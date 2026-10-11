@@ -43,6 +43,8 @@ private:
     // because it delegates to the stronger supportsRdma().
     [[nodiscard]] bool
     rdmaEngReady() const;
+
+    const bool allowLargeRdmaReg_;
 };
 
 #endif // OBJ_PLUGIN_S3_ACCEL_ENGINE_IMPL_H

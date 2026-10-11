@@ -86,11 +86,12 @@ SharedCuObjClient::instance() {
 }
 
 bool
-SharedCuObjClient::registerBuffer(void *ptr, size_t size) {
+SharedCuObjClient::registerBuffer(void *ptr, size_t size, bool allow_large) {
     const std::lock_guard<std::mutex> lock(mutex_);
+    const auto base = reinterpret_cast<uintptr_t>(ptr);
     // cuObject registrations are process-wide, so agents sharing a buffer share
     // one registration rather than each calling cuMemObjGetDescriptor.
-    const auto it = registrations_.find(reinterpret_cast<uintptr_t>(ptr));
+    const auto it = registrations_.find(base);
     if (it != registrations_.end()) {
         if (it->second.size != size) {
             NIXL_ERROR << "RDMA buffer ptr=" << ptr << " is already registered with size "
@@ -100,14 +101,35 @@ SharedCuObjClient::registerBuffer(void *ptr, size_t size) {
         ++it->second.refs;
         return true;
     }
-    cuObjErr_t rc = client_->cuMemObjGetDescriptor(ptr, size);
-    if (rc != CU_OBJ_SUCCESS) {
-        NIXL_ERROR << "cuMemObjGetDescriptor failed rc=" << rc << " ptr=" << ptr
-                   << " size=" << size;
+    if (size > max_region_size && !allow_large) {
+        NIXL_ERROR << "RDMA buffer ptr=" << ptr << " size=" << size
+                   << " exceeds the cuObject registration limit of " << max_region_size
+                   << " bytes; set rdma_large_registration=true to register it as "
+                      "overlapping windows";
         return false;
     }
-    registrations_[reinterpret_cast<uintptr_t>(ptr)] = {size, 1};
-    NIXL_DEBUG << "cuMemObjGetDescriptor OK ptr=" << ptr << " size=" << size;
+    std::vector<uintptr_t> regions;
+    for (uintptr_t start = base;; start += window_stride) {
+        const size_t len = std::min(max_region_size, base + size - start);
+        cuObjErr_t rc = client_->cuMemObjGetDescriptor(reinterpret_cast<void *>(start), len);
+        if (rc != CU_OBJ_SUCCESS) {
+            NIXL_ERROR << "cuMemObjGetDescriptor failed rc=" << rc
+                       << " ptr=" << reinterpret_cast<void *>(start) << " size=" << len;
+            for (const auto region : regions) {
+                regions_.erase(region);
+                client_->cuMemObjPutDescriptor(reinterpret_cast<void *>(region));
+            }
+            return false;
+        }
+        regions.push_back(start);
+        regions_[start] = {len, base};
+        if (start + len == base + size) {
+            break;
+        }
+    }
+    NIXL_DEBUG << "cuMemObjGetDescriptor OK ptr=" << ptr << " size=" << size
+               << " regions=" << regions.size();
+    registrations_[base] = {size, 1, std::move(regions)};
     return true;
 }
 
@@ -125,11 +147,14 @@ SharedCuObjClient::release(std::map<uintptr_t, Registration>::iterator it) {
     if (--it->second.refs > 0) {
         return;
     }
-    void *ptr = reinterpret_cast<void *>(it->first);
-    registrations_.erase(it);
-    if (client_->cuMemObjPutDescriptor(ptr) != CU_OBJ_SUCCESS) {
-        NIXL_WARN << "cuMemObjPutDescriptor failed for ptr " << ptr;
+    for (const auto region : it->second.regions) {
+        regions_.erase(region);
+        if (client_->cuMemObjPutDescriptor(reinterpret_cast<void *>(region)) != CU_OBJ_SUCCESS) {
+            NIXL_WARN << "cuMemObjPutDescriptor failed for ptr "
+                      << reinterpret_cast<void *>(region);
+        }
     }
+    registrations_.erase(it);
 }
 
 bool
@@ -144,15 +169,14 @@ char *
 SharedCuObjClient::getToken(void *ptr, size_t size, cuObjOpType_t op) {
     const std::lock_guard<std::mutex> lock(mutex_);
     const auto addr = reinterpret_cast<uintptr_t>(ptr);
-    auto contains = [addr, size](const auto &reg) {
-        const auto &[base, registration] = reg;
-        const auto len = registration.size;
+    auto contains = [addr, size](const auto &region) {
+        const auto base = region.first;
+        const auto len = region.second.size;
         return addr - base <= len && size <= len - (addr - base);
     };
-    const auto rit = std::find_if(std::make_reverse_iterator(registrations_.upper_bound(addr)),
-                                  registrations_.rend(),
-                                  contains);
-    if (rit == registrations_.rend()) {
+    const auto rit = std::find_if(
+        std::make_reverse_iterator(regions_.upper_bound(addr)), regions_.rend(), contains);
+    if (rit == regions_.rend()) {
         NIXL_ERROR << "No RDMA registration contains ptr=" << ptr << " size=" << size;
         return nullptr;
     }
@@ -168,8 +192,8 @@ SharedCuObjClient::getToken(void *ptr, size_t size, cuObjOpType_t op) {
                    << " size=" << size << " op=" << op << " token=" << static_cast<void *>(token);
         return nullptr;
     }
-    ++rit->second.refs;
-    tokens_[token] = base;
+    ++registrations_.at(rit->second.owner).refs;
+    tokens_[token] = rit->second.owner;
     return token;
 }
 

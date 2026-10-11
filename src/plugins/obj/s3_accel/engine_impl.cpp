@@ -113,14 +113,16 @@ objAccelEngineRegistrar reg_s3_accel(
 } // namespace
 
 S3AccelObjEngineImpl::S3AccelObjEngineImpl(const nixlBackendInitParams *init_params)
-    : DefaultObjEngineImpl(init_params) {
+    : DefaultObjEngineImpl(init_params),
+      allowLargeRdmaReg_(isLargeRdmaRegistrationAllowed(init_params->customParams)) {
     s3Client_ = std::make_shared<awsS3AccelClient>(init_params->customParams, executor_);
     NIXL_INFO << "Object storage backend initialized with S3 Accel client";
 }
 
 S3AccelObjEngineImpl::S3AccelObjEngineImpl(const nixlBackendInitParams *init_params,
                                            std::shared_ptr<iS3Client> s3_client)
-    : DefaultObjEngineImpl(init_params, s3_client, nullptr) {
+    : DefaultObjEngineImpl(init_params, s3_client, nullptr),
+      allowLargeRdmaReg_(isLargeRdmaRegistrationAllowed(init_params->customParams)) {
     if (!s3_client) {
         s3Client_ = std::make_shared<awsS3AccelClient>(init_params->customParams, executor_);
     }
@@ -182,7 +184,9 @@ S3AccelObjEngineImpl::registerMem(const nixlBlobDesc &mem,
         }
 #endif
         auto *rdma = nixl_obj_rdma::SharedCuObjClient::instance();
-        if (!rdma || !rdma->registerBuffer(reinterpret_cast<void *>(mem.addr), mem.len)) {
+        if (!rdma ||
+            !rdma->registerBuffer(
+                reinterpret_cast<void *>(mem.addr), mem.len, allowLargeRdmaReg_)) {
             NIXL_ERROR << "RDMA buffer registration failed; the accelerated path has no HTTP "
                           "fallback";
             return NIXL_ERR_BACKEND;

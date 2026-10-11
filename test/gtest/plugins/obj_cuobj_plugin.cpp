@@ -25,12 +25,14 @@
 #include <map>
 #include <mutex>
 #include <atomic>
+#include <optional>
 #include <random>
 #include <thread>
 #include <vector>
 
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
+#include <cuobjclient.h>
 
 #include "plugins_common.h"
 #include "transfer_handler.h"
@@ -337,34 +339,39 @@ TEST_P(setupObjAccelTestFixture, AccelReservedCharKeyXferTest) {
     EXPECT_EQ(localBackendEngine_->deregisterMem(mem_md), NIXL_SUCCESS);
 }
 
-// Writes a random pattern from the whole of mem to a new object, zeroes mem,
-// reads the object back and checks that the pattern returned.
+// Writes a random pattern from mem[offset, offset + len) to a new object, zeroes
+// that range, reads the object back and checks that the pattern returned. With
+// len 0 the whole of mem is used.
 template<nixl_mem_t memType>
 void
 testRoundTrip(nixlBackendEngine &engine,
               memoryHandler<memType> &mem,
               const nixlBlobDesc &mem_desc,
-              const std::string &key) {
-    nixlBlobDesc obj_desc(0, mem_desc.len, 0, key);
+              const std::string &key,
+              size_t offset = 0,
+              size_t len = 0) {
+    len = len ? len : mem_desc.len;
+    nixlBlobDesc obj_desc(0, len, 0, key);
     nixlBackendMD *obj_md = nullptr;
     ASSERT_EQ(engine.registerMem(obj_desc, OBJ_SEG, obj_md), NIXL_SUCCESS);
 
     nixl_meta_dlist_t local(memType);
     nixl_meta_dlist_t remote(OBJ_SEG);
     nixlMetaDesc local_desc;
-    mem.populateMetaDesc(&local_desc, 0, mem_desc.len);
+    mem.populateMetaDesc(&local_desc, 0, len);
+    local_desc.addr = mem_desc.addr + offset;
     local.addDesc(local_desc);
-    remote.addDesc(nixlMetaDesc(0, mem_desc.len, 0, obj_md));
+    remote.addDesc(nixlMetaDesc(0, len, 0, obj_md));
 
-    std::vector<uint8_t> pattern(mem_desc.len);
+    std::vector<uint8_t> pattern(len);
     std::mt19937 rng(2370);
     std::generate(pattern.begin(), pattern.end(), [&rng] { return static_cast<uint8_t>(rng()); });
-    copyToMem<memType>(mem_desc.addr, pattern);
+    copyToMem<memType>(local_desc.addr, pattern);
     EXPECT_EQ(runXfer(engine, NIXL_WRITE, local, remote), NIXL_SUCCESS);
 
-    copyToMem<memType>(mem_desc.addr, std::vector<uint8_t>(pattern.size(), 0));
+    copyToMem<memType>(local_desc.addr, std::vector<uint8_t>(len, 0));
     EXPECT_EQ(runXfer(engine, NIXL_READ, local, remote), NIXL_SUCCESS);
-    EXPECT_EQ(copyFromMem<memType>(mem_desc.addr, pattern.size()), pattern);
+    EXPECT_EQ(copyFromMem<memType>(local_desc.addr, len), pattern);
 
     EXPECT_EQ(engine.deregisterMem(obj_md), NIXL_SUCCESS);
 }
@@ -571,6 +578,50 @@ TEST_P(setupObjAccelTestFixture, AccelVramRegistrationRestoresContextTest) {
         }
         EXPECT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
     }).join();
+}
+
+// A buffer larger than cuObject's per-registration limit is rejected by default
+// and registered as overlapping windows when rdma_large_registration is set.
+TEST_P(setupObjAccelTestFixture, AccelVramLargeRegistrationTest) {
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
+    }
+    constexpr size_t mib = 1 << 20;
+    constexpr size_t len = size_t(6) << 30;
+    std::optional<memoryHandler<VRAM_SEG>> mem;
+    try {
+        mem.emplace(len, 0);
+    }
+    catch (const std::runtime_error &) {
+        GTEST_SKIP() << "Cannot allocate " << len << " bytes of VRAM";
+    }
+    nixlBlobDesc mem_desc;
+    mem->populateBlobDesc(&mem_desc);
+    nixlBackendMD *mem_md = nullptr;
+    EXPECT_EQ(localBackendEngine_->registerMem(mem_desc, VRAM_SEG, mem_md), NIXL_ERR_BACKEND);
+
+    nixl_b_params_t params = localParams_;
+    params["rdma_large_registration"] = "true";
+    nixlBackendInitParams init_params = GetParam();
+    init_params.customParams = &params;
+    nixlObjEngine large_engine(&init_params);
+    ASSERT_EQ(large_engine.registerMem(mem_desc, VRAM_SEG, mem_md), NIXL_SUCCESS);
+    mem->setMD(mem_md);
+
+    // The start of the buffer, a range across the end of the first window, and
+    // the last MiB, which only the last window covers.
+    for (const size_t offset :
+         {size_t(0), size_t(CUOBJ_MAX_MEMORY_REG_SIZE) - mib / 2, len - mib}) {
+        testRoundTrip<VRAM_SEG>(large_engine,
+                                *mem,
+                                mem_desc,
+                                "test-obj-key-large-registration-" + std::to_string(offset),
+                                offset,
+                                mib);
+    }
+    EXPECT_EQ(large_engine.deregisterMem(mem_md), NIXL_SUCCESS);
 }
 #endif // HAVE_CUDA
 

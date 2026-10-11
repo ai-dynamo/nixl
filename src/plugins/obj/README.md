@@ -73,6 +73,7 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 | `throughput_target_gbps` | Target throughput for the S3 CRT client in **whole Gbps** (integer); sizes its parallel connection count | `10` | No |
 | `accelerated` | Enable S3 Accelerated engine (`true`/`false`) | `false` | No |
 | `type` | Accelerated engine type (`dell`, etc.) | - | No |
+| `rdma_large_registration` | Allow the generic accelerated engine to register buffers larger than 4 GiB − 64 KiB (`true`/`false`). See [Large RDMA buffers](#large-rdma-buffers). | `false` | No |
 
 \* If `access_key` and `secret_key` are not provided, the AWS SDK will attempt to use default credential providers (IAM roles, environment variables, credential files, etc.)
 
@@ -328,6 +329,18 @@ Each engine implementation defines its own supported memory segment types via `g
 | Vendor engines | `OBJ_SEG`, `DRAM_SEG`, `VRAM_SEG` | Vendor-specific - override to add GPU support |
 
 **Important:** `S3AccelObjEngineImpl` advertises `VRAM_SEG` only when the generic S3-over-RDMA fast path is ready (cuObject fabric + control plane). Under `accelerated=true` there is no HTTP fallback: the backend fails to initialize if the fast path is unavailable, and a transfer the server declines is a hard error. `putObjectAsync` rejects a non-zero offset (a single-shot RDMA PUT writes the whole object); `getObjectAsync` honours the offset as a ranged read.
+
+#### Large RDMA buffers
+
+cuObject registers at most 4 GiB − 64 KiB (`CUOBJ_MAX_MEMORY_REG_SIZE`) in one registration. By default, the generic accelerated engine rejects a larger DRAM or VRAM buffer with an error that names this limit.
+
+To register a larger buffer, such as a 64 GiB KV-cache arena, set `rdma_large_registration=true`. The engine then registers the buffer as overlapping 4 GiB − 64 KiB windows, with a new window starting every 2 GiB. A 64 GiB buffer uses 32 windows. This option has costs:
+
+- Each byte is registered about twice, so registration takes about twice as long and uses about twice as many NIC memory-registration entries. Memory is pinned once.
+- Every transfer must fit inside one window. Transfers of up to 2 GiB − 64 KiB always do. Larger transfers fail or succeed depending on where they start.
+- Another registration cannot start exactly at a window's start address (the buffer's start plus a multiple of 2 GiB), because cuObject allows only one registration per start address.
+
+Buffers of 4 GiB − 64 KiB or less are registered the same way with or without this option.
 
 ### Adding a Vendor Implementation
 

@@ -29,6 +29,13 @@ isAcceleratedRequested(const nixl_b_params_t *custom_params) {
     return nixl::getBackendParamDefaulted(custom_params, "accelerated", false);
 }
 
+// Opt-in for registering buffers larger than cuObject's per-registration limit
+// as overlapping windows, at the cost of registering each byte about twice.
+[[nodiscard]] inline bool
+isLargeRdmaRegistrationAllowed(const nixl_b_params_t *custom_params) {
+    return nixl::getBackendParamDefaulted(custom_params, "rdma_large_registration", false);
+}
+
 // Accelerated engine type used when `type` is unset: the standard,
 // protocol-compliant S3-over-RDMA engine.
 inline constexpr const char *default_accel_engine_type = "s3";
