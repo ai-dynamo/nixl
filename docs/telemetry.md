@@ -203,7 +203,7 @@ restarting from zero as under the single-process exporter; Prometheus detects
 that reset only if the next scrape reads a lower value. Only when two or more
 live agents share a name -- a misconfiguration, since peers look agents up by
 name -- does each get `pid` and `agent_instance` labels to stay distinct, and
-the exporter warns once per name.
+the exporter warns once.
 
 `NIXL_TELEMETRY_MULTIPROC_DIR` follows Dynamo's `PROMETHEUS_MULTIPROC_DIR`
 convention: a shared **local** folder (not NFS), one per pod / process-family,

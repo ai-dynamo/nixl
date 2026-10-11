@@ -22,13 +22,10 @@
 #include <prometheus/collectable.h>
 #include <prometheus/metric_family.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
-#include <mutex>
-#include <set>
-#include <string>
-#include <tuple>
 #include <vector>
 
 namespace nixl::telemetry::mp {
@@ -106,8 +103,8 @@ public:
      * Groups @p stores by hostname, agent_name and local_rank. A group with at
      * most one live writer yields one store: the live one, else the most recently
      * updated, ties broken by pid, then instance. A group with two or more live
-     * writers yields every live store with @c withProcessLabels set, and is
-     * reported once per collector.
+     * writers yields every live store with @c withProcessLabels set. Only the
+     * first such group a collector sees is reported.
      */
     [[nodiscard]] std::vector<publishedStore>
     selectStores(std::vector<scannedStore> stores) const;
@@ -124,8 +121,7 @@ private:
     const std::filesystem::path dir_;
     const std::chrono::nanoseconds staleTtl_;
     const bool reapStale_;
-    mutable std::mutex reportedMutex_;
-    mutable std::set<std::tuple<std::string, std::string, std::string>> reportedIdentities_;
+    mutable std::atomic_flag duplicateReported_;
 };
 
 } // namespace nixl::telemetry::mp

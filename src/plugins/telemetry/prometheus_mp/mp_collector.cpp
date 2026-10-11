@@ -27,6 +27,7 @@
 #include <exception>
 #include <limits>
 #include <system_error>
+#include <tuple>
 
 namespace nixl::telemetry::mp {
 
@@ -259,11 +260,8 @@ nixlMultiprocessCollector::selectStores(std::vector<scannedStore> stores) const 
 void
 nixlMultiprocessCollector::reportSharedIdentity(const storeSnapshot &store,
                                                 std::size_t live_writers) const {
-    {
-        const std::lock_guard<std::mutex> lock(reportedMutex_);
-        if (!reportedIdentities_.emplace(identityOf(store)).second) {
-            return;
-        }
+    if (duplicateReported_.test_and_set()) {
+        return;
     }
     const std::string rank =
         store.localRank.empty() ? std::string() : " with local_rank '" + store.localRank + "'";

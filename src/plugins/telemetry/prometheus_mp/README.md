@@ -229,8 +229,8 @@ agents have unique names. On each scrape the collector groups the stores by
   not published, and are still reaped once stale.
 - **No live writer:** the most recently updated departed store.
 - **Two or more live writers:** every live store, with two more labels to keep them
-  apart, and a warning once per name. Peers look agents up by name, so this is a
-  misconfiguration.
+  apart, and a one-time warning naming the first such name. Peers look agents up by
+  name, so this is a misconfiguration.
   - `pid` -- the producing process id. It is deliberately **not** named `instance`
     (a reserved Prometheus target label).
   - `agent_instance` -- a per-process counter distinguishing agents created in the

@@ -212,7 +212,7 @@ TEST(MpCollectorTest, AgentInstanceLabelDisambiguatesSameProcessSameName) {
     EXPECT_DOUBLE_EQ(m_b->counter.value, 20.0);
 }
 
-TEST(MpCollectorTest, DuplicateLiveNameIsReportedOncePerIdentityPerCollector) {
+TEST(MpCollectorTest, DuplicateLiveNameIsReportedOncePerCollector) {
     std::vector<scannedStore> stores;
     for (const std::string name : {"dup-a", "dup-b"}) {
         for (const int64_t pid : {1001, 1002}) {
@@ -226,11 +226,11 @@ TEST(MpCollectorTest, DuplicateLiveNameIsReportedOncePerIdentityPerCollector) {
     const nixlMultiprocessCollector collector{std::filesystem::path()};
     EXPECT_EQ(collector.selectStores(stores).size(), 4u);
     EXPECT_EQ(collector.selectStores(stores).size(), 4u);
-    EXPECT_EQ(lig.getIgnoredCount(), 2u);
+    EXPECT_EQ(lig.getIgnoredCount(), 1u);
 
     const nixlMultiprocessCollector successor{std::filesystem::path()};
     EXPECT_EQ(successor.selectStores(stores).size(), 4u);
-    EXPECT_EQ(lig.getIgnoredCount(), 4u);
+    EXPECT_EQ(lig.getIgnoredCount(), 2u);
 }
 
 TEST(MpCollectorTest, ConcurrentScrapesReportADuplicateLiveNameOnce) {
