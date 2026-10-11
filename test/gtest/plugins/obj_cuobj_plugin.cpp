@@ -389,7 +389,16 @@ testLargeRegistrationXfer(nixlBackendEngine &engine) {
     cross_desc.addr = mem_desc.addr + (size_t{2} << 30) - entry_size / 2;
     cross_local.addDesc(cross_desc);
     cross_remote.addDesc(nixlMetaDesc(0, entry_size, xfer_entries.size(), obj_mds.back()));
-    EXPECT_NE(runXfer(engine, NIXL_WRITE, cross_local, cross_remote), NIXL_SUCCESS);
+    EXPECT_EQ(runXfer(engine, NIXL_WRITE, cross_local, cross_remote), NIXL_ERR_BACKEND);
+
+    // The rejected write must not leave an object behind.
+    nixl_reg_dlist_t cross_obj(OBJ_SEG);
+    cross_obj.addDesc(
+        nixlBlobDesc(nixlBasicDesc(), "test-obj-key-large-" + std::to_string(xfer_entries.size())));
+    std::vector<nixl_query_resp_t> cross_resp;
+    EXPECT_EQ(engine.queryMem(cross_obj, cross_resp), NIXL_SUCCESS);
+    ASSERT_EQ(cross_resp.size(), 1u);
+    EXPECT_FALSE(cross_resp[0].has_value());
 
     for (auto *obj_md : obj_mds) {
         EXPECT_EQ(engine.deregisterMem(obj_md), NIXL_SUCCESS);
