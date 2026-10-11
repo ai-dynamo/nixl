@@ -112,6 +112,42 @@ fi
 
 echo "==== nixl_ep elastic tests done ===="
 
+echo "==== Running NIXL-EP V2 tests ===="
+(
+    unset NIXL_ETCD_ENDPOINTS NIXL_ETCD_PEER_URLS NIXL_ETCD_NAMESPACE
+    unset UCX_NET_DEVICES  # let UCX auto-select GPU-capable transports
+    V2_TEST_DIR="runtime/ep/tests/elastic"
+
+    run_v2_test() {
+        local test_file=$1
+        shift
+        echo "---- NIXL-EP V2: ${test_file} ----"
+        PYTHONPATH="${V2_TEST_DIR}${PYTHONPATH:+:$PYTHONPATH}" \
+            timeout 1800 "${VLLM_PYTHON}" "${V2_TEST_DIR}/${test_file}" "$@"
+    }
+
+    run_v2_test test_ep.py \
+        --num-processes 4 \
+        --num-tokens 512 \
+        --hidden 7168 \
+        --num-topk 8 \
+        --num-experts 256 \
+        --skip-perf-test
+    run_v2_test test_adaptive_elastic.py \
+        --num-processes 4 \
+        --num-tokens 512 \
+        --hidden 7168 \
+        --num-topk 8 \
+        --num-experts 192
+    run_v2_test test_adaptive_modes.py \
+        --num-processes 4 \
+        --num-tokens 1024 \
+        --hidden 7168 \
+        --num-topk 8 \
+        --num-experts 256
+)
+echo "==== NIXL-EP V2 tests done ===="
+
 echo "==== Running vLLM Elastic EP test ===="
 (
     # Avoid SPCx loading HPC-X UCX 1.21; NIXL EP requires UCX >=1.22.
