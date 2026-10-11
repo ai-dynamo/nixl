@@ -251,6 +251,14 @@ Jobs submitted via the `slurmCI` module are named `${JOB_BASE_NAME}-${BUILD_NUMB
 
 Use `squeue --name <pattern>` or `squeue -u <user>` to identify which pipeline owns a running job.
 
+## Slurm container image sync
+
+Every Slurm pipeline has a `Sync Container Image` step right after its allocation step. The first `srun --container-image=...` on a node makes pyxis pull and unpack the whole CI image, which can take many minutes on a slow registry or node. Doing that inside the first test stage would spend that stage's timeout before any test runs.
+
+The sync step runs a cheap environment check (`hostname`, `nvidia-smi -L`, `df -h /`) with the same `dockerImage` and `containerName` the test steps use, under its own 30 min timeout. Later steps reuse the named container, so their timeouts only cover the tests, and a failed or slow import shows up as its own stage. The GPU check does not fail the step when no GPU is visible; it only prints `no-gpu-visible`.
+
+When adding a Slurm pipeline, add this step after the allocation and keep its `dockerImage`/`containerName` identical to the test steps'.
+
 ## How to trigger CI manually
 
 - **Full Jenkins pipeline for a PR:** comment `/build` on the PR (requires authorization — see `Authorization` step in `blossom-ci.yml`).
