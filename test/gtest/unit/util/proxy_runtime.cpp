@@ -32,7 +32,7 @@
 #include "device/proxy/proxy_runtime.h"
 #include "mocks/proxy_mocks.h"
 
-namespace gtest {
+namespace nixl {
 namespace proxy_runtime {
 
     using proxy_mocks::DummyBackendMD;
@@ -158,7 +158,7 @@ namespace proxy_runtime {
 
         static nixlProxyCommand
         makePut(nixlMemViewH src, nixlMemViewH dst, uint32_t dst_index = 0) {
-            nixlProxyCommand record{};
+            nixlProxyCommand record;
             record.opcode = nixl_proxy_opcode_t::PUT;
             record.src_view = hostViewToken(src);
             record.dst_view = hostViewToken(dst);
@@ -171,7 +171,7 @@ namespace proxy_runtime {
 
         static nixlProxyCommand
         makeAtomicAdd(nixlMemViewH dst, uint64_t value = 42) {
-            nixlProxyCommand record{};
+            nixlProxyCommand record;
             record.opcode = nixl_proxy_opcode_t::ATOMIC_ADD;
             record.dst_view = hostViewToken(dst);
             record.dst_offset = 8;
@@ -850,4 +850,4 @@ namespace proxy_runtime {
     }
 
 } // namespace proxy_runtime
-} // namespace gtest
+} // namespace nixl

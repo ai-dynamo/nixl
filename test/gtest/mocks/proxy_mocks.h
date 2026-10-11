@@ -35,7 +35,7 @@
 #include "device/device_ops.h"
 #include "device/proxy/proxy_transport.h"
 
-namespace gtest {
+namespace nixl {
 namespace proxy_mocks {
 
     /** Host-backed allocations with distinct device aliases to catch incorrect publication. */
@@ -415,6 +415,6 @@ namespace proxy_mocks {
     }
 
 } // namespace proxy_mocks
-} // namespace gtest
+} // namespace nixl
 
 #endif // NIXL_TEST_GTEST_MOCKS_PROXY_MOCKS_H

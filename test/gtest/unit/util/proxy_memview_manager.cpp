@@ -30,7 +30,7 @@
 #include "device/proxy/proxy_submission.h"
 #include "mocks/proxy_mocks.h"
 
-namespace gtest {
+namespace nixl {
 namespace proxy_memview_manager {
 
     using proxy_mocks::DummyBackendMD;
@@ -83,7 +83,7 @@ namespace proxy_memview_manager {
             uint64_t size,
             uint64_t src_offset = 0,
             uint64_t dst_offset = 0) {
-            nixlProxyCommand record{};
+            nixlProxyCommand record;
             record.opcode = nixl_proxy_opcode_t::PUT;
             record.src_view = src;
             record.operand = src_offset;
@@ -95,7 +95,7 @@ namespace proxy_memview_manager {
 
         static nixlProxyCommand
         atomicAdd(uint64_t dst, uint64_t dst_offset = 0, uint64_t value = 42) {
-            nixlProxyCommand record{};
+            nixlProxyCommand record;
             record.opcode = nixl_proxy_opcode_t::ATOMIC_ADD;
             record.dst_view = dst;
             record.dst_offset = dst_offset;
@@ -344,4 +344,4 @@ namespace proxy_memview_manager {
     }
 
 } // namespace proxy_memview_manager
-} // namespace gtest
+} // namespace nixl
