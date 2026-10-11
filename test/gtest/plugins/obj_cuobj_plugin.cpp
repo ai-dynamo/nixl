@@ -331,6 +331,49 @@ TEST_P(setupObjAccelTestFixture, AccelReservedCharKeyXferTest) {
     EXPECT_EQ(localBackendEngine_->deregisterMem(mem_md), NIXL_SUCCESS);
 }
 
+// Several agents in one process registering the same buffer share one cuObject
+// registration, so it must stay usable until the last of them deregisters.
+TEST_P(setupObjAccelTestFixture, AccelSharedBufferRegistrationTest) {
+    constexpr size_t len = 1 << 20;
+    nixlBackendInitParams init_params = GetParam();
+    init_params.customParams = &localParams_;
+    nixlObjEngine other_engine(&init_params);
+
+    memoryHandler<DRAM_SEG> mem(len, 0);
+    nixlBlobDesc mem_desc;
+    mem.populateBlobDesc(&mem_desc);
+    nixlBackendMD *first_md = nullptr;
+    nixlBackendMD *second_md = nullptr;
+    ASSERT_EQ(localBackendEngine_->registerMem(mem_desc, DRAM_SEG, first_md), NIXL_SUCCESS);
+    ASSERT_EQ(other_engine.registerMem(mem_desc, DRAM_SEG, second_md), NIXL_SUCCESS);
+    EXPECT_EQ(localBackendEngine_->deregisterMem(first_md), NIXL_SUCCESS);
+    mem.setMD(second_md);
+
+    nixlBlobDesc obj_desc(0, len, 0, "test-obj-key-shared-registration");
+    nixlBackendMD *obj_md = nullptr;
+    ASSERT_EQ(other_engine.registerMem(obj_desc, OBJ_SEG, obj_md), NIXL_SUCCESS);
+
+    nixl_meta_dlist_t local(DRAM_SEG);
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    nixlMetaDesc local_desc;
+    mem.populateMetaDesc(&local_desc, 0, len);
+    local.addDesc(local_desc);
+    remote.addDesc(nixlMetaDesc(0, len, 0, obj_md));
+
+    std::vector<uint8_t> pattern(len);
+    std::mt19937 rng(2370);
+    std::generate(pattern.begin(), pattern.end(), [&rng] { return static_cast<uint8_t>(rng()); });
+    copyToMem<DRAM_SEG>(mem_desc.addr, pattern);
+    EXPECT_EQ(runXfer(other_engine, NIXL_WRITE, local, remote), NIXL_SUCCESS);
+
+    copyToMem<DRAM_SEG>(mem_desc.addr, std::vector<uint8_t>(len, 0));
+    EXPECT_EQ(runXfer(other_engine, NIXL_READ, local, remote), NIXL_SUCCESS);
+    EXPECT_EQ(copyFromMem<DRAM_SEG>(mem_desc.addr, len), pattern);
+
+    EXPECT_EQ(other_engine.deregisterMem(obj_md), NIXL_SUCCESS);
+    EXPECT_EQ(other_engine.deregisterMem(second_md), NIXL_SUCCESS);
+}
+
 #ifdef HAVE_CUDA
 TEST_P(setupObjAccelTestFixture, AccelVramSubRangeXferTest) {
     int device_count = 0;

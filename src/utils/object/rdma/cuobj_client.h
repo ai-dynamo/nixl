@@ -51,6 +51,9 @@ public:
 
     /**
      * @brief Pin a buffer for RDMA. Required before minting a token for it.
+     *
+     * Registering an already registered buffer again with the same size adds a
+     * reference instead of pinning it twice.
      * @param ptr Start of the buffer to register.
      * @param size Buffer length in bytes.
      * @return true on success, false if registration failed.
@@ -60,6 +63,8 @@ public:
 
     /**
      * @brief Release a buffer registration acquired via registerBuffer().
+     *
+     * The buffer is unpinned once its last reference is released.
      * @param ptr Buffer previously passed to registerBuffer().
      */
     void
@@ -96,12 +101,17 @@ public:
     putToken(char *token);
 
 private:
+    struct Registration {
+        size_t size;
+        size_t refs;
+    };
+
     SharedCuObjClient();
     CUObjIOOps ops_{};
     std::unique_ptr<cuObjClient> client_;
     bool connected_ = false;
     std::mutex mutex_;
-    std::map<uintptr_t, size_t> registrations_;
+    std::map<uintptr_t, Registration> registrations_;
 };
 
 } // namespace nixl_obj_rdma
