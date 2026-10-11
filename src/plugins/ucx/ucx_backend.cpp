@@ -858,7 +858,7 @@ nixlUcxEngine::wrapMemView(nixl::deviceOps &ops,
     const nixl_status_t status = nixl::deviceMemViewAllocate(ops, mode, backend_mvh, mvh);
     if (status != NIXL_SUCCESS) {
         if (proxyRuntime_) {
-            static_cast<void>(proxyRuntime_->discardUnpublishedMemView(backend_mvh));
+            static_cast<void>(proxyRuntime_->releaseMemView(backend_mvh));
         } else {
             nixl::ucx::releaseMemList(backend_mvh);
         }
