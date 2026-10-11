@@ -59,7 +59,7 @@ static std::filesystem::path make_dirs(const std::filesystem::path& path) {
         EP_HOST_UNREACHABLE(fmt::format("Failed to make directory: {}, created: {}, value: {}",
                                         path.c_str(), created, capture.value()));
     }
-    if (created and get_env<int>("EP_JIT_DEBUG"))
+    if (created and get_env<int>("NIXL_EP_JIT_DEBUG"))
         printf("Create directory: %s\n", path.c_str());
     return path;
 }

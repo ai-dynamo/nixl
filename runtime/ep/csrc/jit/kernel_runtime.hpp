@@ -23,7 +23,7 @@ public:
         // NOLINT(*-pro-type-member-init)
         const auto cuobjdump_path = cuda_home / "bin" / "cuobjdump";
         const auto cubin_path = dir_path / "kernel.cubin";
-        if (get_env<int>("EP_JIT_DEBUG"))
+        if (get_env<int>("NIXL_EP_JIT_DEBUG"))
             printf("Loading CUBIN: %s\n", cubin_path.c_str());
 
         // Find the only symbol

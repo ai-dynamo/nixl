@@ -401,7 +401,7 @@ public:
             event = EventHandle(comm_stream);
 
             // NOTES: this environment only applies to V2 APIs
-            if (get_env<int>("EP_AVOID_RECORD_STREAM", 0)) {
+            if (get_env<int>("NIXL_EP_AVOID_RECORD_STREAM", 0)) {
                 event->tensors_to_record = tensors;
             } else {
                 for (auto& t: tensors) if (t.has_value()) {
@@ -624,7 +624,7 @@ public:
             max_num_ranks, max_num_scaleout_ranks, num_smem_bytes, prefer_overlap_with_compute);
         if (not adaptive_num_channels_per_sm.has_value()) {
             adaptive_num_channels_per_sm = num_channels_per_sm;
-            if (get_env<int>("EP_BUFFER_DEBUG"))
+            if (get_env<int>("NIXL_EP_BUFFER_DEBUG"))
                 printf("Elastic buffer uses %d channels per SM\n", num_channels_per_sm);
         }
         EP_HOST_ASSERT(*adaptive_num_channels_per_sm == num_channels_per_sm and
@@ -768,7 +768,7 @@ public:
                     return ss.str();
                 };
                 if (ready) {
-                    if (get_env<int>("EP_BUFFER_DEBUG"))
+                    if (get_env<int>("NIXL_EP_BUFFER_DEBUG"))
                         printf("%s\n", get_buffer_info().c_str());
                     break;
                 }

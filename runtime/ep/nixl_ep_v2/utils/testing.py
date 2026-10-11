@@ -140,7 +140,7 @@ def bench_kineto(fn,
 
     # Skip profiling
     # Conflict with Nsight Systems, Nsight Compute and Compute Sanitizer
-    if int(os.environ.get('EP_USE_NVIDIA_TOOLS', 0)):
+    if int(os.environ.get('NIXL_EP_USE_NVIDIA_TOOLS', 0)):
         return (1, ) * len(kernel_names) if is_tuple else 1
 
     # For some auto-tuning kernels with prints
@@ -149,7 +149,7 @@ def bench_kineto(fn,
 
     # Profile
     suppress = suppress_stdout_stderr if suppress_kineto_output else empty_suppress
-    barrier_comm_profiling &= int(os.environ.get('EP_DISABLE_BARRIER_PROFILING', 0)) == 0
+    barrier_comm_profiling &= int(os.environ.get('NIXL_EP_DISABLE_BARRIER_PROFILING', 0)) == 0
     with suppress():
         schedule = torch.profiler.schedule(wait=0, warmup=1, active=1, repeat=1)
         profiler = torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA], schedule=schedule, acc_events=True)

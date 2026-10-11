@@ -24,7 +24,7 @@ static_assert(sizeof(NIXLDeviceContext) == 48, "Unexpected transport context siz
 #include <gpu/nixl_device.cuh>
 // As in `nixl_device.cu`: without UCX's device header NIXL compiles stubs that fail at run time; the header test tells
 #if !__has_include(<ucp/api/device/ucp_device_impl.h>)
-#error "UCX device header <ucp/api/device/ucp_device_impl.h> not on the include path: set EP_UCX_ROOT_DIR (-I <EP_UCX_ROOT_DIR>/include)"
+#error "UCX device header <ucp/api/device/ucp_device_impl.h> not on the include path: set NIXL_EP_UCX_ROOT_DIR (-I <NIXL_EP_UCX_ROOT_DIR>/include)"
 #endif
 
 #include <nixl_ep_v2/common/exception.cuh>
