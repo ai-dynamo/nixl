@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import os
 import tempfile
 import uuid
@@ -22,7 +23,12 @@ import torch
 
 import nixl._bindings as bindings
 import nixl._utils as utils
-from nixl._api import nixl_agent, nixl_agent_config, nixl_thread_sync_t
+from nixl._api import (
+    nixl_agent,
+    nixl_agent_config,
+    nixl_thread_sync_t,
+    nixl_xfer_handle,
+)
 
 # NIXL pytest fixtures
 
@@ -492,3 +498,23 @@ def test_get_xfer_telemetry_cfg(backend_name):
     finally:
         os.environ.pop("NIXL_TELEMETRY_ENABLE")
         os.environ.pop("NIXL_TELEMETRY_DIR")
+
+
+def test_leaked_xfer_handle_is_queued_on_the_agent(one_empty_agent, monkeypatch):
+    """A release that fails in the finalizer defers to the agent's leak list.
+
+    The list lives on nixl_agent, not on the pybind agent, and the agent's own
+    destructor is what drains it.
+    """
+
+    class FailingRelease:
+        def releaseXferReq(self, handle):
+            raise RuntimeError("release refused")
+
+    monkeypatch.setattr(one_empty_agent, "agent", FailingRelease())
+
+    handle = nixl_xfer_handle(one_empty_agent, 0xDEAD)
+    del handle
+    gc.collect()
+
+    assert one_empty_agent._leaked_xfer_handles == [0xDEAD]
