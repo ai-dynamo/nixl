@@ -12,7 +12,7 @@ namespace nixl_ep_v2::elastic::topology {
 // Even, because the kernels are launched in clusters of two. the upstream kernels run on 24 SMs; 26 measured
 // slightly faster for the adaptive kernels and is a tentative value.
 constexpr int kNumLaunchSMs = 26;
-// Hard cap used for buffer sizing (the launch grid may be raised up to this with EP_ADAPTIVE_NUM_LAUNCH_SMS)
+// Hard cap used for buffer sizing (the launch grid may be raised up to this with NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS)
 constexpr int kNumMaxLaunchSMs = 64;
 
 // Hard caps of the rank decomposition: the workspace control words and the transport tables are sized by them, so
@@ -66,13 +66,13 @@ __device__ __host__ __forceinline__ constexpr int rank_id(const int& scaleout_ra
 }
 
 #ifndef __CUDA_ARCH__
-// Host: the launch grid actually used, `kNumLaunchSMs` unless `EP_ADAPTIVE_NUM_LAUNCH_SMS` overrides it (even,
+// Host: the launch grid actually used, `kNumLaunchSMs` unless `NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS` overrides it (even,
 // <= kNumMaxLaunchSMs). An A/B knob: the grid is a template argument of the kernels, so changing it recompiles.
 inline int get_num_launch_sms() {
     static int value = [] {
-        const char* env = std::getenv("EP_ADAPTIVE_NUM_LAUNCH_SMS");
+        const char* env = std::getenv("NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS");
         int v = env != nullptr and env[0] != '\0' ? std::atoi(env) : kNumLaunchSMs;
-        EP_HOST_ASSERT(2 <= v and v <= kNumMaxLaunchSMs and v % 2 == 0 and "EP_ADAPTIVE_NUM_LAUNCH_SMS must be even and <= 64");
+        EP_HOST_ASSERT(2 <= v and v <= kNumMaxLaunchSMs and v % 2 == 0 and "NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS must be even and <= 64");
         return v;
     }();
     return value;

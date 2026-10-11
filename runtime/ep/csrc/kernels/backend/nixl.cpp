@@ -65,7 +65,7 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& rank_id, 
     int fabric = 0, rdma_vmm = 0;
     CUDA_DRIVER_CHECK(lazy_cuDeviceGetAttribute(&fabric, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, device));
     CUDA_DRIVER_CHECK(lazy_cuDeviceGetAttribute(&rdma_vmm, CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED, device));
-    const bool try_vmm = fabric and rdma_vmm and get_env<int>("EP_NIXL_DISABLE_VMM", 0) == 0;
+    const bool try_vmm = fabric and rdma_vmm and get_env<int>("NIXL_EP_NIXL_DISABLE_VMM", 0) == 0;
     if (try_vmm) {
         CUmemAllocationProp prop = {};
         prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
@@ -140,7 +140,7 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& rank_id, 
     activate_staged_views();
     CUDA_RUNTIME_CHECK(cudaMemcpy(ctx_device, &ctx_host, sizeof(NIXLDeviceContext), cudaMemcpyHostToDevice));
 
-    if (get_env<int>("EP_BUFFER_DEBUG"))
+    if (get_env<int>("NIXL_EP_BUFFER_DEBUG"))
         printf("NIXL EP context created: agent %s, rank id %d of %d (%d per domain), %d channels, region %p (%ld bytes, %s)\n",
                agent_name.c_str(), rank_id, num_rank_ids, num_scaleup_ranks_per_domain, num_channels, region_base,
                static_cast<long>(num_region_bytes), region.is_vmm ? "VMM with a fabric handle" : "cudaMalloc");
@@ -232,7 +232,7 @@ void NIXLEPContext::connect_ranks(const std::vector<int>& rank_ids, const std::v
 
     // Wait until every peer is usable (the metadata carries the connection info, the wire-up is lazy)
     const auto start = std::chrono::steady_clock::now();
-    const auto timeout_secs = get_env<int>("EP_NIXL_CONNECT_TIMEOUT_SECS", 120);
+    const auto timeout_secs = get_env<int>("NIXL_EP_NIXL_CONNECT_TIMEOUT_SECS", 120);
     std::vector<bool> ready(rank_ids.size(), false);
     size_t num_ready = 0;
     while (num_ready < rank_ids.size()) {
@@ -442,7 +442,7 @@ void NIXLEPContext::commit(cudaStream_t stream) {
     CUDA_RUNTIME_CHECK(cudaMemcpyAsync(p2p_ptrs_device, p2p_ptrs_probe_device, num_rank_ids * sizeof(void*), cudaMemcpyDeviceToDevice, stream));
     CUDA_RUNTIME_CHECK(cudaStreamSynchronize(stream));
 
-    if (get_env<int>("EP_BUFFER_DEBUG")) {
+    if (get_env<int>("NIXL_EP_BUFFER_DEBUG")) {
         std::stringstream ss;
         for (int i = 0; i < num_rank_ids; ++ i) if (i == rank_id or connected[i])
             ss << i << (i == rank_id ? ":self" : probed[i] != nullptr ? ":p2p" : ":rdma") << " ";

@@ -8,7 +8,7 @@
 #include <nixl_ep_v2/common/topology.cuh>
 #include <nixl_ep_v2/impls/combine_utils.cuh>
 
-// Doorbell interval of the RDMA rows to a domain; overridable at JIT time (`EP_JIT_EXTRA_FLAGS=-DEP_COMBINE_RING_INTERVAL=...`)
+// Doorbell interval of the RDMA rows to a domain; overridable at JIT time (`NIXL_EP_JIT_EXTRA_FLAGS=-DEP_COMBINE_RING_INTERVAL=...`)
 #ifndef EP_COMBINE_RING_INTERVAL
 #define EP_COMBINE_RING_INTERVAL 6
 #endif

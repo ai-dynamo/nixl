@@ -5,26 +5,26 @@ import os
 @functools.lru_cache()
 def find_nixl_root():
     """
-    Find the NIXL installation root (`EP_NIXL_ROOT_DIR` or `NIXL_DIR`, checked for the NIXL headers), cached.
+    Find the NIXL installation root (`NIXL_EP_NIXL_ROOT_DIR` or `NIXL_DIR`, checked for the NIXL headers), cached.
     """
-    for env_name in ('EP_NIXL_ROOT_DIR', 'NIXL_DIR'):
+    for env_name in ('NIXL_EP_NIXL_ROOT_DIR', 'NIXL_DIR'):
         if env_name in os.environ:
             root = os.environ[env_name]
             for header in ('nixl.h', os.path.join('gpu', 'nixl_device.cuh')):
                 assert os.path.isfile(os.path.join(root, 'include', header)), f'{env_name}={root} has no include/{header}'
             return root
-    raise ModuleNotFoundError('Cannot find NIXL: set EP_NIXL_ROOT_DIR to the NIXL install prefix')
+    raise ModuleNotFoundError('Cannot find NIXL: set NIXL_EP_NIXL_ROOT_DIR to the NIXL install prefix')
 
 
 @functools.lru_cache()
 def find_ucx_root():
     """
-    Find the UCX installation root (`EP_UCX_ROOT_DIR`, `UCX_DIR`, `UCX_HOME`, else `ucx_info` on the PATH), cached.
+    Find the UCX installation root (`NIXL_EP_UCX_ROOT_DIR`, `UCX_DIR`, `UCX_HOME`, else `ucx_info` on the PATH), cached.
     """
     def has_device_api(root: str) -> bool:
         return os.path.isfile(os.path.join(root, 'include', 'ucp', 'api', 'device', 'ucp_device_impl.h'))
 
-    for env_name in ('EP_UCX_ROOT_DIR', 'UCX_DIR', 'UCX_HOME'):
+    for env_name in ('NIXL_EP_UCX_ROOT_DIR', 'UCX_DIR', 'UCX_HOME'):
         if env_name in os.environ:
             root = os.environ[env_name]
             assert has_device_api(root), f'{env_name}={root} has no UCX device API headers'
@@ -35,7 +35,7 @@ def find_ucx_root():
         root = os.path.dirname(os.path.dirname(os.path.realpath(ucx_info)))
         if has_device_api(root):
             return root
-    raise ModuleNotFoundError('Cannot find UCX with the device API: set EP_UCX_ROOT_DIR to the UCX install prefix')
+    raise ModuleNotFoundError('Cannot find UCX with the device API: set NIXL_EP_UCX_ROOT_DIR to the UCX install prefix')
 
 
 def find_nixl_lib_dir(nixl_root: str) -> str:

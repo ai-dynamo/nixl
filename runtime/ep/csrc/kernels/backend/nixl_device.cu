@@ -4,7 +4,7 @@
 #include <gpu/nixl_device.cuh>
 // Without UCX's device header NIXL compiles a `getPtr` stub that returns nullptr for every peer: fail the build instead (see `nixl_transport.cuh`)
 #if !__has_include(<ucp/api/device/ucp_device_impl.h>)
-#error "UCX device header <ucp/api/device/ucp_device_impl.h> not on the include path: set EP_UCX_ROOT_DIR (-I <EP_UCX_ROOT_DIR>/include)"
+#error "UCX device header <ucp/api/device/ucp_device_impl.h> not on the include path: set NIXL_EP_UCX_ROOT_DIR (-I <NIXL_EP_UCX_ROOT_DIR>/include)"
 #endif
 // Without UCX's CUDA IPC lane `nixlGetPtr` returns nullptr for every peer, the same symptom
 #if !defined(UCT_CUDA_IPC_SUPPORTED) || !UCT_CUDA_IPC_SUPPORTED

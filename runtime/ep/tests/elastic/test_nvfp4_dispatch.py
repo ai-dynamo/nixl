@@ -4,7 +4,7 @@ e4m3 block scales `[tokens, hidden // 16]`, moved as bytes in the record's hidde
 Every check is bitwise. The reference is `nixl_ep_v2.utils.refs.dispatch` called once per payload (the codes, the scales as
 uint8) with the same routing (`ref_dispatch_nvfp4`), the received rows sorted by source token as in test_ep.py; the scales are
 compared as uint8 views throughout.
-Cases (`--cases main`, in the mode the buffer starts in: direct on one domain, `EP_ADAPTIVE_MODE=hybrid` for the forwarder
+Cases (`--cases main`, in the mode the buffer starts in: direct on one domain, `NIXL_EP_ADAPTIVE_MODE=hybrid` for the forwarder
 relay on one domain, hybrid on two domains = T4):
   T1 compact dispatch with the CPU sync: codes, scales, top-k indices and weights bitwise
   T2 expanded dispatch (zero padding, alignment 128): the padding rows of codes, scales and weights zero, the fold of both tensors

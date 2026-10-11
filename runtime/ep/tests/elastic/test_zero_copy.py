@@ -44,7 +44,7 @@ def make_buffer(group, args, use_fp8: bool, one_domain: bool = True, use_nvfp4: 
     if one_domain:
         num_scaleout_ranks, _ = buffer.get_topology_ranks()
         assert num_scaleout_ranks == 1, 'The zero-copy test needs one NVLink domain (direct mode)'
-        buffer.set_topology_forced('direct', buffer.get_topology()[1])   # one domain is direct by derivation; explicit against EP_ADAPTIVE_MODE
+        buffer.set_topology_forced('direct', buffer.get_topology()[1])   # one domain is direct by derivation; explicit against NIXL_EP_ADAPTIVE_MODE
     return buffer
 
 

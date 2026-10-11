@@ -1,7 +1,7 @@
 // Compile-only probe for the adaptive kernels (they are normally JIT-compiled on first use, which hides
 // template errors until a multi-GPU run). Build inside the release container with the JIT's flags, e.g.
 //   nvcc -std=c++20 -O3 --expt-relaxed-constexpr --expt-extended-lambda -arch=sm_100a \
-//        -I nixl_ep_v2/include -I $EP_NIXL_ROOT_DIR/include -I $EP_UCX_ROOT_DIR/include -DEP_NIXL_DEVICE_API=1 \
+//        -I nixl_ep_v2/include -I $NIXL_EP_NIXL_ROOT_DIR/include -I $NIXL_EP_UCX_ROOT_DIR/include -DEP_NIXL_DEVICE_API=1 \
 //        -c tests/elastic/compile_probe_adaptive.cu -o /dev/null
 #include <nixl_ep_v2/impls/adaptive/dispatch.cuh>
 #include <nixl_ep_v2/impls/adaptive/combine.cuh>

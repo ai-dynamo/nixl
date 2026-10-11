@@ -448,11 +448,11 @@ class GraphCase:
 def expected_mode(phase: Sequence[int], max_num_scaleup_ranks: int) -> str:
     """
     The mode the host must have derived for the live world `phase` (dense rank ids), stated independently of the library:
-    direct iff exactly one NVLink domain is live, hybrid otherwise; `EP_ADAPTIVE_MODE=hybrid` forces hybrid on one domain.
+    direct iff exactly one NVLink domain is live, hybrid otherwise; `NIXL_EP_ADAPTIVE_MODE=hybrid` forces hybrid on one domain.
     Shared by the elastic, processes, warm-up and modes tests.
     """
     one_domain = len({r // max_num_scaleup_ranks for r in phase}) == 1
-    return 'hybrid' if (not one_domain or os.environ.get('EP_ADAPTIVE_MODE') == 'hybrid') else 'direct'
+    return 'hybrid' if (not one_domain or os.environ.get('NIXL_EP_ADAPTIVE_MODE') == 'hybrid') else 'direct'
 
 
 def switch_world(buffer: nixl_ep_v2.ElasticBuffer, infos: Dict[int, Tuple[bytes, Tuple[int, int, int, int]]],

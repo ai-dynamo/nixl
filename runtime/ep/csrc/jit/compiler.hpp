@@ -51,29 +51,29 @@ public:
 
         // Cache settings
         cache_dir_path = std::filesystem::path(get_env<std::string>("HOME")) / ".nixl_ep_v2";
-        if (const auto env_cache_dir_path = get_env<std::string>("EP_JIT_CACHE_DIR"); not env_cache_dir_path.empty())
+        if (const auto env_cache_dir_path = get_env<std::string>("NIXL_EP_JIT_CACHE_DIR"); not env_cache_dir_path.empty())
             cache_dir_path = env_cache_dir_path;
 
         // The compiler flags applied to all derived compilers
         signature = "unknown-compiler";
         flags = fmt::format("-std=c++{} --diag-suppress=39,161,174,177,186,940,3012 "
                             "--ptxas-options=--register-usage-level=10",
-                            get_env<int>("EP_JIT_CPP_STANDARD", 20));
-        if (get_env("EP_JIT_DEBUG", 0) or get_env("EP_JIT_PTXAS_VERBOSE", 0))
+                            get_env<int>("NIXL_EP_JIT_CPP_STANDARD", 20));
+        if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PTXAS_VERBOSE", 0))
             flags += " --ptxas-options=--verbose";
-        if (get_env("EP_JIT_DEBUG", 0) or get_env("EP_JIT_WITH_LINEINFO", 0))
+        if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_WITH_LINEINFO", 0))
             flags += " -Xcompiler -rdynamic -lineinfo";
         // NIXL's GPU API and UCX's device API for the kernels (`EP_NIXL_DEVICE_API` lets `nixl_transport.cuh` include them)
         flags += fmt::format(" -I {}/include -I {}/include -DEP_NIXL_DEVICE_API=1", nixl_root.c_str(), ucx_root.c_str());
 
         // Some special flags for EP
-        if (int num_topk_idx_bits = get_env("EP_NUM_TOPK_IDX_BITS", 0); num_topk_idx_bits != 0)
+        if (int num_topk_idx_bits = get_env("NIXL_EP_NUM_TOPK_IDX_BITS", 0); num_topk_idx_bits != 0)
             flags += fmt::format(" -DEP_NUM_TOPK_IDX_BITS={}", num_topk_idx_bits);
         // Phase timestamps (globaltimer) written by the kernels into the workspace profile slots (debugging only)
-        if (get_env("EP_ADAPTIVE_PROFILE", 0))
+        if (get_env("NIXL_EP_ADAPTIVE_PROFILE", 0))
             flags += " -DEP_ADAPTIVE_PROFILE=1";
         // Extra flags for experiments (e.g. `-DEP_COMBINE_RING_INTERVAL=3`)
-        if (const auto extra_flags = get_env<std::string>("EP_JIT_EXTRA_FLAGS"); not extra_flags.empty())
+        if (const auto extra_flags = get_env<std::string>("NIXL_EP_JIT_EXTRA_FLAGS"); not extra_flags.empty())
             flags += " " + extra_flags;
     }
 
@@ -129,7 +129,7 @@ public:
 
         // Compile into the temporary directory
         const auto tmp_cubin_path = tmp_dir_path / "kernel.cubin";
-        if (get_env<int>("EP_JIT_DUMP_ASM") or get_env<int>("EP_JIT_DUMP_PTX")) {
+        if (get_env<int>("NIXL_EP_JIT_DUMP_ASM") or get_env<int>("NIXL_EP_JIT_DUMP_PTX")) {
             const auto tmp_ptx_path = tmp_dir_path / "kernel.ptx";
             compile(code, tmp_dir_path, tmp_cubin_path, tmp_ptx_path);
         } else {
@@ -137,7 +137,7 @@ public:
         }
 
         // Disassemble if needed
-        if (get_env<int>("EP_JIT_DUMP_ASM") or get_env<int>("EP_JIT_DUMP_SASS")) {
+        if (get_env<int>("NIXL_EP_JIT_DUMP_ASM") or get_env<int>("NIXL_EP_JIT_DUMP_SASS")) {
             const auto tmp_sass_path = tmp_dir_path / "kernel.sass";
             disassemble(tmp_cubin_path, tmp_sass_path);
         }
@@ -167,7 +167,7 @@ public:
     static void disassemble(const std::filesystem::path &cubin_path, const std::filesystem::path &sass_path) {
         // Disassemble the CUBIN file to SASS
         const auto command = fmt::format("{} --dump-sass {} > {}", cuobjdump_path.c_str(), cubin_path.c_str(), sass_path.c_str());
-        if (get_env("EP_JIT_DEBUG", 0) or get_env("EP_JIT_PRINT_COMPILER_COMMAND", 0))
+        if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PRINT_COMPILER_COMMAND", 0))
             printf("Running cuobjdump command: %s\n", command.c_str());
         const auto [return_code, output] = call_external_command(command);
         if (return_code != 0) {
@@ -211,7 +211,7 @@ public:
         // Override the compiler signature
         nvcc_path = cuda_home / "bin" / "nvcc";
         cuobjdump_path = cuda_home / "bin" / "cuobjdump";
-        if (const auto env_nvcc_path = get_env<std::string>("EP_JIT_NVCC_COMPILER"); not env_nvcc_path.empty())
+        if (const auto env_nvcc_path = get_env<std::string>("NIXL_EP_JIT_NVCC_COMPILER"); not env_nvcc_path.empty())
             nvcc_path = env_nvcc_path;
         const auto [nvcc_major, nvcc_minor] = get_nvcc_version();
         signature = fmt::format("NVCC{}.{}", nvcc_major, nvcc_minor);
@@ -237,7 +237,7 @@ public:
         const auto compile_dir = make_tmp_dir();
         const auto command = fmt::format("cd {} && {} {} -cubin -o {} {}",
             compile_dir.c_str(), nvcc_path.c_str(), code_path.c_str(), cubin_path.c_str(), flags);
-        if (get_env("EP_JIT_DEBUG", 0) or get_env("EP_JIT_PRINT_COMPILER_COMMAND", 0))
+        if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PRINT_COMPILER_COMMAND", 0))
             printf("Running NVCC command: %s\n", command.c_str());
         const auto [return_code, output] = call_external_command(command);
         if (return_code != 0) {
@@ -249,7 +249,7 @@ public:
         if (ptx_path.has_value()) {
             const auto ptx_command = fmt::format("cd {} && {} {} -ptx -o {} {}",
                 compile_dir.c_str(), nvcc_path.c_str(), code_path.c_str(), ptx_path->c_str(), flags);
-            if (get_env("EP_JIT_DEBUG", 0) or get_env("EP_JIT_PRINT_COMPILER_COMMAND", 0))
+            if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PRINT_COMPILER_COMMAND", 0))
                 printf("Running NVCC PTX command: %s\n", ptx_command.c_str());
             const auto [ptx_return_code, ptx_output] = call_external_command(ptx_command);
             if (ptx_return_code != 0) {
@@ -259,11 +259,11 @@ public:
         }
 
         // Check local memory usage
-        if (get_env("EP_JIT_PTXAS_CHECK", 0))
+        if (get_env("NIXL_EP_JIT_PTXAS_CHECK", 0))
             EP_HOST_ASSERT(not std::regex_search(output, std::regex(R"(Local memory used)")));
 
         // Print PTXAS log
-        if (get_env("EP_JIT_DEBUG", 0) or get_env("EP_JIT_PTXAS_VERBOSE", 0))
+        if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PTXAS_VERBOSE", 0))
             printf("%s", output.c_str());
     }
 };

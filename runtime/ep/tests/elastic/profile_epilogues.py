@@ -3,7 +3,7 @@ Epilogue timing (debug). Three independent measurements of one dispatch and one 
 10 ms sleep + barrier before each call so ranks start together and nothing overlaps:
 
   wall     CUDA events around the library call (main kernel + epilogue kernel + launch gaps), event clock
-  stamps   `%globaltimer` stamps compiled in with EP_ADAPTIVE_PROFILE=1: main kernel SM 0 entry -> end
+  stamps   `%globaltimer` stamps compiled in with NIXL_EP_ADAPTIVE_PROFILE=1: main kernel SM 0 entry -> end
            (dispatch: SM 0 past the end barrier; combine: last block done), epilogue block 0 past the
            grid dependency -> last block done
   kineto   the library's own `bench_kineto` (the numbers tests/elastic/test_ep.py prints). The epilogues are
@@ -13,8 +13,8 @@ Epilogue timing (debug). Three independent measurements of one dispatch and one 
 layout.cuh (a row is (name, from slot, to slot); from slot -1 an accumulator in us, -2 a count; `-` for slots the current
 mode never writes). `--fp8 1` dispatches an FP8 payload.
 
-    EP_ADAPTIVE_PROFILE=1 python tests/elastic/profile_epilogues.py --num-processes 4 --num-sms 26 --num-tokens-used 4096
-    EP_ADAPTIVE_PROFILE=1 EP_ADAPTIVE_MODE=hybrid python tests/elastic/profile_epilogues.py --slots 1 --fp8 1 --prefer-overlap-with-compute 0 --num-processes 4 --num-tokens 16 --num-tokens-used 16
+    NIXL_EP_ADAPTIVE_PROFILE=1 python tests/elastic/profile_epilogues.py --num-processes 4 --num-sms 26 --num-tokens-used 4096
+    NIXL_EP_ADAPTIVE_PROFILE=1 NIXL_EP_ADAPTIVE_MODE=hybrid python tests/elastic/profile_epilogues.py --slots 1 --fp8 1 --prefer-overlap-with-compute 0 --num-processes 4 --num-tokens 16 --num-tokens-used 16
 """
 import argparse
 import os
@@ -71,7 +71,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         x = per_token_cast_to_fp8(x)
     dispatch_args = dict(x=x, topk_idx=topk_idx, topk_weights=topk_weights, num_sms=num_sms,
                          num_max_tokens_per_rank=args.num_tokens, do_cpu_sync=True)
-    has_stamps = os.environ.get('EP_ADAPTIVE_PROFILE') == '1'
+    has_stamps = os.environ.get('NIXL_EP_ADAPTIVE_PROFILE') == '1'
 
     def settle():
         torch.cuda.synchronize()
@@ -167,5 +167,5 @@ if __name__ == '__main__':
     parser.add_argument('--fp8', type=int, default=0, help='FP8 dispatch payload (1) or BF16 (0)')
     parser.add_argument('--prefer-overlap-with-compute', type=int, default=1)
     args = parser.parse_args()
-    assert not args.slots or os.environ.get('EP_ADAPTIVE_PROFILE') == '1', 'set EP_ADAPTIVE_PROFILE=1 for --slots'
+    assert not args.slots or os.environ.get('NIXL_EP_ADAPTIVE_PROFILE') == '1', 'set NIXL_EP_ADAPTIVE_PROFILE=1 for --slots'
     torch.multiprocessing.spawn(test_loop, args=(args.num_processes, args), nprocs=args.num_processes)

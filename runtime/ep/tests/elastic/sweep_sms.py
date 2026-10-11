@@ -3,10 +3,10 @@ Active-SM sweep of the adaptive kernels inside ONE process group: the buffer is 
 (token count, active SM count) point runs a dispatch and a combine, checks them against the NCCL reference and
 times both main kernels and both epilogues with Kineto (the same method as `test_ep.py`). The active count is
 changed between points through `dispatch(num_sms=...)` (a stage + commit of the topology descriptor); the launch
-grid comes from `EP_ADAPTIVE_NUM_LAUNCH_SMS` (set it above the largest count of the list, identical on every rank).
+grid comes from `NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS` (set it above the largest count of the list, identical on every rank).
 
 Bench only (not part of the library's tests). Usage (one task per node, 4 processes each):
-    EP_ADAPTIVE_NUM_LAUNCH_SMS=62 python tests/elastic/sweep_sms.py --num-processes 4 --num-sms-list 8,16,26,40,62 \
+    NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS=62 python tests/elastic/sweep_sms.py --num-processes 4 --num-sms-list 8,16,26,40,62 \
         --num-tokens-list 16,64,128,1024,4096 --fp8-dispatch 0 --prefer-overlap-with-compute 1 --reps 2
 Each rank prints one `SWEEP ...` line per point and rep; `adaptive-runs/launch_shape/sweep_table.py` summarises them.
 """

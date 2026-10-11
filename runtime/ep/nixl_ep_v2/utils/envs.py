@@ -15,7 +15,7 @@ _local_seed = 0
 _global_seed = 0
 
 # Default NIC name for RDMA operations, configurable via environment variable
-_DEFAULT_NIC_NAME = os.getenv('EP_NIC_NAME', 'mlx5_0')
+_DEFAULT_NIC_NAME = os.getenv('NIXL_EP_NIC_NAME', 'mlx5_0')
 
 
 def init_seed(global_seed: int) -> None:
@@ -223,7 +223,7 @@ def get_rdma_gbs(nic_name: str = _DEFAULT_NIC_NAME) -> float:
         pattern = rf"CA '{nic_name}'.*?Port \d+:\s*.*?Rate:\s*(\d+)"
         match = re.search(pattern, output, re.DOTALL)
         if match is None:
-            raise RuntimeError(f"adapter '{nic_name}' is not in the `ibstat` report: set EP_NIC_NAME to a present adapter "
+            raise RuntimeError(f"adapter '{nic_name}' is not in the `ibstat` report: set NIXL_EP_NIC_NAME to a present adapter "
                                f"or pass `rdma_gbs` explicitly")
         rate = int(match.group(1))
         return rate / 8

@@ -40,7 +40,7 @@ public:
 
         // TODO: optimize string concat performance
         code = fmt::format("// Includes' hash value: {}\n{}", include_hash, code);
-        if (get_env<int>("EP_JIT_DEBUG", 0))
+        if (get_env<int>("NIXL_EP_JIT_DEBUG", 0))
             printf("Generated kernel code:\n%s\n", code.c_str());
         return code;
     }
@@ -61,7 +61,7 @@ public:
                                               launch_args.cooperative, launch_args.pdl_enabled);
 
         // Launch in the derived class
-        if (get_env<int>("EP_JIT_DEBUG")) {
+        if (get_env<int>("NIXL_EP_JIT_DEBUG")) {
             printf("Launch kernel with {%d, %d} x %d (cooperative: %d), shared memory: %d bytes, cluster: %d, stream: %ld\n",
                    launch_args.grid_dim.first, launch_args.grid_dim.second, launch_args.num_threads,
                    launch_args.cooperative,

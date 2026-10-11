@@ -1,8 +1,8 @@
 """
-Phase timing of the dispatch kernel (debug). Run with EP_ADAPTIVE_PROFILE=1 so the JIT compiles the
+Phase timing of the dispatch kernel (debug). Run with NIXL_EP_ADAPTIVE_PROFILE=1 so the JIT compiles the
 `EP_PROFILE_STAMP` timestamps in; prints, on rank 0, the time from kernel entry to each phase boundary (all stamps are SM 0's).
 
-    EP_ADAPTIVE_PROFILE=1 python tests/elastic/profile_dispatch.py --num-processes 4 --num-sms 26
+    NIXL_EP_ADAPTIVE_PROFILE=1 python tests/elastic/profile_dispatch.py --num-processes 4 --num-sms 26
 """
 import argparse
 import os
@@ -67,5 +67,5 @@ if __name__ == '__main__':
     parser.add_argument('--num-experts', type=int, default=256)
     parser.add_argument('--iters', type=int, default=12)
     args = parser.parse_args()
-    assert os.environ.get('EP_ADAPTIVE_PROFILE') == '1', 'set EP_ADAPTIVE_PROFILE=1'
+    assert os.environ.get('NIXL_EP_ADAPTIVE_PROFILE') == '1', 'set NIXL_EP_ADAPTIVE_PROFILE=1'
     torch.multiprocessing.spawn(test_loop, args=(args.num_processes, args), nprocs=args.num_processes)

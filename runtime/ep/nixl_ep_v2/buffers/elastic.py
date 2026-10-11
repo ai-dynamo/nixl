@@ -265,7 +265,7 @@ class ElasticBuffer:
         The kernel mode (the `mode` field of the topology descriptor, `EPTopology`) is decided by the library, never by the
         caller: direct iff exactly one NVLink domain is live, whatever its index, hybrid otherwise (`mode_of`). It is derived
         for the cohort at construction and for every world a later `stage_topology` / `set_active_ranks` stages. The only
-        overrides are for tests and A/B runs: `stage_topology_forced` / `set_topology_forced`, and `EP_ADAPTIVE_MODE=hybrid`
+        overrides are for tests and A/B runs: `stage_topology_forced` / `set_topology_forced`, and `NIXL_EP_ADAPTIVE_MODE=hybrid`
         on a one-domain world.
 
         Arguments:
@@ -291,7 +291,7 @@ class ElasticBuffer:
             max_num_scaleout_ranks: the maximum number of scaleout ranks (NVLink domains) the buffer, the handles and
                 the kernels are sized for; 0 = the cohort's validated layout. The live world is any product subset of it.
             max_num_scaleup_ranks: likewise for the positions per domain, at most 128 (`kNumMaxScaleupRanksCap`).
-            num_nixl_channels: UCX device channels per peer of the NIXL agent; 0 = `EP_NIXL_NUM_CHANNELS` or 64 (UCX's maximum).
+            num_nixl_channels: UCX device channels per peer of the NIXL agent; 0 = `NIXL_EP_NIXL_NUM_CHANNELS` or 64 (UCX's maximum).
             scaleout_rank_idx: this rank's NVLink domain in the maximum world (default: the cohort's validated layout).
             scaleup_rank_idx: this rank's position inside its domain (default: the cohort's validated layout).
             store: an explicit `torch.distributed.Store`: the default of `publish` and `connect_ranks`, and with
@@ -320,12 +320,12 @@ class ElasticBuffer:
                 their static token partition unless the caller asks for the take. `True` turns it on (measured faster or equal
                 at every batch size and active SM count on 1x16, where the static shares meet the per-SM egress arbitration
                 tiers); `None` = automatic, on in direct mode. The hybrid paths' division is pinned by the notify count protocol
-                and ignores the setting. `EP_DYNAMIC_TAKE` (`auto`, `1`, `0`) overrides the argument for A/B runs.
+                and ignores the setting. `NIXL_EP_DYNAMIC_TAKE` (`auto`, `1`, `0`) overrides the argument for A/B runs.
             acquire_flags: the arrival-flag protocol of the scale-out receivers (the forwarder and the combine's reduce epilogue),
                 OFF by default: relaxed polls of a record's per-packet flags followed by one acquire-release fence before the record
                 is read, the review tip's protocol. `True` polls with acquire loads and drops the fence (the forwarder keeps only
                 the proxy fence its bulk load needs): the dispatch at 4x8 measured -10 to -13 % at 16-128 tokens, -5 % at 1024,
-                -2 % at 4096, the combine unchanged. Compile-time in the kernels (one instantiation per setting). `EP_ACQUIRE_FLAGS`
+                -2 % at 4096, the combine unchanged. Compile-time in the kernels (one instantiation per setting). `NIXL_EP_ACQUIRE_FLAGS`
                 (`1`, `0`) overrides the argument for A/B runs.
         """
         assert num_zero_copy_slots >= 0, 'num_zero_copy_slots must not be negative'
@@ -384,7 +384,7 @@ class ElasticBuffer:
             num_max_tokens_per_rank, zero_copy_num_hidden_bytes, zero_copy_num_sf_packs,
             num_topk, num_experts_per_rank, 1, False, False, num_zero_copy_slots) if num_zero_copy_slots > 0 else 0
 
-        if os.environ.get('EP_BUFFER_DEBUG', 0):
+        if os.environ.get('NIXL_EP_BUFFER_DEBUG', 0):
             arena = f'(plus a {num_zero_copy_bytes}-byte zero-copy arena of {num_zero_copy_slots} slot(s)) ' if num_zero_copy_slots > 0 else ''
             print(f'Initializing EP elastic buffer with {num_bytes} bytes {arena}'
                   f'at cohort rank {self.rank_idx}/{self.num_ranks}')
@@ -409,18 +409,18 @@ class ElasticBuffer:
         os.environ.setdefault('UCX_UD_LINGER_TIMEOUT', '1s')
 
         # NIXL: the UCX device channels of the agent (a warp is a channel; UCX's worker address carries at most 64)
-        num_nixl_channels = num_nixl_channels or int(os.getenv('EP_NIXL_NUM_CHANNELS', 64))
+        num_nixl_channels = num_nixl_channels or int(os.getenv('NIXL_EP_NIXL_NUM_CHANNELS', 64))
         assert 1 <= num_nixl_channels <= 64, f'UCX connects at most 64 device channels per peer, got {num_nixl_channels}'
 
         # Dynamic token take of the direct paths: False (default) off, True on, None automatic; the environment overrides for A/B runs
-        env_take = os.getenv('EP_DYNAMIC_TAKE')
+        env_take = os.getenv('NIXL_EP_DYNAMIC_TAKE')
         if env_take is not None:
             dynamic_take = None if env_take.strip().lower() == 'auto' else bool(int(env_take))
         self.dynamic_take = dynamic_take
         dynamic_take_mode = 2 if dynamic_take is None else int(bool(dynamic_take))
 
         # Arrival-flag protocol: False (default) relaxed polls + acq_rel fence, True acquire polls; the environment overrides for A/B runs
-        env_acquire = os.getenv('EP_ACQUIRE_FLAGS')
+        env_acquire = os.getenv('NIXL_EP_ACQUIRE_FLAGS')
         if env_acquire is not None:
             acquire_flags = bool(int(env_acquire))
         self.acquire_flags = bool(acquire_flags)
@@ -652,7 +652,7 @@ class ElasticBuffer:
             return num_groups * (1 - math.comb(num_experts - num_experts // num_groups, effective_topk) / math.comb(num_experts, effective_topk))
 
         # The traffic model follows the live domain count, which is what decides the mode (hybrid across NVLink domains,
-        # direct inside one); the `EP_ADAPTIVE_MODE` test override on one domain does not change it
+        # direct inside one); the `NIXL_EP_ADAPTIVE_MODE` test override on one domain does not change it
 
         # Expected top-k scale-out ranks
         num_expected_scaleout_topk = get_expected_topk(num_scaleout_ranks) if num_scaleout_ranks > 1 else 0
@@ -703,7 +703,7 @@ class ElasticBuffer:
         num_sms = min(num_sms, num_device_sms)
 
         # Summary
-        if os.environ.get('EP_BUFFER_DEBUG', 0):
+        if os.environ.get('NIXL_EP_BUFFER_DEBUG', 0):
             print(f'EP SM approximation: '
                   f'{sm_read=}, {sm_write=}, {rdma_traffic=}, {nvlink_traffic=}, '
                   f'{rdma_gbs=}, {nvlink_gbs=}, '
@@ -750,7 +750,7 @@ class ElasticBuffer:
             peer_infos: the peers' `get_local_peer_info()`, aligned with `rank_ids`.
             store: read `{key_prefix}/{rank_id}` from this store instead (default: the constructor's explicit `store`).
             key_prefix: the publisher's key prefix.
-            timeout_secs: how long to wait for each peer's key in `store` (the wire-up has its own `EP_NIXL_CONNECT_TIMEOUT_SECS`).
+            timeout_secs: how long to wait for each peer's key in `store` (the wire-up has its own `NIXL_EP_NIXL_CONNECT_TIMEOUT_SECS`).
         """
         if len(rank_ids) == 0:
             return
@@ -800,13 +800,13 @@ class ElasticBuffer:
         """
         The kernel mode of a live world whose NVLink domains are `scaleout_mask` (bit d = domain d live): `direct` when
         exactly one domain is live, whatever its index (every live peer over NVLink), `hybrid` otherwise (RDMA between
-        domains, forwarding inside them). The rule every `stage_topology` applies; never a caller input. `EP_ADAPTIVE_MODE=hybrid`
+        domains, forwarding inside them). The rule every `stage_topology` applies; never a caller input. `NIXL_EP_ADAPTIVE_MODE=hybrid`
         forces the hybrid kernel on one domain (tests, A/B runs); several live domains ignore the variable.
         """
         if bin(scaleout_mask).count('1') != 1:
             return 'hybrid'
-        forced = os.environ.get('EP_ADAPTIVE_MODE', 'direct')
-        assert forced in ('direct', 'hybrid'), f'Unknown EP_ADAPTIVE_MODE {forced}'
+        forced = os.environ.get('NIXL_EP_ADAPTIVE_MODE', 'direct')
+        assert forced in ('direct', 'hybrid'), f'Unknown NIXL_EP_ADAPTIVE_MODE {forced}'
         return 'hybrid' if forced == 'hybrid' else 'direct'
 
     def _stage(self, mode: Optional[str], num_active_sms: int, active_ranks: Optional[Sequence[int]]) -> None:
