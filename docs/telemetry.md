@@ -80,8 +80,7 @@ stream:
 - **Latency histograms**: the transfer-time events additionally feed distribution
   histograms `agent_xfer_time_us` / `agent_xfer_post_time_us` (microseconds) on
   the Prometheus, multi-process Prometheus and DOCA exporters, at parity (same
-  names, buckets, and semantics; `prometheus_mp` carries its extra labels here
-  too).
+  names, buckets, and semantics; `prometheus_mp` carries its extra labels here too).
   Each is exposed as the standard `_bucket{le="..."}` / `_sum` / `_count` series
   alongside the existing counter and gauge. Bucket boundaries default to a
   microsecond range covering ~10us..~10s and are overridable via
@@ -168,7 +167,7 @@ multi-process NIXL run behind a **single** Prometheus scrape endpoint, natively
 memory-mapped file in a shared directory; the processes race for an exclusive
 `flock` on `nixl-owner.<address:port>.lock` in that directory, and only the winner binds the
 scrape port and serves `/metrics` by reading and republishing all live processes'
-files on each scrape (one series set per agent name). The losers run as writers only, so
+files on each scrape (one series set per agent name, host and `local_rank`). The losers run as writers only, so
 losing is benign and no rank is dropped, and a writer re-runs the election as it
 exports so the owner's death costs a gap rather than the rest of the run. If the
 winner cannot bind, nothing aggregates the directory and it says so. Should the
@@ -221,7 +220,7 @@ which is what makes a killed rank indistinguishable from a clean exit here, and
 what lets ranks in different PID namespaces aggregate each other.
 
 As with the election, this holds while the lock is usable. A rank whose store lock
-failed warns at startup and is judged by its heartbeat alone from then on, so
+failed warns at startup and is treated as a departed store from then on, so
 going idle for longer than the TTL costs it its series and its file -- or, on a
 filesystem where no process can lock, nothing is ever reaped and departed ranks
 stay published.

@@ -79,8 +79,8 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   elsewhere: it aggregates a subset and looks healthy.
 - **Per-agent series.** Each agent (host, name and `local_rank`) is exported as its
   own series (cumulative counters, last-operation gauges and duration histograms),
-  never summed across processes. A successor under the same name takes over its
-  predecessor's series, so its counters drop at the handover (see "Metric labels").
+  never summed across processes. A successor under the same name takes over the
+  series, its counters restarting from zero (see "Design scope & limitations").
 - **Liveness is a lock, not a pid.** Each process `flock`s its store *before* the
   file has a name, keeps it locked for as long as it lives, and only then links it
   into the directory. So a reader that manages to take the lock knows the writer
@@ -106,8 +106,7 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   dropped for being idle, and a dead one keeps being published until the first
   scrape after its TTL expires. Keep the TTL at or above the Prometheus scrape
   interval, or a rank that exits between two scrapes is reaped before its final
-  values are ever read. A successor under the same agent name takes the series
-  over sooner, while the file is still reaped on these terms (see "Metric labels").
+  values are ever read.
 
   Being kept while idle lasts as long as the store's lock is usable, the same
   qualifier the election carries. A writer whose `flock` failed (it warns) looks
@@ -284,16 +283,16 @@ not reuse, Python `prometheus_client`'s multiprocess format):
   the successor's store (`EMFILE`, `ENOMEM`) while its predecessor is still inside
   the TTL, that scrape publishes the predecessor's values on the shared series.
   Names that change on every restart (a UUID per worker, say) start new series
-  instead. The exposition only ever contains the live processes plus, per name, at
+  instead. The exposition only ever contains the live processes plus, per agent, at
   most one departed store still inside the stale TTL, so scrape size stays
   bounded -- but the TSDB accumulates one series set per name seen
   within the retention window, so a crash-looping deployment with such names grows
   cardinality at the restart rate. Aggregate `agent_name` away
   (`sum without (agent_name) (...)`) for stable per-host or, with `local_rank`,
   per-rank views. Where no process can lock its store, every store reads as held,
-  so a restart under the same name looks like a duplicate live name: both stores
-  stay published, with `pid` and `agent_instance`, since nothing is reaped in that
-  mode either.
+  so a restart under the same name is warned about and labeled as a duplicate live
+  name: both stores stay published, with `pid` and `agent_instance`, since nothing
+  is reaped in that mode either.
 
 This is the native, dependency-free path. For aggregation through an external
 telemetry service, use the DOCA/CollectX exporter (IPC to DTS) instead.

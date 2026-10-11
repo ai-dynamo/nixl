@@ -39,7 +39,6 @@
 #include <fstream>
 #include <map>
 #include <optional>
-#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -62,9 +61,9 @@ constexpr auto XFER_TIME = nixl_telemetry_event_type_t::AGENT_XFER_TIME;
 const std::vector<double> kBuckets = {10, 100, 1000};
 
 [[nodiscard]] storeSnapshot
-makeSnap(const std::string &agent, const std::string &rank) {
+makeSnap(const std::string &agent, const std::string &rank, int64_t pid = ::getpid()) {
     storeSnapshot s;
-    s.pid = ::getpid();
+    s.pid = pid;
     s.lastUpdateNs = monotonicNs();
     s.agentName = agent;
     s.hostname = "host";
@@ -216,9 +215,7 @@ TEST(MpCollectorTest, DuplicateLiveNameIsReportedOncePerCollector) {
     std::vector<scannedStore> stores;
     for (const std::string name : {"dup-a", "dup-b"}) {
         for (const int64_t pid : {1001, 1002}) {
-            auto s = makeSnap(name, "");
-            s.pid = pid;
-            stores.push_back(live(s));
+            stores.push_back(live(makeSnap(name, "", pid)));
         }
     }
 
@@ -234,11 +231,7 @@ TEST(MpCollectorTest, DuplicateLiveNameIsReportedOncePerCollector) {
 }
 
 TEST(MpCollectorTest, ConcurrentScrapesReportADuplicateLiveNameOnce) {
-    auto a = makeSnap("dup", "");
-    a.pid = 1001;
-    auto b = makeSnap("dup", "");
-    b.pid = 1002;
-    const std::vector stores{live(a), live(b)};
+    const std::vector stores{live(makeSnap("dup", "", 1001)), live(makeSnap("dup", "", 1002))};
 
     const gtest::LogIgnoreGuard lig("2 live agents on host 'host' are named 'dup';");
     const nixlMultiprocessCollector collector{std::filesystem::path()};
@@ -256,12 +249,9 @@ TEST(MpCollectorTest, ConcurrentScrapesReportADuplicateLiveNameOnce) {
 }
 
 TEST(MpCollectorTest, DuplicateLiveNameDropsDepartedStoresOfThatName) {
-    auto gone = makeSnap("dup", "3");
-    gone.pid = 1000;
-    auto a = makeSnap("dup", "3");
-    a.pid = 1001;
-    auto b = makeSnap("dup", "3");
-    b.pid = 1002;
+    auto gone = makeSnap("dup", "3", 1000);
+    auto a = makeSnap("dup", "3", 1001);
+    auto b = makeSnap("dup", "3", 1002);
 
     const nixlMultiprocessCollector collector{std::filesystem::path()};
     const gtest::LogIgnoreGuard lig(
@@ -308,19 +298,13 @@ TEST(MpCollectorTest, SingleStoreCarriesOnlyItsIdentityLabels) {
 }
 
 TEST(MpCollectorTest, LiveStoresWithDistinctIdentitiesCarryNoProcessLabels) {
-    auto a = makeSnap("agent-a", "");
-    a.pid = 1001;
-    auto b = makeSnap("agent-b", "");
-    b.pid = 1002;
-    auto ranked = makeSnap("agent-a", "1");
-    ranked.pid = 1003;
-    auto elsewhere = makeSnap("agent-a", "");
+    auto a = makeSnap("agent-a", "", 1001);
+    auto b = makeSnap("agent-b", "", 1002);
+    auto ranked = makeSnap("agent-a", "1", 1003);
+    auto elsewhere = makeSnap("agent-a", "", 1004);
     elsewhere.hostname = "other-host";
-    elsewhere.pid = 1004;
-    auto dup_first = makeSnap("dup", "");
-    dup_first.pid = 1005;
-    auto dup_second = makeSnap("dup", "");
-    dup_second.pid = 1006;
+    auto dup_first = makeSnap("dup", "", 1005);
+    auto dup_second = makeSnap("dup", "", 1006);
 
     const nixlMultiprocessCollector collector{std::filesystem::path()};
     const gtest::LogIgnoreGuard lig("2 live agents on host 'host' are named 'dup';");
@@ -338,12 +322,10 @@ TEST(MpCollectorTest, LiveStoresWithDistinctIdentitiesCarryNoProcessLabels) {
 }
 
 TEST(MpCollectorTest, LiveStoreSupersedesAMoreRecentDepartedOneOfTheSameName) {
-    auto gone = makeSnap("agent-a", "");
-    gone.pid = 1001;
+    auto gone = makeSnap("agent-a", "", 1001);
     gone.lastUpdateNs = 200;
     gone.counters[idx(TX_BYTES)] = 10;
-    auto successor = makeSnap("agent-a", "");
-    successor.pid = 1000;
+    auto successor = makeSnap("agent-a", "", 1000);
     successor.lastUpdateNs = 100;
     successor.counters[idx(TX_BYTES)] = 20;
 
@@ -359,12 +341,10 @@ TEST(MpCollectorTest, LiveStoreSupersedesAMoreRecentDepartedOneOfTheSameName) {
 }
 
 TEST(MpCollectorTest, OnlyTheMostRecentDepartedStoreOfANameIsPublished) {
-    auto older = makeSnap("agent-a", "");
-    older.pid = 1002;
+    auto older = makeSnap("agent-a", "", 1002);
     older.lastUpdateNs = 100;
     older.counters[idx(TX_BYTES)] = 10;
-    auto newer = makeSnap("agent-a", "");
-    newer.pid = 1001;
+    auto newer = makeSnap("agent-a", "", 1001);
     newer.lastUpdateNs = 200;
     newer.counters[idx(TX_BYTES)] = 20;
 
@@ -382,29 +362,28 @@ TEST(MpCollectorTest, OnlyTheMostRecentDepartedStoreOfANameIsPublished) {
 }
 
 TEST(MpCollectorTest, TiedDepartedStoresResolveTheSameInEveryScanOrder) {
-    auto a = makeSnap("agent-a", "");
-    a.pid = 1001;
+    auto a = makeSnap("agent-a", "", 1001);
+    a.instance = 2;
     a.lastUpdateNs = 100;
     a.counters[idx(TX_BYTES)] = 10;
     auto b = a;
     b.pid = 1002;
+    b.instance = 0;
     b.counters[idx(TX_BYTES)] = 20;
-    auto c = a;
+    auto c = b;
     c.instance = 1;
     c.counters[idx(TX_BYTES)] = 30;
     const std::array tied{departed(a), departed(b), departed(c)};
 
     const nixlMultiprocessCollector collector{std::filesystem::path()};
     std::array<std::size_t, 3> order{0, 1, 2};
-    std::set<uint64_t> published;
     do {
         const auto chosen =
             collector.selectStores({tied[order[0]], tied[order[1]], tied[order[2]]});
         ASSERT_EQ(chosen.size(), 1u);
         EXPECT_FALSE(chosen.front().withProcessLabels);
-        published.insert(chosen.front().snapshot.counters[idx(TX_BYTES)]);
+        EXPECT_EQ(chosen.front().snapshot.counters[idx(TX_BYTES)], 30u);
     } while (std::next_permutation(order.begin(), order.end()));
-    EXPECT_EQ(published, (std::set<uint64_t>{20}));
 }
 
 TEST(MpCollectorTest, LocalRankLabelOnlyWhenPresent) {
@@ -634,28 +613,26 @@ TEST_F(MpCollectorFileTest, CoexistingWritersOfOneNameAreToldApartAndReportedOnc
         EXPECT_FALSE(hasLabel(tx->metric.front(), "agent_instance"));
     };
 
-    expectOnlyFirstWithBaseLabels();
+    ASSERT_NO_FATAL_FAILURE(expectOnlyFirstWithBaseLabels());
     {
         storeWriter second(dir_ / makeStoreFileName(666, 1, 1), "dup", "host", "", 1, kBuckets);
         second.addCounter(TX_BYTES, 2);
 
         const gtest::LogIgnoreGuard lig("2 live agents on host 'host' are named 'dup';");
-        for (int scrape = 0; scrape < 2; ++scrape) {
-            const auto fams = collector.Collect();
-            const auto *tx = findFamily(fams, "agent_tx_bytes_total");
-            ASSERT_NE(tx, nullptr);
-            ASSERT_EQ(tx->metric.size(), 2u);
-            const auto *m_first = findByLabel(*tx, "agent_instance", "0");
-            const auto *m_second = findByLabel(*tx, "agent_instance", "1");
-            ASSERT_NE(m_first, nullptr);
-            ASSERT_NE(m_second, nullptr);
-            EXPECT_DOUBLE_EQ(m_first->counter.value, 1.0);
-            EXPECT_DOUBLE_EQ(m_second->counter.value, 2.0);
-            EXPECT_TRUE(hasLabel(*m_first, "pid"));
-        }
+        const auto fams = collector.Collect();
+        const auto *tx = findFamily(fams, "agent_tx_bytes_total");
+        ASSERT_NE(tx, nullptr);
+        ASSERT_EQ(tx->metric.size(), 2u);
+        const auto *m_first = findByLabel(*tx, "agent_instance", "0");
+        const auto *m_second = findByLabel(*tx, "agent_instance", "1");
+        ASSERT_NE(m_first, nullptr);
+        ASSERT_NE(m_second, nullptr);
+        EXPECT_DOUBLE_EQ(m_first->counter.value, 1.0);
+        EXPECT_DOUBLE_EQ(m_second->counter.value, 2.0);
+        EXPECT_TRUE(hasLabel(*m_first, "pid"));
         EXPECT_EQ(lig.getIgnoredCount(), 1u);
     }
-    expectOnlyFirstWithBaseLabels();
+    ASSERT_NO_FATAL_FAILURE(expectOnlyFirstWithBaseLabels());
 }
 
 TEST_F(MpCollectorFileTest, CollectOnEmptyDirYieldsNoFamilies) {
