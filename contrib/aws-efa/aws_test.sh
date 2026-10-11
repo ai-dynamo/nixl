@@ -25,7 +25,7 @@ usage() {
     echo "Runs contrib/aws-efa/aws_test_remote.sh inside the AWS job."
     echo ""
     echo "Required environment variables:"
-    echo "  GITHUB_REF        - Git reference to test if GITHUB_SHA is unset (e.g., main, branch-xyz, commit SHA)"
+    echo "  GITHUB_REF        - Git reference to test if GITHUB_SHA is unset (e.g., main, branch-xyz, full commit SHA)"
     echo "  GITHUB_SERVER_URL - GitHub server URL (e.g., \"https://github.com\")"
     echo "  GITHUB_REPOSITORY - GitHub repository (e.g., \"ai-dynamo/nixl\")"
     echo ""
