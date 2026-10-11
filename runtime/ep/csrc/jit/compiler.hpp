@@ -1,12 +1,17 @@
 #pragma once
 
+#include <algorithm>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
+#include <iterator>
 #include <nvrtc.h>
 #include <optional>
 #include <regex>
+#include <sstream>
 #include <string>
+#include <vector>
 
 #include <nixl_ep_v2/common/exception.cuh>
 
@@ -26,6 +31,36 @@ public:
     static std::filesystem::path cuda_home;
     static std::filesystem::path nixl_root, ucx_root;
     static std::filesystem::path cuobjdump_path;
+    static std::string external_headers_hash;
+
+    static std::string get_headers_hash(
+            const std::filesystem::path& include_root,
+            const std::initializer_list<std::filesystem::path>& relative_roots) {
+        std::vector<std::filesystem::path> files;
+        for (const auto& relative_root: relative_roots) {
+            const auto root = include_root / relative_root;
+            EP_HOST_ASSERT(std::filesystem::exists(root));
+            if (std::filesystem::is_regular_file(root)) {
+                files.push_back(root);
+                continue;
+            }
+            for (const auto& entry: std::filesystem::recursive_directory_iterator(root))
+                if (entry.is_regular_file())
+                    files.push_back(entry.path());
+        }
+        std::sort(files.begin(), files.end());
+
+        std::stringstream ss;
+        for (const auto& path: files) {
+            std::ifstream in(path, std::ios::binary);
+            EP_HOST_ASSERT(in.is_open());
+            const std::vector<char> contents{
+                std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+            ss << path.lexically_relative(include_root).generic_string()
+               << ":" << get_hex_digest(contents) << "$";
+        }
+        return get_hex_digest(ss.str());
+    }
 
     static void prepare_init(const std::string& library_root_path,
                              const std::string& cuda_home_path_by_python,
@@ -37,6 +72,9 @@ public:
         Compiler::nixl_root = nixl_root_path_by_python;
         Compiler::ucx_root = ucx_root_path_by_python;
         Compiler::cuobjdump_path = Compiler::cuda_home / "bin" / "cuobjdump";
+        Compiler::external_headers_hash = get_hex_digest(
+            "nixl:" + get_headers_hash(Compiler::nixl_root / "include", {"gpu", "device", "nixl_types.h"}) +
+            "$ucx:" + get_headers_hash(Compiler::ucx_root / "include", {"ucp", "uct", "ucs"}));
     }
 
     std::string signature, flags;
@@ -114,7 +152,8 @@ public:
     }
 
     std::shared_ptr<KernelRuntime> build(const std::string& name, const std::string& code) const {
-        const auto kernel_signature = fmt::format("{}$${}$${}$${}", name, signature, flags, code);
+        const auto kernel_signature = fmt::format(
+            "{}$${}$${}$${}$${}", name, signature, flags, external_headers_hash, code);
         const auto dir_path = cache_dir_path / "cache" / fmt::format("kernel.{}.{}", name, get_hex_digest(kernel_signature));
 
         // Hit the runtime cache
@@ -185,6 +224,7 @@ EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, cuda_home);
 EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, nixl_root);
 EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, ucx_root);
 EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, cuobjdump_path);
+EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, external_headers_hash);
 
 class NVCCCompiler final: public Compiler {
     std::filesystem::path nvcc_path;
@@ -223,6 +263,8 @@ public:
                             "--compiler-options=-fPIC,-O3,-fconcepts,-Wno-deprecated-declarations,-Wno-abi "
                             "-O3 --expt-relaxed-constexpr --expt-extended-lambda",
                             flags, library_include_path.c_str(), arch);
+        if (nvcc_major == 12 and nvcc_minor == 9)
+            flags += " -D_LIBCUDACXX_ATOMIC_UNSAFE_AUTOMATIC_STORAGE";
     }
 
     void compile(const std::string &code, const std::filesystem::path& dir_path,
