@@ -167,9 +167,9 @@ All code must adhere to the style guide in `docs/CodeStyle.md` and be formatted 
 
 ## Contributing Process
 
-Contributions to the code under `./examples/device/ep` (which is derived
-from DeepEP and licensed under the MIT License) must be licensed under Apache
-2.0.
+Contributions to the code under `./examples/device/ep` and `./runtime/ep`
+(which are derived from DeepEP and licensed under the MIT License) must be
+licensed under Apache 2.0.
 
 Contributions that fix documentation errors or that make small changes
 to existing code can be contributed directly by following the rules
