@@ -226,25 +226,6 @@ public:
 
     void releaseMemView(nixlMemViewH) const override;
 
-private:
-    /** The device proxy's transport over the shared workers; see ucx_proxy_transport.cpp. */
-    class proxyTransportImpl;
-
-    /**
-     * Create and start the engine-owned proxy runtime. Called as the last
-     * step of create(); worker threads drive the engine's UCX workers, so it
-     * must be fully constructed first.
-     */
-    [[nodiscard]] nixl_status_t
-    setupProxyRuntime(const nixl::proxyConfig &config);
-
-    [[nodiscard]] nixl::deviceOps *
-    deviceOps() const noexcept;
-
-    /** Wrap a backend memview into the device-dispatch handle; cleans up on failure. */
-    [[nodiscard]] nixl_status_t
-    wrapMemView(nixl::deviceOps &ops, nixlMemViewH backend_mvh, nixlMemViewH &mvh) const;
-
 protected:
     using worker_span_t = std::span<const std::unique_ptr<nixlUcxWorker>>;
 
@@ -303,6 +284,24 @@ protected:
     notif_list_t notifList_;
 
 private:
+    /** The device proxy's transport over the shared workers; see ucx_proxy_transport.cpp. */
+    class proxyTransportImpl;
+
+    /**
+     * Create and start the engine-owned proxy runtime. Called as the last
+     * step of create(); worker threads drive the engine's UCX workers, so it
+     * must be fully constructed first.
+     */
+    [[nodiscard]] nixl_status_t
+    setupProxyRuntime(const nixl::proxyConfig &config);
+
+    [[nodiscard]] nixl::deviceOps *
+    deviceOps() const noexcept;
+
+    /** Wrap a backend memview into the device-dispatch handle; cleans up on failure. */
+    [[nodiscard]] nixl_status_t
+    wrapMemView(nixl::deviceOps &ops, nixlMemViewH backend_mvh, nixlMemViewH &mvh) const;
+
     /** Shared by the local and remote prepMemView overloads; kind names which. */
     template<typename DlistT>
     nixl_status_t
