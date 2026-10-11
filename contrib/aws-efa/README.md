@@ -109,3 +109,5 @@ You can override this by setting the `CONTAINER_IMAGE` environment variable:
 ```bash
 export CONTAINER_IMAGE="your-custom-image:tag"
 ```
+
+Inside the pod, apt is pointed at the in-region EC2 Ubuntu mirror (`<AWS_DEFAULT_REGION>.ec2.archive.ubuntu.com`) instead of `archive.ubuntu.com` and `security.ubuntu.com`.
