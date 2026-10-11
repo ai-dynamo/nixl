@@ -41,13 +41,25 @@ SharedCuObjClient::instance() {
 bool
 SharedCuObjClient::registerBuffer(void *ptr, size_t size) {
     const std::lock_guard<std::mutex> lock(mutex_);
+    // cuObject registrations are process-wide, so agents sharing a buffer share
+    // one registration rather than each calling cuMemObjGetDescriptor.
+    const auto it = registrations_.find(reinterpret_cast<uintptr_t>(ptr));
+    if (it != registrations_.end()) {
+        if (it->second.size != size) {
+            NIXL_ERROR << "RDMA buffer ptr=" << ptr << " is already registered with size "
+                       << it->second.size << ", cannot register it with size " << size;
+            return false;
+        }
+        ++it->second.refs;
+        return true;
+    }
     cuObjErr_t rc = client_->cuMemObjGetDescriptor(ptr, size);
     if (rc != CU_OBJ_SUCCESS) {
         NIXL_ERROR << "cuMemObjGetDescriptor failed rc=" << rc << " ptr=" << ptr
                    << " size=" << size;
         return false;
     }
-    registrations_[reinterpret_cast<uintptr_t>(ptr)] = size;
+    registrations_[reinterpret_cast<uintptr_t>(ptr)] = {size, 1};
     NIXL_DEBUG << "cuMemObjGetDescriptor OK ptr=" << ptr << " size=" << size;
     return true;
 }
@@ -55,7 +67,11 @@ SharedCuObjClient::registerBuffer(void *ptr, size_t size) {
 void
 SharedCuObjClient::deregisterBuffer(void *ptr) {
     const std::lock_guard<std::mutex> lock(mutex_);
-    registrations_.erase(reinterpret_cast<uintptr_t>(ptr));
+    const auto it = registrations_.find(reinterpret_cast<uintptr_t>(ptr));
+    if (it == registrations_.end() || --it->second.refs > 0) {
+        return;
+    }
+    registrations_.erase(it);
     if (client_->cuMemObjPutDescriptor(ptr) != CU_OBJ_SUCCESS) {
         NIXL_WARN << "cuMemObjPutDescriptor failed for ptr " << ptr;
     }
@@ -74,7 +90,8 @@ SharedCuObjClient::getToken(void *ptr, size_t size, cuObjOpType_t op) {
     const std::lock_guard<std::mutex> lock(mutex_);
     const auto addr = reinterpret_cast<uintptr_t>(ptr);
     auto contains = [addr, size](const auto &reg) {
-        const auto &[base, len] = reg;
+        const auto &[base, registration] = reg;
+        const auto len = registration.size;
         return addr - base <= len && size <= len - (addr - base);
     };
     const auto rit = std::find_if(std::make_reverse_iterator(registrations_.upper_bound(addr)),
