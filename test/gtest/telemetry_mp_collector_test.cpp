@@ -18,6 +18,8 @@
 #include "mp_store.h"
 #include "mp_telemetry_fixture.h"
 
+#include "common.h"
+
 #include <gtest/gtest.h>
 
 #include <prometheus/client_metric.h>
@@ -29,12 +31,17 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -43,6 +50,7 @@ using nixl::telemetry::mp::buildMetricFamilies;
 using nixl::telemetry::mp::isSnapshotLive;
 using nixl::telemetry::mp::makeStoreFileName;
 using nixl::telemetry::mp::monotonicNs;
+using nixl::telemetry::mp::scannedStore;
 using nixl::telemetry::mp::storeSnapshot;
 using nixl::telemetry::mp::storeWriter;
 using nixl::telemetry::mp::nixlMultiprocessCollector;
@@ -64,6 +72,16 @@ makeSnap(const std::string &agent, const std::string &rank) {
     s.bucketCount = static_cast<uint32_t>(kBuckets.size());
     std::copy(kBuckets.begin(), kBuckets.end(), s.bucketBounds.begin());
     return s;
+}
+
+[[nodiscard]] scannedStore
+live(const storeSnapshot &s) {
+    return {s, true};
+}
+
+[[nodiscard]] scannedStore
+departed(const storeSnapshot &s) {
+    return {s, false};
 }
 
 [[nodiscard]] const prometheus::MetricFamily *
@@ -98,6 +116,15 @@ hasLabel(const prometheus::ClientMetric &m, const std::string &key) {
     return false;
 }
 
+[[nodiscard]] std::map<std::string, std::string>
+labelMap(const prometheus::ClientMetric &m) {
+    std::map<std::string, std::string> labels;
+    for (const auto &l : m.label) {
+        labels.emplace(l.name, l.value);
+    }
+    return labels;
+}
+
 TEST(MpCollectorTest, EmptySnapshotsYieldNoFamilies) {
     EXPECT_TRUE(buildMetricFamilies({}).empty());
 }
@@ -110,7 +137,7 @@ TEST(MpCollectorTest, PerProcessCountersAndGauges) {
     b.counters[idx(TX_BYTES)] = 50;
     b.gauges[idx(TX_BYTES)] = 50;
 
-    const auto fams = buildMetricFamilies({a, b});
+    const auto fams = buildMetricFamilies({{a}, {b}});
 
     const auto *tx = findFamily(fams, "agent_tx_bytes_total");
     ASSERT_NE(tx, nullptr);
@@ -141,7 +168,10 @@ TEST(MpCollectorTest, PidLabelDisambiguatesSameAgentName) {
     b.pid = 1002;
     b.counters[idx(TX_BYTES)] = 20;
 
-    const auto fams = buildMetricFamilies({a, b});
+    const nixlMultiprocessCollector collector{std::filesystem::path()};
+    const gtest::LogIgnoreGuard lig("2 live agents on host 'host' are named 'dup';");
+    const auto fams = buildMetricFamilies(collector.selectStores({live(a), live(b)}));
+    EXPECT_EQ(lig.getIgnoredCount(), 1u);
     const auto *tx = findFamily(fams, "agent_tx_bytes_total");
     ASSERT_NE(tx, nullptr);
     ASSERT_EQ(tx->metric.size(), 2u);
@@ -152,6 +182,7 @@ TEST(MpCollectorTest, PidLabelDisambiguatesSameAgentName) {
     EXPECT_DOUBLE_EQ(m_a->counter.value, 10.0);
     EXPECT_DOUBLE_EQ(m_b->counter.value, 20.0);
     EXPECT_TRUE(hasLabel(*m_a, "pid"));
+    EXPECT_TRUE(hasLabel(*m_a, "agent_instance"));
 }
 
 TEST(MpCollectorTest, AgentInstanceLabelDisambiguatesSameProcessSameName) {
@@ -166,7 +197,10 @@ TEST(MpCollectorTest, AgentInstanceLabelDisambiguatesSameProcessSameName) {
     b.instance = 1;
     b.counters[idx(TX_BYTES)] = 20;
 
-    const auto fams = buildMetricFamilies({a, b});
+    const nixlMultiprocessCollector collector{std::filesystem::path()};
+    const gtest::LogIgnoreGuard lig("2 live agents on host 'host' are named 'dup';");
+    const auto fams = buildMetricFamilies(collector.selectStores({live(a), live(b)}));
+    EXPECT_EQ(lig.getIgnoredCount(), 1u);
     const auto *tx = findFamily(fams, "agent_tx_bytes_total");
     ASSERT_NE(tx, nullptr);
     ASSERT_EQ(tx->metric.size(), 2u);
@@ -178,11 +212,198 @@ TEST(MpCollectorTest, AgentInstanceLabelDisambiguatesSameProcessSameName) {
     EXPECT_DOUBLE_EQ(m_b->counter.value, 20.0);
 }
 
+TEST(MpCollectorTest, DuplicateLiveNameIsReportedOncePerIdentityPerCollector) {
+    std::vector<scannedStore> stores;
+    for (const std::string name : {"dup-a", "dup-b"}) {
+        for (const int64_t pid : {1001, 1002}) {
+            auto s = makeSnap(name, "");
+            s.pid = pid;
+            stores.push_back(live(s));
+        }
+    }
+
+    const gtest::LogIgnoreGuard lig("2 live agents on host 'host' are named 'dup-[ab]';");
+    const nixlMultiprocessCollector collector{std::filesystem::path()};
+    EXPECT_EQ(collector.selectStores(stores).size(), 4u);
+    EXPECT_EQ(collector.selectStores(stores).size(), 4u);
+    EXPECT_EQ(lig.getIgnoredCount(), 2u);
+
+    const nixlMultiprocessCollector successor{std::filesystem::path()};
+    EXPECT_EQ(successor.selectStores(stores).size(), 4u);
+    EXPECT_EQ(lig.getIgnoredCount(), 4u);
+}
+
+TEST(MpCollectorTest, ConcurrentScrapesReportADuplicateLiveNameOnce) {
+    auto a = makeSnap("dup", "");
+    a.pid = 1001;
+    auto b = makeSnap("dup", "");
+    b.pid = 1002;
+    const std::vector stores{live(a), live(b)};
+
+    const gtest::LogIgnoreGuard lig("2 live agents on host 'host' are named 'dup';");
+    const nixlMultiprocessCollector collector{std::filesystem::path()};
+    {
+        std::vector<std::jthread> scrapers;
+        for (int i = 0; i < 8; ++i) {
+            scrapers.emplace_back([&collector, &stores] {
+                for (int scrape = 0; scrape < 100; ++scrape) {
+                    EXPECT_EQ(collector.selectStores(stores).size(), 2u);
+                }
+            });
+        }
+    }
+    EXPECT_EQ(lig.getIgnoredCount(), 1u);
+}
+
+TEST(MpCollectorTest, DuplicateLiveNameDropsDepartedStoresOfThatName) {
+    auto gone = makeSnap("dup", "");
+    gone.pid = 1000;
+    auto a = makeSnap("dup", "");
+    a.pid = 1001;
+    auto b = makeSnap("dup", "");
+    b.pid = 1002;
+
+    const nixlMultiprocessCollector collector{std::filesystem::path()};
+    const gtest::LogIgnoreGuard lig("2 live agents on host 'host' are named 'dup';");
+    const auto fams =
+        buildMetricFamilies(collector.selectStores({departed(gone), live(a), live(b)}));
+    EXPECT_EQ(lig.getIgnoredCount(), 1u);
+    const auto *tx = findFamily(fams, "agent_tx_bytes_total");
+    ASSERT_NE(tx, nullptr);
+    ASSERT_EQ(tx->metric.size(), 2u);
+    EXPECT_NE(findByLabel(*tx, "pid", "1001"), nullptr);
+    EXPECT_NE(findByLabel(*tx, "pid", "1002"), nullptr);
+}
+
+TEST(MpCollectorTest, SingleStoreCarriesOnlyItsIdentityLabels) {
+    const nixlMultiprocessCollector collector{std::filesystem::path()};
+    for (const std::string rank : {"", "3"}) {
+        SCOPED_TRACE("local_rank '" + rank + "'");
+        std::map<std::string, std::string> expected{{"hostname", "host"},
+                                                    {"agent_name", "agent-a"}};
+        if (!rank.empty()) {
+            expected.emplace("local_rank", rank);
+        }
+
+        const auto fams =
+            buildMetricFamilies(collector.selectStores({live(makeSnap("agent-a", rank))}));
+        for (const std::string name : {"agent_tx_bytes_total",
+                                       "agent_tx_last_bytes",
+                                       "agent_xfer_time_us",
+                                       "agent_errors_total"}) {
+            EXPECT_NE(findFamily(fams, name), nullptr) << name;
+        }
+        for (const auto &family : fams) {
+            for (const auto &metric : family.metric) {
+                auto labels = labelMap(metric);
+                EXPECT_EQ(labels.size(), metric.label.size()) << family.name;
+                if (family.name == "agent_errors_total") {
+                    EXPECT_EQ(labels.erase("status"), 1u) << family.name;
+                }
+                EXPECT_EQ(labels, expected) << family.name;
+            }
+        }
+    }
+}
+
+TEST(MpCollectorTest, LiveStoresWithDistinctIdentitiesCarryNoProcessLabels) {
+    auto a = makeSnap("agent-a", "");
+    a.pid = 1001;
+    auto b = makeSnap("agent-b", "");
+    b.pid = 1002;
+    auto ranked = makeSnap("agent-a", "1");
+    ranked.pid = 1003;
+    auto elsewhere = makeSnap("agent-a", "");
+    elsewhere.hostname = "other-host";
+    elsewhere.pid = 1004;
+
+    const nixlMultiprocessCollector collector{std::filesystem::path()};
+    const auto fams = buildMetricFamilies(
+        collector.selectStores({live(a), live(b), live(ranked), live(elsewhere)}));
+    const auto *tx = findFamily(fams, "agent_tx_bytes_total");
+    ASSERT_NE(tx, nullptr);
+    ASSERT_EQ(tx->metric.size(), 4u);
+    for (const auto &m : tx->metric) {
+        EXPECT_FALSE(hasLabel(m, "pid"));
+        EXPECT_FALSE(hasLabel(m, "agent_instance"));
+    }
+}
+
+TEST(MpCollectorTest, LiveStoreSupersedesAMoreRecentDepartedOneOfTheSameName) {
+    auto gone = makeSnap("agent-a", "");
+    gone.pid = 1001;
+    gone.lastUpdateNs = 200;
+    gone.counters[idx(TX_BYTES)] = 10;
+    auto successor = makeSnap("agent-a", "");
+    successor.pid = 1002;
+    successor.lastUpdateNs = 100;
+    successor.counters[idx(TX_BYTES)] = 20;
+
+    const nixlMultiprocessCollector collector{std::filesystem::path()};
+    const auto fams =
+        buildMetricFamilies(collector.selectStores({departed(gone), live(successor)}));
+    const auto *tx = findFamily(fams, "agent_tx_bytes_total");
+    ASSERT_NE(tx, nullptr);
+    ASSERT_EQ(tx->metric.size(), 1u);
+    EXPECT_DOUBLE_EQ(tx->metric.front().counter.value, 20.0);
+    EXPECT_FALSE(hasLabel(tx->metric.front(), "pid"));
+    EXPECT_FALSE(hasLabel(tx->metric.front(), "agent_instance"));
+}
+
+TEST(MpCollectorTest, OnlyTheMostRecentDepartedStoreOfANameIsPublished) {
+    auto older = makeSnap("agent-a", "");
+    older.pid = 1001;
+    older.lastUpdateNs = 100;
+    older.counters[idx(TX_BYTES)] = 10;
+    auto newer = makeSnap("agent-a", "");
+    newer.pid = 1002;
+    newer.lastUpdateNs = 200;
+    newer.counters[idx(TX_BYTES)] = 20;
+
+    const nixlMultiprocessCollector collector{std::filesystem::path()};
+    for (const auto &stores : {std::vector{departed(older), departed(newer)},
+                               std::vector{departed(newer), departed(older)}}) {
+        const auto fams = buildMetricFamilies(collector.selectStores(stores));
+        const auto *tx = findFamily(fams, "agent_tx_bytes_total");
+        ASSERT_NE(tx, nullptr);
+        ASSERT_EQ(tx->metric.size(), 1u);
+        EXPECT_DOUBLE_EQ(tx->metric.front().counter.value, 20.0);
+        EXPECT_FALSE(hasLabel(tx->metric.front(), "pid"));
+        EXPECT_FALSE(hasLabel(tx->metric.front(), "agent_instance"));
+    }
+}
+
+TEST(MpCollectorTest, TiedDepartedStoresResolveTheSameInEveryScanOrder) {
+    auto a = makeSnap("agent-a", "");
+    a.pid = 1001;
+    a.lastUpdateNs = 100;
+    a.counters[idx(TX_BYTES)] = 10;
+    auto b = a;
+    b.pid = 1002;
+    b.counters[idx(TX_BYTES)] = 20;
+    auto c = a;
+    c.instance = 1;
+    c.counters[idx(TX_BYTES)] = 30;
+    const std::array tied{departed(a), departed(b), departed(c)};
+
+    const nixlMultiprocessCollector collector{std::filesystem::path()};
+    std::array<std::size_t, 3> order{0, 1, 2};
+    std::set<uint64_t> published;
+    do {
+        const auto chosen =
+            collector.selectStores({tied[order[0]], tied[order[1]], tied[order[2]]});
+        ASSERT_EQ(chosen.size(), 1u);
+        EXPECT_FALSE(chosen.front().withProcessLabels);
+        published.insert(chosen.front().snapshot.counters[idx(TX_BYTES)]);
+    } while (std::next_permutation(order.begin(), order.end()));
+    EXPECT_EQ(published.size(), 1u);
+}
+
 TEST(MpCollectorTest, LocalRankLabelOnlyWhenPresent) {
     const auto with_rank = makeSnap("agent-a", "3");
     const auto without_rank = makeSnap("agent-b", "");
 
-    const auto fams = buildMetricFamilies({with_rank, without_rank});
+    const auto fams = buildMetricFamilies({{with_rank}, {without_rank}});
     const auto *tx = findFamily(fams, "agent_tx_bytes_total");
     ASSERT_NE(tx, nullptr);
 
@@ -198,7 +419,7 @@ TEST(MpCollectorTest, ErrorFamilyCarriesStatusLabel) {
     auto a = makeSnap("agent-a", "0");
     a.counters[idx(ERR_BACKEND)] = 5;
 
-    const auto fams = buildMetricFamilies({a});
+    const auto fams = buildMetricFamilies({{a}});
     const auto *errors = findFamily(fams, "agent_errors_total");
     ASSERT_NE(errors, nullptr);
     EXPECT_EQ(errors->type, prometheus::MetricType::Counter);
@@ -217,7 +438,7 @@ TEST(MpCollectorTest, HistogramFamilyIsCumulativeAndEndsAtInfinity) {
     a.histBuckets[idx(XFER_TIME)] = {1, 2, 3, 4};
     a.histSums[idx(XFER_TIME)] = 9999;
 
-    const auto fams = buildMetricFamilies({a});
+    const auto fams = buildMetricFamilies({{a}});
     const auto *hist = findFamily(fams, "agent_xfer_time_us");
     ASSERT_NE(hist, nullptr);
     EXPECT_EQ(hist->type, prometheus::MetricType::Histogram);
@@ -246,13 +467,13 @@ TEST(MpCollectorTest, HistogramsAreNotAggregatedAcrossProcesses) {
     b.pid = 1002;
     b.histBuckets[idx(XFER_TIME)] = {0, 0, 0, 5};
 
-    const auto fams = buildMetricFamilies({a, b});
+    const auto fams = buildMetricFamilies({{a}, {b}});
     const auto *hist = findFamily(fams, "agent_xfer_time_us");
     ASSERT_NE(hist, nullptr);
     ASSERT_EQ(hist->metric.size(), 2u);
 
-    const auto *m_a = findByLabel(*hist, "pid", "1001");
-    const auto *m_b = findByLabel(*hist, "pid", "1002");
+    const auto *m_a = findByLabel(*hist, "agent_name", "agent-a");
+    const auto *m_b = findByLabel(*hist, "agent_name", "agent-b");
     ASSERT_NE(m_a, nullptr);
     ASSERT_NE(m_b, nullptr);
     EXPECT_EQ(m_a->histogram.sample_count, 1u);
@@ -364,6 +585,54 @@ TEST_F(MpCollectorFileTest, DepartedWriterIsPublishedOnceMoreThenReaped) {
     nixlMultiprocessCollector expired(dir_, std::chrono::seconds(0), /*reap_stale=*/true);
     EXPECT_TRUE(expired.Collect().empty());
     EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST_F(MpCollectorFileTest, RecreatedWriterContinuesTheSeriesOfItsName) {
+    const auto previous = dir_ / makeStoreFileName(555, 1, 0);
+    {
+        storeWriter writer(previous, "agent-a", "host", "", 0, kBuckets);
+        writer.addCounter(TX_BYTES, 42);
+    }
+    storeWriter writer(dir_ / makeStoreFileName(555, 1, 1), "agent-a", "host", "", 1, kBuckets);
+    writer.addCounter(TX_BYTES, 7);
+
+    for (const auto ttl : {std::chrono::seconds(30), std::chrono::seconds(0)}) {
+        SCOPED_TRACE("stale TTL " + std::to_string(ttl.count()) + "s");
+        nixlMultiprocessCollector collector(dir_, ttl);
+        const auto fams = collector.Collect();
+        const auto *tx = findFamily(fams, "agent_tx_bytes_total");
+        ASSERT_NE(tx, nullptr);
+        ASSERT_EQ(tx->metric.size(), 1u);
+        EXPECT_DOUBLE_EQ(tx->metric.front().counter.value, 7.0);
+        EXPECT_EQ(
+            labelMap(tx->metric.front()),
+            (std::map<std::string, std::string>{{"hostname", "host"}, {"agent_name", "agent-a"}}));
+        EXPECT_EQ(std::filesystem::exists(previous), ttl.count() > 0);
+    }
+}
+
+TEST_F(MpCollectorFileTest, CoexistingWritersOfOneNameAreToldApartAndReportedOnce) {
+    storeWriter first(dir_ / makeStoreFileName(666, 1, 0), "dup", "host", "", 0, kBuckets);
+    first.addCounter(TX_BYTES, 1);
+    storeWriter second(dir_ / makeStoreFileName(666, 1, 1), "dup", "host", "", 1, kBuckets);
+    second.addCounter(TX_BYTES, 2);
+
+    const gtest::LogIgnoreGuard lig("2 live agents on host 'host' are named 'dup';");
+    nixlMultiprocessCollector collector(dir_);
+    for (int scrape = 0; scrape < 2; ++scrape) {
+        const auto fams = collector.Collect();
+        const auto *tx = findFamily(fams, "agent_tx_bytes_total");
+        ASSERT_NE(tx, nullptr);
+        ASSERT_EQ(tx->metric.size(), 2u);
+        const auto *m_first = findByLabel(*tx, "agent_instance", "0");
+        const auto *m_second = findByLabel(*tx, "agent_instance", "1");
+        ASSERT_NE(m_first, nullptr);
+        ASSERT_NE(m_second, nullptr);
+        EXPECT_DOUBLE_EQ(m_first->counter.value, 1.0);
+        EXPECT_DOUBLE_EQ(m_second->counter.value, 2.0);
+        EXPECT_TRUE(hasLabel(*m_first, "pid"));
+    }
+    EXPECT_EQ(lig.getIgnoredCount(), 1u);
 }
 
 TEST_F(MpCollectorFileTest, CollectOnEmptyDirYieldsNoFamilies) {

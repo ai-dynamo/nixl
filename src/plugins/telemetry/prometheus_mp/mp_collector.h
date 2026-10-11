@@ -23,7 +23,12 @@
 #include <prometheus/metric_family.h>
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
+#include <mutex>
+#include <set>
+#include <string>
+#include <tuple>
 #include <vector>
 
 namespace nixl::telemetry::mp {
@@ -33,18 +38,28 @@ namespace nixl::telemetry::mp {
 inline constexpr std::chrono::seconds MP_DEFAULT_STALE_TTL{30};
 
 /**
- * @brief Whether a store snapshot should still be published.
+ * @brief Whether a store snapshot may still be published.
  * @param snap Store snapshot.
  * @param ttl Freshness window for a store whose writer is gone.
  * @param writer_alive Whether the writer still holds the store
  *        (storeWriterAlive()).
  *
- * A live writer is always published. A departed one is published until its last
- * values age out of @p ttl, so whatever it recorded after the previous scrape is
- * still exported at least once.
+ * A live writer is always published. A departed one is kept until its last
+ * values age out of @p ttl, and published meanwhile unless another store with
+ * its hostname, agent_name and local_rank is live or was updated more recently.
  */
 [[nodiscard]] bool
 isSnapshotLive(const storeSnapshot &snap, std::chrono::nanoseconds ttl, bool writer_alive);
+
+struct scannedStore {
+    storeSnapshot snapshot;
+    bool writerAlive = false;
+};
+
+struct publishedStore {
+    storeSnapshot snapshot;
+    bool withProcessLabels = false;
+};
 
 /**
  * @brief Converts per-process snapshots into Prometheus metric families.
@@ -53,11 +68,11 @@ isSnapshotLive(const storeSnapshot &snap, std::chrono::nanoseconds ttl, bool wri
  * gauges keyed by nixl_telemetry_event_type_t, plus the agent_errors_total family
  * with a status label. Series are labeled by hostname, agent_name and (when
  * present) local_rank. No cross-process aggregation -- each process is its own
- * series. Returns empty when @p snapshots is empty.
- * @param snapshots Live per-process snapshots.
+ * series. Returns empty when @p stores is empty.
+ * @param stores Live per-process snapshots.
  */
 [[nodiscard]] std::vector<prometheus::MetricFamily>
-buildMetricFamilies(const std::vector<storeSnapshot> &snapshots);
+buildMetricFamilies(const std::vector<publishedStore> &stores);
 
 /**
  * @class nixlMultiprocessCollector
@@ -82,15 +97,23 @@ public:
     [[nodiscard]] std::vector<prometheus::MetricFamily>
     Collect() const override;
 
+    [[nodiscard]] std::vector<publishedStore>
+    selectStores(std::vector<scannedStore> stores) const;
+
 private:
     // Scans the shared directory once, dropping (and optionally reaping) stores
     // that are stale or unusable.
-    [[nodiscard]] std::vector<storeSnapshot>
+    [[nodiscard]] std::vector<scannedStore>
     scanLiveStores() const;
+
+    void
+    reportSharedIdentity(const storeSnapshot &store, std::size_t live_writers) const;
 
     const std::filesystem::path dir_;
     const std::chrono::nanoseconds staleTtl_;
     const bool reapStale_;
+    mutable std::mutex reportedMutex_;
+    mutable std::set<std::tuple<std::string, std::string, std::string>> reportedIdentities_;
 };
 
 } // namespace nixl::telemetry::mp
