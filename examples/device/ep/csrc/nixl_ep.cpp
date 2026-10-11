@@ -789,16 +789,6 @@ void Buffer::_nixl_agent_init() {
         }
     }
 
-    const char *proxy_channels_env = std::getenv("NIXL_EP_PROXY_CHANNELS");
-    if (proxy_channels_env == nullptr) {
-        proxy_channels_env = std::getenv("NIXL_EP_NUM_CHANNELS");
-    }
-    const uint32_t proxy_channels = proxy_channels_env ? std::stoul(proxy_channels_env) : 4;
-
-    const char *proxy_workers_env = std::getenv("NIXL_EP_PROXY_WORKER_COUNT");
-    const uint32_t proxy_workers = proxy_workers_env ? std::stoul(proxy_workers_env) :
-                                                       proxy_channels;
-
     nixlAgentConfig cfg;
     // The proxy's own threads drive UCX progress, one per ring, so a progress
     // thread would only contend with them.
@@ -820,8 +810,15 @@ void Buffer::_nixl_agent_init() {
     init_params["ucx_error_handling_mode"] = "none";
     if (enable_device_proxy) {
         init_params["device_proxy"] = "true";
-        init_params["proxy_channel_count"] = std::to_string(proxy_channels);
-        init_params["proxy_thread_count"] = std::to_string(proxy_workers);
+        // The backend validates the counts; the thread count defaults to the channel count.
+        const char *proxy_channels = std::getenv("NIXL_EP_PROXY_CHANNELS");
+        if (proxy_channels == nullptr) {
+            proxy_channels = std::getenv("NIXL_EP_NUM_CHANNELS");
+        }
+        init_params["proxy_channel_count"] = proxy_channels ? proxy_channels : "4";
+        if (const char *proxy_workers = std::getenv("NIXL_EP_PROXY_WORKER_COUNT")) {
+            init_params["proxy_thread_count"] = proxy_workers;
+        }
         init_params["proxy_max_peers"] = std::to_string(max_num_ranks);
         // The engine derives num_workers from channels x peers and rejects an
         // explicit value that disagrees. getPluginParams() seeded the plugin
