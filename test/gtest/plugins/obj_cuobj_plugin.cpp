@@ -512,6 +512,29 @@ TEST_P(setupObjAccelTestFixture, AccelVramNestedRegistrationXferTest) {
     }
     testSubRangeXfer<VRAM_SEG>(*localBackendEngine_, true);
 }
+
+// VRAM registered from a thread that has made no CUDA calls, so no CUDA context
+// is current on it, as with an application's worker thread.
+TEST_P(setupObjAccelTestFixture, AccelVramWorkerThreadRegistrationTest) {
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
+    }
+    memoryHandler<VRAM_SEG> mem(1 << 20, 0);
+    nixlBlobDesc mem_desc;
+    mem.populateBlobDesc(&mem_desc);
+    nixlBackendMD *mem_md = nullptr;
+    nixl_status_t status = NIXL_ERR_UNKNOWN;
+    std::thread([&] {
+        status = localBackendEngine_->registerMem(mem_desc, VRAM_SEG, mem_md);
+    }).join();
+    ASSERT_EQ(status, NIXL_SUCCESS);
+    mem.setMD(mem_md);
+
+    testRoundTrip<VRAM_SEG>(*localBackendEngine_, mem, mem_desc, "test-obj-key-vram-worker-thread");
+    EXPECT_EQ(localBackendEngine_->deregisterMem(mem_md), NIXL_SUCCESS);
+}
 #endif // HAVE_CUDA
 
 INSTANTIATE_TEST_SUITE_P(ObjAccelTests,
