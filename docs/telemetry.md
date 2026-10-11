@@ -167,7 +167,7 @@ multi-process NIXL run behind a **single** Prometheus scrape endpoint, natively
 memory-mapped file in a shared directory; the processes race for an exclusive
 `flock` on `nixl-owner.<address:port>.lock` in that directory, and only the winner binds the
 scrape port and serves `/metrics` by reading and republishing all live processes'
-files on each scrape (labeled per process). The losers run as writers only, so
+files on each scrape (one series set per agent name). The losers run as writers only, so
 losing is benign and no rank is dropped, and a writer re-runs the election as it
 exports so the owner's death costs a gap rather than the rest of the run. If the
 winner cannot bind, nothing aggregates the directory and it says so. Should the
@@ -198,10 +198,12 @@ additionally includes the bounded `status` label. Metric names, types, and
 semantics are identical to the single-process `prometheus` exporter. Each scrape
 publishes one store per `hostname`, `agent_name` and `local_rank`: the live
 writer's, or with none left, the most recently updated departed one. A rank
-restarted under the same name therefore continues its series, which Prometheus
-sees as a counter reset. Only when two or more live agents share a name -- a
-misconfiguration, since peers look agents up by name -- does each get `pid` and
-`agent_instance` labels to stay distinct, and the exporter warns once per name.
+restarted under the same name therefore continues its series, its counters
+restarting from zero as under the single-process exporter; Prometheus detects
+that reset only if the next scrape reads a lower value. Only when two or more
+live agents share a name -- a misconfiguration, since peers look agents up by
+name -- does each get `pid` and `agent_instance` labels to stay distinct, and
+the exporter warns once per name.
 
 `NIXL_TELEMETRY_MULTIPROC_DIR` follows Dynamo's `PROMETHEUS_MULTIPROC_DIR`
 convention: a shared **local** folder (not NFS), one per pod / process-family,

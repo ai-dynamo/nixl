@@ -183,7 +183,9 @@ host-wide `CLOCK_MONOTONIC`, so the ranks have to agree on it. No PID namespace
 requirement -- liveness is the store's lock, which the kernel resolves regardless
 of which namespace the writer's pid lives in. The pid is then only part of the file
 name and, for duplicate live agent names, a label -- never something a reader
-interprets.
+interprets. Across PID namespaces, `pid` and `agent_instance` may not tell duplicate
+names apart: two such agents can have the same pid and instance number, and then
+their series collide.
 
 ### Optional configuration
 
@@ -267,11 +269,15 @@ not reuse, Python `prometheus_client`'s multiprocess format):
   (keyed) store.
 - **A restart under the same name continues its series.** A rank restarted, or an
   agent re-created in its process, under the same agent name (and `local_rank`)
-  takes over its predecessor's series, and Prometheus sees a counter reset.
-  Whatever the predecessor recorded after the last scrape is lost, as with the
-  single-process `prometheus` exporter; a departed process's final values are
-  guaranteed another scrape only while no successor uses its name. Names that
-  change on every restart (a UUID per worker, say) start new series instead. The
+  takes over its predecessor's series, with its counters starting again from
+  zero. Prometheus detects that as a counter reset only if the next scrape reads
+  a lower value; a successor that has already passed its predecessor's last
+  scraped value is undercounted by that value. Whatever the predecessor recorded
+  after the last scrape is lost either way. The single-process `prometheus`
+  exporter behaves the same on every restart. Without a successor, a departed
+  process's final values stay published until the stale TTL expires (see "Stale
+  handling"); a successor under its name ends that early. Names that change on
+  every restart (a UUID per worker, say) start new series instead. The
   exposition only ever contains live processes, so scrape size is bounded by the
   current process count -- but the TSDB accumulates one series set per name seen
   within the retention window, so a crash-looping deployment with such names grows

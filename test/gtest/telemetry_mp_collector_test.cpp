@@ -256,15 +256,16 @@ TEST(MpCollectorTest, ConcurrentScrapesReportADuplicateLiveNameOnce) {
 }
 
 TEST(MpCollectorTest, DuplicateLiveNameDropsDepartedStoresOfThatName) {
-    auto gone = makeSnap("dup", "");
+    auto gone = makeSnap("dup", "3");
     gone.pid = 1000;
-    auto a = makeSnap("dup", "");
+    auto a = makeSnap("dup", "3");
     a.pid = 1001;
-    auto b = makeSnap("dup", "");
+    auto b = makeSnap("dup", "3");
     b.pid = 1002;
 
     const nixlMultiprocessCollector collector{std::filesystem::path()};
-    const gtest::LogIgnoreGuard lig("2 live agents on host 'host' are named 'dup';");
+    const gtest::LogIgnoreGuard lig(
+        "2 live agents on host 'host' are named 'dup' with local_rank '3';");
     const auto fams =
         buildMetricFamilies(collector.selectStores({departed(gone), live(a), live(b)}));
     EXPECT_EQ(lig.getIgnoredCount(), 1u);

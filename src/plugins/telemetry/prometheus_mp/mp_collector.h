@@ -51,11 +51,13 @@ inline constexpr std::chrono::seconds MP_DEFAULT_STALE_TTL{30};
 [[nodiscard]] bool
 isSnapshotLive(const storeSnapshot &snap, std::chrono::nanoseconds ttl, bool writer_alive);
 
+/** @brief A store that survived the scan, with whether its writer still holds it. */
 struct scannedStore {
     storeSnapshot snapshot;
     bool writerAlive = false;
 };
 
+/** @brief A store selected for a scrape; @c withProcessLabels adds pid and agent_instance. */
 struct publishedStore {
     storeSnapshot snapshot;
     bool withProcessLabels = false;
@@ -67,8 +69,9 @@ struct publishedStore {
  * Emits one series per (metric, process): cumulative counters and last-operation
  * gauges keyed by nixl_telemetry_event_type_t, plus the agent_errors_total family
  * with a status label. Series are labeled by hostname, agent_name and (when
- * present) local_rank. No cross-process aggregation -- each process is its own
- * series. Returns empty when @p stores is empty.
+ * present) local_rank, plus pid and agent_instance for stores with
+ * @c withProcessLabels set. No cross-process aggregation -- each process is its
+ * own series. Returns empty when @p stores is empty.
  * @param stores Live per-process snapshots.
  */
 [[nodiscard]] std::vector<prometheus::MetricFamily>
@@ -97,6 +100,15 @@ public:
     [[nodiscard]] std::vector<prometheus::MetricFamily>
     Collect() const override;
 
+    /**
+     * @brief Picks the stores one scrape publishes.
+     *
+     * Groups @p stores by hostname, agent_name and local_rank. A group with at
+     * most one live writer yields one store: the live one, else the most recently
+     * updated, ties broken by pid, then instance. A group with two or more live
+     * writers yields every live store with @c withProcessLabels set, and is
+     * reported once per collector.
+     */
     [[nodiscard]] std::vector<publishedStore>
     selectStores(std::vector<scannedStore> stores) const;
 
