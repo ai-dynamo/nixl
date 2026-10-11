@@ -131,27 +131,36 @@ report_job_failure() {
     set -x
 }
 
-# Follow the pod log; if the stream drops (e.g. apiserver GOAWAY) while the
-# container is still running, reconnect after the last line received.
+# Print "<timestamp> <line>" log lines without the timestamp and update $last_ts.
+# --since-time has 1s granularity, so skip lines at or before the previous $last_ts.
+print_new_log_lines() {
+    local resume_ts=$last_ts line ts
+    while IFS= read -r line || [ -n "$line" ]; do
+        ts=${line%% *}
+        if [ -n "$resume_ts" ]; then
+            [[ "$ts" > "$resume_ts" ]] || continue
+            resume_ts=""
+        fi
+        last_ts=$ts
+        printf '%s\n' "${line#* }"
+    done
+}
+
+# Follow the pod log. If the stream ends early (e.g. apiserver GOAWAY), reconnect after
+# the last line received while the container runs, or fetch the rest once it has stopped.
 follow_pod_logs() {
     set +x
-    local ns=ucx-ci-batch-nodes last_ts="" resume_ts line ts
+    local ns=ucx-ci-batch-nodes last_ts="" stream_ok running
     for _ in {1..10}; do
-        resume_ts=$last_ts
-        while IFS= read -r line || [ -n "$line" ]; do
-            ts=${line%% *}
-            if [ -n "$resume_ts" ]; then
-                # --since-time has 1s granularity: skip lines already printed
-                [[ "$ts" > "$resume_ts" ]] || continue
-                resume_ts=""
-            fi
-            last_ts=$ts
-            printf '%s\n' "${line#* }"
-        done < <(kubectl -n "$ns" logs -f --timestamps ${last_ts:+--since-time="$last_ts"} "$POD")
-        if [ -z "$(kubectl -n "$ns" get pod "$POD" -o jsonpath='{.status.containerStatuses[0].state.running}' 2>/dev/null)" ]; then
+        print_new_log_lines < <(kubectl -n "$ns" logs -f --timestamps ${last_ts:+--since-time="$last_ts"} "$POD")
+        wait $! && stream_ok=1 || stream_ok=0
+        # On an API error, treat the container as running and retry
+        running=$(kubectl -n "$ns" get pod "$POD" --ignore-not-found -o jsonpath='{.status.containerStatuses[0].state.running}') || running=unknown
+        if [ -z "$running" ]; then
+            [ "$stream_ok" = 1 ] || print_new_log_lines < <(kubectl -n "$ns" logs --timestamps ${last_ts:+--since-time="$last_ts"} "$POD")
             break
         fi
-        echo "Log stream from $POD dropped; reconnecting after $last_ts"
+        echo "Log stream from $POD ended early; reconnecting after $last_ts"
         sleep 5
     done
     set -x
