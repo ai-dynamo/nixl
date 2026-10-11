@@ -220,11 +220,11 @@ putBurstKernel(nixlMemViewH src, nixlMemViewH dst, uint32_t count, nixl_status_t
 }
 
 /** Every participating thread records the status its own call returned. */
-template<nixl_gpu_level_t level>
+template<nixl_gpu_level_t level, nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
 __global__ void
 collectivePutKernel(nixlMemViewH src, nixlMemViewH dst, uint32_t peer, nixl_status_t *statuses) {
     nixlMemViewElem source{src, 0, 0}, destination{dst, peer, 0};
-    statuses[blockIdx.x * blockDim.x + threadIdx.x] = nixlPut<level>(source, destination, 0);
+    statuses[blockIdx.x * blockDim.x + threadIdx.x] = nixlPut<level, mode>(source, destination, 0);
 }
 
 template<nixl_gpu_level_t level>
@@ -234,11 +234,34 @@ collectiveAtomicAddKernel(nixlMemViewH dst, uint32_t peer, nixl_status_t *status
     statuses[blockIdx.x * blockDim.x + threadIdx.x] = nixlAtomicAdd<level>(1, counter);
 }
 
+constexpr auto fixed_proxy = nixl_device_exec_mode_t::PROXY;
+
+__global__ void
+fixedSubmitKernel(nixlMemViewH src, nixlMemViewH dst, DeviceResult *result, bool atomic) {
+    nixlMemViewElem source{src, 0, 0}, destination{dst, 0, 0};
+    result->submit = atomic ? nixlAtomicAdd<nixl_gpu_level_t::THREAD, fixed_proxy>(
+                                  42, destination, 0, 0, &result->transfer) :
+                              nixlPut<nixl_gpu_level_t::THREAD, fixed_proxy>(
+                                  source, destination, 0, 0, 0, &result->transfer);
+}
+
+__global__ void
+fixedPollKernel(DeviceResult *result) {
+    result->poll = nixlGpuGetXferStatus<nixl_gpu_level_t::THREAD, fixed_proxy>(result->transfer);
+}
+
+__global__ void
+fixedGetPtrKernel(nixlMemViewH view, void **ptrs) {
+    ptrs[0] = nixlGetPtr(view, 0);
+    ptrs[1] = nixlGetPtr<fixed_proxy>(view, 0);
+}
+
 /**
  * A grid-level put, then every thread polls the shared status until it leaves NIXL_IN_PROG or
  * `max_spins` polls pass, so a thread that never sees completion fails the test instead of
  * hanging it. Needs a cooperative launch.
  */
+template<nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
 __global__ void
 gridPutAndPollKernel(nixlMemViewH src,
                      nixlMemViewH dst,
@@ -249,10 +272,10 @@ gridPutAndPollKernel(nixlMemViewH src,
     const uint32_t thread = blockIdx.x * blockDim.x + threadIdx.x;
     nixlMemViewElem source{src, 0, 0}, destination{dst, 0, 0};
     submits[thread] =
-        nixlPut<nixl_gpu_level_t::GRID>(source, destination, 0, 0, 0, &shared->transfer);
+        nixlPut<nixl_gpu_level_t::GRID, mode>(source, destination, 0, 0, 0, &shared->transfer);
     nixl_status_t status = NIXL_IN_PROG;
     for (uint64_t spin = 0; status == NIXL_IN_PROG && spin < max_spins; ++spin) {
-        status = nixlGpuGetXferStatus<nixl_gpu_level_t::GRID>(shared->transfer);
+        status = nixlGpuGetXferStatus<nixl_gpu_level_t::GRID, mode>(shared->transfer);
     }
     polls[thread] = status;
 }
@@ -738,7 +761,7 @@ TEST_F(ProxyDeviceApiTest, GridLevelCallsFollowTheUcxContract) {
 
     // The put stays pending until the host completes it, so every thread's poll loop must see
     // the completion published while it spins, in the same kernel as the submission.
-    ASSERT_EQ(launchCooperative(gridPutAndPollKernel,
+    ASSERT_EQ(launchCooperative(gridPutAndPollKernel<>,
                                 blocks,
                                 threads,
                                 views.src,
@@ -777,5 +800,124 @@ TEST_F(ProxyDeviceApiTest, GridLevelCallsFollowTheUcxContract) {
     ASSERT_TRUE(waitForCondition([&] { return backend.entries().size() == 2; }));
     backend.complete(1);
     ASSERT_TRUE(waitForCondition([&] { return deviceGet(ring.consumer_idx) == 2; }));
+    ASSERT_EQ(runtime->shutdown(), NIXL_SUCCESS);
+}
+
+// A fixed mode gives the default's results at every level, without tagging the status.
+TEST_F(ProxyDeviceApiTest, FixedProxyModeMatchesTheDefault) {
+    int cooperative = 0;
+    ASSERT_EQ(cudaDeviceGetAttribute(&cooperative, cudaDevAttrCooperativeLaunch, 0), cudaSuccess);
+    auto transport = std::make_unique<ControllableBackend>();
+    ControllableBackend &backend = *transport;
+    std::unique_ptr<nixl::proxyRuntime> runtime;
+    ASSERT_EQ(
+        nixl::proxyRuntime::create(std::move(transport), makeProxyConfig(1, 1, 1), runtime, *ops_),
+        NIXL_SUCCESS);
+    ASSERT_EQ(runtime->startWorkers(), NIXL_SUCCESS);
+    const DummyProxyMemViews views(*ops_, *runtime);
+    const auto ring = deviceGet(runtime->deviceChannelViews()[0].work_ring);
+    auto *results = deviceAlloc<DeviceResult>(3);
+    auto fixedPoll = [&](DeviceResult *result) {
+        fixedPollKernel<<<1, 1>>>(result);
+        EXPECT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+        return deviceGet(result).poll;
+    };
+    auto modeTag = [&](DeviceResult *result) {
+        const auto host = deviceGet(result);
+        uint32_t tag = 0;
+        std::memcpy(&tag, host.transfer.storage + nixl_gpu_xfer_status_payload_size, sizeof(tag));
+        return tag;
+    };
+
+    // A fixed poll also reads a status submitted with the default mode.
+    fixedSubmitKernel<<<1, 1>>>(views.src, views.dst, results, false);
+    submitKernel<<<1, 1>>>(views.src, views.dst, results + 1);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    ASSERT_TRUE(waitForCondition([&] { return backend.entries().size() == 2; }));
+    EXPECT_EQ(deviceGet(results).submit, NIXL_IN_PROG);
+    EXPECT_EQ(deviceGet(results + 1).submit, NIXL_IN_PROG);
+    EXPECT_EQ(modeTag(results), 0u);
+    EXPECT_EQ(modeTag(results + 1), static_cast<uint32_t>(fixed_proxy));
+    EXPECT_EQ(fixedPoll(results), NIXL_IN_PROG);
+    backend.complete(0);
+    ASSERT_TRUE(waitForCondition([&] { return fixedPoll(results) == NIXL_SUCCESS; }));
+    EXPECT_EQ(fixedPoll(results + 1), NIXL_IN_PROG);
+    backend.complete(1);
+    ASSERT_TRUE(waitForCondition([&] { return fixedPoll(results + 1) == NIXL_SUCCESS; }));
+
+    auto *ptrs = deviceAlloc<void *>(2);
+    fixedGetPtrKernel<<<1, 1>>>(views.dst, ptrs);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    EXPECT_EQ(deviceGet(ptrs + 1), deviceGet(ptrs));
+
+    constexpr uint32_t block_threads = 128;
+    auto *statuses = deviceAlloc<nixl_status_t>(block_threads);
+    auto expectAll = [&](uint32_t threads, nixl_status_t expected, const char *what) {
+        ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+        std::vector<nixl_status_t> host(threads);
+        ASSERT_EQ(
+            cudaMemcpy(
+                host.data(), statuses, sizeof(nixl_status_t) * threads, cudaMemcpyDeviceToHost),
+            cudaSuccess);
+        for (uint32_t i = 0; i < threads; ++i) {
+            EXPECT_EQ(host[i], expected) << what << ": thread " << i;
+        }
+    };
+    collectivePutKernel<nixl_gpu_level_t::WARP, fixed_proxy>
+        <<<1, 32>>>(views.src, views.dst, 0, statuses);
+    expectAll(32, NIXL_IN_PROG, "warp put");
+    collectivePutKernel<nixl_gpu_level_t::BLOCK, fixed_proxy>
+        <<<1, block_threads>>>(views.src, views.dst, 0, statuses);
+    expectAll(block_threads, NIXL_IN_PROG, "block put");
+    EXPECT_EQ(deviceGet(ring.producer_idx), 4u);
+    ASSERT_TRUE(waitForCondition([&] { return backend.entries().size() == 4; }));
+    backend.complete(2);
+    backend.complete(3);
+
+    uint64_t ops = 5;
+    if (cooperative != 0) {
+        constexpr uint32_t blocks = 2;
+        constexpr uint32_t threads = 64;
+        constexpr uint32_t total = blocks * threads;
+        auto *submits = deviceAlloc<nixl_status_t>(total);
+        auto *polls = deviceAlloc<nixl_status_t>(total);
+        ASSERT_EQ(launchCooperative(gridPutAndPollKernel<fixed_proxy>,
+                                    blocks,
+                                    threads,
+                                    views.src,
+                                    views.dst,
+                                    results + 2,
+                                    submits,
+                                    polls,
+                                    uint64_t{1} << 26),
+                  cudaSuccess);
+        ASSERT_TRUE(waitForCondition([&] { return backend.entries().size() == 5; }));
+        backend.complete(4);
+        ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+        std::vector<nixl_status_t> host_submits(total), host_polls(total);
+        ASSERT_EQ(cudaMemcpy(host_submits.data(),
+                             submits,
+                             sizeof(nixl_status_t) * total,
+                             cudaMemcpyDeviceToHost),
+                  cudaSuccess);
+        ASSERT_EQ(
+            cudaMemcpy(
+                host_polls.data(), polls, sizeof(nixl_status_t) * total, cudaMemcpyDeviceToHost),
+            cudaSuccess);
+        for (uint32_t i = 0; i < total; ++i) {
+            EXPECT_EQ(host_submits[i], NIXL_IN_PROG) << "grid put: thread " << i;
+            EXPECT_EQ(host_polls[i], NIXL_SUCCESS) << "grid poll: thread " << i;
+        }
+    } else {
+        ops = 4;
+    }
+
+    fixedSubmitKernel<<<1, 1>>>(views.src, views.dst, results, true);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    EXPECT_EQ(deviceGet(results).submit, NIXL_IN_PROG);
+    ASSERT_TRUE(waitForCondition([&] { return backend.entries().size() == ops + 1; }));
+    backend.complete(ops, NIXL_ERR_BACKEND);
+    ASSERT_TRUE(waitForCondition([&] { return fixedPoll(results) == NIXL_ERR_BACKEND; }));
+    ASSERT_TRUE(waitForCondition([&] { return deviceGet(ring.consumer_idx) == ops + 1; }));
     ASSERT_EQ(runtime->shutdown(), NIXL_SUCCESS);
 }
