@@ -57,7 +57,7 @@ public:
         const size_t worker_id = workerId(submission.channel_id, submission.peer_index);
 
         nixlUcxReq req = nullptr;
-        nixl_status_t status;
+        nixl_status_t status = NIXL_ERR_NOT_SUPPORTED;
         switch (submission.opcode) {
         case nixl_proxy_opcode_t::PUT:
             status = postPut(submission, worker_id, req);
@@ -65,8 +65,6 @@ public:
         case nixl_proxy_opcode_t::ATOMIC_ADD:
             status = postAtomicAdd(submission, worker_id, req);
             break;
-        default:
-            return NIXL_ERR_NOT_SUPPORTED;
         }
 
         // Only puts ever yield a request: a post-mode atomic completes inside
