@@ -24,13 +24,13 @@
 
 namespace nixl::gpu {
 
-template<level_t level = level_t::THREAD>
+template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
 getXferStatus(xferStatusH &xfer_status) {
-    return impl::getXferStatus<level>(xfer_status);
+    return impl::getXferStatus<level, mode>(xfer_status);
 }
 
-template<level_t level = level_t::THREAD>
+template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
 put(const memViewElem &src,
     const memViewElem &dst,
@@ -38,33 +38,36 @@ put(const memViewElem &src,
     unsigned channel_id = 0,
     uint64_t flags = 0,
     xferStatusH *xfer_status = nullptr) {
-    return impl::put<level>(src, dst, size, channel_id, flags, xfer_status);
+    return impl::put<level, mode>(src, dst, size, channel_id, flags, xfer_status);
 }
 
-template<level_t level = level_t::THREAD>
+template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
 atomicAdd(uint64_t value,
           const memViewElem &counter,
           unsigned channel_id = 0,
           uint64_t flags = 0,
           xferStatusH *xfer_status = nullptr) {
-    return impl::atomicAdd<level>(value, counter, channel_id, flags, xfer_status);
+    return impl::atomicAdd<level, mode>(value, counter, channel_id, flags, xfer_status);
 }
 
+template<exec_mode_t mode = exec_mode_t::DYNAMIC>
 __device__ inline void *
 getPtr(nixlMemViewH mvh, size_t index) {
-    return impl::getPtr(mvh, index);
+    return impl::getPtr<mode>(mvh, index);
 }
 
 } // namespace nixl::gpu
 
-template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD,
+         nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
 nixlGpuGetXferStatus(nixlGpuXferStatusH &xfer_status) {
-    return nixl::gpu::getXferStatus<level>(xfer_status);
+    return nixl::gpu::getXferStatus<level, mode>(xfer_status);
 }
 
-template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD,
+         nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
 nixlPut(const nixlMemViewElem &src,
         const nixlMemViewElem &dst,
@@ -72,22 +75,24 @@ nixlPut(const nixlMemViewElem &src,
         unsigned channel_id = 0,
         uint64_t flags = 0,
         nixlGpuXferStatusH *xfer_status = nullptr) {
-    return nixl::gpu::put<level>(src, dst, size, channel_id, flags, xfer_status);
+    return nixl::gpu::put<level, mode>(src, dst, size, channel_id, flags, xfer_status);
 }
 
-template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD,
+         nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
 nixlAtomicAdd(uint64_t value,
               const nixlMemViewElem &counter,
               unsigned channel_id = 0,
               uint64_t flags = 0,
               nixlGpuXferStatusH *xfer_status = nullptr) {
-    return nixl::gpu::atomicAdd<level>(value, counter, channel_id, flags, xfer_status);
+    return nixl::gpu::atomicAdd<level, mode>(value, counter, channel_id, flags, xfer_status);
 }
 
+template<nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
 __device__ inline void *
 nixlGetPtr(nixlMemViewH mvh, size_t index) {
-    return nixl::gpu::getPtr(mvh, index);
+    return nixl::gpu::getPtr<mode>(mvh, index);
 }
 
 #endif // NIXL_SRC_API_DEVICE_GPU_NIXL_DEVICE_CUH

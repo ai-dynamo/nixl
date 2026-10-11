@@ -46,10 +46,15 @@ enum class level_t : uint64_t { THREAD = 0, WARP = 1, BLOCK = 2, GRID = 3 };
  * the backend that prepared it, not per build. Zero is deliberately not a
  * valid mode, so an untagged handle reads as invalid rather than as the first
  * backend.
+ *
+ * DYNAMIC, the device API's default mode argument, reads the mode from the
+ * view. A fixed mode must match the views (otherwise undefined; asserted in
+ * debug builds), and its statuses must be polled with the same mode.
  */
 enum class exec_mode_t : uint8_t {
     UCX_DIRECT = 1,
     PROXY = 2,
+    DYNAMIC = 0xff,
 };
 
 /**
