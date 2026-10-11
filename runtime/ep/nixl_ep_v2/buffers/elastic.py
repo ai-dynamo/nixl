@@ -8,9 +8,9 @@ from datetime import timedelta
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 # noinspection PyUnresolvedReferences
-import nixl_ep_v2._C as _C
+from .. import _C
 # noinspection PyUnresolvedReferences
-from nixl_ep_v2._C import EventHandle
+from .._C import EventHandle
 
 from ..utils.event import EventOverlap
 from ..utils.math import align
@@ -971,7 +971,7 @@ class ElasticBuffer:
                 A `torch.uint8` `x` is always read as NVFP4 codes and needs the scales; there is no byte wire (a uint8
                 payload without scales, or with FP8-shaped scales, is refused), and an FP8 payload must be
                 `torch.float8_e4m3fn`.
-            topk_idx: `[num_tokens, num_topk]` with `nixl_ep_v2.topk_idx_t` (typically `torch.int64`), the expert
+            topk_idx: `[num_tokens, num_topk]` with `nixl.runtime.ep.topk_idx_t` (typically `torch.int64`), the expert
                 indices selected by each token, `-1` means no selections.
             topk_weights: `[num_tokens, num_topk]` with `torch.float`, the expert weights of each token to dispatch.
             cumulative_local_expert_recv_stats: `[num_experts_per_rank]` with `torch.int`, a cumulative expert count
