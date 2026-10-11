@@ -80,7 +80,8 @@ buildMetricFamilies(const std::vector<publishedStore> &stores);
  *
  * Registered with the exporter process's Exposer. On each scrape it globs the
  * shared directory for store files, reads a snapshot of each, drops (and
- * optionally reaps) stale ones, and returns per-process metric families.
+ * optionally reaps) stale ones, picks the ones to publish (selectStores()), and
+ * returns their metric families.
  */
 class nixlMultiprocessCollector final : public prometheus::Collectable {
 public:
@@ -99,12 +100,14 @@ public:
 
     /**
      * @brief Picks the stores one scrape publishes.
+     * @param stores The stores of one scan, in any order.
      *
      * Groups @p stores by hostname, agent_name and local_rank. A group with at
      * most one live writer yields one store: the live one, else the most recently
-     * updated, ties broken by pid, then instance. A group with two or more live
-     * writers yields every live store with @c withProcessLabels set. Only the
-     * first such group a collector sees is reported.
+     * updated, ties going to the higher pid, then the higher instance. A group
+     * with two or more live writers yields every live store with
+     * @c withProcessLabels set. Only the first such group a collector sees is
+     * reported.
      */
     [[nodiscard]] std::vector<publishedStore>
     selectStores(std::vector<scannedStore> stores) const;

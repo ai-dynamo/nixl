@@ -67,8 +67,9 @@ stream:
   derived from one shared metric descriptor
   (`nixlEnumStrings::telemetryMetricDescriptor` in `telemetry_event.h`). The
   emitted series are not always identical: `prometheus_mp` adds `local_rank` when
-  a rank env var is set, and `pid` and `agent_instance` when two live agents share
-  a name (see "Multi-process aggregation" below). All three
+  a rank env var is set, and `pid` and `agent_instance` when two live agents on
+  one host share a name and `local_rank` (see "Multi-process aggregation" below).
+  All three
   expose `agent_tx_bytes_total` / `agent_rx_bytes_total` (counters, OpenMetrics
   `_total` suffix) alongside `agent_tx_last_bytes` / `agent_rx_last_bytes`
   (gauges). The memory events likewise expose both a cumulative `_total` counter
@@ -184,7 +185,7 @@ deciding. Full details:
 | `NIXL_TELEMETRY_PROMETHEUS_PORT` | Scrape port (shared with the `prometheus` exporter) | `9090` |
 | `NIXL_TELEMETRY_PROMETHEUS_LOCAL` | Bind `127.0.0.1` instead of `0.0.0.0` | `false` |
 | `NIXL_TELEMETRY_RANK_ENV` | Name of the env var holding the rank for the optional `local_rank` label; no label if that env var is unset | `LOCAL_RANK` |
-| `NIXL_TELEMETRY_MP_STALE_TTL` | Seconds after a dead process's last update before its store is stale and reaped. A departing rank leaves its store behind so its final values can still be scraped, so keep this at or above the scrape interval | `30` |
+| `NIXL_TELEMETRY_MP_STALE_TTL` | Seconds after a dead process's last update before its store is stale and reaped. A departing rank leaves its store behind so its final values can still be scraped (unless a successor under its name supersedes them), so keep this at or above the scrape interval | `30` |
 | `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Shared with the other exporters, but capped at 32 bounds by the fixed-layout store | built-in µs defaults |
 
 Unlike a bind collision, a configuration error here is fatal: a missing
@@ -203,7 +204,7 @@ restarting from zero as under the single-process exporter; Prometheus detects
 that reset only if the next scrape reads a lower value. Only when two or more
 live agents share a name -- a misconfiguration, since peers look agents up by
 name -- does each get `pid` and `agent_instance` labels to stay distinct, and
-the exporter warns once.
+the owner warns once, naming the first such name.
 
 `NIXL_TELEMETRY_MULTIPROC_DIR` follows Dynamo's `PROMETHEUS_MULTIPROC_DIR`
 convention: a shared **local** folder (not NFS), one per pod / process-family,

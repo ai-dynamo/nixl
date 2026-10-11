@@ -77,9 +77,10 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   Ranks split across *directories* are only detected from the abandoned side. The
   directory that did elect an owner cannot tell that ranks it never saw went
   elsewhere: it aggregates a subset and looks healthy.
-- **Per-process series.** Each process is exported as its own series (cumulative
-  counters, last-operation gauges and duration histograms), never summed across
-  processes, so per-process values stay correct and monotonic.
+- **Per-agent series.** Each agent (host, name and `local_rank`) is exported as its
+  own series (cumulative counters, last-operation gauges and duration histograms),
+  never summed across processes. A successor under the same name takes over its
+  predecessor's series, so its counters drop at the handover (see "Metric labels").
 - **Liveness is a lock, not a pid.** Each process `flock`s its store *before* the
   file has a name, keeps it locked for as long as it lives, and only then links it
   into the directory. So a reader that manages to take the lock knows the writer
@@ -229,15 +230,18 @@ agents have unique names. On each scrape the collector groups the stores by
   not published, and are still reaped once stale.
 - **No live writer:** the most recently updated departed store.
 - **Two or more live writers:** every live store, with two more labels to keep them
-  apart, and a one-time warning naming the first such name. Peers look agents up by
-  name, so this is a misconfiguration.
+  apart, and a warning, once per owner, naming the first such name. Peers look
+  agents up by name, so this is a misconfiguration.
   - `pid` -- the producing process id. It is deliberately **not** named `instance`
     (a reserved Prometheus target label).
   - `agent_instance` -- a per-process counter distinguishing agents created in the
     same process, which share `pid`.
 
   A series that started without `pid` and `agent_instance` gains them when the
-  duplicate appears.
+  duplicate appears, and drops them again once only one live writer is left. The
+  base series then resumes at the survivor's cumulative total, so a
+  `sum without (pid, agent_instance)` over a window spanning both changes counts
+  the survivor's increments in between twice.
 
 What is published depends only on the directory's contents, so an owner failover
 publishes the same series.
@@ -246,7 +250,7 @@ The metric names, types, semantics, and events are identical to the single-proce
 [`prometheus`](../prometheus/README.md) exporter (same shared descriptor). That
 includes the transfer-duration histograms `agent_xfer_time_us` and
 `agent_xfer_post_time_us`, exposed as the usual `_bucket{le="..."}` / `_sum` /
-`_count` series per process.
+`_count` series per agent.
 
 ## Design scope & limitations
 
@@ -276,10 +280,13 @@ not reuse, Python `prometheus_client`'s multiprocess format):
   after the last scrape is lost either way. The single-process `prometheus`
   exporter behaves the same on every restart. Without a successor, a departed
   process's final values stay published until the stale TTL expires (see "Stale
-  handling"); a successor under its name ends that early. Names that change on
-  every restart (a UUID per worker, say) start new series instead. The
-  exposition only ever contains live processes, so scrape size is bounded by the
-  current process count -- but the TSDB accumulates one series set per name seen
+  handling"); a successor under its name ends that early. If a scrape cannot read
+  the successor's store (`EMFILE`, `ENOMEM`) while its predecessor is still inside
+  the TTL, that scrape publishes the predecessor's values on the shared series.
+  Names that change on every restart (a UUID per worker, say) start new series
+  instead. The exposition only ever contains the live processes plus, per name, at
+  most one departed store still inside the stale TTL, so scrape size stays
+  bounded -- but the TSDB accumulates one series set per name seen
   within the retention window, so a crash-looping deployment with such names grows
   cardinality at the restart rate. Aggregate `agent_name` away
   (`sum without (agent_name) (...)`) for stable per-host or, with `local_rank`,

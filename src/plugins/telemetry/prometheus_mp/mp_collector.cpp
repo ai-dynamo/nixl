@@ -43,9 +43,7 @@ namespace {
         std::vector<ClientMetric::Label> labels;
         labels.push_back({"hostname", s.hostname});
         labels.push_back({"agent_name", s.agentName});
-        // pid guarantees per-process series uniqueness even if agent names are
-        // not unique across processes; avoids duplicate-series scrape errors. Not
-        // named "instance" (a reserved Prometheus target label).
+        // Not named "instance" (a reserved Prometheus target label).
         if (store.withProcessLabels) {
             labels.push_back({"pid", std::to_string(s.pid)});
             labels.push_back({"agent_instance", std::to_string(s.instance)});
