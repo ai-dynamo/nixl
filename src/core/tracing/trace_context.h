@@ -41,6 +41,9 @@ class Tracer;
 inline constexpr std::uint8_t traceContextWireVersion = 0x01;
 inline constexpr std::size_t traceContextWireSize = 26;
 
+inline constexpr std::string_view traceSampleRatioVar = "NIXL_TRACE_SAMPLE_RATIO";
+inline constexpr std::string_view otelTracesSampleRatioVar = "OTEL_TRACES_SAMPLE_RATIO";
+
 /**
  * @brief Outcome of decoding a wire record. UnknownVersion is a record written
  *        by a peer speaking a later version and must be ignored rather than
@@ -69,6 +72,9 @@ struct TraceContext {
 
     [[nodiscard]] std::uint64_t
     correlationId64() const noexcept;
+
+    [[nodiscard]] bool
+    operator==(const TraceContext &) const noexcept = default;
 };
 
 [[nodiscard]] std::optional<TraceContext>
@@ -100,8 +106,50 @@ encodeTraceContext(const TraceContext &context, std::span<std::uint8_t> buffer);
 [[nodiscard]] WireDecodeResult
 decodeTraceContext(std::span<const std::uint8_t> buffer, TraceContext &context);
 
+/**
+ * @brief Head-based sampling decision, derived from the context's own trace id
+ *        rather than from a random draw, so it needs no shared generator state
+ *        and every peer inspecting the same context agrees with it. Only the
+ *        trailing 7 bytes are read: those are what W3C Trace Context Level 2's
+ *        random flag covers, while the leading bytes may carry a non-random
+ *        prefix a peer put there. Sampled iff that 56-bit value is >=
+ *        2^56 - round(ratio * 2^56), the OpenTelemetry consistent-probability
+ *        form down to its rounding, so a downstream sampler at a lower ratio
+ *        keeps a subset of what this one keeps rather than a disjoint set.
+ *        Ratios below 2^-56 round to nothing kept: 56 bits cannot express a
+ *        smaller probability, which is why that is also the smallest
+ *        resolveTraceSampleRatio accepts.
+ */
+[[nodiscard]] bool
+sampledByRatio(const TraceContext &context, double ratio) noexcept;
+
+/**
+ * @brief Resolve the sampling ratio: traceSampleRatioVar when set, else
+ *        otelTracesSampleRatioVar, which is Dynamo's convention rather than an
+ *        OpenTelemetry one (the SDK spec defines OTEL_TRACES_SAMPLER and
+ *        OTEL_TRACES_SAMPLER_ARG) but carries the same head-sampling meaning,
+ *        so a NIXL running inside Dynamo inherits it. Unset diverges:
+ *        Dynamo samples everything, NIXL samples nothing. Setting
+ *        traceSampleRatioVar empty is an explicit "off" that beats the
+ *        fallback, matching how NIXL_TRACE_BACKENDS is treated.
+ * @return The resolved ratio, or 0 (sample nothing) when neither is usable.
+ * @throws std::invalid_argument when traceSampleRatioVar holds anything other
+ *         than 0 or a number in [2^-56, 1] — OpenTelemetry's range, 2^-56 being
+ *         one trace in every value 56 bits can express — so a caller who asked
+ *         for sampling is not silently given none. A bad value in the shared
+ *         OpenTelemetry variable only warns: NIXL does not own it and must not
+ *         fail construction on it.
+ */
+[[nodiscard]] double
+resolveTraceSampleRatio();
+
+/**
+ * @brief Generate a context with fresh random ids, marked sampled when
+ *        @p sample_ratio selects it by the rule sampledByRatio documents.
+ * @param sample_ratio Probability in [0, 1]; the default samples nothing.
+ */
 [[nodiscard]] TraceContext
-generateTraceContext();
+generateTraceContext(double sample_ratio = 0.0);
 
 } // namespace nixl::trace
 

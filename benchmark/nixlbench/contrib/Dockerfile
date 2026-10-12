@@ -100,13 +100,16 @@ RUN apt-get update -y && \
     libgtest-dev \
     hwloc \
     libhwloc-dev \
-    build-essential
+    build-essential \
+    libhiredis-dev \
+    libevent-dev \
+    redis-tools
 
 # Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
 # Skip only the DOCA SDK install when the base image already ships it.
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -183,8 +186,12 @@ ARG GRPC_TAG="v1.73.0"
 
 WORKDIR /workspace
 
+# CI supplies a github.com credential as the optional "ghconfig" build secret;
+# without it these clones stay anonymous. RUN --mount needs BuildKit or podman.
+ARG GIT_TERMINAL_PROMPT=0
+
 # Build Abseil from source (required for absl/log).
-RUN git clone https://github.com/abseil/abseil-cpp.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/abseil/abseil-cpp.git && \
     cd abseil-cpp && \
     git fetch --depth 1 origin ${ABSL_TAG} && \
     git checkout ${ABSL_TAG} && \
@@ -201,7 +208,7 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     ldconfig
 
 # Build gRPC from source against /usr/local Abseil.
-RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
     mkdir -p cmake/build && \
     cd cmake/build && \
@@ -245,7 +252,7 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
-RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
@@ -255,7 +262,7 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
 
-RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
     mkdir sdk_build && \
     cd sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_CXX_STANDARD=20 && \
@@ -264,7 +271,7 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
 
 # Install install Azure SDK for C++ dependencies and build
 RUN apt-get update && apt-get install -y libxml2-dev
-RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
     AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON -DCMAKE_CXX_STANDARD=20 && \
@@ -274,7 +281,7 @@ RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch 
     cmake --install sdk/storage/azure-storage-blobs && \
     cmake --install sdk/identity
 
-RUN git clone https://github.com/nvidia/gusli.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/nvidia/gusli.git && \
     cd gusli && \
     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 CXX="g++ -std=c++20" && \
     cd ..
@@ -299,9 +306,10 @@ ENV UV_PYTHON=python${DEFAULT_PYTHON_VERSION}
 RUN uv pip install --system --upgrade \
     meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Use system torch if present (>=2.7), else install it.
-RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then \
+RUN if TORCH_CHECK_ERR=$(/usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then \
         echo "Using PyTorch from system site-packages"; \
     else \
+        echo "System torch check failed: ${TORCH_CHECK_ERR}" >&2; \
         export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
         uv pip install --system torch torchvision torchaudio; \
     fi

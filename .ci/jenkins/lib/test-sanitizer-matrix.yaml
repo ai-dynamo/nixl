@@ -21,9 +21,9 @@
 ---
 job: nixl-ci-test-sanitizers
 
-registry_host: harbor.mellanox.com
-registry_auth: nixl_harbor_credentials
-registry_path: /nixl/base
+registry_host: artifactory.nvidia.com
+registry_auth: svc-nixl-new-artifactory-token
+registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 # Fail job if one of the steps fails or continue
 failFast: false
@@ -33,6 +33,7 @@ timeout_minutes: 240
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
+  imagePullSecrets: "['artifactory-pull-secret']"
   limits: "{memory: 16Gi, cpu: 8000m}"
   requests: "{memory: 16Gi, cpu: 8000m}"
 
@@ -44,17 +45,33 @@ env:
   STORAGE_DRIVER: 'overlay'
   CI_IMAGE_TAG: "CI_MANAGED"
 
+credentials:
+  - credentialsId: 'svc-nixl-github-read-only-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
+
+# ci-demo builds the images below outside any step; an entry's credentialsId binds
+# the token around its build, and this hook writes the git config the Dockerfile
+# mounts as the "ghconfig" secret. Left empty when nothing is bound.
+pipeline_on_image_build:
+  run: |
+    #!/bin/bash -e
+    . .ci/scripts/common.sh
+    write_github_gitconfig /tmp/ghconfig
+
 runs_on_dockers:
   # TSan-instrumented dependency image for the tsan build (DEPS_SANITIZE=thread
   # so abseil's absl::Mutex annotations are visible to ThreadSanitizer).
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-ci-test-sanitizers-base-tsan", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=thread'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=thread --secret id=ghconfig,src=/tmp/ghconfig',
+     credentialsId: 'svc-nixl-github-read-only-token'
     }
   # ASan-instrumented dependency image for the asan_ubsan build.
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-ci-test-sanitizers-base-asan", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=address'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=address --secret id=ghconfig,src=/tmp/ghconfig',
+     credentialsId: 'svc-nixl-github-read-only-token'
     }
 
 matrix:
