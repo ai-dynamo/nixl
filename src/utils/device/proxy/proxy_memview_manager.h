@@ -18,6 +18,7 @@
 #define NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_MEMVIEW_MANAGER_H
 
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -36,7 +37,9 @@ namespace nixl {
  */
 class proxyMemViewManager {
 public:
-    proxyMemViewManager(deviceOps &allocator, const nixlProxyDeviceContextData *device_context);
+    proxyMemViewManager(deviceOps &allocator,
+                        const nixlProxyDeviceContextData *device_context,
+                        uint32_t max_peers);
 
     proxyMemViewManager(const proxyMemViewManager &) = delete;
     proxyMemViewManager &
@@ -65,6 +68,9 @@ private:
 
     deviceOps &allocator_;
     const nixlProxyDeviceContextData *device_context_;
+    const uint32_t max_peers_;
+    /** Each remote agent's peer, kept for the manager's lifetime. */
+    std::unordered_map<std::string, uint32_t> peers_;
     /** Workers never access this ownership map. */
     std::unordered_map<proxy_view_handle_t, std::unique_ptr<proxyHostView>> views_;
 };
