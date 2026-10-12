@@ -132,6 +132,34 @@ def test_nixl_conf_bad_sync_mode():
         nixl_agent_config(sync_mode=1)
 
 
+def test_default_backend_configs_are_independent():
+    first_config = nixl_agent_config()
+    original_backends = first_config.backends.copy()
+    try:
+        second_config = nixl_agent_config()
+        first_config.backends.append("POSIX")
+        assert second_config.backends == ["UCX"]
+        assert nixl_agent_config().backends == ["UCX"]
+    finally:
+        first_config.backends[:] = original_backends
+
+
+def test_default_agent_keeps_ucx_after_another_config_is_cleared():
+    config = nixl_agent_config()
+    original_backends = config.backends.copy()
+    try:
+        config.backends.clear()
+        agent = nixl_agent(str(uuid.uuid4()))
+        assert "UCX" in agent.backends
+    finally:
+        config.backends[:] = original_backends
+
+
+@pytest.mark.parametrize("backends", [[], ["UCX"], ["POSIX", "UCX"]])
+def test_explicit_backend_config_preserves_selection(backends):
+    assert nixl_agent_config(backends=backends).backends == backends
+
+
 def test_make_invalid_op(one_empty_agent, two_xfer_lists):
     # Only READ/WRITE are supported
     with pytest.raises(KeyError):
