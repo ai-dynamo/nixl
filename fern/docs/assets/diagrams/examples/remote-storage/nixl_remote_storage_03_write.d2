@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL Remote Storage — Phase 3: Remote Write Request
+
+shape: sequence_diagram
+
+client: "Client\n(NIXL Agent)" {
+  class: agent
+}
+server: "Storage Server\n(NIXL Agent)" {
+  class: agent
+}
+storage: "Local Storage\n(GDS / POSIX)" {
+  class: external
+}
+
+client -> client: "3.1 get_serialized_descs(VRAM descs)" {
+  class: internal
+}
+client -> server: "3.2 send_notif(\"WRTE\" + iterations + descs)" {
+  class: notification-contrast
+}
+server -> server: "3.3 deserialize_descs(received data)" {
+  class: internal
+}
+server -> client: "3.4 initialize_xfer(READ, DRAM, client VRAM)" {
+  class: call
+}
+server -> client: "3.5 transfer — network read from client" {
+  class: transfer
+}
+server -> storage: "3.6 initialize_xfer(WRITE, DRAM, FILE)" {
+  class: call
+}
+server -> storage: "3.7 transfer — storage write" {
+  class: transfer
+}
+server -> server: "3.8 repeat 3.4–3.7 (pipelined)" {
+  class: repeat
+}
+server -> client: "3.9 send_notif(\"COMPLETE\")" {
+  class: notification-contrast
+}
+client -> client: "3.10 check_remote_xfer_done(\"COMPLETE\")" {
+  class: internal
+}

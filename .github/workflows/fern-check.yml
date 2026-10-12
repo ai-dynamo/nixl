@@ -27,6 +27,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Generate example snippets
+        run: python3 fern/scripts/generate_example_snippets.py
+
+      - name: Install D2
+        env:
+          D2_VERSION: v0.7.1
+          D2_SHA256: eb172adf59f38d1e5a70ab177591356754ffaf9bebb84e0ca8b767dfb421dad7
+        run: |
+          archive="$RUNNER_TEMP/d2-${D2_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/d2lang/d2/releases/download/${D2_VERSION}/d2-${D2_VERSION}-linux-amd64.tar.gz"
+          echo "${D2_SHA256}  ${archive}" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/d2-${D2_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Generate example diagrams
+        run: bash fern/scripts/generate_example_diagrams.sh
+
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

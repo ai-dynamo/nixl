@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL Basic Two Peers Transfer — Phase 4: Teardown
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  class: controller
+}
+initiator: "Initiator Agent\n(Auto Port)" {
+  class: agent
+}
+target: "Target Agent\n(Port 5555)" {
+  class: agent
+}
+
+initiator -> initiator: "4.1 remove_remote_agent(\"target\")" {
+  class: cleanup
+}
+initiator -> initiator: "4.2 release_xfer_handle(handle)" {
+  class: cleanup
+}
+initiator -> target: "4.3 invalidate_local_metadata(ip, 5555)" {
+  class: cleanup
+}
+initiator -> initiator: "4.4 deregister_memory(initiator_reg)" {
+  class: internal
+}
+target -> target: "4.5 deregister_memory(target_reg)" {
+  class: internal
+}
+conductor -> initiator: "4.6 delete agent(\"initiator\")" {
+  class: cleanup
+}
+conductor -> target: "4.7 delete agent(\"target\")" {
+  class: cleanup
+}

@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL Remote Storage — Read Pipeline
+# Shows pipelined overlap: storage read N runs concurrently with network write N-1
+
+shape: sequence_diagram
+
+server: "Storage Server\n(NIXL Agent)" {
+  class: agent
+}
+storage: "Local Storage\n(GDS / POSIX)" {
+  class: external
+}
+client: "Client\n(NIXL Agent)" {
+  class: agent
+}
+
+server -> storage: "Storage Read 1" {
+  class: transfer
+}
+
+server -> client: "Network Write 1" {
+  class: network-transfer
+}
+server -> storage: "Storage Read 2  ← overlaps with Write 1" {
+  class: transfer
+}
+
+server -> client: "Network Write 2" {
+  class: network-transfer
+}
+server -> storage: "Storage Read 3  ← overlaps with Write 2" {
+  class: transfer
+}
+
+server -> client: "Network Write 3" {
+  class: network-transfer
+}
+server -> storage: "Storage Read N  ← overlaps with Write N-1" {
+  class: transfer-repeat
+}
+
+server -> client: "Network Write N" {
+  class: network-transfer
+}

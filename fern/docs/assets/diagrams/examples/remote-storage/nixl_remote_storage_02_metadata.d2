@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL Remote Storage — Phase 2: Metadata Exchange
+
+shape: sequence_diagram
+
+client: "Client\n(NIXL Agent)" {
+  class: agent
+}
+server: "Storage Server\n(NIXL Agent)" {
+  class: agent
+}
+
+client -> server: "2.1 send_local_metadata(server_ip, port)" {
+  class: call
+}
+client -> server: "2.2 fetch_remote_metadata(\"server\", ip, port)" {
+  class: call
+}
+server -> client: "2.3 return server metadata" {
+  class: reply
+}
+client -> client: "2.4 check_remote_metadata(\"server\") [poll]" {
+  class: internal
+}

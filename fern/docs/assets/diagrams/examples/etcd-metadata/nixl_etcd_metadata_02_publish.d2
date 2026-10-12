@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL ETCD Metadata Exchange — Phase 2: Publish Metadata
+
+shape: sequence_diagram
+
+agent_a: "NIXL Agent\n(\"EtcdAgent1\")" {
+  class: agent
+}
+agent_b: "NIXL Agent\n(\"EtcdAgent2\")" {
+  class: agent
+}
+etcd: "etcd Server\n(localhost:2379)" {
+  class: external
+}
+
+agent_a -> agent_a: "2.1 serialize metadata\n(descs + UCX rkeys)" {
+  class: internal
+}
+agent_a -> etcd: "2.2 sendLocalMD() — PUT\n/nixl/agents/EtcdAgent1/metadata" {
+  class: call
+}
+agent_b -> agent_b: "2.3 serialize metadata\n(descs + UCX rkeys)" {
+  class: internal
+}
+agent_b -> etcd: "2.4 sendLocalMD() — PUT\n/nixl/agents/EtcdAgent2/metadata" {
+  class: call
+}
