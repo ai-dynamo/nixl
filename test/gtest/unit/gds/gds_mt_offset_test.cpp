@@ -33,7 +33,7 @@ TEST(GdsMtOffsetTest, InteriorDescriptorUsesRegisteredBase) {
     const uintptr_t descriptor_addr = reinterpret_cast<uintptr_t>(registered) + interior_offset;
 
     gdsResolvedBuffer resolved{};
-    const nixl_status_t status = gds_resolve_registered_buffer(
+    const nixl_status_t status = gdsResolveRegisteredBuffer(
         registered, sizeof(registered), descriptor_addr, interior_size, resolved);
 
     EXPECT_EQ(status, NIXL_SUCCESS);
@@ -45,12 +45,11 @@ TEST(GdsMtOffsetTest, ExactBaseUsesZeroOffset) {
     alignas(4096) char registered[registered_size]{};
 
     gdsResolvedBuffer resolved{};
-    const nixl_status_t status =
-        gds_resolve_registered_buffer(registered,
-                                      sizeof(registered),
-                                      reinterpret_cast<uintptr_t>(registered),
-                                      sizeof(registered),
-                                      resolved);
+    const nixl_status_t status = gdsResolveRegisteredBuffer(registered,
+                                                            sizeof(registered),
+                                                            reinterpret_cast<uintptr_t>(registered),
+                                                            sizeof(registered),
+                                                            resolved);
 
     EXPECT_EQ(status, NIXL_SUCCESS);
     EXPECT_EQ(resolved.dev_ptr_base, static_cast<void *>(registered));
@@ -61,7 +60,7 @@ TEST(GdsMtOffsetTest, DescriptorBeforeRegisteredBaseIsRejected) {
     alignas(4096) char registered[registered_size]{};
 
     gdsResolvedBuffer resolved{};
-    const nixl_status_t status = gds_resolve_registered_buffer(
+    const nixl_status_t status = gdsResolveRegisteredBuffer(
         registered, sizeof(registered), reinterpret_cast<uintptr_t>(registered) - 1, 1, resolved);
 
     EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
@@ -72,11 +71,11 @@ TEST(GdsMtOffsetTest, DescriptorPastRegisteredEndIsRejected) {
 
     gdsResolvedBuffer resolved{};
     const nixl_status_t status =
-        gds_resolve_registered_buffer(registered,
-                                      sizeof(registered),
-                                      reinterpret_cast<uintptr_t>(registered) + 3584,
-                                      1024,
-                                      resolved);
+        gdsResolveRegisteredBuffer(registered,
+                                   sizeof(registered),
+                                   reinterpret_cast<uintptr_t>(registered) + 3584,
+                                   1024,
+                                   resolved);
 
     EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
 }

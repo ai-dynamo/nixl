@@ -53,11 +53,11 @@ struct gdsXferReq {
 
 // Resolves a descriptor against a registered buffer and validates its range.
 nixl_status_t
-gds_resolve_registered_buffer(void *registered_base,
-                              size_t registered_size,
-                              uintptr_t descriptor_addr,
-                              size_t descriptor_size,
-                              gdsResolvedBuffer &resolved);
+gdsResolveRegisteredBuffer(void *registered_base,
+                           size_t registered_size,
+                           uintptr_t descriptor_addr,
+                           size_t descriptor_size,
+                           gdsResolvedBuffer &resolved);
 
 // Abstract base for the GDS family of backends. It owns everything that is
 // identical between "GDS" and "GDS_MT": the cuFile driver lifecycle, memory and

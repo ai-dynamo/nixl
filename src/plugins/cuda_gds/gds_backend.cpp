@@ -70,11 +70,11 @@ public:
 } // namespace
 
 nixl_status_t
-gds_resolve_registered_buffer(void *registered_base,
-                              size_t registered_size,
-                              uintptr_t descriptor_addr,
-                              size_t descriptor_size,
-                              gdsResolvedBuffer &resolved) {
+gdsResolveRegisteredBuffer(void *registered_base,
+                           size_t registered_size,
+                           uintptr_t descriptor_addr,
+                           size_t descriptor_size,
+                           gdsResolvedBuffer &resolved) {
     if (registered_base == nullptr || registered_size == 0 || descriptor_addr == 0) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -246,14 +246,19 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
             return NIXL_ERR_NOT_FOUND;
         }
 
+        if (mem_desc.addr == 0) {
+            NIXL_ERROR << "GDS: null memory descriptor address";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
         gdsResolvedBuffer resolved{};
         if (mem_data->buf.isRegistered()) {
             const nixl_status_t resolve_status =
-                gds_resolve_registered_buffer(mem_data->registered_base,
-                                              mem_data->registered_size,
-                                              mem_desc.addr,
-                                              mem_desc.len,
-                                              resolved);
+                gdsResolveRegisteredBuffer(mem_data->registered_base,
+                                           mem_data->registered_size,
+                                           mem_desc.addr,
+                                           mem_desc.len,
+                                           resolved);
             if (resolve_status != NIXL_SUCCESS) {
                 NIXL_ERROR << "GDS: descriptor is outside registered memory range";
                 return resolve_status;
