@@ -169,8 +169,9 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t er
     ep_params.address = reinterpret_cast<ucp_address_t *>(addr);
 
     status = nixl::ucx::ucsToNixlStatus(ucp_ep_create(worker, &ep_params, &eph));
-    if (status != NIXL_SUCCESS)
+    if (status != NIXL_SUCCESS) {
         throw std::runtime_error("failed to create ep");
+    }
 }
 
 nixlUcxEp::~nixlUcxEp() {
