@@ -22,7 +22,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 #include <random>
+#include <thread>
 #include <vector>
 
 #include <absl/time/clock.h>
@@ -331,15 +333,46 @@ TEST_P(setupObjAccelTestFixture, AccelReservedCharKeyXferTest) {
     EXPECT_EQ(localBackendEngine_->deregisterMem(mem_md), NIXL_SUCCESS);
 }
 
+// Writes a random pattern from the whole of mem to a new object, zeroes mem,
+// reads the object back and checks that the pattern returned.
+template<nixl_mem_t memType>
+void
+testRoundTrip(nixlBackendEngine &engine,
+              memoryHandler<memType> &mem,
+              const nixlBlobDesc &mem_desc,
+              const std::string &key) {
+    nixlBlobDesc obj_desc(0, mem_desc.len, 0, key);
+    nixlBackendMD *obj_md = nullptr;
+    ASSERT_EQ(engine.registerMem(obj_desc, OBJ_SEG, obj_md), NIXL_SUCCESS);
+
+    nixl_meta_dlist_t local(memType);
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    nixlMetaDesc local_desc;
+    mem.populateMetaDesc(&local_desc, 0, mem_desc.len);
+    local.addDesc(local_desc);
+    remote.addDesc(nixlMetaDesc(0, mem_desc.len, 0, obj_md));
+
+    std::vector<uint8_t> pattern(mem_desc.len);
+    std::mt19937 rng(2370);
+    std::generate(pattern.begin(), pattern.end(), [&rng] { return static_cast<uint8_t>(rng()); });
+    copyToMem<memType>(mem_desc.addr, pattern);
+    EXPECT_EQ(runXfer(engine, NIXL_WRITE, local, remote), NIXL_SUCCESS);
+
+    copyToMem<memType>(mem_desc.addr, std::vector<uint8_t>(pattern.size(), 0));
+    EXPECT_EQ(runXfer(engine, NIXL_READ, local, remote), NIXL_SUCCESS);
+    EXPECT_EQ(copyFromMem<memType>(mem_desc.addr, pattern.size()), pattern);
+
+    EXPECT_EQ(engine.deregisterMem(obj_md), NIXL_SUCCESS);
+}
+
 // Several agents in one process registering the same buffer share one cuObject
 // registration, so it must stay usable until the last of them deregisters.
 TEST_P(setupObjAccelTestFixture, AccelSharedBufferRegistrationTest) {
-    constexpr size_t len = 1 << 20;
     nixlBackendInitParams init_params = GetParam();
     init_params.customParams = &localParams_;
     nixlObjEngine other_engine(&init_params);
 
-    memoryHandler<DRAM_SEG> mem(len, 0);
+    memoryHandler<DRAM_SEG> mem(1 << 20, 0);
     nixlBlobDesc mem_desc;
     mem.populateBlobDesc(&mem_desc);
     nixlBackendMD *first_md = nullptr;
@@ -349,29 +382,70 @@ TEST_P(setupObjAccelTestFixture, AccelSharedBufferRegistrationTest) {
     EXPECT_EQ(localBackendEngine_->deregisterMem(first_md), NIXL_SUCCESS);
     mem.setMD(second_md);
 
-    nixlBlobDesc obj_desc(0, len, 0, "test-obj-key-shared-registration");
-    nixlBackendMD *obj_md = nullptr;
-    ASSERT_EQ(other_engine.registerMem(obj_desc, OBJ_SEG, obj_md), NIXL_SUCCESS);
-
-    nixl_meta_dlist_t local(DRAM_SEG);
-    nixl_meta_dlist_t remote(OBJ_SEG);
-    nixlMetaDesc local_desc;
-    mem.populateMetaDesc(&local_desc, 0, len);
-    local.addDesc(local_desc);
-    remote.addDesc(nixlMetaDesc(0, len, 0, obj_md));
-
-    std::vector<uint8_t> pattern(len);
-    std::mt19937 rng(2370);
-    std::generate(pattern.begin(), pattern.end(), [&rng] { return static_cast<uint8_t>(rng()); });
-    copyToMem<DRAM_SEG>(mem_desc.addr, pattern);
-    EXPECT_EQ(runXfer(other_engine, NIXL_WRITE, local, remote), NIXL_SUCCESS);
-
-    copyToMem<DRAM_SEG>(mem_desc.addr, std::vector<uint8_t>(len, 0));
-    EXPECT_EQ(runXfer(other_engine, NIXL_READ, local, remote), NIXL_SUCCESS);
-    EXPECT_EQ(copyFromMem<DRAM_SEG>(mem_desc.addr, len), pattern);
-
-    EXPECT_EQ(other_engine.deregisterMem(obj_md), NIXL_SUCCESS);
+    testRoundTrip<DRAM_SEG>(other_engine, mem, mem_desc, "test-obj-key-shared-registration");
     EXPECT_EQ(other_engine.deregisterMem(second_md), NIXL_SUCCESS);
+}
+
+// Agents register and release a buffer while another agent holds it and
+// transfers through it, and then the last release races a new registration.
+// The shared registration must stay usable for whichever agent still holds it.
+TEST_P(setupObjAccelTestFixture, AccelSharedBufferConcurrentRegistrationTest) {
+    constexpr int num_threads = 4;
+    constexpr int iterations = 20;
+    nixlBackendInitParams init_params = GetParam();
+    init_params.customParams = &localParams_;
+
+    memoryHandler<DRAM_SEG> mem(1 << 20, 0);
+    nixlBlobDesc mem_desc;
+    mem.populateBlobDesc(&mem_desc);
+    nixlBackendMD *holder_md = nullptr;
+    ASSERT_EQ(localBackendEngine_->registerMem(mem_desc, DRAM_SEG, holder_md), NIXL_SUCCESS);
+    mem.setMD(holder_md);
+
+    std::atomic<int> failures{0};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < num_threads; ++t) {
+        threads.emplace_back([&] {
+            nixlObjEngine engine(&init_params);
+            for (int i = 0; i < iterations; ++i) {
+                nixlBackendMD *md = nullptr;
+                if (engine.registerMem(mem_desc, DRAM_SEG, md) != NIXL_SUCCESS ||
+                    engine.deregisterMem(md) != NIXL_SUCCESS) {
+                    ++failures;
+                }
+            }
+        });
+    }
+    for (int i = 0; i < iterations; ++i) {
+        testRoundTrip<DRAM_SEG>(
+            *localBackendEngine_, mem, mem_desc, "test-obj-key-shared-concurrent");
+    }
+    for (auto &thread : threads) {
+        thread.join();
+    }
+    EXPECT_EQ(failures, 0);
+
+    nixlObjEngine other_engine(&init_params);
+    for (int i = 0; i < iterations; ++i) {
+        nixlBackendMD *other_md = nullptr;
+        nixl_status_t release_status = NIXL_ERR_UNKNOWN;
+        nixl_status_t acquire_status = NIXL_ERR_UNKNOWN;
+        std::thread release(
+            [&] { release_status = localBackendEngine_->deregisterMem(holder_md); });
+        std::thread acquire(
+            [&] { acquire_status = other_engine.registerMem(mem_desc, DRAM_SEG, other_md); });
+        release.join();
+        acquire.join();
+        EXPECT_EQ(release_status, NIXL_SUCCESS);
+        ASSERT_EQ(acquire_status, NIXL_SUCCESS);
+        mem.setMD(other_md);
+        testRoundTrip<DRAM_SEG>(other_engine, mem, mem_desc, "test-obj-key-shared-race");
+
+        ASSERT_EQ(localBackendEngine_->registerMem(mem_desc, DRAM_SEG, holder_md), NIXL_SUCCESS);
+        mem.setMD(holder_md);
+        EXPECT_EQ(other_engine.deregisterMem(other_md), NIXL_SUCCESS);
+    }
+    EXPECT_EQ(localBackendEngine_->deregisterMem(holder_md), NIXL_SUCCESS);
 }
 
 #ifdef HAVE_CUDA
