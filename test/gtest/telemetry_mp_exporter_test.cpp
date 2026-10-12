@@ -28,12 +28,11 @@
 
 #include <prometheus/exposer.h>
 
-#include <unistd.h>
+#include <fcntl.h>
+#include <sys/file.h>
 
-#include <cerrno>
 #include <chrono>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -42,6 +41,7 @@
 
 namespace {
 
+using nixl::telemetry::mp::heldAddressesExcept;
 using nixl::telemetry::mp::ownerLockFileName;
 using nixl::telemetry::mp::readStoreSnapshot;
 
@@ -176,15 +176,22 @@ TEST_F(MpExporterTest, LeftoverLockFileIsNotASecondOwner) {
     EXPECT_TRUE(exporter.isExporter());
 }
 
+TEST_F(MpExporterTest, LeftoverLockFileIsNotASecondOwnerWhileAnotherOwnerProbesIt) {
+    const auto leftover = dir_ / ownerLockFileName("127.0.0.1:1");
+    { std::ofstream(leftover).put('\0'); }
+
+    const nixl::scopedFd second_owner_probe(::open(leftover.c_str(), O_RDONLY | O_CLOEXEC));
+    ASSERT_TRUE(second_owner_probe.valid());
+    ASSERT_EQ(::flock(second_owner_probe.get(), LOCK_SH | LOCK_NB), 0);
+
+    EXPECT_TRUE(heldAddressesExcept(dir_, "127.0.0.1:2").empty());
+}
+
 TEST_F(MpExporterTest, ForeignOwnedLockFileCannotSilenceTheRun) {
-    if (::geteuid() != 0) {
-        GTEST_SKIP() << "needs privileges to give the lock file another owner";
-    }
     const auto lock = dir_ / ownerLockFileName("127.0.0.1:" + std::to_string(port_));
     { std::ofstream(lock).put('\0'); }
-    constexpr uid_t nobody = 65534;
-    if (::chown(lock.c_str(), nobody, static_cast<gid_t>(-1)) != 0) {
-        GTEST_SKIP() << "cannot give the lock file another owner: " << strerror(errno);
+    if (const auto why = giveAwayOwnership(lock)) {
+        GTEST_SKIP() << *why;
     }
 
     // A planted lock must not read as a sibling win, or every rank of a shared

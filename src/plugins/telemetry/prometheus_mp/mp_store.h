@@ -37,7 +37,7 @@ namespace nixl::telemetry::mp {
 // On-disk schema version for the per-process metric-state store. Independent of
 // the event-buffer TELEMETRY_VERSION: this is a different file format. Bump on
 // any layout change so a reader rejects incompatible files.
-inline constexpr uint32_t MP_STORE_SCHEMA_VERSION = 1;
+inline constexpr uint32_t MP_STORE_SCHEMA_VERSION = 2;
 
 // Store file naming shared by the writer (exporter) and the collector so the
 // collector can discover peer files by globbing "<prefix>*<suffix>".
@@ -273,9 +273,9 @@ private:
  * @brief Whether the process that created the store at @p path still holds it.
  *
  * A store is locked before it has a name and unlocked only when its writer dies
- * or destroys it, and no process ever locks a store it did not create. So a lock
- * this succeeds in taking means the writer is gone for good and the file will
- * never change again -- which is the whole liveness test, with no pids, no
+ * or destroys it, and no other process ever locks it exclusively. So a shared
+ * lock this succeeds in taking means the writer is gone for good and the file
+ * will never change again -- which is the whole liveness test, with no pids, no
  * /proc, and no need to share a PID namespace with the writer.
  *
  * Conservative on failure: a store that cannot be opened or locked for any other

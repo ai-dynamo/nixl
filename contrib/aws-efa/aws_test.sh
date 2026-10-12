@@ -25,12 +25,13 @@ usage() {
     echo "Runs contrib/aws-efa/aws_test_remote.sh inside the AWS job."
     echo ""
     echo "Required environment variables:"
-    echo "  GITHUB_REF        - Git reference to checkout (e.g., main, branch-xyz, commit SHA)"
+    echo "  GITHUB_REF        - Git reference to test if GITHUB_SHA is unset (e.g., main, branch-xyz, full commit SHA)"
     echo "  GITHUB_SERVER_URL - GitHub server URL (e.g., \"https://github.com\")"
     echo "  GITHUB_REPOSITORY - GitHub repository (e.g., \"ai-dynamo/nixl\")"
     echo ""
     echo "Optional environment variables:"
-    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04)"
+    echo "  GITHUB_SHA        - Commit SHA to test, takes precedence over GITHUB_REF (set by GitHub Actions)"
+    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04)"
     echo "  TEST_TIMEOUT      - Timeout for test execution in minutes"
     exit 1
 }
@@ -41,21 +42,21 @@ if [ -z "$GITHUB_REF" ] || [ -z "$GITHUB_SERVER_URL" ] || [ -z "$GITHUB_REPOSITO
     usage
 fi
 
-export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04"}
+export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04"}
 
-checkout_ref="$GITHUB_REF"
-case "$GITHUB_REF" in
-    refs/heads/*)
-        checkout_ref="${GITHUB_REF#refs/heads/}"
-        ;;
-esac
+# Pin the commit: pull-request/<N> branches can be deleted or moved before the pod clones.
+checkout_ref="${GITHUB_SHA:-$GITHUB_REF}"
 
 if [ -n "$TEST_TIMEOUT" ]; then
     TIMEOUT_CMD="timeout ${TEST_TIMEOUT}m"
 else
     TIMEOUT_CMD=""
 fi
-export AWS_CMD="set -x && git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && cd nixl && git checkout ${checkout_ref} && $TIMEOUT_CMD bash contrib/aws-efa/aws_test_remote.sh \${NIXL_INSTALL_DIR}"
+# Use the in-region EC2 Ubuntu mirror; archive/security.ubuntu.com are reached over the internet.
+ubuntu_mirror="http://${AWS_DEFAULT_REGION:-eu-central-1}.ec2.archive.ubuntu.com/"
+apt_mirror_cmd="grep -rlE 'http://(archive|security).ubuntu.com/' /etc/apt | xargs -r sed -i -E 's#http://(archive|security).ubuntu.com/#${ubuntu_mirror}#'"
+# The nvidia/cuda base image ships no git; .gitlab/build.sh installs it, but only after the clone.
+export AWS_CMD="set -x && ${apt_mirror_cmd} && apt-get -qq update && apt-get -qq install -y git && git init -q nixl && cd nixl && git fetch --depth 1 ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} ${checkout_ref} && git checkout --detach FETCH_HEAD && $TIMEOUT_CMD bash contrib/aws-efa/aws_test_remote.sh \${NIXL_INSTALL_DIR}"
 
 # Generate AWS job properties json from template
 envsubst < aws_vars.template > aws_vars.json
