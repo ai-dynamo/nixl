@@ -84,6 +84,8 @@ rdmaPutObject(SharedCuObjClient &rdma,
 /**
  * @brief Read size bytes of ctx.bucket/ctx.object from offset into buf over
  *        RDMA, as ranged GETs of at most rdma_max_request_size bytes each.
+ *        Every range after the first must match the first range's ETag, so a
+ *        read never mixes two versions of the object.
  * @return Bytes read, or a negative rdma_* code.
  */
 [[nodiscard]] ssize_t

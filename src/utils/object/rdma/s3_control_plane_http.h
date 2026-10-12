@@ -39,6 +39,7 @@ struct S3RdmaClientCtx {
     std::string uploadId; ///< Multipart upload id; empty for single-shot.
     uint32_t partNumber = 0; ///< Part number 1..10000 when uploadId is set.
     std::string etag; ///< ETag returned by the server; populated on success.
+    std::string ifMatch; ///< When set, a GET fails unless the object's ETag matches.
 };
 
 /**

@@ -136,6 +136,7 @@ rdmaGetObject(SharedCuObjClient &rdma,
         if (r != static_cast<ssize_t>(len)) {
             break;
         }
+        ctx.ifMatch = ctx.etag;
     }
     return static_cast<ssize_t>(done);
 }

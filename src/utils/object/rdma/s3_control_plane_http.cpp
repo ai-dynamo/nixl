@@ -389,8 +389,11 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
             "bytes=" + std::to_string(offset) + "-" + std::to_string(offset + size - 1);
 
         auto resp = impl_->sendRdmaRequest(
-            Aws::Http::HttpMethod::HTTP_GET, uri, token, [&range](Aws::Http::HttpRequest &req) {
+            Aws::Http::HttpMethod::HTTP_GET, uri, token, [&](Aws::Http::HttpRequest &req) {
                 req.SetHeaderValue("range", range.c_str());
+                if (!ctx.ifMatch.empty()) {
+                    req.SetHeaderValue("if-match", ("\"" + ctx.ifMatch + "\"").c_str());
+                }
             });
         if (!resp) {
             NIXL_ERROR << "rdmaGet: MakeRequest returned null for key=" << ctx.object;
