@@ -66,9 +66,10 @@ stream:
   **identical** metric definitions -- the same names, types, and semantics --
   derived from one shared metric descriptor
   (`nixlEnumStrings::telemetryMetricDescriptor` in `telemetry_event.h`). The
-  emitted series are not identical, because `prometheus_mp` adds `pid`,
-  `agent_instance` and optionally `local_rank` to keep processes distinct (see
-  "Multi-process aggregation" below). All three
+  emitted series are not always identical: `prometheus_mp` adds `local_rank` when
+  a rank env var is set, and `pid` and `agent_instance` when two live agents on
+  one host share a name and `local_rank` (see "Multi-process aggregation" below).
+  All three
   expose `agent_tx_bytes_total` / `agent_rx_bytes_total` (counters, OpenMetrics
   `_total` suffix) alongside `agent_tx_last_bytes` / `agent_rx_last_bytes`
   (gauges). The memory events likewise expose both a cumulative `_total` counter
@@ -79,8 +80,7 @@ stream:
 - **Latency histograms**: the transfer-time events additionally feed distribution
   histograms `agent_xfer_time_us` / `agent_xfer_post_time_us` (microseconds) on
   the Prometheus, multi-process Prometheus and DOCA exporters, at parity (same
-  names, buckets, and semantics; `prometheus_mp` carries its extra
-  process-identity labels here too).
+  names, buckets, and semantics; `prometheus_mp` carries its extra labels here too).
   Each is exposed as the standard `_bucket{le="..."}` / `_sum` / `_count` series
   alongside the existing counter and gauge. Bucket boundaries default to a
   microsecond range covering ~10us..~10s and are overridable via
@@ -167,7 +167,7 @@ multi-process NIXL run behind a **single** Prometheus scrape endpoint, natively
 memory-mapped file in a shared directory; the processes race for an exclusive
 `flock` on `nixl-owner.<address:port>.lock` in that directory, and only the winner binds the
 scrape port and serves `/metrics` by reading and republishing all live processes'
-files on each scrape (labeled per process). The losers run as writers only, so
+files on each scrape (one series set per agent name, host and `local_rank`). The losers run as writers only, so
 losing is benign and no rank is dropped, and a writer re-runs the election as it
 exports so the owner's death costs a gap rather than the rest of the run. If the
 winner cannot bind, nothing aggregates the directory and it says so. Should the
@@ -184,7 +184,7 @@ deciding. Full details:
 | `NIXL_TELEMETRY_PROMETHEUS_PORT` | Scrape port (shared with the `prometheus` exporter) | `9090` |
 | `NIXL_TELEMETRY_PROMETHEUS_LOCAL` | Bind `127.0.0.1` instead of `0.0.0.0` | `false` |
 | `NIXL_TELEMETRY_RANK_ENV` | Name of the env var holding the rank for the optional `local_rank` label; no label if that env var is unset | `LOCAL_RANK` |
-| `NIXL_TELEMETRY_MP_STALE_TTL` | Seconds after a dead process's last update before its store is stale and reaped. A departing rank leaves its store behind so its final values can still be scraped, so keep this at or above the scrape interval | `30` |
+| `NIXL_TELEMETRY_MP_STALE_TTL` | Seconds after a dead process's last update before its store is stale and reaped. A departing rank leaves its store behind so its final values can still be scraped (unless a successor under its name supersedes them), so keep this at or above the scrape interval | `30` |
 | `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Shared with the other exporters, but capped at 32 bounds by the fixed-layout store | built-in µs defaults |
 
 Unlike a bind collision, a configuration error here is fatal: a missing
@@ -192,12 +192,18 @@ Unlike a bind collision, a configuration error here is fatal: a missing
 `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` both throw out of the `nixlAgent`
 constructor rather than leaving the rank running without telemetry.
 
-Series are labeled by `hostname`, `agent_name`, `pid` (guarantees cross-process
-uniqueness), `agent_instance` (distinguishes multiple same-name agents within one
-process), and optionally `local_rank` (the local/per-GPU rank, not Dynamo's
-data-parallel `dp_rank`). `agent_errors_total` additionally includes the bounded
-`status` label. Metric names, types, and semantics are identical to the
-single-process `prometheus` exporter.
+Series are labeled by `hostname`, `agent_name`, and optionally `local_rank` (the
+local/per-GPU rank, not Dynamo's data-parallel `dp_rank`). `agent_errors_total`
+additionally includes the bounded `status` label. Metric names, types, and
+semantics are identical to the single-process `prometheus` exporter. Each scrape
+publishes one store per `hostname`, `agent_name` and `local_rank`: the live
+writer's, or with none left, the most recently updated departed one. A rank
+restarted under the same name therefore continues its series, its counters
+restarting from zero as under the single-process exporter; Prometheus detects
+that reset only if the next scrape reads a lower value. Only when two or more
+live agents share a name -- a misconfiguration, since peers look agents up by
+name -- does each get `pid` and `agent_instance` labels to stay distinct, and
+the owner warns once, naming the first such name.
 
 `NIXL_TELEMETRY_MULTIPROC_DIR` follows Dynamo's `PROMETHEUS_MULTIPROC_DIR`
 convention: a shared **local** folder (not NFS), one per pod / process-family,
@@ -214,7 +220,7 @@ which is what makes a killed rank indistinguishable from a clean exit here, and
 what lets ranks in different PID namespaces aggregate each other.
 
 As with the election, this holds while the lock is usable. A rank whose store lock
-failed warns at startup and is judged by its heartbeat alone from then on, so
+failed warns at startup and is treated as a departed store from then on, so
 going idle for longer than the TTL costs it its series and its file -- or, on a
 filesystem where no process can lock, nothing is ever reaped and departed ranks
 stay published.
