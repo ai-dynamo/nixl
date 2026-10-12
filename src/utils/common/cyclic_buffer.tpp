@@ -163,7 +163,37 @@ sharedRingBuffer<T>::createCyclicBuffer(const std::string &name, int version) {
         delete fd;
     };
 
-    int fd = open(name.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    // An existing file may still be mapped by a consumer: keep using it if it is compatible,
+    // otherwise replace it (the old consumer keeps its mapping and has to be restarted)
+    bool compat_header_exists = false;
+    int fd = open(name.c_str(), O_RDWR);
+    if (fd != -1) {
+        struct stat st{};
+        // If a file exists check compatibility
+        if (fstat(fd, &st) == 0 && static_cast<size_t>(st.st_size) == getTotalSize()) {
+            void *hp = mmap(nullptr, sizeof(bufferHeader), PROT_READ, MAP_SHARED, fd, 0);
+            if (hp != MAP_FAILED) {
+                const bufferHeader *h = static_cast<const bufferHeader *>(hp);
+                // Only compatible if version, capacity, mask and positions are valid
+                compat_header_exists = h->version.load(std::memory_order_acquire) == version &&
+                    h->capacity == bufferSize_ && h->mask == bufferSize_ - 1 &&
+                    h->write_pos.load(std::memory_order_acquire) <= h->mask &&
+                    h->read_pos.load(std::memory_order_acquire) <= h->mask;
+                munmap(hp, sizeof(bufferHeader));
+            }
+        }
+        // If there is a file but it is not compatible, remove it so the producer can start
+        // again; the old consumer is not affected
+        if (!compat_header_exists) {
+            NIXL_INFO << "Telemetry buffer " << name
+                      << " exists with an incompatible size or header, replacing it";
+            close(fd);
+            unlink(name.c_str());
+        }
+    }
+    if (!compat_header_exists) {
+        fd = open(name.c_str(), O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    }
     if (fd == -1) {
         NIXL_ERROR << "Failed to open a file for shared memory: " << name
                    << " with error: " << strerror(errno);
@@ -189,9 +219,12 @@ sharedRingBuffer<T>::createCyclicBuffer(const std::string &name, int version) {
     header_ = static_cast<bufferHeader *>(ptr);
     data_ = reinterpret_cast<T *>(static_cast<char *>(ptr) + sizeof(bufferHeader));
 
-    new (header_) bufferHeader(bufferSize_);
-    header_->version.store(version, std::memory_order_release);
-    header_->expected_version = version;
+    // Keep values if compatible, new header if not
+    if (!compat_header_exists) {
+        new (header_) bufferHeader(bufferSize_);
+        header_->version.store(version, std::memory_order_release);
+        header_->expected_version = version;
+    }
 
     // Seed the cached values from the header
     cachedWritePos_ = header_->write_pos.load(std::memory_order_acquire);
