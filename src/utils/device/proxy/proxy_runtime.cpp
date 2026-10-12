@@ -139,8 +139,13 @@ proxyRuntime::build() {
     }
     memview_manager_ = std::make_unique<proxyMemViewManager>(allocator_, deviceContext());
 
-    worker_context_ = std::make_unique<const proxyWorkerContext>(proxyWorkerContext{
-        *transport_, channels_, worker_count, drain_requested_, stop_source_.get_token()});
+    worker_context_ =
+        std::make_unique<const proxyWorkerContext>(proxyWorkerContext{*transport_,
+                                                                      channels_,
+                                                                      worker_count,
+                                                                      drain_requested_,
+                                                                      shutting_down_,
+                                                                      stop_source_.get_token()});
     workers_.reserve(worker_count);
     for (uint32_t worker_idx = 0; worker_idx < worker_count; worker_idx++) {
         workers_.push_back(std::make_unique<proxyWorker>(*worker_context_, worker_idx));
@@ -281,6 +286,7 @@ proxyRuntime::shutdown() {
     if (state_ == state_t::STOPPED) {
         return NIXL_SUCCESS;
     }
+    shutting_down_.store(true, std::memory_order_release);
     if (state_ == state_t::RUNNING &&
         control_slots_->publishShutdown(nixl_proxy_control_state_t::SHUTDOWN) != NIXL_SUCCESS) {
         NIXL_FATAL << "Failed to publish proxy shutdown";

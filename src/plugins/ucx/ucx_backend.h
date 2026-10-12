@@ -255,6 +255,14 @@ protected:
     notif_list_t notifList_;
 
 private:
+    /** Shared by the local and remote prepMemView overloads; kind names which. */
+    template<typename DlistT>
+    nixl_status_t
+    prepMemViewImpl(const DlistT &dlist,
+                    nixlMemViewH &mvh,
+                    const nixl_opt_b_args_t *opt_args,
+                    const char *kind) const;
+
     // Memory management helpers
     nixl_status_t
     internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);

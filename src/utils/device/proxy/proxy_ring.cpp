@@ -34,6 +34,10 @@ proxyRing::allocate(deviceOps &allocator,
     depth_ = depth;
     control_ = &control;
     ops_ = &allocator;
+    if (allocator.getActiveDevice(device_id_) != NIXL_SUCCESS) {
+        deallocate();
+        return NIXL_ERR_BACKEND;
+    }
     ring_index_ = ring_index;
     consumer_idx_shadow_ = 0;
 
@@ -102,6 +106,7 @@ proxyRing::rearm() noexcept {
     inflight_.assign(depth_, proxyRequestState{});
     // Clear the old completion latch before reusing the ring.
     completionSlotHost()->completion_status = NIXL_IN_PROG;
+    __atomic_store_n(&completionSlotHost()->failed_idx, uint64_t{0}, __ATOMIC_RELEASE);
     __atomic_store_n(&completionSlotHost()->completed_idx, uint64_t{0}, __ATOMIC_RELEASE);
     return NIXL_SUCCESS;
 }
@@ -110,9 +115,13 @@ void
 proxyRing::retireOldest(nixl_status_t status) noexcept {
     const uint64_t consumer_idx = consumer_idx_shadow_;
     proxyRequestState &front = inflight_[consumer_idx % depth_];
-    if (completionSlotHost()->completion_status >= 0) {
-        completionSlotHost()->completion_status = status;
-        __atomic_store_n(&completionSlotHost()->completed_idx, front.op_idx, __ATOMIC_RELEASE);
+    nixlProxyCompletionSlot *slot = completionSlotHost();
+    if (__atomic_load_n(&slot->failed_idx, __ATOMIC_RELAXED) == 0) {
+        slot->completion_status = status;
+        if (status < 0) {
+            __atomic_store_n(&slot->failed_idx, front.op_idx, __ATOMIC_RELEASE);
+        }
+        __atomic_store_n(&slot->completed_idx, front.op_idx, __ATOMIC_RELEASE);
     }
     if (publishConsumerIdx(consumer_idx + 1) != NIXL_SUCCESS) {
         NIXL_FATAL << "proxyRing::retireOldest: failed to publish CI"
@@ -144,8 +153,35 @@ proxyRing::drained() const noexcept {
         return false;
     }
     // Include published records that have not been submitted yet.
-    const uint32_t slot = static_cast<uint32_t>(submit_idx_ % depth_);
-    return __atomic_load_n(&commandsHost()[slot].op_idx, __ATOMIC_ACQUIRE) == 0;
+    return !published(submit_idx_);
+}
+
+bool
+proxyRing::skipAbandonedTickets() noexcept {
+    if (!allocated() || !drained()) {
+        return false;
+    }
+    uint64_t produced = 0;
+    if (ops_->copy(&produced,
+                   producer_idx_mem_.get(),
+                   sizeof(produced),
+                   deviceOps::copyDirection::DeviceToHost) != NIXL_SUCCESS) {
+        NIXL_FATAL << "proxyRing::skipAbandonedTickets: failed to read the producer index";
+    }
+    const uint64_t first = submit_idx_;
+    while (submit_idx_ < produced && !published(submit_idx_)) {
+        ++submit_idx_;
+    }
+    if (submit_idx_ == first) {
+        return false;
+    }
+    NIXL_DEBUG << "proxyRing::skipAbandonedTickets: ring=" << ring_index_ << " skipped "
+               << submit_idx_ - first << " ticket(s) from " << first;
+    if (publishConsumerIdx(submit_idx_) != NIXL_SUCCESS) {
+        NIXL_FATAL << "proxyRing::skipAbandonedTickets: failed to publish CI"
+                   << " consumer_idx=" << submit_idx_;
+    }
+    return true;
 }
 
 nixl_status_t
