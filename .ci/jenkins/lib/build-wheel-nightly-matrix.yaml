@@ -154,7 +154,7 @@ steps:
           ;;
         13)
           BASE_IMAGE_FLAGS=""
-          TORCH_VERSIONS="2.12,2.13,2.14"
+          TORCH_VERSIONS="2.12,2.13,2.14,2.15"
           ;;
         *)
           echo "ERROR: cuda is '${cuda:-<unset>}', expected 12 or 13"
