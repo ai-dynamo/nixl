@@ -181,10 +181,17 @@ SharedCuObjClient::putToken(char *token) {
     const std::lock_guard<std::mutex> lock(mutex_);
     client_->cuMemObjPutRDMAToken(token);
     const auto it = tokens_.find(token);
-    if (it != tokens_.end()) {
-        release(registrations_.find(it->second));
-        tokens_.erase(it);
+    if (it == tokens_.end()) {
+        return;
     }
+    const auto reg = registrations_.find(it->second);
+    if (reg != registrations_.end()) {
+        release(reg);
+    } else {
+        NIXL_ERROR << "No RDMA registration for token base="
+                   << reinterpret_cast<void *>(it->second);
+    }
+    tokens_.erase(it);
 }
 
 } // namespace nixl_obj_rdma
