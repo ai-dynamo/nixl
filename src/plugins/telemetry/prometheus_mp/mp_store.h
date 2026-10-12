@@ -248,12 +248,14 @@ public:
      *
      * Deliberately separate from the mutators: it costs a CLOCK_MONOTONIC read
      * (~24ns, several times a metric update's atomic), and the collector uses
-     * it for dead processes only: to expire them after the stale TTL (30s by
-     * default), and to pick the most recently updated of the departed stores
-     * that share a hostname, agent_name and local_rank. The exporter therefore
-     * refreshes once per event, after the slot updates, instead of from each
-     * mutator -- a duration event touches three slots. Skipping refreshes never
-     * hides a live process, it only makes a dead one's last values look older.
+     * it in two places. A dead process's store expires once this timestamp is
+     * older than the stale TTL (30s by default). Stores that share a hostname,
+     * agent_name and local_rank are ordered by liveness first and by this
+     * timestamp second, so it picks the departed store that is published when
+     * none of them is live. The exporter therefore refreshes once per event,
+     * after the slot updates, instead of from each mutator -- a duration event
+     * touches three slots. Skipping refreshes never hides a live process, it
+     * only makes a dead one's last values look older.
      */
     [[nodiscard]] uint64_t
     refreshHeartbeat() noexcept;
