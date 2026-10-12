@@ -21,6 +21,7 @@
 
 #include "common/nixl_log.h"
 #include "plugin_manager.h"
+#include "tracing/log_once.h"
 
 namespace nixl::trace {
 
@@ -76,11 +77,22 @@ Span::id() const noexcept {
 
 /*** Tracer ***/
 
-Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends, double sample_ratio) noexcept
+Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
+               double sample_ratio,
+               random_bytes_fn_t random_bytes) noexcept
     : backends_(std::move(backends)),
-      sampleRatio_(sample_ratio) {}
+      sampleRatio_(sample_ratio),
+      randomBytes_(random_bytes) {}
 
 Tracer::~Tracer() = default;
+
+void
+Tracer::reportContextFailure(std::string_view reason) const noexcept {
+    logOnce(contextFailureLogged_, [reason] {
+        NIXL_ERROR << "nixl::trace: could not generate a trace context (" << reason
+                   << "); the request continues untraced and further failures are not logged";
+    });
+}
 
 Span
 Tracer::beginSpan(std::string_view name, Kind kind) {

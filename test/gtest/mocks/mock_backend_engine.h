@@ -46,6 +46,12 @@ public:
     assert(sharedState > 0);
     return gmock_backend_engine->supportsNotif();
   }
+
+  bool
+  supportsTraceContext() const noexcept override {
+      assert(sharedState > 0);
+      return gmock_backend_engine->supportsTraceContext();
+  }
   nixl_mem_list_t getSupportedMems() const override {
     assert(sharedState > 0);
     return gmock_backend_engine->getSupportedMems();

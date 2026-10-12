@@ -219,7 +219,7 @@ TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {
 
 TEST_F(LoadedPluginTestFixture, CurrentPluginApiVersionIsAccepted) {
     EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
-    EXPECT_EQ(NIXL_PLUGIN_API_VERSION, 2);
+    EXPECT_EQ(NIXL_PLUGIN_API_VERSION, 3);
 }
 
 TEST_F(LoadedPluginTestFixture, LoadSinglePluginTest) {

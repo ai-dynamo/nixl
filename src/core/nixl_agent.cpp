@@ -36,6 +36,7 @@
 #include "common/str_util.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
+#include "tracing/log_once.h"
 #include "tracing/trace.h"
 #include "tracing/trace_macros.h"
 #include "tracing/trace_sink.h"
@@ -296,6 +297,23 @@ nixlAgentData::warnAboutEfaHardwareMismatch() {
     }
 }
 
+void
+nixlAgentData::warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
+                                             const nixl::trace::TraceContext &context) noexcept {
+    if (!context.sampled()) {
+        return;
+    }
+    const auto it = traceContextUnsupported_.find(backend.getType());
+    if (it == traceContextUnsupported_.end()) {
+        return;
+    }
+    nixl::trace::logOnce(it->second, [&backend] {
+        NIXL_WARN << "nixl::trace: backend '" << backend.getType()
+                  << "' cannot carry trace contexts, so sampled transfers through it reach "
+                     "remote agents untraced; logged once per backend and agent";
+    });
+}
+
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
                          const nixl_b_params_t &params,
@@ -396,6 +414,9 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     if (backend->supportsRemote()) {
         data->notifEngines.push_back(backend.get());
         data->connMd_[type] = conn_info;
+        if ((data->tracer_ != nullptr) && !backend->supportsTraceContext()) {
+            data->traceContextUnsupported_.try_emplace(type);
+        }
     }
 
     // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
@@ -925,6 +946,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
         return ret;
     }
 
+    data->warnIfTraceContextUnsupported(*backend, handle->traceContext());
     req_hndl = handle.release();
     return NIXL_SUCCESS;
 }
@@ -1072,6 +1094,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return ret1;
     }
 
+    data->warnIfTraceContextUnsupported(*handle->engine, handle->traceContext());
     req_hndl = handle.release();
     return NIXL_SUCCESS;
 }
