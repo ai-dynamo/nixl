@@ -155,11 +155,16 @@ private:
 };
 
 /**
- * @brief Composite tracer owned by the Agent. A single beginSpan()/mark() call
- *        fans out to every enabled backend. No singleton; injected explicitly.
+ * @brief Fills its buffer with random bytes for trace-context ids, or throws a
+ *        std::exception. An all-zero id is drawn again; null selects the default
+ *        getentropy-backed source.
  */
 using random_bytes_fn_t = void (*)(std::uint8_t *, std::size_t);
 
+/**
+ * @brief Composite tracer owned by the Agent. A single beginSpan()/mark() call
+ *        fans out to every enabled backend. No singleton; injected explicitly.
+ */
 class Tracer {
 public:
     explicit Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
@@ -185,11 +190,15 @@ public:
         return sampleRatio_;
     }
 
+    /** @brief Random-byte source for this agent's trace contexts; null means the
+     *         default. Carried here for the same reason as sampleRatio(). */
     [[nodiscard]] random_bytes_fn_t
     randomBytes() const noexcept {
         return randomBytes_;
     }
 
+    /** @brief Logs this tracer's first trace-context generation failure at ERROR;
+     *         later ones are not logged. */
     void
     reportContextFailure(std::string_view reason) const noexcept;
 
