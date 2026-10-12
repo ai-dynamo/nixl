@@ -17,11 +17,22 @@ if 'UCX' in static_plugins and not enabled_plugins.get('UCX')
     error('UCX cannot be listed in static_plugins when UCX is disabled')
 endif
 
-if enabled_plugins.get('UCX')
+if enabled_plugins.get('UCX') or (enabled_plugins.get('MUSA_UCX') and musa_dep.found())
     if not ucx_dep.found() and is_explicit_enable
-        error('UCX plugin requested but UCX dependency not found')
+        error('UCX or MUSA_UCX requested but UCX dependency not found')
     elif ucx_dep.found()
         subdir('ucx')
+    endif
+endif
+
+if enabled_plugins.get('MUSA_UCX')
+    if not musa_dep.found() or not ucx_dep.found()
+        if is_explicit_enable
+            error('MUSA_UCX requires -Dmusa_path=<SDK prefix> and an available UCX installation')
+        endif
+        message('Skipping MUSA_UCX: explicit MUSA SDK and UCX are required')
+    else
+        subdir('musa')
     endif
 endif
 
