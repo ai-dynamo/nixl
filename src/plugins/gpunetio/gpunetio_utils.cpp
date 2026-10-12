@@ -215,6 +215,9 @@ connect_verbs_qp(nixlDocaEngine *eng,
     doca_error_t status = DOCA_SUCCESS, tmp_status = DOCA_SUCCESS;
     doca_verbs_qp_attr *verbs_qp_attr = NULL;
 
+    uint8_t max_dest_rd_atomic, max_rd_atomic;
+    struct doca_verbs_device_attr *verbs_device_attr;
+
     status = doca_verbs_ah_attr_set_gid(eng->verbs_ah_attr, remote_gid);
     if (status != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to set remote gid " << doca_error_get_descr(status);
@@ -308,15 +311,34 @@ connect_verbs_qp(nixlDocaEngine *eng,
         goto destroy_verbs_qp_attr;
     }
 
-    status = doca_verbs_qp_attr_set_max_rd_atomic(verbs_qp_attr, 16);
+    status = doca_verbs_query_device(eng->verbs_context, &verbs_device_attr);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set max rd atomic " << doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to query device attributes: " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
-    status = doca_verbs_qp_attr_set_max_dest_rd_atomic(verbs_qp_attr, 16);
+    max_dest_rd_atomic = doca_verbs_device_attr_get_max_qp_init_rd_atom(verbs_device_attr);
+    max_rd_atomic = doca_verbs_device_attr_get_max_qp_rd_atom(verbs_device_attr);
+
+    status = doca_verbs_device_attr_free(verbs_device_attr);
     if (status != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to set max dest rd atomic " << doca_error_get_descr(status);
+        NIXL_ERROR << "Failed to free device attributes: " << doca_error_get_descr(status);
+        goto destroy_verbs_qp_attr;
+    }
+
+    /*
+     * Both the companion QP (RC_QP_*_REQ_ATTR_MASK) and the single QP modify the RD atomic limits, so set them
+     * once for both paths. Otherwise the companion QP is moved to RTR/RTS with the attribute defaults.
+     */
+    status = doca_verbs_qp_attr_set_max_dest_rd_atomic(verbs_qp_attr, max_dest_rd_atomic);
+    if (status != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to set max_dest_rd_atomic: " << doca_error_get_descr(status);
+        goto destroy_verbs_qp_attr;
+    }
+
+    status = doca_verbs_qp_attr_set_max_rd_atomic(verbs_qp_attr, max_rd_atomic);
+    if (status != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to set max_rd_atomic: " << doca_error_get_descr(status);
         goto destroy_verbs_qp_attr;
     }
 
