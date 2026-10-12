@@ -53,12 +53,11 @@ namespace {
     }
 
     [[noreturn]] void
-    throwStoreError(const char *action, const std::filesystem::path &path) {
-        const int err = errno;
-        throw std::system_error(err,
-                                std::generic_category(),
-                                std::string("prometheus_mp: cannot ") + action +
-                                    " telemetry store '" + path.string() + "'");
+    throwStoreError(int err, const char *action, const std::filesystem::path &path) {
+        throw storeSetupError(err,
+                              std::generic_category(),
+                              std::string("prometheus_mp: cannot ") + action +
+                                  " telemetry store '" + path.string() + "'");
     }
 
     // A store being created: nameless where the filesystem allows it, otherwise
@@ -98,13 +97,13 @@ namespace {
     publishStore(int fd, const std::filesystem::path &staging, const std::filesystem::path &path) {
         if (!staging.empty()) {
             if (::rename(staging.c_str(), path.c_str()) != 0) {
-                throwStoreError("publish", path);
+                throwStoreError(errno, "rename to", path);
             }
             return;
         }
         const std::string proc_path = "/proc/self/fd/" + std::to_string(fd);
         if (::linkat(AT_FDCWD, proc_path.c_str(), AT_FDCWD, path.c_str(), AT_SYMLINK_FOLLOW) != 0) {
-            throwStoreError("publish", path);
+            throwStoreError(errno, "link to", path);
         }
     }
 
@@ -143,7 +142,7 @@ storeWriter::storeWriter(std::filesystem::path path,
 
     auto staged = stageStore(path_);
     if (!staged.fd.valid()) {
-        throwStoreError("create", path_);
+        throwStoreError(errno, "create", path_);
     }
 
     // Not fatal: the store is still written and scraped, only its liveness stops
@@ -159,13 +158,15 @@ storeWriter::storeWriter(std::filesystem::path path,
                   << "and departed ranks stay published indefinitely";
     }
 
-    if (::ftruncate(staged.fd.get(), static_cast<off_t>(sizeof(storeLayout))) != 0) {
-        throwStoreError("size", path_);
+    if (const int err =
+            ::posix_fallocate(staged.fd.get(), 0, static_cast<off_t>(sizeof(storeLayout)));
+        err != 0) {
+        throwStoreError(err, "allocate", path_);
     }
 
     mappedRegion mapping(staged.fd.get(), sizeof(storeLayout), PROT_READ | PROT_WRITE, MAP_SHARED);
     if (!mapping.valid()) {
-        throwStoreError("map", path_);
+        throwStoreError(errno, "map", path_);
     }
 
     auto *layout = static_cast<storeLayout *>(mapping.get());

@@ -31,12 +31,12 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 #include <thread>
 #include <vector>
 
 namespace {
 
+using nixl::telemetry::mp::storeSetupError;
 using nixl::telemetry::mp::storeWriter;
 using nixl::telemetry::mp::storeWriterAlive;
 using nixl::telemetry::mp::processRunMarker;
@@ -180,9 +180,9 @@ TEST_F(MpStoreTest, TooManyBucketsRejected) {
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
-TEST_F(MpStoreTest, OsFailureThrowsSystemError) {
+TEST_F(MpStoreTest, OsFailureThrowsStoreSetupError) {
     const auto path = dir_ / "missing" / "agent-os-failure";
-    EXPECT_THROW({ storeWriter writer(path, "a", "host-1", "", 0, kBuckets); }, std::system_error);
+    EXPECT_THROW({ storeWriter writer(path, "a", "host-1", "", 0, kBuckets); }, storeSetupError);
 }
 
 TEST_F(MpStoreTest, DestructorKeepsStoreFileWithFinalValues) {

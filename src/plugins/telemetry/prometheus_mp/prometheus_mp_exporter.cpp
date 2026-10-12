@@ -44,6 +44,7 @@ using nixl::telemetry::mp::makeStoreFileName;
 using nixl::telemetry::mp::MP_DEFAULT_STALE_TTL;
 using nixl::telemetry::mp::processRunMarker;
 using nixl::telemetry::mp::scrapeEndpoint;
+using nixl::telemetry::mp::storeSetupError;
 using nixl::telemetry::mp::storeWriter;
 
 constexpr uint16_t defaultPort = 9090;
@@ -198,7 +199,7 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
                                                instance,
                                                nixl::telemetry::resolveHistogramBucketsUs());
     }
-    catch (const std::system_error &e) {
+    catch (const storeSetupError &e) {
         if (configuredMultiprocDir()) {
             throw;
         }

@@ -227,7 +227,7 @@ resolve the same temp directory), unrelated jobs included; give concurrent jobs
 different ports to keep them apart. Containers that do not share `/dev/shm`, ranks
 with different temp directories on that fallback, and runs on hosts shared with
 other users, need an explicit directory;
-see the README for both cases and for the files the default directory keeps between
+see the README for these cases and for the files the default directory keeps between
 runs.
 
 Whether a rank is still alive is decided by the lock it holds on its own store,

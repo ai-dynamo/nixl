@@ -35,7 +35,7 @@
  * one is picked, and re-picked when it dies). Not being the one that serves is
  * benign, so every process gets a valid telemetry sink and all ranks are exported
  * behind the single owner port. The exception is a default directory (the variable
- * unset) that cannot be created or written: the constructor then throws
+ * unset or empty) that cannot be created or written: the constructor then throws
  * nixlTelemetryBindFailed, and the process runs without a sink.
  *
  * This class is therefore the mapping from telemetry events to store slots, plus
