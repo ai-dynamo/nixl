@@ -47,7 +47,9 @@ class nixlLibfabricConnection;
  * registered, a registerMemory() call with the same address, length, memory type
  * and device reuses its MR and increments ref_count instead of calling
  * fi_mr_regattr again. The last deregisterMemory() closes the MR and erases the
- * entry, so a rail never holds an idle registration.
+ * entry, so a rail never holds an idle registration. A registration whose
+ * parameters differ from the one tracked at that address is made on its own and
+ * handed out untracked, as at the bound; deregisterMemory() closes it directly.
  */
 struct MRCacheEntry {
     struct fid_mr *mr; ///< Libfabric memory registration handle

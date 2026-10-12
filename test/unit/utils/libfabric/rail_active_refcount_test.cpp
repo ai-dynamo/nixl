@@ -27,6 +27,7 @@
 
 #include <cassert>
 #include <iostream>
+#include <set>
 
 // Number of fake EFA devices to create
 static const size_t NUM_FAKE_RAILS = 4;
@@ -232,6 +233,123 @@ testDeregisterFailureKeepsRailActive(nixlLibfabricRailManager &mgr) {
     return 0;
 }
 
+// --- Same address, different registration parameters ---
+
+// Closed MRs are recorded instead of freed, so a second close of the same MR is caught
+// rather than touching freed memory.
+static std::set<struct fid *> closed_mrs;
+static bool double_close = false;
+
+static int
+fi_mr_close_recording(struct fid *fid) {
+    if (!closed_mrs.insert(fid).second) {
+        double_close = true;
+    }
+    return 0;
+}
+
+static int
+testSameAddressDifferentLength(nixlLibfabricRailManager &mgr) {
+    NIXL_INFO << "  testSameAddressDifferentLength";
+
+    char buf[4096] = {};
+    std::vector<struct fid_mr *> mr_full, mr_half, mr_full2;
+    std::vector<uint64_t> key_full, key_half, key_full2;
+    std::vector<size_t> rails_full, rails_half, rails_full2;
+
+    nixl_status_t st =
+        mgr.registerMemory(buf, sizeof(buf), DRAM_SEG, 0, "", mr_full, key_full, rails_full);
+    TEST_ASSERT(st == NIXL_SUCCESS, "registerMemory(buf, 4096) succeeded");
+
+    // Same address, different length, while the first registration is held
+    st = mgr.registerMemory(buf, sizeof(buf) / 2, DRAM_SEG, 0, "", mr_half, key_half, rails_half);
+    TEST_ASSERT(st == NIXL_SUCCESS, "registerMemory(buf, 2048) at a held address succeeded");
+    TEST_ASSERT(rails_half == rails_full && mr_half.size() == mr_full.size(),
+                "both registrations selected the same rails");
+    for (size_t i = 0; i < mr_full.size(); ++i) {
+        TEST_ASSERT(mr_half[i] != mr_full[i], "different-length registration got its own MR");
+    }
+
+    // Same address and length while held: the first MR is shared
+    st = mgr.registerMemory(buf, sizeof(buf), DRAM_SEG, 0, "", mr_full2, key_full2, rails_full2);
+    TEST_ASSERT(st == NIXL_SUCCESS, "second registerMemory(buf, 4096) succeeded");
+    TEST_ASSERT(mr_full2 == mr_full, "same-length registration shares the first MR");
+
+    // Deregister all three: every call succeeds and each distinct MR is closed exactly once
+    closed_mrs.clear();
+    double_close = false;
+    fi_mr_self_ops_stub.close = fi_mr_close_recording;
+    const nixl_status_t st_full = mgr.deregisterMemory(rails_full, mr_full);
+    const nixl_status_t st_half = mgr.deregisterMemory(rails_half, mr_half);
+    const nixl_status_t st_full2 = mgr.deregisterMemory(rails_full2, mr_full2);
+    fi_mr_self_ops_stub.close = fi_mr_close_stub;
+    const size_t num_closed = closed_mrs.size();
+    for (struct fid *fid : closed_mrs) {
+        fi_mr_close_stub(fid);
+    }
+    closed_mrs.clear();
+
+    TEST_ASSERT(st_full == NIXL_SUCCESS && st_half == NIXL_SUCCESS && st_full2 == NIXL_SUCCESS,
+                "all three deregisterMemory calls succeeded");
+    TEST_ASSERT(!double_close, "no MR closed twice");
+    TEST_ASSERT(num_closed == 2 * mr_full.size(), "both distinct MRs closed on every rail");
+    TEST_ASSERT(mgr.getActiveRailCount() == 0, "no active rails after full deregister");
+    return 0;
+}
+
+// Deterministic stand-in for two threads registering one address with different lengths:
+// the outer registration's fi_mr_regattr() first runs the competing registration on the same
+// rail, so it lands between the outer registration's cache check and its insert.
+static const nixlLibfabricRail *race_rail = nullptr;
+static void *race_buf = nullptr;
+static size_t race_len = 0;
+static struct fid_mr *race_mr = nullptr;
+static uint64_t race_key = 0;
+static nixl_status_t race_status = NIXL_ERR_BACKEND;
+
+static int
+fi_mr_regattr_racing(struct fid *fid,
+                     const struct fi_mr_attr *attr,
+                     uint64_t flags,
+                     struct fid_mr **mr) {
+    if (race_rail != nullptr) {
+        const nixlLibfabricRail *rail = race_rail;
+        race_rail = nullptr; // the competing registration takes the plain stub
+        race_status = rail->registerMemory(
+            race_buf, race_len, DRAM_SEG, 0, FI_HMEM_SYSTEM, &race_mr, &race_key);
+    }
+    return fi_mr_regattr_stub(fid, attr, flags, mr);
+}
+
+static int
+testConcurrentDifferentLengthRegistration(nixlLibfabricRailManager &mgr) {
+    NIXL_INFO << "  testConcurrentDifferentLengthRegistration";
+
+    // static: an address no other case registers, so a registration left behind by a failed
+    // case cannot turn the outer registration into a cache hit
+    static char buf[4096] = {};
+    const nixlLibfabricRail &rail = mgr.getRail(0);
+    race_rail = &rail;
+    race_buf = buf;
+    race_len = sizeof(buf) / 2;
+
+    struct fid_mr *mr = nullptr;
+    uint64_t key = 0;
+    fi_mr_ops_stub.regattr = fi_mr_regattr_racing;
+    const nixl_status_t st =
+        rail.registerMemory(buf, sizeof(buf), DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr, &key);
+    fi_mr_ops_stub.regattr = fi_mr_regattr_stub;
+
+    TEST_ASSERT(race_rail == nullptr && race_status == NIXL_SUCCESS,
+                "competing registration (buf, 2048) ran and succeeded");
+    TEST_ASSERT(st == NIXL_SUCCESS, "registration (buf, 4096) succeeded");
+    TEST_ASSERT(mr != race_mr, "registration that lost the race kept its own MR");
+
+    TEST_ASSERT(rail.deregisterMemory(race_mr) == NIXL_SUCCESS, "deregister the competing MR");
+    TEST_ASSERT(rail.deregisterMemory(mr) == NIXL_SUCCESS, "deregister the outer MR");
+    return 0;
+}
+
 int
 main() {
     NIXL_INFO << "=== Rail Active Refcount Test ===";
@@ -249,6 +367,12 @@ main() {
     if ((res = testClearActiveRails(mgr)) != 0) return res;
     if ((res = testMultipleRailsIndependent(mgr)) != 0) return res;
     if ((res = testRegisterDeregisterRefcount(mgr)) != 0) return res;
+    // Both cases run, so one failing does not hide the other
+    const int diff_len_res = testSameAddressDifferentLength(mgr);
+    const int race_res = testConcurrentDifferentLengthRegistration(mgr);
+    if (diff_len_res != 0 || race_res != 0) {
+        return 1;
+    }
     if ((res = testDeregisterFailureKeepsRailActive(mgr)) != 0) return res;
 
     NIXL_INFO << "=== All rail active refcount tests PASSED ===";
