@@ -24,7 +24,6 @@ ulimit -c unlimited
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
-GPUNETIO_DIAGNOSTIC_SCRIPT=$(realpath "$(dirname "$0")/capture_gpunetio_hang.py")
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir>"
@@ -85,6 +84,14 @@ run_nixlbench_two_workers_asio() {
     parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 4 ; $command_line"
 }
 
+for op_type in READ WRITE; do
+    for initiator in $seg_types; do
+        for target in $seg_types; do
+            run_nixlbench_two_workers_asio --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+        done
+    done
+done
+
 # TODO: remove this once https://github.com/ai-dynamo/nixl/issues/1999 is fixed
 # Skip UCCL nixlbench transfer tests to reduce CI flakiness
 # if $HAS_GPU ; then
@@ -105,6 +112,14 @@ run_nixlbench_two_workers_etcd() {
 }
 
 start_etcd_server "/nixl/nixlbench_ci"
+
+for op_type in READ WRITE; do
+    for initiator in $seg_types; do
+        for target in $seg_types; do
+            run_nixlbench_two_workers_etcd --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+        done
+    done
+done
 
 # TODO: remove this once https://github.com/ai-dynamo/nixl/issues/1999 is fixed
 # Skip UCCL nixlbench transfer tests to reduce CI flakiness
@@ -127,25 +142,7 @@ run_nixlbench_two_workers_gpunetio() {
         port1=$(get_random_tcp_port)
     done
     # Log the GPU-side state of a transfer stuck for 30s, before the capture and the timeout
-    local nb_prefix="NIXL_GPUNETIO_HANG_REPORT_SEC=30 timeout --signal=INT --kill-after=15s 180s python3 '$GPUNETIO_DIAGNOSTIC_SCRIPT' --"
-    local nb_args="--etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group gpunetio-$benchmark_group $*"
-    command_line="$nb_prefix ./bin/nixlbench $nb_args"
-    # TEMPORARY diagnostic: run only the first worker (the initiator that hit an illegal
-    # memory access) under compute-sanitizer to get the faulting kernel and address.
-    # kernel_progress is excluded: memcheck flags its start-up QP reads and kills it.
-    # Opt-in: set GPUNETIO_SANITIZE=1 (it slows the run and can abort the progress kernel).
-    local command_line0="$command_line"
-    if [ "${GPUNETIO_SANITIZE:-0}" = 1 ] && command -v compute-sanitizer > /dev/null; then
-        command_line0="$nb_prefix compute-sanitizer --tool memcheck --print-limit 50 --launch-timeout 0 --kernel-name-exclude kns=kernel_progress ./bin/nixlbench $nb_args"
-    fi
-    # TEMPORARY diagnostic, opt-in (GPUNETIO_COREDUMP=1): ask the driver for a GPU core dump
-    # when the initiator takes a device exception, and print the faulting kernel and PC below.
-    # Untested on x86; on GH200 it was seen to swallow the fault instead (no error, no core).
-    local core_pattern=/tmp/gpunetio_core_%h_%p
-    if [ "${GPUNETIO_COREDUMP:-0}" = 1 ]; then
-        rm -f /tmp/gpunetio_core_*
-        command_line0="CUDA_ENABLE_COREDUMP_ON_EXCEPTION=1 CUDA_COREDUMP_GENERATION_FLAGS=skip_nonrelocated_elf_images,skip_global_memory,skip_shared_memory,skip_local_memory,skip_constbank_memory CUDA_COREDUMP_FILE=$core_pattern $command_line0"
-    fi
+    command_line="NIXL_GPUNETIO_HANG_REPORT_SEC=30 timeout --signal=INT --kill-after=15s 180s ./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group gpunetio-$benchmark_group $*"
     # Each worker keeps a GPUNetIO progress kernel running, and two processes on
     # one GPU get time-sliced: give each worker its own GPU when there are two.
     local gpus gpu0 gpu1
@@ -154,29 +151,9 @@ run_nixlbench_two_workers_gpunetio() {
     gpu1=${gpus[1]:-$gpu0}
     # Each local worker owns its listener; never share an SO_REUSEPORT endpoint.
     # Bound a failed case even if its peer is still waiting for a notification.
-    local rc=0
     parallel --line-buffer --halt now,fail=1 ::: \
-        "CUDA_VISIBLE_DEVICES=$gpu0 $command_line0 --gpunetio_oob_port=$port0" \
-        "sleep 4 ; CUDA_VISIBLE_DEVICES=$gpu1 $command_line --gpunetio_oob_port=$port1" || rc=$?
-    if [ "${GPUNETIO_COREDUMP:-0}" = 1 ]; then
-        print_gpunetio_coredumps
-    fi
-    return $rc
-}
-
-# Print the faulting kernel, thread and PC from any GPU core dump left by the initiator.
-print_gpunetio_coredumps() {
-    local core
-    for core in /tmp/gpunetio_core_*; do
-        [ -e "$core" ] || { echo "GPUNETIO_COREDUMP: no GPU core dump written"; return 0; }
-        echo "GPUNETIO_COREDUMP: $core ($(stat -c %s "$core") bytes)"
-        if command -v cuda-gdb > /dev/null; then
-            timeout 120 cuda-gdb -batch -nx -ex "target cudacore $core" \
-                -ex "info cuda kernels" -ex "info cuda threads" -ex "bt" || true
-        else
-            echo "GPUNETIO_COREDUMP: cuda-gdb not found, cannot decode $core"
-        fi
-    done
+        "CUDA_VISIBLE_DEVICES=$gpu0 $command_line --gpunetio_oob_port=$port0" \
+        "sleep 4 ; CUDA_VISIBLE_DEVICES=$gpu1 $command_line --gpunetio_oob_port=$port1"
 }
 
 if $HAS_GPU ; then
