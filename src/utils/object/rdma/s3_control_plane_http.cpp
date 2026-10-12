@@ -54,9 +54,9 @@ namespace {
     // because that signer hashes the empty body over plain HTTP — the S3 RDMA
     // server only skips content-sha256 validation when the header is exactly
     // UNSIGNED-PAYLOAD, and the data here travels out-of-band over RDMA. This
-    // mirrors the standard S3 SigV4 signing. All non-signed headers (host,
-    // x-amz-rdma-token, content-*) must already be set on the request
-    // before calling.
+    // mirrors the standard S3 SigV4 signing. Op headers (x-amz-rdma-token,
+    // content-*) must be set before calling; this adds host, x-amz-date and
+    // x-amz-content-sha256 and signs every header on the request.
     void
     signV4(Aws::Http::HttpRequest &req,
            const Aws::String &access_key,

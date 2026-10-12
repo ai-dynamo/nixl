@@ -333,7 +333,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
     std::unique_ptr<nixlBackendTraceSink> trace_sink;
     if (data->tracer_ != nullptr) {
-        trace_sink = std::make_unique<nixl::trace::TracerPhaseSink>(*data->tracer_, type);
+        trace_sink = std::make_unique<nixl::trace::TracerPhaseSink>(
+            *data->tracer_, type, data->telemetry_.get());
         init_params.traceSink = trace_sink.get();
     }
 
@@ -1015,7 +1016,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         ret2 = rem_sec_it->second->populate(remote_descs, backend, handle->targetDescs);
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
-            NIXL_INFO << "Selected backend: " << backend->getType();
+            NIXL_DEBUG << "Selected backend: " << backend->getType();
             handle->engine = backend;
             break;
         }
