@@ -140,7 +140,8 @@ static_assert(detail::maxTelemetrySlot() < MP_STORE_SLOT_COUNT,
 struct storeSnapshot {
     int64_t pid = 0;
     // Monotonic nanoseconds (monotonicNs(), CLOCK_MONOTONIC -- host-wide, so
-    // comparable across processes) of the last writer update; used for TTL staleness.
+    // comparable across processes) of the last writer update; used for TTL staleness
+    // and to order the stores that share a hostname, agent_name and local_rank.
     uint64_t lastUpdateNs = 0;
     // Per-process instance counter, distinguishing multiple agents that share the
     // same name (and thus pid/hostname) within one process so their series differ.
@@ -211,10 +212,10 @@ public:
      *
      * The last values a process recorded are typically not scraped yet when it
      * exits, so the file must outlive it: releasing the lock is what tells the
-     * collector to go on publishing them until they age past the stale TTL, or
-     * until a store with the same hostname, agent_name and local_rank is
-     * published instead, and to reap the file once they are stale. Unlinking
-     * here would drop everything produced since the previous scrape.
+     * collector to go on publishing them, whenever no store with the same
+     * hostname, agent_name and local_rank outranks them, until they age past
+     * the stale TTL, and to reap the file then. Unlinking here would drop
+     * everything produced since the previous scrape.
      */
     ~storeWriter() = default;
 

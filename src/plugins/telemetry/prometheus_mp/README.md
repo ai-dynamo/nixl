@@ -102,7 +102,8 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   exits cleanly or is killed: its last values are usually not scraped yet, and
   unlinking on exit would drop everything produced since the previous scrape. The
   owner keeps publishing them until *both* the writer has released the store and
-  its last update has aged past the TTL; only then are the series dropped and the
+  its last update has aged past the TTL, unless a store of the same name outranks
+  them (see "Metric labels"); only then are the series dropped and the
   file reaped. Both are evaluated during a scrape, so a live process is never
   dropped for being idle, and a dead one keeps being published until the first
   scrape after its TTL expires. Keep the TTL at or above the Prometheus scrape
