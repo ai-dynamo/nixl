@@ -17,8 +17,16 @@
 
 #if defined HAVE_CUOBJ_CLIENT
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cstdlib>
+#include <cstring>
+#include <random>
+#include <vector>
+
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 
 #include "plugins_common.h"
 #include "transfer_handler.h"
@@ -35,6 +43,7 @@ nixl_b_params_t obj_dell_params = {{"accelerated", "true"},
                                    {"type", "dell"},
                                    {"req_checksum", "required"},
                                    {"scheme", "http"}};
+constexpr const char *endpoint_env_var = "NIXL_OBJ_ENDPOINT_OVERRIDE";
 const std::string accel_agent_name = "Agent3-Accel";
 const std::string dell_agent_name = "Agent4-Dell";
 
@@ -59,32 +68,37 @@ const nixlBackendInitParams obj_dell_test_params = {.localAgent = dell_agent_nam
 class setupObjAccelTestFixture : public setupBackendTestFixture {
 protected:
     nixl_b_params_t localParams_;
-    std::string skipReason_;
+    std::string constructionError_;
 
     setupObjAccelTestFixture() {
         localParams_ = *GetParam().customParams;
-        const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
+        const char *endpoint = std::getenv(endpoint_env_var);
         if (endpoint && endpoint[0] != '\0') {
             localParams_["endpoint_override"] = endpoint;
             localParams_["req_checksum"] = "required";
-        }
-        nixlBackendInitParams initParams = GetParam();
-        initParams.customParams = &localParams_;
-        // accelerated=true has no HTTP fallback, so the engine throws when the RDMA
-        // fast path is unavailable (e.g. a cuObject build with no RDMA NIC, as the
-        // CI container produces). Skip these tests there rather than fail.
-        try {
-            localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
-        }
-        catch (const std::exception &e) {
-            skipReason_ = e.what();
+            nixlBackendInitParams initParams = GetParam();
+            initParams.customParams = &localParams_;
+            // accelerated=true has no HTTP fallback, so the engine throws when the
+            // fast path is missing. SetUp() decides whether that is a skip.
+            try {
+                localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
+            }
+            catch (const std::exception &e) {
+                constructionError_ = e.what();
+            }
         }
     }
 
     void
     SetUp() override {
+        const char *endpoint = std::getenv(endpoint_env_var);
+        if (!endpoint || endpoint[0] == '\0') {
+            GTEST_SKIP() << endpoint_env_var << " not set, skipping accelerated tests";
+        }
         if (!localBackendEngine_) {
-            GTEST_SKIP() << "S3 accelerated engine unavailable: " << skipReason_;
+            // Only a missing fast path is a skip; anything else must fail.
+            ASSERT_THAT(constructionError_, testing::HasSubstr("fast path is unavailable"));
+            GTEST_SKIP() << "S3 accelerated engine unavailable: " << constructionError_;
         }
         setupBackendTestFixture::SetUp();
     }
@@ -150,6 +164,193 @@ TEST_P(setupObjAccelTestFixture, AccelVramXferTest) {
 }
 #endif // HAVE_CUDA
 
+template<nixl_mem_t memType>
+void
+copyToMem(uintptr_t dst, const std::vector<uint8_t> &src) {
+#ifdef HAVE_CUDA
+    if (memType == VRAM_SEG) {
+        EXPECT_EQ(
+            cudaMemcpy(
+                reinterpret_cast<void *>(dst), src.data(), src.size(), cudaMemcpyHostToDevice),
+            cudaSuccess);
+        return;
+    }
+#endif
+    std::memcpy(reinterpret_cast<void *>(dst), src.data(), src.size());
+}
+
+template<nixl_mem_t memType>
+std::vector<uint8_t>
+copyFromMem(uintptr_t src, size_t len) {
+    std::vector<uint8_t> out(len);
+#ifdef HAVE_CUDA
+    if (memType == VRAM_SEG) {
+        EXPECT_EQ(
+            cudaMemcpy(out.data(), reinterpret_cast<void *>(src), len, cudaMemcpyDeviceToHost),
+            cudaSuccess);
+        return out;
+    }
+#endif
+    std::memcpy(out.data(), reinterpret_cast<void *>(src), len);
+    return out;
+}
+
+nixl_status_t
+runXfer(nixlBackendEngine &engine,
+        nixl_xfer_op_t op,
+        const nixl_meta_dlist_t &local,
+        const nixl_meta_dlist_t &remote) {
+    nixlBackendReqH *handle = nullptr;
+    nixl_status_t ret = engine.prepXfer(op, local, remote, accel_agent_name, handle);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
+    ret = engine.postXfer(op, local, remote, accel_agent_name, handle);
+    const auto deadline = absl::Now() + absl::Seconds(30);
+    while (ret == NIXL_IN_PROG && absl::Now() < deadline) {
+        absl::SleepFor(absl::Milliseconds(10));
+        ret = engine.checkXfer(handle);
+    }
+    engine.releaseReqH(handle);
+    return ret;
+}
+
+// Registers one buffer and transfers two non-adjacent sub-ranges of it. cuObject
+// mints tokens only against a registration's base address, so this covers the
+// base + offset translation in SharedCuObjClient::getToken(). With
+// nested_registration, a smaller region inside the buffer is also registered so
+// that it is the nearest base below both transfers without containing either.
+template<nixl_mem_t memType>
+void
+testSubRangeXfer(nixlBackendEngine &engine, bool nested_registration = false) {
+    constexpr size_t entry_size = 1 << 20;
+    constexpr int num_entries = 4;
+    const std::vector<int> xfer_entries = {1, 3};
+
+    memoryHandler<memType> mem(num_entries * entry_size, 0);
+    nixlBlobDesc mem_desc;
+    mem.populateBlobDesc(&mem_desc);
+    nixlBackendMD *mem_md = nullptr;
+    ASSERT_EQ(engine.registerMem(mem_desc, memType, mem_md), NIXL_SUCCESS);
+    mem.setMD(mem_md);
+
+    nixlBackendMD *inner_md = nullptr;
+    if (nested_registration) {
+        const nixlBlobDesc inner_desc(mem_desc.addr + entry_size, entry_size / 2, 0, "");
+        ASSERT_EQ(engine.registerMem(inner_desc, memType, inner_md), NIXL_SUCCESS);
+    }
+
+    nixl_meta_dlist_t local(memType);
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    std::vector<nixlBackendMD *> obj_mds;
+    for (size_t i = 0; i < xfer_entries.size(); ++i) {
+        nixlBlobDesc obj_desc(0, entry_size, i, "test-obj-key-subrange-" + std::to_string(i));
+        nixlBackendMD *obj_md = nullptr;
+        ASSERT_EQ(engine.registerMem(obj_desc, OBJ_SEG, obj_md), NIXL_SUCCESS);
+        obj_mds.push_back(obj_md);
+
+        nixlMetaDesc local_desc;
+        mem.populateMetaDesc(&local_desc, xfer_entries[i], entry_size);
+        local.addDesc(local_desc);
+
+        remote.addDesc(nixlMetaDesc(0, entry_size, i, obj_md));
+    }
+
+    std::vector<uint8_t> pattern(num_entries * entry_size);
+    std::mt19937 rng(2368);
+    std::generate(pattern.begin(), pattern.end(), [&rng] { return static_cast<uint8_t>(rng()); });
+    copyToMem<memType>(mem_desc.addr, pattern);
+
+    EXPECT_EQ(runXfer(engine, NIXL_WRITE, local, remote), NIXL_SUCCESS);
+
+    copyToMem<memType>(mem_desc.addr, std::vector<uint8_t>(pattern.size(), 0));
+    EXPECT_EQ(runXfer(engine, NIXL_READ, local, remote), NIXL_SUCCESS);
+
+    const auto result = copyFromMem<memType>(mem_desc.addr, pattern.size());
+    for (int e = 0; e < num_entries; ++e) {
+        const auto begin = e * entry_size;
+        const bool transferred =
+            std::find(xfer_entries.begin(), xfer_entries.end(), e) != xfer_entries.end();
+        const std::vector<uint8_t> expected = transferred ?
+            std::vector<uint8_t>(pattern.begin() + begin, pattern.begin() + begin + entry_size) :
+            std::vector<uint8_t>(entry_size, 0);
+        EXPECT_TRUE(std::equal(expected.begin(), expected.end(), result.begin() + begin))
+            << "entry " << e << (transferred ? " was not read back" : " was modified");
+    }
+
+    for (auto *obj_md : obj_mds) {
+        EXPECT_EQ(engine.deregisterMem(obj_md), NIXL_SUCCESS);
+    }
+    if (inner_md) {
+        EXPECT_EQ(engine.deregisterMem(inner_md), NIXL_SUCCESS);
+    }
+    EXPECT_EQ(engine.deregisterMem(mem_md), NIXL_SUCCESS);
+}
+
+TEST_P(setupObjAccelTestFixture, AccelSubRangeXferTest) {
+    testSubRangeXfer<DRAM_SEG>(*localBackendEngine_);
+}
+
+TEST_P(setupObjAccelTestFixture, AccelNestedRegistrationXferTest) {
+    testSubRangeXfer<DRAM_SEG>(*localBackendEngine_, true);
+}
+
+// LMCache object keys use '@' as a separator. The control plane must sign such
+// keys with the same RFC 3986 encoding the server uses to verify them.
+TEST_P(setupObjAccelTestFixture, AccelReservedCharKeyXferTest) {
+    constexpr size_t len = 1 << 20;
+    memoryHandler<DRAM_SEG> mem(len, 0);
+    nixlBlobDesc mem_desc;
+    mem.populateBlobDesc(&mem_desc);
+    nixlBackendMD *mem_md = nullptr;
+    ASSERT_EQ(localBackendEngine_->registerMem(mem_desc, DRAM_SEG, mem_md), NIXL_SUCCESS);
+    mem.setMD(mem_md);
+
+    const nixlBlobDesc obj_desc(0, len, 0, "test-obj-key-model@0x01000100@0@a:b=c$d&e,f.data");
+    nixlBackendMD *obj_md = nullptr;
+    ASSERT_EQ(localBackendEngine_->registerMem(obj_desc, OBJ_SEG, obj_md), NIXL_SUCCESS);
+
+    nixl_meta_dlist_t local(DRAM_SEG);
+    nixlMetaDesc local_desc;
+    mem.populateMetaDesc(&local_desc, 0, len);
+    local.addDesc(local_desc);
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    remote.addDesc(nixlMetaDesc(0, len, 0, obj_md));
+
+    std::vector<uint8_t> pattern(len);
+    std::mt19937 rng(2383);
+    std::generate(pattern.begin(), pattern.end(), [&rng] { return static_cast<uint8_t>(rng()); });
+    copyToMem<DRAM_SEG>(mem_desc.addr, pattern);
+    EXPECT_EQ(runXfer(*localBackendEngine_, NIXL_WRITE, local, remote), NIXL_SUCCESS);
+
+    copyToMem<DRAM_SEG>(mem_desc.addr, std::vector<uint8_t>(len, 0));
+    EXPECT_EQ(runXfer(*localBackendEngine_, NIXL_READ, local, remote), NIXL_SUCCESS);
+    EXPECT_EQ(copyFromMem<DRAM_SEG>(mem_desc.addr, len), pattern);
+
+    EXPECT_EQ(localBackendEngine_->deregisterMem(obj_md), NIXL_SUCCESS);
+    EXPECT_EQ(localBackendEngine_->deregisterMem(mem_md), NIXL_SUCCESS);
+}
+
+#ifdef HAVE_CUDA
+TEST_P(setupObjAccelTestFixture, AccelVramSubRangeXferTest) {
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
+    }
+    testSubRangeXfer<VRAM_SEG>(*localBackendEngine_);
+}
+
+TEST_P(setupObjAccelTestFixture, AccelVramNestedRegistrationXferTest) {
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
+    }
+    testSubRangeXfer<VRAM_SEG>(*localBackendEngine_, true);
+}
+#endif // HAVE_CUDA
+
 INSTANTIATE_TEST_SUITE_P(ObjAccelTests,
                          setupObjAccelTestFixture,
                          testing::Values(obj_accel_test_params));
@@ -167,7 +368,7 @@ protected:
 
     setupObjDellTestFixture() {
         localParams_ = *GetParam().customParams;
-        const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
+        const char *endpoint = std::getenv(endpoint_env_var);
         if (endpoint && endpoint[0] != '\0') {
             localParams_["endpoint_override"] = endpoint;
             nixlBackendInitParams initParams = GetParam();
@@ -178,9 +379,9 @@ protected:
 
     void
     SetUp() override {
-        const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
+        const char *endpoint = std::getenv(endpoint_env_var);
         if (!endpoint || endpoint[0] == '\0') {
-            GTEST_SKIP() << "NIXL_OBJ_ENDPOINT_OVERRIDE not set, skipping Dell tests";
+            GTEST_SKIP() << endpoint_env_var << " not set, skipping Dell tests";
         }
         setupBackendTestFixture::SetUp();
     }

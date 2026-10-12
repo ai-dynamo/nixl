@@ -19,6 +19,8 @@
 #include <cstdint>
 
 #include "common/nixl_log.h"
+#include "telemetry.h"
+#include "tracing/trace_context.h"
 
 namespace nixl::trace {
 
@@ -26,8 +28,11 @@ void
 TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
                              std::string_view label,
                              nixlTime::us_t timestamp,
-                             std::span<const nixlBackendTraceAttr> attrs) noexcept {
+                             std::span<const nixlBackendTraceAttr> attrs,
+                             const TraceContext *context) noexcept {
     try {
+        const CorrelationScope correlation{&tracer_,
+                                           context != nullptr ? context->correlationId64() : 0};
         const bool named = (phase == nixl_trace_phase_t::OTHER) && !label.empty();
         Span span = tracer_.beginSpan(named ? label : toStringView(phase), Kind::Metadata);
         if (!span.active()) {
@@ -36,6 +41,9 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
 
         span.addAttribute("nixl.backend", backend_);
         span.addAttribute("nixl.phase.timestamp_us", static_cast<std::int64_t>(timestamp));
+        if ((context != nullptr) && context->valid()) {
+            span.addAttribute("nixl.traceparent", formatTraceparent(*context));
+        }
         if (!label.empty()) {
             span.addAttribute("nixl.phase.label", label);
         }
@@ -44,6 +52,9 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
         }
     }
     catch (...) {
+        if (telemetry_ != nullptr) {
+            telemetry_->updateTracePhasesDropped(1);
+        }
         if (!dropWarned_.test_and_set(std::memory_order_relaxed)) {
             try {
                 NIXL_ERROR << "Dropping a trace phase for backend " << backend_

@@ -58,6 +58,9 @@ These variables control NIXL's built-in telemetry collection and export system.
 | `NIXL_TELEMETRY_DIR` | String (path) | None | Directory for shared memory telemetry files used by the cyclic buffer exporter. If telemetry is enabled but this is not set, no telemetry file is generated. |
 | `NIXL_TELEMETRY_PROMETHEUS_PORT` | Integer | `9090` | HTTP listen port for the Prometheus telemetry exporter. |
 | `NIXL_TELEMETRY_PROMETHEUS_LOCAL` | Boolean | `false` | When `true`, binds the Prometheus exporter to localhost only (`127.0.0.1`) instead of all interfaces (`0.0.0.0`). |
+| `NIXL_TELEMETRY_MULTIPROC_DIR` | String (path) | `/dev/shm/nixl-telemetry-<euid>-<port>` | Directory shared by the processes that the `prometheus_mp` exporter aggregates behind one endpoint. Unset or empty, it is named after the effective uid and `NIXL_TELEMETRY_PROMETHEUS_PORT`, under the system temp directory when `/dev/shm` is not writable. |
+| `NIXL_TELEMETRY_RANK_ENV` | String | `LOCAL_RANK` | Name of the environment variable whose value the `prometheus_mp` exporter adds as the `local_rank` label. No label is added when that variable is unset. |
+| `NIXL_TELEMETRY_MP_STALE_TTL` | Integer (s) | `30` | Seconds after an exited process's last update before the `prometheus_mp` exporter drops its series and removes its store file. Keep it at or above the scrape interval. |
 
 <Tip>
 For the full telemetry architecture and usage examples, see the [Telemetry Guide](/nixl/user-guide/telemetry-guide).

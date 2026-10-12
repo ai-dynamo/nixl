@@ -32,6 +32,10 @@
 
 #include "common/nixl_time.h"
 
+namespace nixl::trace {
+struct TraceContext;
+}
+
 /**
  * @brief Fixed set of backend phases.
  *
@@ -116,6 +120,10 @@ public:
      *                  `nixl.phase.timestamp_us`.
      * @param attrs     Extra attributes; see @ref nixlBackendTraceAttr for the
      *                  lifetime rule, which applies to @p label as well.
+     * @param context   Trace context the phase belongs to, or null: the request's
+     *                  own for a local phase, the sender's for a phase observed on
+     *                  receipt. Valid for the call only; recorded as
+     *                  `nixl.traceparent`, and the span is correlated on it.
      *
      * Safe to call concurrently from any thread, including a progress thread;
      * each call produces a span scoped to the calling thread. `noexcept`
@@ -127,7 +135,8 @@ public:
     recordPhase(nixl_trace_phase_t phase,
                 std::string_view label,
                 nixlTime::us_t timestamp,
-                std::span<const nixlBackendTraceAttr> attrs = {}) noexcept = 0;
+                std::span<const nixlBackendTraceAttr> attrs = {},
+                const nixl::trace::TraceContext *context = nullptr) noexcept = 0;
 };
 
 #endif // NIXL_SRC_CORE_TRACING_BACKEND_TRACE_H
