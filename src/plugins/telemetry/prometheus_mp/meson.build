@@ -36,7 +36,7 @@ nixl_telemetry_mp_store_dep = declare_dependency(
 
 # Scrape-time collector: converts peer store snapshots into prometheus-cpp metric
 # families. Needs prometheus-cpp (core), so it is gated on it being available
-# (same condition as the prometheus plugin, set in the sibling subdir above).
+# (prometheus_found, set by the prometheus-cpp lookup in the parent meson.build).
 if prometheus_found
     telemetry_mp_collector_lib = static_library(
         'nixl_telemetry_mp_collector',
