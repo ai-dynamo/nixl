@@ -337,6 +337,31 @@ TEST_F(docaNixlExporterTest, DroppedEventsCounterAccumulates) {
         << "dropped-events counter must equal the sum of all emitted deltas (7+4+13)";
 }
 
+TEST_F(docaNixlExporterTest, TracePhasesDroppedCounterAccumulates) {
+    constexpr char agentName[] = "nixl_doca_trace_phases_dropped_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    const std::string metric = nixlEnumStrings::telemetryMetricDescriptor(
+                                   nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED)
+                                   .counterName;
+    const nixl::metrics_test::labelSet labels{{"agent_name", agentName}};
+
+    constexpr uint64_t kDrops = 3;
+    for (uint64_t i = 0; i < kDrops; ++i) {
+        const nixlTelemetryEvent event(nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED, 1);
+        ASSERT_EQ(exporter.exportEvent(event), NIXL_SUCCESS);
+    }
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const auto metrics = scrapeUntilValue(
+        port_, metric, static_cast<double>(kDrops), std::chrono::seconds(12), labels);
+    const std::optional<double> observed = metrics.latestValue(metric, labels);
+    ASSERT_TRUE(observed.has_value())
+        << metric << "{agent_name=" << agentName << "} not served at the endpoint after flush";
+    EXPECT_EQ(*observed, static_cast<double>(kDrops));
+}
+
 // AGENT_XFER_TIME events drive the agent_xfer_time_us DOCA histogram. After
 // flush (which snapshots the cached histogram into the export buffer before the
 // general metrics flush transmits it), the endpoint must serve _count = number

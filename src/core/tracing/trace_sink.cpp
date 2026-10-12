@@ -19,6 +19,7 @@
 #include <cstdint>
 
 #include "common/nixl_log.h"
+#include "telemetry.h"
 
 namespace nixl::trace {
 
@@ -44,6 +45,9 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
         }
     }
     catch (...) {
+        if (telemetry_ != nullptr) {
+            telemetry_->updateTracePhasesDropped(1);
+        }
         if (!dropWarned_.test_and_set(std::memory_order_relaxed)) {
             try {
                 NIXL_ERROR << "Dropping a trace phase for backend " << backend_

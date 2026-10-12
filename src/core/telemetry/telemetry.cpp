@@ -287,6 +287,7 @@ nixlTelemetry::flushPendingEvents() {
         }
 
         exportDroppedEvents();
+        exportTracePhasesDropped();
     });
 
     return true;
@@ -304,6 +305,14 @@ nixlTelemetry::exportDroppedEvents() {
         isMetricEnabled(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED)) {
         exporter_->exportEvent(
             {nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED, dropped});
+    }
+}
+
+void
+nixlTelemetry::exportTracePhasesDropped() {
+    const uint64_t dropped = tracePhasesDropped_.exchange(0, std::memory_order_relaxed);
+    if (dropped > 0 && isMetricEnabled(nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED)) {
+        exporter_->exportEvent({nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED, dropped});
     }
 }
 
@@ -373,6 +382,11 @@ nixlTelemetry::updateMemoryRegistered(uint64_t memory_registered) {
 void
 nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
     updateData(nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED, memory_deregistered);
+}
+
+void
+nixlTelemetry::updateTracePhasesDropped(uint64_t trace_phases_dropped) noexcept {
+    tracePhasesDropped_.fetch_add(trace_phases_dropped, std::memory_order_relaxed);
 }
 
 void
