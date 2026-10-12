@@ -306,6 +306,7 @@ static size_t race_len = 0;
 static struct fid_mr *race_mr = nullptr;
 static uint64_t race_key = 0;
 static nixl_status_t race_status = NIXL_ERR_BACKEND;
+static struct fid_mr *race_outer_mr = nullptr; // fresh MR fi_mr_regattr gave the outer call
 
 static int
 fi_mr_regattr_racing(struct fid *fid,
@@ -317,6 +318,9 @@ fi_mr_regattr_racing(struct fid *fid,
         race_rail = nullptr; // the competing registration takes the plain stub
         race_status = rail->registerMemory(
             race_buf, race_len, DRAM_SEG, 0, FI_HMEM_SYSTEM, &race_mr, &race_key);
+        const int ret = fi_mr_regattr_stub(fid, attr, flags, mr);
+        race_outer_mr = *mr;
+        return ret;
     }
     return fi_mr_regattr_stub(fid, attr, flags, mr);
 }
@@ -350,6 +354,59 @@ testConcurrentDifferentLengthRegistration(nixlLibfabricRailManager &mgr) {
     return 0;
 }
 
+// Same-parameter race: the competing registration matches the outer one, so the outer call
+// must close its own fresh MR exactly once and share the competitor's tracked MR.
+static int
+testConcurrentSameParameterRegistration(nixlLibfabricRailManager &mgr) {
+    NIXL_INFO << "  testConcurrentSameParameterRegistration";
+
+    // static: an address no other case registers
+    static char buf[4096] = {};
+    const nixlLibfabricRail &rail = mgr.getRail(0);
+    race_rail = &rail;
+    race_buf = buf;
+    race_len = sizeof(buf);
+    race_mr = nullptr;
+    race_outer_mr = nullptr;
+    race_status = NIXL_ERR_BACKEND;
+
+    struct fid_mr *mr = nullptr;
+    uint64_t key = 0;
+    closed_mrs.clear();
+    double_close = false;
+    fi_mr_self_ops_stub.close = fi_mr_close_recording;
+    fi_mr_ops_stub.regattr = fi_mr_regattr_racing;
+    const nixl_status_t st =
+        rail.registerMemory(buf, sizeof(buf), DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr, &key);
+    fi_mr_ops_stub.regattr = fi_mr_regattr_stub;
+    const bool hook_ran = race_rail == nullptr && race_status == NIXL_SUCCESS &&
+        race_mr != nullptr && race_outer_mr != nullptr;
+    const bool outer_closed_once =
+        hook_ran && closed_mrs.size() == 1 && closed_mrs.count(&race_outer_mr->fid) == 1;
+
+    const nixl_status_t st_first = rail.deregisterMemory(mr);
+    const bool open_after_first = hook_ran && closed_mrs.count(&race_mr->fid) == 0;
+    const nixl_status_t st_second = rail.deregisterMemory(race_mr);
+    const bool closed_after_second = hook_ran && closed_mrs.count(&race_mr->fid) == 1;
+    fi_mr_self_ops_stub.close = fi_mr_close_stub;
+    const bool no_double_close = !double_close;
+    for (struct fid *fid : closed_mrs) {
+        fi_mr_close_stub(fid);
+    }
+    closed_mrs.clear();
+
+    TEST_ASSERT(hook_ran, "competing registration (buf, 4096) ran and succeeded");
+    TEST_ASSERT(st == NIXL_SUCCESS, "registration (buf, 4096) succeeded");
+    TEST_ASSERT(mr == race_mr, "registration that lost the race returns the competitor's MR");
+    TEST_ASSERT(outer_closed_once, "the outer registration's fresh MR is closed exactly once");
+    TEST_ASSERT(st_first == NIXL_SUCCESS && open_after_first,
+                "first deregister succeeds and leaves the shared MR open");
+    TEST_ASSERT(st_second == NIXL_SUCCESS && closed_after_second,
+                "second deregister succeeds and closes the shared MR");
+    TEST_ASSERT(no_double_close, "no MR closed twice");
+    return 0;
+}
+
 int
 main() {
     NIXL_INFO << "=== Rail Active Refcount Test ===";
@@ -367,10 +424,11 @@ main() {
     if ((res = testClearActiveRails(mgr)) != 0) return res;
     if ((res = testMultipleRailsIndependent(mgr)) != 0) return res;
     if ((res = testRegisterDeregisterRefcount(mgr)) != 0) return res;
-    // Both cases run, so one failing does not hide the other
+    // These cases all run, so one failing does not hide another
     const int diff_len_res = testSameAddressDifferentLength(mgr);
     const int race_res = testConcurrentDifferentLengthRegistration(mgr);
-    if (diff_len_res != 0 || race_res != 0) {
+    const int same_race_res = testConcurrentSameParameterRegistration(mgr);
+    if (diff_len_res != 0 || race_res != 0 || same_race_res != 0) {
         return 1;
     }
     if ((res = testDeregisterFailureKeepsRailActive(mgr)) != 0) return res;

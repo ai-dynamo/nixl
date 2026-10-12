@@ -300,8 +300,8 @@ ControlRequestPool::expandPool() {
         size_t buffer_offset = local_idx * NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE;
         if (buffer_offset + NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE > new_chunk.size) {
             NIXL_ERROR << " Rail " << rail_id_ << " buffer assignment out of bounds for request["
-                       << i << "]:" << " local_idx=" << local_idx
-                       << " buffer_offset=" << buffer_offset
+                       << i << "]:"
+                       << " local_idx=" << local_idx << " buffer_offset=" << buffer_offset
                        << " buffer_size=" << NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE
                        << " chunk_size=" << new_chunk.size;
             return NIXL_ERR_BACKEND;
@@ -746,19 +746,19 @@ nixlLibfabricRail::cleanup() {
     NIXL_TRACE << "Cleaning up request pools for rail " << rail_id;
     control_request_pool_.cleanup();
 
-    // STEP 3b: Close any remaining cached memory registrations before the
-    // domain goes away. Entries can survive to this point when a consumer
-    // never deregistered (ref_count > 0) or when an earlier eviction's
-    // fi_close failed. Closing the domain with MRs still open violates
+    // STEP 3b: Close the tracked memory registrations a consumer never
+    // deregistered, before the domain goes away. Every entry still in the map
+    // is referenced: the deregisterMemory() that drops the last reference
+    // erases its entry. Closing the domain with MRs still open violates
     // libfabric's resource lifetime rules and leaks pinned (GDR) memory.
+    // Only tracked MRs are reclaimed here: an untracked MR that a consumer
+    // never deregistered still reaches the domain close, as on main.
     {
         const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
         for (auto &entry : mr_cache_) {
-            const uint32_t ref_count = entry.second.ref_count.load(std::memory_order_acquire);
-            if (ref_count != 0) {
-                NIXL_WARN << "MRRC: cached MR still referenced at cleanup on rail " << rail_id
-                          << " buffer=" << (void *)entry.first << " ref_count=" << ref_count;
-            }
+            NIXL_WARN << "MRRC: tracked MR never deregistered, closing it at cleanup on rail "
+                      << rail_id << " buffer=" << (void *)entry.first
+                      << " ref_count=" << entry.second.ref_count.load(std::memory_order_acquire);
             const int ret = fi_close(&entry.second.mr->fid);
             if (ret) {
                 NIXL_WARN << "MRRC: fi_close failed at cleanup on rail " << rail_id << ": "
@@ -1727,12 +1727,14 @@ nixlLibfabricRail::registerMemory(void *buffer,
             // deregisterMemory() closes it on its not-found path.
             NIXL_DEBUG << "MRRC: parameters differ from the tracked registration on rail "
                        << rail_id << " buffer=" << buffer << " cached_len=" << entry.length
-                       << " requested_len=" << length << "; registering untracked";
+                       << " requested_len=" << length << " cached_mem_type=" << entry.mem_type
+                       << " requested_mem_type=" << mem_type << " cached_device=" << entry.gpu_id
+                       << " requested_device=" << device_id << "; registering untracked";
             track = false;
         }
     }
 
-    // Cache miss - perform actual registration
+    // Not tracked yet, or tracked with different parameters (track == false): register it
 
     // Determine access flags based on provider capabilities
     uint64_t provider_access_flags;
@@ -1917,9 +1919,16 @@ nixlLibfabricRail::registerMemory(void *buffer,
         // registration itself succeeded, and deregisterMemory() closes an untracked
         // MR directly on its not-found path.
         if (mr_cache_.size() >= mr_cache_max_entries_) {
-            NIXL_WARN << "MRRC: rail " << rail_id << " already tracks " << mr_cache_.size()
-                      << " registrations (mr_cache_max_entries); returning this MR "
-                         "untracked, so it is not de-duplicated";
+            if (!mr_cache_bound_warned_) {
+                mr_cache_bound_warned_ = true;
+                NIXL_WARN << "MRRC: rail " << rail_id << " already tracks " << mr_cache_.size()
+                          << " registrations (mr_cache_max_entries); returning this MR "
+                             "untracked, so it is not de-duplicated. Further registrations "
+                             "past the bound on this rail are logged at DEBUG";
+            } else {
+                NIXL_DEBUG << "MRRC: rail " << rail_id << " at the bound (" << mr_cache_.size()
+                           << " tracked); returning this MR untracked";
+            }
             *mr_out = mr;
             *key_out = actual_key;
             return NIXL_SUCCESS;
@@ -1936,7 +1945,10 @@ nixlLibfabricRail::registerMemory(void *buffer,
                 // deregisterMemory() closes it on its not-found path.
                 NIXL_DEBUG << "MRRC: concurrent registration with different parameters on rail "
                            << rail_id << " buffer=" << buffer << " cached_len=" << raced.length
-                           << " requested_len=" << length << "; returning MR untracked";
+                           << " requested_len=" << length << " cached_mem_type=" << raced.mem_type
+                           << " requested_mem_type=" << mem_type
+                           << " cached_device=" << raced.gpu_id << " requested_device=" << device_id
+                           << "; returning MR untracked";
                 *mr_out = mr;
                 *key_out = actual_key;
                 return NIXL_SUCCESS;

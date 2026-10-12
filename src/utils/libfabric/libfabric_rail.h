@@ -30,7 +30,6 @@
 #include <ostream>
 #include <stack>
 #include <unordered_map>
-#include <atomic>
 
 #include "nixl.h"
 #include "backend/backend_aux.h"
@@ -50,6 +49,7 @@ class nixlLibfabricConnection;
  * entry, so a rail never holds an idle registration. A registration whose
  * parameters differ from the one tracked at that address is made on its own and
  * handed out untracked, as at the bound; deregisterMemory() closes it directly.
+ * Log lines tagged MRRC come from this tracking.
  */
 struct MRCacheEntry {
     struct fid_mr *mr; ///< Libfabric memory registration handle
@@ -702,6 +702,8 @@ private:
     mutable std::mutex mr_cache_mutex_;
     // Bound on tracked registrations; registrations past it are returned untracked
     size_t mr_cache_max_entries_ = NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT;
+    // Set once the at-bound warning was logged on this rail; guarded by mr_cache_mutex_
+    mutable bool mr_cache_bound_warned_ = false;
     // System runtime type (CUDA, NEURON, or SYSTEM) this rail was created for
     enum fi_hmem_iface runtime_;
 
