@@ -17,20 +17,15 @@
 #ifndef NIXL_SRC_PLUGINS_UCX_UCX_THREAD_POOL_ENGINE_H
 #define NIXL_SRC_PLUGINS_UCX_UCX_THREAD_POOL_ENGINE_H
 
-#include <memory>
 #include <string>
-#include <vector>
 
 #include "ucx_thread_engine.h"
-
-namespace asio {
-class io_context;
-}
 
 class nixlUcxThreadPoolEngine : public nixlUcxThreadEngine {
 public:
     nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params, size_t num_threads);
-    ~nixlUcxThreadPoolEngine();
+
+    ~nixlUcxThreadPoolEngine() override;
 
     nixl_status_t
     prepXfer(const nixl_xfer_op_t &operation,
@@ -51,9 +46,11 @@ protected:
                   size_t end_idx) const override;
 
 private:
-    std::unique_ptr<asio::io_context> io_;
-    std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;
-    size_t splitBatchSize_;
+    template<typename callbackType>
+    nixl_status_t
+    execute(callbackType &&callback) const;
+
+    const size_t splitBatchSize_;
 };
 
 #endif // NIXL_SRC_PLUGINS_UCX_UCX_THREAD_POOL_ENGINE_H

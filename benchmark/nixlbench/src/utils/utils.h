@@ -98,6 +98,7 @@
 #define XFERBENCH_BACKEND_MOONCAKE "Mooncake"
 #define XFERBENCH_BACKEND_HF3FS "HF3FS"
 #define XFERBENCH_BACKEND_OBJ "OBJ"
+#define XFERBENCH_BACKEND_REDIS "REDIS"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
@@ -156,6 +157,9 @@
 #define IS_PAIRWISE_AND_MG()                                 \
     (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
      XFERBENCH_MODE_MG == xferBenchConfig::mode)
+#define IS_MANY_TO_ONE_AND_MG()                                 \
+    (XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme && \
+     XFERBENCH_MODE_MG == xferBenchConfig::mode)
 
 class xferBenchConfig {
 public:
@@ -192,6 +196,8 @@ public:
     static std::string filepath;
     static std::string filenames;
     static bool enable_vmm;
+    static bool vmm_gdr_capable;
+    static int use_localized;
     static bool use_hugepages;
     static int num_files;
     static std::string posix_api_type;
@@ -223,7 +229,6 @@ public:
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
-    static std::string infinia_config_file;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
@@ -245,6 +250,12 @@ public:
     static int
     workerNum();
 
+    // Cached set of memory segment types reported by the selected backend.
+    // Populated pre-instantiation in loadParams via getPluginParams, then refreshed
+    // post-instantiation by the worker via getBackendParams (so LIBFABRIC's runtime-added
+    // VRAM_SEG is picked up). The storage/object/block predicates derive from this list.
+    static nixl_mem_list_t backend_mems;
+
     static int
     parseConfig(int argc, char *argv[]);
     static void
@@ -255,10 +266,16 @@ public:
     printSeparator(const char sep = '-');
     static std::vector<std::string>
     parseDeviceList();
+    // Storage taxonomy predicates. All three derive from backend_mems and are safe to
+    // call before the backend is instantiated (using plugin-reported mems) and after
+    // (using engine-reported mems). They return false when backend_mems is empty,
+    // which covers the nvshmem worker case.
     static bool
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    static bool
+    isBlkStorageBackend();
 
 protected:
     static int
@@ -400,6 +417,8 @@ public:
     buildAwsCredentials();
     static bool
     putObj(size_t buffer_size, const std::string &name);
+    static bool
+    putRedis(size_t buffer_size, const std::string &key);
     static bool
     getObj(const std::string &name);
     static bool

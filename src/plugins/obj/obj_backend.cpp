@@ -29,18 +29,11 @@
 
 namespace {
 
-std::string
-getAccelType(const nixl_b_params_t *custom_params) {
-    if (!custom_params) {
-        return "";
-    }
-    auto it = custom_params->find("type");
-    return (it != custom_params->end()) ? it->second : "";
-}
-
 template<typename... Args>
 std::unique_ptr<nixlObjEngineImpl>
 createAccelEngine(const nixl_b_params_t *custom_params, Args &&...args) {
+    // The registry maps an empty type to the standard engine and reports that
+    // case with its own message, so pass the type through unchanged.
     try {
         return objAccelEngineRegistry::instance().create(getAccelType(custom_params),
                                                          std::forward<Args>(args)...);

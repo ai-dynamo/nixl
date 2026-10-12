@@ -320,8 +320,17 @@ protected:
                  const std::string &from_name,
                  size_t expected_count,
                  const std::string &expected_notif,
-                 nixl_notifs_t notif_map = {}) {
+                 nixl_notifs_t notif_map = {},
+                 nixlAgent *sender = nullptr) {
+        // Without a progress thread nothing else advances the sender's worker,
+        // so its queued notifications would never be flushed to the receiver.
+        // When the sender is the receiver, polling it below already does that.
+        nixl_notifs_t sender_notifs;
         for (int i = 0; i < retry_count; i++) {
+            if (sender != nullptr && sender != &agent && !isProgressThreadEnabled()) {
+                ASSERT_EQ(NIXL_SUCCESS, sender->getNotifs(sender_notifs));
+            }
+
             nixl_status_t status = agent.getNotifs(notif_map);
             ASSERT_EQ(status, NIXL_SUCCESS);
 
@@ -371,7 +380,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, total_notifs, notif_msg, std::move(notif_map));
+        verifyNotifs(to, from_name, total_notifs, notif_msg, std::move(notif_map), &from);
         invalidateMD(0, 1);
     }
 
@@ -473,7 +482,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, repeat * num_threads, notif_msg, std::move(notif_map));
+        verifyNotifs(to, from_name, repeat * num_threads, notif_msg, std::move(notif_map), &from);
     }
 
     nixlAgent &getAgent(size_t idx)

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '1.5.0',
+project('nixlbench', 'CPP', version: '1.6.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -127,9 +127,14 @@ else
 endif
 
 cuda_fabric_available = false
+cuda_locality_domain_available = false
 if cuda_available
     if cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC', dependencies: cuda_dep)
         cuda_fabric_available = true
+    endif
+    if cpp.has_header_symbol('cuda.h', 'CU_MEM_LOCATION_TYPE_DEVICE_LOCALITY_DOMAIN',
+                             dependencies: cuda_dep)
+        cuda_locality_domain_available = true
     endif
 endif
 
@@ -197,6 +202,10 @@ endif
 
 if cuda_fabric_available
     add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
+endif
+
+if cuda_locality_domain_available
+    add_project_arguments('-DHAVE_CUDA_LOCALITY_DOMAIN', language: 'cpp')
 endif
 
 if not cuda_available and not rocm_available
@@ -339,6 +348,7 @@ configure_file(
         'HAVE_CUDA': cuda_available ? '1' : '0',
         'HAVE_ROCM': rocm_available ? '1' : '0',
         'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
+        'HAVE_CUDA_LOCALITY_DOMAIN': cuda_locality_domain_available ? '1' :'0',
         'HAVE_RAW_CLI': raw_cli_available ? '1' : '0',
     },
     install: true,

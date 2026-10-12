@@ -37,7 +37,6 @@ struct S3RdmaClientCtx {
     std::string object; ///< Object key.
     std::string uploadId; ///< Multipart upload id; empty for single-shot.
     uint32_t partNumber = 0; ///< Part number 1..10000 when uploadId is set.
-    std::string checksumCrc64nvme; ///< Optional CRC64NVME checksum, in/out.
     std::string etag; ///< ETag returned by the server; populated on success.
 };
 
@@ -73,7 +72,7 @@ public:
 
     /**
      * @brief Issue the signed control-plane PUT carrying the RDMA token.
-     * @param ctx Request context (bucket/object, multipart, checksum, etag out).
+     * @param ctx Request context (bucket/object, multipart, etag out).
      * @param token RDMA descriptor (carries the buffer address and size in its
      *        own leading fields; sent verbatim as x-amz-rdma-token).
      * @param size Number of bytes to transfer.
@@ -85,7 +84,7 @@ public:
 
     /**
      * @brief Issue the signed control-plane GET carrying the RDMA token.
-     * @param ctx Request context (bucket/object, checksum, etag out).
+     * @param ctx Request context (bucket/object, etag out).
      * @param token RDMA descriptor (carries the buffer address and size in its
      *        own leading fields; sent verbatim as x-amz-rdma-token).
      * @param size Number of bytes to fetch.

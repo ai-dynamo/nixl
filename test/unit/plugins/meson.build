@@ -30,36 +30,17 @@ if enabled_plugins.get('GPUNETIO')
         if not cuda_dep.found()
             error('GPUNETIO plugin tests requested but CUDA dependency not found')
         else
-            error('GPUNETIO plugin tests requested but doca-gpunetio dependency not found')
+            error('GPUNETIO plugin tests requested but doca-gpunetio >= 3.5 not found')
         endif
     elif cuda_dep.found() and doca_gpunetio_dep.found()
         subdir('gpunetio')
     endif
 endif
 
-disable_gds_backend = get_option('disable_gds_backend')
-if enabled_plugins.get('GDS')
-    if (disable_gds_backend or not cuda_dep.found()) and is_explicit_enable
-        if disable_gds_backend
-            error('GDS plugin tests requested but GDS backend is disabled')
-        else
-            error('GDS plugin tests requested but CUDA dependency not found')
-        endif
-    elif not disable_gds_backend
-        subdir('cuda_gds')
-    endif
-endif
-
-if enabled_plugins.get('GDS_MT')
-    if (not taskflow_proj.found() or disable_gds_backend) and is_explicit_enable
-        if not taskflow_proj.found()
-            error('GDS_MT plugin tests requested but Taskflow dependency not found')
-        else
-            error('GDS_MT plugin tests requested but GDS backend is disabled')
-        endif
-    elif taskflow_proj.found()
-        subdir('gds_mt')
-    endif
+if is_variable('gds_backend_interface') or is_variable(
+    'gds_mt_backend_interface',
+)
+    subdir('cuda_gds')
 endif
 
 cc = meson.get_compiler('cpp')
@@ -88,20 +69,8 @@ if enabled_plugins.get('HF3FS')
     endif
 endif
 
-infinia_lib_path = get_option('infinia_path') + '/lib'
-infinia_lib_file = 'red_client'
-infinia_lib_found = cc.find_library(infinia_lib_file, dirs: [infinia_lib_path], required: false)
-disable_infinia_backend = get_option('disable_infinia_backend')
-if enabled_plugins.get('INFINIA')
-    if (disable_infinia_backend or not infinia_lib_found.found()) and is_explicit_enable
-        if disable_infinia_backend
-            error('INFINIA plugin tests requested but Infinia backend is disabled')
-        else
-            error('INFINIA plugin tests requested but red_client library not found')
-        endif
-    elif not disable_infinia_backend and infinia_lib_found.found()
-        subdir('infinia')
-    endif
+if is_variable('infinia_backend_interface')
+    subdir('infinia')
 endif
 
 gusli_lib_path = '/usr/lib/'

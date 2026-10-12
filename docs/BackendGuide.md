@@ -135,7 +135,7 @@ From a user perspective talking to the NIXL agent, the type of backend transport
 * get_backend_mems: Returns the supported memory types by this backend
 * get_backend_options: Returns configuration options and parameters that the plugin can use during initialization. The user can use this information to know such parameters during runtime, and across different versions of the plugin.
 
-The plugin manager maintains API versioning of these above APIs. This can allow NIXL to ensure backward/forward compatibility for many more plugins. Furthermore, there can be both static and dynamic plugins, meaning being auto-loaded and/or built-in into the NIXL library directly or being loaded from disk on-demand respectively. Static plugins can provide slightly better performance at the expense of a larger application size. The API for both options are the same.
+The plugin manager maintains API versioning of these above APIs. The check is strict equality against `NIXL_PLUGIN_API_VERSION`: a plugin reporting any other version is refused at load rather than being run against an incompatible core. There is no backward- or forward-compatibility range, so a bump requires rebuilding out-of-tree plugins. Furthermore, there can be both static and dynamic plugins, meaning being auto-loaded and/or built-in into the NIXL library directly or being loaded from disk on-demand respectively. Static plugins can provide slightly better performance at the expense of a larger application size. The API for both options are the same.
 
 ## Comparing two plugins as an example
 
