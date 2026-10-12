@@ -288,11 +288,29 @@ TEST_F(MpExporterTest, WorldWritableTelemetryDirWarns) {
     EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 
-TEST(MpExporterStandaloneTest, MissingMultiprocDirThrows) {
-    gtest::ScopedEnv env;
-    env.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+TEST_F(MpExporterTest, EmptyMultiprocDirDefaultsToAPerUserPerPortDir) {
+    const auto dir = scopedDefaultDir();
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-default"));
+    EXPECT_TRUE(exporter.isExporter());
+    EXPECT_EQ(std::filesystem::status(dir).permissions() & std::filesystem::perms::mask,
+              std::filesystem::perms::owner_all);
+
+    const auto file = singleStoreFile(dir);
+    ASSERT_FALSE(file.empty());
+    const auto snap = readStoreSnapshot(file).snapshot;
+    ASSERT_TRUE(snap.has_value());
+    EXPECT_EQ(snap->agentName, "agent-default");
+}
+
+TEST_F(MpExporterTest, UncreatableMultiprocDirThrows) {
+    const auto file = dir_ / "not-a-dir";
+    { std::ofstream(file).put('\0'); }
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", (file / "telemetry").string());
+
     EXPECT_THROW(
-        { nixlTelemetryPrometheusMpExporter exporter(nixlTelemetryExporterInitParams{"a", 4096}); },
+        { nixlTelemetryPrometheusMpExporter exporter(initParams("agent-uncreatable")); },
         std::runtime_error);
 }
 

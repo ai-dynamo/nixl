@@ -35,8 +35,8 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 ## How it works
 
 - **Every process writes its own metric state** to a per-process memory-mapped
-  file in a shared directory (`NIXL_TELEMETRY_MULTIPROC_DIR`). Updates are
-  lock-free; there is no serialization.
+  file in a shared directory (`NIXL_TELEMETRY_MULTIPROC_DIR`, by default one per
+  user and port under `/dev/shm`). Updates are lock-free; there is no serialization.
 - **Locked owner election, one per address.** On startup -- and, for a process
   that is not serving, again as it exports -- each process races for an `flock` on
   `nixl-owner.<address:port>.lock` in the shared directory. The one that wins
@@ -139,24 +139,51 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 ```bash
 export NIXL_TELEMETRY_ENABLE="y"
 export NIXL_TELEMETRY_EXPORTER="prometheus_mp" # selects libtelemetry_exporter_prometheus_mp.so
-export NIXL_TELEMETRY_MULTIPROC_DIR="/run/nixl_metrics" # REQUIRED: shared by all ranks in the pod
 ```
 
-Configuration errors here are **fatal, unlike a bind collision**: a missing (or
-uncreatable) `NIXL_TELEMETRY_MULTIPROC_DIR`, and a
+That is enough: the processes of a run that use the same
+`NIXL_TELEMETRY_PROMETHEUS_PORT` are exported behind that port.
+
+`NIXL_TELEMETRY_MULTIPROC_DIR`, the directory those processes share, is optional.
+Unset or empty, it defaults to `/dev/shm/nixl-telemetry-<euid>-<port>`, named after
+the process's effective uid and its `NIXL_TELEMETRY_PROMETHEUS_PORT`. When `/dev/shm`
+is not a writable directory, the system temp directory (`TMPDIR`, else `/tmp`) takes
+its place. The exporter logs the path it chose at INFO. Processes that share a port
+therefore aggregate, and processes given different ports keep separate endpoints,
+with no rank configuration. An explicit directory always wins:
+
+```bash
+export NIXL_TELEMETRY_MULTIPROC_DIR="/run/nixl_metrics" # the same for every rank to aggregate
+```
+
+The default only reaches processes that share a `/dev/shm`, that is, one container
+or pod. Processes in separate containers on a host network get a directory each,
+even on one port: the first owner to bind exports only its own container's
+processes, and the ranks of the other containers warn that the port is held by a
+process outside their run. Nothing crashes, but nothing aggregates them either;
+give them an explicit `NIXL_TELEMETRY_MULTIPROC_DIR` on a local volume they all
+mount.
+
+The default directory outlives the run. It keeps the owner lock files and the store
+file of the last process to exit (see "Stale handling"), which the next run on the
+same port reaps on its first scrape. On a host shared with other users, `/dev/shm`
+is world-writable and the default name is predictable, so another user can create
+`/dev/shm/nixl-telemetry-<your euid>-<port>` first. The exporter then warns that the
+directory belongs to another uid but still uses it, and that user can remove your
+store files. Set an explicit private `NIXL_TELEMETRY_MULTIPROC_DIR` on such hosts.
+
+Configuration errors here are **fatal, unlike a bind collision**: a
+`NIXL_TELEMETRY_MULTIPROC_DIR` that cannot be created, and a
 `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` list longer than 32 bounds, throw out of the
 `nixlAgent` constructor rather than leaving the rank running without telemetry.
-Selecting this exporter and forgetting the directory therefore fails every rank at
-startup, loudly, instead of exporting nothing.
 
 This mirrors Dynamo's `PROMETHEUS_MULTIPROC_DIR` convention (a shared folder that
 every related process writes into, one leader exports): all ranks that should be
-aggregated together must point `NIXL_TELEMETRY_MULTIPROC_DIR` at the **same**
-directory. Unlike Dynamo -- which auto-creates a temp dir in the parent and lets
-child engine processes inherit it -- NIXL is a library loaded independently in each
-rank, so there is no parent to propagate the path; the launcher/operator must set
-the same directory for every rank (hence it is required, not auto-defaulted, so a
-per-process temp dir can never silently break aggregation).
+aggregated together must use the **same** directory. Unlike Dynamo -- which
+auto-creates a temp dir in the parent and lets child engine processes inherit it --
+NIXL is a library loaded independently in each rank, so there is no parent to
+propagate the path. The default is therefore built from what the ranks of a run
+already share, their user and their port, rather than created per process.
 
 Recommended, following Dynamo's model: a shared **local** folder, one per pod /
 process-family, treated as ephemeral (e.g. a per-pod Kubernetes `emptyDir`, or a
@@ -193,6 +220,7 @@ their series collide.
 
 ```bash
 # Scrape port (default 9090) and bind scope -- shared with the prometheus plug-in.
+# The port also names the default NIXL_TELEMETRY_MULTIPROC_DIR.
 export NIXL_TELEMETRY_PROMETHEUS_PORT="<port_num>"
 export NIXL_TELEMETRY_PROMETHEUS_LOCAL="y" # bind 127.0.0.1 instead of 0.0.0.0
 

@@ -46,6 +46,7 @@ using nixl::telemetry::mp::storeWriter;
 
 constexpr uint16_t defaultPort = 9090;
 constexpr char defaultRankEnvName[] = "LOCAL_RANK";
+constexpr char defaultMultiprocBase[] = "/dev/shm";
 
 constexpr char prometheusPortVar[] = "NIXL_TELEMETRY_PROMETHEUS_PORT";
 constexpr char prometheusLocalVar[] = "NIXL_TELEMETRY_PROMETHEUS_LOCAL";
@@ -56,11 +57,15 @@ constexpr char staleTtlVar[] = "NIXL_TELEMETRY_MP_STALE_TTL";
 const std::string localAddress = "127.0.0.1";
 const std::string publicAddress = "0.0.0.0";
 
+[[nodiscard]] uint16_t
+resolvePort() {
+    return nixl::config::getValueDefaulted(prometheusPortVar, defaultPort);
+}
+
 [[nodiscard]] std::string
 resolveBindAddress() {
     const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
-    const uint16_t port = nixl::config::getValueDefaulted(prometheusPortVar, defaultPort);
-    return (local ? localAddress : publicAddress) + ":" + std::to_string(port);
+    return (local ? localAddress : publicAddress) + ":" + std::to_string(resolvePort());
 }
 
 // Resolves the optional local_rank label value: NIXL_TELEMETRY_RANK_ENV names
@@ -88,13 +93,24 @@ resolveStaleTtl() {
 }
 
 [[nodiscard]] std::filesystem::path
+defaultMultiprocDir() {
+    const std::filesystem::path shm(defaultMultiprocBase);
+    std::error_code ec;
+    const bool shm_writable =
+        std::filesystem::is_directory(shm, ec) && ::access(shm.c_str(), W_OK | X_OK) == 0;
+    const std::filesystem::path base = shm_writable ? shm : std::filesystem::temp_directory_path();
+    const std::filesystem::path path = base /
+        ("nixl-telemetry-" + std::to_string(::geteuid()) + "-" + std::to_string(resolvePort()));
+    NIXL_INFO << "prometheus_mp: " << multiprocDirVar << " is not set; using telemetry dir '"
+              << path.string() << "'";
+    return path;
+}
+
+[[nodiscard]] std::filesystem::path
 resolveMultiprocDir() {
     const auto dir = nixl::config::getValueOptional<std::string>(multiprocDirVar);
-    if (!dir || dir->empty()) {
-        throw std::runtime_error(
-            "prometheus_mp exporter requires NIXL_TELEMETRY_MULTIPROC_DIR to be set");
-    }
-    std::filesystem::path path(*dir);
+    const std::filesystem::path path =
+        dir && !dir->empty() ? std::filesystem::path(*dir) : defaultMultiprocDir();
     std::error_code ec;
     const bool created = std::filesystem::create_directories(path, ec);
     if (ec) {
