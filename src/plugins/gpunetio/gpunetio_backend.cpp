@@ -1751,10 +1751,8 @@ nixlDocaEngine::reportQp(const char *name,
     for (uint64_t idx = next >= back ? next - back : 0; idx < next + 2; ++idx) {
         const uint64_t idx_in_cq = idx + cq.cqe_rsvd;
         mlx5_cqe64 cqe;
-        err = copyFromGpu(&cqe,
-                          cq.cqe_daddr + (idx_in_cq & (cq.cqe_num - 1)) * sizeof(cqe),
-                          sizeof(cqe),
-                          stream);
+        err = copyFromGpu(
+            &cqe, cq.cqe_daddr + (idx_in_cq & (cq.cqe_num - 1)) * sizeof(cqe), sizeof(cqe), stream);
         if (err != cudaSuccess) {
             NIXL_ERROR << "GPUNETIO_HANG " << name << " cqe " << idx
                        << ": copy failed: " << cudaGetErrorString(err);
@@ -1789,8 +1787,8 @@ nixlDocaEngine::reportStuckXfer(nixlDocaBckndReq *request) const {
         volatile docaXferReqGpu &req = xferReqRingCpu[pos];
         const uint32_t slot = req.id & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
         NIXL_ERROR << "GPUNETIO_HANG ring pos " << pos << ": completion slot " << slot << " num "
-                   << req.num << " in_use " << (unsigned)req.in_use << " last_wqe "
-                   << req.last_wqe << " notif_idx " << req.has_notif_msg_idx;
+                   << req.num << " in_use " << (unsigned)req.in_use << " last_wqe " << req.last_wqe
+                   << " notif_idx " << req.has_notif_msg_idx;
         for (uint32_t s : {slot - 1, slot, slot + 1}) {
             s &= DOCA_MAX_COMPLETION_INFLIGHT_MASK;
             const volatile docaXferCompletion &completion = completion_list_cpu[s];
