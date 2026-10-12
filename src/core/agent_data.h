@@ -69,8 +69,25 @@ class nixlAgentData final : public nixlMetadataContext {
         backend_map_t backendEngines_;
         // Discoverable remote sections; pinned views may retain invalidated sections.
         std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
+        // Releases the view before its owners are dropped.
         struct MemViewBinding {
+            MemViewBinding(nixlBackendEngine &engine,
+                           nixlMemViewH view,
+                           std::vector<std::shared_ptr<nixlRemoteSection>> owners = {})
+                : engine(engine),
+                  view(view),
+                  owners(std::move(owners)) {}
+
+            MemViewBinding(const MemViewBinding &) = delete;
+            MemViewBinding &
+            operator=(const MemViewBinding &) = delete;
+
+            ~MemViewBinding() {
+                engine.releaseMemView(view);
+            }
+
             nixlBackendEngine &engine;
+            const nixlMemViewH view;
             std::vector<std::shared_ptr<nixlRemoteSection>> owners;
         };
         // Owners outlive backend release; engines outlive all bindings.

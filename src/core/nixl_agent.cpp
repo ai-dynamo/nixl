@@ -236,10 +236,6 @@ nixlAgentData::~nixlAgentData() {
     // Runs before any member is destroyed, so no metadata backend thread can
     // still be in the caches below.
     md_.stop();
-    for (const auto &[view, binding] : memViews_) {
-        binding.engine.releaseMemView(view);
-    }
-    memViews_.clear();
 }
 
 /*** nixlAgent implementation ***/
@@ -2000,7 +1996,7 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
 
     const auto status = engine->prepMemView(remote_meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
-        data->memViews_.emplace(mvh, nixlAgentData::MemViewBinding{*engine, std::move(owners)});
+        data->memViews_.try_emplace(mvh, *engine, mvh, std::move(owners));
     }
 
     return status;
@@ -2042,7 +2038,7 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
 
     const auto status = engine->prepMemView(meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
-        data->memViews_.emplace(mvh, nixlAgentData::MemViewBinding{*engine, {}});
+        data->memViews_.try_emplace(mvh, *engine, mvh);
     }
 
     return status;
@@ -2060,6 +2056,5 @@ nixlAgent::releaseMemView(nixlMemViewH mvh) const {
         return;
     }
 
-    it->second.engine.releaseMemView(mvh);
     data->memViews_.erase(it);
 }
