@@ -780,6 +780,29 @@ TEST_F(sharedCuObjClientTest, FinalReleaseRacesNewRegistration) {
     EXPECT_EQ(fake_->registerCalls(), fake_->deregisterCalls());
 }
 
+// A large registration's windows and other registrations must never share a
+// start address, in either registration order.
+TEST_F(sharedCuObjClientTest, WindowStartCollisionIsRejected) {
+    auto *large = reinterpret_cast<uint8_t *>(uintptr_t(1) << 40);
+    const size_t large_len = size_t(6) << 30;
+    uint8_t *second_window = large + nixl_obj_rdma::window_stride;
+
+    ASSERT_TRUE(client_.registerBuffer(large, large_len, true));
+    const int calls = fake_->registerCalls();
+    EXPECT_FALSE(client_.registerBuffer(second_window, len));
+    EXPECT_EQ(fake_->registerCalls(), calls);
+    char *token = client_.getToken(second_window, len, CUOBJ_PUT);
+    EXPECT_NE(token, nullptr);
+    client_.putToken(token);
+    client_.deregisterBuffer(large);
+
+    ASSERT_TRUE(client_.registerBuffer(second_window, len));
+    EXPECT_FALSE(client_.registerBuffer(large, large_len, true));
+    EXPECT_FALSE(fake_->isRegistered(large));
+    client_.deregisterBuffer(second_window);
+    EXPECT_EQ(fake_->registerCalls() - fake_->deregisterCalls(), 0);
+}
+
 TEST_F(sharedCuObjClientTest, TokenKeepsNestedRegistration) {
     ASSERT_TRUE(client_.registerBuffer(buf_.data(), len));
     uint8_t *inner = buf_.data() + len / 4;

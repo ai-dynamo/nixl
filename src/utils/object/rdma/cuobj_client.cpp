@@ -109,16 +109,27 @@ SharedCuObjClient::registerBuffer(void *ptr, size_t size, bool allow_large) {
         return false;
     }
     std::vector<uintptr_t> regions;
+    auto rollback = [&] {
+        for (const auto region : regions) {
+            regions_.erase(region);
+            client_->cuMemObjPutDescriptor(reinterpret_cast<void *>(region));
+        }
+    };
     for (uintptr_t start = base;; start += window_stride) {
         const size_t len = std::min(max_region_size, base + size - start);
-        cuObjErr_t rc = client_->cuMemObjGetDescriptor(reinterpret_cast<void *>(start), len);
+        void *window = reinterpret_cast<void *>(start);
+        if (regions_.count(start) != 0) {
+            NIXL_ERROR << "RDMA buffer ptr=" << ptr << " size=" << size
+                       << " needs a registration at ptr=" << window
+                       << ", where another registration already starts";
+            rollback();
+            return false;
+        }
+        cuObjErr_t rc = client_->cuMemObjGetDescriptor(window, len);
         if (rc != CU_OBJ_SUCCESS) {
-            NIXL_ERROR << "cuMemObjGetDescriptor failed rc=" << rc
-                       << " ptr=" << reinterpret_cast<void *>(start) << " size=" << len;
-            for (const auto region : regions) {
-                regions_.erase(region);
-                client_->cuMemObjPutDescriptor(reinterpret_cast<void *>(region));
-            }
+            NIXL_ERROR << "cuMemObjGetDescriptor failed rc=" << rc << " ptr=" << window
+                       << " size=" << len;
+            rollback();
             return false;
         }
         regions.push_back(start);
