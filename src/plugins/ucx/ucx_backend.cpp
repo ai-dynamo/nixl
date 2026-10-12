@@ -30,7 +30,6 @@
 #include <array>
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string.h>
 #include "absl/strings/str_split.h"
 
@@ -676,18 +675,19 @@ nixl::ucx::serializeNotif(const std::string &agent,
 }
 
 nixl::ucx::notifMessage
-nixl::ucx::deserializeNotif(const std::string &buffer) {
+nixl::ucx::deserializeNotif(const std::string &buffer, bool with_trace_context) {
     nixlSerDes ser_des;
     ser_des.importStr(buffer);
 
     notifMessage notif;
     notif.agent = ser_des.getStr("name");
     notif.msg = ser_des.getStr("msg");
-    if (ser_des.nextTagIs("tctx")) {
-        const std::string record = ser_des.getStr("tctx");
-        const std::span bytes{reinterpret_cast<const std::uint8_t *>(record.data()), record.size()};
+    if (with_trace_context && (ser_des.peekBufLen("tctx") == nixl::trace::traceContextWireSize)) {
+        std::array<std::uint8_t, nixl::trace::traceContextWireSize> record;
         nixl::trace::TraceContext context;
-        if (nixl::trace::decodeTraceContext(bytes, context) == nixl::trace::WireDecodeResult::Ok) {
+        if ((ser_des.getBuf("tctx", record.data(), record.size()) == NIXL_SUCCESS) &&
+            (nixl::trace::decodeTraceContext(record, context) ==
+             nixl::trace::WireDecodeResult::Ok)) {
             notif.traceContext = context;
         }
     }
@@ -739,7 +739,8 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     NIXL_ASSERT(!(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV));
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
-    nixl::ucx::notifMessage notif = nixl::ucx::deserializeNotif(ser_str);
+    nixl::ucx::notifMessage notif =
+        nixl::ucx::deserializeNotif(ser_str, engine->traceSink_ != nullptr);
     if ((engine->traceSink_ != nullptr) && notif.traceContext && notif.traceContext->sampled()) {
         const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", notif.agent}};
         engine->traceSink_->recordPhase(

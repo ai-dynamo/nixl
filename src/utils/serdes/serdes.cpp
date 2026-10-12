@@ -79,10 +79,20 @@ std::string nixlSerDes::getStr(const std::string &tag){
     return ret;
 }
 
-bool
-nixlSerDes::nextTagIs(const std::string &tag) const noexcept {
-    return workingStr.size() >= des_offset + tag.size() + sizeof(size_t) &&
-        std::memcmp(workingStr.data() + des_offset, tag.data(), tag.size()) == 0;
+std::optional<size_t>
+nixlSerDes::peekBufLen(std::string_view tag) const noexcept {
+    const size_t header_end = des_offset + tag.size() + sizeof(size_t);
+    if ((workingStr.size() < header_end) ||
+        (std::memcmp(workingStr.data() + des_offset, tag.data(), tag.size()) != 0)) {
+        return std::nullopt;
+    }
+
+    size_t len;
+    std::memcpy(&len, workingStr.data() + des_offset + tag.size(), sizeof(len));
+    if (workingStr.size() - header_end <= len) {
+        return std::nullopt;
+    }
+    return len;
 }
 
 // Byte buffers serialization

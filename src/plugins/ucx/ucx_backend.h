@@ -47,7 +47,7 @@ serializeNotif(const std::string &agent,
                const nixl::trace::TraceContext *trace_context);
 
 [[nodiscard]] notifMessage
-deserializeNotif(const std::string &buffer);
+deserializeNotif(const std::string &buffer, bool with_trace_context);
 } // namespace nixl::ucx
 
 class nixlUcxConnection : public nixlBackendConnMD {

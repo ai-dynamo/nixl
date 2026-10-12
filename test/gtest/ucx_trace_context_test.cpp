@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -37,20 +38,36 @@ olderSenderNotif(const std::string &agent, const std::string &msg) {
 
 } // namespace
 
-TEST(SerDesProbe, NextTagIsNeitherConsumesNorLogs) {
+TEST(SerDesProbe, PeekBufLenNeitherConsumesNorLogs) {
     nixlSerDes writer;
     writer.addStr("first", "1");
-    writer.addStr("second", "2");
+    writer.addStr("other", "22");
     nixlSerDes reader;
     ASSERT_EQ(reader.importStr(writer.exportStr()), NIXL_SUCCESS);
     const size_t problems = gtest::LogProblemCounter::getProblemCount();
 
-    EXPECT_FALSE(reader.nextTagIs("second"));
-    EXPECT_TRUE(reader.nextTagIs("first"));
+    EXPECT_FALSE(reader.peekBufLen("other").has_value());
+    EXPECT_EQ(reader.peekBufLen("first"), 1u);
     EXPECT_EQ(reader.getStr("first"), "1");
-    EXPECT_TRUE(reader.nextTagIs("second"));
-    EXPECT_EQ(reader.getStr("second"), "2");
-    EXPECT_FALSE(reader.nextTagIs("second"));
+    EXPECT_EQ(reader.peekBufLen("other"), 2u);
+    EXPECT_EQ(reader.getStr("other"), "22");
+    EXPECT_FALSE(reader.peekBufLen("other").has_value());
+    EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
+}
+
+TEST(SerDesProbe, PeekBufLenReportsEmptyValuesAndRejectsTruncatedOnes) {
+    nixlSerDes writer;
+    writer.addStr("empty", "");
+    writer.addStr("value", "12345");
+    const std::string complete = writer.exportStr();
+    nixlSerDes reader;
+    ASSERT_EQ(reader.importStr(complete.substr(0, complete.size() - 2)), NIXL_SUCCESS);
+    const size_t problems = gtest::LogProblemCounter::getProblemCount();
+
+    EXPECT_EQ(reader.peekBufLen("empty"), 0u);
+    char unused;
+    ASSERT_EQ(reader.getBuf("empty", &unused, 0), NIXL_SUCCESS);
+    EXPECT_FALSE(reader.peekBufLen("value").has_value());
     EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
 }
 
@@ -77,25 +94,43 @@ TEST(UcxTraceContextWire, UnsampledRequestWritesNoContextBytes) {
 TEST(UcxTraceContextWire, SampledContextRoundTrips) {
     const auto context = nixl::trace::generateTraceContext(1.0);
     const auto notif =
-        nixl::ucx::deserializeNotif(nixl::ucx::serializeNotif(sender_name, "msg", &context));
+        nixl::ucx::deserializeNotif(nixl::ucx::serializeNotif(sender_name, "msg", &context), true);
 
     EXPECT_EQ(notif.agent, sender_name);
     EXPECT_EQ(notif.msg, "msg");
     EXPECT_EQ(notif.traceContext, context);
 }
 
+TEST(UcxTraceContextWire, ReceiverWithoutTracingIgnoresTheContext) {
+    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto notif =
+        nixl::ucx::deserializeNotif(nixl::ucx::serializeNotif(sender_name, "msg", &context), false);
+
+    EXPECT_EQ(notif.agent, sender_name);
+    EXPECT_EQ(notif.msg, "msg");
+    EXPECT_FALSE(notif.traceContext.has_value());
+}
+
 TEST(UcxTraceContextWire, UndecodableContextKeepsTheMessage) {
     const std::string later_version(nixl::trace::traceContextWireSize,
                                     static_cast<char>(nixl::trace::traceContextWireVersion + 1));
     const std::string malformed(nixl::trace::traceContextWireSize - 1, '\x01');
-    for (const auto &record : {later_version, malformed}) {
+    std::vector<std::string> notifications;
+    for (const auto &record : {later_version, malformed, std::string{}}) {
         nixlSerDes sender;
         sender.addStr("name", sender_name);
         sender.addStr("msg", "msg");
         sender.addStr("tctx", record);
+        notifications.push_back(sender.exportStr());
+    }
+    const auto context = nixl::trace::generateTraceContext(1.0);
+    const std::string sampled = nixl::ucx::serializeNotif(sender_name, "msg", &context);
+    notifications.push_back(sampled.substr(0, sampled.size() - 2));
+
+    for (const auto &notification : notifications) {
         const size_t problems = gtest::LogProblemCounter::getProblemCount();
 
-        const auto notif = nixl::ucx::deserializeNotif(sender.exportStr());
+        const auto notif = nixl::ucx::deserializeNotif(notification, true);
 
         EXPECT_EQ(notif.agent, sender_name);
         EXPECT_EQ(notif.msg, "msg");
@@ -106,7 +141,7 @@ TEST(UcxTraceContextWire, UndecodableContextKeepsTheMessage) {
 
 TEST(UcxTraceContextWire, OlderSenderNotificationParsesWithoutLogging) {
     const size_t problems = gtest::LogProblemCounter::getProblemCount();
-    const auto notif = nixl::ucx::deserializeNotif(olderSenderNotif(sender_name, "msg"));
+    const auto notif = nixl::ucx::deserializeNotif(olderSenderNotif(sender_name, "msg"), true);
 
     EXPECT_EQ(notif.agent, sender_name);
     EXPECT_EQ(notif.msg, "msg");

@@ -221,7 +221,8 @@ record as a `tctx` tag after the notification's `name` and `msg`, so an older
 receiver, which stops reading after `msg`, is unaffected; unsampled requests and
 `genNotif` add nothing. When the notification arrives at an agent with tracing
 on, UCX records `nixl::notif.received` under the sender's context, with
-`nixl.remote_agent` naming the sender. The span thus carries the request's trace
+`nixl.remote_agent` naming the sender; an agent with tracing off skips the record
+without reading it. The span thus carries the request's trace
 id in `nixl.traceparent`, and the same correlation id as the sender's
 `nixl::postXferReq.write` or `.read` span. Writes and reads without a
 notification give the receiver nothing to observe, so they are traced on the
