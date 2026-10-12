@@ -319,7 +319,14 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     if (receiverPid == 0) {
         up_read.reset();
         down_write.reset();
-        ::_exit(runReceiver(up_write.get(), down_read.get(), receiver_buffer, mdFile));
+        int rc = 0;
+        try {
+            rc = runReceiver(up_write.get(), down_read.get(), receiver_buffer, mdFile);
+        }
+        catch (...) {
+            rc = 8;
+        }
+        ::_exit(rc);
     }
     up_write.reset();
     down_read.reset();
