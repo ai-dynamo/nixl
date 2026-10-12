@@ -47,7 +47,7 @@ aws ec2 describe-security-groups --group-ids $CLUSTER_SG \
 ## GitHub Actions Integration
 
 The script is designed to run in GitHub Actions when branches are updated.
-It relies on the `GITHUB_REF` environment variable to determine which branch or commit to test. The value can be a branch name (e.g., `main`, `feature-xyz`) or a commit SHA.
+It tests the exact commit in `GITHUB_SHA`, so the run is unaffected if the `pull-request/<N>` branch is deleted or force-pushed before the AWS pod starts. If `GITHUB_SHA` is unset, it falls back to `GITHUB_REF`, which can be a branch name (e.g., `main`, `feature-xyz`) or a full commit SHA.
 
 ### Required GitHub Secrets
 
@@ -66,7 +66,7 @@ The following secrets are configured in the GitHub environment:
 4. Run cleanup when done (or after failures).
 
 ```bash
-# Branch or commit SHA to test
+# Branch or full commit SHA to test
 export GITHUB_REF="main"
 
 # Required GitHub metadata
