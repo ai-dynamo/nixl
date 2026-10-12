@@ -28,6 +28,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <random>
+#include "absl/log/globals.h"
 #include "absl/log/log_sink_registry.h"
 
 namespace gtest {
@@ -210,6 +211,30 @@ LogProblemCounter::Send(const absl::LogEntry &entry) {
 
     std::cerr << "ATTENTION: Unexpected NIXL warning or error detected!" << std::endl;
     std::cerr << "ATTENTION: Message is '" << msg << '\'' << std::endl;
+}
+
+LogMessageCounter::LogMessageCounter(std::string_view needle)
+    : needle_(needle),
+      minLogLevel_(absl::MinLogLevel()) {
+    absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
+    absl::AddLogSink(static_cast<absl::LogSink *>(this));
+}
+
+LogMessageCounter::~LogMessageCounter() {
+    absl::RemoveLogSink(static_cast<absl::LogSink *>(this));
+    absl::SetMinLogLevel(minLogLevel_);
+}
+
+size_t
+LogMessageCounter::count() const noexcept {
+    return count_.load(std::memory_order_relaxed);
+}
+
+void
+LogMessageCounter::Send(const absl::LogEntry &entry) {
+    if (entry.text_message().find(needle_) != std::string_view::npos) {
+        count_.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 } // namespace gtest
