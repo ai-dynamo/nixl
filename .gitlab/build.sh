@@ -166,7 +166,7 @@ else
         # Ubuntu 22.04 ships hiredis 0.14.x which is below the >=1.0.0 floor
         # required by the Redis plugin. Replace it with a source build.
         $SUDO apt-get remove -y libhiredis-dev 2>/dev/null || true
-        HIREDIS_TAG="v1.2.0"
+        HIREDIS_TAG="v1.4.0"
         ( \
           cd "${BUILD_TMP}" && \
           git clone --depth 1 -b "${HIREDIS_TAG}" https://github.com/redis/hiredis.git && \
