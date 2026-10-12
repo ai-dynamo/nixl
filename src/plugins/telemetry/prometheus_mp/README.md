@@ -83,9 +83,10 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   series, its counters restarting from zero (see "Design scope & limitations").
 - **Liveness is a lock, not a pid.** Each process `flock`s its store *before* the
   file has a name, keeps it locked for as long as it lives, and only then links it
-  into the directory. So a reader that manages to take the lock knows the writer
-  is gone for good -- no other process ever locks a store it did not create -- and
-  a store it cannot lock belongs to a live writer. The kernel releases the lock
+  into the directory. So, as long as that `flock` succeeded, a reader that
+  manages to take the lock knows the writer is gone for good -- no other process
+  ever locks a store exclusively -- and a store it cannot lock belongs to a live
+  writer ("Stale handling" covers a failed `flock`). The kernel releases the lock
   however the process died, so nothing needs cleaning up, and none of this needs
   pids, `/proc`, or a PID namespace shared with the writers. Creating the store
   nameless (`O_TMPFILE`) is what closes the last window: a reader can never find a
@@ -100,8 +101,9 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 - **Stale handling.** A departing process leaves its store file behind, whether it
   exits cleanly or is killed: its last values are usually not scraped yet, and
   unlinking on exit would drop everything produced since the previous scrape. The
-  owner keeps publishing them until *both* the writer has released the store and
-  its last update has aged past the TTL; only then are the series dropped and the
+  owner keeps publishing them, unless a store of the same name outranks them (see
+  "Metric labels"), until *both* the writer has released the store and its last
+  update has aged past the TTL; only then are the series dropped and the
   file reaped. Both are evaluated during a scrape, so a live process is never
   dropped for being idle, and a dead one keeps being published until the first
   scrape after its TTL expires. Keep the TTL at or above the Prometheus scrape
