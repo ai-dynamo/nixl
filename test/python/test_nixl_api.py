@@ -15,6 +15,7 @@
 
 import os
 import tempfile
+import time
 import uuid
 
 import pytest
@@ -353,6 +354,65 @@ def test_prep_mem_view(backend_name, capfd):
                 nprocs=2,
                 join=True,
             )
+
+
+@pytest.mark.parametrize("shape", [(), (0,), (1,), (2, 4)])
+@pytest.mark.parametrize("as_list", [False, True])
+@pytest.mark.parametrize("method", ["get_reg_descs", "get_xfer_descs"])
+def test_tensor_descriptors(one_empty_agent, shape, as_list, method):
+    """Single tensors and tensor lists describe their entire contiguous buffer."""
+    tensor = torch.ones(shape, dtype=torch.float32)
+    tensor_input = [tensor] if as_list else tensor
+    expected = (tensor.data_ptr(), tensor.numel() * tensor.element_size(), 0)
+
+    descs = getattr(one_empty_agent, method)(tensor_input)
+    assert descs.getType() == bindings.DRAM_SEG
+    assert descs.descCount() == 1
+    assert descs[0][:3] == expected
+
+
+@pytest.mark.timeout(10)
+def test_scalar_tensor_transfer(two_agents):
+    """The tensor API can register and transfer a scalar without reshaping it."""
+    source, target = two_agents
+    source_tensor = torch.tensor(123.5)
+    target_tensor = torch.tensor(0.0)
+    source_reg = None
+    target_reg = None
+    handle = None
+    remote_added = False
+
+    try:
+        source_reg = source.register_memory(source_tensor)
+        target_reg = target.register_memory(target_tensor)
+        assert source_reg is not None
+        assert target_reg is not None
+        source.add_remote_agent(target.get_agent_metadata())
+        remote_added = True
+
+        handle = source.initialize_xfer(
+            "WRITE",
+            source.get_xfer_descs(source_tensor),
+            source.get_xfer_descs(target_tensor),
+            target.name,
+        )
+        state = source.transfer(handle)
+        deadline = time.monotonic() + 5
+        while state == "PROC" and time.monotonic() < deadline:
+            time.sleep(0.001)
+            state = source.check_xfer_state(handle)
+
+        assert state == "DONE"
+        assert target_tensor.item() == source_tensor.item()
+    finally:
+        if handle is not None:
+            source.release_xfer_handle(handle)
+        if remote_added:
+            source.remove_remote_agent(target.name)
+        if source_reg is not None:
+            source.deregister_memory(source_reg)
+        if target_reg is not None:
+            target.deregister_memory(target_reg)
 
 
 def test_noncontiguous_tensor(one_empty_agent):
