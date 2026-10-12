@@ -161,8 +161,8 @@ start_redis_server() {
     local redis_dir
     redis_dir=$(mktemp -d /tmp/redis-dir-XXXXXX)
 
-    redis-server --port "${redis_port}" --daemonize no --loglevel notice \
-                 --dir "${redis_dir}" --logfile "${REDIS_LOG}" &
+    redis-server --port "${redis_port}" --bind 127.0.0.1 --daemonize no --loglevel notice \
+                 --dir "${redis_dir}" --save '' --appendonly no --logfile "${REDIS_LOG}" &
     REDIS_PID=$!
 
     wait_for_redis_server "${redis_port}"
