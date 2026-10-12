@@ -10,8 +10,14 @@
 #include <string_view>
 
 #include "s3/client.h"
-#include "object/rdma/rdma.h"
 #include "nixl_types.h"
+
+// Declarations only: the members below are a pointer and a shared_ptr, so
+// including rdma.h here would pull cuObject into every including TU for nothing.
+namespace nixl_obj_rdma {
+class SharedCuObjClient;
+class S3RdmaControlPlane;
+} // namespace nixl_obj_rdma
 
 /**
  * S3 Accelerated Object Client - the generic, protocol-compliant S3-over-RDMA
