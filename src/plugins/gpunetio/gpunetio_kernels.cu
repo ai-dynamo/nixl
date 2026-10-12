@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -146,8 +146,9 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
         doca_gpu_dev_verbs_mark_wqes_ready(qp, base_wqe_idx, wqe_idx);
         doca_gpu_dev_verbs_submit(qp, wqe_idx + 1);
         // Wait for final CQE in block of iterations
-        if (doca_gpu_dev_verbs_poll_cq_at(doca_gpu_dev_verbs_qp_get_cq_sq(qp), wqe_idx) != 0)
+        if (doca_gpu_dev_verbs_poll_cq_at(qp, wqe_idx) != 0) {
             printf("kernel_read: Error CQE!\n");
+        }
 
         DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].last_wqe) = wqe_idx;
         doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
@@ -283,7 +284,7 @@ kernel_progress(struct docaXferCompletion *completion_list,
                                 &out_ticket);
 
                             doca_gpu_dev_verbs_wait(completion_list[index].xferReqRingGpu->qp_notif,
-                                                    &out_ticket);
+                                                    out_ticket);
 #if ENABLE_DEBUG == 1
                             printf("Notif correctly sent %ld\n", out_ticket);
 #endif
@@ -374,7 +375,7 @@ kernel_progress(struct docaXferCompletion *completion_list,
                     notif_send_gpu->msg_size,
                     &out_ticket);
 
-                doca_gpu_dev_verbs_wait(notif_send_gpu->qp_gpu, &out_ticket);
+                doca_gpu_dev_verbs_wait(notif_send_gpu->qp_gpu, out_ticket);
 #if ENABLE_DEBUG == 1
                 printf("Notif correctly sent %ld addr %lx msg_lkey %x qp %p size %d\n",
                        out_ticket,

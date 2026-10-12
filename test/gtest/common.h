@@ -72,13 +72,17 @@ class ScopedEnv {
 public:
     void
     addVar(const std::string &name, const std::string &value);
+    /** @brief Remove a variable for the scope's lifetime, for tests that need
+     *         it genuinely unset rather than set to an empty value. */
+    void
+    unsetVar(const std::string &name);
     void
     popVar();
 
 private:
     class Variable {
     public:
-        Variable(const std::string &name, const std::string &value);
+        Variable(const std::string &name, const std::optional<std::string> &value);
         Variable(Variable &&other);
         ~Variable();
 

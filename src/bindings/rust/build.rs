@@ -97,7 +97,6 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
         "../../api/cpp",
         "../../infra",
         "../../core",
-        "/usr/include",
     ];
 
     let arch = get_arch();
@@ -240,7 +239,6 @@ fn create_builder() -> cc::Build {
     let mut builder = cc::Build::new();
     builder
         .cpp(true)
-        .compiler("g++")
         .flag("-std=c++20")
         .flag("-fPIC")
         .flag("-Wno-unused-parameter")

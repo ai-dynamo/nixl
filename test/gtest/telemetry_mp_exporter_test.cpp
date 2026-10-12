@@ -28,12 +28,8 @@
 
 #include <prometheus/exposer.h>
 
-#include <unistd.h>
-
-#include <cerrno>
 #include <chrono>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -177,14 +173,10 @@ TEST_F(MpExporterTest, LeftoverLockFileIsNotASecondOwner) {
 }
 
 TEST_F(MpExporterTest, ForeignOwnedLockFileCannotSilenceTheRun) {
-    if (::geteuid() != 0) {
-        GTEST_SKIP() << "needs privileges to give the lock file another owner";
-    }
     const auto lock = dir_ / ownerLockFileName("127.0.0.1:" + std::to_string(port_));
     { std::ofstream(lock).put('\0'); }
-    constexpr uid_t nobody = 65534;
-    if (::chown(lock.c_str(), nobody, static_cast<gid_t>(-1)) != 0) {
-        GTEST_SKIP() << "cannot give the lock file another owner: " << strerror(errno);
+    if (const auto why = giveAwayOwnership(lock)) {
+        GTEST_SKIP() << *why;
     }
 
     // A planted lock must not read as a sibling win, or every rank of a shared

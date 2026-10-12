@@ -17,11 +17,9 @@
 #ifndef __BACKEND_ENGINE_H
 #define __BACKEND_ENGINE_H
 
-#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
-#include <mutex>
 
 #include "nixl_types.h"
 #include "backend_aux.h"
@@ -76,7 +74,8 @@ class nixlBackendEngine {
     public:
         explicit nixlBackendEngine(const nixlBackendInitParams *init_params)
             : backendType(init_params->type),
-              customParams(*init_params->customParams),
+              customParams(init_params->customParams ? *init_params->customParams :
+                                                       nixl_b_params_t{}),
               localAgent(init_params->localAgent),
               enableTelemetry_(init_params->enableTelemetry_) {}
 
