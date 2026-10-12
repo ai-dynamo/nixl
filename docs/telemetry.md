@@ -165,6 +165,7 @@ Telemetry is configured by environment variables:
 - When telemetry is requested but no output sink is configured (neither `NIXL_TELEMETRY_EXPORTER` nor `NIXL_TELEMETRY_DIR`), it falls back to the collect-only NOP exporter: events are collected in-process so `getXferTelemetry()` / `get_xfer_telemetry()` works, but nothing is written out.
 - If telemetry is enabled but no exporter is set, or the exporter name is empty, then the sink depends on `NIXL_TELEMETRY_DIR` as explained below (falling back to NOP when it is unset).
 - Set `NIXL_TELEMETRY_EXPORTER=NOP` to explicitly keep telemetry active (events are collected and `getXferTelemetry()` works) while discarding all output. It needs no sink and writes nothing, so it can be used to measure the overhead of the telemetry collection path in isolation.
+
 ## Multi-process aggregation (`prometheus`)
 
 The Prometheus exporter (`prometheus`, also selectable as `prometheus_mp`) aggregates the telemetry of all processes of a

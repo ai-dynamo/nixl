@@ -75,7 +75,7 @@ if prometheus_found
                        nixl_telemetry_mp_collector_dep],
     )
 
-    # Installable plugin: selected via NIXL_TELEMETRY_EXPORTER=prometheus_mp.
+    # Installable plugin: selected via NIXL_TELEMETRY_EXPORTER=prometheus or prometheus_mp.
     prometheus_mp_exporter_plugin = shared_library(
         'libtelemetry_exporter_prometheus_mp',
         'prometheus_mp_plugin.cpp',

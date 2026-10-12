@@ -369,5 +369,3 @@ not reuse, Python `prometheus_client`'s multiprocess format):
   so a restart under the same name is warned about and labeled as a duplicate live
   name: both stores stay published, with `pid` and `agent_instance`, since nothing
   is reaped in that mode either.
-
-This is the native, dependency-free path.
