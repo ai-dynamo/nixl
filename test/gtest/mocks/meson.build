@@ -38,5 +38,13 @@ run_command('sh', '-c',
                 check: true
             )
 
+mock_stale_telemetry_plugin = shared_library('libtelemetry_exporter_mock_stale',
+               ['mock_stale_telemetry_plugin.cpp'],
+               dependencies: [nixl_infra, nixl_common_dep],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
+               name_prefix: '',
+               install: true,
+               install_dir: plugin_install_dir)
+
 source_root = meson.project_source_root()
 mocks_dep = declare_dependency(variables : {'path' : meson.current_source_dir().split(source_root + '/')[1]})

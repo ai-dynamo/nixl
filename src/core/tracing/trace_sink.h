@@ -25,13 +25,18 @@
 #include "tracing/backend_trace.h"
 #include "tracing/trace.h"
 
+class nixlTelemetry;
+
 namespace nixl::trace {
 
 class TracerPhaseSink final : public nixlBackendTraceSink {
 public:
-    TracerPhaseSink(Tracer &tracer, std::string backend) noexcept
+    TracerPhaseSink(Tracer &tracer,
+                    std::string backend,
+                    nixlTelemetry *telemetry = nullptr) noexcept
         : tracer_(tracer),
-          backend_(std::move(backend)) {}
+          backend_(std::move(backend)),
+          telemetry_(telemetry) {}
 
     void
     recordPhase(nixl_trace_phase_t phase,
@@ -42,6 +47,7 @@ public:
 private:
     Tracer &tracer_;
     const std::string backend_;
+    nixlTelemetry *const telemetry_;
     std::atomic_flag dropWarned_;
 };
 
