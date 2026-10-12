@@ -492,15 +492,20 @@ S3RdmaControlPlane::completeMultipartUpload(const S3RdmaClientCtx &ctx,
 }
 
 void
-S3RdmaControlPlane::abortMultipartUpload(const S3RdmaClientCtx &ctx) {
-    Aws::S3::Model::AbortMultipartUploadRequest req;
-    req.SetBucket(ctx.bucket.c_str());
-    req.SetKey(ctx.object.c_str());
-    req.SetUploadId(ctx.uploadId.c_str());
-    auto outcome = impl_->s3->AbortMultipartUpload(req);
-    if (!outcome.IsSuccess()) {
-        NIXL_WARN << "AbortMultipartUpload failed for key=" << ctx.object << ": "
-                  << outcome.GetError().GetMessage();
+S3RdmaControlPlane::abortMultipartUpload(const S3RdmaClientCtx &ctx) noexcept {
+    try {
+        Aws::S3::Model::AbortMultipartUploadRequest req;
+        req.SetBucket(ctx.bucket.c_str());
+        req.SetKey(ctx.object.c_str());
+        req.SetUploadId(ctx.uploadId.c_str());
+        auto outcome = impl_->s3->AbortMultipartUpload(req);
+        if (!outcome.IsSuccess()) {
+            NIXL_WARN << "AbortMultipartUpload failed for key=" << ctx.object << ": "
+                      << outcome.GetError().GetMessage();
+        }
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "AbortMultipartUpload failed for key=" << ctx.object << ": " << e.what();
     }
 }
 

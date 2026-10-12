@@ -85,6 +85,19 @@ rdmaPutObject(SharedCuObjClient &rdma,
     if (ctx.uploadId.empty()) {
         return rdma_error;
     }
+
+    struct abortUnlessCompleted {
+        S3RdmaControlPlane &cp;
+        const S3RdmaClientCtx &ctx;
+        bool completed = false;
+
+        ~abortUnlessCompleted() {
+            if (!completed) {
+                cp.abortMultipartUpload(ctx);
+            }
+        }
+    } upload{cp, ctx};
+
     std::vector<std::string> etags;
     for (uint64_t done = 0; done < size; done += rdma_max_request_size) {
         const uint64_t len = std::min(rdma_max_request_size, size - done);
@@ -93,16 +106,12 @@ rdmaPutObject(SharedCuObjClient &rdma,
         if (r != static_cast<ssize_t>(len)) {
             NIXL_ERROR << "RDMA multipart upload part " << ctx.partNumber << " failed (" << r
                        << " of " << len << ") for key=" << ctx.object;
-            cp.abortMultipartUpload(ctx);
             return rdma_error;
         }
         etags.push_back(ctx.etag);
     }
-    if (!cp.completeMultipartUpload(ctx, etags)) {
-        cp.abortMultipartUpload(ctx);
-        return rdma_error;
-    }
-    return static_cast<ssize_t>(size);
+    upload.completed = cp.completeMultipartUpload(ctx, etags);
+    return upload.completed ? static_cast<ssize_t>(size) : rdma_error;
 }
 
 ssize_t

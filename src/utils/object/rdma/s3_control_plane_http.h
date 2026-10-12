@@ -115,7 +115,7 @@ public:
      * @brief Abort ctx.uploadId and discard the parts uploaded so far.
      */
     void
-    abortMultipartUpload(const S3RdmaClientCtx &ctx);
+    abortMultipartUpload(const S3RdmaClientCtx &ctx) noexcept;
 
 private:
     struct Impl;
