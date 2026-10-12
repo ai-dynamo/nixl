@@ -55,7 +55,7 @@ BUILD_TYPE="release"
 CUDA_VERSION_DEFAULT="13.2"
 CUDA_VERSION=${CUDA_VERSION:-}
 BUILD_INFINIA="false"
-INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
+INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.5.0-rcx.1"
 APT_MIRROR=""
 BUILD_UCX_SPCX_PLUGIN="false"
 UCX_SPCX_PLUGIN_REF="v0.3.x"
@@ -391,6 +391,7 @@ show_help() {
     echo "  [--infinia-image full image reference for infinia-libs (default: ${INFINIA_LIBS_IMAGE})]"
     echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
     echo "  [--build-options-file path to write the resolved build options as KEY=VALUE lines]"
+    echo "  [DOCKER_BUILD_EXTRA_ARGS env var: extra arguments passed through to docker build, e.g. --secret id=ghconfig,src=<file>; word-split, so paths with spaces are not supported]"
     exit 0
 }
 
@@ -451,6 +452,7 @@ if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
     if [ -z "${NIXL_SPCX_PLUGIN_REPO_URL:-}" ]; then
         error "ERROR:" "--build-ucx-spcx-plugin requires the NIXL_SPCX_PLUGIN_REPO_URL environment variable"
     fi
+    SPCX_SHA_FILE=$(mktemp)
     trap 'rm -rf "$SPCX_SRC_DIR"' EXIT
     mkdir -p "$SPCX_SRC_DIR"
     (
@@ -464,8 +466,11 @@ if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
             fetch -q --depth 1 origin "$UCX_SPCX_PLUGIN_REF"
         git checkout -q FETCH_HEAD
         echo "ucx-spcx-plugin ref ${UCX_SPCX_PLUGIN_REF} -> commit $(git rev-parse HEAD)"
+        git rev-parse HEAD > "$SPCX_SHA_FILE"
         rm -rf .git
     ) || error "ERROR:" "failed to fetch ucx-spcx-plugin at ref ${UCX_SPCX_PLUGIN_REF}"
+    BUILD_ARGS+=" --build-arg UCX_SPCX_PLUGIN_VERSION=$(cat "$SPCX_SHA_FILE")"
+    rm -f "$SPCX_SHA_FILE"
 fi
 
 if [ -n "$WHEEL_BASE_IMAGE" ]; then
@@ -502,9 +507,18 @@ if [ "$BUILD_INFINIA" = "true" ]; then
     # the wheel would silently build without libplugin_INFINIA.so.
     [ -n "$(ls -A "$INFINIA_LIBS_DIR")" ] || \
         error "ERROR:" "no Infinia libs found for arch $ARCH in ${INFINIA_LIBS_IMAGE}"
+    INFINIA_PLUGIN_VERSION="${INFINIA_LIBS_IMAGE##*:}"
+    infinia_digest=$(docker image inspect --format '{{index .RepoDigests 0}}' \
+        "$INFINIA_LIBS_IMAGE" 2>/dev/null | sed -n 's/.*@//p')
+    [ -n "$infinia_digest" ] && \
+        INFINIA_PLUGIN_VERSION="${INFINIA_PLUGIN_VERSION}@${infinia_digest}"
+    BUILD_ARGS+=" --build-arg INFINIA_PLUGIN_VERSION=$INFINIA_PLUGIN_VERSION"
 fi
 
 show_build_options
 [ -n "$BUILD_OPTIONS_FILE" ] && write_build_options_file
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT
+# The Dockerfiles use RUN --mount, which the legacy builder rejects. Default to
+# BuildKit for Docker releases that do not already (pre-23); podman ignores this.
+export DOCKER_BUILDKIT=${DOCKER_BUILDKIT:-1}
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS ${DOCKER_BUILD_EXTRA_ARGS:-} $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT

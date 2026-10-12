@@ -77,6 +77,18 @@ nixlLibfabricTopology::discoverTopology() {
         return status;
     }
 
+    // Discover accelerators from hwloc early, before provider selection. This lets
+    // the Neuron/EFA preflight (below) fire even when the libfabric provider falls
+    // back to tcp/sockets (see PR discussion on ai-dynamo/nixl#1994). The EFA path
+    // relies on num_aws_accel / num_nvidia_accel being populated for the preflight
+    // check; discoverHwlocTopology() skips its own discoverAccelWithHwloc() call
+    // because it was already made here.
+    status = discoverAccelWithHwloc();
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to discover accelerators from hwloc";
+        return status;
+    }
+
     status = discoverProviderWithDevices();
     if (status != NIXL_SUCCESS) {
         return status;
@@ -105,6 +117,8 @@ nixlLibfabricTopology::discoverTopology() {
         // build nic info map regardless of accelerator to EFA / CXI mapping
         buildNicInfoMap();
 
+        neuronEfaPreflightForEfaProvider();
+
         // Build nVidia accelerator to EFA / CXI mapping based on PCIe topology
         if (num_nvidia_accel > 0 || num_amd_accel > 0) {
             status = buildAccelToEfaMapping();
@@ -118,6 +132,8 @@ nixlLibfabricTopology::discoverTopology() {
         NIXL_INFO << "Using simplified topology for " << provider_name
                   << " devices (no topology mapping needed)";
 
+        neuronEfaPreflightForNonEfaProvider();
+
         // Set basic values without hwloc discovery
         num_nvidia_accel = 0; // TCP doesn't need accelerator topology
         num_aws_accel = 0; // TCP doesn't need accelerator topology
@@ -129,6 +145,90 @@ nixlLibfabricTopology::discoverTopology() {
     topology_discovered = true;
     NIXL_TRACE << "Topology discovery completed successfully";
     return NIXL_SUCCESS;
+}
+
+// Preflight: warn on Neuron-accelerator vs EFA-NIC count mismatches when the
+// libfabric EFA provider is selected. AWS Trainium instances that support DI
+// need one EFA NIC per Neuron device (e.g. 16 per-device EFA NICs on
+// trn2.48xlarge). Some smaller Neuron instance types (e.g. trn2.3xlarge) expose
+// only a single host-level EFA NIC and are not sufficient for FI_HMEM_NEURON
+// memory registration on all Neuron devices. Also, EFA-typed NICs must be
+// attached explicitly at instance launch time via
+// `--network-interfaces InterfaceType=efa`; the AWS default only attaches an
+// ENA NIC. Warn here so users see a clear diagnostic at plugin init rather than
+// a mysterious fi_mr_reg -EINVAL later during memory registration.
+//
+// Called from the EFA / CXI branch of discoverTopology(); returns without any
+// log message on CXI hosts, since Neuron devices don't coexist with CXI
+// (HPE Slingshot) interconnects.
+void
+nixlLibfabricTopology::neuronEfaPreflightForEfaProvider() {
+    if (provider_name != "efa") {
+        return;
+    }
+    if (!(num_aws_accel > 0 && num_nvidia_accel == 0)) {
+        return;
+    }
+    const size_t efa_nic_count = nic_info_map.size();
+    if (efa_nic_count == 0) {
+        NIXL_WARN << "Discovered " << num_aws_accel
+                  << " Neuron accelerator(s) but 0 EFA NIC(s) with usable PCIe topology; "
+                     "FI_HMEM_NEURON memory registration will fail. On AWS, launch the instance "
+                     "with EFA network interfaces attached (e.g. `--network-interfaces "
+                     "InterfaceType=efa` per NetworkCardIndex). On trn2.48xlarge attach 16 "
+                     "EFA NICs (one per Neuron device); on Trn3 attach the count matching the "
+                     "instance size. Instance types without any per-Neuron-device EFA "
+                     "(e.g. trn2.3xlarge, which exposes only a single host-level EFA) are not "
+                     "supported by the libfabric plugin for VRAM_SEG memory transfers.";
+    } else if (static_cast<int>(efa_nic_count) < num_aws_accel) {
+        NIXL_WARN << "Discovered " << num_aws_accel << " Neuron accelerator(s) but only "
+                  << efa_nic_count
+                  << " EFA NIC(s) with usable PCIe topology. Three cases: "
+                     "(1) trn1.32xlarge has 16 Neuron devices and 8 EFA NICs by design "
+                     "(2 Neurons share each EFA); if this is trn1.32xlarge, the plugin "
+                     "works and this warning can be ignored. "
+                     "(2) trn2.3xlarge (or a similar smaller Trn2 with only a single "
+                     "host-level EFA and no per-device EFA) cannot register Neuron device "
+                     "memory for RDMA; use trn2.48xlarge instead. "
+                     "(3) trn2.48xlarge or a larger Trn2/Trn3 instance launched without "
+                     "all EFA NICs attached: verify that all EFA network interfaces were "
+                     "attached at launch time via `--network-interfaces InterfaceType=efa` "
+                     "for each NetworkCardIndex (the AWS default attaches only an ENA NIC, "
+                     "not EFA). FI_HMEM_NEURON memory registration will fail for Neuron "
+                     "devices without a paired EFA NIC.";
+    } else if (static_cast<int>(efa_nic_count) > num_aws_accel &&
+               (static_cast<int>(efa_nic_count) % num_aws_accel) != 0) {
+        NIXL_WARN << "Discovered " << num_aws_accel << " Neuron accelerator(s) and "
+                  << efa_nic_count
+                  << " EFA NIC(s); NIC count is not a multiple of Neuron count, "
+                     "rail selection policy may be sub-optimal";
+    } else {
+        NIXL_INFO << "Neuron/EFA preflight: " << num_aws_accel << " Neuron device(s), "
+                  << efa_nic_count << " EFA NIC(s) (" << (efa_nic_count / num_aws_accel)
+                  << " NIC(s) per Neuron device)";
+    }
+}
+
+// Preflight for the TCP/sockets fallback with Neuron accelerators present: this
+// typically means the instance has Neuron devices but no EFA NIC was found
+// (either the instance type has no per-Neuron-device EFA, or it was launched
+// without any EFA-typed network interfaces). Called before num_aws_accel is
+// cleared in the TCP branch of discoverTopology().
+void
+nixlLibfabricTopology::neuronEfaPreflightForNonEfaProvider() {
+    if (!(num_aws_accel > 0 && num_nvidia_accel == 0)) {
+        return;
+    }
+    NIXL_WARN << "Discovered " << num_aws_accel
+              << " Neuron accelerator(s) but the libfabric provider selected `" << provider_name
+              << "` (no EFA). FI_HMEM_NEURON memory registration is not available on the `"
+              << provider_name
+              << "` provider. On AWS, launch the instance with EFA network interfaces attached "
+                 "(e.g. `--network-interfaces InterfaceType=efa` per NetworkCardIndex). On "
+                 "trn2.48xlarge attach 16 EFA NICs (one per Neuron device); on Trn3 attach the "
+                 "count matching the instance size. Instance types without any per-Neuron-device "
+                 "EFA (e.g. trn2.3xlarge, which exposes only a single host-level EFA) are not "
+                 "supported by the libfabric plugin for VRAM_SEG memory transfers.";
 }
 
 nixl_status_t
@@ -389,13 +489,11 @@ nixlLibfabricTopology::discoverHwlocTopology() {
         NIXL_ERROR << "hwloc topology not initialized";
         return NIXL_ERR_BACKEND;
     }
-    // Discover accelerators and EFA devices using hwloc
-    nixl_status_t status = discoverAccelWithHwloc();
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to discover accelerators with hwloc";
-        return status;
-    }
-    status = discoverRDMADevicesWithHwloc();
+    // Note: discoverAccelWithHwloc() is intentionally NOT called here. It is
+    // called earlier from discoverTopology(), before provider selection, so
+    // that num_aws_accel / num_nvidia_accel are available for the Neuron/EFA
+    // preflight in both the EFA and TCP-fallback paths.
+    nixl_status_t status = discoverRDMADevicesWithHwloc();
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to discover EFA devices with hwloc";
         return status;
@@ -631,6 +729,15 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
             std::vector<std::string> accel_efa_devices;
             for (const auto &nic : group.nics) {
                 accel_efa_devices.push_back(nic.libfabric_name);
+                // group.common_ancestor is the lowest common ancestor of this NIC and
+                // the group's accelerator: step 2 walks each accelerator up to the node
+                // where it enters the NIC subtree, and step 3 walks these NICs to that
+                // same node. The groups hold copies of the NicInfo values, so the answer
+                // goes on the map entry.
+                auto nic_itr = nic_info_map.find(nic.libfabric_name);
+                if (nic_itr != nic_info_map.end()) {
+                    nic_itr->second.accel_via_pcie_switch = isPcieSwitch(group.common_ancestor);
+                }
             }
             // Find accelerator index in our discovered accelerators list
             int accel_index = -1;
@@ -646,9 +753,15 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
             }
 
             if (accel_index >= 0) {
-                // Store mapping using PCI bus ID as key
+                // Store mapping using PCI bus ID as key. Appended, not assigned: an accelerator
+                // reached by NICs on more than one route holds a group per route -- on GB200 one
+                // for the NICs under its PCIe switch and one for the NICs it meets at the Grace
+                // Package -- and it should be able to use all of them.
                 std::string pci_bus_id = getPcieAddressFromHwlocObj(group.closest_accel.hwloc_node);
-                pci_to_efa_devices[pci_bus_id] = accel_efa_devices;
+                auto &efa_devices_for_accel = pci_to_efa_devices[pci_bus_id];
+                efa_devices_for_accel.insert(efa_devices_for_accel.end(),
+                                             accel_efa_devices.begin(),
+                                             accel_efa_devices.end());
 
                 NIXL_TRACE << "PCI " << pci_bus_id << " (Accelerator " << accel_index << ") → "
                            << accel_efa_devices.size() << " EFA devices: [";
@@ -662,7 +775,40 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
             }
         }
     }
+
+    // Report the PCIe-path verdict per device, so a plugin init states which devices need
+    // the PCIe (BAR1) dmabuf mapping.
+    size_t pcie_path_nic_count = 0;
+    for (const auto &entry : nic_info_map) {
+        const bool pcie_mapping = entry.second.accel_via_pcie_switch;
+        if (pcie_mapping) {
+            pcie_path_nic_count++;
+        }
+        NIXL_DEBUG << "Device " << entry.first << " reaches its closest accelerator "
+                   << (pcie_mapping ? "through a PCIe switch" : "through the host");
+    }
+    NIXL_INFO << "GPU dmabuf mapping: " << pcie_path_nic_count << " of " << nic_info_map.size()
+              << " device(s) reach their accelerator through a PCIe switch";
+
     return NIXL_SUCCESS;
+}
+
+bool
+nixlLibfabricTopology::isPcieSwitch(hwloc_obj_t obj) {
+    return obj != nullptr && obj->type == HWLOC_OBJ_BRIDGE && obj->attr != nullptr &&
+        obj->attr->bridge.upstream_type == HWLOC_OBJ_BRIDGE_PCI;
+}
+
+bool
+nixlLibfabricTopology::nicSharesPcieSwitchWithAccel(const std::string &efa_device) const {
+    const auto itr = nic_info_map.find(efa_device);
+    if (itr == nic_info_map.end()) {
+        NIXL_DEBUG << "No NIC info for EFA device " << efa_device
+                   << "; reporting no PCIe path to an accelerator";
+        return false;
+    }
+
+    return itr->second.accel_via_pcie_switch;
 }
 
 void
@@ -933,6 +1079,8 @@ nixlLibfabricTopology::collectNicInfo(NicInfo &nic,
     nic.bus_id = bus_id;
     nic.device_id = device_id;
     nic.function_id = function_id;
+    // Filled in by buildTopologyAwareGrouping() once NIC/accelerator grouping runs.
+    nic.accel_via_pcie_switch = false;
     if (!getPcieDevParentSwitchData(hwloc_node,
                                     pcie_addr,
                                     nic.parent_switch_domain,
@@ -1185,6 +1333,25 @@ nixlLibfabricTopology::calcAvgNicUpstreamBandwidth() {
     }
 }
 
+hwloc_obj_t
+nixlLibfabricTopology::findHostRouteNode(
+    hwloc_obj_t nic_node,
+    const std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> &subtree_accel) {
+    for (hwloc_obj_t node = nic_node; node; node = node->parent) {
+        if (node->type == HWLOC_OBJ_MACHINE) {
+            return nullptr;
+        }
+        if (subtree_accel.find(node) != subtree_accel.end()) {
+            return node;
+        }
+        if (node->type == HWLOC_OBJ_PACKAGE) {
+            // The NIC's own socket holds no accelerator.
+            return nullptr;
+        }
+    }
+    return nullptr;
+}
+
 nixl_status_t
 nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered_nics,
                                           const std::vector<AccelInfo> &discovered_accel,
@@ -1211,15 +1378,24 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
     // count
     std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> node_accel;
 
+    // Every accelerator under a node, for every ancestor of every accelerator. Step 2 stops an
+    // accelerator at the first node holding a NIC, which on a platform where some NICs share no
+    // PCIe switch with any accelerator is that accelerator's own switch -- so no higher node is
+    // ever marked and those NICs reach step 3 with nothing to join. This map lets step 3 pair
+    // them with the accelerators they do share an ancestor with, typically a Package.
+    std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> subtree_accel;
+
     for (const auto &accel : discovered_accel) {
         hwloc_obj_t node = accel.hwloc_node;
+        bool marked = false;
 
         while (node) {
-            if (nic_subtree_nodes.find(node) != nic_subtree_nodes.end()) {
+            if (!marked && nic_subtree_nodes.find(node) != nic_subtree_nodes.end()) {
                 node_group_counts[node]++;
                 node_accel[node].push_back(accel);
-                break;
+                marked = true;
             }
+            subtree_accel[node].push_back(accel);
             node = node->parent;
         }
     }
@@ -1242,8 +1418,35 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
             }
             target_node = target_node->parent;
         }
-        // If no ancestor found with groups, create individual groups
+        // These NICs share no PCIe switch with an accelerator. Pair them with the accelerators
+        // they do meet further up -- on GB200 that is the Grace Package holding both, and the
+        // NIC reaches HBM through the CPU rather than over PCIe. Leaving them unpaired is what
+        // kept half a GB200 node's EFA devices out of every VRAM registration.
+        //
+        // The meeting node is not a PCIe switch, so isPcieSwitch(common_ancestor) reports false
+        // for these NICs and their dmabuf exports take the platform default mapping, which is
+        // the window a CPU-attached NIC can address.
         if (!target_node) {
+            hwloc_obj_t host_node = findHostRouteNode(nic_node, subtree_accel);
+
+            if (host_node) {
+                // Seed the node so step 4 splits these NICs across its accelerators, rather
+                // than duplicating that logic here. A node an accelerator already stopped at
+                // keeps its own count, and these NICs join that split.
+                if (node_group_counts[host_node] == 0) {
+                    node_accel[host_node] = subtree_accel[host_node];
+                    node_group_counts[host_node] = static_cast<int>(node_accel[host_node].size());
+                }
+                ancestor_nics[host_node].insert(
+                    ancestor_nics[host_node].end(), nics.begin(), nics.end());
+                NIXL_DEBUG << "Paired " << nics.size()
+                           << " NIC(s) sharing no PCIe switch with an accelerator to a common "
+                           << "ancestor of type " << hwloc_obj_type_string(host_node->type)
+                           << " holding " << node_accel[host_node].size() << " accelerator(s)";
+                continue;
+            }
+
+            // No accelerator anywhere above this NIC, so it stays in a group of its own.
             for (const auto &nic : nics) {
                 NicGroup group;
                 group.nics.push_back(nic);

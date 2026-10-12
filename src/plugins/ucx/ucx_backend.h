@@ -25,6 +25,7 @@
 #include <chrono>
 #include <poll.h>
 #include <optional>
+#include <utility>
 
 #include "backend/backend_engine.h"
 
@@ -199,6 +200,13 @@ public:
 protected:
     using worker_span_t = std::span<const std::unique_ptr<nixlUcxWorker>>;
 
+    template<typename workerType, typename... argTypes>
+    void
+    addWorker(argTypes &&...args) {
+        workers_.emplace_back(std::make_unique<workerType>(
+            *uc, errHandlingMode_, workers_.size(), std::forward<argTypes>(args)...));
+    }
+
     [[nodiscard]] worker_span_t
     getSharedWorkers() const {
         return {workers_.data(), numSharedWorkers_};
@@ -223,6 +231,11 @@ protected:
     [[nodiscard]] size_t
     getSharedWorkersSize() const {
         return numSharedWorkers_;
+    }
+
+    [[nodiscard]] bool
+    isSglEnabled() const noexcept {
+        return sglEnabled_;
     }
 
     virtual void
@@ -255,11 +268,11 @@ private:
               size_t length,
               const ucp_am_recv_param_t *param);
 
-    [[nodiscard]] std::unique_ptr<std::string>
+    [[nodiscard]] std::string
     buildNotif(const std::string &msg) const;
 
     [[nodiscard]] static nixl_status_t
-    sendNotif(std::unique_ptr<std::string> &&msg, const nixlUcxEp &ep, nixlUcxReq *req);
+    sendNotif(std::string &&msg, const nixlUcxEp &ep, nixlUcxReq *req);
 
     nixl_status_t
     notifSendPriv(const std::string &remote_agent,
@@ -291,6 +304,7 @@ private:
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> workers_;
     size_t numSharedWorkers_;
+    const ucp_err_handling_mode_t errHandlingMode_;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
     const bool sglEnabled_;
