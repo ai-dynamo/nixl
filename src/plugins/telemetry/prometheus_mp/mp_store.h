@@ -211,9 +211,10 @@ public:
      *
      * The last values a process recorded are typically not scraped yet when it
      * exits, so the file must outlive it: releasing the lock is what tells the
-     * collector to go on publishing them until they age past the stale TTL, and
-     * to reap the file then. Unlinking here would drop everything produced since
-     * the previous scrape.
+     * collector to go on publishing them until they age past the stale TTL, or
+     * until a store with the same hostname, agent_name and local_rank is
+     * published instead, and to reap the file once they are stale. Unlinking
+     * here would drop everything produced since the previous scrape.
      */
     ~storeWriter() = default;
 
@@ -246,12 +247,13 @@ public:
      *         exporter throttles its re-elections on it) reads the clock once.
      *
      * Deliberately separate from the mutators: it costs a CLOCK_MONOTONIC read
-     * (~24ns, several times a metric update's atomic), and the only consumer is
-     * the collector's staleness check, which has a 30s default TTL and applies
-     * to dead processes only. The exporter therefore refreshes once per event,
-     * after the slot updates, instead of from each mutator -- a duration event
-     * touches three slots. Skipping refreshes never hides a live process, it
-     * only shortens how long a dead one's last values linger.
+     * (~24ns, several times a metric update's atomic), and the collector uses
+     * it for dead processes only: to expire them after the stale TTL (30s by
+     * default), and to pick the most recently updated of the departed stores
+     * that share a hostname, agent_name and local_rank. The exporter therefore
+     * refreshes once per event, after the slot updates, instead of from each
+     * mutator -- a duration event touches three slots. Skipping refreshes never
+     * hides a live process, it only makes a dead one's last values look older.
      */
     [[nodiscard]] uint64_t
     refreshHeartbeat() noexcept;
