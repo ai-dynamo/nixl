@@ -22,6 +22,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <atomic>
 #include <random>
 #include <thread>
@@ -467,18 +469,28 @@ TEST_P(setupObjAccelTestFixture, AccelTokenHoldsNestedRegistrationTest) {
     ASSERT_EQ(localBackendEngine_->registerMem(mem_desc, DRAM_SEG, outer_md), NIXL_SUCCESS);
     const nixlBlobDesc inner_desc(mem_desc.addr + len / 4, len / 4, 0, "");
     nixlBackendMD *inner_md = nullptr;
-    ASSERT_EQ(other_engine.registerMem(inner_desc, DRAM_SEG, inner_md), NIXL_SUCCESS);
-
     auto *inner = reinterpret_cast<void *>(inner_desc.addr);
-    char *token = rdma->getToken(inner, 1 << 20, CUOBJ_PUT);
-    ASSERT_NE(token, nullptr);
-    EXPECT_EQ(other_engine.deregisterMem(inner_md), NIXL_SUCCESS);
-    EXPECT_FALSE(rdma->registerBuffer(inner, len / 8))
-        << "the nested registration was released while its token was outstanding";
-
-    rdma->putToken(token);
-    ASSERT_TRUE(rdma->registerBuffer(inner, len / 8));
-    rdma->deregisterBuffer(inner);
+    // Non-fatal checks only from here, so every registration is released even
+    // when a check fails.
+    if (other_engine.registerMem(inner_desc, DRAM_SEG, inner_md) != NIXL_SUCCESS) {
+        ADD_FAILURE() << "registering the nested range failed";
+    } else if (char *token = rdma->getToken(inner, 1 << 20, CUOBJ_PUT); token == nullptr) {
+        ADD_FAILURE() << "minting a token in the nested range failed";
+        EXPECT_EQ(other_engine.deregisterMem(inner_md), NIXL_SUCCESS);
+    } else {
+        EXPECT_EQ(other_engine.deregisterMem(inner_md), NIXL_SUCCESS);
+        const bool released_early = rdma->registerBuffer(inner, len / 8);
+        EXPECT_FALSE(released_early)
+            << "the nested registration was released while its token was outstanding";
+        rdma->putToken(token);
+        if (released_early) {
+            rdma->deregisterBuffer(inner);
+        } else if (rdma->registerBuffer(inner, len / 8)) {
+            rdma->deregisterBuffer(inner);
+        } else {
+            ADD_FAILURE() << "the nested registration was not released with its token";
+        }
+    }
     EXPECT_EQ(localBackendEngine_->deregisterMem(outer_md), NIXL_SUCCESS);
 }
 
@@ -505,6 +517,173 @@ TEST_P(setupObjAccelTestFixture, AccelVramNestedRegistrationXferTest) {
 INSTANTIATE_TEST_SUITE_P(ObjAccelTests,
                          setupObjAccelTestFixture,
                          testing::Values(obj_accel_test_params));
+
+// Stands in for cuObject: a second registration at the same start address
+// fails, and tokens are minted only for ranges inside a live registration.
+class fakeCuObjApi : public nixl_obj_rdma::cuObjApi {
+public:
+    cuObjErr_t
+    cuMemObjGetDescriptor(void *ptr, size_t size) override {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        ++registerCalls_;
+        return registered_.emplace(ptr, size).second ? CU_OBJ_SUCCESS : CU_OBJ_FAIL;
+    }
+
+    cuObjErr_t
+    cuMemObjPutDescriptor(void *ptr) override {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        ++deregisterCalls_;
+        return registered_.erase(ptr) ? CU_OBJ_SUCCESS : CU_OBJ_FAIL;
+    }
+
+    cuObjErr_t
+    cuMemObjGetRDMAToken(void *ptr,
+                         size_t size,
+                         size_t buffer_offset,
+                         cuObjOpType_t,
+                         char **desc_str_out) override {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = registered_.find(ptr);
+        if (it == registered_.end() || buffer_offset + size > it->second) {
+            return CU_OBJ_FAIL;
+        }
+        *desc_str_out = strdup("token");
+        return CU_OBJ_SUCCESS;
+    }
+
+    cuObjErr_t
+    cuMemObjPutRDMAToken(char *desc_str) override {
+        free(desc_str);
+        return CU_OBJ_SUCCESS;
+    }
+
+    [[nodiscard]] bool
+    isRegistered(void *ptr) {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return registered_.count(ptr) != 0;
+    }
+
+    [[nodiscard]] int
+    registerCalls() {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return registerCalls_;
+    }
+
+    [[nodiscard]] int
+    deregisterCalls() {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return deregisterCalls_;
+    }
+
+private:
+    std::mutex mutex_;
+    std::map<void *, size_t> registered_;
+    int registerCalls_ = 0;
+    int deregisterCalls_ = 0;
+};
+
+class sharedCuObjClientTest : public testing::Test {
+protected:
+    static constexpr size_t len = 1 << 20;
+
+    sharedCuObjClientTest()
+        : fake_(new fakeCuObjApi()),
+          client_(std::unique_ptr<nixl_obj_rdma::cuObjApi>(fake_)) {}
+
+    // Mints and releases a token for the first KiB of the buffer.
+    [[nodiscard]] bool
+    canMintToken() {
+        char *token = client_.getToken(buf_.data(), 1024, CUOBJ_PUT);
+        client_.putToken(token);
+        return token != nullptr;
+    }
+
+    std::vector<uint8_t> buf_ = std::vector<uint8_t>(len);
+    fakeCuObjApi *fake_;
+    nixl_obj_rdma::SharedCuObjClient client_;
+};
+
+TEST_F(sharedCuObjClientTest, LastOwnerReleasesRegistration) {
+    ASSERT_TRUE(client_.registerBuffer(buf_.data(), len));
+    ASSERT_TRUE(client_.registerBuffer(buf_.data(), len));
+    EXPECT_EQ(fake_->registerCalls(), 1);
+
+    client_.deregisterBuffer(buf_.data());
+    EXPECT_TRUE(fake_->isRegistered(buf_.data()));
+    EXPECT_TRUE(canMintToken());
+
+    client_.deregisterBuffer(buf_.data());
+    EXPECT_FALSE(fake_->isRegistered(buf_.data()));
+    EXPECT_EQ(fake_->deregisterCalls(), 1);
+}
+
+TEST_F(sharedCuObjClientTest, OwnersReleasingWhileAnotherTransfers) {
+    constexpr int num_threads = 4;
+    constexpr int iterations = 1000;
+    ASSERT_TRUE(client_.registerBuffer(buf_.data(), len));
+
+    std::atomic<int> failures{0};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < num_threads; ++t) {
+        threads.emplace_back([&] {
+            for (int i = 0; i < iterations; ++i) {
+                if (!client_.registerBuffer(buf_.data(), len)) {
+                    ++failures;
+                }
+                client_.deregisterBuffer(buf_.data());
+            }
+        });
+    }
+    for (int i = 0; i < iterations; ++i) {
+        if (!canMintToken()) {
+            ++failures;
+        }
+    }
+    for (auto &thread : threads) {
+        thread.join();
+    }
+    EXPECT_EQ(failures, 0);
+    EXPECT_EQ(fake_->registerCalls(), 1);
+    EXPECT_EQ(fake_->deregisterCalls(), 0);
+
+    client_.deregisterBuffer(buf_.data());
+    EXPECT_FALSE(fake_->isRegistered(buf_.data()));
+}
+
+TEST_F(sharedCuObjClientTest, FinalReleaseRacesNewRegistration) {
+    constexpr int iterations = 1000;
+    for (int i = 0; i < iterations; ++i) {
+        ASSERT_TRUE(client_.registerBuffer(buf_.data(), len));
+        bool registered = false;
+        std::thread release([&] { client_.deregisterBuffer(buf_.data()); });
+        std::thread acquire([&] { registered = client_.registerBuffer(buf_.data(), len); });
+        release.join();
+        acquire.join();
+        ASSERT_TRUE(registered);
+        ASSERT_TRUE(fake_->isRegistered(buf_.data()));
+        ASSERT_TRUE(canMintToken());
+
+        client_.deregisterBuffer(buf_.data());
+        ASSERT_FALSE(fake_->isRegistered(buf_.data()));
+    }
+    EXPECT_EQ(fake_->registerCalls(), fake_->deregisterCalls());
+}
+
+TEST_F(sharedCuObjClientTest, TokenKeepsNestedRegistration) {
+    ASSERT_TRUE(client_.registerBuffer(buf_.data(), len));
+    uint8_t *inner = buf_.data() + len / 4;
+    ASSERT_TRUE(client_.registerBuffer(inner, len / 4));
+
+    char *token = client_.getToken(inner, 1024, CUOBJ_GET);
+    ASSERT_NE(token, nullptr);
+    client_.deregisterBuffer(inner);
+    EXPECT_TRUE(fake_->isRegistered(inner));
+
+    client_.putToken(token);
+    EXPECT_FALSE(fake_->isRegistered(inner));
+    client_.deregisterBuffer(buf_.data());
+    EXPECT_FALSE(fake_->isRegistered(buf_.data()));
+}
 
 /**
  * @brief Test fixture for Dell ObjectScale S3 over RDMA engine.
