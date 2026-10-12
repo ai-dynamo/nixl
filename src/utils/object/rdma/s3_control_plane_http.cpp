@@ -117,10 +117,9 @@ namespace {
                 StringUtils::URLEncode(kv.second.c_str());
         }
 
-        Aws::String canonical_uri = req.GetUri().GetURLEncodedPathRFC3986();
-        if (canonical_uri.empty()) {
-            canonical_uri = "/";
-        }
+        // Same encoding as the SDK's own SigV4 signer: every byte except the
+        // unreserved characters is escaped, unlike the path sent on the wire.
+        const Aws::String canonical_uri = req.GetUri().GetURLEncodedPath();
 
         const Aws::String method =
             Aws::Http::HttpMethodMapper::GetNameForHttpMethod(req.GetMethod());
