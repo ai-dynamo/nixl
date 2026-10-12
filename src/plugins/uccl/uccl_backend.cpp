@@ -681,9 +681,9 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     NIXL_DEBUG << "Successfully posted vector " << (operation == NIXL_READ ? "READ" : "WRITE")
                << " operation with " << lcnt << " iovecs, transfer_id: " << transfer_id;
 
-    if (opt_args && opt_args->hasNotif) {
-        uccl_handle->notif_msg = opt_args->notifMsg;
-    }
+    // Notify only if this post requested it; reset so a re-posted handle cannot resend a stale one.
+    uccl_handle->has_notif = opt_args && opt_args->hasNotif;
+    uccl_handle->notif_msg = uccl_handle->has_notif ? opt_args->notifMsg : nixl_blob_t();
 
     return NIXL_IN_PROG;
 }
@@ -709,6 +709,7 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
 
     bool is_done = uccl_engine_xfer_status(conn, uccl_handle->transfer_id);
     if (is_done) {
+        if (!uccl_handle->has_notif) return NIXL_SUCCESS;
         nixlSerDes ser_des;
         ser_des.addStr("msg", uccl_handle->notif_msg);
 
