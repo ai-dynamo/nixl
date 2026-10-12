@@ -131,8 +131,14 @@ struct nixlProxyWorkRing {
     uint32_t depth = 0;
 };
 
+/**
+ * The host writes completion_status, failed_idx, then completed_idx; a poller reads completed_idx
+ * before failed_idx, so it reads completion_status only behind the failure that wrote it.
+ */
 struct alignas(16) nixlProxyCompletionSlot {
     uint64_t completed_idx = 0;
+    /** op_idx of the first failed op, or 0 while none has failed. */
+    uint64_t failed_idx = 0;
     /** Status of the op at completed_idx; an error stays latched. */
     nixl_status_t completion_status = NIXL_IN_PROG;
 };
@@ -162,8 +168,10 @@ static_assert(sizeof(nixlProxyDeviceMemView) % alignof(void *) == 0,
               "the trailing direct-pointer run must start aligned");
 
 static_assert(sizeof(nixlProxyWorkRing) == 40, "nixlProxyWorkRing layout changed");
-static_assert(sizeof(nixlProxyCompletionSlot) == 16, "nixlProxyCompletionSlot layout changed");
+static_assert(sizeof(nixlProxyCompletionSlot) == 32, "nixlProxyCompletionSlot layout changed");
 static_assert(offsetof(nixlProxyCompletionSlot, completed_idx) == 0,
+              "nixlProxyCompletionSlot layout changed");
+static_assert(offsetof(nixlProxyCompletionSlot, failed_idx) == 8,
               "nixlProxyCompletionSlot layout changed");
 static_assert(sizeof(nixl_status_t) == 4, "nixl_status_t must be 4 bytes in a completion slot");
 static_assert(sizeof(nixlProxyRingDesc) == 16, "nixlProxyRingDesc layout changed");
