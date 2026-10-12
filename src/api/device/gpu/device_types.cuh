@@ -30,33 +30,6 @@
 namespace nixl::gpu {
 
 /**
- * @brief Opaque handle for a GPU transfer request.
- *
- * Pass an optional pointer to put or atomicAdd, then poll with
- * @ref nixl::gpu::getXferStatus until the request completes.
- */
-struct xferStatusH {
-    alignas(16) unsigned char storage[64] = {}; /**< Backend-owned request payload */
-};
-
-/**
- * How much of xferStatusH::storage a backend implementation may use. The
- * remaining bytes hold the execution-mode tag written by the dispatch layer,
- * which is what lets a later poll on this handle find its way back to the
- * implementation that produced it.
- */
-constexpr size_t xfer_status_payload_size = 60;
-constexpr size_t xfer_status_mode_size = 4;
-
-static_assert(xfer_status_payload_size + xfer_status_mode_size == sizeof(xferStatusH));
-
-/**
- * @enum  level_t
- * @brief An enumeration of different levels for GPU transfer requests.
- */
-enum class level_t : uint64_t { THREAD = 0, WARP = 1, BLOCK = 2, GRID = 3 };
-
-/**
  * Which implementation executes a prepared memory view, chosen per view by
  * the backend that prepared it, not per build. Zero is deliberately not a
  * valid mode, so an untagged handle reads as invalid rather than as the first
@@ -71,6 +44,27 @@ enum class exec_mode_t : uint8_t {
     PROXY = 2,
     DYNAMIC = 0xff,
 };
+
+/**
+ * @brief Opaque handle for a GPU transfer request.
+ *
+ * Pass an optional pointer to put or atomicAdd, then poll with
+ * @ref nixl::gpu::getXferStatus until the request completes.
+ */
+struct xferStatusH {
+    alignas(16) unsigned char storage[60] = {}; /**< Backend-owned request payload */
+    exec_mode_t mode{}; /**< Mode that accepted the request; set by the dispatch layer */
+};
+
+constexpr size_t xfer_status_payload_size = sizeof(xferStatusH::storage);
+
+static_assert(sizeof(xferStatusH) == 64);
+
+/**
+ * @enum  level_t
+ * @brief An enumeration of different levels for GPU transfer requests.
+ */
+enum class level_t : uint64_t { THREAD = 0, WARP = 1, BLOCK = 2, GRID = 3 };
 
 /**
  * What a prepared memory-view handle actually points at: the mode, plus the
@@ -115,7 +109,6 @@ using nixlMemViewElem = nixl::gpu::memViewElem;
 using nixl_device_exec_mode_t = nixl::gpu::exec_mode_t;
 using nixlDeviceMemViewWrapper = nixl::gpu::memViewWrapper;
 constexpr size_t nixl_gpu_xfer_status_payload_size = nixl::gpu::xfer_status_payload_size;
-constexpr size_t nixl_gpu_xfer_status_mode_size = nixl::gpu::xfer_status_mode_size;
 
 namespace nixl_gpu_flags {
 /** @brief Defer the operation instead of flushing immediately. */
