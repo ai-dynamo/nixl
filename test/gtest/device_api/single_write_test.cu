@@ -574,6 +574,53 @@ TEST_P(SingleWriteTest, SingleWorkerPutGap) {
     invalidateMD();
 }
 
+TEST_P(SingleWriteTest, ManyElementsOnePeerPut) {
+    constexpr size_t size = 4 * 1024;
+    constexpr size_t count = 5; // more elements than proxy_max_peers, all on one peer
+    constexpr nixl_mem_t mem_type = VRAM_SEG;
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(getAgent(SENDER_AGENT), size, count, mem_type, src_buffers);
+    createRegisteredMem(getAgent(RECEIVER_AGENT), size, count, mem_type, dst_buffers);
+
+    for (size_t i = 0; i < count; i++) {
+        const std::vector<uint32_t> pattern(size / sizeof(uint32_t), 0xBEEF0000 | i);
+        cudaMemcpy(
+            static_cast<void *>(src_buffers[i]), pattern.data(), size, cudaMemcpyHostToDevice);
+        cudaMemset(static_cast<void *>(dst_buffers[i]), 0, size);
+    }
+
+    exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
+
+    nixlMemViewH src_mvh;
+    ASSERT_EQ(getAgent(SENDER_AGENT)
+                  .prepMemView(makeDescList<nixlBasicDesc>(src_buffers, mem_type), src_mvh),
+              NIXL_SUCCESS);
+    nixlMemViewH dst_mvh;
+    ASSERT_EQ(getAgent(SENDER_AGENT)
+                  .prepMemView(makeDescList<nixlRemoteDesc>(
+                                   dst_buffers, mem_type, getAgentName(RECEIVER_AGENT)),
+                               dst_mvh),
+              NIXL_SUCCESS);
+
+    for (size_t i = 0; i < count; i++) {
+        putParams put_params{{src_mvh, i, 0}, {dst_mvh, i, 0}, size};
+        ASSERT_EQ(dispatchLaunchPutKernel(GetParam(), put_params, 1), NIXL_SUCCESS)
+            << "Put to element " << i << " failed";
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        std::vector<uint32_t> received(size / sizeof(uint32_t));
+        cudaMemcpy(
+            received.data(), static_cast<void *>(dst_buffers[i]), size, cudaMemcpyDeviceToHost);
+        EXPECT_EQ(received, std::vector<uint32_t>(received.size(), 0xBEEF0000 | i))
+            << "Element " << i << " verification failed";
+    }
+
+    getAgent(SENDER_AGENT).releaseMemView(dst_mvh);
+    getAgent(SENDER_AGENT).releaseMemView(src_mvh);
+    invalidateMD();
+}
+
 TEST_P(SingleWriteTest, SingleWorkerPutFixedMode) {
     std::vector<MemBuffer> src_buffers, dst_buffers;
     constexpr size_t size = 4 * 1024;
