@@ -43,7 +43,7 @@ class nixlUcxMem;
 class nixlUcxEp {
 private:
     ucp_ep_h eph{nullptr};
-    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::UNINITIALIZED};
+    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::CONNECTED};
 
     void
     setState(nixl::ucx::ep_state_t new_state);

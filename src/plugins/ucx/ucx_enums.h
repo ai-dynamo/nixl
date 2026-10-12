@@ -49,7 +49,6 @@ toStringView(const mt_mode_t t) noexcept {
 }
 
 enum class ep_state_t {
-    UNINITIALIZED,
     CONNECTED,
     FAILED,
     CLOSED,
@@ -58,8 +57,6 @@ enum class ep_state_t {
 [[nodiscard]] constexpr std::string_view
 toStringView(const ep_state_t t) noexcept {
     switch (t) {
-    case ep_state_t::UNINITIALIZED:
-        return "UNINITIALIZED";
     case ep_state_t::CONNECTED:
         return "CONNECTED";
     case ep_state_t::FAILED:
@@ -121,8 +118,6 @@ toNixlStatus(const ep_state_t t) noexcept {
     case ep_state_t::FAILED:
     case ep_state_t::CLOSED:
         return NIXL_ERR_REMOTE_DISCONNECT;
-    case ep_state_t::UNINITIALIZED:
-        return NIXL_ERR_BACKEND;
     }
     return NIXL_ERR_BACKEND;
 }

@@ -92,7 +92,6 @@ nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
                << ucs_status_string(status) << ")";
 
     switch (current_state) {
-    case nixl::ucx::ep_state_t::UNINITIALIZED:
     case nixl::ucx::ep_state_t::FAILED:
     case nixl::ucx::ep_state_t::CLOSED:
         // The error was already handled, nothing to do
@@ -127,22 +126,18 @@ nixlUcxEp::disconnect(uint32_t flags) {
     const nixl::ucx::ep_state_t current_state = state_;
 
     switch (current_state) {
-    case nixl::ucx::ep_state_t::UNINITIALIZED:
     case nixl::ucx::ep_state_t::CLOSED:
-        NIXL_ASSERT(eph == nullptr);
         return NIXL_SUCCESS;
     case nixl::ucx::ep_state_t::FAILED: {
         ucs_status_ptr_t request = ucpEpClose(eph, UCP_EP_CLOSE_FLAG_FORCE);
         if (UCS_PTR_IS_PTR(request)) {
             ucp_request_free(request);
         }
-        eph = nullptr;
         setState(nixl::ucx::ep_state_t::CLOSED);
         return NIXL_SUCCESS;
     }
     case nixl::ucx::ep_state_t::CONNECTED: {
         ucs_status_ptr_t request = ucpEpClose(eph, flags);
-        eph = nullptr;
         setState(nixl::ucx::ep_state_t::CLOSED);
         if (request == nullptr) {
             return NIXL_SUCCESS;
@@ -174,9 +169,7 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t er
     ep_params.address = reinterpret_cast<ucp_address_t *>(addr);
 
     status = nixl::ucx::ucsToNixlStatus(ucp_ep_create(worker, &ep_params, &eph));
-    if (status == NIXL_SUCCESS)
-        setState(nixl::ucx::ep_state_t::CONNECTED);
-    else
+    if (status != NIXL_SUCCESS)
         throw std::runtime_error("failed to create ep");
 }
 
