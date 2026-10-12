@@ -72,13 +72,6 @@ namespace detail {
         return static_cast<const memViewWrapper *>(handle);
     }
 
-    __device__ __forceinline__ exec_mode_t
-    loadExecutionMode(const xferStatusH &status) {
-        uint32_t execution_mode = 0;
-        memcpy(&execution_mode, status.storage + xfer_status_payload_size, sizeof(execution_mode));
-        return static_cast<exec_mode_t>(execution_mode);
-    }
-
     template<exec_mode_t mode>
     inline constexpr bool buildable = mode != exec_mode_t::UCX_DIRECT || ucx::available;
 
@@ -99,7 +92,7 @@ namespace detail {
     executionMode(const xferStatusH &status) {
         static_assert(buildable<mode>, "UCX_DIRECT needs UCX's GPU device API");
         if constexpr (mode == exec_mode_t::DYNAMIC) {
-            return loadExecutionMode(status);
+            return status.mode;
         } else {
             return mode;
         }
@@ -113,8 +106,7 @@ namespace detail {
                        exec_mode_t execution_mode) {
         if constexpr (mode == exec_mode_t::DYNAMIC) {
             if (status != nullptr && submission_status >= 0 && isLeader<level>()) {
-                const uint32_t tag = static_cast<uint32_t>(execution_mode);
-                memcpy(status->storage + xfer_status_payload_size, &tag, sizeof(tag));
+                status->mode = execution_mode;
             }
             // Collective pollers share the leader's tag.
             sync<level>();
