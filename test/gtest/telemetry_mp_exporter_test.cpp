@@ -314,4 +314,31 @@ TEST_F(MpExporterTest, UncreatableMultiprocDirThrows) {
         std::runtime_error);
 }
 
+TEST_F(MpExporterTest, SquattedDefaultDirRunsWithoutTelemetry) {
+    { std::ofstream(scopedDefaultDir()).put('\0'); }
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+    env_.addVar(telemetryExporterVar, "prometheus_mp");
+
+    const gtest::LogIgnoreGuard probe("Plugin file does not exist");
+    const gtest::LogIgnoreGuard lig("will run without a telemetry sink");
+    EXPECT_EQ(nixlTelemetry::create("agent-squatted"), nullptr);
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
+}
+
+TEST_F(MpExporterTest, OverlongBucketListStaysFatalWithTheDefaultDir) {
+    scopedDefaultDir();
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+    env_.addVar(telemetryExporterVar, "prometheus_mp");
+    std::string bounds = "1";
+    for (std::size_t i = 2; i <= nixl::telemetry::mp::MP_STORE_MAX_BUCKETS + 1; ++i) {
+        bounds += "," + std::to_string(i);
+    }
+    env_.addVar("NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US", bounds);
+
+    const gtest::LogIgnoreGuard probe("Plugin file does not exist");
+    const gtest::LogIgnoreGuard lig("Failed to create exporter");
+    EXPECT_THROW(static_cast<void>(nixlTelemetry::create("agent-overlong")), std::runtime_error);
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
+}
+
 } // namespace

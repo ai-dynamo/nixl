@@ -31,6 +31,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -177,6 +178,11 @@ TEST_F(MpStoreTest, TooManyBucketsRejected) {
     const auto path = storePath("agent-too-many");
     EXPECT_THROW({ storeWriter writer(path, "a", "host-1", "", 0, too_many); }, std::runtime_error);
     EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST_F(MpStoreTest, OsFailureThrowsSystemError) {
+    const auto path = dir_ / "missing" / "agent-os-failure";
+    EXPECT_THROW({ storeWriter writer(path, "a", "host-1", "", 0, kBuckets); }, std::system_error);
 }
 
 TEST_F(MpStoreTest, DestructorKeepsStoreFileWithFinalValues) {

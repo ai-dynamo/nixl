@@ -31,8 +31,10 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -92,30 +94,54 @@ resolveStaleTtl() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(seconds);
 }
 
+[[nodiscard]] std::optional<std::filesystem::path>
+configuredMultiprocDir() {
+    const auto dir = nixl::config::getValueOptional<std::string>(multiprocDirVar);
+    if (!dir || dir->empty()) {
+        return std::nullopt;
+    }
+    return std::filesystem::path(*dir);
+}
+
+[[noreturn]] void
+throwDefaultDirUnusable(const std::string &why) {
+    throw nixlTelemetryBindFailed(why + " (" + multiprocDirVar +
+                                  " is unset or empty; set it to a private directory)");
+}
+
 [[nodiscard]] std::filesystem::path
 defaultMultiprocDir() {
     const std::filesystem::path shm(defaultMultiprocBase);
     std::error_code ec;
-    const bool shm_writable =
-        std::filesystem::is_directory(shm, ec) && ::access(shm.c_str(), W_OK | X_OK) == 0;
-    const std::filesystem::path base = shm_writable ? shm : std::filesystem::temp_directory_path();
+    std::filesystem::path base = shm;
+    if (!std::filesystem::is_directory(shm, ec) || ::access(shm.c_str(), W_OK | X_OK) != 0) {
+        base = std::filesystem::temp_directory_path(ec);
+        if (ec) {
+            throwDefaultDirUnusable(
+                "prometheus_mp exporter: " + shm.string() +
+                " is not writable and the temp dir is unusable: " + ec.message());
+        }
+    }
     const std::filesystem::path path = base /
         ("nixl-telemetry-" + std::to_string(::geteuid()) + "-" + std::to_string(resolvePort()));
-    NIXL_INFO << "prometheus_mp: " << multiprocDirVar << " is not set; using telemetry dir '"
+    NIXL_INFO << "prometheus_mp: " << multiprocDirVar << " is unset or empty; using telemetry dir '"
               << path.string() << "'";
     return path;
 }
 
 [[nodiscard]] std::filesystem::path
 resolveMultiprocDir() {
-    const auto dir = nixl::config::getValueOptional<std::string>(multiprocDirVar);
-    const std::filesystem::path path =
-        dir && !dir->empty() ? std::filesystem::path(*dir) : defaultMultiprocDir();
+    const auto configured = configuredMultiprocDir();
+    const std::filesystem::path path = configured ? *configured : defaultMultiprocDir();
     std::error_code ec;
     const bool created = std::filesystem::create_directories(path, ec);
     if (ec) {
-        throw std::runtime_error("prometheus_mp exporter: cannot create telemetry dir '" +
-                                 path.string() + "': " + ec.message());
+        const std::string why = "prometheus_mp exporter: cannot create telemetry dir '" +
+            path.string() + "': " + ec.message();
+        if (!configured) {
+            throwDefaultDirUnusable(why);
+        }
+        throw std::runtime_error(why);
     }
     if (created) {
         // The umask default (typically 0755) would leave the store files readable
@@ -164,12 +190,20 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     const std::filesystem::path store_path =
         dir_ / makeStoreFileName(pid, processRunMarker(), instance);
 
-    store_ = std::make_unique<storeWriter>(store_path,
-                                           init_params.agentName,
-                                           nixl::getHostname().value_or("unknown"),
-                                           resolveLocalRank(),
-                                           instance,
-                                           nixl::telemetry::resolveHistogramBucketsUs());
+    try {
+        store_ = std::make_unique<storeWriter>(store_path,
+                                               init_params.agentName,
+                                               nixl::getHostname().value_or("unknown"),
+                                               resolveLocalRank(),
+                                               instance,
+                                               nixl::telemetry::resolveHistogramBucketsUs());
+    }
+    catch (const std::system_error &e) {
+        if (configuredMultiprocDir()) {
+            throw;
+        }
+        throwDefaultDirUnusable(e.what());
+    }
 
     const std::string &bind_address = endpoint_.bindAddress();
     const auto claimed = endpoint_.claim();

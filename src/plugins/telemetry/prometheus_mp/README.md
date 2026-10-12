@@ -118,10 +118,12 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   can lock at all, the readers' probes fail too and nothing is reaped, so departed
   ranks stay published indefinitely instead.
 
-  This leaves at most one file per run on disk -- the last process to exit has no
-  owner left to reap it. It is harmless: the next run reaps it on the first scrape
-  after it goes stale, which is its first scrape unless the run started within the
-  TTL, and until then publishes it like any other departed store.
+  Reaping needs a live owner scraping after the TTL, so a run leaves the stores of
+  the processes that exited last on disk -- one per agent after a normal teardown,
+  when every rank exits at about the same time. It is harmless: the next run reaps
+  them on the first scrape after they go stale, which is its first scrape unless it
+  started within the TTL, and until then publishes them like any other departed
+  store.
 - **The owner's death is survived, not fatal.** The kernel releases the lock when
   the owner dies, so a writer re-running the election wins it, binds the port and
   starts aggregating -- reaping the dead owner's own store included. Writers
@@ -151,7 +153,11 @@ the process's effective uid and its `NIXL_TELEMETRY_PROMETHEUS_PORT`. When `/dev
 is not a writable directory, the system temp directory (`TMPDIR`, else `/tmp`) takes
 its place. The exporter logs the path it chose at INFO. Processes that share a port
 therefore aggregate, and processes given different ports keep separate endpoints,
-with no rank configuration. An explicit directory always wins:
+with no rank configuration. The name knows nothing about runs, though: unrelated
+jobs of one user on one host that use the same port share the directory too,
+publish each other's series behind one endpoint, and when the job serving it ends,
+the other takes the port over. Give concurrent jobs different ports to keep them
+apart. An explicit directory always wins:
 
 ```bash
 export NIXL_TELEMETRY_MULTIPROC_DIR="/run/nixl_metrics" # the same for every rank to aggregate
@@ -167,16 +173,20 @@ other containers warn that the port is held by a process outside their run.
 Nothing crashes, but nothing aggregates them either; give them an explicit
 `NIXL_TELEMETRY_MULTIPROC_DIR` on a local volume they all mount.
 
-The default directory outlives the run. It keeps the owner lock files and the store
-file of the last process to exit (see "Stale handling"), which the next run on the
-same port reaps on the first scrape after that store goes stale. On a host shared
-with other users, `/dev/shm` is world-writable and the default name is predictable,
-so another user can create `/dev/shm/nixl-telemetry-<your euid>-<port>` first. The
-exporter then warns that the directory belongs to another uid but still uses it, and
-that user can remove your store files. Set an explicit private
+The default directory outlives the run. It keeps the owner lock files and the
+stores of the processes that exited last, one per agent after a normal teardown,
+since reaping needs a live owner scraping after the TTL (see "Stale handling"); the
+next run on the same port reaps them on the first scrape after they go stale. On a
+host shared with other users, `/dev/shm` is world-writable and the default name is
+predictable, so another user can take `/dev/shm/nixl-telemetry-<your euid>-<port>`
+first. If what they put there leaves this process unable to create its directory or
+its store, the process warns and runs without telemetry, as on a port collision,
+instead of failing agent construction. If it is a directory this process can write
+to, the exporter warns that another uid owns it but uses it, and that user can
+remove your store files. Either way, set an explicit private
 `NIXL_TELEMETRY_MULTIPROC_DIR` on such hosts.
 
-Configuration errors here are **fatal, unlike a bind collision**: a
+Configuration errors here are **fatal, unlike a bind collision**: an explicitly set
 `NIXL_TELEMETRY_MULTIPROC_DIR` that cannot be created, and a
 `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` list longer than 32 bounds, throw out of the
 `nixlAgent` constructor rather than leaving the rank running without telemetry.
