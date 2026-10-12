@@ -570,7 +570,7 @@ TEST(TracePhaseSink, RecordedPhaseReachesEveryBackend) {
     const auto tracer = makeMockTracer(a, b);
     nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
 
-    sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 1234, {});
+    sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 1234, {}, nullptr);
 
     for (const CallLog *log : {&a, &b}) {
         EXPECT_EQ(log->spansBegun, 1);
@@ -611,8 +611,8 @@ TEST(TracePhaseSink, GenericPhaseUsesPluginLabel) {
     const auto tracer = makeMockTracer(a, b);
     nixl::trace::TracerPhaseSink sink{*tracer, "LIBFABRIC"};
 
-    sink.recordPhase(nixl_trace_phase_t::OTHER, "post_write", 1, {});
-    sink.recordPhase(nixl_trace_phase_t::OTHER, {}, 2, {});
+    sink.recordPhase(nixl_trace_phase_t::OTHER, "post_write", 1, {}, nullptr);
+    sink.recordPhase(nixl_trace_phase_t::OTHER, {}, 2, {}, nullptr);
 
     ASSERT_EQ(a.spanNames.size(), 2u);
     EXPECT_EQ(a.spanNames[0], "post_write");
@@ -627,7 +627,7 @@ TEST(TracePhaseSink, LabelIsRecordedForEveryPhase) {
     const auto tracer = makeMockTracer(a, b);
     nixl::trace::TracerPhaseSink sink{*tracer, "LIBFABRIC"};
 
-    sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, "rail0", 5, {});
+    sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, "rail0", 5, {}, nullptr);
 
     ASSERT_EQ(a.spanNames.size(), 1u);
     EXPECT_EQ(a.spanNames[0], "nixl::wire.submitted");
@@ -642,7 +642,7 @@ TEST(TracePhaseSink, EmptyLabelAddsNoAttribute) {
     const auto tracer = makeMockTracer(a, b);
     nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
 
-    sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 5, {});
+    sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 5, {}, nullptr);
 
     for (const auto &attr : a.strAttrs) {
         EXPECT_NE(attr.first, "nixl.phase.label");
@@ -656,13 +656,37 @@ TEST(TracePhaseSink, PluginAttributesAreForwarded) {
     nixl::trace::TracerPhaseSink sink{*tracer, "LIBFABRIC"};
 
     const nixlBackendTraceAttr attrs[] = {{"rail", "0"}, {"op", "write"}};
-    sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 7, attrs);
+    sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 7, attrs, nullptr);
 
     ASSERT_EQ(a.strAttrs.size(), 3u);
     EXPECT_EQ(a.strAttrs[1].first, "rail");
     EXPECT_EQ(a.strAttrs[1].second, "0");
     EXPECT_EQ(a.strAttrs[2].first, "op");
     EXPECT_EQ(a.strAttrs[2].second, "write");
+}
+
+TEST(TracePhaseSink, ValidContextCorrelatesAndRecordsTraceparent) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+    constexpr std::string_view traceparent =
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    const auto context = nixl::trace::parseTraceparent(traceparent);
+    ASSERT_TRUE(context.has_value());
+    const nixl::trace::TraceContext zeroed;
+
+    sink.recordPhase(nixl_trace_phase_t::NOTIF_RECEIVED, {}, 1, {}, nullptr);
+    sink.recordPhase(nixl_trace_phase_t::NOTIF_RECEIVED, {}, 2, {}, &zeroed);
+    sink.recordPhase(nixl_trace_phase_t::NOTIF_RECEIVED, {}, 3, {}, &*context);
+
+    for (const CallLog *log : {&a, &b}) {
+        ASSERT_EQ(log->pushedCorrelationIds.size(), 1u);
+        EXPECT_EQ(log->pushedCorrelationIds[0], context->correlationId64());
+        EXPECT_EQ(log->correlationPops, 1);
+        ASSERT_EQ(log->strAttrs.size(), 4u);
+        EXPECT_EQ(log->strAttrs[3].first, "nixl.traceparent");
+        EXPECT_EQ(log->strAttrs[3].second, traceparent);
+    }
 }
 
 // A backend may decline a span; Tracer drops the null, leaving the Span
@@ -676,7 +700,7 @@ TEST(TracePhaseSink, InactiveSpanRecordsNothing) {
     nixl::trace::TracerPhaseSink sink{tracer, "UCX"};
 
     const nixlBackendTraceAttr attrs[] = {{"rail", "0"}};
-    sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 1, attrs);
+    sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 1, attrs, nullptr);
 
     EXPECT_FALSE(tracer.empty());
     EXPECT_EQ(a.spansBegun, 1);
@@ -692,8 +716,8 @@ TEST(TracePhaseSink, ThrowingBackendIsReportedOnce) {
     gtest::LogMessageCounter drops("Dropping a trace phase");
     nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
 
-    EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 1, {}));
-    EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 2, {}));
+    EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 1, {}, nullptr));
+    EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 2, {}, nullptr));
 
     EXPECT_EQ(drops.count(), 1u);
 }

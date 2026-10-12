@@ -19,6 +19,8 @@
 
 #include <string>
 #include <cstdint>
+#include <optional>
+#include <string_view>
 
 #include "nixl_types.h"
 
@@ -40,6 +42,15 @@ public:
     /* Ser/Des for Byte buffers */
     nixl_status_t addBuf(const std::string &tag, const void* buf, ssize_t len);
     ssize_t getBufLen(const std::string &tag) const;
+
+    /**
+     * @brief Length of the next field's value when that field carries @p tag and is complete,
+     *        without consuming it or logging.
+     * @return std::nullopt when the remaining buffer holds no complete field tagged @p tag.
+     */
+    [[nodiscard]] std::optional<size_t>
+    peekBufLen(std::string_view tag) const noexcept;
+
     nixl_status_t getBuf(const std::string &tag, void *buf, ssize_t len);
 
     /* Ser/Des buffer management */
