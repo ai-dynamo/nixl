@@ -430,6 +430,7 @@ else
         ${NIXL_BUILD_DIR} \
         --prefix=${INSTALL_DIR} \
         -Ducx_path=${UCX_INSTALL_DIR} \
+        -Dwheel_variant=rocm \
         -Dbuild_docs=false \
         -Drust=false \
         ${EXTRA_BUILD_ARGS} \
