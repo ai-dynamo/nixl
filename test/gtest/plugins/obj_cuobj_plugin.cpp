@@ -381,8 +381,9 @@ TEST_P(setupObjAccelTestFixture, AccelSharedBufferRegistrationTest) {
     nixlBackendMD *first_md = nullptr;
     nixlBackendMD *second_md = nullptr;
     ASSERT_EQ(localBackendEngine_->registerMem(mem_desc, DRAM_SEG, first_md), NIXL_SUCCESS);
-    ASSERT_EQ(other_engine.registerMem(mem_desc, DRAM_SEG, second_md), NIXL_SUCCESS);
+    const nixl_status_t second = other_engine.registerMem(mem_desc, DRAM_SEG, second_md);
     EXPECT_EQ(localBackendEngine_->deregisterMem(first_md), NIXL_SUCCESS);
+    ASSERT_EQ(second, NIXL_SUCCESS);
     mem.setMD(second_md);
 
     testRoundTrip<DRAM_SEG>(other_engine, mem, mem_desc, "test-obj-key-shared-registration");
@@ -444,9 +445,11 @@ TEST_P(setupObjAccelTestFixture, AccelSharedBufferConcurrentRegistrationTest) {
         mem.setMD(other_md);
         testRoundTrip<DRAM_SEG>(other_engine, mem, mem_desc, "test-obj-key-shared-race");
 
-        ASSERT_EQ(localBackendEngine_->registerMem(mem_desc, DRAM_SEG, holder_md), NIXL_SUCCESS);
-        mem.setMD(holder_md);
+        const nixl_status_t reacquire =
+            localBackendEngine_->registerMem(mem_desc, DRAM_SEG, holder_md);
         EXPECT_EQ(other_engine.deregisterMem(other_md), NIXL_SUCCESS);
+        ASSERT_EQ(reacquire, NIXL_SUCCESS);
+        mem.setMD(holder_md);
     }
     EXPECT_EQ(localBackendEngine_->deregisterMem(holder_md), NIXL_SUCCESS);
 }
