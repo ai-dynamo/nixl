@@ -18,6 +18,7 @@
 
 #include "common.h"
 #include "mp_telemetry_fixture.h"
+#include "telemetry.h"
 
 #include "common/scoped_fd.h"
 
@@ -32,10 +33,13 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -78,6 +82,33 @@ runWriterChild(int go_fd, int ready_fd, int quit_fd, const std::string &agent, u
             ::_exit(4);
         }
         // Block until the parent closes the quit pipe.
+        while (::read(quit_fd, &c, 1) > 0) {}
+    }
+    catch (...) {
+        rc = 3;
+    }
+    ::_exit(rc);
+}
+
+void
+runDefaultDirChild(int ready_fd, int quit_fd, uint16_t port, const std::string &agent) {
+    ::setenv("NIXL_TELEMETRY_ENABLE", "y", 1);
+    ::setenv("NIXL_TELEMETRY_EXPORTER", "prometheus_mp", 1);
+    ::setenv("NIXL_TELEMETRY_PROMETHEUS_PORT", std::to_string(port).c_str(), 1);
+    ::unsetenv("NIXL_TELEMETRY_MULTIPROC_DIR");
+
+    int rc = 0;
+    try {
+        std::unique_ptr<nixlTelemetry> telemetry;
+        {
+            const gtest::LogIgnoreGuard lig("Plugin file does not exist");
+            telemetry = nixlTelemetry::create(agent);
+        }
+        const char ok = 1;
+        if (!telemetry || ::write(ready_fd, &ok, 1) != 1) {
+            ::_exit(4);
+        }
+        char c = 0;
         while (::read(quit_fd, &c, 1) > 0) {}
     }
     catch (...) {
@@ -230,6 +261,52 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     EXPECT_EQ(countStores(dead_prefix), 0u);
 
     // The remaining children are released and reaped by TearDown().
+}
+
+TEST_F(MpE2ETest, RanksConfiguredWithOnlyAPortAggregateBehindIt) {
+    constexpr int kChildren = 2;
+    scopedDefaultDir();
+
+    int ready_pipe[2];
+    int quit_pipe[2];
+    ASSERT_EQ(::pipe(ready_pipe), 0);
+    scopedFd ready_read(ready_pipe[0]);
+    scopedFd ready_write(ready_pipe[1]);
+    ASSERT_EQ(::pipe(quit_pipe), 0);
+    scopedFd quit_read(quit_pipe[0]);
+    scopedFd quit_write(quit_pipe[1]);
+
+    for (int i = 0; i < kChildren; ++i) {
+        const pid_t pid = ::fork();
+        ASSERT_GE(pid, 0);
+        if (pid == 0) {
+            ready_read.reset();
+            quit_write.reset();
+            runDefaultDirChild(
+                ready_write.get(), quit_read.get(), port_, "rank-" + std::to_string(i));
+        }
+        children_.push_back(pid);
+    }
+
+    ready_write.reset();
+    quit_read.reset();
+
+    for (int i = 0; i < kChildren; ++i) {
+        pollfd pfd{ready_read.get(), POLLIN, 0};
+        ASSERT_GT(::poll(&pfd, 1, 30000), 0) << "rank " << i << " never signalled readiness";
+        char c = 0;
+        ASSERT_EQ(::read(ready_read.get(), &c, 1), 1) << "a rank failed to create its telemetry";
+    }
+
+    const auto metrics = scrapeMetrics(port_);
+    const auto tx_series = std::ranges::count_if(metrics.series(), [](const auto &entry) {
+        return entry.first.name == "agent_tx_bytes_total";
+    });
+    const auto ranks = seriesByAgent(metrics, "agent_tx_bytes_total");
+    EXPECT_EQ(tx_series, kChildren) << absl::StrJoin(ranks, ", ", absl::PairFormatter("="));
+    for (int i = 0; i < kChildren; ++i) {
+        EXPECT_EQ(ranks.count("rank-" + std::to_string(i)), 1u) << "rank " << i;
+    }
 }
 
 } // namespace
