@@ -197,6 +197,12 @@ The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. No plugin emits them
 yet; UCX and libfabric map their internals onto the vocabulary in later PRs.
 
+Recording a phase never fails the transfer: if the trace backend throws, the
+phase is dropped and the first drop per backend is logged. With telemetry
+enabled, drops are also exported as `agent_trace_phases_dropped_total`, subject
+to the same per-metric filter as every other metric (see
+[telemetry](telemetry.md)).
+
 A backend also sees the trace context of the request it is executing, as
 `traceContext` in the `nixl_opt_b_args_t` that `prepXfer` and `postXfer` receive.
 It is the same context at prep and at every post of that request, reposts
@@ -207,6 +213,16 @@ needs the context later, at completion or when building a notification, copies
 the value onto its own request handle. A carrier that puts it on the wire calls
 `encodeTraceContext` itself. `TraceContext` is internal like the sink, so only
 in-tree plugins can read it; none does yet.
+
+A backend that carries the context to its peer says so by overriding
+`supportsTraceContext()`, which defaults to `false`; core reads it once, when
+the backend is created. Tracing never fails a transfer over it. A sampled
+request on a backend that supports remote transfers but not trace contexts runs
+as usual, its trace just does not reach the remote agent, and core logs a
+warning once per backend in each agent; backends without remote transfers are
+not reported. Likewise, if generating a request's context fails, the request
+runs with the zeroed context and no correlation id, and each agent logs its
+first such failure as an error.
 
 ## Profiling with NVTX / Nsight Systems
 
@@ -287,10 +303,10 @@ In NIXL tracing, "correlation" can mean two different things:
   (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
   same request. Implemented via the backend-agnostic `pushCorrelationId()` /
   `popCorrelationId()` API: NIXL wraps `postXferReq` and the `xfer.complete` marker in a
-  correlation scope keyed on the transfer-request handle's address, and the NVTX backend
-  records that id as the event's `uint64` payload -- so a post and its completion carry
-  the same id on the timeline regardless of which thread emitted each. (The id is a
-  process-local diagnostic handle, not a globally unique on-the-wire id.)
+  correlation scope keyed on the span id of the request's trace context, and the NVTX
+  backend records that id as the event's `uint64` payload -- so a post and its completion
+  carry the same id on the timeline regardless of which thread emitted each. A request
+  without a valid context carries no id. (The id is not propagated across processes yet.)
 
 ## Planned work
 
