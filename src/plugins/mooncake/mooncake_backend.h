@@ -113,7 +113,7 @@ public:
 
 private:
     struct AgentInfo {
-        int segment_id;
+        segment_id_t segment_id;
     };
 
     mutable std::mutex mutex_;
