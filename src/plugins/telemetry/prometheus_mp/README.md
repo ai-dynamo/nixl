@@ -151,20 +151,23 @@ That is enough: the processes of a run that use the same
 Unset or empty, it defaults to `/dev/shm/nixl-telemetry-<euid>-<port>`, named after
 the process's effective uid and its `NIXL_TELEMETRY_PROMETHEUS_PORT`. When `/dev/shm`
 is not a writable directory, the system temp directory (`TMPDIR`, else `/tmp`) takes
-its place. The exporter logs the path it chose at INFO. Processes that share a port
-therefore aggregate, and processes given different ports keep separate endpoints,
-with no rank configuration. The name knows nothing about runs, though: unrelated
-jobs of one user on one host that use the same port share the directory too,
-publish each other's series behind one endpoint, and when the job serving it ends,
-the other takes the port over. Give concurrent jobs different ports to keep them
-apart. An explicit directory always wins:
+its place, and only processes that resolve the same temp directory aggregate there:
+ranks given different `TMPDIR`s, as some schedulers do per job, need an explicit
+shared directory. The exporter logs the path it chose at INFO. Processes that share
+a port therefore aggregate, and processes given different ports keep separate
+endpoints, with no rank configuration. The name knows nothing about runs, though:
+unrelated jobs of one user on one host that use the same port share the directory
+too, publish each other's series behind one endpoint, and when the job serving it
+ends, the other takes the port over. Give concurrent jobs different ports to keep
+them apart. An explicit directory always wins:
 
 ```bash
 export NIXL_TELEMETRY_MULTIPROC_DIR="/run/nixl_metrics" # the same for every rank to aggregate
 ```
 
 The default only reaches processes that run as the same user and see the same
-`/dev/shm`. The processes of one container always do. Separate containers do only
+`/dev/shm` (or, on the fallback, the same temp directory). The processes of one
+container always do. Separate containers do only
 if they share `/dev/shm`: those of a Kubernetes pod normally do, unless one of them
 mounts its own. Containers that share a network namespace (one pod, or a host
 network) but not a `/dev/shm` get a directory each, even on one port: the first
@@ -180,11 +183,10 @@ next run on the same port reaps them on the first scrape after they go stale. On
 host shared with other users, `/dev/shm` is world-writable and the default name is
 predictable, so another user can take `/dev/shm/nixl-telemetry-<your euid>-<port>`
 first. If what they put there leaves this process unable to create its directory or
-its store, the process warns and runs without telemetry, as on a port collision,
-instead of failing agent construction. If it is a directory this process can write
-to, the exporter warns that another uid owns it but uses it, and that user can
-remove your store files. Either way, set an explicit private
-`NIXL_TELEMETRY_MULTIPROC_DIR` on such hosts.
+its store, the process warns and runs without telemetry instead of failing agent
+construction. If it is a directory this process can write to, the exporter warns
+that another uid owns it but uses it, and that user can remove your store files.
+Either way, set an explicit private `NIXL_TELEMETRY_MULTIPROC_DIR` on such hosts.
 
 Configuration errors here are **fatal, unlike a bind collision**: an explicitly set
 `NIXL_TELEMETRY_MULTIPROC_DIR` that cannot be created, and a

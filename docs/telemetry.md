@@ -201,8 +201,7 @@ Unlike a bind collision, a configuration error here is fatal: an explicitly set
 `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` both throw out of the `nixlAgent`
 constructor rather than leaving the rank running without telemetry. A default
 directory that the process cannot create, or cannot create its store in, is not a
-configuration error: that process warns and runs without telemetry, as on a bind
-collision.
+configuration error: that process warns and runs without telemetry.
 
 Series are labeled by `hostname`, `agent_name`, and optionally `local_rank` (the
 local/per-GPU rank, not Dynamo's data-parallel `dp_rank`). `agent_errors_total`
@@ -223,9 +222,11 @@ treated as ephemeral (e.g. a per-pod Kubernetes `emptyDir`). Because NIXL is a
 library loaded independently per rank -- with no parent to propagate the path as in
 Dynamo -- the default is built from what the ranks of a run already share, their
 user and their port, so it aggregates with no configuration the processes of that
-user and port that see the same `/dev/shm`, unrelated jobs included; give
-concurrent jobs different ports to keep them apart. Containers that do not share
-`/dev/shm`, and runs on hosts shared with other users, need an explicit directory;
+user and port that see the same `/dev/shm` (or, where `/dev/shm` is not writable,
+resolve the same temp directory), unrelated jobs included; give concurrent jobs
+different ports to keep them apart. Containers that do not share `/dev/shm`, ranks
+with different temp directories on that fallback, and runs on hosts shared with
+other users, need an explicit directory;
 see the README for both cases and for the files the default directory keeps between
 runs.
 
