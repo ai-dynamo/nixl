@@ -119,8 +119,9 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   ranks stay published indefinitely instead.
 
   This leaves at most one file per run on disk -- the last process to exit has no
-  owner left to reap it. It is harmless: the next run reaps it on its first scrape,
-  since it is both dead and stale.
+  owner left to reap it. It is harmless: the next run reaps it on the first scrape
+  after it goes stale, which is its first scrape unless the run started within the
+  TTL, and until then publishes it like any other departed store.
 - **The owner's death is survived, not fatal.** The kernel releases the lock when
   the owner dies, so a writer re-running the election wins it, binds the port and
   starts aggregating -- reaping the dead owner's own store included. Writers
@@ -156,21 +157,24 @@ with no rank configuration. An explicit directory always wins:
 export NIXL_TELEMETRY_MULTIPROC_DIR="/run/nixl_metrics" # the same for every rank to aggregate
 ```
 
-The default only reaches processes that share a `/dev/shm`, that is, one container
-or pod. Processes in separate containers on a host network get a directory each,
-even on one port: the first owner to bind exports only its own container's
-processes, and the ranks of the other containers warn that the port is held by a
-process outside their run. Nothing crashes, but nothing aggregates them either;
-give them an explicit `NIXL_TELEMETRY_MULTIPROC_DIR` on a local volume they all
-mount.
+The default only reaches processes that run as the same user and see the same
+`/dev/shm`. The processes of one container always do. Separate containers do only
+if they share `/dev/shm`: those of a Kubernetes pod normally do, unless one of them
+mounts its own. Containers that share a network namespace (one pod, or a host
+network) but not a `/dev/shm` get a directory each, even on one port: the first
+owner to bind exports only its own container's processes, and the ranks of the
+other containers warn that the port is held by a process outside their run.
+Nothing crashes, but nothing aggregates them either; give them an explicit
+`NIXL_TELEMETRY_MULTIPROC_DIR` on a local volume they all mount.
 
 The default directory outlives the run. It keeps the owner lock files and the store
 file of the last process to exit (see "Stale handling"), which the next run on the
-same port reaps on its first scrape. On a host shared with other users, `/dev/shm`
-is world-writable and the default name is predictable, so another user can create
-`/dev/shm/nixl-telemetry-<your euid>-<port>` first. The exporter then warns that the
-directory belongs to another uid but still uses it, and that user can remove your
-store files. Set an explicit private `NIXL_TELEMETRY_MULTIPROC_DIR` on such hosts.
+same port reaps on the first scrape after that store goes stale. On a host shared
+with other users, `/dev/shm` is world-writable and the default name is predictable,
+so another user can create `/dev/shm/nixl-telemetry-<your euid>-<port>` first. The
+exporter then warns that the directory belongs to another uid but still uses it, and
+that user can remove your store files. Set an explicit private
+`NIXL_TELEMETRY_MULTIPROC_DIR` on such hosts.
 
 Configuration errors here are **fatal, unlike a bind collision**: a
 `NIXL_TELEMETRY_MULTIPROC_DIR` that cannot be created, and a

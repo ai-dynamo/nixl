@@ -219,10 +219,11 @@ convention: a shared **local** folder (not NFS), one per pod / process-family,
 treated as ephemeral (e.g. a per-pod Kubernetes `emptyDir`). Because NIXL is a
 library loaded independently per rank -- with no parent to propagate the path as in
 Dynamo -- the default is built from what the ranks of a run already share, their
-user and their port, so it aggregates the processes of one container or pod with no
-configuration. Processes in separate containers, and runs on hosts shared with
-other users, need an explicit directory; see the README for both cases and for the
-files the default directory keeps between runs.
+user and their port, so it aggregates with no configuration the processes of that
+user and port that see the same `/dev/shm`. Containers that do not share
+`/dev/shm`, and runs on hosts shared with other users, need an explicit directory;
+see the README for both cases and for the files the default directory keeps between
+runs.
 
 Whether a rank is still alive is decided by the lock it holds on its own store,
 not by its pid: a store is `flock`-ed before it is given a name and stays locked

@@ -33,6 +33,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -297,9 +298,12 @@ TEST_F(MpE2ETest, RanksConfiguredWithOnlyAPortAggregateBehindIt) {
         ASSERT_EQ(::read(ready_read.get(), &c, 1), 1) << "a rank failed to create its telemetry";
     }
 
-    const auto ranks = seriesByAgent(scrapeMetrics(port_), "agent_tx_bytes_total");
-    EXPECT_EQ(ranks.size(), static_cast<std::size_t>(kChildren))
-        << absl::StrJoin(ranks, ", ", absl::PairFormatter("="));
+    const auto metrics = scrapeMetrics(port_);
+    const auto tx_series = std::ranges::count_if(metrics.series(), [](const auto &entry) {
+        return entry.first.name == "agent_tx_bytes_total";
+    });
+    const auto ranks = seriesByAgent(metrics, "agent_tx_bytes_total");
+    EXPECT_EQ(tx_series, kChildren) << absl::StrJoin(ranks, ", ", absl::PairFormatter("="));
     for (int i = 0; i < kChildren; ++i) {
         EXPECT_EQ(ranks.count("rank-" + std::to_string(i)), 1u) << "rank " << i;
     }
