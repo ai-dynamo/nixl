@@ -24,35 +24,54 @@
 namespace {
 
 #ifdef HAVE_CUDA
-// cuObject registers device memory in the calling thread's current CUDA context.
-// A thread that never selected a device has none, so the buffer's device is
-// selected for the registration. The caller's context, or the absence of one, is
-// restored afterwards.
+/**
+ * @brief Makes a buffer's CUDA device current for the lifetime of the object.
+ *
+ * cuObject registers device memory in the calling thread's current CUDA context.
+ * A thread that never selected a device has none, so the buffer's device is
+ * selected for the registration. The caller's context, or the absence of one, is
+ * restored afterwards. If the caller's context cannot be read, the device is not
+ * selected, so the caller's context is never lost.
+ */
 class scopedCudaDevice {
 public:
     explicit scopedCudaDevice(int device) {
-        if (cuCtxGetCurrent(&saved_) != CUDA_SUCCESS) {
-            saved_ = nullptr;
+        const CUresult rc = cuCtxGetCurrent(&saved_);
+        if (rc != CUDA_SUCCESS) {
+            error_ = "cuCtxGetCurrent failed: " + std::to_string(rc);
+            return;
         }
-        err_ = cudaSetDevice(device);
+        restore_ = true;
+        const cudaError_t err = cudaSetDevice(device);
+        if (err != cudaSuccess) {
+            error_ =
+                "cudaSetDevice(" + std::to_string(device) + ") failed: " + cudaGetErrorString(err);
+        }
     }
 
     ~scopedCudaDevice() {
-        cuCtxSetCurrent(saved_);
+        if (restore_ && cuCtxSetCurrent(saved_) != CUDA_SUCCESS) {
+            NIXL_WARN << "Failed to restore the caller's CUDA context";
+        }
     }
 
     scopedCudaDevice(const scopedCudaDevice &) = delete;
     scopedCudaDevice &
     operator=(const scopedCudaDevice &) = delete;
 
-    [[nodiscard]] cudaError_t
+    /**
+     * @brief Why the device could not be selected.
+     * @return An empty string on success, otherwise the failure.
+     */
+    [[nodiscard]] const std::string &
     error() const {
-        return err_;
+        return error_;
     }
 
 private:
     CUcontext saved_ = nullptr;
-    cudaError_t err_ = cudaSuccess;
+    bool restore_ = false;
+    std::string error_;
 };
 #endif
 
@@ -155,9 +174,9 @@ S3AccelObjEngineImpl::registerMem(const nixlBlobDesc &mem,
         std::optional<scopedCudaDevice> device;
         if (nixl_mem == VRAM_SEG) {
             device.emplace(static_cast<int>(mem.devId));
-            if (device->error() != cudaSuccess) {
-                NIXL_ERROR << "cudaSetDevice(" << mem.devId
-                           << ") failed: " << cudaGetErrorString(device->error());
+            if (!device->error().empty()) {
+                NIXL_ERROR << "Cannot register VRAM on device " << mem.devId << ": "
+                           << device->error();
                 return NIXL_ERR_BACKEND;
             }
         }
