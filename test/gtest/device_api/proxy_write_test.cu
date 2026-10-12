@@ -822,12 +822,7 @@ TEST_F(ProxyDeviceApiTest, FixedProxyModeMatchesTheDefault) {
         EXPECT_EQ(cudaDeviceSynchronize(), cudaSuccess);
         return deviceGet(result).poll;
     };
-    auto modeTag = [&](DeviceResult *result) {
-        const auto host = deviceGet(result);
-        uint32_t tag = 0;
-        std::memcpy(&tag, host.transfer.storage + nixl_gpu_xfer_status_payload_size, sizeof(tag));
-        return tag;
-    };
+    auto modeTag = [&](DeviceResult *result) { return deviceGet(result).transfer.mode; };
 
     // A fixed poll also reads a status submitted with the default mode.
     fixedSubmitKernel<<<1, 1>>>(views.src, views.dst, results, false);
@@ -836,8 +831,8 @@ TEST_F(ProxyDeviceApiTest, FixedProxyModeMatchesTheDefault) {
     ASSERT_TRUE(waitForCondition([&] { return backend.entries().size() == 2; }));
     EXPECT_EQ(deviceGet(results).submit, NIXL_IN_PROG);
     EXPECT_EQ(deviceGet(results + 1).submit, NIXL_IN_PROG);
-    EXPECT_EQ(modeTag(results), 0u);
-    EXPECT_EQ(modeTag(results + 1), static_cast<uint32_t>(fixed_proxy));
+    EXPECT_EQ(modeTag(results), nixl_device_exec_mode_t{});
+    EXPECT_EQ(modeTag(results + 1), fixed_proxy);
     EXPECT_EQ(fixedPoll(results), NIXL_IN_PROG);
     backend.complete(0);
     ASSERT_TRUE(waitForCondition([&] { return fixedPoll(results) == NIXL_SUCCESS; }));
