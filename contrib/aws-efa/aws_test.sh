@@ -52,8 +52,11 @@ if [ -n "$TEST_TIMEOUT" ]; then
 else
     TIMEOUT_CMD=""
 fi
+# Use the in-region EC2 Ubuntu mirror; archive/security.ubuntu.com are reached over the internet.
+ubuntu_mirror="http://${AWS_DEFAULT_REGION:-eu-central-1}.ec2.archive.ubuntu.com/"
+apt_mirror_cmd="grep -rlE 'http://(archive|security).ubuntu.com/' /etc/apt | xargs -r sed -i -E 's#http://(archive|security).ubuntu.com/#${ubuntu_mirror}#'"
 # The nvidia/cuda base image ships no git; .gitlab/build.sh installs it, but only after the clone.
-export AWS_CMD="set -x && apt-get -qq update && apt-get -qq install -y git && git init -q nixl && cd nixl && git fetch --depth 1 ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} ${checkout_ref} && git checkout --detach FETCH_HEAD && $TIMEOUT_CMD bash contrib/aws-efa/aws_test_remote.sh \${NIXL_INSTALL_DIR}"
+export AWS_CMD="set -x && ${apt_mirror_cmd} && apt-get -qq update && apt-get -qq install -y git && git init -q nixl && cd nixl && git fetch --depth 1 ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} ${checkout_ref} && git checkout --detach FETCH_HEAD && $TIMEOUT_CMD bash contrib/aws-efa/aws_test_remote.sh \${NIXL_INSTALL_DIR}"
 
 # Generate AWS job properties json from template
 envsubst < aws_vars.template > aws_vars.json
