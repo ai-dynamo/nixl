@@ -20,6 +20,7 @@
 #include <sstream>
 #include <thread>
 #include <filesystem>
+#include <mutex>
 #include <fnmatch.h>
 #include <unistd.h>
 #include <cstdlib>
@@ -121,8 +122,11 @@ nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &e
     startExportTask();
 
     if (!nixlTime::fastClockUsesHwCounter()) {
-        NIXL_WARN << "telemetry: no invariant CPU counter available; per-transfer timing falls "
-                     "back to steady_clock (higher overhead)";
+        static std::once_flag noHwCounterLogged;
+        std::call_once(noHwCounterLogged, [] {
+            NIXL_INFO << "telemetry: CPU counter unusable (no invariant TSC or clocksource is "
+                         "not tsc); per-transfer timing uses steady_clock (higher overhead)";
+        });
     }
 }
 
