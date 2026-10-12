@@ -230,7 +230,7 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}"
+      testScript: "GPUNETIO_SANITIZE=1 .gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
       dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
