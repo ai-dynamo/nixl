@@ -11,6 +11,7 @@
 #include <string>
 
 #ifdef HAVE_CUDA
+#include <cuda.h>
 #include <cuda_runtime.h>
 #endif
 
@@ -25,20 +26,19 @@ namespace {
 #ifdef HAVE_CUDA
 // cuObject registers device memory in the calling thread's current CUDA context.
 // A thread that never selected a device has none, so the buffer's device is
-// selected for the registration and the caller's device is restored afterwards.
+// selected for the registration. The caller's context, or the absence of one, is
+// restored afterwards.
 class scopedCudaDevice {
 public:
     explicit scopedCudaDevice(int device) {
-        if (cudaGetDevice(&saved_) != cudaSuccess) {
-            saved_ = -1;
+        if (cuCtxGetCurrent(&saved_) != CUDA_SUCCESS) {
+            saved_ = nullptr;
         }
         err_ = cudaSetDevice(device);
     }
 
     ~scopedCudaDevice() {
-        if (saved_ >= 0) {
-            cudaSetDevice(saved_);
-        }
+        cuCtxSetCurrent(saved_);
     }
 
     scopedCudaDevice(const scopedCudaDevice &) = delete;
@@ -51,7 +51,7 @@ public:
     }
 
 private:
-    int saved_ = -1;
+    CUcontext saved_ = nullptr;
     cudaError_t err_ = cudaSuccess;
 };
 #endif
