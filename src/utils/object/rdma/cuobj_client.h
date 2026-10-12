@@ -83,7 +83,9 @@ public:
      *
      * cuObject accepts only a registration's base address plus an offset, so the
      * registration containing [ptr, ptr + size) is looked up and the token is
-     * minted as (base, size, ptr - base).
+     * minted as (base, size, ptr - base). That registration holds a reference
+     * until the token is released, so it stays registered while the token is in
+     * use even if its owner deregisters it.
      * @param ptr Start of the range; anywhere inside a registered buffer.
      * @param size Length in bytes covered by the token.
      * @param op Operation the token authorizes (CUOBJ_GET / CUOBJ_PUT).
@@ -107,11 +109,16 @@ private:
     };
 
     SharedCuObjClient();
+    void
+    release(std::map<uintptr_t, Registration>::iterator it);
+
     CUObjIOOps ops_{};
     std::unique_ptr<cuObjClient> client_;
     bool connected_ = false;
     std::mutex mutex_;
     std::map<uintptr_t, Registration> registrations_;
+    // Outstanding tokens and the registration each was minted from.
+    std::map<char *, uintptr_t> tokens_;
 };
 
 } // namespace nixl_obj_rdma
