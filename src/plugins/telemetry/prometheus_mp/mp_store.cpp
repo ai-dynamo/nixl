@@ -190,9 +190,9 @@ storeWriterAlive(const std::filesystem::path &path) {
         // is for the next operation on the path to report.
         return true;
     }
-    // Taking the lock proves nobody holds it; closing the descriptor gives it
-    // straight back, so nothing is kept from a writer that never existed.
-    return ::flock(fd.get(), LOCK_EX | LOCK_NB) != 0;
+    // Shared: the writer's exclusive lock refuses it, while another owner
+    // probing the same store at the same moment does not.
+    return ::flock(fd.get(), LOCK_SH | LOCK_NB) != 0;
 }
 
 uint64_t

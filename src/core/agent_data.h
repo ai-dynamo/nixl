@@ -61,6 +61,7 @@ class nixlAgentData final : public nixlMetadataContext {
             remoteBackends_;
 
         // The order of the following data members is crucial for destruction.
+        std::unique_ptr<nixlTelemetry> telemetry_;
         // Composite tracer (fans out to every enabled backend); null when no
         // backend is active.
         const std::unique_ptr<nixl::trace::Tracer> tracer_;
@@ -72,7 +73,6 @@ class nixlAgentData final : public nixlMetadataContext {
         // Owning shared_ptr per registration generation; weak refs in handles expire on
         // invalidation or re-registration.
         std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
-        std::unique_ptr<nixlTelemetry> telemetry_;
         nixlLocalSection localSection_;
 
         // nixlMetadataContext impl; private as before (backends call via the interface).
