@@ -142,6 +142,7 @@ else
                                  pybind11-dev \
                                  etcd-server \
                                  redis-server \
+                                 redis-tools \
                                  libhiredis-dev \
                                  libevent-dev \
                                  net-tools \
