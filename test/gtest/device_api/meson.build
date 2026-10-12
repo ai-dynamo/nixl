@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,13 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Device API test utilities and sources
-device_api_inc_dirs = include_directories('.')
+# Proxy tests also run without UCX's direct GPU API.
+proxy_device_api_test_sources = files(
+    'proxy_write_test.cu',
+)
 
-device_api_sources = [
+ucx_device_api_test_sources = files(
     'single_write_test.cu',
-    'utils.cu'
-]
-
-# Export for parent meson.build
-device_api_test_sources = files(device_api_sources)
+    'utils.cu',
+)
