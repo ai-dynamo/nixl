@@ -132,13 +132,13 @@ protected:
 };
 
 // The multi-process exporter pointed at that directory and a port of its own.
-// Driven both directly (telemetry_mp_exporter_test.cpp) and through the core
-// (telemetry_mp_core_test.cpp): both files name this single fixture class, so
-// gtest groups them into one suite and runs SetUpTestSuite once per iteration.
+// Driven both directly and through the core, from several test files that all
+// name this single fixture class, so gtest groups them into one suite and runs
+// SetUpTestSuite once per iteration.
 class MpExporterTest : public mpTempDirTest {
 protected:
-    // A build tree has no <libnixl.so dir>/plugins, so LoadsThroughPluginManager
-    // finds the plugin only if the build path is registered. Registered once per
+    // A build tree has no <libnixl.so dir>/plugins, so a test that loads the plugin
+    // by name finds it only if the build path is registered. Registered once per
     // process (--gtest_repeat re-enters this hook), and only when it exists:
     // re-registering, or registering a missing directory, logs a warning/error
     // that the gtest main counts as a failure. When it is absent (a binary run
