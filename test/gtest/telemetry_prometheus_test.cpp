@@ -453,6 +453,29 @@ TEST_F(prometheusTelemetryTest, DroppedEventsCounterAccumulates) {
         << "dropped-events counter must sum every emitted delta (7+5)";
 }
 
+TEST_F(prometheusTelemetryTest, TracePhasesDroppedCounterAccumulates) {
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr);
+
+    const std::string agent_name = "prometheus_trace_phases_dropped_agent";
+    const nixlTelemetryExporterInitParams params{agent_name, 4096};
+    auto exporter = handle->createExporter(params);
+    ASSERT_NE(exporter, nullptr);
+
+    constexpr uint64_t kDrops = 3;
+    for (uint64_t i = 0; i < kDrops; ++i) {
+        EXPECT_EQ(
+            exporter->exportEvent({nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED, 1}),
+            NIXL_SUCCESS);
+    }
+
+    const auto metrics = scrapeMetrics(port_);
+    ASSERT_FALSE(metrics.empty()) << "Got empty /metrics response on port " << port_;
+
+    EXPECT_EQ(metrics.latestValue("agent_trace_phases_dropped_total", agentLabel(agent_name)),
+              std::optional<double>(static_cast<double>(kDrops)));
+}
+
 // End-to-end through the core: a per-event allowlist skips deactivated metrics at
 // the source, so an enabled metric advances while a disabled one stays at its
 // pre-registered 0. Families are always registered, so this asserts values, not

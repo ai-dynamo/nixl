@@ -12,6 +12,8 @@
 // is present.
 
 #include <cstddef>
+#include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 
@@ -72,15 +74,19 @@ public:
     isDeviceMemory(const void *ptr) const;
 
     /**
-     * @brief Mint an RDMA token for a registered buffer.
-     * @param ptr Registered buffer.
+     * @brief Mint an RDMA token for a range inside a registered buffer.
+     *
+     * cuObject accepts only a registration's base address plus an offset, so the
+     * registration containing [ptr, ptr + size) is looked up and the token is
+     * minted as (base, size, ptr - base).
+     * @param ptr Start of the range; anywhere inside a registered buffer.
      * @param size Length in bytes covered by the token.
-     * @param offset Byte offset into the buffer.
      * @param op Operation the token authorizes (CUOBJ_GET / CUOBJ_PUT).
-     * @return An opaque token string (release via putToken()), or nullptr on failure.
+     * @return An opaque token string (release via putToken()), or nullptr if no
+     *         registration contains the range or minting failed.
      */
     [[nodiscard]] char *
-    getToken(void *ptr, size_t size, size_t offset, cuObjOpType_t op);
+    getToken(void *ptr, size_t size, cuObjOpType_t op);
 
     /**
      * @brief Release a token acquired via getToken().
@@ -95,6 +101,7 @@ private:
     std::unique_ptr<cuObjClient> client_;
     bool connected_ = false;
     std::mutex mutex_;
+    std::map<uintptr_t, size_t> registrations_;
 };
 
 } // namespace nixl_obj_rdma
