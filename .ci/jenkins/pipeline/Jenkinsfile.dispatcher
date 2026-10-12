@@ -278,6 +278,7 @@ currentBuild.description = githubHelper.getBuildDescription()
 def leafJobs = [
     'non-gpu':         [job: 'nixl-ci-non-gpu',            components: []],
     'gpu':             [job: 'nixl-ci-gpu',                components: []],
+    'cmx':             [job: 'nixl-ci-cmx',                components: []],
     'dl-gpu':          [job: 'nixl-ci-dl-gpu',             components: []],
     'dl-gpu-ep':       [job: 'nixl-ci-dl-gpu-ep',          components: []],
     'gpu-vr':          [job: 'nixl-ci-gpu-vr',             components: []],
