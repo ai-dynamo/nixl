@@ -528,11 +528,13 @@ TEST_P(setupObjAccelTestFixture, AccelVramWorkerThreadRegistrationTest) {
     nixlBackendMD *mem_md = nullptr;
     nixl_status_t status = NIXL_ERR_UNKNOWN;
     CUcontext context_after = nullptr;
+    CUresult context_rc = CUDA_ERROR_UNKNOWN;
     std::thread([&] {
         status = localBackendEngine_->registerMem(mem_desc, VRAM_SEG, mem_md);
-        cuCtxGetCurrent(&context_after);
+        context_rc = cuCtxGetCurrent(&context_after);
     }).join();
     ASSERT_EQ(status, NIXL_SUCCESS);
+    ASSERT_EQ(context_rc, CUDA_SUCCESS);
     EXPECT_EQ(context_after, nullptr);
     mem.setMD(mem_md);
 
