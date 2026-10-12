@@ -68,9 +68,17 @@ void
 SharedCuObjClient::deregisterBuffer(void *ptr) {
     const std::lock_guard<std::mutex> lock(mutex_);
     const auto it = registrations_.find(reinterpret_cast<uintptr_t>(ptr));
-    if (it == registrations_.end() || --it->second.refs > 0) {
+    if (it != registrations_.end()) {
+        release(it);
+    }
+}
+
+void
+SharedCuObjClient::release(std::map<uintptr_t, Registration>::iterator it) {
+    if (--it->second.refs > 0) {
         return;
     }
+    void *ptr = reinterpret_cast<void *>(it->first);
     registrations_.erase(it);
     if (client_->cuMemObjPutDescriptor(ptr) != CU_OBJ_SUCCESS) {
         NIXL_WARN << "cuMemObjPutDescriptor failed for ptr " << ptr;
@@ -113,6 +121,8 @@ SharedCuObjClient::getToken(void *ptr, size_t size, cuObjOpType_t op) {
                    << " size=" << size << " op=" << op << " token=" << static_cast<void *>(token);
         return nullptr;
     }
+    ++rit->second.refs;
+    tokens_[token] = base;
     return token;
 }
 
@@ -123,6 +133,11 @@ SharedCuObjClient::putToken(char *token) {
     }
     const std::lock_guard<std::mutex> lock(mutex_);
     client_->cuMemObjPutRDMAToken(token);
+    const auto it = tokens_.find(token);
+    if (it != tokens_.end()) {
+        release(registrations_.find(it->second));
+        tokens_.erase(it);
+    }
 }
 
 } // namespace nixl_obj_rdma

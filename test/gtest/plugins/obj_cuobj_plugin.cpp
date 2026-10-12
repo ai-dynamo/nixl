@@ -33,6 +33,7 @@
 #include "plugins_common.h"
 #include "transfer_handler.h"
 #include "obj/obj_backend.h"
+#include "object/rdma/cuobj_client.h"
 
 #ifdef HAVE_CUDA
 #include <cuda_runtime.h>
@@ -446,6 +447,39 @@ TEST_P(setupObjAccelTestFixture, AccelSharedBufferConcurrentRegistrationTest) {
         EXPECT_EQ(other_engine.deregisterMem(other_md), NIXL_SUCCESS);
     }
     EXPECT_EQ(localBackendEngine_->deregisterMem(holder_md), NIXL_SUCCESS);
+}
+
+// A transfer inside another agent's nested registration gets its token from
+// that registration. It must stay registered until the token is released, even
+// if that agent deregisters it while the transfer is in flight.
+TEST_P(setupObjAccelTestFixture, AccelTokenHoldsNestedRegistrationTest) {
+    constexpr size_t len = 4 << 20;
+    auto *rdma = nixl_obj_rdma::SharedCuObjClient::instance();
+    ASSERT_NE(rdma, nullptr);
+    nixlBackendInitParams init_params = GetParam();
+    init_params.customParams = &localParams_;
+    nixlObjEngine other_engine(&init_params);
+
+    memoryHandler<DRAM_SEG> mem(len, 0);
+    nixlBlobDesc mem_desc;
+    mem.populateBlobDesc(&mem_desc);
+    nixlBackendMD *outer_md = nullptr;
+    ASSERT_EQ(localBackendEngine_->registerMem(mem_desc, DRAM_SEG, outer_md), NIXL_SUCCESS);
+    const nixlBlobDesc inner_desc(mem_desc.addr + len / 4, len / 4, 0, "");
+    nixlBackendMD *inner_md = nullptr;
+    ASSERT_EQ(other_engine.registerMem(inner_desc, DRAM_SEG, inner_md), NIXL_SUCCESS);
+
+    auto *inner = reinterpret_cast<void *>(inner_desc.addr);
+    char *token = rdma->getToken(inner, 1 << 20, CUOBJ_PUT);
+    ASSERT_NE(token, nullptr);
+    EXPECT_EQ(other_engine.deregisterMem(inner_md), NIXL_SUCCESS);
+    EXPECT_FALSE(rdma->registerBuffer(inner, len / 8))
+        << "the nested registration was released while its token was outstanding";
+
+    rdma->putToken(token);
+    ASSERT_TRUE(rdma->registerBuffer(inner, len / 8));
+    rdma->deregisterBuffer(inner);
+    EXPECT_EQ(localBackendEngine_->deregisterMem(outer_md), NIXL_SUCCESS);
 }
 
 #ifdef HAVE_CUDA
