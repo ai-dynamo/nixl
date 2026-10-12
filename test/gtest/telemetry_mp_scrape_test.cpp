@@ -87,6 +87,7 @@ TEST_F(MpExporterTest, ScrapeEmitsExactlyTheDescriptorSeries) {
 }
 
 TEST_F(MpExporterTest, AgentMetricsAppearInScrape) {
+    env_.unsetVar("NIXL_TELEMETRY_RANK_ENV");
     env_.unsetVar("LOCAL_RANK");
     const std::string agent_name = "mp_scrape_agent";
     const auto exporter = createExporter(agent_name);
@@ -96,8 +97,12 @@ TEST_F(MpExporterTest, AgentMetricsAppearInScrape) {
     const auto tx_series = [&](const std::string &agent) {
         return seriesId{"agent_tx_bytes_total", {{"agent_name", agent}, {"hostname", host}}};
     };
-    EXPECT_TRUE(scrapeMetrics(port_).series().contains(tx_series(agent_name)))
-        << "a lone agent must carry only agent_name and hostname, no pid or agent_instance";
+    const auto lone = scrapeMetrics(port_);
+    EXPECT_TRUE(lone.series().contains(tx_series(agent_name)))
+        << "a lone agent must carry only agent_name and hostname";
+    for (const auto &id : std::views::keys(lone.series())) {
+        EXPECT_FALSE(id.labels.contains("pid") || id.labels.contains("agent_instance")) << id.name;
+    }
 
     const std::string peer_name = "mp_scrape_agent_peer";
     {
