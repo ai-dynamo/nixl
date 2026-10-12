@@ -28,6 +28,8 @@
  * a public header later without churn if an external consumer appears.
  */
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -156,10 +158,13 @@ private:
  * @brief Composite tracer owned by the Agent. A single beginSpan()/mark() call
  *        fans out to every enabled backend. No singleton; injected explicitly.
  */
+using random_bytes_fn_t = void (*)(std::uint8_t *, std::size_t);
+
 class Tracer {
 public:
     explicit Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
-                    double sample_ratio = 0.0) noexcept;
+                    double sample_ratio = 0.0,
+                    random_bytes_fn_t random_bytes = nullptr) noexcept;
     ~Tracer();
     Tracer(const Tracer &) = delete;
     Tracer &
@@ -180,6 +185,14 @@ public:
         return sampleRatio_;
     }
 
+    [[nodiscard]] random_bytes_fn_t
+    randomBytes() const noexcept {
+        return randomBytes_;
+    }
+
+    void
+    reportContextFailure(std::string_view reason) const noexcept;
+
     [[nodiscard]] Span
     beginSpan(std::string_view name, Kind kind = Kind::Generic);
 
@@ -194,6 +207,8 @@ public:
 private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;
     const double sampleRatio_;
+    const random_bytes_fn_t randomBytes_;
+    mutable std::atomic<bool> contextFailureLogged_ = false;
 };
 
 /**

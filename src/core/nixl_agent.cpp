@@ -36,6 +36,7 @@
 #include "common/str_util.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
+#include "tracing/log_once.h"
 #include "tracing/trace.h"
 #include "tracing/trace_macros.h"
 #include "tracing/trace_sink.h"
@@ -194,20 +195,6 @@ makeMDConfig(const nixlAgentConfig &config) {
             std::chrono::microseconds(config.lthrDelay)};
 }
 
-template<typename logFn>
-void
-logOnce(std::atomic<bool> &logged, logFn &&log) noexcept {
-    if (logged.load(std::memory_order_relaxed) ||
-        logged.exchange(true, std::memory_order_relaxed)) {
-        return;
-    }
-    try {
-        log();
-    }
-    catch (...) {
-    }
-}
-
 } // namespace
 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
@@ -310,21 +297,6 @@ nixlAgentData::warnAboutEfaHardwareMismatch() {
     }
 }
 
-nixl::trace::TraceContext
-nixlAgentData::makeTraceContext() {
-    try {
-        return nixl::trace::TraceContext{tracer_.get()};
-    }
-    catch (const std::exception &e) {
-        logOnce(traceContextFailureLogged_, [&e] {
-            NIXL_ERROR << "nixl::trace: could not generate a trace context (" << e.what()
-                       << "); the request continues untraced and further failures are not "
-                          "logged";
-        });
-    }
-    return {};
-}
-
 void
 nixlAgentData::warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
                                              const nixl::trace::TraceContext &context) noexcept {
@@ -335,7 +307,7 @@ nixlAgentData::warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
     if (it == traceContextUnsupported_.end()) {
         return;
     }
-    logOnce(it->second, [&backend] {
+    nixl::trace::logOnce(it->second, [&backend] {
         NIXL_WARN << "nixl::trace: backend '" << backend.getType()
                   << "' cannot carry trace contexts, so sampled transfers through it reach "
                      "remote agents untraced; logged once per backend and agent";
@@ -884,7 +856,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                                                  remote_descs.getType(),
                                                  desc_count,
                                                  remote_side.remoteSectionRef,
-                                                 data->makeTraceContext());
+                                                 nixl::trace::TraceContext{data->tracer_.get()});
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -1055,7 +1027,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  remote_descs.getType(),
                                                  local_descs.descCount(),
                                                  rem_sec_it->second,
-                                                 data->makeTraceContext());
+                                                 nixl::trace::TraceContext{data->tracer_.get()});
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
