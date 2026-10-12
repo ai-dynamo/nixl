@@ -432,6 +432,50 @@ else
     )
 fi # PRE_INSTALLED_UCX_ENV end
 
+if [ -n "$DOCA_KV_ENV" ]; then
+    echo "DOCA_KV_ENV is set, compiling DOCA KV"
+    for _secret in ssh_key git_user git_pass; do
+        if [ ! -s "/run/secrets/${_secret}" ]; then
+            echo "ERROR: DOCA_KV_ENV is set but the ${_secret} build secret is missing" >&2
+            exit 1
+        fi
+    done
+    # liburing is held for the meson wrap; DOCA KV and its mock need the system one.
+    $SUDO apt-get -qq install -y --no-install-recommends --allow-change-held-packages liburing2 liburing-dev
+    GIT_SSH_COMMAND="ssh -i /run/secrets/ssh_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes" \
+        git clone -b doca_memos ssh://svc-nixl@git-nbu.nvidia.com:12023/doca/doca.git ${BUILD_TMP}/doca_kv
+    ( \
+    cd ${BUILD_TMP}/doca_kv && \
+    meson setup build \
+    -Ddisable_all_applications=true -Ddisable_all_samples=false \
+    -Ddisable_all_tools=true -Ddisable_all_services=true \
+    -Ddisable_all_extensions=true -Denable_grpc_support=false \
+    -Denable_gpu_support=false -Dbuildtype=debug \
+    -Denable_libs=kv,argp -Dprefix=/opt/doca_memos/doca_kv && \
+    cd build && \
+    meson compile && \
+    $SUDO meson install \
+    )
+    echo "/opt/doca_memos/doca_kv/lib/${ARCH}-linux-gnu" | $SUDO tee /etc/ld.so.conf.d/doca_kv.conf
+    $SUDO ldconfig
+    export PKG_CONFIG_PATH="/opt/mellanox/doca/lib/$ARCH-linux-gnu/pkgconfig:/opt/mellanox/doca/lib64/pkgconfig:${PKG_CONFIG_PATH}:/opt/doca_memos/doca_kv/lib/$ARCH-linux-gnu/pkgconfig"
+
+    # Stage the DOCA KV mock (private gitlab-master repo) as source, built and
+    # swapped in by test_cmx.sh. Under /opt, not /tmp: the Slurm/enroot test
+    # runtime overmounts /tmp.
+    MOCK_SRC=/opt/doca_kv_mock
+    $SUDO mkdir -p "${MOCK_SRC}"
+    $SUDO chown "$(id -u):$(id -g)" "${MOCK_SRC}"
+    set +x  # never echo the credentials
+    _git_auth=$(printf '%s:%s' "$(cat /run/secrets/git_user)" "$(cat /run/secrets/git_pass)" | base64 | tr -d '\n')
+    git -c http.extraHeader="Authorization: Basic ${_git_auth}" clone --depth 1 \
+        https://gitlab-master.nvidia.com/benwalker/doca_kv_mock.git "${MOCK_SRC}"
+    unset _git_auth
+    set -x
+    # Drop .git so the credential header never lands in the image.
+    rm -rf "${MOCK_SRC}/.git"
+fi
+
 $SUDO rm -rf ${BUILD_TMP}
 
 # Disabling CUDA IPC not to use NVLINK, as it slows down local
