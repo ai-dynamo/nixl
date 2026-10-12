@@ -41,13 +41,13 @@
 class nixlLibfabricConnection;
 
 /**
- * @brief Memory Registration Cache Entry
+ * @brief Tracked live memory registration of a rail
  *
- * Reference-counted cache entry for fi_mr_reg results to avoid repeated
- * expensive memory registration calls for the same buffers.
- *
- * Based on He et al. "An efficient design for fast memory registration in RDMA"
- * (JNCA 2009) showing memory registration costs can exceed RDMA latency.
+ * Ref-counted de-duplication of concurrent registrations: while a buffer is
+ * registered, a registerMemory() call with the same address, length, memory type
+ * and device reuses its MR and increments ref_count instead of calling
+ * fi_mr_regattr again. The last deregisterMemory() closes the MR and erases the
+ * entry, so a rail never holds an idle registration.
  */
 struct MRCacheEntry {
     struct fid_mr *mr; ///< Libfabric memory registration handle
@@ -67,6 +67,17 @@ struct MRCacheEntry {
           mem_type(type_),
           gpu_id(gpu_) {}
 };
+
+/**
+ * @brief Default bound on the registrations a rail tracks for de-duplication
+ *
+ * Set with the "mr_cache_max_entries" backend parameter or the
+ * NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES environment variable. It bounds the tracking
+ * map only: past it a new registration is still made and returned untracked, so it
+ * is not de-duplicated. 1024 is a round default, not a measured value; exceeding it
+ * costs de-duplication, not a registration.
+ */
+constexpr size_t NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT = 1024;
 
 /**
  * @brief Request structure for libfabric operations
@@ -483,33 +494,9 @@ public:
     nixl_status_t
     deregisterMemory(struct fid_mr *mr) const;
 
-    // Memory Registration Cache Statistics
-    /**
-     * @brief Get the number of MR cache hits.
-     * @return Total number of times registerMemory() reused a cached MR on
-     *         this rail (including late-race concurrent hits).
-     */
-    uint64_t
-    getMRCacheHits() const {
-        return mr_cache_hits_.load(std::memory_order_relaxed);
-    }
-
-    /**
-     * @brief Get the number of MR cache misses.
-     * @return Total number of times registerMemory() had to issue a fresh
-     *         fi_mr_reg on this rail.
-     */
-    uint64_t
-    getMRCacheMisses() const {
-        return mr_cache_misses_.load(std::memory_order_relaxed);
-    }
-
-    /**
-     * @brief Get the current number of entries in the MR cache.
-     * @return Number of cache entries currently held by this rail.
-     */
-    size_t
-    getMRCacheSize() const;
+    /** Set the bound on the registrations this rail tracks for de-duplication */
+    void
+    setMRCacheMaxEntries(size_t max_entries);
 
     /** Sentinel for "no agent is mapped to this fi_addr". */
     static constexpr uint32_t kUnknownAgentIdx = std::numeric_limits<uint32_t>::max();
@@ -704,16 +691,15 @@ private:
     // Provider capability flags
     bool provider_supports_hmem_;
 
-    // Memory Registration Resource Cache (MRRC)
-    // Based on He et al. "An efficient design for fast memory registration in RDMA" (JNCA 2009)
+    // Ref-counted de-duplication of concurrent memory registrations (see MRCacheEntry)
     mutable std::unordered_map<uintptr_t, MRCacheEntry> mr_cache_;
     // Reverse index (fid_mr* -> buffer address) so deregisterMemory can
     // resolve its cache entry in O(1) instead of scanning the cache under
     // the lock. Maintained in lockstep with mr_cache_ under mr_cache_mutex_.
     mutable std::unordered_map<struct fid_mr *, uintptr_t> mr_cache_by_mr_;
     mutable std::mutex mr_cache_mutex_;
-    mutable std::atomic<uint64_t> mr_cache_hits_{0};
-    mutable std::atomic<uint64_t> mr_cache_misses_{0};
+    // Bound on tracked registrations; registrations past it are returned untracked
+    size_t mr_cache_max_entries_ = NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT;
     // System runtime type (CUDA, NEURON, or SYSTEM) this rail was created for
     enum fi_hmem_iface runtime_;
 
