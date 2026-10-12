@@ -379,10 +379,12 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
 
     const std::string correlation = "correlation=" + std::to_string(context.correlationId64());
+#if defined(NIXL_TRACE_ENABLED)
     const auto posted = recordedSpans(traceFile, sender_name, "nixl::postXferReq.write");
     ASSERT_EQ(posted.size(), 1u);
     EXPECT_THAT(posted[0],
                 testing::IsSupersetOf({correlation, std::string("remote_agent=") + receiver_name}));
+#endif
     const auto received = recordedSpans(traceFile, receiver_name, "nixl::notif.received");
     ASSERT_EQ(received.size(), 1u);
     EXPECT_THAT(
