@@ -33,6 +33,7 @@
 #include "file/file_path_mode.h"
 #include "gds_utils.h"
 
+// Resolved base pointer and offset for a descriptor within a registered buffer.
 struct gdsResolvedBuffer {
     void *dev_ptr_base;
     size_t dev_ptr_offset;
@@ -50,6 +51,7 @@ struct gdsXferReq {
     CUfileOpcode_t op;
 };
 
+// Resolves a descriptor against a registered buffer and validates its range.
 nixl_status_t
 gds_resolve_registered_buffer(void *registered_base,
                               size_t registered_size,

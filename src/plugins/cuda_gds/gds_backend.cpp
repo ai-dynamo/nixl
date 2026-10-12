@@ -247,15 +247,20 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
         }
 
         gdsResolvedBuffer resolved{};
-        const nixl_status_t resolve_status =
-            gds_resolve_registered_buffer(mem_data->registered_base,
-                                          mem_data->registered_size,
-                                          mem_desc.addr,
-                                          mem_desc.len,
-                                          resolved);
-        if (resolve_status != NIXL_SUCCESS) {
-            NIXL_ERROR << "GDS: descriptor is outside registered memory range";
-            return resolve_status;
+        if (mem_data->buf.isRegistered()) {
+            const nixl_status_t resolve_status =
+                gds_resolve_registered_buffer(mem_data->registered_base,
+                                              mem_data->registered_size,
+                                              mem_desc.addr,
+                                              mem_desc.len,
+                                              resolved);
+            if (resolve_status != NIXL_SUCCESS) {
+                NIXL_ERROR << "GDS: descriptor is outside registered memory range";
+                return resolve_status;
+            }
+        } else {
+            resolved.dev_ptr_base = reinterpret_cast<void *>(mem_desc.addr);
+            resolved.dev_ptr_offset = 0;
         }
 
         const auto *md = static_cast<const nixlGdsMetadata *>(file_desc.metadataP);
