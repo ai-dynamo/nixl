@@ -34,20 +34,20 @@
 #include "gds_utils.h"
 
 struct gdsResolvedBuffer {
-    void *dev_ptr_base{nullptr};
-    size_t dev_ptr_offset{0};
+    void *dev_ptr_base;
+    size_t dev_ptr_offset;
 };
 
 // One logical mem<->file I/O produced by the shared preparation path. The
 // concrete engines turn these into their own posted, pollable request handles.
 struct gdsXferReq {
-    void *addr{nullptr};
-    void *dev_ptr_base{nullptr};
-    size_t dev_ptr_offset{0};
-    size_t size{0};
-    size_t file_offset{0};
-    CUfileHandle_t fh{nullptr};
-    CUfileOpcode_t op{CUFILE_READ};
+    void *addr;
+    void *dev_ptr_base;
+    size_t dev_ptr_offset;
+    size_t size;
+    size_t file_offset;
+    CUfileHandle_t fh;
+    CUfileOpcode_t op;
 };
 
 nixl_status_t
