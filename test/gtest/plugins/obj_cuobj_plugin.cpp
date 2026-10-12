@@ -38,6 +38,7 @@
 #include "object/rdma/cuobj_client.h"
 
 #ifdef HAVE_CUDA
+#include <cuda.h>
 #include <cuda_runtime.h>
 #endif
 
@@ -526,14 +527,48 @@ TEST_P(setupObjAccelTestFixture, AccelVramWorkerThreadRegistrationTest) {
     mem.populateBlobDesc(&mem_desc);
     nixlBackendMD *mem_md = nullptr;
     nixl_status_t status = NIXL_ERR_UNKNOWN;
+    CUcontext context_after = nullptr;
     std::thread([&] {
         status = localBackendEngine_->registerMem(mem_desc, VRAM_SEG, mem_md);
+        cuCtxGetCurrent(&context_after);
     }).join();
     ASSERT_EQ(status, NIXL_SUCCESS);
+    EXPECT_EQ(context_after, nullptr);
     mem.setMD(mem_md);
 
     testRoundTrip<VRAM_SEG>(*localBackendEngine_, mem, mem_desc, "test-obj-key-vram-worker-thread");
     EXPECT_EQ(localBackendEngine_->deregisterMem(mem_md), NIXL_SUCCESS);
+}
+
+// Registering VRAM must leave the caller's own CUDA context current.
+TEST_P(setupObjAccelTestFixture, AccelVramRegistrationRestoresContextTest) {
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
+    }
+    memoryHandler<VRAM_SEG> mem(1 << 20, 0);
+    nixlBlobDesc mem_desc;
+    mem.populateBlobDesc(&mem_desc);
+    std::thread([&] {
+        CUdevice device;
+        ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
+        CUcontext context = nullptr;
+#if CUDA_VERSION >= 13000
+        ASSERT_EQ(cuCtxCreate(&context, nullptr, 0, device), CUDA_SUCCESS);
+#else
+        ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
+#endif
+        nixlBackendMD *mem_md = nullptr;
+        EXPECT_EQ(localBackendEngine_->registerMem(mem_desc, VRAM_SEG, mem_md), NIXL_SUCCESS);
+        CUcontext current = nullptr;
+        EXPECT_EQ(cuCtxGetCurrent(&current), CUDA_SUCCESS);
+        EXPECT_EQ(current, context);
+        if (mem_md) {
+            EXPECT_EQ(localBackendEngine_->deregisterMem(mem_md), NIXL_SUCCESS);
+        }
+        EXPECT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+    }).join();
 }
 #endif // HAVE_CUDA
 
