@@ -13,12 +13,55 @@
 
 namespace nixl_obj_rdma {
 
-SharedCuObjClient::SharedCuObjClient() {
-    try {
+namespace {
+
+    class cuObjClientApi : public cuObjApi {
+    public:
         // The token-based flow does not use the get/put callbacks, so empty ops
         // suffice (matches the reference SDKs' availability probe).
-        client_ = std::make_unique<cuObjClient>(ops_, CUOBJ_PROTO_RDMA_DC_V1);
-        connected_ = client_ && client_->isConnected();
+        cuObjClientApi() : client_(ops_, CUOBJ_PROTO_RDMA_DC_V1) {}
+
+        [[nodiscard]] bool
+        isConnected() {
+            return client_.isConnected();
+        }
+
+        cuObjErr_t
+        cuMemObjGetDescriptor(void *ptr, size_t size) override {
+            return client_.cuMemObjGetDescriptor(ptr, size);
+        }
+
+        cuObjErr_t
+        cuMemObjPutDescriptor(void *ptr) override {
+            return client_.cuMemObjPutDescriptor(ptr);
+        }
+
+        cuObjErr_t
+        cuMemObjGetRDMAToken(void *ptr,
+                             size_t size,
+                             size_t buffer_offset,
+                             cuObjOpType_t operation,
+                             char **desc_str_out) override {
+            return client_.cuMemObjGetRDMAToken(ptr, size, buffer_offset, operation, desc_str_out);
+        }
+
+        cuObjErr_t
+        cuMemObjPutRDMAToken(char *desc_str) override {
+            return client_.cuMemObjPutRDMAToken(desc_str);
+        }
+
+    private:
+        CUObjIOOps ops_{};
+        cuObjClient client_;
+    };
+
+} // namespace
+
+SharedCuObjClient::SharedCuObjClient() {
+    try {
+        auto client = std::make_unique<cuObjClientApi>();
+        connected_ = client->isConnected();
+        client_ = std::move(client);
         if (connected_) {
             NIXL_INFO << "S3 RDMA fabric connected (cuObject)";
         }
@@ -31,6 +74,10 @@ SharedCuObjClient::SharedCuObjClient() {
         connected_ = false;
     }
 }
+
+SharedCuObjClient::SharedCuObjClient(std::unique_ptr<cuObjApi> api)
+    : client_(std::move(api)),
+      connected_(client_ != nullptr) {}
 
 SharedCuObjClient *
 SharedCuObjClient::instance() {

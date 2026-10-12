@@ -22,6 +22,31 @@
 namespace nixl_obj_rdma {
 
 /**
+ * @brief The cuObjClient calls SharedCuObjClient makes, so that tests can
+ * substitute them. The methods mirror cuObjClient's.
+ */
+class cuObjApi {
+public:
+    virtual ~cuObjApi() = default;
+
+    virtual cuObjErr_t
+    cuMemObjGetDescriptor(void *ptr, size_t size) = 0;
+
+    virtual cuObjErr_t
+    cuMemObjPutDescriptor(void *ptr) = 0;
+
+    virtual cuObjErr_t
+    cuMemObjGetRDMAToken(void *ptr,
+                         size_t size,
+                         size_t buffer_offset,
+                         cuObjOpType_t operation,
+                         char **desc_str_out) = 0;
+
+    virtual cuObjErr_t
+    cuMemObjPutRDMAToken(char *desc_str) = 0;
+};
+
+/**
  * @brief Process-wide cuObjClient singleton.
  *
  * libcuobjclient is expensive to construct and its callbacks may fire on
@@ -39,6 +64,13 @@ public:
      */
     [[nodiscard]] static SharedCuObjClient *
     instance();
+
+    /**
+     * @brief Construct a client over the given cuObject calls, for tests.
+     * Production code uses instance().
+     * @param api The cuObject calls to make.
+     */
+    explicit SharedCuObjClient(std::unique_ptr<cuObjApi> api);
 
     /**
      * @brief Whether the RDMA fabric is connected.
@@ -112,8 +144,7 @@ private:
     void
     release(std::map<uintptr_t, Registration>::iterator it);
 
-    CUObjIOOps ops_{};
-    std::unique_ptr<cuObjClient> client_;
+    std::unique_ptr<cuObjApi> client_;
     bool connected_ = false;
     std::mutex mutex_;
     std::map<uintptr_t, Registration> registrations_;
