@@ -137,7 +137,8 @@ proxyRuntime::build() {
                         deviceOps::copyDirection::HostToDevice) != NIXL_SUCCESS) {
         return NIXL_ERR_BACKEND;
     }
-    memview_manager_ = std::make_unique<proxyMemViewManager>(allocator_, deviceContext());
+    memview_manager_ =
+        std::make_unique<proxyMemViewManager>(allocator_, deviceContext(), max_peers);
 
     worker_context_ =
         std::make_unique<const proxyWorkerContext>(proxyWorkerContext{*transport_,

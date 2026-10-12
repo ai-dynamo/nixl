@@ -27,9 +27,11 @@
 namespace nixl {
 
 proxyMemViewManager::proxyMemViewManager(deviceOps &allocator,
-                                         const nixlProxyDeviceContextData *device_context)
+                                         const nixlProxyDeviceContextData *device_context,
+                                         uint32_t max_peers)
     : allocator_(allocator),
-      device_context_(device_context) {}
+      device_context_(device_context),
+      max_peers_(max_peers) {}
 
 template<typename DlistT>
 nixl_status_t
@@ -43,14 +45,33 @@ proxyMemViewManager::createView(const DlistT &dlist,
     auto host_view = std::make_unique<proxyHostView>();
     host_view->remote = std::is_same_v<DlistT, nixl_remote_meta_dlist_t>;
     fillDescs(dlist, host_view->descs);
+
+    std::vector<uint32_t> peers;
+    if constexpr (std::is_same_v<DlistT, nixl_remote_meta_dlist_t>) {
+        for (const auto &desc : dlist) {
+            // A hole's command fails on the host, so any ring will do.
+            if (desc.metadataP == nullptr) {
+                peers.push_back(0);
+                continue;
+            }
+            if (!peers_.count(desc.remoteAgent) && peers_.size() == max_peers_) {
+                NIXL_ERROR << "proxyMemViewManager: remote agent " << desc.remoteAgent
+                           << " exceeds proxy_max_peers=" << max_peers_;
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            peers.push_back(peers_.try_emplace(desc.remoteAgent, peers_.size()).first->second);
+        }
+    }
+
     const nixlProxyDeviceMemView memview_contents{
         static_cast<uint64_t>(reinterpret_cast<uintptr_t>(host_view.get())),
         device_context_,
-        static_cast<uint32_t>(direct_ptrs.size())};
+        static_cast<uint32_t>(direct_ptrs.size()),
+        static_cast<uint32_t>(peers.size())};
 
-    // GPU: allocate the device memview and copy the contents and direct pointers into it.
+    // GPU: allocate the device memview and copy the contents, direct pointers and peers into it.
     deviceMem device_memview_mem;
-    if (allocator_.allocDeviceMem(nixlProxyDeviceMemViewBytes(direct_ptrs.size()),
+    if (allocator_.allocDeviceMem(nixlProxyDeviceMemViewBytes(direct_ptrs.size(), peers.size()),
                                   device_memview_mem) != NIXL_SUCCESS) {
         NIXL_ERROR << "proxyMemViewManager: failed to allocate device memview";
         return NIXL_ERR_BACKEND;
@@ -65,6 +86,13 @@ proxyMemViewManager::createView(const DlistT &dlist,
                                       direct_ptrs.data(),
                                       direct_ptrs.size() * sizeof(void *),
                                       deviceOps::copyDirection::HostToDevice);
+    }
+    if (copy_status == NIXL_SUCCESS && !peers.empty()) {
+        copy_status =
+            allocator_.copy(nixlProxyDeviceMemViewDirectPtrs(device_memview) + direct_ptrs.size(),
+                            peers.data(),
+                            peers.size() * sizeof(uint32_t),
+                            deviceOps::copyDirection::HostToDevice);
     }
     if (copy_status != NIXL_SUCCESS) {
         NIXL_ERROR << "proxyMemViewManager: failed to initialize device memview";
