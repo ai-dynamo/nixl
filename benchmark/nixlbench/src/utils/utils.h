@@ -407,6 +407,8 @@ private:
     buildCommonAzCliBlobParams(const std::string &blob_name);
 
 public:
+    static bool
+    debugEnabled(); // Whether NIXLBENCH_LOG_LEVEL is DEBUG or TRACE
     static void
     setRT(xferBenchRT *rt);
     static void
