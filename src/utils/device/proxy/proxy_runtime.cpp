@@ -183,7 +183,23 @@ proxyRuntime::prepMemView(const nixl_remote_meta_dlist_t &dlist,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    return memview_manager_->prepRemote(dlist, direct_ptrs, *proxy_memview);
+    std::vector<uint32_t> peers;
+    peers.reserve(dlist.descCount());
+    for (const auto &desc : dlist) {
+        // A hole's command fails on the host, so any ring will do.
+        if (desc.metadataP == nullptr) {
+            peers.push_back(0);
+            continue;
+        }
+        if ((peers_.count(desc.remoteAgent) == 0) && (peers_.size() == config_.max_peers)) {
+            NIXL_ERROR << "ProxyRuntime::prepMemView: remote agent " << desc.remoteAgent
+                       << " exceeds proxy_max_peers=" << config_.max_peers;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        peers.push_back(peers_.try_emplace(desc.remoteAgent, peers_.size()).first->second);
+    }
+
+    return memview_manager_->prepRemote(dlist, direct_ptrs, peers, *proxy_memview);
 }
 
 nixl_status_t

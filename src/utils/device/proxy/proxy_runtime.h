@@ -24,6 +24,7 @@
 #include <mutex>
 #include <stop_token>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "backend_aux.h"
@@ -63,7 +64,8 @@ public:
     [[nodiscard]] nixl_status_t
     prepMemView(const nixl_meta_dlist_t &dlist, proxy_view_handle_t *proxy_memview);
 
-    /** Resolves the transport's direct pointers first; it may offer none. */
+    /** Resolves the transport's direct pointers first; it may offer none. Gives each remote
+     *  agent a peer the first time a view names it. */
     [[nodiscard]] nixl_status_t
     prepMemView(const nixl_remote_meta_dlist_t &dlist, proxy_view_handle_t *proxy_memview);
 
@@ -120,6 +122,8 @@ private:
     std::vector<std::unique_ptr<proxyWorker>> workers_;
     /** Created after the device context; destroyed after workers stop. */
     std::unique_ptr<proxyMemViewManager> memview_manager_;
+    /** Each remote agent's peer, kept for the runtime's lifetime. */
+    std::unordered_map<std::string, uint32_t> peers_;
     std::stop_source stop_source_;
     /** Bumped once per drain; each worker acks it when it has applied it. */
     alignas(64) std::atomic<uint64_t> drain_requested_{0};
