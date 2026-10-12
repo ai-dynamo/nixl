@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
+all_plugins = ['UCX', 'MUSA_UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
 
 enabled_plugins = {}
 
@@ -457,6 +457,8 @@ else
   ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'], required: false)
 endif
 
+subdir('src/plugins/musa/dependency')
+
 libfabric_path = get_option('libfabric_path')
 if libfabric_path != ''
   libfabric_lib_path = libfabric_path + '/lib'
@@ -582,10 +584,13 @@ static_plugins = []
 
 # Check for static plugins, then set compiler flags to enable
 if get_option('static_plugins') != ''
-    static_plugins = get_option('static_plugins').split(',')
-    foreach p : static_plugins
-        flagname = '-DSTATIC_PLUGIN_' + p
-        add_project_arguments(flagname, language: 'cpp')
+    foreach raw_plugin : get_option('static_plugins').split(',')
+        plugin = raw_plugin.strip()
+        if plugin != ''
+            static_plugins += [plugin]
+            flagname = '-DSTATIC_PLUGIN_' + plugin
+            add_project_arguments(flagname, language: 'cpp')
+        endif
     endforeach
 endif
 

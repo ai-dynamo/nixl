@@ -29,6 +29,7 @@ extern "C" {
 
 #include "rkey.h"
 #include "ucx_enums.h"
+#include "memory_policy.h"
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
 
@@ -124,9 +125,9 @@ public:
 
 class nixlUcxMem {
 private:
-    void *base;
-    size_t size;
-    ucp_mem_h memh;
+    void *base = nullptr;
+    size_t size = 0;
+    ucp_mem_h memh = nullptr;
 
 public:
     [[nodiscard]] ucp_mem_h
@@ -153,6 +154,7 @@ class nixlUcxContext {
 private:
     /* Local UCX stuff */
     std::unique_ptr<ucp_context, void (*)(ucp_context_h)> ctx{nullptr, &ucp_cleanup};
+    std::optional<unsigned> requiredDeviceMemoryType_;
     const nixl::ucx::mt_mode_t mtType_;
     const unsigned ucpVersion_;
     const std::string name_;
@@ -167,7 +169,8 @@ public:
                    nixl_thread_sync_t sync_mode,
                    size_t num_device_channels,
                    const std::string &engine_conf = "",
-                   const std::string &name = "");
+                   const std::string &name = "",
+                   std::string_view device_memory_type = {});
     nixlUcxContext(nixlUcxContext &&) = delete;
     nixlUcxContext(const nixlUcxContext &) = delete;
 
