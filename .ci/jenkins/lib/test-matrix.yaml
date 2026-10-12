@@ -21,8 +21,8 @@ job: nixl-ci-gpu
 failFast: false
 
 # Job cap. Axes run in parallel, so this bounds the longest single axis:
-# docker build (~11) + allocation wait (up to immediateTimeout 60) + run steps (110) + stop (~5).
-timeout_minutes: 200
+# docker build (~11) + allocation wait (up to immediateTimeout 60) + run steps (150, incl. the 30 image sync) + stop (~5).
+timeout_minutes: 240
 
 registry_host: artifactory.nvidia.com
 registry_auth: svc-nixl-new-artifactory-token
@@ -52,7 +52,7 @@ env:
   SLURM_GRES: gpu:4
   SLURM_MEM: 128G
   SLURM_MINCPUS: 24
-  SLURM_JOB_TIMEOUT: '02:20:00'
+  SLURM_JOB_TIMEOUT: '02:50:00'
   SLURM_IMMEDIATE_TIMEOUT: "3600"
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
@@ -154,6 +154,24 @@ steps:
         "--mincpus=${SLURM_MINCPUS}",
         "--mem=${SLURM_MEM}"
       ]
+
+  - name: Sync Container Image
+    # Import the image onto the node before the timed test stages, so a slow
+    # registry pull is not counted against (and does not time out) a test stage.
+    containerSelector: "{name: 'build_helper'}"
+    timeout: 30
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
+      exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
   - name: Run CPP tests
     containerSelector: "{name: 'build_helper'}"

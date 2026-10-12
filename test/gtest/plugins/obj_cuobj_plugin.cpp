@@ -295,6 +295,42 @@ TEST_P(setupObjAccelTestFixture, AccelNestedRegistrationXferTest) {
     testSubRangeXfer<DRAM_SEG>(*localBackendEngine_, true);
 }
 
+// LMCache object keys use '@' as a separator. The control plane must sign such
+// keys with the same RFC 3986 encoding the server uses to verify them.
+TEST_P(setupObjAccelTestFixture, AccelReservedCharKeyXferTest) {
+    constexpr size_t len = 1 << 20;
+    memoryHandler<DRAM_SEG> mem(len, 0);
+    nixlBlobDesc mem_desc;
+    mem.populateBlobDesc(&mem_desc);
+    nixlBackendMD *mem_md = nullptr;
+    ASSERT_EQ(localBackendEngine_->registerMem(mem_desc, DRAM_SEG, mem_md), NIXL_SUCCESS);
+    mem.setMD(mem_md);
+
+    const nixlBlobDesc obj_desc(0, len, 0, "test-obj-key-model@0x01000100@0@a:b=c$d&e,f.data");
+    nixlBackendMD *obj_md = nullptr;
+    ASSERT_EQ(localBackendEngine_->registerMem(obj_desc, OBJ_SEG, obj_md), NIXL_SUCCESS);
+
+    nixl_meta_dlist_t local(DRAM_SEG);
+    nixlMetaDesc local_desc;
+    mem.populateMetaDesc(&local_desc, 0, len);
+    local.addDesc(local_desc);
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    remote.addDesc(nixlMetaDesc(0, len, 0, obj_md));
+
+    std::vector<uint8_t> pattern(len);
+    std::mt19937 rng(2383);
+    std::generate(pattern.begin(), pattern.end(), [&rng] { return static_cast<uint8_t>(rng()); });
+    copyToMem<DRAM_SEG>(mem_desc.addr, pattern);
+    EXPECT_EQ(runXfer(*localBackendEngine_, NIXL_WRITE, local, remote), NIXL_SUCCESS);
+
+    copyToMem<DRAM_SEG>(mem_desc.addr, std::vector<uint8_t>(len, 0));
+    EXPECT_EQ(runXfer(*localBackendEngine_, NIXL_READ, local, remote), NIXL_SUCCESS);
+    EXPECT_EQ(copyFromMem<DRAM_SEG>(mem_desc.addr, len), pattern);
+
+    EXPECT_EQ(localBackendEngine_->deregisterMem(obj_md), NIXL_SUCCESS);
+    EXPECT_EQ(localBackendEngine_->deregisterMem(mem_md), NIXL_SUCCESS);
+}
+
 #ifdef HAVE_CUDA
 TEST_P(setupObjAccelTestFixture, AccelVramSubRangeXferTest) {
     int device_count = 0;

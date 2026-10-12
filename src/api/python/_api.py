@@ -1036,6 +1036,20 @@ class nixl_agent:
         elif isinstance(descs, nixlBind.nixlRegDList):
             logger.error("RegList type detected for transfer, please use XferList")
             new_descs = None
+        elif _is_torch_tensor(descs):
+            if descs.is_contiguous():
+                mem_type = self._tensor_mem_type(descs)
+                base_addr = descs.data_ptr()
+                region_len = descs.numel() * descs.element_size()
+                gpu_id = descs.get_device()
+                if gpu_id == -1:  # DRAM
+                    gpu_id = 0
+                new_descs = nixlBind.nixlXferDList(
+                    self.nixl_mems[mem_type], [(base_addr, region_len, gpu_id)]
+                )
+            else:
+                logger.error("Please use a list of contiguous Tensors")
+                new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 3:
                 new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
@@ -1055,20 +1069,6 @@ class nixl_agent:
                 logger.error(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
-                new_descs = None
-        elif _is_torch_tensor(descs):
-            if descs.is_contiguous():
-                mem_type = self._tensor_mem_type(descs)
-                base_addr = descs.data_ptr()
-                region_len = descs.numel() * descs.element_size()
-                gpu_id = descs.get_device()
-                if gpu_id == -1:  # DRAM
-                    gpu_id = 0
-                new_descs = nixlBind.nixlXferDList(
-                    self.nixl_mems[mem_type], [(base_addr, region_len, gpu_id)]
-                )
-            else:
-                logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
         elif _is_torch_tensor(descs[0]):  # List[torch.Tensor]:
             tensor_type = descs[0].device
@@ -1154,6 +1154,20 @@ class nixl_agent:
         elif isinstance(descs, nixlBind.nixlXferDList):
             logger.error("XferList type detected for registration, please use RegList")
             new_descs = None
+        elif _is_torch_tensor(descs):
+            if descs.is_contiguous():
+                mem_type = self._tensor_mem_type(descs)
+                base_addr = descs.data_ptr()
+                region_len = descs.numel() * descs.element_size()
+                gpu_id = descs.get_device()
+                if gpu_id == -1:  # DRAM
+                    gpu_id = 0
+                new_descs = nixlBind.nixlRegDList(
+                    self.nixl_mems[mem_type], [(base_addr, region_len, gpu_id, "")]
+                )
+            else:
+                logger.error("Please use a list of contiguous Tensors")
+                new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 4:
                 new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
@@ -1173,20 +1187,6 @@ class nixl_agent:
                 logger.error(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
-                new_descs = None
-        elif _is_torch_tensor(descs):
-            if descs.is_contiguous():
-                mem_type = self._tensor_mem_type(descs)
-                base_addr = descs.data_ptr()
-                region_len = descs.numel() * descs.element_size()
-                gpu_id = descs.get_device()
-                if gpu_id == -1:  # DRAM
-                    gpu_id = 0
-                new_descs = nixlBind.nixlRegDList(
-                    self.nixl_mems[mem_type], [(base_addr, region_len, gpu_id, "")]
-                )
-            else:
-                logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
         elif _is_torch_tensor(descs[0]):  # List[torch.Tensor]:
             tensor_type = descs[0].device
