@@ -134,11 +134,15 @@ wait_for_etcd() {
 wait_for_redis_server() {
     local port=$1
     local timeout=30
+    command -v redis-cli >/dev/null 2>&1 || { echo "ERROR: redis-cli not found — install redis-tools"; exit 1; }
     echo "Waiting for Redis to be ready on port ${port} (timeout: ${timeout}s)..."
-    while ! redis-cli -t 1 -p "${port}" ping 2>/dev/null | grep -q 'PONG'; do
+    while ! redis-cli -t 1 -p "${port}" ping 2>&1 | grep -q 'PONG'; do
         timeout=$((timeout - 1))
         if [ $timeout -eq 0 ]; then
-            echo "Redis failed to start"
+            echo "Redis failed to start on port ${port}"
+            ss -tulnp 2>/dev/null | grep ":${port}" || echo "(no socket found on port ${port})"
+            kill -0 "${REDIS_PID:-}" 2>/dev/null && echo "redis-server pid=${REDIS_PID} is alive" || echo "redis-server pid=${REDIS_PID} is dead"
+            echo "Redis server log:"; cat "${REDIS_LOG:-/dev/null}"
             kill -9 "${REDIS_PID:-}" 2>/dev/null || true
             exit 1
         fi
@@ -152,8 +156,13 @@ start_redis_server() {
     redis_port=$(get_next_tcp_port)
     export REDIS_HOST="127.0.0.1"
     export REDIS_PORT="${redis_port}"
+    export REDIS_LOG
+    REDIS_LOG=$(mktemp /tmp/redis-XXXXXX.log)
+    local redis_dir
+    redis_dir=$(mktemp -d /tmp/redis-dir-XXXXXX)
 
-    redis-server --port "${redis_port}" --daemonize no --loglevel warning &
+    redis-server --port "${redis_port}" --daemonize no --loglevel notice \
+                 --dir "${redis_dir}" --logfile "${REDIS_LOG}" &
     REDIS_PID=$!
 
     wait_for_redis_server "${redis_port}"
