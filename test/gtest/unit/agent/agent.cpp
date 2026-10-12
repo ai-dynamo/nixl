@@ -21,6 +21,7 @@
 #include <chrono>
 #include <filesystem>
 #include <random>
+#include <thread>
 
 #include "common.h"
 #include "nixl.h"
@@ -83,10 +84,17 @@ namespace agent {
         const std::string name_;
 
     public:
-        agentHelper(const std::string &name, const std::string &trace_backends = "") : name_(name) {
+        agentHelper(const std::string &name,
+                    const std::string &trace_backends = "",
+                    uint16_t listen_port = 0)
+            : name_(name) {
             trace_env_.addVar("NIXL_TRACE_BACKENDS", trace_backends);
             nixlAgentConfig cfg;
             cfg.useProgThread = true;
+            if (listen_port != 0) {
+                cfg.useListenThread = true;
+                cfg.listenPort = listen_port;
+            }
             agent_ = std::make_unique<nixlAgent>(name, cfg);
         }
 
@@ -666,6 +674,159 @@ namespace agent {
         EXPECT_EQ(local_agent_->releaseXferReq(request), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->releasedDlistH(local_side), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->releasedDlistH(remote_side), NIXL_SUCCESS);
+    }
+
+    TEST_F(dualAgentBridgeFixture, InvalidateRefusedWhileViewsUseAgent) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s, false);
+        nixl_remote_dlist_t descs(DRAM_SEG);
+        descs.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
+        char handles[2];
+        unsigned prepared = 0, unloaded = 0;
+        const auto &mock = local_agent_helper_->getGMockEngine();
+        EXPECT_CALL(
+            mock,
+            prepMemView(testing::A<const nixl_remote_meta_dlist_t &>(), testing::_, testing::_))
+            .Times(2)
+            .WillRepeatedly([&](const auto &, nixlMemViewH &view, const auto *) {
+                view = &handles[prepared++];
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(mock, releaseMemView).Times(2);
+        EXPECT_CALL(mock, unloadMD).WillOnce([&](nixlBackendMD *) {
+            ++unloaded;
+            return NIXL_SUCCESS;
+        });
+        nixlMemViewH first = nullptr, second = nullptr;
+        ASSERT_EQ(local_agent_->prepMemView(descs, first), NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_->prepMemView(descs, second), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_ERR_NOT_ALLOWED);
+        local_agent_->releaseMemView(first);
+        EXPECT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_ERR_NOT_ALLOWED);
+        EXPECT_EQ(unloaded, 0u);
+        local_agent_->releaseMemView(second);
+        EXPECT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_SUCCESS);
+        EXPECT_EQ(unloaded, 1u);
+        local_agent_helper_.reset();
+    }
+
+    // The remote agent announces its own invalidation (P2P INVL) to the listening local agent.
+    static constexpr uint16_t kPeerInvalidationPort = 18876;
+
+    static void
+    peerInvalidates(nixlAgent *remote_agent, nixlAgent *local_agent, const std::string &name) {
+        nixl_opt_args_t args;
+        args.ipAddr = "127.0.0.1";
+        args.port = kPeerInvalidationPort;
+        ASSERT_EQ(remote_agent->invalidateLocalMD(&args), NIXL_SUCCESS);
+        for (int i = 0; i < 500; ++i) {
+            if (local_agent->checkRemoteMD(name, {DRAM_SEG}) == NIXL_ERR_NOT_FOUND) {
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        FAIL() << "peer invalidation did not reach the local agent";
+    }
+
+    TEST_F(dualAgentBridgeFixture, PeerInvalidationKeepsViewMetadataUntilRelease) {
+        local_agent_helper_ =
+            std::make_unique<agentHelper>(local_agent_name, "", kPeerInvalidationPort);
+        local_agent_ = local_agent_helper_->getAgent();
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s, false);
+        nixl_remote_dlist_t descs(DRAM_SEG);
+        descs.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
+        unsigned released = 0, unloaded = 0;
+        const auto &mock = local_agent_helper_->getGMockEngine();
+        EXPECT_CALL(mock, releaseMemView).WillOnce([&](nixlMemViewH) {
+            EXPECT_EQ(unloaded, 0u);
+            ++released;
+        });
+        EXPECT_CALL(mock, unloadMD).WillOnce([&](nixlBackendMD *) {
+            EXPECT_EQ(released, 1u);
+            ++unloaded;
+            return NIXL_SUCCESS;
+        });
+        nixlMemViewH view = nullptr;
+        ASSERT_EQ(local_agent_->prepMemView(descs, view), NIXL_SUCCESS);
+        peerInvalidates(remote_agent_, local_agent_, s.remote_agent_name);
+        EXPECT_EQ(unloaded, 0u);
+        // The view still holds the peer's metadata, so the user cannot claim it is gone.
+        EXPECT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_ERR_NOT_ALLOWED);
+        local_agent_->releaseMemView(view);
+        EXPECT_EQ(unloaded, 1u);
+        EXPECT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_ERR_NOT_FOUND);
+        local_agent_helper_.reset();
+    }
+
+    TEST_F(dualAgentBridgeFixture, AgentDestructionReleasesViewsBeforeMetadata) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s, false);
+        nixl_remote_dlist_t descs(DRAM_SEG);
+        descs.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
+        nixlMemViewH view = nullptr;
+        ASSERT_EQ(local_agent_->prepMemView(descs, view), NIXL_SUCCESS);
+        testing::InSequence sequence;
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), releaseMemView(view));
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), unloadMD)
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        local_agent_helper_.reset();
+    }
+
+    TEST_F(dualAgentBridgeFixture, FailedViewPreparationDoesNotBlockInvalidate) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s, false);
+        nixl_remote_dlist_t descs(DRAM_SEG);
+        descs.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
+        const auto &mock = local_agent_helper_->getGMockEngine();
+        EXPECT_CALL(
+            mock,
+            prepMemView(testing::A<const nixl_remote_meta_dlist_t &>(), testing::_, testing::_))
+            .WillOnce(testing::Return(NIXL_ERR_BACKEND));
+        EXPECT_CALL(mock, releaseMemView).Times(0);
+        EXPECT_CALL(mock, unloadMD).WillOnce(testing::Return(NIXL_SUCCESS));
+        nixlMemViewH view = nullptr;
+        EXPECT_EQ(local_agent_->prepMemView(descs, view), NIXL_ERR_BACKEND);
+        EXPECT_EQ(view, nullptr);
+        EXPECT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_SUCCESS);
+        local_agent_helper_.reset();
+    }
+
+    TEST_F(dualAgentBridgeFixture, PeerInvalidatedViewDoesNotKeepHostRequestsValid) {
+        local_agent_helper_ =
+            std::make_unique<agentHelper>(local_agent_name, "", kPeerInvalidationPort);
+        local_agent_ = local_agent_helper_->getAgent();
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+        nixl_remote_dlist_t views(DRAM_SEG);
+        views.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
+        nixlMemViewH view = nullptr;
+        ASSERT_EQ(local_agent_->prepMemView(views, view), NIXL_SUCCESS);
+        nixl_xfer_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+        local.addDesc(s.local_blob.getDesc());
+        remote.addDesc(s.remote_blob.getDesc());
+        nixlDlistH *local_list = nullptr, *remote_list = nullptr;
+        ASSERT_EQ(local_agent_->prepXferDlist(local, local_list), NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_->prepXferDlist(s.remote_agent_name, remote, remote_list),
+                  NIXL_SUCCESS);
+        nixlXferReqH *request = nullptr;
+        const std::vector<int> indices{0};
+        ASSERT_EQ(local_agent_->makeXferReq(
+                      NIXL_WRITE, *local_list, indices, *remote_list, indices, request),
+                  NIXL_SUCCESS);
+        peerInvalidates(remote_agent_, local_agent_, s.remote_agent_name);
+        EXPECT_EQ(local_agent_->postXferReq(request), NIXL_ERR_NOT_FOUND);
+        ASSERT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, s.remote_agent_name),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->postXferReq(request), NIXL_ERR_NOT_FOUND);
+        nixlXferReqH *stale = nullptr;
+        EXPECT_EQ(local_agent_->makeXferReq(
+                      NIXL_WRITE, *local_list, indices, *remote_list, indices, stale),
+                  NIXL_ERR_NOT_FOUND);
+        EXPECT_EQ(local_agent_->releaseXferReq(request), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releasedDlistH(local_list), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releasedDlistH(remote_list), NIXL_SUCCESS);
+        local_agent_->releaseMemView(view);
     }
 
     TEST_F(dualAgentBridgeFixture, XferReqSubFunctionsTest) {

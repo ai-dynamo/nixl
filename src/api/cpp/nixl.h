@@ -396,6 +396,9 @@ class nixlAgent {
          * agent. NIXL automatically determines the backend that can perform the preparation. If a
          * list of backends hints is provided (via extra_params), the selection is limited to the
          * specified backends.
+         * The view keeps the metadata of every remote agent in @a dlist valid until it is
+         * released: invalidateRemoteMD refuses those agents meanwhile, and a peer-announced
+         * invalidation leaves their metadata in place for the view.
          *
          * @param  dlist         [in]  Descriptor list for the remote buffers
          * @param  mvh           [out] Memory view handle for the remote buffers
@@ -429,6 +432,10 @@ class nixlAgent {
 
         /**
          * @brief  Release a memory view handle.
+         *
+         * Stop and synchronize GPU users of the view before releasing it or deregistering the
+         * buffers it covers. Agent destruction releases any remaining views under the same
+         * requirement.
          *
          * @param  mvh           [in] Memory view handle to be released
          */
@@ -526,7 +533,9 @@ class nixlAgent {
          *         transfers can be initiated towards that agent.
          *
          * @param  remote_agent  Remote agent name to invalidate its metadata blob
-         * @return nixl_status_t Error code if call was not successful
+         * @return nixl_status_t NIXL_ERR_NOT_ALLOWED while a prepared memory view still uses
+         *                       the agent's metadata; otherwise error code if call was not
+         *                       successful
          */
         nixl_status_t
         invalidateRemoteMD (const std::string &remote_agent);
