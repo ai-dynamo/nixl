@@ -34,8 +34,8 @@ const std::string tracePluginPrefix = "libtrace_backend_";
 const std::string kPluginSuffix = ".so";
 const std::string kUcxPluginName = "UCX";
 const std::string kUcxDeepBindVar = "NIXL_UCX_DEEPBIND";
-const std::string kPrometheusPluginName = "prometheus";
-const std::string kPrometheusMpPluginName = "prometheus_mp";
+const std::string prometheus_plugin_name = "prometheus";
+const std::string prometheus_mp_plugin_name = "prometheus_mp";
 
 // pluginHandle implementation
 nixlBackendPluginHandle::nixlBackendPluginHandle(void *handle, nixlBackendPlugin *plugin)
@@ -543,7 +543,7 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
     }
 
     const std::string &file_name =
-        plugin_name == kPrometheusPluginName ? kPrometheusMpPluginName : plugin_name;
+        plugin_name == prometheus_plugin_name ? prometheus_mp_plugin_name : plugin_name;
     it = loaded_telemetry_plugins_.find(file_name);
     if (it != loaded_telemetry_plugins_.end()) {
         const auto telemetry_plugin = it->second;
