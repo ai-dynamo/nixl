@@ -301,8 +301,8 @@ ninja -C build test/gtest/unit/unit test/gtest/gtest
     --gtest_filter='ucxTraceContextPropagation.*'
 ```
 
-The two-process test forks a receiver agent and checks the span it records against
-the sender's request. Both agents trace through `recorder`, a test-only backend
+The two-process test forks a receiver agent and checks the spans both agents record
+against the sender's request. Both agents trace through `recorder`, a test-only backend
 (`libtrace_backend_recorder.so` in the mocks directory) that appends one line per
 finished span to the file named by `NIXL_TEST_TRACE_FILE`; the test sets both
 variables itself. The ASan and TSan suites skip it, because UCX's CMA transport probes
