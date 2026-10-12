@@ -144,6 +144,19 @@ TEST_F(telemetryTest, NonexistentExporterThrows) {
         { nixlTelemetry telemetry(testFile_, "nixl_nonexistent_exporter"); }, std::runtime_error);
 }
 
+TEST_F(telemetryTest, ExporterBindFailureRunsWithoutSink) {
+    envHelper_.addVar(TELEMETRY_EXPORTER_VAR, "mock_bind_failed");
+    const gtest::LogIgnoreGuard ignore_missing_plugin("Plugin file does not exist");
+    const gtest::LogIgnoreGuard ignore_sinkless("will run without a telemetry sink");
+
+    std::unique_ptr<nixlTelemetry> telemetry;
+    EXPECT_NO_THROW(telemetry = nixlTelemetry::create(testFile_));
+    EXPECT_EQ(telemetry, nullptr);
+    EXPECT_EQ(ignore_sinkless.getIgnoredCount(), 1u);
+
+    envHelper_.popVar();
+}
+
 TEST_F(telemetryTest, CreateFallsBackToNopWithoutSink) {
     envHelper_.popVar(); // drop NIXL_TELEMETRY_DIR set by SetUp -> no sink
     // Neutralize any inherited NIXL_TELEMETRY_EXPORTER (empty is ignored) so the
