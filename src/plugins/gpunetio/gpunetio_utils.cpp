@@ -327,8 +327,9 @@ connect_verbs_qp(nixlDocaEngine *eng,
     }
 
     /*
-     * Both the companion QP (RC_QP_*_REQ_ATTR_MASK) and the single QP modify the RD atomic limits, so set them
-     * once for both paths. Otherwise the companion QP is moved to RTR/RTS with the attribute defaults.
+     * Both the companion QP (RC_QP_*_REQ_ATTR_MASK) and the single QP modify the RD atomic limits,
+     * so set them once for both paths. Otherwise the companion QP is moved to RTR/RTS with the
+     * attribute defaults.
      */
     status = doca_verbs_qp_attr_set_max_dest_rd_atomic(verbs_qp_attr, max_dest_rd_atomic);
     if (status != DOCA_SUCCESS) {
