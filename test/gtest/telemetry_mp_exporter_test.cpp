@@ -28,6 +28,9 @@
 
 #include <prometheus/exposer.h>
 
+#include <fcntl.h>
+#include <sys/file.h>
+
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -38,6 +41,7 @@
 
 namespace {
 
+using nixl::telemetry::mp::heldAddressesExcept;
 using nixl::telemetry::mp::ownerLockFileName;
 using nixl::telemetry::mp::readStoreSnapshot;
 
@@ -170,6 +174,17 @@ TEST_F(MpExporterTest, LeftoverLockFileIsNotASecondOwner) {
 
     nixlTelemetryPrometheusMpExporter exporter(initParams("agent-owner"));
     EXPECT_TRUE(exporter.isExporter());
+}
+
+TEST_F(MpExporterTest, LeftoverLockFileIsNotASecondOwnerWhileAnotherOwnerProbesIt) {
+    const auto leftover = dir_ / ownerLockFileName("127.0.0.1:1");
+    { std::ofstream(leftover).put('\0'); }
+
+    const nixl::scopedFd second_owner_probe(::open(leftover.c_str(), O_RDONLY | O_CLOEXEC));
+    ASSERT_TRUE(second_owner_probe.valid());
+    ASSERT_EQ(::flock(second_owner_probe.get(), LOCK_SH | LOCK_NB), 0);
+
+    EXPECT_TRUE(heldAddressesExcept(dir_, "127.0.0.1:2").empty());
 }
 
 TEST_F(MpExporterTest, ForeignOwnedLockFileCannotSilenceTheRun) {
