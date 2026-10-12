@@ -425,6 +425,10 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
 
         const std::string etag =
             resp->HasHeader("etag") ? stripQuotes(resp->GetHeader("etag").c_str()) : "";
+        if (etag.empty()) {
+            NIXL_ERROR << "rdmaGet: response has no ETag for key=" << ctx.object;
+            return rdma_error;
+        }
 
         // The server reports the actual transferred byte count in
         // x-amz-rdma-bytes-transferred: it is authoritative and already clamped
