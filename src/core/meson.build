@@ -33,8 +33,7 @@ if 'POSIX' in static_plugins
     nixl_lib_deps += [ posix_backend_interface ]
 endif
 
-disable_infinia_backend = get_option('disable_infinia_backend')
-if infinia_lib_found.found() and not disable_infinia_backend and 'INFINIA' in static_plugins
+if is_variable('infinia_backend_interface') and 'INFINIA' in static_plugins
     nixl_lib_deps += [ infinia_backend_interface ]
 endif
 

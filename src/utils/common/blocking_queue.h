@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_UTILS_COMMON_BLOCKING_QUEUE_H
 #define NIXL_SRC_UTILS_COMMON_BLOCKING_QUEUE_H
 
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <stop_token>
@@ -84,6 +85,18 @@ public:
     pop(std::stop_token token = {}) {
         std::unique_lock<std::mutex> lock(mutex_);
         cv_.wait(lock, std::move(token), [this] { return head_ != nullptr; });
+        return popLocked();
+    }
+
+    /**
+     * @brief Pop the oldest item, waiting until a push, timeout, or stop request
+     * @return The item, or nullptr if the queue is empty after waiting
+     */
+    template<typename repType, typename periodType>
+    [[nodiscard]] T *
+    pop(std::stop_token token, const std::chrono::duration<repType, periodType> &timeout) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait_for(lock, std::move(token), timeout, [this] { return head_ != nullptr; });
         return popLocked();
     }
 
