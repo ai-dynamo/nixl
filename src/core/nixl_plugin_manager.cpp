@@ -840,6 +840,10 @@ void nixlPluginManager::registerBuiltinPlugins() {
     NIXL_REGISTER_STATIC_PLUGIN(Backend, POSIX)
 #endif
 
+#ifdef STATIC_PLUGIN_RADOS
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, RADOS)
+#endif
+
 #ifdef STATIC_PLUGIN_GPUNETIO
     NIXL_REGISTER_STATIC_PLUGIN(Backend, GPUNETIO)
 #endif
