@@ -25,9 +25,8 @@ RADOS objects (`OBJ_SEG`) in a single Ceph pool through the librados
 asynchronous I/O interface. The backend is local-only: it serves `NIXL_WRITE`
 from local `DRAM_SEG` to `OBJ_SEG` descriptors of the same agent and
 `NIXL_READ` in the reverse direction. It does not support remote agents or
-notifications. `queryMem` is not yet implemented and returns
-`NIXL_ERR_NOT_SUPPORTED`; batched object-size queries land in a follow-up
-commit of this series.
+notifications. Object-size queries (`queryMem`) are served by batched
+asynchronous stats (see Results and errors).
 
 Transfers are direct: C AIO reads land directly in caller-provided destination
 memory, and writes describe caller memory through a non-owning C++
@@ -49,9 +48,11 @@ written range are preserved (native RADOS range-write semantics).
 - **librados** (pkg-config name `rados`): headers and shared library from a
   Ceph client distribution. The plugin uses the librados C
   lifecycle/configuration/namespace/AIO-read surface (including pool-context
-  namespace configuration) and the C++ `IoCtx` write surface
-  (`IoCtx::aio_write` over a static, non-owning `bufferlist`). During setup, meson compiles and
-  links a probe program using exactly this surface, and the plugin is
+  namespace configuration), the C++ `IoCtx` write surface
+  (`IoCtx::aio_write` over a static, non-owning `bufferlist`), and the C++
+  async stat surface (`librados::ObjectReadOperation::stat` submitted
+  through `librados::IoCtx::aio_operate`). During setup, meson compiles and
+  links a probe program using exactly these surfaces, and the plugin is
   built only when the probe succeeds; the runtime librados must be ABI/link
   compatible with the build headers (there is no runtime version
   negotiation).
@@ -257,8 +258,26 @@ outcomes:
 | Short read (delivered fewer bytes than requested; the delivered prefix has already landed in the destination) | `NIXL_ERR_MISMATCH` |
 | Other I/O failure reported by Ceph | `NIXL_ERR_BACKEND` (logged) |
 
-`queryMem` is not implemented at this increment and returns
-`NIXL_ERR_NOT_SUPPORTED`.
+`queryMem` supports `OBJ_SEG` only. It resets `resp` to one null entry per
+descriptor before validation: a non-`OBJ_SEG` list yields all-null entries and
+`NIXL_ERR_NOT_SUPPORTED`, and an init-errored engine yields all-null entries
+and `NIXL_ERR_BACKEND`, neither issuing a stat. A descriptor whose
+`metaInfo` contains an embedded NUL byte fails the whole list with
+`NIXL_ERR_INVALID_PARAM` before any stat — all entries stay null — because
+the OID reaches librados as a C string, where a NUL would silently truncate
+the key and alias the query to its prefix. It then stats each
+descriptor's object — non-empty `metaInfo`, else decimal `devId` —
+independently of registration. A found object reports a decimal `size`
+parameter, including zero; a missing object is a null entry under
+`NIXL_SUCCESS`; any other stat return keeps its entry null, still queries the
+remaining descriptors, and yields overall `NIXL_ERR_BACKEND`. The query is
+synchronous to the caller — every answer is resolved before the call returns —
+but internally issues asynchronous stats in fixed windows of up to 256
+descriptors, harvesting each window completely before submitting the next.
+Results are point-in-time. A result guarantees neither object completeness nor
+reservation for a later read. The plugin sets no deadline; timeout handling
+belongs to librados/Ceph above (see Custom parameters). Callers must not
+overlap a query with backend destruction.
 
 ### Buffer lifetime
 

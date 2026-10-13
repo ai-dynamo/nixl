@@ -26,8 +26,10 @@
 #include <cstdint>
 #include <future>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -60,6 +62,13 @@ namespace {
         int releases = 0;
         bool released_unretired = false;
         bool submitted = false;
+        bool is_stat = false;
+        int stat_rc = 0;
+        int stat_prval_rc = 0;
+        uint64_t stat_size = 0;
+        std::optional<uint64_t> *size_cell = nullptr;
+        std::optional<int> *prval_cell = nullptr;
+        std::optional<librados::bufferlist> *pbl_cell = nullptr;
     };
 
     struct submission {
@@ -123,6 +132,8 @@ namespace {
         int cpp_create_completion_fail_after = -1;
         int cpp_submit_fail_after = -1;
         int cpp_write_throw_after = -1;
+        int cpp_aio_stat_create_fail_at = -1;
+        int cpp_aio_stat_submit_fail_at = -1;
 
         std::vector<submission> submissions;
         int c_waits = 0;
@@ -131,6 +142,12 @@ namespace {
         int cpp_releases = 0;
         int c_rc_reads = 0;
         int cpp_rc_reads = 0;
+        int cpp_create_attempts = 0;
+        int stat_submits = 0;
+        std::vector<fakeCppCompletion *> stat_comps;
+        std::map<std::string, uint64_t> stat_sizes;
+        std::map<std::string, int> stat_errors;
+        std::vector<std::string> stat_oids;
         std::vector<std::string> create2_names;
         std::vector<std::string> conf_paths;
         std::vector<std::string> pools;
@@ -166,6 +183,11 @@ namespace {
             if (submissions[i].is_write) {
                 ASSERT_NE(submissions[i].cpp_comp, nullptr);
                 submissions[i].cpp_comp->rc = rc;
+                if (submissions[i].cpp_comp->is_stat) {
+                    fillStatCells(submissions[i].cpp_comp);
+                    submissions[i].cpp_comp->completion_stage = stage::retired;
+                    return;
+                }
                 ASSERT_NE(submissions[i].payload, nullptr);
                 submissions[i].payload_at_release = submissions[i].payload->to_str();
                 submissions[i].cpp_comp->completion_stage = stage::retired;
@@ -438,13 +460,66 @@ namespace {
         int
         cppCreateCompletion(librados::AioCompletion **pc) override {
             log->push_back("cpp_create_completion");
+            const int attempt = cpp_create_attempts++;
             *pc = nullptr;
+            if (cpp_aio_stat_create_fail_at >= 0 && attempt == cpp_aio_stat_create_fail_at) {
+                return -ENOMEM;
+            }
             if (cpp_create_completion_fail_after >= 0 &&
                 static_cast<int>(cpp_completions.size()) >= cpp_create_completion_fail_after) {
                 return -ENOMEM;
             }
             cpp_completions.push_back(std::make_unique<fakeCppCompletion>());
             *pc = reinterpret_cast<librados::AioCompletion *>(cpp_completions.back().get());
+            return 0;
+        }
+
+        int
+        cppAioStat(librados::IoCtx *ctx,
+                   const char *oid,
+                   librados::AioCompletion *completion,
+                   std::optional<uint64_t> *psize,
+                   std::optional<int> *prval,
+                   std::optional<librados::bufferlist> *pbl) override {
+            log->push_back("cpp_aio_stat");
+            EXPECT_NE(ctx, nullptr);
+            fakeCppCompletion *comp = asCpp(completion);
+            if (comp == nullptr) {
+                violations += "C++ async stat submitted with a foreign completion token\n";
+                return -EINVAL;
+            }
+            if (psize == nullptr || prval == nullptr || pbl == nullptr) {
+                violations += "C++ async stat submitted with null output cells\n";
+                return -EINVAL;
+            }
+            psize->emplace(0);
+            prval->emplace(0);
+            pbl->emplace();
+            stat_oids.emplace_back(oid);
+            comp->is_stat = true;
+            comp->size_cell = psize;
+            comp->prval_cell = prval;
+            comp->pbl_cell = pbl;
+            const auto err = stat_errors.find(oid);
+            const auto found = stat_sizes.find(oid);
+            if (err != stat_errors.end()) {
+                comp->stat_rc = err->second;
+                comp->stat_prval_rc = err->second;
+            } else if (found != stat_sizes.end()) {
+                comp->stat_rc = 0;
+                comp->stat_prval_rc = 0;
+                comp->stat_size = found->second;
+            } else {
+                comp->stat_rc = -ENOENT;
+                comp->stat_prval_rc = -EIO;
+            }
+            stat_comps.push_back(comp);
+            const int ordinal = stat_submits++;
+            if (cpp_aio_stat_submit_fail_at >= 0 && ordinal == cpp_aio_stat_submit_fail_at) {
+                return -EIO;
+            }
+            submissions.push_back({true, oid, 0, 0, 0, nullptr, comp, nullptr, {}, 0});
+            comp->submitted = true;
             return 0;
         }
 
@@ -517,6 +592,9 @@ namespace {
             ++cpp_waits;
             comp->waited = true;
             blockOnGateIfNeeded();
+            if (comp->completion_stage != stage::retired) {
+                fillStatCells(comp);
+            }
             comp->completion_stage = stage::retired;
             return 0;
         }
@@ -556,6 +634,17 @@ namespace {
             gate.entered = true;
             gate.cv.notify_all();
             gate.cv.wait(lock, [this] { return gate.released; });
+        }
+
+        static void
+        fillStatCells(fakeCppCompletion *comp) {
+            if (!comp->is_stat || comp->prval_cell == nullptr) {
+                return;
+            }
+            *comp->prval_cell = comp->stat_prval_rc;
+            *comp->size_cell = comp->stat_size;
+            *comp->pbl_cell = librados::bufferlist{};
+            comp->rc = comp->stat_rc;
         }
 
         static uintptr_t
@@ -1629,17 +1718,266 @@ TEST_F(radosEngineFixture, RepostAfterTerminalResubmitsResetStateWithCurrentSour
     EXPECT_EQ(engine->deregisterMem(md_r), NIXL_SUCCESS);
 }
 
-TEST_F(radosEngineFixture, QueryMemUnsupportedUntilBatchedQueries) {
+TEST_F(radosEngineFixture, QueryResolvesOidFromMetaInfoThenDecimalDevId) {
+    custom_params_ = validBase();
     fakeCApi *fake = nullptr;
-    const auto engine = makeReady(&fake);
+    auto engine = makeEngine(&fake);
+    ASSERT_FALSE(engine->getInitErr());
+
+    // Registration-independent: no registerMem call precedes the query.
+    fake->stat_sizes["named-obj"] = 1;
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(0, 0, 7, "named-obj"));
+    descs.addDesc(nixlBlobDesc(0, 0, 42, ""));
+    std::vector<nixl_query_resp_t> resp(4, nixl_query_resp_t{nixl_b_params_t{}});
+    ASSERT_EQ(engine->queryMem(descs, resp), NIXL_SUCCESS);
+    EXPECT_EQ(fake->stat_oids, (std::vector<std::string>{"named-obj", "42"}));
+    ASSERT_EQ(resp.size(), 2u);
+    ASSERT_TRUE(resp[0].has_value());
+    EXPECT_EQ(resp[0]->at("size"), "1");
+    EXPECT_FALSE(resp[1].has_value());
+}
+
+TEST_F(radosEngineFixture, QueryContinuesAfterErrorAndPopulatesLaterSuccess) {
+    custom_params_ = validBase();
+    fakeCApi *fake = nullptr;
+    auto engine = makeEngine(&fake);
+    ASSERT_FALSE(engine->getInitErr());
+
+    fake->stat_sizes["zero-obj"] = 0;
+    fake->stat_errors["bad-obj"] = -EIO;
+    fake->stat_sizes["later-obj"] = 30;
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(0, 0, 1, "zero-obj"));
+    descs.addDesc(nixlBlobDesc(0, 0, 2, "bad-obj"));
+    descs.addDesc(nixlBlobDesc(0, 0, 3, "later-obj"));
+    std::vector<nixl_query_resp_t> resp;
+    EXPECT_EQ(engine->queryMem(descs, resp), NIXL_ERR_BACKEND);
+    ASSERT_EQ(resp.size(), 3u);
+    ASSERT_TRUE(resp[0].has_value());
+    EXPECT_EQ(resp[0]->at("size"), "0");
+    EXPECT_FALSE(resp[1].has_value());
+    ASSERT_TRUE(resp[2].has_value());
+    EXPECT_EQ(resp[2]->at("size"), "30");
+    EXPECT_EQ(fake->stat_oids, (std::vector<std::string>{"zero-obj", "bad-obj", "later-obj"}));
+}
+
+TEST_F(radosEngineFixture, QueryGatesClearAndResizeResponseWithoutSeamCall) {
+    struct gate_case {
+        const char *name;
+        bool init_err;
+        nixl_mem_t list_type;
+        int desc_count;
+        nixl_status_t expected;
+    };
+
+    const gate_case cases[] = {
+        {"initialization error", true, OBJ_SEG, 1, NIXL_ERR_BACKEND},
+        {"non-OBJ_SEG list", false, DRAM_SEG, 1, NIXL_ERR_NOT_SUPPORTED},
+        {"empty OBJ_SEG list", false, OBJ_SEG, 0, NIXL_SUCCESS},
+    };
+    for (const auto &item : cases) {
+        custom_params_ = validBase();
+        if (item.init_err) {
+            custom_params_.erase("pool");
+        }
+        fakeCApi *fake = nullptr;
+        auto engine = makeEngine(&fake);
+        EXPECT_EQ(engine->getInitErr(), item.init_err) << item.name;
+
+        nixl_reg_dlist_t descs(item.list_type);
+        for (int i = 0; i < item.desc_count; ++i) {
+            descs.addDesc(nixlBlobDesc(0, 0, 7, "obj-a"));
+        }
+        std::vector<nixl_query_resp_t> resp(2, nixl_query_resp_t{nixl_b_params_t{}});
+        EXPECT_EQ(engine->queryMem(descs, resp), item.expected) << item.name;
+        EXPECT_EQ(resp.size(), static_cast<size_t>(item.desc_count)) << item.name;
+        for (const auto &entry : resp) {
+            EXPECT_FALSE(entry.has_value()) << item.name;
+        }
+        EXPECT_TRUE(fake->stat_oids.empty()) << item.name;
+        EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_aio_stat")), 0)
+            << item.name;
+    }
+}
+
+TEST_F(radosEngineFixture, QueryRejectsEmbeddedNulMetaInfoBeforeAnyStat) {
+    custom_params_ = validBase();
+    fakeCApi *fake = nullptr;
+    auto engine = makeEngine(&fake);
+    ASSERT_FALSE(engine->getInitErr());
+
+    // Statable prefixes: any submitted stat on them would be a NUL-truncation alias.
+    fake->stat_sizes["bad"] = 7;
+    fake->stat_sizes["key"] = 9;
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(0, 0, 1, "untouched"));
+    descs.addDesc(nixlBlobDesc(0, 0, 2, std::string("bad\0key", 7)));
+    descs.addDesc(nixlBlobDesc(0, 0, 3, std::string("key\0", 4)));
+    std::vector<nixl_query_resp_t> resp(1, nixl_query_resp_t{nixl_b_params_t{}});
+    EXPECT_EQ(engine->queryMem(descs, resp), NIXL_ERR_INVALID_PARAM);
+    ASSERT_EQ(resp.size(), 3u);
+    for (const auto &entry : resp) {
+        EXPECT_FALSE(entry.has_value());
+    }
+    EXPECT_TRUE(fake->stat_oids.empty()) << "an embedded-NUL list must not alias-stat its prefix";
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_aio_stat")), 0);
+
+    // Rejection is per-call: a clean list resolves normally afterwards.
+    nixl_reg_dlist_t clean(OBJ_SEG);
+    clean.addDesc(nixlBlobDesc(0, 0, 4, "bad"));
+    EXPECT_EQ(engine->queryMem(clean, resp), NIXL_SUCCESS);
+    ASSERT_EQ(resp.size(), 1u);
+    ASSERT_TRUE(resp[0].has_value());
+    EXPECT_EQ(resp[0]->at("size"), "7");
+    EXPECT_EQ(fake->stat_oids, (std::vector<std::string>{"bad"}));
+}
+
+TEST_F(radosEngineFixture, QueryWindowsPreserveFoundMissingAndErrorOrder) {
+    custom_params_ = validBase();
+    fakeCApi *fake = nullptr;
+    auto engine = makeEngine(&fake);
+    ASSERT_FALSE(engine->getInitErr());
+
+    // 300 descriptors span two 256-wide stat windows; found (including decimal
+    // zero), missing, and failed stats interleave across the boundary.
+    constexpr int kCount = 300;
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    std::vector<std::string> expected_oids;
+    for (int i = 0; i < kCount; ++i) {
+        const std::string key = "win-" + std::to_string(i);
+        if (i % 5 == 0) {
+            fake->stat_sizes[key] = static_cast<uint64_t>(i);
+        } else if (i % 7 == 0) {
+            fake->stat_errors[key] = -EIO;
+        }
+        expected_oids.push_back(key);
+        descs.addDesc(nixlBlobDesc(0, 0, static_cast<uint64_t>(i), key));
+    }
+
+    std::vector<nixl_query_resp_t> resp;
+    EXPECT_EQ(engine->queryMem(descs, resp), NIXL_ERR_BACKEND);
+    ASSERT_EQ(resp.size(), static_cast<size_t>(kCount));
+    for (int i = 0; i < kCount; ++i) {
+        const nixl_query_resp_t &entry = resp[static_cast<size_t>(i)];
+        if (i % 5 == 0) {
+            ASSERT_TRUE(entry.has_value()) << i;
+            EXPECT_EQ(entry->at("size"), std::to_string(i)) << i;
+        } else {
+            EXPECT_FALSE(entry.has_value()) << i;
+        }
+    }
+    EXPECT_EQ(fake->stat_oids, expected_oids);
+    EXPECT_EQ(fake->submissions.size(), static_cast<size_t>(kCount));
+    EXPECT_EQ(fake->cpp_releases, kCount);
+    EXPECT_EQ(fake->cpp_waits, kCount);
+    EXPECT_EQ(fake->cpp_rc_reads, kCount);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_aio_stat")), kCount);
+
+    size_t stats_before_first_wait = 0;
+    for (const auto &entry : *log) {
+        if (entry == "cpp_aio_stat") {
+            ++stats_before_first_wait;
+        } else if (entry == "cpp_wait_for_complete_and_cb") {
+            break;
+        }
+    }
+    EXPECT_EQ(stats_before_first_wait, 256U) << "the in-flight stat window must cap at 256";
+}
+
+TEST_F(radosEngineFixture, QueryCreateFailureMidWindowLeaksNothingAndLaterStatsSucceed) {
+    custom_params_ = validBase();
+    fakeCApi *fake = nullptr;
+    auto engine = makeEngine(&fake);
+    ASSERT_FALSE(engine->getInitErr());
+
+    constexpr int kCount = 40;
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    for (int i = 0; i < kCount; ++i) {
+        const std::string key = "cf-" + std::to_string(i);
+        fake->stat_sizes[key] = static_cast<uint64_t>(i) + 1;
+        descs.addDesc(nixlBlobDesc(0, 0, static_cast<uint64_t>(i), key));
+    }
+    fake->cpp_aio_stat_create_fail_at = 3;
+
+    std::vector<nixl_query_resp_t> resp;
+    EXPECT_EQ(engine->queryMem(descs, resp), NIXL_ERR_BACKEND);
+    ASSERT_EQ(resp.size(), static_cast<size_t>(kCount));
+    for (int i = 0; i < kCount; ++i) {
+        const nixl_query_resp_t &entry = resp[static_cast<size_t>(i)];
+        if (i == 3) {
+            EXPECT_FALSE(entry.has_value());
+            continue;
+        }
+        ASSERT_TRUE(entry.has_value()) << i;
+        EXPECT_EQ(entry->at("size"), std::to_string(i + 1)) << i;
+    }
+    EXPECT_EQ(fake->cpp_create_attempts, kCount);
+    EXPECT_EQ(fake->submissions.size(), static_cast<size_t>(kCount - 1));
+    EXPECT_EQ(fake->cpp_releases, kCount - 1);
+    EXPECT_EQ(fake->cpp_waits, kCount - 1);
+}
+
+TEST_F(radosEngineFixture, QuerySubmitFailureMidWindowReleasesOnceAndLaterStatsSucceed) {
+    custom_params_ = validBase();
+    fakeCApi *fake = nullptr;
+    auto engine = makeEngine(&fake);
+    ASSERT_FALSE(engine->getInitErr());
+
+    constexpr int kCount = 40;
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    for (int i = 0; i < kCount; ++i) {
+        const std::string key = "sf-" + std::to_string(i);
+        fake->stat_sizes[key] = static_cast<uint64_t>(i) + 1;
+        descs.addDesc(nixlBlobDesc(0, 0, static_cast<uint64_t>(i), key));
+    }
+    fake->cpp_aio_stat_submit_fail_at = 35;
+
+    std::vector<nixl_query_resp_t> resp;
+    EXPECT_EQ(engine->queryMem(descs, resp), NIXL_ERR_BACKEND);
+    ASSERT_EQ(resp.size(), static_cast<size_t>(kCount));
+    for (int i = 0; i < kCount; ++i) {
+        const nixl_query_resp_t &entry = resp[static_cast<size_t>(i)];
+        if (i == 35) {
+            EXPECT_FALSE(entry.has_value());
+            continue;
+        }
+        ASSERT_TRUE(entry.has_value()) << i;
+        EXPECT_EQ(entry->at("size"), std::to_string(i + 1)) << i;
+    }
+    EXPECT_EQ(fake->submissions.size(), static_cast<size_t>(kCount - 1));
+    EXPECT_EQ(fake->cpp_releases, kCount);
+    EXPECT_EQ(fake->cpp_waits, kCount - 1);
+    ASSERT_EQ(fake->stat_comps.size(), static_cast<size_t>(kCount));
+    fakeCppCompletion *rejected = fake->stat_comps[35];
+    EXPECT_FALSE(rejected->submitted);
+    EXPECT_FALSE(rejected->waited);
+    EXPECT_FALSE(rejected->released_unretired);
+    EXPECT_EQ(rejected->releases, 1);
+}
+
+TEST_F(radosEngineFixture, QueryResolvesBeforeReturnWithoutStatusWaitTimer) {
+    custom_params_ = validBase();
+    custom_params_["status_wait_us"] = "4000";
+    auto tstate = std::make_shared<timer_state>();
+    fakeCApi *fake = nullptr;
+    auto engine = makeEngineWithTimer(&fake, tstate);
+    ASSERT_FALSE(engine->getInitErr());
 
     nixl_reg_dlist_t descs(OBJ_SEG);
-    descs.addDesc(nixlBlobDesc(0, 0, 1, "obj"));
-    std::vector<nixl_query_resp_t> resp(1, nixl_query_resp_t{nixl_b_params_t{}});
-    EXPECT_EQ(engine->queryMem(descs, resp), NIXL_ERR_NOT_SUPPORTED);
-    ASSERT_EQ(resp.size(), 1u);
-    EXPECT_TRUE(resp[0].has_value());
-    EXPECT_EQ(fake->submissions.size(), 0U);
+    for (int i = 0; i < 36; ++i) {
+        descs.addDesc(nixlBlobDesc(0, 0, static_cast<uint64_t>(i), "qt-" + std::to_string(i)));
+    }
+    fake->stat_sizes["qt-7"] = 77;
+
+    std::vector<nixl_query_resp_t> resp;
+    EXPECT_EQ(engine->queryMem(descs, resp), NIXL_SUCCESS);
+    ASSERT_EQ(resp.size(), 36u);
+    ASSERT_TRUE(resp[7].has_value());
+    EXPECT_EQ(resp[7]->at("size"), "77");
+    EXPECT_TRUE(tstate->budgets.empty()) << "query must never touch the status wait timer";
+    EXPECT_EQ(fake->cpp_releases, 36);
+    EXPECT_EQ(fake->cpp_waits, 36);
 }
 
 // C reads submit on the raw ioctx and C++ writes on the bound IoCtx view, so

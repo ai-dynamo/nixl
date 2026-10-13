@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include <rados/librados.h>
 #include <rados/librados.hpp>
@@ -128,6 +129,23 @@ public:
              const librados::bufferlist &bl,
              size_t len,
              uint64_t off) = 0;
+    /**
+     * Submit an async single-stat read op through ctx; the seam engages all three cells,
+     * then librados writes the object size into *psize and the per-op result into *prval
+     * at retirement. psize, prval, and pbl are caller-owned and must stay allocated and
+     * stable until the completion is released (see cppRelease); pbl receives the merged
+     * read output, empty for a stat-only op but still dereferenced at completion.
+     * On an absent object the completion return value is -ENOENT while the untouched
+     * per-op slot surfaces -EIO.
+     * @return 0 on acceptance; negative errno on rejection, caller releases completion
+     */
+    virtual int
+    cppAioStat(librados::IoCtx *ctx,
+               const char *oid,
+               librados::AioCompletion *completion,
+               std::optional<uint64_t> *psize,
+               std::optional<int> *prval,
+               std::optional<librados::bufferlist> *pbl) = 0;
     /**
      * Non-blocking poll gating harvest and release; 1 once complete and
      * callback-retired, else 0.
@@ -257,6 +275,24 @@ public:
              size_t len,
              uint64_t off) override {
         return ctx->aio_write(oid, completion, bl, len, off);
+    }
+
+    int
+    cppAioStat(librados::IoCtx *ctx,
+               const char *oid,
+               librados::AioCompletion *completion,
+               std::optional<uint64_t> *psize,
+               std::optional<int> *prval,
+               std::optional<librados::bufferlist> *pbl) override {
+        if (psize == nullptr || prval == nullptr || pbl == nullptr) {
+            return -EINVAL;
+        }
+        psize->emplace(0);
+        prval->emplace(0);
+        pbl->emplace();
+        librados::ObjectReadOperation op;
+        op.stat(&**psize, nullptr, &**prval);
+        return ctx->aio_operate(oid, completion, &op, &**pbl);
     }
 
     int

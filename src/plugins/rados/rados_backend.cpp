@@ -17,12 +17,15 @@
  */
 #include "rados_backend.h"
 
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <chrono>
 #include <climits>
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -358,6 +361,54 @@ logRetiredResult(const directRequestState &state,
                << pair.oid << "' at offset " << pair.offset << " failed with error " << result;
 }
 
+constexpr size_t kAioStatWindow = 256;
+
+struct statSlot {
+    std::string oid;
+    std::optional<uint64_t> size;
+    std::optional<int> prval;
+    std::optional<librados::bufferlist> merged;
+    librados::AioCompletion *comp = nullptr;
+    bool submitted = false;
+    int submit_error = 0;
+};
+
+// Backstop releasing every still-held completion exactly once on unwinding:
+// accepted work through the retirement wait, never-accepted work directly.
+// Drained slots are nulled before this runs, so the happy path is a no-op.
+class statWindow {
+public:
+    statWindow(nixl::rados::cApi &capi, size_t width) : capi_(capi), width_(width) {}
+
+    statWindow(const statWindow &) = delete;
+    statWindow &
+    operator=(const statWindow &) = delete;
+
+    ~statWindow() {
+        for (size_t i = 0; i < width_; ++i) {
+            statSlot &slot = slots_[i];
+            if (slot.comp == nullptr) {
+                continue;
+            }
+            if (slot.submitted) {
+                capi_.cppWaitForCompleteAndCb(slot.comp);
+            }
+            capi_.cppRelease(slot.comp);
+            slot.comp = nullptr;
+        }
+    }
+
+    statSlot &
+    operator[](size_t i) {
+        return slots_[i];
+    }
+
+private:
+    nixl::rados::cApi &capi_;
+    const size_t width_;
+    std::array<statSlot, kAioStatWindow> slots_;
+};
+
 } // namespace
 
 // Opaque token; its real state lives in the engine's handles_, so registry lookup
@@ -491,6 +542,79 @@ nixlRadosEngine::deregisterMem(nixlBackendMD *meta) {
         objects_.erase(it);
     }
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlRadosEngine::queryMem(const nixl_reg_dlist_t &descs,
+                          std::vector<nixl_query_resp_t> &resp) const {
+    resp.assign(static_cast<size_t>(descs.descCount()), std::nullopt);
+    if (descs.getType() != OBJ_SEG) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+    if (initErr) {
+        return NIXL_ERR_BACKEND;
+    }
+    for (int i = 0; i < descs.descCount(); ++i) {
+        if (descs[i].metaInfo.find('\0') != std::string::npos) {
+            NIXL_ERROR << "RADOS query rejected an OBJ_SEG descriptor whose metaInfo "
+                          "contains an embedded NUL byte";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    }
+    const size_t count = static_cast<size_t>(descs.descCount());
+    bool stat_failed = false;
+    for (size_t base = 0; base < count; base += kAioStatWindow) {
+        const size_t width = std::min(kAioStatWindow, count - base);
+        statWindow window(*capi_, width);
+        for (size_t i = 0; i < width; ++i) {
+            const nixlBlobDesc &desc = descs[static_cast<int>(base + i)];
+            statSlot &slot = window[i];
+            slot.oid = desc.metaInfo.empty() ? std::to_string(desc.devId) : desc.metaInfo;
+            const int create_ret = capi_->cppCreateCompletion(&slot.comp);
+            if (create_ret != 0 || slot.comp == nullptr) {
+                slot.comp = nullptr;
+                slot.submit_error = create_ret < 0 ? create_ret : -ENOMEM;
+                continue;
+            }
+            const int submit_ret = capi_->cppAioStat(
+                &cppCtx_, slot.oid.c_str(), slot.comp, &slot.size, &slot.prval, &slot.merged);
+            if (submit_ret != 0) {
+                capi_->cppRelease(slot.comp);
+                slot.comp = nullptr;
+                slot.submit_error = submit_ret < 0 ? submit_ret : -EIO;
+                continue;
+            }
+            slot.submitted = true;
+        }
+        for (size_t i = 0; i < width; ++i) {
+            statSlot &slot = window[i];
+            if (slot.submit_error != 0) {
+                NIXL_ERROR << "RADOS query failed to submit an async stat for object '" << slot.oid
+                           << "' with error " << slot.submit_error;
+                stat_failed = true;
+                continue;
+            }
+            capi_->cppWaitForCompleteAndCb(slot.comp);
+            const int prval = *slot.prval;
+            const int aggregate = capi_->cppGetReturnValue(slot.comp);
+            capi_->cppRelease(slot.comp);
+            slot.comp = nullptr;
+            if (prval == 0 && aggregate == 0) {
+                resp[base + i] = nixl_b_params_t{{"size", std::to_string(*slot.size)}};
+                continue;
+            }
+            // Absent stat objects surface -ENOENT in the completion return value while
+            // librados fills the untouched per-op slot with -EIO.
+            if (aggregate == -ENOENT) {
+                continue;
+            }
+            const int fault = aggregate != 0 ? aggregate : prval;
+            NIXL_ERROR << "RADOS query failed to stat object '" << slot.oid << "' with error "
+                       << fault;
+            stat_failed = true;
+        }
+    }
+    return stat_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
 }
 
 std::shared_ptr<directRequestState>

@@ -126,6 +126,9 @@ public:
     deregisterMem(nixlBackendMD *meta) override;
 
     nixl_status_t
+    queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
+
+    nixl_status_t
     prepXfer(const nixl_xfer_op_t &operation,
              const nixl_meta_dlist_t &local,
              const nixl_meta_dlist_t &remote,

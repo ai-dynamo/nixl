@@ -148,6 +148,23 @@ TEST_F(radosDiscoveryFixture, DirectRoundTripAndCleanShutdown) {
               NIXL_SUCCESS);
     run_to_completion(write_request);
 
+    // Registration-independent query over the same object: the written object
+    // is found with its decimal size, an absent key is a null response.
+    nixl_reg_dlist_t query_found(OBJ_SEG);
+    query_found.addDesc(nixlBlobDesc(object_offset, bytes.size(), 1, object_key));
+    std::vector<nixl_query_resp_t> found_resp;
+    ASSERT_EQ(agent.queryMem(query_found, found_resp, &reg_args), NIXL_SUCCESS);
+    ASSERT_EQ(found_resp.size(), 1u);
+    ASSERT_TRUE(found_resp[0].has_value());
+    EXPECT_EQ(found_resp[0]->at("size"), std::to_string(object_offset + bytes.size()));
+
+    nixl_reg_dlist_t query_missing(OBJ_SEG);
+    query_missing.addDesc(nixlBlobDesc(0, 0, 3, object_key + "-absent"));
+    std::vector<nixl_query_resp_t> missing_resp;
+    ASSERT_EQ(agent.queryMem(query_missing, missing_resp, &reg_args), NIXL_SUCCESS);
+    ASSERT_EQ(missing_resp.size(), 1u);
+    EXPECT_FALSE(missing_resp[0].has_value());
+
     nixl_xfer_dlist_t read_local(DRAM_SEG);
     read_local.addDesc(readback_desc);
     nixlXferReqH *read_request = nullptr;
@@ -204,6 +221,45 @@ TEST_F(radosDiscoveryFixture, DirectRoundTripAndCleanShutdown) {
 
     ASSERT_EQ(agent.deregisterMem(object_registrations, &reg_args), NIXL_SUCCESS);
     ASSERT_EQ(agent.deregisterMem(dram_registrations, &reg_args), NIXL_SUCCESS);
+}
+
+TEST_F(radosDiscoveryFixture, QueryBeyondOneAioStatWindowResolvesAcrossWindows) {
+    const std::string conf = environmentValue("NIXL_RADOS_CONF");
+    const std::string pool = environmentValue("NIXL_RADOS_POOL");
+    const std::string name = environmentValue("NIXL_RADOS_NAME");
+    if (conf.empty() || pool.empty() || name.empty()) {
+        GTEST_SKIP() << "set NIXL_RADOS_CONF, NIXL_RADOS_POOL, and "
+                        "NIXL_RADOS_NAME to run this live RADOS case";
+    }
+    ASSERT_EQ(access(conf.c_str(), R_OK), 0) << "Ceph conf is not readable: " << conf;
+
+    nixl_b_params_t parameters{{"conf", conf}, {"pool", pool}, {"name", name}};
+    const std::string object_namespace = environmentValue("NIXL_RADOS_NS");
+    if (!object_namespace.empty()) {
+        parameters["namespace"] = object_namespace;
+    }
+    const nixlAgentConfig agent_config;
+    nixlAgent agent(localAgent, agent_config);
+
+    nixlBackendH *backend = nullptr;
+    ASSERT_EQ(agent.createBackend("RADOS", parameters, backend), NIXL_SUCCESS);
+    ASSERT_NE(backend, nullptr);
+    nixl_opt_args_t reg_args;
+    reg_args.backends = {backend};
+
+    const std::string key_prefix = "nixl-rados-gtest-" + std::to_string(::getpid());
+    constexpr int kCount = 300;
+    nixl_reg_dlist_t query(OBJ_SEG);
+    for (int i = 0; i < kCount; ++i) {
+        const std::string absent_key = key_prefix + "-absent-" + std::to_string(i);
+        query.addDesc(nixlBlobDesc(0, 0, static_cast<uint64_t>(i), absent_key));
+    }
+    std::vector<nixl_query_resp_t> resp;
+    ASSERT_EQ(agent.queryMem(query, resp, &reg_args), NIXL_SUCCESS);
+    ASSERT_EQ(resp.size(), static_cast<size_t>(kCount));
+    for (const auto &entry : resp) {
+        EXPECT_FALSE(entry.has_value());
+    }
 }
 
 } // namespace gtest::rados
