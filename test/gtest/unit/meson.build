@@ -18,6 +18,8 @@ unit_test_deps = [
     gtest_dep,
 ]
 
+subdir('gpunetio')
+
 if is_variable('obj_backend_interface')
     subdir('obj')
     unit_test_deps += [obj_unit_test_dep]
