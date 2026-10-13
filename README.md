@@ -404,10 +404,8 @@ NIXL includes C++ and Python examples demonstrating metadata exchange and data t
 To run the Python example from the repository root after installing the Python bindings:
 
 ```bash
-python3 examples/python/nixl_etcd_example.py --timeout 30
+python3 examples/python/nixl_etcd_example.py
 ```
-
-The Python example runs two agents in one process, exchanges metadata through ETCD, and verifies a UCX transfer between CPU buffers. `--timeout` sets the maximum wait in seconds for metadata exchange and for transfer completion with its notification (default: 30 seconds).
 
 ### nixlbench Benchmark
 For more comprehensive testing, the nixlbench benchmarking tool supports ETCD for worker coordination:
