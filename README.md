@@ -384,8 +384,8 @@ To use ETCD with NIXL, set the following environment variables:
 # Set ETCD endpoints (required) - replace localhost with the hostname of the etcd server
 export NIXL_ETCD_ENDPOINTS="http://localhost:2379"
 
-# Set ETCD namespace (optional, defaults to /nixl/agents)
-export NIXL_ETCD_NAMESPACE="/nixl/agents"
+# Set ETCD namespace (optional, defaults to /nixl/agents/)
+export NIXL_ETCD_NAMESPACE="/nixl/agents/"
 ```
 
 ### Running the ETCD Examples
