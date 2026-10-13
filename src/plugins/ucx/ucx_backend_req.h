@@ -20,7 +20,9 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
+#include <utility>
+
+#include "absl/container/inlined_vector.h"
 
 #include "backend/backend_engine.h"
 #include "common/nixl_log.h"
@@ -46,7 +48,6 @@ public:
     void
     init(const ucx_connection_ptr_t &conn, const nixlUcxEp &ep) {
         NIXL_ASSERT(requests_.empty());
-        requests_.reserve(max_requests);
         conn_ = conn;
         ep_ = &ep;
     }
@@ -70,6 +71,25 @@ public:
         return NIXL_SUCCESS;
     }
 
+    /**
+     * @brief Flush the bound endpoint and track the flush request
+     */
+    [[nodiscard]] nixl_status_t
+    flush() {
+        nixlUcxReq req = nullptr;
+        const nixl_status_t status = ep_->flushEp(req);
+        return append(status, req);
+    }
+
+    [[nodiscard]] nixl_status_t
+    sendNotif() {
+        nixlUcxReq req = nullptr;
+        const nixl_status_t status = getEp().sendAm(
+            nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(notif), UCP_AM_SEND_FLAG_EAGER, &req);
+        notif.clear();
+        return append(status, req);
+    }
+
     [[nodiscard]] virtual bool
     isComposite() const noexcept {
         return false;
@@ -77,15 +97,20 @@ public:
 
     virtual void
     release() {
-        // TODO: Error log: uncompleted requests found! Cancelling ...
+        size_t incomplete_reqs = 0;
         for (nixlUcxReq req : requests_) {
             const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
             if (ret == NIXL_IN_PROG) {
                 // TODO: Need process this properly.
                 // it may not be enough to cancel UCX request
                 worker_->reqCancel(req);
+                ++incomplete_reqs;
             }
             worker_->reqRelease(req);
+        }
+        if (incomplete_reqs != 0) {
+            NIXL_WARN << "request handle " << this << " released with " << incomplete_reqs
+                      << " requests in progress";
         }
         reset();
     }
@@ -173,7 +198,7 @@ private:
     ucx_connection_ptr_t conn_;
     // Resolved endpoint over which data and notifications are sent.
     const nixlUcxEp *ep_ = nullptr;
-    std::vector<nixlUcxReq> requests_;
+    absl::InlinedVector<nixlUcxReq, max_requests> requests_;
     nixlUcxWorker *worker_ = nullptr;
 };
 

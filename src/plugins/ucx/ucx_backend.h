@@ -301,9 +301,6 @@ private:
     [[nodiscard]] std::string
     buildNotif(const std::string &msg, const nixl::trace::TraceContext *trace_context) const;
 
-    [[nodiscard]] static nixl_status_t
-    sendNotif(std::string &&msg, const nixlUcxEp &ep, nixlUcxReq *req);
-
     nixl_status_t
     notifSendPriv(const std::string &remote_agent,
                   const std::string &msg,

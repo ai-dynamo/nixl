@@ -467,13 +467,7 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
         return post_ret;
     }
 
-    nixlUcxReq flush_req;
-    const nixl_status_t flush_ret = ep->flushEp(flush_req);
-    if (int_handle->append(flush_ret, flush_req) != NIXL_SUCCESS) {
-        return flush_ret;
-    }
-
-    return NIXL_SUCCESS;
+    return int_handle->flush();
 }
 #endif
 
@@ -551,13 +545,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
      * Flush keeps int_handle non-empty until the operation is actually
      * completed, which can happen after local requests completion.
      */
-    nixlUcxReq flush_req;
-    const nixl_status_t flush_ret = ep->flushEp(flush_req);
-    if (int_handle->append(flush_ret, flush_req) != NIXL_SUCCESS) {
-        return flush_ret;
-    }
-
-    return NIXL_SUCCESS;
+    return int_handle->flush();
 }
 
 nixl_status_t
@@ -586,18 +574,15 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     ret = int_handle->status();
-    if (opt_args && opt_args->hasNotif) {
-        auto notif = buildNotif(opt_args->notifMsg, opt_args->traceContext);
+    if (opt_args && opt_args->hasNotif && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
+        int_handle->notif = buildNotif(opt_args->notifMsg, opt_args->traceContext);
         if (ret == NIXL_SUCCESS) {
-            nixlUcxReq req;
-            ret = sendNotif(std::move(notif), int_handle->getEp(), &req);
-            if (int_handle->append(ret, req) != NIXL_SUCCESS) {
+            ret = int_handle->sendNotif();
+            if (ret != NIXL_SUCCESS) {
                 return ret;
             }
 
             ret = int_handle->status();
-        } else if (ret == NIXL_IN_PROG) {
-            int_handle->notif = std::move(notif);
         }
     }
 
@@ -618,11 +603,8 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
         return handle_status;
     }
 
-    nixlUcxReq req;
-    const nixl_status_t status = sendNotif(std::move(int_handle->notif), int_handle->getEp(), &req);
-    int_handle->notif.clear();
-
-    if (int_handle->append(status, req) != NIXL_SUCCESS) {
+    const nixl_status_t status = int_handle->sendNotif();
+    if (status != NIXL_SUCCESS) {
         return status;
     }
 
@@ -674,7 +656,7 @@ nixl::ucx::serializeNotif(const std::string &agent,
             ser_des.addBuf("tctx", record.data(), *size);
         }
     }
-    return ser_des.exportStr();
+    return std::move(ser_des).exportMoveStr();
 }
 
 nixl::ucx::notifMessage
@@ -705,16 +687,12 @@ nixlUcxEngine::buildNotif(const std::string &msg,
 }
 
 nixl_status_t
-nixlUcxEngine::sendNotif(std::string &&msg, const nixlUcxEp &ep, nixlUcxReq *req) {
-    return ep.sendAm(nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(msg), UCP_AM_SEND_FLAG_EAGER, req);
-}
-
-nixl_status_t
 nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::string &msg,
                              const nixlUcxEp &ep,
                              nixlUcxReq *req) const {
-    return sendNotif(buildNotif(msg, nullptr), ep, req);
+    return ep.sendAm(
+        nixl::ucx::am_cb_op_t::NOTIF_STR, buildNotif(msg, nullptr), UCP_AM_SEND_FLAG_EAGER, req);
 }
 
 ucx_connection_ptr_t

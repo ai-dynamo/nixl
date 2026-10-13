@@ -298,7 +298,7 @@ nixlUcxEp::estimateCost(size_t size,
 }
 
 nixl_status_t
-nixlUcxEp::flushEp(nixlUcxReq &req) {
+nixlUcxEp::flushEp(nixlUcxReq &req) const noexcept {
     ucp_request_param_t param;
     ucs_status_ptr_t request;
 
