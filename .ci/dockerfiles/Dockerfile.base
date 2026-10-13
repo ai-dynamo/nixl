@@ -44,7 +44,7 @@ LABEL version="1.0"
 RUN . /etc/os-release && \
     printf '%s\n' \
         'Types: deb' \
-        'URIs: https://urm.nvidia.com/artifactory/ubuntu-public' \
+        'URIs: https://artifactory.nvidia.com/artifactory/ubuntu-public' \
         "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
         'Components: main restricted universe multiverse' \
         'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
