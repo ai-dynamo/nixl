@@ -364,7 +364,7 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     int receiver_status = 0;
     ASSERT_EQ(::waitpid(receiverPid, &receiver_status, 0), receiverPid);
     receiverPid = -1;
-    ASSERT_TRUE(WIFEXITED(receiver_status));
+    ASSERT_TRUE(WIFEXITED(receiver_status)) << receiverOutput();
     EXPECT_EQ(WEXITSTATUS(receiver_status), 0) << receiverOutput();
     EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
 
