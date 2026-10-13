@@ -137,6 +137,11 @@ wait_for_redis_server() {
     command -v redis-cli >/dev/null 2>&1 || { echo "ERROR: redis-cli not found — install redis-tools"; exit 1; }
     echo "Waiting for Redis to be ready on port ${port} (timeout: ${timeout}s)..."
     while ! timeout 1 redis-cli -p "${port}" ping 2>&1 | grep -q 'PONG'; do
+        if ! kill -0 "${REDIS_PID:-}" 2>/dev/null; then
+            echo "Redis process (pid=${REDIS_PID}) exited before becoming ready"
+            echo "Redis server log:"; cat "${REDIS_LOG:-/dev/null}"
+            exit 1
+        fi
         timeout=$((timeout - 1))
         if [ $timeout -eq 0 ]; then
             echo "Redis failed to start on port ${port}"
