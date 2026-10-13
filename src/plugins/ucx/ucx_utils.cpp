@@ -172,7 +172,7 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t er
 }
 
 nixlUcxEp::~nixlUcxEp() {
-    nixl_status_t status = disconnect();
+    const nixl_status_t status = disconnect();
     if (status) NIXL_ERROR << "Failed to disconnect ep with status " << status;
 }
 
