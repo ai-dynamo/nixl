@@ -24,6 +24,7 @@ jobs:
   Authorization:
     name: Authorization
     runs-on: blossom
+    timeout-minutes: 10
     outputs:
       args: ${{ env.args }}
 
@@ -41,6 +42,7 @@ jobs:
     name: Vulnerability scan
     needs: [Authorization]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
@@ -63,6 +65,7 @@ jobs:
     name: Start ci job
     needs: [Vulnerability-scan]
     runs-on: blossom
+    timeout-minutes: 10
     steps:
       - name: Start ci job
         run: blossom-ci
@@ -74,6 +77,7 @@ jobs:
   Upload-Log:
     name: Upload log
     runs-on: blossom
+    timeout-minutes: 10
     if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Jenkins log for pull request ${{ fromJson(github.event.inputs.args).pr }} (click here)
