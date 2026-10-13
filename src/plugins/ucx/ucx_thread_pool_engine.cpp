@@ -431,6 +431,7 @@ nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
     const size_t num_chunks = getDedicatedWorkers().size();
     const auto comp_handle =
         new nixlUcxCompositeBackendReqH(getSharedWorker(getSharedWorkerId()).get(), num_chunks);
+    comp_handle->traceContext = sampledTraceContext(opt_args);
     NIXL_TRACE << "created " << *comp_handle;
     handle = comp_handle;
     return NIXL_SUCCESS;

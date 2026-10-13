@@ -196,8 +196,8 @@ phase vocabulary is closed so that timelines stay comparable across backends:
 
 The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. UCX emits
-`nixl::notif.received`, described below; its other phases, and libfabric's, come
-in later PRs.
+`nixl::submit`, `nixl::wire.submitted`, `nixl::notif.sent` and
+`nixl::notif.received`, described below; libfabric's phases come in later PRs.
 
 Recording a phase never fails the transfer: if the trace backend throws, the
 phase is dropped and the first drop per backend is logged. With telemetry
@@ -227,6 +227,16 @@ id in `nixl.traceparent`, and the same correlation id as the sender's
 `nixl::postXferReq.write` or `.read` span. Writes and reads without a
 notification give the receiver nothing to observe, so they are traced on the
 sender only.
+
+On the sender, UCX records three phases for every post of a sampled request,
+each under the request's context: `nixl::submit` when `postXfer` accepts the
+post, `nixl::wire.submitted` once all of its puts or gets and the flushes behind
+them are posted to UCX, and `nixl::notif.sent` when the notification is posted.
+The notification goes out from `postXfer` if the transfer has already completed,
+and otherwise from the first status check that finds it complete, so
+`notif.sent` appears once per notifying post, from either call. UCX records no
+`nixl::wire.completed`: it learns of completion only when the application checks
+the status, so the stamp would time the poll rather than the transport.
 
 A backend that carries the context to its peer says so by overriding
 `supportsTraceContext()`, which defaults to `false`; core reads it once, when
@@ -344,6 +354,8 @@ In NIXL tracing, "correlation" can mean two different things:
   separate NIXL-architecture effort). UCX carries it in notifications (see "Backend
   phase spans"); the libfabric, gpunetio, mooncake and uccl carriers come next.
 
-- **Backend phase emission** — the sink described under "Backend phase spans" exists,
-  and UCX records `nixl::notif.received` through it; the remaining phases are not
-  recorded by any plugin yet.
+- **Backend phase emission** — UCX records `nixl::submit`, `nixl::wire.submitted`,
+  `nixl::notif.sent` and `nixl::notif.received` through the sink described under
+  "Backend phase spans". Not recorded yet: an accurate `nixl::wire.completed`,
+  which needs a completion point that does not depend on how often the
+  application polls, and the other backends' phases.

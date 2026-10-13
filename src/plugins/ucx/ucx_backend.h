@@ -260,6 +260,9 @@ protected:
         return sglEnabled_;
     }
 
+    [[nodiscard]] std::optional<nixl::trace::TraceContext>
+    sampledTraceContext(const nixl_opt_b_args_t *opt_args) const noexcept;
+
     virtual void
     appendNotif(std::string &&remote_name, std::string &&msg);
 
