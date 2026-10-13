@@ -32,6 +32,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <cstring>
@@ -43,6 +44,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 extern "C" char **environ;
@@ -62,6 +64,11 @@ using ucx_trace_peer::untagged_msg;
 using ucx_trace_peer::wait_timeout;
 
 constexpr int wait_timeout_ms = static_cast<int>(std::chrono::milliseconds(wait_timeout).count());
+constexpr const char *unsampled_name = "unsampled";
+constexpr const char *untraced_name = "untraced";
+constexpr std::array<const char *, 3> sender_phases{"nixl::submit",
+                                                    "nixl::wire.submitted",
+                                                    "nixl::notif.sent"};
 
 [[nodiscard]] std::string
 olderSenderNotif(const std::string &agent, const std::string &msg) {
@@ -76,6 +83,51 @@ awaitBytes(int fd, void *data, size_t size) {
     pollfd pfd{fd, POLLIN, 0};
     return (::poll(&pfd, 1, wait_timeout_ms) > 0) &&
         (::read(fd, data, size) == static_cast<ssize_t>(size));
+}
+
+[[nodiscard]] nixl_status_t
+awaitCompletion(nixlAgent &agent, nixlXferReqH *req, nixl_status_t status) {
+    const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
+    while ((status == NIXL_IN_PROG) && (std::chrono::steady_clock::now() < deadline)) {
+        std::this_thread::sleep_for(poll_interval);
+        status = agent.getXferStatus(req);
+    }
+    return status;
+}
+
+void
+writeToSelf(const std::string &name,
+            const nixl_b_params_t &backend_params,
+            size_t desc_count,
+            const std::vector<std::optional<std::string>> &post_notifs,
+            nixl::trace::TraceContext &context) {
+    const gtest::LogIgnoreGuard efa(efa_warning);
+    nixlAgent agent(name, agentConfig());
+    nixlBackendH *backend = nullptr;
+    ASSERT_EQ(agent.createBackend("UCX", backend_params, backend), NIXL_SUCCESS);
+    const std::vector<char> src_buffer(desc_count * buffer_size, 'x');
+    const std::vector<char> dst_buffer(desc_count * buffer_size);
+    nixl_reg_dlist_t regs(DRAM_SEG);
+    regs.addDesc(nixlBlobDesc(address(src_buffer), src_buffer.size(), 0));
+    regs.addDesc(nixlBlobDesc(address(dst_buffer), dst_buffer.size(), 0));
+    ASSERT_EQ(agent.registerMem(regs), NIXL_SUCCESS);
+
+    nixl_xfer_dlist_t src(DRAM_SEG);
+    nixl_xfer_dlist_t dst(DRAM_SEG);
+    for (size_t i = 0; i < desc_count; ++i) {
+        src.addDesc(nixlBasicDesc(address(src_buffer) + i * buffer_size, buffer_size, 0));
+        dst.addDesc(nixlBasicDesc(address(dst_buffer) + i * buffer_size, buffer_size, 0));
+    }
+    nixlXferReqH *req = nullptr;
+    ASSERT_EQ(agent.createXferReq(NIXL_WRITE, src, dst, name, req), NIXL_SUCCESS);
+    context = req->traceContext();
+    for (const auto &notif : post_notifs) {
+        nixl_opt_args_t params;
+        params.notif = notif;
+        ASSERT_EQ(awaitCompletion(agent, req, agent.postXferReq(req, &params)), NIXL_SUCCESS);
+    }
+    ASSERT_EQ(agent.releaseXferReq(req), NIXL_SUCCESS);
+    ASSERT_EQ(agent.deregisterMem(regs), NIXL_SUCCESS);
 }
 
 [[nodiscard]] std::optional<std::string>
@@ -181,6 +233,24 @@ protected:
     receiverOutput() const {
         std::ifstream log(receiverLog);
         return "\nreceiver output:\n" + std::string(std::istreambuf_iterator<char>(log), {});
+    }
+
+    void
+    expectPhasesOfTwoPostsOneNotifying(const nixl::trace::TraceContext &context) const {
+        ASSERT_TRUE(context.sampled());
+        const std::vector<std::string> expected{
+            "correlation=" + std::to_string(context.correlationId64()),
+            "nixl.traceparent=" + nixl::trace::formatTraceparent(context),
+            "nixl.backend=UCX"};
+        const std::array<std::pair<const char *, size_t>, 3> expected_counts{
+            {{"nixl::submit", 2}, {"nixl::wire.submitted", 2}, {"nixl::notif.sent", 1}}};
+        for (const auto &[phase, count] : expected_counts) {
+            const auto spans = recordedSpans(traceFile, sender_name, phase);
+            EXPECT_EQ(spans.size(), count) << phase;
+            for (const auto &span : spans) {
+                EXPECT_THAT(span, testing::IsSupersetOf(expected)) << phase;
+            }
+        }
     }
 
     gtest::ScopedEnv env;
@@ -347,13 +417,7 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     const nixl::trace::TraceContext context = req->traceContext();
     ASSERT_TRUE(context.sampled());
 
-    nixl_status_t status = sender.postXferReq(req);
-    const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
-    while ((status == NIXL_IN_PROG) && (std::chrono::steady_clock::now() < deadline)) {
-        std::this_thread::sleep_for(poll_interval);
-        status = sender.getXferStatus(req);
-    }
-    ASSERT_EQ(status, NIXL_SUCCESS);
+    ASSERT_EQ(awaitCompletion(sender, req, sender.postXferReq(req)), NIXL_SUCCESS);
     ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
     ASSERT_EQ(sender.genNotif(receiver_name, untagged_msg), NIXL_SUCCESS);
 
@@ -371,6 +435,7 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
 
     const std::string correlation = "correlation=" + std::to_string(context.correlationId64());
+    const std::string traceparent = "nixl.traceparent=" + nixl::trace::formatTraceparent(context);
 #if defined(NIXL_TRACE_ENABLED)
     const auto posted = recordedSpans(traceFile, sender_name, "nixl::postXferReq.write");
     ASSERT_EQ(posted.size(), 1u);
@@ -379,9 +444,52 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
 #endif
     const auto received = recordedSpans(traceFile, receiver_name, "nixl::notif.received");
     ASSERT_EQ(received.size(), 1u);
-    EXPECT_THAT(
-        received[0],
-        testing::IsSupersetOf({correlation,
-                               "nixl.traceparent=" + nixl::trace::formatTraceparent(context),
-                               std::string("nixl.remote_agent=") + sender_name}));
+    EXPECT_THAT(received[0],
+                testing::IsSupersetOf(
+                    {correlation, traceparent, std::string("nixl.remote_agent=") + sender_name}));
+    for (const char *phase : sender_phases) {
+        const auto spans = recordedSpans(traceFile, sender_name, phase);
+        ASSERT_EQ(spans.size(), 1u) << phase;
+        EXPECT_THAT(
+            spans[0],
+            testing::IsSupersetOf({correlation, traceparent, std::string("nixl.backend=UCX")}))
+            << phase;
+    }
+}
+
+TEST_F(ucxTraceContextPropagation, SenderRecordsItsPhasesOncePerPost) {
+    nixl::trace::TraceContext context;
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(sender_name, {}, 1, {tagged_msg, std::nullopt}, context));
+    expectPhasesOfTwoPostsOneNotifying(context);
+}
+
+TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsItsPhasesOncePerPostNotPerChunk) {
+    nixl::trace::TraceContext context;
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(sender_name,
+                                        {{"num_threads", "2"}, {"split_batch_size", "2"}},
+                                        2,
+                                        {tagged_msg, std::nullopt},
+                                        context));
+    expectPhasesOfTwoPostsOneNotifying(context);
+}
+
+TEST_F(ucxTraceContextPropagation, UnsampledAndUntracedPostsRecordNoPhases) {
+    nixl::trace::TraceContext unsampled;
+    env.addVar("NIXL_TRACE_SAMPLE_RATIO", "0");
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(unsampled_name, {}, 1, {tagged_msg}, unsampled));
+    ASSERT_TRUE(unsampled.valid());
+    ASSERT_FALSE(unsampled.sampled());
+
+    nixl::trace::TraceContext untraced;
+    env.addVar("NIXL_TRACE_BACKENDS", "");
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(untraced_name, {}, 1, {tagged_msg}, untraced));
+    ASSERT_FALSE(untraced.valid());
+
+    for (const char *phase : sender_phases) {
+        EXPECT_TRUE(recordedSpans(traceFile, unsampled_name, phase).empty()) << phase;
+        EXPECT_TRUE(recordedSpans(traceFile, untraced_name, phase).empty()) << phase;
+    }
+#if defined(NIXL_TRACE_ENABLED)
+    EXPECT_EQ(recordedSpans(traceFile, unsampled_name, "nixl::postXferReq.write").size(), 1u);
+#endif
 }
