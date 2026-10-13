@@ -135,6 +135,8 @@ v2_cpp_args = [
     '-Wno-sign-compare',
     '-Wno-reorder',
     '-Wno-attributes',
+    '-Wno-unknown-pragmas',
+    '-Wno-unused-function',
 ]
 v2_cuda_args = [
     '-DTORCH_EXTENSION_NAME=' + v2_ext_name,
@@ -146,6 +148,8 @@ v2_cuda_args = [
     '-Xcompiler', '-Wno-sign-compare',
     '-Xcompiler', '-Wno-reorder',
     '-Xcompiler', '-Wno-attributes',
+    '-Xcompiler', '-Wno-unknown-pragmas',
+    '-Xcompiler', '-Wno-unused-function',
 ]
 
 if nvcc.version().version_compare('>=12.9') and nvcc.version().version_compare('<12.10')
