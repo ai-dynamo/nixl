@@ -47,7 +47,7 @@ aws ec2 describe-security-groups --group-ids $CLUSTER_SG \
 ## GitHub Actions Integration
 
 The script is designed to run in GitHub Actions when branches are updated.
-It relies on the `GITHUB_REF` environment variable to determine which branch or commit to test. The value can be a branch name (e.g., `main`, `feature-xyz`) or a commit SHA.
+It tests the exact commit in `GITHUB_SHA`, so the run is unaffected if the `pull-request/<N>` branch is deleted or force-pushed before the AWS pod starts. If `GITHUB_SHA` is unset, it falls back to `GITHUB_REF`, which can be a branch name (e.g., `main`, `feature-xyz`) or a full commit SHA.
 
 ### Required GitHub Secrets
 
@@ -66,7 +66,7 @@ The following secrets are configured in the GitHub environment:
 4. Run cleanup when done (or after failures).
 
 ```bash
-# Branch or commit SHA to test
+# Branch or full commit SHA to test
 export GITHUB_REF="main"
 
 # Required GitHub metadata
@@ -98,8 +98,8 @@ The AWS test script:
 1. Generates AWS job configuration from template
 2. Submits a job to AWS
 3. Monitors AWS job execution
-4. Streams logs from the AWS pod
-5. Reports success or failure
+4. Streams logs from the AWS pod, reconnecting if the stream drops while the container is running
+5. Reports success or failure; on failure, prints the Batch status reason and each attempt's pod, node and container exit code
 
 ## Container Image
 
@@ -109,3 +109,5 @@ You can override this by setting the `CONTAINER_IMAGE` environment variable:
 ```bash
 export CONTAINER_IMAGE="your-custom-image:tag"
 ```
+
+Inside the pod, apt is pointed at the in-region EC2 Ubuntu mirror (`<AWS_DEFAULT_REGION>.ec2.archive.ubuntu.com`) instead of `archive.ubuntu.com` and `security.ubuntu.com`.

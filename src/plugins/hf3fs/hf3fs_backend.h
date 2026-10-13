@@ -15,14 +15,15 @@
  * limitations under the License.
  */
 
-#ifndef __HF3FS_BACKEND_H
-#define __HF3FS_BACKEND_H
+#ifndef NIXL_SRC_PLUGINS_HF3FS_HF3FS_BACKEND_H
+#define NIXL_SRC_PLUGINS_HF3FS_HF3FS_BACKEND_H
 
 #include <nixl.h>
 #include <nixl_types.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include "common/uuid_v4.h"
+#include <atomic>
 #include <list>
 #include <unordered_set>
 #include <thread>
@@ -101,9 +102,9 @@ class nixlHf3fsIO {
 class nixlH3fsThreadStatus {
     public:
         std::thread *thread = nullptr;
-        nixl_status_t error_status = NIXL_SUCCESS;
+        std::atomic<nixl_status_t> error_status{NIXL_SUCCESS};
         std::string error_message = "";
-        bool stop_thread = false;
+        std::atomic<bool> stop_thread{false};
 
         nixlH3fsThreadStatus() = default;
 };
@@ -112,8 +113,8 @@ class nixlHf3fsBackendReqH : public nixlBackendReqH {
     public:
         std::list<nixlHf3fsIO *> io_list;
         hf3fs_ior ior;
-        uint32_t completed_ios = 0; // Number of completed IOs
-        uint32_t num_ios = 0; // Number of submitted IOs
+        std::atomic<uint32_t> completed_ios{0};
+        std::atomic<uint32_t> submitted_ios{0};
         nixlH3fsThreadStatus io_status;
 
         nixlHf3fsBackendReqH() = default;
