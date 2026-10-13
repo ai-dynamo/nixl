@@ -34,6 +34,7 @@ class UcxBuildSplitTests(unittest.TestCase):
                 "nixl_common_dep = declare_dependency()\n"
                 "nixl_infra = declare_dependency()\n"
                 "serdes_interface = declare_dependency()\n"
+                "device_utils_interface = declare_dependency()\n"
                 "thread_dep = dependency('threads')\n"
                 "ucx_dep = declare_dependency()\n"
                 "nixl_inc_dirs = include_directories('.')\n"
