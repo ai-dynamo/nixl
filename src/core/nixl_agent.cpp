@@ -1771,12 +1771,15 @@ nixlAgentData::invalidateRemoteMD(const std::string &remote_agent) {
 
     const auto rb_it = remoteBackends_.find(remote_agent);
     if (rb_it != remoteBackends_.end()) {
+        ret = NIXL_SUCCESS;
         for (const auto &entry : rb_it->second) {
-            backendEngines_[entry.first]->disconnect(remote_agent);
+            const nixl_status_t status = backendEngines_[entry.first]->disconnect(remote_agent);
+            if (ret == NIXL_SUCCESS) {
+                ret = status;
+            }
         }
 
         remoteBackends_.erase(rb_it);
-        ret = NIXL_SUCCESS;
     }
 
     if (ret == NIXL_ERR_NOT_FOUND)

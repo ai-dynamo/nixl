@@ -87,31 +87,12 @@ void
 nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
     const auto current_state = state_.load(std::memory_order_relaxed);
 
-    NIXL_DEBUG << "ep " << eph << ": state " << current_state
+    NIXL_DEBUG << "ep " << eph_ << ": state " << current_state
                << ", UCX error handling callback was invoked with status " << status << " ("
                << ucs_status_string(status) << ")";
 
-    NIXL_ASSERT(eph == ucp_ep);
-
-    switch (current_state) {
-    case nixl::ucx::ep_state_t::UNINITIALIZED:
-    case nixl::ucx::ep_state_t::FAILED:
-        // The error was already handled, nothing to do
-        return;
-    case nixl::ucx::ep_state_t::CONNECTED:
-        setState(nixl::ucx::ep_state_t::FAILED);
-        return;
-    }
-    NIXL_FATAL << "Invalid endpoint state: " << current_state;
-    std::terminate();
-}
-
-void
-nixlUcxEp::setState(nixl::ucx::ep_state_t new_state) {
-    const auto old_state = state_.load(std::memory_order_relaxed);
-    NIXL_ASSERT(new_state != old_state);
-    NIXL_DEBUG << "ep " << eph << ": state " << old_state << " -> " << new_state;
-    state_ = new_state;
+    NIXL_ASSERT(eph_ == ucp_ep);
+    state_ = nixl::ucx::ep_state_t::FAILED;
 }
 
 namespace {
@@ -123,37 +104,30 @@ ucpEpClose(ucp_ep_h ep, uint32_t flags) {
 } // namespace
 
 nixl_status_t
-nixlUcxEp::closeImpl() {
+nixlUcxEp::disconnect() {
     const nixl::ucx::ep_state_t current_state = state_;
 
     switch (current_state) {
-    case nixl::ucx::ep_state_t::UNINITIALIZED:
-        // The EP has not been connected.
-        // Nothing to do.
-        NIXL_ASSERT(eph == nullptr);
-        return NIXL_SUCCESS;
     case nixl::ucx::ep_state_t::FAILED: {
-        ucs_status_ptr_t request = ucpEpClose(eph, UCP_EP_CLOSE_FLAG_FORCE);
+        ucs_status_ptr_t request = ucpEpClose(eph_, UCP_EP_CLOSE_FLAG_FORCE);
         if (UCS_PTR_IS_PTR(request)) {
             ucp_request_free(request);
         }
-        eph = nullptr;
-        return NIXL_ERR_REMOTE_DISCONNECT;
+        return NIXL_SUCCESS;
     }
     case nixl::ucx::ep_state_t::CONNECTED: {
-        ucs_status_ptr_t request = ucpEpClose(eph, 0);
+        ucs_status_ptr_t request = ucpEpClose(eph_, closeFlags_);
         if (request == nullptr) {
-            eph = nullptr;
             return NIXL_SUCCESS;
         }
 
         if (UCS_PTR_IS_ERR(request)) {
-            eph = nullptr;
-            return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+            const nixl_status_t status = nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+            // At step of disconnect we can ignore the remote disconnect error.
+            return (status == NIXL_ERR_REMOTE_DISCONNECT) ? NIXL_SUCCESS : status;
         }
 
         ucp_request_free(request);
-        eph = nullptr;
         return NIXL_SUCCESS;
     }
     }
@@ -161,39 +135,29 @@ nixlUcxEp::closeImpl() {
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode) {
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode)
+    : closeFlags_(err_handling_mode == UCP_ERR_HANDLING_MODE_PEER ? UCP_EP_CLOSE_FLAG_FORCE : 0) {
     ucp_ep_params_t ep_params;
-    nixl_status_t status;
 
     ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS | UCP_EP_PARAM_FIELD_ERR_HANDLER |
         UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
     ep_params.err_mode = err_handling_mode;
-    ep_params.err_handler.cb = err_cb_wrapper;
-    ep_params.err_handler.arg = static_cast<void *>(this);
+    if (err_handling_mode != UCP_ERR_HANDLING_MODE_NONE) {
+        ep_params.err_handler.cb = err_cb_wrapper;
+        ep_params.err_handler.arg = static_cast<void *>(this);
+    }
     ep_params.address = reinterpret_cast<ucp_address_t *>(addr);
 
-    status = nixl::ucx::ucsToNixlStatus(ucp_ep_create(worker, &ep_params, &eph));
-    if (status == NIXL_SUCCESS)
-        setState(nixl::ucx::ep_state_t::CONNECTED);
-    else
+    const nixl_status_t status =
+        nixl::ucx::ucsToNixlStatus(ucp_ep_create(worker, &ep_params, &eph_));
+    if (status != NIXL_SUCCESS) {
         throw std::runtime_error("failed to create ep");
+    }
 }
 
 nixlUcxEp::~nixlUcxEp() {
-    nixl_status_t status = disconnect_nb();
+    const nixl_status_t status = disconnect();
     if (status) NIXL_ERROR << "Failed to disconnect ep with status " << status;
-}
-
-/* ===========================================
- * EP management
- * =========================================== */
-
-nixl_status_t
-nixlUcxEp::disconnect_nb() {
-    const nixl_status_t status = closeImpl();
-
-    // At step of disconnect we can ignore the remote disconnect error.
-    return (status == NIXL_ERR_REMOTE_DISCONNECT) ? NIXL_SUCCESS : status;
 }
 
 /* ===========================================
@@ -239,7 +203,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
     param.user_data = ctx.get();
 
     const ucs_status_ptr_t request = ucp_am_send_nbx(
-        eph, unsigned(msg_id), nullptr, 0, ctx->first.data(), ctx->first.size(), &param);
+        eph_, unsigned(msg_id), nullptr, 0, ctx->first.data(), ctx->first.size(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         ctx.release();
         if (req != nullptr) {
@@ -271,7 +235,7 @@ nixlUcxEp::read(uint64_t raddr,
     param.op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND;
     param.memh = mem.memh;
 
-    const ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rkey.get(), &param);
+    const ucs_status_ptr_t request = ucp_get_nbx(eph_, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);
         return NIXL_IN_PROG;
@@ -296,7 +260,7 @@ nixlUcxEp::write(void *laddr,
     param.op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND;
     param.memh = mem.memh;
 
-    const ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey.get(), &param);
+    const ucs_status_ptr_t request = ucp_put_nbx(eph_, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);
         return NIXL_IN_PROG;
@@ -319,7 +283,7 @@ nixlUcxEp::estimateCost(size_t size,
         .field_mask = UCP_EP_PERF_ATTR_FIELD_ESTIMATED_TIME,
     };
 
-    ucs_status_t status = ucp_ep_evaluate_perf(this->eph, &params, &cost_result);
+    ucs_status_t status = ucp_ep_evaluate_perf(this->eph_, &params, &cost_result);
     if (status != UCS_OK) {
         NIXL_ERROR << "ucp_ep_evaluate_perf failed: " << ucs_status_string(status);
         return NIXL_ERR_BACKEND;
@@ -339,7 +303,7 @@ nixlUcxEp::flushEp(nixlUcxReq &req) {
     ucs_status_ptr_t request;
 
     param.op_attr_mask = 0;
-    request = ucp_ep_flush_nbx(eph, &param);
+    request = ucp_ep_flush_nbx(eph_, &param);
 
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);
@@ -370,7 +334,7 @@ nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
     };
 
     const ucs_status_ptr_t request =
-        ucp_put_nbx(eph, &local, count, UCP_REMOTE_ADDR_INVALID, UCP_RKEY_INVALID, &param);
+        ucp_put_nbx(eph_, &local, count, UCP_REMOTE_ADDR_INVALID, UCP_RKEY_INVALID, &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);
         return NIXL_IN_PROG;
