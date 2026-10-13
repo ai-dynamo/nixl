@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <numeric>
@@ -144,7 +145,7 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
-              "REDIS, GUSLI, AZURE_BLOB] (only used with nixl worker)");
+              "REDIS, GUSLI, AZURE_BLOB, RADOS] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -307,6 +308,22 @@ NB_ARG_STRING(azure_blob_connection_string,
               "Connection string for Azure Blob backend (alternative to connect to Azurite for "
               "local testing)");
 
+// RADOS options - only used when backend is RADOS
+NB_ARG_STRING(rados_conf, "", "Path to a readable Ceph config file (RADOS only)");
+NB_ARG_STRING(rados_name, "", "Full Ceph entity name client.<id> (RADOS only)");
+NB_ARG_STRING(rados_pool, "", "RADOS pool to open (RADOS only)");
+NB_ARG_STRING(rados_prefix,
+              "nixlbench_rados",
+              "OID name prefix <prefix>_t<thread>_d<device> (RADOS only)");
+NB_ARG_UINT64(rados_status_wait_us,
+              0,
+              "checkXfer status-wait budget in microseconds; 0 = fully nonblocking, maximum "
+              "1000000 (RADOS only)");
+NB_ARG_STRING(rados_ceph_overrides,
+              "",
+              "Semicolon-separated KEY=VALUE entries applied as ceph.<KEY>; values never printed "
+              "(RADOS only)");
+
 // HF3FS options - only used when backend is HF3FS
 NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");
 
@@ -421,6 +438,13 @@ std::string xferBenchConfig::obj_accelerated_type = "";
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 std::string xferBenchConfig::azure_blob_connection_string = "";
+std::string xferBenchConfig::rados_conf = "";
+std::string xferBenchConfig::rados_name = "";
+std::string xferBenchConfig::rados_pool = "";
+std::string xferBenchConfig::rados_prefix = "nixlbench_rados";
+uint64_t xferBenchConfig::rados_status_wait_us = 0;
+std::string xferBenchConfig::rados_ceph_overrides = "";
+std::vector<std::pair<std::string, std::string>> xferBenchConfig::rados_ceph_params = {};
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
@@ -739,6 +763,49 @@ xferBenchConfig::loadParams(void) {
             azure_blob_container_name = NB_ARG(azure_blob_container_name);
             azure_blob_connection_string = NB_ARG(azure_blob_connection_string);
         }
+
+        // Load RADOS-specific configurations if backend is RADOS
+        if (backend == XFERBENCH_BACKEND_RADOS) {
+            rados_conf = NB_ARG(rados_conf);
+            rados_name = NB_ARG(rados_name);
+            rados_pool = NB_ARG(rados_pool);
+            rados_prefix = NB_ARG(rados_prefix);
+            rados_status_wait_us = NB_ARG(rados_status_wait_us);
+            rados_ceph_overrides = NB_ARG(rados_ceph_overrides);
+
+            if (rados_conf.empty() || rados_name.empty() ||
+                rados_pool.empty()) {
+                std::cerr << "Error: RADOS backend requires non-empty rados_conf, "
+                             "rados_name and rados_pool"
+                          << std::endl;
+                return -1;
+            }
+            if (rados_prefix.empty()) {
+                std::cerr << "Error: RADOS backend requires a non-empty "
+                             "rados_prefix"
+                          << std::endl;
+                return -1;
+            }
+            // A TOML "\u0000" escape can smuggle a NUL into the prefix; OIDs
+            // reach librados as C strings, where it silently truncates.
+            if (rados_prefix.find('\0') != std::string::npos) {
+                std::cerr << "Error: RADOS rados_prefix must not contain NUL "
+                             "characters"
+                          << std::endl;
+                return -1;
+            }
+            // The plugin's status_wait_us contract fixes this ceiling.
+            if (rados_status_wait_us > 1000000ULL) {
+                std::cerr << "Error: RADOS rados_status_wait_us exceeds the "
+                             "1000000 microsecond ceiling"
+                          << std::endl;
+                return -1;
+            }
+            if (!parseRadosCephOverrides(rados_ceph_overrides,
+                                               rados_ceph_params)) {
+                return -1;
+            }
+        }
     }
 
     initiator_seg_type = NB_ARG(initiator_seg_type);
@@ -885,6 +952,28 @@ xferBenchConfig::loadParams(void) {
         return -1;
     }
 
+    // The persistent-range mapping needs pairwise local transfers, deterministic
+    // occurrence pairing, and one-time registration/request state.
+    if (backend == XFERBENCH_BACKEND_RADOS) {
+        auto reject_rados_mode = [](const char *reason) {
+            std::cerr << "Unsupported configuration for RADOS backend: " << reason
+                      << std::endl;
+            return -1;
+        };
+        if (check_consistency) {
+            return reject_rados_mode("check_consistency is not supported");
+        }
+        if (reregister_mem) {
+            return reject_rados_mode("reregister_mem is not supported");
+        }
+        if (XFERBENCH_SCHEME_PAIRWISE != scheme) {
+            return reject_rados_mode("scheme must be pairwise");
+        }
+        if (XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE != randomize_location_mode) {
+            return reject_rados_mode("randomize_location_mode must be none");
+        }
+    }
+
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&
               (XFERBENCH_SEG_TYPE_VRAM == target_seg_type) && (1 == num_threads) &&
@@ -998,7 +1087,7 @@ xferBenchConfig::printConfig() {
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         printOption(
-            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB])",
+            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB,RADOS])",
             backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
@@ -1072,6 +1161,23 @@ xferBenchConfig::printConfig() {
             printOption("Azure Blob Storage connection string "
                         "(--azure_blob_connection_string=connection-string)",
                         azure_blob_connection_string);
+        }
+
+        if (backend == XFERBENCH_BACKEND_RADOS) {
+            // conf/name/pool/prefix are echoed once by the worker banner at
+            // backend creation; the dump adds option names only (redacted).
+            printOption("RADOS status wait us (--rados_status_wait_us=N)",
+                        std::to_string(rados_status_wait_us));
+            std::string override_keys;
+            for (const auto &param : rados_ceph_params) {
+                if (!override_keys.empty()) {
+                    override_keys += ";";
+                }
+                override_keys += "ceph." + param.first;
+            }
+            printOption("RADOS ceph overrides "
+                        "(--rados_ceph_overrides=KEY=VALUE;...) (values redacted)",
+                        override_keys.empty() ? "(none)" : override_keys);
         }
 
         if (xferBenchConfig::isStorageBackend()) {
@@ -1334,6 +1440,49 @@ parseGusliDeviceList(const std::string &device_list,
     }
 
     return devices;
+}
+
+bool
+parseRadosCephOverrides(const std::string &list,
+                              std::vector<std::pair<std::string, std::string>> &params) {
+    params.clear();
+    if (list.empty()) {
+        return true;
+    }
+
+    std::stringstream ss(list);
+    std::string entry;
+    while (std::getline(ss, entry, ';')) {
+        const size_t sep = entry.find('=');
+        if (sep == std::string::npos) {
+            std::cerr << "Invalid RADOS ceph override entry: expected semicolon-separated "
+                         "KEY=VALUE list (entries are not echoed)"
+                      << std::endl;
+            return false;
+        }
+        const std::string key = entry.substr(0, sep);
+        if (key.empty()) {
+            std::cerr << "Invalid RADOS ceph override entry: empty ceph. option name"
+                      << std::endl;
+            return false;
+        }
+        if (std::any_of(params.begin(), params.end(), [&](const auto &param) {
+                return param.first == key;
+            })) {
+            std::cerr << "Duplicate RADOS ceph override option: ceph." << key << std::endl;
+            return false;
+        }
+        params.emplace_back(key, entry.substr(sep + 1));
+    }
+    return true;
+}
+
+size_t
+radosTilingCapacity() {
+    const uint64_t occurrences = static_cast<uint64_t>(xferBenchConfig::max_batch_size) *
+        static_cast<uint64_t>(xferBenchConfig::pipeline_depth);
+    return static_cast<size_t>(occurrences *
+                               static_cast<uint64_t>(xferBenchConfig::max_block_size));
 }
 
 bool
@@ -1700,6 +1849,10 @@ xferBenchUtils::putRedis(size_t buffer_size, const std::string &key) {
 
 bool
 xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_RADOS) {
+        // RADOS writes through the agent; no external CLI put.
+        return true;
+    }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
         // INFINIA backends don't need external CLI put
         return true;
@@ -1717,6 +1870,10 @@ xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
 
 bool
 xferBenchUtils::getObj(const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_RADOS) {
+        // RADOS reads through the agent; no external CLI get.
+        return true;
+    }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
         // INFINIA backends don't need external CLI get
         return true;
@@ -1734,6 +1891,10 @@ xferBenchUtils::getObj(const std::string &name) {
 
 bool
 xferBenchUtils::rmObj(const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_RADOS) {
+        // RADOS objects are retained; no external CLI rm.
+        return true;
+    }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
         return true;
     }
