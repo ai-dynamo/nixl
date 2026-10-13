@@ -45,6 +45,8 @@
 #include <thread>
 #include <vector>
 
+extern "C" char **environ;
+
 namespace {
 
 using span_record_t = std::vector<std::string>;
