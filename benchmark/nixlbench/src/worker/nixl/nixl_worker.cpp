@@ -1415,7 +1415,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     remote_iov_list.push_back(redis_remote);
                 } else if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
-                    basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
+                    int obj_dev_id = list_idx * xferBenchConfig::num_initiator_dev + iov.devId;
+                    basic_desc = initBasicDescObj(iov.len, obj_dev_id, iov.metaInfo);
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
                     }
