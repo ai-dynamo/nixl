@@ -155,6 +155,26 @@ steps:
         "--exclude=${SLURM_EXCLUDE}"
       ]
 
+  - name: Sync Container Image
+    # Import the image onto the node before the timed test stages, so a slow
+    # registry pull is not counted against (and does not time out) a test stage.
+    containerSelector: "{name: 'build_helper_llm'}"
+    timeout: 30
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${DOCKER_IMAGE}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-llm-${FRAMEWORK}-${BUILD_NUMBER}"
+      extraArgs: [
+        "--container-mount-home"
+      ]
+
   - name: Copy Tests
     containerSelector: "{name: 'build_helper_llm'}"
     timeout: 30

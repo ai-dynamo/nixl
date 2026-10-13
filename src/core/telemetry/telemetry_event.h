@@ -27,7 +27,7 @@ constexpr char TELEMETRY_BUFFER_SIZE_VAR[] = "NIXL_TELEMETRY_BUFFER_SIZE";
 constexpr char TELEMETRY_RUN_INTERVAL_VAR[] = "NIXL_TELEMETRY_RUN_INTERVAL";
 constexpr char TELEMETRY_ENABLED_METRICS_VAR[] = "NIXL_TELEMETRY_ENABLED_METRICS";
 
-constexpr inline int TELEMETRY_VERSION = 4;
+constexpr inline int TELEMETRY_VERSION = 5;
 
 /**
  * @enum nixl_telemetry_event_type_t
@@ -54,7 +54,8 @@ enum class nixl_telemetry_event_type_t : uint32_t {
     AGENT_ERR_REMOTE_DISCONNECT = 17,
     AGENT_ERR_CANCELED = 18,
     AGENT_ERR_NO_TELEMETRY = 19,
-    AGENT_TELEMETRY_EVENTS_DROPPED = 20,
+    AGENT_TRACE_PHASES_DROPPED = 20,
+    AGENT_TELEMETRY_EVENTS_DROPPED = 21,
 };
 
 inline constexpr std::size_t nixl_telemetry_event_type_count =
@@ -90,6 +91,7 @@ inline constexpr std::array telemetry_metric_event_types = {
     nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED,
     nixl_telemetry_event_type_t::AGENT_XFER_TIME,
     nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
+    nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED,
     nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED,
 };
 
@@ -155,6 +157,8 @@ telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
         return "agent_err_canceled";
     case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
         return "agent_err_no_telemetry";
+    case nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED:
+        return "agent_trace_phases_dropped";
     case nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED:
         return "agent_telemetry_events_dropped";
     }
@@ -196,6 +200,7 @@ telemetryErrorStatusLabel(const nixl_telemetry_event_type_t type) noexcept {
     case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
     case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
     case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
+    case nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED:
     case nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED:
         return nullptr;
     }
@@ -274,6 +279,13 @@ telemetryMetricDescriptor(const nixl_telemetry_event_type_t type) noexcept {
                 "Post time of the last request",
                 "agent_xfer_post_time_us",
                 "Distribution of time from start to posting to the back-end, in microseconds"};
+    case nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED:
+        return {"agent_trace_phases_dropped_total",
+                "Cumulative backend trace phases dropped because recording them failed",
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr};
     case nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED:
         return {"agent_telemetry_events_dropped_total",
                 "Cumulative telemetry events dropped at the producer-side staging queue",
