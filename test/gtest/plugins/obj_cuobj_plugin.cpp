@@ -34,6 +34,7 @@
 #include <absl/time/time.h>
 #include <cuobjclient.h>
 
+#include "../common.h"
 #include "plugins_common.h"
 #include "transfer_handler.h"
 #include "obj/obj_backend.h"
@@ -521,6 +522,7 @@ TEST_P(setupObjAccelTestFixture, AccelVramLargeObjectXferTest) {
     }
     std::unique_ptr<memoryHandler<VRAM_SEG>> mem;
     try {
+        const gtest::LogIgnoreGuard lig("cudaMalloc.* failed");
         mem = std::make_unique<memoryHandler<VRAM_SEG>>(len, 0);
     }
     catch (const std::runtime_error &) {
@@ -529,7 +531,13 @@ TEST_P(setupObjAccelTestFixture, AccelVramLargeObjectXferTest) {
     nixlBlobDesc mem_desc;
     mem->populateBlobDesc(&mem_desc);
     nixlBackendMD *mem_md = nullptr;
-    if (localBackendEngine_->registerMem(mem_desc, VRAM_SEG, mem_md) != NIXL_SUCCESS) {
+    nixl_status_t reg_status;
+    {
+        const gtest::LogIgnoreGuard lig_desc("cuMemObjGetDescriptor failed");
+        const gtest::LogIgnoreGuard lig_reg("RDMA buffer registration failed");
+        reg_status = localBackendEngine_->registerMem(mem_desc, VRAM_SEG, mem_md);
+    }
+    if (reg_status != NIXL_SUCCESS) {
         GTEST_SKIP() << "cuObject cannot register " << len << " bytes (needs CUDA 13.4 or later)";
     }
     mem->setMD(mem_md);
