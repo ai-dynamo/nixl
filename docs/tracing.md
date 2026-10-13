@@ -130,8 +130,8 @@ stable per request and every peer inspecting the same context agrees with it.
 A request is sampled when the random part of its trace id falls in the top
 `ratio` of the range, which is the OpenTelemetry consistent-probability rule: a
 later phase sampling at a lower ratio thins what NIXL kept instead of discarding
-all of it. No backend consumes the sampled flag yet — it is the gate the first
-cross-process carrier will use to decide whether to propagate a context.
+all of it. The sampled flag is also what decides whether a context crosses the
+wire: UCX carries only sampled contexts to the remote agent.
 
 A value that is neither `0` nor a number in `[2^-56, 1]` makes agent
 construction fail, whether or not tracing is otherwise enabled, rather than
@@ -180,8 +180,9 @@ the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core turns
 each recorded phase into a momentary span carrying `nixl.backend` (the recording
 backend's type), `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
 `nixl.phase.label` when the plugin supplied one, and any plugin-supplied
-attributes. The phase vocabulary is closed so that timelines stay comparable
-across backends:
+attributes. A phase recorded under a trace context also carries the context as
+`nixl.traceparent` and is correlated on it, like the agent's own spans. The
+phase vocabulary is closed so that timelines stay comparable across backends:
 
 | Span | Phase enumerator | Meaning |
 | ---- | ---------------- | ------- |
@@ -194,8 +195,9 @@ across backends:
 | `nixl::phase` | `OTHER` | generic escape hatch; the plugin's label becomes the span name |
 
 The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
-installed header), so only in-tree plugins can emit phases. No plugin emits them
-yet; UCX and libfabric map their internals onto the vocabulary in later PRs.
+installed header), so only in-tree plugins can emit phases. UCX emits
+`nixl::notif.received`, described below; its other phases, and libfabric's, come
+in later PRs.
 
 Recording a phase never fails the transfer: if the trace backend throws, the
 phase is dropped and the first drop per backend is logged. With telemetry
@@ -212,7 +214,19 @@ engine is called directly. The pointer is valid only for the call: a plugin that
 needs the context later, at completion or when building a notification, copies
 the value onto its own request handle. A carrier that puts it on the wire calls
 `encodeTraceContext` itself. `TraceContext` is internal like the sink, so only
-in-tree plugins can read it; none does yet.
+in-tree plugins can read it.
+
+UCX is the first such carrier. For a sampled request it appends the 26-byte
+record as a `tctx` tag after the notification's `name` and `msg`, so an older
+receiver, which stops reading after `msg`, is unaffected; unsampled requests and
+`genNotif` add nothing. When the notification arrives at an agent with tracing
+on, UCX records `nixl::notif.received` under the sender's context, with
+`nixl.remote_agent` naming the sender; an agent with tracing off skips the record
+without reading it. The span thus carries the request's trace
+id in `nixl.traceparent`, and the same correlation id as the sender's
+`nixl::postXferReq.write` or `.read` span. Writes and reads without a
+notification give the receiver nothing to observe, so they are traced on the
+sender only.
 
 A backend that carries the context to its peer says so by overriding
 `supportsTraceContext()`, which defaults to `false`; core reads it once, when
@@ -294,11 +308,12 @@ In NIXL tracing, "correlation" can mean two different things:
 
 - **Cross-rank / cross-agent** -- linking the sender's span to the receiver's span across
   processes. NVTX has **no** native cross-process linkage: each process is its own
-  timeline that Nsight aligns best-effort by clock, so the only aid today is matching a
-  `request_id`-style attribute by hand. Structured linking is a **Chakra** capability (one
-  trace per rank, joined offline by `chakra_trace_link` from matching send/recv) and
-  requires a globally unique id propagated on the wire. It is planned, and not part of the
-  NVTX backend.
+  timeline that Nsight aligns best-effort by clock. What NIXL adds is the id: over UCX
+  notifications the receiver's `nixl::notif.received` carries the sender's correlation id
+  and `nixl.traceparent` (see "Backend phase spans"), so the two ranges can be matched
+  across timelines. Structured linking is a **Chakra** capability (one trace per rank,
+  joined offline by `chakra_trace_link` from matching send/recv); it is planned, and not
+  part of the NVTX backend.
 - **Cross-thread within a process** -- attributing spans emitted on different threads
   (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
   same request. Implemented via the backend-agnostic `pushCorrelationId()` /
@@ -306,7 +321,7 @@ In NIXL tracing, "correlation" can mean two different things:
   correlation scope keyed on the span id of the request's trace context, and the NVTX
   backend records that id as the event's `uint64` payload -- so a post and its completion
   carry the same id on the timeline regardless of which thread emitted each. A request
-  without a valid context carries no id. (The id is not propagated across processes yet.)
+  without a valid context carries no id.
 
 ## Planned work
 
@@ -314,9 +329,9 @@ In NIXL tracing, "correlation" can mean two different things:
   recording the span attributes and dependencies the NVTX backend ignores.
 - **Cross-rank correlation** — propagate a globally unique request id on the wire so
   sender and receiver spans can be linked across processes (distributed tracing; a
-  separate NIXL-architecture effort). Backends already receive each request's trace
-  context (see "Backend phase spans"); the per-plugin carriers that put it on the
-  wire come next.
+  separate NIXL-architecture effort). UCX carries it in notifications (see "Backend
+  phase spans"); the libfabric, gpunetio, mooncake and uccl carriers come next.
 
 - **Backend phase emission** — the sink described under "Backend phase spans" exists,
-  but no plugin records a phase yet.
+  and UCX records `nixl::notif.received` through it; the remaining phases are not
+  recorded by any plugin yet.

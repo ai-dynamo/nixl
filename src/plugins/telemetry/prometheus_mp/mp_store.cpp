@@ -33,6 +33,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace nixl::telemetry::mp {
@@ -49,6 +50,14 @@ namespace {
         static std::set<std::filesystem::path> seen;
         const std::lock_guard<std::mutex> lock(mutex);
         return seen.size() < max_remembered && seen.insert(path).second;
+    }
+
+    [[noreturn]] void
+    throwStoreError(int err, const char *action, const std::filesystem::path &path) {
+        throw storeSetupError(err,
+                              std::generic_category(),
+                              std::string("prometheus_mp: cannot ") + action +
+                                  " telemetry store '" + path.string() + "'");
     }
 
     // A store being created: nameless where the filesystem allows it, otherwise
@@ -88,15 +97,13 @@ namespace {
     publishStore(int fd, const std::filesystem::path &staging, const std::filesystem::path &path) {
         if (!staging.empty()) {
             if (::rename(staging.c_str(), path.c_str()) != 0) {
-                throw std::runtime_error("prometheus_mp: cannot publish telemetry store '" +
-                                         path.string() + "': " + std::strerror(errno));
+                throwStoreError(errno, "rename to", path);
             }
             return;
         }
         const std::string proc_path = "/proc/self/fd/" + std::to_string(fd);
         if (::linkat(AT_FDCWD, proc_path.c_str(), AT_FDCWD, path.c_str(), AT_SYMLINK_FOLLOW) != 0) {
-            throw std::runtime_error("prometheus_mp: cannot publish telemetry store '" +
-                                     path.string() + "': " + std::strerror(errno));
+            throwStoreError(errno, "link to", path);
         }
     }
 
@@ -135,8 +142,7 @@ storeWriter::storeWriter(std::filesystem::path path,
 
     auto staged = stageStore(path_);
     if (!staged.fd.valid()) {
-        throw std::runtime_error("prometheus_mp: cannot create telemetry store '" + path_.string() +
-                                 "': " + std::strerror(errno));
+        throwStoreError(errno, "create", path_);
     }
 
     // Not fatal: the store is still written and scraped, only its liveness stops
@@ -152,15 +158,15 @@ storeWriter::storeWriter(std::filesystem::path path,
                   << "and departed ranks stay published indefinitely";
     }
 
-    if (::ftruncate(staged.fd.get(), static_cast<off_t>(sizeof(storeLayout))) != 0) {
-        throw std::runtime_error("prometheus_mp: cannot size telemetry store '" + path_.string() +
-                                 "': " + std::strerror(errno));
+    if (const int err =
+            ::posix_fallocate(staged.fd.get(), 0, static_cast<off_t>(sizeof(storeLayout)));
+        err != 0) {
+        throwStoreError(err, "allocate", path_);
     }
 
     mappedRegion mapping(staged.fd.get(), sizeof(storeLayout), PROT_READ | PROT_WRITE, MAP_SHARED);
     if (!mapping.valid()) {
-        throw std::runtime_error("prometheus_mp: cannot map telemetry store '" + path_.string() +
-                                 "': " + std::strerror(errno));
+        throwStoreError(errno, "map", path_);
     }
 
     auto *layout = static_cast<storeLayout *>(mapping.get());

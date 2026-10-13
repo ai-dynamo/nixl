@@ -82,6 +82,9 @@ public:
     [[nodiscard]] bool
     drained() const noexcept;
 
+    [[nodiscard]] bool
+    skipAbandonedTickets() noexcept;
+
     /** Once drained: check each ring, quiesce the transport for it, then reset it; fatal on
      * failure. */
     void
