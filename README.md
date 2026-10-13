@@ -99,11 +99,9 @@ sudo apt install etcd etcd-server etcd-client
 docker run -d -p 2379:2379 \
   --name etcd-server \
   -e ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379 \
-  -e ETCD_ADVERTISE_CLIENT_URLS=http://127.0.0.1:2379 \
+  -e ETCD_ADVERTISE_CLIENT_URLS=http://0.0.0.0:2379 \
   quay.io/coreos/etcd:v3.5.1
 ```
-
-This Docker command is for clients on the same host. For clients on other machines, replace `127.0.0.1` in `ETCD_ADVERTISE_CLIENT_URLS` with a hostname or IP address reachable by those clients.
 
 #### ETCD CPP API
 Installed from https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3
