@@ -43,3 +43,17 @@ for yaml in "${YAML_FILES[@]}"; do
     sed -i "s/CI_IMAGE_TAG: \"CI_MANAGED\"/CI_IMAGE_TAG: \"${NEW_TAG}\"/" "$yaml"
     echo "Patched: $yaml"
 done
+
+# --- nixl-ci-build-wheel-nightly -------------------------------------------
+# The nightly builds its wheel_base images through runs_on_dockers so the deps
+# compile once per arch and CUDA major instead of once per matrix cell. Those
+# images are built before any step runs, so their tag cannot be set by a step -
+# and it has to be unique per run, both because the nightly rebuilds them every
+# time and so they cannot collide with the CI_IMAGE_TAG-keyed image that per-PR
+# builds cache on.
+NIGHTLY_YAML=".ci/jenkins/lib/build-wheel-nightly-matrix.yaml"
+if grep -q 'NIGHTLY_MANAGED_WHEEL_BASE_TAG' "$NIGHTLY_YAML" 2>/dev/null; then
+    WHEEL_BASE_TAG="nightly-${BUILD_NUMBER:-0}"
+    sed -i "s|NIGHTLY_MANAGED_WHEEL_BASE_TAG|${WHEEL_BASE_TAG}|" "$NIGHTLY_YAML"
+    echo "Patched: $NIGHTLY_YAML (wheel_base tag ${WHEEL_BASE_TAG})"
+fi
