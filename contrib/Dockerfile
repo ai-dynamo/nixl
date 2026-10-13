@@ -102,7 +102,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
 RUN apt-get update -y && \
     apt-get install -y ubuntu-keyring && \
     apt-get update -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install \
     ninja-build \
     libclang-dev \
     cmake \
