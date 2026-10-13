@@ -22,9 +22,11 @@
 
 #include <prometheus/exposer.h>
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -84,7 +86,7 @@ public:
 
     [[nodiscard]] bool
     serving() const noexcept {
-        return static_cast<bool>(exposer_);
+        return serving_.load(std::memory_order_acquire);
     }
 
     /// The address this process serves, or would serve if it won.
@@ -104,6 +106,8 @@ private:
     std::chrono::nanoseconds staleTtl_;
     std::chrono::nanoseconds lastAttempt_{0};
     std::chrono::nanoseconds retryInterval_;
+    std::mutex mutex_;
+    std::atomic<bool> serving_{false};
 
     // Optional because an election cannot be re-run in place: resetting it is
     // how a non-owner gives up the descriptor before contending again.
