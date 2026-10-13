@@ -9,7 +9,7 @@
 #   ./artifactory-cleanup-by-time.sh [--dry-run] --spec <cleanup-spec.json>
 #
 # Environment:
-#   ARTIFACTORY_URL       Base Artifactory URL (default: https://artifactory.nvidia.com/artifactory)
+#   ARTIFACTORY_URL       Base Artifactory URL (default: https://il.artifactory.nvidia.com/artifactory)
 #   ARTIFACTORY_USER      Artifactory username (required)
 #   ARTIFACTORY_TOKEN     Password or API key (required)
 #   ARTIFACTORY_API_KEY   Alternative to ARTIFACTORY_TOKEN
@@ -33,7 +33,7 @@ done
 [[ -z "$SPEC" ]] && { echo "Usage: $0 [--dry-run] --spec <cleanup-spec.json>" >&2; exit 1; }
 [[ -f "$SPEC" ]] || { echo "Spec file not found: $SPEC" >&2; exit 1; }
 
-ARTIFACTORY_URL="${ARTIFACTORY_URL:-https://artifactory.nvidia.com/artifactory}"
+ARTIFACTORY_URL="${ARTIFACTORY_URL:-https://il.artifactory.nvidia.com/artifactory}"
 TOKEN="${ARTIFACTORY_TOKEN:-${ARTIFACTORY_API_KEY:?Set ARTIFACTORY_TOKEN or ARTIFACTORY_API_KEY}}"
 USER="${ARTIFACTORY_USER:?Set ARTIFACTORY_USER}"
 
