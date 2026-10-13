@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,11 +15,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
+import ctypes
+import math
 import os
 import time
 
 import nixl._utils as nixl_utils
-from nixl._api import nixl_agent, nixl_agent_config
+from nixl import nixl_agent, nixl_agent_config
 from nixl.logging import get_logger
 
 logger = get_logger(__name__)
@@ -31,12 +34,15 @@ AGENT2_NAME = "EtcdAgent2"
 
 
 def register_memory(agent, backend_name, pattern):
+    """Allocate and initialize a CPU buffer, then register it with the backend."""
     buffer_size = 1024
     addr = nixl_utils.malloc_passthru(buffer_size)
+    if not addr:
+        raise MemoryError("Failed to allocate a CPU buffer")
 
     # Fill buffer with pattern
-    data = pattern * buffer_size
-    reg_descs = agent.get_reg_descs([(addr, buffer_size, 0, data)], "DRAM")
+    ctypes.memset(addr, ord(pattern), buffer_size)
+    reg_descs = agent.get_reg_descs([(addr, buffer_size, 0, "")], "DRAM")
 
     # Register memory
     agent.register_memory(reg_descs, backends=[backend_name])
@@ -46,6 +52,18 @@ def register_memory(agent, backend_name, pattern):
 
 
 def main():
+    """Exchange metadata through etcd and verify a UCX transfer between two agents."""
+    parser = argparse.ArgumentParser(description="NIXL etcd metadata example")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=30.0,
+        help="Timeout in seconds for each metadata/transfer wait (default: 30)",
+    )
+    args = parser.parse_args()
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error("--timeout must be a positive, finite number")
+
     # Set etcd endpoint if not already set
     if os.getenv("NIXL_ETCD_ENDPOINTS"):
         logger.info("NIXL_ETCD_ENDPOINTS is set")
@@ -101,10 +119,15 @@ def main():
     agent2.fetch_remote_metadata(AGENT1_NAME)
 
     # Wait for metadata to be available (fetch_remote_metadata is asynchronous)
+    metadata_deadline = time.monotonic() + args.timeout
     while not (
         agent1.check_remote_metadata(AGENT2_NAME)
         and agent2.check_remote_metadata(AGENT1_NAME)
     ):
+        if time.monotonic() >= metadata_deadline:
+            raise TimeoutError(
+                "Timed out waiting for remote metadata exchange via etcd"
+            )
         time.sleep(0.5)
 
     logger.info("Metadata exchange successful!")
@@ -133,25 +156,44 @@ def main():
     logger.info("Transfer request created")
     state = agent1.transfer(xfer_handle)
     logger.info(f"Transfer was posted, initial state: {state}")
+    if state == "ERR":
+        raise RuntimeError("Failed to post the UCX transfer")
 
     # Wait for transfer completion and notification
     notifs = {}
-    while state != "DONE" or len(notifs) == 0:
+    xfer_deadline = time.monotonic() + args.timeout
+    while state != "DONE" or b"notification" not in notifs.get(AGENT1_NAME, []):
+        if time.monotonic() >= xfer_deadline:
+            raise TimeoutError(
+                f"Timed out waiting for transfer completion/notification (state={state})"
+            )
         if state != "DONE":
             state = agent1.check_xfer_state(xfer_handle)
-        if len(notifs) == 0:
+            if state == "ERR":
+                raise RuntimeError("The UCX transfer failed")
+        if b"notification" not in notifs.get(AGENT1_NAME, []):
             notifs = agent2.get_new_notifs()
         time.sleep(0.5)
 
     logger.info(f"Received notifications: {notifs}")
+    if ctypes.string_at(addr2 + dst_offset, req_size) != ctypes.string_at(
+        addr1 + 16, req_size
+    ):
+        raise RuntimeError("Transferred data does not match the source buffer")
     logger.info("Transfer verified")
 
     # Release transfer handle
     agent1.release_xfer_handle(xfer_handle)
 
+    # Remove published metadata before deregistering its memory regions
+    agent1.invalidate_local_metadata()
+    agent2.invalidate_local_metadata()
+
     # Deregister memory
     agent1.deregister_memory(reg_descs1, backends=["UCX"])
     agent2.deregister_memory(reg_descs2, backends=["UCX"])
+    nixl_utils.free_passthru(addr1)
+    nixl_utils.free_passthru(addr2)
 
 
 if __name__ == "__main__":

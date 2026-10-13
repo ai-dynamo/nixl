@@ -96,8 +96,14 @@ NIXL can use ETCD for metadata distribution and coordination between nodes in di
 $ sudo apt install etcd etcd-server etcd-client
 
 # Or use Docker
-$ docker run -d -p 2379:2379 quay.io/coreos/etcd:v3.5.1
+docker run -d -p 2379:2379 \
+  --name etcd-server \
+  -e ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379 \
+  -e ETCD_ADVERTISE_CLIENT_URLS=http://127.0.0.1:2379 \
+  quay.io/coreos/etcd:v3.5.1
 ```
+
+This Docker command is for clients on the same host. For clients on other machines, replace `127.0.0.1` in `ETCD_ADVERTISE_CLIENT_URLS` with a hostname or IP address reachable by those clients.
 
 #### ETCD CPP API
 Installed from https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3
@@ -369,6 +375,8 @@ $ ./contrib/build-wheel.sh
 ## Running with ETCD
 NIXL can use ETCD for metadata exchange between distributed nodes. This is especially useful in containerized or cloud-native environments.
 
+The examples below require NIXL built with ETCD support. Install the [ETCD CPP API prerequisites](#etcd-cpp-api) before building NIXL.
+
 ### Environment Setup
 To use ETCD with NIXL, set the following environment variables:
 
@@ -380,20 +388,26 @@ export NIXL_ETCD_ENDPOINTS="http://localhost:2379"
 export NIXL_ETCD_NAMESPACE="/nixl/agents"
 ```
 
-### Running the ETCD Example
-NIXL includes an example demonstrating metadata exchange and data transfer using ETCD:
+### Running the ETCD Examples
+NIXL includes C++ and Python examples demonstrating metadata exchange and data transfer using ETCD:
 
 ```bash
-# Start an ETCD server if not already running
-# For example:
-# docker run -d -p 2379:2379 quay.io/coreos/etcd:v3.5.1
+# Start an ETCD server as described in "ETCD Server and Client" above
 
 # Set the ETCD env variables as above
 
 # Run the example. The two agents in the example will exchange metadata through ETCD
 # and perform data transfers
-./<nixl_build_path>/examples/nixl_etcd_example
+./<nixl_build_path>/examples/cpp/nixl_etcd_example
 ```
+
+To run the Python example from the repository root after installing the Python bindings:
+
+```bash
+python3 examples/python/nixl_etcd_example.py --timeout 30
+```
+
+The Python example runs two agents in one process, exchanges metadata through ETCD, and verifies a UCX transfer between CPU buffers. `--timeout` sets the maximum wait in seconds for metadata exchange and for transfer completion with its notification (default: 30 seconds).
 
 ### nixlbench Benchmark
 For more comprehensive testing, the nixlbench benchmarking tool supports ETCD for worker coordination:
