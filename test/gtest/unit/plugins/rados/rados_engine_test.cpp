@@ -637,6 +637,36 @@ namespace {
         return {{"conf", "fixture.conf"}, {"pool", "qa-pool"}, {"name", "client.qa"}};
     }
 
+    // Survives the engine's adopt-or-drop decision so sleeps and timer
+    // retention stay observable either way.
+    struct timer_state {
+        std::vector<uint64_t> budgets;
+        bool destroyed = false;
+    };
+
+    // Records every intended sleep and its verbatim budget; never really sleeps.
+    class fakeStatusWaitTimer final : public nixl::rados::statusWaitTimer {
+    public:
+        explicit fakeStatusWaitTimer(std::shared_ptr<timer_state> state)
+            : state_(std::move(state)) {}
+
+        fakeStatusWaitTimer(const fakeStatusWaitTimer &) = delete;
+        fakeStatusWaitTimer &
+        operator=(const fakeStatusWaitTimer &) = delete;
+
+        ~fakeStatusWaitTimer() override {
+            state_->destroyed = true;
+        }
+
+        void
+        sleep(uint64_t budget_us) override {
+            state_->budgets.push_back(budget_us);
+        }
+
+    private:
+        std::shared_ptr<timer_state> state_;
+    };
+
     void
     add_pair(nixl_meta_dlist_t &local, nixl_meta_dlist_t &remote, uintptr_t addr, uint64_t len,
              uint64_t object_offset, uint64_t dev_id) {
@@ -686,6 +716,19 @@ protected:
             *retained_fake = fake.get();
         }
         return std::make_unique<nixlRadosEngine>(&init_params_, std::move(fake));
+    }
+
+    // Same as makeEngine, but injects the fake status-wait timer.
+    std::unique_ptr<nixlRadosEngine>
+    makeEngineWithTimer(fakeCApi **retained_fake, const std::shared_ptr<timer_state> &state) {
+        auto fake = std::make_unique<fakeCApi>();
+        log = fake->log;
+        if (retained_fake != nullptr) {
+            *retained_fake = fake.get();
+        }
+        auto timer = std::make_unique<fakeStatusWaitTimer>(state);
+        return std::make_unique<nixlRadosEngine>(
+            &init_params_, std::move(fake), std::move(timer));
     }
 
     // Representative successful construction: validBase parameters plus the two client bootstraps.
@@ -1594,6 +1637,188 @@ TEST_F(radosEngineFixture, ReadsUseRawIoctxWritesUseBoundView) {
     EXPECT_EQ(engine->releaseReqH(read_handle), NIXL_SUCCESS);
     EXPECT_EQ(engine->deregisterMem(md_w), NIXL_SUCCESS);
     EXPECT_EQ(engine->deregisterMem(md_r), NIXL_SUCCESS);
+}
+
+// Representative rejections; the full table lives in radosConfigTest.
+TEST_F(radosEngineFixture, InvalidStatusWaitUsFailsInitWithoutCephAccess) {
+    for (const char *bad : {"", "-1", "abc", "1000001"}) {
+        custom_params_ = validBase();
+        custom_params_["status_wait_us"] = bad;
+        auto engine = makeEngine();
+        EXPECT_TRUE(engine->getInitErr()) << "value '" << bad << "'";
+        EXPECT_TRUE(log->empty()) << "rejection must not touch the librados seam";
+    }
+}
+
+TEST_F(radosEngineFixture, ZeroStatusWaitUsRetainsNoTimerAndNeverSleeps) {
+    std::vector<nixl_b_params_t> variants;
+    variants.push_back(validBase()); // absent
+    auto zero = validBase();
+    zero["status_wait_us"] = "0";
+    variants.push_back(zero);
+    auto padded = validBase();
+    padded["status_wait_us"] = "00000"; // leading-zero zero
+    variants.push_back(padded);
+
+    for (const auto &variant : variants) {
+        custom_params_ = variant;
+        auto tstate = std::make_shared<timer_state>();
+        fakeCApi *fake = nullptr;
+        auto engine = makeEngineWithTimer(&fake, tstate);
+        ASSERT_FALSE(engine->getInitErr());
+        EXPECT_TRUE(tstate->destroyed) << "zero mode must not retain the injected timer";
+
+        nixlBackendMD *md = registerObject(*engine, 1, "obj");
+        const one_pair pair(0, 64, 1, 0x00);
+
+        nixlBackendReqH *handle = nullptr;
+        ASSERT_EQ(engine->prepXfer(NIXL_READ, pair.local, pair.remote, "test-agent", handle),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(engine->postXfer(NIXL_READ, pair.local, pair.remote, "test-agent", handle),
+                  NIXL_IN_PROG);
+        EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
+        EXPECT_TRUE(tstate->budgets.empty());
+        fake->completeSubmission(0, static_cast<int>(pair.buffer.size()));
+        EXPECT_EQ(engine->checkXfer(handle), NIXL_SUCCESS);
+        EXPECT_TRUE(tstate->budgets.empty());
+        EXPECT_EQ(fake->c_waits, 0);
+        EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
+        EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
+    }
+}
+
+TEST_F(radosEngineFixture, FirstUnprovenPairSleepsOncePerCallAndDefersHarvest) {
+    custom_params_ = validBase();
+    custom_params_["status_wait_us"] = "777";
+    auto tstate = std::make_shared<timer_state>();
+    fakeCApi *fake = nullptr;
+    auto engine = makeEngineWithTimer(&fake, tstate);
+    ASSERT_FALSE(engine->getInitErr());
+    EXPECT_FALSE(tstate->destroyed) << "a positive budget must adopt the injected timer";
+    nixlBackendMD *md = registerObject(*engine, 1, "obj");
+
+    const one_pair pair(0, 128, 1, 0x00);
+    const uintptr_t base = reinterpret_cast<uintptr_t>(pair.buffer.data());
+    nixl_meta_dlist_t local(DRAM_SEG);
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    for (int i = 0; i < 2; ++i) {
+        add_pair(local,
+                 remote,
+                 base + static_cast<uintptr_t>(i) * 64,
+                 64,
+                 static_cast<uint64_t>(i) * 64,
+                 1);
+    }
+
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(engine->prepXfer(NIXL_READ, local, remote, "test-agent", handle), NIXL_SUCCESS);
+    ASSERT_EQ(engine->postXfer(NIXL_READ, local, remote, "test-agent", handle), NIXL_IN_PROG);
+
+    const auto poll_count = [this]() {
+        return std::count(log->begin(), log->end(), std::string("c_is_complete_and_cb"));
+    };
+
+    // Pair 0 is operationally done but callback-unretired (unproven through the
+    // combined seam) and pair 1 is retired: one sleep per call, no rescan, so
+    // the sleeping poll never reaches pair 1 nor harvests anything.
+    fake->submissions[0].c_comp->rc = 64;
+    fake->completeButUnretired(0);
+    fake->completeSubmission(1, 64);
+    EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
+    EXPECT_EQ(tstate->budgets, (std::vector<uint64_t>{777}));
+    EXPECT_EQ(poll_count(), 1);
+    EXPECT_EQ(fake->c_rc_reads, 0);
+    EXPECT_EQ(fake->c_releases, 0);
+
+    EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
+    EXPECT_EQ(tstate->budgets, (std::vector<uint64_t>{777, 777}));
+
+    // The next poll after retirement harvests both in order, sleep-free.
+    fake->retire(0);
+    EXPECT_EQ(engine->checkXfer(handle), NIXL_SUCCESS);
+    EXPECT_EQ(tstate->budgets.size(), 2U);
+    EXPECT_EQ(fake->c_rc_reads, 2);
+    EXPECT_EQ(fake->c_releases, 2);
+    EXPECT_EQ(fake->c_waits, 0);
+    EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
+    EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
+}
+
+TEST_F(radosEngineFixture, WriteCompletionSleepsOnceAndHarvestsOnNextPoll) {
+    custom_params_ = validBase();
+    custom_params_["status_wait_us"] = "2400";
+    auto tstate = std::make_shared<timer_state>();
+    fakeCApi *fake = nullptr;
+    auto engine = makeEngineWithTimer(&fake, tstate);
+    ASSERT_FALSE(engine->getInitErr());
+    nixlBackendMD *md = registerObject(*engine, 1, "obj");
+
+    const one_pair pair(0, 64, 1, 0x63);
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(engine->prepXfer(NIXL_WRITE, pair.local, pair.remote, "test-agent", handle),
+              NIXL_SUCCESS);
+    ASSERT_EQ(engine->postXfer(NIXL_WRITE, pair.local, pair.remote, "test-agent", handle),
+              NIXL_IN_PROG);
+
+    const auto poll_count = [this]() {
+        return std::count(log->begin(), log->end(), std::string("cpp_is_complete_and_cb"));
+    };
+
+    EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
+    EXPECT_EQ(tstate->budgets, (std::vector<uint64_t>{2400}));
+    EXPECT_EQ(poll_count(), 1);
+    EXPECT_EQ(fake->cpp_rc_reads, 0);
+    EXPECT_EQ(fake->cpp_releases, 0);
+
+    fake->completeSubmission(0);
+    EXPECT_EQ(engine->checkXfer(handle), NIXL_SUCCESS);
+    EXPECT_EQ(tstate->budgets.size(), 1U);
+    EXPECT_EQ(poll_count(), 2);
+    EXPECT_EQ(fake->cpp_rc_reads, 1);
+    EXPECT_EQ(fake->cpp_releases, 1);
+    EXPECT_EQ(fake->cpp_waits, 0);
+    EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
+    EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
+}
+
+TEST_F(radosEngineFixture, WaitNeverSleepsOutsideActivePairScans) {
+    custom_params_ = validBase();
+    custom_params_["status_wait_us"] = "3000";
+    auto tstate = std::make_shared<timer_state>();
+    fakeCApi *fake = nullptr;
+    auto engine = makeEngineWithTimer(&fake, tstate);
+    ASSERT_FALSE(engine->getInitErr());
+    [[maybe_unused]] nixlBackendMD *md = registerObject(*engine, 1, "obj");
+
+    const one_pair pair(0, 64, 1, 0x00);
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(engine->prepXfer(NIXL_READ, pair.local, pair.remote, "test-agent", handle),
+              NIXL_SUCCESS);
+    EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_NOT_POSTED);
+    EXPECT_EQ(engine->checkXfer(nullptr), NIXL_ERR_INVALID_PARAM);
+    nixlBackendReqH *foreign = reinterpret_cast<nixlBackendReqH *>(static_cast<uintptr_t>(0x1));
+    EXPECT_EQ(engine->checkXfer(foreign), NIXL_ERR_INVALID_PARAM);
+    EXPECT_TRUE(tstate->budgets.empty());
+
+    // Release and teardown drain through the seam's blocking waits, never the
+    // timer; the fake seam dies with the engine, so post-reset assertions run
+    // on the shared log.
+    ASSERT_EQ(engine->postXfer(NIXL_READ, pair.local, pair.remote, "test-agent", handle),
+              NIXL_IN_PROG);
+    EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
+    EXPECT_TRUE(tstate->budgets.empty());
+
+    nixlBackendReqH *abandoned = nullptr;
+    ASSERT_EQ(engine->prepXfer(NIXL_READ, pair.local, pair.remote, "test-agent", abandoned),
+              NIXL_SUCCESS);
+    ASSERT_EQ(engine->postXfer(NIXL_READ, pair.local, pair.remote, "test-agent", abandoned),
+              NIXL_IN_PROG);
+    engine.reset();
+    EXPECT_TRUE(tstate->budgets.empty());
+    EXPECT_TRUE(tstate->destroyed);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("c_wait_for_complete_and_cb")), 2);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("c_release")), 2);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_close")), 1);
 }
 
 } // namespace gtest::rados

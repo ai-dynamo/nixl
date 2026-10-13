@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -36,11 +37,35 @@ struct backendConfig {
     std::string conf;
     std::string pool;
     std::string name;
+    uint64_t status_wait_us = 0;
     ceph_options_t ceph_options;
 };
 
 inline constexpr const char *kCephPrefix = "ceph.";
 inline constexpr std::size_t kCephPrefixLength = 5;
+
+inline constexpr uint64_t kStatusWaitUsCeiling = 1000000;
+
+// Strict ASCII decimal ([0-9]+), leading zeros valid, ceiling-bounded; the
+// running total is checked per digit, so long digit strings fail without overflow.
+inline bool
+parseStatusWaitUs(const std::string &value, uint64_t &budget_us) {
+    if (value.empty()) {
+        return false;
+    }
+    uint64_t parsed = 0;
+    for (const char ch : value) {
+        if (ch < '0' || ch > '9') {
+            return false;
+        }
+        parsed = parsed * 10 + static_cast<uint64_t>(ch - '0');
+        if (parsed > kStatusWaitUsCeiling) {
+            return false;
+        }
+    }
+    budget_us = parsed;
+    return true;
+}
 
 inline std::optional<backendConfig>
 parseCustomParams(const nixl_b_params_t &params) {
@@ -61,6 +86,14 @@ parseCustomParams(const nixl_b_params_t &params) {
 
     for (const auto &[key, value] : params) {
         if (key == "conf" || key == "pool" || key == "name") {
+            continue;
+        }
+        // Reserved ahead of the unknown-key rule; the exact match leaves
+        // `ceph.status_wait_us` a normal Ceph option.
+        if (key == "status_wait_us") {
+            if (!parseStatusWaitUs(value, config.status_wait_us)) {
+                return std::nullopt;
+            }
             continue;
         }
         if (key.rfind(kCephPrefix, 0) != 0 || key.size() == kCephPrefixLength) {

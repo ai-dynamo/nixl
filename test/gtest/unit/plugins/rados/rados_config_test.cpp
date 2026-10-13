@@ -17,6 +17,7 @@
  */
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -63,17 +64,91 @@ TEST(radosConfigTest, RejectsInvalidParameterTables) {
         EXPECT_FALSE(nixl::rados::parseCustomParams(empty).has_value())
             << "empty " << key << " must be rejected";
     }
+    // The reserved-key match is exact, so near-miss names stay unknown keys.
     for (const char *key : {"rbd_cache",
                             "conf_file",
                             "pool_name",
                             "entity",
                             "rados_conf",
-                            "ceph."}) {
+                            "ceph.",
+                            "status-wait-us",
+                            "STATUS_WAIT_US",
+                            "status_wait",
+                            "xstatus_wait_us"}) {
         auto params = validBase();
         params[key] = "1";
         EXPECT_FALSE(nixl::rados::parseCustomParams(params).has_value())
             << "unprefixed " << key << " must be rejected";
     }
+}
+
+TEST(radosConfigTest, StatusWaitUsStrictDecimalParseTable) {
+    const auto absent = nixl::rados::parseCustomParams(validBase());
+    ASSERT_TRUE(absent.has_value());
+    EXPECT_EQ(absent->status_wait_us, 0U);
+
+    // Digits only, leading zeros valid, the 1,000,000-us ceiling accepted.
+    const std::vector<std::pair<std::string, uint64_t>> accepted = {
+        {"0", 0},
+        {"00000", 0},
+        {"1", 1},
+        {"10", 10},
+        {"000010", 10},
+        {"999999", 999999},
+        {"1000000", 1000000},
+        {"000000000000000000001", 1},
+    };
+    for (const auto &[text, expected] : accepted) {
+        auto params = validBase();
+        params["status_wait_us"] = text;
+        const auto config = nixl::rados::parseCustomParams(params);
+        ASSERT_TRUE(config.has_value()) << "value '" << text << "' must parse";
+        EXPECT_EQ(config->status_wait_us, expected) << "value '" << text << "'";
+        EXPECT_TRUE(config->ceph_options.empty()) << "reserved key must not reach Ceph options";
+    }
+
+    // Malformed spellings and above-ceiling/overflowing values are failures,
+    // not truncations.
+    for (const char *text : {"",
+                             "-1",
+                             "+1",
+                             " 1",
+                             "1 ",
+                             "\t1",
+                             "1.0",
+                             "1,000",
+                             "1e3",
+                             "0x10",
+                             "abc",
+                             "1_0",
+                             "1000001",
+                             "99999999999999999999999999",
+                             "18446744073709551615",
+                             "18446744073709551616"}) {
+        auto params = validBase();
+        params["status_wait_us"] = text;
+        EXPECT_FALSE(nixl::rados::parseCustomParams(params).has_value())
+            << "value '" << text << "' must be rejected";
+    }
+}
+
+TEST(radosConfigTest, KeepsCephStatusWaitUsAsNormalCephOption) {
+    // The exact reserved-key match leaves `ceph.status_wait_us` a Ceph option.
+    auto params = validBase();
+    params["ceph.status_wait_us"] = "4242";
+    auto config = nixl::rados::parseCustomParams(params);
+    ASSERT_TRUE(config.has_value());
+    EXPECT_EQ(config->status_wait_us, 0U);
+    EXPECT_EQ(config->ceph_options,
+              nixl::rados::ceph_options_t({{"status_wait_us", "4242"}}));
+
+    // Both spellings coexist: engine budget and Ceph option are distinct.
+    params["status_wait_us"] = "500";
+    config = nixl::rados::parseCustomParams(params);
+    ASSERT_TRUE(config.has_value());
+    EXPECT_EQ(config->status_wait_us, 500U);
+    EXPECT_EQ(config->ceph_options,
+              nixl::rados::ceph_options_t({{"status_wait_us", "4242"}}));
 }
 
 } // namespace gtest::rados

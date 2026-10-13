@@ -30,6 +30,27 @@
 #include "rados_capi.h"
 #include "rados_config.h"
 
+namespace nixl::rados {
+
+// Timeout-only status-wait seam: no wake channel or early wakeup, and the
+// cApi surface never learns a timer exists.
+class statusWaitTimer {
+public:
+    statusWaitTimer(const statusWaitTimer &) = delete;
+    statusWaitTimer &
+    operator=(const statusWaitTimer &) = delete;
+    virtual ~statusWaitTimer() = default;
+
+    // Block for the budget; the caller holds no registry or request lock.
+    virtual void
+    sleep(uint64_t budget_us) = 0;
+
+protected:
+    statusWaitTimer() = default;
+};
+
+} // namespace nixl::rados
+
 class nixlRadosObjectMD : public nixlBackendMD {
 public:
     nixlRadosObjectMD(uint64_t dev_id, std::string object_key)
@@ -52,7 +73,8 @@ public:
     explicit nixlRadosEngine(const nixlBackendInitParams *init_params);
 
     nixlRadosEngine(const nixlBackendInitParams *init_params,
-                    std::unique_ptr<nixl::rados::cApi> capi);
+                    std::unique_ptr<nixl::rados::cApi> capi,
+                    std::unique_ptr<nixl::rados::statusWaitTimer> status_wait_timer = nullptr);
 
     ~nixlRadosEngine() override;
 
@@ -136,6 +158,8 @@ private:
     drainRequestState(const std::shared_ptr<directRequestState> &state) const;
 
     std::unique_ptr<nixl::rados::cApi> capi_;
+    uint64_t statusWaitBudgetUs_ = 0;
+    std::unique_ptr<nixl::rados::statusWaitTimer> statusWaitTimer_;
     rados_t cluster_ = nullptr;
     rados_ioctx_t ioctx_ = nullptr;
     mutable librados::IoCtx cppCtx_;

@@ -18,11 +18,13 @@
 #include "rados_backend.h"
 
 #include <cerrno>
+#include <chrono>
 #include <climits>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -191,6 +193,16 @@ bootstrapClient(nixl::rados::cApi &capi,
     return true;
 }
 
+// Production seam: a plain per-call timeout for the configured budget;
+// scheduler delivery delay lies outside it (see the plugin README).
+class thisThreadStatusWaitTimer final : public nixl::rados::statusWaitTimer {
+public:
+    void
+    sleep(uint64_t budget_us) override {
+        std::this_thread::sleep_for(std::chrono::microseconds(budget_us));
+    }
+};
+
 } // namespace
 
 class directRequestState {
@@ -348,7 +360,8 @@ nixlRadosEngine::nixlRadosEngine(const nixlBackendInitParams *init_params)
     : nixlRadosEngine(init_params, std::make_unique<nixl::rados::libRados>()) {}
 
 nixlRadosEngine::nixlRadosEngine(const nixlBackendInitParams *init_params,
-                                 std::unique_ptr<nixl::rados::cApi> capi)
+                                 std::unique_ptr<nixl::rados::cApi> capi,
+                                 std::unique_ptr<nixl::rados::statusWaitTimer> status_wait_timer)
     : nixlBackendEngine(init_params),
       capi_(std::move(capi)) {
     if (capi_ == nullptr) {
@@ -359,10 +372,17 @@ nixlRadosEngine::nixlRadosEngine(const nixlBackendInitParams *init_params,
     const auto config = nixl::rados::parseCustomParams(getCustomParams());
     if (!config) {
         NIXL_ERROR << "RADOS custom parameter validation failed: 'conf', 'pool', and "
-                      "'name' must be non-empty, and every other parameter must be "
-                      "'ceph.<option>'";
+                      "'name' must be non-empty, 'status_wait_us' must be a decimal in "
+                      "[0, 1000000], and every other parameter must be 'ceph.<option>'";
         initErr = true;
         return;
+    }
+    // Only a positive budget adopts the injected timer or creates the
+    // production one; with a zero budget an injected timer is dropped.
+    statusWaitBudgetUs_ = config->status_wait_us;
+    if (statusWaitBudgetUs_ > 0) {
+        statusWaitTimer_ = status_wait_timer ? std::move(status_wait_timer)
+                                             : std::make_unique<thisThreadStatusWaitTimer>();
     }
     initialize(*config);
 }
@@ -755,6 +775,12 @@ nixlRadosEngine::checkXfer(nixlBackendReqH *handle) const {
 
     for (auto &pair : state->pairs()) {
         if (pairUnproven(*capi_, pair)) {
+            // Status wait: one sleep per call with the state lock released,
+            // no rescan; unproven pairs are harvested on the next poll.
+            if (statusWaitTimer_ != nullptr) {
+                slock.unlock();
+                statusWaitTimer_->sleep(statusWaitBudgetUs_);
+            }
             return NIXL_IN_PROG;
         }
         if (pairOwned(pair)) {

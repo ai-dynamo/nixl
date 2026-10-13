@@ -101,6 +101,7 @@ Passed as the `nixl_b_params_t` map to `createBackend("RADOS", ...)`:
 | `conf` | Path to a readable Ceph configuration file | Yes |
 | `name` | Full Ceph entity name (normally `client.<id>`) | Yes |
 | `pool` | RADOS pool opened at backend initialization | Yes |
+| `status_wait_us` | Optional bounded status wait for `checkXfer` polling: strict ASCII decimal (`[0-9]+`, leading zeros valid) in `[0, 1000000]` microseconds; absent or `0` keeps polling fully nonblocking; malformed or above-ceiling values fail backend creation (see Bounded status wait) | No |
 | `ceph.<option>` | Any other parameter; the prefix is stripped and the option/value are applied verbatim to the Ceph configuration (empty values allowed) | No |
 
 Backend creation is synchronous: at initialization the backend creates a
@@ -113,13 +114,36 @@ the connection is made. The `ceph.rados_mon_op_timeout` and
 `ceph.rados_osd_op_timeout` client timeouts (whole seconds; both default to
 `0`, unlimited) are forwarded before connect. Authentication and keyring
 resolution are handled by Ceph through `conf` and the overrides; the plugin
-interprets nothing beyond the three required keys. A missing or empty `conf`,
-`name`, or `pool`, a parameter that is neither one of those keys nor
-`ceph.<option>` (including the bare key `ceph.`), or a failure to connect or
-open the pool makes `createBackend()` return an error without a usable
+interprets nothing beyond the three required keys and the numeric
+`status_wait_us` budget. A missing or empty `conf`, `name`, or `pool`, an
+invalid `status_wait_us` value, a parameter that is neither one of those keys
+nor `ceph.<option>` (including the bare key `ceph.`), or a failure to connect
+or open the pool makes `createBackend()` return an error without a usable
 backend. The opened pool is fixed for the backend instance's lifetime;
 working with several pools means creating separate backend instances (each
 with its own `pool` parameter), as the public agent API permits.
+
+### Bounded status wait (`status_wait_us`)
+
+An experimental polling knob, reserved ahead of the unknown-key rule;
+`ceph.status_wait_us` remains a normal Ceph option override.
+
+- Absent or `0` (leading zeros valid, e.g. `"00000"`): `checkXfer` stays
+  strictly nonblocking and the engine allocates and retains no timer, so the
+  sleep is unreachable.
+- Above `0` (ceiling 1,000,000 us): when a `checkXfer` poll of an ACTIVE
+  request reaches its first unproven pair, the call releases the request-state
+  lock, sleeps exactly once for the configured budget (a plain timeout, no
+  early wake-up, no lock held), and returns `NIXL_IN_PROG` without rescanning;
+  pairs that would complete during the sleep — and pairs after that first
+  unproven one — are harvested on the caller's next poll. The C/C++ librados
+  surface reports only combined complete-and-callback status, so an
+  operationally complete but callback-unretired completion counts as unproven
+  and may trigger the sleep.
+- The budget is an intended sleep, not a wall-clock bound: scheduler delivery
+  delay lies outside it. Release and teardown drain through the completion
+  waits and never through this timer; overlapping a sleep with another
+  thread's release or teardown stays outside the one-caller-per-handle rule.
 
 ### Registration and object-key mapping
 
@@ -173,10 +197,12 @@ with its own `pool` parameter), as the public agent API permits.
 - A posted request can be re-posted only from a terminal status: the previous
   round's results are fully reset and the same prepared ranges are submitted
   again from the current contents of the caller's buffers.
-- Status polling never blocks: while submitted operations are still
+- Status polling never blocks by default: while submitted operations are still
   running the request reports in-progress; once all have completed, per-pair
   results are collected and the overall request status is the first non-success
-  in descriptor-pair order.
+  in descriptor-pair order. With `status_wait_us` above 0, a poll that reaches
+  an unproven pair may first take a single budgeted timeout sleep outside the
+  request-state lock before reporting in-progress (see Bounded status wait).
 - Releasing a request (`releaseXferReq`) is cleanup, not result reporting:
   the I/O outcome is whatever the polled terminal status was, and a successful
   release only means the request's resources and references to caller memory
@@ -241,6 +267,9 @@ independently observe librados' internal last-reference destruction moment.
 
 - `nixlRadosEngine` (`rados_backend.h/.cpp`): the backend engine
   implementing registration, transfers, status polling, and draining release.
+- `nixl::rados::statusWaitTimer` (`rados_backend.h/.cpp`): the
+  engine-owned timeout-only sleep seam, present exactly when
+  `status_wait_us > 0`.
 - `nixl::rados::parseCustomParams()` (`rados_config.h`):
   parameter parsing and validation for the table above.
 
