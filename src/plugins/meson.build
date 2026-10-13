@@ -13,6 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if 'UCX' in static_plugins and not enabled_plugins.get('UCX')
+    error('UCX cannot be listed in static_plugins when UCX is disabled')
+endif
+
 if enabled_plugins.get('UCX')
     if not ucx_dep.found() and is_explicit_enable
         error('UCX plugin requested but UCX dependency not found')
