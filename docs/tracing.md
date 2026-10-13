@@ -301,14 +301,13 @@ ninja -C build test/gtest/unit/unit test/gtest/gtest
     --gtest_filter='ucxTraceContextPropagation.*'
 ```
 
-The two-process test forks a receiver agent and checks the spans both agents record
-against the sender's request; with `-Dwith_trace=false`, which compiles the sender's
-span out, it checks the receiver's alone. Both agents trace through `recorder`, a test-only backend
-(`libtrace_backend_recorder.so` in the mocks directory) that appends one line per
-finished span to the file named by `NIXL_TEST_TRACE_FILE`; the test sets both
-variables itself. The ASan and TSan suites skip it, because UCX's CMA transport probes
-the peer process with `process_vm_readv`, which their interceptors cannot follow; run
-it under those sanitizers with `UCX_TLS=^cma`.
+The two-process test starts its receiver agent as a separate executable,
+`ucx_trace_receiver`, which is built and installed next to `gtest`, and checks the
+spans both agents record against the sender's request; with `-Dwith_trace=false`,
+which compiles the sender's span out, it checks the receiver's alone. Both agents
+trace through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in the
+mocks directory) that appends one line per finished span to the file named by
+`NIXL_TEST_TRACE_FILE`; the test sets both variables itself.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
 test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically

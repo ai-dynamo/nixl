@@ -21,20 +21,24 @@
 #include "tracing/trace_context.h"
 #include "transfer_request.h"
 #include "ucx_backend.h"
+#include "ucx_trace_peer.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <fcntl.h>
 #include <poll.h>
+#include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <chrono>
 #include <csignal>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <set>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -44,17 +48,18 @@
 namespace {
 
 using span_record_t = std::vector<std::string>;
+using ucx_trace_peer::address;
+using ucx_trace_peer::agentConfig;
+using ucx_trace_peer::buffer_size;
+using ucx_trace_peer::efa_warning;
+using ucx_trace_peer::poll_interval;
+using ucx_trace_peer::receiver_name;
+using ucx_trace_peer::sender_name;
+using ucx_trace_peer::tagged_msg;
+using ucx_trace_peer::untagged_msg;
+using ucx_trace_peer::wait_timeout;
 
-constexpr const char *sender_name = "sender";
-constexpr const char *receiver_name = "receiver";
-constexpr const char *tagged_msg = "tagged";
-constexpr const char *untagged_msg = "untagged";
-constexpr const char *efa_warning =
-    "Amazon EFA\\(s\\) were detected, but the UCX backend was configured";
-constexpr size_t buffer_size = 4096;
-constexpr std::chrono::seconds wait_timeout{30};
 constexpr int wait_timeout_ms = static_cast<int>(std::chrono::milliseconds(wait_timeout).count());
-constexpr std::chrono::milliseconds poll_interval{10};
 
 [[nodiscard]] std::string
 olderSenderNotif(const std::string &agent, const std::string &msg) {
@@ -65,28 +70,21 @@ olderSenderNotif(const std::string &agent, const std::string &msg) {
 }
 
 [[nodiscard]] bool
-sendByte(int fd) {
-    const char byte = 1;
-    return ::write(fd, &byte, 1) == 1;
-}
-
-[[nodiscard]] bool
-awaitByte(int fd) {
+awaitBytes(int fd, void *data, size_t size) {
     pollfd pfd{fd, POLLIN, 0};
-    char byte = 0;
-    return (::poll(&pfd, 1, wait_timeout_ms) > 0) && (::read(fd, &byte, 1) == 1);
+    return (::poll(&pfd, 1, wait_timeout_ms) > 0) &&
+        (::read(fd, data, size) == static_cast<ssize_t>(size));
 }
 
-[[nodiscard]] nixlAgentConfig
-agentConfig() {
-    nixlAgentConfig cfg;
-    cfg.useProgThread = true;
-    return cfg;
-}
-
-[[nodiscard]] uintptr_t
-address(const std::vector<char> &buffer) {
-    return reinterpret_cast<uintptr_t>(buffer.data());
+[[nodiscard]] std::optional<std::string>
+pluginDirsArg() {
+    std::ifstream cmdline("/proc/self/cmdline", std::ios::binary);
+    for (std::string arg; std::getline(cmdline, arg, '\0');) {
+        if (arg.starts_with("--tests_plugin_dirs=")) {
+            return arg;
+        }
+    }
+    return std::nullopt;
 }
 
 [[nodiscard]] std::vector<span_record_t>
@@ -104,55 +102,6 @@ recordedSpans(const std::filesystem::path &path, std::string_view agent, std::st
     return spans;
 }
 
-[[nodiscard]] int
-runReceiver(int up_fd,
-            int down_fd,
-            const std::vector<char> &buffer,
-            const std::filesystem::path &md_file) {
-    const size_t problems = gtest::LogProblemCounter::getProblemCount();
-    {
-        const gtest::LogIgnoreGuard efa(efa_warning);
-        nixlAgent receiver(receiver_name, agentConfig());
-        nixlBackendH *backend = nullptr;
-        nixl_reg_dlist_t regs(DRAM_SEG);
-        regs.addDesc(nixlBlobDesc(address(buffer), buffer.size(), 0));
-        std::string md;
-        if ((receiver.createBackend("UCX", {}, backend) != NIXL_SUCCESS) ||
-            (receiver.registerMem(regs) != NIXL_SUCCESS) ||
-            (receiver.getLocalMD(md) != NIXL_SUCCESS)) {
-            return 1;
-        }
-        std::ofstream(md_file, std::ios::binary) << md;
-        if (!sendByte(up_fd)) {
-            return 2;
-        }
-
-        nixl_notifs_t notifs;
-        const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
-        while ((notifs[sender_name].size() < 2) && (std::chrono::steady_clock::now() < deadline)) {
-            if (receiver.getNotifs(notifs) != NIXL_SUCCESS) {
-                return 3;
-            }
-            std::this_thread::sleep_for(poll_interval);
-        }
-        const std::multiset<std::string> received(notifs[sender_name].begin(),
-                                                  notifs[sender_name].end());
-        if (received != std::multiset<std::string>{tagged_msg, untagged_msg}) {
-            return 4;
-        }
-        if (!sendByte(up_fd)) {
-            return 5;
-        }
-
-        char quit = 0;
-        while (::read(down_fd, &quit, 1) > 0) {}
-        if (receiver.deregisterMem(regs) != NIXL_SUCCESS) {
-            return 6;
-        }
-    }
-    return (gtest::LogProblemCounter::getProblemCount() == problems) ? 0 : 7;
-}
-
 class ucxTraceContextPropagation : public testing::Test {
 protected:
     void
@@ -161,8 +110,10 @@ protected:
             ("nixl_trace_recorder_" + std::to_string(::getpid()));
         traceFile = prefix.string() + ".spans";
         mdFile = prefix.string() + ".md";
+        receiverLog = prefix.string() + ".log";
         std::filesystem::remove(traceFile);
         std::filesystem::remove(mdFile);
+        std::filesystem::remove(receiverLog);
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
         env.unsetVar("NIXL_ETCD_ENDPOINTS");
         env.unsetVar("NIXL_TCPSTORE_ENDPOINT");
@@ -179,11 +130,61 @@ protected:
         }
         std::filesystem::remove(traceFile);
         std::filesystem::remove(mdFile);
+        std::filesystem::remove(receiverLog);
+    }
+
+    void
+    startReceiver(int up_fd, int down_fd) {
+        const auto binary = std::filesystem::read_symlink("/proc/self/exe").parent_path() /
+            ucx_trace_peer::receiver_binary;
+        ASSERT_TRUE(std::filesystem::exists(binary)) << binary;
+        std::vector<std::string> args{binary.string()};
+        if (const auto dirs = pluginDirsArg()) {
+            args.push_back(*dirs);
+        }
+        std::vector<std::string> vars{
+            std::string(ucx_trace_peer::up_fd_var) + "=" + std::to_string(up_fd),
+            std::string(ucx_trace_peer::down_fd_var) + "=" + std::to_string(down_fd),
+            std::string(ucx_trace_peer::md_file_var) + "=" + mdFile.string()};
+        for (char **entry = environ; *entry != nullptr; ++entry) {
+            const std::string_view var(*entry);
+            if (!var.starts_with("GTEST_") && !var.starts_with("XML_OUTPUT_FILE=") &&
+                !var.starts_with("TEST_PREMATURE_EXIT_FILE=")) {
+                vars.emplace_back(var);
+            }
+        }
+        std::vector<char *> argv;
+        for (std::string &arg : args) {
+            argv.push_back(arg.data());
+        }
+        argv.push_back(nullptr);
+        std::vector<char *> envp;
+        for (std::string &var : vars) {
+            envp.push_back(var.data());
+        }
+        envp.push_back(nullptr);
+
+        posix_spawn_file_actions_t actions;
+        ASSERT_EQ(::posix_spawn_file_actions_init(&actions), 0);
+        ::posix_spawn_file_actions_addopen(
+            &actions, STDOUT_FILENO, receiverLog.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        ::posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
+        const int rc = ::posix_spawn(
+            &receiverPid, binary.c_str(), &actions, nullptr, argv.data(), envp.data());
+        ::posix_spawn_file_actions_destroy(&actions);
+        ASSERT_EQ(rc, 0) << std::strerror(rc);
+    }
+
+    [[nodiscard]] std::string
+    receiverOutput() const {
+        std::ifstream log(receiverLog);
+        return "\nreceiver output:\n" + std::string(std::istreambuf_iterator<char>(log), {});
     }
 
     gtest::ScopedEnv env;
     std::filesystem::path traceFile;
     std::filesystem::path mdFile;
+    std::filesystem::path receiverLog;
     pid_t receiverPid = -1;
 };
 
@@ -301,7 +302,6 @@ TEST(UcxTraceContextWire, OlderSenderNotificationParsesWithoutLogging) {
 }
 
 TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
-    std::vector<char> receiver_buffer(buffer_size);
     const std::vector<char> sender_buffer(buffer_size, 'x');
     int up[2];
     int down[2];
@@ -311,23 +311,9 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     ASSERT_EQ(::pipe(down), 0);
     nixl::scopedFd down_read(down[0]);
     nixl::scopedFd down_write(down[1]);
-
-    // Fork before creating any agent, while this process is still single-threaded;
-    // the child registers receiver_buffer at the address the parent writes to.
-    receiverPid = ::fork();
-    ASSERT_GE(receiverPid, 0);
-    if (receiverPid == 0) {
-        up_read.reset();
-        down_write.reset();
-        int rc = 0;
-        try {
-            rc = runReceiver(up_write.get(), down_read.get(), receiver_buffer, mdFile);
-        }
-        catch (...) {
-            rc = 8;
-        }
-        ::_exit(rc);
-    }
+    ASSERT_EQ(::fcntl(up_read.get(), F_SETFD, FD_CLOEXEC), 0);
+    ASSERT_EQ(::fcntl(down_write.get(), F_SETFD, FD_CLOEXEC), 0);
+    ASSERT_NO_FATAL_FAILURE(startReceiver(up_write.get(), down_read.get()));
     up_write.reset();
     down_read.reset();
 
@@ -339,7 +325,9 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     nixl_reg_dlist_t regs(DRAM_SEG);
     regs.addDesc(nixlBlobDesc(address(sender_buffer), buffer_size, 0));
     ASSERT_EQ(sender.registerMem(regs), NIXL_SUCCESS);
-    ASSERT_TRUE(awaitByte(up_read.get())) << "the receiver did not publish its metadata";
+    uintptr_t receiver_address = 0;
+    ASSERT_TRUE(awaitBytes(up_read.get(), &receiver_address, sizeof(receiver_address)))
+        << "the receiver did not publish its metadata" << receiverOutput();
     std::ifstream md_stream(mdFile, std::ios::binary);
     const std::string receiver_md{std::istreambuf_iterator<char>(md_stream), {}};
     std::string loaded_name;
@@ -348,7 +336,7 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     nixl_xfer_dlist_t src(DRAM_SEG);
     src.addDesc(nixlBasicDesc(address(sender_buffer), buffer_size, 0));
     nixl_xfer_dlist_t dst(DRAM_SEG);
-    dst.addDesc(nixlBasicDesc(address(receiver_buffer), buffer_size, 0));
+    dst.addDesc(nixlBasicDesc(receiver_address, buffer_size, 0));
     nixl_opt_args_t extra_params;
     extra_params.notif = tagged_msg;
     nixlXferReqH *req = nullptr;
@@ -367,7 +355,9 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
     ASSERT_EQ(sender.genNotif(receiver_name, untagged_msg), NIXL_SUCCESS);
 
-    ASSERT_TRUE(awaitByte(up_read.get())) << "the receiver did not get both notifications";
+    char ack = 0;
+    ASSERT_TRUE(awaitBytes(up_read.get(), &ack, 1))
+        << "the receiver did not get both notifications" << receiverOutput();
     ASSERT_EQ(sender.invalidateRemoteMD(receiver_name), NIXL_SUCCESS);
     ASSERT_EQ(sender.deregisterMem(regs), NIXL_SUCCESS);
     down_write.reset();
@@ -375,7 +365,7 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     ASSERT_EQ(::waitpid(receiverPid, &receiver_status, 0), receiverPid);
     receiverPid = -1;
     ASSERT_TRUE(WIFEXITED(receiver_status));
-    EXPECT_EQ(WEXITSTATUS(receiver_status), 0);
+    EXPECT_EQ(WEXITSTATUS(receiver_status), 0) << receiverOutput();
     EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
 
     const std::string correlation = "correlation=" + std::to_string(context.correlationId64());
