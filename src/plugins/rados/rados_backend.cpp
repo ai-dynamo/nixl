@@ -172,7 +172,7 @@ private:
     bool view_held_ = false;
 };
 
-// Bring up the rados client (create2 -> conf -> overrides -> connect -> pool
+// Bring up one rados client (create2 -> conf -> overrides -> connect -> pool
 // ioctx -> optional namespace -> non-owning view) from the parsed config. On
 // success the raw handles move into the out-params for engine ownership; on
 // any failure everything acquired so far unwinds here and nothing is taken.
@@ -457,6 +457,12 @@ nixlRadosEngine::initialize(const nixl::rados::backendConfig &config) {
     clusterCreated_ = true;
     ioctxOpen_ = true;
     cppCtxOpen_ = true;
+    if (!bootstrapClient(*capi_, config, &metaCppCtx_, metaCluster_, metaIoctx_)) {
+        NIXL_ERROR << "RADOS metadata stat client initialization failed";
+        initErr = true;
+        return;
+    }
+    metaClientOpen_ = true;
 }
 
 nixlRadosEngine::~nixlRadosEngine() {
@@ -475,6 +481,12 @@ nixlRadosEngine::~nixlRadosEngine() {
         alock.lock();
     }
     alock.unlock();
+    if (metaClientOpen_) {
+        capi_->ioCtxClose(&metaCppCtx_);
+        capi_->ioctx_destroy(metaIoctx_);
+        capi_->shutdown(metaCluster_);
+        metaClientOpen_ = false;
+    }
     if (cppCtxOpen_) {
         capi_->ioCtxClose(&cppCtx_);
         cppCtxOpen_ = false;
@@ -577,7 +589,7 @@ nixlRadosEngine::queryMem(const nixl_reg_dlist_t &descs,
                 continue;
             }
             const int submit_ret = capi_->cppAioStat(
-                &cppCtx_, slot.oid.c_str(), slot.comp, &slot.size, &slot.prval, &slot.merged);
+                &metaCppCtx_, slot.oid.c_str(), slot.comp, &slot.size, &slot.prval, &slot.merged);
             if (submit_ret != 0) {
                 capi_->cppRelease(slot.comp);
                 slot.comp = nullptr;

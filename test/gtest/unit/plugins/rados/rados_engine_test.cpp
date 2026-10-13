@@ -127,6 +127,14 @@ namespace {
 
         int connect_rc = 0;
 
+        // Per-method call ordinals (0-based) that fail with -EINVAL, used to make
+        // the second (metadata) client's bootstrap fail while the data client succeeds.
+        int create2_fail_ordinal = -1;
+        int conf_read_file_fail_ordinal = -1;
+        int conf_set_fail_ordinal = -1;
+        int connect_fail_ordinal = -1;
+        int ioctx_create_fail_ordinal = -1;
+
         int c_create_completion_fail_after = -1;
         int c_submit_fail_after = -1;
         int cpp_create_completion_fail_after = -1;
@@ -152,6 +160,8 @@ namespace {
         std::vector<std::string> conf_paths;
         std::vector<std::string> pools;
         std::string object_namespace;
+        std::vector<std::string> namespaces;
+        std::vector<librados::IoCtx *> stat_ctxs;
         std::vector<librados::IoCtx *> write_ctxs;
         std::vector<size_t> read_ioctx_ordinals;
         wait_gate gate;
@@ -229,6 +239,10 @@ namespace {
         create2(rados_t *cluster, const char *, const char *name, uint64_t) override {
             log->push_back("create2");
             create2_names.push_back(name);
+            if (create2_fail_ordinal >= 0 &&
+                static_cast<size_t>(create2_fail_ordinal) == clusters.size()) {
+                return -EINVAL;
+            }
             *cluster = makeClusterToken(clusters.size());
             clusters.push_back({*cluster, true});
             return 0;
@@ -241,6 +255,11 @@ namespace {
             if (!requireLiveCluster(cluster)) {
                 return -EINVAL;
             }
+            const size_t ordinal = conf_read_file_calls++;
+            if (conf_read_file_fail_ordinal >= 0 &&
+                static_cast<size_t>(conf_read_file_fail_ordinal) == ordinal) {
+                return -EINVAL;
+            }
             return 0;
         }
 
@@ -249,6 +268,11 @@ namespace {
             log->push_back(std::string("conf_set:") + option);
             options.emplace_back(option, value);
             if (!requireLiveCluster(cluster)) {
+                return -EINVAL;
+            }
+            const size_t ordinal = conf_set_calls++;
+            if (conf_set_fail_ordinal >= 0 &&
+                static_cast<size_t>(conf_set_fail_ordinal) == ordinal) {
                 return -EINVAL;
             }
             return 0;
@@ -263,6 +287,10 @@ namespace {
             if (connect_rc != 0) {
                 return connect_rc;
             }
+            const size_t ordinal = connect_calls++;
+            if (connect_fail_ordinal >= 0 && static_cast<size_t>(connect_fail_ordinal) == ordinal) {
+                return -EINVAL;
+            }
             return 0;
         }
 
@@ -271,6 +299,11 @@ namespace {
             log->push_back("ioctx_create");
             pools.push_back(pool);
             if (!requireLiveCluster(cluster)) {
+                return -EINVAL;
+            }
+            const size_t ordinal = ioctx_create_calls++;
+            if (ioctx_create_fail_ordinal >= 0 &&
+                static_cast<size_t>(ioctx_create_fail_ordinal) == ordinal) {
                 return -EINVAL;
             }
             *ioctx = makeIoctxToken(ioctxs.size());
@@ -286,6 +319,9 @@ namespace {
             }
             EXPECT_NE(nspace, nullptr);
             object_namespace = nspace;
+            if (nspace != nullptr) {
+                namespaces.emplace_back(nspace);
+            }
         }
 
         void
@@ -483,6 +519,7 @@ namespace {
                    std::optional<librados::bufferlist> *pbl) override {
             log->push_back("cpp_aio_stat");
             EXPECT_NE(ctx, nullptr);
+            stat_ctxs.push_back(ctx);
             fakeCppCompletion *comp = asCpp(completion);
             if (comp == nullptr) {
                 violations += "C++ async stat submitted with a foreign completion token\n";
@@ -690,6 +727,10 @@ namespace {
         };
         std::vector<cluster_rec> clusters;
         std::vector<ioctx_rec> ioctxs;
+        size_t conf_read_file_calls = 0;
+        size_t conf_set_calls = 0;
+        size_t connect_calls = 0;
+        size_t ioctx_create_calls = 0;
 
         static rados_t
         makeClusterToken(size_t ordinal) {
@@ -878,7 +919,7 @@ TEST_F(radosEngineFixture, RejectsInvalidParamsBeforeAnyAPICall) {
     EXPECT_TRUE(null_seam.getInitErr());
 }
 
-TEST_F(radosEngineFixture, BootstrapsClientAndRetiresResources) {
+TEST_F(radosEngineFixture, BootstrapsTwoClientsAndRetiresMetadataFirst) {
     auto params = validBase();
     params["ceph.zeta"] = "3";
     params["ceph.alpha"] = "";
@@ -894,40 +935,57 @@ TEST_F(radosEngineFixture, BootstrapsClientAndRetiresResources) {
     const std::vector<std::string> client_teardown{"ioctx_close", "ioctx_destroy", "shutdown"};
 
     fakeCApi *fake = nullptr;
+    std::shared_ptr<std::vector<librados::IoCtx *>> binds;
+    std::shared_ptr<std::vector<librados::IoCtx *>> closes;
     {
         auto engine = makeEngine(&fake);
         ASSERT_FALSE(engine->getInitErr());
-        EXPECT_EQ(*log, client_bootstrap);
-        EXPECT_EQ(fake->create2_names, (std::vector<std::string>{"client.qa"}));
-        EXPECT_EQ(fake->conf_paths, (std::vector<std::string>{"fixture.conf"}));
-        EXPECT_EQ(fake->pools, (std::vector<std::string>{"qa-pool"}));
+        std::vector<std::string> running = client_bootstrap;
+        running.insert(running.end(), client_bootstrap.begin(), client_bootstrap.end());
+        EXPECT_EQ(*log, running);
+        EXPECT_EQ(fake->create2_names, (std::vector<std::string>{"client.qa", "client.qa"}));
+        EXPECT_EQ(fake->conf_paths, (std::vector<std::string>{"fixture.conf", "fixture.conf"}));
+        EXPECT_EQ(fake->pools, (std::vector<std::string>{"qa-pool", "qa-pool"}));
         EXPECT_EQ(fake->options,
-                  (std::vector<std::pair<std::string, std::string>>{{"alpha", ""}, {"zeta", "3"}}));
-        ASSERT_EQ(fake->view_bind_order->size(), 1U);
+                  (std::vector<std::pair<std::string, std::string>>{
+                      {"alpha", ""}, {"zeta", "3"}, {"alpha", ""}, {"zeta", "3"}}));
+        ASSERT_EQ(fake->view_bind_order->size(), 2U);
+        EXPECT_NE((*fake->view_bind_order)[0], (*fake->view_bind_order)[1])
+            << "data and metadata views must be distinct IoCtx objects";
+        binds = fake->view_bind_order;
+        closes = fake->view_close_order;
     }
     std::vector<std::string> final_log = client_bootstrap;
+    final_log.insert(final_log.end(), client_bootstrap.begin(), client_bootstrap.end());
+    final_log.insert(final_log.end(), client_teardown.begin(), client_teardown.end());
     final_log.insert(final_log.end(), client_teardown.begin(), client_teardown.end());
     EXPECT_EQ(*log, final_log);
+    ASSERT_EQ(closes->size(), 2U);
+    EXPECT_EQ((*closes)[0], (*binds)[1]) << "the metadata view must close first";
+    EXPECT_EQ((*closes)[1], (*binds)[0]) << "the data view must close last";
 }
 
-TEST_F(radosEngineFixture, NamespaceConfiguredOnceBetweenIoctxCreateAndView) {
+TEST_F(radosEngineFixture, NamespaceConfiguredOncePerClientBetweenIoctxCreateAndView) {
     custom_params_ = validBase();
     custom_params_["namespace"] = "qa-ns";
     fakeCApi *fake = nullptr;
     {
         auto engine = makeEngine(&fake);
         ASSERT_FALSE(engine->getInitErr());
-        EXPECT_EQ(*log,
-                  (std::vector<std::string>{"create2",
-                                            "conf_read_file",
-                                            "connect",
-                                            "ioctx_create",
-                                            "ioctx_set_namespace",
-                                            "ioctx_from_raw"}));
+        const std::vector<std::string> client_bootstrap{"create2",
+                                                        "conf_read_file",
+                                                        "connect",
+                                                        "ioctx_create",
+                                                        "ioctx_set_namespace",
+                                                        "ioctx_from_raw"};
+        std::vector<std::string> running = client_bootstrap;
+        running.insert(running.end(), client_bootstrap.begin(), client_bootstrap.end());
+        EXPECT_EQ(*log, running);
         EXPECT_EQ(fake->object_namespace, "qa-ns");
+        EXPECT_EQ(fake->namespaces, (std::vector<std::string>{"qa-ns", "qa-ns"}));
+        EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_set_namespace")), 2)
+            << "each client's raw ioctx must be configured exactly once";
     }
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_set_namespace")), 1)
-        << "the one raw ioctx must be configured exactly once";
 }
 
 TEST_F(radosEngineFixture, BootstrapFailureUnwindsAndGatesRegistration) {
@@ -1985,7 +2043,7 @@ TEST_F(radosEngineFixture, QueryResolvesBeforeReturnWithoutStatusWaitTimer) {
 TEST_F(radosEngineFixture, ReadsUseRawIoctxWritesUseBoundView) {
     fakeCApi *fake = nullptr;
     auto engine = makeReady(&fake);
-    ASSERT_EQ(fake->view_bind_order->size(), 1U);
+    ASSERT_EQ(fake->view_bind_order->size(), 2U);
     const librados::IoCtx *view = (*fake->view_bind_order)[0];
 
     nixlBackendMD *md_w = registerObject(*engine, 1, "iso-w");
@@ -2198,7 +2256,118 @@ TEST_F(radosEngineFixture, WaitNeverSleepsOutsideActivePairScans) {
     EXPECT_TRUE(tstate->destroyed);
     EXPECT_EQ(std::count(log->begin(), log->end(), std::string("c_wait_for_complete_and_cb")), 2);
     EXPECT_EQ(std::count(log->begin(), log->end(), std::string("c_release")), 2);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_close")), 1);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_close")), 2);
+}
+
+TEST_F(radosEngineFixture, MetadataBootstrapFailureUnwindsWithoutLeak) {
+    struct entry {
+        const char *name;
+        int fakeCApi::*fail_field;
+        std::vector<std::string> metadata_attempt;
+    };
+
+    // A metadata-client stage failure must leave the data client fully
+    // bootstrapped, the engine init-errored, and every acquired metadata
+    // resource unwound by the bootstrap RAII before the data teardown.
+    const entry stages[] = {
+        {"meta create2", &fakeCApi::create2_fail_ordinal, {"create2"}},
+        {"meta conf_read_file",
+         &fakeCApi::conf_read_file_fail_ordinal,
+         {"create2", "conf_read_file", "shutdown"}},
+        {"meta connect",
+         &fakeCApi::connect_fail_ordinal,
+         {"create2", "conf_read_file", "connect", "shutdown"}},
+        {"meta ioctx_create",
+         &fakeCApi::ioctx_create_fail_ordinal,
+         {"create2", "conf_read_file", "connect", "ioctx_create", "shutdown"}},
+    };
+
+    for (const auto &stage : stages) {
+        custom_params_ = validBase();
+        auto failing = std::make_unique<fakeCApi>();
+        log = failing->log;
+        auto binds = failing->view_bind_order;
+        (failing.get()->*stage.fail_field) = 1;
+        {
+            nixlRadosEngine engine(&init_params_, std::move(failing));
+            EXPECT_TRUE(engine.getInitErr()) << stage.name;
+
+            nixlBackendMD *md = nullptr;
+            EXPECT_EQ(engine.registerMem(nixlBlobDesc(0, 1024, 1, "obj"), OBJ_SEG, md),
+                      NIXL_ERR_BACKEND)
+                << stage.name;
+
+            nixl_reg_dlist_t descs(OBJ_SEG);
+            descs.addDesc(nixlBlobDesc(0, 0, 1, "obj"));
+            std::vector<nixl_query_resp_t> resp(1, nixl_query_resp_t{nixl_b_params_t{}});
+            EXPECT_EQ(engine.queryMem(descs, resp), NIXL_ERR_BACKEND) << stage.name;
+            EXPECT_FALSE(resp[0].has_value()) << stage.name;
+            EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_aio_stat")), 0)
+                << stage.name;
+            EXPECT_EQ(binds->size(), 1U) << stage.name;
+        }
+        std::vector<std::string> expected{
+            "create2", "conf_read_file", "connect", "ioctx_create", "ioctx_from_raw"};
+        expected.insert(
+            expected.end(), stage.metadata_attempt.begin(), stage.metadata_attempt.end());
+        expected.insert(expected.end(), {"ioctx_close", "ioctx_destroy", "shutdown"});
+        EXPECT_EQ(*log, expected) << stage.name;
+    }
+}
+
+TEST_F(radosEngineFixture, QueryMemUsesMetadataClientAndTransfersUseDataClient) {
+    custom_params_ = validBase();
+    fakeCApi *fake = nullptr;
+    std::shared_ptr<std::vector<librados::IoCtx *>> binds;
+    std::shared_ptr<std::vector<librados::IoCtx *>> closes;
+    {
+        auto engine = makeEngine(&fake);
+        ASSERT_FALSE(engine->getInitErr());
+        ASSERT_EQ(fake->view_bind_order->size(), 2U);
+        binds = fake->view_bind_order;
+        closes = fake->view_close_order;
+        const librados::IoCtx *data_view = (*binds)[0];
+        const librados::IoCtx *meta_view = (*binds)[1];
+        ASSERT_NE(data_view, meta_view);
+        EXPECT_TRUE(fake->write_ctxs.empty());
+        EXPECT_TRUE(fake->stat_ctxs.empty());
+        EXPECT_TRUE(fake->read_ioctx_ordinals.empty());
+
+        nixlBackendMD *md = registerObject(*engine, 1, "iso-obj");
+        std::vector<unsigned char> src(64, 0x77);
+        nixl_meta_dlist_t local(DRAM_SEG);
+        nixl_meta_dlist_t remote(OBJ_SEG);
+        local.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(src.data()), src.size(), 0));
+        remote.addDesc(nixlMetaDesc(0, src.size(), 1));
+
+        nixlBackendReqH *handle = nullptr;
+        ASSERT_EQ(engine->prepXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_SUCCESS);
+        ASSERT_EQ(engine->postXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_IN_PROG);
+        ASSERT_EQ(fake->write_ctxs.size(), 1U);
+        EXPECT_EQ(fake->write_ctxs[0], data_view) << "writes must submit on the data view";
+        EXPECT_TRUE(fake->stat_ctxs.empty()) << "transfers must not touch the metadata client";
+        fake->completeSubmission(0, 0);
+        EXPECT_EQ(engine->checkXfer(handle), NIXL_SUCCESS);
+        EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
+
+        fake->stat_sizes["iso-obj"] = 64;
+        nixl_reg_dlist_t descs(OBJ_SEG);
+        descs.addDesc(nixlBlobDesc(0, 0, 1, "iso-obj"));
+        std::vector<nixl_query_resp_t> resp;
+        ASSERT_EQ(engine->queryMem(descs, resp), NIXL_SUCCESS);
+        ASSERT_TRUE(resp[0].has_value());
+        EXPECT_EQ(resp[0]->at("size"), "64");
+        ASSERT_EQ(fake->stat_ctxs.size(), 1U);
+        EXPECT_EQ(fake->stat_ctxs[0], meta_view) << "queryMem must submit on the metadata view";
+        EXPECT_EQ(fake->write_ctxs[0], data_view) << "the write view must stay the data view";
+        EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
+    }
+    ASSERT_EQ(closes->size(), 2U);
+    EXPECT_EQ((*closes)[0], (*binds)[1]) << "the metadata view must retire first";
+    EXPECT_EQ((*closes)[1], (*binds)[0]) << "the data view must retire last";
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("create2")), 2);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("connect")), 2);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("shutdown")), 2);
 }
 
 } // namespace gtest::rados

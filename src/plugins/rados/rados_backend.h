@@ -170,6 +170,13 @@ private:
     bool ioctxOpen_ = false;
     bool cppCtxOpen_ = false;
 
+    // Independent stat-only client for queryMem, bootstrapped from the same
+    // parsed config; committed and retired as one unit, never by transfer paths.
+    rados_t metaCluster_ = nullptr;
+    rados_ioctx_t metaIoctx_ = nullptr;
+    mutable librados::IoCtx metaCppCtx_;
+    bool metaClientOpen_ = false;
+
     mutable std::mutex objectsMutex_;
     std::unordered_map<uint64_t, std::string> objects_;
 

@@ -110,13 +110,18 @@ Passed as the `nixl_b_params_t` map to `createBackend("RADOS", ...)`:
 | `status_wait_us` | Optional bounded status wait for `checkXfer` polling: strict ASCII decimal (`[0-9]+`, leading zeros valid) in `[0, 1000000]` microseconds; absent or `0` keeps polling fully nonblocking; malformed or above-ceiling values fail backend creation (see Bounded status wait) | No |
 | `ceph.<option>` | Any other parameter; the prefix is stripped and the option/value are applied verbatim to the Ceph configuration (empty values allowed) | No |
 
-Backend creation is synchronous: at initialization the backend creates a
-cluster handle with `name`, reads `conf`, applies the `ceph.<option>`
-overrides, connects, and opens the pool — any of which may block on Ceph
-configuration, authentication, connection, or pool-open work — then points
-the opened ioctx at the optional `namespace` (local handle configuration with
-no Ceph round trip) and binds a non-owning C++ `IoCtx` view of the opened raw
-ioctx for writes. Overrides
+Backend creation is synchronous: at initialization the backend brings up two
+independently connected librados clients from the same parsed parameters — a
+data client that carries transfers (C AIO reads on its raw ioctx, C++ writes
+on its `IoCtx` view) and a metadata-stat client that serves `queryMem()`
+stats only. Each client is created with `name`, reads `conf`, applies the
+`ceph.<option>` overrides, connects, and opens the `pool` — any of which may
+block on Ceph configuration, authentication, connection, or pool-open work —
+then points its ioctx at the optional `namespace` (local handle
+configuration with no Ceph round trip) and binds a non-owning C++ `IoCtx`
+view of its opened raw ioctx. Both clients use the same identity,
+configuration file, overrides, pool, and namespace; backend creation fails if
+either client fails to initialize. Overrides
 therefore always take effect after the configuration file is read and before
 the connection is made. The `ceph.rados_mon_op_timeout` and
 `ceph.rados_osd_op_timeout` client timeouts (whole seconds; both default to
@@ -127,8 +132,9 @@ and the numeric `status_wait_us` budget. A missing or empty `conf`, `name`,
 or `pool`, an invalid `namespace`, an invalid `status_wait_us` value, a
 parameter that is neither one of those keys
 nor `ceph.<option>` (including the bare key `ceph.`), or a failure to connect
-or open the pool makes `createBackend()` return an error without a usable
-backend. The opened pool is fixed for the backend instance's lifetime;
+or open the pool on either client makes `createBackend()` return an error
+without a usable backend. The opened pool is fixed for the backend instance's
+lifetime;
 working with several pools means creating separate backend instances (each
 with its own `pool` parameter), as the public agent API permits.
 
@@ -160,8 +166,8 @@ Reserved ahead of the unknown-key rule, so `ceph.namespace` stays a normal
 Ceph option. Absent keeps the default (unnamed) namespace and the setter is
 never called; a present value must be non-empty, NUL-free, and not the
 all-namespaces sentinel (single `0x01` byte), or creation fails before any
-Ceph access. When set, the setter runs exactly once on the raw ioctx after
-pool open and before the C++ view is bound, so every operation of the
+Ceph access. When set, the setter runs exactly once on each client's raw
+ioctx after pool open and before the C++ view is bound, so every operation of the
 instance resolves within that namespace; other namespaces need separate
 backend instances. External listing or cleanup needs the namespace selected
 (`rados -N <namespace>`), and isolation holds only where cephx caps enforce
@@ -237,9 +243,9 @@ it.
   exactly once — including requests that were never posted or whose posting
   failed outright — and a released handle is finished and must never be used
   again. Destroying the agent blocks the same way: backend teardown drains
-  every still-registered request before closing the pool context and the
-  cluster connection, so release every transfer request before destroying the
-  agent.
+  every still-registered request before closing both clients' pool contexts
+  and cluster connections — the metadata-stat client first, the data client
+  last — so release every transfer request before destroying the agent.
 - Request handles are for one caller at a time: posting, polling, and
   releasing must not overlap on the same handle. The backend coordinates
   nothing across requests (the overlap rejection above applies within one
@@ -273,7 +279,8 @@ parameter, including zero; a missing object is a null entry under
 remaining descriptors, and yields overall `NIXL_ERR_BACKEND`. The query is
 synchronous to the caller — every answer is resolved before the call returns —
 but internally issues asynchronous stats in fixed windows of up to 256
-descriptors, harvesting each window completely before submitting the next.
+descriptors on the metadata-stat client, harvesting each window completely
+before submitting the next; a query never touches the data client.
 Results are point-in-time. A result guarantees neither object completeness nor
 reservation for a later read. The plugin sets no deadline; timeout handling
 belongs to librados/Ceph above (see Custom parameters). Callers must not
