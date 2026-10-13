@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include "backend/backend_plugin.h"
 #include "common.h"
 #include "nixl.h"
 #include "plugin_manager.h"
@@ -38,6 +39,9 @@ const PluginDesc ucx_plugin_desc{.name = "UCX",
                                  .type = PluginDesc::PluginType::Real};
 const PluginDesc gds_plugin_desc{.name = "GDS",
                                  .type = PluginDesc::PluginType::Real};
+#ifdef HAVE_LIBFABRIC
+const PluginDesc libfabric_plugin_desc{.name = "LIBFABRIC", .type = PluginDesc::PluginType::Real};
+#endif
 
 class LoadSinglePluginTestFixture
     : public testing::TestWithParam<PluginDesc> {
@@ -58,7 +62,7 @@ protected:
     if (GetParam().type == PluginDesc::PluginType::Real)
       return;
 #endif
-    plugin_manager_.unloadBackendPlugin(GetParam().name);
+    plugin_manager_.unloadBackendPluginForUnitTest(GetParam().name);
   }
 
   /* Returns true if the plugin was successfully loaded, otherwise false. */
@@ -87,7 +91,7 @@ protected:
       if (plugin.type == PluginDesc::PluginType::Real)
         continue;
 #endif
-      plugin_manager_.unloadBackendPlugin(plugin.name);
+      plugin_manager_.unloadBackendPluginForUnitTest(plugin.name);
     }
   }
 
@@ -115,7 +119,7 @@ protected:
 
   void TearDown() override {
     for (const auto &plugin : loaded_plugins_)
-        plugin_manager_.unloadBackendPlugin(plugin);
+        plugin_manager_.unloadBackendPluginForUnitTest(plugin);
   }
 
   /*
@@ -136,7 +140,7 @@ protected:
   void UnloadPlugin(std::string name) {
     if (loaded_plugins_.find(name) == loaded_plugins_.end())
       return;
-    plugin_manager_.unloadBackendPlugin(name);
+    plugin_manager_.unloadBackendPluginForUnitTest(name);
     loaded_plugins_.erase(name);
   }
 
@@ -169,6 +173,55 @@ TEST_F(LoadedPluginTestFixture, NoLoadedPluginsTest) {
   EXPECT_TRUE(HasOnlyLoadedPlugins());
 }
 
+TEST_F(LoadedPluginTestFixture, DeferredDiscoveryTest) {
+    auto mock = GetMockBackendName();
+    auto avail = plugin_manager_.getAvailBackendPluginNames();
+    auto loaded = plugin_manager_.getLoadedBackendPluginNames();
+
+    // Available plugins should include discovered-but-not-loaded ones
+    EXPECT_GT(avail.size(), loaded.size());
+    EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
+    EXPECT_EQ(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
+
+    // After loading, it should appear in both
+    EXPECT_TRUE(LoadPlugin(mock));
+    loaded = plugin_manager_.getLoadedBackendPluginNames();
+    EXPECT_NE(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
+
+    // After unloading, still available (discovered on disk) but not loaded
+    UnloadPlugin(mock);
+    loaded = plugin_manager_.getLoadedBackendPluginNames();
+    EXPECT_EQ(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
+    avail = plugin_manager_.getAvailBackendPluginNames();
+    EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
+}
+
+TEST_F(LoadedPluginTestFixture, StaleTelemetryPluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+    const LogIgnoreGuard lig_missing("Plugin file does not exist");
+
+    EXPECT_EQ(plugin_manager_.loadTelemetryPlugin("mock_stale"), nullptr);
+    EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
+}
+
+TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+    const LogIgnoreGuard lig_missing("Plugin file does not exist");
+
+    const auto avail = plugin_manager_.getAvailBackendPluginNames();
+    ASSERT_NE(std::find(avail.begin(), avail.end(), "MOCK_STALE_BACKEND"), avail.end());
+
+    EXPECT_EQ(plugin_manager_.loadBackendPlugin("MOCK_STALE_BACKEND"), nullptr);
+
+    const auto loaded = plugin_manager_.getLoadedBackendPluginNames();
+    EXPECT_EQ(std::find(loaded.begin(), loaded.end(), "MOCK_STALE_BACKEND"), loaded.end());
+}
+
+TEST_F(LoadedPluginTestFixture, CurrentPluginApiVersionIsAccepted) {
+    EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
+    EXPECT_EQ(NIXL_PLUGIN_API_VERSION, 3);
+}
+
 TEST_F(LoadedPluginTestFixture, LoadSinglePluginTest) {
     EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
     EXPECT_TRUE(HasOnlyLoadedPlugins());
@@ -178,6 +231,27 @@ TEST_F(LoadedPluginTestFixture, LoadUnloadSimplePluginTest) {
     EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
     UnloadPlugin(GetMockBackendName());
     EXPECT_TRUE(HasOnlyLoadedPlugins());
+}
+
+TEST_F(LoadedPluginTestFixture, LibfabricPluginAdvertisesPostThreadOptions) {
+#if defined(HAVE_LIBFABRIC) && TEST_ALL_PLUGINS
+    auto plugin_handle = plugin_manager_.getBackendPlugin("LIBFABRIC");
+    if (!plugin_handle) {
+        plugin_handle = plugin_manager_.loadBackendPlugin("LIBFABRIC");
+        if (plugin_handle) {
+            loaded_plugins_.insert("LIBFABRIC");
+        }
+    }
+    ASSERT_NE(plugin_handle, nullptr);
+
+    const auto backend_options = plugin_handle->getBackendOptions();
+    ASSERT_NE(backend_options.find("num_threads"), backend_options.end());
+    ASSERT_NE(backend_options.find("split_batch_size"), backend_options.end());
+    EXPECT_EQ(backend_options.at("num_threads"), "0");
+    EXPECT_EQ(backend_options.at("split_batch_size"), "1024");
+#else
+    GTEST_SKIP();
+#endif
 }
 
 /* Load single plugins tests instantiations. */
@@ -191,6 +265,11 @@ INSTANTIATE_TEST_SUITE_P(UcxLoadPluginInstantiation,
 INSTANTIATE_TEST_SUITE_P(GdsLoadPluginInstantiation,
                          LoadSinglePluginTestFixture,
                          testing::Values(gds_plugin_desc));
+#ifdef HAVE_LIBFABRIC
+INSTANTIATE_TEST_SUITE_P(LibfabricLoadPluginInstantiation,
+                         LoadSinglePluginTestFixture,
+                         testing::Values(libfabric_plugin_desc));
+#endif
 
 /* Load multiple plugins tests instantiations. */
 INSTANTIATE_TEST_SUITE_P(UcxGdsLoadMultiplePluginInstantiation,

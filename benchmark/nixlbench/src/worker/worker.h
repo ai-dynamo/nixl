@@ -20,6 +20,7 @@
 
 #include "runtime/runtime.h"
 #include "utils/utils.h"
+#include <atomic>
 #include <string>
 #include <vector>
 #include <variant>
@@ -29,7 +30,7 @@ class xferBenchWorker {
     protected:
         std::string name;
         xferBenchRT *rt;
-        static int terminate;
+        static std::atomic<int> terminate;
 
     public:
         xferBenchWorker();
@@ -39,7 +40,8 @@ class xferBenchWorker {
         bool isMasterRank();
         bool isInitiator();
         bool isTarget();
-        int synchronize();
+        int
+        synchronize(bool finishing = false);
         bool signaled() const { return terminate != 0; }
         static void signalHandler(int signal);
 

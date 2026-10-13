@@ -10,6 +10,7 @@
 #include <aws/s3-crt/model/PutObjectRequest.h>
 #include <aws/s3-crt/model/GetObjectRequest.h>
 #include <aws/s3-crt/model/HeadObjectRequest.h>
+#include <aws/s3-crt/S3CrtErrors.h>
 #include <aws/core/utils/stream/PreallocatedStreamBuf.h>
 #include <aws/core/utils/memory/stl/AWSStringStream.h>
 #include <absl/strings/str_format.h>
@@ -37,6 +38,12 @@ awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
     if (crt_min_limit > 0) {
         config.partSize = crt_min_limit;
         config.multipartUploadThreshold = crt_min_limit;
+    }
+
+    // Optional CRT throughput target in whole Gbps (integer); sizes connection count, default 10.
+    if (const auto opt =
+            nixl::getBackendParamOptional<size_t>(custom_params, "throughput_target_gbps")) {
+        config.throughputTargetGbps = *opt;
     }
 
     auto credentials_opt = nixl_s3_utils::createAWSCredentials(custom_params);
@@ -137,17 +144,46 @@ awsS3CrtClient::getObjectAsync(std::string_view key,
         nullptr);
 }
 
-bool
-awsS3CrtClient::checkObjectExists(std::string_view key) {
+void
+awsS3CrtClient::checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) {
     Aws::S3Crt::Model::HeadObjectRequest request;
     request.WithBucket(bucketName_).WithKey(Aws::String(key));
 
-    auto outcome = s3CrtClient_->HeadObject(request);
-    if (outcome.IsSuccess())
-        return true;
-    else if (outcome.GetError().GetResponseCode() == Aws::Http::HttpResponseCode::NOT_FOUND)
-        return false;
-    else
-        throw std::runtime_error("Failed to check if object exists (CRT): " +
-                                 outcome.GetError().GetMessage());
+    s3CrtClient_->HeadObjectAsync(
+        request,
+        [callback](const Aws::S3Crt::S3CrtClient *,
+                   const Aws::S3Crt::Model::HeadObjectRequest &,
+                   const Aws::S3Crt::Model::HeadObjectOutcome &outcome,
+                   const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+            if (outcome.IsSuccess()) {
+                callback(true);
+            } else {
+                const auto &error = outcome.GetError();
+                auto error_type = error.GetErrorType();
+                auto exception_name = error.GetExceptionName();
+
+                // Object-missing indicators: check both error type enum and
+                // exception name string, since HeadObject 404 responses lack
+                // an XML body and the CRT SDK may report different identifiers.
+                bool is_object_missing = error_type == Aws::S3Crt::S3CrtErrors::NO_SUCH_KEY ||
+                    error_type == Aws::S3Crt::S3CrtErrors::RESOURCE_NOT_FOUND ||
+                    exception_name == "NoSuchKey" || exception_name == "NotFound" ||
+                    exception_name == "ResourceNotFound";
+
+                bool is_bucket_error = error_type == Aws::S3Crt::S3CrtErrors::NO_SUCH_BUCKET ||
+                    exception_name == "NoSuchBucket";
+
+                if (is_object_missing) {
+                    callback(false);
+                } else if (is_bucket_error) {
+                    NIXL_ERROR << "checkObjectExistsAsync (CRT) bucket/endpoint error: "
+                               << error.GetMessage();
+                    callback(std::nullopt);
+                } else {
+                    NIXL_ERROR << "checkObjectExistsAsync (CRT) error: " << error.GetMessage();
+                    callback(std::nullopt);
+                }
+            }
+        },
+        nullptr);
 }

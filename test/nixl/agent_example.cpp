@@ -141,7 +141,8 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
 
     //should print n_mems number of final descriptors
     extra_params1.notif = "test";
-    status = A1->makeXferReq(NIXL_WRITE, src_side[0], indices, dst_side[0], indices, reqh1, &extra_params1);
+    status = A1->makeXferReq(
+        NIXL_WRITE, *src_side[0], indices, *dst_side[0], indices, reqh1, &extra_params1);
     nixl_exit_on_failure(status, "Failed to make Xfer Req", agent1);
 
     indices.clear();
@@ -149,7 +150,8 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
         indices.push_back(i);
 
     //should print (n_mems*descs_per_mem/2) number of final descriptors
-    status = A1->makeXferReq(NIXL_WRITE, src_side[0], indices, dst_side[0], indices, reqh2, &extra_params1);
+    status = A1->makeXferReq(
+        NIXL_WRITE, *src_side[0], indices, *dst_side[0], indices, reqh2, &extra_params1);
     nixl_exit_on_failure(status, "Failed to make Xfer Req", agent1);
 
     status = A1->releaseXferReq(reqh1);
@@ -277,6 +279,11 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
         nixl_exit_on_failure(status, "Failed to prep xfer dlist", agent1);
         nixl_exit_on_failure((dst_side != nullptr), "Dst side is null", agent1);
 
+        // Release the prepared handle: the negative-check loop below reuses
+        // dst_side and nothing else frees it, so it would otherwise leak.
+        status = A1->releasedDlistH(dst_side);
+        nixl_exit_on_failure(status, "Failed to release xfer dlist", agent1);
+
         // Make sure not-loaded descriptors are not updated
         for (int invalid_idx = update + 1; invalid_idx < NUM_UPDATES; invalid_idx++) {
             status = A1->prepXferDlist(agent2, dst_mem_lists[invalid_idx].trim(), dst_side, &extra_params1);
@@ -321,7 +328,8 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
     extra_params1.notif = "partialMdTest_notification";
 
     // Create and post the transfer request
-    status = A1->makeXferReq(NIXL_WRITE, src_side, indices, dst_side, indices, req, &extra_params1);
+    status =
+        A1->makeXferReq(NIXL_WRITE, *src_side, indices, *dst_side, indices, req, &extra_params1);
     nixl_exit_on_failure(status, "Failed to make xfer req", agent1);
     nixl_status_t xfer_status = A1->postXferReq(req);
 
@@ -449,7 +457,8 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     nixlXferReqH *req1, *req2, *req3;
 
     //write first half of src_bufs to dst_bufs
-    status = A1->makeXferReq(NIXL_WRITE, src_side, indices1, dst_side, indices1, req1, &extra_params1);
+    status =
+        A1->makeXferReq(NIXL_WRITE, *src_side, indices1, *dst_side, indices1, req1, &extra_params1);
     nixl_exit_on_failure(status, "Failed to make xfer req", agent1);
     nixl_status_t xfer_status = A1->postXferReq(req1);
 
@@ -466,7 +475,8 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     std::cout << "transfer 1 done\n";
 
     //read first half of dst_bufs back to second half of src_bufs
-    status = A1->makeXferReq(NIXL_READ, src_side, indices2, dst_side, indices1, req2, &extra_params1);
+    status =
+        A1->makeXferReq(NIXL_READ, *src_side, indices2, *dst_side, indices1, req2, &extra_params1);
     nixl_exit_on_failure(status, "Failed to make xfer req", agent1);
     xfer_status = A1->postXferReq(req2);
 
@@ -483,7 +493,8 @@ nixl_status_t sideXferTest(nixlAgent* A1, nixlAgent* A2, nixlXferReqH* src_handl
     std::cout << "transfer 2 done\n";
 
     //write second half of src_bufs to dst_bufs
-    status = A1->makeXferReq(NIXL_WRITE, src_side, indices2, dst_side, indices2, req3, &extra_params1);
+    status =
+        A1->makeXferReq(NIXL_WRITE, *src_side, indices2, *dst_side, indices2, req3, &extra_params1);
     nixl_exit_on_failure(status, "Failed to make xfer req", agent1);
     xfer_status = A1->postXferReq(req3);
 

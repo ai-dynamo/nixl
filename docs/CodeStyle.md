@@ -179,8 +179,8 @@ limitations under the License.
   }
   ```
 
-* Short if-statements without else can be on single line when appropriate
-* Empty functions/blocks can be on single line: `void empty() {}`
+* Braces are **required** around every control statement (`if`/`else`/`for`/`while`/`do`).
+* Empty functions/blocks can be on single line: `void empty() {}` / `while (poll()) {}`
 
 ### Switch Statements
 

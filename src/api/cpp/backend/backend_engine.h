@@ -17,11 +17,9 @@
 #ifndef __BACKEND_ENGINE_H
 #define __BACKEND_ENGINE_H
 
-#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
-#include <mutex>
 
 #include "nixl_types.h"
 #include "backend_aux.h"
@@ -62,22 +60,22 @@ class nixlBackendEngine {
         }
 
         void
-        addTelemetryEvent(const std::string &event_name, uint64_t value) {
-            if (!enableTelemetry_) return;
-            if (telemetryEvents_.size() >= MAX_TELEMETRY_QUEUE_SIZE) return;
+        addTelemetryEvent(nixl_telemetry_event_type_t event_type, uint64_t value) {
+            if (!enableTelemetry_) {
+                return;
+            }
             std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
-            telemetryEvents_.emplace_back(std::chrono::duration_cast<std::chrono::microseconds>(
-                                              std::chrono::system_clock::now().time_since_epoch())
-                                              .count(),
-                                          nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND,
-                                          event_name,
-                                          value);
+            if (telemetryEvents_.size() >= MAX_TELEMETRY_QUEUE_SIZE) {
+                return;
+            }
+            telemetryEvents_.emplace_back(event_type, value);
         }
 
     public:
         explicit nixlBackendEngine(const nixlBackendInitParams *init_params)
             : backendType(init_params->type),
-              customParams(*init_params->customParams),
+              customParams(init_params->customParams ? *init_params->customParams :
+                                                       nixl_b_params_t{}),
               localAgent(init_params->localAgent),
               enableTelemetry_(init_params->enableTelemetry_) {}
 
@@ -248,6 +246,13 @@ class nixlBackendEngine {
                          nixl_cost_t &method,
                          const nixl_opt_args_t *extra_params = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        // Determines if a backend carries a request's trace context to its peer. Core reads it
+        // once for remote backends and, if false, warns once when a sampled request goes untraced.
+        [[nodiscard]] virtual bool
+        supportsTraceContext() const noexcept {
+            return false;
         }
 };
 #endif

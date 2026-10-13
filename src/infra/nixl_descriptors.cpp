@@ -15,10 +15,11 @@
  * limitations under the License.
  */
 #include <algorithm>
-#include <functional>
+#include <cstddef>
+#include <iterator>
 #include <stdexcept>
 #include <iostream>
-#include "nixl.h"
+
 #include "nixl_descriptors.h"
 #include "mem_section.h"
 #include "backend/backend_aux.h"
@@ -148,9 +149,11 @@ nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
     if (str.size()==0)
         return;
 
-    // nixlMetaDesc and nixlSectionDesc should be internal and not be serialized
-    if (std::is_same<nixlMetaDesc, T>::value || std::is_same<nixlSectionDesc, T>::value)
+    // nixlMetaDesc, nixlSectionDesc and nixlMetaStrideDesc are internal and not serialized
+    if (std::is_same<nixlMetaDesc, T>::value || std::is_same<nixlSectionDesc, T>::value ||
+        std::is_same<nixlMetaStrideDesc, T>::value) {
         return;
+    }
 
     if (deserializer->getBuf("t", &type, sizeof(type)))
         return;
@@ -168,6 +171,18 @@ nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
         // If size is proper, deserializer cannot fail
         descs.resize(n_desc);
         str.copy(reinterpret_cast<char*>(descs.data()), str.size());
+
+    } else if (std::is_same<nixlStrideDesc, T>::value) {
+        // Fixed-size POD like nixlBasicDesc, contiguous in memory
+        if (str != "nixlStrideDList") {
+            return;
+        }
+        str = deserializer->getStr("");
+        if (str.size() != n_desc * sizeof(nixlStrideDesc)) {
+            return;
+        }
+        descs.resize(n_desc);
+        str.copy(reinterpret_cast<char *>(descs.data()), str.size());
 
     } else if (std::is_same<nixlBlobDesc, T>::value) {
         if (str!="nixlSDList")
@@ -238,19 +253,26 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     nixl_status_t ret;
     size_t n_desc = descs.size();
 
-    // nixlMetaDesc should be internal and not be serialized
-    if (std::is_same<nixlMetaDesc, T>::value)
+    // nixlMetaDesc and nixlMetaStrideDesc are internal (they hold backend metadata
+    // pointers) and must not be serialized
+    if (std::is_same<nixlMetaDesc, T>::value || std::is_same<nixlMetaStrideDesc, T>::value) {
         return NIXL_ERR_INVALID_PARAM;
+    }
 
     // For now very few descriptor types, if needed can add a name method to each
     // descriptor. std::string_view(typeid(T).name()) is compiler dependent
     if (std::is_same<nixlBasicDesc, T>::value)
         ret = serializer->addStr("nixlDList", "nixlBDList");
-    // We serialize SectionDesc the same as BlobDesc so it will be deserialized as BlobDesc on the other side
-    else if (std::is_same<nixlBlobDesc, T>::value || std::is_same<nixlSectionDesc, T>::value)
+    else if (std::is_same<nixlStrideDesc, T>::value) {
+        ret = serializer->addStr("nixlDList", "nixlStrideDList");
+    }
+    // We serialize SectionDesc the same as BlobDesc so it will be deserialized as BlobDesc on the
+    // other side
+    else if (std::is_same<nixlBlobDesc, T>::value || std::is_same<nixlSectionDesc, T>::value) {
         ret = serializer->addStr("nixlDList", "nixlSDList");
-    else
+    } else {
         return NIXL_ERR_INVALID_PARAM;
+    }
 
     if (ret) return ret;
 
@@ -263,12 +285,11 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     if (n_desc==0)
         return NIXL_SUCCESS; // Unusual, but supporting it
 
-    // Optimization for nixlBasicDesc,
+    // Optimization for fixed-size POD descriptors (nixlBasicDesc, nixlStrideDesc):
     // contiguous in memory, so no need for per elm serialization
-    if (std::is_same<nixlBasicDesc, T>::value) {
-        ret = serializer->addStr("", std::string(
-                                 reinterpret_cast<const char*>(descs.data()),
-                                 n_desc * sizeof(nixlBasicDesc)));
+    if (std::is_same<nixlBasicDesc, T>::value || std::is_same<nixlStrideDesc, T>::value) {
+        ret = serializer->addStr(
+            "", std::string(reinterpret_cast<const char *>(descs.data()), n_desc * sizeof(T)));
         if (ret) return ret;
     } else { // already checked it can be only nixlBlobDesc or nixlSectionDesc
         for (auto & elm : descs) {
@@ -332,9 +353,14 @@ template class nixlDescList<nixlBlobDesc>;
 template class nixlDescList<nixlSectionDesc>;
 template class nixlDescList<nixlRemoteDesc>;
 template class nixlDescList<nixlRemoteMetaDesc>;
+template class nixlDescList<nixlStrideDesc>;
+template class nixlDescList<nixlMetaStrideDesc>;
 
 template bool operator==<nixlBasicDesc> (const nixlDescList<nixlBasicDesc> &lhs,
                                          const nixlDescList<nixlBasicDesc> &rhs);
+template bool
+operator== <nixlStrideDesc>(const nixlDescList<nixlStrideDesc> &lhs,
+                            const nixlDescList<nixlStrideDesc> &rhs);
 template bool operator==<nixlMetaDesc>  (const nixlDescList<nixlMetaDesc> &lhs,
                                          const nixlDescList<nixlMetaDesc> &rhs);
 template bool operator==<nixlBlobDesc>(const nixlDescList<nixlBlobDesc> &lhs,
@@ -351,32 +377,138 @@ operator== <nixlRemoteMetaDesc>(const nixlDescList<nixlRemoteMetaDesc> &lhs,
 // nixlSecDescList keeps the elements sorted
 void
 nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
+    nixlSectionDesc normalized = desc;
+    normalizeSecDesc(normalized);
     auto &vec = this->descs;
-    auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
-    if (itr == vec.end())
-        vec.push_back(desc);
-    else
-        vec.insert(itr, desc);
+    auto itr = std::upper_bound(vec.begin(), vec.end(), normalized);
+    vec.insert(itr, std::move(normalized));
 }
 
-bool
-nixlSecDescList::verifySorted() const {
-    const auto &vec = this->descs;
-    int size = (int)vec.size();
-    if (size <= 1) return (size == 1);
-    for (int i = 0; i < size - 1; ++i) {
-        if (vec[i + 1] < vec[i]) return false;
-    }
-    return true;
+void
+nixlSecDescList::addDesc(nixlSectionDesc &&desc) {
+    normalizeSecDesc(desc);
+    auto &vec = this->descs;
+    auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
+    vec.insert(itr, std::move(desc));
 }
+
+namespace {
+void
+appendAll(std::vector<nixlSectionDesc> &dst, std::vector<nixlSectionDesc> &src) {
+    dst.reserve(dst.size() + src.size());
+    for (auto &d : src) {
+        dst.emplace_back(std::move(d));
+    }
+}
+} // namespace
+
+void
+nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
+    auto &vec = this->descs;
+    if (vec.empty()) {
+        vec = std::move(batch);
+        return;
+    }
+
+    // Check if the batch comes after the existing elements
+    if (!(batch.front() < vec.back())) {
+        appendAll(vec, batch);
+        return;
+    }
+
+    // Check if the batch comes before the existing elements
+    if (!(vec.front() < batch.back())) {
+        appendAll(batch, vec);
+        vec = std::move(batch);
+        return;
+    }
+
+    // Merge the batch into the existing vector in-place in reverse order to reduce copies
+    const size_t old_size = vec.size();
+    const size_t batch_size = batch.size();
+    const size_t new_size = old_size + batch_size;
+
+    vec.resize(new_size);
+
+    auto dst = vec.rbegin();
+    auto a = std::make_reverse_iterator(vec.begin() + old_size);
+    auto a_end = vec.rend();
+    auto b = batch.rbegin();
+    auto b_end = batch.rend();
+
+    while (a != a_end && b != b_end) {
+        auto &src = (*b < *a) ? a : b;
+        *dst++ = std::move(*src++);
+    }
+    while (b != b_end) {
+        *dst++ = std::move(*b++);
+    }
+}
+
+void
+nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, order ord) {
+    if (batch.empty()) return;
+
+    if (batch.size() == 1) {
+        // It's more efficient to insert a single element directly
+        addDesc(std::move(batch[0]));
+        return;
+    }
+
+    normalizeSecDescBatch(batch);
+
+    if (ord == order::SORTED) {
+        NIXL_ASSERT(std::is_sorted(batch.begin(), batch.end()));
+    } else {
+        std::sort(batch.begin(), batch.end());
+    }
+
+    addSortedDescs(std::move(batch));
+}
+
+void
+nixlSecDescList::addDescs(nixlSecDescList &&other) {
+    NIXL_ASSERT(type == other.type) << "Memory type mismatch: " << static_cast<int>(type)
+                                    << " != " << static_cast<int>(other.type);
+    addDescs(std::move(other.descs), order::SORTED);
+}
+
+void
+nixlSecDescList::remDescs(std::vector<size_t> indices, order ord) {
+    if (indices.empty()) {
+        return;
+    }
+
+    if (ord == order::SORTED) {
+        NIXL_ASSERT(std::is_sorted(indices.begin(), indices.end()));
+    } else {
+        std::sort(indices.begin(), indices.end());
+    }
+
+    size_t ri = 0;
+    size_t write = 0;
+    for (size_t read = 0; read < descs.size(); ++read) {
+        if (ri < indices.size() && read == indices[ri]) {
+            ++ri;
+        } else {
+            if (write != read) {
+                descs[write] = std::move(descs[read]);
+            }
+            ++write;
+        }
+    }
+    descs.resize(write);
+}
+
 
 int
 nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
-    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
-    if (itr == this->descs.end()) return NIXL_ERR_NOT_FOUND;
-    if (static_cast<const nixlBasicDesc &>(*itr) == query)
-        return static_cast<int>(itr - this->descs.begin());
-    return NIXL_ERR_NOT_FOUND;
+    const nixlBasicDesc adjusted_query = normalizeQuery(query);
+
+    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), adjusted_query);
+    if (itr == this->descs.end() || static_cast<const nixlBasicDesc &>(*itr) != adjusted_query)
+        return NIXL_ERR_NOT_FOUND;
+    return static_cast<int>(itr - this->descs.begin());
 }
 
 int

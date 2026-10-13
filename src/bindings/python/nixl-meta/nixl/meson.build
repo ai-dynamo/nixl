@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,4 +14,6 @@
 # limitations under the License.
 
 fs = import('fs')
-fs.copyfile('__init__.py')
+nixl_init_copy = fs.copyfile('__init__.py')
+nixl_api_copy = fs.copyfile('_api.py')
+nixl_logging_copy = fs.copyfile('logging.py')

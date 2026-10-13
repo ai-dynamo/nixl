@@ -3,52 +3,55 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef OBJ_PLUGIN_UTILS_OBJECT_ENGINE_UTILS_H
-#define OBJ_PLUGIN_UTILS_OBJECT_ENGINE_UTILS_H
+#ifndef NIXL_SRC_UTILS_OBJECT_ENGINE_UTILS_H
+#define NIXL_SRC_UTILS_OBJECT_ENGINE_UTILS_H
 
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include <algorithm>
+#include <string>
 #include <thread>
 
-inline std::size_t
-getNumThreads(nixl_b_params_t *custom_params) {
-    return custom_params && custom_params->count("num_threads") > 0 ?
-        std::stoul(custom_params->at("num_threads")) :
-        std::max(1u, std::thread::hardware_concurrency() / 2);
+[[nodiscard]] inline std::size_t
+getNumThreads(const nixl_b_params_t *custom_params) {
+    const std::size_t fallback = std::max(1u, std::thread::hardware_concurrency() / 2);
+    return nixl::getBackendParamDefaulted(custom_params, "num_threads", fallback);
 }
 
-inline size_t
-getCrtMinLimit(nixl_b_params_t *custom_params) {
-    if (!custom_params) return 0;
-
-    auto it = custom_params->find("crtMinLimit");
-    if (it != custom_params->end()) {
-        try {
-            return std::stoull(it->second);
-        }
-        catch (const std::exception &e) {
-            NIXL_WARN << "Invalid crtMinLimit value: " << it->second
-                      << ", using default (CRT disabled)";
-            return 0;
-        }
-    }
-    return 0; // Disabled by default
+[[nodiscard]] inline size_t
+getCrtMinLimit(const nixl_b_params_t *custom_params) {
+    return nixl::getBackendParamDefaulted(custom_params, "crtMinLimit", size_t(0));
 }
 
-inline bool
-isAcceleratedRequested(nixl_b_params_t *custom_params) {
-    if (!custom_params) return false;
-    auto accel_it = custom_params->find("accelerated");
-    return accel_it != custom_params->end() && accel_it->second == "true";
+[[nodiscard]] inline bool
+isAcceleratedRequested(const nixl_b_params_t *custom_params) {
+    return nixl::getBackendParamDefaulted(custom_params, "accelerated", false);
 }
 
-inline bool
-isDellOBSRequested(nixl_b_params_t *custom_params) {
-    if (!isAcceleratedRequested(custom_params)) return false;
-    auto type_it = custom_params->find("type");
-    return type_it != custom_params->end() && type_it->second == "dell";
+// Accelerated engine type used when `type` is unset: the standard,
+// protocol-compliant S3-over-RDMA engine.
+inline constexpr const char *default_accel_engine_type = "s3";
+
+[[nodiscard]] inline std::string
+getAccelType(const nixl_b_params_t *custom_params) {
+    return nixl::getBackendParamDefaulted(custom_params, "type", std::string());
 }
 
+// Standard, protocol-compliant S3-over-RDMA path: `accelerated=true` with no
+// `type` (or `type=s3`). This is the vendor-neutral engine that speaks the
+// published `x-amz-rdma-*` protocol and needs no per-vendor code, unlike a
+// vendor engine selected by an explicit `type`.
+//
+// RDMA is asserted (not auto-probed): a server that silently ignores the
+// `x-amz-rdma-token` would accept a body-less PUT as a 0-byte object, so the
+// caller must opt in; on a decline/failure the transfer errors rather than
+// silently falling back to HTTP.
+[[nodiscard]] inline bool
+isGenericAccelRequested(const nixl_b_params_t *custom_params) {
+    const std::string type = getAccelType(custom_params);
+    return isAcceleratedRequested(custom_params) &&
+        (type.empty() || type == default_accel_engine_type);
+}
 
-#endif // OBJ_PLUGIN_UTILS_OBJECT_ENGINE_UTILS_H
+#endif

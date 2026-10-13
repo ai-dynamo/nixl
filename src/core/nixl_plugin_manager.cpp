@@ -20,19 +20,20 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include <dlfcn.h>
+#include <exception>
 #include <filesystem>
 #include <dirent.h>
 #include <unistd.h>  // For access() and F_OK
 #include <fstream>
 #include <string>
 #include <map>
-#include <dlfcn.h>
-
-using lock_guard = const std::lock_guard<std::mutex>;
 
 const std::string backendPluginPrefix = "libplugin_";
 const std::string telemetryPluginPrefix = "libtelemetry_exporter_";
+const std::string tracePluginPrefix = "libtrace_backend_";
 const std::string kPluginSuffix = ".so";
+const std::string kUcxPluginName = "UCX";
+const std::string kUcxDeepBindVar = "NIXL_UCX_DEEPBIND";
 
 // pluginHandle implementation
 nixlBackendPluginHandle::nixlBackendPluginHandle(void *handle, nixlBackendPlugin *plugin)
@@ -186,16 +187,88 @@ telemetryLoader(void *handle, const std::string &plugin_path) {
         return nullptr;
     }
 
-    // Check API version
-    if (plugin->api_version != nixlTelemetryPluginApiVersionV1) {
+    if (plugin->api_version != NIXL_TELEMETRY_PLUGIN_API_VERSION) {
         NIXL_ERROR << "Plugin API version mismatch for " << plugin_path << ": expected "
-                   << static_cast<int>(nixlTelemetryPluginApiVersionV1) << ", got "
-                   << static_cast<int>(plugin->api_version);
+                   << static_cast<unsigned int>(NIXL_TELEMETRY_PLUGIN_API_VERSION) << ", got "
+                   << static_cast<unsigned int>(plugin->api_version);
         dlclose(handle);
         return nullptr;
     }
 
     return std::make_shared<const nixlTelemetryPluginHandle>(handle, plugin);
+}
+} // namespace
+
+nixlTracePluginHandle::nixlTracePluginHandle(void *handle, nixlTracePlugin *plugin)
+    : nixlPluginHandle(handle),
+      plugin_(plugin) {}
+
+nixlTracePluginHandle::~nixlTracePluginHandle() {
+    if (handle_) {
+        typedef void (*fini_func_t)();
+        fini_func_t fini = (fini_func_t)dlsym(handle_, "nixl_trace_plugin_fini");
+        if (fini) {
+            fini();
+        }
+        dlclose(handle_);
+        handle_ = nullptr;
+        plugin_ = nullptr;
+    }
+}
+
+std::unique_ptr<nixl::trace::TraceBackend>
+nixlTracePluginHandle::createBackend(const nixlTraceBackendInitParams &init_params) const {
+    if (plugin_ && plugin_->create_backend) {
+        return plugin_->create_backend(init_params);
+    }
+    return nullptr;
+}
+
+const char *
+nixlTracePluginHandle::getName() const {
+    if (plugin_) {
+        return plugin_->getName().c_str();
+    }
+    return "unknown";
+}
+
+const char *
+nixlTracePluginHandle::getVersion() const {
+    if (plugin_) {
+        return plugin_->getVersion().c_str();
+    }
+    return "unknown";
+}
+
+namespace {
+// Trace plugin loader
+std::shared_ptr<const nixlPluginHandle>
+traceLoader(void *handle, const std::string &plugin_path) {
+    typedef nixlTracePlugin *(*init_func_t)();
+    init_func_t init = (init_func_t)dlsym(handle, "nixl_trace_plugin_init");
+    if (!init) {
+        NIXL_ERROR << "Failed to find nixl_trace_plugin_init in " << plugin_path << ": "
+                   << dlerror();
+        dlclose(handle);
+        return nullptr;
+    }
+
+    nixlTracePlugin *plugin = init();
+    if (!plugin) {
+        NIXL_ERROR << "Plugin initialization failed for " << plugin_path;
+        dlclose(handle);
+        return nullptr;
+    }
+
+    if (plugin->api_version != nixl_trace_plugin_api_version::V1) {
+        NIXL_ERROR << "Plugin API version mismatch for " << plugin_path << ": expected "
+                   << static_cast<unsigned int>(nixl_trace_plugin_api_version::V1) << ", got "
+                   << static_cast<unsigned int>(plugin->api_version);
+        dlclose(handle);
+        return nullptr;
+    }
+
+    return std::make_shared<const nixlTracePluginHandle>(handle, plugin);
 }
 } // namespace
 
@@ -237,13 +310,44 @@ loadPluginList(const std::string &filename) {
     return plugins;
 }
 
+namespace {
+bool
+shouldDeepBindPlugin(const std::string &plugin_name) {
+    if (plugin_name != kUcxPluginName) {
+        return false;
+    }
+
+    try {
+        /* TODO: check if RTLD_DEEPBIND is needed at all for UCX/NIXL */
+        return nixl::config::getValueDefaulted<bool>(kUcxDeepBindVar, false);
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "Invalid " << kUcxDeepBindVar
+                  << " value, enabling RTLD_DEEPBIND: " << e.what();
+        return true;
+    }
+}
+} // namespace
+
 std::shared_ptr<const nixlPluginHandle>
-nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPluginLoaderFunc loader) {
+nixlPluginManager::loadPluginFromPath(const std::string &plugin_path,
+                                      nixlPluginLoaderFunc loader,
+                                      bool deepbind) {
     // Open the plugin file with RTLD_NODELETE to prevent glibc from physically unloading
     // the library on dlclose. This is required because plugins link dynamically against Abseil,
     // which uses thread_local and static initialization that are unsafe to unload dynamically
     // and trigger glibc bugs on older versions (e.g. Ubuntu 22.04 / glibc 2.35).
-    void *handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
+    int flags = RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE;
+    if (deepbind) {
+#ifdef RTLD_DEEPBIND
+        flags |= RTLD_DEEPBIND;
+#else
+        NIXL_WARN << "RTLD_DEEPBIND requested for " << plugin_path
+                  << " but is not supported on this platform";
+#endif
+    }
+
+    void *handle = dlopen(plugin_path.c_str(), flags);
     if (!handle) {
         NIXL_INFO << "Failed to load plugin from " << plugin_path << ": " << dlerror();
         return nullptr;
@@ -253,20 +357,23 @@ nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPlugin
 }
 
 void
-nixlPluginManager::loadPluginsFromList(const std::string &filename) {
+nixlPluginManager::discoverPluginsFromList(const std::string &filename) {
     auto plugins = loadPluginList(filename);
 
-    lock_guard lg(lock);
+    const std::lock_guard lock(mutex_);
 
     for (const auto& pair : plugins) {
         const std::string& name = pair.first;
         const std::string& path = pair.second;
 
-        auto plugin_handle = loadPluginFromPath(path, backendLoader);
-        if (plugin_handle) {
-            auto backend_plugin =
-                std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
-            loaded_backend_plugins_[name] = backend_plugin;
+        if (loaded_backend_plugins_.find(name) == loaded_backend_plugins_.end()) {
+            discovered_backend_plugins_.insert(name);
+            if (!path.empty()) {
+                explicit_plugin_paths_[name] = path;
+                NIXL_INFO << "Discovered backend plugin from list: " << name << " (" << path << ")";
+            } else {
+                NIXL_INFO << "Discovered backend plugin from list: " << name;
+            }
         }
     }
 }
@@ -297,7 +404,7 @@ nixlPluginManager::nixlPluginManager() {
     NIXL_DEBUG << "Loading plugins from file: " << NIXL_USE_PLUGIN_FILE;
     std::string plugin_file = NIXL_USE_PLUGIN_FILE;
     if (std::filesystem::exists(plugin_file)) {
-        loadPluginsFromList(plugin_file);
+        discoverPluginsFromList(plugin_file);
     }
 #endif
 
@@ -333,7 +440,7 @@ nixlPluginManager::addPluginDirectory(const std::string &directory) {
     }
 
     {
-        lock_guard lg(lock);
+        const std::lock_guard lock(mutex_);
 
         // Check if directory is already in the list
         for (const auto& dir : plugin_dirs_) {
@@ -367,13 +474,36 @@ nixlPluginManager::composePluginPath(const std::string &dir,
 
 std::shared_ptr<const nixlBackendPluginHandle>
 nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
-    lock_guard lg(lock);
+    const std::lock_guard lock(mutex_);
+
+    const auto plugin_handle = loadBackendPluginImpl(plugin_name);
+    if (plugin_handle) {
+        loaded_backend_plugins_.try_emplace(plugin_name, plugin_handle);
+    }
+    return plugin_handle;
+}
+
+std::shared_ptr<const nixlBackendPluginHandle>
+nixlPluginManager::loadBackendPluginImpl(const std::string &plugin_name) const {
 
     // Check if the plugin is already loaded
     // Static Plugins are preloaded so return handle
     auto it = loaded_backend_plugins_.find(plugin_name);
     if (it != loaded_backend_plugins_.end()) {
         return it->second;
+    }
+
+    // Try the explicit path from the plugin list file first
+    auto path_it = explicit_plugin_paths_.find(plugin_name);
+    if (path_it != explicit_plugin_paths_.end()) {
+        const std::string &plugin_path = path_it->second;
+        if (std::filesystem::exists(plugin_path)) {
+            auto plugin_handle =
+                loadPluginFromPath(plugin_path, backendLoader, shouldDeepBindPlugin(plugin_name));
+            if (plugin_handle) {
+                return std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
+            }
+        }
     }
 
     // Try to load the plugin from all registered directories
@@ -388,12 +518,10 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
             continue;
         }
 
-        auto plugin_handle = loadPluginFromPath(plugin_path, backendLoader);
+        auto plugin_handle =
+            loadPluginFromPath(plugin_path, backendLoader, shouldDeepBindPlugin(plugin_name));
         if (plugin_handle) {
-            auto backend_plugin =
-                std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
-            loaded_backend_plugins_[plugin_name] = backend_plugin;
-            return backend_plugin;
+            return std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
         }
     }
 
@@ -404,7 +532,7 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
 
 std::shared_ptr<const nixlTelemetryPluginHandle>
 nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
-    lock_guard lg(lock);
+    const std::lock_guard lock(mutex_);
 
     // Check if the plugin is already loaded
     auto it = loaded_telemetry_plugins_.find(plugin_name);
@@ -437,6 +565,36 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
     return nullptr;
 }
 
+std::shared_ptr<const nixlTracePluginHandle>
+nixlPluginManager::loadTracePlugin(const std::string &plugin_name) {
+    const std::lock_guard lock(mutex_);
+
+    // Check if the plugin is already loaded
+    auto it = loaded_trace_plugins_.find(plugin_name);
+    if (it != loaded_trace_plugins_.end()) {
+        return it->second;
+    }
+
+    // Try to load the plugin from all registered directories
+    for (const auto &dir : plugin_dirs_) {
+        std::string plugin_path = composePluginPath(dir, tracePluginPrefix, plugin_name);
+        if (plugin_path.empty() || !std::filesystem::exists(plugin_path)) {
+            continue;
+        }
+
+        auto plugin_handle = loadPluginFromPath(plugin_path, traceLoader);
+        if (plugin_handle) {
+            auto trace_plugin =
+                std::dynamic_pointer_cast<const nixlTracePluginHandle>(plugin_handle);
+            loaded_trace_plugins_[plugin_name] = trace_plugin;
+            return trace_plugin;
+        }
+    }
+
+    NIXL_INFO << "Failed to load trace plugin '" << plugin_name << "' from any directory";
+    return nullptr;
+}
+
 namespace {
 static bool
 startsWith(const std::string &str, const std::string &prefix) {
@@ -458,9 +616,11 @@ void
 nixlPluginManager::discoverBackendPlugin(const std::string &filename) {
     if (startsWith(filename, backendPluginPrefix) && endsWith(filename, kPluginSuffix)) {
         std::string plugin_name = extractPluginName(filename, backendPluginPrefix);
-        auto plugin = loadBackendPlugin(plugin_name);
-        if (plugin) {
-            NIXL_INFO << "Discovered and loaded backend plugin: " << plugin_name;
+
+        const std::lock_guard lock(mutex_);
+        if (loaded_backend_plugins_.find(plugin_name) == loaded_backend_plugins_.end()) {
+            discovered_backend_plugins_.insert(plugin_name);
+            NIXL_INFO << "Discovered backend plugin: " << plugin_name;
         }
     }
 }
@@ -469,11 +629,15 @@ void
 nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
     if (startsWith(filename, telemetryPluginPrefix) && endsWith(filename, kPluginSuffix)) {
         std::string plugin_name = extractPluginName(filename, telemetryPluginPrefix);
+        NIXL_INFO << "Discovered telemetry plugin: " << plugin_name;
+    }
+}
 
-        auto plugin = loadTelemetryPlugin(plugin_name);
-        if (plugin) {
-            NIXL_INFO << "Discovered and loaded telemetry plugin: " << plugin_name;
-        }
+void
+nixlPluginManager::discoverTracePlugin(const std::string &filename) {
+    if (startsWith(filename, tracePluginPrefix) && endsWith(filename, kPluginSuffix)) {
+        std::string plugin_name = extractPluginName(filename, tracePluginPrefix);
+        NIXL_INFO << "Discovered trace plugin: " << plugin_name;
     }
 }
 
@@ -490,11 +654,12 @@ nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path &dirpath) 
         std::string filename = entry.path().filename().string();
         discoverBackendPlugin(filename);
         discoverTelemetryPlugin(filename);
+        discoverTracePlugin(filename);
     }
 }
 
 void
-nixlPluginManager::unloadBackendPlugin(const nixl_backend_t &plugin_name) {
+nixlPluginManager::unloadBackendPluginForUnitTest(const nixl_backend_t &plugin_name) {
     // Do not unload static plugins
     for (const auto &splugin : getBackendStaticPlugins()) {
         if (splugin.name == plugin_name) {
@@ -502,28 +667,27 @@ nixlPluginManager::unloadBackendPlugin(const nixl_backend_t &plugin_name) {
         }
     }
 
-    lock_guard lg(lock);
-
+    const std::lock_guard lock(mutex_);
     loaded_backend_plugins_.erase(plugin_name);
 }
 
-void
-nixlPluginManager::unloadTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_name) {
-    // Do not unload static plugins
-    for (const auto &splugin : getTelemetryStaticPlugins()) {
-        if (splugin.name == plugin_name) {
-            return;
-        }
+nixl_status_t
+nixlPluginManager::getBackendParams(const nixl_backend_t &type,
+                                    nixl_mem_list_t &mems,
+                                    nixl_b_params_t &params) const {
+    const std::lock_guard lock(mutex_);
+
+    if (const auto plugin = loadBackendPluginImpl(type)) {
+        mems = plugin->getBackendMems();
+        params = plugin->getBackendOptions();
+        return NIXL_SUCCESS;
     }
-
-    lock_guard lg(lock);
-
-    loaded_telemetry_plugins_.erase(plugin_name);
+    return NIXL_ERR_NOT_FOUND;
 }
 
 std::shared_ptr<const nixlBackendPluginHandle>
 nixlPluginManager::getBackendPlugin(const nixl_backend_t &plugin_name) {
-    lock_guard lg(lock);
+    const std::lock_guard lock(mutex_);
 
     auto it = loaded_backend_plugins_.find(plugin_name);
     if (it != loaded_backend_plugins_.end()) {
@@ -534,7 +698,7 @@ nixlPluginManager::getBackendPlugin(const nixl_backend_t &plugin_name) {
 
 std::shared_ptr<const nixlTelemetryPluginHandle>
 nixlPluginManager::getTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_name) {
-    lock_guard lg(lock);
+    const std::lock_guard lock(mutex_);
     auto it = loaded_telemetry_plugins_.find(plugin_name);
     if (it != loaded_telemetry_plugins_.end()) {
         return it->second;
@@ -562,7 +726,7 @@ nixlBackendPluginHandle::getBackendMems() const {
 
 std::vector<nixl_backend_t>
 nixlPluginManager::getLoadedBackendPluginNames() {
-    lock_guard lg(lock);
+    const std::lock_guard lock(mutex_);
 
     std::vector<nixl_backend_t> names;
     for (const auto &pair : loaded_backend_plugins_) {
@@ -571,9 +735,26 @@ nixlPluginManager::getLoadedBackendPluginNames() {
     return names;
 }
 
+std::vector<nixl_backend_t>
+nixlPluginManager::getAvailBackendPluginNames() {
+    const std::lock_guard lock(mutex_);
+
+    std::vector<nixl_backend_t> names;
+    for (const auto &pair : loaded_backend_plugins_) {
+        names.push_back(pair.first);
+    }
+    for (const auto &name : discovered_backend_plugins_) {
+        // Skip discovered plugins that are already loaded to avoid duplicates
+        if (loaded_backend_plugins_.find(name) == loaded_backend_plugins_.end()) {
+            names.push_back(name);
+        }
+    }
+    return names;
+}
+
 std::vector<nixl_telemetry_plugin_t>
 nixlPluginManager::getLoadedTelemetryPluginNames() {
-    lock_guard lg(lock);
+    const std::lock_guard lock(mutex_);
 
     std::vector<nixl_telemetry_plugin_t> names;
     for (const auto &pair : loaded_telemetry_plugins_) {
@@ -585,7 +766,7 @@ nixlPluginManager::getLoadedTelemetryPluginNames() {
 void
 nixlPluginManager::registerBackendStaticPlugin(const std::string &name,
                                                nixlStaticPluginCreatorFunc creator) {
-    lock_guard lg(lock);
+    const std::lock_guard lock(mutex_);
 
     nixlBackendStaticPluginInfo info;
     info.name = name;
@@ -605,7 +786,7 @@ nixlPluginManager::registerBackendStaticPlugin(const std::string &name,
 void
 nixlPluginManager::registerTelemetryStaticPlugin(const std::string &name,
                                                  nixlTelemetryStaticPluginCreatorFunc creator) {
-    lock_guard lg(lock);
+    const std::lock_guard lock(mutex_);
 
     nixlTelemetryStaticPluginInfo info;
     info.name = name;
@@ -667,6 +848,10 @@ void nixlPluginManager::registerBuiltinPlugins() {
     NIXL_REGISTER_STATIC_PLUGIN(Backend, OBJ)
 #endif
 
+#ifdef STATIC_PLUGIN_REDIS
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, REDIS)
+#endif
+
 #ifdef STATIC_PLUGIN_MOONCAKE
     NIXL_REGISTER_STATIC_PLUGIN(Backend, MOONCAKE)
 #endif
@@ -674,5 +859,11 @@ void nixlPluginManager::registerBuiltinPlugins() {
 #ifdef STATIC_PLUGIN_HF3FS
     NIXL_REGISTER_STATIC_PLUGIN(Backend, HF3FS)
 #endif
+
+#ifdef STATIC_PLUGIN_INFINIA
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, INFINIA)
+#endif
+
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, BUFFER)
+    NIXL_REGISTER_STATIC_PLUGIN(Telemetry, NOP)
 }
