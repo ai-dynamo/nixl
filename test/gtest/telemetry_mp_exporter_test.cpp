@@ -131,6 +131,25 @@ TEST_F(MpExporterTest, LastAgentReleasesTheEndpoint) {
     EXPECT_EQ(fresh.claim(), scrapeEndpoint::status::SERVING);
 }
 
+TEST_F(MpExporterTest, AgentCreatedWhileTheLastOneIsDestroyedServes) {
+    auto last = std::make_unique<nixlTelemetryPrometheusMpExporter>(initParams("agent-last"));
+    ASSERT_TRUE(last->isExporter());
+
+    std::latch start(2);
+    std::unique_ptr<nixlTelemetryPrometheusMpExporter> successor;
+    std::thread creator([&start, &successor] {
+        start.arrive_and_wait();
+        successor =
+            std::make_unique<nixlTelemetryPrometheusMpExporter>(initParams("agent-successor"));
+    });
+    start.arrive_and_wait();
+    last.reset();
+    creator.join();
+
+    ASSERT_NE(successor, nullptr);
+    EXPECT_TRUE(successor->isExporter());
+}
+
 TEST_F(MpExporterTest, ConcurrentConstructionSharesOneEndpoint) {
     constexpr std::size_t kAgents = 8;
     std::vector<std::unique_ptr<nixlTelemetryPrometheusMpExporter>> exporters(kAgents);
@@ -166,8 +185,9 @@ TEST_F(MpExporterTest, ConcurrentReclaimServesEveryAgentOnceThePortFrees) {
         }
         EXPECT_EQ(lig.getIgnoredCount(), 1);
     }
+    blocker.reset();
 
-    std::latch start(kAgents + 1);
+    std::latch start(kAgents);
     std::vector<std::thread> threads;
     for (const auto &exporter : exporters) {
         threads.emplace_back([&start, agent = exporter.get()] {
@@ -179,9 +199,6 @@ TEST_F(MpExporterTest, ConcurrentReclaimServesEveryAgentOnceThePortFrees) {
             }
         });
     }
-    start.arrive_and_wait();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    blocker.reset();
     for (auto &thread : threads) {
         thread.join();
     }
@@ -221,6 +238,38 @@ TEST_F(MpExporterTest, ReclaimWhileServingKeepsTheElection) {
     scrapeEndpoint intruder(dir_, bind, std::chrono::seconds(2));
     EXPECT_EQ(intruder.claim(), scrapeEndpoint::status::SIBLING_OWNS)
         << "the serving process gave its election away";
+}
+
+TEST_F(MpExporterTest, ReclaimsFromSeveralThreadsElectOneAtATime) {
+    using nixl::telemetry::mp::monotonicNs;
+    using nixl::telemetry::mp::scrapeEndpoint;
+
+    const std::string bind = "127.0.0.1:" + std::to_string(port_);
+    auto blocker = std::make_unique<prometheus::Exposer>(bind);
+    scrapeEndpoint endpoint(dir_, bind, std::chrono::seconds(2));
+    ASSERT_EQ(endpoint.claim(), scrapeEndpoint::status::PORT_TAKEN);
+
+    constexpr int kThreads = 4;
+    constexpr int kHours = 20;
+    const auto base = std::chrono::nanoseconds(monotonicNs());
+    std::latch start(kThreads);
+    std::vector<std::thread> threads;
+    for (int i = 0; i < kThreads; ++i) {
+        threads.emplace_back([&endpoint, &start, base] {
+            start.arrive_and_wait();
+            for (int hour = 1; hour <= kHours; ++hour) {
+                endpoint.reclaim(base + std::chrono::hours(hour));
+            }
+        });
+    }
+    for (auto &thread : threads) {
+        thread.join();
+    }
+    EXPECT_FALSE(endpoint.serving());
+
+    blocker.reset();
+    endpoint.reclaim(base + std::chrono::hours(kHours + 1));
+    EXPECT_TRUE(endpoint.serving());
 }
 
 TEST_F(MpExporterTest, RanksConfiguredForAnotherAddressServeItAndWarn) {

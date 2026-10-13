@@ -72,6 +72,9 @@ scrapeEndpoint::claim() {
 
 void
 scrapeEndpoint::reclaim(std::chrono::nanoseconds now) noexcept {
+    if (now < nextAttempt_.load(std::memory_order_relaxed)) {
+        return;
+    }
     const std::unique_lock lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) {
         return;
@@ -81,10 +84,10 @@ scrapeEndpoint::reclaim(std::chrono::nanoseconds now) noexcept {
     if (serving()) {
         return;
     }
-    if (now - lastAttempt_ < retryInterval_) {
+    if (now < nextAttempt_.load(std::memory_order_relaxed)) {
         return;
     }
-    lastAttempt_ = now;
+    nextAttempt_.store(now + retryInterval_, std::memory_order_relaxed);
     try {
         // Quiet: an unusable lock file is the condition claim() already warned
         // about once, and repeating it every retry would bury the log.
@@ -96,6 +99,7 @@ scrapeEndpoint::reclaim(std::chrono::nanoseconds now) noexcept {
         if (!serve()) {
             election_.reset();
             retryInterval_ = backoff;
+            nextAttempt_.store(now + backoff, std::memory_order_relaxed);
             return;
         }
         NIXL_INFO << "prometheus_mp: no process owns telemetry dir " << dir_.string()

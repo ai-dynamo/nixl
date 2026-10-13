@@ -221,9 +221,9 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     auto &shared = s_endpoints[{dir_, bind_address, stale_ttl}];
     endpoint_ = shared.lock();
     if (endpoint_) {
-        NIXL_INFO << "prometheus_mp exporter: agent '" << init_params.agentName
-                  << "' shares this process's endpoint on " << bind_address << ", writing to "
-                  << store_path.string();
+        NIXL_INFO << "prometheus_mp exporter (" << (endpoint_->serving() ? "owner" : "writer")
+                  << "): agent '" << init_params.agentName << "' shares this process's endpoint on "
+                  << bind_address << ", writing to " << store_path.string();
         return;
     }
     endpoint_ = std::make_shared<scrapeEndpoint>(dir_, bind_address, stale_ttl);

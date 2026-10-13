@@ -104,7 +104,7 @@ private:
     std::filesystem::path dir_;
     std::string bindAddress_;
     std::chrono::nanoseconds staleTtl_;
-    std::chrono::nanoseconds lastAttempt_{0};
+    std::atomic<std::chrono::nanoseconds> nextAttempt_{std::chrono::nanoseconds::zero()};
     std::chrono::nanoseconds retryInterval_;
     std::mutex mutex_;
     std::atomic<bool> serving_{false};
