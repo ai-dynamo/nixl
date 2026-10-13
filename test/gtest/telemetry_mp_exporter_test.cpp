@@ -288,12 +288,57 @@ TEST_F(MpExporterTest, WorldWritableTelemetryDirWarns) {
     EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 
-TEST(MpExporterStandaloneTest, MissingMultiprocDirThrows) {
-    gtest::ScopedEnv env;
-    env.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+TEST_F(MpExporterTest, EmptyMultiprocDirDefaultsToAPerUserPerPortDir) {
+    const auto dir = scopedDefaultDir();
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-default"));
+    EXPECT_TRUE(exporter.isExporter());
+    EXPECT_EQ(std::filesystem::status(dir).permissions() & std::filesystem::perms::mask,
+              std::filesystem::perms::owner_all);
+
+    const auto file = singleStoreFile(dir);
+    ASSERT_FALSE(file.empty());
+    const auto snap = readStoreSnapshot(file).snapshot;
+    ASSERT_TRUE(snap.has_value());
+    EXPECT_EQ(snap->agentName, "agent-default");
+}
+
+TEST_F(MpExporterTest, UncreatableMultiprocDirThrows) {
+    const auto file = dir_ / "not-a-dir";
+    { std::ofstream(file).put('\0'); }
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", (file / "telemetry").string());
+
     EXPECT_THROW(
-        { nixlTelemetryPrometheusMpExporter exporter(nixlTelemetryExporterInitParams{"a", 4096}); },
+        { nixlTelemetryPrometheusMpExporter exporter(initParams("agent-uncreatable")); },
         std::runtime_error);
+}
+
+TEST_F(MpExporterTest, SquattedDefaultDirRunsWithoutTelemetry) {
+    { std::ofstream(scopedDefaultDir()).put('\0'); }
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+    env_.addVar(telemetryExporterVar, "prometheus_mp");
+
+    const gtest::LogIgnoreGuard probe("Plugin file does not exist");
+    const gtest::LogIgnoreGuard lig("will run without a telemetry sink");
+    EXPECT_EQ(nixlTelemetry::create("agent-squatted"), nullptr);
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
+}
+
+TEST_F(MpExporterTest, OverlongBucketListStaysFatalWithTheDefaultDir) {
+    scopedDefaultDir();
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+    env_.addVar(telemetryExporterVar, "prometheus_mp");
+    std::string bounds = "1";
+    for (std::size_t i = 2; i <= nixl::telemetry::mp::MP_STORE_MAX_BUCKETS + 1; ++i) {
+        bounds += "," + std::to_string(i);
+    }
+    env_.addVar("NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US", bounds);
+
+    const gtest::LogIgnoreGuard probe("Plugin file does not exist");
+    const gtest::LogIgnoreGuard lig("Failed to create exporter");
+    EXPECT_THROW(static_cast<void>(nixlTelemetry::create("agent-overlong")), std::runtime_error);
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 
 } // namespace

@@ -57,9 +57,10 @@ public:
      * sink, which still records events in process (so getXferTelemetry() returns
      * data) but writes nothing.
      * @param agent_name Non-empty agent name.
-     * @return A telemetry instance, or nullptr if the exporter's scrape endpoint
-     *         could not bind its port (a benign multi-process collision): that
-     *         rank then runs without a telemetry sink instead of failing.
+     * @return A telemetry instance, or nullptr if the exporter threw
+     *         nixlTelemetryBindFailed (a port it cannot bind, or a default
+     *         telemetry directory it cannot create or write): that rank then
+     *         runs without a telemetry sink instead of failing.
      * @throws std::invalid_argument / std::runtime_error on genuine
      *         configuration or plugin-load errors.
      */
