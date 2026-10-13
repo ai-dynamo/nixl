@@ -172,7 +172,7 @@ std::string nixlSerDes::exportStr() const {
 }
 
 std::string
-nixlSerDes::exportMoveStr() {
+nixlSerDes::exportMoveStr() && {
     return std::move(workingStr);
 }
 

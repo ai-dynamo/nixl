@@ -656,7 +656,7 @@ nixl::ucx::serializeNotif(const std::string &agent,
             ser_des.addBuf("tctx", record.data(), *size);
         }
     }
-    return ser_des.exportMoveStr();
+    return std::move(ser_des).exportMoveStr();
 }
 
 nixl::ucx::notifMessage
