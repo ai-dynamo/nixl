@@ -98,8 +98,8 @@ The AWS test script:
 1. Generates AWS job configuration from template
 2. Submits a job to AWS
 3. Monitors AWS job execution
-4. Streams logs from the AWS pod
-5. Reports success or failure
+4. Streams logs from the AWS pod, reconnecting if the stream drops while the container is running
+5. Reports success or failure; on failure, prints the Batch status reason and each attempt's pod, node and container exit code
 
 ## Container Image
 

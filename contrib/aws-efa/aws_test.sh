@@ -114,18 +114,70 @@ wait_for_status() {
     return 1
 }
 
+# Print the Batch status reason and, per attempt, the pod, node and container exit codes
+report_job_failure() {
+    set +x
+    local details
+    if details=$(aws batch describe-jobs --jobs "$JOB_ID" --output json --query 'jobs[0].{
+            status: status,
+            statusReason: statusReason,
+            attempts: eksAttempts[].{pod: podName, node: nodeName, statusReason: statusReason,
+                containers: containers[].{name: name, exitCode: exitCode, reason: reason}}}'); then
+        echo "$details"
+        if [ -n "$TEST_TIMEOUT" ] && echo "$details" | jq -e 'any(.attempts[]?.containers[]?; .exitCode == 124)' >/dev/null; then
+            echo "Exit code 124: the in-pod test timeout (${TEST_TIMEOUT}m) expired"
+        fi
+    fi
+    set -x
+}
+
+# Print "<timestamp> <line>" log lines without the timestamp and update $last_ts.
+# --since-time has 1s granularity, so skip lines at or before the previous $last_ts.
+print_new_log_lines() {
+    local resume_ts=$last_ts line ts
+    while IFS= read -r line || [ -n "$line" ]; do
+        ts=${line%% *}
+        if [ -n "$resume_ts" ]; then
+            [[ "$ts" > "$resume_ts" ]] || continue
+            resume_ts=""
+        fi
+        last_ts=$ts
+        printf '%s\n' "${line#* }"
+    done
+}
+
+# Follow the pod log. If the stream ends early (e.g. apiserver GOAWAY), reconnect after
+# the last line received while the container runs, or fetch the rest once it has stopped.
+follow_pod_logs() {
+    set +x
+    local ns=ucx-ci-batch-nodes last_ts="" stream_ok running
+    for _ in {1..10}; do
+        print_new_log_lines < <(kubectl -n "$ns" logs -f --timestamps ${last_ts:+--since-time="$last_ts"} "$POD")
+        wait $! && stream_ok=1 || stream_ok=0
+        # On an API error, treat the container as running and retry
+        running=$(kubectl -n "$ns" get pod "$POD" --ignore-not-found -o jsonpath='{.status.containerStatuses[0].state.running}') || running=unknown
+        if [ -z "$running" ]; then
+            [ "$stream_ok" = 1 ] || print_new_log_lines < <(kubectl -n "$ns" logs --timestamps ${last_ts:+--since-time="$last_ts"} "$POD")
+            break
+        fi
+        echo "Log stream from $POD ended early; reconnecting after $last_ts"
+        sleep 5
+    done
+    set -x
+}
+
 # Wait for the job to start running
 echo "Waiting for job to start running (timeout: 30m)..."
 if ! wait_for_status "RUNNING" 1800 10; then
     echo "Job failed to start"
-    aws batch describe-jobs --jobs "$JOB_ID" --query 'jobs[0].[status,statusReason]' --output table
+    report_job_failure
     exit 1
 fi
 
 # Stream logs from the pod
 POD=$(aws batch describe-jobs --jobs "$JOB_ID" --query 'jobs[0].eksProperties.podProperties.podName' --output text)
 echo "Streaming logs from pod: $POD"
-kubectl -n ucx-ci-batch-nodes logs -f "$POD" || kubectl -n ucx-ci-batch-nodes logs "$POD" --previous || true
+follow_pod_logs
 
 # logs -f can return early (apiserver GOAWAY), so cover the full build+test.
 # Wait 5m past the in-pod TEST_TIMEOUT (60m) so this layer strictly wraps it
@@ -133,6 +185,7 @@ kubectl -n ucx-ci-batch-nodes logs -f "$POD" || kubectl -n ucx-ci-batch-nodes lo
 echo "Waiting for job completion (timeout: 65m)..."
 if ! wait_for_status "SUCCEEDED" 3900 10; then
     echo "Failure running NIXL tests"
+    report_job_failure
     exit 1
 fi
 
