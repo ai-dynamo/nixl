@@ -193,7 +193,9 @@ heldAddressesExcept(const std::filesystem::path &dir, const std::string &address
         if (!fd.valid()) {
             continue;
         }
-        if (::flock(fd.get(), LOCK_EX | LOCK_NB) == 0) {
+        // Shared: the owner's exclusive lock refuses it, while another owner
+        // probing the same file at the same moment does not.
+        if (::flock(fd.get(), LOCK_SH | LOCK_NB) == 0) {
             continue;
         }
         if (errno == EWOULDBLOCK) {

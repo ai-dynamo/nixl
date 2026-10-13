@@ -123,6 +123,7 @@ private:
     std::stop_source stop_source_;
     /** Bumped once per drain; each worker acks it when it has applied it. */
     alignas(64) std::atomic<uint64_t> drain_requested_{0};
+    std::atomic<bool> shutting_down_{false};
     uint64_t *shutdown_word_dev_ = nullptr;
     state_t state_ = state_t::CREATED;
 };

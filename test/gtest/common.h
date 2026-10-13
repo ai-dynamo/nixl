@@ -17,6 +17,7 @@
 #ifndef TEST_GTEST_COMMON_H
 #define TEST_GTEST_COMMON_H
 
+#include <atomic>
 #include <iostream>
 #include <iomanip>
 #include <cassert>
@@ -30,6 +31,7 @@
 #include <utility>
 #include <vector>
 #include <string>
+#include <string_view>
 #include "gtest/gtest.h"
 #include "absl/log/log_sink.h"
 #include "absl/log/log_entry.h"
@@ -173,6 +175,31 @@ public:
 private:
     void
     Send(const absl::LogEntry &entry) override;
+};
+
+class LogMessageCounter : private absl::LogSink {
+public:
+    explicit LogMessageCounter(std::string_view needle);
+    ~LogMessageCounter() override;
+
+    LogMessageCounter(LogMessageCounter &&) = delete;
+    LogMessageCounter(const LogMessageCounter &) = delete;
+
+    void
+    operator=(LogMessageCounter &&) = delete;
+    void
+    operator=(const LogMessageCounter &) = delete;
+
+    [[nodiscard]] size_t
+    count() const noexcept;
+
+private:
+    void
+    Send(const absl::LogEntry &entry) override;
+
+    const std::string needle_;
+    const absl::LogSeverityAtLeast minLogLevel_;
+    std::atomic<size_t> count_ = 0;
 };
 
 struct nixlTestParam {

@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -1628,6 +1629,22 @@ xferBenchUtils::printStats(bool is_target,
     }
 }
 
+bool
+xferBenchUtils::debugEnabled() {
+    static const bool enabled = [] {
+        const char *env = std::getenv("NIXLBENCH_LOG_LEVEL");
+        if (env == nullptr) {
+            return false;
+        }
+        std::string level(env);
+        std::transform(level.begin(), level.end(), level.begin(), [](unsigned char c) {
+            return static_cast<char>(std::toupper(c));
+        });
+        return level == "DEBUG" || level == "TRACE";
+    }();
+    return enabled;
+}
+
 std::string
 xferBenchUtils::buildAwsCredentials() {
     std::string env_setup = "";
@@ -1744,9 +1761,14 @@ xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
             " --checksum-algorithm SHA256 --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
-              << " (size: " << buffer_size << " bytes)" << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
+                  << " (size: " << buffer_size << " bytes)" << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {
@@ -1772,8 +1794,13 @@ xferBenchUtils::getObjS3(const std::string &name) {
         aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {
@@ -1798,8 +1825,13 @@ xferBenchUtils::rmObjS3(const std::string &name) {
         aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Removing S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Removing S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {
