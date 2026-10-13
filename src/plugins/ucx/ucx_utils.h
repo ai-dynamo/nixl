@@ -46,9 +46,6 @@ private:
     std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::CONNECTED};
     const uint32_t closeFlags_;
 
-    void
-    setState(nixl::ucx::ep_state_t new_state);
-
     nixl_status_t
     disconnect();
 

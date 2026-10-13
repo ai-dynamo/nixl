@@ -92,25 +92,7 @@ nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
                << ucs_status_string(status) << ")";
 
     NIXL_ASSERT(eph_ == ucp_ep);
-
-    switch (current_state) {
-    case nixl::ucx::ep_state_t::FAILED:
-        // The error was already handled, nothing to do
-        return;
-    case nixl::ucx::ep_state_t::CONNECTED:
-        setState(nixl::ucx::ep_state_t::FAILED);
-        return;
-    }
-    NIXL_FATAL << "Invalid endpoint state: " << current_state;
-    std::terminate();
-}
-
-void
-nixlUcxEp::setState(nixl::ucx::ep_state_t new_state) {
-    const auto old_state = state_.load(std::memory_order_relaxed);
-    NIXL_ASSERT(new_state != old_state);
-    NIXL_DEBUG << "ep " << eph_ << ": state " << old_state << " -> " << new_state;
-    state_ = new_state;
+    state_ = nixl::ucx::ep_state_t::FAILED;
 }
 
 namespace {
@@ -161,11 +143,14 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t er
     ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS | UCP_EP_PARAM_FIELD_ERR_HANDLER |
         UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
     ep_params.err_mode = err_handling_mode;
-    ep_params.err_handler.cb = err_cb_wrapper;
-    ep_params.err_handler.arg = static_cast<void *>(this);
+    if (err_handling_mode != UCP_ERR_HANDLING_MODE_NONE) {
+        ep_params.err_handler.cb = err_cb_wrapper;
+        ep_params.err_handler.arg = static_cast<void *>(this);
+    }
     ep_params.address = reinterpret_cast<ucp_address_t *>(addr);
 
-    const nixl_status_t status = nixl::ucx::ucsToNixlStatus(ucp_ep_create(worker, &ep_params, &eph_));
+    const nixl_status_t status =
+        nixl::ucx::ucsToNixlStatus(ucp_ep_create(worker, &ep_params, &eph_));
     if (status != NIXL_SUCCESS) {
         throw std::runtime_error("failed to create ep");
     }
