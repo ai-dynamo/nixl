@@ -318,9 +318,13 @@ steps:
   # cached deps image so only the wheel stage compiles.
   - name: Build Wheel
     containerSelector: "{name: 'manylinux|build_helper_(vllm|sglang)'}"
+    credentialsId: 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       set -x
+      # github.com credential for the wheel stage's meson wrap-git clones ("ghconfig" build secret).
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
+      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
       export NPROC=$NPROC
       export GRPC_NPROC=$GRPC_NPROC
       ./contrib/build-container.sh \

@@ -321,7 +321,8 @@ COPY --from=nixlbench . /workspace/nixlbench
 
 WORKDIR /workspace/nixl
 
-RUN rm -rf build && \
+# meson setup clones the taskflow and prometheus-cpp [wrap-git] subprojects from github.com.
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     mkdir build && \
     meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \

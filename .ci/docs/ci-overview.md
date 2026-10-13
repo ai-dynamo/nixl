@@ -339,7 +339,9 @@ missing terminal git tried to prompt on, not to DNS or connectivity.
 Every cloning `RUN` mounts an optional build secret,
 `--mount=type=secret,id=ghconfig,target=/root/.gitconfig`, holding
 `http.https://github.com/.extraheader = AUTHORIZATION: basic <base64 user:token>`, so
-every request to github.com is authenticated rather than anonymous.
+every request to github.com is authenticated rather than anonymous. This includes the
+NIXL `meson setup` `RUN`s, which clone the `taskflow` and `prometheus-cpp` `[wrap-git]`
+subprojects implicitly; later meson-python builds reuse the downloaded subprojects.
 `GIT_TERMINAL_PROMPT=0` is an `ARG`, so it applies to these builds without persisting
 into the shipped images.
 
@@ -359,8 +361,8 @@ not only the ones GitHub would have challenged — rotate it before it lapses.
 CI supplies it through `DOCKER_BUILD_EXTRA_ARGS`, a generic passthrough that
 `contrib/build-container.sh` and `benchmark/nixlbench/contrib/build.sh` append to their
 `docker build` command (empty by default; word-split, so no paths with spaces). In
-`build-container-pr-matrix.yaml`, `build-container-matrix.yaml` and
-`build-wheel-nightly-matrix.yaml`:
+`build-container-pr-matrix.yaml`, `build-container-matrix.yaml`,
+`build-wheel-nightly-matrix.yaml` and `build-wheel-matrix.yaml`:
 
 - the setup step binds the token and calls `write_github_gitconfig /tmp/ghconfig`
   (`.ci/scripts/common.sh`), which writes the config with tracing off and mode 600, or an
@@ -376,9 +378,10 @@ The token never lands in an image layer or in `podman history`. Still anonymous:
 ref lookup in `build-container-matrix.yaml`'s Groovy pre-step, which runs before any
 credential is bound.
 
-`build-wheel-matrix.yaml` needs nothing: it passes `--wheel-base-image`, which skips the
-`wheel_base` stage that holds the manylinux clones. That base, and `Dockerfile.base`,
-are built by ci-demo; see the next section.
+`build-wheel-matrix.yaml` passes `--wheel-base-image`, which skips the `wheel_base`
+stage that holds the manylinux clones; its `Build Wheel` step binds the token, writes
+`/tmp/ghconfig` and passes the secret itself, for the `wheel` stage's `meson setup`. That base, and `Dockerfile.base`, are
+built by ci-demo; see the next section.
 
 ## Authenticated clones in ci-demo-built images
 
