@@ -36,6 +36,7 @@
 
 namespace {
 
+using nixl::telemetry::mp::storeSetupError;
 using nixl::telemetry::mp::storeWriter;
 using nixl::telemetry::mp::storeWriterAlive;
 using nixl::telemetry::mp::processRunMarker;
@@ -177,6 +178,11 @@ TEST_F(MpStoreTest, TooManyBucketsRejected) {
     const auto path = storePath("agent-too-many");
     EXPECT_THROW({ storeWriter writer(path, "a", "host-1", "", 0, too_many); }, std::runtime_error);
     EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST_F(MpStoreTest, OsFailureThrowsStoreSetupError) {
+    const auto path = dir_ / "missing" / "agent-os-failure";
+    EXPECT_THROW({ storeWriter writer(path, "a", "host-1", "", 0, kBuckets); }, storeSetupError);
 }
 
 TEST_F(MpStoreTest, DestructorKeepsStoreFileWithFinalValues) {

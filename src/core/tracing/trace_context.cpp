@@ -23,6 +23,7 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/uuid_v4.h"
+#include "log_once.h"
 #include "trace.h"
 #include "trace_context.h"
 
@@ -138,6 +139,14 @@ nixl::trace::TraceContext::TraceContext(const nixl::trace::Tracer *tracer) {
         *this = TraceContext{};
         tracer->reportContextFailure(e.what());
     }
+}
+
+void
+nixl::trace::Tracer::reportContextFailure(std::string_view reason) const noexcept {
+    logOnce(contextFailureLogged_, [reason] {
+        NIXL_ERROR << "nixl::trace: could not generate a trace context (" << reason
+                   << "); the request continues untraced and further failures are not logged";
+    });
 }
 
 bool
