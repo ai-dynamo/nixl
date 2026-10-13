@@ -480,11 +480,13 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modify("CUDA_IPC_ENABLE_GET_ZCOPY", "on");
     }
 
-    // rocm_ipc reports a 128-byte minimum zero-copy size by default, and UCP's
-    // put/get zero-copy protocols only accept lanes whose minimum is 0. Without
-    // this, GPU-to-GPU RMA on AMD never uses rocm_ipc (XGMI) and is staged
-    // through host memory instead.
-    config.modify("ROCM_IPC_MIN_ZCOPY", "0");
+    if (device_memory_type.empty()) {
+        // rocm_ipc reports a 128-byte minimum zero-copy size by default, and
+        // UCP's put/get zero-copy protocols only accept lanes whose minimum is
+        // 0. Without this, GPU-to-GPU RMA on AMD never uses rocm_ipc (XGMI)
+        // and is staged through host memory instead.
+        config.modify("ROCM_IPC_MIN_ZCOPY", "0");
+    }
 
     // NIXL only needs AMs to be visible after previous PUTs which RC already
     // provides without the need of strict order key.
