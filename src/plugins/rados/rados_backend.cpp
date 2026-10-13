@@ -129,6 +129,11 @@ public:
     }
 
     void
+    set_namespace(const std::string &ns) {
+        capi_.ioctx_set_namespace(ioctx_, ns.c_str());
+    }
+
+    void
     create_view(librados::IoCtx *ctx) {
         view_ = ctx;
         view_held_ = true;
@@ -165,9 +170,9 @@ private:
 };
 
 // Bring up the rados client (create2 -> conf -> overrides -> connect -> pool
-// ioctx -> non-owning view) from the parsed config. On success the raw handles
-// move into the out-params for engine ownership; on any failure everything
-// acquired so far unwinds here and nothing is taken.
+// ioctx -> optional namespace -> non-owning view) from the parsed config. On
+// success the raw handles move into the out-params for engine ownership; on
+// any failure everything acquired so far unwinds here and nothing is taken.
 bool
 bootstrapClient(nixl::rados::cApi &capi,
                 const nixl::rados::backendConfig &config,
@@ -185,6 +190,9 @@ bootstrapClient(nixl::rados::cApi &capi,
     }
     if (!checkRadosResult("rados_ioctx_create", resources.create_ioctx(config.pool.c_str()))) {
         return false;
+    }
+    if (config.ns) {
+        resources.set_namespace(*config.ns);
     }
     resources.create_view(view);
     out_ioctx = resources.take_ioctx();
@@ -373,7 +381,9 @@ nixlRadosEngine::nixlRadosEngine(const nixlBackendInitParams *init_params,
     if (!config) {
         NIXL_ERROR << "RADOS custom parameter validation failed: 'conf', 'pool', and "
                       "'name' must be non-empty, 'status_wait_us' must be a decimal in "
-                      "[0, 1000000], and every other parameter must be 'ceph.<option>'";
+                      "[0, 1000000], 'namespace' when present must be non-empty, NUL-free, "
+                      "and not the all-namespaces sentinel, and every other parameter must be "
+                      "'ceph.<option>'";
         initErr = true;
         return;
     }

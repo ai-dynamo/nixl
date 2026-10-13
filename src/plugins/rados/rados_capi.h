@@ -52,6 +52,13 @@ public:
     virtual int
     ioctx_create(rados_t cluster, const char *pool_name, rados_ioctx_t *ioctx) = 0;
     /**
+     * Point the raw handle at an object namespace for all later operations on
+     * it; configuration-only, and the engine calls it exactly once, after
+     * ioctx_create and before ioctxFromRaw binds the shared view.
+     */
+    virtual void
+    ioctx_set_namespace(rados_ioctx_t ioctx, const char *nspace) = 0;
+    /**
      * Destroy the raw handle exactly once, after its views close.
      */
     virtual void
@@ -170,6 +177,11 @@ public:
     int
     ioctx_create(rados_t cluster, const char *pool_name, rados_ioctx_t *ioctx) override {
         return rados_ioctx_create(cluster, pool_name, ioctx);
+    }
+
+    void
+    ioctx_set_namespace(rados_ioctx_t ioctx, const char *nspace) override {
+        rados_ioctx_set_namespace(ioctx, nspace);
     }
 
     void

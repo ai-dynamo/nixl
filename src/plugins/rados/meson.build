@@ -29,6 +29,7 @@ if not cpp.links('''
             rc += rados_conf_set(cluster, "log_file", "");
             rc += rados_connect(cluster);
             rc += rados_ioctx_create(cluster, "pool", &ioctx);
+            rados_ioctx_set_namespace(ioctx, "fixture-ns");
             rc += rados_aio_create_completion(nullptr, nullptr, nullptr, &c_comp);
             rc += rados_aio_read(ioctx, "oid", c_comp, buf, sizeof(buf), 0);
             rc += rados_aio_is_complete_and_cb(c_comp);
@@ -54,7 +55,7 @@ if not cpp.links('''
          name: 'librados C lifecycle/read and C++ IoCtx/bufferlist/AIO surface')
     error('The RADOS plugin requires the librados C lifecycle and AIO-read surface plus the C++ ' +
           'IoCtx/bufferlist/AIO surface: rados_create2, rados_conf_read_file, ' +
-          'rados_conf_set, rados_connect, rados_ioctx_create, ' +
+          'rados_conf_set, rados_connect, rados_ioctx_create, rados_ioctx_set_namespace, ' +
           'rados_ioctx_destroy, rados_shutdown, ' +
           'rados_aio_create_completion, rados_aio_read, rados_aio_is_complete_and_cb, ' +
           'rados_aio_get_return_value, rados_aio_wait_for_complete_and_cb, rados_aio_release, ' +

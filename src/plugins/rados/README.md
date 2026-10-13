@@ -48,7 +48,8 @@ written range are preserved (native RADOS range-write semantics).
 
 - **librados** (pkg-config name `rados`): headers and shared library from a
   Ceph client distribution. The plugin uses the librados C
-  lifecycle/configuration/AIO-read surface and the C++ `IoCtx` write surface
+  lifecycle/configuration/namespace/AIO-read surface (including pool-context
+  namespace configuration) and the C++ `IoCtx` write surface
   (`IoCtx::aio_write` over a static, non-owning `bufferlist`). During setup, meson compiles and
   links a probe program using exactly this surface, and the plugin is
   built only when the probe succeeds; the runtime librados must be ABI/link
@@ -86,7 +87,10 @@ meson install -C build
 - **Tests:** deterministic unit tests exercise the backend with no Ceph
   access. A separate, environment-gated live test performs a real-cluster
   round trip when `NIXL_RADOS_CONF`, `NIXL_RADOS_POOL`, and
-  `NIXL_RADOS_NAME` are exported, and skips otherwise. These variables
+  `NIXL_RADOS_NAME` are exported, and skips otherwise; when the optional
+  `NIXL_RADOS_NS` is set the round trip runs under that `namespace` and the
+  written object must stay invisible to a default-namespace backend on the
+  same pool. These variables
   configure that live test only; they are not runtime plugin configuration —
   backend configuration comes solely from the custom parameters below.
 
@@ -101,22 +105,26 @@ Passed as the `nixl_b_params_t` map to `createBackend("RADOS", ...)`:
 | `conf` | Path to a readable Ceph configuration file | Yes |
 | `name` | Full Ceph entity name (normally `client.<id>`) | Yes |
 | `pool` | RADOS pool opened at backend initialization | Yes |
+| `namespace` | Optional object namespace for the opened pool context; absent keeps the default (unnamed) namespace, and a present value must be non-empty, NUL-free, and not the all-namespaces sentinel (see Object namespace) | No |
 | `status_wait_us` | Optional bounded status wait for `checkXfer` polling: strict ASCII decimal (`[0-9]+`, leading zeros valid) in `[0, 1000000]` microseconds; absent or `0` keeps polling fully nonblocking; malformed or above-ceiling values fail backend creation (see Bounded status wait) | No |
 | `ceph.<option>` | Any other parameter; the prefix is stripped and the option/value are applied verbatim to the Ceph configuration (empty values allowed) | No |
 
 Backend creation is synchronous: at initialization the backend creates a
 cluster handle with `name`, reads `conf`, applies the `ceph.<option>`
 overrides, connects, and opens the pool — any of which may block on Ceph
-configuration, authentication, connection, or pool-open work — then binds a
-non-owning C++ `IoCtx` view of the opened raw ioctx for writes. Overrides
+configuration, authentication, connection, or pool-open work — then points
+the opened ioctx at the optional `namespace` (local handle configuration with
+no Ceph round trip) and binds a non-owning C++ `IoCtx` view of the opened raw
+ioctx for writes. Overrides
 therefore always take effect after the configuration file is read and before
 the connection is made. The `ceph.rados_mon_op_timeout` and
 `ceph.rados_osd_op_timeout` client timeouts (whole seconds; both default to
 `0`, unlimited) are forwarded before connect. Authentication and keyring
 resolution are handled by Ceph through `conf` and the overrides; the plugin
-interprets nothing beyond the three required keys and the numeric
-`status_wait_us` budget. A missing or empty `conf`, `name`, or `pool`, an
-invalid `status_wait_us` value, a parameter that is neither one of those keys
+interprets nothing beyond the three required keys, the optional `namespace`,
+and the numeric `status_wait_us` budget. A missing or empty `conf`, `name`,
+or `pool`, an invalid `namespace`, an invalid `status_wait_us` value, a
+parameter that is neither one of those keys
 nor `ceph.<option>` (including the bare key `ceph.`), or a failure to connect
 or open the pool makes `createBackend()` return an error without a usable
 backend. The opened pool is fixed for the backend instance's lifetime;
@@ -144,6 +152,19 @@ An experimental polling knob, reserved ahead of the unknown-key rule;
   delay lies outside it. Release and teardown drain through the completion
   waits and never through this timer; overlapping a sleep with another
   thread's release or teardown stays outside the one-caller-per-handle rule.
+
+### Object namespace (`namespace`)
+
+Reserved ahead of the unknown-key rule, so `ceph.namespace` stays a normal
+Ceph option. Absent keeps the default (unnamed) namespace and the setter is
+never called; a present value must be non-empty, NUL-free, and not the
+all-namespaces sentinel (single `0x01` byte), or creation fails before any
+Ceph access. When set, the setter runs exactly once on the raw ioctx after
+pool open and before the C++ view is bound, so every operation of the
+instance resolves within that namespace; other namespaces need separate
+backend instances. External listing or cleanup needs the namespace selected
+(`rados -N <namespace>`), and isolation holds only where cephx caps enforce
+it.
 
 ### Registration and object-key mapping
 

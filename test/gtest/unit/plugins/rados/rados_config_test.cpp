@@ -151,4 +151,38 @@ TEST(radosConfigTest, KeepsCephStatusWaitUsAsNormalCephOption) {
               nixl::rados::ceph_options_t({{"status_wait_us", "4242"}}));
 }
 
+TEST(radosConfigTest, ParsesOptionalNamespace) {
+    const auto absent = nixl::rados::parseCustomParams(validBase());
+    ASSERT_TRUE(absent.has_value());
+    EXPECT_FALSE(absent->ns.has_value());
+
+    auto params = validBase();
+    params["namespace"] = "qa-images";
+    const auto config = nixl::rados::parseCustomParams(params);
+    ASSERT_TRUE(config.has_value());
+    ASSERT_TRUE(config->ns.has_value());
+    EXPECT_EQ(*config->ns, "qa-images");
+    EXPECT_TRUE(config->ceph_options.empty()) << "reserved key must not reach Ceph options";
+}
+
+TEST(radosConfigTest, RejectsEmptyNulAndSentinelNamespace) {
+    auto empty = validBase();
+    empty["namespace"] = "";
+    EXPECT_FALSE(nixl::rados::parseCustomParams(empty).has_value());
+
+    auto nul = validBase();
+    nul["namespace"] = std::string("qa\0ns", 5);
+    EXPECT_FALSE(nixl::rados::parseCustomParams(nul).has_value());
+
+    auto only_nul = validBase();
+    only_nul["namespace"] = std::string("\0", 1);
+    EXPECT_FALSE(nixl::rados::parseCustomParams(only_nul).has_value());
+
+    // Exact-match rejection of LIBRADOS_ALL_NSPACES; longer names merely
+    // starting with 0x01 stay valid namespaces.
+    auto sentinel = validBase();
+    sentinel["namespace"] = std::string("\x01", 1);
+    EXPECT_FALSE(nixl::rados::parseCustomParams(sentinel).has_value());
+}
+
 } // namespace gtest::rados

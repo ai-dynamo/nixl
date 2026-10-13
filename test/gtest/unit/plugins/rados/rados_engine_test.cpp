@@ -134,6 +134,7 @@ namespace {
         std::vector<std::string> create2_names;
         std::vector<std::string> conf_paths;
         std::vector<std::string> pools;
+        std::string object_namespace;
         std::vector<librados::IoCtx *> write_ctxs;
         std::vector<size_t> read_ioctx_ordinals;
         wait_gate gate;
@@ -253,6 +254,16 @@ namespace {
             *ioctx = makeIoctxToken(ioctxs.size());
             ioctxs.push_back({*ioctx, true});
             return 0;
+        }
+
+        void
+        ioctx_set_namespace(rados_ioctx_t ioctx, const char *nspace) override {
+            log->push_back("ioctx_set_namespace");
+            if (!requireLiveIoctx(ioctx)) {
+                return;
+            }
+            EXPECT_NE(nspace, nullptr);
+            object_namespace = nspace;
         }
 
         void
@@ -752,15 +763,26 @@ protected:
     nixl_b_params_t custom_params_;
 };
 
-// radosConfigTest owns the invalid-parameter matrix; one representative proves the
-// engine rejects it before touching the librados seam.
+// radosConfigTest owns the invalid-parameter matrix; representatives prove the
+// engine rejects them before touching the librados seam.
 TEST_F(radosEngineFixture, RejectsInvalidParamsBeforeAnyAPICall) {
-    auto params = validBase();
-    params["rbd_cache"] = "true";
-    custom_params_ = params;
-    auto engine = makeEngine();
-    EXPECT_TRUE(engine->getInitErr());
-    EXPECT_TRUE(log->empty()) << "rejection must not touch the librados seam";
+    std::vector<nixl_b_params_t> invalid;
+    auto unprefixed = validBase();
+    unprefixed["rbd_cache"] = "true";
+    invalid.push_back(unprefixed);
+    auto empty_ns = validBase();
+    empty_ns["namespace"] = "";
+    invalid.push_back(empty_ns);
+    auto nul_ns = validBase();
+    nul_ns["namespace"] = std::string("qa\0ns", 5);
+    invalid.push_back(nul_ns);
+
+    for (const auto &params : invalid) {
+        custom_params_ = params;
+        auto engine = makeEngine();
+        EXPECT_TRUE(engine->getInitErr());
+        EXPECT_TRUE(log->empty()) << "rejection must not touch the librados seam";
+    }
 
     custom_params_ = validBase();
     nixlRadosEngine null_seam(&init_params_, nullptr);
@@ -797,6 +819,26 @@ TEST_F(radosEngineFixture, BootstrapsClientAndRetiresResources) {
     std::vector<std::string> final_log = client_bootstrap;
     final_log.insert(final_log.end(), client_teardown.begin(), client_teardown.end());
     EXPECT_EQ(*log, final_log);
+}
+
+TEST_F(radosEngineFixture, NamespaceConfiguredOnceBetweenIoctxCreateAndView) {
+    custom_params_ = validBase();
+    custom_params_["namespace"] = "qa-ns";
+    fakeCApi *fake = nullptr;
+    {
+        auto engine = makeEngine(&fake);
+        ASSERT_FALSE(engine->getInitErr());
+        EXPECT_EQ(*log,
+                  (std::vector<std::string>{"create2",
+                                            "conf_read_file",
+                                            "connect",
+                                            "ioctx_create",
+                                            "ioctx_set_namespace",
+                                            "ioctx_from_raw"}));
+        EXPECT_EQ(fake->object_namespace, "qa-ns");
+    }
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_set_namespace")), 1)
+        << "the one raw ioctx must be configured exactly once";
 }
 
 TEST_F(radosEngineFixture, BootstrapFailureUnwindsAndGatesRegistration) {

@@ -92,6 +92,10 @@ TEST_F(radosDiscoveryFixture, DirectRoundTripAndCleanShutdown) {
     ASSERT_EQ(access(conf.c_str(), R_OK), 0) << "Ceph conf is not readable: " << conf;
 
     nixl_b_params_t parameters{{"conf", conf}, {"pool", pool}, {"name", name}};
+    const std::string object_namespace = environmentValue("NIXL_RADOS_NS");
+    if (!object_namespace.empty()) {
+        parameters["namespace"] = object_namespace;
+    }
     const nixlAgentConfig agent_config;
     nixlAgent agent(localAgent, agent_config);
 
@@ -152,6 +156,51 @@ TEST_F(radosDiscoveryFixture, DirectRoundTripAndCleanShutdown) {
               NIXL_SUCCESS);
     run_to_completion(read_request);
     EXPECT_EQ(bytes, readback);
+
+    if (!object_namespace.empty()) {
+        // A default-namespace backend on the same pool must not see the
+        // namespaced object: the read must terminate NIXL_ERR_NOT_FOUND.
+        nixl_b_params_t plain{{"conf", conf}, {"pool", pool}, {"name", name}};
+        const nixlAgentConfig default_ns_agent_config;
+        nixlAgent default_ns_agent(localAgent, default_ns_agent_config);
+        nixlBackendH *default_ns_backend = nullptr;
+        ASSERT_EQ(default_ns_agent.createBackend("RADOS", plain, default_ns_backend), NIXL_SUCCESS);
+        ASSERT_NE(default_ns_backend, nullptr);
+        nixl_opt_args_t default_ns_args;
+        default_ns_args.backends = {default_ns_backend};
+
+        std::vector<unsigned char> invisible(bytes.size(), 0x00);
+        const nixlBlobDesc invisible_desc(
+            reinterpret_cast<uintptr_t>(invisible.data()), invisible.size(), 0, {});
+        nixl_reg_dlist_t invisible_reg(DRAM_SEG);
+        invisible_reg.addDesc(invisible_desc);
+        ASSERT_EQ(default_ns_agent.registerMem(invisible_reg, &default_ns_args), NIXL_SUCCESS);
+        nixl_reg_dlist_t object_reg(OBJ_SEG);
+        object_reg.addDesc(object_desc);
+        ASSERT_EQ(default_ns_agent.registerMem(object_reg, &default_ns_args), NIXL_SUCCESS);
+
+        nixl_xfer_dlist_t invisible_local(DRAM_SEG);
+        invisible_local.addDesc(invisible_desc);
+        nixlXferReqH *invisible_request = nullptr;
+        ASSERT_EQ(default_ns_agent.createXferReq(NIXL_READ,
+                                                 invisible_local,
+                                                 object_remote,
+                                                 localAgent,
+                                                 invisible_request,
+                                                 &default_ns_args),
+                  NIXL_SUCCESS);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        nixl_status_t status = default_ns_agent.postXferReq(invisible_request);
+        while (status == NIXL_IN_PROG && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            status = default_ns_agent.getXferStatus(invisible_request);
+        }
+        EXPECT_EQ(status, NIXL_ERR_NOT_FOUND)
+            << "namespaced object leaked into the pool's default namespace";
+        EXPECT_EQ(default_ns_agent.releaseXferReq(invisible_request), NIXL_SUCCESS);
+        EXPECT_EQ(default_ns_agent.deregisterMem(object_reg, &default_ns_args), NIXL_SUCCESS);
+        EXPECT_EQ(default_ns_agent.deregisterMem(invisible_reg, &default_ns_args), NIXL_SUCCESS);
+    }
 
     ASSERT_EQ(agent.deregisterMem(object_registrations, &reg_args), NIXL_SUCCESS);
     ASSERT_EQ(agent.deregisterMem(dram_registrations, &reg_args), NIXL_SUCCESS);

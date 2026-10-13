@@ -37,6 +37,7 @@ struct backendConfig {
     std::string conf;
     std::string pool;
     std::string name;
+    std::optional<std::string> ns;
     uint64_t status_wait_us = 0;
     ceph_options_t ceph_options;
 };
@@ -45,6 +46,10 @@ inline constexpr const char *kCephPrefix = "ceph.";
 inline constexpr std::size_t kCephPrefixLength = 5;
 
 inline constexpr uint64_t kStatusWaitUsCeiling = 1000000;
+
+// librados' LIBRADOS_ALL_NSPACES widens operations across every namespace
+// instead of selecting one; kept as a literal so this parser stays librados-free.
+inline constexpr const char *kAllNamespacesSentinel = "\x01";
 
 // Strict ASCII decimal ([0-9]+), leading zeros valid, ceiling-bounded; the
 // running total is checked per digit, so long digit strings fail without overflow.
@@ -94,6 +99,14 @@ parseCustomParams(const nixl_b_params_t &params) {
             if (!parseStatusWaitUs(value, config.status_wait_us)) {
                 return std::nullopt;
             }
+            continue;
+        }
+        if (key == "namespace") {
+            if (value.empty() || value == kAllNamespacesSentinel ||
+                value.find('\0') != std::string::npos) {
+                return std::nullopt;
+            }
+            config.ns = value;
             continue;
         }
         if (key.rfind(kCephPrefix, 0) != 0 || key.size() == kCephPrefixLength) {
