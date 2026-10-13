@@ -181,6 +181,7 @@ else
           make -j"$NPROC" && \
           $SUDO make install && \
           $SUDO ldconfig && \
+          $SUDO chown -R "$(id -u):$(id -g)" "${INSTALL_DIR}" && \
           cd "${BUILD_TMP}" && \
           rm -rf hiredis \
         )

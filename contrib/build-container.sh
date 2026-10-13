@@ -40,7 +40,7 @@ ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
-WHL_PYTHON_VERSIONS="3.12"
+WHL_PYTHON_VERSIONS=""
 UCX_REPO=${UCX_REPO:-https://github.com/openucx/ucx.git}
 UCX_REF=${UCX_REF:-v1.23.x}
 UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-}
@@ -283,9 +283,10 @@ get_options() {
         BASE_IMAGE_TAG=13.0.1-devel-ubuntu22.04
         WHL_BASE=${WHL_BASE:-manylinux_2_34}
         DEFAULT_PYTHON_VERSION="3.10"
-        WHL_PYTHON_VERSIONS="3.10"
+        WHL_PYTHON_VERSIONS="${WHL_PYTHON_VERSIONS:-3.10}"
     fi
 
+    WHL_PYTHON_VERSIONS="${WHL_PYTHON_VERSIONS:-3.12}"
     WHL_PLATFORM=${WHL_BASE}_${ARCH}
 
     if [ -z "$TAG" ]; then
