@@ -228,7 +228,6 @@ RUN wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIR
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DCMAKE_INSTALL_LIBDIR=lib \
         -DCMAKE_BUILD_TYPE=Release \
-        -DENABLE_SSL=ON \
         -DBUILD_SHARED_LIBS=ON && \
     make -j"${NPROC:-$(nproc)}" && \
     make install && \
