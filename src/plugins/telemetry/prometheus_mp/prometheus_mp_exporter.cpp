@@ -179,6 +179,13 @@ resolveMultiprocDir() {
     return path;
 }
 
+[[nodiscard]] std::filesystem::path
+canonicalDir(const std::filesystem::path &dir) {
+    std::error_code ec;
+    std::filesystem::path canonical = std::filesystem::canonical(dir, ec);
+    return ec ? dir : canonical;
+}
+
 // Per-process instance counter so multiple agents in one process get distinct
 // store files.
 std::atomic<uint64_t> s_instanceSeq{0};
@@ -216,9 +223,10 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
         throwDefaultDirUnusable(e.what());
     }
 
+    const std::filesystem::path endpoint_dir = canonicalDir(dir_);
     const std::lock_guard lock(s_endpointsMutex);
     std::erase_if(s_endpoints, [](const auto &entry) { return entry.second.expired(); });
-    auto &shared = s_endpoints[{dir_, bind_address, stale_ttl}];
+    auto &shared = s_endpoints[{endpoint_dir, bind_address, stale_ttl}];
     endpoint_ = shared.lock();
     if (endpoint_) {
         NIXL_INFO << "prometheus_mp exporter (" << (endpoint_->serving() ? "owner" : "writer")

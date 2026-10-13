@@ -106,6 +106,17 @@ TEST_F(MpExporterTest, AgentsOfOneProcessShareTheEndpoint) {
     EXPECT_EQ(metrics.latestValue("agent_tx_bytes_total", {{"agent_name", "agent-second"}}), 2.0);
 }
 
+TEST_F(MpExporterTest, SpellingsOfOneDirectoryShareTheEndpoint) {
+    const auto link = dir_ / "link";
+    std::filesystem::create_directory_symlink(dir_, link);
+
+    auto first = std::make_unique<nixlTelemetryPrometheusMpExporter>(initParams("agent-first"));
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", link.string());
+    nixlTelemetryPrometheusMpExporter second(initParams("agent-second"));
+    first.reset();
+    EXPECT_TRUE(second.isExporter());
+}
+
 TEST_F(MpExporterTest, EndpointOutlivesTheAgentThatCreatedIt) {
     auto first = std::make_unique<nixlTelemetryPrometheusMpExporter>(initParams("agent-first"));
     nixlTelemetryPrometheusMpExporter survivor(initParams("agent-survivor"));
@@ -238,6 +249,45 @@ TEST_F(MpExporterTest, ReclaimWhileServingKeepsTheElection) {
     scrapeEndpoint intruder(dir_, bind, std::chrono::seconds(2));
     EXPECT_EQ(intruder.claim(), scrapeEndpoint::status::SIBLING_OWNS)
         << "the serving process gave its election away";
+}
+
+TEST_F(MpExporterTest, ReclaimWaitsTheRetryIntervalAfterLosingToASibling) {
+    using nixl::telemetry::mp::monotonicNs;
+    using nixl::telemetry::mp::scrapeEndpoint;
+
+    const std::string bind = "127.0.0.1:" + std::to_string(port_);
+    auto owner = std::make_unique<scrapeEndpoint>(dir_, bind, std::chrono::seconds(2));
+    ASSERT_EQ(owner->claim(), scrapeEndpoint::status::SERVING);
+    scrapeEndpoint writer(dir_, bind, std::chrono::seconds(2));
+    ASSERT_EQ(writer.claim(), scrapeEndpoint::status::SIBLING_OWNS);
+
+    const auto start = std::chrono::nanoseconds(monotonicNs());
+    writer.reclaim(start);
+    owner.reset();
+
+    writer.reclaim(start + std::chrono::milliseconds(100));
+    EXPECT_FALSE(writer.serving()) << "retried inside the retry interval";
+    writer.reclaim(start + std::chrono::milliseconds(300));
+    EXPECT_TRUE(writer.serving());
+}
+
+TEST_F(MpExporterTest, ReclaimBacksOffAfterABindFailure) {
+    using nixl::telemetry::mp::monotonicNs;
+    using nixl::telemetry::mp::scrapeEndpoint;
+
+    const std::string bind = "127.0.0.1:" + std::to_string(port_);
+    auto blocker = std::make_unique<prometheus::Exposer>(bind);
+    scrapeEndpoint endpoint(dir_, bind, std::chrono::seconds(2));
+    ASSERT_EQ(endpoint.claim(), scrapeEndpoint::status::PORT_TAKEN);
+
+    const auto start = std::chrono::nanoseconds(monotonicNs());
+    endpoint.reclaim(start);
+    blocker.reset();
+
+    endpoint.reclaim(start + std::chrono::seconds(1));
+    EXPECT_FALSE(endpoint.serving()) << "retried inside the backoff";
+    endpoint.reclaim(start + std::chrono::seconds(6));
+    EXPECT_TRUE(endpoint.serving());
 }
 
 TEST_F(MpExporterTest, ReclaimsFromSeveralThreadsElectOneAtATime) {
