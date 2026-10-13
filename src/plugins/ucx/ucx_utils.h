@@ -42,17 +42,12 @@ class nixlUcxMem;
 
 class nixlUcxEp {
 private:
-    ucp_ep_h eph{nullptr};
-    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::UNINITIALIZED};
+    ucp_ep_h eph_{nullptr};
+    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::CONNECTED};
+    const uint32_t closeFlags_;
 
-    void
-    setState(nixl::ucx::ep_state_t new_state);
     nixl_status_t
-    closeImpl();
-
-    /* Connection */
-    nixl_status_t
-    disconnect_nb();
+    disconnect();
 
     static void
     sendAmCallback(void *request, ucs_status_t status, void *user_data);
@@ -118,7 +113,7 @@ public:
 
     [[nodiscard]] ucp_ep_h
     getEp() const noexcept {
-        return eph;
+        return eph_;
     }
 };
 
