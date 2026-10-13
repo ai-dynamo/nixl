@@ -183,7 +183,12 @@ class nixlMemSection {
         nixl_status_t
         populate(const nixl_xfer_dlist_t &query,
                  nixlBackendEngine *backend,
-                 nixl_stride_dlist_t &resp) const;
+                 nixl_meta_stride_dlist_t &resp) const;
+
+        nixl_status_t
+        populate(const nixl_stride_dlist_t &query,
+                 nixlBackendEngine *backend,
+                 nixl_meta_stride_dlist_t &resp) const;
 
         [[nodiscard]] nixl_status_t
         addElement(const nixlRemoteDesc &query,
@@ -216,20 +221,12 @@ class nixlLocalSection : public nixlMemSection {
 class nixlRemoteSection : public nixlMemSection {
     private:
         std::string agentName;
-        // Per-connection id: a peer may reconnect under the same agentName, so
-        // invalidation matches this generation to avoid tearing down a newer connection.
-        uint64_t generation_;
 
         nixl_status_t addDescList (
                            const nixl_reg_dlist_t &mem_elms,
                            nixlBackendEngine *backend);
     public:
         explicit nixlRemoteSection(std::string agent_name) noexcept;
-
-        [[nodiscard]] uint64_t
-        getGeneration() const noexcept {
-            return generation_;
-        }
 
         nixl_status_t loadRemoteData (nixlSerDes* deserializer,
                                       backend_map_t &backendToEngineMap);

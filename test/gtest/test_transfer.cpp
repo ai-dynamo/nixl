@@ -22,6 +22,7 @@
 #include "nixl.h"
 #include "nixl_types.h"
 #include "plugin_manager.h"
+#include "transfer_request.h"
 
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
@@ -284,7 +285,7 @@ protected:
     invalidateMD(size_t start, size_t end) {
         // Invalidate each other's metadata for the agents in the specified range
         for (size_t i = start; i <= end; i++) {
-            for (size_t j = start; j < end; j++) {
+            for (size_t j = start; j <= end; j++) {
                 if (i == j)
                     continue;
                 nixl_status_t status = agents[j]->invalidateRemoteMD(
@@ -319,8 +320,17 @@ protected:
                  const std::string &from_name,
                  size_t expected_count,
                  const std::string &expected_notif,
-                 nixl_notifs_t notif_map = {}) {
+                 nixl_notifs_t notif_map = {},
+                 nixlAgent *sender = nullptr) {
+        // Without a progress thread nothing else advances the sender's worker,
+        // so its queued notifications would never be flushed to the receiver.
+        // When the sender is the receiver, polling it below already does that.
+        nixl_notifs_t sender_notifs;
         for (int i = 0; i < retry_count; i++) {
+            if (sender != nullptr && sender != &agent && !isProgressThreadEnabled()) {
+                ASSERT_EQ(NIXL_SUCCESS, sender->getNotifs(sender_notifs));
+            }
+
             nixl_status_t status = agent.getNotifs(notif_map);
             ASSERT_EQ(status, NIXL_SUCCESS);
 
@@ -370,7 +380,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, total_notifs, notif_msg, std::move(notif_map));
+        verifyNotifs(to, from_name, total_notifs, notif_msg, std::move(notif_map), &from);
         invalidateMD(0, 1);
     }
 
@@ -389,7 +399,8 @@ protected:
                nixl_mem_t dst_mem_type,
                std::vector<MemBuffer> dst_buffers,
                nixl_status_t expected_telem_status = NIXL_ERR_NO_TELEMETRY,
-               const std::string &notif_msg = NOTIF_MSG) {
+               const std::string &notif_msg = NOTIF_MSG,
+               bool expect_trace_context = false) {
         std::mutex logger_mutex;
         std::vector<std::thread> threads;
         nixl_notifs_t notif_map;
@@ -408,16 +419,22 @@ protected:
                                        &extra_params);
                 ASSERT_EQ(status, NIXL_SUCCESS);
                 EXPECT_NE(xfer_req, nullptr);
+                const auto trace_correlation_id = xfer_req->traceCorrelationId64();
+                if (expect_trace_context) {
+                    EXPECT_NE(trace_correlation_id, 0u);
+                }
 
                 auto start_time = absl::Now();
 
                 for (size_t i = 0; i < repeat; i++) {
                     status = from.postXferReq(xfer_req);
                     ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+                    EXPECT_EQ(xfer_req->traceCorrelationId64(), trace_correlation_id);
 
                     for (int i = 0; i < retry_count; i++) {
                         status = from.getXferStatus(xfer_req);
                         EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+                        EXPECT_EQ(xfer_req->traceCorrelationId64(), trace_correlation_id);
                         if (status == NIXL_SUCCESS) {
                             break;
                         }
@@ -465,7 +482,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, repeat * num_threads, notif_msg, std::move(notif_map));
+        verifyNotifs(to, from_name, repeat * num_threads, notif_msg, std::move(notif_map), &from);
     }
 
     nixlAgent &getAgent(size_t idx)
@@ -761,19 +778,24 @@ protected:
         createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
 
         exchangeMD(0, 1);
-        doTransfer(getAgent(0),
-                   getAgentName(0),
-                   getAgent(1),
-                   getAgentName(1),
-                   NIXL_WRITE,
-                   size,
-                   count,
-                   repeat,
-                   num_threads,
-                   DRAM_SEG,
-                   src_buffers,
-                   DRAM_SEG,
-                   dst_buffers);
+        for (const auto op : {NIXL_WRITE, NIXL_READ}) {
+            doTransfer(getAgent(0),
+                       getAgentName(0),
+                       getAgent(1),
+                       getAgentName(1),
+                       op,
+                       size,
+                       count,
+                       repeat,
+                       num_threads,
+                       DRAM_SEG,
+                       src_buffers,
+                       DRAM_SEG,
+                       dst_buffers,
+                       NIXL_ERR_NO_TELEMETRY,
+                       "notification",
+                       true);
+        }
         invalidateMD(0, 1);
         deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
         deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);

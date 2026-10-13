@@ -22,7 +22,7 @@ else
 endif
 
 infinia_nixl_app = executable('infinia_nixl_test', 'infinia_nixl_test.cpp',
-                          dependencies: [nixl_dep, nixl_infra, cuda_dep],
+                          dependencies: [nixl_dep, nixl_infra, cuda_dep, nixl_common_dep],
                           cpp_args : compile_flags,
                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
                           install: true)

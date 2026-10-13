@@ -75,7 +75,8 @@ int main(int argc, char** argv) {
                                      "LIBFABRIC",
                                      "GUSLI",
                                      "UCCL",
-                                     "AZURE_BLOB"};
+                                     "AZURE_BLOB",
+                                     "REDIS"};
 
     if (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
         print_usage(argv[0]);
@@ -103,7 +104,7 @@ int main(int argc, char** argv) {
 
     // First make sure tested plugins are not already loaded
     for (const auto& plugin : plugins) {
-        plugin_manager.unloadBackendPlugin(plugin);
+        plugin_manager.unloadBackendPluginForUnitTest(plugin);
     }
 
     for (const auto& plugin : plugins) {
@@ -117,7 +118,7 @@ int main(int argc, char** argv) {
     }
 
     for (const auto& plugin : plugins) {
-        plugin_manager.unloadBackendPlugin(plugin);
+        plugin_manager.unloadBackendPluginForUnitTest(plugin);
     }
 
     // List all loaded plugins and make sure static plugins are present

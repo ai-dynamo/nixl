@@ -45,6 +45,44 @@ protected:
     }
 };
 
+class UcxTlsValidationTest : public ::testing::Test {
+protected:
+    void
+    SetUp() override {
+        if (std::getenv("NIXL_CI_NON_GPU") != nullptr ||
+            nixl::hwInfo::instance().numNvidiaGpus == 0) {
+            GTEST_SKIP() << "No available NVIDIA GPUs, skipping GPU UCX_TLS validation test";
+        }
+    }
+
+    void
+    expectCudaTlsValidationFailure(const std::string &tls) {
+        gtest::ScopedEnv env_helper;
+        env_helper.addVar("UCX_TLS", tls);
+
+        const gtest::LogIgnoreGuard lig_tls(
+            "Invalid UCX_TLS=.*Add cuda_copy for basic GPU support, or cuda to also include "
+            "NVLink support");
+        const gtest::LogIgnoreGuard lig_backend("backend creation failed for 'UCX'");
+
+        nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
+        nixlBackendH *backend = nullptr;
+        EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_ERR_BACKEND);
+        EXPECT_GE(lig_tls.getIgnoredCount(), 1);
+        EXPECT_EQ(lig_backend.getIgnoredCount(), 1);
+    }
+
+    void
+    expectCudaTlsValidationSuccess(const std::string &tls) {
+        gtest::ScopedEnv env_helper;
+        env_helper.addVar("UCX_TLS", tls);
+
+        nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
+        nixlBackendH *backend = nullptr;
+        EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
+    }
+};
+
 /**
  * Test that a warning is logged when NVIDIA GPUs are present but UCX
  * CUDA support is not available.
@@ -55,19 +93,17 @@ TEST_F(HardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
         GTEST_SKIP() << "No NVIDIA GPUs detected, skipping test";
     }
 
-    // Disable CUDA transport in UCX
-    envHelper_.addVar("UCX_TLS", "^cuda,rc_gda");
-
+    // Configure TLS directly so this test reaches the hardware warning path instead of the
+    // UCX_TLS environment validation path.
     std::vector<std::string> devs;
-    nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
+    nixlUcxContext ctx(
+        devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0, "TLS=^cuda,rc_gda");
 
     const gtest::LogIgnoreGuard lig(
         "NVIDIA GPU\\(s\\) were detected, but UCX CUDA support was not found");
     ctx.warnAboutHardwareSupportMismatch();
 
     EXPECT_EQ(lig.getIgnoredCount(), 1);
-
-    envHelper_.popVar();
 }
 
 /**
@@ -117,6 +153,34 @@ TEST_F(HardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
     ctx.warnAboutHardwareSupportMismatch();
 
     envHelper_.popVar();
+}
+
+TEST_F(UcxTlsValidationTest, MissingCudaTlsFailsWhenCudaIsAvailable) {
+    expectCudaTlsValidationFailure("sm,tcp");
+}
+
+TEST_F(UcxTlsValidationTest, CudaDenyListFailsWhenCudaIsAvailable) {
+    expectCudaTlsValidationFailure("^cuda");
+    expectCudaTlsValidationFailure("^tcp,cuda");
+}
+
+TEST_F(UcxTlsValidationTest, CudaCopyDenyListFailsWhenCudaIsAvailable) {
+    expectCudaTlsValidationFailure("^cuda_copy");
+    expectCudaTlsValidationFailure("^tcp,cuda_copy");
+    expectCudaTlsValidationFailure("^\\cuda_copy");
+    expectCudaTlsValidationFailure("^tcp,\\cuda_copy");
+}
+
+TEST_F(UcxTlsValidationTest, CudaIpcDenyListSucceedsWhenCudaIsAvailable) {
+    expectCudaTlsValidationSuccess("^cuda_ipc");
+}
+
+TEST_F(UcxTlsValidationTest, AllTlsSucceedsWhenCudaIsAvailable) {
+    expectCudaTlsValidationSuccess("all");
+}
+
+TEST_F(UcxTlsValidationTest, EscapedCudaCopyTlsSucceedsWhenCudaIsAvailable) {
+    expectCudaTlsValidationSuccess("tcp,\\cuda_copy");
 }
 
 /**

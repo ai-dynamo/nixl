@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include "backend/backend_plugin.h"
 #include "common.h"
 #include "nixl.h"
 #include "plugin_manager.h"
@@ -61,7 +62,7 @@ protected:
     if (GetParam().type == PluginDesc::PluginType::Real)
       return;
 #endif
-    plugin_manager_.unloadBackendPlugin(GetParam().name);
+    plugin_manager_.unloadBackendPluginForUnitTest(GetParam().name);
   }
 
   /* Returns true if the plugin was successfully loaded, otherwise false. */
@@ -90,7 +91,7 @@ protected:
       if (plugin.type == PluginDesc::PluginType::Real)
         continue;
 #endif
-      plugin_manager_.unloadBackendPlugin(plugin.name);
+      plugin_manager_.unloadBackendPluginForUnitTest(plugin.name);
     }
   }
 
@@ -118,7 +119,7 @@ protected:
 
   void TearDown() override {
     for (const auto &plugin : loaded_plugins_)
-        plugin_manager_.unloadBackendPlugin(plugin);
+        plugin_manager_.unloadBackendPluginForUnitTest(plugin);
   }
 
   /*
@@ -139,7 +140,7 @@ protected:
   void UnloadPlugin(std::string name) {
     if (loaded_plugins_.find(name) == loaded_plugins_.end())
       return;
-    plugin_manager_.unloadBackendPlugin(name);
+    plugin_manager_.unloadBackendPluginForUnitTest(name);
     loaded_plugins_.erase(name);
   }
 
@@ -193,6 +194,32 @@ TEST_F(LoadedPluginTestFixture, DeferredDiscoveryTest) {
     EXPECT_EQ(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
     avail = plugin_manager_.getAvailBackendPluginNames();
     EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
+}
+
+TEST_F(LoadedPluginTestFixture, StaleTelemetryPluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+    const LogIgnoreGuard lig_missing("Plugin file does not exist");
+
+    EXPECT_EQ(plugin_manager_.loadTelemetryPlugin("mock_stale"), nullptr);
+    EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
+}
+
+TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+    const LogIgnoreGuard lig_missing("Plugin file does not exist");
+
+    const auto avail = plugin_manager_.getAvailBackendPluginNames();
+    ASSERT_NE(std::find(avail.begin(), avail.end(), "MOCK_STALE_BACKEND"), avail.end());
+
+    EXPECT_EQ(plugin_manager_.loadBackendPlugin("MOCK_STALE_BACKEND"), nullptr);
+
+    const auto loaded = plugin_manager_.getLoadedBackendPluginNames();
+    EXPECT_EQ(std::find(loaded.begin(), loaded.end(), "MOCK_STALE_BACKEND"), loaded.end());
+}
+
+TEST_F(LoadedPluginTestFixture, CurrentPluginApiVersionIsAccepted) {
+    EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
+    EXPECT_EQ(NIXL_PLUGIN_API_VERSION, 3);
 }
 
 TEST_F(LoadedPluginTestFixture, LoadSinglePluginTest) {

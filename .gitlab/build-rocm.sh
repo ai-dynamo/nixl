@@ -349,6 +349,7 @@ else
         git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
         cd Mooncake && \
         sed -i '/liburing-dev/d' dependencies.sh && \
+        sed -i 's/^\([[:space:]]*\)install_go$/\1true/' dependencies.sh && \
         $SUDO bash dependencies.sh -y && \
         mkdir build && cd build && \
         cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
@@ -387,7 +388,7 @@ if [ -n "$PRE_INSTALLED_UCX_ENV" ]; then
 else
     # UCCL is skipped if no Nvidia GPU is present.
     # Skipping steps entirely for ROCm.
-    UCX_VERSION=${UCX_VERSION:-v1.21.x}
+    UCX_VERSION=${UCX_VERSION:-v1.23.x}
     git clone --depth 1 --branch "${UCX_VERSION}" https://github.com/openucx/ucx.git ${TMPDIR}/ucx
     ( \
         cd ${TMPDIR}/ucx && \
@@ -430,6 +431,7 @@ else
         ${NIXL_BUILD_DIR} \
         --prefix=${INSTALL_DIR} \
         -Ducx_path=${UCX_INSTALL_DIR} \
+        -Dwheel_variant=rocm \
         -Dbuild_docs=false \
         -Drust=false \
         ${EXTRA_BUILD_ARGS} \

@@ -22,6 +22,7 @@
 #include "nixl_metadata_context.h"
 #include "telemetry.h"
 #include "tracing/trace.h"
+#include "tracing/trace_context.h"
 #include "sync.h"
 
 #include <atomic>
@@ -61,15 +62,19 @@ class nixlAgentData final : public nixlMetadataContext {
             remoteBackends_;
 
         // The order of the following data members is crucial for destruction.
-        // Bookkeeping for local connection metadata and user handles per backend
-        std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
-        std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
-        backend_map_t backendEngines_;
-        std::unordered_map<std::string, nixlRemoteSection> remoteSections_;
         std::unique_ptr<nixlTelemetry> telemetry_;
         // Composite tracer (fans out to every enabled backend); null when no
         // backend is active.
         const std::unique_ptr<nixl::trace::Tracer> tracer_;
+        std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendTraceSink>> traceSinks_;
+        std::unordered_map<nixl_backend_t, std::atomic<bool>> traceContextUnsupported_;
+        // Bookkeeping for local connection metadata and user handles per backend
+        std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
+        std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
+        backend_map_t backendEngines_;
+        // Owning shared_ptr per registration generation; weak refs in handles expire on
+        // invalidation or re-registration.
+        std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
         nixlLocalSection localSection_;
 
         // nixlMetadataContext impl; private as before (backends call via the interface).
@@ -93,14 +98,22 @@ class nixlAgentData final : public nixlMetadataContext {
                      const nixl_blob_t &conn_info);
         nixl_status_t
         loadRemoteSections(const std::string &remote_name, nixlSerDes &sd);
-        nixl_status_t
-        invalidateRemoteData(const std::string &remote_name, uint64_t generation);
         [[nodiscard]] static backend_set_t
         getBackends(const nixl_opt_args_t *opt_args,
                     const nixlMemSection &section,
                     nixl_mem_t mem_type);
         void
         warnAboutEfaHardwareMismatch();
+        void
+        warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
+                                      const nixl::trace::TraceContext &context) noexcept;
+
+        template<class dlist_t>
+        nixl_status_t
+        prepXferDlist(const std::string &agent_name,
+                      const dlist_t &descs,
+                      nixlDlistH *&dlist_hndl,
+                      const nixl_opt_args_t *extra_params);
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &config);

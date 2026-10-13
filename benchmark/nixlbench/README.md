@@ -17,7 +17,11 @@ limitations under the License.
 
 # NIXL Benchmark
 
-A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) that uses ETCD for coordination. NIXLBench provides performance testing across multiple communication backends and storage systems, making it ideal for evaluating high-performance data transfer scenarios in distributed computing environments.
+A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) that supports multiple coordination backends. NIXLBench provides performance testing across multiple communication backends and storage systems, making it ideal for evaluating high-performance data transfer scenarios in distributed computing environments.
+
+**Coordination Options:**
+- **ASIO**: Lightweight TCP socket-based coordination (no external dependencies required)
+- **ETCD**: Coordination using etcd key-value store (optional)
 
 ## Table of Contents
 
@@ -43,7 +47,9 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 - **Multiple Worker Types**:
   - **NIXL worker**: Full-featured with all backend support
   - **NVSHMEM worker**: GPU-focused with VRAM-only transfers
-- **Cloud-Native Coordination**: Uses ETCD for worker coordination - ideal for containerized environments
+- **Flexible Coordination**:
+  - **ASIO**: TCP socket-based coordination - no external dependencies required
+  - **ETCD**: Optional worker coordination using etcd
 - **Performance Features**:
   - Multi-threading support with configurable progress threads
   - VMM memory allocation support for CUDA Fabric
@@ -82,21 +88,16 @@ cd nixl/benchmark/nixlbench/contrib
 # Build the container with default settings
 ./build.sh
 
-# Start ETCD server for coordination
-docker run -d --name etcd-server \
-  -p 2379:2379 -p 2380:2380 \
-  quay.io/coreos/etcd:v3.5.18 \
-  /usr/local/bin/etcd \
-  --data-dir=/etcd-data \
-  --listen-client-urls=http://0.0.0.0:2379 \
-  --advertise-client-urls=http://0.0.0.0:2379 \
-  --listen-peer-urls=http://0.0.0.0:2380 \
-  --initial-advertise-peer-urls=http://0.0.0.0:2380 \
-  --initial-cluster=default=http://0.0.0.0:2380
-
-# Run a basic benchmark
+# Run a basic two-node benchmark using ASIO (no ETCD required)
+# On target node (start first):
 docker run -it --gpus all --network host nixlbench:latest \
-  nixlbench --etcd_endpoints http://localhost:2379 --backend UCX
+  bash -c "nixlbench --runtime_type ASIO --asio_address \$(hostname -i) --asio_port 23456 \
+           --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM"
+
+# On initiator node (start after ~10 seconds):
+docker run -it --gpus all --network host nixlbench:latest \
+  bash -c "nixlbench --runtime_type ASIO --asio_address <TARGET_IP> --asio_port 23456 \
+           --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM"
 ```
 
 ### Native Installation
@@ -108,7 +109,7 @@ For development or when Docker is not available:
 sudo apt-get update && sudo apt-get install -y \
   build-essential cmake ninja-build pkg-config \
   libgflags-dev libgrpc-dev libprotobuf-dev \
-  etcd-server etcd-client python3-dev python3-pip
+  python3-dev python3-pip
 
 # Build and install NIXL first
 cd /path/to/nixl
@@ -191,11 +192,12 @@ For development environments or when Docker is not available.
 - **CMake**: Build system (≥3.20)
 - **Meson**: Build system for NIXL/NIXLBench
 - **Ninja**: Build backend
-- **etcd-cpp-api**: C++ client library for etcd (required for metadata exchange)
+- **ASIO**: Bundled TCP socket runtime subproject
 - **GFlags**: Command line flag processing
 - **OpenMP**: Multi-threading support
 
 **Optional:**
+- **etcd-cpp-api**: C++ client library for ETCD runtime support
 - **LibFabric**: Fabric communication library
 - **DOCA**: NVIDIA DOCA SDK for GPUNetIO
 - **AWS SDK C++**: For S3 object storage backend
@@ -222,7 +224,7 @@ sudo apt-get update && sudo apt-get install -y \
   libgtest-dev hwloc libhwloc-dev libgflags-dev \
   libgrpc-dev libgrpc++-dev libprotobuf-dev \
   libaio-dev protobuf-compiler-grpc \
-  libcpprest-dev etcd-server etcd-client \
+  libcpprest-dev \
   pybind11-dev libclang-dev libcurl4-openssl-dev \
   libssl-dev uuid-dev libxml2-dev zlib1g-dev python3-dev python3-pip
 
@@ -257,9 +259,10 @@ cd ucx
 make -j$(nproc) && sudo make install
 ```
 
-#### etcd-cpp-api Installation (Required)
+#### etcd-cpp-api Installation (Optional for ETCD Runtime)
+
 ```bash
-# Clone and build etcd-cpp-api
+# Clone and build etcd-cpp-api when ETCD runtime support is needed
 git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git
 cd etcd-cpp-apiv3
 
@@ -314,7 +317,7 @@ cmake --install sdk/identity
 **DOCA (Optional):**
 ```bash
 # Add Mellanox repository and install DOCA
-wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-ubuntu2404_amd64.deb -O doca-host.deb
+wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-ubuntu2404_amd64.deb -O doca-host.deb
 sudo dpkg -i doca-host.deb
 sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 ```
@@ -366,6 +369,7 @@ cd /path/to/nixlbench
 rm -rf build && mkdir build
 uv run meson setup build \
   -Dnixl_path=/usr/local/nixl/ \
+  -Dbuild_raw_cli=true \
   -Dprefix=/usr/local/nixlbench \
   --buildtype=release
 cd build && ninja && sudo ninja install
@@ -384,60 +388,167 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 - `etcd_lib_path`: Path to ETCD C++ client library
 - `nvshmem_inc_path`: Path to NVSHMEM include directory
 - `nvshmem_lib_path`: Path to NVSHMEM library directory
+- `build_raw_cli`: Build the experimental CLI11-based raw command path (default: false)
+- `build_tests`: Build NIXLBench tests for non-release builds (default: true)
 - `buildtype`: Build type: `debug`, `release`, `debugoptimized` (default: release)
 - `prefix`: Installation prefix (default: /usr/local)
 
 ## Usage
 
-### ETCD Coordination Setup
+### Verb-based interface
 
-NIXLBench uses ETCD for worker coordination, which is essential for multi-node benchmarking.
+When configured with `-Dbuild_raw_cli=true`, NIXLBench also provides a
+verb-based interface. The first available command is `raw posix`, which runs
+the existing NIXLBench worker with three explicit ownership layers:
 
-**Start ETCD server:**
+- `raw` owns benchmark controls such as operation, transfer sizes, iterations,
+  threads, and consistency checking.
+- NIXLBench owns shared `FILE_SEG` resource controls such as path, filenames,
+  file count, and direct file opening, and exposes them only when advertised by
+  the selected plugin.
+- The installed plugin owns its initialization parameters. NIXLBench forwards
+  `--plugin-param KEY VALUE` overrides without interpreting names, values,
+  ranges, or relationships.
+
+Raw and `FILE_SEG` options are accepted before or after the backend subcommand.
+Sizes accept `KB`, `MB`, `GB`, and `TB`, using 1024-based multipliers.
+
 ```bash
-# Option 1: Using Docker
-docker run -d --name etcd-server \
-  -p 2379:2379 -p 2380:2380 \
-  quay.io/coreos/etcd:v3.5.18 \
-  /usr/local/bin/etcd \
-  --data-dir=/etcd-data \
-  --listen-client-urls=http://0.0.0.0:2379 \
-  --advertise-client-urls=http://0.0.0.0:2379 \
-  --listen-peer-urls=http://0.0.0.0:2380 \
-  --initial-advertise-peer-urls=http://0.0.0.0:2380 \
-  --initial-cluster=default=http://0.0.0.0:2380
+# Create the directory used by the examples below
+mkdir -p /tmp/nixlbench-data
 
-# Option 2: Native installation
-sudo apt install etcd-server
-sudo systemctl start etcd && sudo systemctl enable etcd
+# Inspect backend-neutral raw benchmark controls
+nixlbench raw --help
+
+# Inspect POSIX configuration exposed by this plugin build
+nixlbench raw posix --help
+
+# Print the resolved configuration without creating a worker or touching files
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --dry-run
+
+# Run a checked write using the same existing benchmark execution machinery
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --operation write \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --check-consistency
+
+# Override exact initialization keys advertised by this plugin build
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --plugin-param ios_pool_size 4096 \
+  --plugin-param use_uring true
+```
+
+Plugin keys and values retain their published spelling and exact string values.
+Only keys advertised by the selected plugin may be overridden. The plugin
+interprets and validates the resolved values during backend creation rather than
+through copied NIXLBench rules, so the `use_uring` example depends on that
+parameter being advertised by the installed POSIX plugin.
+
+The existing flags-only interface remains available for all other commands.
+
+
+### ASIO Runtime Setup (Recommended - No External Dependencies)
+
+NIXLBench supports ASIO runtime using TCP sockets for metadata exchange. For two-instance UCX runs this removes the need to run an ETCD service or provide `--etcd_endpoints`.
+
+**Key Requirements for ASIO Runtime:**
+1. Use `--runtime_type ASIO`.
+2. Use an IP address for `--asio_address`; hostnames are not accepted by the ASIO runtime.
+3. Use the same `--asio_address` and `--asio_port` on both instances.
+4. ASIO supports two NIXLBench instances. Use ETCD for larger multi-process coordination.
+5. When launching through Slurm/Pyxis, set rank environment variables explicitly in each task and start the target task before the initiator task.
+
+**Two-node UCX VRAM example:**
+
+```bash
+TARGET_IP=<target-node-ip>
+PORT=23456
+
+# Target node: start first, then wait about 10 seconds before launching the initiator.
+./nixlbench --runtime_type ASIO --asio_address "${TARGET_IP}" --asio_port "${PORT}" \
+  --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
+
+# Initiator node.
+./nixlbench --runtime_type ASIO --asio_address "${TARGET_IP}" --asio_port "${PORT}" \
+  --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
+```
+
+**Generic Slurm/Pyxis launch pattern:**
+
+```bash
+NODES=($(scontrol show hostnames "${SLURM_JOB_NODELIST}"))
+TARGET_NODE=${NODES[0]}
+INITIATOR_NODE=${NODES[1]}
+TARGET_IP=$(srun --nodes=1 --nodelist="${TARGET_NODE}" hostname -i | awk '{print $1}')
+PORT=23456
+IMAGE=<container-image>
+
+srun --nodes=1 --nodelist="${TARGET_NODE}" --gpus=1 \
+  --container-image="${IMAGE}" \
+  bash -c "export OMPI_COMM_WORLD_RANK=1; export OMPI_COMM_WORLD_SIZE=2; \
+           nixlbench --runtime_type ASIO --asio_address ${TARGET_IP} --asio_port ${PORT} \
+           --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM" &
+
+sleep 10
+
+srun --nodes=1 --nodelist="${INITIATOR_NODE}" --gpus=1 \
+  --container-image="${IMAGE}" \
+  bash -c "export OMPI_COMM_WORLD_RANK=0; export OMPI_COMM_WORLD_SIZE=2; \
+           nixlbench --runtime_type ASIO --asio_address ${TARGET_IP} --asio_port ${PORT} \
+           --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM"
+
+wait
 ```
 
 ### Basic Usage Examples
 
 ```bash
-# Basic UCX benchmark with VRAM transfers
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
+# Basic two-node UCX benchmark with VRAM transfers. Run on both nodes with the
+# same ASIO address and port as shown above.
+./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
+  --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 
-# Storage benchmark with GDS backend
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile
+# UCX benchmark with VMM memory localized to locality domain 0 (use 1 for domain 1)
+./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
+  --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM --enable_vmm --use_localized=0
+
+# Single-instance POSIX storage benchmark
+./nixlbench --backend POSIX --filepath /mnt/storage/testfile
+
+# Single-instance GDS storage benchmark, when GPUDirect Storage is available
+./nixlbench --backend GDS --filepath /mnt/storage/testfile --storage_enable_direct
 
 # S3 object storage benchmark
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend OBJ --obj_bucket_name my-bucket --obj_access_key $AWS_ACCESS_KEY_ID --obj_secret_key $AWS_SECRET_ACCESS_KEY
+./nixlbench --backend OBJ --obj_bucket_name my-bucket \
+  --obj_access_key "$AWS_ACCESS_KEY_ID" --obj_secret_key "$AWS_SECRET_ACCESS_KEY"
 
-# Multi-threaded benchmark with progress threads
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --num_threads 4 --enable_pt --progress_threads 2
+# Multi-threaded two-node UCX benchmark with progress threads
+./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
+  --backend UCX --num_threads 4 --enable_pt --progress_threads 2
 ```
 
 ### Command Line Options
 
 #### Core Configuration
-```
---config_file PATH         # Configuraion file (default: NONE)
---runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
+
+```text
+--config_file PATH         # Configuration file (default: NONE)
+--runtime_type NAME        # Type of runtime to use [ETCD, ASIO] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
 --backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
---etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
 
 #### Memory and Transfer Configuration
@@ -466,13 +577,28 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --num_target_dev NUM       # Number of devices in target processes (default: 1)
 --enable_pt                # Enable progress thread (only used with nixl worker)
 --progress_threads NUM     # Number of progress threads (default: 0)
---enable_vmm               # Enable VMM memory allocation when DRAM is requested
+--enable_vmm               # Enable VMM memory allocation for VRAM buffers
+--vmm_gdr_capable BOOL     # Set gpuDirectRDMACapable for non-localized VMM(default: true)
+--use_localized DOMAIN     # VMM locality: -1 disabled, 0 domain 0, 1 domain 1; requires --enable_vmm
 ```
+
+`--vmm_gdr_capable` only controls non-localized VMM allocations. Explicit
+locality-domain allocations always use `gpuDirectRDMACapable=0`. Use
+`--enable_vmm --use_localized=-1 --vmm_gdr_capable=0` when placement is
+provided by CUDA MPS locality-domain devices; setting the GDR-capable flag opts
+such allocations out of that placement.
+
+To transfer from both locality domains concurrently, launch two two-worker benchmark groups with
+distinct `--benchmark_group` values. Select domain 0 in one group and domain 1 in the other.
+Each process then has one memory location and one independent backend worker. Physical CUDA
+devices can differ between the initiator and target processes.
 
 #### Device and Network Configuration
 ```
---device_list LIST         # Comma-separated device names (default: all)
---etcd_endpoints URL       # ETCD server URL for coordination (optional for storage backends)
+--device_list LIST         # Comma-separated device names, or all (default: all)
+--asio_address IP          # ASIO TCP address used by both two-node instances (default: 127.0.0.1)
+--asio_port PORT           # ASIO TCP port used by both two-node instances (default: 12345)
+--etcd_endpoints URL       # ETCD server URL when using --runtime_type ETCD
 ```
 
 #### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB)
@@ -511,6 +637,9 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 **GPUNETIO Backend:**
 ```
 --gpunetio_device_list LIST # Comma-separated GPU CUDA device id for GPUNETIO
+--gpunetio_oob_list IFACE   # OOB interface name for the control path
+--gpunetio_gid_index N      # RoCE GID table index (default: 0)
+--gpunetio_oob_port PORT    # OOB TCP port (default: 6544)
 ```
 
 **OBJ (S3) Backend:**
@@ -549,32 +678,24 @@ Note: storage_enable_direct is automatically enabled for GUSLI backend
 
 **INFINIA Backend:**
 ```
---infinia_config_file PATH             # Path to INFINIA plugin configuration file (simple key=value format)
+No INFINIA-specific command-line options. The plugin is configured through
+RED_* environment variables or NIXL's common TOML configuration (NIXL_CONFIG_FILE).
 
-INFINIA Config File Format:
-  Simple key=value format (one parameter per line, comments start with #)
+  Environment / top-level TOML keys:
+    RED_CLUSTER=NAME                   # Infinia cluster name
+    RED_TENANT=NAME[/SUBTENANT]        # Tenant name, optionally with subtenant
+    RED_DATASET=NAME                   # Dataset name
 
-  Required Parameters:
-    cluster=NAME                       # Infinia cluster name
-    tenant=NAME                        # Tenant name
-    dataset=NAME                       # Dataset name
+  [infinia] TOML table (optional tuning):
+    sthreads = NUM                     # Number of service threads (default: 8)
+    num_buffers = NUM                  # Pre-allocated deferred operation buffers for async ops (default: 512)
+    num_ring_entries = NUM             # Depth of the asynchronous I/O ring buffer (default: 512)
+    coremasks = "VALUE"                # CPU affinity: hex ("0x0F") or list ("0-3,8") (default: "0x2")
+    use_dmabuf = BOOL                  # Use DMA-BUF for GPU memory registration (default: true)
+    max_retries = NUM                  # BatchTask retry limit (default: library default)
+    batch_size = NUM                   # Async operations per batch (default: library default)
 
-  Optional Parameters:
-    subtenant=NAME                     # Subtenant (default: "red")
-    sthreads=NUM                       # Number of service threads (default: 8, limited by CPU cores)
-    num_buffers=NUM                    # Pre-allocated deferred operation buffers for async ops (default: 512)
-    num_ring_entries=NUM               # Depth of the asynchronous I/O ring buffer (default: 512)
-    coremasks=VALUE                    # CPU affinity: hex ("0x0F"), list ("[0-3,8]"), or empty disables (default: "")
-    max_retries=NUM                    # BatchTask retry limit (default: 3)
-
-Example INFINIA config file:
-  # INFINIA configuration
-  cluster=my_cluster
-  tenant=my_tenant
-  dataset=my_dataset
-  sthreads=8
-  num_buffers=512
-  num_ring_entries=512
+See src/plugins/infinia/infinia_example.conf for a complete example.
 ```
 
 ### Configuration File
@@ -584,7 +705,7 @@ The name of a config file can be specified using the `--config_file` command lin
 Each existing command-line parameter can also be placed in the global scope (no sections) of the configuration file, so the following invocations:
 
 ```
-nixlbench --etcd_endpoints http://localhost:2379 --backend POSIX --filepath /mnt/test --posix_api_type AIO --max_block_size 2097152
+nixlbench --backend POSIX --filepath /mnt/test --posix_api_type AIO --max_block_size 2097152
 ```
 and
 
@@ -594,33 +715,57 @@ nixlbench --config_file /tmp/nixlbench.config
 
 where `/tmp/nixlbench.config` contains:
 
-```
-etcd_endpoints="http://localhost:2379"
+```toml
 backend="POSIX"
 filepath="/mnt/test"
 posix_api_type="AIO"
 max_block_size=2097152
-``
+```
+
 are identical.
 
 If a parameter exists in the config file and is also explicitly specified on the command line, the latter takes precedence.
 
 ### Using ETCD for Coordination
 
-NIXL Benchmark uses an ETCD key-value store for coordination between benchmark workers. This is useful in containerized or cloud-native environments.
+NIXLBench can also use an ETCD key-value store for coordination between benchmark workers. Use ETCD when you need ETCD-backed rank assignment or coordination beyond the two-instance ASIO runtime.
 
 **ETCD Requirements:**
-- **Required**: Network backends (UCX, GPUNETIO, Mooncake, Libfabric) and multi-node setups
-- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances
-- **Required**: Storage backends when `--etcd_endpoints` is explicitly specified
+- **Optional**: Two-instance UCX, GPUNETIO, Mooncake, and Libfabric runs can use `--runtime_type ASIO` instead.
+- **Required**: Network backends when using `--runtime_type ETCD`.
+- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances.
+- **Required**: Storage backends when ETCD coordination is explicitly requested with `--etcd_endpoints`.
 
-**For multi-node benchmarks:**
+For non-storage backends using `--runtime_type ETCD`, NIXLBench defaults to `http://localhost:2379` when `--etcd_endpoints` is not provided. In that case, an ETCD server must be running on `localhost:2379`; otherwise, provide `--etcd_endpoints` explicitly to point to a custom ETCD server.
 
-1. Ensure ETCD server is running (e.g., `docker run -p 2379:2379 quay.io/coreos/etcd`
+**Start ETCD server:**
+
+```bash
+# Option 1: Using Docker
+docker run -d --name etcd-server \
+  -p 2379:2379 -p 2380:2380 \
+  quay.io/coreos/etcd:v3.5.18 \
+  /usr/local/bin/etcd \
+  --data-dir=/etcd-data \
+  --listen-client-urls=http://0.0.0.0:2379 \
+  --advertise-client-urls=http://0.0.0.0:2379 \
+  --listen-peer-urls=http://0.0.0.0:2380 \
+  --initial-advertise-peer-urls=http://0.0.0.0:2380 \
+  --initial-cluster=default=http://0.0.0.0:2380
+
+# Option 2: Native installation
+sudo apt-get install -y etcd-server etcd-client
+sudo systemctl start etcd && sudo systemctl enable etcd
+```
+
+**For ETCD-backed multi-node benchmarks:**
+
+1. Ensure an ETCD server is running.
 2. Launch multiple nixlbench instances pointing to the same ETCD server
 3. Multiple instances should be launched within the default timeout of 60s.
 
 **For single-instance storage benchmarks:**
+
 ```bash
 # No ETCD needed - just run directly
 ./nixlbench --backend GDS --filepath /mnt/storage/testfile
@@ -629,13 +774,16 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile
 ```
 
-**For multi-instance storage benchmarks where ETCD is required:**
+**For ETCD-backed multi-instance benchmarks:**
+
 ```bash
 # On host 1
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
+./nixlbench --runtime_type ETCD --etcd_endpoints http://etcd-server:2379 \
+  --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 
 # On host 2
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
+./nixlbench --runtime_type ETCD --etcd_endpoints http://etcd-server:2379 \
+  --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 ```
 The workers automatically coordinate ranks through ETCD as they connect. Note, the second nixlbench should be started within 60s, otherwise the first instance will stop with an error in the barrier.
 
@@ -644,20 +792,26 @@ The workers automatically coordinate ranks through ETCD as they connect. Note, t
 #### Network Backends
 
 **UCX Backend (Default)**
-```bash
-# Basic UCX benchmark
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
-sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
 
-# UCX with specific devices
-$ host1 > ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
-$ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
+```bash
+# Basic two-node UCX benchmark. Run on both nodes with the same ASIO address
+# and port; start the target before the initiator.
+./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
+  --backend UCX
+
+# UCX with one explicit device per rank.
+./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
+  --backend UCX --device_list <ucx-device>
 ```
 
+For pairwise UCX runs, `--device_list` must match the configured initiator and target device counts. For UCX multi-rail experiments, keep `--device_list all` and use UCX environment variables such as `UCX_NET_DEVICES` to constrain NIC selection.
+
 **GPUNETIO Backend:**
+
 ```bash
 # DOCA GPUNetIO with specific GPU devices
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GPUNETIO --gpunetio_device_list 0,1
+./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
+  --backend GPUNETIO --gpunetio_device_list 0,1
 ```
 
 ### Storage Backends
@@ -755,27 +909,28 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 
 **INFINIA Backend:**
 
-INFINIA uses a simple key=value configuration file passed via the `--infinia_config_file` parameter.
+INFINIA reads its settings from `RED_*` environment variables or from NIXL's common TOML configuration file pointed to by `NIXL_CONFIG_FILE`.
 
 ```bash
-# Step 1: Create INFINIA plugin config file (infinia.conf)
-cat > infinia.conf << EOF
-# INFINIA configuration
-cluster=my_cluster
-tenant=my_tenant
-dataset=my_dataset
-sthreads=8
-num_buffers=512
-num_ring_entries=512
+# Step 1: Create a NIXL TOML config file for the INFINIA plugin (nixl-infinia.toml)
+cat > nixl-infinia.toml << EOF
+RED_CLUSTER = "my_cluster"
+RED_TENANT = "my_tenant"
+RED_DATASET = "my_dataset"
+
+[infinia]
+sthreads = 8
+num_buffers = 512
+num_ring_entries = 512
 EOF
+export NIXL_CONFIG_FILE=$PWD/nixl-infinia.toml
 
 # Step 2: Run basic INFINIA benchmark (no ETCD needed for single instance)
-./nixlbench --backend INFINIA --infinia_config_file infinia.conf
+./nixlbench --backend INFINIA
 
 # Step 3: Or use a nixlbench TOML config file
 cat > nixlbench.toml << EOF
 backend = "INFINIA"
-infinia_config_file = "infinia.conf"
 initiator_seg_type = "DRAM"
 target_seg_type = "DRAM"
 total_buffer_size = 67108864
@@ -787,7 +942,6 @@ EOF
 # Command-line only approach
 ./nixlbench \
   --backend INFINIA \
-  --infinia_config_file infinia.conf \
   --initiator_seg_type DRAM \
   --target_seg_type DRAM \
   --num_iter 16
@@ -969,6 +1123,42 @@ nvidia-smi topo -m
 # Check CUDA driver
 cat /proc/driver/nvidia/version
 ```
+
+#### GDS Compat Mode Hangs
+
+When running the GDS backend in cuFile compatible mode (e.g. `CUFILE_FORCE_COMPAT_MODE=true`
+for comparing GDS on/off), benchmarks with large batch sizes can hang indefinitely with
+no output and no error:
+
+```bash
+# Completes fine up to batch 64, hangs forever at batch 128 with the default cufile.json
+CUFILE_ALLOW_COMPAT_MODE=true CUFILE_FORCE_COMPAT_MODE=true \
+nixlbench --backend GDS --initiator_seg_type VRAM --filepath /mnt/storage/testdir \
+  --storage_enable_direct --start_batch_size 1 --max_batch_size 128
+```
+
+In compat mode every in-flight batch entry takes a CPU bounce buffer from the cuFile
+POSIX pool (`posix_pool_slab_count`, default 64 buffers for the 1MiB slab class). When
+the number of concurrent batch entries exceeds the pool size, `cuFileBatchIOSubmit`
+blocks forever waiting for a free buffer. To confirm, set `"logging": {"level": "DEBUG"}`
+in cufile.json and look for:
+
+```
+Waiting for free buffer pool_is_full: 0 gpuid: 0 available slots 0 wait 1
+```
+
+Fix: increase the slab count for the slab class matching your block size so it covers
+the maximum number of concurrent batch entries, e.g. in cufile.json:
+
+```json
+"properties": {
+    "posix_pool_slab_size_kb": [4, 1024, 16384],
+    "posix_pool_slab_count": [128, 256, 64]
+}
+```
+
+See the [GDS plugin README](../../src/plugins/cuda_gds/README.md#cufilejson-configuration)
+for the full recommended compat mode configuration.
 
 #### Network Backend Issues
 ```bash

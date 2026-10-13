@@ -37,6 +37,9 @@ kubernetes:
   privileged: true
 
 credentials:
+  - credentialsId: 'svc-nixl-github-read-only-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
   - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
 
 env:
@@ -64,14 +67,24 @@ empty_volumes:
 pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
+# ci-demo builds the images below outside any step; an entry's credentialsId binds
+# the token around its build, and this hook writes the git config the Dockerfile
+# mounts as the "ghconfig" secret. Left empty when nothing is bound.
+pipeline_on_image_build:
+  run: |
+    #!/bin/bash -e
+    . .ci/scripts/common.sh
+    write_github_gitconfig /tmp/ghconfig
+
 # Docker images for DL testing
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
-     name: 'nixl-ci-dl-gpu-base-pytorch26.06-cuda13.3-ubuntu24.04',
+     name: 'nixl-ci-dl-gpu-base',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghconfig,src=/tmp/ghconfig',
+     credentialsId: 'svc-nixl-github-read-only-token'
     }
 
   - {
@@ -79,7 +92,7 @@ runs_on_dockers:
      name: 'build_helper_dl',
      arch: "aarch64",
      tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04 --build-arg ARCH=${arch}'
+     build_args: '--build-arg ARCH=${arch}'
     }
 
 matrix:
@@ -110,7 +123,7 @@ steps:
       --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
-      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-base-pytorch26.06-cuda13.3-ubuntu24.04:${CI_IMAGE_TAG} \
+      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-base:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       for i in {1..6}; do
@@ -138,6 +151,24 @@ steps:
       extraArgs: [
         "--account=${SLURM_ACCOUNT}"
       ]
+
+  - name: Sync Container Image
+    # Import the image onto the node before the timed test stages, so a slow
+    # registry pull is not counted against (and does not time out) a test stage.
+    containerSelector: "{name: 'build_helper_dl'}"
+    timeout: 30
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test:${BUILD_NUMBER}"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
 
   - name: Run DL Python tests
     containerSelector: "{name: 'build_helper_dl'}"

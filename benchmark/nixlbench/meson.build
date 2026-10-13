@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '1.4.0',
+project('nixlbench', 'CPP', version: '1.6.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -127,9 +127,14 @@ else
 endif
 
 cuda_fabric_available = false
+cuda_locality_domain_available = false
 if cuda_available
     if cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC', dependencies: cuda_dep)
         cuda_fabric_available = true
+    endif
+    if cpp.has_header_symbol('cuda.h', 'CU_MEM_LOCATION_TYPE_DEVICE_LOCALITY_DOMAIN',
+                             dependencies: cuda_dep)
+        cuda_locality_domain_available = true
     endif
 endif
 
@@ -141,6 +146,17 @@ etcd_dep = dependency('etcd-cpp-api', required : false)
 
 # GFlags
 gflags_dep = dependency('gflags', required: true)
+
+# CLI11 is used only by the opt-in `raw` command hierarchy. Legacy invocations
+# continue to use gflags unchanged when CLI11 is unavailable or raw is disabled.
+cli11_dep = disabler()
+if get_option('build_raw_cli')
+    cli11_dep = dependency('CLI11', required: false, fallback: ['cli11'])
+    if not cli11_dep.found()
+        warning('CLI11 not found. The raw command path will not be built.')
+    endif
+endif
+raw_cli_available = get_option('build_raw_cli') and cli11_dep.found()
 
 # ASIO (usually via libasio-dev package)
 asio_dep = dependency('asio', required: true)
@@ -186,6 +202,10 @@ endif
 
 if cuda_fabric_available
     add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
+endif
+
+if cuda_locality_domain_available
+    add_project_arguments('-DHAVE_CUDA_LOCALITY_DOMAIN', language: 'cpp')
 endif
 
 if not cuda_available and not rocm_available
@@ -286,7 +306,7 @@ else
         if have_gpu_side
             have_nixl_device_api = cuda.compiles(
                 '''
-                #include <gpu/ucx/nixl_device.cuh>
+                #include <gpu/nixl_device.cuh>
                 int main() { return 0; }
                 ''',
                 dependencies: [ucx_dep, doca_gpunetio_dep],
@@ -328,6 +348,8 @@ configure_file(
         'HAVE_CUDA': cuda_available ? '1' : '0',
         'HAVE_ROCM': rocm_available ? '1' : '0',
         'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
+        'HAVE_CUDA_LOCALITY_DOMAIN': cuda_locality_domain_available ? '1' :'0',
+        'HAVE_RAW_CLI': raw_cli_available ? '1' : '0',
     },
     install: true,
     install_dir: get_option('includedir') / 'nixlbench'
@@ -335,6 +357,9 @@ configure_file(
 
 deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, gflags_dep, tomlplusplus_dep, asio_dep]
 args = []
+if raw_cli_available
+    deps += [cli11_dep]
+endif
 if etcd_available
     deps += [etcd_dep]
 endif
@@ -390,6 +415,10 @@ if nvshmem_available
                  meson.current_build_dir() + '/src/worker/nvshmem/libnvshmemWorker.a.p/nvshmem_worker.cpp.o'
                  ]
 
+    if raw_cli_available
+        nvcc_cmd_files += meson.current_build_dir() + '/src/utils/libutils.a.p/raw_cli.cpp.o'
+    endif
+
     if etcd_available
         nvcc_args += ['-letcd-cpp-api-core', '-lcpprest']
         etcd_rt = meson.current_build_dir() + '/src/runtime/etcd/libetcd_rt.a.p/etcd_rt.cpp.o'
@@ -399,7 +428,7 @@ if nvshmem_available
     nvcc_command = [nvcc, nvcc_args, '-o', '@OUTPUT@', '@INPUT@']
     nvcc_command += nvcc_cmd_files
 
-    custom_target('nixlbench',
+    nixlbench_target = custom_target('nixlbench',
         input: 'src/main.cpp',
         output: 'nixlbench',
         command: nvcc_command,
@@ -408,11 +437,15 @@ if nvshmem_available
         install_dir: get_option('bindir'),
         depends: [nixlbench_runtimes, utils_lib, worker_libs])
 else
-    executable('nixlbench', 'src/main.cpp',
+    nixlbench_target = executable('nixlbench', 'src/main.cpp',
                 include_directories: inc_dir,
                 link_with: [nixlbench_runtimes, utils_lib, worker_libs],
                 dependencies: deps,
                 link_args: args,
                 install: true,
                 install_dir: get_option('bindir'))
+endif
+
+if get_option('build_tests') and get_option('buildtype') != 'release'
+    subdir('tests')
 endif

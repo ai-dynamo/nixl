@@ -30,8 +30,6 @@ extern "C" {
 #include "rkey.h"
 #include "ucx_enums.h"
 
-#include "absl/strings/numbers.h"
-
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
@@ -44,17 +42,12 @@ class nixlUcxMem;
 
 class nixlUcxEp {
 private:
-    ucp_ep_h eph{nullptr};
-    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::UNINITIALIZED};
+    ucp_ep_h eph_{nullptr};
+    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::CONNECTED};
+    const uint32_t closeFlags_;
 
-    void
-    setState(nixl::ucx::ep_state_t new_state);
     nixl_status_t
-    closeImpl();
-
-    /* Connection */
-    nixl_status_t
-    disconnect_nb();
+    disconnect();
 
     static void
     sendAmCallback(void *request, ucs_status_t status, void *user_data);
@@ -74,18 +67,17 @@ public:
     nixlUcxEp &
     operator=(const nixlUcxEp &) = delete;
 
-    using am_cleanup_t = std::function<void(void *request, void *buffer)>;
-
-    /* Active message handling */
+    /**
+     * @brief Send an active message that owns its payload
+     * @param payload Data released once the send completes
+     * @param req Receives the UCX request of an in-progress send; if null, the request is
+     *            released on completion
+     */
     nixl_status_t
     sendAm(nixl::ucx::am_cb_op_t msg_id,
-           void *hdr,
-           size_t hdr_len,
-           void *buffer,
-           size_t len,
+           std::string &&payload,
            uint32_t flags,
-           nixlUcxReq *req = nullptr,
-           am_cleanup_t &&cleanup = nullptr) const;
+           nixlUcxReq *req = nullptr) const;
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -121,7 +113,7 @@ public:
 
     [[nodiscard]] ucp_ep_h
     getEp() const noexcept {
-        return eph;
+        return eph_;
     }
 };
 
@@ -155,10 +147,13 @@ public:
 class nixlUcxContext {
 private:
     /* Local UCX stuff */
-    ucp_context_h ctx;
+    std::unique_ptr<ucp_context, void (*)(ucp_context_h)> ctx{nullptr, &ucp_cleanup};
     const nixl::ucx::mt_mode_t mtType_;
     const unsigned ucpVersion_;
     const std::string name_;
+
+    [[nodiscard]] bool
+    supportsMemoryType(ucs_memory_type_t mem_type) const;
 
 public:
     nixlUcxContext(const std::vector<std::string> &devs,
@@ -168,8 +163,6 @@ public:
                    size_t num_device_channels,
                    const std::string &engine_conf = "",
                    const std::string &name = "");
-    ~nixlUcxContext();
-
     nixlUcxContext(nixlUcxContext &&) = delete;
     nixlUcxContext(const nixlUcxContext &) = delete;
 
@@ -209,6 +202,8 @@ public:
         const nixlUcxContext &,
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
         size_t id = 0);
+
+    virtual ~nixlUcxWorker() = default;
 
     nixlUcxWorker(nixlUcxWorker &&) = delete;
     nixlUcxWorker(const nixlUcxWorker &) = delete;
