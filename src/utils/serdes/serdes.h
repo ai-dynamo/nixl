@@ -55,6 +55,8 @@ public:
 
     /* Ser/Des buffer management */
     std::string exportStr() const;
+    std::string
+    exportMoveStr();
     nixl_status_t importStr(const std::string &sdbuf);
 
     static std::string _bytesToString(const void *buf, ssize_t size);
