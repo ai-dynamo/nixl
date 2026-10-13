@@ -11,6 +11,7 @@ jobs:
     name: Mirror Repository to GitLab
     environment: GITLAB
     runs-on: gitlab
+    timeout-minutes: 30
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -22,6 +23,7 @@ jobs:
     environment: GITLAB
     needs: mirror_repo
     runs-on: gitlab
+    timeout-minutes: 10
     steps:
     - name: Trigger Pipeline
       run: |

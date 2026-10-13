@@ -25,10 +25,16 @@
 #include "common/backend.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "tracing/backend_trace.h"
 
+#include <array>
+#include <cstdint>
 #include <optional>
 #include <string.h>
 #include "absl/strings/str_split.h"
+
+#include "device/device_memview.h"
+#include "device/device_ops.h"
 
 namespace {
 [[nodiscard]] bool
@@ -44,11 +50,14 @@ sglEnabledFromConfig() {
     return false;
 #endif
 }
-} // namespace
 
-// A transfer to a single endpoint posts at most three requests:
-// one data request, one flush request, and one notification request.
-constexpr size_t single_ep_request_count = 3;
+[[nodiscard]] ucp_err_handling_mode_t
+errHandlingModeFromParams(const nixl_b_params_t *custom_params) {
+    const auto opt = nixl::getBackendParamOptional<std::string>(
+        custom_params, std::string(nixl_ucx_err_handling_param_name));
+    return opt ? ucx_err_mode_from_string(*opt) : UCP_ERR_HANDLING_MODE_PEER;
+}
+} // namespace
 
 /****************************************
  * Constructor/Destructor
@@ -71,8 +80,10 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
     : nixlBackendEngine(&init_params),
+      errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
-      sglEnabled_(sglEnabledFromConfig()) {
+      sglEnabled_(sglEnabledFromConfig()),
+      traceSink_(init_params.traceSink) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -89,13 +100,6 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
     const size_t num_device_channels =
         nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
 
-
-    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
-    if (const auto opt = nixl::getBackendParamOptional<std::string>(
-            custom_params, std::string(nixl_ucx_err_handling_param_name))) {
-        err_handling_mode = ucx_err_mode_from_string(*opt);
-    }
-
     const auto engine_config =
         nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
 
@@ -110,8 +114,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
     uc->warnAboutHardwareSupportMismatch();
 
     workers_.reserve(num_workers);
-    for (size_t i = 0; i < num_workers; i++) {
-        workers_.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, i));
+    for (size_t i = 0; i < numSharedWorkers_; i++) {
+        addWorker<nixlUcxWorker>();
     }
 
     auto &worker = workers_.front();
@@ -455,22 +459,15 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
     const ucx_connection_ptr_t &conn = sgl.conn();
 
     auto &ep = conn->getEp(int_handle->getWorkerId());
-
-    int_handle->reserve(single_ep_request_count);
+    int_handle->init(conn, *ep);
 
     nixlUcxReq req;
     const nixl_status_t post_ret = sgl.post(*ep, req);
-    if (int_handle->append(post_ret, req, conn) != NIXL_SUCCESS) {
+    if (int_handle->append(post_ret, req) != NIXL_SUCCESS) {
         return post_ret;
     }
 
-    nixlUcxReq flush_req;
-    const nixl_status_t flush_ret = ep->flushEp(flush_req);
-    if (int_handle->append(flush_ret, flush_req, conn) != NIXL_SUCCESS) {
-        return flush_ret;
-    }
-
-    return NIXL_SUCCESS;
+    return int_handle->flush();
 }
 #endif
 
@@ -498,11 +495,10 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
     }
 #endif
 
-    int_handle->reserve(single_ep_request_count);
-
     const ucx_connection_ptr_t &conn =
         static_cast<nixlUcxPublicMetadata *>(remote[start_idx].metadataP)->conn;
     auto &ep = conn->getEp(worker_id);
+    int_handle->init(conn, *ep);
 
     nixl_status_t status = NIXL_SUCCESS;
     nixlUcxReq pending_req = nullptr;
@@ -541,7 +537,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
         status = NIXL_IN_PROG;
     }
 
-    if (int_handle->append(status, pending_req, conn) != NIXL_SUCCESS) {
+    if (int_handle->append(status, pending_req) != NIXL_SUCCESS) {
         return status;
     }
 
@@ -549,13 +545,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
      * Flush keeps int_handle non-empty until the operation is actually
      * completed, which can happen after local requests completion.
      */
-    nixlUcxReq flush_req;
-    const nixl_status_t flush_ret = ep->flushEp(flush_req);
-    if (int_handle->append(flush_ret, flush_req, conn) != NIXL_SUCCESS) {
-        return flush_ret;
-    }
-
-    return NIXL_SUCCESS;
+    return int_handle->flush();
 }
 
 nixl_status_t
@@ -584,19 +574,15 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     ret = int_handle->status();
-    if (opt_args && opt_args->hasNotif) {
+    if (opt_args && opt_args->hasNotif && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
+        int_handle->notif = buildNotif(opt_args->notifMsg, opt_args->traceContext);
         if (ret == NIXL_SUCCESS) {
-            nixlUcxReq req;
-            const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[0].metadataP);
-            const nixlUcxEp &ep = *rmd->conn->getEp(int_handle->getWorkerId());
-            ret = notifSendPriv(remote_agent, opt_args->notifMsg, ep, &req);
-            if (int_handle->append(ret, req, rmd->conn) != NIXL_SUCCESS) {
+            ret = int_handle->sendNotif();
+            if (ret != NIXL_SUCCESS) {
                 return ret;
             }
 
             ret = int_handle->status();
-        } else if (ret == NIXL_IN_PROG) {
-            int_handle->notif.emplace(remote_agent, buildNotif(opt_args->notifMsg));
         }
     }
 
@@ -608,27 +594,17 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     const nixl_status_t handle_status = int_handle->status();
 
-    if ((handle_status == NIXL_IN_PROG) || !int_handle->notif) {
+    if ((handle_status == NIXL_IN_PROG) || int_handle->notif.empty()) {
         return handle_status;
     }
-
-    nixlUcxBackendReqH::Notif notif(std::move(int_handle->notif).value());
-    int_handle->notif.reset();
 
     if (handle_status != NIXL_SUCCESS) [[unlikely]] {
+        int_handle->notif.clear();
         return handle_status;
     }
 
-    const ucx_connection_ptr_t conn = getConnection(notif.agent);
-    if (!conn) [[unlikely]] {
-        return NIXL_ERR_NOT_FOUND;
-    }
-
-    nixlUcxReq req;
-    const nixlUcxEp &ep = *conn->getEp(int_handle->getWorkerId());
-    const nixl_status_t status = sendNotif(std::move(notif.msg), ep, &req);
-
-    if (int_handle->append(status, req, conn) != NIXL_SUCCESS) {
+    const nixl_status_t status = int_handle->sendNotif();
+    if (status != NIXL_SUCCESS) {
         return status;
     }
 
@@ -666,35 +642,48 @@ nixlUcxEngine::progressLoop() {
  * Notifications
 *****************************************/
 
-std::unique_ptr<std::string>
-nixlUcxEngine::buildNotif(const std::string &msg) const {
+std::string
+nixl::ucx::serializeNotif(const std::string &agent,
+                          const std::string &msg,
+                          const nixl::trace::TraceContext *trace_context) {
     nixlSerDes ser_des;
 
-    ser_des.addStr("name", localAgent);
+    ser_des.addStr("name", agent);
     ser_des.addStr("msg", msg);
-    // TODO: replace with mpool for performance
-    return std::make_unique<std::string>(ser_des.exportStr());
+    if ((trace_context != nullptr) && trace_context->sampled()) {
+        std::array<std::uint8_t, nixl::trace::traceContextWireSize> record;
+        if (const auto size = nixl::trace::encodeTraceContext(*trace_context, record)) {
+            ser_des.addBuf("tctx", record.data(), *size);
+        }
+    }
+    return std::move(ser_des).exportMoveStr();
 }
 
-nixl_status_t
-nixlUcxEngine::sendNotif(std::unique_ptr<std::string> &&msg, const nixlUcxEp &ep, nixlUcxReq *req) {
-    std::string *buffer = msg.release();
-    auto cleanup = [buffer, req](void *completed_request, void *ptr) {
-        delete buffer;
-        if ((req == nullptr) && (completed_request != nullptr)) {
-            /* Caller is not interested in the request, free it */
-            ucp_request_free(completed_request);
-        }
-    };
+nixl::ucx::notifMessage
+nixl::ucx::deserializeNotif(const std::string &buffer, bool with_trace_context) {
+    nixlSerDes ser_des;
+    ser_des.importStr(buffer);
 
-    return ep.sendAm(nixl::ucx::am_cb_op_t::NOTIF_STR,
-                     nullptr,
-                     0,
-                     buffer->data(),
-                     buffer->size(),
-                     UCP_AM_SEND_FLAG_EAGER,
-                     req,
-                     std::move(cleanup));
+    notifMessage notif;
+    notif.agent = ser_des.getStr("name");
+    notif.msg = ser_des.getStr("msg");
+    if (with_trace_context && (ser_des.peekBufLen("tctx") == nixl::trace::traceContextWireSize)) {
+        std::array<std::uint8_t, nixl::trace::traceContextWireSize> record;
+        nixl::trace::TraceContext context;
+        if ((ser_des.getBuf("tctx", record.data(), record.size()) == NIXL_SUCCESS) &&
+            (nixl::trace::decodeTraceContext(record, context) ==
+             nixl::trace::WireDecodeResult::Ok)) {
+            notif.traceContext = context;
+        }
+    }
+    return notif;
+}
+
+std::string
+nixlUcxEngine::buildNotif(const std::string &msg,
+                          const nixl::trace::TraceContext *trace_context) const {
+    // TODO: replace with mpool for performance
+    return nixl::ucx::serializeNotif(localAgent, msg, trace_context);
 }
 
 nixl_status_t
@@ -702,7 +691,8 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::string &msg,
                              const nixlUcxEp &ep,
                              nixlUcxReq *req) const {
-    return sendNotif(buildNotif(msg), ep, req);
+    return ep.sendAm(
+        nixl::ucx::am_cb_op_t::NOTIF_STR, buildNotif(msg, nullptr), UCP_AM_SEND_FLAG_EAGER, req);
 }
 
 ucx_connection_ptr_t
@@ -723,8 +713,6 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
                          size_t length,
                          const ucp_am_recv_param_t *param)
 {
-    nixlSerDes ser_des;
-
     std::string ser_str( (char*) data, length);
     nixlUcxEngine* engine = (nixlUcxEngine*) arg;
 
@@ -732,11 +720,15 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     NIXL_ASSERT(!(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV));
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
-    ser_des.importStr(ser_str);
-    std::string remote_name = ser_des.getStr("name");
-    std::string msg = ser_des.getStr("msg");
+    nixl::ucx::notifMessage notif =
+        nixl::ucx::deserializeNotif(ser_str, engine->traceSink_ != nullptr);
+    if ((engine->traceSink_ != nullptr) && notif.traceContext && notif.traceContext->sampled()) {
+        const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", notif.agent}};
+        engine->traceSink_->recordPhase(
+            nixl_trace_phase_t::NOTIF_RECEIVED, {}, nixlTime::getUs(), attrs, &*notif.traceContext);
+    }
 
-    engine->appendNotif(std::move(remote_name), std::move(msg));
+    engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
     return UCS_OK;
 }
 
@@ -772,33 +764,64 @@ nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
-    const size_t worker_id = getSharedWorkerId(opt_args);
-    try {
-        mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
-        return NIXL_SUCCESS;
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to prepare remote memory view: " << e.what();
-        return NIXL_ERR_BACKEND;
-    }
+    return prepMemViewImpl(dlist, mvh, opt_args, "remote");
 }
 
 nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
+    return prepMemViewImpl(dlist, mvh, opt_args, "local");
+}
+
+template<typename DlistT>
+nixl_status_t
+nixlUcxEngine::prepMemViewImpl(const DlistT &dlist,
+                               nixlMemViewH &mvh,
+                               const nixl_opt_b_args_t *opt_args,
+                               const char *kind) const {
+    nixl::deviceOps *ops = nixl::getDeviceOps();
+    if (ops == nullptr) {
+        NIXL_ERROR << "No device operations implementation is loaded";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    nixlMemViewH backend_mvh = nullptr;
     const size_t worker_id = getSharedWorkerId(opt_args);
     try {
-        mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
-        return NIXL_SUCCESS;
+        backend_mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
     }
     catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to prepare local memory view: " << e.what();
+        NIXL_ERROR << "Failed to prepare " << kind << " memory view: " << e.what();
         return NIXL_ERR_BACKEND;
     }
+
+    // Device code reaches an implementation through the handle, not through a
+    // build-time choice, so what leaves here is a tagged wrapper rather than
+    // the bare backend handle.
+    const nixl_status_t status =
+        nixl::deviceMemViewAllocate(*ops, nixl_device_exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
+    if (status != NIXL_SUCCESS) {
+        nixl::ucx::releaseMemList(backend_mvh);
+    }
+    return status;
 }
 
 void
 nixlUcxEngine::releaseMemView(nixlMemViewH mem_view) const {
-    nixl::ucx::releaseMemList(mem_view);
+    if (mem_view == nullptr) {
+        return;
+    }
+
+    // prepMemView allocated the wrapper through the same process-wide instance.
+    nixl::deviceOps &ops = *nixl::getDeviceOps();
+    nixlMemViewH backend_mvh = nullptr;
+    if (nixl::deviceMemViewGetBackend(ops, mem_view, backend_mvh) != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to read device memview wrapper for handle " << mem_view;
+        nixl::deviceMemViewFree(ops, mem_view);
+        return;
+    }
+
+    nixl::ucx::releaseMemList(backend_mvh);
+    nixl::deviceMemViewFree(ops, mem_view);
 }
