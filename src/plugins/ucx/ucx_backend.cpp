@@ -26,10 +26,16 @@
 #include "common/backend.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "tracing/backend_trace.h"
 
+#include <array>
+#include <cstdint>
 #include <optional>
 #include <string.h>
 #include "absl/strings/str_split.h"
+
+#include "device/device_memview.h"
+#include "device/device_ops.h"
 
 namespace {
 [[nodiscard]] bool
@@ -80,7 +86,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
       memoryPolicy_(std::move(policy)),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
-      sglEnabled_(sglEnabledFromConfig()) {
+      sglEnabled_(sglEnabledFromConfig()),
+      traceSink_(init_params.traceSink) {
     if (memoryPolicy_ && memoryPolicy_->deviceMemoryType().empty()) {
         throw std::invalid_argument("A memory policy must name its required device memory type");
     }
@@ -622,16 +629,17 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
     ret = int_handle->status();
     if (opt_args && opt_args->hasNotif) {
+        auto notif = buildNotif(opt_args->notifMsg, opt_args->traceContext);
         if (ret == NIXL_SUCCESS) {
             nixlUcxReq req;
-            ret = notifSendPriv(remote_agent, opt_args->notifMsg, int_handle->getEp(), &req);
+            ret = sendNotif(std::move(notif), int_handle->getEp(), &req);
             if (int_handle->append(ret, req) != NIXL_SUCCESS) {
                 return ret;
             }
 
             ret = int_handle->status();
         } else if (ret == NIXL_IN_PROG) {
-            int_handle->notif = buildNotif(opt_args->notifMsg);
+            int_handle->notif = std::move(notif);
         }
     }
 
@@ -695,13 +703,47 @@ nixlUcxEngine::progressLoop() {
 *****************************************/
 
 std::string
-nixlUcxEngine::buildNotif(const std::string &msg) const {
+nixl::ucx::serializeNotif(const std::string &agent,
+                          const std::string &msg,
+                          const nixl::trace::TraceContext *trace_context) {
     nixlSerDes ser_des;
 
-    ser_des.addStr("name", localAgent);
+    ser_des.addStr("name", agent);
     ser_des.addStr("msg", msg);
-    // TODO: replace with mpool for performance
+    if ((trace_context != nullptr) && trace_context->sampled()) {
+        std::array<std::uint8_t, nixl::trace::traceContextWireSize> record;
+        if (const auto size = nixl::trace::encodeTraceContext(*trace_context, record)) {
+            ser_des.addBuf("tctx", record.data(), *size);
+        }
+    }
     return ser_des.exportStr();
+}
+
+nixl::ucx::notifMessage
+nixl::ucx::deserializeNotif(const std::string &buffer, bool with_trace_context) {
+    nixlSerDes ser_des;
+    ser_des.importStr(buffer);
+
+    notifMessage notif;
+    notif.agent = ser_des.getStr("name");
+    notif.msg = ser_des.getStr("msg");
+    if (with_trace_context && (ser_des.peekBufLen("tctx") == nixl::trace::traceContextWireSize)) {
+        std::array<std::uint8_t, nixl::trace::traceContextWireSize> record;
+        nixl::trace::TraceContext context;
+        if ((ser_des.getBuf("tctx", record.data(), record.size()) == NIXL_SUCCESS) &&
+            (nixl::trace::decodeTraceContext(record, context) ==
+             nixl::trace::WireDecodeResult::Ok)) {
+            notif.traceContext = context;
+        }
+    }
+    return notif;
+}
+
+std::string
+nixlUcxEngine::buildNotif(const std::string &msg,
+                          const nixl::trace::TraceContext *trace_context) const {
+    // TODO: replace with mpool for performance
+    return nixl::ucx::serializeNotif(localAgent, msg, trace_context);
 }
 
 nixl_status_t
@@ -714,7 +756,7 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::string &msg,
                              const nixlUcxEp &ep,
                              nixlUcxReq *req) const {
-    return sendNotif(buildNotif(msg), ep, req);
+    return sendNotif(buildNotif(msg, nullptr), ep, req);
 }
 
 ucx_connection_ptr_t
@@ -735,8 +777,6 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
                          size_t length,
                          const ucp_am_recv_param_t *param)
 {
-    nixlSerDes ser_des;
-
     std::string ser_str( (char*) data, length);
     nixlUcxEngine* engine = (nixlUcxEngine*) arg;
 
@@ -744,11 +784,15 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     NIXL_ASSERT(!(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV));
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
-    ser_des.importStr(ser_str);
-    std::string remote_name = ser_des.getStr("name");
-    std::string msg = ser_des.getStr("msg");
+    nixl::ucx::notifMessage notif =
+        nixl::ucx::deserializeNotif(ser_str, engine->traceSink_ != nullptr);
+    if ((engine->traceSink_ != nullptr) && notif.traceContext && notif.traceContext->sampled()) {
+        const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", notif.agent}};
+        engine->traceSink_->recordPhase(
+            nixl_trace_phase_t::NOTIF_RECEIVED, {}, nixlTime::getUs(), attrs, &*notif.traceContext);
+    }
 
-    engine->appendNotif(std::move(remote_name), std::move(msg));
+    engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
     return UCS_OK;
 }
 
@@ -787,15 +831,7 @@ nixlUcxEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
     if (memoryPolicy_) {
         return NIXL_ERR_NOT_SUPPORTED;
     }
-    const size_t worker_id = getSharedWorkerId(opt_args);
-    try {
-        mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
-        return NIXL_SUCCESS;
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to prepare remote memory view: " << e.what();
-        return NIXL_ERR_BACKEND;
-    }
+    return prepMemViewImpl(dlist, mvh, opt_args, "remote");
 }
 
 nixl_status_t
@@ -805,18 +841,57 @@ nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
     if (memoryPolicy_) {
         return NIXL_ERR_NOT_SUPPORTED;
     }
+    return prepMemViewImpl(dlist, mvh, opt_args, "local");
+}
+
+template<typename DlistT>
+nixl_status_t
+nixlUcxEngine::prepMemViewImpl(const DlistT &dlist,
+                               nixlMemViewH &mvh,
+                               const nixl_opt_b_args_t *opt_args,
+                               const char *kind) const {
+    nixl::deviceOps *ops = nixl::getDeviceOps();
+    if (ops == nullptr) {
+        NIXL_ERROR << "No device operations implementation is loaded";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    nixlMemViewH backend_mvh = nullptr;
     const size_t worker_id = getSharedWorkerId(opt_args);
     try {
-        mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
-        return NIXL_SUCCESS;
+        backend_mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
     }
     catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to prepare local memory view: " << e.what();
+        NIXL_ERROR << "Failed to prepare " << kind << " memory view: " << e.what();
         return NIXL_ERR_BACKEND;
     }
+
+    // Device code reaches an implementation through the handle, not through a
+    // build-time choice, so what leaves here is a tagged wrapper rather than
+    // the bare backend handle.
+    const nixl_status_t status =
+        nixl::deviceMemViewAllocate(*ops, nixl_device_exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
+    if (status != NIXL_SUCCESS) {
+        nixl::ucx::releaseMemList(backend_mvh);
+    }
+    return status;
 }
 
 void
 nixlUcxEngine::releaseMemView(nixlMemViewH mem_view) const {
-    nixl::ucx::releaseMemList(mem_view);
+    if (mem_view == nullptr) {
+        return;
+    }
+
+    // prepMemView allocated the wrapper through the same process-wide instance.
+    nixl::deviceOps &ops = *nixl::getDeviceOps();
+    nixlMemViewH backend_mvh = nullptr;
+    if (nixl::deviceMemViewGetBackend(ops, mem_view, backend_mvh) != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to read device memview wrapper for handle " << mem_view;
+        nixl::deviceMemViewFree(ops, mem_view);
+        return;
+    }
+
+    nixl::ucx::releaseMemList(backend_mvh);
+    nixl::deviceMemViewFree(ops, mem_view);
 }

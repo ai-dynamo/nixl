@@ -247,5 +247,12 @@ class nixlBackendEngine {
                          const nixl_opt_args_t *extra_params = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
+
+        // Determines if a backend carries a request's trace context to its peer. Core reads it
+        // once for remote backends and, if false, warns once when a sampled request goes untraced.
+        [[nodiscard]] virtual bool
+        supportsTraceContext() const noexcept {
+            return false;
+        }
 };
 #endif

@@ -480,6 +480,12 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modify("CUDA_IPC_ENABLE_GET_ZCOPY", "on");
     }
 
+    // rocm_ipc reports a 128-byte minimum zero-copy size by default, and UCP's
+    // put/get zero-copy protocols only accept lanes whose minimum is 0. Without
+    // this, GPU-to-GPU RMA on AMD never uses rocm_ipc (XGMI) and is staged
+    // through host memory instead.
+    config.modify("ROCM_IPC_MIN_ZCOPY", "0");
+
     // NIXL only needs AMs to be visible after previous PUTs which RC already
     // provides without the need of strict order key.
     if (device_memory_type.empty()) {
@@ -751,6 +757,12 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
     if (hw_info.numNvidiaGpus > 0 && !cuda_supported) {
         NIXL_WARN << *this << ": " << hw_info.numNvidiaGpus
                   << " NVIDIA GPU(s) were detected, but UCX CUDA support was not found! "
+                  << "GPU memory is not supported.";
+    }
+
+    if (hw_info.numAmdGpus > 0 && !supportsMemoryType(UCS_MEMORY_TYPE_ROCM)) {
+        NIXL_WARN << *this << ": " << hw_info.numAmdGpus
+                  << " AMD GPU(s) were detected, but UCX ROCm support was not found! "
                   << "GPU memory is not supported.";
     }
 

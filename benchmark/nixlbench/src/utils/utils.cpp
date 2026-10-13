@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +32,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <gflags/gflags.h>
+#include <nixl.h>
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
@@ -516,6 +518,29 @@ setupDeviceAPIConfig() {
     return true;
 }
 
+nixl_mem_list_t xferBenchConfig::backend_mems = {};
+
+namespace {
+// Discover the memory segment types supported by the configured backend plugin.
+// Uses a transient nixlAgent to call getPluginParams; the plugin manager is a
+// singleton so this is cheap and does not affect the real agent created later
+// by the worker.
+nixl_mem_list_t
+discoverPluginMems(const std::string &backend) {
+    nixl_mem_list_t mems;
+    if (backend.empty()) {
+        return mems;
+    }
+    nixlAgent discovery_agent("nixlbench_discovery_" + std::to_string(::getpid()),
+                              nixlAgentConfig());
+    nixl_b_params_t params;
+    if (discovery_agent.getPluginParams(backend, mems, params) != NIXL_SUCCESS) {
+        mems.clear();
+    }
+    return mems;
+}
+} // namespace
+
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
     plugin_parameters.reset();
@@ -582,6 +607,9 @@ xferBenchConfig::loadParams(void) {
     // Only load NIXL-specific configurations if using NIXL worker
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         backend = NB_ARG(backend);
+        // Discover supported memory types so the storage/object/block predicates work
+        // before the real agent is created (the worker later refreshes from the engine).
+        backend_mems = discoverPluginMems(backend);
         enable_pt = NB_ARG(enable_pt);
         progress_threads = NB_ARG(progress_threads);
         device_list = NB_ARG(device_list);
@@ -1130,24 +1158,22 @@ xferBenchConfig::workerNum() {
 
 bool
 xferBenchConfig::isStorageBackend() {
-    return (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_GDS_MT == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
+    return std::any_of(backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) {
+        return m == FILE_SEG || m == BLK_SEG || m == OBJ_SEG;
+    });
 }
 
 bool
 xferBenchConfig::isObjStorageBackend() {
-    return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
-};
+    return std::any_of(
+        backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) { return m == OBJ_SEG; });
+}
+
+bool
+xferBenchConfig::isBlkStorageBackend() {
+    return std::any_of(
+        backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) { return m == BLK_SEG; });
+}
 
 
 /**********
@@ -1320,8 +1346,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
 
             len = iov.len;
 
-            if (xferBenchConfig::isStorageBackend() ||
-                xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO) {
+            if (xferBenchConfig::isStorageBackend()) {
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
                     if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
                         if (posix_memalign(&addr, xferBenchConfig::page_size, len) != 0) {
@@ -1604,6 +1629,22 @@ xferBenchUtils::printStats(bool is_target,
     }
 }
 
+bool
+xferBenchUtils::debugEnabled() {
+    static const bool enabled = [] {
+        const char *env = std::getenv("NIXLBENCH_LOG_LEVEL");
+        if (env == nullptr) {
+            return false;
+        }
+        std::string level(env);
+        std::transform(level.begin(), level.end(), level.begin(), [](unsigned char c) {
+            return static_cast<char>(std::toupper(c));
+        });
+        return level == "DEBUG" || level == "TRACE";
+    }();
+    return enabled;
+}
+
 std::string
 xferBenchUtils::buildAwsCredentials() {
     std::string env_setup = "";
@@ -1720,9 +1761,14 @@ xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
             " --checksum-algorithm SHA256 --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
-              << " (size: " << buffer_size << " bytes)" << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
+                  << " (size: " << buffer_size << " bytes)" << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {
@@ -1748,8 +1794,13 @@ xferBenchUtils::getObjS3(const std::string &name) {
         aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {
@@ -1774,8 +1825,13 @@ xferBenchUtils::rmObjS3(const std::string &name) {
         aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Removing S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Removing S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {
