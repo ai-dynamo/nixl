@@ -18,11 +18,13 @@
 #ifndef NIXL_SRC_PLUGINS_RADOS_RADOS_BACKEND_H
 #define NIXL_SRC_PLUGINS_RADOS_RADOS_BACKEND_H
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "backend/backend_engine.h"
 #include "rados_capi.h"
@@ -42,6 +44,8 @@ public:
     const uint64_t devId;
     const std::string objectKey;
 };
+
+class directRequestState;
 
 class nixlRadosEngine : public nixlBackendEngine {
 public:
@@ -99,8 +103,6 @@ public:
     nixl_status_t
     deregisterMem(nixlBackendMD *meta) override;
 
-    // Registration-only increment: the transfer surface is rejected until the
-    // asynchronous transfer commits land on top of this series.
     nixl_status_t
     prepXfer(const nixl_xfer_op_t &operation,
              const nixl_meta_dlist_t &local,
@@ -127,14 +129,26 @@ private:
     void
     initialize(const nixl::rados::backendConfig &config);
 
+    std::shared_ptr<directRequestState>
+    lookupActiveLocked(nixlBackendReqH *handle) const;
+
+    void
+    drainRequestState(const std::shared_ptr<directRequestState> &state) const;
+
     std::unique_ptr<nixl::rados::cApi> capi_;
     rados_t cluster_ = nullptr;
     rados_ioctx_t ioctx_ = nullptr;
+    mutable librados::IoCtx cppCtx_;
     bool clusterCreated_ = false;
     bool ioctxOpen_ = false;
+    bool cppCtxOpen_ = false;
 
     mutable std::mutex objectsMutex_;
     std::unordered_map<uint64_t, std::string> objects_;
+
+    mutable std::mutex activeMutex_;
+    std::atomic<bool> shuttingDown_{false};
+    mutable std::unordered_map<nixlBackendReqH *, std::shared_ptr<directRequestState>> handles_;
 };
 
 #endif

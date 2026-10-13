@@ -15,25 +15,53 @@
 # limitations under the License.
 
 if not cpp.links('''
+        #include <cstddef>
         #include <cstdint>
         #include <rados/librados.h>
+        #include <rados/librados.hpp>
         int main() {
             rados_t cluster = nullptr;
             rados_ioctx_t ioctx = nullptr;
+            rados_completion_t c_comp = nullptr;
+            char buf[8] = {};
             int rc = rados_create2(&cluster, nullptr, "client.fixture", uint64_t{0});
             rc += rados_conf_read_file(cluster, "fixture.conf");
             rc += rados_conf_set(cluster, "log_file", "");
             rc += rados_connect(cluster);
             rc += rados_ioctx_create(cluster, "pool", &ioctx);
+            rc += rados_aio_create_completion(nullptr, nullptr, nullptr, &c_comp);
+            rc += rados_aio_read(ioctx, "oid", c_comp, buf, sizeof(buf), 0);
+            rc += rados_aio_is_complete_and_cb(c_comp);
+            rc += rados_aio_get_return_value(c_comp);
+            rc += rados_aio_wait_for_complete_and_cb(c_comp);
+            rados_aio_release(c_comp);
+            librados::IoCtx view;
+            librados::IoCtx::from_rados_ioctx_t(ioctx, view);
+            librados::AioCompletion *cpp_comp = librados::Rados::aio_create_completion();
+            librados::bufferlist bl = librados::bufferlist::static_from_mem(buf, sizeof(buf));
+            rc += view.aio_write("oid", cpp_comp, bl, sizeof(buf), 0);
+            cpp_comp->is_complete_and_cb();
+            cpp_comp->get_return_value();
+            cpp_comp->wait_for_complete_and_cb();
+            bl.clear();
+            cpp_comp->release();
+            view.close();
             rados_ioctx_destroy(ioctx);
             rados_shutdown(cluster);
             return rc;
         }
     ''', dependencies: [rados_dep],
-         name: 'librados C lifecycle/configuration surface')
-    error('The RADOS plugin requires the librados C lifecycle/configuration surface: ' +
-          'rados_create2, rados_conf_read_file, rados_conf_set, rados_connect, ' +
-          'rados_ioctx_create, rados_ioctx_destroy, rados_shutdown.')
+         name: 'librados C lifecycle/read and C++ IoCtx/bufferlist/AIO surface')
+    error('The RADOS plugin requires the librados C lifecycle and AIO-read surface plus the C++ ' +
+          'IoCtx/bufferlist/AIO surface: rados_create2, rados_conf_read_file, ' +
+          'rados_conf_set, rados_connect, rados_ioctx_create, ' +
+          'rados_ioctx_destroy, rados_shutdown, ' +
+          'rados_aio_create_completion, rados_aio_read, rados_aio_is_complete_and_cb, ' +
+          'rados_aio_get_return_value, rados_aio_wait_for_complete_and_cb, rados_aio_release, ' +
+          'librados::IoCtx::from_rados_ioctx_t, librados::IoCtx::close, librados::IoCtx::aio_write, ' +
+          'librados::Rados::aio_create_completion, librados::bufferlist::static_from_mem, and the ' +
+          'librados::AioCompletion is_complete_and_cb/get_return_value/wait_for_complete_and_cb/release ' +
+          'operations.')
 endif
 
 rados_sources = ['rados_backend.cpp', 'rados_backend.h',

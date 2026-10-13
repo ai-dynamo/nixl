@@ -17,13 +17,27 @@
  */
 #include <gtest/gtest.h>
 
+#include <unistd.h>
+
+#include <chrono>
 #include <cstdlib>
+#include <string>
+#include <thread>
+#include <vector>
 
 #include "nixl.h"
+#include "nixl_descriptors.h"
+#include "nixl_params.h"
 
 namespace gtest::rados {
 
 namespace {
+
+    const char *
+    environmentValue(const char *name) {
+        const char *value = std::getenv(name);
+        return value == nullptr ? "" : value;
+    }
 
     constexpr const char *localAgent = "rados_discovery_test";
 
@@ -40,6 +54,9 @@ protected:
     }
 };
 
+// One representative through the loaded plugin's factory: agent-level error
+// propagation for a rejected parameter, failing before any Ceph access. The
+// rejection matrix itself is owned by radosConfigTest.
 TEST_F(radosDiscoveryFixture, CreateBackendRejectsUnprefixedParameter) {
     nixl_b_params_t parameters{{"conf", "missing-ceph.conf"},
                                {"pool", "qa-pool"},
@@ -62,6 +79,82 @@ TEST_F(radosDiscoveryFixture, LoadedPluginDeclaresExactlyDramAndObjSegments) {
     ASSERT_EQ(agent.getPluginParams("RADOS", mems, params), NIXL_SUCCESS);
     EXPECT_EQ(mems, (nixl_mem_list_t{DRAM_SEG, OBJ_SEG}));
     EXPECT_TRUE(params.empty());
+}
+
+TEST_F(radosDiscoveryFixture, DirectRoundTripAndCleanShutdown) {
+    const std::string conf = environmentValue("NIXL_RADOS_CONF");
+    const std::string pool = environmentValue("NIXL_RADOS_POOL");
+    const std::string name = environmentValue("NIXL_RADOS_NAME");
+    if (conf.empty() || pool.empty() || name.empty()) {
+        GTEST_SKIP() << "set NIXL_RADOS_CONF, NIXL_RADOS_POOL, and "
+                        "NIXL_RADOS_NAME to run this live RADOS case";
+    }
+    ASSERT_EQ(access(conf.c_str(), R_OK), 0) << "Ceph conf is not readable: " << conf;
+
+    nixl_b_params_t parameters{{"conf", conf}, {"pool", pool}, {"name", name}};
+    const nixlAgentConfig agent_config;
+    nixlAgent agent(localAgent, agent_config);
+
+    nixlBackendH *backend = nullptr;
+    ASSERT_EQ(agent.createBackend("RADOS", parameters, backend), NIXL_SUCCESS);
+    ASSERT_NE(backend, nullptr);
+
+    std::vector<unsigned char> bytes(1024, 0x5a);
+    std::vector<unsigned char> readback(bytes.size(), 0x00);
+    nixl_opt_args_t reg_args;
+    reg_args.backends = {backend};
+    const nixlBlobDesc dram_desc(reinterpret_cast<uintptr_t>(bytes.data()), bytes.size(), 0, {});
+    const nixlBlobDesc readback_desc(
+        reinterpret_cast<uintptr_t>(readback.data()), readback.size(), 0, {});
+    nixl_reg_dlist_t dram_registrations(DRAM_SEG);
+    dram_registrations.addDesc(dram_desc);
+    dram_registrations.addDesc(readback_desc);
+    ASSERT_EQ(agent.registerMem(dram_registrations, &reg_args), NIXL_SUCCESS);
+
+    // Unique key per run; the plugin has no delete operation, so the object is
+    // deliberately retained in the pool.
+    const std::string object_key = "nixl-rados-gtest-" + std::to_string(::getpid()) + "-" +
+        std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count());
+    constexpr uint64_t object_offset = 4096;
+    const nixlBlobDesc object_desc(object_offset, bytes.size(), 1, object_key);
+    nixl_reg_dlist_t object_registrations(OBJ_SEG);
+    object_registrations.addDesc(object_desc);
+    ASSERT_EQ(agent.registerMem(object_registrations, &reg_args), NIXL_SUCCESS);
+
+    const auto run_to_completion = [&agent](nixlXferReqH *request) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        nixl_status_t status = agent.postXferReq(request);
+        while (status == NIXL_IN_PROG && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            status = agent.getXferStatus(request);
+        }
+        EXPECT_EQ(status, NIXL_SUCCESS) << "live RADOS transfer did not complete";
+        EXPECT_EQ(agent.releaseXferReq(request), NIXL_SUCCESS);
+    };
+
+    nixl_xfer_dlist_t write_local(DRAM_SEG);
+    write_local.addDesc(dram_desc);
+    nixl_xfer_dlist_t object_remote(OBJ_SEG);
+    object_remote.addDesc(nixlBasicDesc(object_offset, bytes.size(), 1));
+    nixlXferReqH *write_request = nullptr;
+    ASSERT_EQ(agent.createXferReq(
+                  NIXL_WRITE, write_local, object_remote, localAgent, write_request, &reg_args),
+              NIXL_SUCCESS);
+    run_to_completion(write_request);
+
+    nixl_xfer_dlist_t read_local(DRAM_SEG);
+    read_local.addDesc(readback_desc);
+    nixlXferReqH *read_request = nullptr;
+    ASSERT_EQ(agent.createXferReq(
+                  NIXL_READ, read_local, object_remote, localAgent, read_request, &reg_args),
+              NIXL_SUCCESS);
+    run_to_completion(read_request);
+    EXPECT_EQ(bytes, readback);
+
+    ASSERT_EQ(agent.deregisterMem(object_registrations, &reg_args), NIXL_SUCCESS);
+    ASSERT_EQ(agent.deregisterMem(dram_registrations, &reg_args), NIXL_SUCCESS);
 }
 
 } // namespace gtest::rados

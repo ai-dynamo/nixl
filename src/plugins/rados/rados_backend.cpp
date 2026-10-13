@@ -17,9 +17,15 @@
  */
 #include "rados_backend.h"
 
+#include <cerrno>
+#include <climits>
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
+#include <vector>
 
 #include "common/nixl_log.h"
 
@@ -48,18 +54,50 @@ applyCephOverrides(nixl::rados::cApi &capi,
     return true;
 }
 
+// librados yields delivered bytes for an AIO read but only 0/-errno for a write,
+// so the mapped NIXL status must key off direction and requested length.
+nixl_status_t
+radosResultToNixl(nixl_xfer_op_t operation, int result, uint64_t requested_len) {
+    if (operation == NIXL_READ && result == -ENOENT) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+    if (result < 0) {
+        NIXL_ERROR << "RADOS object I/O failed with error " << result;
+        return NIXL_ERR_BACKEND;
+    }
+    if (operation == NIXL_READ) {
+        if (static_cast<uint64_t>(result) == requested_len) {
+            return NIXL_SUCCESS;
+        }
+        if (static_cast<uint64_t>(result) < requested_len) {
+            return NIXL_ERR_MISMATCH;
+        }
+        NIXL_ERROR << "RADOS read reported " << result << " delivered bytes for a "
+                   << requested_len << " byte request";
+        return NIXL_ERR_BACKEND;
+    }
+    if (result == 0) {
+        return NIXL_SUCCESS;
+    }
+    NIXL_ERROR << "RADOS write reported unexpected positive result " << result;
+    return NIXL_ERR_BACKEND;
+}
+
 // Initialization-only, exception-safe owner of the cluster/ioctx handles:
-// take_*() hands ownership to the engine on success, while any failed path
-// unwinds here as ioctx -> cluster.
-class bootstrap_resources {
+// take_*()/commit_view() hand ownership to the engine on success, while any
+// failed path unwinds here as view -> ioctx -> cluster.
+class bootstrapResources {
 public:
-    explicit bootstrap_resources(nixl::rados::cApi &capi) : capi_(capi) {}
+    explicit bootstrapResources(nixl::rados::cApi &capi) : capi_(capi) {}
 
-    bootstrap_resources(const bootstrap_resources &) = delete;
-    bootstrap_resources &
-    operator=(const bootstrap_resources &) = delete;
+    bootstrapResources(const bootstrapResources &) = delete;
+    bootstrapResources &
+    operator=(const bootstrapResources &) = delete;
 
-    ~bootstrap_resources() {
+    ~bootstrapResources() {
+        if (view_held_) {
+            capi_.ioCtxClose(view_);
+        }
         if (ioctx_ != nullptr) {
             capi_.ioctx_destroy(ioctx_);
         }
@@ -88,6 +126,19 @@ public:
         return capi_.ioctx_create(cluster_, pool, &ioctx_);
     }
 
+    void
+    create_view(librados::IoCtx *ctx) {
+        view_ = ctx;
+        view_held_ = true;
+        capi_.ioctxFromRaw(ioctx_, view_);
+    }
+
+    void
+    commit_view() {
+        view_ = nullptr;
+        view_held_ = false;
+    }
+
     rados_t
     cluster() const {
         return cluster_;
@@ -107,18 +158,21 @@ private:
     nixl::rados::cApi &capi_;
     rados_t cluster_ = nullptr;
     rados_ioctx_t ioctx_ = nullptr;
+    librados::IoCtx *view_ = nullptr;
+    bool view_held_ = false;
 };
 
 // Bring up the rados client (create2 -> conf -> overrides -> connect -> pool
-// ioctx) from the parsed config. On success the raw handles move into the
-// out-params for engine ownership; on any failure everything acquired so far
-// unwinds here and nothing is taken.
+// ioctx -> non-owning view) from the parsed config. On success the raw handles
+// move into the out-params for engine ownership; on any failure everything
+// acquired so far unwinds here and nothing is taken.
 bool
 bootstrapClient(nixl::rados::cApi &capi,
                 const nixl::rados::backendConfig &config,
+                librados::IoCtx *view,
                 rados_t &out_cluster,
                 rados_ioctx_t &out_ioctx) {
-    bootstrap_resources resources(capi);
+    bootstrapResources resources(capi);
     if (!checkRadosResult("rados_create2", resources.create_cluster(config.name.c_str()))) {
         return false;
     }
@@ -130,12 +184,165 @@ bootstrapClient(nixl::rados::cApi &capi,
     if (!checkRadosResult("rados_ioctx_create", resources.create_ioctx(config.pool.c_str()))) {
         return false;
     }
+    resources.create_view(view);
     out_ioctx = resources.take_ioctx();
     out_cluster = resources.take_cluster();
+    resources.commit_view();
     return true;
 }
 
 } // namespace
+
+class directRequestState {
+public:
+    // Only forward transitions are legal: PREPARED -> ACTIVE -> TERMINAL (a terminal
+    // round may repost to ACTIVE); release/teardown demotes to drain-only ABANDONED.
+    enum class phase_t { PREPARED, ACTIVE, TERMINAL, ABANDONED };
+
+    struct cRead {
+        rados_completion_t handle = nullptr;
+    };
+
+    struct cppWrite {
+        librados::AioCompletion *handle = nullptr;
+    };
+
+    using owned_completion_t = std::variant<std::monostate, cRead, cppWrite>;
+
+    struct requestPair {
+        std::string oid;
+        uintptr_t dram = 0;
+        uint64_t offset = 0;
+        uint64_t len = 0;
+        int result = 0;
+        // Write-only, non-owning view of snapshotted caller DRAM; librados keeps
+        // borrowing it until retirement, and repost rebuilds it from the pointer.
+        librados::bufferlist payload;
+        owned_completion_t owned;
+    };
+
+    explicit directRequestState(nixl_xfer_op_t operation) : operation_(operation) {}
+
+    ~directRequestState() {
+        for (const requestPair &pair : pairs_) {
+            if (!std::holds_alternative<std::monostate>(pair.owned)) {
+                NIXL_ERROR << "RADOS request state destroyed with an unreleased "
+                              "completion on object '"
+                           << pair.oid << "'";
+            }
+        }
+    }
+
+    directRequestState(const directRequestState &) = delete;
+    directRequestState &
+    operator=(const directRequestState &) = delete;
+
+    bool
+    reservePairs(size_t count) {
+        try {
+            pairs_.resize(count);
+        }
+        catch (const std::bad_alloc &) {
+            return false;
+        }
+        return true;
+    }
+
+    nixl_xfer_op_t
+    operation() const {
+        return operation_;
+    }
+
+    std::vector<requestPair> &
+    pairs() {
+        return pairs_;
+    }
+
+    const std::vector<requestPair> &
+    pairs() const {
+        return pairs_;
+    }
+
+    void
+    resetForRepostLocked() {
+        for (requestPair &pair : pairs_) {
+            pair.owned = owned_completion_t{};
+            pair.payload.clear();
+            pair.result = 0;
+        }
+        terminalStatus = NIXL_SUCCESS;
+    }
+
+    std::mutex mtx;
+    phase_t phase = phase_t::PREPARED;
+    nixl_status_t terminalStatus = NIXL_SUCCESS;
+
+private:
+    const nixl_xfer_op_t operation_;
+    std::vector<requestPair> pairs_;
+};
+
+namespace {
+
+bool
+pairUnproven(nixl::rados::cApi &capi, const directRequestState::requestPair &pair) {
+    if (const auto *read = std::get_if<directRequestState::cRead>(&pair.owned)) {
+        return capi.cIsCompleteAndCb(read->handle) == 0;
+    }
+    if (const auto *write = std::get_if<directRequestState::cppWrite>(&pair.owned)) {
+        return capi.cppIsCompleteAndCb(write->handle) == 0;
+    }
+    return false;
+}
+
+bool
+pairOwned(const directRequestState::requestPair &pair) {
+    return !std::holds_alternative<std::monostate>(pair.owned);
+}
+
+// wait=false runs only after the caller proved callback retirement, so it stays
+// nonblocking; an empty slot (never posted or already harvested) yields its cached result.
+int
+retirePair(nixl::rados::cApi &capi, directRequestState::requestPair &pair, bool wait) {
+    if (auto *read = std::get_if<directRequestState::cRead>(&pair.owned)) {
+        if (wait) {
+            capi.cWaitForCompleteAndCb(read->handle);
+        }
+        const int result = capi.cGetReturnValue(read->handle);
+        capi.cRelease(read->handle);
+        pair.owned = std::monostate{};
+        return result;
+    }
+    if (auto *write = std::get_if<directRequestState::cppWrite>(&pair.owned)) {
+        if (wait) {
+            capi.cppWaitForCompleteAndCb(write->handle);
+        }
+        const int result = capi.cppGetReturnValue(write->handle);
+        capi.cppRelease(write->handle);
+        pair.payload.clear();
+        pair.owned = std::monostate{};
+        return result;
+    }
+    return pair.result;
+}
+
+void
+logRetiredResult(const directRequestState &state,
+                 const directRequestState::requestPair &pair,
+                 int result) {
+    if (result >= 0) {
+        return;
+    }
+    NIXL_ERROR << "RADOS abandoned "
+               << (state.operation() == NIXL_READ ? "read of" : "write to") << " object '"
+               << pair.oid << "' at offset " << pair.offset << " failed with error " << result;
+}
+
+} // namespace
+
+// Opaque token; its real state lives in the engine's handles_, so registry lookup
+// is what rejects null, unknown, and already-released handles.
+class nixlRadosBackendReqH final : public nixlBackendReqH {};
 
 nixlRadosEngine::nixlRadosEngine(const nixlBackendInitParams *init_params)
     : nixlRadosEngine(init_params, std::make_unique<nixl::rados::libRados>()) {}
@@ -162,15 +369,35 @@ nixlRadosEngine::nixlRadosEngine(const nixlBackendInitParams *init_params,
 
 void
 nixlRadosEngine::initialize(const nixl::rados::backendConfig &config) {
-    if (!bootstrapClient(*capi_, config, cluster_, ioctx_)) {
+    if (!bootstrapClient(*capi_, config, &cppCtx_, cluster_, ioctx_)) {
         initErr = true;
         return;
     }
     clusterCreated_ = true;
     ioctxOpen_ = true;
+    cppCtxOpen_ = true;
 }
 
 nixlRadosEngine::~nixlRadosEngine() {
+    std::unique_lock alock(activeMutex_);
+    shuttingDown_ = true;
+    while (!handles_.empty()) {
+        const auto it = handles_.begin();
+        nixlBackendReqH *handle = it->first;
+        std::shared_ptr<directRequestState> state = std::move(it->second);
+        // Erase before draining so each abandoned state is claimed and drained
+        // exactly once, then unlock: the drain blocks on completions.
+        handles_.erase(it);
+        alock.unlock();
+        drainRequestState(state);
+        delete static_cast<nixlRadosBackendReqH *>(handle);
+        alock.lock();
+    }
+    alock.unlock();
+    if (cppCtxOpen_) {
+        capi_->ioCtxClose(&cppCtx_);
+        cppCtxOpen_ = false;
+    }
     if (ioctxOpen_) {
         capi_->ioctx_destroy(ioctx_);
         ioctxOpen_ = false;
@@ -236,33 +463,333 @@ nixlRadosEngine::deregisterMem(nixlBackendMD *meta) {
     return NIXL_SUCCESS;
 }
 
+std::shared_ptr<directRequestState>
+nixlRadosEngine::lookupActiveLocked(nixlBackendReqH *handle) const {
+    if (handle == nullptr) {
+        return {};
+    }
+    const auto it = handles_.find(handle);
+    return it == handles_.end() ? std::shared_ptr<directRequestState>{} : it->second;
+}
+
+void
+nixlRadosEngine::drainRequestState(const std::shared_ptr<directRequestState> &state) const {
+    std::lock_guard slock(state->mtx);
+    for (auto &pair : state->pairs()) {
+        if (!pairOwned(pair)) {
+            continue;
+        }
+        const int result = retirePair(*capi_, pair, true);
+        logRetiredResult(*state, pair, result);
+    }
+    state->phase = directRequestState::phase_t::ABANDONED;
+}
+
 nixl_status_t
-nixlRadosEngine::prepXfer(const nixl_xfer_op_t &,
-                          const nixl_meta_dlist_t &,
-                          const nixl_meta_dlist_t &,
-                          const std::string &,
+nixlRadosEngine::prepXfer(const nixl_xfer_op_t &operation,
+                          const nixl_meta_dlist_t &local,
+                          const nixl_meta_dlist_t &remote,
+                          const std::string &remote_agent,
                           nixlBackendReqH *&handle,
                           const nixl_opt_b_args_t *) const {
     handle = nullptr;
-    return NIXL_ERR_NOT_SUPPORTED;
+    if (initErr) {
+        return NIXL_ERR_BACKEND;
+    }
+    if ((operation != NIXL_WRITE && operation != NIXL_READ) || local.getType() != DRAM_SEG ||
+        remote.getType() != OBJ_SEG || remote_agent != localAgent) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+    const int count = local.descCount();
+    if (count == 0 || count != remote.descCount()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    std::shared_ptr<directRequestState> state;
+    try {
+        state = std::make_shared<directRequestState>(operation);
+    }
+    catch (const std::bad_alloc &) {
+        return NIXL_ERR_BACKEND;
+    }
+    if (!state->reservePairs(static_cast<size_t>(count))) {
+        NIXL_ERROR << "RADOS backend failed to allocate request pairs";
+        return NIXL_ERR_BACKEND;
+    }
+
+    try {
+        std::lock_guard lock(objectsMutex_);
+        for (int i = 0; i < count; ++i) {
+            const auto &local_desc = local[i];
+            const auto &remote_desc = remote[i];
+            if (local_desc.len == 0 || local_desc.len != remote_desc.len) {
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            if (local_desc.len > static_cast<size_t>(INT_MAX)) {
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            if (local_desc.addr == 0 ||
+                local_desc.addr > std::numeric_limits<uintptr_t>::max() - local_desc.len) {
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            if (remote_desc.addr > std::numeric_limits<uint64_t>::max() - remote_desc.len) {
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            const auto key = objects_.find(remote_desc.devId);
+            if (key == objects_.end()) {
+                NIXL_ERROR << "RADOS OBJ_SEG devId " << remote_desc.devId
+                           << " is not registered for transfer";
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            auto &pair = state->pairs()[i];
+            pair.oid = key->second;
+            pair.dram = local_desc.addr;
+            pair.offset = remote_desc.addr;
+            pair.len = local_desc.len;
+        }
+
+        if (operation == NIXL_WRITE) {
+            for (int i = 0; i < count; ++i) {
+                const auto &a = state->pairs()[i];
+                for (int j = i + 1; j < count; ++j) {
+                    const auto &b = state->pairs()[j];
+                    const bool overlaps = a.oid == b.oid && a.offset < b.offset + b.len &&
+                        b.offset < a.offset + a.len;
+                    if (overlaps) {
+                        NIXL_ERROR << "RADOS request contains overlapping writes to object '"
+                                   << a.oid << "'";
+                        return NIXL_ERR_INVALID_PARAM;
+                    }
+                }
+            }
+        }
+    }
+    catch (const std::bad_alloc &) {
+        NIXL_ERROR << "RADOS backend failed to allocate request state";
+        return NIXL_ERR_BACKEND;
+    }
+
+    std::unique_ptr<nixlRadosBackendReqH> req;
+    try {
+        req = std::make_unique<nixlRadosBackendReqH>();
+        std::lock_guard alock(activeMutex_);
+        if (shuttingDown_) {
+            return NIXL_ERR_NOT_ALLOWED;
+        }
+        handles_.emplace(req.get(), std::move(state));
+    }
+    catch (const std::bad_alloc &) {
+        return NIXL_ERR_BACKEND;
+    }
+    handle = req.release();
+    return NIXL_SUCCESS;
 }
 
+// The operation/descriptor/agent arguments are ignored on purpose: prepXfer already
+// snapshotted them into the request state, which alone drives this (re)submission.
 nixl_status_t
 nixlRadosEngine::postXfer(const nixl_xfer_op_t &,
                           const nixl_meta_dlist_t &,
                           const nixl_meta_dlist_t &,
                           const std::string &,
-                          nixlBackendReqH *&,
+                          nixlBackendReqH *&handle,
                           const nixl_opt_b_args_t *) const {
-    return NIXL_ERR_NOT_SUPPORTED;
+    if (initErr) {
+        return NIXL_ERR_BACKEND;
+    }
+    std::shared_ptr<directRequestState> state;
+    {
+        std::lock_guard alock(activeMutex_);
+        state = lookupActiveLocked(handle);
+        if (state == nullptr) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        if (shuttingDown_) {
+            return NIXL_ERR_NOT_ALLOWED;
+        }
+    }
+
+    std::lock_guard slock(state->mtx);
+    if (shuttingDown_) {
+        return NIXL_ERR_NOT_ALLOWED;
+    }
+    switch (state->phase) {
+    case directRequestState::phase_t::PREPARED:
+        break;
+    case directRequestState::phase_t::TERMINAL:
+        state->resetForRepostLocked();
+        break;
+    case directRequestState::phase_t::ACTIVE:
+        return NIXL_IN_PROG;
+    case directRequestState::phase_t::ABANDONED:
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    const bool is_read = state->operation() == NIXL_READ;
+    for (auto &pair : state->pairs()) {
+        if (is_read) {
+            rados_completion_t completion = nullptr;
+            bool completion_held = false;
+            try {
+                const int create_ret = capi_->cCreateCompletion(&completion);
+                if (create_ret != 0 || completion == nullptr) {
+                    pair.result = create_ret < 0 ? create_ret : -ENOMEM;
+                    NIXL_ERROR << "RADOS failed to create a C completion for object '"
+                               << pair.oid << "'; submitting no further pairs";
+                    break;
+                }
+                completion_held = true;
+                const int ret = capi_->cRead(ioctx_,
+                                             pair.oid.c_str(),
+                                             completion,
+                                             reinterpret_cast<char *>(pair.dram),
+                                             pair.len,
+                                             pair.offset);
+                if (ret != 0) {
+                    capi_->cRelease(completion);
+                    completion_held = false;
+                    pair.result = ret < 0 ? ret : -EIO;
+                    NIXL_ERROR << "RADOS failed to submit a C read from object '" << pair.oid
+                               << "' with error " << ret << "; submitting no further pairs";
+                    break;
+                }
+                pair.owned = directRequestState::cRead{completion};
+                completion_held = false;
+            }
+            catch (const std::bad_alloc &) {
+                if (completion_held) {
+                    capi_->cRelease(completion);
+                }
+                pair.result = -ENOMEM;
+                NIXL_ERROR << "RADOS C read allocation failed for object '" << pair.oid
+                           << "'; submitting no further pairs";
+                break;
+            }
+        } else {
+            librados::AioCompletion *completion = nullptr;
+            bool completion_held = false;
+            try {
+                pair.payload = librados::bufferlist::static_from_mem(
+                    reinterpret_cast<char *>(pair.dram), pair.len);
+                const int create_ret = capi_->cppCreateCompletion(&completion);
+                if (create_ret != 0 || completion == nullptr) {
+                    pair.payload.clear();
+                    pair.result = create_ret < 0 ? create_ret : -ENOMEM;
+                    NIXL_ERROR << "RADOS failed to create a C++ completion for object '"
+                               << pair.oid << "'; submitting no further pairs";
+                    break;
+                }
+                completion_held = true;
+                const int ret = capi_->cppWrite(
+                    &cppCtx_, pair.oid.c_str(), completion, pair.payload, pair.len, pair.offset);
+                if (ret != 0) {
+                    capi_->cppRelease(completion);
+                    completion_held = false;
+                    pair.payload.clear();
+                    pair.result = ret < 0 ? ret : -EIO;
+                    NIXL_ERROR << "RADOS failed to submit a C++ write to object '"
+                               << pair.oid << "' with error " << ret
+                               << "; submitting no further pairs";
+                    break;
+                }
+                pair.owned = directRequestState::cppWrite{completion};
+                completion_held = false;
+            }
+            catch (const std::bad_alloc &) {
+                if (completion_held) {
+                    capi_->cppRelease(completion);
+                }
+                pair.payload.clear();
+                pair.result = -ENOMEM;
+                NIXL_ERROR << "RADOS C++ write allocation failed for object '" << pair.oid
+                           << "'; submitting no further pairs";
+                break;
+            }
+        }
+    }
+
+    size_t accepted = 0;
+    for (const auto &pair : state->pairs()) {
+        if (pairOwned(pair)) {
+            ++accepted;
+        }
+    }
+
+    if (accepted > 0) {
+        state->phase = directRequestState::phase_t::ACTIVE;
+        return NIXL_IN_PROG;
+    }
+    for (const auto &pair : state->pairs()) {
+        if (pair.result != 0) {
+            state->phase = directRequestState::phase_t::TERMINAL;
+            state->terminalStatus = radosResultToNixl(state->operation(), pair.result, pair.len);
+            return state->terminalStatus;
+        }
+    }
+    state->phase = directRequestState::phase_t::TERMINAL;
+    state->terminalStatus = NIXL_SUCCESS;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlRadosEngine::checkXfer(nixlBackendReqH *) const {
-    return NIXL_ERR_NOT_SUPPORTED;
+nixlRadosEngine::checkXfer(nixlBackendReqH *handle) const {
+    std::shared_ptr<directRequestState> state;
+    {
+        std::lock_guard alock(activeMutex_);
+        state = lookupActiveLocked(handle);
+    }
+    if (state == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    std::unique_lock slock(state->mtx);
+    switch (state->phase) {
+    case directRequestState::phase_t::PREPARED:
+        return NIXL_ERR_NOT_POSTED;
+    case directRequestState::phase_t::TERMINAL:
+        return state->terminalStatus;
+    case directRequestState::phase_t::ABANDONED:
+        return NIXL_ERR_INVALID_PARAM;
+    case directRequestState::phase_t::ACTIVE:
+        break;
+    }
+
+    for (auto &pair : state->pairs()) {
+        if (pairUnproven(*capi_, pair)) {
+            return NIXL_IN_PROG;
+        }
+        if (pairOwned(pair)) {
+            pair.result = retirePair(*capi_, pair, false);
+        }
+    }
+
+    nixl_status_t overall = NIXL_SUCCESS;
+    for (const auto &pair : state->pairs()) {
+        const auto status = radosResultToNixl(state->operation(), pair.result, pair.len);
+        if (status != NIXL_SUCCESS) {
+            overall = status;
+            break;
+        }
+    }
+    state->terminalStatus = overall;
+    state->phase = directRequestState::phase_t::TERMINAL;
+    return overall;
 }
 
 nixl_status_t
-nixlRadosEngine::releaseReqH(nixlBackendReqH *) const {
-    return NIXL_ERR_NOT_SUPPORTED;
+nixlRadosEngine::releaseReqH(nixlBackendReqH *handle) const {
+    std::shared_ptr<directRequestState> state;
+    {
+        std::lock_guard alock(activeMutex_);
+        state = lookupActiveLocked(handle);
+        if (state == nullptr) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        if (shuttingDown_) {
+            return NIXL_ERR_NOT_ALLOWED;
+        }
+        handles_.erase(handle);
+    }
+    drainRequestState(state);
+    delete static_cast<nixlRadosBackendReqH *>(handle);
+    return NIXL_SUCCESS;
 }

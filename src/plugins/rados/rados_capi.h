@@ -18,15 +18,17 @@
 #ifndef NIXL_SRC_PLUGINS_RADOS_RADOS_CAPI_H
 #define NIXL_SRC_PLUGINS_RADOS_RADOS_CAPI_H
 
+#include <cstddef>
 #include <cstdint>
 
 #include <rados/librados.h>
+#include <rados/librados.hpp>
 
 namespace nixl::rados {
 
 /**
- * librados C lifecycle/configuration seam of the rados engine,
- * fake-injectable for the hermetic tests.
+ * librados seam of the rados engine, fake-injectable: reads land
+ * directly in caller memory, writes use static, non-owning bufferlists.
  */
 class cApi {
 public:
@@ -50,7 +52,7 @@ public:
     virtual int
     ioctx_create(rados_t cluster, const char *pool_name, rados_ioctx_t *ioctx) = 0;
     /**
-     * Destroy the raw handle exactly once, after all I/O drains.
+     * Destroy the raw handle exactly once, after its views close.
      */
     virtual void
     ioctx_destroy(rados_ioctx_t ioctx) = 0;
@@ -59,6 +61,85 @@ public:
      */
     virtual void
     shutdown(rados_t cluster) = 0;
+    /**
+     * Bind ctx as a non-owning view of raw, closed via ioCtxClose() before ioctx_destroy().
+     */
+    virtual void
+    ioctxFromRaw(rados_ioctx_t raw, librados::IoCtx *ctx) = 0;
+    /**
+     * Detach the view only; drain every submission made through it first.
+     */
+    virtual void
+    ioCtxClose(librados::IoCtx *ctx) = 0;
+
+    virtual int
+    cCreateCompletion(rados_completion_t *pc) = 0;
+    /**
+     * Submit an async read landing bytes directly in caller memory; keep buf
+     * allocated and writable until its completion is released (see cRelease).
+     * @return 0 on acceptance; negative errno on rejection, caller releases completion
+     */
+    virtual int
+    cRead(rados_ioctx_t ioctx,
+          const char *oid,
+          rados_completion_t completion,
+          char *buf,
+          size_t len,
+          uint64_t off) = 0;
+    /**
+     * Non-blocking poll gating harvest and release; 1 once complete and
+     * callback-retired, else 0.
+     */
+    virtual int
+    cIsCompleteAndCb(rados_completion_t completion) = 0;
+    /**
+     * Result of a retired operation, valid before release: delivered bytes on
+     * success, negative errno on failure.
+     */
+    virtual int
+    cGetReturnValue(rados_completion_t completion) = 0;
+    virtual int
+    cWaitForCompleteAndCb(rados_completion_t completion) = 0;
+    /**
+     * Release exactly once, only after polled or waited retirement; never reuse.
+     */
+    virtual void
+    cRelease(rados_completion_t completion) = 0;
+
+    virtual int
+    cppCreateCompletion(librados::AioCompletion **pc) = 0;
+    /**
+     * Submit an async range write over bl, a static, non-owning bufferlist: the
+     * source must stay allocated, readable, and immutable until its completion
+     * is released (see cppRelease); librados reads the payload at flush.
+     * @return 0 on acceptance; negative errno on rejection, caller releases completion
+     */
+    virtual int
+    cppWrite(librados::IoCtx *ctx,
+             const char *oid,
+             librados::AioCompletion *completion,
+             const librados::bufferlist &bl,
+             size_t len,
+             uint64_t off) = 0;
+    /**
+     * Non-blocking poll gating harvest and release; 1 once complete and
+     * callback-retired, else 0.
+     */
+    virtual int
+    cppIsCompleteAndCb(librados::AioCompletion *completion) = 0;
+    /**
+     * Result of a retired write, valid before release: 0 on success, negative
+     * errno on failure.
+     */
+    virtual int
+    cppGetReturnValue(librados::AioCompletion *completion) = 0;
+    virtual int
+    cppWaitForCompleteAndCb(librados::AioCompletion *completion) = 0;
+    /**
+     * Release exactly once, only after polled or waited retirement; never reuse.
+     */
+    virtual void
+    cppRelease(librados::AioCompletion *completion) = 0;
 
 protected:
     cApi() = default;
@@ -99,6 +180,91 @@ public:
     void
     shutdown(rados_t cluster) override {
         rados_shutdown(cluster);
+    }
+
+    void
+    ioctxFromRaw(rados_ioctx_t raw, librados::IoCtx *ctx) override {
+        librados::IoCtx::from_rados_ioctx_t(raw, *ctx);
+    }
+
+    void
+    ioCtxClose(librados::IoCtx *ctx) override {
+        ctx->close();
+    }
+
+    int
+    cCreateCompletion(rados_completion_t *pc) override {
+        return rados_aio_create_completion(nullptr, nullptr, nullptr, pc);
+    }
+
+    int
+    cRead(rados_ioctx_t ioctx,
+          const char *oid,
+          rados_completion_t completion,
+          char *buf,
+          size_t len,
+          uint64_t off) override {
+        return rados_aio_read(ioctx, oid, completion, buf, len, off);
+    }
+
+    int
+    cIsCompleteAndCb(rados_completion_t completion) override {
+        return rados_aio_is_complete_and_cb(completion) ? 1 : 0;
+    }
+
+    int
+    cGetReturnValue(rados_completion_t completion) override {
+        return rados_aio_get_return_value(completion);
+    }
+
+    int
+    cWaitForCompleteAndCb(rados_completion_t completion) override {
+        return rados_aio_wait_for_complete_and_cb(completion);
+    }
+
+    void
+    cRelease(rados_completion_t completion) override {
+        rados_aio_release(completion);
+    }
+
+    int
+    cppCreateCompletion(librados::AioCompletion **pc) override {
+        librados::AioCompletion *created = librados::Rados::aio_create_completion();
+        if (created == nullptr) {
+            return -ENOMEM;
+        }
+        *pc = created;
+        return 0;
+    }
+
+    int
+    cppWrite(librados::IoCtx *ctx,
+             const char *oid,
+             librados::AioCompletion *completion,
+             const librados::bufferlist &bl,
+             size_t len,
+             uint64_t off) override {
+        return ctx->aio_write(oid, completion, bl, len, off);
+    }
+
+    int
+    cppIsCompleteAndCb(librados::AioCompletion *completion) override {
+        return completion->is_complete_and_cb() ? 1 : 0;
+    }
+
+    int
+    cppGetReturnValue(librados::AioCompletion *completion) override {
+        return completion->get_return_value();
+    }
+
+    int
+    cppWaitForCompleteAndCb(librados::AioCompletion *completion) override {
+        return completion->wait_for_complete_and_cb();
+    }
+
+    void
+    cppRelease(librados::AioCompletion *completion) override {
+        completion->release();
     }
 };
 
