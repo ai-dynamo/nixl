@@ -162,32 +162,32 @@ else
     if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
         # Upgrade pip for '--break-system-packages' support
         $SUDO pip3 install --upgrade pip
-
-        # Ubuntu 22.04 ships hiredis 0.14.x which is below the >=1.0.0 floor
-        # required by the Redis plugin. Replace it with a source build.
-        $SUDO apt-get remove -y libhiredis-dev 2>/dev/null || true
-        HIREDIS_VERSION="1.2.0"
-        ( \
-          cd "${BUILD_TMP}" && \
-          wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
-              -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
-          tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
-          mkdir -p "hiredis-${HIREDIS_VERSION}/build" && \
-          cd "hiredis-${HIREDIS_VERSION}/build" && \
-          cmake .. \
-              -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
-              -DCMAKE_INSTALL_LIBDIR=lib \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DBUILD_SHARED_LIBS=ON && \
-          make -j"$NPROC" && \
-          $SUDO make install && \
-          $SUDO ldconfig && \
-          $SUDO chown -R "$(id -u):$(id -g)" "${INSTALL_DIR}" && \
-          PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig" pkg-config --atleast-version=1.0.1 hiredis && \
-          cd "${BUILD_TMP}" && \
-          rm -rf "hiredis-${HIREDIS_VERSION}" "hiredis-${HIREDIS_VERSION}.tar.gz" \
-        )
     fi
+
+    # Build hiredis from source (apt ships 0.14.x on Ubuntu 22.04 and 1.2.0 on
+    # Ubuntu 24.04; build a consistent version everywhere to match contrib/Dockerfile).
+    $SUDO apt-get remove -y libhiredis-dev 2>/dev/null || true
+    HIREDIS_VERSION="1.2.0"
+    ( \
+      cd "${BUILD_TMP}" && \
+      wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+          -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+      tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+      mkdir -p "hiredis-${HIREDIS_VERSION}/build" && \
+      cd "hiredis-${HIREDIS_VERSION}/build" && \
+      cmake .. \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=ON && \
+      make -j"$NPROC" && \
+      $SUDO make install && \
+      $SUDO ldconfig && \
+      $SUDO chown -R "$(id -u):$(id -g)" "${INSTALL_DIR}" && \
+      PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig" pkg-config --atleast-version=1.0.1 hiredis && \
+      cd "${BUILD_TMP}" && \
+      rm -rf "hiredis-${HIREDIS_VERSION}" "hiredis-${HIREDIS_VERSION}.tar.gz" \
+    )
 
     # Install python dependencies and upgrade to latest version
     $SUDO pip3 --no-cache-dir install --break-system-packages \
