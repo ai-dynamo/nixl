@@ -47,14 +47,13 @@ proxyRuntime::create(std::unique_ptr<proxyTransport> transport,
                      deviceOps &allocator) {
     NIXL_INFO << "ProxyRuntime::create: max_peers=" << config.max_peers
               << " channel_count=" << config.channel_count
-              << " thread_count=" << config.effectiveThreadCount()
-              << " ring_depth=" << config.ring_depth;
+              << " thread_count=" << config.thread_count << " ring_depth=" << config.ring_depth;
 
     if (!transport) {
         NIXL_ERROR << "ProxyRuntime::create: no transport";
         return NIXL_ERR_INVALID_PARAM;
     }
-    if (config.max_peers == 0 || config.channel_count == 0 || config.effectiveThreadCount() == 0 ||
+    if (config.max_peers == 0 || config.channel_count == 0 || !config.evenThreadSplit() ||
         config.ring_depth == 0) {
         NIXL_ERROR << "ProxyRuntime::create: invalid config";
         return NIXL_ERR_INVALID_PARAM;
@@ -81,7 +80,7 @@ nixl_status_t
 proxyRuntime::build() {
     const uint32_t max_peers = config_.max_peers;
     const uint32_t channel_count = config_.channel_count;
-    const uint32_t worker_count = config_.effectiveThreadCount();
+    const uint32_t worker_count = config_.thread_count;
 
     nixl_status_t rc = transport_->init(config_);
     if (rc != NIXL_SUCCESS) {
@@ -140,16 +139,16 @@ proxyRuntime::build() {
     memview_manager_ =
         std::make_unique<proxyMemViewManager>(allocator_, deviceContext(), max_peers);
 
-    worker_context_ =
-        std::make_unique<const proxyWorkerContext>(proxyWorkerContext{*transport_,
-                                                                      channels_,
-                                                                      worker_count,
-                                                                      drain_requested_,
-                                                                      shutting_down_,
-                                                                      stop_source_.get_token()});
+    worker_context_ = std::make_unique<const proxyWorkerContext>(proxyWorkerContext{
+        *transport_, drain_requested_, shutting_down_, stop_source_.get_token()});
     workers_.reserve(worker_count);
     for (uint32_t worker_idx = 0; worker_idx < worker_count; worker_idx++) {
-        workers_.push_back(std::make_unique<proxyWorker>(*worker_context_, worker_idx));
+        const proxyThreadShare share = config_.threadShare(worker_idx);
+        workers_.push_back(std::make_unique<proxyWorker>(
+            *worker_context_,
+            worker_idx,
+            std::span<proxyChannel>(channels_).subspan(share.first_channel, share.channel_count),
+            share.peers));
     }
 
     state_ = state_t::BUILT;

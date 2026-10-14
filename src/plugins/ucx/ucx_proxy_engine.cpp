@@ -340,7 +340,7 @@ nixlUcxProxyEngine::nixlUcxProxyEngine(const nixlBackendInitParams &init_params,
 
     runtime_ = std::move(runtime);
     NIXL_INFO << "Engine-owned device proxy enabled: " << config.channel_count << " channel(s), "
-              << config.effectiveThreadCount() << " thread(s), max_peers=" << config.max_peers
+              << config.thread_count << " thread(s), max_peers=" << config.max_peers
               << ", ring_depth=" << config.ring_depth;
 }
 
