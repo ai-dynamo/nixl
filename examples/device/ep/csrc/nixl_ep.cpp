@@ -71,8 +71,7 @@ Buffer::Buffer(int rank, bool explicitly_destroy, int timeout_ms):
             return static_cast<uint64_t>(timeout_ms);
         }()),
         rank(rank),
-        explicitly_destroy(explicitly_destroy),
-        comm_stream(at::cuda::getStreamFromPool(true)) {}
+        explicitly_destroy(explicitly_destroy) {}
 
 bool Buffer::_is_rank_connected(int rank_id) const {
     return rank_id == rank or std::find(remote_ranks.begin(), remote_ranks.end(), rank_id) != remote_ranks.end();
@@ -121,6 +120,7 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     EP_HOST_ASSERT(0 <= rank and rank < num_ranks);
 
     CUDA_CHECK(cudaGetDevice(&device_id));
+    comm_stream = cuda_stream::get_from_pool();
 
     // Get device info
     int device_clock_rate_khz = 0;
@@ -197,8 +197,9 @@ torch::Tensor Buffer::get_local_buffer_tensor(const pybind11::object& dtype, int
     return torch::from_blob(base_ptr, num_rdma_bytes / element_bytes, torch::TensorOptions().dtype(casted_dtype).device(at::kCUDA));
 }
 
-torch::Stream Buffer::get_comm_stream() const {
-    return comm_stream;
+int64_t Buffer::get_comm_stream() const {
+    EP_HOST_ASSERT(is_available() && "get_comm_stream() called before update_memory_buffers()");
+    return reinterpret_cast<int64_t>(comm_stream);
 }
 
 void Buffer::destroy() {
@@ -401,6 +402,7 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
 
     _nixl_ep_memory_views_commit();
 }
+
 std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
 Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
                              const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
@@ -444,7 +446,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
     // Wait previous tasks to be finished
     // NOTES: the hook mode will always use the default stream
     cudaStream_t compute_stream = cuda_stream::get_current();
-    cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream.stream();
+    cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream;
     EP_HOST_ASSERT(not (async and return_recv_hook));
     if (not return_recv_hook)
         stream_wait(launch_stream, compute_stream);
@@ -563,7 +565,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
     // Wait previous tasks to be finished
     // NOTES: the hook mode will always use the default stream
     cudaStream_t compute_stream = cuda_stream::get_current();
-    cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream.stream();
+    cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream;
     EP_HOST_ASSERT(not (async and return_recv_hook));
     if (not return_recv_hook)
         stream_wait(launch_stream, compute_stream);
