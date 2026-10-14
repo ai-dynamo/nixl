@@ -403,6 +403,28 @@ TEST_F(dellGpuRegistrationTest, WorkerThreadPreservesExplicitContextOnSuccessAnd
     EXPECT_EQ(api->unpinned, 1);
     verifyBuffer();
 }
+
+TEST_F(dellGpuRegistrationTest, InvalidDeviceFailsBeforePinningAndPreservesContext) {
+    int devices = 0;
+    ASSERT_EQ(cudaGetDeviceCount(&devices), cudaSuccess);
+    CUcontext before = nullptr;
+    ASSERT_EQ(cuCtxGetCurrent(&before), CUDA_SUCCESS);
+    ASSERT_NE(before, nullptr);
+    int registrationCalls = 0;
+    api->onRegister = [&registrationCalls] { ++registrationCalls; };
+    nixlBackendMD *md = nullptr;
+    EXPECT_EQ(
+        engine->registerMem(
+            nixlBlobDesc(reinterpret_cast<uintptr_t>(buffer), size, devices, ""), VRAM_SEG, md),
+        NIXL_ERR_BACKEND);
+    EXPECT_EQ(md, nullptr);
+    EXPECT_EQ(registrationCalls, 0);
+    EXPECT_EQ(api->unpinned, 0);
+    CUcontext after = nullptr;
+    EXPECT_EQ(cuCtxGetCurrent(&after), CUDA_SUCCESS);
+    EXPECT_EQ(after, before);
+    verifyBuffer();
+}
 #endif // HAVE_CUDA
 
 } // namespace
