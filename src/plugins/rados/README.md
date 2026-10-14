@@ -22,47 +22,37 @@ limitations under the License.
 
 The `RADOS` backend transfers data between local `DRAM_SEG` memory and
 RADOS objects (`OBJ_SEG`) in a single Ceph pool through the librados
-asynchronous I/O interface. The backend is local-only: it serves `NIXL_WRITE`
-from local `DRAM_SEG` to `OBJ_SEG` descriptors of the same agent and
-`NIXL_READ` in the reverse direction. It does not support remote agents or
-notifications. Object-size queries (`queryMem`) are served by batched
-asynchronous stats (see Results and errors).
+asynchronous I/O interface.
 
-Transfers are direct: C AIO reads land directly in caller-provided destination
-memory, and writes describe caller memory through a non-owning C++
-`bufferlist::static_from_mem` view; the plugin never stages payload bytes in
-its own buffers in either direction (the Ceph client and network stack may
-still copy). Callers must retain readable, immutable write sources and
-writable read destinations through a terminal status or a successful release —
-that is, through completion-and-callback retirement (see Buffer lifetime);
-reusing, freeing, or mutating those buffers early races the transfer and can
-corrupt its data.
-
-Each descriptor pair is an independent RADOS range operation; there is no
-atomicity across pairs within a request. A write creates a missing object,
-overwrites the selected range, and may extend the object; bytes outside the
-written range are preserved (native RADOS range-write semantics).
+- **Local-only:** it serves `NIXL_WRITE` from local `DRAM_SEG` to
+  `OBJ_SEG` descriptors of the same agent, and `NIXL_READ` in the
+  reverse direction. Remote agents and notifications are not supported.
+- **Direct data path:** reads land straight in caller-provided
+  destination memory and writes reference caller memory through a
+  non-owning view; the plugin never stages payload in its own buffers
+  (the Ceph client and network stack may still copy).
+- **Object ranges:** an `OBJ_SEG` address is a byte offset inside the
+  object. A write creates a missing object, overwrites the selected
+  range, may extend the object, and preserves bytes outside the written
+  range (native RADOS range-write semantics).
+- Each descriptor pair is an independent RADOS operation; there is no
+  atomicity across pairs within a request.
 
 ## Dependencies
 
-- **librados** (pkg-config name `rados`): headers and shared library from a
-  Ceph client distribution. The plugin uses the librados C
-  lifecycle/configuration/namespace/AIO-read surface (including pool-context
-  namespace configuration), the C++ `IoCtx` write surface
-  (`IoCtx::aio_write` over a static, non-owning `bufferlist`), and the C++
-  async stat surface (`librados::ObjectReadOperation::stat` submitted
-  through `librados::IoCtx::aio_operate`). During setup, meson compiles and
-  links a probe program using exactly these surfaces, and the plugin is
-  built only when the probe succeeds; the runtime librados must be ABI/link
-  compatible with the build headers (there is no runtime version
-  negotiation).
-- **A reachable Ceph cluster** with a readable Ceph configuration file and a
-  client entity authorized to read and write objects in the configured pool.
+- **librados** (pkg-config name `rados`): headers and shared library
+  from a Ceph client distribution. Meson probes the required API surface
+  during setup and builds the plugin only when the probe succeeds. The
+  runtime librados must be ABI/link compatible with the build headers
+  (no runtime version negotiation).
+- **A reachable Ceph cluster** with a readable Ceph configuration file
+  and a client entity authorized to read and write objects in the
+  configured pool.
 
-## Build Instructions
+## Build and Test
 
-`RADOS` is part of the default plugin set, which is built when its
-dependencies are found. Standard build:
+`RADOS` is part of the default plugin set, built when its dependencies
+are found:
 
 ```bash
 meson setup build
@@ -70,263 +60,162 @@ ninja -C build
 meson install -C build
 ```
 
-- **Explicitly enable:** `meson setup build -Denable_plugins=RADOS`.
-  If librados is not found while the plugin is explicitly requested,
-  configuration fails with an error.
-- **Build without it:** `meson setup build -Ddisable_plugins=RADOS`, or
-  simply request a plugin list that excludes it; when not explicitly requested
-  and librados is missing, the plugin is silently skipped.
-- **Dynamic (default):** a shared object `libplugin_RADOS.so` is
-  installed under `<libdir>/plugins`. At runtime the plugin manager loads
-  backends by name from `$NIXL_PLUGIN_DIR`, or from the `plugins/` directory
-  next to the loading NIXL library. In debug builds the plugin path is also
-  recorded in a `pluginlist` file in the build directory, which a debug-built
-  NIXL library reads for discovery without installation.
-- **Static:** adding `RADOS` to `-Dstatic_plugins` builds a static
-  library linked into the core NIXL library instead of a loadable plugin; the
-  same librados probe and configuration parameters apply.
-- **Tests:** deterministic unit tests exercise the backend with no Ceph
-  access. A separate, environment-gated live test performs a real-cluster
-  round trip when `NIXL_RADOS_CONF`, `NIXL_RADOS_POOL`, and
-  `NIXL_RADOS_NAME` are exported, and skips otherwise; when the optional
-  `NIXL_RADOS_NS` is set the round trip runs under that `namespace` and the
-  written object must stay invisible to a default-namespace backend on the
-  same pool. These variables
-  configure that live test only; they are not runtime plugin configuration —
-  backend configuration comes solely from the custom parameters below.
+- Explicitly enable with `-Denable_plugins=RADOS` (configuration fails
+  if librados is not found); otherwise the plugin is silently skipped
+  when librados is missing. Exclude it with `-Ddisable_plugins=RADOS` or
+  a plugin list that omits it.
+- Adding `RADOS` to `-Dstatic_plugins` builds a static library linked
+  into the core NIXL library instead of a loadable plugin.
+- **Tests:** deterministic unit tests run with no Ceph access. A
+  separate, environment-gated live test performs a real-cluster round
+  trip only when `NIXL_RADOS_CONF`, `NIXL_RADOS_POOL`, and
+  `NIXL_RADOS_NAME` are exported (optionally `NIXL_RADOS_NS` to run
+  under a namespace), and skips otherwise. These variables configure
+  that live test only; runtime backend configuration comes solely from
+  the custom parameters below.
 
-## API Reference
+Run the hermetic RADOS tests from a debug build with:
 
-### Custom parameters
+```bash
+build/test/gtest/unit/unit --gtest_filter='rados*'
+```
 
-Passed as the `nixl_b_params_t` map to `createBackend("RADOS", ...)`:
+Run the environment-gated live test with:
+
+```bash
+meson test -C build rados_live --print-errorlogs
+```
+
+## Configuration
+
+Custom parameters, passed as the `nixl_b_params_t` map to
+`createBackend("RADOS", ...)`:
 
 | Parameter | Description | Required |
 |-----------|-------------|----------|
 | `conf` | Path to a readable Ceph configuration file | Yes |
 | `name` | Full Ceph entity name (normally `client.<id>`) | Yes |
 | `pool` | RADOS pool opened at backend initialization | Yes |
-| `namespace` | Optional object namespace for the opened pool context; absent keeps the default (unnamed) namespace, and a present value must be non-empty, NUL-free, and not the all-namespaces sentinel (see Object namespace) | No |
-| `status_wait_us` | Optional bounded status wait for `checkXfer` polling: strict ASCII decimal (`[0-9]+`, leading zeros valid) in `[0, 1000000]` microseconds; absent or `0` keeps polling fully nonblocking; malformed or above-ceiling values fail backend creation (see Bounded status wait) | No |
-| `ceph.<option>` | Any other parameter; the prefix is stripped and the option/value are applied verbatim to the Ceph configuration (empty values allowed) | No |
+| `namespace` | Object namespace for the pool context; absent keeps the default (unnamed) namespace; must be non-empty, NUL-free, and not the all-namespaces sentinel | No |
+| `status_wait_us` | Bounded status wait for `getXferStatus()` polling: decimal integer in `[0, 1000000]` microseconds; absent or `0` keeps polling fully nonblocking; malformed or above-ceiling values fail backend creation | No |
+| `ceph.<option>` | Any other parameter; the prefix is stripped and the option/value is applied verbatim to the Ceph configuration | No |
 
-Backend creation is synchronous: at initialization the backend brings up two
-independently connected librados clients from the same parsed parameters — a
-data client that carries transfers (C AIO reads on its raw ioctx, C++ writes
-on its `IoCtx` view) and a metadata-stat client that serves `queryMem()`
-stats only. Each client is created with `name`, reads `conf`, applies the
-`ceph.<option>` overrides, connects, and opens the `pool` — any of which may
-block on Ceph configuration, authentication, connection, or pool-open work —
-then points its ioctx at the optional `namespace` (local handle
-configuration with no Ceph round trip) and binds a non-owning C++ `IoCtx`
-view of its opened raw ioctx. Both clients use the same identity,
-configuration file, overrides, pool, and namespace; backend creation fails if
-either client fails to initialize. Overrides
-therefore always take effect after the configuration file is read and before
-the connection is made. The `ceph.rados_mon_op_timeout` and
-`ceph.rados_osd_op_timeout` client timeouts (whole seconds; both default to
-`0`, unlimited) are forwarded before connect. Authentication and keyring
-resolution are handled by Ceph through `conf` and the overrides; the plugin
-interprets nothing beyond the three required keys, the optional `namespace`,
-and the numeric `status_wait_us` budget. A missing or empty `conf`, `name`,
-or `pool`, an invalid `namespace`, an invalid `status_wait_us` value, a
-parameter that is neither one of those keys
-nor `ceph.<option>` (including the bare key `ceph.`), or a failure to connect
-or open the pool on either client makes `createBackend()` return an error
-without a usable backend. The opened pool is fixed for the backend instance's
-lifetime;
-working with several pools means creating separate backend instances (each
-with its own `pool` parameter), as the public agent API permits.
+Backend creation is synchronous and may block on Ceph configuration,
+authentication, connection, or pool-open work; it fails on a missing or
+empty `conf`/`name`/`pool`, an invalid `namespace` or `status_wait_us`,
+an unknown parameter key, or a connection/pool-open failure. Client
+options such as `rados_mon_op_timeout` and `rados_osd_op_timeout` are
+set through `ceph.<option>` overrides, which always take effect after
+the configuration file is read and before connecting. The opened pool
+is fixed for the backend's lifetime; several pools mean several backend
+instances.
 
-### Bounded status wait (`status_wait_us`)
+### `status_wait_us` summary
 
-An experimental polling knob, reserved ahead of the unknown-key rule;
-`ceph.status_wait_us` remains a normal Ceph option override.
+Absent or `0` keeps `getXferStatus()` strictly
+nonblocking. Above `0`, a status poll of an in-progress request may
+sleep once for the configured budget before reporting
+`NIXL_IN_PROG`; completions that land during the sleep are harvested on
+the next poll. The budget is an intended sleep, not a wall-clock
+guarantee.
 
-- Absent or `0` (leading zeros valid, e.g. `"00000"`): `checkXfer` stays
-  strictly nonblocking and the engine allocates and retains no timer, so the
-  sleep is unreachable.
-- Above `0` (ceiling 1,000,000 us): when a `checkXfer` poll of an ACTIVE
-  request reaches its first unproven pair, the call releases the request-state
-  lock, sleeps exactly once for the configured budget (a plain timeout, no
-  early wake-up, no lock held), and returns `NIXL_IN_PROG` without rescanning;
-  pairs that would complete during the sleep — and pairs after that first
-  unproven one — are harvested on the caller's next poll. The C/C++ librados
-  surface reports only combined complete-and-callback status, so an
-  operationally complete but callback-unretired completion counts as unproven
-  and may trigger the sleep.
-- The budget is an intended sleep, not a wall-clock bound: scheduler delivery
-  delay lies outside it. Release and teardown drain through the completion
-  waits and never through this timer; overlapping a sleep with another
-  thread's release or teardown stays outside the one-caller-per-handle rule.
+### `namespace` behavior
 
-### Object namespace (`namespace`)
+When set, every operation of the backend instance resolves within that
+namespace; other namespaces require separate backend instances. External
+listing or cleanup needs the namespace selected (`rados -N
+<namespace>`), and isolation holds only where cephx caps enforce it.
 
-Reserved ahead of the unknown-key rule, so `ceph.namespace` stays a normal
-Ceph option. Absent keeps the default (unnamed) namespace and the setter is
-never called; a present value must be non-empty, NUL-free, and not the
-all-namespaces sentinel (single `0x01` byte), or creation fails before any
-Ceph access. When set, the setter runs exactly once on each client's raw
-ioctx after pool open and before the C++ view is bound, so every operation of the
-instance resolves within that namespace; other namespaces need separate
-backend instances. External listing or cleanup needs the namespace selected
-(`rados -N <namespace>`), and isolation holds only where cephx caps enforce
-it.
+## Supported Operations and Limitations
 
-### Registration and object-key mapping
+Registration:
 
 - Only `DRAM_SEG` and `OBJ_SEG` can be registered with this backend.
-- `DRAM_SEG` registration is metadata-free: it does not pin, own, modify, or
-  write the caller's buffer. Reads only touch destination memory once a
-  transfer is posted (see Buffer lifetime).
-- Each `OBJ_SEG` registration records only an in-memory `devId` → object-key
-  mapping inside the backend: it does not create, reserve, lock, or stat any
-  object in Ceph. The object key is the non-empty `metaInfo` verbatim, or the
-  decimal `devId` when `metaInfo` is empty. A `devId` that is already
-  registered is rejected; different `devId` values may deliberately resolve to
-   the same object key. After the type and initialization checks, a `metaInfo`
-   containing an embedded NUL byte is rejected with `NIXL_ERR_INVALID_PARAM`
-   before registration reserves anything, because librados object operations
-   take the key as a C string, so a NUL would silently truncate the effective
-   key.
-- In transfer descriptors, an `OBJ_SEG` `addr` is the byte offset inside the
-  object. Transfer requests are matched against registrations by the agent:
-  every local range must lie within a registered `DRAM_SEG` descriptor, and
-  every remote range within one registered `OBJ_SEG` descriptor, so a
-  registration's `addr`/`len` bound the object range usable for transfers
-  (a zero-length `OBJ_SEG` registration denotes an unbounded range from its
-  `addr` onward, per the NIXL object-segment convention). The backend itself
-  resolves only the `devId` → key mapping.
-- Deregistration performs no RADOS I/O: it removes the in-memory mapping only
-  (it neither deletes nor truncates any object); it does not wait for
-  in-flight requests, does not stop them, and does not end their buffer
-  obligations (see Buffer lifetime).
+- `DRAM_SEG` registration is metadata-free: it does not pin, own, or
+  modify the caller's buffer.
+- `OBJ_SEG` registration records only an in-memory `devId` -> object-key
+  mapping (the non-empty `metaInfo` verbatim, else the decimal
+  `devId`); it does not create, reserve, lock, or stat anything in Ceph.
+  Duplicate `devId` registrations are rejected, while different `devId`s
+  may map to the same object key. A `metaInfo` containing an embedded NUL
+  byte is rejected.
+- In transfer descriptors, an `OBJ_SEG` `addr` is the byte offset
+  inside the object, and registrations bound the object range usable
+  for transfers (a zero-length `OBJ_SEG` registration denotes an
+  unbounded range from its `addr` onward).
 
-### Transfer operations
+Transfers:
 
-- Request creation validates the pair list: only `NIXL_WRITE`
-  (`DRAM_SEG` → `OBJ_SEG`) and `NIXL_READ` (`OBJ_SEG` → `DRAM_SEG`) against
-  the local agent itself; equal, non-empty descriptor lists with non-zero
-  per-pair lengths of at most `INT_MAX` bytes; non-null local DRAM addresses;
-  local and object-offset ranges that do not wrap their address space;
-  registered object `devId`s; and no overlapping write ranges to one object
-  within a request. Anything else is rejected. On success, key, pointer,
-  offset, length, and direction are snapshotted into the request.
-- Posting submits each pair as an independent asynchronous RADOS range
-  operation in descriptor order. Operations complete asynchronously, but
-  posting is not guaranteed non-blocking: librados may wait on its Objecter
-  client-side in-flight operation and byte admission budgets before accepting
-  more work. Submission is best effort in descriptor order with no rollback:
-  if a pair fails to submit, later pairs in that round are not submitted,
-  already-accepted operations keep running and may still change objects or
-  destination memory. If no pair was accepted the request terminates
-  immediately with the mapped error, otherwise it runs in progress until
-  polled.
-- A posted request can be re-posted only from a terminal status: the previous
-  round's results are fully reset and the same prepared ranges are submitted
-  again from the current contents of the caller's buffers.
-- Status polling never blocks by default: while submitted operations are still
-  running the request reports in-progress; once all have completed, per-pair
-  results are collected and the overall request status is the first non-success
-  in descriptor-pair order. With `status_wait_us` above 0, a poll that reaches
-  an unproven pair may first take a single budgeted timeout sleep outside the
-  request-state lock before reporting in-progress (see Bounded status wait).
-- Releasing a request (`releaseXferReq`) is cleanup, not result reporting:
-  the I/O outcome is whatever the polled terminal status was, and a successful
-  release only means the request's resources and references to caller memory
-  and in-flight operations are gone — never that the transfer succeeded. The
-  call is synchronous and blocks: nothing is cancelled and the plugin imposes
-  no deadlines of its own, so it waits for every still-in-flight operation to
-  finish and can take as long as the slowest one (bounding in-flight time
-  relies on Ceph client timeout/configuration options applied via
-  `ceph.<option>`). Every successfully created request must be released
-  exactly once — including requests that were never posted or whose posting
-  failed outright — and a released handle is finished and must never be used
-  again. Destroying the agent blocks the same way: backend teardown drains
-  every still-registered request before closing both clients' pool contexts
-  and cluster connections — the metadata-stat client first, the data client
-  last — so release every transfer request before destroying the agent.
-- Request handles are for one caller at a time: posting, polling, and
-  releasing must not overlap on the same handle. The backend coordinates
-  nothing across requests (the overlap rejection above applies within one
-  request only), so serialize concurrent use of overlapping read destinations
-  and of the same or overlapping object ranges across requests yourself.
+- Only `NIXL_WRITE` (`DRAM_SEG` -> `OBJ_SEG`) and `NIXL_READ`
+  (`OBJ_SEG` -> `DRAM_SEG`) against the local agent itself; no remote
+  agents, no notifications.
+- Each pair has a nonzero length of at most `INT_MAX` bytes.
+- Pairs are posted as independent asynchronous range operations in
+  descriptor order, best effort with no rollback; posting is not
+  guaranteed nonblocking (librados may briefly wait on its in-flight
+  admission budgets).
+- Status polling reports in-progress while operations run; the terminal
+  status is the first failure in pair order: `NIXL_ERR_NOT_FOUND` for a
+  read of a missing object, `NIXL_ERR_MISMATCH` for a short read (the
+  delivered prefix has already landed in the destination), and
+  `NIXL_ERR_BACKEND` for other Ceph I/O failures.
+- A request may be re-posted only from a terminal status.
+- Release (`releaseXferReq`) is cleanup, not result reporting: it is
+  synchronous and blocking, waits for every still-in-flight operation,
+  cancels nothing, and imposes no deadlines of its own - bound
+  in-flight time via Ceph client timeout options. Every created request
+  must be released exactly once (including never-posted or
+  submission-failed requests), and a released handle must never be used
+  again.
+- Agent destruction blocks until all registered requests drain; release
+  all transfer requests before destroying the agent.
+- Handles are for one caller at a time: do not overlap posting,
+  polling, or releasing on the same handle.
+- The backend coordinates nothing across requests (overlapping write
+  ranges within one request are rejected); serialize concurrent use of
+  overlapping buffers or object ranges across requests yourself.
+- **No automatic object deletion:** deregistration, release, and
+  teardown never delete or truncate objects. Pool cleanup is an
+  out-of-band operator task.
 
-### Results and errors
+## Buffer Lifetime (Critical)
 
-When a request reaches a terminal status, the public request status reports
-one ordered aggregate result derived from the completed operations' per-pair
-outcomes:
+The plugin borrows caller memory and does not own it:
 
-| Condition | Status |
-|-----------|--------|
-| Read of a missing object | `NIXL_ERR_NOT_FOUND` |
-| Short read (delivered fewer bytes than requested; the delivered prefix has already landed in the destination) | `NIXL_ERR_MISMATCH` |
-| Other I/O failure reported by Ceph | `NIXL_ERR_BACKEND` (logged) |
+- Keep write sources allocated, readable, and **immutable**, and read
+  destinations allocated and writable, from posting until the transfer
+  reaches a terminal status or the request is successfully released.
+- Reusing, freeing, or mutating them earlier races the transfer and can
+  corrupt in-flight data.
+- Writes are the unforgiving side: the non-owning buffer view lets
+  librados keep referencing the source across redirects and retries,
+  with no copy fallback and no notification when it finally drops the
+  reference.
+- Terminal status and successful release are the only reuse points;
+  memory deregistration alone does not end the obligation.
 
-`queryMem` supports `OBJ_SEG` only. It resets `resp` to one null entry per
-descriptor before validation: a non-`OBJ_SEG` list yields all-null entries and
-`NIXL_ERR_NOT_SUPPORTED`, and an init-errored engine yields all-null entries
-and `NIXL_ERR_BACKEND`, neither issuing a stat. A descriptor whose
-`metaInfo` contains an embedded NUL byte fails the whole list with
-`NIXL_ERR_INVALID_PARAM` before any stat — all entries stay null — because
-the OID reaches librados as a C string, where a NUL would silently truncate
-the key and alias the query to its prefix. It then stats each
-descriptor's object — non-empty `metaInfo`, else decimal `devId` —
-independently of registration. A found object reports a decimal `size`
-parameter, including zero; a missing object is a null entry under
-`NIXL_SUCCESS`; any other stat return keeps its entry null, still queries the
-remaining descriptors, and yields overall `NIXL_ERR_BACKEND`. The query is
-synchronous to the caller — every answer is resolved before the call returns —
-but internally issues asynchronous stats in fixed windows of up to 256
-descriptors on the metadata-stat client, harvesting each window completely
-before submitting the next; a query never touches the data client.
-Results are point-in-time. A result guarantees neither object completeness nor
-reservation for a later read. The plugin sets no deadline; timeout handling
-belongs to librados/Ceph above (see Custom parameters). Callers must not
-overlap a query with backend destruction.
+## `queryMem` Summary
 
-### Buffer lifetime
+`queryMem` supports `OBJ_SEG` only, is synchronous to the caller, and
+stats each descriptor's object independently of registration:
 
-The plugin's buffer-reuse boundary is completion-and-callback retirement of
-each operation's librados completion (`is_complete_and_cb()` /
-`wait_for_complete_and_cb()`), not operation completion alone. Callers observe
-that boundary at exactly two plugin points: terminal status reporting (polling
-retires every operation before a terminal status is reported) and a successful
-synchronous release (which blocks until every still-in-flight operation has
-retired). The boundary relies on librados' completion guarantee that a
-retired completion no longer references caller memory; the plugin does not
-independently observe librados' internal last-reference destruction moment.
+- Found object: a decimal `size` parameter (including zero).
+- Missing object: a null entry under `NIXL_SUCCESS`.
+- Any other stat failure: null entry for that descriptor, remaining
+  descriptors still queried, overall `NIXL_ERR_BACKEND`.
+- A non-`OBJ_SEG` list yields all-null entries and
+  `NIXL_ERR_NOT_SUPPORTED`; a `metaInfo` with an embedded NUL byte
+  fails the whole list with `NIXL_ERR_INVALID_PARAM`.
 
-- **Reads (C AIO):** librados writes reply bytes directly into the supplied
-  destination; if a redirect or retry replaces that buffer, current Ceph's
-  retry/transport path falls back to copying the data. Keep the destination
-  allocated and writable from posting until the boundary above.
-- **Writes (static bufferlist):** the non-owning `static_from_mem` view
-  borrows caller memory, and librados keeps using the source across redirects
-  and retries with no analogous fallback copy and no public notification when
-  it finally drops its reference. Keep each source allocated, readable, and
-  immutable until the same boundary; mutating it earlier races the transfer.
-- A successful release of in-flight work ends both obligations; memory
-  deregistration alone does not.
-
-### Key classes
-
-- `nixlRadosEngine` (`rados_backend.h/.cpp`): the backend engine
-  implementing registration, transfers, status polling, and draining release.
-- `nixl::rados::statusWaitTimer` (`rados_backend.h/.cpp`): the
-  engine-owned timeout-only sleep seam, present exactly when
-  `status_wait_us > 0`.
-- `nixl::rados::parseCustomParams()` (`rados_config.h`):
-  parameter parsing and validation for the table above.
+Results are point-in-time: a query guarantees neither object
+completeness nor reservation for a later read.
 
 ## Example Usage
 
-A local write-then-read round trip against a pool named `nixl` as
-`client.nixl`, with one Ceph option override relocating the client log file.
-Every step's result is checked, each request is driven to a terminal status
-before its single release, the round-tripped bytes are compared, and the
-deregistrations are verified:
+A local write-then-read round trip against pool `nixl` as
+`client.nixl`. Each request is posted, polled to a terminal status, and
+released exactly once; every step's result is checked and the
+round-tripped bytes are compared.
 
 ```cpp
 #include <chrono>
@@ -340,7 +229,6 @@ bool rados_round_trip() {
         {"conf", "/etc/ceph/ceph.conf"},
         {"name", "client.nixl"},
         {"pool", "nixl"},
-        {"ceph.log_file", "/var/log/ceph/nixl-rados.log"},
     };
 
     const std::string agent_name = "agent1";
