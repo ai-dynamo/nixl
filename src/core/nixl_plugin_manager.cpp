@@ -323,7 +323,7 @@ shouldDeepBindPlugin(const std::string &plugin_name) {
      * suffix already provides the isolation this flag was meant to add.
      *
      * The variable is deprecated and ignored, so it is not converted: only its presence
-     * matters. Looking the value up is what let an unparseable one reach `createBackend`
+     * matters. Looking the value up is what let an unparsable one reach `createBackend`
      * (configTraits<bool>::convert throws), and `checkExistence` cannot throw. */
     if (nixl::config::checkExistence(kUcxDeepBindVar)) {
         NIXL_WARN << kUcxDeepBindVar
