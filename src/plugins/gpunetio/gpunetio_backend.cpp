@@ -18,6 +18,7 @@
 #include "gpunetio_backend.h"
 #include "gpunetio_cuda_device_guard.h"
 #include "gpunetio_completion_status.h"
+#include "gpunetio_wire.h"
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <cassert>
@@ -1339,8 +1340,6 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
                              nixlBackendMD *&output) {
     // TODO: connection setup should move to connect
     nixlDocaConnection conn;
-    std::vector<std::string> tokens;
-    std::string token;
     auto md = std::make_unique<nixlDocaPublicMetadata>();
     auto search = remoteConnMap.find(remote_agent);
 
@@ -1354,14 +1353,13 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     // directly copy underlying conn struct
     md->conn = conn;
 
-    std::stringstream ss(input.metaInfo.data());
-    while (std::getline(ss, token, info_delimiter)) {
-        tokens.push_back(token);
+    uint32_t rkey;
+    uintptr_t addr;
+    size_t tot_size;
+    if (!nixl::gpunetio::parseRemoteMetadata(input.metaInfo, rkey, addr, tot_size)) {
+        NIXL_ERROR << "Malformed remote metadata from " << remote_agent;
+        return NIXL_ERR_INVALID_PARAM;
     }
-
-    uint32_t rkey = static_cast<uint32_t>(atoi(tokens[0].c_str()));
-    uintptr_t addr = static_cast<uintptr_t>(atol(tokens[1].c_str()));
-    size_t tot_size = static_cast<size_t>(atol(tokens[2].c_str()));
 
     // Empty mmap, filled with imported data
     try {
@@ -1704,10 +1702,8 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
         return completion_status;
     }
     uint32_t recv_idx;
-    std::string msg_src;
     uint32_t num_msg = 0;
     char *addr;
-    size_t position;
 
     // Lock required to prevent inconsistency if another notifyQp (new peer) is added
     // while getNotifs is running
@@ -1742,39 +1738,22 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
         while (num_msg > 0) {
             recv_idx = notif.second->recv_pi.load() & (DOCA_MAX_NOTIF_INFLIGHT - 1);
             addr = (char *)(notif.second->recv_addr + (recv_idx * notif.second->elems_size));
-            msg_src = addr;
-
-            NIXL_DEBUG << "CPU num_msg " << num_msg << " at " << recv_idx << " addr "
-                       << (void *)addr << " msg " << msg_src << std::endl;
-
-            position = msg_src.find(msg_tag_start);
-
-            NIXL_DEBUG << "getNotifs idx " << recv_idx << " addr "
-                       << (void *)((notif.second->recv_addr +
-                                    (recv_idx * notif.second->elems_size)))
-                       << " msg " << msg_src << " position " << (int)position << std::endl;
-
-            if (position != std::string::npos && position == 0) {
-                unsigned last = msg_src.find(msg_tag_end);
-                std::string msg_sz =
-                    msg_src.substr(position + msg_tag_start.size(), last - position);
-                int sz = std::stoi(msg_sz);
-
-                std::string msg(addr + last + msg_tag_end.size(),
-                                addr + last + msg_tag_end.size() + sz);
-
-                NIXL_DEBUG << "getNotifs propagating notif from " << notif.first << " msg " << msg
-                           << " size " << sz << " num " << num_msg << std::endl;
-
-                notif_list.push_back(std::pair(notif.first, msg));
-                // Tag cleanup
-                memset(addr, 0, msg_tag_start.size());
-                recv_idx = notif.second->recv_pi.fetch_add(1);
-                num_msg--;
-            } else {
-                NIXL_ERROR << "getNotifs error message at " << num_msg << " size " << msg_src.size()
-                           << " msg " << msg_src;
-                break;
+            std::string_view payload;
+            const bool valid =
+                nixl::gpunetio::parseNotification(std::string_view(addr, notif.second->elems_size),
+                                                  msg_tag_start,
+                                                  msg_tag_end,
+                                                  payload);
+            if (valid) {
+                notif_list.emplace_back(notif.first, std::string(payload));
+            }
+            // Consume malformed messages too, rather than repeatedly parsing the same slot.
+            memset(addr, 0, msg_tag_start.size());
+            notif.second->recv_pi.fetch_add(1);
+            num_msg--;
+            if (!valid) {
+                NIXL_ERROR << "Malformed notification from " << notif.first;
+                return NIXL_ERR_BACKEND;
             }
         }
     }

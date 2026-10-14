@@ -40,6 +40,10 @@ unit_test_deps += [device_ops_unit_test_dep]
 subdir('util')
 unit_test_deps += [util_unit_test_dep]
 
+# Wire parsing is CPU-only, including when the optional GPUNETIO plugin is disabled.
+subdir('gpunetio')
+unit_test_deps += [gpunetio_wire_unit_test_dep]
+
 subdir('tracing')
 unit_test_deps += [tracing_unit_test_dep]
 
