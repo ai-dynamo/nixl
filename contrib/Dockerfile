@@ -82,7 +82,7 @@ ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
-ARG HIREDIS_VERSION="1.2.0"
+ARG HIREDIS_VERSION="1.4.0"
 ARG APT_MIRROR=""
 
 # Optional apt mirror override, e.g. for CI environments with an internal

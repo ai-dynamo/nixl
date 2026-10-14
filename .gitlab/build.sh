@@ -167,7 +167,7 @@ else
     # Build hiredis from source (apt ships 0.14.x on Ubuntu 22.04 and 1.2.0 on
     # Ubuntu 24.04; build a consistent version everywhere to match contrib/Dockerfile).
     $SUDO apt-get remove -y libhiredis-dev 2>/dev/null || true
-    HIREDIS_VERSION="1.2.0"
+    HIREDIS_VERSION="1.4.0"
     ( \
       cd "${BUILD_TMP}" && \
       wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
@@ -184,7 +184,7 @@ else
       $SUDO make install && \
       $SUDO ldconfig && \
       $SUDO chown -R "$(id -u):$(id -g)" "${INSTALL_DIR}" && \
-      PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig" pkg-config --atleast-version=1.0.1 hiredis && \
+      pkg-config --atleast-version=1.0.1 hiredis && \
       cd "${BUILD_TMP}" && \
       rm -rf "hiredis-${HIREDIS_VERSION}" "hiredis-${HIREDIS_VERSION}.tar.gz" \
     )
