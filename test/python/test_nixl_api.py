@@ -134,6 +134,7 @@ def test_nixl_conf_bad_sync_mode():
 
 
 def test_default_backend_configs_are_independent():
+    """Keep each configuration's default backend list independent."""
     first_config = nixl_agent_config()
     original_backends = first_config.backends.copy()
     try:
@@ -146,6 +147,7 @@ def test_default_backend_configs_are_independent():
 
 
 def test_default_agent_keeps_ucx_after_another_config_is_cleared():
+    """Retain UCX for a default agent after clearing another configuration."""
     config = nixl_agent_config()
     original_backends = config.backends.copy()
     try:
@@ -158,6 +160,7 @@ def test_default_agent_keeps_ucx_after_another_config_is_cleared():
 
 @pytest.mark.parametrize("backends", [[], ["UCX"], ["POSIX", "UCX"]])
 def test_explicit_backend_config_preserves_selection(backends):
+    """Preserve an explicitly supplied backend selection, including an empty list."""
     assert nixl_agent_config(backends=backends).backends == backends
 
 
