@@ -50,7 +50,7 @@ public:
     // True once every completion (confirmed I/Os and expected cancellations) has been reaped.
     bool
     isComplete() const {
-        return num_confirmed_ios_ == queue_depth_ && cancels_expected_ == cancels_seen_;
+        return num_confirmed_ios_ == enqueued_ios_ && cancels_expected_ == cancels_seen_;
     }
 
     // Best-effort abort of outstanding I/O. Queued entries fail synchronously; in-flight
@@ -88,8 +88,8 @@ private:
     const nixl_xfer_op_t &operation; // The transfer operation (read/write)
     const nixl_meta_dlist_t &local; // Local memory descriptor list
     const nixl_meta_dlist_t &remote; // Remote memory descriptor list
-    const int queue_depth_; // Queue depth for async I/O
-    int num_confirmed_ios_; // Number of confirmed IOs
+    int enqueued_ios_ = 0; // Number of accepted IOs
+    int num_confirmed_ios_ = 0; // Number of confirmed IOs
     bool transfer_failed_ = false; // Set if any io of the current transfer failed
     bool cancellation_requested_ = false; // Set when cancellation begins for this transfer
     unsigned cancels_expected_ = 0; // Cancellations expected for this request

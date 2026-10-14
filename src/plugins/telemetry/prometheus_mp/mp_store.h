@@ -30,6 +30,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace nixl::telemetry::mp {
@@ -37,7 +38,7 @@ namespace nixl::telemetry::mp {
 // On-disk schema version for the per-process metric-state store. Independent of
 // the event-buffer TELEMETRY_VERSION: this is a different file format. Bump on
 // any layout change so a reader rejects incompatible files.
-inline constexpr uint32_t MP_STORE_SCHEMA_VERSION = 1;
+inline constexpr uint32_t MP_STORE_SCHEMA_VERSION = 2;
 
 // Store file naming shared by the writer (exporter) and the collector so the
 // collector can discover peer files by globbing "<prefix>*<suffix>".
@@ -140,7 +141,8 @@ static_assert(detail::maxTelemetrySlot() < MP_STORE_SLOT_COUNT,
 struct storeSnapshot {
     int64_t pid = 0;
     // Monotonic nanoseconds (monotonicNs(), CLOCK_MONOTONIC -- host-wide, so
-    // comparable across processes) of the last writer update; used for TTL staleness.
+    // comparable across processes) of the last writer update; used for TTL staleness
+    // and to order the stores that share a hostname, agent_name and local_rank.
     uint64_t lastUpdateNs = 0;
     // Per-process instance counter, distinguishing multiple agents that share the
     // same name (and thus pid/hostname) within one process so their series differ.
@@ -163,6 +165,11 @@ struct storeSnapshot {
     std::array<std::array<uint64_t, MP_STORE_MAX_BUCKETS + 1>, MP_STORE_SLOT_COUNT> histBuckets{};
     // Sum of all observed values per event type, in the event's own units.
     std::array<uint64_t, MP_STORE_SLOT_COUNT> histSums{};
+};
+
+class storeSetupError : public std::system_error {
+public:
+    using std::system_error::system_error;
 };
 
 /**
@@ -196,8 +203,8 @@ public:
      *        same-named agents in one process so their series stay distinct.
      * @param histogram_buckets Histogram bucket upper bounds, at most
      *        MP_STORE_MAX_BUCKETS of them.
-     * @throws std::runtime_error on create/ftruncate/mmap/publish failure, or
-     *         when @p histogram_buckets does not fit the store.
+     * @throws storeSetupError on create/allocate/mmap/publish failure, and
+     *         std::runtime_error when @p histogram_buckets does not fit the store.
      */
     storeWriter(std::filesystem::path path,
                 const std::string &agent_name,
@@ -211,9 +218,10 @@ public:
      *
      * The last values a process recorded are typically not scraped yet when it
      * exits, so the file must outlive it: releasing the lock is what tells the
-     * collector to go on publishing them until they age past the stale TTL, and
-     * to reap the file then. Unlinking here would drop everything produced since
-     * the previous scrape.
+     * collector to go on publishing them, whenever no store with the same
+     * hostname, agent_name and local_rank outranks them, until they age past
+     * the stale TTL, and to reap the file then. Unlinking here would drop
+     * everything produced since the previous scrape.
      */
     ~storeWriter() = default;
 
@@ -246,12 +254,15 @@ public:
      *         exporter throttles its re-elections on it) reads the clock once.
      *
      * Deliberately separate from the mutators: it costs a CLOCK_MONOTONIC read
-     * (~24ns, several times a metric update's atomic), and the only consumer is
-     * the collector's staleness check, which has a 30s default TTL and applies
-     * to dead processes only. The exporter therefore refreshes once per event,
+     * (~24ns, several times a metric update's atomic), and the collector uses
+     * it in two places. A dead process's store expires once this timestamp is
+     * older than the stale TTL (30s by default). Stores that share a hostname,
+     * agent_name and local_rank are ordered by liveness first and by this
+     * timestamp second, so it picks the departed store that is published when
+     * none of them is live. The exporter therefore refreshes once per event,
      * after the slot updates, instead of from each mutator -- a duration event
      * touches three slots. Skipping refreshes never hides a live process, it
-     * only shortens how long a dead one's last values linger.
+     * only makes a dead one's last values look older.
      */
     [[nodiscard]] uint64_t
     refreshHeartbeat() noexcept;
@@ -273,9 +284,9 @@ private:
  * @brief Whether the process that created the store at @p path still holds it.
  *
  * A store is locked before it has a name and unlocked only when its writer dies
- * or destroys it, and no process ever locks a store it did not create. So a lock
- * this succeeds in taking means the writer is gone for good and the file will
- * never change again -- which is the whole liveness test, with no pids, no
+ * or destroys it, and no other process ever locks it exclusively. So a shared
+ * lock this succeeds in taking means the writer is gone for good and the file
+ * will never change again -- which is the whole liveness test, with no pids, no
  * /proc, and no need to share a PID namespace with the writer.
  *
  * Conservative on failure: a store that cannot be opened or locked for any other

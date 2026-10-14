@@ -33,8 +33,10 @@
  * NIXL_TELEMETRY_MULTIPROC_DIR, and one of them additionally serves the scrape
  * endpoint that publishes all of those stores (see scrapeEndpoint for how that
  * one is picked, and re-picked when it dies). Not being the one that serves is
- * benign -- it never throws nixlTelemetryBindFailed -- so every process gets a
- * valid telemetry sink and all ranks are exported behind the single owner port.
+ * benign, so every process gets a valid telemetry sink and all ranks are exported
+ * behind the single owner port. The exception is a default directory (the variable
+ * unset or empty) that cannot be created or written: the constructor then throws
+ * nixlTelemetryBindFailed, and the process runs without a sink.
  *
  * This class is therefore the mapping from telemetry events to store slots, plus
  * the reporting of what the election meant for this particular rank; a rank that
