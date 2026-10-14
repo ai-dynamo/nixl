@@ -204,9 +204,9 @@ TEST_P(dellTokenTest, RepostMintsFreshTokenAndPropagatesFailure) {
 }
 
 TEST_P(dellTokenTest, CompletedFailureIsVisibleBehindPendingRequest) {
-    prepare();
     local.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(buffer.data()) + 64, 32, 1));
     remote.addDesc(nixlMetaDesc(GetParam() == NIXL_READ ? 39 : 0, 32, 2));
+    prepare();
     ASSERT_EQ(post(), NIXL_IN_PROG);
     ASSERT_EQ(client->pending.size(), 2);
     client->finish(false, 1);

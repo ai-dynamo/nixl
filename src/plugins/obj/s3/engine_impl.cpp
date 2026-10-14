@@ -29,12 +29,11 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
         return false;
     }
 
-    if (remote_agent != local_agent) {
+    if (remote_agent != local_agent)
         NIXL_WARN << absl::StrFormat(
             "Warning: Remote agent doesn't match the requesting agent (%s). Got %s",
             local_agent,
             remote_agent);
-    }
 
     // The local buffer type must be one the engine advertises (OBJ_SEG is the
     // remote side). This keeps VRAM_SEG out of the base HTTP engine, which does
@@ -125,9 +124,7 @@ DefaultObjEngineImpl::DefaultObjEngineImpl(const nixlBackendInitParams *init_par
     // The s3_client_crt parameter is accepted for API consistency with derived
     // engine implementations (e.g., S3CrtObjEngineImpl) but is intentionally unused here.
     (void)s3_client_crt;
-    if (s3Client_) {
-        s3Client_->setExecutor(executor_);
-    }
+    if (s3Client_) s3Client_->setExecutor(executor_);
     NIXL_INFO << "Object storage backend initialized with injected S3 clients";
 }
 
@@ -140,9 +137,8 @@ DefaultObjEngineImpl::registerMem(const nixlBlobDesc &mem,
                                   const nixl_mem_t &nixl_mem,
                                   nixlBackendMD *&out) {
     nixl_mem_list_t supported_mems = {OBJ_SEG, DRAM_SEG};
-    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end()) {
+    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end())
         return NIXL_ERR_NOT_SUPPORTED;
-    }
 
     if (nixl_mem == OBJ_SEG) {
         std::unique_ptr<nixlObjMetadata> obj_md = std::make_unique<nixlObjMetadata>(
@@ -207,9 +203,7 @@ DefaultObjEngineImpl::queryMem(const nixl_reg_dlist_t &descs,
                 desc.metaInfo,
                 [&resp, &has_error, i, promise = state.promise, completed = state.completed](
                     std::optional<bool> exists) {
-                    if (completed->exchange(true)) {
-                        return;
-                    }
+                    if (completed->exchange(true)) return;
                     if (!exists.has_value()) {
                         resp[i] = std::nullopt;
                         has_error.store(true, std::memory_order_relaxed);
@@ -243,9 +237,8 @@ DefaultObjEngineImpl::queryMem(const nixl_reg_dlist_t &descs,
         // Wait for all callbacks to complete their writes to resp/has_error
         // to avoid use-after-free if a callback passed the exchange check
         // but was preempted before writing.
-        for (size_t j = 0; j < futures.size(); ++j) {
+        for (size_t j = 0; j < futures.size(); ++j)
             futures[j].wait();
-        }
         NIXL_ERROR << "Failed to query memory: " << e.what();
         return NIXL_ERR_BACKEND;
     }
@@ -336,13 +329,12 @@ DefaultObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
             status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
         };
 
-        if (operation == NIXL_WRITE) {
+        if (operation == NIXL_WRITE)
             client->putObjectAsync(
                 obj_key_search->second, data_ptr, data_len, offset, status_callback);
-        } else {
+        else
             client->getObjectAsync(
                 obj_key_search->second, data_ptr, data_len, offset, status_callback);
-        }
     }
 
     return NIXL_IN_PROG;
