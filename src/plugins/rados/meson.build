@@ -58,17 +58,21 @@ if not cpp.links('''
         }
     ''', dependencies: [rados_dep],
          name: 'librados C lifecycle/read and C++ IoCtx/bufferlist/AIO/async-query surface')
-    error('The RADOS plugin requires the librados C lifecycle and AIO-read surface plus the C++ ' +
-          'IoCtx/bufferlist/AIO and async object-query surface: rados_create2, rados_conf_read_file, ' +
-          'rados_conf_set, rados_connect, rados_ioctx_create, rados_ioctx_set_namespace, ' +
-          'rados_ioctx_destroy, rados_shutdown, ' +
-          'rados_aio_create_completion, rados_aio_read, rados_aio_is_complete_and_cb, ' +
-          'rados_aio_get_return_value, rados_aio_wait_for_complete_and_cb, rados_aio_release, ' +
-          'librados::IoCtx::from_rados_ioctx_t, librados::IoCtx::close, librados::IoCtx::aio_write, ' +
-          'librados::IoCtx::aio_operate, librados::ObjectReadOperation::stat, ' +
-          'librados::Rados::aio_create_completion, librados::bufferlist::static_from_mem, and the ' +
-          'librados::AioCompletion is_complete_and_cb/get_return_value/wait_for_complete_and_cb/release ' +
-          'operations.')
+    if is_explicit_enable or 'RADOS' in static_plugins
+        error('The RADOS plugin requires the librados C lifecycle and AIO-read surface plus the C++ ' +
+              'IoCtx/bufferlist/AIO and async object-query surface: rados_create2, rados_conf_read_file, ' +
+              'rados_conf_set, rados_connect, rados_ioctx_create, rados_ioctx_set_namespace, ' +
+              'rados_ioctx_destroy, rados_shutdown, ' +
+              'rados_aio_create_completion, rados_aio_read, rados_aio_is_complete_and_cb, ' +
+              'rados_aio_get_return_value, rados_aio_wait_for_complete_and_cb, rados_aio_release, ' +
+              'librados::IoCtx::from_rados_ioctx_t, librados::IoCtx::close, librados::IoCtx::aio_write, ' +
+              'librados::IoCtx::aio_operate, librados::ObjectReadOperation::stat, ' +
+              'librados::Rados::aio_create_completion, librados::bufferlist::static_from_mem, and the ' +
+              'librados::AioCompletion is_complete_and_cb/get_return_value/wait_for_complete_and_cb/release ' +
+              'operations.')
+    endif
+    warning('RADOS plugin disabled because the required librados API probe failed')
+    subdir_done()
 endif
 
 rados_sources = ['rados_backend.cpp', 'rados_backend.h',

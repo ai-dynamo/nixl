@@ -45,7 +45,7 @@ if 'REDIS' in static_plugins
     nixl_lib_deps += [ redis_backend_interface ]
 endif
 
-if 'RADOS' in static_plugins
+if is_variable('rados_backend_interface') and 'RADOS' in static_plugins
     nixl_lib_deps += [ rados_backend_interface ]
 endif
 
