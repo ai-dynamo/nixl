@@ -16,13 +16,14 @@
  */
 
 #include "ucx_utils.h"
-#include "registration.h"
 #include <ucs/memory/memory_type.h>
 
+#include <absl/cleanup/cleanup.h>
 #include <cstring>
 #include <exception>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nixl_types.h>
@@ -681,44 +682,35 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
         .length = mem.size,
     };
 
-    const bool registered = nixl::ucx::registrationTransaction(
-        [&] {
-            const auto status = ucp_mem_map(ctx.get(), &mem_params, &mem.memh);
-            if (status != UCS_OK) {
-                NIXL_ERROR << *this << ": failed to ucp_mem_map: " << ucs_status_string(status);
-            }
-            return status == UCS_OK;
-        },
-        [&] {
-            if (!requiredDeviceMemoryType_ && nixl_mem_type != VRAM_SEG) {
-                return true;
-            }
-            ucp_mem_attr_t attr{};
-            attr.field_mask = UCP_MEM_ATTR_FIELD_MEM_TYPE;
-            const auto status = ucp_mem_query(mem.memh, &attr);
-            if (status != UCS_OK) {
-                NIXL_ERROR << *this << ": failed to ucp_mem_query: " << ucs_status_string(status);
-                return false;
-            }
-            const bool matches = requiredDeviceMemoryType_ ?
-                nixl::ucx::registeredMemoryTypeMatches(nixl_mem_type,
-                                                       attr.mem_type,
-                                                       UCS_MEMORY_TYPE_HOST,
-                                                       *requiredDeviceMemoryType_) :
-                attr.mem_type != UCS_MEMORY_TYPE_HOST;
-            if (!matches) {
-                NIXL_ERROR << *this << ": detected UCX memory type " << attr.mem_type
-                           << " does not match the registered memory contract";
-            }
-            return matches;
-        },
-        [&]() noexcept {
-            ucp_mem_unmap(ctx.get(), mem.memh);
-            mem.memh = nullptr;
-        });
-    if (!registered) {
+    const auto map_status = ucp_mem_map(ctx.get(), &mem_params, &mem.memh);
+    if (map_status != UCS_OK) {
+        NIXL_ERROR << *this << ": failed to ucp_mem_map: " << ucs_status_string(map_status);
         return -1;
     }
+    auto rollback = absl::MakeCleanup([&]() noexcept {
+        ucp_mem_unmap(ctx.get(), mem.memh);
+        mem.memh = nullptr;
+    });
+
+    if (requiredDeviceMemoryType_ || nixl_mem_type == VRAM_SEG) {
+        ucp_mem_attr_t attr{};
+        attr.field_mask = UCP_MEM_ATTR_FIELD_MEM_TYPE;
+        const auto query_status = ucp_mem_query(mem.memh, &attr);
+        if (query_status != UCS_OK) {
+            NIXL_ERROR << *this << ": failed to ucp_mem_query: " << ucs_status_string(query_status);
+            return -1;
+        }
+        const bool matches = requiredDeviceMemoryType_ ?
+            nixl::ucx::registeredMemoryTypeMatches(
+                nixl_mem_type, attr.mem_type, UCS_MEMORY_TYPE_HOST, *requiredDeviceMemoryType_) :
+            attr.mem_type != UCS_MEMORY_TYPE_HOST;
+        if (!matches) {
+            NIXL_ERROR << *this << ": detected UCX memory type " << attr.mem_type
+                       << " does not match the registered memory contract";
+            return -1;
+        }
+    }
+    std::move(rollback).Cancel();
 
     NIXL_DEBUG << *this << ": registered " << mem.size << " bytes at " << mem.base << ", memh "
                << mem.memh;

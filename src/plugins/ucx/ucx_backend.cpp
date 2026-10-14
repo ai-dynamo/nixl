@@ -20,7 +20,6 @@
 #include "ucx_thread_pool_engine.h"
 #include "ucx_backend_req.h"
 #include "ucx_sgl.h"
-#include "registration.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/backend.h"
@@ -29,9 +28,11 @@
 #include "tracing/backend_trace.h"
 
 #include <array>
+#include <absl/cleanup/cleanup.h>
 #include <cstdint>
 #include <optional>
 #include <string.h>
+#include <utility>
 #include "absl/strings/str_split.h"
 
 #include "device/device_memview.h"
@@ -227,23 +228,21 @@ nixlUcxEngine::registerMem(const nixlBlobDesc &mem,
             }
         }
         auto priv = std::make_unique<nixlUcxPrivateMetadata>();
-        const bool registered = nixl::ucx::registrationTransaction(
-            [&] {
-                return uc->memReg(
-                           reinterpret_cast<void *>(mem.addr), mem.len, priv->mem, nixl_mem) == 0;
-            },
-            [&] {
-                priv->rkeyStr = uc->packRkey(priv->mem);
-                return !priv->rkeyStr.empty();
-            },
-            [&]() noexcept { uc->memDereg(priv->mem); });
-        if (!registered) {
+        if (uc->memReg(reinterpret_cast<void *>(mem.addr), mem.len, priv->mem, nixl_mem) != 0) {
             return NIXL_ERR_BACKEND;
         }
+        auto rollback = absl::MakeCleanup([&]() noexcept { uc->memDereg(priv->mem); });
+        priv->rkeyStr = uc->packRkey(priv->mem);
+        if (priv->rkeyStr.empty()) {
+            return NIXL_ERR_BACKEND;
+        }
+        std::move(rollback).Cancel();
         out = priv.release();
         return NIXL_SUCCESS;
     }
-    // The registration transaction has already rolled back mapped memory and packed keys.
+    // UCX returns status codes, but policy validation, metadata allocation, and rkey
+    // serialization are C++ operations that may throw. Convert those failures to
+    // the backend status while the scope cleanup releases any mapped memory.
     catch (const std::exception &error) {
         NIXL_ERROR << "Memory registration failed: " << error.what();
         return NIXL_ERR_BACKEND;
