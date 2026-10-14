@@ -68,7 +68,7 @@ public:
 class recordingDellClient : public awsS3DellObsClient {
 public:
     using awsS3DellObsClient::awsS3DellObsClient;
-    std::function<void(bool)> pending;
+    std::vector<std::function<void(bool)>> pending;
     Aws::S3::Model::PutObjectRequest put;
     Aws::S3::Model::GetObjectRequest get;
     int submitted = 0;
@@ -78,8 +78,9 @@ public:
     setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor>) override {}
 
     void
-    finish(bool success) {
-        auto callback = std::move(pending);
+    finish(bool success, size_t index = 0) {
+        auto callback = std::move(pending.at(index));
+        pending.erase(pending.begin() + index);
         callback(success);
     }
 
@@ -92,7 +93,7 @@ protected:
         }
         put = request;
         ++submitted;
-        pending = std::move(callback);
+        pending.push_back(std::move(callback));
     }
 
     void
@@ -103,7 +104,7 @@ protected:
         }
         get = request;
         ++submitted;
-        pending = std::move(callback);
+        pending.push_back(std::move(callback));
     }
 };
 
@@ -199,6 +200,20 @@ TEST_P(dellTokenTest, RepostMintsFreshTokenAndPropagatesFailure) {
     EXPECT_EQ(api->released, 1);
     client->finish(false);
     EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
+    EXPECT_EQ(api->released, 2);
+}
+
+TEST_P(dellTokenTest, CompletedFailureIsVisibleBehindPendingRequest) {
+    prepare();
+    local.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(buffer.data()) + 64, 32, 1));
+    remote.addDesc(nixlMetaDesc(GetParam() == NIXL_READ ? 39 : 0, 32, 2));
+    ASSERT_EQ(post(), NIXL_IN_PROG);
+    ASSERT_EQ(client->pending.size(), 2);
+    client->finish(false, 1);
+    EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
+    EXPECT_EQ(api->released, 1);
+    // The pending request still owns its token despite the reported error.
+    client->finish(true);
     EXPECT_EQ(api->released, 2);
 }
 
