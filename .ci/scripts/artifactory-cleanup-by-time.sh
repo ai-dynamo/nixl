@@ -49,7 +49,9 @@ jf rt ping
 
 # For Docker: delete the tag directory (repo/path/) recursively.
 # For PyPI: delete the .whl file directly.
+# Never delete anything under <repo>/static/, whatever the spec matches.
 if ! targets=$(jf rt search --spec "$SPEC" | jq -r '.[] | .path | ltrimstr("/") |
+    select(split("/")[1] != "static") |
     if endswith("/manifest.json") or endswith("/list.manifest.json")
     then split("/")[:-1] | join("/") | . + "/"
     else .
