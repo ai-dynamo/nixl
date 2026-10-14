@@ -143,7 +143,6 @@ else
                                  etcd-server \
                                  redis-server \
                                  redis-tools \
-                                 libhiredis-dev \
                                  libevent-dev \
                                  net-tools \
                                  iproute2 \
@@ -167,12 +166,14 @@ else
         # Ubuntu 22.04 ships hiredis 0.14.x which is below the >=1.0.0 floor
         # required by the Redis plugin. Replace it with a source build.
         $SUDO apt-get remove -y libhiredis-dev 2>/dev/null || true
-        HIREDIS_TAG="v1.4.0"
+        HIREDIS_VERSION="1.2.0"
         ( \
           cd "${BUILD_TMP}" && \
-          git clone --depth 1 -b "${HIREDIS_TAG}" https://github.com/redis/hiredis.git && \
-          cd hiredis && \
-          mkdir build && cd build && \
+          wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+              -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+          tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+          mkdir -p "hiredis-${HIREDIS_VERSION}/build" && \
+          cd "hiredis-${HIREDIS_VERSION}/build" && \
           cmake .. \
               -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
               -DCMAKE_INSTALL_LIBDIR=lib \
@@ -182,8 +183,9 @@ else
           $SUDO make install && \
           $SUDO ldconfig && \
           $SUDO chown -R "$(id -u):$(id -g)" "${INSTALL_DIR}" && \
+          PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig" pkg-config --atleast-version=1.0.1 hiredis && \
           cd "${BUILD_TMP}" && \
-          rm -rf hiredis \
+          rm -rf "hiredis-${HIREDIS_VERSION}" "hiredis-${HIREDIS_VERSION}.tar.gz" \
         )
     fi
 
