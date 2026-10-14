@@ -773,8 +773,7 @@ xferBenchConfig::loadParams(void) {
             rados_status_wait_us = NB_ARG(rados_status_wait_us);
             rados_ceph_overrides = NB_ARG(rados_ceph_overrides);
 
-            if (rados_conf.empty() || rados_name.empty() ||
-                rados_pool.empty()) {
+            if (rados_conf.empty() || rados_name.empty() || rados_pool.empty()) {
                 std::cerr << "Error: RADOS backend requires non-empty rados_conf, "
                              "rados_name and rados_pool"
                           << std::endl;
@@ -801,8 +800,7 @@ xferBenchConfig::loadParams(void) {
                           << std::endl;
                 return -1;
             }
-            if (!parseRadosCephOverrides(rados_ceph_overrides,
-                                               rados_ceph_params)) {
+            if (!parseRadosCephOverrides(rados_ceph_overrides, rados_ceph_params)) {
                 return -1;
             }
         }
@@ -956,8 +954,7 @@ xferBenchConfig::loadParams(void) {
     // occurrence pairing, and one-time registration/request state.
     if (backend == XFERBENCH_BACKEND_RADOS) {
         auto reject_rados_mode = [](const char *reason) {
-            std::cerr << "Unsupported configuration for RADOS backend: " << reason
-                      << std::endl;
+            std::cerr << "Unsupported configuration for RADOS backend: " << reason << std::endl;
             return -1;
         };
         if (check_consistency) {
@@ -1087,7 +1084,8 @@ xferBenchConfig::printConfig() {
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         printOption(
-            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB,RADOS])",
+            "Backend "
+            "(--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB,RADOS])",
             backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
@@ -1294,7 +1292,6 @@ xferBenchConfig::isBlkStorageBackend() {
         backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) { return m == BLK_SEG; });
 }
 
-
 /**********
  * xferBench Utils
  **********/
@@ -1444,7 +1441,7 @@ parseGusliDeviceList(const std::string &device_list,
 
 bool
 parseRadosCephOverrides(const std::string &list,
-                              std::vector<std::pair<std::string, std::string>> &params) {
+                        std::vector<std::pair<std::string, std::string>> &params) {
     params.clear();
     if (list.empty()) {
         return true;
@@ -1462,8 +1459,7 @@ parseRadosCephOverrides(const std::string &list,
         }
         const std::string key = entry.substr(0, sep);
         if (key.empty()) {
-            std::cerr << "Invalid RADOS ceph override entry: empty ceph. option name"
-                      << std::endl;
+            std::cerr << "Invalid RADOS ceph override entry: empty ceph. option name" << std::endl;
             return false;
         }
         if (std::any_of(params.begin(), params.end(), [&](const auto &param) {

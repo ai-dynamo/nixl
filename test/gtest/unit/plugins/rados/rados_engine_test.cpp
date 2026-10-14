@@ -426,9 +426,16 @@ namespace {
                 static_cast<int>(submissions.size()) >= c_submit_fail_after) {
                 return -EIO;
             }
-            submissions.push_back(
-                {false, oid, off, reinterpret_cast<uintptr_t>(buf), len, comp, nullptr, nullptr,
-                 {}, 0});
+            submissions.push_back({false,
+                                   oid,
+                                   off,
+                                   reinterpret_cast<uintptr_t>(buf),
+                                   len,
+                                   comp,
+                                   nullptr,
+                                   nullptr,
+                                   {},
+                                   0});
             comp->submitted = true;
             return 0;
         }
@@ -721,10 +728,12 @@ namespace {
             rados_t token;
             bool live;
         };
+
         struct ioctx_rec {
             rados_ioctx_t token;
             bool live;
         };
+
         std::vector<cluster_rec> clusters;
         std::vector<ioctx_rec> ioctxs;
         size_t conf_read_file_calls = 0;
@@ -734,14 +743,14 @@ namespace {
 
         static rados_t
         makeClusterToken(size_t ordinal) {
-            return reinterpret_cast<rados_t>(static_cast<uintptr_t>(0xc10e0000u +
-                                                                    0x100u * (ordinal + 1)));
+            return reinterpret_cast<rados_t>(
+                static_cast<uintptr_t>(0xc10e0000u + 0x100u * (ordinal + 1)));
         }
 
         static rados_ioctx_t
         makeIoctxToken(size_t ordinal) {
-            return reinterpret_cast<rados_ioctx_t>(static_cast<uintptr_t>(0x10c70002u +
-                                                                          0x100u * (ordinal + 1)));
+            return reinterpret_cast<rados_ioctx_t>(
+                static_cast<uintptr_t>(0x10c70002u + 0x100u * (ordinal + 1)));
         }
 
         bool
@@ -809,8 +818,12 @@ namespace {
     };
 
     void
-    add_pair(nixl_meta_dlist_t &local, nixl_meta_dlist_t &remote, uintptr_t addr, uint64_t len,
-             uint64_t object_offset, uint64_t dev_id) {
+    add_pair(nixl_meta_dlist_t &local,
+             nixl_meta_dlist_t &remote,
+             uintptr_t addr,
+             uint64_t len,
+             uint64_t object_offset,
+             uint64_t dev_id) {
         local.addDesc(nixlMetaDesc(addr, len, 0));
         remote.addDesc(nixlMetaDesc(object_offset, len, dev_id));
     }
@@ -819,7 +832,9 @@ namespace {
     // descriptor-captured addresses stay valid.
     struct one_pair {
         one_pair(uint64_t object_offset, uint64_t length, uint64_t dev_id, unsigned char fill)
-            : buffer(static_cast<size_t>(length), fill), local(DRAM_SEG), remote(OBJ_SEG) {
+            : buffer(static_cast<size_t>(length), fill),
+              local(DRAM_SEG),
+              remote(OBJ_SEG) {
             add_pair(local,
                      remote,
                      reinterpret_cast<uintptr_t>(buffer.data()),
@@ -868,8 +883,7 @@ protected:
             *retained_fake = fake.get();
         }
         auto timer = std::make_unique<fakeStatusWaitTimer>(state);
-        return std::make_unique<nixlRadosEngine>(
-            &init_params_, std::move(fake), std::move(timer));
+        return std::make_unique<nixlRadosEngine>(&init_params_, std::move(fake), std::move(timer));
     }
 
     // Representative successful construction: validBase parameters plus the two client bootstraps.
@@ -1002,16 +1016,10 @@ TEST_F(radosEngineFixture, BootstrapFailureUnwindsAndGatesRegistration) {
         EXPECT_EQ(md, nullptr);
         EXPECT_EQ(engine.registerMem(nixlBlobDesc(0, 1024, 1, "obj"), OBJ_SEG, md),
                   NIXL_ERR_BACKEND);
-        EXPECT_EQ(*log, (std::vector<std::string>{"create2",
-                                                  "conf_read_file",
-                                                  "connect",
-                                                  "shutdown"}));
+        EXPECT_EQ(*log,
+                  (std::vector<std::string>{"create2", "conf_read_file", "connect", "shutdown"}));
     }
-    EXPECT_EQ(*log,
-              (std::vector<std::string>{"create2",
-                                        "conf_read_file",
-                                        "connect",
-                                        "shutdown"}));
+    EXPECT_EQ(*log, (std::vector<std::string>{"create2", "conf_read_file", "connect", "shutdown"}));
 }
 
 TEST_F(radosEngineFixture, AdvertisesLocalOnlyDramAndObjSegments) {
@@ -1123,7 +1131,8 @@ TEST_F(radosEngineFixture, PrepValidationGateTable) {
     const uintptr_t base = 0x10000;
     const uintptr_t top = std::numeric_limits<uintptr_t>::max();
     const uint64_t otop = std::numeric_limits<uint64_t>::max();
-    using pair_spec = std::tuple<uintptr_t, uint64_t, uint64_t, uint64_t>;  // addr,len,off,dev
+    using pair_spec = std::tuple<uintptr_t, uint64_t, uint64_t, uint64_t>; // addr,len,off,dev
+
     struct prep_case {
         const char *name;
         nixl_xfer_op_t op;
@@ -1133,44 +1142,107 @@ TEST_F(radosEngineFixture, PrepValidationGateTable) {
         std::vector<pair_spec> pairs;
         nixl_status_t expected;
     };
+
     const std::vector<prep_case> cases = {
         {"unsupported op",
-         static_cast<nixl_xfer_op_t>(99), DRAM_SEG, OBJ_SEG, "test-agent", {{base, 64, 0, 1}},
+         static_cast<nixl_xfer_op_t>(99),
+         DRAM_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{base, 64, 0, 1}},
          NIXL_ERR_NOT_SUPPORTED},
         {"local segment",
-         NIXL_WRITE, FILE_SEG, OBJ_SEG, "test-agent", {{base, 64, 0, 1}}, NIXL_ERR_NOT_SUPPORTED},
+         NIXL_WRITE,
+         FILE_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{base, 64, 0, 1}},
+         NIXL_ERR_NOT_SUPPORTED},
         {"remote segment",
-         NIXL_WRITE, DRAM_SEG, DRAM_SEG, "test-agent", {{base, 64, 0, 1}}, NIXL_ERR_NOT_SUPPORTED},
+         NIXL_WRITE,
+         DRAM_SEG,
+         DRAM_SEG,
+         "test-agent",
+         {{base, 64, 0, 1}},
+         NIXL_ERR_NOT_SUPPORTED},
         {"foreign agent",
-         NIXL_WRITE, DRAM_SEG, OBJ_SEG, "other-agent", {{base, 64, 0, 1}}, NIXL_ERR_NOT_SUPPORTED},
+         NIXL_WRITE,
+         DRAM_SEG,
+         OBJ_SEG,
+         "other-agent",
+         {{base, 64, 0, 1}},
+         NIXL_ERR_NOT_SUPPORTED},
         {"empty list", NIXL_WRITE, DRAM_SEG, OBJ_SEG, "test-agent", {}, NIXL_ERR_INVALID_PARAM},
         {"zero length",
-         NIXL_WRITE, DRAM_SEG, OBJ_SEG, "test-agent", {{base, 0, 0, 1}}, NIXL_ERR_INVALID_PARAM},
+         NIXL_WRITE,
+         DRAM_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{base, 0, 0, 1}},
+         NIXL_ERR_INVALID_PARAM},
         {"length above INT_MAX",
-         NIXL_WRITE, DRAM_SEG, OBJ_SEG, "test-agent", {{base, uint64_t(INT_MAX) + 1, 0, 1}},
+         NIXL_WRITE,
+         DRAM_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{base, uint64_t(INT_MAX) + 1, 0, 1}},
          NIXL_ERR_INVALID_PARAM},
         {"null dram address",
-         NIXL_WRITE, DRAM_SEG, OBJ_SEG, "test-agent", {{0, 64, 0, 1}}, NIXL_ERR_INVALID_PARAM},
+         NIXL_WRITE,
+         DRAM_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{0, 64, 0, 1}},
+         NIXL_ERR_INVALID_PARAM},
         {"local range wrap",
-         NIXL_WRITE, DRAM_SEG, OBJ_SEG,
-         "test-agent", {{top - 8, 64, 0, 1}}, NIXL_ERR_INVALID_PARAM},
+         NIXL_WRITE,
+         DRAM_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{top - 8, 64, 0, 1}},
+         NIXL_ERR_INVALID_PARAM},
         {"object offset wrap",
-         NIXL_WRITE, DRAM_SEG, OBJ_SEG, "test-agent", {{base, 64, otop - 8, 1}},
+         NIXL_WRITE,
+         DRAM_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{base, 64, otop - 8, 1}},
          NIXL_ERR_INVALID_PARAM},
         {"unregistered devId",
-         NIXL_WRITE, DRAM_SEG, OBJ_SEG, "test-agent", {{base, 64, 0, 42}}, NIXL_ERR_INVALID_PARAM},
+         NIXL_WRITE,
+         DRAM_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{base, 64, 0, 42}},
+         NIXL_ERR_INVALID_PARAM},
         {"overlapping writes on one devId",
-         NIXL_WRITE, DRAM_SEG, OBJ_SEG,
-         "test-agent", {{base, 64, 0, 1}, {base + 64, 64, 32, 1}}, NIXL_ERR_INVALID_PARAM},
+         NIXL_WRITE,
+         DRAM_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{base, 64, 0, 1}, {base + 64, 64, 32, 1}},
+         NIXL_ERR_INVALID_PARAM},
         {"overlapping writes across aliased devIds",
-         NIXL_WRITE, DRAM_SEG, OBJ_SEG,
-         "test-agent", {{base, 64, 0, 1}, {base + 64, 64, 32, 2}}, NIXL_ERR_INVALID_PARAM},
+         NIXL_WRITE,
+         DRAM_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{base, 64, 0, 1}, {base + 64, 64, 32, 2}},
+         NIXL_ERR_INVALID_PARAM},
         {"overlapping reads are legal",
-         NIXL_READ, DRAM_SEG, OBJ_SEG,
-         "test-agent", {{base, 64, 0, 1}, {base + 64, 64, 32, 1}}, NIXL_SUCCESS},
+         NIXL_READ,
+         DRAM_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{base, 64, 0, 1}, {base + 64, 64, 32, 1}},
+         NIXL_SUCCESS},
         {"adjacent writes across aliased devIds",
-         NIXL_WRITE, DRAM_SEG, OBJ_SEG,
-         "test-agent", {{base, 64, 0, 1}, {base + 64, 64, 64, 2}}, NIXL_SUCCESS},
+         NIXL_WRITE,
+         DRAM_SEG,
+         OBJ_SEG,
+         "test-agent",
+         {{base, 64, 0, 1}, {base + 64, 64, 64, 2}},
+         NIXL_SUCCESS},
     };
     for (const auto &item : cases) {
         nixl_meta_dlist_t local(item.local_type);
@@ -1193,7 +1265,7 @@ TEST_F(radosEngineFixture, PrepValidationGateTable) {
         nixl_meta_dlist_t local(DRAM_SEG);
         nixl_meta_dlist_t remote(OBJ_SEG);
         add_pair(local, remote, base, 64, 0, 1);
-        remote.addDesc(nixlMetaDesc(64, 64, 2));  // descriptor-count mismatch
+        remote.addDesc(nixlMetaDesc(64, 64, 2)); // descriptor-count mismatch
         nixlBackendReqH *handle = nullptr;
         EXPECT_EQ(engine->prepXfer(NIXL_WRITE, local, remote, "test-agent", handle),
                   NIXL_ERR_INVALID_PARAM);
@@ -1202,7 +1274,7 @@ TEST_F(radosEngineFixture, PrepValidationGateTable) {
     {
         const one_pair single(0, 64, 1, 0x00);
         nixl_meta_dlist_t short_remote(OBJ_SEG);
-        short_remote.addDesc(nixlMetaDesc(0, 63, 1));  // unequal pair lengths
+        short_remote.addDesc(nixlMetaDesc(0, 63, 1)); // unequal pair lengths
         nixlBackendReqH *handle = nullptr;
         EXPECT_EQ(engine->prepXfer(NIXL_WRITE, single.local, short_remote, "test-agent", handle),
                   NIXL_ERR_INVALID_PARAM);
@@ -1352,9 +1424,12 @@ TEST_F(radosEngineFixture, WriteSubmissionStopsAtFirstRejectedPairAndOwnsComplet
     nixl_meta_dlist_t local(DRAM_SEG);
     nixl_meta_dlist_t remote(OBJ_SEG);
     for (int i = 0; i < 3; ++i) {
-        add_pair(
-            local, remote, base + static_cast<uintptr_t>(i) * 64, 64, static_cast<uint64_t>(i) * 64,
-            1);
+        add_pair(local,
+                 remote,
+                 base + static_cast<uintptr_t>(i) * 64,
+                 64,
+                 static_cast<uint64_t>(i) * 64,
+                 1);
     }
     nixlBackendReqH *handle = nullptr;
 
@@ -1414,9 +1489,12 @@ TEST_F(radosEngineFixture, ReadSubmissionStopsAtFirstRejectedPairAndOwnsCompleti
     nixl_meta_dlist_t local(DRAM_SEG);
     nixl_meta_dlist_t remote(OBJ_SEG);
     for (int i = 0; i < 3; ++i) {
-        add_pair(
-            local, remote, base + static_cast<uintptr_t>(i) * 64, 64, static_cast<uint64_t>(i) * 64,
-            1);
+        add_pair(local,
+                 remote,
+                 base + static_cast<uintptr_t>(i) * 64,
+                 64,
+                 static_cast<uint64_t>(i) * 64,
+                 1);
     }
     nixlBackendReqH *handle = nullptr;
 
@@ -1476,9 +1554,12 @@ TEST_F(radosEngineFixture, CppWriteThrowAfterAcceptedPrefixReleasesWithoutWait) 
     nixl_meta_dlist_t local(DRAM_SEG);
     nixl_meta_dlist_t remote(OBJ_SEG);
     for (int i = 0; i < 3; ++i) {
-        add_pair(
-            local, remote, base + static_cast<uintptr_t>(i) * 64, 64, static_cast<uint64_t>(i) * 64,
-            1);
+        add_pair(local,
+                 remote,
+                 base + static_cast<uintptr_t>(i) * 64,
+                 64,
+                 static_cast<uint64_t>(i) * 64,
+                 1);
     }
 
     fake->cpp_write_throw_after = 1;
@@ -1609,10 +1690,9 @@ TEST_F(radosEngineFixture, EarlyReleaseBlocksOnWithheldWaitThenDrainsBothFamilie
     const size_t log_before = log->size();
     std::promise<nixl_status_t> write_release;
     std::future<nixl_status_t> write_status = write_release.get_future();
-    std::thread releaser(
-        [&write_release, &engine, write_handle]() {
-            write_release.set_value(engine->releaseReqH(write_handle));
-        });
+    std::thread releaser([&write_release, &engine, write_handle]() {
+        write_release.set_value(engine->releaseReqH(write_handle));
+    });
 
     const bool gate_entered = fake->waitGateEntered();
     bool withheld = false;
@@ -1620,8 +1700,7 @@ TEST_F(radosEngineFixture, EarlyReleaseBlocksOnWithheldWaitThenDrainsBothFamilie
     int cpp_releases_at_gate = -1;
     int c_releases_at_gate = -1;
     if (gate_entered) {
-        withheld =
-            write_status.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
+        withheld = write_status.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
         cpp_waits_at_gate = fake->cpp_waits;
         cpp_releases_at_gate = fake->cpp_releases;
         c_releases_at_gate = fake->c_releases;
@@ -1733,9 +1812,8 @@ TEST_F(radosEngineFixture, RepostAfterTerminalResubmitsResetStateWithCurrentSour
 
     one_pair write(0, 64, 1, 0x99);
     nixlBackendReqH *write_handle = nullptr;
-    ASSERT_EQ(
-        engine->prepXfer(NIXL_WRITE, write.local, write.remote, "test-agent", write_handle),
-        NIXL_SUCCESS);
+    ASSERT_EQ(engine->prepXfer(NIXL_WRITE, write.local, write.remote, "test-agent", write_handle),
+              NIXL_SUCCESS);
     ASSERT_EQ(engine->postXfer(NIXL_WRITE, write.local, write.remote, "test-agent", write_handle),
               NIXL_IN_PROG);
     ASSERT_EQ(engine->postXfer(NIXL_WRITE, write.local, write.remote, "test-agent", write_handle),

@@ -53,7 +53,9 @@ resolveVramSegment() {
 #elif HAVE_ROCM
     return VRAM_SEG;
 #else
-    if (neuronCoreCount() > 0) return VRAM_SEG;
+    if (neuronCoreCount() > 0) {
+        return VRAM_SEG;
+    }
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
@@ -370,15 +372,13 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["conf"] = xferBenchConfig::rados_conf;
         backend_params["name"] = xferBenchConfig::rados_name;
         backend_params["pool"] = xferBenchConfig::rados_pool;
-        backend_params["status_wait_us"] =
-            std::to_string(xferBenchConfig::rados_status_wait_us);
+        backend_params["status_wait_us"] = std::to_string(xferBenchConfig::rados_status_wait_us);
         for (const auto &param : xferBenchConfig::rados_ceph_params) {
             backend_params["ceph." + param.first] = param.second;
         }
-        std::cout << "RADOS backend: conf " << xferBenchConfig::rados_conf
-                  << ", name " << xferBenchConfig::rados_name << ", pool "
-                  << xferBenchConfig::rados_pool << ", prefix "
-                  << xferBenchConfig::rados_prefix
+        std::cout << "RADOS backend: conf " << xferBenchConfig::rados_conf << ", name "
+                  << xferBenchConfig::rados_name << ", pool " << xferBenchConfig::rados_pool
+                  << ", prefix " << xferBenchConfig::rados_prefix
                   << ", ceph overrides: " << xferBenchConfig::rados_ceph_params.size()
                   << " (values redacted)" << std::endl;
     } else {

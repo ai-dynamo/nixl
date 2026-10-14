@@ -314,7 +314,7 @@ parseGusliDeviceList(const std::string &device_list,
 // first '='; missing '=', empty keys, and duplicates are rejected without echoing content.
 bool
 parseRadosCephOverrides(const std::string &list,
-                              std::vector<std::pair<std::string, std::string>> &params);
+                        std::vector<std::pair<std::string, std::string>> &params);
 
 // RADOS tiling capacity C = max_batch_size x pipeline_depth x
 // max_block_size, sizing each object and its backing range so occurrences tile disjointly.

@@ -48,9 +48,9 @@ TEST(radosConfigTest, ParsesRequiredParametersAndCephOptions) {
     EXPECT_EQ(config->name, "client.qa");
     EXPECT_EQ(config->ceph_options,
               nixl::rados::ceph_options_t({{"admin_socket", ""},
-                                          {"alpha", "1"},
-                                          {"log_conf", "file:///fixture/log.conf"},
-                                          {"zeta", "3"}}));
+                                           {"alpha", "1"},
+                                           {"log_conf", "file:///fixture/log.conf"},
+                                           {"zeta", "3"}}));
 }
 
 TEST(radosConfigTest, RejectsInvalidParameterTables) {
@@ -139,16 +139,14 @@ TEST(radosConfigTest, KeepsCephStatusWaitUsAsNormalCephOption) {
     auto config = nixl::rados::parseCustomParams(params);
     ASSERT_TRUE(config.has_value());
     EXPECT_EQ(config->status_wait_us, 0U);
-    EXPECT_EQ(config->ceph_options,
-              nixl::rados::ceph_options_t({{"status_wait_us", "4242"}}));
+    EXPECT_EQ(config->ceph_options, nixl::rados::ceph_options_t({{"status_wait_us", "4242"}}));
 
     // Both spellings coexist: engine budget and Ceph option are distinct.
     params["status_wait_us"] = "500";
     config = nixl::rados::parseCustomParams(params);
     ASSERT_TRUE(config.has_value());
     EXPECT_EQ(config->status_wait_us, 500U);
-    EXPECT_EQ(config->ceph_options,
-              nixl::rados::ceph_options_t({{"status_wait_us", "4242"}}));
+    EXPECT_EQ(config->ceph_options, nixl::rados::ceph_options_t({{"status_wait_us", "4242"}}));
 }
 
 TEST(radosConfigTest, ParsesOptionalNamespace) {

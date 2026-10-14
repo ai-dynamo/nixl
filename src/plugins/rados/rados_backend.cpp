@@ -77,8 +77,8 @@ radosResultToNixl(nixl_xfer_op_t operation, int result, uint64_t requested_len) 
         if (static_cast<uint64_t>(result) < requested_len) {
             return NIXL_ERR_MISMATCH;
         }
-        NIXL_ERROR << "RADOS read reported " << result << " delivered bytes for a "
-                   << requested_len << " byte request";
+        NIXL_ERROR << "RADOS read reported " << result << " delivered bytes for a " << requested_len
+                   << " byte request";
         return NIXL_ERR_BACKEND;
     }
     if (result == 0) {
@@ -356,9 +356,9 @@ logRetiredResult(const directRequestState &state,
     if (result >= 0) {
         return;
     }
-    NIXL_ERROR << "RADOS abandoned "
-               << (state.operation() == NIXL_READ ? "read of" : "write to") << " object '"
-               << pair.oid << "' at offset " << pair.offset << " failed with error " << result;
+    NIXL_ERROR << "RADOS abandoned " << (state.operation() == NIXL_READ ? "read of" : "write to")
+               << " object '" << pair.oid << "' at offset " << pair.offset << " failed with error "
+               << result;
 }
 
 constexpr size_t kAioStatWindow = 256;
@@ -442,8 +442,8 @@ nixlRadosEngine::nixlRadosEngine(const nixlBackendInitParams *init_params,
     // production one; with a zero budget an injected timer is dropped.
     statusWaitBudgetUs_ = config->status_wait_us;
     if (statusWaitBudgetUs_ > 0) {
-        statusWaitTimer_ = status_wait_timer ? std::move(status_wait_timer)
-                                             : std::make_unique<thisThreadStatusWaitTimer>();
+        statusWaitTimer_ = status_wait_timer ? std::move(status_wait_timer) :
+                                               std::make_unique<thisThreadStatusWaitTimer>();
     }
     initialize(*config);
 }
@@ -800,8 +800,8 @@ nixlRadosEngine::postXfer(const nixl_xfer_op_t &,
                 const int create_ret = capi_->cCreateCompletion(&completion);
                 if (create_ret != 0 || completion == nullptr) {
                     pair.result = create_ret < 0 ? create_ret : -ENOMEM;
-                    NIXL_ERROR << "RADOS failed to create a C completion for object '"
-                               << pair.oid << "'; submitting no further pairs";
+                    NIXL_ERROR << "RADOS failed to create a C completion for object '" << pair.oid
+                               << "'; submitting no further pairs";
                     break;
                 }
                 completion_held = true;
@@ -841,8 +841,8 @@ nixlRadosEngine::postXfer(const nixl_xfer_op_t &,
                 if (create_ret != 0 || completion == nullptr) {
                     pair.payload.clear();
                     pair.result = create_ret < 0 ? create_ret : -ENOMEM;
-                    NIXL_ERROR << "RADOS failed to create a C++ completion for object '"
-                               << pair.oid << "'; submitting no further pairs";
+                    NIXL_ERROR << "RADOS failed to create a C++ completion for object '" << pair.oid
+                               << "'; submitting no further pairs";
                     break;
                 }
                 completion_held = true;
@@ -853,9 +853,8 @@ nixlRadosEngine::postXfer(const nixl_xfer_op_t &,
                     completion_held = false;
                     pair.payload.clear();
                     pair.result = ret < 0 ? ret : -EIO;
-                    NIXL_ERROR << "RADOS failed to submit a C++ write to object '"
-                               << pair.oid << "' with error " << ret
-                               << "; submitting no further pairs";
+                    NIXL_ERROR << "RADOS failed to submit a C++ write to object '" << pair.oid
+                               << "' with error " << ret << "; submitting no further pairs";
                     break;
                 }
                 pair.owned = directRequestState::cppWrite{completion};
