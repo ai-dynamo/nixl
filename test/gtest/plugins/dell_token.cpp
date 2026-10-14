@@ -8,6 +8,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#ifdef HAVE_CUDA
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <thread>
+#endif
 #include "s3_accel/dell/client.h"
 #include "s3_accel/dell/engine_impl.h"
 #include "object/rdma/cuobj_client.h"
@@ -22,10 +27,15 @@ public:
     size_t offset = 0;
     cuObjOpType_t operation = CUOBJ_GET;
     bool failMint = false;
+    bool failRegister = false;
+    std::function<void()> onRegister;
 
     cuObjErr_t
     cuMemObjGetDescriptor(void *, size_t) override {
-        return CU_OBJ_SUCCESS;
+        if (onRegister) {
+            onRegister();
+        }
+        return failRegister ? CU_OBJ_FAIL : CU_OBJ_SUCCESS;
     }
 
     cuObjErr_t
@@ -269,4 +279,130 @@ TEST_P(dellTokenTest, RegistrationContractsAndVendorDiscovery) {
 }
 
 INSTANTIATE_TEST_SUITE_P(ReadAndWrite, dellTokenTest, testing::Values(NIXL_READ, NIXL_WRITE));
+#ifdef HAVE_CUDA
+// Real CUDA allocation/context handling with an injected cuObject API. No RDMA
+// fabric or ObjectScale endpoint is needed; this does not test GPU-direct I/O.
+class dellGpuRegistrationTest : public testing::Test {
+protected:
+    fakeDellCuObjApi *api = new fakeDellCuObjApi;
+    nixl_obj_rdma::SharedCuObjClient rdma{std::unique_ptr<nixl_obj_rdma::cuObjApi>(api)};
+    nixl_b_params_t params{{"accelerated", "true"},
+                           {"type", "dell"},
+                           {"bucket", "bucket"},
+                           {"access_key", "test"},
+                           {"secret_key", "test"}};
+    nixlBackendInitParams init;
+    std::shared_ptr<recordingDellClient> client;
+    std::unique_ptr<S3DellObsObjEngineImpl> engine;
+    void *buffer = nullptr;
+    static constexpr size_t size = 1 << 20;
+
+    void
+    SetUp() override {
+        int devices = 0;
+        const auto status = cudaGetDeviceCount(&devices);
+        if (status == cudaErrorNoDevice || status == cudaErrorInsufficientDriver ||
+            (status == cudaSuccess && devices == 0)) {
+            GTEST_SKIP() << "CUDA device/driver unavailable";
+        }
+        ASSERT_EQ(status, cudaSuccess);
+        ASSERT_GT(devices, 0);
+        ASSERT_EQ(cudaSetDevice(0), cudaSuccess);
+        ASSERT_EQ(cudaMalloc(&buffer, size), cudaSuccess);
+        ASSERT_EQ(cudaMemset(buffer, 0x5a, size), cudaSuccess);
+        init.customParams = &params;
+        client = std::make_shared<recordingDellClient>(&params, rdma);
+        engine = std::make_unique<S3DellObsObjEngineImpl>(&init, client, &rdma);
+    }
+
+    void
+    TearDown() override {
+        if (buffer) {
+            EXPECT_EQ(cudaFree(buffer), cudaSuccess);
+        }
+    }
+
+    void
+    verifyBuffer() {
+        std::vector<unsigned char> bytes(size);
+        ASSERT_EQ(cudaMemcpy(bytes.data(), buffer, size, cudaMemcpyDeviceToHost), cudaSuccess);
+        EXPECT_TRUE(
+            std::all_of(bytes.begin(), bytes.end(), [](unsigned char b) { return b == 0x5a; }));
+    }
+};
+
+TEST_F(dellGpuRegistrationTest, WorkerThreadRestoresAbsentContextOnSuccessAndFailure) {
+    int registrationCalls = 0;
+    api->onRegister = [&registrationCalls] {
+        ++registrationCalls;
+        CUdevice device = -1;
+        EXPECT_EQ(cuCtxGetDevice(&device), CUDA_SUCCESS);
+        EXPECT_EQ(device, 0);
+    };
+    std::thread([&] {
+        CUcontext before = nullptr;
+        ASSERT_EQ(cuCtxGetCurrent(&before), CUDA_SUCCESS);
+        ASSERT_EQ(before, nullptr);
+        for (bool fail : {false, true}) {
+            api->failRegister = fail;
+            nixlBackendMD *md = nullptr;
+            EXPECT_EQ(
+                engine->registerMem(
+                    nixlBlobDesc(reinterpret_cast<uintptr_t>(buffer), size, 0, ""), VRAM_SEG, md),
+                fail ? NIXL_ERR_BACKEND : NIXL_SUCCESS);
+            CUcontext after = nullptr;
+            EXPECT_EQ(cuCtxGetCurrent(&after), CUDA_SUCCESS);
+            EXPECT_EQ(after, nullptr);
+            if (md) {
+                EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
+            } else {
+                EXPECT_TRUE(fail);
+            }
+        }
+    }).join();
+    EXPECT_EQ(registrationCalls, 2);
+    EXPECT_EQ(api->unpinned, 1);
+    verifyBuffer();
+}
+
+TEST_F(dellGpuRegistrationTest, WorkerThreadPreservesExplicitContextOnSuccessAndFailure) {
+    int registrationCalls = 0;
+    api->onRegister = [&registrationCalls] {
+        ++registrationCalls;
+        CUdevice device = -1;
+        EXPECT_EQ(cuCtxGetDevice(&device), CUDA_SUCCESS);
+        EXPECT_EQ(device, 0);
+    };
+    std::thread([&] {
+        CUdevice device;
+        ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
+        CUcontext saved = nullptr;
+#if CUDA_VERSION >= 13000
+        ASSERT_EQ(cuCtxCreate(&saved, nullptr, 0, device), CUDA_SUCCESS);
+#else
+        ASSERT_EQ(cuCtxCreate(&saved, 0, device), CUDA_SUCCESS);
+#endif
+        for (bool fail : {false, true}) {
+            api->failRegister = fail;
+            nixlBackendMD *md = nullptr;
+            EXPECT_EQ(
+                engine->registerMem(
+                    nixlBlobDesc(reinterpret_cast<uintptr_t>(buffer), size, 0, ""), VRAM_SEG, md),
+                fail ? NIXL_ERR_BACKEND : NIXL_SUCCESS);
+            CUcontext after = nullptr;
+            EXPECT_EQ(cuCtxGetCurrent(&after), CUDA_SUCCESS);
+            EXPECT_EQ(after, saved);
+            if (md)
+                EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
+            else
+                EXPECT_TRUE(fail);
+        }
+        EXPECT_EQ(cuCtxDestroy(saved), CUDA_SUCCESS);
+    }).join();
+    EXPECT_EQ(registrationCalls, 2);
+    EXPECT_EQ(api->unpinned, 1);
+    verifyBuffer();
+}
+#endif // HAVE_CUDA
+
 } // namespace
