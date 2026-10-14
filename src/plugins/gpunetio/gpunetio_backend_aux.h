@@ -99,6 +99,12 @@ struct docaXferReqGpu {
     nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
     doca_gpu_dev_verbs_qp *qp_data;
     doca_gpu_dev_verbs_qp *qp_notif;
+    struct docaXferCompletion *completion_list;
+    uint32_t *wait_exit;
+    uint16_t wait_completion_count;
+    uint16_t wait_completion_ids[DOCA_XFER_REQ_MAX];
+    uint64_t *peer_write_completed;
+    uint64_t write_ticket;
 };
 
 struct nixlDocaNotif {
@@ -167,6 +173,13 @@ public:
     ~nixlDocaPublicMetadata() {}
 };
 
+struct nixlDocaGpuCounterDeleter {
+    doca_gpu *gpu = nullptr;
+
+    void
+    operator()(uint64_t *counter) const;
+};
+
 struct nixlDocaRdmaQp {
     std::unique_ptr<nixl::doca::verbs::qp> qp_data;
     uint32_t qpn_data;
@@ -179,6 +192,22 @@ struct nixlDocaRdmaQp {
     uint32_t remote_lid = 0;
     bool dataProgrammed = false;
     bool notifProgrammed = false;
+    std::vector<std::unique_ptr<nixl::doca::verbs::qp>> qp_write;
+    std::vector<uint32_t> qpn_write;
+    std::vector<uint32_t> rqpn_write;
+    std::vector<bool> writeProgrammed;
+    std::unique_ptr<uint64_t, nixlDocaGpuCounterDeleter> writeCompletedGpu;
+    uint64_t *writeCompletedCpu = nullptr;
+    uint64_t postedWriteTicket = 0;
+
+    bool
+    closeDataQps() {
+        bool closed = qp_data == nullptr || qp_data->close();
+        for (auto &qp : qp_write) {
+            closed = qp->close() && closed;
+        }
+        return closed;
+    }
 };
 
 struct nixlDocaEngine;

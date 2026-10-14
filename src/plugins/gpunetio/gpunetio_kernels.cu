@@ -107,6 +107,7 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
     enum doca_gpu_dev_verbs_wqe_ctrl_flags cflag = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE;
     uint32_t tot_wqe, idx = 0;
     __shared__ uint64_t base_wqe_idx;
+    __shared__ bool abort_write;
 
     // Warmup
     if (xferReqRing == nullptr) {
@@ -116,9 +117,41 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
     tot_wqe = xferReqRing[pos].num;
 
     if (threadIdx.x == 0) {
-        base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+        abort_write = false;
+        for (uint32_t dependency = 0; dependency < xferReqRing[pos].wait_completion_count;
+             ++dependency) {
+            const uint32_t id = xferReqRing[pos].wait_completion_ids[dependency];
+            while (DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].completion_list[id].completed) == 0) {
+                if (DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].wait_exit) != 0) {
+                    abort_write = true;
+                    break;
+                }
+            }
+            if (abort_write) {
+                break;
+            }
+        }
+        if (xferReqRing[pos].peer_write_completed != nullptr) {
+            while (!abort_write &&
+                   DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].peer_write_completed) <
+                       xferReqRing[pos].write_ticket - 1) {
+                if (DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].wait_exit) != 0) {
+                    abort_write = true;
+                }
+            }
+        }
+        if (!abort_write) {
+            if (xferReqRing[pos].wait_completion_count != 0 ||
+                xferReqRing[pos].peer_write_completed != nullptr) {
+                doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+            }
+            base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+        }
     }
     __syncthreads();
+    if (abort_write) {
+        return;
+    }
 
     for (idx = threadIdx.x; idx < tot_wqe; idx += blockDim.x) {
         wqe_idx = base_wqe_idx + idx;
@@ -242,6 +275,10 @@ kernel_progress(struct docaXferCompletion *completion_list,
 #endif
                         }
 
+                        if (req->peer_write_completed != nullptr) {
+                            doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+                            DOCA_GPUNETIO_VOLATILE(*req->peer_write_completed) = req->write_ticket;
+                        }
                         DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) = 1;
                         index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
                     }

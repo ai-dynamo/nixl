@@ -151,6 +151,7 @@ private:
     std::string msg_tag_end = "DOCAE";
     std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
     int nstreams;
+    uint32_t data_qp_count = 1;
 
     uint16_t local_port;
     int noSyncIters;
@@ -213,6 +214,9 @@ private:
 
     void
     retireRequest(nixlDocaBckndReq *request) const;
+
+    nixl_status_t
+    postStripedWrite(nixlDocaBckndReq *request, const std::string &remote_agent) const;
 
     nixl_status_t
     progressThreadStart();

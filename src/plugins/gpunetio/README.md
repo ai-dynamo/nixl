@@ -34,6 +34,14 @@ Stream pool mode instead is when applications mostly wants to process data on th
 
 ## Input parameters
 
+`data_qp_count` optionally selects 1–4 WRITE QPs per peer (default 1). Both peers
+must use the same count. Counts above 1 retain a dedicated READ QP, stripe WRITE
+chunks over per-QP streams and require `data_qp_count <= cuda_streams <= 4`.
+The final chunk waits for all preceding chunks and the previous peer WRITE
+before posting, preserving ordering-tail/notification semantics. Attached CUDA
+streams are supported for WRITE only with count 1. Single-QP mode preserves the
+legacy OOB format; multi-QP mode uses a versioned QPN exchange.
+
 DOCA GPUNetIO backend takes these input parameters:
 - network_devices: network device to be used during the execution (e.g. mlx5_0). Current release supports only 1 network device.
 - oob_interface: network interface to be used when exchanging control info during initiator/target connection. Optional parameter, not needed if the network device is set in Ethernet mode.
