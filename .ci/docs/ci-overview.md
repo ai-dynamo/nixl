@@ -405,6 +405,30 @@ An unbound or empty secret leaves the clones anonymous, as before. A revoked, ex
 or org-blocked token, however, fails every github.com clone in these builds, since the
 header is sent on every request.
 
+## Authenticated meson subproject clones in the test pipelines
+
+`meson setup` clones the `taskflow` and `prometheus-cpp` `[wrap-git]` subprojects
+(and prometheus-cpp's civetweb and googletest submodules) from github.com. The test
+pipelines run it through `.gitlab/build.sh` outside the image builds above, with the
+same credential:
+
+- The `Build` steps of `build-matrix.yaml` (`nixl-ci-non-gpu`) and
+  `test-sanitizer-matrix.yaml` run `build.sh` in the job container. They bind
+  `svc-nixl-github-read-only-token`, call `write_github_gitconfig /tmp/ghconfig` in a
+  subshell, and export `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=include.path` and
+  `GIT_CONFIG_VALUE_0=/tmp/ghconfig`. Every git process the step starts, including
+  meson's clones and their submodule fetches, inherits that, without changing
+  `~/.gitconfig`; the variables carry only the file's path (git ≥ 2.31).
+- The image-build steps of `test-matrix.yaml`, `test-dl-matrix.yaml`,
+  `test-vr-matrix.yaml` and `test-dl-ep-matrix.yaml` build `Dockerfile.gpu-test` with
+  `podman build`. They bind the token, write `/tmp/ghconfig` and pass
+  `--secret id=ghconfig,src=/tmp/ghconfig`. `Dockerfile.gpu-test` mounts it at the
+  default `/run/secrets/ghconfig` (`mode=0444`, for the non-root build user) on its
+  `build.sh` `RUN` and points `build.sh` at it with the same `GIT_CONFIG_*` variables,
+  so no home directory is involved. A secret mount exists only during that `RUN`.
+
+As above, an empty config leaves the clones anonymous, and an invalid token fails them.
+
 ## Related docs
 
 - [Build Wheel Matrix CI Job Documentation](build-wheel-matrix-ci.md) — deep dive into `nixl-ci-build-wheel`.

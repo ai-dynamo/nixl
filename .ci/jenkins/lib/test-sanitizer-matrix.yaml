@@ -97,10 +97,15 @@ taskName: "${arch}/${sanitizer}/${name}/${axis_index}"
 
 steps:
   - name: Build
+    credentialsId: 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       export PRE_INSTALLED_ENV="true"
       export PRE_INSTALLED_UCX_ENV="true"
+      # Authenticate meson's [wrap-git] subproject clones (taskflow, prometheus-cpp) with the
+      # github.com credential; git's environment config is inherited by every git it runs.
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
+      export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=/tmp/ghconfig
       # Map the sanitizer variant to the meson -Dsanitizer option (wired in
       # meson.build, which applies -fsanitize plus the third-party workarounds).
       case "${sanitizer}" in
