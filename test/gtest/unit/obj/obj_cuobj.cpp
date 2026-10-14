@@ -50,7 +50,7 @@ INSTANTIATE_TEST_SUITE_P(ObjAccelClientTests,
  * Exercises the Dell S3-over-RDMA code path by configuring the OBJ engine
  * with accelerated=true and type=dell. Uses the standard mock S3 client for asynchronous
  * completion; memory registration requires a connected cuObject fabric. Token/request lifecycle is
- * exercised separately with a fake cuObject API in dell_token.cpp.
+ * exercised separately with a fake cuObject API in test/gtest/plugins/dell_token.cpp.
  */
 class objDellTestFixture : public objTestBase, public testing::Test {
 protected:
@@ -611,6 +611,6 @@ TEST_F(objDellTestFixture, DellRegisterMemZeroLengthBuffer) {
 }
 
 // Unregistered ranges and offsets within registered buffers are checked at
-// token minting time (postXfer), covered without hardware in dell_token.cpp.
+// token minting time (postXfer), covered without hardware in test/gtest/plugins/dell_token.cpp.
 
 } // namespace gtest::obj
