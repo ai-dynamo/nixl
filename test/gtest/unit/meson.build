@@ -64,12 +64,14 @@ unit_test_exe = executable('unit',
     sources : [
         'main.cpp',
         '../common.cpp',
+        'gpunetio_read_coalescing_test.cpp',
     ],
     cpp_args : cpp_flags,
     dependencies : unit_test_deps,
     include_directories: [
         nixl_inc_dirs,
         utils_inc_dirs,
+        include_directories('../../../src/plugins/gpunetio'),
     ],
     link_with: [nixl_build_lib],
     install : true
