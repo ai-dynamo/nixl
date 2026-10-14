@@ -1548,18 +1548,23 @@ execTransferLoop(nixlAgent *agent,
                  const std::vector<xferBenchIOV> &remote_iov,
                  const std::atomic<int> *terminate_ptr = nullptr) {
     const int depth = std::min(xferBenchConfig::pipeline_depth, num_iter);
-    if (depth < xferBenchConfig::pipeline_depth) {
-        std::cout << "Warning: pipeline_depth (" << xferBenchConfig::pipeline_depth
-                  << ") exceeds num_iter (" << num_iter << "), capping to " << depth << std::endl;
+    // Runs inside an omp parallel region, so only the master thread reports.
+    // Single-iteration passes (setup/warmup) always cap to 1.
+    if (depth < xferBenchConfig::pipeline_depth && num_iter > 1 && omp_get_thread_num() == 0) {
+        std::cout << "Warning: capping pipeline_depth from " << xferBenchConfig::pipeline_depth
+                  << " to " << depth << " (num_iter=" << num_iter << ")" << std::endl;
     }
     const bool recreate = xferBenchConfig::recreate_xfer;
 
-    if (local_iov.size() % depth != 0) {
+    // Slot size comes from the configured depth, not the capped one, so every
+    // request moves batch_size descriptors, which is what the stats assume.
+    if (local_iov.size() % xferBenchConfig::pipeline_depth != 0) {
         std::cerr << "Error: descriptor count (" << local_iov.size()
-                  << ") is not evenly divisible by pipeline depth (" << depth << ")" << std::endl;
+                  << ") is not evenly divisible by pipeline depth ("
+                  << xferBenchConfig::pipeline_depth << ")" << std::endl;
         return -1;
     }
-    const size_t entries_per_slot = local_iov.size() / depth;
+    const size_t entries_per_slot = local_iov.size() / xferBenchConfig::pipeline_depth;
 
     std::vector<slotState> slots(depth);
     for (int s = 0; s < depth; s++) {
