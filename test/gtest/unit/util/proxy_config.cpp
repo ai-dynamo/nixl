@@ -49,19 +49,18 @@ TEST(ProxyConfigTest, AcceptsParameters) {
 
     ASSERT_EQ(parse({{"device_proxy", "true"},
                      {"proxy_channel_count", "3"},
-                     {"proxy_thread_count", "8"},
+                     {"proxy_thread_count", "15"},
                      {"proxy_max_peers", "5"},
                      {"proxy_ring_depth", "512"},
                      {"proxy_drain_timeout_ms", "0"}},
                     config),
               NIXL_SUCCESS);
     EXPECT_EQ(config.channel_count, 3u);
-    EXPECT_EQ(config.thread_count, 8u);
+    EXPECT_EQ(config.thread_count, 15u);
     EXPECT_EQ(config.max_peers, 5u);
     EXPECT_EQ(config.ring_depth, 512u);
     EXPECT_EQ(config.drain_timeout_ms, 0u);
     EXPECT_EQ(config.ringCount(), 15u);
-    EXPECT_EQ(config.effectiveThreadCount(), 3u);
 }
 
 TEST(ProxyConfigTest, RejectsParameters) {
@@ -86,6 +85,24 @@ TEST(ProxyConfigTest, RejectsParameters) {
          {{"device_proxy", "true"}, {"proxy_worker_count", "2"}},
          NIXL_ERR_INVALID_PARAM},
         {"tuning without enable", {{"proxy_channel_count", "2"}}, NIXL_ERR_INVALID_PARAM},
+        {"threads not dividing channels",
+         {{"device_proxy", "true"}, {"proxy_channel_count", "4"}, {"proxy_thread_count", "3"}},
+         NIXL_ERR_INVALID_PARAM},
+        {"threads not a multiple of channels",
+         {{"device_proxy", "true"}, {"proxy_channel_count", "4"}, {"proxy_thread_count", "6"}},
+         NIXL_ERR_INVALID_PARAM},
+        {"threads per channel not dividing peers",
+         {{"device_proxy", "true"},
+          {"proxy_channel_count", "4"},
+          {"proxy_thread_count", "12"},
+          {"proxy_max_peers", "8"}},
+         NIXL_ERR_INVALID_PARAM},
+        {"more threads than rings",
+         {{"device_proxy", "true"},
+          {"proxy_channel_count", "4"},
+          {"proxy_thread_count", "64"},
+          {"proxy_max_peers", "8"}},
+         NIXL_ERR_INVALID_PARAM},
         {"progress thread conflict", {{"device_proxy", "true"}}, NIXL_ERR_NOT_ALLOWED, true},
     };
     for (const auto &row : rows) {
@@ -93,6 +110,56 @@ TEST(ProxyConfigTest, RejectsParameters) {
         config.channel_count = 7;
         EXPECT_EQ(parse(row.params, config, row.enable_prog_th), row.expected) << row.name;
         EXPECT_EQ(config.channel_count, 7u) << row.name << ": config written on failure";
+    }
+}
+
+TEST(ProxyConfigTest, EvenThreadSplits) {
+    nixl::proxyConfig config;
+    config.channel_count = 4;
+    config.max_peers = 8;
+    std::vector<uint32_t> accepted;
+    for (uint32_t threads = 1; threads <= 64; ++threads) {
+        config.thread_count = threads;
+        if (config.evenThreadSplit()) {
+            accepted.push_back(threads);
+        }
+    }
+    EXPECT_EQ(accepted, (std::vector<uint32_t>{1, 2, 4, 8, 16, 32}));
+}
+
+TEST(ProxyConfigTest, ThreadShares) {
+    for (uint32_t channels : {1u, 2u, 3u, 4u, 8u}) {
+        for (uint32_t peers : {1u, 2u, 3u, 4u, 8u}) {
+            for (uint32_t threads = 1; threads <= channels * peers; ++threads) {
+                nixl::proxyConfig config;
+                config.channel_count = channels;
+                config.max_peers = peers;
+                config.thread_count = threads;
+                if (!config.evenThreadSplit()) {
+                    continue;
+                }
+                std::vector<uint32_t> owners(config.ringCount(), 0);
+                for (uint32_t thread = 0; thread < threads; ++thread) {
+                    const nixl::proxyThreadShare share = config.threadShare(thread);
+                    ASSERT_LE(share.first_channel + share.channel_count, channels);
+                    size_t owned = 0;
+                    for (uint32_t channel = share.first_channel;
+                         channel < share.first_channel + share.channel_count;
+                         ++channel) {
+                        for (uint32_t peer = share.peers.first; peer < peers;
+                             peer += share.peers.stride) {
+                            ++owners[channel * peers + peer];
+                            ++owned;
+                        }
+                    }
+                    EXPECT_EQ(owned, config.ringCount() / threads)
+                        << channels << " channels, " << peers << " peers, " << threads
+                        << " threads";
+                }
+                EXPECT_EQ(owners, std::vector<uint32_t>(config.ringCount(), 1))
+                    << channels << " channels, " << peers << " peers, " << threads << " threads";
+            }
+        }
     }
 }
 

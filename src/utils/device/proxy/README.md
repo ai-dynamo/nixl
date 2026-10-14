@@ -37,13 +37,13 @@ the proxy. It is internal to `libnixl_device_proxy` and the plugins: not install
 ### Threading
 
 - `init()` and `shutdown()` run with no worker thread alive.
-- `submit()`, `progress()` and `quiesce()` for any ring of channel c, and `checkCompletion()` for
-  requests submitted on those rings, are made from a single thread at a time. Different channels
-  may be served concurrently by different threads.
+- `submit()`, `progress()` and `quiesce()` for a ring (channel, peer), and `checkCompletion()` for
+  requests submitted on that ring, are made from a single thread at a time. Different rings, of
+  the same channel or not, may be served concurrently by different threads.
 - `resolveDirectPtrs()` runs on an application thread, concurrently with the calls above, and must
   not touch per-ring state.
 - `submit()`, `checkCompletion()` and `progress()` are the data path: no locks and no atomic
-  read-modify-write shared across channels.
+  read-modify-write shared across rings.
 
 ### Requests
 
