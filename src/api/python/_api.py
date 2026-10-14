@@ -172,6 +172,7 @@ class nixl_agent_config:
         backends: Optional[list[str]] = None,
         sync_mode: Optional[nixl_thread_sync_t] = None,
     ):
+        """Initialize the configuration, creating a fresh default backend list."""
         # TODO: add backend init parameters
         self.backends = ["UCX"] if backends is None else backends
         self.enable_pthread = enable_prog_thread
