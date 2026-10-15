@@ -47,9 +47,6 @@ public:
     [[nodiscard]] nixl_status_t
     allocate(deviceOps &allocator, uint32_t depth, proxyControlBuffer &control);
 
-    void
-    deallocate() noexcept;
-
     [[nodiscard]] uint32_t
     id() const noexcept {
         return id_;

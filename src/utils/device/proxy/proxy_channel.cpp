@@ -40,13 +40,6 @@ proxyChannel::allocate(deviceOps &allocator, uint32_t depth, proxyControlBuffer 
 }
 
 void
-proxyChannel::deallocate() noexcept {
-    for (proxyRing &ring : rings_) {
-        ring.deallocate();
-    }
-}
-
-void
 proxyChannel::submitReady(proxyTransport &transport, proxyPeerSlice peers) {
     for (uint32_t peer = peers.first; peer < rings_.size(); peer += peers.stride) {
         uint32_t slot = 0;
