@@ -18,13 +18,15 @@
 #include "gpunetio_backend.h"
 #include "gpunetio_cuda_device_guard.h"
 #include "gpunetio_completion_status.h"
-#include "gpunetio_wire.h"
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <cassert>
+#include <charconv>
 #include <cstring>
 #include <cerrno>
 #include <stdexcept>
+#include <string_view>
+#include <system_error>
 #include <unistd.h>
 #include "common/nixl_log.h"
 #include <absl/strings/str_split.h>
@@ -32,6 +34,66 @@
 const char info_delimiter = '-';
 
 namespace {
+template<typename unsignedType>
+inline bool
+parseUnsigned(std::string_view field, unsignedType &value) {
+    if (field.empty()) {
+        return false;
+    }
+    const auto result = std::from_chars(field.data(), field.data() + field.size(), value);
+    return result.ec == std::errc{} && result.ptr == field.data() + field.size();
+}
+
+/** Parse the existing decimal rkey-address-size metadata without unchecked indexing. */
+inline bool
+parseRemoteMetadata(std::string_view input, uint32_t &rkey, uintptr_t &addr, size_t &size) {
+    const size_t first = input.find('-');
+    if (first == std::string_view::npos) {
+        return false;
+    }
+    const size_t second = input.find('-', first + 1);
+    if (second == std::string_view::npos) {
+        return false;
+    }
+    uint32_t parsed_rkey;
+    uintptr_t parsed_addr;
+    size_t parsed_size;
+    if (!parseUnsigned(input.substr(0, first), parsed_rkey) ||
+        !parseUnsigned(input.substr(first + 1, second - first - 1), parsed_addr) ||
+        !parseUnsigned(input.substr(second + 1), parsed_size)) {
+        return false;
+    }
+    rkey = parsed_rkey;
+    addr = parsed_addr;
+    size = parsed_size;
+    return true;
+}
+
+/** Decode a notification within its slot; neither header nor payload needs a trailing NUL. */
+inline bool
+parseNotification(std::string_view slot,
+                  std::string_view start_tag,
+                  std::string_view end_tag,
+                  std::string_view &payload) {
+    if (!slot.starts_with(start_tag)) {
+        return false;
+    }
+    const size_t end = slot.find(end_tag, start_tag.size());
+    if (end == std::string_view::npos) {
+        return false;
+    }
+    size_t payload_size;
+    if (!parseUnsigned(slot.substr(start_tag.size(), end - start_tag.size()), payload_size)) {
+        return false;
+    }
+    const size_t offset = end + end_tag.size();
+    if (payload_size > slot.size() - offset) {
+        return false;
+    }
+    payload = slot.substr(offset, payload_size);
+    return true;
+}
+
 int
 parseGidIndex(const std::string &value) {
     if (value.empty()) {
@@ -1384,7 +1446,7 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     uint32_t rkey;
     uintptr_t addr;
     size_t tot_size;
-    if (!nixl::gpunetio::parseRemoteMetadata(input.metaInfo, rkey, addr, tot_size)) {
+    if (!parseRemoteMetadata(input.metaInfo, rkey, addr, tot_size)) {
         NIXL_ERROR << "Malformed remote metadata from " << remote_agent;
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -1767,11 +1829,10 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
             recv_idx = notif.second->recv_pi.load() & (DOCA_MAX_NOTIF_INFLIGHT - 1);
             addr = (char *)(notif.second->recv_addr + (recv_idx * notif.second->elems_size));
             std::string_view payload;
-            const bool valid =
-                nixl::gpunetio::parseNotification(std::string_view(addr, notif.second->elems_size),
-                                                  msg_tag_start,
-                                                  msg_tag_end,
-                                                  payload);
+            const bool valid = parseNotification(std::string_view(addr, notif.second->elems_size),
+                                                 msg_tag_start,
+                                                 msg_tag_end,
+                                                 payload);
             if (valid) {
                 notif_list.emplace_back(notif.first, std::string(payload));
             }

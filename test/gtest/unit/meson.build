@@ -18,9 +18,9 @@ unit_test_deps = [
     gtest_dep,
 ]
 
-# Wire parsing is CPU-only, including when the optional GPUNETIO plugin is disabled.
-subdir('gpunetio')
-unit_test_deps += [gpunetio_wire_unit_test_dep]
+if is_variable('gpunetio_backend_interface')
+    subdir('gpunetio')
+endif
 
 if is_variable('obj_backend_interface')
     subdir('obj')
