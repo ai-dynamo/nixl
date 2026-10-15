@@ -63,15 +63,36 @@ echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 
+# CX-7 HCAs and IB port the RDMA (--disable-ll-nvlink) elastic tests use. The PORT_ACTIVE gate
+# and the UCX_NET_DEVICES pin below are both derived from these so they always match.
+RDMA_HCAS=(mlx5_0 mlx5_1 mlx5_2 mlx5_3)
+RDMA_PORT=1
+
+rdma_ucx_net_devices() {
+    local hca devs=()
+    for hca in "${RDMA_HCAS[@]}"; do
+        devs+=("${hca}:${RDMA_PORT}")
+    done
+    local IFS=,
+    echo "${devs[*]}"
+}
+
 run_elastic_test() {
     local plan_file=$1
     local extra_flags=${2:-}
     echo "---- elastic: plan=$(basename "$plan_file") flags=[$extra_flags] ----"
     (
         unset NIXL_ETCD_ENDPOINTS NIXL_ETCD_PEER_URLS NIXL_ETCD_NAMESPACE
-        unset UCX_NET_DEVICES  # let UCX auto-select GPU-capable transport
-        # Force NVLink-only transports.
-        if [[ "$extra_flags" != *--disable-ll-nvlink* ]]; then
+        if [[ "$extra_flags" == *--disable-ll-nvlink* ]]; then
+            # RDMA: all ranks share one node, so with UCX defaults it prefers the intra-node
+            # cuda_ipc/sm lanes and never builds the rc_gda device lane, or picks a lane on a
+            # non-IB HCA (mlx5_4/mlx5_5) where no device EP can be created. Exclude the
+            # intra-node transports and pin the active IB HCAs.
+            export UCX_TLS=^cuda_ipc,sm
+            export UCX_NET_DEVICES="$(rdma_ucx_net_devices)"
+        else
+            # NVLink: let UCX auto-select a GPU-capable transport, without the GDA lane.
+            unset UCX_NET_DEVICES
             export UCX_TLS=^rc_gda
         fi
         PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
@@ -90,12 +111,12 @@ run_elastic_test() {
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
 
-# Only run the --disable-ll-nvlink (RDMA) elastic tests when all four CX-7
-# NICs (mlx5_0..mlx5_3) report PORT_ACTIVE.
+# Only run the --disable-ll-nvlink (RDMA) elastic tests when port RDMA_PORT of every HCA in
+# RDMA_HCAS (the ones pinned through UCX_NET_DEVICES) reports PORT_ACTIVE.
 all_rdma_nics_active() {
     local hca
-    for hca in mlx5_0 mlx5_1 mlx5_2 mlx5_3; do
-        if ! ibv_devinfo -d "$hca" 2>/dev/null | grep -q "state:.*PORT_ACTIVE"; then
+    for hca in "${RDMA_HCAS[@]}"; do
+        if ! ibv_devinfo -d "$hca" -i "$RDMA_PORT" 2>/dev/null | grep -q "state:.*PORT_ACTIVE"; then
             return 1
         fi
     done
@@ -107,7 +128,7 @@ if all_rdma_nics_active; then
     run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json" "--disable-ll-nvlink"
     run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
 else
-    echo "Skipping RDMA elastic tests: not all of mlx5_0..mlx5_3 are PORT_ACTIVE on $(hostname)"
+    echo "Skipping RDMA elastic tests: not all of ${RDMA_HCAS[*]} are PORT_ACTIVE on port ${RDMA_PORT} of $(hostname)"
 fi
 
 echo "==== nixl_ep elastic tests done ===="
