@@ -86,6 +86,30 @@ recvAll(int fd, void *buffer, size_t size) {
     }
     return true;
 }
+
+void
+rollbackOobDevice(doca_dev *device,
+                  doca_verbs_pd *protection_domain,
+                  doca_verbs_context *context) noexcept {
+    // Discovery runs before GPU/AH allocation; retain dependents if a close fails.
+    doca_error_t result = doca_dev_close(device);
+    if (result != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to close DOCA device after OOB discovery failure: "
+                   << doca_error_get_descr(result);
+        return;
+    }
+    result = doca_verbs_pd_destroy(protection_domain);
+    if (result != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to destroy DOCA PD after OOB discovery failure: "
+                   << doca_error_get_descr(result);
+        return;
+    }
+    result = doca_verbs_context_destroy(context);
+    if (result != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to destroy DOCA context after OOB discovery failure: "
+                   << doca_error_get_descr(result);
+    }
+}
 } // namespace
 
 /****************************************
@@ -179,6 +203,17 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     NIXL_INFO << "OOB listen port: " << local_port;
 
+    // Reject an unusable explicit interface before acquiring RDMA/GPU resources.
+    const bool explicit_oob = !oobdev.empty() && !oobdev[0].empty();
+    if (explicit_oob) {
+        if (netif_get_addr(oobdev[0].c_str(), AF_INET, &oob_saddr, &oob_netmask) != 0) {
+            throw std::invalid_argument("Failed to find an active IPv4 address for oob_interface " +
+                                        oobdev[0]);
+        }
+        const auto *address = reinterpret_cast<const sockaddr_in *>(&oob_saddr);
+        memcpy(ipv4_addr, &address->sin_addr.s_addr, sizeof(ipv4_addr));
+    }
+
     /* Open DOCA device */
     verbs_context = open_ib_device((char *)(ndevs[0].c_str()));
     if (verbs_context == nullptr) {
@@ -201,6 +236,16 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to create doca verbs pd: %s", doca_error_get_descr(result);
         throw std::invalid_argument("Failed to create doca verbs pd");
+    }
+
+    if (!explicit_oob) {
+        result = doca_devinfo_get_ipv4_addr(
+            doca_dev_as_devinfo(ddev), ipv4_addr, DOCA_DEVINFO_IPV4_ADDR_SIZE);
+        if (result != DOCA_SUCCESS) {
+            rollbackOobDevice(ddev, verbs_pd, verbs_context);
+            throw std::invalid_argument(
+                "Failed to determine the GPUNETIO IPv4 address; set oob_interface explicitly");
+        }
     }
 
     ret = ibv_query_port(pd->context, 1, &port_attr);
@@ -251,23 +296,6 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         if (result != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to create DOCA GPU device " << doca_error_get_descr(result);
         }
-    }
-
-    if (oobdev.size() > 0 && oobdev[0] != "") {
-        netif_get_addr(oobdev[0].c_str(), AF_INET, &oob_saddr, &oob_netmask);
-        struct sockaddr_in *addr_in = (struct sockaddr_in *)&oob_saddr;
-        memcpy(ipv4_addr, (uint8_t *)&(addr_in->sin_addr.s_addr), 4);
-        NIXL_DEBUG << "Eth IP address " << static_cast<unsigned>(ipv4_addr[0]) << " "
-                   << static_cast<unsigned>(ipv4_addr[1]) << " "
-                   << static_cast<unsigned>(ipv4_addr[2]) << " "
-                   << static_cast<unsigned>(ipv4_addr[3]) << " " << "ifface " << oobdev[0].c_str();
-    } else {
-        doca_devinfo_get_ipv4_addr(
-            doca_dev_as_devinfo(ddev), (uint8_t *)ipv4_addr, DOCA_DEVINFO_IPV4_ADDR_SIZE);
-        NIXL_DEBUG << "DOCA IP address " << static_cast<unsigned>(ipv4_addr[0]) << " "
-                   << static_cast<unsigned>(ipv4_addr[1]) << " "
-                   << static_cast<unsigned>(ipv4_addr[2]) << " "
-                   << static_cast<unsigned>(ipv4_addr[3]);
     }
 
     // DOCA_GPU_MEM_TYPE_GPU_CPU == GDRCopy
