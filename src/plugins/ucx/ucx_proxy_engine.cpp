@@ -15,15 +15,20 @@
  * limitations under the License.
  */
 
-#include "ucx_backend.h"
+#include "ucx_proxy_engine.h"
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "common/backend.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "device/device_memview.h"
 #include "device/device_ops.h"
+#include "device/proxy/proxy_config.h"
 #include "device/proxy/proxy_runtime.h"
 #include "device/proxy/proxy_transport.h"
 
@@ -35,9 +40,9 @@ static_assert(sizeof(nixlUcxReq) <= sizeof(uint64_t),
  * (channel, peer) ring. Nested in the engine, it reads the workers and the descriptor
  * metadata with the engine's own access.
  */
-class nixlUcxEngine::proxyTransportImpl final : public nixl::proxyTransport {
+class nixlUcxProxyEngine::transport final : public nixl::proxyTransport {
 public:
-    explicit proxyTransportImpl(worker_span_t workers) noexcept : workers_(workers) {}
+    explicit transport(worker_span_t workers) noexcept : workers_(workers) {}
 
     nixl_status_t
     init(const nixl::proxyConfig &config) override {
@@ -275,32 +280,136 @@ private:
     uint32_t max_peers_ = 0;
 };
 
-nixl_status_t
-nixlUcxEngine::setupProxyRuntime(const nixl::proxyConfig &config) {
+namespace {
+[[nodiscard]] nixl::deviceOps &
+requireDeviceOps() {
     nixl::deviceOps *ops = nixl::getDeviceOps();
     if (ops == nullptr) {
-        NIXL_ERROR << "Device proxy needs a device operations implementation; none is loaded";
-        return NIXL_ERR_NOT_SUPPORTED;
+        nixl::throwRuntimeError(
+            "device proxy needs a device operations implementation; none is loaded");
+    }
+    return *ops;
+}
+
+/** One shared worker per (channel, peer) ring and RW sync; `storage` holds the custom params. */
+[[nodiscard]] nixlBackendInitParams
+proxyInitParams(const nixlBackendInitParams &init_params,
+                const nixl::proxyConfig &config,
+                nixl_b_params_t &&storage) {
+    const size_t derived_workers = config.ringCount();
+    const auto explicit_workers =
+        nixl::getBackendParamOptional<size_t>(init_params.customParams, "num_workers");
+    if (explicit_workers.has_value() && *explicit_workers != derived_workers) {
+        nixl::throwRuntimeError("num_workers=",
+                                *explicit_workers,
+                                " conflicts with the device proxy topology (",
+                                config.channel_count,
+                                " channels x ",
+                                config.max_peers,
+                                " peers = ",
+                                derived_workers,
+                                "); omit num_workers");
     }
 
+    storage = init_params.customParams ? *init_params.customParams : nixl_b_params_t{};
+    storage["num_workers"] = std::to_string(derived_workers);
+    nixlBackendInitParams params = init_params;
+    params.customParams = &storage;
+    // Proxy progress can overlap metadata operations under any agent lock mode.
+    params.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+    return params;
+}
+} // namespace
+
+nixlUcxProxyEngine::nixlUcxProxyEngine(const nixlBackendInitParams &init_params,
+                                       const nixl::proxyConfig &config)
+    // The temporary params outlive the base constructor, the only place they are read.
+    : nixlUcxEngine(proxyInitParams(init_params, config, nixl_b_params_t{})),
+      ops_(requireDeviceOps()) {
     std::unique_ptr<nixl::proxyRuntime> runtime;
     nixl_status_t status = nixl::proxyRuntime::create(
-        std::make_unique<proxyTransportImpl>(getSharedWorkers()), config, runtime, *ops);
+        std::make_unique<transport>(getSharedWorkers()), config, runtime, ops_);
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Device proxy runtime creation failed: " << status;
-        return status;
+        nixl::throwRuntimeError("device proxy runtime creation failed: status=", status);
     }
 
     status = runtime->startWorkers();
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Device proxy runtime failed to start workers: " << status;
-        return status;
+        nixl::throwRuntimeError("device proxy runtime failed to start workers: status=", status);
     }
 
-    proxyRuntime_ = std::move(runtime);
-    deviceOps_ = ops;
+    runtime_ = std::move(runtime);
     NIXL_INFO << "Engine-owned device proxy enabled: " << config.channel_count << " channel(s), "
               << config.effectiveThreadCount() << " thread(s), max_peers=" << config.max_peers
               << ", ring_depth=" << config.ring_depth;
+}
+
+nixlUcxProxyEngine::~nixlUcxProxyEngine() = default;
+
+nixl_status_t
+nixlUcxProxyEngine::getNotifs(notif_list_t &notif_list) {
+    if (!notif_list.empty()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // Every shared worker is a ring worker that its proxy thread progresses.
+    const std::lock_guard lock(notifMutex_);
+    notifList_.swap(notif_list);
     return NIXL_SUCCESS;
+}
+
+void
+nixlUcxProxyEngine::appendNotif(std::string &&remote_name, std::string &&msg) {
+    const std::lock_guard lock(notifMutex_);
+    notifList_.emplace_back(std::move(remote_name), std::move(msg));
+}
+
+template<typename DlistT>
+nixl_status_t
+nixlUcxProxyEngine::prepProxyMemView(const DlistT &dlist, nixlMemViewH &mvh) const {
+    nixlMemViewH proxy_mvh = nullptr;
+    nixl_status_t status = runtime_->prepMemView(dlist, &proxy_mvh);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
+    status = nixl::deviceMemViewAllocate(ops_, nixl_device_exec_mode_t::PROXY, proxy_mvh, mvh);
+    if (status != NIXL_SUCCESS) {
+        static_cast<void>(runtime_->releaseMemView(proxy_mvh));
+    }
+    return status;
+}
+
+nixl_status_t
+nixlUcxProxyEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
+                                nixlMemViewH &mvh,
+                                const nixl_opt_b_args_t *) const {
+    return prepProxyMemView(dlist, mvh);
+}
+
+nixl_status_t
+nixlUcxProxyEngine::prepMemView(const nixl_meta_dlist_t &dlist,
+                                nixlMemViewH &mvh,
+                                const nixl_opt_b_args_t *) const {
+    return prepProxyMemView(dlist, mvh);
+}
+
+void
+nixlUcxProxyEngine::releaseMemView(nixlMemViewH mem_view) const {
+    if (mem_view == nullptr) {
+        return;
+    }
+
+    nixlMemViewH proxy_mvh = nullptr;
+    if (nixl::deviceMemViewGetBackend(ops_, mem_view, proxy_mvh) != NIXL_SUCCESS) {
+        NIXL_FATAL << "Failed to read proxy memory view before retirement";
+    }
+
+    const nixl_status_t status = runtime_->releaseMemView(proxy_mvh);
+    if (status != NIXL_SUCCESS) {
+        NIXL_FATAL << "Failed to release proxy memory view " << mem_view << " with status "
+                   << status;
+    }
+
+    nixl::deviceMemViewFree(ops_, mem_view);
 }
