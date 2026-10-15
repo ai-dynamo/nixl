@@ -77,6 +77,22 @@ canCoalesceRead(const readRange &previous, const readRange &next, size_t max_rea
         previous.localKey == next.localKey && previous.remoteKey == next.remoteKey;
 }
 
+inline bool
+canPairWrite(uintptr_t address,
+             size_t length,
+             uint32_t key,
+             uintptr_t next_address,
+             size_t next_length,
+             uint32_t next_key,
+             size_t remaining,
+             size_t max_length) {
+    // The final descriptor may carry an arrival marker; never fold it into a pair.
+    return remaining > 2 && length != 0 && next_length != 0 && key == next_key &&
+        next_address >= address && next_address - address == length &&
+        next_length <= std::numeric_limits<uintptr_t>::max() - next_address &&
+        next_length <= max_length && length <= max_length - next_length;
+}
+
 } // namespace nixl::gpunetio
 
 constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
@@ -123,6 +139,12 @@ struct docaXferReqGpu {
     nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
     doca_gpu_dev_verbs_qp *qp_data;
     doca_gpu_dev_verbs_qp *qp_notif;
+    uint8_t has_two_sge;
+    // Keep optional fields last so one-SGE requests need not publish them.
+    uintptr_t lbuf2[DOCA_XFER_REQ_SIZE];
+    size_t size2[DOCA_XFER_REQ_SIZE];
+    uint32_t lkey2[DOCA_XFER_REQ_SIZE];
+    uint8_t num_sge[DOCA_XFER_REQ_SIZE];
 };
 
 struct nixlDocaNotif {
