@@ -809,6 +809,9 @@ For pairwise UCX runs, `--device_list` must match the configured initiator and t
 
 ### Storage Backends
 
+The examples below write their files into `/mnt/storage/testdir`. Create it on
+the device you want to measure first: `mkdir -p /mnt/storage/testdir`.
+
 **GDS (GPU Direct Storage):**
 ```bash
 # Basic GDS benchmark (no ETCD needed for single instance)
