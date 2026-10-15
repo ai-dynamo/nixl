@@ -17,8 +17,7 @@ The INFINIA backend connects NIXL to DDN INFINIA object storage. It uses the INF
 
 The backend requires an INFINIA installation containing these libraries and headers:
 
-- `libred_client.so`
-- `libred_async.so`
+- `libred_async.so` (Infinia SDK 2.5.0 or later)
 - `red/red_async.hpp`
 - `red/red_status.h`
 
@@ -45,8 +44,9 @@ Create the backend with parameters passed to `createBackend("INFINIA", params)`:
 | `num_buffers` | Number of operation buffers | `512` |
 | `num_ring_entries` | Number of ring entries | `512` |
 | `coremasks` | CPU affinity mask | `0x2` |
+| `use_dmabuf` | Use DMA-BUF for GPU memory registration | `true` |
 | `max_retries` | Maximum retries for failed operations | Library default |
-| `config_file` | Path to a `key=value` configuration file | None |
+| `batch_size` | Async operations per batch | Library default |
 
 The `RED_CLUSTER`, `RED_TENANT`, and `RED_DATASET` environment variables override backend parameters. `RED_TENANT` may include a subtenant as `tenant/subtenant`.
 
@@ -60,23 +60,25 @@ nixl_b_params_t params = {
 agent.createBackend("INFINIA", params);
 ```
 
-Alternatively, pass a configuration file:
+Alternatively, use NIXL's common TOML configuration by pointing `NIXL_CONFIG_FILE` at a file such as:
 
-```text
-cluster=mycluster
-tenant=mytenant
-subtenant=mysubtenant
-dataset=mydataset
-sthreads=8
-num_buffers=512
-num_ring_entries=512
-coremasks=0x2
+```toml
+RED_CLUSTER = "mycluster"
+RED_TENANT = "mytenant/mysubtenant"
+RED_DATASET = "mydataset"
+
+[infinia]
+sthreads = 8
+num_buffers = 512
+num_ring_entries = 512
+coremasks = "0x2"
 ```
 
-```cpp
-nixl_b_params_t params = {{"config_file", "/path/to/infinia.conf"}};
-agent.createBackend("INFINIA", params);
+```bash
+export NIXL_CONFIG_FILE=/path/to/nixl-infinia.toml
 ```
+
+Values in the `[infinia]` table apply only to settings not passed as backend parameters.
 
 ## Memory Registration
 

@@ -76,9 +76,12 @@ Span::id() const noexcept {
 
 /*** Tracer ***/
 
-Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends, double sample_ratio) noexcept
+Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
+               double sample_ratio,
+               random_bytes_fn_t random_bytes) noexcept
     : backends_(std::move(backends)),
-      sampleRatio_(sample_ratio) {}
+      sampleRatio_(sample_ratio),
+      randomBytes_(random_bytes) {}
 
 Tracer::~Tracer() = default;
 

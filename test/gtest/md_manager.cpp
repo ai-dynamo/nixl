@@ -73,6 +73,22 @@ namespace {
         return value != nullptr && *value != '\0';
     }
 
+    // Sanitizer builds are much slower; give etcd propagation more time there.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    constexpr bool kSanitizerBuild = true;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+    constexpr bool kSanitizerBuild = true;
+#else
+    constexpr bool kSanitizerBuild = false;
+#endif
+#else
+    constexpr bool kSanitizerBuild = false;
+#endif
+
+    constexpr std::chrono::milliseconds kRemoteMdTimeout =
+        kSanitizerBuild ? std::chrono::seconds(15) : std::chrono::seconds(3);
+
     // Bounded polling around checkRemoteMD: avoids fixed sleeps that make
     // async assertions slow and timing-sensitive.
     nixl_status_t
@@ -80,7 +96,7 @@ namespace {
                     const std::string &remote_name,
                     const nixl_xfer_dlist_t &descs,
                     nixl_status_t expected,
-                    std::chrono::milliseconds timeout = std::chrono::seconds(3),
+                    std::chrono::milliseconds timeout = kRemoteMdTimeout,
                     std::chrono::milliseconds interval = std::chrono::milliseconds(25)) {
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         nixl_status_t last = agent->checkRemoteMD(remote_name, descs);

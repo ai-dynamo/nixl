@@ -36,8 +36,10 @@
 #include "common/str_util.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
+#include "tracing/log_once.h"
 #include "tracing/trace.h"
 #include "tracing/trace_macros.h"
+#include "tracing/trace_sink.h"
 
 namespace {
 
@@ -295,6 +297,23 @@ nixlAgentData::warnAboutEfaHardwareMismatch() {
     }
 }
 
+void
+nixlAgentData::warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
+                                             const nixl::trace::TraceContext &context) noexcept {
+    if (!context.sampled()) {
+        return;
+    }
+    const auto it = traceContextUnsupported_.find(backend.getType());
+    if (it == traceContextUnsupported_.end()) {
+        return;
+    }
+    nixl::trace::logOnce(it->second, [&backend] {
+        NIXL_WARN << "nixl::trace: backend '" << backend.getType()
+                  << "' cannot carry trace contexts, so sampled transfers through it reach "
+                     "remote agents untraced; logged once per backend and agent";
+    });
+}
+
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
                          const nixl_b_params_t &params,
@@ -329,6 +348,13 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
+
+    std::unique_ptr<nixlBackendTraceSink> trace_sink;
+    if (data->tracer_ != nullptr) {
+        trace_sink = std::make_unique<nixl::trace::TracerPhaseSink>(
+            *data->tracer_, type, data->telemetry_.get());
+        init_params.traceSink = trace_sink.get();
+    }
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
@@ -388,6 +414,9 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     if (backend->supportsRemote()) {
         data->notifEngines.push_back(backend.get());
         data->connMd_[type] = conn_info;
+        if ((data->tracer_ != nullptr) && !backend->supportsTraceContext()) {
+            data->traceContextUnsupported_.try_emplace(type);
+        }
     }
 
     // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
@@ -396,6 +425,9 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     NIXL_ASSERT(inserted);
     bknd_hndl = it->second.get();
 
+    if (trace_sink != nullptr) {
+        data->traceSinks_.insert_or_assign(type, std::move(trace_sink));
+    }
     data->backendEngines_.try_emplace(type, std::move(backend));
 
     // TODO: Check if backend supports ProgThread
@@ -900,6 +932,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     handle->telemetry.totalBytes = total_bytes;
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
+    opt_args.traceContext = &handle->traceContext();
     ret = handle->engine->prepXfer(handle->backendOp,
                                    handle->initiatorDescs,
                                    handle->targetDescs,
@@ -913,6 +946,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
         return ret;
     }
 
+    data->warnIfTraceContextUnsupported(*backend, handle->traceContext());
     req_hndl = handle.release();
     return NIXL_SUCCESS;
 }
@@ -1004,7 +1038,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         ret2 = rem_sec_it->second->populate(remote_descs, backend, handle->targetDescs);
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
-            NIXL_INFO << "Selected backend: " << backend->getType();
+            NIXL_DEBUG << "Selected backend: " << backend->getType();
             handle->engine = backend;
             break;
         }
@@ -1046,6 +1080,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     handle->telemetry.totalBytes = total_bytes;
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
+    opt_args.traceContext = &handle->traceContext();
     ret1 = handle->engine->prepXfer(handle->backendOp,
                                     handle->initiatorDescs,
                                     handle->targetDescs,
@@ -1059,6 +1094,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return ret1;
     }
 
+    data->warnIfTraceContextUnsupported(*handle->engine, handle->traceContext());
     req_hndl = handle.release();
     return NIXL_SUCCESS;
 }
@@ -1191,6 +1227,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_BACKEND;
     }
 
+    opt_args.traceContext = &req_hndl->traceContext();
+
     // If status is not NIXL_IN_PROG we can repost,
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,
                                                   req_hndl->initiatorDescs,
@@ -1303,15 +1341,16 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 
         if(req_hndl->status == NIXL_IN_PROG) {
 
-            req_hndl->status = req_hndl->engine->releaseReqH(
-                                         req_hndl->backendHandle);
+            const nixl_status_t release_status =
+                req_hndl->engine->releaseReqH(req_hndl->backendHandle);
 
-            if (req_hndl->status < 0) {
+            if (release_status < 0) {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
                                 << "' could not release transfer request and returned error status "
-                                << req_hndl->status;
+                                << release_status;
                 return NIXL_ERR_REPOST_ACTIVE; // Might need renaming
             }
+            req_hndl->status = release_status;
             // just in case the backend doesn't set to NULL on success
             // this will prevent calling releaseReqH again in destructor
             req_hndl->backendHandle = nullptr;
@@ -1733,12 +1772,15 @@ nixlAgentData::invalidateRemoteMD(const std::string &remote_agent) {
 
     const auto rb_it = remoteBackends_.find(remote_agent);
     if (rb_it != remoteBackends_.end()) {
+        ret = NIXL_SUCCESS;
         for (const auto &entry : rb_it->second) {
-            backendEngines_[entry.first]->disconnect(remote_agent);
+            const nixl_status_t status = backendEngines_[entry.first]->disconnect(remote_agent);
+            if (ret == NIXL_SUCCESS) {
+                ret = status;
+            }
         }
 
         remoteBackends_.erase(rb_it);
-        ret = NIXL_SUCCESS;
     }
 
     if (ret == NIXL_ERR_NOT_FOUND)

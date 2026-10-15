@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <sys/types.h> // ssize_t
 
@@ -37,8 +38,8 @@ struct S3RdmaClientCtx {
     std::string object; ///< Object key.
     std::string uploadId; ///< Multipart upload id; empty for single-shot.
     uint32_t partNumber = 0; ///< Part number 1..10000 when uploadId is set.
-    std::string checksumCrc64nvme; ///< Optional CRC64NVME checksum, in/out.
     std::string etag; ///< ETag returned by the server; populated on success.
+    std::string ifMatch; ///< When set, a GET fails unless the object's ETag matches.
 };
 
 /**
@@ -73,7 +74,7 @@ public:
 
     /**
      * @brief Issue the signed control-plane PUT carrying the RDMA token.
-     * @param ctx Request context (bucket/object, multipart, checksum, etag out).
+     * @param ctx Request context (bucket/object, multipart, etag out).
      * @param token RDMA descriptor (carries the buffer address and size in its
      *        own leading fields; sent verbatim as x-amz-rdma-token).
      * @param size Number of bytes to transfer.
@@ -85,7 +86,7 @@ public:
 
     /**
      * @brief Issue the signed control-plane GET carrying the RDMA token.
-     * @param ctx Request context (bucket/object, checksum, etag out).
+     * @param ctx Request context (bucket/object, etag out).
      * @param token RDMA descriptor (carries the buffer address and size in its
      *        own leading fields; sent verbatim as x-amz-rdma-token).
      * @param size Number of bytes to fetch.
@@ -96,6 +97,26 @@ public:
      */
     [[nodiscard]] ssize_t
     rdmaGet(S3RdmaClientCtx &ctx, const char *token, uint64_t size, uint64_t offset);
+
+    /**
+     * @brief Start a multipart upload for ctx.bucket/ctx.object.
+     * @return The upload id, or an empty string on failure.
+     */
+    [[nodiscard]] std::string
+    createMultipartUpload(const S3RdmaClientCtx &ctx);
+
+    /**
+     * @brief Complete ctx.uploadId from its parts' ETags, in part order.
+     * @return true if the server assembled the object.
+     */
+    [[nodiscard]] bool
+    completeMultipartUpload(const S3RdmaClientCtx &ctx, const std::vector<std::string> &etags);
+
+    /**
+     * @brief Abort ctx.uploadId and discard the parts uploaded so far.
+     */
+    void
+    abortMultipartUpload(const S3RdmaClientCtx &ctx) noexcept;
 
 private:
     struct Impl;
