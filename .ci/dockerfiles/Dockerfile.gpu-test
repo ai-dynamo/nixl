@@ -33,7 +33,9 @@ COPY --chown="${_UID}":"${_GID}" . .
 # same layer to actually shrink the image. gdb is installed before build.sh so its apt-get runs
 # against a clean apt state.
 # Use the internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable).
-RUN . /etc/os-release && \
+# CI supplies a github.com credential as the optional "ghconfig" build secret for
+# build.sh's clones, including meson's [wrap-git] subprojects.
+RUN --mount=type=secret,id=ghconfig,mode=0444 . /etc/os-release && \
     printf '%s\n' \
         'Types: deb' \
         'URIs: https://urm.nvidia.com/artifactory/ubuntu-public' \
@@ -43,7 +45,8 @@ RUN . /etc/os-release && \
     grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f && \
     sudo apt-get update && \
     sudo apt-get install -y --no-install-recommends gdb gdb-multiarch && \
-    .gitlab/build.sh ${NIXL_INSTALL_DIR} && \
+    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=/run/secrets/ghconfig \
+        .gitlab/build.sh ${NIXL_INSTALL_DIR} && \
     sudo apt-get clean && \
     sudo rm -rf /var/lib/apt/lists/*
 
