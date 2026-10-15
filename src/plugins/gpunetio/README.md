@@ -91,9 +91,7 @@ Without `NIXL_TEST_RDMA_DEVICE`, the hardware test explicitly skips.
 meson setup build --buildtype=debugoptimized -Denable_plugins=POSIX,GPUNETIO \
   -Dbuild_tests=true -Dbuild_examples=false -Dnixl_cuda_arch_list=90
 ninja -C build src/plugins/gpunetio/libplugin_GPUNETIO.so \
-  test/gtest/unit/gpunetio/gpunetio_write_pairing_test \
   test/gtest/unit/gpunetio/gpunetio_peer_write2_test
-meson test -C build --no-rebuild --print-errorlogs -v gpunetio_write_pairing
 CUDA_VISIBLE_DEVICES='<GPU_A>,<GPU_B>' \
 NIXL_PLUGIN_DIR="$PWD/build/src/plugins/gpunetio" \
 NIXL_TEST_RDMA_DEVICE='<RDMA_DEVICE>' NIXL_TEST_OOB_INTERFACE='<OOB_INTERFACE>' \

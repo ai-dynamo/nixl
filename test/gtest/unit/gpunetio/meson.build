@@ -12,14 +12,6 @@ netif_discovery_test = executable(
 )
 test('gpunetio_netif_discovery', netif_discovery_test)
 
-write_pairing_test = executable(
-    'gpunetio_write_pairing_test',
-    'write_pairing_test.cpp',
-    include_directories: include_directories('../../../../src/plugins/gpunetio'),
-    dependencies: dependency('gtest', main: true),
-)
-test('gpunetio_write_pairing', write_pairing_test)
-
 if is_variable('gpunetio_backend_interface')
     peer_write2_test = executable(
         'gpunetio_peer_write2_test',

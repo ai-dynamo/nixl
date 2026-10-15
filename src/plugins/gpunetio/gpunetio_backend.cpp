@@ -18,7 +18,6 @@
 #include "gpunetio_backend.h"
 #include "gpunetio_cuda_device_guard.h"
 #include "gpunetio_completion_status.h"
-#include "gpunetio_write_pairing.h"
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <cassert>
