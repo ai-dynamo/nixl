@@ -346,12 +346,12 @@ This is handled by `contrib/tomlutil.py` which modifies `pyproject.toml` during 
 ### PyPI Repository Configuration
 ```yaml
 credentials:
-  - credentialsId: 'svc-nixl-il-artifactory-token'
+  - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
 
 env:
-  ARTIFACTORY_PYPI_URL: https://il.artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
+  ARTIFACTORY_PYPI_URL: https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
 ```
 
 ### Wheel Upload Process
@@ -379,11 +379,11 @@ Users can install wheels from Artifactory:
 ```bash
 # Using pip with extra index
 pip install nixl-cu12 \
-  --extra-index-url https://il.artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
+  --extra-index-url https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
 
 # Or configure in pip.conf
 [global]
-extra-index-url = https://il.artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
+extra-index-url = https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
 ```
 
 ## 8. Troubleshooting

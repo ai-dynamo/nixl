@@ -18,6 +18,7 @@ env:
 
 credentials:
   - {credentialsId: 'svc-nixl-il-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN'}
+  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN'}
 
 pipeline_start:
   shell: action
@@ -36,4 +37,13 @@ steps:
       apt-get update -qq && apt-get install -y -qq jq curl > /dev/null
       curl -fsSL "https://releases.jfrog.io/artifactory/jfrog-cli/v2-jf/2.72.2/jfrog-cli-linux-amd64/jf" -o /usr/local/bin/jf && chmod +x /usr/local/bin/jf
       .ci/scripts/artifactory-cleanup-by-time.sh ${DRY_RUN_FLAG} \
+        --spec .ci/cleanup-spec.json
+
+  # Verification images and wheels are still published to artifactory.nvidia.com.
+  - name: Cleanup artifactory.nvidia.com artifacts
+    parallel: false
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    run: |
+      ARTIFACTORY_URL="https://artifactory.nvidia.com/artifactory" \
+        .ci/scripts/artifactory-cleanup-by-time.sh ${DRY_RUN_FLAG} \
         --spec .ci/cleanup-spec.json
