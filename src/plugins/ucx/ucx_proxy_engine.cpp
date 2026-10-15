@@ -42,18 +42,9 @@ static_assert(sizeof(nixlUcxReq) <= sizeof(uint64_t),
  */
 class nixlUcxProxyEngine::transport final : public nixl::proxyTransport {
 public:
-    explicit transport(worker_span_t workers) noexcept : workers_(workers) {}
-
-    nixl_status_t
-    init(const nixl::proxyConfig &config) override {
-        if (workers_.size() != config.ringCount()) {
-            NIXL_ERROR << "UCX proxy requires one UCX worker per (channel, peer): "
-                       << workers_.size() << " worker(s) for " << config.ringCount() << " ring(s)";
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        max_peers_ = config.max_peers;
-        return NIXL_SUCCESS;
-    }
+    transport(worker_span_t workers, const nixl::proxyConfig &config) noexcept
+        : workers_(workers),
+          max_peers_(config.max_peers) {}
 
     nixl_status_t
     submit(const nixl::proxyBackendSubmission &submission,
@@ -134,11 +125,6 @@ public:
         } while (status == UCS_INPROGRESS);
         worker->reqRelease(request);
         return nixl::ucx::ucsToNixlStatus(status);
-    }
-
-    nixl_status_t
-    shutdown() override {
-        return NIXL_SUCCESS;
     }
 
     /** Any worker's rkey resolves the same address; worker 0 always exists. */
@@ -276,8 +262,7 @@ private:
     }
 
     const worker_span_t workers_;
-    /** Set by init(), before any worker thread exists. */
-    uint32_t max_peers_ = 0;
+    const uint32_t max_peers_;
 };
 
 namespace {
@@ -337,20 +322,19 @@ nixlUcxProxyEngine::nixlUcxProxyEngine(const nixlBackendInitParams &init_params,
                                        const nixl::proxyConfig &config)
     // The temporary params outlive the base constructor, the only place they are read.
     : nixlUcxEngine(proxyInitParams(init_params, config, nixl_b_params_t{})),
-      ops_(requireDeviceOps()) {
-    std::unique_ptr<nixl::proxyRuntime> runtime;
-    nixl_status_t status = nixl::proxyRuntime::create(
-        std::make_unique<transport>(getSharedWorkers()), config, runtime, ops_);
-    if (status != NIXL_SUCCESS) {
-        nixl::throwRuntimeError("device proxy runtime creation failed: status=", status);
+      ops_(requireDeviceOps()),
+      runtime_(nixl::proxyRuntime::create(std::make_unique<transport>(getSharedWorkers(), config),
+                                          config,
+                                          ops_)) {
+    if (!runtime_) {
+        nixl::throwRuntimeError("device proxy runtime creation failed");
     }
 
-    status = runtime->startWorkers();
+    const nixl_status_t status = runtime_->startWorkers();
     if (status != NIXL_SUCCESS) {
         nixl::throwRuntimeError("device proxy runtime failed to start workers: status=", status);
     }
 
-    runtime_ = std::move(runtime);
     NIXL_INFO << "Engine-owned device proxy enabled: " << config.channel_count << " channel(s), "
               << config.thread_count << " thread(s), max_peers=" << config.max_peers
               << ", ring_depth=" << config.ring_depth;

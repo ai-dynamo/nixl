@@ -29,14 +29,14 @@ the proxy. It is internal to `libnixl_device_proxy` and the plugins: not install
 
 ### Ownership
 
-- `proxyRuntime::create()` takes ownership of the transport. The runtime calls `shutdown()` and
-  destroys the transport after its workers have joined.
+- `proxyRuntime::create()` takes ownership of a constructed, ready transport and destroys it after
+  its workers have joined and every ring has drained.
 - Anything the transport references (engine workers, endpoints) must outlive the runtime. The
-  owning engine shuts the runtime down first in its destructor.
+  owning engine destroys the runtime first.
 
 ### Threading
 
-- `init()` and `shutdown()` run with no worker thread alive.
+- The transport's constructor and destructor run with no worker thread alive.
 - `submit()`, `progress()` and `quiesce()` for a ring (channel, peer), and `checkCompletion()` for
   requests submitted on that ring, are made from a single thread at a time. Different rings, of
   the same channel or not, may be served concurrently by different threads.
