@@ -99,6 +99,12 @@ struct docaXferReqGpu {
     nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
     doca_gpu_dev_verbs_qp *qp_data;
     doca_gpu_dev_verbs_qp *qp_notif;
+    uint8_t has_two_sge;
+    // Keep optional fields last so one-SGE requests need not publish them.
+    uintptr_t lbuf2[DOCA_XFER_REQ_SIZE];
+    size_t size2[DOCA_XFER_REQ_SIZE];
+    uint32_t lkey2[DOCA_XFER_REQ_SIZE];
+    uint8_t num_sge[DOCA_XFER_REQ_SIZE];
 };
 
 struct nixlDocaNotif {
