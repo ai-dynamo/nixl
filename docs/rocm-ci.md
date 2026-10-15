@@ -81,10 +81,10 @@ If nixlbench fails with `Permission denied` while **creating** files under
 example block above with `--user "$(id -u):$(id -g)"`.
 
 A successful run of the `docker run` command above looks like this (numbers
-and log paths will differ):
+will differ):
 
 ```
-HIPFILE_STATS_LEVEL=1 (ais-stats + nixlbench log: /tmp/ais-stats.uYulz6.log)
+HIPFILE_STATS_LEVEL=1
 Running: /opt/nixl/bin/nixlbench --backend AIS --filepath /mnt/nvme-nixlbench/nixlbench-ais --initiator_seg_type VRAM --target_seg_type VRAM --gds_mt_num_threads 4 --total_buffer_size 67108864 --start_block_size 65536 --max_block_size 65536 --start_batch_size 1 --max_batch_size 1 --num_iter 200 --warmup_iter 40 --op_type WRITE --check_consistency
 WARNING: Adjusting num_iter to 208 to allow equal distribution to 1 threads
 WARNING: Adjusting warmup_iter to 48 to allow equal distribution to 1 threads
@@ -94,17 +94,20 @@ AIS thread_count: 4
 Waiting for all processes to start... (expecting 1 total: 1 initiators and 1 targets)
 All processes are ready to proceed
 Creating file: /mnt/nvme-nixlbench/nixlbench-ais/nixlbench_ais_test_file_initiator_0
+nixlbench: SG mode — set NEURON_RT_NUM_CORES=1
 ****************************************************************************************************************************************************************
 NIXLBench Configuration
 ****************************************************************************************************************************************************************
 Runtime (--runtime_type=[ETCD,ASIO])                        : ETCD
 ETCD Endpoint                                               : disabled (storage backend)
 Worker type (--worker_type=[nixl,nvshmem])                  : nixl
-Backend (--backend=[UCX,GDS,GDS_MT,AIS,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB]): AIS
+Backend (--backend=[UCX,GDS,GDS_MT,AIS,POSIX,Mooncake,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB]): AIS
 Enable pt (--enable_pt=[0,1])                               : 0
 Progress threads (--progress_threads=N)                     : 0
 Device list (--device_list=dev1,dev2,...)                   : all
 Enable VMM (--enable_vmm=[0,1])                             : 0
+VMM GPUDirect RDMA capable (--vmm_gdr_capable=[0,1])        : 1
+VMM locality domain (--use_localized=[-1,0,1])              : -1
 Recreate xfer each iteration (--recreate_xfer=[0,1])        : 0
 Re-register memory each iteration (--reregister_mem=[0,1])  : 0
 Prepared xfer (prep+make) (--prepared_xfer=[0,1])           : 0
@@ -115,6 +118,7 @@ filepath (--filepath=path)                                  : /mnt/nvme-nixlbenc
 filenames (--filenames=filename1,filename2,...)             :
 Number of files (--num_files=N)                             : 1
 Storage enable direct (--storage_enable_direct=[0,1])       : 0
+Randomize location mode (--randomize_location_mode=[none, blockaligned, bytealigned]): none
 Initiator seg type (--initiator_seg_type=[DRAM,VRAM])       : VRAM
 Target seg type (--target_seg_type=[DRAM,VRAM])             : VRAM
 Scheme (--scheme=[pairwise,manytoone,onetomany,tp])         : pairwise
@@ -132,11 +136,12 @@ Num iter (--num_iter=N)                                     : 208
 Warmup iter (--warmup_iter=N)                               : 48
 Large block iter factor (--large_blk_iter_ftr=N)            : 16
 Num threads (--num_threads=N)                               : 1
+Use Device API (--use_device_api=[0,1])                     : 0
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 Block Size (B)      Batch Size     B/W (GB/Sec)   Avg Lat. (us)  Avg Prep (us)  P99 Prep (us)  Avg Post (us)  P99 Post (us)  Avg Tx (us)    P99 Tx (us)
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------
-65536               1              1.236753       53.0           16.0           16.0           4.0            6.0            48.9           64.0
+65536               1              1.530252       42.8           19.0           19.0           5.2            6.0            37.5           43.0
 AIS-STATS Version: 1
 HipFile Stats Level: 1
 File Handle Registrations: 1
@@ -147,21 +152,25 @@ Total Fastpath Read Size (B): 0
 Average Fastpath Read Bandwidth (GiB/s): 0
 Average Fastpath Read Latency (us): 0
 Total Fastpath Read Errors: 0
+Total Fastpath Read Unaligned: 0
 
 Total Fastpath Write Size (B): 16777216
-Average Fastpath Write Bandwidth (GiB/s): 1.14452
-Average Fastpath Write Latency (us): 53.3281
+Average Fastpath Write Bandwidth (GiB/s): 1.56172
+Average Fastpath Write Latency (us): 39.082
 Total Fastpath Write Errors: 0
+Total Fastpath Write Unaligned: 0
 
 Total Fallback Read Size (B): 0
 Average Fallback Read Bandwidth (GiB/s): 0
 Average Fallback Read Latency (us): 0
 Total Fallback Read Errors: 0
+Total Fallback Read Unaligned: 0
 
 Total Fallback Write Size (B): 0
 Average Fallback Write Bandwidth (GiB/s): 0
 Average Fallback Write Latency (us): 0
 Total Fallback Write Errors: 0
+Total Fallback Write Unaligned: 0
 
 GPU 0:
 IO Size Histogram
@@ -189,7 +198,7 @@ IO Size (KiB)      Fastpath Read Bandwidth (GiB/s)  Fastpath Write Bandwidth (Gi
 8-16                                             0                                 0                                 0                                 0
 16-32                                            0                                 0                                 0                                 0
 32-64                                            0                                 0                                 0                                 0
-64-128                                           0                           1.14452                                 0                                 0
+64-128                                           0                           1.56172                                 0                                 0
 128-256                                          0                                 0                                 0                                 0
 256-512                                          0                                 0                                 0                                 0
 512-1024                                         0                                 0                                 0                                 0
@@ -207,7 +216,7 @@ IO Size (KiB)           Fastpath Read Latency (us)       Fastpath Write Latency 
 8-16                                             0                                 0                                 0                                 0
 16-32                                            0                                 0                                 0                                 0
 32-64                                            0                                 0                                 0                                 0
-64-128                                           0                           53.3281                                 0                                 0
+64-128                                           0                            39.082                                 0                                 0
 128-256                                          0                                 0                                 0                                 0
 256-512                                          0                                 0                                 0                                 0
 512-1024                                         0                                 0                                 0                                 0
@@ -236,5 +245,9 @@ IO Size (KiB)            Fastpath Read Error Count        Fastpath Write Error C
 16384-32768                                      0                                 0                                 0                                 0
 32768-65536                                      0                                 0                                 0                                 0
 65536-...                                        0                                 0                                 0                                 0
-OK: ais-stats / hipFile output mentions fastpath (see /tmp/ais-stats.uYulz6.log).
+Fastpath Read Unaligned Count: 0
+Fastpath Write Unaligned Count: 0
+Fallback Read Unaligned Count: 0
+Fallback Write Unaligned Count: 0
+OK: hipFile stats report fastpath I/O.
 ```
