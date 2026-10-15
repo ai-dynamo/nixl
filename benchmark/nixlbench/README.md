@@ -695,7 +695,7 @@ See src/plugins/infinia/infinia_example.conf for a complete example.
 
 The name of a config file can be specified using the `--config_file` command line parameter. The config file is in TOML format.
 
-Each existing command-line parameter can also be placed in the global scope (no sections) of the configuration file, so the following invocations:
+Each existing command-line parameter can also be placed in the global scope (no sections) of the configuration file, so the following invocations (with `/mnt/test` an existing directory):
 
 ```
 nixlbench --backend POSIX --filepath /mnt/test --posix_api_type AIO --max_block_size 2097152
