@@ -471,6 +471,13 @@ nixlDocaEngine::~nixlDocaEngine() {
     progressThreadStop();
 
     *reinterpret_cast<volatile uint32_t *>(wait_exit_cpu) = 1;
+    nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
+    if (cuda_device.status() != cudaSuccess) {
+        NIXL_ERROR << "Cannot select GPUNETIO engine device; retaining device resources";
+        // Host progress is joined; do not destroy device-owned objects in another context.
+        retainedQp_.release();
+        return;
+    }
     NIXL_DEBUG << "Before cudaStreamSynchronize ";
     nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
     nixlDocaEngineCheckCudaError(cudaStreamDestroy(wait_stream), "stream destroy");
@@ -1321,13 +1328,29 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
     });
 
     if (it == gdevs.end()) {
-        NIXL_ERROR << "Can't register memory for unknown device " << mem.devId;
-        return NIXL_ERR_INVALID_PARAM;
+        int device_count = 0;
+        if (nixl_mem != VRAM_SEG || cudaGetDeviceCount(&device_count) != cudaSuccess ||
+            mem.devId >= static_cast<uint64_t>(device_count)) {
+            NIXL_ERROR << "Can't register memory for unknown device " << mem.devId;
+            return NIXL_ERR_INVALID_PARAM;
+        }
     }
 
+    // A foreign payload GPU has no engine-owned DOCA handle; use its PeerDirect MR.
+    doca_gpu *memory_gpu = it == gdevs.end() ? nullptr : it->second;
+    nixl::doca::cudaDeviceGuard memory_device(
+        nixl_mem == VRAM_SEG ? static_cast<uint32_t>(mem.devId) : gdevs[0].first);
+    if (memory_device.status() != cudaSuccess) {
+        return NIXL_ERR_BACKEND;
+    }
     try {
-        priv->mr = std::make_unique<nixl::doca::verbs::mr>(
-            it->second, (void *)mem.addr, 1, (size_t)mem.len, pd, nixl_mem == VRAM_SEG);
+        priv->mr =
+            std::make_unique<nixl::doca::verbs::mr>(memory_gpu,
+                                                    (void *)mem.addr,
+                                                    1,
+                                                    (size_t)mem.len,
+                                                    pd,
+                                                    nixl_mem == VRAM_SEG && memory_gpu != nullptr);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
@@ -1447,12 +1470,11 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         }
     }
 
-    // TODO: check device id from local dlist mr that should be all the same and same of
-    // the engine
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         lmd = (nixlDocaPrivateMetadata *)local[idx].metadataP;
-        if (lmd->devId != gdevs[0].first) {
-            return NIXL_ERR_INVALID_PARAM;
+        if (lmd->devId != gdevs[0].first && opt_args && !opt_args->customParam.empty()) {
+            NIXL_ERROR << "Attached CUDA streams are not supported for peer-GPU payloads";
+            return NIXL_ERR_NOT_SUPPORTED;
         }
     }
 
@@ -1523,14 +1545,39 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             staged_req.rbuf[idx] = remote[desc_idx].addr;
             staged_req.rkey[idx] = rmd->mr->get_rkey();
             staged_req.size[idx] = local[desc_idx].len;
+            staged_req.num_sge[idx] = 1;
             staged_req.num++;
+
+            if (operation == NIXL_WRITE && lcnt - desc_idx > 2) {
+                auto *next_lmd =
+                    static_cast<nixlDocaPrivateMetadata *>(local[desc_offset].metadataP);
+                auto *next_rmd =
+                    static_cast<nixlDocaPublicMetadata *>(remote[desc_offset].metadataP);
+                if (nixl::gpunetio::canPairWrite(remote[desc_idx].addr,
+                                                 remote[desc_idx].len,
+                                                 staged_req.rkey[idx],
+                                                 remote[desc_offset].addr,
+                                                 remote[desc_offset].len,
+                                                 next_rmd->mr->get_rkey(),
+                                                 lcnt - desc_idx,
+                                                 DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE)) {
+                    staged_req.lbuf2[idx] = local[desc_offset].addr;
+                    staged_req.lkey2[idx] = next_lmd->mr->get_lkey();
+                    staged_req.size2[idx] = local[desc_offset].len;
+                    staged_req.num_sge[idx] = 2;
+                    staged_req.has_two_sge = 1;
+                    ++desc_offset;
+                }
+            }
         }
 
         staged_req.last_rsvd = last_rsvd_flags;
         staged_req.last_posted = last_posted_flags;
         staged_req.qp_data = rdma_qp->qp_data->get_qp_gpu_dev();
         staged_req.qp_notif = rdma_qp->qp_notif->get_qp_gpu_dev();
-        memcpy(&xferReqRingCpu[pos], &staged_req, sizeof(staged_req));
+        const size_t publish_size =
+            staged_req.has_two_sge ? sizeof(staged_req) : offsetof(docaXferReqGpu, lbuf2);
+        memcpy(&xferReqRingCpu[pos], &staged_req, publish_size);
 
         if (desc_offset < lcnt && !reserve_position()) {
             abandon_request();
@@ -1600,6 +1647,10 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
+    if (cuda_device.status() != cudaSuccess) {
+        return NIXL_ERR_BACKEND;
+    }
     const nixl_status_t completion_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
     if (completion_status != NIXL_SUCCESS) {
         return completion_status;

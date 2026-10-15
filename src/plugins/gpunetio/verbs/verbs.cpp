@@ -20,7 +20,7 @@
 #include "verbs.h"
 #include "gpunetio_backend_aux.h"
 
-#define VERBS_TEST_MAX_SEND_SEGS (1)
+#define VERBS_TEST_MAX_SEND_SEGS (2)
 #define VERBS_TEST_MAX_RECEIVE_SEGS (1)
 #define VERBS_TEST_DBR_SIZE (8)
 #define ROUND_UP(unaligned_mapping_size, align_val) \
@@ -596,7 +596,8 @@ mr::mr(doca_gpu *gpu_dev_,
       elem_num(elem_num_),
       elem_size(elem_size_),
       pd(pd_) {
-    if (gpu_dev == nullptr || addr == nullptr || elem_num == 0 || elem_size == 0 || pd == nullptr) {
+    if ((use_dmabuf && gpu_dev == nullptr) || addr == nullptr || elem_num == 0 || elem_size == 0 ||
+        pd == nullptr) {
         throw std::invalid_argument("Invalid mr input values");
     }
 

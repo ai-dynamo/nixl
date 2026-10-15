@@ -53,5 +53,31 @@ NIXL bench also has the option to specify the DOCA GPUNetIO backend. An example 
 
 ## Caveats
 
+### Peer-owned GPU memory and two-SGE WRITE
+
+`gpu_devices` selects the communication GPU. In stream-pool mode, a VRAM
+descriptor may name another visible GPU as its memory owner. Registration runs
+under that owner's CUDA device; posting runs on the communication GPU and
+restores the caller's device. Foreign VRAM uses legacy PeerDirect registration
+(`ibv_reg_mr`, requiring compatible peer-memory support), rather than exporting
+it with the communication GPU's DOCA handle. Synchronize producer writes before
+posting, retain allocations and registrations until completion, and establish
+receiver GPU visibility before consumption. Attached application streams are
+not supported for peer-owned payloads. This is ordinary GPU memory, not VMM or
+multicast-memory support.
+
+Eligible consecutive WRITE descriptors with adjacent remote ranges and the same
+remote key use one two-SGE WQE. Source addresses and local keys may differ; no
+gather buffer is allocated. Non-adjacent or different-key ranges, zero lengths,
+and pairs exceeding the SDK transfer limit keep the one-SGE path. The final
+descriptor stays separate for arrival-marker ordering. READ, dense CQ signaling,
+request completion and notification polling policies are unchanged.
+
+For a component comparison, build main and this PR with the same supported
+DOCA SDK and run the existing NIXLBench pairwise WRITE with fixed bytes,
+descriptor count, pipeline depth and consistency checking, selecting one GPU
+per worker. This measures WRITE pairing with owner-matching memory; it does not
+by itself validate peer ownership or serving performance.
+
 To run for performance (e.g. with NIXL bench) it's highly recommended to build NIXL with `buildtype=release`.
 For debugging purposes, NIXL can be built with `buildtype=debug`.
