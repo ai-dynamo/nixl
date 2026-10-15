@@ -1322,6 +1322,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
 
     if (it == gdevs.end()) {
         NIXL_ERROR << "Can't register memory for unknown device " << mem.devId;
+        delete priv;
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -1331,6 +1332,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
+        delete priv;
         return NIXL_ERR_BACKEND;
     }
 
@@ -1374,6 +1376,7 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
 
     if (search == remoteConnMap.end()) {
         NIXL_ERROR << "err: remote connection not found remote_agent " << remote_agent;
+        delete md;
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -1387,6 +1390,13 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
         tokens.push_back(token);
     }
 
+    if (tokens.size() < 3) {
+        NIXL_ERROR << "err: malformed remote metadata (expected 3 fields) for agent "
+                   << remote_agent;
+        delete md;
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     uint32_t rkey = static_cast<uint32_t>(atoi(tokens[0].c_str()));
     uintptr_t addr = static_cast<uintptr_t>(atol(tokens[1].c_str()));
     size_t tot_size = static_cast<size_t>(atol(tokens[2].c_str()));
@@ -1397,6 +1407,7 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
+        delete md;
         return NIXL_ERR_BACKEND;
     }
 
