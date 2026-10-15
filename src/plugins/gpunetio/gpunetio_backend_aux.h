@@ -105,6 +105,12 @@ struct docaXferReqGpu {
     uint16_t wait_completion_ids[DOCA_XFER_REQ_MAX];
     uint64_t *peer_write_completed;
     uint64_t write_ticket;
+    uint32_t posting_ctas_done;
+};
+
+struct docaStripedWriteLaunch {
+    uint32_t count;
+    uint32_t positions[DOCA_XFER_REQ_MAX];
 };
 
 struct nixlDocaNotif {
@@ -199,24 +205,13 @@ struct nixlDocaRdmaQp {
     std::unique_ptr<uint64_t, nixlDocaGpuCounterDeleter> writeCompletedGpu;
     uint64_t *writeCompletedCpu = nullptr;
     uint64_t postedWriteTicket = 0;
-    uint32_t writeEventDevice = 0;
-    std::vector<cudaEvent_t> writeSubmitEvents;
-    cudaEvent_t writeTailPostEvent = nullptr;
-    bool writeTailPostEventRecorded = false;
-
-    void
-    createWriteEvents(uint32_t device, uint32_t count);
-
-    bool
-    closeWriteEvents();
-
     bool
     closeDataQps() {
         bool closed = qp_data == nullptr || qp_data->close();
         for (auto &qp : qp_write) {
             closed = qp->close() && closed;
         }
-        return closed && closeWriteEvents();
+        return closed;
     }
 };
 
@@ -261,6 +256,11 @@ doca_kernel_write(cudaStream_t stream,
                   doca_gpu_dev_verbs_qp *qp_gpu,
                   struct docaXferReqGpu *xferReqRing,
                   uint32_t pos);
+doca_error_t
+doca_kernel_write_striped(cudaStream_t stream,
+                          struct docaXferReqGpu *xferReqRing,
+                          docaStripedWriteLaunch launch,
+                          uint32_t qp_count);
 doca_error_t
 doca_kernel_read(cudaStream_t stream,
                  doca_gpu_dev_verbs_qp *qp_gpu,

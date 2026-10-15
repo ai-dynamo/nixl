@@ -100,8 +100,10 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
 #endif
 }
 
-__global__ void
-kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint32_t pos) {
+__device__ __forceinline__ bool
+nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
+                              struct docaXferReqGpu *xferReqRing,
+                              uint32_t pos) {
     uint64_t wqe_idx = 0;
     doca_gpu_dev_verbs_wqe *wqe_ptr;
     enum doca_gpu_dev_verbs_wqe_ctrl_flags cflag = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE;
@@ -111,7 +113,7 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
 
     // Warmup
     if (xferReqRing == nullptr) {
-        return;
+        return false;
     }
 
     tot_wqe = xferReqRing[pos].num;
@@ -150,7 +152,7 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
     }
     __syncthreads();
     if (abort_write) {
-        return;
+        return false;
     }
 
     for (idx = threadIdx.x; idx < tot_wqe; idx += blockDim.x) {
@@ -192,10 +194,47 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
     if (threadIdx.x == 0) {
         printf(">>>>>>> CUDA rdma write kernel pos %d posted %d buffers from base_wqe_idx %ld\n",
                pos,
-               xferReqRing[pos].num,
+               tot_wqe,
                base_wqe_idx);
     }
 #endif
+    return true;
+}
+
+__global__ void
+kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint32_t pos) {
+    nixl_gpunetio_dev_write_chunk(qp, xferReqRing, pos);
+}
+
+__global__ void
+kernel_write_striped(struct docaXferReqGpu *xferReqRing, docaStripedWriteLaunch launch) {
+    if (xferReqRing == nullptr) {
+        return;
+    }
+    __shared__ bool final_owner;
+    const uint32_t final_pos = launch.positions[launch.count - 1];
+
+    for (uint32_t ordinal = blockIdx.x; ordinal + 1 < launch.count; ordinal += gridDim.x) {
+        const uint32_t pos = launch.positions[ordinal];
+        const bool posted =
+            nixl_gpunetio_dev_write_chunk(xferReqRing[pos].qp_data, xferReqRing, pos);
+        // Reuse the helper's CTA-local state only after the posting lane finishes.
+        __syncthreads();
+        if (!posted) {
+            break;
+        }
+    }
+
+    if (threadIdx.x == 0) {
+        final_owner = cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(
+                          xferReqRing[final_pos].posting_ctas_done)
+                          .fetch_add(1U, cuda::std::memory_order_acq_rel) == gridDim.x - 1;
+    }
+    __syncthreads();
+    if (final_owner) {
+        // The last arrival acquired every CTA's completed posting publications.
+        nixl_gpunetio_dev_write_chunk(xferReqRing[final_pos].qp_data, xferReqRing, final_pos);
+    }
 }
 
 __global__ void
@@ -423,6 +462,26 @@ doca_kernel_write(cudaStream_t stream,
     }
 
     return DOCA_SUCCESS;
+}
+
+doca_error_t
+doca_kernel_write_striped(cudaStream_t stream,
+                          struct docaXferReqGpu *xferReqRing,
+                          docaStripedWriteLaunch launch,
+                          uint32_t qp_count) {
+    if (xferReqRing != nullptr &&
+        (launch.count == 0 || launch.count > DOCA_XFER_REQ_MAX || qp_count < 2 ||
+         qp_count > DOCA_POST_STREAM_NUM)) {
+        return DOCA_ERROR_INVALID_VALUE;
+    }
+    cudaError_t result = cudaGetLastError();
+    if (result != cudaSuccess) {
+        return DOCA_ERROR_BAD_STATE;
+    }
+    const uint32_t cta_count = xferReqRing == nullptr ? 1U : qp_count;
+    kernel_write_striped<<<cta_count, DOCA_XFER_REQ_SIZE, 0, stream>>>(xferReqRing, launch);
+    result = cudaGetLastError();
+    return result == cudaSuccess ? DOCA_SUCCESS : DOCA_ERROR_BAD_STATE;
 }
 
 doca_error_t
