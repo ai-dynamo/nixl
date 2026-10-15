@@ -399,11 +399,11 @@ kernel_progress(struct docaXferReqGpu *xfer_req_ring,
                     .load(cuda::std::memory_order_acquire);
             const uint32_t start = atomicAdd(&progress_state->progress_cursor, 0U);
 
-            for (uint32_t offset = 0; offset < DOCA_XFER_REQ_MAX; ++offset) {
+            uint32_t pending = __funnelshift_r(active, active, start);
+            while (pending != 0U) {
+                const uint32_t offset = __ffs(pending) - 1;
+                pending &= pending - 1;
                 const uint32_t pos = (start + offset) & DOCA_XFER_REQ_MASK;
-                if ((active & (1U << pos)) == 0U) {
-                    continue;
-                }
 
                 docaXferReqGpu *request = &xfer_req_ring[pos];
                 if (progress_state->active_generation[pos] != request->generation) {
