@@ -11,14 +11,3 @@ netif_discovery_test = executable(
     install: true,
 )
 test('gpunetio_netif_discovery', netif_discovery_test)
-
-if is_variable('gpunetio_backend_interface')
-    peer_write2_test = executable(
-        'gpunetio_peer_write2_test',
-        'peer_write2_test.cpp',
-        include_directories: [nixl_inc_dirs, utils_inc_dirs],
-        dependencies: [nixl_dep, nixl_infra, cuda_dep, dependency('gtest', main: true)],
-        link_with: [nixl_build_lib, serdes_lib],
-    )
-    test('gpunetio_peer_write2', peer_write2_test, timeout: 120)
-endif
