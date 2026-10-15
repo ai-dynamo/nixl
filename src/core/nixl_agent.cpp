@@ -1338,23 +1338,17 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
     if(req_hndl->status == NIXL_IN_PROG) {
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
-
-        if(req_hndl->status == NIXL_IN_PROG) {
-
-            const nixl_status_t release_status =
-                req_hndl->engine->releaseReqH(req_hndl->backendHandle);
-
-            if (release_status < 0) {
-                NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
-                                << "' could not release transfer request and returned error status "
-                                << release_status;
-                return NIXL_ERR_REPOST_ACTIVE; // Might need renaming
-            }
-            req_hndl->status = release_status;
-            // just in case the backend doesn't set to NULL on success
-            // this will prevent calling releaseReqH again in destructor
-            req_hndl->backendHandle = nullptr;
+    }
+    if (req_hndl->backendHandle != nullptr && req_hndl->engine != nullptr) {
+        const nixl_status_t release_status = req_hndl->engine->releaseReqH(req_hndl->backendHandle);
+        if (release_status < 0) {
+            NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
+                            << "' could not release transfer request and returned error status "
+                            << release_status;
+            return NIXL_ERR_REPOST_ACTIVE;
         }
+        // Do not release the backend handle again in the destructor.
+        req_hndl->backendHandle = nullptr;
     }
     delete req_hndl;
     return NIXL_SUCCESS;

@@ -740,6 +740,55 @@ namespace agent {
         EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
     }
 
+    TEST_F(dualAgentBridgeFixture, ErrorCompletionReleaseRejectionKeepsRequestOwned) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+
+        nixl_xfer_dlist_t local_xfer_dlist(DRAM_SEG), remote_xfer_dlist(DRAM_SEG);
+        local_xfer_dlist.addDesc(s.local_blob.getDesc());
+        remote_xfer_dlist.addDesc(s.remote_blob.getDesc());
+
+        for (bool query_before_release : {false, true}) {
+            SCOPED_TRACE(query_before_release);
+
+            nixlBackendReqH backend_request;
+            auto &engine = local_agent_helper_->getGMockEngine();
+            EXPECT_CALL(engine, prepXfer)
+                .WillOnce([&](const auto &,
+                              const auto &,
+                              const auto &,
+                              const auto &,
+                              nixlBackendReqH *&request,
+                              const auto *) {
+                    request = &backend_request;
+                    return NIXL_SUCCESS;
+                });
+            EXPECT_CALL(engine, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+            EXPECT_CALL(engine, checkXfer(&backend_request))
+                .WillOnce(testing::Return(NIXL_ERR_BACKEND));
+            EXPECT_CALL(engine, releaseReqH(&backend_request))
+                .WillOnce(testing::Return(NIXL_ERR_BACKEND))
+                .WillOnce(testing::Return(NIXL_ERR_BACKEND))
+                .WillOnce(testing::Return(NIXL_SUCCESS));
+
+            nixlXferReqH *request = nullptr;
+            ASSERT_EQ(
+                local_agent_->createXferReq(
+                    NIXL_WRITE, local_xfer_dlist, remote_xfer_dlist, s.remote_agent_name, request),
+                NIXL_SUCCESS);
+            ASSERT_EQ(local_agent_->postXferReq(request), NIXL_IN_PROG);
+            if (query_before_release) {
+                ASSERT_EQ(local_agent_->getXferStatus(request), NIXL_ERR_BACKEND);
+            }
+            // Stop before touching the handle if a broken release already destroyed it.
+            ASSERT_EQ(local_agent_->releaseXferReq(request), NIXL_ERR_REPOST_ACTIVE);
+            EXPECT_EQ(local_agent_->getXferStatus(request), NIXL_ERR_BACKEND);
+            ASSERT_EQ(local_agent_->releaseXferReq(request), NIXL_ERR_REPOST_ACTIVE);
+            EXPECT_EQ(local_agent_->getXferStatus(request), NIXL_ERR_BACKEND);
+            ASSERT_EQ(local_agent_->releaseXferReq(request), NIXL_SUCCESS);
+        }
+    }
+
     TEST_F(dualAgentBridgeFixture, PrepMemViewRemoteDRAM) {
         DualAgentSetup s(DRAM_SEG);
         setupDualAgent(s, /*register_local=*/false);
