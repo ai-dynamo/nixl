@@ -89,7 +89,7 @@ public:
          nixlUcxReq &req);
     [[nodiscard]] nixl_status_t
     write(void *laddr,
-          nixlUcxMem &mem,
+          const nixlUcxMem &mem,
           uint64_t raddr,
           const nixl::ucx::rkey &rkey,
           size_t size,

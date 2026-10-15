@@ -246,7 +246,7 @@ nixlUcxEp::read(uint64_t raddr,
 
 nixl_status_t
 nixlUcxEp::write(void *laddr,
-                 nixlUcxMem &mem,
+                 const nixlUcxMem &mem,
                  uint64_t raddr,
                  const nixl::ucx::rkey &rkey,
                  size_t size,
