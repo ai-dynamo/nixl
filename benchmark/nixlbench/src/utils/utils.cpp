@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -37,6 +38,10 @@
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
 #include "utils/utils.h"
+
+#if HAVE_NUMA
+#include <numa.h>
+#endif
 
 namespace {
 
@@ -193,6 +198,11 @@ NB_ARG_INT32(use_localized,
              "VMM locality domain: -1 disables programmatic localization, while 0 or 1 selects "
              "one locality domain (requires enable_vmm)");
 NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
+NB_ARG_INT32(numa_node, -1, "Bind host memory to this NUMA node (default: -1, unbound)");
+NB_ARG_INT32(numa_cpu_node,
+             -1,
+             "Bind CPUs to this NUMA node (default: -1, same as --numa_node; unbound if that "
+             "node has no CPUs)");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
 NB_ARG_STRING(filepath, "", "File path for storage operations");
@@ -379,6 +389,8 @@ bool xferBenchConfig::enable_vmm = false;
 bool xferBenchConfig::vmm_gdr_capable = true;
 int xferBenchConfig::use_localized = -1;
 bool xferBenchConfig::use_hugepages = false;
+int xferBenchConfig::numa_node = -1;
+int xferBenchConfig::numa_cpu_node = -1;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::asio_address = "127.0.0.1";
@@ -796,6 +808,13 @@ xferBenchConfig::loadParams(void) {
     reregister_mem = NB_ARG(reregister_mem);
     prepared_xfer = NB_ARG(prepared_xfer);
     use_hugepages = NB_ARG(use_hugepages);
+    numa_node = NB_ARG(numa_node);
+    numa_cpu_node = NB_ARG(numa_cpu_node);
+    if (numa_node < -1 || numa_cpu_node < -1) {
+        std::cerr << "--numa_node and --numa_cpu_node must be -1 or a NUMA node number"
+                  << std::endl;
+        return -1;
+    }
     if (use_hugepages && (total_buffer_size % HUGEPAGE_SIZE) != 0) {
         size_t hugepage_aligned_size = ROUND_UP(total_buffer_size, HUGEPAGE_SIZE);
         std::cout << "Rounding total_buffer_size from " << total_buffer_size << " to "
@@ -979,6 +998,85 @@ xferBenchConfig::printSeparator(const char sep) {
     std::cout << std::string(160, sep) << std::endl;
 }
 
+int
+xferBenchConfig::applyNumaBinding() {
+    if (numa_node < 0 && numa_cpu_node < 0) {
+        return 0;
+    }
+#if HAVE_NUMA
+    if (numa_available() < 0) {
+        std::cerr << "NUMA is not available on this system" << std::endl;
+        return -1;
+    }
+    for (int node : {numa_node, numa_cpu_node}) {
+        if (node > numa_max_node()) {
+            std::cerr << "NUMA node " << node << " does not exist (max node is " << numa_max_node()
+                      << ")" << std::endl;
+            return -1;
+        }
+    }
+
+    if (numa_node >= 0) {
+        struct bitmask *allowed = numa_get_mems_allowed();
+        const bool allowed_ok = numa_bitmask_isbitset(allowed, numa_node);
+        numa_free_nodemask(allowed);
+        if (!allowed_ok) {
+            std::cerr << "--numa_node: node " << numa_node
+                      << " is not in this process's allowed memory nodes (see "
+                         "Mems_allowed_list in /proc/self/status)"
+                      << std::endl;
+            return -1;
+        }
+        // Strict bind, like numactl --membind. numa_set_membind returns void, so
+        // read the policy back
+        struct bitmask *nodes = numa_allocate_nodemask();
+        numa_bitmask_setbit(nodes, numa_node);
+        numa_set_membind(nodes);
+        struct bitmask *bound = numa_get_membind();
+        const bool bound_ok = numa_bitmask_equal(bound, nodes);
+        numa_free_nodemask(bound);
+        numa_free_nodemask(nodes);
+        if (!bound_ok) {
+            std::cerr << "--numa_node: binding memory to node " << numa_node << " failed"
+                      << std::endl;
+            return -1;
+        }
+    }
+
+    const int cpu_node = numa_cpu_node >= 0 ? numa_cpu_node : numa_node;
+    struct bitmask *cpus = numa_allocate_cpumask();
+    const int cpus_rc = numa_node_to_cpus(cpu_node, cpus);
+    const bool has_cpus = numa_bitmask_weight(cpus) > 0;
+    numa_free_cpumask(cpus);
+    if (cpus_rc != 0) {
+        std::cerr << "Reading the CPUs of NUMA node " << cpu_node << " failed: " << strerror(errno)
+                  << std::endl;
+        return -1;
+    }
+    if (!has_cpus) {
+        // A node without CPUs can hold memory but cannot run threads
+        if (numa_cpu_node >= 0) {
+            std::cerr << "--numa_cpu_node: node " << cpu_node << " has no CPUs" << std::endl;
+            return -1;
+        }
+        std::cout << "--numa_node: node " << cpu_node
+                  << " has no CPUs, binding memory only (use --numa_cpu_node to place CPUs)"
+                  << std::endl;
+        return 0;
+    }
+    if (numa_run_on_node(cpu_node) != 0) {
+        std::cerr << "Binding CPUs to NUMA node " << cpu_node << " failed: " << strerror(errno)
+                  << std::endl;
+        return -1;
+    }
+    return 0;
+#else
+    std::cerr << "--numa_node and --numa_cpu_node require nixlbench built with libnuma"
+              << std::endl;
+    return -1;
+#endif
+}
+
 void
 xferBenchConfig::printConfig() {
     printSeparator('*');
@@ -1016,6 +1114,9 @@ xferBenchConfig::printConfig() {
                     std::to_string(prepared_xfer));
         printOption("Pipeline depth (--pipeline_depth=N)", std::to_string(pipeline_depth));
         printOption("Use hugepages (--use_hugepages=[0,1])", std::to_string(use_hugepages));
+        printOption("NUMA node (--numa_node=N, -1=unbound)", std::to_string(numa_node));
+        printOption("NUMA CPU node (--numa_cpu_node=N, -1=same as --numa_node)",
+                    std::to_string(numa_cpu_node));
 
         // Print GDS options if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
