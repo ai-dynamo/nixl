@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '1.5.0',
+project('nixlbench', 'CPP', version: '1.6.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -499,9 +499,5 @@ else
 endif
 
 if get_option('build_tests') and get_option('buildtype') != 'release'
-    if raw_cli_available
-        subdir('tests')
-    else
-        message('Skipping raw CLI tests because the raw command path is not built.')
-    endif
+    subdir('tests')
 endif
