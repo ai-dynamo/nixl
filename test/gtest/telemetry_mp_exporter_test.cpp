@@ -28,6 +28,9 @@
 
 #include <prometheus/exposer.h>
 
+#include <fcntl.h>
+#include <sys/file.h>
+
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -38,6 +41,7 @@
 
 namespace {
 
+using nixl::telemetry::mp::heldAddressesExcept;
 using nixl::telemetry::mp::ownerLockFileName;
 using nixl::telemetry::mp::readStoreSnapshot;
 
@@ -172,6 +176,17 @@ TEST_F(MpExporterTest, LeftoverLockFileIsNotASecondOwner) {
     EXPECT_TRUE(exporter.isExporter());
 }
 
+TEST_F(MpExporterTest, LeftoverLockFileIsNotASecondOwnerWhileAnotherOwnerProbesIt) {
+    const auto leftover = dir_ / ownerLockFileName("127.0.0.1:1");
+    { std::ofstream(leftover).put('\0'); }
+
+    const nixl::scopedFd second_owner_probe(::open(leftover.c_str(), O_RDONLY | O_CLOEXEC));
+    ASSERT_TRUE(second_owner_probe.valid());
+    ASSERT_EQ(::flock(second_owner_probe.get(), LOCK_SH | LOCK_NB), 0);
+
+    EXPECT_TRUE(heldAddressesExcept(dir_, "127.0.0.1:2").empty());
+}
+
 TEST_F(MpExporterTest, ForeignOwnedLockFileCannotSilenceTheRun) {
     const auto lock = dir_ / ownerLockFileName("127.0.0.1:" + std::to_string(port_));
     { std::ofstream(lock).put('\0'); }
@@ -273,12 +288,57 @@ TEST_F(MpExporterTest, WorldWritableTelemetryDirWarns) {
     EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 
-TEST(MpExporterStandaloneTest, MissingMultiprocDirThrows) {
-    gtest::ScopedEnv env;
-    env.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+TEST_F(MpExporterTest, EmptyMultiprocDirDefaultsToAPerUserPerPortDir) {
+    const auto dir = scopedDefaultDir();
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-default"));
+    EXPECT_TRUE(exporter.isExporter());
+    EXPECT_EQ(std::filesystem::status(dir).permissions() & std::filesystem::perms::mask,
+              std::filesystem::perms::owner_all);
+
+    const auto file = singleStoreFile(dir);
+    ASSERT_FALSE(file.empty());
+    const auto snap = readStoreSnapshot(file).snapshot;
+    ASSERT_TRUE(snap.has_value());
+    EXPECT_EQ(snap->agentName, "agent-default");
+}
+
+TEST_F(MpExporterTest, UncreatableMultiprocDirThrows) {
+    const auto file = dir_ / "not-a-dir";
+    { std::ofstream(file).put('\0'); }
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", (file / "telemetry").string());
+
     EXPECT_THROW(
-        { nixlTelemetryPrometheusMpExporter exporter(nixlTelemetryExporterInitParams{"a", 4096}); },
+        { nixlTelemetryPrometheusMpExporter exporter(initParams("agent-uncreatable")); },
         std::runtime_error);
+}
+
+TEST_F(MpExporterTest, SquattedDefaultDirRunsWithoutTelemetry) {
+    { std::ofstream(scopedDefaultDir()).put('\0'); }
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+    env_.addVar(telemetryExporterVar, "prometheus_mp");
+
+    const gtest::LogIgnoreGuard probe("Plugin file does not exist");
+    const gtest::LogIgnoreGuard lig("will run without a telemetry sink");
+    EXPECT_EQ(nixlTelemetry::create("agent-squatted"), nullptr);
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
+}
+
+TEST_F(MpExporterTest, OverlongBucketListStaysFatalWithTheDefaultDir) {
+    scopedDefaultDir();
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
+    env_.addVar(telemetryExporterVar, "prometheus_mp");
+    std::string bounds = "1";
+    for (std::size_t i = 2; i <= nixl::telemetry::mp::MP_STORE_MAX_BUCKETS + 1; ++i) {
+        bounds += "," + std::to_string(i);
+    }
+    env_.addVar("NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US", bounds);
+
+    const gtest::LogIgnoreGuard probe("Plugin file does not exist");
+    const gtest::LogIgnoreGuard lig("Failed to create exporter");
+    EXPECT_THROW(static_cast<void>(nixlTelemetry::create("agent-overlong")), std::runtime_error);
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 
 } // namespace

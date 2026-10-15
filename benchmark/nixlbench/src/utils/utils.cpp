@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -265,6 +266,12 @@ NB_ARG_STRING(
     gpunetio_oob_list,
     "",
     "Comma-separated OOB network interface name for control path (only used with nixl worker)");
+NB_ARG_STRING(gpunetio_gid_index,
+              "0",
+              "RoCE GID table index for GPUNetIO (only used with nixl worker; default: 0)");
+NB_ARG_STRING(gpunetio_oob_port,
+              "",
+              "OOB TCP port for GPUNetIO (only used with nixl worker; default: 6544)");
 
 // OBJ options - only used when backend is OBJ
 NB_ARG_STRING(obj_access_key, "", "Access key for S3 backend");
@@ -384,6 +391,8 @@ int xferBenchConfig::gds_batch_limit = 0;
 int xferBenchConfig::gds_mt_num_threads = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
 std::string xferBenchConfig::gpunetio_oob_list = "";
+std::string xferBenchConfig::gpunetio_gid_index = "0";
+std::string xferBenchConfig::gpunetio_oob_port = "";
 std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
@@ -673,6 +682,8 @@ xferBenchConfig::loadParams(void) {
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             gpunetio_device_list = NB_ARG(gpunetio_device_list);
             gpunetio_oob_list = NB_ARG(gpunetio_oob_list);
+            gpunetio_gid_index = NB_ARG(gpunetio_gid_index);
+            gpunetio_oob_port = NB_ARG(gpunetio_oob_port);
         }
 
         // Load HD3FS-specific configurations if backend is HD3FS
@@ -1082,8 +1093,11 @@ xferBenchConfig::printConfig() {
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             printOption("GPU CUDA Device id list (--device_list=dev1,dev2,...)",
                         gpunetio_device_list);
-            printOption("OOB network interface name for control path (--oob_list=ifface)",
+            printOption("OOB network interface name for control path (--gpunetio_oob_list=IFACE)",
                         gpunetio_oob_list);
+            printOption("RoCE GID table index (--gpunetio_gid_index=N)", gpunetio_gid_index);
+            printOption("OOB TCP port (--gpunetio_oob_port=N)",
+                        gpunetio_oob_port.empty() ? "6544" : gpunetio_oob_port);
         }
     }
     printOption("Initiator seg type (--initiator_seg_type=[DRAM,VRAM])", initiator_seg_type);
@@ -1628,6 +1642,22 @@ xferBenchUtils::printStats(bool is_target,
     }
 }
 
+bool
+xferBenchUtils::debugEnabled() {
+    static const bool enabled = [] {
+        const char *env = std::getenv("NIXLBENCH_LOG_LEVEL");
+        if (env == nullptr) {
+            return false;
+        }
+        std::string level(env);
+        std::transform(level.begin(), level.end(), level.begin(), [](unsigned char c) {
+            return static_cast<char>(std::toupper(c));
+        });
+        return level == "DEBUG" || level == "TRACE";
+    }();
+    return enabled;
+}
+
 std::string
 xferBenchUtils::buildAwsCredentials() {
     std::string env_setup = "";
@@ -1744,9 +1774,14 @@ xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
             " --checksum-algorithm SHA256 --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
-              << " (size: " << buffer_size << " bytes)" << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
+                  << " (size: " << buffer_size << " bytes)" << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {
@@ -1772,8 +1807,13 @@ xferBenchUtils::getObjS3(const std::string &name) {
         aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {
@@ -1798,8 +1838,13 @@ xferBenchUtils::rmObjS3(const std::string &name) {
         aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Removing S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Removing S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {
