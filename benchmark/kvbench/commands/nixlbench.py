@@ -188,12 +188,14 @@ class NIXLBench:
         """Configure GDS and GDS_MT plugins (same logic for both)"""
         if source == "file":
             self.op_type = "READ"
-            self.target_seg_type = "VRAM"
         elif source == "gpu":
             self.op_type = "WRITE"
-            self.target_seg_type = "FILE"
         else:
             raise ValueError(f"Invalid source for GDS/GDS_MT: {source}")
+        self.initiator_seg_type = "VRAM"
+        # nixlbench derives FILE_SEG from the storage backend, but still parses
+        # target_seg_type as a memory type before constructing its descriptors.
+        self.target_seg_type = "DRAM"
 
     def _configure_posix(self, source: str, destination: str):
         """Configure POSIX and HF3FS plugins (same logic for both)"""
