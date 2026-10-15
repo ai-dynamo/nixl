@@ -17,7 +17,7 @@ limitations under the License.
 
 # NIXL Benchmark
 
-GPUNetIO supports optional WRITE striping with `--gpunetio_data_qp_count=1|2|4`
+GPUNetIO supports optional WRITE striping with `--gpunetio_data_qp_count=N` (1–4)
 (default 1). Use the same value on both endpoints. Compare counts with identical
 bytes, descriptors, pipeline depth and consistency checking; one GPU per worker
 avoids single-GPU scheduling time-slicing. The flag does not enable peer-MR or

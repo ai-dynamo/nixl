@@ -38,7 +38,9 @@ Stream pool mode instead is when applications mostly wants to process data on th
 must use the same count. Counts above 1 retain a dedicated READ QP, stripe WRITE
 chunks over per-QP streams and require `data_qp_count <= cuda_streams <= 4`.
 The final chunk waits for all preceding chunks and the previous peer WRITE
-before posting, preserving ordering-tail/notification semantics. Attached CUDA
+before posting, preserving ordering-tail/notification semantics. CUDA events order
+the prerequisite posting kernels before the final kernel can run; they do not
+replace its RDMA completion checks. Attached CUDA
 streams are supported for WRITE only with count 1. Single-QP mode preserves the
 legacy OOB format; multi-QP mode uses a versioned QPN exchange.
 

@@ -199,6 +199,16 @@ struct nixlDocaRdmaQp {
     std::unique_ptr<uint64_t, nixlDocaGpuCounterDeleter> writeCompletedGpu;
     uint64_t *writeCompletedCpu = nullptr;
     uint64_t postedWriteTicket = 0;
+    uint32_t writeEventDevice = 0;
+    std::vector<cudaEvent_t> writeSubmitEvents;
+    cudaEvent_t writeTailPostEvent = nullptr;
+    bool writeTailPostEventRecorded = false;
+
+    void
+    createWriteEvents(uint32_t device, uint32_t count);
+
+    bool
+    closeWriteEvents();
 
     bool
     closeDataQps() {
@@ -206,7 +216,7 @@ struct nixlDocaRdmaQp {
         for (auto &qp : qp_write) {
             closed = qp->close() && closed;
         }
-        return closed;
+        return closed && closeWriteEvents();
     }
 };
 

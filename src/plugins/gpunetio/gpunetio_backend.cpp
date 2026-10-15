@@ -19,6 +19,7 @@
 #include "gpunetio_cuda_device_guard.h"
 #include "gpunetio_completion_status.h"
 #include "serdes/serdes.h"
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cassert>
 #include <charconv>
@@ -36,6 +37,83 @@ nixlDocaGpuCounterDeleter::operator()(uint64_t *counter) const {
     if (doca_gpu_mem_free(gpu, counter) != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to free striped WRITE completion counter";
     }
+}
+
+void
+nixlDocaRdmaQp::createWriteEvents(uint32_t device, uint32_t count) {
+    writeEventDevice = device;
+    nixl::doca::cudaDeviceGuard cuda_device(device);
+    if (cuda_device.status() != cudaSuccess) {
+        throw std::runtime_error("Failed to select CUDA device for striped WRITE events");
+    }
+    try {
+        writeSubmitEvents.resize(count);
+        for (auto &event : writeSubmitEvents) {
+            const cudaError_t status = cudaEventCreateWithFlags(&event, cudaEventDisableTiming);
+            if (status != cudaSuccess) {
+                throw std::runtime_error(
+                    std::string("Failed to create striped WRITE submit event: ") +
+                    cudaGetErrorString(status));
+            }
+        }
+        const cudaError_t status =
+            cudaEventCreateWithFlags(&writeTailPostEvent, cudaEventDisableTiming);
+        if (status != cudaSuccess) {
+            throw std::runtime_error(std::string("Failed to create striped WRITE tail event: ") +
+                                     cudaGetErrorString(status));
+        }
+    }
+    catch (...) {
+        closeWriteEvents();
+        throw;
+    }
+}
+
+bool
+nixlDocaRdmaQp::closeWriteEvents() {
+    if (writeSubmitEvents.empty() && writeTailPostEvent == nullptr) {
+        return true;
+    }
+    bool closed = true;
+    nixl::doca::cudaDeviceGuard cuda_device(writeEventDevice);
+    if (cuda_device.status() != cudaSuccess) {
+        if (writeTailPostEvent != nullptr ||
+            std::any_of(writeSubmitEvents.begin(), writeSubmitEvents.end(), [](cudaEvent_t event) {
+                return event != nullptr;
+            })) {
+            NIXL_ERROR << "Failed to select CUDA device for striped WRITE event teardown";
+            return false;
+        }
+        return true;
+    }
+    for (auto &event : writeSubmitEvents) {
+        if (event == nullptr) {
+            continue;
+        }
+        const cudaError_t status = cudaEventDestroy(event);
+        if (status != cudaSuccess) {
+            NIXL_ERROR << "Failed to destroy striped WRITE submit event: "
+                       << cudaGetErrorString(status);
+            closed = false;
+        } else {
+            event = nullptr;
+        }
+    }
+    if (writeTailPostEvent != nullptr) {
+        const cudaError_t status = cudaEventDestroy(writeTailPostEvent);
+        if (status != cudaSuccess) {
+            NIXL_ERROR << "Failed to destroy striped WRITE tail event: "
+                       << cudaGetErrorString(status);
+            closed = false;
+        } else {
+            writeTailPostEvent = nullptr;
+            writeTailPostEventRecorded = false;
+        }
+    }
+    if (closed) {
+        writeSubmitEvents.clear();
+    }
+    return closed;
 }
 
 namespace {
@@ -902,6 +980,7 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
             rdma_qp->writeCompletedGpu.get_deleter().gpu = gdevs[0].second;
             rdma_qp->writeCompletedGpu.reset(gpu_counter);
             *rdma_qp->writeCompletedCpu = 0;
+            rdma_qp->createWriteEvents(gdevs[0].first, data_qp_count);
         }
     }
     catch (const std::exception &e) {
@@ -1788,6 +1867,12 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
         }
         peer = found->second;
     }
+    if (request->positions.empty() || peer->writeSubmitEvents.size() != data_qp_count ||
+        peer->writeTailPostEvent == nullptr) {
+        request->postStatus = NIXL_ERR_BACKEND;
+        *reinterpret_cast<volatile uint32_t *>(wait_exit_cpu) = 1;
+        return request->postStatus;
+    }
 
     // Publish all dependencies before any kernel can consume the final chunk.
     const uint32_t first_id = lastPostedReq.load(std::memory_order_relaxed);
@@ -1812,20 +1897,77 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
     }
     std::atomic_thread_fence(std::memory_order_release);
 
+    const size_t final_ordinal = request->positions.size() - 1;
+    const uint32_t final_stream_index = final_ordinal % data_qp_count;
+    std::array<size_t, DOCA_POST_STREAM_NUM> last_prerequisite;
+    last_prerequisite.fill(request->positions.size());
+    for (size_t ordinal = 0; ordinal < final_ordinal; ++ordinal) {
+        const uint32_t stream_index = ordinal % data_qp_count;
+        if (stream_index != final_stream_index) {
+            last_prerequisite[stream_index] = ordinal;
+        }
+    }
+    bool has_submission[DOCA_POST_STREAM_NUM]{};
+    auto fail_post = [&]() {
+        request->postStatus = NIXL_ERR_BACKEND;
+        *reinterpret_cast<volatile uint32_t *>(wait_exit_cpu) = 1;
+    };
     for (size_t ordinal = 0; ordinal < request->positions.size(); ++ordinal) {
         const uint32_t position = request->positions[ordinal];
-        const auto result = doca_kernel_write(post_stream[ordinal % data_qp_count],
-                                              xferReqRingCpu[position].qp_data,
-                                              xferReqRingGpu,
-                                              position);
+        const uint32_t stream_index = ordinal % data_qp_count;
+        const cudaStream_t stream = post_stream[stream_index];
+        const bool final_chunk = ordinal == final_ordinal;
+
+        if (final_chunk) {
+            // Same-stream FIFO covers this request's final stream. Order only
+            // cross-stream prerequisite kernels before the CQ-waiting tail.
+            if (peer->writeTailPostEventRecorded &&
+                cudaStreamWaitEvent(stream, peer->writeTailPostEvent, 0) != cudaSuccess) {
+                fail_post();
+                break;
+            }
+            for (uint32_t prerequisite_stream = 0; prerequisite_stream < data_qp_count;
+                 ++prerequisite_stream) {
+                if (prerequisite_stream != stream_index && has_submission[prerequisite_stream] &&
+                    cudaStreamWaitEvent(stream, peer->writeSubmitEvents[prerequisite_stream], 0) !=
+                        cudaSuccess) {
+                    fail_post();
+                    break;
+                }
+            }
+            if (request->postStatus != NIXL_SUCCESS) {
+                break;
+            }
+        }
+
+        const auto result =
+            doca_kernel_write(stream, xferReqRingCpu[position].qp_data, xferReqRingGpu, position);
         if (result != DOCA_SUCCESS) {
-            request->postStatus = NIXL_ERR_BACKEND;
-            *reinterpret_cast<volatile uint32_t *>(wait_exit_cpu) = 1;
+            fail_post();
             break;
         }
         completion_list_cpu[xferReqRingCpu[position].id].xferReqRingGpu = xferReqRingGpu + position;
         lastPostedReq.fetch_add(1, std::memory_order_relaxed);
         ++request->postedCount;
+
+        if (final_chunk) {
+            const cudaError_t event_status = cudaEventRecord(peer->writeTailPostEvent, stream);
+            if (event_status != cudaSuccess) {
+                fail_post();
+                break;
+            }
+            peer->writeTailPostEventRecorded = true;
+        } else if (last_prerequisite[stream_index] == ordinal) {
+            // Re-record once after the last prerequisite on this stream. The
+            // next final-tail wait is enqueued before postLock_ permits reuse.
+            const cudaError_t event_status =
+                cudaEventRecord(peer->writeSubmitEvents[stream_index], stream);
+            if (event_status != cudaSuccess) {
+                fail_post();
+                break;
+            }
+            has_submission[stream_index] = true;
+        }
     }
     return request->postedCount == 0 ? request->postStatus : NIXL_IN_PROG;
 }
