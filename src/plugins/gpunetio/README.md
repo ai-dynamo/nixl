@@ -66,5 +66,33 @@ NIXL bench also has the option to specify the DOCA GPUNetIO backend. An example 
 
 ## Caveats
 
+### Comparing striped WRITE submission designs
+
+For a matched comparison, build both versions with the same release toolchain
+and DOCA SDK, then use one common core/NIXLBench executable and switch only
+`NIXL_PLUGIN_DIR`. Use two GPUs with MPS off. Set `GPU`, `OOB_PORT`, `NIC`,
+`IFACE`, `GID` and `ASIO_PORT` for your system; each worker gets a different GPU
+and OOB port, but the same ASIO address/port and remaining options. Start the
+first worker before the second:
+
+```bash
+CUDA_VISIBLE_DEVICES="$GPU" CUDA_MODULE_LOADING=EAGER CUDA_DEVICE_MAX_CONNECTIONS=8 \
+nixlbench --runtime_type=ASIO --asio_address=127.0.0.1 --asio_port="$ASIO_PORT" \
+  --backend=GPUNETIO --worker_type=nixl --device_list="$NIC" \
+  --gpunetio_device_list=0 --gpunetio_oob_list="$IFACE" \
+  --gpunetio_gid_index="$GID" --gpunetio_oob_port="$OOB_PORT" \
+  --gpunetio_data_qp_count=4 --initiator_seg_type=VRAM --target_seg_type=VRAM \
+  --op_type=WRITE --scheme=pairwise --mode=SG --num_threads=1 \
+  --num_initiator_dev=1 --num_target_dev=1 --total_buffer_size=268435456 \
+  --start_block_size=4096 --max_block_size=4096 \
+  --start_batch_size=4096 --max_batch_size=4096 --pipeline_depth=1 \
+  --num_iter=100 --warmup_iter=20 --large_blk_iter_ftr=1 --check_consistency=true
+```
+
+Repeat five fresh-worker pairs per version, alternating their order. Repeat with
+`--pipeline_depth=4` to check request overlap and count1/depth1 as the default-path
+control. Report Post/Prep times, Tx p99 and payload bandwidth separately. These
+are component measurements, not serving latency or NIC-only latency.
+
 To run for performance (e.g. with NIXL bench) it's highly recommended to build NIXL with `buildtype=release`.
 For debugging purposes, NIXL can be built with `buildtype=debug`.
