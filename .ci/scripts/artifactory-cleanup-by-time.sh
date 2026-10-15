@@ -43,8 +43,7 @@ jf config add artifactory \
     --artifactory-url "${ARTIFACTORY_URL}" \
     --password "${TOKEN}" \
     --user "${USER}" \
-    --interactive=false \
-    --overwrite
+    --interactive=false
 
 jf rt ping
 

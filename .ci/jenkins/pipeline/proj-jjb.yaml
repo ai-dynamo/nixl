@@ -544,7 +544,7 @@
       • Builds and pushes x86_64 &amp; aarch64 images with any NIXL/UCX version combination<br/>
       • Choose between <b>nixlbench</b> or <b>nixl</b> build targets<br/>
       • Optional latest tag update via <code>UPDATE_LATEST</code> parameter<br/>
-      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
+      • Images pushed to: https://il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
       • You must be part of access-artifactory-nbu-swx-nixl-users DL group in order to work with these images
       <br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
@@ -732,7 +732,7 @@
       • Builds for x86_64 and aarch64 (aarch64 via podman with QEMU)<br/>
       • Publishes multi-arch manifests after both arches succeed<br/>
       • Wheels pulled from <code>sw-nbu-swx-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/</code><br/>
-      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>verification/llm/{{vllm-cu12-nixl,vllm-cu13-nixl,sglang-cu12-nixl,sglang-cu13-nixl}}</code><br/>
+      • Images pushed to: https://il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>verification/llm/{{vllm-cu12-nixl,vllm-cu13-nixl,sglang-cu12-nixl,sglang-cu13-nixl}}</code><br/>
       • For <b>rc0</b> leave the <code>BASE_IMAGE_*</code> params empty to use upstream defaults<br/>
       • For <b>rcN, N&gt;0</b> set each <code>BASE_IMAGE_*</code> to the matching rc0 image to isolate the verification to the NIXL change<br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
@@ -786,7 +786,7 @@
             Optional override for the vllm-cu12 base image build-arg.<br/>
             Leave empty to use upstream <code>docker.io/vllm/vllm-openai:latest-cu129</code> (rc0 default).<br/>
             For <b>rcN, N&gt;0</b> pin to the rc0 vllm-cu12-nixl image, e.g.<br/>
-            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu12-nixl:1.1.0-rc0</code>
+            <code>il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu12-nixl:1.1.0-rc0</code>
       - string:
           name: "BASE_IMAGE_VLLM_CU13"
           default: ""
@@ -794,7 +794,7 @@
             Optional override for the vllm-cu13 base image build-arg.<br/>
             Leave empty for <b>rc0</b> (uses the CUDA 13 default <code>docker.io/vllm/vllm-openai:latest</code>).<br/>
             For <b>rcN, N&gt;0</b> set to the corresponding rc0 image, e.g.<br/>
-            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code>
+            <code>il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code>
       - string:
           name: "BASE_IMAGE_SGLANG_CU12"
           default: ""
@@ -802,7 +802,7 @@
             Optional override for the sglang-cu12 base image build-arg.<br/>
             Leave empty for <b>rc0</b> (uses the CUDA 12 default <code>docker.io/lmsysorg/sglang:latest-cu129-runtime</code>).<br/>
             For <b>rcN, N&gt;0</b> pin to the rc0 sglang-cu12-nixl image, e.g.<br/>
-            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-cu12-nixl:1.1.0-rc0</code>
+            <code>il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-cu12-nixl:1.1.0-rc0</code>
       - string:
           name: "BASE_IMAGE_SGLANG_CU13"
           default: ""
@@ -810,7 +810,7 @@
             Optional override for the sglang-cu13 base image build-arg.<br/>
             Leave empty to use upstream <code>docker.io/lmsysorg/sglang:latest-cu130-runtime</code> (rc0 default).<br/>
             For <b>rcN, N&gt;0</b> pin to the rc0 sglang-cu13-nixl image, e.g.<br/>
-            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-cu13-nixl:1.1.0-rc0</code>
+            <code>il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-cu13-nixl:1.1.0-rc0</code>
       - string:
           name: "TAG_SUFFIX"
           default: ""
@@ -917,7 +917,7 @@
       • Brings up prefill + decode + proxy/router and runs smoke / perf / accuracy phases<br/>
       • Framework (vllm vs sglang) is auto-detected from the image URL<br/>
       • The URL must point to the multi-arch manifest tag (resolves to x86_64 on mizu nodes), e.g.<br/>
-      &nbsp;&nbsp;<code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code><br/>
+      &nbsp;&nbsp;<code>il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code><br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: true
     sandbox: true
@@ -927,7 +927,7 @@
           default: ""
           description: >
             Full URL of the LLM image to test (multi-arch manifest tag, e.g.
-            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code>).<br/>
+            <code>il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code>).<br/>
             Framework is auto-detected: URL containing <code>vllm</code> runs
             <code>test_vllm.sh</code>; URL containing <code>sglang</code> runs <code>test_sglang.sh</code>.
       - bool:
@@ -997,7 +997,7 @@
       with <code>PUBLISH_DIR=release/&lt;ver&gt;</code><br/>
       • Release runs publish to <code>release/&lt;ver&gt;/&lt;build number&gt;/</code> &mdash;
       browse them at
-      <a href='https://artifactory.nvidia.com/ui/repos/tree/General/sw-nbu-swx-nixl-pypi-local/release'>sw-nbu-swx-nixl-pypi-local/release</a>.
+      <a href='https://il.artifactory.nvidia.com/ui/repos/tree/General/sw-nbu-swx-nixl-pypi-local/release'>sw-nbu-swx-nixl-pypi-local/release</a>.
       Each green build also links its own folder from the build description<br/>
       • A run that does not end green deletes its release folder: a partial wheel set has to
       be rebuilt anyway, and leaving it would make the poller skip the commit<br/>
