@@ -47,11 +47,11 @@ parseUnsigned(std::string_view field, unsignedType &value) {
 /** Parse the existing decimal rkey-address-size metadata without unchecked indexing. */
 inline bool
 parseRemoteMetadata(std::string_view input, uint32_t &rkey, uintptr_t &addr, size_t &size) {
-    const size_t first = input.find('-');
+    const size_t first = input.find(info_delimiter);
     if (first == std::string_view::npos) {
         return false;
     }
-    const size_t second = input.find('-', first + 1);
+    const size_t second = input.find(info_delimiter, first + 1);
     if (second == std::string_view::npos) {
         return false;
     }
