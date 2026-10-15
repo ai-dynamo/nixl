@@ -36,6 +36,7 @@ env:
   NPROC: 24
   UCX_VERSION: "v1.23.x"
   LOCAL_TAG_BASE: "nixl-ci-pr:build-"
+  APT_MIRROR: "https://urm.nvidia.com/artifactory/ubuntu-public"
 
 taskName: "container-build/${target}/${arch}"
 
@@ -97,12 +98,13 @@ steps:
           export UCX_REF="$UCX_VERSION"
           contrib/build-container.sh \
             --tag "${LOCAL_TAG_BASE}${target}-${arch}" --arch "$arch" \
-            --build-type debug --no-cache
+            --build-type debug --no-cache --apt-mirror "$APT_MIRROR"
           ;;
         nixlbench)
           benchmark/nixlbench/contrib/build.sh \
             --tag "${LOCAL_TAG_BASE}${target}-${arch}" --arch "$arch" \
-            --no-cache --nixl "$WORKSPACE" --ucx "$WORKSPACE/ucx-src"
+            --no-cache --apt-mirror "$APT_MIRROR" \
+            --nixl "$WORKSPACE" --ucx "$WORKSPACE/ucx-src"
           ;;
       esac
       echo "Container build verification passed ($target) on ${arch}. No images pushed."
