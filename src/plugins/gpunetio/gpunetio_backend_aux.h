@@ -205,6 +205,7 @@ struct nixlDocaRdmaQp {
     std::unique_ptr<uint64_t, nixlDocaGpuCounterDeleter> writeCompletedGpu;
     uint64_t *writeCompletedCpu = nullptr;
     uint64_t postedWriteTicket = 0;
+
     bool
     closeDataQps() {
         bool closed = qp_data == nullptr || qp_data->close();
