@@ -22,6 +22,7 @@
 #include <atomic>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <sys/types.h>
 #include <thread>
@@ -54,6 +55,29 @@
 // Local includes
 #include "common/nixl_time.h"
 #include "gpunetio_oob_endpoint.h"
+
+namespace nixl::gpunetio {
+
+struct readRange {
+    uintptr_t localAddr;
+    uintptr_t remoteAddr;
+    size_t size;
+    uint32_t localKey;
+    uint32_t remoteKey;
+};
+
+/** Merge only adjacent same-key ranges whose combined READ fits the SDK length limit. */
+inline bool
+canCoalesceRead(const readRange &previous, const readRange &next, size_t max_read_size) {
+    return previous.size <= max_read_size && next.size <= max_read_size - previous.size &&
+        previous.localAddr <= std::numeric_limits<uintptr_t>::max() - previous.size &&
+        previous.remoteAddr <= std::numeric_limits<uintptr_t>::max() - previous.size &&
+        previous.localAddr + previous.size == next.localAddr &&
+        previous.remoteAddr + previous.size == next.remoteAddr &&
+        previous.localKey == next.localKey && previous.remoteKey == next.remoteKey;
+}
+
+} // namespace nixl::gpunetio
 
 constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
 constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT_MASK = (DOCA_MAX_COMPLETION_INFLIGHT - 1);
