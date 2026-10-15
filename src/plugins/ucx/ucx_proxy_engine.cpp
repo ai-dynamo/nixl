@@ -265,7 +265,8 @@ requireDeviceOps() {
     return *ops;
 }
 
-/** One shared worker per (channel, peer) ring and RW sync; `storage` holds the custom params. */
+/** One shared worker per (channel, peer) ring, RW sync and error mode none; `storage` holds the
+ *  custom params. */
 [[nodiscard]] nixlBackendInitParams
 proxyInitParams(const nixlBackendInitParams &init_params,
                 const nixl::proxyConfig &config,
@@ -278,8 +279,19 @@ proxyInitParams(const nixlBackendInitParams &init_params,
             "num_workers=", *num_workers, " exceeds the device proxy's ", ring_workers, " rings");
     }
 
+    // Under peer, UCX disables every AMO protocol and cancels the proxy's atomics.
+    const auto err_mode = nixl::getBackendParamOptional<std::string>(
+        init_params.customParams, std::string(nixl_ucx_err_handling_param_name));
+    if (err_mode.has_value() && ucx_err_mode_from_string(*err_mode) != UCP_ERR_HANDLING_MODE_NONE) {
+        nixl::throwRuntimeError(nixl_ucx_err_handling_param_name,
+                                "=",
+                                *err_mode,
+                                " is not supported with device_proxy=true; use none");
+    }
+
     storage = init_params.customParams ? *init_params.customParams : nixl_b_params_t{};
     storage["num_workers"] = std::to_string(ring_workers);
+    storage[std::string(nixl_ucx_err_handling_param_name)] = "none";
     nixlBackendInitParams params = init_params;
     params.customParams = &storage;
     // Proxy progress can overlap metadata operations under any agent lock mode.
