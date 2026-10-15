@@ -709,7 +709,9 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
 
     bool is_done = uccl_engine_xfer_status(conn, uccl_handle->transfer_id);
     if (is_done) {
-        if (!uccl_handle->has_notif) return NIXL_SUCCESS;
+        if (!uccl_handle->has_notif) {
+            return NIXL_SUCCESS;
+        }
         nixlSerDes ser_des;
         ser_des.addStr("msg", uccl_handle->notif_msg);
 
