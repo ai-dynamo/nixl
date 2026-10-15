@@ -160,7 +160,9 @@ if $HAS_GPU ; then
     for op_type in WRITE READ; do
         for initiator in $seg_types; do
             for target in $seg_types; do
-                run_nixlbench_two_workers_gpunetio --backend GPUNETIO --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+                for qp_count in 1 4; do
+                    run_nixlbench_two_workers_gpunetio --backend GPUNETIO --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency --gpunetio_data_qp_count=$qp_count
+                done
             done
         done
     done
