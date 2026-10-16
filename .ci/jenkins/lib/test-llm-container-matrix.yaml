@@ -64,8 +64,7 @@ runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
      name: 'build_helper_llm',
-     tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+     tag: "${CI_IMAGE_TAG}"
     }
 
 # Matrix kept to a single arch axis because the framework requires `arch` to
@@ -146,7 +145,7 @@ steps:
       nodes: "${SLURM_NODES}"
       jobTimeout: "${SLURM_JOB_TIMEOUT}"
       immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
-      jobName: "nixl-llm-${BUILD_NUMBER}"
+      jobName: "${JOB_BASE_NAME}-${BUILD_NUMBER}"
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
       extraArgs: [
@@ -154,6 +153,26 @@ steps:
         "--mincpus=${SLURM_MINCPUS}",
         "--mem=${SLURM_MEM}",
         "--exclude=${SLURM_EXCLUDE}"
+      ]
+
+  - name: Sync Container Image
+    # Import the image onto the node before the timed test stages, so a slow
+    # registry pull is not counted against (and does not time out) a test stage.
+    containerSelector: "{name: 'build_helper_llm'}"
+    timeout: 30
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${DOCKER_IMAGE}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-llm-${FRAMEWORK}-${BUILD_NUMBER}"
+      extraArgs: [
+        "--container-mount-home"
       ]
 
   - name: Copy Tests

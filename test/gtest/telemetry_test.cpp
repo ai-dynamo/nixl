@@ -27,9 +27,14 @@
 #include <unistd.h>
 #include <climits>
 #include <atomic>
+#include <cstdint>
+#include <stdexcept>
+#include <string_view>
 
 #include "telemetry.h"
 #include "telemetry_event.h"
+#include "tracing/trace.h"
+#include "tracing/trace_sink.h"
 #include "nixl_types.h"
 #include "common/cyclic_buffer.h"
 #include "common.h"
@@ -137,6 +142,19 @@ TEST_F(telemetryTest, NonexistentExporterThrows) {
 
     EXPECT_THROW(
         { nixlTelemetry telemetry(testFile_, "nixl_nonexistent_exporter"); }, std::runtime_error);
+}
+
+TEST_F(telemetryTest, ExporterBindFailureRunsWithoutSink) {
+    envHelper_.addVar(TELEMETRY_EXPORTER_VAR, "mock_bind_failed");
+    const gtest::LogIgnoreGuard ignore_missing_plugin("Plugin file does not exist");
+    const gtest::LogIgnoreGuard ignore_sinkless("will run without a telemetry sink");
+
+    std::unique_ptr<nixlTelemetry> telemetry;
+    EXPECT_NO_THROW(telemetry = nixlTelemetry::create(testFile_));
+    EXPECT_EQ(telemetry, nullptr);
+    EXPECT_EQ(ignore_sinkless.getIgnoredCount(), 1u);
+
+    envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, CreateFallsBackToNopWithoutSink) {
@@ -273,7 +291,7 @@ TEST_F(telemetryTest, AddXferStatsRxBranch) {
 TEST_F(telemetryTest, TelemetryEventStructure) {
     nixlTelemetryEvent event1(nixl_telemetry_event_type_t::AGENT_TX_BYTES, 42);
 
-    EXPECT_EQ(TELEMETRY_VERSION, 4);
+    EXPECT_EQ(TELEMETRY_VERSION, 5);
     EXPECT_EQ(sizeof(nixlTelemetryEvent), 16);
     EXPECT_EQ(event1.value_, 42);
     EXPECT_EQ(event1.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
@@ -301,6 +319,7 @@ TEST(telemetryMetricContract, DescriptorIsUnifiedExporterSeriesContract) {
          "agent_memory_deregistered_last_bytes"},
         {et::AGENT_XFER_TIME, "agent_xfer_time_total", "agent_xfer_time"},
         {et::AGENT_XFER_POST_TIME, "agent_xfer_post_time_total", "agent_xfer_post_time"},
+        {et::AGENT_TRACE_PHASES_DROPPED, "agent_trace_phases_dropped_total", nullptr},
         {et::AGENT_TELEMETRY_EVENTS_DROPPED, "agent_telemetry_events_dropped_total", nullptr},
     };
 
@@ -329,6 +348,82 @@ TEST(telemetryMetricContract, DescriptorIsUnifiedExporterSeriesContract) {
         EXPECT_EQ(descriptor.counterName, nullptr);
         EXPECT_EQ(descriptor.gaugeName, nullptr);
     }
+}
+
+// A subset allowlist exports only the listed event; deactivated metrics are
+// skipped at the source and never enter the staging queue (BUFFER here).
+TEST_F(telemetryTest, MetricAllowlistSubset) {
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    envHelper_.addVar(TELEMETRY_ENABLED_METRICS_VAR, "agent_tx_bytes");
+    testFile_ = "test_allowlist_subset";
+
+    {
+        nixlTelemetry telemetry(testFile_, "BUFFER");
+        telemetry.updateTxBytes(1024); // allowed
+        telemetry.updateRxBytes(2048); // filtered
+        telemetry.updateMemoryRegistered(4096); // filtered
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+    EXPECT_EQ(buffer->size(), 1);
+    nixlTelemetryEvent event;
+    ASSERT_TRUE(buffer->pop(event));
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
+    EXPECT_EQ(event.value_, 1024);
+
+    envHelper_.popVar(); // TELEMETRY_ENABLED_METRICS_VAR
+    envHelper_.popVar(); // TELEMETRY_RUN_INTERVAL_VAR
+}
+
+// A family glob (agent_err_*) enables every matching event and nothing else.
+TEST_F(telemetryTest, MetricAllowlistFamilyGlob) {
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    envHelper_.addVar(TELEMETRY_ENABLED_METRICS_VAR, "agent_err_*");
+    testFile_ = "test_allowlist_family";
+
+    {
+        nixlTelemetry telemetry(testFile_, "BUFFER");
+        telemetry.updateErrorCount(nixl_status_t::NIXL_ERR_BACKEND); // allowed
+        telemetry.updateTxBytes(1024); // filtered
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+    EXPECT_EQ(buffer->size(), 1);
+    nixlTelemetryEvent event;
+    ASSERT_TRUE(buffer->pop(event));
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERR_BACKEND);
+
+    envHelper_.popVar(); // TELEMETRY_ENABLED_METRICS_VAR
+    envHelper_.popVar(); // TELEMETRY_RUN_INTERVAL_VAR
+}
+
+// An allowlist whose tokens match nothing warns and exports nothing.
+TEST_F(telemetryTest, MetricAllowlistUnknownTokenExportsNothing) {
+    gtest::LogIgnoreGuard ignore_unknown("no telemetry metric matches");
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    envHelper_.addVar(TELEMETRY_ENABLED_METRICS_VAR, "nope_*, also_missing");
+    testFile_ = "test_allowlist_unknown";
+
+    {
+        nixlTelemetry telemetry(testFile_, "BUFFER");
+        telemetry.updateTxBytes(1024);
+        telemetry.updateRxBytes(2048);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+    EXPECT_EQ(buffer->size(), 0);
+
+    envHelper_.popVar(); // TELEMETRY_ENABLED_METRICS_VAR
+    envHelper_.popVar(); // TELEMETRY_RUN_INTERVAL_VAR
 }
 
 TEST_F(telemetryTest, ShortRunInterval) {
@@ -545,5 +640,64 @@ TEST_F(telemetryTest, DroppedEventsAppearInBufferStream) {
         << "produced must equal exported + dropped (no silent loss)";
 
     envHelper_.popVar();
+    envHelper_.popVar();
+}
+
+namespace {
+
+class throwingTraceBackend final : public nixl::trace::TraceBackend {
+public:
+    [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
+    beginSpan(std::string_view, nixl::trace::Kind) override {
+        throw std::runtime_error("beginSpan failed");
+    }
+
+    void
+    mark(std::string_view, nixl::trace::Kind) override {}
+
+    void
+    pushCorrelationId(std::uint64_t) override {}
+
+    void
+    popCorrelationId() override {}
+
+    [[nodiscard]] std::string_view
+    name() const noexcept override {
+        return "throwing";
+    }
+};
+
+} // namespace
+
+TEST_F(telemetryTest, TracePhaseDropsAreCounted) {
+    constexpr uint64_t kDrops = 3;
+    const gtest::LogIgnoreGuard lig("Dropping a trace phase");
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    testFile_ = "test_trace_phase_drops";
+
+    {
+        nixlTelemetry telemetry(testFile_, "BUFFER");
+        std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+        backends.push_back(std::make_unique<throwingTraceBackend>());
+        nixl::trace::Tracer tracer(std::move(backends), 0.0);
+        nixl::trace::TracerPhaseSink sink{tracer, "UCX", &telemetry};
+        for (uint64_t i = 0; i < kDrops; ++i) {
+            sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, i, {}, nullptr);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    const auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+    uint64_t dropped = 0;
+    nixlTelemetryEvent event;
+    while (buffer->pop(event)) {
+        if (event.eventType_ == nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED) {
+            dropped += event.value_;
+        }
+    }
+    EXPECT_EQ(dropped, kDrops);
+
     envHelper_.popVar();
 }

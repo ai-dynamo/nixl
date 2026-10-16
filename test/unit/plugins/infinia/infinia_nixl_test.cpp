@@ -38,6 +38,7 @@
 #include <random>
 #include <fstream>
 #include <sys/sysinfo.h>
+#include <cstdlib>
 
 using namespace nixlTime;
 
@@ -212,6 +213,8 @@ print_usage(const char *program_name) {
                  "(default: \"0x2\")\n"
               << "  -M, --max-retries N         Max retry attempts for operations (default: 3, "
                  "range: 0-100)\n"
+              << "  -F, --nixl-config FILE       Path to NIXL config file (TOML) passed via "
+                 "NIXL_CONFIG_FILE\n"
               << "\n  Other:\n"
               << "  -S, --seed N                Random seed for reproducibility (default: 0, use "
                  "-1 to skip validation).\n"
@@ -408,6 +411,7 @@ main(int argc, char *argv[]) {
     bool use_vram = false;
     int opt;
     std::string dir_path;
+    std::string nixl_config_file;
     size_t transfer_size = DEFAULT_TRANSFER_SIZE;
     int num_transfers = DEFAULT_NUM_TRANSFERS;
     bool skip_read = false;
@@ -417,6 +421,7 @@ main(int argc, char *argv[]) {
     unsigned int num_ring_entries = 512;
     std::string coremask = "0x2";
     unsigned int max_retries = 3;
+    nixl_b_params_t params;
     nixlTime::us_t total_time(0);
     nixlTime::us_t alloc_duration(0);
     nixlTime::us_t write_duration_total(0);
@@ -449,14 +454,16 @@ main(int argc, char *argv[]) {
                                            {"max-retries", required_argument, 0, 'M'},
                                            {"iterations", required_argument, 0, 't'},
                                            {"direct", no_argument, 0, 'D'},
+                                           {"nixl-config", required_argument, 0, 'F'},
                                            {"seed", required_argument, 0, 'S'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
 #ifdef HAVE_CUDA
-    while ((opt = getopt_long(argc, argv, "dvn:s:rwT:B:R:C:M:t:DS:h", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dvn:s:rwT:B:R:C:M:t:DF:S:h", long_options, NULL)) !=
+           -1) {
 #else
-    while ((opt = getopt_long(argc, argv, "dn:s:rwT:B:R:C:M:t:DS:h", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dn:s:rwT:B:R:C:M:t:DF:S:h", long_options, NULL)) != -1) {
 #endif
         switch (opt) {
         case 'd':
@@ -498,6 +505,7 @@ main(int argc, char *argv[]) {
                 std::cerr << "Error: Service threads must be between 1 and 64\n";
                 return -1;
             }
+            params["sthreads"] = std::to_string(sthreads);
             break;
         case 'B':
             num_buffers = atoi(optarg);
@@ -505,6 +513,7 @@ main(int argc, char *argv[]) {
                 std::cerr << "Error: Number of buffers must be between 1 and 4096\n";
                 return -1;
             }
+            params["num_buffers"] = std::to_string(num_buffers);
             break;
         case 'R':
             num_ring_entries = atoi(optarg);
@@ -512,9 +521,11 @@ main(int argc, char *argv[]) {
                 std::cerr << "Error: Number of ring entries must be between 1 and 4096\n";
                 return -1;
             }
+            params["num_ring_entries"] = std::to_string(num_ring_entries);
             break;
         case 'C':
             coremask = optarg;
+            params["coremasks"] = coremask;
             break;
         case 'M':
             max_retries = atoi(optarg);
@@ -522,6 +533,10 @@ main(int argc, char *argv[]) {
                 std::cerr << "Error: Max retries must be between 0 and 100\n";
                 return -1;
             }
+            params["max_retries"] = std::to_string(max_retries);
+            break;
+        case 'F':
+            nixl_config_file = optarg;
             break;
         case 't':
             iterations = atoi(optarg);
@@ -540,6 +555,10 @@ main(int argc, char *argv[]) {
             print_usage(argv[0]);
             return 0;
         }
+    }
+
+    if (!nixl_config_file.empty()) {
+        setenv("NIXL_CONFIG_FILE", nixl_config_file.c_str(), 1);
     }
 
     if (skip_read && skip_write) {
@@ -586,7 +605,6 @@ main(int argc, char *argv[]) {
 
     // Initialize NIXL components
     nixlAgentConfig cfg(true);
-    nixl_b_params_t params;
     nixlBlobDesc *vram_buf = use_vram ? new nixlBlobDesc[num_transfers] : NULL;
     nixlBlobDesc *dram_buf = use_dram ? new nixlBlobDesc[num_transfers] : NULL;
     nixlBlobDesc *ftrans = new nixlBlobDesc[num_transfers];
@@ -617,11 +635,17 @@ main(int argc, char *argv[]) {
     }
     std::cout << std::endl;
     std::cout << "\nINFINIA Backend Configuration:" << std::endl;
-    std::cout << "- Service threads: " << sthreads << std::endl;
-    std::cout << "- Async buffers: " << num_buffers << std::endl;
-    std::cout << "- Ring entries: " << num_ring_entries << std::endl;
-    std::cout << "- Core mask: " << coremask << std::endl;
-    std::cout << "- Max retries: " << max_retries << std::endl;
+    std::cout << "- NIXL config file: "
+              << (nixl_config_file.empty() ? "(not set)" : nixl_config_file) << std::endl;
+    for (const auto &[label, key] : {std::pair{"Service threads", "sthreads"},
+                                     std::pair{"Async buffers", "num_buffers"},
+                                     std::pair{"Ring entries", "num_ring_entries"},
+                                     std::pair{"Core mask", "coremasks"},
+                                     std::pair{"Max retries", "max_retries"}}) {
+        auto it = params.find(key);
+        std::cout << "- " << label << ": "
+                  << (it != params.end() ? it->second : "(NIXL config or default)") << std::endl;
+    }
     std::cout << "============================================================\n" << std::endl;
 
     // Check memory requirements before starting
@@ -644,13 +668,7 @@ main(int argc, char *argv[]) {
 
     nixlAgent agent("INFINIA_Tester", cfg);
 
-    // Set INFINIA backend parameters
-    params["sthreads"] = std::to_string(sthreads);
-    params["num_buffers"] = std::to_string(num_buffers);
-    params["num_ring_entries"] = std::to_string(num_ring_entries);
-    params["coremasks"] = coremask;
-    params["max_retries"] = std::to_string(max_retries);
-
+    // Only parameters given on the command line are passed; the rest come from the NIXL config
     // To also test the decision making of createXferReq
     ret = agent.createBackend("INFINIA", params, infinia);
 
