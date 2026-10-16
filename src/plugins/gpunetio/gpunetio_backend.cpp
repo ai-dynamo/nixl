@@ -1758,12 +1758,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         }
 
         auto &final_request = xferReqRingCpu[final_pos];
-        notif_addr =
-            (uintptr_t)nixl::gpunetio::reserveNotificationSlot(notif->send_pi,
-                                                               notif->elems_num,
-                                                               notif->send_addr,
-                                                               notif->elems_size,
-                                                               final_request.has_notif_msg_idx);
+        // The handle retains this ring position, including between reposts.
+        final_request.has_notif_msg_idx = final_pos;
+        notif_addr = (uintptr_t)notif->send_addr + (final_pos * notif->elems_size);
         final_request.msg_sz = newMsg.size() + 1;
         final_request.lbuf_notif = notif_addr;
         final_request.lkey_notif = notif->send_mr->get_lkey();
@@ -2112,12 +2109,6 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     }
 
     std::string newMsg = msg_tag_start + std::to_string((int)msg.size()) + msg_tag_end + msg;
-    buf_idx = (notif->send_pi.fetch_add(1) & (notif->elems_num - 1));
-    msg_buf = (uintptr_t)notif->send_addr + (buf_idx * notif->elems_size);
-    memcpy((void *)msg_buf, newMsg.c_str(), newMsg.size() + 1);
-
-    NIXL_DEBUG << "genNotif to " << remote_agent << " msg size " << std::to_string((int)msg.size())
-               << " msg " << newMsg << " at " << buf_idx << " msg_buf " << msg_buf << "\n";
 
     bool ring_reserved = false;
     for (uint32_t attempt = 0; attempt < DOCA_XFER_REQ_MAX; ++attempt) {
@@ -2137,6 +2128,14 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     if (!ring_reserved) {
         return NIXL_ERR_BACKEND;
     }
+
+    // Reserve before writing: live handles and concurrent senders own other positions.
+    buf_idx = pos;
+    msg_buf = (uintptr_t)notif->send_addr + (buf_idx * notif->elems_size);
+    memcpy((void *)msg_buf, newMsg.c_str(), newMsg.size() + 1);
+
+    NIXL_DEBUG << "genNotif to " << remote_agent << " msg size " << std::to_string((int)msg.size())
+               << " msg " << newMsg << " at " << buf_idx << " msg_buf " << msg_buf << "\n";
 
     docaXferReqGpu request{};
     request.generation = ++xferReqGenerations_[pos];
