@@ -122,6 +122,20 @@ meson setup build -Dnixl_path=/usr/local/nixl --buildtype=release
 cd build && ninja && sudo ninja install
 ```
 
+### Running in Kubernetes
+
+`contrib/k8s/nixlbench-pod.yaml` runs nixlbench as a long-running pod on one node
+of a cluster. Edit the node name, the image and the host directory in the
+manifest, apply it, and run nixlbench inside the pod:
+
+```bash
+kubectl apply -f contrib/k8s/nixlbench-pod.yaml
+kubectl exec -it nixlbench -- nixlbench --backend POSIX --filepath /mnt/storage --storage_enable_direct
+```
+
+See [contrib/k8s/README.md](contrib/k8s/README.md) for the storage and UCX
+examples and the pod settings they need.
+
 ## Building
 
 ### Docker Container Build (Recommended)
