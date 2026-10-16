@@ -167,6 +167,7 @@ public:
     uccl_conn_t *conn;
     uint64_t transfer_id;
     nixl_blob_t notif_msg;
+    bool has_notif = false;
     std::vector<FifoItem> fifo_items;
     std::vector<std::vector<char>> ipc_infos;
     bool use_ipc = false;
