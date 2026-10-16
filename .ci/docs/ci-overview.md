@@ -170,7 +170,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 - **What it does:** Fans out in parallel to eight downstream Jenkins jobs, waiting on all of them:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
-  - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com)
+  - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node)
   - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (NIXL EP tests on dlcluster.nvidia.com)
   - `nixl-ci-gpu-vr` — `.ci/jenkins/lib/test-vr-matrix.yaml` (same tests as `nixl-ci-dl-gpu`, on the Vera Rubin `vrnvl72` partition / `rubin` account; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node, so it can run on a partly used node of the busy partition; nodes with a differing configuration are excluded via `SLURM_EXCLUDE`)
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
@@ -188,7 +188,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 ### `nixl-ci-build-wheel` (dispatcher-triggered)
 - **Config:** `.ci/jenkins/lib/build-wheel-matrix.yaml`
 - **What it does:** Builds NIXL Python wheels for each Python version × architecture combination. Uses a two-stage `contrib/Dockerfile.manylinux` build: the `wheel_base` stage (all slow deps: UCX, gRPC, Rust, etc.) is pre-built and cached in Artifactory under `CI_IMAGE_TAG`; PR builds pull this pre-built image and run only the `wheel` stage (~16 steps). PR builds also pass `--torch-versions` (set via the `TORCH_VERSIONS` env in the matrix file) to limit the torch extension builds to the latest version. x86_64 wheels build in the `manylinux` (podman-in-container) runner.
-- **vLLM/SGLang NIXL sanity (aarch64):** the same job also gates a 1-prefill/1-decode NIXL KV-transfer sanity for vLLM and SGLang. Each framework runs as its own aarch64 branch (`build_helper_vllm` / `build_helper_sglang`): build the aarch64 wheels (reusing the cached `wheel_base`), layer them onto the pinned framework base image (`.ci/dockerfiles/Dockerfile.{vllm,sglang}-base`, built as `category: tool` by ci-demo), then run the sanity on the `gb200nvl72_ci` dlcluster SLURM partition over SSH (`.gitlab/test_vllm_sglang_sanity.sh`). SGLang additionally asserts a gsm8k accuracy floor on `Qwen/Qwen3-8B`. The aarch64 wheels are built once per framework branch (duplicated) so the two flows stay separate, labeled branches in the Jenkins UI. The sanity model is prefetched through the internal HuggingFace mirror in `SANITY_HF_ENDPOINT` rather than `huggingface.co` (which rate-limits the shared CI egress IP); each sanity step passes it into the SLURM container as `HF_ENDPOINT`.
+- **vLLM/SGLang NIXL sanity (aarch64):** the same job also gates a 1-prefill/1-decode NIXL KV-transfer sanity for vLLM and SGLang. Each framework runs as its own aarch64 branch (`build_helper_vllm` / `build_helper_sglang`): build the aarch64 wheels (reusing the cached `wheel_base`), layer them onto the pinned framework base image (`.ci/dockerfiles/Dockerfile.{vllm,sglang}-base`, built as `category: tool` by ci-demo), then run the sanity on the `gb200nvl72_ci` dlcluster SLURM partition over SSH (`.gitlab/test_vllm_sglang_sanity.sh`), each branch in its own 2-GPU allocation (`--gres=gpu:2`) rather than a whole node. SGLang additionally asserts a gsm8k accuracy floor on `Qwen/Qwen3-8B`. The aarch64 wheels are built once per framework branch (duplicated) so the two flows stay separate, labeled branches in the Jenkins UI. The sanity model is prefetched through the internal HuggingFace mirror in `SANITY_HF_ENDPOINT` rather than `huggingface.co` (which rate-limits the shared CI egress IP); each sanity step passes it into the SLURM container as `HF_ENDPOINT`.
 - **UCX spcx plugin compile check:** `pipeline_start` triggers `nixl-ci-compile-ucx-plugin` and fails the job if it fails, before any wheel is built. That job lives in the closed-source plugin repo (its definition, matrix and build scripts) but runs on this Jenkins instance so it can write to the shared PVC. It builds both arches against the same `wheel_base` image this job uses and stages the module under `SPCX_STAGING_ROOT/<build>/<arch>/`; the Build Wheel step passes that to `build-container.sh --ucx-spcx-plugin-install`, and `wheel_add_ucx_plugins.py` bundles it like any other UCX module. The plugin is never cloned or built here — this repo is public and everything in a PR's checkout is PR-editable, so the plugin's read credential and source stay on the trusted side; only the built module and a pass/fail crosses back. Which plugin ref gets built is that job's own default, owned by the plugin developers, so a plugin bump needs no change here.
 - **`CI_IMAGE_TAG`:** Same convention as the other five matrix files (also tags `build_helper_*` and the sanity `*-nixl-base` images). `contrib/Dockerfile.manylinux` is part of the `CI_FILES` list in `cidemo-init.sh`, so changing it (or any other CI file) automatically derives a new `CI_IMAGE_TAG` and rebuilds the cached `wheel_base` image (see [CI_IMAGE_TAG management](#ci_image_tag-management)).
 
@@ -404,6 +404,30 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 An unbound or empty secret leaves the clones anonymous, as before. A revoked, expired
 or org-blocked token, however, fails every github.com clone in these builds, since the
 header is sent on every request.
+
+## Authenticated meson subproject clones in the test pipelines
+
+`meson setup` clones the `taskflow` and `prometheus-cpp` `[wrap-git]` subprojects
+(and prometheus-cpp's civetweb and googletest submodules) from github.com. The test
+pipelines run it through `.gitlab/build.sh` outside the image builds above, with the
+same credential:
+
+- The `Build` steps of `build-matrix.yaml` (`nixl-ci-non-gpu`) and
+  `test-sanitizer-matrix.yaml` run `build.sh` in the job container. They bind
+  `svc-nixl-github-read-only-token`, call `write_github_gitconfig /tmp/ghconfig` in a
+  subshell, and export `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=include.path` and
+  `GIT_CONFIG_VALUE_0=/tmp/ghconfig`. Every git process the step starts, including
+  meson's clones and their submodule fetches, inherits that, without changing
+  `~/.gitconfig`; the variables carry only the file's path (git ≥ 2.31).
+- The image-build steps of `test-matrix.yaml`, `test-dl-matrix.yaml`,
+  `test-vr-matrix.yaml` and `test-dl-ep-matrix.yaml` build `Dockerfile.gpu-test` with
+  `podman build`. They bind the token, write `/tmp/ghconfig` and pass
+  `--secret id=ghconfig,src=/tmp/ghconfig`. `Dockerfile.gpu-test` mounts it at the
+  default `/run/secrets/ghconfig` (`mode=0444`, for the non-root build user) on its
+  `build.sh` `RUN` and points `build.sh` at it with the same `GIT_CONFIG_*` variables,
+  so no home directory is involved. A secret mount exists only during that `RUN`.
+
+As above, an empty config leaves the clones anonymous, and an invalid token fails them.
 
 ## Related docs
 
