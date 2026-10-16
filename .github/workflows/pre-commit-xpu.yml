@@ -1,0 +1,54 @@
+name: Run Pre-Commit Hooks XPU
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: xpu-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-xpu-dockerfile:
+    name: Build .ci/dockerfiles/Dockerfile.xpu
+    runs-on: xpu-nixl-build
+    timeout-minutes: 120
+
+    env:
+      IMAGE_TAG: nixl-xpu:sha-${{ github.sha }}
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image from Dockerfile.xpu
+        shell: bash
+        run: |
+          docker buildx inspect nixl-xpu-builder > /dev/null
+          docker buildx build \
+            --builder nixl-xpu-builder \
+            --network=host \
+            --tag "${IMAGE_TAG}" \
+            --file .ci/dockerfiles/Dockerfile.xpu \
+            --load \
+            .
+
+      - name: Inspect built image
+        shell: bash
+        run: docker image inspect "${IMAGE_TAG}" > /dev/null
+
+  xpu-gtest:
+    needs: build-xpu-dockerfile
+    uses: ./.github/workflows/xpu-gtest.yml
+    with:
+      image_tag: nixl-xpu:sha-${{ github.sha }}
