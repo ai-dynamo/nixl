@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,9 +34,11 @@ Stream pool mode instead is when applications mostly wants to process data on th
 
 ## Input parameters
 
-DOCA GPUNetIO backend takes 3 input parameters:
+DOCA GPUNetIO backend takes these input parameters:
 - network_devices: network device to be used during the execution (e.g. mlx5_0). Current release supports only 1 network device.
 - oob_interface: network interface to be used when exchanging control info during initiator/target connection. Optional parameter, not needed if the network device is set in Ethernet mode.
+- oob_port: TCP port used to listen for OOB connection setup. It must be an integer in the inclusive range [1, 65535] and defaults to 6544. Set a distinct port for each GPUNETIO backend sharing a host network namespace.
+- gid_index: RoCE GID table index, in [0, 255]. Defaults to 0; select the GID for the test fabric when a non-default index is required.
 - gpu_devices: GPU CUDA ID to be used during the execution (e.g. 0). Current release supports only 1 GPU device.
 - cuda_streams: how many CUDA streams the backend should created at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. If this parameter is not specified, default value is `DOCA_POST_STREAM_NUM`.
 
@@ -50,6 +52,32 @@ NIXL bench also has the option to specify the DOCA GPUNetIO backend. An example 
 ```
 
 ## Caveats
+
+### Peer-owned GPU memory and two-SGE WRITE
+
+`gpu_devices` selects the communication GPU. In stream-pool mode, a VRAM
+descriptor may name another visible GPU as its memory owner. Registration runs
+under that owner's CUDA device; posting runs on the communication GPU and
+restores the caller's device. Foreign VRAM uses legacy PeerDirect registration
+(`ibv_reg_mr`, requiring compatible peer-memory support), rather than exporting
+it with the communication GPU's DOCA handle. Synchronize producer writes before
+posting, retain allocations and registrations until completion, and establish
+receiver GPU visibility before consumption. Attached application streams are
+not supported for peer-owned payloads. This is ordinary GPU memory, not VMM or
+multicast-memory support.
+
+Eligible consecutive WRITE descriptors with adjacent remote ranges and the same
+remote key use one two-SGE WQE. Source addresses and local keys may differ; no
+gather buffer is allocated. Non-adjacent or different-key ranges, zero lengths,
+and pairs exceeding the SDK transfer limit keep the one-SGE path. The final
+descriptor stays separate for arrival-marker ordering. READ, dense CQ signaling,
+request completion and notification polling policies are unchanged.
+
+For a component comparison, build main and this PR with the same supported
+DOCA SDK and run the existing NIXLBench pairwise WRITE with fixed bytes,
+descriptor count, pipeline depth and consistency checking, selecting one GPU
+per worker. This measures WRITE pairing with owner-matching memory; it does not
+by itself validate peer ownership or serving performance.
 
 To run for performance (e.g. with NIXL bench) it's highly recommended to build NIXL with `buildtype=release`.
 For debugging purposes, NIXL can be built with `buildtype=debug`.

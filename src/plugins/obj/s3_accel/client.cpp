@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "object/engine_utils.h"
+#include "object/rdma/rdma.h"
 #include "common/nixl_log.h"
 
 awsS3AccelClient::awsS3AccelClient(nixl_b_params_t *custom_params,
@@ -86,7 +87,7 @@ awsS3AccelClient::putObjectAsync(std::string_view key,
         nixl_obj_rdma::S3RdmaClientCtx ctx;
         ctx.bucket = bucket;
         ctx.object = k;
-        const ssize_t r = nixl_obj_rdma::rdmaPutWithRetry(
+        const ssize_t r = nixl_obj_rdma::rdmaPutObject(
             *rdma, *cp, ctx, reinterpret_cast<void *>(data_ptr), data_len);
         // Success is a complete transfer: the descriptor length is a promise, so a
         // short count is a failure, not a partially-written object.
@@ -129,7 +130,7 @@ awsS3AccelClient::getObjectAsync(std::string_view key,
         nixl_obj_rdma::S3RdmaClientCtx ctx;
         ctx.bucket = bucket;
         ctx.object = k;
-        const ssize_t r = nixl_obj_rdma::rdmaGetWithRetry(
+        const ssize_t r = nixl_obj_rdma::rdmaGetObject(
             *rdma, *cp, ctx, reinterpret_cast<void *>(data_ptr), data_len, offset);
         // A full read is required: the server clamps to min(requested, servable),
         // so a short count (r < data_len) leaves the buffer tail unfilled and must

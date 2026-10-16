@@ -66,7 +66,7 @@ env:
   SLURM_MINCPUS: 24
   # Nodes whose configuration differs from the rest of the partition
   SLURM_EXCLUDE: 'vr-nvl72-ts3-l06-comp137,vr-nvl72-ts3-l06-comp139,vr-nvl72-ts3-l06-comp141,vr-nvl72-ts2b-l10-comp102'
-  SLURM_JOB_TIMEOUT: '01:30:00'
+  SLURM_JOB_TIMEOUT: '02:00:00'
   SLURM_IMMEDIATE_TIMEOUT: 3600
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
@@ -119,10 +119,14 @@ taskName: "${name}/${arch}/${axis_index}"
 steps:
   - name: Compiling NIXL Docker Image
     containerSelector: "{name: 'build_helper_dl'}"
-    credentialsId: "svc-nixl-new-artifactory-token"
+    credentialsId:
+      - 'svc-nixl-new-artifactory-token'
+      - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       set -x
+      # github.com credential for build.sh's clones, incl. meson's [wrap-git] subprojects ("ghconfig" build secret).
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
       # Pass UCX_VERSION only when UCX_VER is set (e.g. nightly master);
       # empty falls back to the Dockerfile ARG UCX_VERSION default so the
       # per-branch default lives in one place.
@@ -138,6 +142,7 @@ steps:
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
       --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-base:${CI_IMAGE_TAG} \
+      --secret id=ghconfig,src=/tmp/ghconfig \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       for i in {1..6}; do
@@ -169,6 +174,24 @@ steps:
         "--mincpus=${SLURM_MINCPUS}",
         "--exclude=${SLURM_EXCLUDE}"
       ]
+
+  - name: Sync Container Image
+    # Import the image onto the node before the timed test stages, so a slow
+    # registry pull is not counted against (and does not time out) a test stage.
+    containerSelector: "{name: 'build_helper_dl'}"
+    timeout: 30
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-vr-test:${BUILD_NUMBER}"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      containerName: "nixl-ci-vr-${BUILD_NUMBER}"
 
   - name: Run Python tests
     containerSelector: "{name: 'build_helper_dl'}"
