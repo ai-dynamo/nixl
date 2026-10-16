@@ -24,12 +24,7 @@ import torch
 
 import nixl._bindings as bindings
 import nixl._utils as utils
-from nixl._api import (
-    nixl_agent,
-    nixl_agent_config,
-    nixl_thread_sync_t,
-    nixl_xfer_handle,
-)
+from nixl._api import nixl_agent, nixl_agent_config, nixl_thread_sync_t
 
 # NIXL pytest fixtures
 
@@ -561,20 +556,28 @@ def test_get_xfer_telemetry_cfg(backend_name):
 
 
 def test_leaked_xfer_handle_is_queued_on_the_agent(one_empty_agent, monkeypatch):
-    """A release that fails in the finalizer defers to the agent's leak list.
+    """A release that fails in the finalizer defers to the nixl_agent's leak list.
 
-    The list lives on nixl_agent, not on the pybind agent, and the agent's own
-    destructor is what drains it.
+    The handle comes from initialize_xfer, so it holds whatever the agent passes
+    it. That used to be the pybind agent, which has no leak list, and the handle
+    was dropped without a trace.
     """
 
-    class FailingRelease:
+    class FailingNative:
+        def createXferReq(self, *args):
+            return 0xDEAD
+
         def releaseXferReq(self, handle):
             raise RuntimeError("release refused")
 
-    monkeypatch.setattr(one_empty_agent, "agent", FailingRelease())
+    monkeypatch.setattr(one_empty_agent, "agent", FailingNative())
+    try:
+        handle = one_empty_agent.initialize_xfer("WRITE", None, None, "peer")
+        del handle
+        gc.collect()
 
-    handle = nixl_xfer_handle(one_empty_agent, 0xDEAD)
-    del handle
-    gc.collect()
-
-    assert one_empty_agent._leaked_xfer_handles == [0xDEAD]
+        assert one_empty_agent._leaked_xfer_handles == [0xDEAD]
+    finally:
+        # 0xDEAD is not a real request, so the agent's destructor must not
+        # hand it to the native release once the real agent is back.
+        one_empty_agent._leaked_xfer_handles.clear()
