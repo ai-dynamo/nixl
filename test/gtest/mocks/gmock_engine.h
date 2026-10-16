@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,16 @@
 #ifndef TEST_GTEST_GMOCK_ENGINE_H
 #define TEST_GTEST_GMOCK_ENGINE_H
 
+#include <chrono>
+
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
+#include <mutex>
+#include <optional>
+
 #include "backend/backend_engine.h"
+#include "tracing/trace_context.h"
 
 namespace mocks {
 
@@ -56,17 +62,29 @@ class GMockBackendEngine : public nixlBackendEngine {
 public:
     GMockBackendEngine();
 
-    GMockBackendEngine(const nixlBackendInitParams *init_params) : nixlBackendEngine(init_params) {}
-
+    explicit GMockBackendEngine(const nixlBackendInitParams *init_params);
 
     void
     SetToParams(nixl_b_params_t &params) const;
     static GMockBackendEngine *
     GetFromParams(nixl_b_params_t *params);
 
+    void
+    observeTraceSink(const nixlBackendTraceSink *sink);
+
+    void
+    observeTraceContext(const nixl_opt_b_args_t *opt_args);
+
+    [[nodiscard]] std::optional<const nixlBackendTraceSink *>
+    observedTraceSink() const;
+
+    [[nodiscard]] std::optional<nixl::trace::TraceContext>
+    observedTraceContext() const;
+
     MOCK_METHOD(bool, supportsRemote, (), (const, override));
     MOCK_METHOD(bool, supportsLocal, (), (const, override));
     MOCK_METHOD(bool, supportsNotif, (), (const, override));
+    MOCK_METHOD(bool, supportsTraceContext, (), (const, noexcept, override));
     MOCK_METHOD(nixl_mem_list_t, getSupportedMems, (), (const, override));
     MOCK_METHOD(nixl_status_t,
                 registerMem,
@@ -97,6 +115,19 @@ public:
     MOCK_METHOD(nixl_status_t, checkXfer, (nixlBackendReqH * req), (const, override));
     MOCK_METHOD(nixl_status_t, releaseReqH, (nixlBackendReqH * req), (const, override));
     MOCK_METHOD(nixl_status_t,
+                prepMemView,
+                (const nixl_remote_meta_dlist_t &dlist,
+                 nixlMemViewH &mvh,
+                 const nixl_opt_b_args_t *opt_args),
+                (const, override));
+    MOCK_METHOD(nixl_status_t,
+                prepMemView,
+                (const nixl_meta_dlist_t &dlist,
+                 nixlMemViewH &mvh,
+                 const nixl_opt_b_args_t *opt_args),
+                (const, override));
+    MOCK_METHOD(void, releaseMemView, (nixlMemViewH mvh), (const, override));
+    MOCK_METHOD(nixl_status_t,
                 getPublicData,
                 (const nixlBackendMD *input, std::string &str),
                 (const, override));
@@ -121,6 +152,32 @@ public:
                 genNotif,
                 (const std::string &remote_agent, const std::string &msg),
                 (const, override));
+    MOCK_METHOD(nixl_status_t,
+                queryMem,
+                (const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp),
+                (const, override));
+    MOCK_METHOD(nixl_status_t,
+                estimateXferCost,
+                (const nixl_xfer_op_t &operation,
+                 const nixl_meta_dlist_t &local,
+                 const nixl_meta_dlist_t &remote,
+                 const std::string &remote_agent,
+                 nixlBackendReqH *const &handle,
+                 std::chrono::microseconds &duration,
+                 std::chrono::microseconds &err_margin,
+                 nixl_cost_t &method,
+                 const nixl_opt_args_t *extra_params),
+                (const, override));
+
+private:
+    void
+    setDefaults();
+    void
+    setOptionalDefaults();
+
+    mutable std::mutex observedMutex_;
+    std::optional<const nixlBackendTraceSink *> observedTraceSink_;
+    std::optional<nixl::trace::TraceContext> observedTraceContext_;
 };
 
 } // namespace mocks

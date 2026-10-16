@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "uccl_backend.h"
+#include "common/backend.h"
 #include "serdes/serdes.h"
 #include <iostream>
 #include <cstdlib>
@@ -62,35 +63,15 @@ parseConnectionString(const std::string &conn_str,
     return true;
 }
 
-int
-getNixlParam(const nixl_b_params_t *custom_params, const std::string &key, int default_value) {
-    if (!custom_params) {
-        return default_value;
-    }
-
-    auto it = custom_params->find(key);
-    if (it == custom_params->end()) {
-        return default_value;
-    }
-
-    try {
-        return std::stoi(it->second);
-    }
-    catch (const std::exception &) {
-        return default_value;
-    }
-}
-
 nixlUcclEngine::nixlUcclEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       stop_listener_(false) {
 
     local_agent_name_ = init_params->localAgent;
-    nixl_b_params_t *custom_params = init_params->customParams;
-
-    size_t num_cpus = getNixlParam(custom_params, "num_cpus", 4);
-    int in_python = getNixlParam(custom_params, "in_python", 1);
-    engine_ = uccl_engine_create(num_cpus, (in_python == 1));
+    const nixl_b_params_t *custom_params = init_params->customParams;
+    const size_t num_cpus = nixl::getBackendParamDefaulted(custom_params, "num_cpus", 4u);
+    const bool in_python = nixl::getBackendParamDefaulted(custom_params, "in_python", true);
+    engine_ = uccl_engine_create(num_cpus, in_python);
     NIXL_DEBUG << "UCCL engine created";
 
     listener_thread_ = std::thread(&nixlUcclEngine::startListener, this);
@@ -730,23 +711,18 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
     if (is_done) {
         nixlSerDes ser_des;
         ser_des.addStr("msg", uccl_handle->notif_msg);
-        std::string serialized = ser_des.exportStr();
 
-        if (serialized.size() > sizeof(notify_msg_t::msg)) {
-            NIXL_ERROR << "Notification message too large: " << serialized.size()
-                       << " bytes, max: " << sizeof(notify_msg_t::msg) << " bytes";
-        } else {
-            notify_msg_t notify_msg = {};
-            strncpy(notify_msg.name, local_agent_name_.c_str(), sizeof(notify_msg.name) - 1);
-            memcpy(notify_msg.msg, serialized.c_str(), serialized.size());
+        // Notifications are variable-length; no backend-side size cap.
+        notify_msg_v_t notify_msg;
+        notify_msg.name = local_agent_name_;
+        notify_msg.msg = ser_des.exportStr();
 
-            int result = uccl_engine_send_notif(conn, &notify_msg);
-            if (result < 0) {
-                NIXL_ERROR << "Failed to send notify message";
-                return NIXL_ERR_BACKEND;
-            }
-            NIXL_DEBUG << "Transfer complete, sent notification: " << uccl_handle->notif_msg;
+        int result = uccl_engine_send_notif_v(conn, &notify_msg);
+        if (result < 0) {
+            NIXL_ERROR << "Failed to send notify message";
+            return NIXL_ERR_BACKEND;
         }
+        NIXL_DEBUG << "Transfer complete, sent notification: " << uccl_handle->notif_msg;
         return NIXL_SUCCESS;
     }
 
@@ -771,20 +747,15 @@ nixl_status_t
 nixlUcclEngine::getNotifs(notif_list_t &notif_list) {
     if (notif_list.size() != 0) return NIXL_ERR_INVALID_PARAM;
 
-    std::vector<notify_msg_t> notify_msgs = uccl_engine_get_notifs();
-    for (size_t i = 0; i < notify_msgs.size(); i++) {
-        size_t msg_len = sizeof(notify_msgs[i].msg);
-        std::string serialized_str(notify_msgs[i].msg, msg_len);
+    std::vector<notify_msg_v_t> notify_msgs = uccl_engine_get_notifs_v();
+    for (auto &notify_msg : notify_msgs) {
         nixlSerDes ser_des;
-        nixl_status_t ret = ser_des.importStr(serialized_str);
+        nixl_status_t ret = ser_des.importStr(notify_msg.msg);
         if (ret != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to deserialize notification message";
             continue;
         }
-        std::string remote_name(notify_msgs[i].name);
-        std::string msg = ser_des.getStr("msg");
-
-        notif_list.push_back(std::make_pair(remote_name, msg));
+        notif_list.push_back(std::make_pair(notify_msg.name, ser_des.getStr("msg")));
     }
 
     return NIXL_SUCCESS;
@@ -807,20 +778,13 @@ nixlUcclEngine::genNotif(const std::string &remote_agent, const std::string &msg
 
     nixlSerDes ser_des;
     ser_des.addStr("msg", msg);
-    std::string serialized = ser_des.exportStr();
 
-    if (serialized.size() > sizeof(notify_msg_t::msg)) {
-        NIXL_ERROR << "Notification message too large: " << serialized.size()
-                   << " bytes, max: " << sizeof(notify_msg_t::msg) << " bytes";
-        return NIXL_ERR_INVALID_PARAM;
-    }
+    // Notifications are variable-length; no backend-side size cap.
+    notify_msg_v_t notify_msg;
+    notify_msg.name = local_agent_name_;
+    notify_msg.msg = ser_des.exportStr();
 
-    notify_msg_t notify_msg;
-    memset(&notify_msg, 0, sizeof(notify_msg));
-    strncpy(notify_msg.name, local_agent_name_.c_str(), sizeof(notify_msg.name) - 1);
-    memcpy(notify_msg.msg, serialized.c_str(), serialized.size());
-
-    int result = uccl_engine_send_notif(conn, &notify_msg);
+    int result = uccl_engine_send_notif_v(conn, &notify_msg);
     if (result < 0) {
         NIXL_ERROR << "Failed to send notify message";
         return NIXL_ERR_BACKEND;

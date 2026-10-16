@@ -16,11 +16,15 @@
 nixl_worker_sources = [
   'nixl_worker.cpp',
   'nixl_worker.h',
+  'nixl_mem_region.cpp',
+  'nixl_mem_region.h',
 ]
 
 nixl_worker_deps = [openmp_dep, nixl_lib, nixl_build, nixl_serdes, tomlplusplus_dep]
 if cuda_available
   nixl_worker_deps += [cuda_dep]
+elif rocm_available
+  nixl_worker_deps += [rocm_dep]
 endif
 
 nixl_worker_lib = static_library('nixl_worker',

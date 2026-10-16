@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <getopt.h>
 #include "common/nixl_time.h"
+#include "path_mode_common.h"
 #include "temp_file.h"
 
 namespace {
@@ -138,6 +139,14 @@ namespace {
         }
     };
 
+    int
+    runPathModeSmoke() {
+        const char *probe_path = std::getenv("NIXL_HF3FS_PROBE_PATH");
+        if (!probe_path) {
+            probe_path = "/mnt/3fs/nixl_hf3fs_path_mode_smoke.bin";
+        }
+        return nixl_test::runPathModeSmoke("HF3FSPathModeSmoke", "HF3FS", probe_path, 4096);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -149,10 +158,11 @@ int main(int argc, char *argv[])
     nixlTime::us_t wait_time = default_wait_time;
     int max_waits = default_max_waits;
     bool filled_after_mem_register = false;
+    bool run_path_mode_smoke = true;
 
     // getopt argument parsing
     int opt;
-    while ((opt = getopt(argc, argv, "hn:s:d:w:m:l:")) != -1) {
+    while ((opt = getopt(argc, argv, "hn:s:d:w:m:l:P")) != -1) {
         switch (opt) {
         case 'l':
             if (strcmp(optarg, "before") == 0) {
@@ -202,11 +212,14 @@ int main(int argc, char *argv[])
                 return 1;
             }
             break;
+        case 'P':
+            run_path_mode_smoke = false;
+            break;
         case 'h':
         default:
             std::cout << "Usage: " << argv[0]
                       << " [-n num_transfers] [-s transfer_size] [-d test_files_dir_path] [-w "
-                         "wait_time] [-m max_waits]"
+                         "wait_time] [-m max_waits] [-P]"
                       << std::endl;
             std::cout << "  -n num_transfers      Number of transfers (default: "
                       << default_num_transfers << ")" << std::endl;
@@ -224,6 +237,8 @@ int main(int argc, char *argv[])
             std::cout << "  -l                    Filled memory before or after memory register "
                          "with NIXL: [before, after]"
                       << std::endl;
+            std::cout << "  -P                    Skip path-mode smoke (enabled by default)"
+                      << std::endl;
             std::cout << "  -h                    Show this help message" << std::endl;
             return (opt == 'h') ? 0 : 1;
         }
@@ -232,6 +247,12 @@ int main(int argc, char *argv[])
     if (page_size == 0) {
         std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
         return 1;
+    }
+
+    if (run_path_mode_smoke) {
+        if (int rc = runPathModeSmoke(); rc != 0) {
+            return rc;
+        }
     }
 
     // Convert directory path to absolute path using std::filesystem

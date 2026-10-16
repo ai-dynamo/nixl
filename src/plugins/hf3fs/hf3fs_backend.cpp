@@ -23,7 +23,9 @@
 #include <filesystem>
 #include "hf3fs_backend.h"
 #include "hf3fs_log.h"
+#include "common/backend.h"
 #include "common/nixl_log.h"
+#include "file/file_path_mode.h"
 #include "file/file_utils.h"
 
 #define NUM_CQES 1024
@@ -47,12 +49,15 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
 
     // Get mount point from parameters if available
     std::string mount_point = "/mnt/3fs/"; // default
-    if (init_params && init_params->customParams) {
-        if (init_params->customParams->count("mount_point") > 0) {
-            mount_point = init_params->customParams->at("mount_point");
+    if (init_params) {
+        nixl_b_params_t *params = init_params->customParams;
+
+        if (const auto opt = nixl::getBackendParamOptional<std::string>(params, "mount_point")) {
+            mount_point = *opt;
         }
-        if (init_params->customParams->count("mem_config") > 0) {
-            std::string mem_config_str = init_params->customParams->at("mem_config");
+
+        if (const auto opt = nixl::getBackendParamOptional<std::string>(params, "mem_config")) {
+            const std::string &mem_config_str = *opt;
             if (mem_config_str == "dram") {
                 mem_config = NIXL_HF3FS_MEM_CONFIG_DRAM;
             } else if (mem_config_str == "dram_zc") {
@@ -63,8 +68,9 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
                 return;
             }
         }
-        if (init_params->customParams->count("iopool_size") > 0) {
-            int size = atoi(init_params->customParams->at("iopool_size").c_str());
+
+        if (const auto opt = nixl::getBackendParamOptional<unsigned>(params, "iopool_size")) {
+            const unsigned int size = *opt;
             if (size > 0) {
                 if (size < HF3FS_MAX_IOPOOL_SIZE) {
                     iopool_size = size;
@@ -185,11 +191,25 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
         break;
     }
     case FILE_SEG: {
-        int fd = mem.devId;
+        auto resv = path_mode_devids_.reserve(mem.devId, mem.metaInfo);
+        if (!resv.ok()) {
+            HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
+                             absl::StrFormat("HF3FS path-mode requires a unique devId per file "
+                                             "(devId=%llu already registered)",
+                                             static_cast<unsigned long long>(mem.devId)));
+        }
+        std::unique_ptr<nixlHf3fsFileMetadata> md;
+        try {
+            md = std::make_unique<nixlHf3fsFileMetadata>(mem.devId, mem.metaInfo);
+        }
+        catch (const std::system_error &e) {
+            HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
+                             absl::StrFormat("HF3FS path-mode open failed: %s", e.what()));
+        }
+        int fd = md->file_fd.fd();
 
         // if the same file is reused - no need to re-register
-        auto it = hf3fs_file_set.find(fd);
-        if (it == hf3fs_file_set.end()) {
+        if (hf3fs_file_set.find(fd) == hf3fs_file_set.end()) {
             int ret = 0;
             status = hf3fs_utils->registerFileHandle(fd, &ret);
             if (status != NIXL_SUCCESS) {
@@ -199,11 +219,11 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             hf3fs_file_set.insert(fd);
         }
 
-        nixlHf3fsFileMetadata *md = new nixlHf3fsFileMetadata();
+        resv.commit();
         md->handle.fd = fd;
         md->handle.size = mem.len;
         md->handle.metadata = mem.metaInfo;
-        out = (nixlBackendMD *)md;
+        out = md.release();
         break;
     }
     default:
@@ -218,6 +238,9 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
     nixlHf3fsMetadata *md = (nixlHf3fsMetadata *)meta;
     if (md->type == NIXL_HF3FS_MEM_TYPE_FILE) {
         nixlHf3fsFileMetadata *file_md = (nixlHf3fsFileMetadata *)md;
+        if (!file_md->file_fd.path().empty()) {
+            path_mode_devids_.release(file_md->devId);
+        }
         hf3fs_file_set.erase(file_md->handle.fd);
         hf3fs_utils->deregisterFileHandle(file_md->handle.fd);
     } else if (md->type != NIXL_HF3FS_MEM_TYPE_DRAM && md->type != NIXL_HF3FS_MEM_TYPE_DRAM_ZC) {
@@ -242,14 +265,14 @@ void nixlHf3fsEngine::cleanupIOList(nixlHf3fsBackendReqH *handle) const
 void nixlHf3fsEngine::cleanupIOThread(nixlHf3fsBackendReqH *handle) const
 {
     if (handle->io_status.thread != nullptr) {
-        handle->io_status.stop_thread = true;
+        handle->io_status.stop_thread.store(true, std::memory_order_relaxed);
         handle->io_status.thread->join();
 
         delete handle->io_status.thread;
         handle->io_status.thread = nullptr;
         handle->io_status.error_status = NIXL_SUCCESS;
         handle->io_status.error_message = "";
-        handle->io_status.stop_thread = false;
+        handle->io_status.stop_thread.store(false, std::memory_order_relaxed);
     }
 }
 
@@ -299,8 +322,8 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
 
     for (int i = 0; i < file_cnt; i++) {
-        // Get file descriptor from the proper list
-        int file_descriptor = (*file_list)[i].devId;
+        auto file_md = static_cast<nixlHf3fsFileMetadata *>((*file_list)[i].metadataP);
+        int file_descriptor = file_md->file_fd.fd();
         addr = (void*) (*mem_list)[i].addr;
         size = (*mem_list)[i].len;
         offset = (size_t) (*file_list)[i].addr;  // Offset in file
@@ -378,7 +401,8 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM, "Error: empty io list");
     }
 
-    if (UINT_MAX - hf3fs_handle->num_ios < hf3fs_handle->io_list.size()) {
+    if (UINT_MAX - hf3fs_handle->submitted_ios.load(std::memory_order_relaxed) <
+        hf3fs_handle->io_list.size()) {
         HF3FS_LOG_RETURN(NIXL_ERR_NOT_ALLOWED, "Error: more than UINT_MAX ios");
     }
     for (auto it = hf3fs_handle->io_list.begin(); it != hf3fs_handle->io_list.end(); ++it) {
@@ -397,6 +421,8 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         HF3FS_LOG_RETURN(status, "Error: Failed to post IOR");
     }
 
+    hf3fs_handle->submitted_ios.fetch_add(hf3fs_handle->io_list.size(), std::memory_order_relaxed);
+
     // postXfer may be called multiple times, so we need to check if the thread is already running
     if (hf3fs_handle->io_status.thread == nullptr) {
         hf3fs_handle->io_status.thread = new std::thread(waitForIOsThread, hf3fs_handle,
@@ -405,8 +431,6 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
             HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error: Failed to create io thread");
         }
     }
-
-    hf3fs_handle->num_ios += hf3fs_handle->io_list.size();
 
     return NIXL_IN_PROG;
 }
@@ -418,9 +442,13 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
     nixlH3fsThreadStatus* io_status = &hf3fs_handle->io_status;
     hf3fs_cqe* cqes = new hf3fs_cqe[NUM_CQES];
 
-    while (!io_status->stop_thread && io_status->error_status == NIXL_SUCCESS) {
+    while (!io_status->stop_thread.load(std::memory_order_relaxed) &&
+           (io_status->error_status == NIXL_SUCCESS)) {
         // Check if we've processed all IOs
-        if (hf3fs_handle->completed_ios >= hf3fs_handle->num_ios) {
+        // Dual loads without joint locking is ok here because only this thread
+        // modifies completed_ios.
+        if (hf3fs_handle->completed_ios.load(std::memory_order_relaxed) >=
+            hf3fs_handle->submitted_ios.load(std::memory_order_relaxed)) {
             // User may call postXfer multiple times, so we could not exit yet,
             // so we must wait for stop condition
             sched_yield();
@@ -440,17 +468,19 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
         nixl_status_t status = hf3fs_utils->waitForIOs(&hf3fs_handle->ior, cqes, NUM_CQES, 1, &ts,
                                                        &num_completed);
         if (status != NIXL_SUCCESS) {
-            io_status->error_status = status;
+            // Write error message before "publishing" it to the other thread.
             io_status->error_message = "Error: Failed to wait for IOs";
+            io_status->error_status.store(status, std::memory_order_release);
             break;
         }
 
         if (num_completed > 0) {
             for (int i = 0; i < num_completed; i++) {
                 if (cqes[i].result < 0) {
-                    io_status->error_status = NIXL_ERR_BACKEND;
+                    // Write error message before "publishing" it to the other thread.
                     io_status->error_message = absl::StrFormat(
                         "Error: I/O operation completed with error: %d", cqes[i].result);
+                    io_status->error_status.store(NIXL_ERR_BACKEND, std::memory_order_release);
                     break;
                 }
 
@@ -459,7 +489,7 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
                     memcpy(io->addr, io->iov.base, io->size);
                 }
 
-                hf3fs_handle->completed_ios++;
+                hf3fs_handle->completed_ios.fetch_add(1, std::memory_order_relaxed);
             }
         }
     }
@@ -476,24 +506,32 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
 
     // Check if IOR is initialized
-    if (&hf3fs_handle->ior == nullptr) {
-        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
-            "Error: IOR is not initialized in checkXfer");
-    }
+    // TODO: This doesn't check anything...
+    // if (&hf3fs_handle->ior == nullptr) {
+    //     HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
+    //         "Error: IOR is not initialized in checkXfer");
+    // }
 
     if (hf3fs_handle->io_status.thread == nullptr) {
         HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
             "Error: io thread is not initialized in checkXfer");
     }
 
-    if (hf3fs_handle->io_status.error_status != NIXL_SUCCESS) {
-        nixl_status_t error_status = hf3fs_handle->io_status.error_status;
-        std::string error_message = hf3fs_handle->io_status.error_message;
+    // The following is thread safe under the currently valid assumptions that
+    // - error_message is written before error_status is updated, and
+    // - error_status and error_message are not changed after the first error.
+    const nixl_status_t error_status =
+        hf3fs_handle->io_status.error_status.load(std::memory_order_acquire);
+    if (error_status != NIXL_SUCCESS) {
+        const std::string error_message = hf3fs_handle->io_status.error_message;
         cleanupIOThread(hf3fs_handle);
         HF3FS_LOG_RETURN(error_status, error_message);
     }
 
-    if (hf3fs_handle->completed_ios < hf3fs_handle->num_ios) {
+    // Dual loads without joing locking is ok here because Agent-level locking does
+    // not allow submitted_ios to change via postXfer() concurrently to this function.
+    if (hf3fs_handle->completed_ios.load(std::memory_order_relaxed) <
+        hf3fs_handle->submitted_ios.load(std::memory_order_relaxed)) {
         return NIXL_IN_PROG;
     }
 
@@ -521,13 +559,8 @@ nixlHf3fsEngine::~nixlHf3fsEngine() {
 nixl_status_t
 nixlHf3fsEngine::queryMem(const nixl_reg_dlist_t &descs,
                           std::vector<nixl_query_resp_t> &resp) const {
-    // Extract metadata from descriptors which are file names
-    // Different plugins might customize parsing of metaInfo to get the file names
-    std::vector<nixl_blob_t> metadata(descs.descCount());
-    for (int i = 0; i < descs.descCount(); ++i)
-        metadata[i] = descs[i].metaInfo;
-
-    return nixl::queryFileInfoList(metadata, resp);
+    resp = nixl::queryFileInfoFromDescList(descs);
+    return NIXL_SUCCESS;
 }
 
 nixlHf3fsDramZCMetadata::nixlHf3fsDramZCMetadata(uint8_t *addr, size_t len, hf3fsUtil &utils)

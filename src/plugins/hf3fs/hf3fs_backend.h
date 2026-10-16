@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,19 +15,21 @@
  * limitations under the License.
  */
 
-#ifndef __HF3FS_BACKEND_H
-#define __HF3FS_BACKEND_H
+#ifndef NIXL_SRC_PLUGINS_HF3FS_HF3FS_BACKEND_H
+#define NIXL_SRC_PLUGINS_HF3FS_HF3FS_BACKEND_H
 
 #include <nixl.h>
 #include <nixl_types.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include "common/uuid_v4.h"
+#include <atomic>
 #include <list>
 #include <unordered_set>
 #include <thread>
 #include "hf3fs_utils.h"
 #include "backend/backend_engine.h"
+#include "file/file_path_mode.h"
 
 class nixlHf3fsShmException : public std::runtime_error {
 public:
@@ -56,8 +58,15 @@ class nixlHf3fsMetadata : public nixlBackendMD {
 class nixlHf3fsFileMetadata : public nixlHf3fsMetadata {
 public:
     hf3fsFileHandle handle;
+    nixl::FileFd file_fd;
+    uint64_t devId = 0;
 
     nixlHf3fsFileMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE) {}
+
+    nixlHf3fsFileMetadata(uint64_t devid, const std::string &metaInfo)
+        : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE),
+          file_fd(devid, metaInfo),
+          devId(devid) {}
 };
 
 class nixlHf3fsDramMetadata : public nixlHf3fsMetadata {
@@ -93,9 +102,9 @@ class nixlHf3fsIO {
 class nixlH3fsThreadStatus {
     public:
         std::thread *thread = nullptr;
-        nixl_status_t error_status = NIXL_SUCCESS;
+        std::atomic<nixl_status_t> error_status{NIXL_SUCCESS};
         std::string error_message = "";
-        bool stop_thread = false;
+        std::atomic<bool> stop_thread{false};
 
         nixlH3fsThreadStatus() = default;
 };
@@ -104,8 +113,8 @@ class nixlHf3fsBackendReqH : public nixlBackendReqH {
     public:
         std::list<nixlHf3fsIO *> io_list;
         hf3fs_ior ior;
-        uint32_t completed_ios = 0; // Number of completed IOs
-        uint32_t num_ios = 0; // Number of submitted IOs
+        std::atomic<uint32_t> completed_ios{0};
+        std::atomic<uint32_t> submitted_ios{0};
         nixlH3fsThreadStatus io_status;
 
         nixlHf3fsBackendReqH() = default;
@@ -116,6 +125,7 @@ class nixlHf3fsEngine : public nixlBackendEngine {
     private:
         hf3fsUtil *hf3fs_utils;
         std::unordered_set<int> hf3fs_file_set;
+        nixl::PathModeDevIdRegistry path_mode_devids_;
         nixl_hf3fs_mem_config mem_config;
         static long page_size;
 

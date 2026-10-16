@@ -15,10 +15,16 @@
  * limitations under the License.
  */
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <cerrno>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <thread>
 #include <random>
 #include "nixl.h"
 #include "common.h"
+#include "common/scoped_fd.h"
 
 // Used to avoid failures when etcd is not available
 #if HAVE_ETCD
@@ -138,11 +144,9 @@ protected:
 
     void TearDown() override
     {
-        for (auto &agent : agents_) {
-            if (agent.agent) {
-                agent.agent->invalidateLocalMD(nullptr);
-            }
-        }
+        // Destroying an agent does not require invalidating its metadata, so the
+        // fixture does not do it: a test that publishes metadata invalidates it
+        // through the same route it published on.
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         agents_.clear();
     }
@@ -398,8 +402,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     {
         const LogIgnoreGuard lig1("poll timed out for ip_addr: " + ip_str +
                                   " and port: " + port_str);
-        const LogIgnoreGuard lig2("Listener thread could not connect to IP " + ip_str +
-                                  " and port " + port_str);
+        const LogIgnoreGuard lig2("P2P backend could not connect to IP " + ip_str + " and port " +
+                                  port_str);
         const LogIgnoreGuard lig3("getsockopt gave error for ip_addr: " + ip_str +
                                   " and port: " + port_str + ": No route to host");
         const LogIgnoreGuard lig4("poll returned but socket not ready for write for ip_addr: " +
@@ -441,6 +445,60 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
     ASSERT_EQ(src.agent->invalidateLocalMD(&invalidate_args), NIXL_SUCCESS);
     std::this_thread::sleep_for(sleep_time);
     ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+}
+
+TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
+    nixl::scopedFd fd(socket(AF_INET6, SOCK_STREAM, 0));
+    if (!fd.valid() &&
+        (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT || errno == EACCES || errno == EPERM)) {
+        GTEST_SKIP() << "IPv6 is unavailable";
+    }
+    ASSERT_TRUE(fd.valid());
+    const int v6only = 0;
+    const int option_result =
+        setsockopt(fd.get(), IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
+    if (option_result < 0 && errno == ENOPROTOOPT) {
+        GTEST_SKIP() << "Dual-stack IPv6 sockets are unavailable";
+    }
+    ASSERT_EQ(option_result, 0);
+
+    sockaddr_in6 loopback{};
+    loopback.sin6_family = AF_INET6;
+    loopback.sin6_addr = in6addr_loopback;
+    const int bind_result =
+        bind(fd.get(), reinterpret_cast<sockaddr *>(&loopback), sizeof(loopback));
+    const int bind_error = errno;
+    fd.reset();
+    if (bind_result < 0 &&
+        (bind_error == EADDRNOTAVAIL || bind_error == EADDRINUSE || bind_error == EACCES ||
+         bind_error == EPERM)) {
+        GTEST_SKIP() << "IPv6 loopback is unavailable";
+    }
+    ASSERT_EQ(bind_result, 0);
+
+    initAgentsDefault();
+
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+    nixl_opt_args_t args;
+    args.ipAddr = "::1";
+    args.port = src.port;
+
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &args), NIXL_SUCCESS);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+
+    const auto scope_id = if_nametoindex("lo");
+    ASSERT_NE(scope_id, 0);
+    args.ipAddr = "::1%" + std::to_string(scope_id);
+    ASSERT_EQ(dst.agent->sendLocalMD(&args), NIXL_SUCCESS);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    ASSERT_EQ(src.agent->checkRemoteMD(dst.name, {DRAM_SEG}), NIXL_SUCCESS);
+
+    args.port = dst.port;
+    ASSERT_EQ(src.agent->invalidateLocalMD(&args), NIXL_SUCCESS);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketSendPartialLocal) {
@@ -497,6 +555,12 @@ TEST_F(MetadataExchangeTestFixture, SocketSendPartialLocal) {
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, valid_descs.trim()), NIXL_SUCCESS);
 
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, invalid_descs.trim()), NIXL_ERR_NOT_FOUND);
+
+    ASSERT_EQ(src.agent->invalidateLocalMD(&send_args), NIXL_SUCCESS);
+
+    std::this_thread::sleep_for(sleep_time);
+
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
@@ -517,20 +581,20 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
     unregistered_descs.addDesc(unregistered_buffer.getBlobDesc());
 
     {
+        // The serialization failure is still surfaced by getLocalPartialMD; the
+        // public method now delegates to the manager, so the redundant wrapper
+        // log ("error getting local partial metadata") no longer applies.
         const LogIgnoreGuard lig1("getLocalPartialMD: serialization failed");
-        const LogIgnoreGuard lig2("sendLocalPartialMD: error getting local partial metadata with "
-                                  "status NIXL_ERR_NOT_FOUND");
 
         ASSERT_NE(src.agent->sendLocalPartialMD(unregistered_descs, &send_args), NIXL_SUCCESS);
 
         EXPECT_EQ(lig1.getIgnoredCount(), 1);
-        EXPECT_EQ(lig2.getIgnoredCount(), 1);
     }
 
     // Case 2: Attempt to load connection info on agent without backend
     {
         const LogIgnoreGuard lig1("loadRemoteMD: no common backend found");
-        const LogIgnoreGuard lig2(std::regex("loadRemoteMD in listener thread failed for md from "
+        const LogIgnoreGuard lig2(std::regex("loadRemoteMD in P2P backend failed from "
                                              "peer 127.0.0.1:[0-9]+ with error NIXL_ERR_BACKEND"));
 
         ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
@@ -550,11 +614,21 @@ TEST_F(MetadataExchangeTestFixture, LocalNonLocalMDExchange) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
+    std::vector<nixl_backend_t> plugins;
+    ASSERT_EQ(src.agent->getAvailPlugins(plugins), NIXL_SUCCESS);
+
     nixl_status_t status = NIXL_ERR_NOT_FOUND;
     nixlBackendH *backend;
     std::string backend_name;
     for (const auto& name : std::set<std::string>{"GDS", "POSIX"}) {
-        const LogIgnoreGuard lig1("Error initializing GPU Direct Storage driver");
+        // Requesting a backend the plugin manager does not list warns once per
+        // plugin directory and then reports an unsupported backend, so only ask
+        // for the local-only plugins it actually found.
+        if (std::find(plugins.begin(), plugins.end(), name) == plugins.end()) {
+            continue;
+        }
+
+        const LogIgnoreGuard lig1("GDS: error initializing GPU Direct Storage driver");
         const LogIgnoreGuard lig2("createBackend: backend initialization error for 'GDS'");
         status = src.agent->createBackend(name, {}, backend);
         if (status == NIXL_SUCCESS) {
@@ -590,7 +664,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
     {
         // Expected due to failure of checkRemoteMd() below?
         const LogIgnoreGuard lig1(std::regex("Watch timed out for key: .*/agent_0/metadata"));
-        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
+        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd for agent: " + src.name);
 
         ASSERT_EQ(dst.agent->fetchRemoteMD(src.name), NIXL_SUCCESS);
 
@@ -621,7 +695,8 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
     {
         const LogIgnoreGuard lig1(
             std::regex("Watch timed out for key: .*/invalid_agent_name/metadata"));
-        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
+        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd for agent: "
+                                  "invalid_agent_name");
 
         ASSERT_EQ(dst.agent->fetchRemoteMD("invalid_agent_name"), NIXL_SUCCESS);
 
@@ -631,10 +706,6 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
         EXPECT_EQ(lig1.getIgnoredCount(), 1);
         EXPECT_EQ(lig2.getIgnoredCount(), 1);
     }
-
-    // Prevent invalidateLocalMD() from begin called again in TearDown()
-    // (which would generate more undesired warning/error log messages).
-    src.agent.reset();
 }
 
 TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemote) {
@@ -724,10 +795,6 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemote) {
     std::this_thread::sleep_for(sleep_time);
 
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, valid_descs.trim()), NIXL_ERR_NOT_FOUND);
-
-    // Prevent invalidateLocalMD() from begin called again in TearDown()
-    // (which would generate more undesired warning/error log messages).
-    src.agent.reset();
 }
 
 TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors) {
@@ -744,7 +811,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
 
     // Case 1: Send without label
     {
-        const LogIgnoreGuard lig("sendLocalPartialMD: metadata label is required for etcd send of "
+        const LogIgnoreGuard lig("sendLocalPartial: metadata label is required for etcd send of "
                                  "local partial metadata");
 
         ASSERT_NE(src.agent->sendLocalPartialMD({DRAM_SEG}, nullptr), NIXL_SUCCESS);
@@ -761,7 +828,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
 
     {
         const LogIgnoreGuard lig1(std::regex("Watch timed out for key: .*/agent_0/metadata"));
-        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
+        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd for agent: " + src.name);
 
         nixl_opt_args_t fetch_args;
         ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &fetch_args), NIXL_SUCCESS);
@@ -777,7 +844,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
     // Case 3: Fetch with invalid label (should not block the test)
     {
         const LogIgnoreGuard lig1(std::regex("Watch timed out for key: .*/agent_0/invalid_label"));
-        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
+        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd for agent: " + src.name);
 
         nixl_opt_args_t fetch_args;
         fetch_args.metadataLabel = "invalid_label";
@@ -788,6 +855,9 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
         EXPECT_EQ(lig1.getIgnoredCount(), 1);
         EXPECT_EQ(lig2.getIgnoredCount(), 1);
     }
+
+    // Remove the label published in case 2, so the agent name is reusable.
+    ASSERT_EQ(src.agent->invalidateLocalMD(), NIXL_SUCCESS);
 }
 
 } // namespace metadata_exchange

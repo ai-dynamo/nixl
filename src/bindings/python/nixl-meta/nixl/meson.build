@@ -14,6 +14,6 @@
 # limitations under the License.
 
 fs = import('fs')
-fs.copyfile('__init__.py')
-fs.copyfile('_api.py')
-fs.copyfile('logging.py')
+nixl_init_copy = fs.copyfile('__init__.py')
+nixl_api_copy = fs.copyfile('_api.py')
+nixl_logging_copy = fs.copyfile('logging.py')

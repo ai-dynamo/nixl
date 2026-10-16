@@ -27,6 +27,7 @@
 #include <variant>
 #include <vector>
 #include <optional>
+#include <nixl_types.h>
 #include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
@@ -56,6 +57,18 @@
             exit(EXIT_FAILURE);                                                        \
         }                                                                              \
     } while (0)
+#elif HAVE_ROCM
+#include <hip/hip_runtime.h>
+
+#define CHECK_CUDA_ERROR(result, message)                                      \
+    do {                                                                       \
+        const auto _r = (result);                                              \
+        if (_r != hipSuccess) {                                                \
+            std::cerr << "HIP: " << message << " (Error code: " << _r << " - " \
+                      << hipGetErrorString(_r) << ")" << std::endl;            \
+            exit(EXIT_FAILURE);                                                \
+        }                                                                      \
+    } while (0)
 #endif
 
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
@@ -67,6 +80,9 @@
 
 #define XFERBENCH_INITIATOR_BUFFER_ELEMENT 0xbb
 #define XFERBENCH_TARGET_BUFFER_ELEMENT 0xaa
+
+// CUDA warp size, to derive Device API group number from block_threads
+#define XFERBENCH_DEVICE_WARP_SIZE 32
 
 // Runtime types
 #define XFERBENCH_RT_ETCD "ETCD"
@@ -82,9 +98,11 @@
 #define XFERBENCH_BACKEND_MOONCAKE "Mooncake"
 #define XFERBENCH_BACKEND_HF3FS "HF3FS"
 #define XFERBENCH_BACKEND_OBJ "OBJ"
+#define XFERBENCH_BACKEND_REDIS "REDIS"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
+#define XFERBENCH_BACKEND_INFINIA "INFINIA"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -128,11 +146,19 @@
 #define XFERBENCH_WORKER_NIXL "nixl"
 #define XFERBENCH_WORKER_NVSHMEM "nvshmem"
 
+// Randomization location modes
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE "none"
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED "blockaligned"
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED "bytealigned"
+
 #define IS_PAIRWISE_AND_SG()                                 \
     (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
      XFERBENCH_MODE_SG == xferBenchConfig::mode)
 #define IS_PAIRWISE_AND_MG()                                 \
     (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
+     XFERBENCH_MODE_MG == xferBenchConfig::mode)
+#define IS_MANY_TO_ONE_AND_MG()                                 \
+    (XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme && \
      XFERBENCH_MODE_MG == xferBenchConfig::mode)
 
 class xferBenchConfig {
@@ -164,10 +190,14 @@ public:
     static std::string etcd_endpoints;
     static std::string asio_address; // IPv4
     static uint16_t asio_port;
+    static std::string randomize_location_mode;
+    static uint64_t randomize_location_mode_seed;
     static std::string benchmark_group;
     static std::string filepath;
     static std::string filenames;
     static bool enable_vmm;
+    static bool vmm_gdr_capable;
+    static int use_localized;
     static bool use_hugepages;
     static int num_files;
     static std::string posix_api_type;
@@ -175,12 +205,15 @@ public:
     static int posix_kernel_queue_size;
     static bool storage_enable_direct;
     static bool reregister_mem;
+    static bool prepared_xfer;
     static int pipeline_depth;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
     static int gds_mt_num_threads;
     static std::string gpunetio_device_list;
     static std::string gpunetio_oob_list;
+    static std::string gpunetio_gid_index;
+    static std::string gpunetio_oob_port;
     static long page_size;
     static std::string obj_access_key;
     static std::string obj_secret_key;
@@ -204,6 +237,26 @@ public:
     static std::string gusli_config_file;
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
+    static bool gusli_try_use_uring;
+    // Opaque plugin parameters are populated only by the raw CLI path.
+    static std::optional<nixl_b_params_t> plugin_parameters;
+    static bool use_device_api;
+    static int block_threads;
+    static int device_channel_num;
+
+    /* Number of independent groups Device API kernel runs with. */
+    static int
+    deviceGroupNum();
+
+    /* Parallel workers split iterations across both CPU and Device API. */
+    static int
+    workerNum();
+
+    // Cached set of memory segment types reported by the selected backend.
+    // Populated pre-instantiation in loadParams via getPluginParams, then refreshed
+    // post-instantiation by the worker via getBackendParams (so LIBFABRIC's runtime-added
+    // VRAM_SEG is picked up). The storage/object/block predicates derive from this list.
+    static nixl_mem_list_t backend_mems;
 
     static int
     parseConfig(int argc, char *argv[]);
@@ -215,10 +268,16 @@ public:
     printSeparator(const char sep = '-');
     static std::vector<std::string>
     parseDeviceList();
+    // Storage taxonomy predicates. All three derive from backend_mems and are safe to
+    // call before the backend is instantiated (using plugin-reported mems) and after
+    // (using engine-reported mems). They return false when backend_mems is empty,
+    // which covers the nvshmem worker case.
     static bool
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    static bool
+    isBlkStorageBackend();
 
 protected:
     static int
@@ -350,6 +409,8 @@ private:
     buildCommonAzCliBlobParams(const std::string &blob_name);
 
 public:
+    static bool
+    debugEnabled(); // Whether NIXLBENCH_LOG_LEVEL is DEBUG or TRACE
     static void
     setRT(xferBenchRT *rt);
     static void
@@ -360,6 +421,8 @@ public:
     buildAwsCredentials();
     static bool
     putObj(size_t buffer_size, const std::string &name);
+    static bool
+    putRedis(size_t buffer_size, const std::string &key);
     static bool
     getObj(const std::string &name);
     static bool

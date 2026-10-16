@@ -27,7 +27,10 @@
 enum class nixl_telemetry_plugin_api_version : unsigned int {
     V1 = 1,
     V2 = 2,
+    V3 = 3,
 };
+
+#define NIXL_TELEMETRY_PLUGIN_API_VERSION nixl_telemetry_plugin_api_version::V3
 
 // Type alias for exporter creation function
 using exporter_creator_fn_t =
@@ -82,6 +85,9 @@ private:
     createExporter(const nixlTelemetryExporterInitParams &init_params) {
         try {
             return std::make_unique<exporterType>(init_params);
+        }
+        catch (const nixlTelemetryBindFailed &) {
+            throw;
         }
         catch (const std::exception &e) {
             NIXL_ERROR << "Failed to create exporter: " << e.what();

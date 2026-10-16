@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,9 +24,18 @@
 class nixlLock {
     public:
         nixlLock(const nixl_thread_sync_t sync_mode) {
+            assert_held_cb = [this](bool writer) {
+                if (writer) {
+                    m.AssertHeld();
+                } else {
+                    m.AssertReaderHeld();
+                }
+            };
+
             switch (sync_mode) {
             case nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE:
                 lock_cb = unlock_cb = lock_shared_cb = unlock_shared_cb = []() {};
+                assert_held_cb = [](bool) {};
                 break;
             case nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT:
                 lock_cb = lock_shared_cb = [this]() {
@@ -69,11 +78,17 @@ class nixlLock {
             unlock_shared_cb();
         }
 
+        void
+        assertHeld(bool writer = true) {
+            assert_held_cb(writer);
+        }
+
     private:
         std::function<void()> lock_cb;
         std::function<void()> unlock_cb;
         std::function<void()> lock_shared_cb;
         std::function<void()> unlock_shared_cb;
+        std::function<void(bool writer)> assert_held_cb;
 
         absl::Mutex m;
 };

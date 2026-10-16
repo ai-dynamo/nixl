@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,13 +19,15 @@
 
 #include "backend/backend_engine.h"
 #include "backend/backend_plugin.h"
+#include "gmock_engine.h"
 #include <cassert>
+#include <chrono>
 
 namespace mocks {
 
 class MockBackendEngine : public nixlBackendEngine {
 private:
-    nixlBackendEngine *gmock_backend_engine;
+    GMockBackendEngine *gmock_backend_engine;
 
 public:
     MockBackendEngine(const nixlBackendInitParams *init_params);
@@ -43,6 +45,12 @@ public:
   bool supportsNotif() const override {
     assert(sharedState > 0);
     return gmock_backend_engine->supportsNotif();
+  }
+
+  bool
+  supportsTraceContext() const noexcept override {
+      assert(sharedState > 0);
+      return gmock_backend_engine->supportsTraceContext();
   }
   nixl_mem_list_t getSupportedMems() const override {
     assert(sharedState > 0);
@@ -67,7 +75,35 @@ public:
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const override;
   nixl_status_t checkXfer(nixlBackendReqH *handle) const override;
-  nixl_status_t releaseReqH(nixlBackendReqH *handle) const override;
+  nixl_status_t
+  releaseReqH(nixlBackendReqH *handle) const override;
+
+  nixl_status_t
+  prepMemView(const nixl_remote_meta_dlist_t &dlist,
+              nixlMemViewH &mvh,
+              const nixl_opt_b_args_t *opt_args) const override {
+      assert(sharedState > 0);
+      return gmock_backend_engine->prepMemView(dlist, mvh, opt_args);
+  }
+
+  nixl_status_t
+  prepMemView(const nixl_meta_dlist_t &dlist,
+              nixlMemViewH &mvh,
+              const nixl_opt_b_args_t *opt_args) const override;
+  void
+  releaseMemView(nixlMemViewH mvh) const override;
+  nixl_status_t
+  queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
+  nixl_status_t
+  estimateXferCost(const nixl_xfer_op_t &operation,
+                   const nixl_meta_dlist_t &local,
+                   const nixl_meta_dlist_t &remote,
+                   const std::string &remote_agent,
+                   nixlBackendReqH *const &handle,
+                   std::chrono::microseconds &duration,
+                   std::chrono::microseconds &err_margin,
+                   nixl_cost_t &method,
+                   const nixl_opt_args_t *extra_params) const override;
   nixl_status_t getPublicData(const nixlBackendMD *meta, std::string &str) const override {
     assert(sharedState > 0);
     return gmock_backend_engine->getPublicData(meta, str);

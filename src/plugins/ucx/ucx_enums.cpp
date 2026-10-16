@@ -41,8 +41,8 @@ operator<<(std::ostream &os, const am_cb_op_t t) {
 
 nixl_status_t
 ucsToNixlStatus(const ucs_status_t t) {
-    switch (__builtin_expect(t, UCS_OK)) {
-    case UCS_OK:
+    switch (t) {
+    [[likely]] case UCS_OK:
         return NIXL_SUCCESS;
     case UCS_INPROGRESS:
     case UCS_ERR_BUSY:

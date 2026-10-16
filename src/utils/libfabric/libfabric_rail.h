@@ -20,15 +20,20 @@
 
 #include <vector>
 #include <deque>
+#include <limits>
 #include <string>
 #include <functional>
 #include <mutex>
+#include <shared_mutex>
+#include <atomic>
+#include <thread>
 #include <ostream>
 #include <stack>
 
 #include "nixl.h"
 #include "backend/backend_aux.h"
 #include "libfabric/libfabric_common.h"
+#include "libfabric/libfabric_cuda_dmabuf.h"
 
 // Forward declarations
 class nixlLibfabricConnection;
@@ -51,7 +56,7 @@ struct nixlLibfabricReq {
     bool in_use; ///< Pool management flag
     size_t chunk_offset; ///< Chunk offset for DATA requests
     size_t chunk_size; ///< Chunk size for DATA requests
-    std::function<void()> completion_callback; ///< Completion callback function
+    std::function<void(nixl_status_t)> completion_callback; ///< Completion callback function
     void *local_addr; ///< Local memory address for transfers
     uint64_t remote_addr; ///< Remote memory address for transfers
     struct fid_mr *local_mr; ///< Local memory registration for transfers
@@ -232,6 +237,162 @@ operator<<(std::ostream &os, const ConnectionState &state) {
     }
 }
 
+/**
+ * @brief Lock-free, and mostly wait-free, Multi-Producer Single-Consumer ring buffer.
+ * Multiple producer threads (postXfer) push concurrently.
+ * Single consumer (progress thread) pops and posts.
+ * Uses fetch-add on head for multi-producer safety and freedom to execute in parallel.
+ */
+template<typename T> class MpscRing {
+public:
+    MpscRing() : head_(0), tail_(0), capacity_(0), ring_(nullptr), committed_(nullptr) {}
+
+    MpscRing(const MpscRing &) = delete;
+    MpscRing(MpscRing &&) = delete;
+
+    MpscRing &
+    operator=(const MpscRing &) = delete;
+
+    ~MpscRing() {
+        destroy();
+    }
+
+    bool
+    initialize(size_t capacity) {
+        if (capacity == 0) {
+            NIXL_ERROR << "Invalid ring buffer zero size";
+            return false;
+        }
+        if (ring_ != nullptr) {
+            NIXL_WARN << "Ring buffer already initialized, request to initialize ignored";
+            return true;
+        }
+        if (committed_ != nullptr) {
+            // this should never happen
+            NIXL_ERROR << "Ring buffer in invalid state";
+            return false;
+        }
+        ring_ = new (std::nothrow) T[capacity];
+        if (ring_ == nullptr) {
+            NIXL_ERROR << "Failed to allocate ring buffer of size " << capacity;
+            return false;
+        }
+        committed_ = new (std::nothrow) std::atomic<bool>[capacity];
+        if (committed_ == nullptr) {
+            NIXL_ERROR << "Failed to allocated ring buffer committed array of size " << capacity;
+            delete[] ring_;
+            ring_ = nullptr;
+            return false;
+        }
+        for (size_t i = 0; i < capacity; ++i) {
+            committed_[i].store(false, std::memory_order_relaxed);
+        }
+        capacity_ = capacity;
+        return true;
+    }
+
+    void
+    destroy() {
+        if (ring_ != nullptr) {
+            delete[] ring_;
+            ring_ = nullptr;
+        }
+        if (committed_ != nullptr) {
+            delete[] committed_;
+            committed_ = nullptr;
+        }
+        capacity_ = 0;
+        head_ = 0;
+        tail_ = 0;
+    }
+
+    void
+    push(const T &item) {
+        // NOTE: although this is a blocking call, as long as there is enough room in the ring
+        // buffer, this is WAIT-FREE (as opposed to any other CAS-based solution)
+
+        // grab a unique slot among all concurrent writers
+        size_t absHead = head_.fetch_add(1, std::memory_order_relaxed);
+        size_t absTail = tail_.load(std::memory_order_acquire);
+
+        // wait until reader catches up
+        // NOTE: capacity should be matched with expected insert load and reader's capability to
+        // handle requests (should be large enough to handle the largest expected burst)
+        while (absHead - absTail >= capacity_) {
+            std::this_thread::yield();
+            absTail = tail_.load(std::memory_order_acquire);
+            // NOTE: we may add here some counters for reporting a full ring buffer
+        }
+
+        // head slot is now reserved for us
+        size_t head = absHead % capacity_;
+        ring_[head] = item;
+        // Signal that this slot is written (use a separate committed array)
+        committed_[head].store(true, std::memory_order_release);
+    }
+
+    bool
+    pop(T &item) {
+        size_t absTail = tail_.load(std::memory_order_relaxed);
+        size_t absHead = head_.load(std::memory_order_acquire);
+        if (absTail == absHead) {
+            return false;
+        }
+        size_t tail = absTail % capacity_;
+        // Wait for the slot to be committed (producer might still be writing)
+        // NOTE: we can actually peek entries ahead if head > tail + 1, but that would require
+        // skipping them later, so we need a third state for committed array, for now this
+        // optimization is not implemented, unless we see reader having difficulties
+        if (!committed_[tail].load(std::memory_order_acquire)) {
+            // item is not ready, so back-off
+            return false;
+        }
+        item = ring_[tail];
+        committed_[tail].store(false, std::memory_order_relaxed);
+        tail_.store((absTail + 1), std::memory_order_release);
+        return true;
+    }
+
+    bool
+    empty() const {
+        // NOTE: we don't care about order here, as long as both head and tail are loaded by the
+        // time we compare them
+        size_t absTail = tail_.load(std::memory_order_relaxed);
+        size_t absHead = head_.load(std::memory_order_relaxed);
+
+        // NOTE: if reader is busy reading last committed entry and has not advanced yet the tail
+        // pointer, we still consider this as not-empty
+        return (absTail == absHead);
+    }
+
+private:
+    alignas(64) std::atomic<size_t> head_;
+    alignas(64) std::atomic<size_t> tail_;
+    size_t capacity_;
+    T *ring_;
+    std::atomic<bool> *committed_;
+};
+
+/**
+ * @brief Queued post request for PT-owns-endpoint model
+ * Main thread enqueues; progress thread dequeues and posts.
+ */
+struct nixlLibfabricPostRequest {
+    enum post_type { WRITE, READ, SEND } type;
+
+    void *local_addr;
+    size_t length;
+    void *local_desc;
+    uint64_t immediate_data; // WRITE only
+    fi_addr_t dest_addr;
+    uint64_t remote_addr;
+    uint64_t remote_key;
+    nixlLibfabricReq *req;
+    uint64_t fi_flags;
+    int device_id; // CUDA device ordinal for cudaSetDevice in PT
+    bool is_cuda_vram;
+};
+
 /** Individual libfabric rail managing fabric, domain, endpoint, CQ, and AV */
 class nixlLibfabricRail {
 public:
@@ -242,7 +403,10 @@ public:
     struct fid_ep *endpoint; ///< Libfabric endpoint handle
 
     /** Initialize libfabric rail with all resources */
-    nixlLibfabricRail(const std::string &device, const std::string &provider, uint16_t id);
+    nixlLibfabricRail(const std::string &device,
+                      const std::string &provider,
+                      uint16_t id,
+                      enum fi_hmem_iface runtime);
 
     /** Destroy rail and cleanup all libfabric resources */
     ~nixlLibfabricRail();
@@ -264,7 +428,10 @@ public:
     isProperlyInitialized() const;
 
     // Memory registration methods
-    /** Register memory buffer with libfabric */
+    /** Register memory buffer with libfabric.
+     *  The rail registers the region with FI_MR_DMABUF when dmabuf carries an fd and
+     *  canRegisterWithDmabuf() holds for this registration, and by virtual address
+     *  otherwise. A FI_MR_DMABUF registration that fails retries by virtual address. */
     nixl_status_t
     registerMemory(void *buffer,
                    size_t length,
@@ -272,20 +439,36 @@ public:
                    int device_id,
                    enum fi_hmem_iface iface,
                    struct fid_mr **mr_out,
-                   uint64_t *key_out) const;
+                   uint64_t *key_out,
+                   const LibfabricUtils::CudaDmabufExport *dmabuf = nullptr) const;
+
+    /** Check if this rail can register CUDA device memory with a caller-exported dmabuf fd.
+     *  The rail qualifies when its provider is EFA with FI_HMEM support and its fabric
+     *  carries libfabric API 1.20 or newer, the version at which the provider accepts
+     *  FI_MR_DMABUF. A caller exports an fd only for a rail that reports true. */
+    bool
+    canRegisterWithDmabuf(nixl_mem_t mem_type, enum fi_hmem_iface iface) const;
 
     /** Deregister memory from libfabric */
     nixl_status_t
     deregisterMemory(struct fid_mr *mr) const;
 
-    // Address vector management methods
-    /** Insert remote endpoint address into address vector */
-    nixl_status_t
-    insertAddress(const void *addr, fi_addr_t *fi_addr_out) const;
+    /** Sentinel for "no agent is mapped to this fi_addr". */
+    static constexpr uint32_t kUnknownAgentIdx = std::numeric_limits<uint32_t>::max();
 
-    /** Remove address from address vector */
+    // Address vector management methods
+    /** Insert remote endpoint address into address vector, and map it to agent_idx */
+    nixl_status_t
+    insertAddress(const void *addr, uint32_t agent_idx, fi_addr_t *fi_addr_out) const;
+
+    /** Remove address from address vector, and drop its source-address mapping */
     nixl_status_t
     removeAddress(fi_addr_t fi_addr) const;
+
+    /** Resolve a fi_cq_readfrom() source address to a local agent index. Returns
+     *  kUnknownAgentIdx if it is FI_ADDR_NOTAVAIL or unmapped; callers must then drop it. */
+    [[nodiscard]] uint32_t
+    resolveSourceAddress(fi_addr_t src_addr) const;
 
     // Memory descriptor helper methods
     /** Get libfabric memory descriptor for MR */
@@ -303,7 +486,7 @@ public:
 
     /** Post send operation with immediate data */
     nixl_status_t
-    postSend(uint64_t immediate_data, fi_addr_t dest_addr, nixlLibfabricReq *req) const;
+    postSend(uint64_t immediate_data, fi_addr_t dest_addr, nixlLibfabricReq *req);
 
     /** Post RDMA write operation with immediate data */
     nixl_status_t
@@ -315,7 +498,7 @@ public:
               uint64_t remote_addr,
               uint64_t remote_key,
               nixlLibfabricReq *req,
-              uint64_t fi_flags = 0) const;
+              uint64_t fi_flags = 0);
 
     /** Post RDMA read operation */
     nixl_status_t
@@ -325,16 +508,33 @@ public:
              fi_addr_t dest_addr,
              uint64_t remote_addr,
              uint64_t remote_key,
-             nixlLibfabricReq *req) const;
+             nixlLibfabricReq *req);
 
     /** Process completion queue with batching support */
     nixl_status_t
-    progressCompletionQueue() const;
+    progressCompletionQueue();
+
+    /** Enqueue a post request for the progress thread to execute */
+    void
+    enqueuePost(const nixlLibfabricPostRequest &req);
+
+    /** Drain pending posts (called by progress thread) */
+    nixl_status_t
+    drainPostQueue();
 
     // Callback registration methods
-    /** Set callback for notification message processing */
+    /** Set callback for notification message processing.
+     *  Signature: (serialized_notif, sender_agent_idx_in_our_table).
+     *  sender_agent_idx is the sender's local index in our agent_names_ table,
+     *  resolved from the completion's source address via resolveSourceAddress(). */
     void
-    setNotificationCallback(std::function<void(const std::string &)> callback);
+    setNotificationCallback(std::function<void(const std::string &, uint32_t)> callback);
+
+    /** Set callback for handshake-message processing.
+     *  Called with the serialized handshake payload on receipt of a
+     *  NIXL_LIBFABRIC_MSG_HANDSHAKE control message. */
+    void
+    setHandshakeCallback(std::function<void(const std::string &)> callback);
 
     /**
      * @brief Enable or disable a progress thread that handles CQ draining.
@@ -345,9 +545,37 @@ public:
     void
     setProgressThreadEnabled(bool enabled);
 
-    /** Set callback for XFER_ID tracking */
+    /** Check if progress thread is enabled for this rail */
+    bool
+    isProgressThreadEnabled() const {
+        return progress_thread_enabled_;
+    }
+
+    /**
+     * @brief Initializes the post transfer queue (lokc-free ring buffer) for deferring requests
+     * when the progress thread is enabled.
+     *
+     * @param post_queue_size The size of the post transfer queue (lock-free ring buffer) size.
+     *
+     * @return True if initialization succeeded, otherwise false.
+     */
+    bool
+    initPostQueue(size_t post_queue_size);
+
+    /** Set callback for XFER_ID tracking.
+     *  Signature: (imm_data, sender_agent_idx_in_our_table). sender_agent_idx is
+     *  resolved from the source address of the fi_writemsg (with remote completion)
+     *  completion; imm_data supplies only the message type and XFER_ID. */
     void
-    setXferIdCallback(std::function<void(uint32_t)> callback);
+    setXferIdCallback(std::function<void(uint64_t, uint32_t)> callback);
+
+    /** Set callback for transfer-error messages from an initiator.
+     *  Signature: (xfer_id, sender_agent_idx_in_our_table, final_completions).
+     *  Called on receipt of a NIXL_LIBFABRIC_MSG_XFER_ERROR control message, which tells us that
+     *  the transfer failed on the initiator and that only final_completions of its writes will
+     *  ever arrive. */
+    void
+    setXferErrorCallback(std::function<void(uint16_t, uint32_t, uint32_t)> callback);
 
     // Optimized resource management methods
     /** Allocate control request with size validation */
@@ -377,16 +605,39 @@ private:
     struct fid_cq *cq; // from rail_cqs[rail_id]
     struct fid_av *av; // from rail_avs[rail_id]
 
-    // EP mutex to protect endpoint and CQ operations
+    // Serializes every libfabric call on this rail's endpoint, CQ and AV. The rail opens its
+    // domain with FI_THREAD_COMPLETION, under which the provider takes no locks for these
+    // objects and the application must serialize them. With the progress thread enabled the
+    // PT posts data transfers and reads the CQ while the caller's thread still posts control
+    // messages (postSend), so both paths must hold this lock.
+    //  - Hold it only around the fi_* call itself, never around an FI_EAGAIN retry loop:
+    //    the thread that reaps completions (and so clears EAGAIN) needs the lock too.
+    //  - Keep it innermost: never run completion handling or callbacks while holding it,
+    //    they take other locks and may re-enter (e.g. postRecv from a recv completion).
     mutable std::mutex ep_mutex_;
+
+    // Lock-free MPSC ring: main thread pushes, PT pops and posts
+    using post_ring_t = MpscRing<nixlLibfabricPostRequest>;
+    post_ring_t post_ring_;
+
+    // the post/poll interleave ratio constants
+    static constexpr size_t POST_MAX_BATCH_SIZE = 256;
+    static constexpr size_t POST_POLL_INTERLEAVE_RATIO = 32;
 
     // Whether a progress thread is handling CQ draining
     bool progress_thread_enabled_ = false;
 
-    // Callback functions
-    std::function<void(const std::string &)> notificationCallback;
-    // XFER_ID tracking callback
-    std::function<void(uint32_t)> xferIdCallback;
+    // Callback functions. Receive completions carry the sender's index in OUR table,
+    // resolved from the completion's source address (see resolveSourceAddress()).
+    std::function<void(const std::string &, uint32_t)> notificationCallback;
+    std::function<void(uint64_t, uint32_t)> xferIdCallback;
+    std::function<void(const std::string &)> handshakeCallback;
+    std::function<void(uint16_t, uint32_t, uint32_t)> xferErrorCallback;
+
+    // fi_addr_t -> local agent index, indexed directly by fi_addr_t (dense, as the AV is
+    // FI_AV_TABLE). Written at connection setup, read on the completion path.
+    mutable std::vector<uint32_t> src_addr_to_agent_;
+    mutable std::shared_mutex src_addr_mutex_;
 
     // Separate request pools for optimal performance
     ControlRequestPool control_request_pool_;
@@ -395,17 +646,27 @@ private:
     // Provider capability flags
     bool provider_supports_hmem_;
 
+    // System runtime type (CUDA, NEURON, or SYSTEM) this rail was created for
+    enum fi_hmem_iface runtime_;
 
+    void
+    pollForCompletions();
+
+    /** Record that fi_addr belongs to agent_idx. Called from insertAddress(). */
+    void
+    mapSourceAddress(fi_addr_t fi_addr, uint32_t agent_idx) const;
+
+    // src_addr is FI_ADDR_NOTAVAIL when the provider has none (always for local completions).
     nixl_status_t
-    processCompletionQueueEntry(struct fi_cq_data_entry *comp) const;
+    processCompletionQueueEntry(struct fi_cq_data_entry *comp, fi_addr_t src_addr) const;
     nixl_status_t
     processLocalSendCompletion(struct fi_cq_data_entry *comp) const;
     nixl_status_t
     processLocalTransferCompletion(struct fi_cq_data_entry *comp, const char *operation_type) const;
     nixl_status_t
-    processRecvCompletion(struct fi_cq_data_entry *comp) const;
+    processRecvCompletion(struct fi_cq_data_entry *comp, fi_addr_t src_addr) const;
     nixl_status_t
-    processRemoteWriteCompletion(struct fi_cq_data_entry *comp) const;
+    processRemoteWriteCompletion(struct fi_cq_data_entry *comp, fi_addr_t src_addr) const;
 };
 
 

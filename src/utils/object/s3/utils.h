@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef NIXL_S3_UTILS_H
-#define NIXL_S3_UTILS_H
+#ifndef NIXL_SRC_UTILS_OBJECT_S3_UTILS_H
+#define NIXL_SRC_UTILS_OBJECT_S3_UTILS_H
 
 #include <optional>
 #include <string>
@@ -25,6 +25,7 @@
 #include <aws/core/auth/AWSCredentials.h>
 #include <aws/core/client/ClientConfiguration.h>
 #include "nixl_types.h"
+#include "common/backend.h"
 
 namespace nixl_s3_utils {
 
@@ -33,21 +34,21 @@ namespace nixl_s3_utils {
  * Returns nullopt if access_key or secret_key are not provided.
  */
 std::optional<Aws::Auth::AWSCredentials>
-createAWSCredentials(nixl_b_params_t *custom_params);
+createAWSCredentials(const nixl_b_params_t *custom_params);
 
 /**
  * Get use_virtual_addressing setting from custom parameters.
  * Defaults to false if not specified.
  */
 bool
-getUseVirtualAddressing(nixl_b_params_t *custom_params);
+getUseVirtualAddressing(const nixl_b_params_t *custom_params);
 
 /**
  * Get bucket name from custom parameters or AWS_DEFAULT_BUCKET env var.
  * Throws runtime_error if bucket cannot be determined.
  */
 std::string
-getBucketName(nixl_b_params_t *custom_params);
+getBucketName(const nixl_b_params_t *custom_params);
 
 /**
  * Template function to configure common client settings.
@@ -69,57 +70,59 @@ getBucketName(nixl_b_params_t *custom_params);
  */
 template<typename ConfigType>
 void
-configureClientCommon(ConfigType &config, nixl_b_params_t *custom_params) {
-    if (!custom_params) return;
-
-    auto endpoint_override_it = custom_params->find("endpoint_override");
-    if (endpoint_override_it != custom_params->end())
-        config.endpointOverride = endpoint_override_it->second;
-
-    auto scheme_it = custom_params->find("scheme");
-    if (scheme_it != custom_params->end()) {
-        if (scheme_it->second == "http")
-            config.scheme = Aws::Http::Scheme::HTTP;
-        else if (scheme_it->second == "https")
-            config.scheme = Aws::Http::Scheme::HTTPS;
-        else
-            throw std::runtime_error("Invalid scheme: " + scheme_it->second);
+configureClientCommon(ConfigType &config, const nixl_b_params_t *custom_params) {
+    if (const auto opt =
+            nixl::getBackendParamOptional<std::string>(custom_params, "endpoint_override")) {
+        config.endpointOverride = *opt;
     }
 
-    auto region_it = custom_params->find("region");
-    if (region_it != custom_params->end()) config.region = region_it->second;
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "scheme")) {
+        if (*opt == "http") {
+            config.scheme = Aws::Http::Scheme::HTTP;
+        } else if (*opt == "https") {
+            config.scheme = Aws::Http::Scheme::HTTPS;
+        } else {
+            throw std::runtime_error("Invalid scheme: " + *opt);
+        }
+    }
 
-    auto req_checksum_it = custom_params->find("req_checksum");
-    if (req_checksum_it != custom_params->end()) {
-        if (req_checksum_it->second == "required")
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "region")) {
+        config.region = *opt;
+    }
+
+    if (const auto opt =
+            nixl::getBackendParamOptional<std::string>(custom_params, "req_checksum")) {
+        if (*opt == "required") {
             config.checksumConfig.requestChecksumCalculation =
                 Aws::Client::RequestChecksumCalculation::WHEN_REQUIRED;
-        else if (req_checksum_it->second == "supported")
+        } else if (*opt == "supported") {
             config.checksumConfig.requestChecksumCalculation =
                 Aws::Client::RequestChecksumCalculation::WHEN_SUPPORTED;
-        else
-            throw std::runtime_error("Invalid value for req_checksum: '" + req_checksum_it->second +
+        } else {
+            throw std::runtime_error("Invalid value for req_checksum: '" + *opt +
                                      "'. Must be 'required' or 'supported'");
+        }
     }
 
-    auto resp_checksum_it = custom_params->find("resp_checksum");
-    if (resp_checksum_it != custom_params->end()) {
-        if (resp_checksum_it->second == "required")
+    if (const auto opt =
+            nixl::getBackendParamOptional<std::string>(custom_params, "resp_checksum")) {
+        if (*opt == "required") {
             config.checksumConfig.responseChecksumValidation =
                 Aws::Client::ResponseChecksumValidation::WHEN_REQUIRED;
-        else if (resp_checksum_it->second == "supported")
+        } else if (*opt == "supported") {
             config.checksumConfig.responseChecksumValidation =
                 Aws::Client::ResponseChecksumValidation::WHEN_SUPPORTED;
-        else
-            throw std::runtime_error("Invalid value for resp_checksum: '" +
-                                     resp_checksum_it->second +
+        } else {
+            throw std::runtime_error("Invalid value for resp_checksum: '" + *opt +
                                      "'. Must be 'required' or 'supported'");
+        }
     }
 
-    auto ca_bundle_it = custom_params->find("ca_bundle");
-    if (ca_bundle_it != custom_params->end()) config.caFile = ca_bundle_it->second;
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "ca_bundle")) {
+        config.caFile = *opt;
+    }
 }
 
 } // namespace nixl_s3_utils
 
-#endif // NIXL_S3_UTILS_H
+#endif

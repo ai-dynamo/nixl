@@ -22,20 +22,10 @@
 
 #pragma once
 
-#define NUM_MAX_NVL_PEERS 8
-#define NUM_MAX_RDMA_PEERS 20
 #define NUM_WORKSPACE_BYTES (32 * 1024 * 1024)
-#define NUM_MAX_LOCAL_EXPERTS 1024
 #define NUM_BUFFER_ALIGNMENT_BYTES 128
 
 #define FINISHED_SUM_TAG 1024
-#define NUM_WAIT_NANOSECONDS 500
-
-#ifndef ENABLE_FAST_DEBUG
-#define NUM_CPU_TIMEOUT_SECS 100
-#else
-#define NUM_CPU_TIMEOUT_SECS 10
-#endif
 
 #define EP_SEND_PHASE 1
 #define EP_RECV_PHASE 2
@@ -77,7 +67,7 @@ typedef uint8_t __nv_fp8_storage_t;
 namespace nixl_ep {
 
 #ifndef TOPK_IDX_BITS
-#define TOPK_IDX_BITS 64
+#define TOPK_IDX_BITS 32
 #endif
 
 #define INT_BITS_T2(bits) int##bits##_t
