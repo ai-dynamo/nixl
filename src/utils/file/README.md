@@ -12,7 +12,7 @@ All file-aware plugins (POSIX, HF3FS, and CUDA GDS, which provides both the
 `GDS` and `GDS_MT` backend names) link `file_utils_interface` and consume both
 sets of helpers.
 
-## QueryMem API Implementation through queryFileInfoList
+## QueryMem API Implementation through file query functions
 
 The QueryMem API has been implemented for these file backends:
 
@@ -20,49 +20,10 @@ The QueryMem API has been implemented for these file backends:
 - **HF3FS Backend** (`src/plugins/hf3fs/`)
 - **CUDA GDS Backend** (`src/plugins/cuda_gds/`, provides both the `GDS` and `GDS_MT` backends)
 
-The backend extracts the filenames from the input descriptors (`nixl_reg_dlist_t`) and passes them to queryFileInfoList.
-Then queryFileInfoList returns a vector of `nixl_query_resp_t` structures containing:
-   - `accessible`: Boolean indicating if file exists
-   - `info`: Additional file information (size, mode, mtime) if file exists
-
-### Usage Example:
-
-```cpp
-// Create registration descriptor list with filenames in metaInfo
-nixl_reg_dlist_t descs(FILE_SEG, false);
-descs.addDesc(nixlBlobDesc(0, 0, 0, "/path/to/file1.txt"));
-descs.addDesc(nixlBlobDesc(0, 0, 0, "/path/to/file2.txt"));
-descs.addDesc(nixlBlobDesc(0, 0, 0, "/path/to/file3.txt"));
-
-// Query file status using the plugin's queryMem method
-std::vector<nixl_query_resp_t> resp;
-nixl_status_t status = plugin->queryMem(descs, resp);
-
-// Check results
-for (const auto& result : resp) {
-    if (result.accessible) {
-        std::cout << "File exists, size: " << result.info["size"] << std::endl;
-    } else {
-        std::cout << "File does not exist" << std::endl;
-    }
-}
-```
-
-## File Utils Functions
-
-### `queryFileInfo`
-- **Purpose**: Query file information for a single file
-- **Parameters**:
-  - `filename`: The filename to query
-  - `resp`: Output response structure
-- **Returns**: NIXL_SUCCESS on success, error code otherwise
-
-### `queryFileInfoList`
-- **Purpose**: Query file information for multiple files
-- **Parameters**:
-  - `filenames`: Vector of filenames to query
-  - `resp`: Output response vector
-- **Returns**: NIXL_SUCCESS on success, error code otherwise
+The backend passes a single filename or the entire input descriptors (`nixl_reg_dlist_t`) to
+`queryFileInfo()` or `queryFileInfoFromDescList()`, respectively. The result consists of an
+optional hash-map from string to string, currently the result fields are `size`, `mode` and
+`mtime`.
 
 ## Building
 

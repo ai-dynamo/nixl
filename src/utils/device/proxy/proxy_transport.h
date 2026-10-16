@@ -35,9 +35,9 @@ struct proxyBackendSubmission {
     uint32_t channel_id = 0;
     uint32_t peer_index = 0;
 
-    /** nixlMetaDesc() leaves addr, len and devId unset, so zero them explicitly. */
-    nixlMetaDesc local{0, 0, 0, nullptr};
-    nixlMetaDesc remote{0, 0, 0, nullptr};
+    /** Set only for a PUT: an atomic add has no source. */
+    nixlMetaDesc local;
+    nixlMetaDesc remote;
 
     size_t size = 0;
     uint64_t value = 0;

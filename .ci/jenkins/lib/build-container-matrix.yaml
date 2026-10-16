@@ -50,6 +50,9 @@ credentials:
   - credentialsId: 'svc-nixl-gitlab-token'
     usernameVariable: 'NIXL_GITLAB_USER'
     passwordVariable: 'NIXL_GITLAB_TOKEN'
+  - credentialsId: 'svc-nixl-github-read-only-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
   # Paired with NIXL_GITLAB_TOKEN; only read on the spcx path.
   - credentialsId: 'ucx-plugin-gitlab-url'
     type: 'string'
@@ -104,6 +107,7 @@ steps:
     credentialsId:
       - 'svc-nixl-new-artifactory-token'
       - 'nixl-gitlab-registry-token'
+      - 'svc-nixl-github-read-only-token'
     run: |
       # Setup podman and dependencies
       set -x
@@ -111,6 +115,10 @@ steps:
       podman system reset -f || true
       podman info
       ln -sfT $(type -p podman) /usr/bin/docker
+      # github.com credential, used as the "ghconfig" build secret and by the
+      # agent-side clones below.
+      . .ci/scripts/common.sh
+      write_github_gitconfig /tmp/ghconfig
       # Login to Artifactory
       set +x -v
       echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
@@ -127,8 +135,9 @@ steps:
     enable: ${ENABLE_NIXLBENCH_BUILD}
     containerSelector: "{name: 'podman'}"
     run: |
+      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
       # Clone UCX source for nixlbench
-      git clone https://github.com/openucx/ucx.git ucx-src
+      git -c include.path=/tmp/ghconfig clone https://github.com/openucx/ucx.git ucx-src
       git -C ucx-src checkout "${UCX_SHA}"
 
       "benchmark/nixlbench/contrib/build.sh" \
@@ -148,6 +157,7 @@ steps:
       - 'svc-nixl-gitlab-token'
       - 'ucx-plugin-gitlab-url'
     run: |
+      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
       export UCX_REF="${UCX_SHA}"
 
       NIXL_EP_FLAG=""
