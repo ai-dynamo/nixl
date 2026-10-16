@@ -93,7 +93,7 @@ runWriterChild(int go_fd, int ready_fd, int quit_fd, const std::string &agent, u
 void
 runDefaultDirChild(int ready_fd, int quit_fd, uint16_t port, const std::string &agent) {
     ::setenv("NIXL_TELEMETRY_ENABLE", "y", 1);
-    ::setenv("NIXL_TELEMETRY_EXPORTER", "prometheus_mp", 1);
+    ::setenv("NIXL_TELEMETRY_EXPORTER", "prometheus", 1);
     ::setenv("NIXL_TELEMETRY_PROMETHEUS_PORT", std::to_string(port).c_str(), 1);
     ::unsetenv("NIXL_TELEMETRY_MULTIPROC_DIR");
 
