@@ -840,6 +840,8 @@ export CUDA_MPS_PIPE_DIRECTORY="$mps_test_dir/pipe"
 export CUDA_MPS_LOG_DIRECTORY="$mps_test_dir/log"
 mkdir -p "$CUDA_MPS_PIPE_DIRECTORY" "$CUDA_MPS_LOG_DIRECTORY"
 nvidia-cuda-mps-control -d
+# The daemon remaps its selected GPU to device 0; clients use that mapping.
+unset CUDA_VISIBLE_DEVICES
 trap 'printf "quit\n" | nvidia-cuda-mps-control' EXIT
 
 # Adjust these fabric settings and use three unused TCP ports.
