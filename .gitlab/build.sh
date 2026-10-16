@@ -141,6 +141,9 @@ else
                                  protobuf-compiler-grpc \
                                  pybind11-dev \
                                  etcd-server \
+                                 redis-server \
+                                 redis-tools \
+                                 libevent-dev \
                                  net-tools \
                                  iproute2 \
                                  pciutils \
@@ -160,6 +163,31 @@ else
         # Upgrade pip for '--break-system-packages' support
         $SUDO pip3 install --upgrade pip
     fi
+
+    # Build hiredis from source (apt ships 0.14.x on Ubuntu 22.04 and 1.2.0 on
+    # Ubuntu 24.04; build a consistent version everywhere to match contrib/Dockerfile).
+    $SUDO apt-get remove -y libhiredis-dev 2>/dev/null || true
+    HIREDIS_VERSION="1.4.0"
+    ( \
+      cd "${BUILD_TMP}" && \
+      wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+          -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+      tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+      mkdir -p "hiredis-${HIREDIS_VERSION}/build" && \
+      cd "hiredis-${HIREDIS_VERSION}/build" && \
+      cmake .. \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=ON && \
+      make -j"$NPROC" && \
+      $SUDO make install && \
+      $SUDO ldconfig && \
+      $SUDO chown -R "$(id -u):$(id -g)" "${INSTALL_DIR}" && \
+      pkg-config --atleast-version=1.0.1 hiredis && \
+      cd "${BUILD_TMP}" && \
+      rm -rf "hiredis-${HIREDIS_VERSION}" "hiredis-${HIREDIS_VERSION}.tar.gz" \
+    )
 
     # Install python dependencies and upgrade to latest version
     $SUDO pip3 --no-cache-dir install --break-system-packages \
