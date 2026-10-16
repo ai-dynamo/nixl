@@ -373,6 +373,41 @@ TEST_F(MetadataExchangeTestFixture, GetLocalPartialWithErrors) {
     }
 }
 
+TEST_F(MetadataExchangeTestFixture, LoadRemoteAfterSectionError) {
+    initAgentsDefault();
+
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    std::string remote_name;
+    nixl_blob_t md;
+
+    ASSERT_EQ(src.agent->getLocalMD(md), NIXL_SUCCESS);
+
+    // Corrupt the memory section, so that the connection info loads and the section fails
+    nixl_blob_t invalid_md = md;
+    const size_t pos = invalid_md.find("nixlSecElms");
+    ASSERT_NE(pos, nixl_blob_t::npos);
+    invalid_md[pos] = 'X';
+
+    {
+        const LogIgnoreGuard lig1("Deserialization of tag nixlSecElms failed for tag mismatch");
+        const LogIgnoreGuard lig2("loadRemoteMD: error loading remote metadata for agent 'agent_0' "
+                                  "with status NIXL_ERR_MISMATCH");
+
+        ASSERT_NE(dst.agent->loadRemoteMD(invalid_md, remote_name), NIXL_SUCCESS);
+
+        EXPECT_EQ(lig1.getIgnoredCount(), 1);
+        EXPECT_EQ(lig2.getIgnoredCount(), 1);
+    }
+
+    // The failed load leaves no connection behind, so the valid metadata loads
+    ASSERT_EQ(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    ASSERT_EQ(remote_name, src.name);
+
+    ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
+}
+
 TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     initAgentsDefault();
 
