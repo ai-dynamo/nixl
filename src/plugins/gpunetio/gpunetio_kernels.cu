@@ -332,6 +332,7 @@ kernel_publish_notif(docaXferReqGpu *xfer_req_ring,
                      uint32_t pos) {
     if (nixl_gpunetio_dev_load_host_state(xfer_req_ring[pos].state) !=
         DOCA_XFER_STATE_NOTIF_PENDING) {
+        nixl_gpunetio_dev_fail_request(&xfer_req_ring[pos], progress_state, pos);
         return;
     }
     progress_state->active_generation[pos] = xfer_req_ring[pos].generation;
