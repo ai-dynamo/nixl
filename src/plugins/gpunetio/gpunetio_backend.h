@@ -158,7 +158,7 @@ private:
     struct sockaddr oob_saddr;
     struct sockaddr oob_netmask;
     std::thread pthr;
-    cudaStream_t post_stream[DOCA_POST_STREAM_NUM];
+    cudaStream_t post_stream[DOCA_POST_STREAM_NUM]{};
     cudaStream_t wait_stream;
     mutable std::atomic<uint32_t> xferStream;
 
