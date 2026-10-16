@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import os
 import tempfile
 import time
@@ -552,3 +553,31 @@ def test_get_xfer_telemetry_cfg(backend_name):
     finally:
         os.environ.pop("NIXL_TELEMETRY_ENABLE")
         os.environ.pop("NIXL_TELEMETRY_DIR")
+
+
+def test_leaked_xfer_handle_is_queued_on_the_agent(one_empty_agent, monkeypatch):
+    """A release that fails in the finalizer defers to the nixl_agent's leak list.
+
+    The handle comes from initialize_xfer, so it holds whatever the agent passes
+    it. That used to be the pybind agent, which has no leak list, and the handle
+    was dropped without a trace.
+    """
+
+    class FailingNative:
+        def createXferReq(self, *args):
+            return 0xDEAD
+
+        def releaseXferReq(self, handle):
+            raise RuntimeError("release refused")
+
+    monkeypatch.setattr(one_empty_agent, "agent", FailingNative())
+    try:
+        handle = one_empty_agent.initialize_xfer("WRITE", None, None, "peer")
+        del handle
+        gc.collect()
+
+        assert one_empty_agent._leaked_xfer_handles == [0xDEAD]
+    finally:
+        # 0xDEAD is not a real request, so the agent's destructor must not
+        # hand it to the native release once the real agent is back.
+        one_empty_agent._leaked_xfer_handles.clear()
