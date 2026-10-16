@@ -31,6 +31,13 @@
 #include <thread>
 #include <vector>
 
+#ifndef NIXL_QP_PROGRESS_WARMUP
+#define NIXL_QP_PROGRESS_WARMUP 20
+#endif
+#ifndef NIXL_QP_PROGRESS_MEASURED
+#define NIXL_QP_PROGRESS_MEASURED 100
+#endif
+
 namespace {
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -40,8 +47,9 @@ constexpr size_t kSmallBytes = 4ULL << 10;
 constexpr size_t kStressDescriptors = 512;
 constexpr size_t kStressRequests = 7;
 constexpr size_t kFastChurnRequests = 129;
-constexpr int kWarmup = 20;
-constexpr int kMeasured = 100;
+constexpr int kWarmup = NIXL_QP_PROGRESS_WARMUP;
+constexpr int kMeasured = NIXL_QP_PROGRESS_MEASURED;
+static_assert(kWarmup >= 0 && kMeasured > 0);
 constexpr int kRepeats = 1;
 constexpr auto kTimeout = std::chrono::seconds(30);
 

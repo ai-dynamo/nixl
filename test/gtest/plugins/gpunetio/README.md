@@ -25,6 +25,13 @@ export QP_TEST="$PWD/qp_progress_gtest"
 export CUDA_MODULE_LOADING=EAGER CUDA_DEVICE_MAX_CONNECTIONS=8
 ```
 
+For the longer 1200-warmup/1000-measured qualification, add
+`-DNIXL_QP_PROGRESS_WARMUP=1200 -DNIXL_QP_PROGRESS_MEASURED=1000` to that
+same `nvcc` command and use the resulting single executable for both arms.
+Without these flags, the defaults remain 20/100. Record CPU affinity as well
+as GPU placement; if pinning workers, use the same distinct physical CPU cores
+for both plugin arms, and keep bound/unbound results separate.
+
 Keep that executable and the core/DOCA library search path unchanged when
 switching `NIXL_PLUGIN_DIR`. Use five fresh pairs per arm for the mixed case and
 each 4 KiB/2 MiB single-active-QP control, alternating arm order. Three distinct
