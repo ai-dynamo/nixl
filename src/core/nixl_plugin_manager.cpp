@@ -187,9 +187,9 @@ telemetryLoader(void *handle, const std::string &plugin_path) {
         return nullptr;
     }
 
-    if (plugin->api_version != NIXL_TELEMETRY_PLUGIN_API_VERSION) {
+    if (plugin->api_version != nixl_telemetry_plugin_api_version::V2) {
         NIXL_ERROR << "Plugin API version mismatch for " << plugin_path << ": expected "
-                   << static_cast<unsigned int>(NIXL_TELEMETRY_PLUGIN_API_VERSION) << ", got "
+                   << static_cast<unsigned int>(nixl_telemetry_plugin_api_version::V2) << ", got "
                    << static_cast<unsigned int>(plugin->api_version);
         dlclose(handle);
         return nullptr;
@@ -862,6 +862,14 @@ void nixlPluginManager::registerBuiltinPlugins() {
 
 #ifdef STATIC_PLUGIN_INFINIA
     NIXL_REGISTER_STATIC_PLUGIN(Backend, INFINIA)
+#endif
+
+#ifdef STATIC_PLUGIN_IBM_SCALE
+    // clang-format off
+    extern nixlBackendPlugin *
+    createStaticIBMScalePlugin();
+    // clang-format on
+    registerBackendStaticPlugin("IBM_SCALE", createStaticIBMScalePlugin);
 #endif
 
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, BUFFER)
