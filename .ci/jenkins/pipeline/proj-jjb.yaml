@@ -559,9 +559,12 @@
             # Build nixl nightly around 22:00 - Ubuntu 24.04
             H 22 * * * %BUILD_TARGET=nixl;UPDATE_LATEST=true
             # Build nixlbench nightly around 22:00 - PyTorch release
-            H 22 * * * %BUILD_TARGET=nixlbench;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.06-py3;UPDATE_LATEST=true
+            # Keep the PyTorch tag on the same NGC release as the Dockerfiles'
+            # CUOBJ_DEV_IMAGE (26.08 = CUDA 13.4.1): the cuObject dev files are
+            # only staged when the base's libcuobjclient runtime matches them.
+            H 22 * * * %BUILD_TARGET=nixlbench;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.08-py3;UPDATE_LATEST=true
             # Build nixl nightly around 22:00 - PyTorch release
-            H 22 * * * %BUILD_TARGET=nixl;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.06-py3;UPDATE_LATEST=true
+            H 22 * * * %BUILD_TARGET=nixl;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.08-py3;UPDATE_LATEST=true
     # Manual build parameters
     parameters:
       - choice:
