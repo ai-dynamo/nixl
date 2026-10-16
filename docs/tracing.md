@@ -113,6 +113,37 @@ So `nsys profile ... ./app` needs no NIXL-specific flags to get an NVTX timeline
 (and still records any other backend you asked for), while `NIXL_TRACE_BACKENDS=`
 force-disables tracing even under a profiler.
 
+#### Sampling
+
+| Source | Description |
+| ------ | ----------- |
+| `NIXL_TRACE_SAMPLE_RATIO` env var | Fraction of requests marked as sampled: `0` (off) or a number in `[2^-56, 1]`. Empty is an explicit off; when unset, the variable below decides |
+| `OTEL_TRACES_SAMPLE_RATIO` env var | Fallback used only when the NIXL variable is unset; Dynamo's variable, read so a NIXL inside Dynamo inherits its ratio. Unset means the opposite in each: Dynamo samples everything, NIXL samples nothing |
+
+The ratio applies to the trace contexts the agent generates, so it does nothing
+on its own: with no backend active — no `NIXL_TRACE_BACKENDS`, no nsys — the
+agent creates no contexts, and setting only the ratio produces nothing to see.
+
+The decision is head-based: it is taken once, when the agent creates the trace
+context for a request, and derives from that context's own trace id, so it is
+stable per request and every peer inspecting the same context agrees with it.
+A request is sampled when the random part of its trace id falls in the top
+`ratio` of the range, which is the OpenTelemetry consistent-probability rule: a
+later phase sampling at a lower ratio thins what NIXL kept instead of discarding
+all of it. The sampled flag is also what decides whether a context crosses the
+wire: UCX carries only sampled contexts to the remote agent.
+
+A value that is neither `0` nor a number in `[2^-56, 1]` makes agent
+construction fail, whether or not tracing is otherwise enabled, rather than
+silently sampling nothing. `2^-56` is OpenTelemetry's minimum probability and
+means one trace in every value 56 bits can express; anything smaller and
+nonzero cannot be represented, so it is rejected instead of quietly behaving
+like `0`. The
+same is not true of `OTEL_TRACES_SAMPLE_RATIO`, which NIXL does not own: a bad
+value there is warned about and ignored. Note that in a `.nixl.cfg` file the
+value must be quoted (`NIXL_TRACE_SAMPLE_RATIO = "0.25"`), since it is read as a
+string.
+
 ## Instrumented operations
 
 The following Agent operations emit spans/markers (more will be added in later
@@ -141,6 +172,71 @@ dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with
 backend (e.g. NVTX attaches attributes as typed payloads on the range via
 `nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
 record them).
+
+### Backend phase spans
+
+A backend plugin can record a phase of its own work through
+the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core turns
+each recorded phase into a momentary span carrying `nixl.backend` (the recording
+backend's type), `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
+`nixl.phase.label` when the plugin supplied one, and any plugin-supplied
+attributes. A phase recorded under a trace context also carries the context as
+`nixl.traceparent` and is correlated on it, like the agent's own spans. The
+phase vocabulary is closed so that timelines stay comparable across backends:
+
+| Span | Phase enumerator | Meaning |
+| ---- | ---------------- | ------- |
+| `nixl::submit` | `SUBMIT` | the backend accepted the operation |
+| `nixl::wire.submitted` | `WIRE_SUBMITTED` | handed to the transport |
+| `nixl::wire.completed` | `WIRE_COMPLETED` | transport signalled completion |
+| `nixl::notif.sent` | `NOTIF_SENT` | notification posted to the wire |
+| `nixl::notif.received` | `NOTIF_RECEIVED` | notification observed locally |
+| `nixl::remote.observed` | `REMOTE_OBSERVED` | the peer's side was observed |
+| `nixl::phase` | `OTHER` | generic escape hatch; the plugin's label becomes the span name |
+
+The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
+installed header), so only in-tree plugins can emit phases. UCX emits
+`nixl::notif.received`, described below; its other phases, and libfabric's, come
+in later PRs.
+
+Recording a phase never fails the transfer: if the trace backend throws, the
+phase is dropped and the first drop per backend is logged. With telemetry
+enabled, drops are also exported as `agent_trace_phases_dropped_total`, subject
+to the same per-metric filter as every other metric (see
+[telemetry](telemetry.md)).
+
+A backend also sees the trace context of the request it is executing, as
+`traceContext` in the `nixl_opt_b_args_t` that `prepXfer` and `postXfer` receive.
+It is the same context at prep and at every post of that request, reposts
+included, and the zeroed, invalid context when tracing is off. It is null in
+`prepMemView`, which has no request, and `opt_args` itself may be null when an
+engine is called directly. The pointer is valid only for the call: a plugin that
+needs the context later, at completion or when building a notification, copies
+the value onto its own request handle. A carrier that puts it on the wire calls
+`encodeTraceContext` itself. `TraceContext` is internal like the sink, so only
+in-tree plugins can read it.
+
+UCX is the first such carrier. For a sampled request it appends the 26-byte
+record as a `tctx` tag after the notification's `name` and `msg`, so an older
+receiver, which stops reading after `msg`, is unaffected; unsampled requests and
+`genNotif` add nothing. When the notification arrives at an agent with tracing
+on, UCX records `nixl::notif.received` under the sender's context, with
+`nixl.remote_agent` naming the sender; an agent with tracing off skips the record
+without reading it. The span thus carries the request's trace
+id in `nixl.traceparent`, and the same correlation id as the sender's
+`nixl::postXferReq.write` or `.read` span. Writes and reads without a
+notification give the receiver nothing to observe, so they are traced on the
+sender only.
+
+A backend that carries the context to its peer says so by overriding
+`supportsTraceContext()`, which defaults to `false`; core reads it once, when
+the backend is created. Tracing never fails a transfer over it. A sampled
+request on a backend that supports remote transfers but not trace contexts runs
+as usual, its trace just does not reach the remote agent, and core logs a
+warning once per backend in each agent; backends without remote transfers are
+not reported. Likewise, if generating a request's context fails, the request
+runs with the zeroed context and no correlation id, and each agent logs its
+first such failure as an error.
 
 ## Profiling with NVTX / Nsight Systems
 
@@ -212,19 +308,20 @@ In NIXL tracing, "correlation" can mean two different things:
 
 - **Cross-rank / cross-agent** -- linking the sender's span to the receiver's span across
   processes. NVTX has **no** native cross-process linkage: each process is its own
-  timeline that Nsight aligns best-effort by clock, so the only aid today is matching a
-  `request_id`-style attribute by hand. Structured linking is a **Chakra** capability (one
-  trace per rank, joined offline by `chakra_trace_link` from matching send/recv) and
-  requires a globally unique id propagated on the wire. It is planned, and not part of the
-  NVTX backend.
+  timeline that Nsight aligns best-effort by clock. What NIXL adds is the id: over UCX
+  notifications the receiver's `nixl::notif.received` carries the sender's correlation id
+  and `nixl.traceparent` (see "Backend phase spans"), so the two ranges can be matched
+  across timelines. Structured linking is a **Chakra** capability (one trace per rank,
+  joined offline by `chakra_trace_link` from matching send/recv); it is planned, and not
+  part of the NVTX backend.
 - **Cross-thread within a process** -- attributing spans emitted on different threads
   (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
   same request. Implemented via the backend-agnostic `pushCorrelationId()` /
   `popCorrelationId()` API: NIXL wraps `postXferReq` and the `xfer.complete` marker in a
-  correlation scope keyed on the transfer-request handle's address, and the NVTX backend
-  records that id as the event's `uint64` payload -- so a post and its completion carry
-  the same id on the timeline regardless of which thread emitted each. (The id is a
-  process-local diagnostic handle, not a globally unique on-the-wire id.)
+  correlation scope keyed on the span id of the request's trace context, and the NVTX
+  backend records that id as the event's `uint64` payload -- so a post and its completion
+  carry the same id on the timeline regardless of which thread emitted each. A request
+  without a valid context carries no id.
 
 ## Planned work
 
@@ -232,7 +329,9 @@ In NIXL tracing, "correlation" can mean two different things:
   recording the span attributes and dependencies the NVTX backend ignores.
 - **Cross-rank correlation** — propagate a globally unique request id on the wire so
   sender and receiver spans can be linked across processes (distributed tracing; a
-  separate NIXL-architecture effort).
+  separate NIXL-architecture effort). UCX carries it in notifications (see "Backend
+  phase spans"); the libfabric, gpunetio, mooncake and uccl carriers come next.
 
-Backend-engine sub-spans (finer spans inside backends, e.g. UCX
-`prepXfer`/`postXfer`/`checkXfer`) were considered and are currently not planned.
+- **Backend phase emission** — the sink described under "Backend phase spans" exists,
+  and UCX records `nixl::notif.received` through it; the remaining phases are not
+  recorded by any plugin yet.

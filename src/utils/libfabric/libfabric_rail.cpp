@@ -437,6 +437,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     hints->caps = 0;
     hints->caps = FI_MSG | FI_RMA | FI_HMEM; // Try with FI_HMEM first
     hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
+    hints->caps |= FI_SOURCE;
     hints->mode = FI_CONTEXT;
     hints->ep_attr->type = FI_EP_RDM;
     // Configure memory registration mode based on provider capabilities
@@ -457,9 +458,23 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     hints->domain_attr->name = strdup(device_name.c_str());
     hints->domain_attr->threading = FI_THREAD_COMPLETION;
 
+    // The EFA provider accepts FI_MR_DMABUF from libfabric API 1.20 on, so request 1.20
+    // where the library provides it and 1.18 elsewhere. The fabric carries the requested
+    // version, and canRegisterWithDmabuf() checks it.
+    //
+    // A build whose headers predate FI_MR_DMABUF compiles the registration path out, so it
+    // asks for 1.18: an application states the API version it was built against, and 1.20
+    // buys nothing once the only feature that needs it is absent.
+#ifdef FI_MR_DMABUF
+    const uint32_t requested_api_version =
+        FI_VERSION_GE(fi_version(), FI_VERSION(1, 20)) ? FI_VERSION(1, 20) : FI_VERSION(1, 18);
+#else
+    const uint32_t requested_api_version = FI_VERSION(1, 18);
+#endif
+
     try {
         // Get fabric info for this specific device - first try with FI_HMEM
-        int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
+        int ret = fi_getinfo(requested_api_version, NULL, NULL, 0, hints, &info);
 
         // If no provider found with FI_HMEM, retry without it
         if (ret || !info) {
@@ -469,9 +484,27 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             // Retry without FI_HMEM
             hints->caps = FI_MSG | FI_RMA;
             hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
+            hints->caps |= FI_SOURCE;
 
-            ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
+            ret = fi_getinfo(requested_api_version, NULL, NULL, 0, hints, &info);
             if (ret) {
+                // A provider that cannot support FI_SOURCE fails fi_getinfo rather than returning
+                // info without it. Probe once without FI_SOURCE to check whether it caused the
+                // failure.
+                hints->caps &= ~FI_SOURCE;
+                struct fi_info *probe = nullptr;
+                const int probe_ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &probe);
+                if (probe) {
+                    fi_freeinfo(probe);
+                }
+                if (probe_ret == 0) {
+                    NIXL_ERROR << "Provider " << provider << " does not support FI_SOURCE on rail "
+                               << rail_id
+                               << "; the libfabric backend cannot attribute incoming transfers "
+                                  "to a sender without it";
+                    throw std::runtime_error("FI_SOURCE not supported for rail " +
+                                             std::to_string(rail_id));
+                }
                 NIXL_ERROR << "fi_getinfo failed for rail " << rail_id << ": " << fi_strerror(-ret);
                 throw std::runtime_error("fi_getinfo failed for rail " + std::to_string(rail_id));
             }
@@ -520,6 +553,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         }
         // Create AV for this rail
         struct fi_av_attr av_attr = {};
+        av_attr.type = FI_AV_TABLE;
         ret = fi_av_open(domain, &av_attr, &av, NULL);
         if (ret) {
             NIXL_ERROR << "fi_av_open failed for rail " << rail_id << ": " << fi_strerror(-ret);
@@ -740,7 +774,7 @@ nixlLibfabricRail::cleanup() {
 
 void
 nixlLibfabricRail::setNotificationCallback(
-    std::function<void(const std::string &, uint16_t)> callback) {
+    std::function<void(const std::string &, uint32_t)> callback) {
     notificationCallback = callback;
 }
 
@@ -760,13 +794,13 @@ nixlLibfabricRail::initPostQueue(size_t post_queue_size) {
 }
 
 void
-nixlLibfabricRail::setXferIdCallback(std::function<void(uint64_t, uint16_t)> callback) {
+nixlLibfabricRail::setXferIdCallback(std::function<void(uint64_t, uint32_t)> callback) {
     xferIdCallback = callback;
 }
 
 void
 nixlLibfabricRail::setXferErrorCallback(
-    std::function<void(uint16_t, uint16_t, uint32_t)> callback) {
+    std::function<void(uint16_t, uint32_t, uint32_t)> callback) {
     xferErrorCallback = callback;
 }
 
@@ -775,61 +809,74 @@ nixl_status_t
 nixlLibfabricRail::progressCompletionQueue() {
     // Completion processing FIRST — process arrivals before posting new items
     struct fi_cq_data_entry completions[NIXL_LIBFABRIC_CQ_BATCH_SIZE];
+    fi_addr_t src_addrs[NIXL_LIBFABRIC_CQ_BATCH_SIZE];
 
     int ret;
+    struct fi_cq_err_entry err_entry;
+    int err_ret = 0;
 
     // Only protect libfabric CQ hardware operations
     {
         std::lock_guard<std::mutex> ep_lock(ep_mutex_);
 
         // Non-blocking read (used by progress thread or fallback)
-        ret = fi_cq_read(cq, completions, NIXL_LIBFABRIC_CQ_BATCH_SIZE);
+        ret = fi_cq_readfrom(cq, completions, NIXL_LIBFABRIC_CQ_BATCH_SIZE, src_addrs);
 
         if (ret < 0 && ret != -FI_EAGAIN) {
-            NIXL_ERROR << "fi_cq_read returned error " << ret << " on rail " << rail_id << ": "
-                       << fi_strerror(-ret);
-
             // Handle error - but be careful about fi_cq_readerr
-            struct fi_cq_err_entry err_entry;
             memset(&err_entry, 0, sizeof(err_entry));
-
-            int err_ret = fi_cq_readerr(cq, &err_entry, 0);
-            if (err_ret > 0) {
-                NIXL_ERROR << "CQ read failed on rail " << rail_id
-                           << " with error: " << fi_strerror(err_entry.err)
-                           << " prov_errno: " << err_entry.prov_errno << " len: " << err_entry.len;
-
-                // Notify the owning handle of the error and release the request
-                if (err_entry.op_context) {
-                    nixlLibfabricReq *req = findRequestFromContext(err_entry.op_context);
-                    if (req && req->in_use) {
-                        if (req->completion_callback) {
-                            req->completion_callback(NIXL_ERR_BACKEND);
-                        }
-                        releaseRequest(req);
-                    }
-                }
-            } else {
-                NIXL_ERROR << "fi_cq_readerr failed with " << err_ret;
-            }
-            return NIXL_ERR_BACKEND;
+            err_ret = fi_cq_readerr(cq, &err_entry, 0);
         }
     }
     // CQ lock released here - completion is now local data
+
+    if (ret < 0 && ret != -FI_EAGAIN) {
+        NIXL_ERROR << "fi_cq_readfrom returned error " << ret << " on rail " << rail_id << ": "
+                   << fi_strerror(-ret);
+        if (err_ret > 0) {
+            NIXL_ERROR << "CQ read failed on rail " << rail_id
+                       << " with error: " << fi_strerror(err_entry.err)
+                       << " prov_errno: " << err_entry.prov_errno << " len: " << err_entry.len;
+
+            // Notify the owning handle of the error and release the request. Done without the
+            // EP lock: the callback and the request pool take their own locks.
+            if (err_entry.op_context) {
+                nixlLibfabricReq *req = findRequestFromContext(err_entry.op_context);
+                if (req && req->in_use) {
+                    if (req->completion_callback) {
+                        req->completion_callback(NIXL_ERR_BACKEND);
+                    }
+                    releaseRequest(req);
+                }
+            }
+        } else {
+            NIXL_ERROR << "fi_cq_readerr failed with " << err_ret;
+        }
+        return NIXL_ERR_BACKEND;
+    }
 
     if (ret == -FI_EAGAIN) {
         // No completions - fall through to drainPostQueue
     }
 
     if (ret > 0) {
+        nixl_status_t first_error = NIXL_SUCCESS;
         for (int i = 0; i < ret; ++i) {
             // Process completion using local data. Callbacks have their own thread safety
-            nixl_status_t status = processCompletionQueueEntry(&completions[i]);
+            nixl_status_t status = processCompletionQueueEntry(&completions[i], src_addrs[i]);
             if (status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed to process completion " << i << " out of batch of " << ret
-                           << " on rail " << rail_id;
-                return status;
+                           << " on rail " << rail_id << " with status " << status;
+                // Keep draining: these entries are already dequeued, so stopping here would
+                // drop the valid ones behind the failure. Report the first error afterwards.
+                if (first_error == NIXL_SUCCESS) {
+                    first_error = status;
+                }
             }
+        }
+
+        if (first_error != NIXL_SUCCESS) {
+            return first_error;
         }
 
         NIXL_DEBUG << "Processed " << ret << " completions on rail " << rail_id;
@@ -849,15 +896,22 @@ nixlLibfabricRail::progressCompletionQueue() {
 
 void
 nixlLibfabricRail::pollForCompletions() {
-    struct fi_cq_data_entry cq_buf[16];
-    int cq_ret = fi_cq_read(cq, cq_buf, 16);
+    struct fi_cq_data_entry cq_buf[NIXL_LIBFABRIC_CQ_BATCH_SIZE];
+    fi_addr_t src_addrs[NIXL_LIBFABRIC_CQ_BATCH_SIZE];
+    struct fi_cq_err_entry err_entry = {};
+    int cq_ret;
+    {
+        const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
+        cq_ret = fi_cq_readfrom(cq, cq_buf, NIXL_LIBFABRIC_CQ_BATCH_SIZE, src_addrs);
+        if (cq_ret < 0 && cq_ret != -FI_EAGAIN) {
+            fi_cq_readerr(cq, &err_entry, 0);
+        }
+    }
     if (cq_ret > 0) {
         for (int c = 0; c < cq_ret; c++) {
-            processCompletionQueueEntry(&cq_buf[c]);
+            processCompletionQueueEntry(&cq_buf[c], src_addrs[c]);
         }
     } else if (cq_ret < 0 && cq_ret != -FI_EAGAIN) {
-        struct fi_cq_err_entry err_entry = {};
-        fi_cq_readerr(cq, &err_entry, 0);
         NIXL_ERROR << "CQ error in drain interleave on rail " << rail_id << ": "
                    << fi_strerror(err_entry.err);
     }
@@ -865,7 +919,8 @@ nixlLibfabricRail::pollForCompletions() {
 
 // Route completion to appropriate handler (rail-specific)
 nixl_status_t
-nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) const {
+nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp,
+                                               fi_addr_t src_addr) const {
     uint64_t flags = comp->flags;
 
     NIXL_TRACE << "Routing completion from rail " << rail_id << " with flags=" << std::hex << flags
@@ -878,11 +933,11 @@ nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) co
         return processLocalSendCompletion(comp);
 
     } else if (flags & FI_RECV) {
-        // Receive completions - use immediate data
-        return processRecvCompletion(comp);
+        // Receive completions - use immediate data and the source address
+        return processRecvCompletion(comp, src_addr);
 
     } else if (flags & FI_WRITE) {
-        // Local write completions (fi_writedata) - use context
+        // Local write completions (fi_writemsg with remote completion) - use context
         return processLocalTransferCompletion(comp, "write");
 
     } else if (flags & FI_READ) {
@@ -890,8 +945,8 @@ nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) co
         return processLocalTransferCompletion(comp, "read");
 
     } else if (flags & FI_REMOTE_WRITE || flags & FI_REMOTE_CQ_DATA) {
-        // Remote write completions (from fi_writedata) - use immediate data
-        return processRemoteWriteCompletion(comp);
+        // Remote write completions (from fi_writemsg with remote completion) - use immediate data
+        return processRemoteWriteCompletion(comp, src_addr);
 
     } else {
         // Add more detailed warning for unknown completion flags
@@ -986,7 +1041,7 @@ nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
 
 // Handle remote receive completions (conn_req, conn_ack, notification messages)
 nixl_status_t
-nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
+nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp, fi_addr_t src_addr) const {
     // Get the request from context to access the received buffer
     nixlLibfabricReq *req = findRequestFromContext(comp->op_context);
     if (!req) {
@@ -995,14 +1050,25 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
     }
     // Decode the immediate data format
     uint64_t msg_type = NIXL_GET_MSG_TYPE_FROM_IMM(comp->data);
-    uint16_t agent_idx = NIXL_GET_AGENT_INDEX_FROM_IMM(comp->data);
     uint32_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(comp->data);
-    NIXL_TRACE << "Received control message type " << msg_type << " agent_idx=" << agent_idx
+    NIXL_TRACE << "Received control message type " << msg_type << " src_addr=" << src_addr
                << " XFER_ID=" << xfer_id << " imm_data=" << std::hex << comp->data << std::dec;
 
     nixl_status_t result = NIXL_SUCCESS;
 
-    if (msg_type == NIXL_LIBFABRIC_MSG_NOTIFICTION) {
+    // HANDSHAKE needs no sender: it can arrive before we have inserted the peer into our AV,
+    // and it carries the sender's name in its payload.
+    const bool needs_sender =
+        (msg_type == NIXL_LIBFABRIC_MSG_NOTIFICTION || msg_type == NIXL_LIBFABRIC_MSG_XFER_ERROR);
+    const uint32_t agent_idx = needs_sender ? resolveSourceAddress(src_addr) : kUnknownAgentIdx;
+
+    if (needs_sender && agent_idx == kUnknownAgentIdx) {
+        NIXL_ERROR << "Cannot attribute control message type " << msg_type << " XFER_ID=" << xfer_id
+                   << " on rail " << rail_id << " to a peer: src_addr=" << src_addr
+                   << " is not a known sender. Dropping the message; the initiator will not "
+                      "see this transfer complete.";
+        // Handled by dropping it; not an error for whichever caller progressed the CQ.
+    } else if (msg_type == NIXL_LIBFABRIC_MSG_NOTIFICTION) {
         NIXL_TRACE << "Processing notification request on rail " << rail_id
                    << " Xfer_id :" << xfer_id;
 
@@ -1074,15 +1140,24 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
 
 // Handle remote write completions (data arrival notification)
 nixl_status_t
-nixlLibfabricRail::processRemoteWriteCompletion(struct fi_cq_data_entry *comp) const {
+nixlLibfabricRail::processRemoteWriteCompletion(struct fi_cq_data_entry *comp,
+                                                fi_addr_t src_addr) const {
     // Decode the immediate data format
     uint64_t msg_type = NIXL_GET_MSG_TYPE_FROM_IMM(comp->data);
-    uint16_t agent_idx = NIXL_GET_AGENT_INDEX_FROM_IMM(comp->data);
     uint32_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(comp->data);
 
     // For remote write completions, we don't need to post a new receive
     // The write operation doesn't consume a receive buffer
     if (msg_type == NIXL_LIBFABRIC_MSG_TRANSFER) {
+        const uint32_t agent_idx = resolveSourceAddress(src_addr);
+        if (agent_idx == kUnknownAgentIdx) {
+            NIXL_ERROR << "Remote write completion on rail " << rail_id
+                       << " from unknown src_addr=" << src_addr << " XFER_ID=" << xfer_id
+                       << "; cannot credit it to a pending notification";
+            // Handled by dropping it; not an error for whichever caller progressed the CQ.
+            return NIXL_SUCCESS;
+        }
+
         NIXL_TRACE << "Remote write completion on rail " << rail_id << " - received " << comp->len
                    << " bytes" << " agent_idx=" << agent_idx << " XFER_ID=" << xfer_id
                    << " imm_data=" << std::hex << comp->data << std::dec;
@@ -1153,7 +1228,6 @@ nixlLibfabricRail::postSend(uint64_t immediate_data, fi_addr_t dest_addr, nixlLi
     NIXL_TRACE << "Sending data on endpoint=" << endpoint << " buffer=" << req->buffer
                << " size=" << req->buffer_size << " immediate_data=" << std::hex << immediate_data
                << " msg_type=" << NIXL_GET_MSG_TYPE_FROM_IMM(immediate_data)
-               << " agent_idx=" << NIXL_GET_AGENT_INDEX_FROM_IMM(immediate_data)
                << " XFER_ID=" << NIXL_GET_XFER_ID_FROM_IMM(immediate_data)
                << " dest_addr=" << dest_addr << std::dec << " context=" << &req->ctx;
 
@@ -1312,6 +1386,7 @@ nixlLibfabricRail::drainPostQueue() {
                 msg.context = &pr.req->ctx;
                 msg.data = pr.immediate_data;
 
+                const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
                 ret = fi_writemsg(endpoint, &msg, pr.fi_flags | FI_REMOTE_CQ_DATA);
             } else {
                 struct iovec iov{};
@@ -1333,6 +1408,7 @@ nixlLibfabricRail::drainPostQueue() {
                 msg.rma_iov_count = 1;
                 msg.context = &pr.req->ctx;
 
+                const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
                 ret = fi_readmsg(endpoint, &msg, pr.fi_flags);
             }
 
@@ -1430,10 +1506,10 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
 
             // Log every N attempts to avoid log spam
             if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
-                NIXL_DEBUG << "fi_writedata still retrying EAGAIN on rail " << rail_id << " after "
+                NIXL_DEBUG << "fi_writemsg still retrying EAGAIN on rail " << rail_id << " after "
                            << attempt << " attempts";
             } else {
-                NIXL_TRACE << "fi_writedata returned EAGAIN on rail " << rail_id
+                NIXL_TRACE << "fi_writemsg returned EAGAIN on rail " << rail_id
                            << ", retrying (attempt " << attempt << ")";
             }
 
@@ -1442,7 +1518,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                 nixl_status_t progress_status = progressCompletionQueue();
                 if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
                     NIXL_ERROR << "progressCompletionQueue failed on rail " << rail_id
-                               << " during fi_writedata retry";
+                               << " during fi_writemsg retry";
                     return progress_status;
                 }
                 if (progress_status == NIXL_SUCCESS) {
@@ -1457,7 +1533,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
         }
     }
 
-    NIXL_ERROR << "fi_writedata failed on rail " << rail_id << ": " << fi_strerror(-ret);
+    NIXL_ERROR << "fi_writemsg failed on rail " << rail_id << ": " << fi_strerror(-ret);
     return NIXL_ERR_BACKEND;
 }
 
@@ -1546,6 +1622,39 @@ nixlLibfabricRail::postRead(void *local_buffer,
 
 // Memory Registration Methods
 
+bool
+nixlLibfabricRail::canRegisterWithDmabuf(nixl_mem_t mem_type, enum fi_hmem_iface iface) const {
+#ifdef FI_MR_DMABUF
+    // The CUDA driver exports the dmabuf, so the registration covers VRAM_SEG memory
+    // whose iface is FI_HMEM_CUDA.
+    if (mem_type != VRAM_SEG || iface != FI_HMEM_CUDA) {
+        return false;
+    }
+
+    // The provider registers device memory through its FI_HMEM support.
+    if (!provider_supports_hmem_) {
+        return false;
+    }
+
+    // The EFA provider accepts FI_MR_DMABUF, and the prefix match also covers efa-direct.
+    if (provider_name.rfind("efa", 0) != 0) {
+        return false;
+    }
+
+    // The provider accepts the flag on a fabric carrying api_version 1.20 or newer.
+    if (info == nullptr || info->fabric_attr == nullptr ||
+        !FI_VERSION_GE(info->fabric_attr->api_version, FI_VERSION(1, 20))) {
+        return false;
+    }
+
+    return true;
+#else
+    (void)mem_type;
+    (void)iface;
+    return false;
+#endif
+}
+
 nixl_status_t
 nixlLibfabricRail::registerMemory(void *buffer,
                                   size_t length,
@@ -1553,7 +1662,8 @@ nixlLibfabricRail::registerMemory(void *buffer,
                                   int device_id,
                                   enum fi_hmem_iface iface,
                                   struct fid_mr **mr_out,
-                                  uint64_t *key_out) const {
+                                  uint64_t *key_out,
+                                  const LibfabricUtils::CudaDmabufExport *dmabuf) const {
     if (!buffer || !mr_out || !key_out) {
         NIXL_ERROR << "Invalid parameters on rail " << rail_id;
         return NIXL_ERR_INVALID_PARAM;
@@ -1646,13 +1756,54 @@ nixlLibfabricRail::registerMemory(void *buffer,
         NIXL_DEBUG << "System memory registration - iface: FI_HMEM_SYSTEM";
     }
 
+    // mr_iov and dmabuf share a union in fi_mr_attr, and the FI_MR_DMABUF flag selects the
+    // member the provider reads.
     struct iovec iov;
-    iov.iov_base = buffer;
-    iov.iov_len = length;
-    mr_attr.mr_iov = &iov;
-    mr_attr.iov_count = 1;
+    uint64_t regattr_flags = 0;
+    const bool use_dmabuf =
+        dmabuf != nullptr && dmabuf->fd >= 0 && canRegisterWithDmabuf(mem_type, iface);
 
-    int ret = fi_mr_regattr(domain, &mr_attr, 0, &mr);
+#ifdef FI_MR_DMABUF
+    struct fi_mr_dmabuf dmabuf_desc = {};
+    if (use_dmabuf) {
+        // The provider registers len bytes at base_addr + offset, where base_addr is the
+        // page-aligned start of the exported range.
+        dmabuf_desc.fd = dmabuf->fd;
+        dmabuf_desc.offset = dmabuf->offset;
+        dmabuf_desc.len = length;
+        dmabuf_desc.base_addr = dmabuf->base_addr;
+        mr_attr.dmabuf = &dmabuf_desc;
+        mr_attr.iov_count = 1;
+        regattr_flags = FI_MR_DMABUF;
+    } else
+#endif
+    {
+        iov.iov_base = buffer;
+        iov.iov_len = length;
+        mr_attr.mr_iov = &iov;
+        mr_attr.iov_count = 1;
+    }
+
+    // fi_mr_regattr is a domain-level call, not tied to the endpoint or CQ, so it runs
+    // without the EP lock.
+    int ret = fi_mr_regattr(domain, &mr_attr, regattr_flags, &mr);
+
+    if (ret && use_dmabuf) {
+        // The retry registers the same region by virtual address, which libfabric exports
+        // as a dmabuf of its own.
+        NIXL_WARN << "fi_mr_regattr with FI_MR_DMABUF failed on rail " << rail_id << ": "
+                  << fi_strerror(-ret) << " (buffer=" << buffer << ", length=" << length
+                  << ", fd=" << dmabuf->fd << "); retrying as a virtual-address registration";
+        mr_attr.mr_iov = &iov;
+        iov.iov_base = buffer;
+        iov.iov_len = length;
+        mr_attr.iov_count = 1;
+        // Carries the path that ran into the log below, which is the only per-rail record of
+        // which registration a rail ended up with.
+        regattr_flags = 0;
+        ret = fi_mr_regattr(domain, &mr_attr, 0, &mr);
+    }
+
     if (ret) {
         NIXL_ERROR << "fi_mr_reg failed on rail " << rail_id << ": " << fi_strerror(-ret)
                    << " (buffer=" << buffer << ", length=" << length
@@ -1660,7 +1811,12 @@ nixlLibfabricRail::registerMemory(void *buffer,
         return NIXL_ERR_BACKEND;
     }
 
+    NIXL_DEBUG << "Registered on rail " << rail_id << " via "
+               << (regattr_flags == 0 ? "virtual address" : "FI_MR_DMABUF");
+
+    // Only an MR bound to the endpoint (FI_MR_ENDPOINT) needs the lock.
     if (info->domain_attr->mr_mode & FI_MR_ENDPOINT) {
+        const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
         ret = fi_mr_bind(mr, &endpoint->fid, 0);
         if (ret) {
             NIXL_ERROR << "fi_mr_bind failed on rail " << rail_id << ": " << fi_strerror(-ret);
@@ -1679,7 +1835,7 @@ nixlLibfabricRail::registerMemory(void *buffer,
     uint64_t key = fi_mr_key(mr);
     if (key == FI_KEY_NOTAVAIL) {
         NIXL_ERROR << "fi_mr_key returned FI_KEY_NOTAVAIL on rail " << rail_id;
-        fi_close(&mr->fid);
+        deregisterMemory(mr);
         return NIXL_ERR_BACKEND;
     } else {
         NIXL_TRACE << "MR key obtained: " << key << " (" << std::hex << key << std::dec << ")";
@@ -1702,6 +1858,11 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    // Same rule as registerMemory: only an MR bound to the endpoint needs the EP lock.
+    std::unique_lock<std::mutex> ep_lock(ep_mutex_, std::defer_lock);
+    if (info->domain_attr->mr_mode & FI_MR_ENDPOINT) {
+        ep_lock.lock();
+    }
     int ret = fi_close(&mr->fid);
     if (ret) {
         NIXL_ERROR << "fi_close failed on rail " << rail_id << ": " << fi_strerror(-ret);
@@ -1714,7 +1875,9 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
 // Address Vector Management Methods
 
 nixl_status_t
-nixlLibfabricRail::insertAddress(const void *addr, fi_addr_t *fi_addr_out) const {
+nixlLibfabricRail::insertAddress(const void *addr,
+                                 uint32_t agent_idx,
+                                 fi_addr_t *fi_addr_out) const {
     if (!addr || !fi_addr_out) {
         NIXL_ERROR << "Invalid parameters on rail " << rail_id;
         return NIXL_ERR_INVALID_PARAM;
@@ -1724,11 +1887,18 @@ nixlLibfabricRail::insertAddress(const void *addr, fi_addr_t *fi_addr_out) const
         return NIXL_ERR_BACKEND;
     }
 
-    int ret = fi_av_insert(av, addr, 1, fi_addr_out, 0, NULL);
+    int ret;
+    {
+        const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
+        ret = fi_av_insert(av, addr, 1, fi_addr_out, 0, NULL);
+    }
     if (ret != 1) {
         NIXL_ERROR << "fi_av_insert failed on rail " << rail_id << ": " << fi_strerror(-ret);
         return NIXL_ERR_BACKEND;
     }
+
+    // Kept together with the insert so the table cannot drift from the AV.
+    mapSourceAddress(*fi_addr_out, agent_idx);
 
     return NIXL_SUCCESS;
 }
@@ -1744,13 +1914,64 @@ nixlLibfabricRail::removeAddress(fi_addr_t fi_addr) const {
         return NIXL_ERR_BACKEND;
     }
 
-    int ret = fi_av_remove(av, &fi_addr, 1, 0);
+    int ret;
+    {
+        const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
+        ret = fi_av_remove(av, &fi_addr, 1, 0);
+    }
     if (ret != 0) {
         NIXL_ERROR << "fi_av_remove failed on rail " << rail_id << ": " << fi_strerror(-ret);
         return NIXL_ERR_BACKEND;
     }
 
+    // Clear the mapping so a reused fi_addr is not misattributed to a different peer.
+    // Not reachable yet: cleanupConnection() has no callers; disconnect() never removes AV entries.
+    {
+        std::unique_lock<std::shared_mutex> lk(src_addr_mutex_);
+        if (fi_addr < src_addr_to_agent_.size()) {
+            src_addr_to_agent_[fi_addr] = kUnknownAgentIdx;
+        }
+    }
+
     return NIXL_SUCCESS;
+}
+
+void
+nixlLibfabricRail::mapSourceAddress(fi_addr_t fi_addr, uint32_t agent_idx) const {
+    if (fi_addr == FI_ADDR_NOTAVAIL) {
+        NIXL_ERROR << "Refusing to map invalid fi_addr " << fi_addr << " on rail " << rail_id;
+        return;
+    }
+
+    std::unique_lock<std::shared_mutex> lk(src_addr_mutex_);
+    if (fi_addr >= src_addr_to_agent_.size()) {
+        src_addr_to_agent_.resize(fi_addr + 1, kUnknownAgentIdx);
+    }
+
+    const uint32_t prev = src_addr_to_agent_[fi_addr];
+    if (prev != kUnknownAgentIdx && prev != agent_idx) {
+        // A reconnect: a duplicate fi_av_insert() returns the existing fi_addr under a fresh
+        // index. Last writer wins; transfers in flight under the old index are orphaned.
+        NIXL_WARN << "Re-mapping fi_addr " << fi_addr << " on rail " << rail_id
+                  << " from agent index " << prev << " to " << agent_idx;
+    }
+    src_addr_to_agent_[fi_addr] = agent_idx;
+
+    NIXL_TRACE << "Mapped fi_addr " << fi_addr << " -> agent index " << agent_idx << " on rail "
+               << rail_id;
+}
+
+uint32_t
+nixlLibfabricRail::resolveSourceAddress(fi_addr_t src_addr) const {
+    if (src_addr == FI_ADDR_NOTAVAIL) {
+        return kUnknownAgentIdx;
+    }
+
+    std::shared_lock<std::shared_mutex> lk(src_addr_mutex_);
+    if (src_addr >= src_addr_to_agent_.size()) {
+        return kUnknownAgentIdx;
+    }
+    return src_addr_to_agent_[src_addr];
 }
 
 // Memory Descriptor Helper Methods

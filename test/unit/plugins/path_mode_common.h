@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -150,9 +151,12 @@ inline int
 runPathModeSmoke(const char *agent_name,
                  const char *backend_name,
                  const char *file_path,
-                 size_t size) {
-    const std::string path_a = file_path;
-    const std::string path_b = std::string(file_path) + ".b";
+                 size_t size,
+                 const nixl_b_params_t &params = {}) {
+    static std::atomic<unsigned long> sequence{0};
+    const std::string path_a = std::string(file_path) + "." + std::to_string(getpid()) + "." +
+        std::to_string(sequence.fetch_add(1, std::memory_order_relaxed));
+    const std::string path_b = path_a + ".b";
 
     for (const std::string &p : {path_a, path_b}) {
         if (auto *f = std::fopen(p.c_str(), "wb")) {
@@ -166,7 +170,6 @@ runPathModeSmoke(const char *agent_name,
 
     nixlAgentConfig cfg;
     nixlAgent agent(agent_name, cfg);
-    nixl_b_params_t params;
     nixlBackendH *be = nullptr;
     if (agent.createBackend(backend_name, params, be) != NIXL_SUCCESS || !be) {
         std::cout << "SKIP: " << backend_name << " createBackend failed" << std::endl;
@@ -183,7 +186,7 @@ runPathModeSmoke(const char *agent_name,
         return 1;
     }
 
-    const std::string missing = std::string(file_path) + ".missing";
+    const std::string missing = path_a + ".missing";
     std::remove(missing.c_str());
     if (!checkMissingFileRejected(agent, missing)) {
         std::cerr << backend_name << " path-mode missing-file check FAILED" << std::endl;

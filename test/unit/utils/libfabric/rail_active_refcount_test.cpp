@@ -51,41 +51,7 @@ __wrap_fi_getinfo(uint32_t /*version*/,
                   const struct fi_info * /*hints*/,
                   struct fi_info **info) {
     // Build a linked list of NUM_FAKE_RAILS fake EFA devices
-    fi_info *head = nullptr;
-    fi_info *prev = nullptr;
-    for (size_t i = 0; i < NUM_FAKE_RAILS; ++i) {
-        fi_info *fi = malloc_zero<fi_info>();
-
-        fi->domain_attr = malloc_zero<fi_domain_attr>();
-        std::string name = "efa_" + std::to_string(i);
-        fi->domain_attr->name = strdup(name.c_str());
-
-        fi->fabric_attr = malloc_zero<fi_fabric_attr>();
-        fi->fabric_attr->prov_name = strdup("efa");
-        fi->fabric_attr->name = strdup("efa");
-
-        fi->ep_attr = malloc_zero<fi_ep_attr>();
-        fi->ep_attr->type = FI_EP_RDM;
-
-        fi->nic = malloc_zero<fid_nic>();
-        fi->nic->bus_attr = malloc_zero<fi_bus_attr>();
-        fi->nic->bus_attr->bus_type = FI_BUS_PCI;
-        fi->nic->bus_attr->attr.pci.domain_id = 0;
-        fi->nic->bus_attr->attr.pci.bus_id = static_cast<uint8_t>(i);
-        fi->nic->bus_attr->attr.pci.device_id = 0;
-        fi->nic->bus_attr->attr.pci.function_id = 0;
-
-        fi->nic->link_attr = malloc_zero<fi_link_attr>();
-        fi->nic->link_attr->speed = 100ull * NIXL_LIBFABRIC_GIGA;
-
-        if (prev) {
-            prev->next = fi;
-        } else {
-            head = fi;
-        }
-        prev = fi;
-    }
-    *info = head;
+    *info = mock_fi_info_chain(NUM_FAKE_RAILS, 100ull * NIXL_LIBFABRIC_GIGA);
     return 0;
 }
 
