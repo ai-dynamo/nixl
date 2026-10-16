@@ -158,7 +158,7 @@ $ meson setup <name_of_build_dir> \
 Common build options:
 - `build_docs`: Build Doxygen documentation (default: false)
 - `ucx_path`: Path to UCX installation (default: system path)
-- `install_headers`: Install development headers (default: true)
+- `install_headers`: Install development headers (default: true for direct Meson builds; disabled for Python wheels)
 - `disable_gds_backend`: Disable GDS backend (default: false)
 - `cudapath_inc`, `cudapath_lib`: Custom CUDA paths
 - `static_plugins`: Comma-separated list of plugins to build statically
@@ -361,6 +361,15 @@ $ ./contrib/build-container.sh -h
 The container has the NIXL python bindings preinstalled (built from source against the container's own PyTorch). For a redistributable python wheel, use the wheel build script below or install the published `nixl` package.
 
 ### Building the python wheel
+
+Python wheel builds set `-Dinstall_headers=false` in [pyproject.toml](pyproject.toml),
+so installing a wheel does not install the NIXL C++ development headers. This
+overrides the default for direct Meson builds listed in [Build Options](#build-options).
+For C++ development, follow [Build & install](#build--install) with
+`install_headers` enabled. Headers are installed under `<prefix>/include`
+(`/opt/nvidia/nvda_nixl/include` by default); use Meson's `--prefix` option to
+choose a different installation prefix.
+
 The contrib folder also includes a script to build the python wheel with the UCX dependencies. Note, that UCX and other NIXL dependencies are required to be installed.
 ```
 $ ./contrib/build-wheel.sh
