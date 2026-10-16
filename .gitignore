@@ -21,6 +21,13 @@ subprojects/*
 .venv/
 .venv*/
 
+# Python build artifacts
+*.egg-info/
+build/
+dist/
+*.pyc
+__pycache__/
+
 # Infinia DDN libs staged into the build context by build-container.sh --build-infinia
 /infinia-libs/
 
