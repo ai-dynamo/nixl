@@ -1106,6 +1106,26 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
+        auto obj_name = [timestamp](int list_idx, int dev) {
+            return "nixlbench_obj" + std::to_string(list_idx) + "_" + std::to_string(dev) + "_" +
+                std::to_string(timestamp);
+        };
+
+        // A READ first needs its objects created. Each put is a network round
+        // trip, so they are issued concurrently.
+        const int num_objs = num_threads * num_devices;
+        std::vector<char> obj_ok(num_objs, 1);
+        if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+#pragma omp parallel for
+            for (int n = 0; n < num_objs; n++) {
+                const std::string name = obj_name(n / num_devices, n % num_devices);
+                if (!xferBenchUtils::putObj(buffer_size, name)) {
+#pragma omp critical
+                    std::cerr << "Failed to put object: " << name << std::endl;
+                    obj_ok[n] = 0;
+                }
+            }
+        }
 
         std::cout << "Using " << num_threads * num_devices << " objects of " << buffer_size
                   << " bytes" << std::endl;
@@ -1114,17 +1134,11 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
-                std::string unique_name = "nixlbench_obj" + std::to_string(list_idx) + "_" +
-                    std::to_string(i) + "_" + std::to_string(timestamp);
-
-                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                    if (!xferBenchUtils::putObj(buffer_size, unique_name)) {
-                        std::cerr << "Failed to put object: " << unique_name << std::endl;
-                        continue;
-                    }
-                }
-
                 int obj_dev_id = list_idx * num_devices + i;
+                if (!obj_ok[obj_dev_id]) {
+                    continue;
+                }
+                std::string unique_name = obj_name(list_idx, i);
                 basic_desc = initBasicDescObj(buffer_size, obj_dev_id, unique_name);
                 if (basic_desc) {
                     if (xferBenchUtils::debugEnabled()) {
