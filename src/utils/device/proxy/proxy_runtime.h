@@ -52,12 +52,11 @@ public:
     /**
      * Build without starting workers. The runtime owns the transport; the allocator
      * must outlive the runtime.
-     * @retval NIXL_ERR_INVALID_PARAM No transport, or an invalid config.
+     * @return nullptr on no transport, an invalid config, or a failed build.
      */
-    [[nodiscard]] static nixl_status_t
+    [[nodiscard]] static std::unique_ptr<proxyRuntime>
     create(std::unique_ptr<proxyTransport> transport,
            const proxyConfig &config,
-           std::unique_ptr<proxyRuntime> &out,
            deviceOps &allocator);
 
     [[nodiscard]] nixl_status_t
@@ -73,9 +72,6 @@ public:
     [[nodiscard]] nixl_status_t
     startWorkers();
 
-    nixl_status_t
-    shutdown();
-
     const nixlProxyRingDesc *
     deviceChannelViews() const {
         return device_channel_views_.empty() ? nullptr : device_channel_views_.data();
@@ -87,8 +83,7 @@ public:
     }
 
 private:
-    /** INITIALIZED: the transport's init() succeeded, so shutdown() must call its shutdown(). */
-    enum class state_t { CREATED, INITIALIZED, BUILT, RUNNING, STOPPED };
+    enum class state_t { CREATED, BUILT, RUNNING, STOPPED };
 
     proxyRuntime(std::unique_ptr<proxyTransport> transport,
                  const proxyConfig &config,
@@ -101,6 +96,10 @@ private:
     /** Allocate rings, device context and workers; see create(). */
     nixl_status_t
     build();
+
+    /** Stop and join the workers, then release what build() allocated. */
+    void
+    shutdown() noexcept;
 
     void
     joinWorkerThreads() noexcept;

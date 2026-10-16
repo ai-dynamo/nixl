@@ -84,6 +84,7 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
         }
 
     friend class nixlUcxEngine;
+    friend class nixlUcxProxyEngine;
 };
 
 // A public metadata has to implement put, and only has the remote metadata
