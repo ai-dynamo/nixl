@@ -29,6 +29,7 @@
 #include <thread>
 #include <ostream>
 #include <stack>
+#include <unordered_map>
 
 #include "nixl.h"
 #include "backend/backend_aux.h"
@@ -37,6 +38,48 @@
 
 // Forward declarations
 class nixlLibfabricConnection;
+
+/**
+ * @brief Tracked live memory registration of a rail
+ *
+ * Ref-counted de-duplication of concurrent registrations: while a buffer is
+ * registered, a registerMemory() call with the same address, length, memory type
+ * and device reuses its MR and increments ref_count instead of calling
+ * fi_mr_regattr again. The last deregisterMemory() closes the MR and erases the
+ * entry, so a rail never holds an idle registration. A registration whose
+ * parameters differ from the one tracked at that address is made on its own and
+ * handed out untracked, as at the bound; deregisterMemory() closes it directly.
+ * Log lines tagged MRRC come from this tracking.
+ */
+struct MRCacheEntry {
+    struct fid_mr *mr; ///< Libfabric memory registration handle
+    uint64_t key; ///< Remote access key
+    std::atomic<uint32_t> ref_count; ///< Reference count for safe deregistration
+    size_t length; ///< Buffer length for validation
+    nixl_mem_t mem_type; ///< Memory type (DRAM_SEG or VRAM_SEG)
+    int gpu_id; ///< GPU ID for VRAM validation (-1 for DRAM)
+
+    MRCacheEntry() : mr(nullptr), key(0), ref_count(0), length(0), mem_type(DRAM_SEG), gpu_id(-1) {}
+
+    MRCacheEntry(struct fid_mr *mr_, uint64_t key_, size_t len_, nixl_mem_t type_, int gpu_)
+        : mr(mr_),
+          key(key_),
+          ref_count(1),
+          length(len_),
+          mem_type(type_),
+          gpu_id(gpu_) {}
+};
+
+/**
+ * @brief Default bound on the registrations a rail tracks for de-duplication
+ *
+ * Set with the "mr_cache_max_entries" backend parameter or the
+ * NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES environment variable. It bounds the tracking
+ * map only: past it a new registration is still made and returned untracked, so it
+ * is not de-duplicated. 1024 is a round default, not a measured value; exceeding it
+ * costs de-duplication, not a registration.
+ */
+constexpr size_t NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT = 1024;
 
 /**
  * @brief Request structure for libfabric operations
@@ -453,6 +496,10 @@ public:
     nixl_status_t
     deregisterMemory(struct fid_mr *mr) const;
 
+    /** Set the bound on the registrations this rail tracks for de-duplication */
+    void
+    setMRCacheMaxEntries(size_t max_entries);
+
     /** Sentinel for "no agent is mapped to this fi_addr". */
     static constexpr uint32_t kUnknownAgentIdx = std::numeric_limits<uint32_t>::max();
 
@@ -646,6 +693,17 @@ private:
     // Provider capability flags
     bool provider_supports_hmem_;
 
+    // Ref-counted de-duplication of concurrent memory registrations (see MRCacheEntry)
+    mutable std::unordered_map<uintptr_t, MRCacheEntry> mr_cache_;
+    // Reverse index (fid_mr* -> buffer address) so deregisterMemory can
+    // resolve its cache entry in O(1) instead of scanning the cache under
+    // the lock. Maintained in lockstep with mr_cache_ under mr_cache_mutex_.
+    mutable std::unordered_map<struct fid_mr *, uintptr_t> mr_cache_by_mr_;
+    mutable std::mutex mr_cache_mutex_;
+    // Bound on tracked registrations; registrations past it are returned untracked
+    size_t mr_cache_max_entries_ = NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT;
+    // Set once the at-bound warning was logged on this rail; guarded by mr_cache_mutex_
+    mutable bool mr_cache_bound_warned_ = false;
     // System runtime type (CUDA, NEURON, or SYSTEM) this rail was created for
     enum fi_hmem_iface runtime_;
 
