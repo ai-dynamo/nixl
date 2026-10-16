@@ -158,30 +158,28 @@ private:
     struct sockaddr oob_saddr;
     struct sockaddr oob_netmask;
     std::thread pthr;
-    uint64_t *last_rsvd_flags;
-    uint64_t *last_posted_flags;
     cudaStream_t post_stream[DOCA_POST_STREAM_NUM]{};
     cudaStream_t wait_stream;
     mutable std::atomic<uint32_t> xferStream;
-    mutable std::atomic<uint32_t> lastPostedReq;
-    mutable std::mutex postLock_;
 
     struct docaXferReqGpu *xferReqRingGpu;
     struct docaXferReqGpu *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
     mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved_;
+    mutable std::array<uint32_t, DOCA_XFER_REQ_MAX> xferReqGenerations_{};
+    std::atomic<uint32_t> stopped_{0};
+    docaHostState *host_state_cpu_ = nullptr;
+    docaHostState *host_state_gpu_ = nullptr;
 
-    struct docaXferCompletion *completion_list_gpu;
-    struct docaXferCompletion *completion_list_cpu;
+    struct docaProgressState *progress_state_gpu;
+    struct docaProgressState *progress_state_cpu;
+    std::vector<struct docaQpProgress *> qp_progress_gpu_;
     uint32_t *wait_exit_gpu;
     uint32_t *wait_exit_cpu;
     struct docaNotif *notif_fill_gpu;
     struct docaNotif *notif_fill_cpu;
     struct docaNotif *notif_progress_gpu;
     struct docaNotif *notif_progress_cpu;
-
-    struct docaNotif *notif_send_gpu;
-    struct docaNotif *notif_send_cpu;
 
     // Map of agent name to saved nixlDocaConnection info
     std::unordered_map<std::string, nixlDocaConnection> remoteConnMap;
@@ -199,8 +197,11 @@ private:
         enum class completion_state : uint8_t { IN_PROGRESS, COMPLETING, COMPLETE };
 
         cudaStream_t stream;
+        bool attachedStream = false;
         uint32_t devId;
         std::vector<uint32_t> positions;
+        std::vector<uint32_t> generations;
+        doca_gpu_dev_verbs_qp *qp_data = nullptr;
         uintptr_t backendHandleGpu;
         size_t postedCount = 0;
         nixl_status_t postStatus = NIXL_SUCCESS;
@@ -213,7 +214,10 @@ private:
 
     void
     retireRequest(nixlDocaBckndReq *request) const;
-
+    void
+    markFailed() const;
+    bool
+    hasFailed() const;
     nixl_status_t
     progressThreadStart();
     void
@@ -224,8 +228,6 @@ private:
     connectClientRdmaQp(int oob_sock_client, const std::string &remote_agent);
     nixl_status_t
     nixlDocaDestroyNotif(doca_gpu *gpu, struct nixlDocaNotif *notif);
-
-    mutable std::mutex notifSendLock;
 };
 
 #endif
