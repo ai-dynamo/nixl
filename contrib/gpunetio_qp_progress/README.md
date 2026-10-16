@@ -1,14 +1,14 @@
-# GPUNETIO QP-progress GoogleTest harness
+# GPUNETIO QP-progress manual replay
 
-`gpunetio_qp_progress_gtest` is a paired, environment-configured integration
+`qp_progress_replay` is a paired, environment-configured integration
 executable. Running its paired cases needs
 one source GPU and two target GPUs, a numeric target IPv4 address, unique OOB
 ports, and a shared directory used only to exchange serialized NIXL metadata.
 Control/verification acknowledgements use TCP, outside the measured interval.
 
-The GPUNETIO GTest parent wires this directory. The local `meson.build` builds
-the paired executable and registers it with Meson; absent role configuration is
-an explicit GoogleTest skip before any CUDA query.
+This optional tool uses GoogleTest assertions but is built and run manually.
+It is not registered with the project's GTest/Meson suite and adds no default
+CI workload. Absent role configuration is an explicit skip before any CUDA query.
 
 ## Release-build component reproduction
 
@@ -18,10 +18,10 @@ Current component measurements use release core/plugin builds and one common
 ```bash
 : "${PREFIX:?Set the matching NIXL installation prefix}"
 nvcc --std=c++20 -O3 -arch=sm_90 --cudart shared \
-  -I"$PREFIX/include" test/gtest/plugins/gpunetio/qp_progress_gtest.cu \
+  -I"$PREFIX/include" contrib/gpunetio_qp_progress/qp_progress_replay.cu \
   -L"$PREFIX/lib/x86_64-linux-gnu" -L"$PREFIX/lib" \
-  -lnixl -lnixl_build -lgtest -Xcompiler=-pthread -o qp_progress_gtest
-export QP_TEST="$PWD/qp_progress_gtest"
+  -lnixl -lnixl_build -lgtest -Xcompiler=-pthread -o qp_progress_replay
+export QP_TEST="$PWD/qp_progress_replay"
 export CUDA_MODULE_LOADING=EAGER CUDA_DEVICE_MAX_CONNECTIONS=8
 ```
 
@@ -41,29 +41,12 @@ hashes. These are source API completion windows, not NIC or serving measurements
 
 ## Required environment
 
-Build with CUDA, DOCA, GoogleTest/GoogleMock and the normal NIXL development
-dependencies available. Use the same compiler options for both comparison arms.
-The root build disables tests for `buildtype=release`, so use an optimized
-`debugoptimized` build with assertions enabled:
-
-```bash
-meson setup build --buildtype=debugoptimized -Doptimization=3 -Ddebug=false \
-  -Db_ndebug=false -Denable_plugins=GPUNETIO -Dbuild_tests=true \
-  -Dbuild_examples=false -Dbuild_docs=false -Dnixl_cuda_arch_list=90 \
-  -Dcpp_args=-Wno-error=maybe-uninitialized --wrap-mode=forcefallback
-ninja -C build src/core/libnixl.so src/plugins/gpunetio/libplugin_GPUNETIO.so \
-  test/gtest/plugins/gpunetio/gpunetio_qp_progress_gtest
-export QP_TEST="$PWD/build/test/gtest/plugins/gpunetio/gpunetio_qp_progress_gtest"
-export NIXL_PLUGIN_DIR="$PWD/build/src/plugins/gpunetio"
-export LD_LIBRARY_PATH="$(find "$PWD/build/src" -name 'lib*.so' -printf '%h\n' \
-  | sort -u | paste -sd:):${LD_LIBRARY_PATH:-}"
-git rev-parse HEAD
-sha256sum "$QP_TEST" "$NIXL_PLUGIN_DIR/libplugin_GPUNETIO.so"
-```
-
-Architecture 90 and the GCC warning override describe the tested H20 build;
-adapt these to the GPU/compiler in use. Include the DOCA library directory in
-`LD_LIBRARY_PATH` if it is not already in the system loader configuration.
+Build with CUDA, DOCA, GoogleTest and the normal NIXL development dependencies
+available. Use the manual compile command above with a matching release NIXL
+installation; it does not require `build_tests=true`. Architecture90 describes
+the tested H20 build; adapt it to the GPU/compiler in use. Include the NIXL and
+DOCA library directories in `LD_LIBRARY_PATH` if they are not already in the
+system loader configuration. Record commit and executable/plugin hashes.
 
 Both processes need `NIXL_PLUGIN_DIR` and `LD_LIBRARY_PATH` pointing to the
 same feature-tree build. Set the following values without placing site-specific
