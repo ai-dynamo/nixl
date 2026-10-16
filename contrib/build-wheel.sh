@@ -341,6 +341,29 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
             --pattern "nixl_ep_cpp_torch${TORCH_MM}.*" \
             --target-dir "nixl_ep_cu${CUDA_MAJOR}"
 
+        if python3 - "$EP_WHL" "nixl_ep_v2_cpp_torch${TORCH_MM}.*" <<'PY'
+import fnmatch
+import os
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as wheel:
+    found = any(
+        fnmatch.fnmatch(os.path.basename(name), sys.argv[2])
+        for name in wheel.namelist()
+    )
+raise SystemExit(0 if found else 1)
+PY
+        then
+            ./contrib/wheel_merge.py \
+                --base-wheel "$BASE_WHL" \
+                --source-wheel "$EP_WHL" \
+                --pattern "nixl_ep_v2_cpp_torch${TORCH_MM}.*" \
+                --target-dir "nixl_cu${CUDA_MAJOR}/runtime/ep"
+        else
+            echo "=== NIXL-EP V2 was not built for torch ${TORCH}; skipping merge ==="
+        fi
+
         rm -rf "$EP_TMP"
     done
 
