@@ -1,0 +1,59 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NIXL × CuTe: API review map</title>
+<style>
+  body { max-width: 1120px; margin: 3rem auto; padding: 0 1.2rem; font: 16px/1.55 system-ui, sans-serif; color: #202a35; }
+  h1 { font-size: 2rem; line-height: 1.15; } h2 { margin-top: 2rem; font-size: 1.3rem; }
+  a { color: #075ea3; } code { font-size: .9em; background: #f1f4f7; padding: .1em .25em; }
+  .lead { font-size: 1.15rem; } .note { border-left: 3px solid #4c839f; padding: .6rem 1rem; background: #f3f8fa; }
+  table { width: 100%; min-width: 800px; border-collapse: collapse; font-size: .94rem; } th, td { text-align: left; vertical-align: top; border-bottom: 1px solid #d9e1e8; padding: .75rem; }
+  th { background: #edf3f6; } .table { overflow-x: auto; } small { color: #536370; }
+  @media print { body { margin: 0; font-size: 11pt; } a { color: inherit; } tr { break-inside: avoid; } }
+  @media (max-width: 600px) { .table::before { content: "Scroll the table horizontally →"; display: block; font-size: .8rem; color: #536370; margin-bottom: .5rem; } }
+</style>
+<main>
+<h1>NIXL × CuTe: the API review map</h1>
+<p class="lead">Expose native NIXL operations inside a CuTe compute kernel. Keep host setup in NIXL and completion policy in the application.</p>
+<p><strong>Motivation:</strong> initiate KV-cache transfer where data is produced or transformed. Packing or compression may justify fusion later; this proposal does not implement a codec, attention integration or an EP runtime.</p>
+<p><small>Scope: NIXL <a href="https://github.com/ai-dynamo/nixl/tree/349514f94ed9c58d66f13b616a67fc49f248cdee">349514f</a>; NCCL CuTe sources <a href="https://github.com/NVIDIA/nccl/tree/12df1a11afad322be5a204a2db890161cbf8131d">12df1a1</a>. The table separates native capability from this prototype's coverage; it is not a parity checklist.</small></p>
+
+<h2>1. What is exposed?</h2>
+<div class="table"><table>
+<thead><tr><th>Concern</th><th>Native NIXL</th><th>This CuTe prototype</th><th>NCCL GIN × CuTe</th></tr></thead>
+<tbody>
+<tr><td>Data movement</td><td>Device PUT with memory-view elements: handle, descriptor index, byte offset.</td><td><code>put</code>; all those arguments remain explicit.</td><td>GIN exposes PUT and GET using communicator ranks and registered windows.</td></tr>
+<tr><td>Completion</td><td>Submission status plus an optional request; explicit device progress.</td><td><code>get_xfer_status</code> makes one native poll. No implicit wait or separate blocking PUT alias.</td><td>GIN exposes local counters, remote signals and <code>flush</code>; these are different completion abstractions, not NIXL request handles.</td></tr>
+<tr><td>Notification</td><td>Remote <code>atomicAdd</code>, with a native ordering contract.</td><td><code>atomic_add</code>. The example owns its counter protocol and receiver acquire.</td><td>PUT can carry remote signal/local counter options; separate signal and wait operations are exposed.</td></tr>
+<tr><td>Channels and deferral</td><td>Channel ID and flags, including <code>defer</code>.</td><td>Forwarded without selecting a hidden policy; deferred submission still requires the native progress/completion protocol.</td><td>GIN context/connection selection and operation-specific memory ordering. Do not equate these directly with a NIXL channel or flag.</td></tr>
+<tr><td>Cooperation</td><td>THREAD/WARP/BLOCK/GRID template levels.</td><td>THREAD/WARP/BLOCK only; per-thread request storage. GRID is not reviewed here.</td><td>Explicit NCCL cooperation objects select participating threads/warps/blocks.</td></tr>
+<tr><td>Mapped pointer</td><td><code>getPtr</code> returns a locally mapped pointer or null.</td><td>Not bound yet; an explicit scope question. No device GET exists in the pinned NIXL header; host READ is a different API.</td><td>Window helpers expose local/peer-addressing facilities, subject to their reachability contracts.</td></tr>
+<tr><td>CuTe mechanism</td><td>C++ device templates and opaque memory views.</td><td><code>@cute.extern</code> + source-matched LLVM bitcode; plain scalars. No stable ABI or native struct required.</td><td>The same <code>@cute.extern</code> + bitcode mechanism (<code>libnccl_device.bc</code>), plus typed <code>@cute.native_struct</code> wrappers and a broader object-oriented interface.</td></tr>
+</tbody></table></div>
+<p>Sources: <a href="https://github.com/ai-dynamo/nixl/blob/349514f94ed9c58d66f13b616a67fc49f248cdee/src/api/device/gpu/nixl_device.cuh">NIXL device API</a>, <a href="https://github.com/ai-dynamo/nixl/blob/349514f94ed9c58d66f13b616a67fc49f248cdee/src/api/device/gpu/impl/ucx/device_ucx.cuh">UCX status/flag mapping</a>, <a href="https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/nccl/core/device/cute/gin.py">NCCL CuTe GIN implementation</a>, <a href="https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/nccl/core/device/cute/_bindings.py">NCCL extern/bitcode layer</a>, <a href="https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/nccl/core/device/cute/window.py">NCCL CuTe windows</a>.</p>
+
+<h2>2. Symmetry and elasticity: the useful distinction</h2>
+<p class="note"><strong>NCCL GIN does not require symmetric traffic.</strong> Its CuTe example has rank 0 issue a PUT and rank 1 wait. Collective setup must not be confused with collective data movement.</p>
+<div class="table"><table>
+<thead><tr><th>Question</th><th>NIXL</th><th>NCCL</th></tr></thead>
+<tbody>
+<tr><td>Who establishes communication?</td><td>Agents exchange metadata, connect to individual peers, and prepare views. No fixed all-ranks communicator is imposed by this binding.</td><td>Communicator, registered-window and device-communicator lifecycle. Window registration and device-communicator creation are collective.</td></tr>
+<tr><td>Must buffers/traffic be identical?</td><td>Per-peer descriptors and operation-specific offsets/sizes.</td><td>No identical traffic pattern is required. Current window-registration documentation permits different window sizes; collective registration is still required.</td></tr>
+<tr><td>Can membership change?</td><td>Native peer/view lifecycle is a useful basis for independent producer/consumer membership. Pass new valid handles at subsequent launches after safely retiring old work.</td><td>NCCL has communicator grow/shrink APIs. It is inaccurate to say “NCCL has no elasticity”; their coordination model differs from per-peer agents.</td></tr>
+<tr><td>What does this PR prove?</td><td>Direct binding coverage and a two-peer correctness example. No peer-churn, in-flight replacement or crash-recovery guarantee.</td><td>The comparison describes the pinned binding and cited native lifecycle documentation, not a benchmark or a claim that every lifecycle operation is CuTe-wrapped.</td></tr>
+</tbody></table></div>
+<p>Sources: <a href="https://github.com/ai-dynamo/nixl/blob/349514f94ed9c58d66f13b616a67fc49f248cdee/src/api/python/_api.py">NIXL host lifecycle</a>, <a href="https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/examples/cute/00_basic.py">one-sided NCCL CuTe example</a>, <a href="https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/nccl/core/communicator.py">NCCL Python setup implementation</a>, <a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/comms.html">current NCCL communicator/window documentation</a>.</p>
+
+<h2>3. What reviewers should decide</h2>
+<ol>
+<li><strong>API contract:</strong> names, request storage/ownership, null-request behavior, progress and publication rules. No NIXL semantics should be invented in the wrapper.</li>
+<li><strong>Binding scope:</strong> is the three-operation core enough for first review, or should mapped-pointer access be included? Is source-matched bitcode an acceptable initial integration route?</li>
+<li><strong>Qualification next:</strong> inter-node GPU RDMA, outstanding-request overlap, controlled peer/view replacement, then comparison with native CUDA at matched geometry and transport.</li>
+</ol>
+<p><strong>Not claimed:</strong> measured zero overhead, speed-of-light throughput, general inter-node support validated here, live in-flight elasticity, or production packaging. NIXL EP v2 is a separate product/API effort, not an “example” supplied by this PR.</p>
+<p>Start the implementation review at <a href="https://github.com/samnordmann/nixl/blob/snordmann/nixl-cute-device-api/src/bindings/cute/nixl_cute.py">the Python operations</a>, then <a href="https://github.com/samnordmann/nixl/blob/snordmann/nixl-cute-device-api/src/bindings/cute/device.cu">the native shim</a>, then <a href="https://github.com/samnordmann/nixl/blob/snordmann/nixl-cute-device-api/examples/python/cute/compute_put.py">the separate example</a>.</p>
+</main>
+</html>
