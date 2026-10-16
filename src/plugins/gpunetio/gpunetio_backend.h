@@ -151,7 +151,7 @@ private:
     std::string msg_tag_end = "DOCAE";
     std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
     int nstreams;
-    uint32_t data_qp_count = 1;
+    uint32_t dataQpCount_ = 1;
 
     uint16_t local_port;
     int noSyncIters;
