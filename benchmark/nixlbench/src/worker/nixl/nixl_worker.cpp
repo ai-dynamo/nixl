@@ -53,7 +53,9 @@ resolveVramSegment() {
 #elif HAVE_ROCM
     return VRAM_SEG;
 #else
-    if (neuronCoreCount() > 0) return VRAM_SEG;
+    if (neuronCoreCount() > 0) {
+        return VRAM_SEG;
+    }
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
@@ -79,6 +81,22 @@ constexpr size_t kDeviceCounterDoneOffsetBytes = 0;
 constexpr size_t kDeviceCounterErrorOffsetBytes = sizeof(uint64_t);
 constexpr size_t kDeviceCounterBytes = 2 * sizeof(uint64_t);
 constexpr uint64_t kUnwrittenDeviceDurationNs = std::numeric_limits<uint64_t>::max();
+
+static bool
+isRadosBackend() {
+    return XFERBENCH_BACKEND_RADOS == xferBenchConfig::backend;
+}
+
+namespace {
+
+// Stable per-(thread,device) object name: matching later runs resolve the same objects.
+std::string
+radosOid(int thread, int device) {
+    return xferBenchConfig::rados_prefix + "_t" + std::to_string(thread) + "_d" +
+        std::to_string(device);
+}
+
+} // namespace
 
 // Reuse parser from utils
 
@@ -350,6 +368,19 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         std::cout << "INFINIA backend (plugin will use RED_* environment variables, "
                      "NIXL_CONFIG_FILE, or defaults)"
                   << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_RADOS)) {
+        backend_params["conf"] = xferBenchConfig::rados_conf;
+        backend_params["name"] = xferBenchConfig::rados_name;
+        backend_params["pool"] = xferBenchConfig::rados_pool;
+        backend_params["status_wait_us"] = std::to_string(xferBenchConfig::rados_status_wait_us);
+        for (const auto &param : xferBenchConfig::rados_ceph_params) {
+            backend_params["ceph." + param.first] = param.second;
+        }
+        std::cout << "RADOS backend: conf " << xferBenchConfig::rados_conf << ", name "
+                  << xferBenchConfig::rados_name << ", pool " << xferBenchConfig::rados_pool
+                  << ", prefix " << xferBenchConfig::rados_prefix
+                  << ", ceph overrides: " << xferBenchConfig::rados_ceph_params.size()
+                  << " (values redacted)" << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -1103,6 +1134,13 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
     } else if (xferBenchConfig::isObjStorageBackend()) {
         buffer_size = xferBenchConfig::max_block_size;
 
+        // RADOS: stable-named objects and their local DRAM backing ranges
+        // use the full tiling capacity C; occurrence mapping happens in exchangeIOV.
+        const bool rados = isRadosBackend();
+        if (rados) {
+            buffer_size = radosTilingCapacity();
+        }
+
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -1114,9 +1152,16 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
-                std::string unique_name = "nixlbench_obj" + std::to_string(list_idx) + "_" +
-                    std::to_string(i) + "_" + std::to_string(timestamp);
+                std::string unique_name;
 
+                if (rados) {
+                    unique_name = radosOid(list_idx, i);
+                } else {
+                    unique_name = "nixlbench_obj" + std::to_string(list_idx) + "_" +
+                        std::to_string(i) + "_" + std::to_string(timestamp);
+                }
+
+                // No-op for RADOS: READ reads the prior WRITE dataset.
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
                     if (!xferBenchUtils::putObj(buffer_size, unique_name)) {
                         std::cerr << "Failed to put object: " << unique_name << std::endl;
@@ -1402,10 +1447,35 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
+        const bool rados = isRadosBackend();
         for (size_t list_idx = 0; list_idx < local_iovs.size(); list_idx++) {
             const auto &iov_list = local_iovs[list_idx];
             std::vector<xferBenchIOV> remote_iov_list;
             size_t num_devices = iov_list.size();
+
+            // POSIX-style range mapping over the expanded list (base_devs x
+            // occurrences): occurrence q of device d addresses object range
+            // [q * block_size, (q + 1) * block_size) of the (list_idx, d)
+            // registration, keeping expanded batch/pipeline ranges disjoint.
+            if (rados) {
+                const size_t base_devs = static_cast<size_t>(xferBenchConfig::num_initiator_dev);
+                if (0 == base_devs || num_devices % base_devs != 0) {
+                    std::cerr << "RADOS: unexpected expanded descriptor list" << std::endl;
+                    std::exit(EXIT_FAILURE);
+                }
+                const size_t occurrences = num_devices / base_devs;
+                for (size_t devidx = 0; devidx < num_devices; devidx++) {
+                    const auto &iov = iov_list[devidx];
+                    remote_iov_list.emplace_back(
+                        static_cast<uintptr_t>((devidx % occurrences) * block_size),
+                        block_size,
+                        static_cast<int>(list_idx * base_devs + devidx / occurrences),
+                        iov.metaInfo);
+                }
+                res.push_back(remote_iov_list);
+                continue;
+            }
+
             for (size_t devidx = 0; devidx < num_devices; devidx++) {
                 const auto &iov = iov_list[devidx];
                 if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend) {

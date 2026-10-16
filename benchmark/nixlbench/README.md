@@ -37,7 +37,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 ## Features
 
 - **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
-- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA for storage operations
+- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA, RADOS (Ceph) for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
@@ -547,7 +547,7 @@ wait
 --config_file PATH         # Configuration file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD, ASIO] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA, RADOS] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 ```
 
@@ -662,6 +662,22 @@ devices can differ between the initiator and target processes.
 --azure_blob_connection_string CONNECTION_STRING  # Connection string for Azure Blob backend
 ```
 
+**RADOS Backend:**
+```
+--rados_conf PATH                   # Path to a readable Ceph configuration file (required)
+--rados_name NAME                   # Full Ceph entity name, normally client.<id> (required)
+--rados_pool POOL                   # RADOS pool to open (required)
+--rados_prefix NAME                 # Object name prefix (optional; default
+                                           # nixlbench_rados; must be non-empty and
+                                           # contain no NUL bytes)
+--rados_status_wait_us N            # checkXfer status-wait budget in microseconds
+                                           # (optional; default: 0 = fully nonblocking,
+                                           # maximum: 1000000)
+--rados_ceph_overrides LIST         # Semicolon-separated KEY=VALUE entries forwarded to
+                                           # Ceph as ceph.<KEY> options (optional; values are
+                                           # redacted in printed output)
+```
+
 **GUSLI Backend:**
 ```
 --device_list LIST                     # Device specs in format 'id:type:path' (e.g., '11:F:./store0.bin,27:K:/dev/nvme0n1')
@@ -733,7 +749,7 @@ NIXLBench can also use an ETCD key-value store for coordination between benchmar
 **ETCD Requirements:**
 - **Optional**: Two-instance UCX, GPUNETIO, Mooncake, and Libfabric runs can use `--runtime_type ASIO` instead.
 - **Required**: Network backends when using `--runtime_type ETCD`.
-- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances.
+- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI, RADOS) running as single instances.
 - **Required**: Storage backends when ETCD coordination is explicitly requested with `--etcd_endpoints`.
 
 For non-storage backends using `--runtime_type ETCD`, NIXLBench defaults to `http://localhost:2379` when `--etcd_endpoints` is not provided. In that case, an ETCD server must be running on `localhost:2379`; otherwise, provide `--etcd_endpoints` explicitly to point to a custom ETCD server.
@@ -945,6 +961,61 @@ EOF
   --initiator_seg_type DRAM \
   --target_seg_type DRAM \
   --num_iter 16
+```
+
+**RADOS Backend (Ceph):**
+
+Local Ceph RADOS object backend: `NIXL_WRITE` stores initiator DRAM into pool
+objects and `NIXL_READ` reads object bytes back, all within one process (no
+ETCD needed for a single instance). Plugin behavior and configuration
+parameters are documented in the [RADOS plugin README](../../src/plugins/rados/README.md).
+
+- Objects are persistent and stably named: each (thread, device) slot uses one
+  object named `<prefix>_t<thread>_d<device>`. Re-running with the same
+  `--rados_pool` and `--rados_prefix` reaches the same objects;
+  use different prefixes (or pools) to separate datasets.
+- Reads need pre-existing objects: `--op_type READ` transfers whatever the
+  named objects already hold. Run a WRITE first with the identical prefix,
+  pool, and geometry (`--num_threads`, device counts, batch, pipeline, and
+  block size), then repeat the READ with those same settings. nixlbench does
+  not verify where the bytes came from or what they contain; reads of missing
+  or too-short objects fail as transfer errors.
+- Memory sizing: each (thread, device) slot uses a local DRAM region of
+  `max_batch_size x pipeline_depth x max_block_size` bytes.
+- Status polling: `--rados_status_wait_us` (default 0, maximum
+  1,000,000) sets the plugin's sleep budget in microseconds; 0 keeps status
+  polling fully nonblocking, and a nonzero budget makes a status check that
+  reaches an unproven completion sleep once within the budget before
+  returning in-progress -- no rescan happens in that call, and the following
+  poll harvests later completions.
+- Unsupported modes: pairwise scheme only; `--check_consistency`,
+  `--reregister_mem`, and `--randomize_location_mode` other than `none` are
+  rejected.
+- Objects are never deleted; remove them externally (for example `rados rm`)
+  when no longer needed. Concurrent WRITE runs that share a prefix race on the
+  same objects and the final contents are unspecified: run one writer per
+  prefix and READ after it completes.
+
+```bash
+# WRITE and the matching READ (identical geometry and prefix, 2 threads x
+# 2 devices, batch 4 x pipeline 2, 4 KiB blocks):
+./nixlbench --backend RADOS \
+  --rados_conf /path/to/ceph.conf \
+  --rados_name client.nixl \
+  --rados_pool nixl_test \
+  --num_threads 2 --num_initiator_dev 2 --num_target_dev 2 \
+  --start_batch_size 4 --max_batch_size 4 --pipeline_depth 2 \
+  --start_block_size 4096 --max_block_size 4096 \
+  --num_iter 16 --warmup_iter 4
+
+./nixlbench --backend RADOS --op_type READ \
+  --rados_conf /path/to/ceph.conf \
+  --rados_name client.nixl \
+  --rados_pool nixl_test \
+  --num_threads 2 --num_initiator_dev 2 --num_target_dev 2 \
+  --start_batch_size 4 --max_batch_size 4 --pipeline_depth 2 \
+  --start_block_size 4096 --max_block_size 4096 \
+  --num_iter 16 --warmup_iter 4
 ```
 
 ### Worker Types

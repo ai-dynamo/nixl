@@ -24,6 +24,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 #include <optional>
@@ -103,6 +104,7 @@
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 #define XFERBENCH_BACKEND_INFINIA "INFINIA"
+#define XFERBENCH_BACKEND_RADOS "RADOS"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -231,6 +233,13 @@ public:
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
+    static std::string rados_conf;
+    static std::string rados_name;
+    static std::string rados_pool;
+    static std::string rados_prefix;
+    static uint64_t rados_status_wait_us;
+    static std::string rados_ceph_overrides;
+    static std::vector<std::pair<std::string, std::string>> rados_ceph_params;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
@@ -300,6 +309,17 @@ parseGusliDeviceList(const std::string &device_list,
                      const std::string &security_list,
                      const std::string &dev_offset_list,
                      int num_devices);
+
+// Parses ';'-separated RADOS ceph KEY=VALUE override lists, splitting at the
+// first '='; missing '=', empty keys, and duplicates are rejected without echoing content.
+bool
+parseRadosCephOverrides(const std::string &list,
+                        std::vector<std::pair<std::string, std::string>> &params);
+
+// RADOS tiling capacity C = max_batch_size x pipeline_depth x
+// max_block_size, sizing each object and its backing range so occurrences tile disjointly.
+size_t
+radosTilingCapacity();
 
 // Timer class for measuring durations at high resolution
 class xferBenchTimer {
