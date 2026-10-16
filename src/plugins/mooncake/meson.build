@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,15 +16,13 @@
 cpp = meson.get_compiler('cpp')
 mooncake_lib = cpp.find_library('transfer_engine')
 
-compile_flags = []
-
 if 'Mooncake' in static_plugins
     mooncake_backend_lib = static_library('Mooncake',
                'mooncake_backend.cpp', 'mooncake_backend.h', 'mooncake_plugin.cpp',
                dependencies: [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib, cuda_dep],
                include_directories: nixl_inc_dirs,
                install: false,
-               cpp_args : compile_flags,
+               cpp_args : [],
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
     mooncake_backend_lib = shared_library('Mooncake',
@@ -32,7 +30,7 @@ else
                dependencies: [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib, cuda_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
-               cpp_args : compile_flags + ['-fPIC'],
+               cpp_args : ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir,
                install_rpath: '$ORIGIN/..')
