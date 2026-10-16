@@ -29,6 +29,9 @@
 #include <omp.h>
 #include <set>
 
+/* CUDA/HIP are pulled in via utils.h *after* toml++. Including hip/hip_runtime.h
+ * here first would load ROCm host_defines.h, which defines an empty __noinline__
+ * macro on GCC and breaks toml++ (TOML_HAS_ATTR(__noinline__)). */
 #include <fcntl.h>
 #include <filesystem>
 #include <gflags/gflags.h>
@@ -143,8 +146,8 @@ NB_ARG_STRING(runtime_type,
 NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
-              "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
-              "REDIS, GUSLI, AZURE_BLOB] (only used with nixl worker)");
+              "Name of NIXL backend [UCX, GDS, GDS_MT, AIS, POSIX, GPUNETIO, Mooncake, HF3FS, "
+              "OBJ, REDIS, GUSLI, AZURE_BLOB] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -194,7 +197,7 @@ NB_ARG_INT32(use_localized,
              "one locality domain (requires enable_vmm)");
 NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
 
-// Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
+// Storage backend (GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ) options
 NB_ARG_STRING(filepath, "", "File path for storage operations");
 NB_ARG_STRING(filenames, "", "Comma-separated filenames for storage operations");
 NB_ARG_INT32(num_files, 1, "Number of files used by benchmark");
@@ -205,7 +208,9 @@ NB_ARG_INT32(gds_batch_pool_size,
              32,
              "Batch pool size for GDS operations (only used with GDS backend)");
 NB_ARG_INT32(gds_batch_limit, 128, "Batch limit for GDS operations (only used with GDS backend)");
-NB_ARG_INT32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin");
+NB_ARG_INT32(gds_mt_num_threads,
+             1,
+             "Number of Taskflow worker threads for GDS_MT and AIS backends");
 
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
@@ -658,7 +663,7 @@ xferBenchConfig::loadParams(void) {
             gds_batch_limit = NB_ARG(gds_batch_limit);
         }
 
-        if (backend == XFERBENCH_BACKEND_GDS_MT) {
+        if (backend == XFERBENCH_BACKEND_GDS_MT || backend == XFERBENCH_BACKEND_AIS) {
             gds_mt_num_threads = NB_ARG(gds_mt_num_threads);
         }
 
@@ -997,9 +1002,9 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption(
-            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB])",
-            backend);
+        printOption("Backend (--backend=[UCX,GDS,GDS_MT,AIS,POSIX,Mooncake,HF3FS,OBJ,REDIS,GUSLI,"
+                    "AZURE_BLOB])",
+                    backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
@@ -1024,8 +1029,8 @@ xferBenchConfig::printConfig() {
             printOption("GDS batch limit (--gds_batch_limit=N)", std::to_string(gds_batch_limit));
         }
 
-        if (backend == XFERBENCH_BACKEND_GDS_MT) {
-            printOption("GDS MT Number of threads (--gds_mt_num_threads=N)",
+        if (backend == XFERBENCH_BACKEND_GDS_MT || backend == XFERBENCH_BACKEND_AIS) {
+            printOption("GDS_MT / AIS thread pool (--gds_mt_num_threads=N)",
                         std::to_string(gds_mt_num_threads));
         }
 
