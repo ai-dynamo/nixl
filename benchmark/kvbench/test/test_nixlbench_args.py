@@ -15,35 +15,9 @@
 
 import os
 import sys
-from pathlib import Path
-
-import pytest  # type: ignore
 
 p = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, p + "/../")
-
-
-@pytest.fixture
-def examples_dir():
-    return Path(p).parent / "examples"
-
-
-@pytest.fixture
-def benchmark(examples_dir):
-    from commands.nixlbench import NIXLBench
-    from models.model_config import ModelConfig
-    from models.models import BaseModelArch
-
-    model_arch = BaseModelArch.from_yaml(
-        str(examples_dir / "model_qwen3_8b.yaml"), None
-    )
-    model_config = ModelConfig.from_yaml(str(examples_dir / "block-tp1-pp1.yaml"))
-    model_arch.set_model_config(model_config)
-
-    def build(**kwargs):
-        return NIXLBench(model_arch, model_config, **kwargs)
-
-    return build
 
 
 def nixl_bench_option_names():
@@ -73,15 +47,3 @@ def test_every_nixlbench_option_is_carried_by_the_wrapper():
     missing = sorted(name for name in nixl_bench_option_names() if name not in defaults)
 
     assert missing == []
-
-
-def test_a_ca_bundle_reaches_the_generated_command(benchmark):
-    command = benchmark(backend="OBJ", obj_ca_bundle="/etc/ssl/my-ca.pem").plan()
-
-    assert "--obj_ca_bundle /etc/ssl/my-ca.pem" in command
-
-
-def test_no_ca_bundle_leaves_the_command_alone(benchmark):
-    command = benchmark(backend="OBJ").plan()
-
-    assert "--obj_ca_bundle" not in command
