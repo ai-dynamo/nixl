@@ -116,6 +116,30 @@ TEST_F(MpExporterTest, DroppedEventsCounterAccumulates) {
         << "dropped-events counter must sum every emitted delta (7+5)";
 }
 
+TEST_F(MpExporterTest, TracePhasesDroppedCounterAccumulates) {
+    const gtest::LogIgnoreGuard lig(PLUGIN_PROBE_WARNING);
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus_mp");
+    ASSERT_NE(handle, nullptr);
+
+    const std::string agent_name = "mp_trace_phases_dropped_agent";
+    auto exporter = handle->createExporter(initParams(agent_name));
+    ASSERT_NE(exporter, nullptr);
+
+    constexpr uint64_t kDrops = 3;
+    for (uint64_t i = 0; i < kDrops; ++i) {
+        EXPECT_EQ(
+            exporter->exportEvent({nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED, 1}),
+            NIXL_SUCCESS);
+    }
+
+    const auto metrics = scrapeMetrics(port_);
+    ASSERT_FALSE(metrics.empty()) << "Got empty /metrics response on port " << port_;
+
+    EXPECT_EQ(metrics.latestValue("agent_trace_phases_dropped_total",
+                                  labelSet{{"agent_name", agent_name}}),
+              std::optional<double>(static_cast<double>(kDrops)));
+}
+
 TEST_F(MpExporterTest, CoreUpdateDataOverflowConservation) {
     const std::string agent_name = "mp_core_update_overflow_agent";
     constexpr uint64_t kProduced = 100000; // far exceeds the 256-slot staging queue

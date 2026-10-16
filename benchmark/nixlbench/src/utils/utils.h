@@ -212,6 +212,8 @@ public:
     static int gds_mt_num_threads;
     static std::string gpunetio_device_list;
     static std::string gpunetio_oob_list;
+    static std::string gpunetio_gid_index;
+    static std::string gpunetio_oob_port;
     static long page_size;
     static std::string obj_access_key;
     static std::string obj_secret_key;
@@ -407,6 +409,8 @@ private:
     buildCommonAzCliBlobParams(const std::string &blob_name);
 
 public:
+    static bool
+    debugEnabled(); // Whether NIXLBENCH_LOG_LEVEL is DEBUG or TRACE
     static void
     setRT(xferBenchRT *rt);
     static void
