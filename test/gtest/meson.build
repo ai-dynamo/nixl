@@ -171,6 +171,17 @@ test_exe = executable('gtest',
     install : true
 )
 
+if ucx_dep.found() and is_variable('ucx_backend_interface')
+    executable('ucx_trace_receiver',
+        sources : ['main.cpp', 'common.cpp', 'ucx_trace_receiver.cpp'],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        cpp_args : cpp_flags,
+        dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, gtest_dep, gmock_dep],
+        link_with: [nixl_build_lib],
+        install : true
+    )
+endif
+
 # MetadataExchangeTestFixture rapidly creates and tears down comm-thread agents,
 # which trips the GCC 13.3 libsanitizer thread-registry crash (a flaky SIGSEGV in
 # the ASan/TSan runtime on thread create/destroy -- a toolchain bug, not a NIXL
