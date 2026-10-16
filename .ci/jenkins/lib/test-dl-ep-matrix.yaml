@@ -30,14 +30,13 @@ failFast: false
 
 timeout_minutes: 300
 
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   limits: "{memory: 16Gi, cpu: 16000m}"
   requests: "{memory: 8Gi, cpu: 8000m}"
   privileged: true
@@ -46,7 +45,7 @@ credentials:
   - credentialsId: 'svc-nixl-github-read-only-token'
     usernameVariable: 'NIXL_GITHUB_USER'
     passwordVariable: 'NIXL_GITHUB_TOKEN'
-  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+  - {credentialsId: 'svc-nixl-il-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
 
 env:
   ARTIFACTORY_PATH: /sw-nbu-swx-nixl-docker-local/ci
@@ -116,7 +115,7 @@ steps:
   - name: Compiling NIXL EP Docker Image for DL
     containerSelector: "{name: 'build_helper_dl_ep'}"
     credentialsId:
-      - 'svc-nixl-new-artifactory-token'
+      - 'svc-nixl-il-artifactory-token'
       - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
