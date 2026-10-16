@@ -83,6 +83,7 @@ ARG BUILD_TYPE="release"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
 ARG APT_MIRROR=""
+ARG WGET_RETRY_OPTS="--tries=10 --waitretry=15 --retry-connrefused --retry-on-http-error=429,500,502,503,504 --no-http-keep-alive --timeout=30 --read-timeout=60"
 
 # Optional apt mirror override, e.g. for CI environments with an internal
 # Ubuntu mirror. Empty (default) keeps the public archive/ports.ubuntu.com.
@@ -135,7 +136,7 @@ RUN apt-get update -y && \
 # Skip only the DOCA SDK install when the base image already ships it.
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    wget ${WGET_RETRY_OPTS} --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -241,7 +242,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     RUSTARCH=${ARCH}-unknown-linux-gnu
 
 # Download rustup-init and its checksum for the target architecture
-RUN wget --tries=3 --waitretry=5 \
+RUN wget ${WGET_RETRY_OPTS} \
     "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" \
     "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init.sha256" && \
     sha256sum -c rustup-init.sha256 && \
@@ -305,7 +306,7 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /tmp && \
 ENV PATH=/usr/local/bin:$PATH
 
 # Build libfabric from source
-RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+RUN wget ${WGET_RETRY_OPTS} \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
     cd libfabric-* && \
