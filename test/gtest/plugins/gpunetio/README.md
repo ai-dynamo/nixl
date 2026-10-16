@@ -95,18 +95,20 @@ NIXL_QP_PROGRESS_ROLE=source \
   "$QP_TEST" --gtest_filter=QpProgress.PerformanceMixed2MiBAnd4KiB
 ```
 
-The performance case runs one 20-warmup/100-measured pair. Run three fresh
+The performance case runs one 20-warmup/100-measured pair. Run five fresh
 source/target process pairs externally for independent repeats.
 It writes `qp_progress_performance.json` into the coordinate directory. The
 JSON reports p50/p99 transfer-window latency, actual payload and marker bytes,
 and separate wall time. It does not claim CQ timing or backend-internal timing.
-Both endpoints must print `PASSED`, not `SKIPPED`. Keep all three JSON files per
-arm. Compare medians of the three per-run metrics, reporting small-transfer and
+Both endpoints must print `PASSED`, not `SKIPPED`. Keep all five JSON files per
+arm. Compare medians of the five per-run metrics, reporting small-transfer and
 bulk-transfer tails plus aggregate rate; an isolation win is not automatically
 a throughput win. Profiled runs must not enter the performance comparison.
 
 `OutstandingDescriptorsAndAttachedStreamOrder` uses 513 descriptors per
-request (512 data plus an epoch marker) with descriptor merging disabled. It
+request (512 data plus an epoch marker). Adjacent rows are swapped in the
+descriptor order on both ends, preserving the full payload while preventing
+backend READ coalescing or WRITE pairing from removing multi-ring pressure. It
 posts seven requests per peer, then releases the alternating delayed/fast A
 requests before performing 129 sequential B-peer reuse posts. The delay is a
 test-only CUDA kernel enqueued before the attached transfer; it is not a backend

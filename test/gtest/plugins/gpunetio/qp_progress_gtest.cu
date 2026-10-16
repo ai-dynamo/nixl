@@ -822,10 +822,10 @@ nixl_xfer_dlist_t
 StressList(const DeviceMemory &memory) {
     nixl_xfer_dlist_t list(VRAM_SEG);
     for (size_t descriptor = 0; descriptor < kStressDescriptors; ++descriptor) {
-        list.addDesc(
-            nixlBasicDesc(reinterpret_cast<uintptr_t>(memory.data() + descriptor * kSmallBytes),
-                          kSmallBytes,
-                          memory.device()));
+        list.addDesc(nixlBasicDesc(
+            reinterpret_cast<uintptr_t>(memory.data() + (descriptor ^ 1) * kSmallBytes),
+            kSmallBytes,
+            memory.device()));
     }
     list.addDesc(nixlBasicDesc(
         reinterpret_cast<uintptr_t>(memory.epoch()), sizeof(uint64_t), memory.device()));
@@ -836,7 +836,9 @@ nixl_xfer_dlist_t
 StressRemoteList(uintptr_t data, size_t bytes, uintptr_t epoch, int device) {
     nixl_xfer_dlist_t list(VRAM_SEG);
     for (size_t descriptor = 0; descriptor < kStressDescriptors; ++descriptor) {
-        list.addDesc(nixlBasicDesc(data + descriptor * kSmallBytes, kSmallBytes, device));
+        // Swap adjacent rows on both ends so backend coalescing cannot turn
+        // this multi-chunk ownership test into a single ring entry.
+        list.addDesc(nixlBasicDesc(data + (descriptor ^ 1) * kSmallBytes, kSmallBytes, device));
     }
     list.addDesc(nixlBasicDesc(epoch, sizeof(uint64_t), device));
     return list;
