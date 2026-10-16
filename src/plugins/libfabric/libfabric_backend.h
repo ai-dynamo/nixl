@@ -690,13 +690,22 @@ public:
 
     // Notification Queuing Helper Methods
     /**
-     * @brief Process pending notifications that are now ready
+     * @brief Release one pending notification if it is now ready
      *
-     * Checks pending notifications to see if their associated transfers
-     * have completed and moves them to the main notification list.
+     * If the entry for @p key has all its message fragments and all its expected
+     * write completions, moves it to the main notification list and erases it.
+     *
+     * Every caller has just updated exactly that one entry, and an entry's
+     * readiness depends only on its own counters, so no other entry can have
+     * become ready. Checking only @p key keeps each completion O(1); scanning the
+     * whole map made every completion O(entries), and entries for writes posted
+     * without a notification are never released, so that cost grew without bound
+     * on a long-lived receiver.
+     *
+     * @param[in] key makePendingKey(sender_peer_idx, notif_xfer_id) of the entry
      */
     void
-    checkPendingNotifications();
+    checkPendingNotification(uint64_t key);
 };
 
 #endif
