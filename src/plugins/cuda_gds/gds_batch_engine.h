@@ -25,7 +25,7 @@
 
 #include "gds_backend.h"
 
-// Wraps a cuFile batch I/O context (setup/submit/status/cancel).
+// Wraps a cuFile batch I/O context (setup/submit/status).
 class nixlGdsIOBatch {
 public:
     explicit nixlGdsIOBatch(unsigned int size);
@@ -42,17 +42,29 @@ public:
     submitBatch(int flags);
     nixl_status_t
     checkStatus();
-    nixl_status_t
-    cancelBatch();
+    bool
+    drain();
+    bool
+    recycle();
     void
     reset();
+    void
+    breakContextForTest();
 
     bool
     isValid() const {
         return batch_handle != nullptr && init_err.err == CU_FILE_SUCCESS;
     }
 
+    bool
+    pollBroken() const {
+        return poll_broken;
+    }
+
 private:
+    nixl_status_t
+    cancelBatch();
+
     CUfileBatchHandle_t batch_handle = nullptr;
     std::unique_ptr<CUfileIOEvents_t[]> io_batch_events;
     std::unique_ptr<CUfileIOParams_t[]> io_batch_params;
@@ -61,6 +73,9 @@ private:
     unsigned int batch_size = 0;
     unsigned int entries_completed = 0;
     bool active = false;
+    // A poll on the context failed, so the batch can neither be trusted nor
+    // waited for. The context is recreated before the batch is reused
+    bool poll_broken = false;
     nixl_status_t current_status = NIXL_ERR_NOT_POSTED;
 };
 
@@ -112,8 +127,6 @@ private:
                          size_t start_idx,
                          size_t batch_size,
                          nixlGdsIOBatch *&batch_out) const;
-    nixl_status_t
-    cancelAndReclaimBatches(std::vector<nixlGdsIOBatch *> &batch_list) const;
 
     mutable std::mutex batch_pool_lock_;
     mutable std::vector<nixlGdsIOBatch *> batch_pool_;
@@ -121,6 +134,8 @@ private:
     unsigned int batch_pool_size_ = 0;
     unsigned int batch_limit_ = 0;
     unsigned int max_request_size_ = 0;
+    // Test only: break the first submitted batch so its next poll fails
+    mutable bool break_first_batch_poll_ = false;
 };
 
 #endif // NIXL_SRC_PLUGINS_CUDA_GDS_GDS_BATCH_ENGINE_H
