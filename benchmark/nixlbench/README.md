@@ -520,8 +520,15 @@ wait
 ./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
   --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 
-# Storage benchmark with GDS backend
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testdir
+# UCX benchmark with VMM memory localized to locality domain 0 (use 1 for domain 1)
+./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
+  --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM --enable_vmm --use_localized=0
+
+# Single-instance POSIX storage benchmark
+./nixlbench --backend POSIX --filepath /mnt/storage/testdir
+
+# Single-instance GDS storage benchmark, when GPUDirect Storage is available
+./nixlbench --backend GDS --filepath /mnt/storage/testdir --storage_enable_direct
 
 # S3 object storage benchmark
 ./nixlbench --backend OBJ --obj_bucket_name my-bucket \
