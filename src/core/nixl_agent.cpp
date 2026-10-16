@@ -1341,14 +1341,13 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 
         if(req_hndl->status == NIXL_IN_PROG) {
 
-            // Keep the request at NIXL_IN_PROG when the backend refuses, so the
-            // caller can keep polling getXferStatus and release afterwards
-            nixl_status_t rel = req_hndl->engine->releaseReqH(req_hndl->backendHandle);
+            const nixl_status_t release_status =
+                req_hndl->engine->releaseReqH(req_hndl->backendHandle);
 
-            if (rel < 0) {
+            if (release_status < 0) {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
                                 << "' could not release transfer request and returned error status "
-                                << rel;
+                                << release_status;
                 return NIXL_ERR_REPOST_ACTIVE; // Might need renaming
             }
             req_hndl->status = release_status;

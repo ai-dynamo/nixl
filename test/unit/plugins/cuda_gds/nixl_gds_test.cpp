@@ -232,7 +232,7 @@ runPathModeSmoke(const std::string &backend_name,
 // what the recovery path must guarantee: the request reaches a terminal
 // status, releases, and the single pool slot serves the next transfer.
 static int
-runRecoveryCase(const char *name, const char *hook, const std::string &dir) {
+runRecoveryCase(const char *name, const char *hook, const std::string &dir, bool use_direct) {
     const size_t size = 512 * 1024;
     const std::string path = dir + "/nixl_gds_" + name + ".bin";
     int rc = 1;
@@ -253,7 +253,7 @@ runRecoveryCase(const char *name, const char *hook, const std::string &dir) {
     }
 
     unlink(path.c_str());
-    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_DIRECT, 0644);
+    int fd = open(path.c_str(), O_RDWR | O_CREAT | (use_direct ? O_DIRECT : 0), 0644);
     if (fd < 0 || ftruncate(fd, size) != 0) {
         std::cerr << "cannot create " << path << ": " << strerror(errno) << std::endl;
         return 1;
@@ -316,8 +316,10 @@ runRecoveryCase(const char *name, const char *hook, const std::string &dir) {
             goto out_dereg;
         }
         st = agent.postXferReq(req);
-        while (st == NIXL_IN_PROG) {
+        polls = 0;
+        while (st == NIXL_IN_PROG && polls < 100000) {
             st = agent.getXferStatus(req);
+            polls++;
         }
         agent.releaseXferReq(req);
         if (st != NIXL_SUCCESS) {
@@ -340,8 +342,8 @@ out:
 
 // cuFileBatchIOGetStatus fails on the first batch
 static int
-runPollFailureRecovery(const std::string &dir) {
-    return runRecoveryCase("GDSPollFailure", "test_break_first_batch_poll", dir);
+runPollFailureRecovery(const std::string &dir, bool use_direct) {
+    return runRecoveryCase("GDSPollFailure", "test_break_first_batch_poll", dir, use_direct);
 }
 
 int main(int argc, char *argv[])
@@ -544,7 +546,7 @@ int main(int argc, char *argv[])
     dir_path = argv[optind];
 
     if (run_failure_checks && !use_mt_engine) {
-        if (int rc = runPollFailureRecovery(dir_path); rc != 0) {
+        if (int rc = runPollFailureRecovery(dir_path, use_direct); rc != 0) {
             return rc;
         }
     }

@@ -225,7 +225,9 @@ nixlGdsIOBatch::drain() {
 // context is what makes the batch reusable: nothing can still complete into it
 bool
 nixlGdsIOBatch::recycle() {
-    cuFileBatchIODestroy(batch_handle);
+    if (batch_handle != nullptr) {
+        cuFileBatchIODestroy(batch_handle);
+    }
     batch_handle = nullptr;
     active = false;
     poll_broken = false;
@@ -244,6 +246,7 @@ nixlGdsIOBatch::recycle() {
 void
 nixlGdsIOBatch::breakContextForTest() {
     cuFileBatchIODestroy(batch_handle);
+    batch_handle = nullptr;
 }
 
 void
