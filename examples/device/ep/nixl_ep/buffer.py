@@ -21,7 +21,7 @@
 import os
 from contextlib import contextmanager
 from datetime import timedelta
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -157,7 +157,9 @@ class Buffer:
             use_rdma_buffer: kept for API compatibility; the RDMA buffer is the only buffer and this must be True.
         """
         assert use_rdma_buffer, "Only the RDMA buffer is supported"
-        tensor = self.runtime.get_local_buffer_tensor(dtype, offset)
+        tensor = torch.ops.nixl_ep.get_local_buffer_tensor(
+            self.runtime._ptr(), dtype, offset, use_rdma_buffer
+        )
         if size is None:
             return tensor
 
@@ -191,7 +193,11 @@ class Buffer:
         async_finish: bool = False,
         return_recv_hook: bool = False,
     ) -> Tuple[
-        Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple, EventOverlap, Callable
+        Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor],
+        torch.Tensor,
+        Tuple,
+        EventOverlap,
+        Optional[Callable],
     ]:
         """
         A low-latency implementation for dispatching with NIXL device API.
@@ -248,9 +254,9 @@ class Buffer:
             packed_recv_count,
             packed_recv_src_info,
             packed_recv_layout_range,
-            event,
-            hook,
-        ) = self.runtime.dispatch(
+            event_ptr,
+        ) = torch.ops.nixl_ep.dispatch(
+            self.runtime._ptr(),
             x,
             topk_idx,
             cumulative_local_expert_recv_stats,
@@ -262,6 +268,12 @@ class Buffer:
             use_ue8m0,
             async_finish,
             return_recv_hook,
+        )
+        event = EventHandle._adopt_ptr(event_ptr) if event_ptr else None
+        hook = (
+            (lambda: torch.ops.nixl_ep.dispatch_recv_hook(self.runtime._ptr()))
+            if return_recv_hook
+            else None
         )
         handle = (
             packed_recv_src_info,
@@ -300,7 +312,7 @@ class Buffer:
         return_recv_hook: bool = False,
         out: Optional[torch.Tensor] = None,
         combine_wait_recv_cost_stats: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, EventOverlap, Callable]:
+    ) -> Tuple[torch.Tensor, EventOverlap, Optional[Callable]]:
         """
         A low-latency implementation for combining tokens (reduce **with weights**) with NIXL device API.
         This kernel requires all the ranks (no matter intranode or internode) should be visible via RDMA
@@ -339,7 +351,8 @@ class Buffer:
             num_max_dispatch_tokens_per_rank,
             hidden,
         ) = handle
-        combined_x, event, hook = self.runtime.combine(
+        combined_x, event_ptr = torch.ops.nixl_ep.combine(
+            self.runtime._ptr(),
             x,
             topk_idx,
             topk_weights,
@@ -352,6 +365,12 @@ class Buffer:
             async_finish,
             return_recv_hook,
             out,
+        )
+        event = EventHandle._adopt_ptr(event_ptr) if event_ptr else None
+        hook = (
+            (lambda: torch.ops.nixl_ep.combine_recv_hook(self.runtime._ptr()))
+            if return_recv_hook
+            else None
         )
         tensors_to_record = (
             x,
@@ -386,7 +405,7 @@ class Buffer:
         Arguments:
             mask_status: `[num_ranks]` with `torch.int`, the mask status of each rank. `1` means mask and `0` means unmasked.
         """
-        self.runtime.query_mask_buffer(mask_status)
+        torch.ops.nixl_ep.query_mask_buffer_(self.runtime._ptr(), mask_status)
 
     def clean_mask_buffer(self):
         """
@@ -413,8 +432,11 @@ class Buffer:
             num_max_dispatch_tokens_per_rank,
             hidden,
         ) = handle
-        return self.runtime.get_next_combine_buffer(
-            num_max_dispatch_tokens_per_rank, hidden, layout_range.size(1)
+        return torch.ops.nixl_ep.get_next_combine_buffer(
+            self.runtime._ptr(),
+            num_max_dispatch_tokens_per_rank,
+            hidden,
+            layout_range.size(1),
         )
 
     def update_memory_buffers(
