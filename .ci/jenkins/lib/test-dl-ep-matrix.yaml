@@ -115,10 +115,14 @@ taskName: "${name}/${arch}/${axis_index}"
 steps:
   - name: Compiling NIXL EP Docker Image for DL
     containerSelector: "{name: 'build_helper_dl_ep'}"
-    credentialsId: "svc-nixl-new-artifactory-token"
+    credentialsId:
+      - 'svc-nixl-new-artifactory-token'
+      - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       set -x
+      # github.com credential for build.sh's clones, incl. meson's [wrap-git] subprojects ("ghconfig" build secret).
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
       # Pass UCX_VERSION only when UCX_VER is set (e.g. nightly master);
       # empty falls back to the Dockerfile ARG UCX_VERSION default so the
       # per-branch default lives in one place.
@@ -136,6 +140,7 @@ steps:
       --build-arg BUILD_NIXL_EP=true \
       --build-arg NIXL_PYTHON=${NIXL_EP_PYTHON} \
       --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base:${CI_IMAGE_TAG} \
+      --secret id=ghconfig,src=/tmp/ghconfig \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       for i in {1..6}; do

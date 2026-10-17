@@ -139,10 +139,10 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t er
     : closeFlags_(err_handling_mode == UCP_ERR_HANDLING_MODE_PEER ? UCP_EP_CLOSE_FLAG_FORCE : 0) {
     ucp_ep_params_t ep_params;
 
-    ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS | UCP_EP_PARAM_FIELD_ERR_HANDLER |
-        UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
+    ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS | UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
     ep_params.err_mode = err_handling_mode;
     if (err_handling_mode != UCP_ERR_HANDLING_MODE_NONE) {
+        ep_params.field_mask |= UCP_EP_PARAM_FIELD_ERR_HANDLER;
         ep_params.err_handler.cb = err_cb_wrapper;
         ep_params.err_handler.arg = static_cast<void *>(this);
     }
