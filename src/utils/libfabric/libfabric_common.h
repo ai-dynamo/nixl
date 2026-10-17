@@ -98,9 +98,8 @@ constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 #define NIXL_LIBFABRIC_MSG_NOTIFICTION 2
 #define NIXL_LIBFABRIC_MSG_TRANSFER 4
 // Peer-id handshake message. Sent when a connection is set up, and as a reply
-// to a peer's fresh handshake (first-time establishment or re-establishment).
-// Carries protocol version, sender name, has_conn, and optionally connection
-// info. See libfabric_handshake.cpp for wire-format details.
+// to a peer's fresh handshake. Carries protocol version, sender name, and
+// optionally connection info. See libfabric_handshake.cpp for wire-format details.
 #define NIXL_LIBFABRIC_MSG_HANDSHAKE 8
 
 // Single-operation immediate data extraction (no intermediate shifts)
