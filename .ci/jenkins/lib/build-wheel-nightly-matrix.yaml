@@ -7,6 +7,11 @@
 # One run builds every CUDA major, so a release folder holds a complete wheel
 # set and is owned by this build alone - which is what lets pipeline_stop delete
 # it on failure and mark it, only on SUCCESS, for the release poller.
+#
+# On SUCCESS (release or verification), pipeline_stop also fires a GitHub
+# repository_dispatch (nixl-wheels-published, credential
+# svc-nixl-github-dispatch-token) so ai-dynamo/nixl's nixl-compliance.yml
+# doesn't have to poll Artifactory for this commit's wheels itself.
 
 ---
 job: nixl-ci-build-wheel-nightly
@@ -334,6 +339,24 @@ pipeline_stop:
     def folderUrl = "${env.WHEEL_REPO_UI}/${folderPath}"
     def removedNote = ''
 
+    // Resolved once, on any SUCCESS (release or verification/nightly): the
+    // GitHub dispatch below needs it regardless of publish path, and the
+    // release-folder marker further down reuses it instead of resolving twice.
+    def sha = null
+    if (jobStatus == 'SUCCESS') {
+        // The poller always passes a full sha; a manual run naming a
+        // branch/tag needs one ls-remote.
+        sha = params.NIXL_VERSION ==~ /[0-9a-f]{40}/
+            ? params.NIXL_VERSION.take(8)
+            : sh(returnStdout: true, script: """
+                  git ls-remote "${env.NIXL_REPO_URL}" "${params.NIXL_VERSION}" \
+                    | head -1 | cut -c1-8
+              """).trim()
+        if (!sha) {
+            error("cannot resolve NIXL_SHA for ${env.JOB_NAME} [${env.BUILD_NUMBER}]")
+        }
+    }
+
     if (isRelease) {
         withCredentials([usernamePassword(
                 credentialsId: 'svc-nixl-new-artifactory-token',
@@ -361,17 +384,6 @@ pipeline_stop:
             }
 
             if (jobStatus == 'SUCCESS') {
-                // The poller always passes a full sha; a manual run naming a
-                // branch/tag needs one ls-remote.
-                def sha = params.NIXL_VERSION ==~ /[0-9a-f]{40}/
-                    ? params.NIXL_VERSION.take(8)
-                    : sh(returnStdout: true, script: """
-                          git ls-remote "${env.NIXL_REPO_URL}" "${params.NIXL_VERSION}" \
-                            | head -1 | cut -c1-8
-                      """).trim()
-                if (!sha) {
-                    error("cannot resolve NIXL_SHA for the ${folderPath} completion marker")
-                }
                 try {
                     // recursive=0: the properties API defaults to recursive and
                     // would stamp this over each wheel's own NIXL_SHA.
@@ -395,6 +407,34 @@ pipeline_stop:
                     ? "<p>Partial wheel set removed: <b>${folderPath}</b></p>"
                     : "<p>Partial wheel set at <b>${folderPath}</b> could NOT be removed - delete it manually</p>"
             }
+        }
+    }
+
+    // Notify GitHub so nixl-compliance.yml's wait-for-wheels job doesn't have
+    // to poll Artifactory from the scarce gitlab_ci_runners pool. Fires for
+    // both release and verification builds - GitHub re-derives the actual
+    // folder itself via an AQL lookup keyed on nixl_sha, so this is just the
+    // "go check now" nudge, not an exact path (the UCX sha in a verification/
+    // folder name isn't known at this pipeline level anyway). Best-effort: a
+    // GitHub outage must not fail an otherwise-successful wheel build, so
+    // dispatch failures are caught and only logged.
+    if (jobStatus == 'SUCCESS') {
+        try {
+            withCredentials([string(
+                    credentialsId: 'svc-nixl-github-dispatch-token',
+                    variable: 'GH_TOKEN')]) {
+                sh """
+                    set +x
+                    curl -fsSL -X POST --retry 3 --retry-delay 2 \
+                      -H "Authorization: Bearer \$GH_TOKEN" \
+                      -H "Accept: application/vnd.github+json" \
+                      https://api.github.com/repos/ai-dynamo/nixl/dispatches \
+                      -d '{"event_type":"nixl-wheels-published","client_payload":{"nixl_sha":"${sha}","publish_dir":"${publishDir ?: 'verification'}","build_number":"${env.BUILD_NUMBER}","job_url":"${env.BUILD_URL}"}}'
+                """
+            }
+            echo "Notified GitHub: nixl-wheels-published (nixl_sha=${sha})"
+        } catch (err) {
+            echo "WARNING: GitHub dispatch notification failed (wheels are still published fine): ${err}"
         }
     }
 
