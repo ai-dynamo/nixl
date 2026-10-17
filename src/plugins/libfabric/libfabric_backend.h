@@ -27,6 +27,7 @@
 #include <atomic>
 #include <chrono>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -122,6 +123,8 @@ private:
     std::atomic<size_t> completed_requests_; // Atomic count of completed requests
     std::atomic<size_t> submitted_requests_; // Total number of submitted requests
     std::atomic<nixl_status_t> error_status_; // Error status from CQ failures
+    std::atomic<size_t> successful_requests_; // Requests that completed without an error
+    std::atomic<bool> xfer_error_sent_; // Target already told about the failure
 
 public:
     uint16_t post_xfer_id;
@@ -144,14 +147,20 @@ public:
     init_request_tracking(size_t num_requests);
 
     /** Record completion of one request (with status).
-     *  Stores error before incrementing the counter so that is_completed()
-     *  observers always see the error_status_ that caused the transition. */
+     *  Stores error and bumps successful_requests_ before incrementing the counter so that
+     *  is_completed() observers always see the error_status_ that caused the transition and the
+     *  final successful count. */
     void
     complete_request(nixl_status_t status);
 
     /** Get current count of requests completed as part of this transfer */
     size_t
     get_completed_requests_count() const;
+
+    /** Get the number of requests that completed without an error. Meaningful once
+     *  is_completed() is true, when it is the count of writes that actually reached the target. */
+    size_t
+    get_successful_requests_count() const;
 
     /** Get total number of requests submitted as part of this transfer */
     size_t
@@ -164,6 +173,13 @@ public:
     /** Get error status */
     nixl_status_t
     get_error_status() const;
+
+    /** Claim the right to send the transfer-error message to the target.
+     * @return true for the first caller only, so the message is sent at most once however many
+     *         times checkXfer is polled. There is deliberately no way to give the claim back:
+     *         delivery is best effort. */
+    bool
+    claim_xfer_error_send();
 };
 
 class nixlLibfabricEngine : public nixlBackendEngine {
@@ -233,6 +249,7 @@ private:
         uint16_t received_msg_fragments; // Fragments received so far
         uint32_t total_message_length; // Total length of complete message (all fragments)
         uint16_t agent_name_length; // Length of agent_name in combined payload
+        bool xfer_failed; // Initiator reported the transfer failed; stop waiting for its writes
 
         PendingNotification(uint16_t xfer_id)
             : notif_xfer_id(xfer_id),
@@ -241,25 +258,25 @@ private:
               expected_msg_fragments(0),
               received_msg_fragments(0),
               total_message_length(0),
-              agent_name_length(0) {}
+              agent_name_length(0),
+              xfer_failed(false) {}
     };
 
     // O(1) lookup with composite key = (sender_peer_idx << 16) | notif_xfer_id.
-    // The peer_idx half of the key is the SENDER's local index in OUR
-    // agent_names_ table, which the sender learned via the handshake protocol
-    // (NIXL_LIBFABRIC_MSG_HANDSHAKE). The sender embeds that value as the
-    // agent_idx field of every imm_data.
+    // The peer_idx half of the key is the SENDER's index in OUR agent_names_ table,
+    // resolved from the completion's source address.
     static inline uint64_t
-    makePendingKey(uint16_t sender_peer_idx, uint16_t notif_xfer_id) {
+    makePendingKey(uint32_t sender_peer_idx, uint16_t notif_xfer_id) {
         return (static_cast<uint64_t>(sender_peer_idx) << 16) | notif_xfer_id;
     }
 
     std::unordered_map<uint64_t, PendingNotification> pending_notifications_;
 
-    // Handshake messagess that arrived before the local createAgentConnection had
-    // registered the originator in connections_. Drained inside
-    // createAgentConnection.
-    std::unordered_map<std::string, uint16_t> pending_inbound_handshakes_;
+    // Agents whose handshake arrived before the local createAgentConnection had registered
+    // them in connections_. Drained inside createAgentConnection.
+    std::unordered_set<std::string> pending_inbound_handshakes_;
+    // Same, for handshakes rejected for their protocol version: agent name -> peer's version.
+    std::unordered_map<std::string, uint16_t> pending_rejected_handshakes_;
     std::mutex pending_handshake_mutex_;
 
     // Connection management helpers
@@ -278,6 +295,23 @@ private:
                   uint32_t total_message_length,
                   uint16_t notif_xfer_id,
                   uint32_t expected_completions) const;
+
+    // Tell the target that notif_xfer_id failed on this side and that only final_completions of
+    // its writes will arrive, so it stops waiting for the rest.
+    nixl_status_t
+    notifXferErrorPriv(const std::string &remote_agent,
+                       uint16_t notif_xfer_id,
+                       uint32_t final_completions) const;
+
+    // Receiver-side handler for NIXL_LIBFABRIC_MSG_XFER_ERROR
+    void
+    handleXferError(uint16_t notif_xfer_id, uint32_t sender_peer_idx, uint32_t final_completions);
+
+    // Tell the target once that this transfer failed, so it stops waiting for writes that never
+    // went out. Called only from checkXfer: an asynchronous post failure must not turn postXfer
+    // into an error.
+    void
+    notifXferFailure(nixlLibfabricBackendH *backend_handle, nixl_status_t error_status) const;
 
     // Private function to fragment notification messages to binary notifications
     void
@@ -301,31 +335,25 @@ private:
 
 
     // Engine message processing methods.
-    // sender_peer_idx is the SENDER's index in OUR agent_names_ table,
-    // decoded from the imm_data.
+    // sender_peer_idx is the SENDER's index in OUR agent_names_ table, resolved from the
+    // completion's source address.
     void
-    processNotification(const std::string &serialized_notif, uint16_t sender_peer_idx);
+    processNotification(const std::string &serialized_notif, uint32_t sender_peer_idx);
 
-    // Send the per-peer handshake message to a peer we just created a connection
-    // with, telling them what index we have assigned them in our agent_names_.
+    // Send the per-peer handshake message to a peer we just created a connection with. It
+    // tells the peer we hold its endpoints in our AV, so we can attribute its traffic.
     // When we decide the peer may not have seen us, i.e. have never sent us a handshake,
     // embed our own connection info in the message.
     nixl_status_t
     sendHandshakeTo(const nixlLibfabricConnection &conn) const;
 
-    // Resolve the agent_idx the sender should ship to a given remote peer in
-    // every imm_data field. Returns the handshake-supplied value.
-    // establishConnection() guarantees the handshake is received before
-    // marking the connection as CONNECTED; this function should never be
-    // called without a valid handshake. Sending to ourselves (same-process
-    // self-connection) returns 0 immediately.
-    uint16_t
-    senderImmDataAgentIdx(nixlLibfabricConnection &conn) const;
-
-    // Looks up the peer by agent_name and stores the assigned index on its connection
-    // record. Will load peer's connection info from the handshake payload, if it's a new peer.
+    // Records that a peer has us in its address vectors, so we may start sending to it.
+    // Will load the peer's connection info from the handshake payload, if it's a new peer.
     void
     handleHandshake(const std::string &raw_payload);
+    // Marks a peer rejected for its protocol version; establishConnection() then fails fast.
+    void
+    rejectHandshake(const std::string &peer_agent_name, uint16_t peer_proto_ver);
     nixl_status_t
     loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
                        void *buffer,
@@ -653,12 +681,12 @@ public:
      * Thread-safe method to track received data transfers.
      *
      * @param[in] xfer_id 16-bit transfer ID that was received
-     * @param[in] sender_peer_idx The SENDER's index in our agent_names_ table,
-     *            extracted from the imm_data the sender shipped. Combined with
+     * @param[in] sender_peer_idx The SENDER's index in our agent_names_ table, resolved
+     *            from the source address of the write completion. Combined with
      *            xfer_id to form the pending_notifications_ joint key.
      */
     void
-    addReceivedXferId(uint16_t xfer_id, uint16_t sender_peer_idx);
+    addReceivedXferId(uint16_t xfer_id, uint32_t sender_peer_idx);
 
     // Notification Queuing Helper Methods
     /**

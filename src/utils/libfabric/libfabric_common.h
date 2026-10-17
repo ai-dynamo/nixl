@@ -59,33 +59,42 @@
 #define NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S 60
 
 // Handshake SerDes tag names
-constexpr const char *NIXL_HANDSHAKE_TAG_IDX = "idx";
+constexpr const char *NIXL_HANDSHAKE_TAG_VER = "ver";
+// Sent by protocol-version-1 peers in place of "ver"; only read to recognise such a peer.
+constexpr const char *NIXL_HANDSHAKE_TAG_V1_IDX = "idx";
 constexpr const char *NIXL_HANDSHAKE_TAG_NAME = "name";
 constexpr const char *NIXL_HANDSHAKE_TAG_HAS_CONN = "has_conn";
 constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 
+// Wire-protocol version of the libfabric plugin, exchanged in the handshake. Bump it on any
+// incompatible imm_data or control-message change. 1: 8-bit agent index in imm_data (sends
+// "idx", no "ver"). 2: senders are resolved from the completion's source address.
+#define NIXL_LIBFABRIC_PROTO_VERSION 2u
+
 // The immediate data associated with an RDMA operation is 32 bits and is divided as follows:
-// | 4-bit MSG TYPE flag | 8-bit agent index | 16-bit XFER_ID | 4-bit SEQ_ID |
+// | 4-bit MSG TYPE flag | 8-bit RESERVED | 16-bit XFER_ID | 4-bit SEQ_ID |
+// RESERVED held the 8-bit peer agent index in protocol version 1; it must now be zero.
 
 // Optimized bit field constants (compile-time computed)
 #define NIXL_MSG_TYPE_BITS 4
-#define NIXL_AGENT_INDEX_BITS 8
+#define NIXL_IMM_RESERVED_BITS 8
 #define NIXL_XFER_ID_BITS 16
 #define NIXL_SEQ_ID_BITS 4
 
 // Pre-computed shift amounts for better performance
 #define NIXL_MSG_TYPE_SHIFT 0
-#define NIXL_AGENT_INDEX_SHIFT 4
+#define NIXL_IMM_RESERVED_SHIFT 4
 #define NIXL_XFER_ID_SHIFT 12
 #define NIXL_SEQ_ID_SHIFT 28
 
 // Pre-computed masks (compile-time constants)
 #define NIXL_MSG_TYPE_MASK 0xFU // 0x0000000F (4 bits)
-#define NIXL_AGENT_INDEX_MASK 0xFFU // 0x000000FF (8 bits)
+#define NIXL_IMM_RESERVED_MASK 0xFFU // 0x000000FF (8 bits)
 #define NIXL_XFER_ID_MASK 0xFFFFU // 0x0000FFFF (16 bits)
 #define NIXL_SEQ_ID_MASK 0xFU // 0x0000000F (4 bits)
 
 // Message type constants
+#define NIXL_LIBFABRIC_MSG_XFER_ERROR 1
 #define NIXL_LIBFABRIC_MSG_NOTIFICTION 2
 #define NIXL_LIBFABRIC_MSG_TRANSFER 4
 // Peer-id handshake message. Sent once per (peer A, peer B) pair after
@@ -95,16 +104,14 @@ constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 
 // Single-operation immediate data extraction (no intermediate shifts)
 #define NIXL_GET_MSG_TYPE_FROM_IMM(data) ((data) & NIXL_MSG_TYPE_MASK)
-#define NIXL_GET_AGENT_INDEX_FROM_IMM(data) \
-    (((data) >> NIXL_AGENT_INDEX_SHIFT) & NIXL_AGENT_INDEX_MASK)
+#define NIXL_GET_IMM_RESERVED(data) (((data) >> NIXL_IMM_RESERVED_SHIFT) & NIXL_IMM_RESERVED_MASK)
 #define NIXL_GET_XFER_ID_FROM_IMM(data) (((data) >> NIXL_XFER_ID_SHIFT) & NIXL_XFER_ID_MASK)
 #define NIXL_GET_SEQ_ID_FROM_IMM(data) (((data) >> NIXL_SEQ_ID_SHIFT) & NIXL_SEQ_ID_MASK)
 
 // Single-operation immediate data creation (minimal bit operations)
-#define NIXL_MAKE_IMM_DATA(msg_type, agent_idx, xfer_id, seq_id)                   \
-    (((uint64_t)(msg_type) & NIXL_MSG_TYPE_MASK) |                                 \
-     (((uint64_t)(agent_idx) & NIXL_AGENT_INDEX_MASK) << NIXL_AGENT_INDEX_SHIFT) | \
-     (((uint64_t)(xfer_id) & NIXL_XFER_ID_MASK) << NIXL_XFER_ID_SHIFT) |           \
+#define NIXL_MAKE_IMM_DATA(msg_type, xfer_id, seq_id)                    \
+    (((uint64_t)(msg_type) & NIXL_MSG_TYPE_MASK) |                       \
+     (((uint64_t)(xfer_id) & NIXL_XFER_ID_MASK) << NIXL_XFER_ID_SHIFT) | \
      (((uint64_t)(seq_id) & NIXL_SEQ_ID_MASK) << NIXL_SEQ_ID_SHIFT))
 
 #define NIXL_LIBFABRIC_CQ_BATCH_SIZE 16
@@ -123,6 +130,18 @@ struct BinaryNotificationHeader {
     uint16_t notif_seq_id; // Fragment index (0, 1, 2...)
     uint16_t notif_seq_len; // Total number of fragments
     uint32_t payload_length; // Message bytes of this fragment
+} __attribute__((packed));
+
+/**
+ * @brief Payload of a NIXL_LIBFABRIC_MSG_XFER_ERROR control message (4 bytes)
+ *
+ * The transfer this refers to is identified by the xfer_id embedded in the immediate data, so the
+ * payload only carries how many of the transfer's writes actually completed. The initiator's count
+ * is authoritative: the target lowers its expected completion count to final_completions so that it
+ * waits for exactly the writes that will arrive, and no longer waits for the ones that failed.
+ */
+struct XferErrorPayload {
+    uint32_t final_completions; // Writes that completed on the initiator and will reach the target
 } __attribute__((packed));
 
 /**

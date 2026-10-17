@@ -58,6 +58,10 @@ GSM8K_DATA_PATH="${GSM8K_DATA_PATH:-/opt/gsm8k/test.jsonl}"
 GSM8K_NUM_QUESTIONS="${GSM8K_NUM_QUESTIONS:-200}"
 GSM8K_MIN_ACCURACY="${GSM8K_MIN_ACCURACY:-0.8}"
 
+# Slurm sets CUDA_VISIBLE_DEVICES to the allocated GPUs (e.g. 2,3), but the container
+# still sees every GPU on the node, so pin each server to one of ours, not to 0/1.
+IFS=, read -r PREFILL_GPU DECODE_GPU _ <<< "${CUDA_VISIBLE_DEVICES:-0,1}"
+
 log() { echo "[sanity:${FRAMEWORK}] $*"; }
 
 # Per-request curl caps so a stalled/half-open connection can't hang past the loop's
@@ -67,6 +71,7 @@ CURL_OPTS=(--connect-timeout 5 --max-time 30)
 wait_for() {  # wait_for <url> <timeout_s>
   local url="$1" t="${2:-180}" i=0
   until curl -sf "${CURL_OPTS[@]}" "$url" >/dev/null 2>&1; do
+    check_alive || return 1
     i=$((i + 1))
     if [ "$i" -ge "$t" ]; then
       log "timeout (${t}s) waiting for ${url}"
@@ -81,12 +86,24 @@ wait_for() {  # wait_for <url> <timeout_s>
 # whole group so forked engine/worker subprocesses can't survive this job and keep holding
 # GPUs against whatever the SLURM node runs next.
 pids=()
+names=()
 cleanup() {
   for p in "${pids[@]:-}"; do
     kill -TERM -- "-$p" 2>/dev/null || true
   done
 }
 trap cleanup EXIT
+
+# Fail fast instead of polling a server that has already died.
+check_alive() {
+  local k
+  for k in "${!pids[@]}"; do
+    if ! kill -0 "${pids[$k]}" 2>/dev/null; then
+      log "${names[$k]} (pid ${pids[$k]}) exited"
+      return 1
+    fi
+  done
+}
 
 log "model: ${MODEL}"
 nvidia-smi -L
@@ -115,17 +132,19 @@ if [ "$FRAMEWORK" = "vllm" ]; then
   # side-channel handshake port (default 5600 for both -> "Address already in use").
   PREFILL_SIDE_PORT="$(get_next_tcp_port)"
   DECODE_SIDE_PORT="$(get_next_tcp_port)"
-  setsid env CUDA_VISIBLE_DEVICES=0 VLLM_NIXL_SIDE_CHANNEL_PORT="$PREFILL_SIDE_PORT" \
+  setsid env CUDA_VISIBLE_DEVICES="$PREFILL_GPU" VLLM_NIXL_SIDE_CHANNEL_PORT="$PREFILL_SIDE_PORT" \
     vllm serve "$MODEL" --port "$PREFILL_PORT" \
     --enforce-eager --gpu-memory-utilization "$GPU_MEM_FRACTION" \
     --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' &
   pids+=($!)
+  names+=(prefill)
 
-  setsid env CUDA_VISIBLE_DEVICES=1 VLLM_NIXL_SIDE_CHANNEL_PORT="$DECODE_SIDE_PORT" \
+  setsid env CUDA_VISIBLE_DEVICES="$DECODE_GPU" VLLM_NIXL_SIDE_CHANNEL_PORT="$DECODE_SIDE_PORT" \
     vllm serve "$MODEL" --port "$DECODE_PORT" \
     --enforce-eager --gpu-memory-utilization "$GPU_MEM_FRACTION" \
     --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}' &
   pids+=($!)
+  names+=(decode)
 
   wait_for "http://localhost:${PREFILL_PORT}/health" "$SERVER_TIMEOUT"
   wait_for "http://localhost:${DECODE_PORT}/health" "$SERVER_TIMEOUT"
@@ -135,6 +154,7 @@ if [ "$FRAMEWORK" = "vllm" ]; then
   setsid python3 /usr/local/bin/toy_proxy_server.py --port "$PROXY_PORT" \
     --prefiller-ports "$PREFILL_PORT" --decoder-ports "$DECODE_PORT" &
   pids+=($!)
+  names+=(proxy)
   wait_for "http://localhost:${PROXY_PORT}/healthcheck" "$PROXY_TIMEOUT"
   ENDPOINT="http://localhost:${PROXY_PORT}/v1/completions"
 
@@ -145,19 +165,27 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
   # 8998); take a free port rather than trusting the default to be unbound. Both sides
   # are configured with the same port (decode connects to the prefill's bootstrap).
   BOOTSTRAP_PORT="$(get_next_tcp_port)"
-  setsid env CUDA_VISIBLE_DEVICES=0 python3 -m sglang.launch_server --model-path "$MODEL" \
+  # Without --nccl-port SGLang picks an ephemeral port for its torch.distributed
+  # rendezvous and binds it later, racing other listeners on the host network.
+  PREFILL_NCCL_PORT="$(get_next_tcp_port)"
+  DECODE_NCCL_PORT="$(get_next_tcp_port)"
+  setsid env CUDA_VISIBLE_DEVICES="$PREFILL_GPU" python3 -m sglang.launch_server --model-path "$MODEL" \
     --mem-fraction-static "$GPU_MEM_FRACTION" \
     --disaggregation-mode prefill --disaggregation-transfer-backend nixl \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
+    --nccl-port "$PREFILL_NCCL_PORT" \
     --trust-remote-code --host 0.0.0.0 --port "$PREFILL_PORT" &
   pids+=($!)
+  names+=(prefill)
 
-  setsid env CUDA_VISIBLE_DEVICES=1 python3 -m sglang.launch_server --model-path "$MODEL" \
+  setsid env CUDA_VISIBLE_DEVICES="$DECODE_GPU" python3 -m sglang.launch_server --model-path "$MODEL" \
     --mem-fraction-static "$GPU_MEM_FRACTION" \
     --disaggregation-mode decode --disaggregation-transfer-backend nixl \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
+    --nccl-port "$DECODE_NCCL_PORT" \
     --trust-remote-code --host 0.0.0.0 --port "$DECODE_PORT" &
   pids+=($!)
+  names+=(decode)
 
   wait_for "http://localhost:${PREFILL_PORT}/health" "$SERVER_TIMEOUT"
   wait_for "http://localhost:${DECODE_PORT}/health" "$SERVER_TIMEOUT"
@@ -175,6 +203,7 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
     --decode "http://localhost:${DECODE_PORT}" \
     --host 0.0.0.0 --port "$PROXY_PORT" &
   pids+=($!)
+  names+=(router)
   wait_for "http://localhost:${PROXY_PORT}/health" "$PROXY_TIMEOUT"
   ENDPOINT="http://localhost:${PROXY_PORT}/v1/completions"
 
@@ -191,6 +220,7 @@ log "waiting for the proxy to accept requests"
 i=0
 until curl -sf "${CURL_OPTS[@]}" "$ENDPOINT" -H 'Content-Type: application/json' \
         -d "{\"model\":\"${MODEL}\",\"prompt\":\"hi\",\"max_tokens\":1,\"temperature\":0}" >/dev/null; do
+  check_alive || exit 1
   i=$((i + 1))
   if [ "$i" -ge "$REQUEST_TIMEOUT" ]; then
     log "timeout (${REQUEST_TIMEOUT}s) waiting for the proxy to serve a request"

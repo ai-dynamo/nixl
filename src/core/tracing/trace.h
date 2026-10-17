@@ -28,6 +28,8 @@
  * a public header later without churn if an external consumer appears.
  */
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -153,12 +155,21 @@ private:
 };
 
 /**
+ * @brief Fills its buffer with random bytes for trace-context ids, or throws a
+ *        std::exception. An all-zero id is drawn again; null selects the default
+ *        getentropy-backed source.
+ */
+using random_bytes_fn_t = void (*)(std::uint8_t *, std::size_t);
+
+/**
  * @brief Composite tracer owned by the Agent. A single beginSpan()/mark() call
  *        fans out to every enabled backend. No singleton; injected explicitly.
  */
 class Tracer {
 public:
-    explicit Tracer(std::vector<std::unique_ptr<TraceBackend>> backends) noexcept;
+    explicit Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
+                    double sample_ratio = 0.0,
+                    random_bytes_fn_t random_bytes = nullptr) noexcept;
     ~Tracer();
     Tracer(const Tracer &) = delete;
     Tracer &
@@ -169,6 +180,27 @@ public:
     empty() const noexcept {
         return backends_.empty();
     }
+
+    /** @brief Sampling ratio applied when a trace context is generated for one
+     *         of this agent's requests. Carried here because the tracer pointer
+     *         is what the generation call sites have; the tracer never reads it
+     *         itself. */
+    [[nodiscard]] double
+    sampleRatio() const noexcept {
+        return sampleRatio_;
+    }
+
+    /** @brief Random-byte source for this agent's trace contexts; null means the
+     *         default. Carried here for the same reason as sampleRatio(). */
+    [[nodiscard]] random_bytes_fn_t
+    randomBytes() const noexcept {
+        return randomBytes_;
+    }
+
+    /** @brief Logs this tracer's first trace-context generation failure at ERROR;
+     *         later ones are not logged. */
+    void
+    reportContextFailure(std::string_view reason) const noexcept;
 
     [[nodiscard]] Span
     beginSpan(std::string_view name, Kind kind = Kind::Generic);
@@ -183,18 +215,23 @@ public:
 
 private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;
+    const double sampleRatio_;
+    const random_bytes_fn_t randomBytes_;
+    mutable std::atomic<bool> contextFailureLogged_ = false;
 };
 
 /**
  * @brief RAII guard that keeps a correlation id active on the tracer for its
  *        lifetime, so every span/mark created while it is in scope is tagged
- *        with that id. Null-tracer-safe. Used to link spans emitted on different
+ *        with that id. Null-tracer-safe; an id of 0, which an invalid context
+ *        projects to, pushes nothing. Used to link spans emitted on different
  *        threads (e.g. postXferReq on the caller thread vs. the completion on
  *        the polling thread) to the same logical request.
  */
 class CorrelationScope {
 public:
-    [[nodiscard]] CorrelationScope(Tracer *tracer, std::uint64_t id) : tracer_(tracer) {
+    [[nodiscard]] CorrelationScope(Tracer *tracer, std::uint64_t id)
+        : tracer_(id == 0 ? nullptr : tracer) {
         if (tracer_ != nullptr) {
             tracer_->pushCorrelationId(id);
         }
@@ -223,6 +260,8 @@ struct TracerConfig {
     std::string agentName;
     /** @brief Backend names requested at runtime (e.g. {"nvtx"}). */
     std::vector<std::string> backends;
+    /** @brief Head-based sampling probability in [0, 1]; 0 samples nothing. */
+    double sampleRatio{0.0};
 };
 
 /**

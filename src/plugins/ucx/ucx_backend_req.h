@@ -20,7 +20,9 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
+#include <utility>
+
+#include "absl/container/inlined_vector.h"
 
 #include "backend/backend_engine.h"
 #include "common/nixl_log.h"
@@ -31,17 +33,9 @@
 
 class nixlUcxBackendReqH : public nixlBackendReqH {
 public:
-    // Notification to be sent after completion of all requests
-    struct Notif {
-        const std::string agent;
-        std::unique_ptr<std::string> msg;
-
-        Notif(const std::string &remote_agent, std::unique_ptr<std::string> msg)
-            : agent(remote_agent),
-              msg(std::move(msg)) {}
-    };
-
-    std::optional<Notif> notif;
+    // Notification to be sent over the bound connection after completion of all requests.
+    // Empty if there is no pending notification.
+    std::string notif;
 
 #ifdef HAVE_UCX_SGL_API
     std::optional<nixl::ucx::sglXfer> sgl;
@@ -52,13 +46,20 @@ public:
     }
 
     void
-    reserve(size_t size) {
-        requests_.reserve(size);
-        NIXL_ASSERT(conn_ == nullptr);
+    init(const ucx_connection_ptr_t &conn, const nixlUcxEp &ep) {
+        NIXL_ASSERT(requests_.empty());
+        conn_ = conn;
+        ep_ = &ep;
+    }
+
+    [[nodiscard]] const nixlUcxEp &
+    getEp() const {
+        NIXL_ASSERT(ep_ != nullptr);
+        return *ep_;
     }
 
     [[nodiscard]] nixl_status_t
-    append(nixl_status_t status, nixlUcxReq req, const ucx_connection_ptr_t &conn) {
+    append(nixl_status_t status, nixlUcxReq req) {
         if (status == NIXL_IN_PROG) [[likely]] {
             requests_.push_back(req);
         } else if (status != NIXL_SUCCESS) {
@@ -67,9 +68,26 @@ public:
             return status;
         }
 
-        NIXL_ASSERT(conn_ == nullptr || conn_ == conn);
-        conn_ = conn;
         return NIXL_SUCCESS;
+    }
+
+    /**
+     * @brief Flush the bound endpoint and track the flush request
+     */
+    [[nodiscard]] nixl_status_t
+    flush() {
+        nixlUcxReq req = nullptr;
+        const nixl_status_t status = ep_->flushEp(req);
+        return append(status, req);
+    }
+
+    [[nodiscard]] nixl_status_t
+    sendNotif() {
+        nixlUcxReq req = nullptr;
+        const nixl_status_t status = getEp().sendAm(
+            nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(notif), UCP_AM_SEND_FLAG_EAGER, &req);
+        notif.clear();
+        return append(status, req);
     }
 
     [[nodiscard]] virtual bool
@@ -79,25 +97,28 @@ public:
 
     virtual void
     release() {
-        // TODO: Error log: uncompleted requests found! Cancelling ...
+        size_t incomplete_reqs = 0;
         for (nixlUcxReq req : requests_) {
             const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
             if (ret == NIXL_IN_PROG) {
                 // TODO: Need process this properly.
                 // it may not be enough to cancel UCX request
                 worker_->reqCancel(req);
+                ++incomplete_reqs;
             }
             worker_->reqRelease(req);
         }
-        requests_.clear();
-        conn_.reset();
+        if (incomplete_reqs != 0) {
+            NIXL_WARN << "request handle " << this << " released with " << incomplete_reqs
+                      << " requests in progress";
+        }
+        reset();
     }
 
     [[nodiscard]] virtual nixl_status_t
     status() {
         if (requests_.empty()) {
             /* No pending transmissions */
-            conn_.reset();
             return NIXL_SUCCESS;
         }
 
@@ -133,9 +154,6 @@ public:
         }
 
         requests_.resize(incomplete_reqs);
-        if (requests_.empty()) {
-            conn_.reset();
-        }
         return out_ret;
     }
 
@@ -157,15 +175,30 @@ protected:
     }
 
 private:
+    // A post to a single endpoint issues at most three requests:
+    // one data request, one flush request, and one notification request.
+    static constexpr size_t max_requests = 3;
+
+    void
+    reset() noexcept {
+        requests_.clear();
+        conn_.reset();
+        ep_ = nullptr;
+    }
+
     [[nodiscard]] nixl_status_t
     checkConnection(const nixl_status_t status = NIXL_SUCCESS) const {
-        NIXL_ASSERT(conn_ != nullptr);
-        const nixl_status_t conn_status = conn_->getEp(getWorkerId())->checkTxState();
+        NIXL_ASSERT(ep_ != nullptr);
+        const nixl_status_t conn_status = ep_->checkTxState();
         return (conn_status != NIXL_SUCCESS) ? conn_status : status;
     }
 
+    // Keeps the connection (which owns the endpoint) alive for the lifetime
+    // of the request handle.
     ucx_connection_ptr_t conn_;
-    std::vector<nixlUcxReq> requests_;
+    // Resolved endpoint over which data and notifications are sent.
+    const nixlUcxEp *ep_ = nullptr;
+    absl::InlinedVector<nixlUcxReq, max_requests> requests_;
     nixlUcxWorker *worker_ = nullptr;
 };
 

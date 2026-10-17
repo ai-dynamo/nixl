@@ -187,9 +187,9 @@ telemetryLoader(void *handle, const std::string &plugin_path) {
         return nullptr;
     }
 
-    if (plugin->api_version != nixl_telemetry_plugin_api_version::V2) {
+    if (plugin->api_version != NIXL_TELEMETRY_PLUGIN_API_VERSION) {
         NIXL_ERROR << "Plugin API version mismatch for " << plugin_path << ": expected "
-                   << static_cast<unsigned int>(nixl_telemetry_plugin_api_version::V2) << ", got "
+                   << static_cast<unsigned int>(NIXL_TELEMETRY_PLUGIN_API_VERSION) << ", got "
                    << static_cast<unsigned int>(plugin->api_version);
         dlclose(handle);
         return nullptr;
@@ -846,6 +846,10 @@ void nixlPluginManager::registerBuiltinPlugins() {
 
 #ifdef STATIC_PLUGIN_OBJ
     NIXL_REGISTER_STATIC_PLUGIN(Backend, OBJ)
+#endif
+
+#ifdef STATIC_PLUGIN_REDIS
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, REDIS)
 #endif
 
 #ifdef STATIC_PLUGIN_MOONCAKE
