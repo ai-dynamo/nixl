@@ -94,4 +94,5 @@ else
 endif
 
 # Declare dependency interface
-libfabric_backend_interface = declare_dependency(link_with: libfabric_backend_lib)
+libfabric_backend_interface = declare_dependency(link_with: libfabric_backend_lib,
+    include_directories: include_directories('.'))
