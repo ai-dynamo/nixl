@@ -17,7 +17,6 @@
 
 #include "gpunetio_backend.h"
 #include "gpunetio_cuda_device_guard.h"
-#include "gpunetio_completion_status.h"
 #include "serdes/serdes.h"
 #include <algorithm>
 #include <arpa/inet.h>
@@ -35,6 +34,11 @@
 const char info_delimiter = '-';
 
 namespace {
+nixl_status_t
+completionStatus(const volatile uint32_t *error_flag) {
+    return *error_flag == 0 ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
+}
+
 template<typename unsignedType>
 inline bool
 parseUnsigned(std::string_view field, unsignedType &value) {
@@ -260,6 +264,11 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
     if (nstreams == 0) {
         nstreams = DOCA_POST_STREAM_NUM;
+    }
+
+    if (nstreams < 0 || nstreams > static_cast<int>(DOCA_POST_STREAM_NUM) ||
+        (nstreams & (nstreams - 1)) != 0) {
+        throw std::invalid_argument("cuda_streams must be a power of two up to four");
     }
 
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
@@ -633,7 +642,7 @@ nixlDocaEngine::~nixlDocaEngine() {
 
 nixl_status_t
 nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev, doca_gpu *gpu) {
-    const nixl_status_t completion_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+    const nixl_status_t completion_status = completionStatus(wait_exit_cpu);
     if (completion_status != NIXL_SUCCESS) {
         return completion_status;
     }
@@ -697,7 +706,6 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
         return NIXL_ERR_BACKEND;
     }
 
-    notif->send_pi = 0;
     notif->recv_pi = 0;
 
     // Ensure notif list is not added twice for the same peer
@@ -713,7 +721,7 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     std::atomic_thread_fence(std::memory_order_seq_cst);
     ((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu = notif_qp_gpu;
     while (((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu != nullptr) {
-        const nixl_status_t wait_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+        const nixl_status_t wait_status = completionStatus(wait_exit_cpu);
         if (wait_status != NIXL_SUCCESS) {
             return wait_status;
         }
@@ -1521,7 +1529,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     if (lcnt != rcnt || lcnt == 0) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    if ((lcnt + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE > DOCA_XFER_REQ_MAX) {
+    if ((lcnt - 1) / DOCA_XFER_REQ_SIZE + 1 > DOCA_XFER_REQ_MAX) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -1583,7 +1591,10 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         return false;
     };
 
-    treq->positions.reserve((lcnt + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
+    const uint32_t request_entries = (lcnt - 1) / DOCA_XFER_REQ_SIZE + 1;
+    treq->positions.reserve(request_entries);
+    treq->completion_ids.reserve(request_entries);
+    treq->completion_done.reserve(request_entries);
     if (!reserve_position()) {
         abandon_request();
         return NIXL_ERR_BACKEND;
@@ -1704,12 +1715,8 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         }
 
         auto &final_request = xferReqRingCpu[final_pos];
-        notif_addr =
-            (uintptr_t)nixl::gpunetio::reserveNotificationSlot(notif->send_pi,
-                                                               notif->elems_num,
-                                                               notif->send_addr,
-                                                               notif->elems_size,
-                                                               final_request.has_notif_msg_idx);
+        final_request.has_notif_msg_idx = final_pos;
+        notif_addr = (uintptr_t)(notif->send_addr + final_pos * notif->elems_size);
         final_request.msg_sz = newMsg.size() + 1;
         final_request.lbuf_notif = notif_addr;
         final_request.lkey_notif = notif->send_mr->get_lkey();
@@ -1745,126 +1752,148 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     if (cuda_device.status() != cudaSuccess) {
         return NIXL_ERR_BACKEND;
     }
-    const nixl_status_t completion_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+    const nixl_status_t completion_status = completionStatus(wait_exit_cpu);
     if (completion_status != NIXL_SUCCESS) {
         return completion_status;
     }
-    nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
-
+    (void)local;
+    (void)remote;
+    (void)remote_agent;
+    (void)opt_args;
+    if (handle == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     if (operation != NIXL_READ && operation != NIXL_WRITE) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    if (treq->postStatus != NIXL_SUCCESS) {
+    nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
+    const uint32_t request_entries = treq->positions.size();
+
+    const std::lock_guard lock(postLock_);
+    for (bool done : treq->completion_done) {
+        if (!done) {
+            return NIXL_ERR_REPOST_ACTIVE;
+        }
+    }
+    treq->completion_ids.clear();
+    treq->completion_done.clear();
+    const uint32_t next_completion = lastPostedReq.load();
+    uint32_t completion_start = next_completion;
+    uint32_t skipped = 0;
+    while (skipped < DOCA_MAX_COMPLETION_INFLIGHT && completionReserved[completion_start] &&
+           ((volatile docaXferCompletion *)completion_list_cpu)[completion_start].completed !=
+               DOCA_COMPLETION_PENDING) {
+        completion_start = (completion_start + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+        ++skipped;
+    }
+    if (skipped == DOCA_MAX_COMPLETION_INFLIGHT) {
+        treq->postStatus = NIXL_ERR_BACKEND;
         return treq->postStatus;
     }
-    treq->postedCount = 0;
-    treq->postStatus = NIXL_SUCCESS;
-    treq->completionState.store(nixlDocaBckndReq::completion_state::IN_PROGRESS,
-                                std::memory_order_release);
-    for (uint32_t idx : treq->positions) {
-        std::lock_guard<std::mutex> lock(postLock_);
-        const uint32_t completion_index =
-            lastPostedReq.load(std::memory_order_relaxed) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
-        xferReqRingCpu[idx].id = completion_index;
-        completion_list_cpu[completion_index].xferReqRingGpu = nullptr;
-        completion_list_cpu[completion_index].completed = 0;
-
-        const doca_error_t result = operation == NIXL_READ ?
-            doca_kernel_read(treq->stream, xferReqRingCpu[idx].qp_data, xferReqRingGpu, idx) :
-            doca_kernel_write(treq->stream, xferReqRingCpu[idx].qp_data, xferReqRingGpu, idx);
-        if (result != DOCA_SUCCESS) {
+    for (uint32_t entry = 0; entry < request_entries; ++entry) {
+        const uint32_t completion_id =
+            (completion_start + entry) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+        if (completionReserved[completion_id]) {
             treq->postStatus = NIXL_ERR_BACKEND;
-            break;
+            return treq->postStatus;
         }
-        completion_list_cpu[completion_index].xferReqRingGpu = xferReqRingGpu + idx;
-        lastPostedReq.fetch_add(1, std::memory_order_relaxed);
-        ++treq->postedCount;
     }
 
-    return treq->postedCount == 0 ? treq->postStatus : NIXL_IN_PROG;
+    treq->postStatus = NIXL_SUCCESS;
+    for (uint32_t entry = 0; entry < request_entries; ++entry) {
+        const uint32_t completion_id =
+            (completion_start + entry) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+        completionReserved[completion_id] = true;
+        const uint32_t ring_idx = treq->positions[entry];
+        xferReqRingCpu[ring_idx].id = completion_id;
+        completion_list_cpu[completion_id].xferReqRingGpu = xferReqRingGpu + ring_idx;
+        completion_list_cpu[completion_id].completed = DOCA_COMPLETION_PENDING;
+
+        doca_error_t launch_result = DOCA_SUCCESS;
+        switch (operation) {
+        case NIXL_READ:
+            launch_result = doca_kernel_read(
+                treq->stream, xferReqRingCpu[ring_idx].qp_data, xferReqRingGpu, ring_idx);
+            break;
+        case NIXL_WRITE:
+            launch_result = doca_kernel_write(
+                treq->stream, xferReqRingCpu[ring_idx].qp_data, xferReqRingGpu, ring_idx);
+            break;
+        }
+        if (launch_result != DOCA_SUCCESS) {
+            completion_list_cpu[completion_id].xferReqRingGpu = nullptr;
+            completion_list_cpu[completion_id].completed = DOCA_COMPLETION_ABORTED;
+            treq->completion_ids.push_back(completion_id);
+            treq->completion_done.push_back(false);
+            lastPostedReq.store((completion_id + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK);
+            treq->postStatus = NIXL_ERR_BACKEND;
+            return NIXL_IN_PROG;
+        }
+        treq->completion_ids.push_back(completion_id);
+        treq->completion_done.push_back(false);
+        lastPostedReq.store((completion_id + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK);
+    }
+
+    return NIXL_IN_PROG;
 }
 
 nixl_status_t
 nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
-    const nixl_status_t completion_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+    const nixl_status_t completion_status = completionStatus(wait_exit_cpu);
     if (completion_status != NIXL_SUCCESS) {
         return completion_status;
     }
+    if (handle == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    const std::lock_guard lock(postLock_);
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
-    uint32_t completion_index;
+    bool complete = true;
+    for (uint32_t entry = 0; entry < treq->completion_ids.size(); ++entry) {
+        if (treq->completion_done[entry]) {
+            continue;
+        }
+        const uint32_t ring_idx = treq->positions[entry];
+        const uint32_t completion_index = treq->completion_ids[entry];
 
-    auto state = treq->completionState.load(std::memory_order_acquire);
-    if (state == nixlDocaBckndReq::completion_state::COMPLETE) {
-        return treq->postStatus;
-    }
-    if (state == nixlDocaBckndReq::completion_state::COMPLETING) {
-        treq->completionState.wait(state, std::memory_order_acquire);
-        return treq->postStatus;
-    }
-
-    for (size_t i = 0; i < treq->postedCount; ++i) {
-        const uint32_t idx = treq->positions[i];
-        completion_index = xferReqRingCpu[idx].id & (DOCA_MAX_COMPLETION_INFLIGHT_MASK);
-
-        if (((volatile docaXferCompletion *)completion_list_cpu)[completion_index].completed != 1) {
-            return NIXL_IN_PROG;
+        if (((volatile docaXferCompletion *)completion_list_cpu)[completion_index].completed ==
+            DOCA_COMPLETION_RELEASED) {
+            *((volatile uint8_t *)&xferReqRingCpu[ring_idx].in_use) = 0;
+            completion_list_cpu[completion_index].xferReqRingGpu = nullptr;
+            completionReserved[completion_index] = false;
+            treq->completion_done[entry] = true;
+            NIXL_INFO << "DOCA checkXfer pos " << ring_idx << " compl_idx " << completion_index
+                      << " COMPLETED!\n";
+        } else {
+            complete = false;
         }
     }
 
-    retireRequest(treq);
-    return nixl::gpunetio::completionStatus(wait_exit_cpu) == NIXL_SUCCESS ? treq->postStatus :
-                                                                             NIXL_ERR_BACKEND;
-}
-
-void
-nixlDocaEngine::retireRequest(nixlDocaBckndReq *request) const {
-    auto state = request->completionState.load(std::memory_order_acquire);
-    if (state == nixlDocaBckndReq::completion_state::COMPLETE) {
-        return;
-    }
-    if (state == nixlDocaBckndReq::completion_state::COMPLETING) {
-        request->completionState.wait(state, std::memory_order_acquire);
-        return;
+    if (!complete) {
+        return NIXL_IN_PROG;
     }
 
-    auto expected = nixlDocaBckndReq::completion_state::IN_PROGRESS;
-    if (request->completionState.compare_exchange_strong(
-            expected, nixlDocaBckndReq::completion_state::COMPLETING, std::memory_order_acq_rel)) {
-        for (size_t i = 0; i < request->postedCount; ++i) {
-            const uint32_t idx = request->positions[i];
-            *((volatile uint8_t *)&xferReqRingCpu[idx].in_use) = 0;
-            NIXL_INFO << "DOCA retireRequest pos " << idx << " COMPLETED!";
-        }
-        request->completionState.store(nixlDocaBckndReq::completion_state::COMPLETE,
-                                       std::memory_order_release);
-        request->completionState.notify_all();
-    } else if (expected == nixlDocaBckndReq::completion_state::COMPLETING) {
-        request->completionState.wait(expected, std::memory_order_acquire);
-    }
+    return completionStatus(wait_exit_cpu) == NIXL_SUCCESS ? treq->postStatus : NIXL_ERR_BACKEND;
 }
 
 nixl_status_t
 nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
-    auto *treq = static_cast<nixlDocaBckndReq *>(handle);
-    if (treq->postedCount == 0) {
-        for (uint32_t idx : treq->positions) {
-            xferReqReserved_[idx].store(false, std::memory_order_release);
-        }
-        delete treq;
-        return NIXL_SUCCESS;
+    if (handle == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
     }
-
-    if (treq->completionState.load(std::memory_order_acquire) !=
-        nixlDocaBckndReq::completion_state::COMPLETE) {
-        nixl_status_t status = checkXfer(handle);
-        if (status == NIXL_IN_PROG) {
+    if (checkXfer(handle) == NIXL_IN_PROG) {
+        return NIXL_ERR_BACKEND;
+    }
+    const std::lock_guard lock(postLock_);
+    auto *treq = static_cast<nixlDocaBckndReq *>(handle);
+    for (bool done : treq->completion_done) {
+        if (!done) {
             return NIXL_ERR_BACKEND;
         }
     }
-
-    for (uint32_t idx : treq->positions) {
-        xferReqReserved_[idx].store(false, std::memory_order_release);
+    for (uint32_t pos : treq->positions) {
+        xferReqReserved_[pos].store(false, std::memory_order_release);
     }
     delete treq;
     return NIXL_SUCCESS;
@@ -1872,7 +1901,7 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
-    const nixl_status_t completion_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+    const nixl_status_t completion_status = completionStatus(wait_exit_cpu);
     if (completion_status != NIXL_SUCCESS) {
         return completion_status;
     }
@@ -1884,7 +1913,7 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
     // while getNotifs is running
     std::lock_guard<std::mutex> lock(notifLock);
     for (auto &notif : notifMap) {
-        const nixl_status_t preflight_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+        const nixl_status_t preflight_status = completionStatus(wait_exit_cpu);
         if (preflight_status != NIXL_SUCCESS) {
             return preflight_status;
         }
@@ -1900,12 +1929,12 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
         ((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu = notif_qp_gpu;
         std::atomic_thread_fence(std::memory_order_seq_cst);
         while (((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu != nullptr) {
-            const nixl_status_t wait_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+            const nixl_status_t wait_status = completionStatus(wait_exit_cpu);
             if (wait_status != NIXL_SUCCESS) {
                 return wait_status;
             }
         }
-        const nixl_status_t progress_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+        const nixl_status_t progress_status = completionStatus(wait_exit_cpu);
         if (progress_status != NIXL_SUCCESS) {
             return progress_status;
         }
@@ -1937,12 +1966,11 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
 
 nixl_status_t
 nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
-    const nixl_status_t completion_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+    const nixl_status_t completion_status = completionStatus(wait_exit_cpu);
     if (completion_status != NIXL_SUCCESS) {
         return completion_status;
     }
     struct nixlDocaNotif *notif;
-    uint32_t buf_idx;
     uintptr_t msg_buf;
 
     {
@@ -1976,25 +2004,25 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     }
 
     std::string newMsg = msg_tag_start + std::to_string((int)msg.size()) + msg_tag_end + msg;
-    buf_idx = (notif->send_pi.fetch_add(1) & (notif->elems_num - 1));
+    const std::lock_guard lock(notifSendLock);
+    const uint32_t buf_idx = DOCA_XFER_REQ_MAX;
     msg_buf = (uintptr_t)notif->send_addr + (buf_idx * notif->elems_size);
     memcpy((void *)msg_buf, newMsg.c_str(), newMsg.size());
 
     NIXL_DEBUG << "genNotif to " << remote_agent << " msg size " << std::to_string((int)msg.size())
                << " msg " << newMsg << " at " << buf_idx << " msg_buf " << msg_buf << "\n";
 
-    std::lock_guard<std::mutex> lock(notifSendLock);
     ((volatile struct docaNotif *)notif_send_cpu)->msg_buf = msg_buf;
     ((volatile struct docaNotif *)notif_send_cpu)->msg_lkey = notif->send_mr->get_lkey();
     ((volatile struct docaNotif *)notif_send_cpu)->msg_size = newMsg.size();
     std::atomic_thread_fence(std::memory_order_seq_cst);
     ((volatile struct docaNotif *)notif_send_cpu)->qp_gpu = notif_qp_gpu;
     while (((volatile struct docaNotif *)notif_send_cpu)->qp_gpu != nullptr) {
-        const nixl_status_t wait_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+        const nixl_status_t wait_status = completionStatus(wait_exit_cpu);
         if (wait_status != NIXL_SUCCESS) {
             return wait_status;
         }
     }
 
-    return nixl::gpunetio::completionStatus(wait_exit_cpu);
+    return completionStatus(wait_exit_cpu);
 }

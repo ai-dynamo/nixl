@@ -200,13 +200,24 @@ kernel_progress(struct docaXferCompletion *completion_list,
     if (blockIdx.x == 0) {
         while (DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0) {
             // Check xfer completion and send notif
-            // The host resets this slot (pointer to nullptr, completed to 0) in postXfer while we
-            // poll it: read the pointer once, so a null check and the later dereferences cannot
-            // see different values.
+            const uint8_t completion_state =
+                DOCA_GPUNETIO_VOLATILE(completion_list[index].completed);
+            if (completion_state == DOCA_COMPLETION_ABORTED) {
+                const uint32_t aborted_index = index;
+                index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+                DOCA_GPUNETIO_VOLATILE(completion_list[aborted_index].completed) =
+                    DOCA_COMPLETION_RELEASED;
+                continue;
+            }
+            if (completion_state == DOCA_COMPLETION_RELEASED) {
+                index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+                continue;
+            }
+            // Keep one pointer snapshot until the slot is released to the host.
             struct docaXferReqGpu *const req =
                 DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu);
             if (req != nullptr) {
-                if (DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) == 0 &&
+                if (completion_state == DOCA_COMPLETION_PENDING &&
                     DOCA_GPUNETIO_VOLATILE(req->in_use) == 1) {
                     // Wait for final CQE in block of iterations
                     int poll_status = nixl_gpunetio_dev_poll_one_cq_at<
@@ -259,8 +270,12 @@ kernel_progress(struct docaXferCompletion *completion_list,
 #endif
                         }
 
-                        DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) = 1;
+                        const uint32_t completed_index = index;
+                        DOCA_GPUNETIO_VOLATILE(completion_list[completed_index].completed) =
+                            DOCA_COMPLETION_DONE;
                         index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+                        DOCA_GPUNETIO_VOLATILE(completion_list[completed_index].completed) =
+                            DOCA_COMPLETION_RELEASED;
                     }
                 }
             }
