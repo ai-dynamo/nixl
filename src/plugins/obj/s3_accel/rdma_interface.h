@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef NIXL_OBJ_PLUGIN_S3_DELL_RDMA_INTERFACE_H
-#define NIXL_OBJ_PLUGIN_S3_DELL_RDMA_INTERFACE_H
+#ifndef NIXL_SRC_PLUGINS_OBJ_S3_ACCEL_RDMA_INTERFACE_H
+#define NIXL_SRC_PLUGINS_OBJ_S3_ACCEL_RDMA_INTERFACE_H
 
 #include <string_view>
 #include <cstdint>
@@ -13,11 +13,10 @@
 
 /**
  * Interface for S3 clients that support RDMA operations.
- * Only Dell-specific clients implement this interface.
  */
-class iDellS3RdmaClient {
+class iS3RdmaClient {
 public:
-    virtual ~iDellS3RdmaClient() = default;
+    virtual ~iS3RdmaClient() = default;
 
     /**
      * Asynchronously put an object to S3 using RDMA.
@@ -54,4 +53,4 @@ public:
                        get_object_callback_t callback) = 0;
 };
 
-#endif // NIXL_OBJ_PLUGIN_S3_DELL_RDMA_INTERFACE_H
+#endif // NIXL_SRC_PLUGINS_OBJ_S3_ACCEL_RDMA_INTERFACE_H
