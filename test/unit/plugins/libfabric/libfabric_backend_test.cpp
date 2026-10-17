@@ -86,7 +86,7 @@ main() {
                          "Re-establishment after unilateral teardown failed: the peer still "
                          "holds a live entry and did not answer the fresh handshake "
                          "(vllm#62144 deadlock)");
-    nixl_exit_on_failure(seconds(elapsed / 1000) < kMaxHandshakeWait,
+    nixl_exit_on_failure(milliseconds(elapsed) < kMaxHandshakeWait,
                          "Re-establishment degraded to near the 60 s handshake timeout");
 
     cout << "libfabric_backend_test OK: initial handshake " << initial_ms
