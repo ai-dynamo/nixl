@@ -342,9 +342,8 @@ private:
 
     // Send the per-peer handshake message to a peer, telling it we hold its endpoints in
     // our AV, so we can attribute its traffic. Sent when a connection is created, and as
-    // a reply to a peer's fresh (has_conn) handshake, e.g. one re-establishing its side.
-    // When we decide the peer may not have seen us, i.e. have never sent us a handshake,
-    // embed our own connection info in the message.
+    // a reply to a peer's fresh (has_conn) handshake. If the peer may not have seen us
+    // (i.e. never sent us a handshake), embed our own connection info in the message.
     nixl_status_t
     sendHandshakeTo(const nixlLibfabricConnection &conn) const;
 

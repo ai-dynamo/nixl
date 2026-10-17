@@ -223,10 +223,8 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
 
         if (has_conn) {
             // The sender has not received our handshake yet (see sendHandshakeTo), so it
-            // is establishing fresh: it rebuilt its state (we hold a connection to it),
-            // or both sides are racing first-time establishment. Reply so its wait
-            // completes; the reply goes to the addresses on record and carries
-            // has_conn=0, so it cannot loop.
+            // is establishing fresh: rebuilt its side, or both sides race first-time
+            // setup. The has_conn=0 reply cannot loop and goes to the addresses on record.
             if (peer_agent_name == localAgent) {
                 return; // we never handshake ourselves (mirrors loadRemoteConnInfo)
             }
@@ -241,8 +239,7 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
             nixl_status_t status = sendHandshakeTo(*conn);
             if (status != NIXL_SUCCESS) {
                 NIXL_WARN << "Replying to re-establishment handshake from '" << peer_agent_name
-                          << "' failed (non-fatal; re-triggers once the peer tears down and "
-                             "re-adds the connection): status="
+                          << "' failed (non-fatal; re-triggers on the peer's next re-add): status="
                           << status;
             }
         }
