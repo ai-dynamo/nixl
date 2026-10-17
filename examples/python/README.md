@@ -6,6 +6,7 @@ This directory contains Python examples for NIXL demonstrating multi-peer transf
 
 - `basic_two_peers.py`: Simple two-peer example showing registration, metadata exchange, a single READ, notification, verification, and teardown.
 - `expanded_two_peers.py`: Comprehensive example with parallel READs (prepped), parallel WRITEs (initialized), reposting READs, notification patterns, and minimal layout sharing.
+- `nixl_etcd_example.py`: Two agents exchange metadata through ETCD and verify a UCX transfer between CPU buffers. See [Running with ETCD](../../README.md#running-with-etcd) for setup and execution.
 - `nixl_gds_example.py`: GPU Direct Storage integration—buffer-to-file write and read-back verification.
 - `partial_md_example.py`: Shows handling of partial metadata updates and retrying initialize_xfer.
 - `query_mem_example.py`: Demonstrates querying backend memory/storage details for registered regions.
