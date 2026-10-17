@@ -220,5 +220,28 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
         NIXL_INFO << "Handshake stored: peer='" << peer_agent_name
                   << "' — it has our endpoints in its address vectors, so it can attribute "
                      "our transfers and we may start sending";
+
+        if (has_conn) {
+            // The sender has not received our handshake yet (see sendHandshakeTo);
+            // from a peer we already hold, that means it rebuilt its state. Our
+            // reply carries has_conn=0, so it cannot loop.
+            if (peer_agent_name == localAgent) {
+                return;
+            }
+            auto rail_it = conn->rail_remote_addr_list_.find(0);
+            if (rail_it == conn->rail_remote_addr_list_.end() || rail_it->second.empty()) {
+                NIXL_WARN << "Cannot reply to re-establishment handshake from '" << peer_agent_name
+                          << "': no remote rail addresses on record";
+                return;
+            }
+            NIXL_INFO << "Peer '" << peer_agent_name
+                      << "' re-established its side; replying so its handshake wait completes";
+            nixl_status_t status = sendHandshakeTo(*conn);
+            if (status != NIXL_SUCCESS) {
+                NIXL_WARN << "Replying to re-establishment handshake from '" << peer_agent_name
+                          << "' failed (non-fatal; the peer's retry re-triggers it): status="
+                          << status;
+            }
+        }
     }
 }
