@@ -19,6 +19,7 @@
 #include "gpunetio_cuda_device_guard.h"
 #include "gpunetio_completion_status.h"
 #include "serdes/serdes.h"
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cassert>
 #include <charconv>
@@ -1593,13 +1594,46 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         docaXferReqGpu staged_req{};
         staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
 
-        while (desc_offset < lcnt && staged_req.num < DOCA_XFER_REQ_SIZE) {
-            const uint32_t idx = staged_req.num;
-            const uint32_t desc_idx = desc_offset++;
+        uint32_t chunk_desc_count = 0;
+        while (desc_offset < lcnt && staged_req.num < DOCA_XFER_REQ_SIZE &&
+               (operation == NIXL_READ || chunk_desc_count < DOCA_XFER_REQ_SIZE)) {
+            const uint32_t desc_idx = desc_offset;
 
             lmd = (nixlDocaPrivateMetadata *)local[desc_idx].metadataP;
             rmd = (nixlDocaPublicMetadata *)remote[desc_idx].metadataP;
 
+            bool mergeable = false;
+            if (operation == NIXL_READ && staged_req.num > 0) {
+                const uint32_t prev = staged_req.num - 1;
+                const nixl::gpunetio::readRange previous{staged_req.lbuf[prev],
+                                                         staged_req.rbuf[prev],
+                                                         staged_req.size[prev],
+                                                         staged_req.lkey[prev],
+                                                         staged_req.rkey[prev]};
+                const nixl::gpunetio::readRange next{local[desc_idx].addr,
+                                                     remote[desc_idx].addr,
+                                                     local[desc_idx].len,
+                                                     lmd->mr->get_lkey(),
+                                                     rmd->mr->get_rkey()};
+                constexpr size_t max_read_size =
+                    std::min<size_t>(8ULL * 1024 * 1024, DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
+                mergeable = nixl::gpunetio::canCoalesceRead(previous, next, max_read_size);
+                if (mergeable) {
+                    staged_req.size[prev] += local[desc_idx].len;
+                }
+            }
+
+            // After the input boundary, consume only extensions of the current READ run.
+            if (chunk_desc_count >= DOCA_XFER_REQ_SIZE && !mergeable) {
+                break;
+            }
+            ++desc_offset;
+            ++chunk_desc_count;
+            if (mergeable) {
+                continue;
+            }
+
+            const uint32_t idx = staged_req.num;
             staged_req.lbuf[idx] = local[desc_idx].addr;
             staged_req.lkey[idx] = lmd->mr->get_lkey();
             staged_req.rbuf[idx] = remote[desc_idx].addr;
