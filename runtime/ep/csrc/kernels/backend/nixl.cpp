@@ -429,9 +429,8 @@ void NIXLEPContext::commit(cudaStream_t stream) {
     CUDA_RUNTIME_CHECK(cudaMemcpyAsync(probed.data(), p2p_ptrs_probe_device, num_rank_ids * sizeof(void*), cudaMemcpyDeviceToHost, stream));
     CUDA_RUNTIME_CHECK(cudaStreamSynchronize(stream));
 
-    // A connected same-domain peer without a pointer, or a rail peer with one (the declared domains split a CUDA IPC clique:
-    // UCX would then carry every scale-out put as plain stores of one thread, with no release before the arrival flags, see
-    // `rdma_put`): refuse with the active views untouched (the staged views stay staged)
+    // Require CUDA IPC pointers within each declared domain and RDMA lanes between domains.
+    // Refuse unsupported mappings with the active views untouched (the staged views stay staged).
     for (int rid = 0; rid < num_rank_ids; ++ rid) {
         const bool same_domain = rid / num_scaleup_ranks_per_domain == rank_id / num_scaleup_ranks_per_domain;
         if (connected[rid] and same_domain == (probed[rid] == nullptr)) {
@@ -441,7 +440,7 @@ void NIXLEPContext::commit(cudaStream_t stream) {
                   "unset; for an NVLink domain spanning several hosts, UCX_CUDA_IPC_ENABLE_MNNVL=yes with the IMEX "
                   "service running). The previous views stay active";
             else ss << "nixlGetPtr returned an NVLink pointer from rank " << rank_id << " to rail peer " << rid << ": the declared "
-                  "NVLink domains split one CUDA IPC clique, which the scale-out path (RDMA writes with arrival flags) does not "
+                  "NVLink domains split one CUDA IPC clique, which the scale-out path (RDMA writes and completion atomics) does not "
                   "support; declare the whole clique as one domain, or set UCX_CUDA_IPC_ENABLE_MNNVL=n when no domain spans hosts. The previous views stay active";
             throw EPException("NIXL", __FILE__, __LINE__, ss.str());
         }

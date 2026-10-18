@@ -122,6 +122,18 @@ struct NIXLTransport {
         EP_DEVICE_ASSERT(status == NIXL_IN_PROG and "nixlPut failed");
     }
 
+    // The completion word is outside the payload. Submit both operations on the same peer/channel,
+    // and let the atomic carry the caller's doorbell decision.
+    __device__ __forceinline__ void rdma_put_and_signal(void* dst_sym_ptr, const void* src_sym_ptr, const int& num_bytes,
+                                                       int64_t* signal_sym_ptr, const int& rid,
+                                                       const bool& ring_doorbell = true, const uint64_t& signal_value = 1) const {
+        rdma_put(dst_sym_ptr, src_sym_ptr, num_bytes, rid, false);
+        const nixlMemViewElem signal{ctx.remote_mvh, static_cast<size_t>(rid), get_offset(signal_sym_ptr)};
+        const auto status = nixlAtomicAdd<nixl_gpu_level_t::THREAD>(signal_value, signal, channel,
+                                                                  ring_doorbell ? 0 : nixl_gpu_flags::defer);
+        EP_DEVICE_ASSERT(status == NIXL_IN_PROG and "nixlAtomicAdd failed");
+    }
+
     // Release-add on a peer's word: a system-scope atomic over the mapping when the peer is reachable with stores,
     // an RDMA atomic otherwise (64-bit words only; visible only after this channel's earlier writes to the peer have
     // completed). Never mix this with plain stores into the same word

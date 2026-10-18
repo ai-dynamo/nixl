@@ -34,9 +34,6 @@ namespace nixl_ep_v2::elastic::adaptive {
 // Hard caps of the rank decomposition; they size the per-lane register arrays and the notify smem region
 using topology::kNumMaxScaleoutRanksCap;
 using topology::kNumMaxScaleupRanksCap;
-// Compile-time channel maxima: the block shape and the channel slack of the buffers follow the fixed grid.
-constexpr int kNumMaxChannelsPerSM = 8;
-constexpr int kNumMaxChannels = kNumMaxChannelsPerSM * topology::kNumMaxLaunchSMs;
 EP_STATIC_ASSERT(kNumMaxChannels <= nixl_ep_v2::kNumMaxChannels, "The workspace channel arrays are sized by `nixl_ep_v2::kNumMaxChannels`");
 
 class DispatchRuntime final : public jit::LaunchRuntime<DispatchRuntime> {
@@ -127,7 +124,7 @@ static int get_num_notify_smem_bytes(const int& num_max_ranks, const int& num_ma
     return math::align(num_max_ranks + num_max_expert_slots + topology::get_num_launch_sms() * kNumMaxChannelsPerSM * num_max_scaleout_ranks, kNumNotifyWarps * 32) * sizeof(int);
 }
 
-// DeepSeek's hybrid token layout plus the arrival flag and spill slots of the scale-out path (`with_flags`; direct mode ignores them)
+// Token payload layout
 // In bytes: the NVFP4 wire holds two codes per byte, so the hidden row has no element size
 static layout::TokenLayout get_dispatch_token_layout(
     const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk) {

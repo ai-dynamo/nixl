@@ -184,3 +184,11 @@ __device__ __forceinline__ EPTopology load(const EPTopology* ptr) {
 }
 
 }  // namespace nixl_ep_v2::elastic::topology
+
+namespace nixl_ep_v2::elastic::adaptive {
+
+// Compile-time channel maxima: the block shape and the channel slack of the buffers follow the fixed grid.
+constexpr int kNumMaxChannelsPerSM = 8;
+constexpr int kNumMaxChannels = kNumMaxChannelsPerSM * topology::kNumMaxLaunchSMs;
+
+}  // namespace nixl_ep_v2::elastic::adaptive

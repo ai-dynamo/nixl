@@ -430,9 +430,9 @@ __forceinline__ __device__ void st_relaxed_gpu(unsigned* ptr, const unsigned& va
     asm volatile("st.relaxed.gpu.global.u32 [%0], %1;" :: "l"(ptr), "r"(value) : "memory");
 }
 
-// GPU-scope relaxed store of a 64-bit word whose consumer is a thread of this GPU (the arrival flags of own-domain rows)
-__forceinline__ __device__ void st_relaxed_gpu(void* ptr, const int64_t value) {
-    asm volatile("st.relaxed.gpu.global.u64 [%0], %1;" :: "l"(ptr), "l"(value));
+// GPU-scope release store of a 64-bit word whose consumer is a thread of this GPU (own-domain completion counters)
+__forceinline__ __device__ void st_release_gpu(void* ptr, const int64_t value) {
+    asm volatile("st.release.gpu.global.u64 [%0], %1;" :: "l"(ptr), "l"(value) : "memory");
 }
 
 __forceinline__ __device__ void st_release_gpu(unsigned* ptr, const unsigned& value) {
@@ -458,6 +458,14 @@ __device__ __forceinline__ void warpgroup_reg_dealloc(){
 }
 
 /// General fences
+__device__ __forceinline__ void fence_acq_sys() {
+    asm volatile("fence.acquire.sys;" ::: "memory");
+}
+
+__device__ __forceinline__ void fence_acq_gpu() {
+    asm volatile("fence.acquire.gpu;" ::: "memory");
+}
+
 __device__ __forceinline__ void fence_acq_rel_sys() {
     asm volatile("fence.acq_rel.sys;" ::: "memory");
 }

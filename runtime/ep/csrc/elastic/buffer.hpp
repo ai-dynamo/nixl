@@ -44,7 +44,7 @@ namespace nixl_ep_v2::elastic {
 using namespace adaptive;
 class ElasticBuffer {
     // Buffer bytes (excludes workspace)
-    // Memory layout: [[Workspace] GPU buffer [zero-copy arena]]
+    // Memory layout: [[Workspace, including atomic token ready counters] GPU buffer [zero-copy arena]]
     int64_t num_buffer_bytes;
     void* buffer;
 
@@ -53,7 +53,6 @@ class ElasticBuffer {
     bool destroyed = false;
 
     // Workspace
-    // NOTES: for all workspace, we must keep them as zeros
     void *workspace;
     void *host_workspace, *mapped_host_workspace;
     std::shared_ptr<layout::WorkspaceLayout> workspace_layout_wo_expert;
@@ -552,9 +551,8 @@ public:
                 scaleout_send_buffer.get_num_bytes()};
     }
 
-    // How the token buffer is carved: the dispatch and the combine overlay their RECEIVE regions on `[0, num_shared_bytes)`
-    // (sized for the larger of the two); the scale-out SEND buffers of the two kernels sit at the END of the GPU buffer, each
-    // in a region of its own, because the NIC keeps reading the sources of RDMA puts after the kernel that issued them has ended
+    // Dispatch and combine overlay their RECEIVE regions on `[0, num_shared_bytes)`, sized for the larger one.
+    // Their separate SEND regions sit at the end of the token arena.
     static std::tuple<int64_t, int64_t, int64_t> get_buffer_arena(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
                                                                   const bool& allow_multiple_reduction,
                                                                   const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
@@ -579,7 +577,7 @@ public:
         // NOTES: there are lots of `kNumTopk <= 32` restrictions, so we use 32 to calculate token size
         num_topk = num_topk == 0 ? 32 : num_topk;
 
-        // Shared receive regions plus the two send buffers (see `get_buffer_arena`), aligned to 2 MB
+        // Shared receive regions and two send buffers, aligned to 2 MB
         const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena(
             num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
         return math::align(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes, kNumAlignmentBytes);
@@ -1311,6 +1309,7 @@ public:
                                        get_topology_ptr(),
                                        jit::device_runtime->get_num_sms(),
                                        jit::device_runtime->get_num_smem_bytes(),
+                                       *adaptive_num_channels_per_sm,
                                        use_expanded_layout, allow_multiple_reduction,
                                        acquire_flags,
                                        comm_stream);

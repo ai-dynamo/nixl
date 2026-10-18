@@ -363,9 +363,10 @@ class ElasticBuffer:
                 Store are used, no collective), or `None` with `rank_idx`, `num_ranks`, `store` and `bootstrap_id`.
             num_bytes: the total buffer size in bytes (excludes workspace), if set, overrides MoE-based calculation.
                 Must be aligned to 2 MB (``get_elastic_buffer_alignment()``).
-            num_max_tokens_per_rank: the maximum number of tokens per rank, used for buffer size calculation.
+            num_max_tokens_per_rank: used for buffer sizing when `num_bytes` is omitted and as the dispatch default.
+                If left at 0 with explicit `num_bytes`, supply it when calling dispatch.
             hidden: the hidden dimension of each token.
-            num_topk: the number of top-k experts per token.
+            num_topk: the number of top-k experts per token for sizing payload capacity; 0 reserves for 32.
             use_fp8_dispatch: whether to enable FP8 casting, with this, the received data will be a tuple of FP8 tensor and scaling factors.
             num_experts_per_rank: the fixed number of expert slots on every rank, in every live world: the expert count
                 of a world is its rank count times this, and slot `e` belongs to rank `e // num_experts_per_rank` of the
@@ -556,15 +557,6 @@ class ElasticBuffer:
 
         # Store default values
         self.num_max_tokens_per_rank = num_max_tokens_per_rank
-
-        # The arrival flags of the RDMA records (`TokenLayout`) need strict PCIe ordering on the receiving region and one
-        # flag per packet, so the path MTU must be the 4096 bytes of `kNumChunkBytes` (UCX would otherwise take the port's)
-        assert (
-            os.environ.setdefault("UCX_IB_PCI_RELAXED_ORDERING", "n") == "n"
-        ), "UCX_IB_PCI_RELAXED_ORDERING must be n for the arrival flags of the RDMA records"
-        assert (
-            os.environ.setdefault("UCX_IB_PATH_MTU", "4096") == "4096"
-        ), "UCX_IB_PATH_MTU must be 4096: an RDMA record carries one arrival flag per 4096-byte packet"
 
         # UCX only flags a closed UD endpoint (the wire-up lane between hosts) as disconnected and keeps it in the
         # interface's connection-match table for UCX_UD_LINGER_TIMEOUT (UCX default 5 minutes); a connection request

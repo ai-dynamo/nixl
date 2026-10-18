@@ -102,7 +102,8 @@ static void launch_combine(void* x,
                            int* psum_num_recv_tokens_per_scaleup_rank,
                            int* token_metadata_at_forward,
                            int* channel_linked_list,
-                           void* buffer, void* send_buffer, void* workspace,
+                           void* buffer, void* send_buffer,
+                           void* workspace,
                            const topology::EPTopology* topology,
                            const int& num_reduced_tokens, const int& num_max_tokens_per_rank,
                            const int& hidden,
@@ -158,6 +159,7 @@ public:
     struct Args {
         // Templated arguments
         bool use_expanded_layout, allow_multiple_reduction;
+        int num_channels_per_sm;
         int hidden;
         int num_experts_per_rank, num_topk;
         int64_t num_timeout_cycles;
@@ -185,11 +187,12 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",                        args.use_expanded_layout, args.allow_multiple_reduction,
                            args.launch_args.grid_dim.first,
                            args.launch_args.num_threads / 32,
+                           args.num_channels_per_sm,
                            args.hidden,
                            args.num_experts_per_rank, args.num_topk,
                            args.num_timeout_cycles, args.acquire_flags);
@@ -215,16 +218,18 @@ static void launch_combine_reduce_epilogue(void* combined_x,
                                            const int& hidden,
                                            const int& num_experts_per_rank, const int& num_topk,
                                            const int64_t& num_timeout_cycles,
-                                           void* buffer, void* workspace,
+                                           void* buffer,
+                                           void* workspace,
                                            void* bias_0, void* bias_1,
                                            const topology::EPTopology* topology,
                                            const int& num_sms, const int& num_smem_bytes,
+                                           const int& num_channels_per_sm,
                                            const bool& use_expanded_layout, const bool& allow_multiple_reduction,
                                            const bool& acquire_flags,
                                            const at::cuda::CUDAStream& stream) {
     // Maximize shared memory utilization
     // Too many warps may cause performance degrade, so we limit into 1024
-    const auto token_layout = layout::TokenLayout(hidden * sizeof(nv_bfloat16), 0, 0, false, nullptr, /* with_flags */ false);
+    const auto token_layout = layout::TokenLayout(hidden * sizeof(nv_bfloat16), 0, 0, false);
     const auto num_warps = std::min<int>(num_smem_bytes / token_layout.get_num_bytes<false>(), 32);
     const auto num_threads = num_warps * 32;
 
@@ -232,6 +237,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
     const CombineReduceEpilogueRuntime::Args args = {
         .use_expanded_layout = use_expanded_layout,
         .allow_multiple_reduction = allow_multiple_reduction,
+        .num_channels_per_sm = num_channels_per_sm,
         .hidden = hidden,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk,
         .num_timeout_cycles = num_timeout_cycles,

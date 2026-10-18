@@ -35,7 +35,7 @@ namespace nixl_ep_v2::elastic::adaptive {
 
 // Reduce epilogue of the adaptive combine: given the buffer base, it derives the rows to reduce from the topology descriptor (`EPTopology`)
 template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
-          int kNumSMs, int kNumWarps,
+          int kNumSMs, int kNumWarps, int kNumChannelsPerSM,
           int kHidden,
           int kNumExpertsPerRank, int kNumTopk,
           int64_t kNumTimeoutCycles,
@@ -46,7 +46,8 @@ __global__ void __launch_bounds__(kNumThreads, 1)
 combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
                              float* combined_topk_weights,
                              topk_idx_t* combined_topk_idx,
-                             void* buffer, void* workspace,
+                             void* buffer,
+                             void* workspace,
                              void* bias_0, void* bias_1,
                              const int num_combined_tokens,
                              const topology::EPTopology* topology_ptr,
@@ -55,6 +56,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     const auto topo = topology::load(topology_ptr);
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
     const int num_ranks = num_scaleout_ranks * num_scaleup_ranks;
+    const int num_channels = kNumChannelsPerSM * topo.num_active_sms;
     // Fixed expert slots per rank: the live expert count follows the live rank count
     const int num_experts_per_rank = kNumExpertsPerRank;
     const bool use_scaleup_rank_layout = kAllowMultipleReduction and num_scaleup_ranks <= kNumTopk;
@@ -86,7 +88,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
         comm_token_layout, num_tokens_in_layout, num_max_tokens_per_rank, scaleup_buffer.get_buffer_end_ptr());
 
     // Store buffers
-    const auto output_token_layout = layout::TokenLayout(kNumHiddenBytes, 0, 0, false, nullptr, /* with_flags */ false);
+    const auto output_token_layout = layout::TokenLayout(kNumHiddenBytes, 0, 0, false);
     const auto output_buffer = layout::BufferLayout<false>(output_token_layout, 1, num_combined_tokens, combined_x);
     const auto tma_buffer = layout::BufferLayout<false>(output_token_layout, kNumWarps, 1, smem)
         .get_rank_buffer(warp_idx).get_token_buffer(0);
@@ -138,8 +140,8 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
 
     // Hidden-dimension chunking (direct only): a work item is one (token, chunk) pair, `kChunkVec` vectors wide, so a token's row
     // is reduced by `kNumChunks` warps on different SMs. Bit-exact with the one-warp row: the slot order and the bypass choice depend
-    // only on the token's indices, and every chunk reduces its own disjoint slice. Hybrid keeps one warp per token (its flag wait,
-    // spill restore and flag clear are per row)
+    // only on the token's indices, and every chunk reduces its own disjoint slice. Hybrid keeps one warp per token (its wait on the
+    // producing channel's progress word is per row)
     using combine_vec_t = typename CombineVecTraits<kNumHiddenBytes>::vec_t;
     constexpr int kHiddenVec = kNumHiddenBytes / sizeof(combine_vec_t);
     constexpr int kUnrollFactor = get_max_unroll_factor<kHiddenVec, 4>();
@@ -163,27 +165,35 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     const int num_bytes_per_chunk = is_small_batch ? kNumBytesPerSmallBatchChunk : kNumBytesPerChunk;
     const int num_work_items = num_combined_tokens * num_items_per_token;
 
+    // The token of a work item: direct items run upward (`num_items_per_token` per token); hybrid rows run from the last token
+    // down, the order in which the producing channels' progress words complete (they descend from the highest token index)
+    const auto item_token_idx = [&](const int& item_idx) {
+        return is_direct ? item_idx / num_items_per_token : num_combined_tokens - 1 - item_idx;
+    };
+
     // The warp's first token, preprocessed before the dependency wait (a warp-uniform condition)
     int cached_token_idx = -1;
     TokenIndices token_indices = {-1, 0u};
     if (global_warp_idx < num_work_items) {
-        cached_token_idx = global_warp_idx / num_items_per_token;
+        cached_token_idx = item_token_idx(global_warp_idx);
         token_indices = preprocess_token(cached_token_idx);
     }
 
-    // Will block until the main combine kernel has finished and all data are visible
+    // Wait for the main combine and its local stores; the remote result batches are polled below (hybrid)
     // NOTES: PDL is used, please do not use `__ldg`
     cudaGridDependencySynchronize();
 
+    const auto workspace_layout = layout::WorkspaceLayout(workspace, num_scaleout_ranks, num_scaleup_ranks, num_ranks * kNumExpertsPerRank);
+    const auto ready_atomic_buff = workspace_layout.get_combine_ready_atomic_buff();
+
     // Profile slots 16/17: epilogue work start (block 0) / last block done
 #ifdef EP_ADAPTIVE_PROFILE
-    const auto profile_layout = layout::WorkspaceLayout(workspace, num_scaleout_ranks, num_scaleup_ranks, num_ranks * kNumExpertsPerRank);
-    EP_PROFILE_STAMP(profile_layout, 16);
+    EP_PROFILE_STAMP(workspace_layout, 16);
 #endif
 
     // Read from buffers and do reduction
     for (int item_idx = global_warp_idx; item_idx < num_work_items; item_idx += kNumWarps * kNumSMs) {
-        const int token_idx = item_idx / num_items_per_token;
+        const int token_idx = item_token_idx(item_idx);
         const int chunk_begin = item_idx % num_items_per_token;   // the item's chunk (direct); 0 for hybrid's whole row
         const bool is_weights_item = is_small_batch and chunk_begin == kNumSmallBatchChunks;
         // Preprocess all indices (the first token was done above)
@@ -194,35 +204,32 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
         const int stored_dst_rank_idx = token_indices.stored_dst_rank_idx;
         const auto reduce_valid_mask = token_indices.reduce_valid_mask;
 
-        // Hybrid: the rows came over the scale-out path with their arrival flags inside (see `TokenLayout`); lane `l` waits
-        // for the row it reduces, restores the spills, and zeroes the flags once the row is consumed (below)
-        const bool lane_has_row = not is_direct and ((reduce_valid_mask >> lane_idx) & 1);
-        const auto lane_row = comm_buffer.get_rank_buffer(lane_has_row ? (use_rank_layout ? stored_dst_rank_idx : lane_idx) : 0)
-                                         .get_token_buffer(token_idx);
-        if (lane_has_row) {
-            int pending_flag_idx = lane_row.num_spill_slots;
-            comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
-                if (lane_row.template are_flags_set<kAcquireFlags>(pending_flag_idx))
-                    return true;
-                if (is_last_check) {
-                    printf("NIXL EP V2 adaptive combine (reduce epilogue) timeout, scale-out: %d/%d, scale-up: %d/%d, "
-                           "token: %d, row: %d\n",
-                           topo.scaleout_rank_idx, num_scaleout_ranks, topo.scaleup_rank_idx, num_scaleup_ranks,
-                           token_idx, use_rank_layout ? stored_dst_rank_idx : lane_idx);
-                }
-                return false;
-            });
-            if constexpr (not kAcquireFlags) {
-                // The flags were polled with relaxed loads: the acquire fence before the row is read (the review tip's protocol). The reads
-                // that follow use `ld.global.nc`, safe because no L1 line of the row can predate its arrival: the polls bypass L1, the data
-                // loads carry `L1::no_allocate`, the one plain load below (the spill slot) lies inside the landed record
-                ptx::fence_acq_rel_sys();
+        // One lane per remote producing domain waits for this token's cumulative channel watermark.
+        if (not is_direct) {
+            const bool lane_polls = ptx::deduplicate(stored_dst_rank_idx, lane_idx) and
+                                    stored_dst_rank_idx >= 0 and stored_dst_rank_idx != topo.scaleout_rank_idx;
+            if (lane_polls) {
+                const int channel_idx = token_idx % num_channels;
+                const auto completion_ptr = ready_atomic_buff + channel_idx * num_scaleout_ranks + stored_dst_rank_idx;
+                comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
+                    const auto signal = kAcquireFlags ? ptx::ld_acquire_sys<int64_t>(completion_ptr) :
+                                                       ptx::ld_relaxed_sys<int64_t>(completion_ptr);
+                    if (signal <= token_idx) {
+                        if constexpr (not kAcquireFlags)
+                            ptx::fence_acq_sys();
+                        return true;
+                    }
+                    if (is_last_check) {
+                        printf("NIXL EP V2 combine (reduce epilogue) timeout, scale-out: %d/%d, scale-up: %d/%d, "
+                               "channel: %d, source domain: %d, token: %d, signal: %lld\n",
+                               topo.scaleout_rank_idx, num_scaleout_ranks, topo.scaleup_rank_idx, num_scaleup_ranks,
+                               channel_idx, stored_dst_rank_idx, token_idx, static_cast<long long>(signal));
+                    }
+                    return false;
+                });
             }
-            // With acquire polls (`acquire_flags`) no fence is needed: this lane's plain accesses (the spill slots here, the top-k weight
-            // below) follow the acquire, the other lanes' reads follow the `__syncwarp`
-            lane_row.restore_spills();
+            __syncwarp();
         }
-        __syncwarp();
 
         // Iterate over per-hidden-chunk stage
         // The number of rows to gather is a runtime value; pick the instantiation DeepSeek's kernels would use
@@ -303,17 +310,12 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
             }
             __syncwarp();
         }
-
-        // The rows are consumed: their flag words back to zero for the next use
-        if (lane_has_row)
-            lane_row.clear_flags();
-        __syncwarp();
     }
 
 #ifdef EP_ADAPTIVE_PROFILE
     ptx::tma_store_wait();
     __syncthreads();
-    EP_PROFILE_STAMP_LAST(profile_layout, 17);
+    EP_PROFILE_STAMP_LAST(workspace_layout, 17);
 #endif
 }
 

@@ -240,13 +240,19 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
     // Live positions only: a masked position never published a tail (its word is zero and would alias channel 0's first entry)
     if (do_create_linked_list) {
         const auto workspace_layout = layout::WorkspaceLayout(workspace, num_scaleout_ranks, num_scaleup_ranks, num_experts);
+        const int list_capacity = num_scaleout_ranks * math::ceil_div(num_max_tokens_per_rank, num_channels);
         for (int i = global_warp_idx; i < num_channels; i += kNumSMs * kNumWarps) {
             for (int k = lane_idx; k < num_scaleup_ranks; k += 32) {
                 if (not topo.is_scaleup_live(k))
                     continue;
-                channel_linked_list[
-                    *workspace_layout.get_channel_scaleup_tail_ptr(i, k)
-                ] = -1;
+                const int tail_idx = *workspace_layout.get_channel_scaleup_tail_ptr(i, k);
+                const int list_base = i * (list_capacity + 1) * num_scaleup_ranks + k;
+                const int list_length = (tail_idx - list_base) / num_scaleup_ranks;
+                channel_linked_list[tail_idx] = -1;
+                // Store the length as -(length + 1), so sorting distinguishes list-end metadata from token indices.
+                // The +1 keeps empty lists negative; the reader accounts for it with last_index = -stored_value - 2.
+                // A full list uses this entry as its end marker.
+                channel_linked_list[list_base + list_capacity * num_scaleup_ranks] = -list_length - 1;
 
                 // Clean for combine usages
                 *workspace_layout.get_channel_scaleup_tail_ptr(i, k) = 0;

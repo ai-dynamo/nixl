@@ -49,8 +49,7 @@ template <bool kDoCPUSync, bool kZeroCopy,
           int kNumScaleupRanksPerLane = math::constexpr_ceil_div(kNumMaxScaleupRanks, 32),
           int kNumScaleoutWarps = kNumChannelsPerSM,
           int kNumForwardWarps = kNumChannelsPerSM,
-          int kScaleoutUpdateInterval = 6,
-          int kNumSlotsPerForwardChunk = kScaleoutUpdateInterval,
+          int kScaleoutUpdateInterval = 3,
           int kNumMaxRanks = kNumMaxScaleoutRanks * kNumMaxScaleupRanks,
           int kNumNotifyThreads = kNumNotifyWarps * 32,
           int kNumScaleoutSendThreads = kNumScaleoutWarps * 32,
@@ -140,6 +139,7 @@ adaptive_dispatch_impl(
 
     // Workspaces
     const auto workspace_layout = layout::WorkspaceLayout(workspace, num_scaleout_ranks, num_scaleup_ranks, num_experts);
+    const auto ready_atomic_buff = workspace_layout.get_dispatch_ready_atomic_buff();
     const auto host_workspace_layout = layout::WorkspaceLayout(mapped_host_workspace, num_scaleout_ranks, num_scaleup_ranks, num_experts);
     EP_PROFILE_STAMP(workspace_layout, 0);
 
@@ -1125,9 +1125,8 @@ adaptive_dispatch_impl(
         const int channel_idx = sm_idx * kNumChannelsPerSM + scaleout_warp_idx;
         scaleout_recv_buffer = scaleout_recv_buffer.get_rank_buffer(scaleout_rank_idx);
         scaleout_recv_buffer = scaleout_recv_buffer.get_channel_buffer(channel_idx, num_max_tokens_per_channel);
-
         // How many records this channel sends to each domain (lane `d`): the channel's last put to a domain rings the
-        // doorbell of its deferred puts (no tail travels; the receiver learns the count from the notify exchange)
+        // doorbell of its deferred puts (the receiver learns the final count from the notify exchange)
         int stored_num_records_to_domain = 0;
         for (int token_idx = channel_idx; token_idx < num_tokens; token_idx += num_channels) {
             const auto dst_expert_idx = lane_idx < kNumTopk ? static_cast<int>(__ldg(topk_idx + token_idx * kNumTopk + lane_idx)) : -1;
@@ -1173,6 +1172,9 @@ adaptive_dispatch_impl(
                 __syncwarp();
             }
         };
+
+        auto* chnl_atomic_ready_token_counter = ready_atomic_buff +
+            channel_idx * num_scaleout_ranks + scaleout_rank_idx;
 
         // Iterate all tokens
         preload_next_token(channel_idx);
@@ -1220,12 +1222,11 @@ adaptive_dispatch_impl(
             // The doorbell rings every `kScaleoutUpdateInterval` records to a domain and on the channel's last record to it
             const bool ring_now = stored_dst_slot_idx + 1 == num_records_to_dst or (stored_dst_slot_idx + 1) % kScaleoutUpdateInterval == 0;
 
-            // Wait TMA arrival, stage the flags (spills, flag words, TMA proxy fence), store into the send buffer when any lane goes by RDMA
+            // Wait TMA arrival and store into the send buffer when any lane goes by RDMA
             EP_PROFILE_ACCUM_BEGIN(profile_t_ldst);
             if (ptx::elect_one_sync()) {
                 ptx::mbarrier_arrive_and_set_tx(mbarrier_ptr, kNumHiddenBytes);
                 ptx::mbarrier_wait_and_flip_phase(mbarrier_ptr, phase);
-                tma_buffer.spill_and_set_flags();
                 ptx::tma_store_fence();
             }
             __syncwarp();
@@ -1240,23 +1241,20 @@ adaptive_dispatch_impl(
             EP_PROFILE_ACCUM_END(workspace_layout, 33, profile_t_ldst, profile_sender);
 
             EP_PROFILE_ACCUM_BEGIN(profile_t_own);
-            // Own-domain rows: the record without its flag slots (a bulk store is not ordered internally), the flags after the stores completed
+            // Own-domain rows: store the payload before publishing completion
             // Local rank can be bypassed
             if (stored_dst_slot_idx >= 0 and stored_dst_scaleout_rank_idx == scaleout_rank_idx) {
-                tma_buffer.tma_store_skipping_flags(scaleout_recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr());
+                ptx::tma_store_1d(scaleout_recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+                                  tma_buffer.get_base_ptr(), tma_buffer.get_num_bytes<false>());
             }
             ptx::tma_store_commit();
             ptx::tma_store_wait();
             __syncwarp();
             EP_PROFILE_ACCUM_END(workspace_layout, 34, profile_t_own, profile_sender);
             EP_PROFILE_ACCUM_BEGIN(profile_t_rel);
-            // Flag release once per doorbell interval (the RDMA doorbell's rule): the rows stored since the previous release
-            // have consecutive slots and completed stores, so ONE GPU-scope fence orders them all before the flag stores
+            // Publish the cumulative count after all local payload stores in the batch completed
             if (stored_dst_slot_idx >= 0 and stored_dst_scaleout_rank_idx == scaleout_rank_idx and ring_now) {
-                ptx::fence_acq_rel_gpu();
-                const int first_slot_idx = stored_dst_slot_idx - stored_dst_slot_idx % kScaleoutUpdateInterval;
-                for (int slot_idx = first_slot_idx; slot_idx <= stored_dst_slot_idx; ++ slot_idx)
-                    tma_buffer.store_flags(scaleout_recv_buffer.get_token_buffer(slot_idx).get_base_ptr());
+                ptx::st_release_gpu(chnl_atomic_ready_token_counter, int64_t(stored_dst_slot_idx + 1));
             }
             __syncwarp();
             EP_PROFILE_ACCUM_END(workspace_layout, 35, profile_t_rel, profile_sender);
@@ -1267,12 +1265,21 @@ adaptive_dispatch_impl(
             // Issue RDMA requests under the doorbell rule above (the NIC drains while the channel keeps sending)
             EP_PROFILE_ACCUM_BEGIN(profile_t_put);
             if (needs_rdma) {
-                transport.rdma_put(
+                if (ring_now) {
+                    transport.rdma_put_and_signal(
                         scaleout_recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
                         scaleout_send_buffer.get_token_buffer(token_idx).get_base_ptr(),
                         tma_buffer.get_num_bytes<false>(),
+                        chnl_atomic_ready_token_counter,
                         scaleout_peer_id(stored_dst_scaleout_rank_idx),
-                        ring_now);
+                        true, stored_dst_slot_idx % kScaleoutUpdateInterval + 1);
+                } else {
+                    transport.rdma_put(
+                        scaleout_recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(),
+                        scaleout_send_buffer.get_token_buffer(token_idx).get_base_ptr(),
+                        tma_buffer.get_num_bytes<false>(),
+                        scaleout_peer_id(stored_dst_scaleout_rank_idx), false);
+                }
             }
             __syncwarp();
 #ifdef EP_ADAPTIVE_PROFILE
@@ -1307,20 +1314,20 @@ adaptive_dispatch_impl(
         };
 
         // Forward tokens from scale-out ranks. Lane `d` tracks domain `d`: the record count from the notify exchange (-1 until
-        // it arrived) and how many it has consumed; a record is complete when every flag inside it is set (see `TokenLayout`)
+        // it arrived) and how many it has consumed; one completion word per [channel][source domain] holds the cumulative ready count
         int num_tokens_processed = 0;
         int stored_scaleup_send_counters[kNumScaleupRanksPerLane] = {};
         const bool lane_tracks_live_domain = lane_idx < num_scaleout_ranks and topo.is_scaleout_live(lane_idx);
         const auto count_word_ptr = workspace_layout.get_scaleout_expert_count_ptr<false>(
             lane_tracks_live_domain ? lane_idx : 0, num_experts_per_scaleout + num_scaleup_ranks + channel_idx);
-        int stored_num_records = lane_tracks_live_domain ? -1 : 0, stored_num_consumed = 0;
-        const auto lane_recv_buffer = scaleout_recv_buffer.get_rank_buffer(lane_tracks_live_domain ? lane_idx : 0);
+        int stored_num_records = lane_tracks_live_domain ? -1 : 0, stored_num_consumed = 0, stored_num_ready = 0;
+        auto* lane_ready_atomic_buff = ready_atomic_buff +
+            channel_idx * num_scaleout_ranks + (lane_tracks_live_domain ? lane_idx : 0);
         int recv_scaleout_rank_idx = channel_idx % num_scaleout_ranks;
         uint32_t wip_mask;
         while ((wip_mask = ptx::gather(stored_num_records < 0 or stored_num_consumed < stored_num_records))) {
-            // Wait until some pending domain has its next record complete (lane `d` polls domain `d` and its count word)
+            // Wait until some pending domain has its next batch complete (lane `d` polls domain `d` and its count word)
             uint32_t ready_mask = 0;
-            int pending_flag_idx = token_layout.num_spill_slots;
             comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
                 bool ready = false;
                 if ((wip_mask >> lane_idx) & 1) {
@@ -1329,9 +1336,12 @@ adaptive_dispatch_impl(
                         if (math::is_decoded_positive_ready(decoded))
                             stored_num_records = decoded, *count_word_ptr = 0;
                     }
-                    ready = (stored_num_records < 0 or stored_num_consumed < stored_num_records) and
-                            stored_num_consumed < num_max_tokens_per_channel and
-                            lane_recv_buffer.get_token_buffer(stored_num_consumed).template are_flags_set<kAcquireFlags>(pending_flag_idx);
+                    if ((stored_num_records < 0 or stored_num_consumed < stored_num_records) and
+                        stored_num_consumed < num_max_tokens_per_channel) {
+                        stored_num_ready = static_cast<int>(kAcquireFlags ? ptx::ld_acquire_sys<int64_t>(lane_ready_atomic_buff) :
+                                                                          ptx::ld_relaxed_sys<int64_t>(lane_ready_atomic_buff));
+                        ready = stored_num_ready > stored_num_consumed;
+                    }
                 }
                 ready_mask = ptx::gather(ready);
                 wip_mask = ptx::gather(stored_num_records < 0 or stored_num_consumed < stored_num_records);
@@ -1353,30 +1363,25 @@ adaptive_dispatch_impl(
             const auto offset = (recv_scaleout_rank_idx + 1) % num_scaleout_ranks;
             const auto hi_mask = (ready_mask >> offset) << offset;
             recv_scaleout_rank_idx = hi_mask ? ptx::ffs(hi_mask) : ptx::ffs(ready_mask);
-            pending_flag_idx = token_layout.num_spill_slots;
 
-            // Process the run of complete records at the head of that domain's queue, up to one chunk (lane `j` probes slot `start + j`)
+            // Process at most one batch, even if several batches have already arrived
             const auto recv_buffer = scaleout_recv_buffer.get_rank_buffer(recv_scaleout_rank_idx);
             const auto start_slot_idx = ptx::exchange(stored_num_consumed, recv_scaleout_rank_idx);
-            const auto num_records = ptx::exchange(stored_num_records, recv_scaleout_rank_idx);
-            const auto probe_slot_idx = start_slot_idx + lane_idx;
-            const bool slot_complete = lane_idx < kNumSlotsPerForwardChunk and probe_slot_idx < num_max_tokens_per_channel and
-                                       (num_records < 0 or probe_slot_idx < num_records) and
-                                       (lane_idx == 0 or recv_buffer.get_token_buffer(probe_slot_idx).template are_flags_set<kAcquireFlags>(pending_flag_idx));
-            const auto end_slot_idx = start_slot_idx + ptx::ffs(~ptx::gather(slot_complete));
+            const auto end_slot_idx = min(start_slot_idx + kScaleoutUpdateInterval,
+                                         ptx::exchange(stored_num_ready, recv_scaleout_rank_idx));
             if (lane_idx == recv_scaleout_rank_idx)
                 stored_num_consumed = end_slot_idx;
 
             if constexpr (kAcquireFlags) {
-                // The flags were read with acquire loads; the bulk load runs in the async proxy, so only the proxy fence is needed
+                // The counter was read with an acquire load; the bulk load runs in the async proxy, so only the proxy fence is needed
                 ptx::fence_proxy_async_global();
             } else {
-                // The flags were observed with relaxed loads by the probing lanes: the acquire fence runs in every lane, GPU scope for our
-                // own domain's records, system scope for a NIC's or another GPU's (the review tip's protocol; `acquire_flags` replaces it)
+                // The counter was observed with a relaxed load by its domain's lane: the acquire fence runs in every lane,
+                // GPU scope for our own domain's records, system scope for incoming RDMA records
                 if (recv_scaleout_rank_idx == scaleout_rank_idx) {
-                    ptx::fence_acq_rel_gpu();
+                    ptx::fence_acq_gpu();
                 } else {
-                    ptx::fence_acq_rel_sys();
+                    ptx::fence_acq_sys();
                 }
             }
             __syncwarp();
@@ -1388,17 +1393,12 @@ adaptive_dispatch_impl(
                 ptx::tma_store_wait();
                 __syncwarp();
 
-                // The record into shared memory as it lies, the slot's flag words back to zero, then the copy made whole (spills restored,
-                // the last flag slot zeroed: no copy outside a live receive slot may carry the flag pattern)
+                // Load the payload
                 if (ptx::elect_one_sync()) {
                     ptx::tma_load_1d(tma_buffer.get_base_ptr(), token_buffer.get_base_ptr(),
                                      mbarrier_ptr, token_layout.get_num_bytes<false>());
                     ptx::mbarrier_arrive_and_set_tx(mbarrier_ptr, token_layout.get_num_bytes<false>());
                     ptx::mbarrier_wait_and_flip_phase(mbarrier_ptr, phase);
-                    token_buffer.clear_flags();
-                    tma_buffer.restore_spills();
-                    tma_buffer.clear_final_flag();
-                    ptx::tma_store_fence();
                 }
                 __syncwarp();
 
@@ -1475,11 +1475,18 @@ adaptive_dispatch_impl(
             }
         }
 
+        // All records from every live source domain have been consumed; reset the counters for the next invocation
+        if (lane_tracks_live_domain)
+            ptx::st_relaxed_sys(lane_ready_atomic_buff, int64_t(0));
+        __syncwarp();
+
         EP_PROFILE_STAMP_LAST(workspace_layout, 11);   // hybrid: the last forward warp has consumed its records
 
-        // Assign the source token index part of the metadata into `-1` as an ending mark
-        if (ptx::elect_one_sync())
+        // Store the length as -(length + 1) in the reserved final row; it also marks the end when the list is full.
+        if (ptx::elect_one_sync()) {
             token_metadata_at_forward[num_tokens_processed * kNumForwardMetadataDims] = -1;
+            token_metadata_at_forward[(num_tokens_in_linked_list - 1) * kNumForwardMetadataDims] = -num_tokens_processed - 1;
+        }
         __syncwarp();
 
         // Update linked list's ending position

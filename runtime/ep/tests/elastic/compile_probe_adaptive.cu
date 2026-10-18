@@ -42,17 +42,17 @@ static void __instantiate_kernels() {
     auto p1 = reinterpret_cast<void*>(&adaptive_dispatch_impl<true, false, 26, 4, 7, 4, 8, 14336, 0, 8, 8, 1, 2000000000ll>);
     auto pf = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 7, 4, 8, 7168, 56, 8, 8, 1, 2000000000ll>);
     // The acquire-flag protocol (`acquire_flags=True`, kAcquireFlags): the hybrid dispatch at the 4 x 8 maximum on the three wires and
-    // the reduce epilogue; the forms above are the default (relaxed polls + acq_rel fences)
+    // the reduce epilogue; the forms above are the default (relaxed polls + acquire fences)
     auto pa0 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 7, 4, 8, 14336, 0, 8, 8, 1, 2000000000ll, true>);
     auto pa1 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 7, 4, 8, 7168, 56, 8, 8, 1, 2000000000ll, true>);
     auto pa2 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 4, 4, 8, 3584, 112, 8, 8, 1, 2000000000ll, true>);
-    auto pa3 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<false, true, 148, 16, 7168, 8, 8, 2000000000ll, true>);
+    auto pa3 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<false, true, 148, 16, 7, 7168, 8, 8, 2000000000ll, true>);
     auto p2 = reinterpret_cast<void*>(&adaptive_combine_impl<false, true, 26, 7, 4, 8, 7168, 8, 8, 2000000000ll>);
     auto p3 = reinterpret_cast<void*>(&adaptive_combine_impl<true, false, 26, 7, 4, 8, 7168, 8, 8, 2000000000ll>);
     auto p4 = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<false, false, false, 148, 7, 16, 14336, 0, 8, 8, 1>);
     auto p5 = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<true, true, false, 148, 7, 16, 14336, 0, 8, 8, 32>);
-    auto p6 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<false, true, 148, 16, 7168, 8, 8, 2000000000ll>);
-    auto p7 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<true, false, 148, 16, 7168, 8, 8, 2000000000ll>);
+    auto p6 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<false, true, 148, 16, 7, 7168, 8, 8, 2000000000ll>);
+    auto p7 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<true, false, 148, 16, 7, 7168, 8, 8, 2000000000ll>);
     auto p8 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 7, 32, 128, 14336, 0, 1, 8, 1, 2000000000ll>);
     auto p9 = reinterpret_cast<void*>(&adaptive_combine_impl<false, true, 26, 7, 32, 128, 7168, 1, 8, 2000000000ll>);
     // FP8 wire at hidden 7168 (56 SF packs): top-6 (top-8 is `pf` above)

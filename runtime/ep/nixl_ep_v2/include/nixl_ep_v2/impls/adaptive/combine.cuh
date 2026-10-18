@@ -30,14 +30,6 @@
 #include <nixl_ep_v2/common/topology.cuh>
 #include <nixl_ep_v2/impls/combine_utils.cuh>
 
-// Doorbell interval of the RDMA rows to a domain; overridable at JIT time (`NIXL_EP_JIT_EXTRA_FLAGS=-DEP_COMBINE_RING_INTERVAL=...`)
-#ifndef EP_COMBINE_RING_INTERVAL
-#define EP_COMBINE_RING_INTERVAL 6
-#endif
-#if EP_COMBINE_RING_INTERVAL < 1
-#error "EP_COMBINE_RING_INTERVAL must be at least 1"
-#endif
-
 namespace nixl_ep_v2::elastic::adaptive {
 
 // DeepSeek's hybrid combine on a fixed grid; rank decomposition and active block count come from the topology descriptor (`EPTopology`)
@@ -51,7 +43,6 @@ template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
           int64_t kNumTimeoutCycles,
           int kNumScaleupRanksPerLane = math::constexpr_ceil_div(kNumMaxScaleupRanks, 32),
           int kNumScaleupUpdateInterval = 3,
-          int kDoorbellInterval = EP_COMBINE_RING_INTERVAL,
           int kNumScaleupWarps = kNumChannelsPerSM,
           int kNumForwardWarps = kNumChannelsPerSM,
           int kNumWarps = kNumScaleupWarps + kNumForwardWarps,
@@ -64,7 +55,8 @@ adaptive_combine_impl(nv_bfloat16* x,
                       int* psum_num_recv_tokens_per_scaleup_rank,
                       int* token_metadata_at_forward,
                       int* channel_linked_list,
-                      void* buffer, void* send_buffer, void* workspace,
+                      void* buffer, void* send_buffer,
+                      void* workspace,
                       const topology::EPTopology* topology_ptr,
                       int num_reduced_tokens,
                       const bool dynamic_take,
@@ -114,6 +106,7 @@ adaptive_combine_impl(nv_bfloat16* x,
     // Workspaces (fixed expert slots per rank: the live expert count is the live rank count times the slots)
     const auto workspace_layout = layout::WorkspaceLayout(workspace, num_scaleout_ranks, num_scaleup_ranks,
                                                           num_scaleout_ranks * num_scaleup_ranks * kNumExpertsPerRank);
+    const auto ready_atomic_buff = workspace_layout.get_combine_ready_atomic_buff();
     EP_PROFILE_STAMP(workspace_layout, 14);  // combine main: entry
 
     // We should assign the real number of received tokens if without CPU sync
@@ -161,6 +154,11 @@ adaptive_combine_impl(nv_bfloat16* x,
     if (is_direct) {
         comm::peer_ready_publish_rt<kNumThreads, kNumMaxScaleupRanks>(transport, workspace_layout, topo, sm_idx, thread_idx);
     } else {
+        // The previous epilogue has finished. Initialize descending progress to num_max_tokens_per_rank before the entry barrier.
+        if (warp_idx >= kNumScaleupWarps and lane_idx < num_scaleout_ranks) {
+            const int completion_channel_idx = sm_idx * kNumChannelsPerSM + warp_idx - kNumScaleupWarps;
+            ptx::st_relaxed_sys(ready_atomic_buff + completion_channel_idx * num_scaleout_ranks + lane_idx, int64_t{num_max_tokens_per_rank});
+        }
         comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kHybridCombineTag0, kNumMaxScaleupRanks, false, true, true>(
             transport, workspace_layout, topo, sm_idx, thread_idx);
     }
@@ -455,17 +453,24 @@ adaptive_combine_impl(nv_bfloat16* x,
         // Shape of `channel_linked_list`: `[num_channels, num_scaleout_ranks * num_max_tokens_per_channel + 1, num_scaleup_ranks]`
         // Iterate until all scale-up peers finish
         const int num_tokens_in_linked_list = num_scaleout_ranks * num_max_tokens_per_channel + 1;
+        // Send in reverse dispatch order; tails still count completed sends.
         int dst_scaleup_rank_idx = channel_idx;
-        int stored_ll_idx[kNumScaleupRanksPerLane] = {}, stored_token_idx[kNumScaleupRanksPerLane] = {};
+        int stored_ll_idx[kNumScaleupRanksPerLane], stored_token_idx[kNumScaleupRanksPerLane] = {};
         #pragma unroll
-        for (int i = 0; i < kNumScaleupRanksPerLane; ++ i)
+        for (int i = 0; i < kNumScaleupRanksPerLane; ++ i) {
+            const auto j = i * 32 + lane_idx;
+            stored_ll_idx[i] = j < num_scaleup_ranks and topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, j) ?
+                -__ldg(channel_linked_list +
+                       channel_idx * num_tokens_in_linked_list * num_scaleup_ranks +
+                       (num_tokens_in_linked_list - 1) * num_scaleup_ranks + j) - 2 : -1;
             stored_token_idx[i] = -1;
+        }
         while (true) {
             // Load token indices in the list
             #pragma unroll
             for (int i = 0; i < kNumScaleupRanksPerLane; ++ i) {
                 const auto j = i * 32 + lane_idx;
-                stored_token_idx[i] = j < num_scaleup_ranks and topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, j) ?
+                stored_token_idx[i] = stored_ll_idx[i] >= 0 ?
                     __ldg(channel_linked_list +
                           channel_idx * num_tokens_in_linked_list * num_scaleup_ranks +
                           stored_ll_idx[i] * num_scaleup_ranks + j) : -1;
@@ -665,7 +670,7 @@ adaptive_combine_impl(nv_bfloat16* x,
             // Move linked list
             #pragma unroll
             for (int i = 0; i < kNumScaleupRanksPerLane; ++ i)
-                stored_ll_idx[i] += (stored_token_idx[i] >= 0);
+                stored_ll_idx[i] -= (stored_token_idx[i] >= 0);
         }
 
         // Update for the unissued ones
@@ -686,39 +691,28 @@ adaptive_combine_impl(nv_bfloat16* x,
         constexpr int kNumForwardMetadataDims = 2 + kNumTopk * 2;
         token_metadata_at_forward += channel_idx * ((num_scaleout_ranks * num_max_tokens_per_channel + 1) * kNumForwardMetadataDims);
 
-        // How many rows this channel sends back to each source domain (lane `d`): the put of the LAST row to a domain
-        // rings the doorbell of its deferred puts (one row per replayed token; the list ends at the first negative source index)
-        int stored_num_rows_to_domain = 0, stored_rows_sent_to_domain = 0;
-        if constexpr (kAllowMultipleReduction) {
-            const int num_replay_entries = num_scaleout_ranks * num_max_tokens_per_channel + 1;
-            for (int base = 0; base < num_replay_entries; base += 32) {
-                const int i = base + lane_idx;
-                const auto src_token_global_idx = i < num_replay_entries ?
-                    __ldg(token_metadata_at_forward + i * kNumForwardMetadataDims) : -1;
-                const auto end_mask = ptx::gather(src_token_global_idx < 0);
-                const int num_valid = end_mask != 0 ? ptx::ffs(end_mask) : 32;
-                const int d = lane_idx < num_valid ? (src_token_global_idx / num_max_tokens_per_rank) / num_scaleup_ranks : -1;
-                for (int dd = 0; dd < num_scaleout_ranks; ++ dd) {
-                    const auto rows_mask = ptx::gather(d == dd);
-                    if (lane_idx == dd)
-                        stored_num_rows_to_domain += __popc(rows_mask);
-                }
-                if (num_valid < 32)
-                    break;
-            }
-        }
+        // Each remote receiver has one progress word per channel and producing domain.
+        auto* channel_ready_atomic_buff = ready_atomic_buff + channel_idx * num_scaleout_ranks + scaleout_rank_idx;
+        // Lane d tracks the lowest completed original token index published to destination domain d.
+        int stored_last_published_token_idx = num_max_tokens_per_rank;
 
-        // A reduced token goes back to its source domain: our own domain straight into our receive buffer (whole record, flags
-        // inside, no release: the reduce epilogue reads it after this kernel), another domain through the send buffer and an RDMA put
+        // A reduced token goes back to its source domain: our own domain straight into our receive buffer,
+        // another domain through the send buffer. Publish completion and ring at reversed chunk ends.
 
         // Overlap TMA stores and reduction
-        int last_src_scaleout_rank_idx = -1;
+        int last_src_scaleout_rank_idx = -1, last_src_token_idx = -1;
         int last_is_token_last_in_chunk = 0;
         void* last_recv_token_buffer_ptr = nullptr;
         void* last_send_token_buffer_ptr = nullptr;
         // Profile accumulators of SM 0's first forward warp, slots 40 to 50 (the slot map is in `layout.cuh`)
         [[maybe_unused]] const bool profile_warp = sm_idx == 0 and warp_idx == kNumScaleupWarps;
         const auto flush_last_tma_and_issue_rdma = [&]() {
+            int64_t signal_delta = 0;
+            if (last_src_scaleout_rank_idx >= 0 and last_src_scaleout_rank_idx != scaleout_rank_idx and last_is_token_last_in_chunk) {
+                signal_delta = last_src_token_idx - ptx::exchange(stored_last_published_token_idx, last_src_scaleout_rank_idx);
+                if (lane_idx == last_src_scaleout_rank_idx)
+                    stored_last_published_token_idx = last_src_token_idx;
+            }
             if (last_src_scaleout_rank_idx >= 0 and ptx::elect_one_sync()) {
                 EP_PROFILE_ACCUM_BEGIN(profile_t_wait);
                 ptx::tma_store_wait();
@@ -727,14 +721,22 @@ adaptive_combine_impl(nv_bfloat16* x,
                 // Issue only if not local rank
                 if (last_src_scaleout_rank_idx != scaleout_rank_idx) {
                     EP_PROFILE_ACCUM_BEGIN(profile_t_put);
-                    transport.rdma_put(
-                        last_recv_token_buffer_ptr,
-                        last_send_token_buffer_ptr,
-                        token_layout.get_num_bytes<false>(),
-                        scaleout_peer_id(last_src_scaleout_rank_idx),
-                        last_is_token_last_in_chunk != 0);
+                    if (last_is_token_last_in_chunk) {
+                        transport.rdma_put_and_signal(
+                            last_recv_token_buffer_ptr,
+                            last_send_token_buffer_ptr,
+                            token_layout.get_num_bytes<false>(),
+                            channel_ready_atomic_buff,
+                            scaleout_peer_id(last_src_scaleout_rank_idx), true, static_cast<uint64_t>(signal_delta));
+                    } else {
+                        transport.rdma_put(
+                            last_recv_token_buffer_ptr,
+                            last_send_token_buffer_ptr,
+                            token_layout.get_num_bytes<false>(),
+                            scaleout_peer_id(last_src_scaleout_rank_idx), false);
+                    }
                     EP_PROFILE_ACCUM_END(workspace_layout, 40, profile_t_put, profile_warp);
-                    // The puts that ring the doorbell, separately (slot 41 time, 42 count)
+                    // The batches that ring the doorbell, separately (slot 41 time, 42 count)
                     EP_PROFILE_ACCUM_END(workspace_layout, 41, profile_t_put, profile_warp and last_is_token_last_in_chunk != 0);
                     EP_PROFILE_COUNT(workspace_layout, 42, profile_warp and last_is_token_last_in_chunk != 0);
                 }
@@ -744,9 +746,13 @@ adaptive_combine_impl(nv_bfloat16* x,
 
         // Replay the dispatch
         int stored_num_tokens_recv[kNumScaleupRanksPerLane] = {}, stored_cached_scaleup_tail[kNumScaleupRanksPerLane] = {};
-        for (int i = 0; ; ++ i) {
+        // Match the scale-up senders' reverse order using the length in the reserved final row.
+        const int last_token_idx = -__ldg(token_metadata_at_forward +
+            num_scaleout_ranks * num_max_tokens_per_channel * kNumForwardMetadataDims) - 2;
+        for (int i = last_token_idx; i >= 0; -- i) {
             const auto src_token_global_idx = __ldg(token_metadata_at_forward + i * kNumForwardMetadataDims);
-            const auto is_token_last_in_chunk = __ldg(token_metadata_at_forward + i * kNumForwardMetadataDims + 1);
+            const auto is_token_last_in_chunk = i == 0 or
+                __ldg(token_metadata_at_forward + (i - 1) * kNumForwardMetadataDims + 1) != 0;
             const auto src_rank_idx = src_token_global_idx / num_max_tokens_per_rank;
             const auto src_scaleout_rank_idx = src_rank_idx / num_scaleup_ranks;
             const auto src_token_idx = src_token_global_idx % num_max_tokens_per_rank;
@@ -754,8 +760,6 @@ adaptive_combine_impl(nv_bfloat16* x,
                 __ldg(token_metadata_at_forward + i * kNumForwardMetadataDims + 2 + lane_idx) : -1;
             auto stored_src_slot_idx = lane_idx < kNumTopk ?
                 __ldg(token_metadata_at_forward + i * kNumForwardMetadataDims + 2 + kNumTopk + lane_idx) : -1;
-            if (src_token_global_idx < 0)
-                break;
             EP_PROFILE_ACCUM_BEGIN(profile_t_row);   // per-row time, split by destination path (slots 47 / 49)
 
             // Scaleup rank mask
@@ -815,6 +819,12 @@ adaptive_combine_impl(nv_bfloat16* x,
                 auto topk_valid_mask = kUseExpandedLayout ?
                     ptx::gather(stored_src_scaleup_rank_idx >= 0) :
                     ptx::gather(ptx::deduplicate(stored_src_scaleup_rank_idx, lane_idx) and stored_src_scaleup_rank_idx >= 0);  // Deduplicate w.r.t. scaleup rank index if expanded mode is disabled
+                int64_t signal_delta = 0;
+                if (src_scaleout_rank_idx != scaleout_rank_idx and is_token_last_in_chunk) {
+                    signal_delta = src_token_idx - ptx::exchange(stored_last_published_token_idx, src_scaleout_rank_idx);
+                    if (lane_idx == src_scaleout_rank_idx)
+                        stored_last_published_token_idx = src_token_idx;
+                }
                 if (ptx::elect_one_sync()) {
                     #pragma unroll
                     for (int k = 0; k < kNumTopk; ++ k) {
@@ -828,25 +838,32 @@ adaptive_combine_impl(nv_bfloat16* x,
                         ptx::mbarrier_arrive_and_set_tx(mbarrier_ptr, token_layout.get_num_bytes<false>());
                         ptx::mbarrier_wait_and_flip_phase(mbarrier_ptr, phase);
 
-                        // Flags into the staged record (see `TokenLayout`), then one TMA store: the send buffer for RDMA, else our receive buffer
+                        // Stage the payload in the send buffer for RDMA, else directly in our receive buffer.
                         const auto recv_buffer_ptr = scaleout_recv_buffer.get_rank_buffer(k).get_token_buffer(src_token_idx).get_base_ptr();
                         const auto send_buffer_ptr = src_scaleout_rank_idx == scaleout_rank_idx ?
                             recv_buffer_ptr : scaleout_send_buffer.get_rank_buffer(k).get_token_buffer(i).get_base_ptr();
-                        tma_buffer.spill_and_set_flags();
                         ptx::tma_store_fence();
                         ptx::tma_store_1d(send_buffer_ptr, tma_buffer.get_base_ptr(), token_layout.get_num_bytes<false>());
                         ptx::tma_store_commit();
                         ptx::tma_store_wait();
 
-                        // Issue the RDMA put
+                        // Publish only after the last result row of the chunk's last token.
                         topk_valid_mask ^= 1u << k;
                         if (src_scaleout_rank_idx != scaleout_rank_idx) {
-                            transport.rdma_put(
-                                recv_buffer_ptr,
-                                send_buffer_ptr,
-                                token_layout.get_num_bytes<false>(),
-                                scaleout_peer_id(src_scaleout_rank_idx),
-                                topk_valid_mask == 0 and is_token_last_in_chunk);
+                            if (topk_valid_mask == 0 and is_token_last_in_chunk) {
+                                transport.rdma_put_and_signal(
+                                    recv_buffer_ptr,
+                                    send_buffer_ptr,
+                                    token_layout.get_num_bytes<false>(),
+                                    channel_ready_atomic_buff,
+                                    scaleout_peer_id(src_scaleout_rank_idx), true, static_cast<uint64_t>(signal_delta));
+                            } else {
+                                transport.rdma_put(
+                                    recv_buffer_ptr,
+                                    send_buffer_ptr,
+                                    token_layout.get_num_bytes<false>(),
+                                    scaleout_peer_id(src_scaleout_rank_idx), false);
+                            }
                         }
                     }
                 }
@@ -916,10 +933,9 @@ adaptive_combine_impl(nv_bfloat16* x,
                     recv_token_buffer :
                     scaleout_send_buffer.get_token_buffer(i);
 
-                // Flags into the staged record (see `TokenLayout`), then one TMA store: the send buffer for RDMA, else our receive buffer
+                // Stage the payload in the send buffer for RDMA, else directly in our receive buffer.
                 if (ptx::elect_one_sync()) {
-                    EP_PROFILE_ACCUM_BEGIN(profile_t_stage);   // slot 46: flag staging + store issue
-                    tma_buffer.spill_and_set_flags();
+                    EP_PROFILE_ACCUM_BEGIN(profile_t_stage);   // slot 46: store issue
                     ptx::tma_store_fence();
                     ptx::tma_store_1d(send_token_buffer.get_base_ptr(), tma_buffer.get_base_ptr(),
                                     token_layout.get_num_bytes<false>());
@@ -928,14 +944,10 @@ adaptive_combine_impl(nv_bfloat16* x,
                 }
                 __syncwarp();
 
-                // Record RDMA info to issue later. The doorbell rings every `kDoorbellInterval` rows to a domain and on the channel's
-                // LAST row to it: every peer's reduce epilogue waits for its last row, so what stays queued behind the last ring is a plain tail
-                stored_rows_sent_to_domain += lane_idx == src_scaleout_rank_idx;
-                const int row_ordinal = ptx::exchange(stored_rows_sent_to_domain, src_scaleout_rank_idx);
-                const bool ring_doorbell = row_ordinal % kDoorbellInterval == 0 or
-                                           row_ordinal == ptx::exchange(stored_num_rows_to_domain, src_scaleout_rank_idx);
+                // Defer the put until its TMA store completes; publish completion at the recorded chunk end.
                 last_src_scaleout_rank_idx = src_scaleout_rank_idx;
-                last_is_token_last_in_chunk = ring_doorbell;
+                last_src_token_idx = src_token_idx;
+                last_is_token_last_in_chunk = is_token_last_in_chunk;
                 last_recv_token_buffer_ptr = recv_token_buffer.get_base_ptr();
                 last_send_token_buffer_ptr = send_token_buffer.get_base_ptr();
                 // Profile: the row's time into slot 47 (our own domain) or 49 (RDMA path), its count into slot 48 / 50
@@ -944,11 +956,9 @@ adaptive_combine_impl(nv_bfloat16* x,
             }
         }
 
-        // Issue the last RDMA
+        // Finish the last TMA store and submit its RDMA write if the destination is remote.
         if constexpr (kAllowMultipleReduction)
             flush_last_tma_and_issue_rdma();
-
-        EP_PROFILE_STAMP_LAST(workspace_layout, 31);   // hybrid combine: the last forward warp is done
 
         // Clean scaleup tails
         #pragma unroll
@@ -958,11 +968,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                 *workspace_layout.get_channel_scaleup_tail_ptr(channel_idx, k) = 0;
         }
         __syncwarp();
-
-        // No finish signal: the records carry their arrival flags and the reduce epilogue waits for the rows it reduces; the
-        // send buffer is rewritten only past the next start barrier, which a peer reaches after its epilogue (see `comm::gpu_barrier_rt`)
-        ptx::tma_store_wait();
-        __syncwarp();
+        EP_PROFILE_STAMP_LAST(workspace_layout, 31);   // hybrid combine: the last forward warp is done
     }
 
     // No barrier at epilogue

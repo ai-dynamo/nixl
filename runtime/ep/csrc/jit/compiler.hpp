@@ -132,7 +132,7 @@ public:
         // Phase timestamps (globaltimer) written by the kernels into the workspace profile slots (debugging only)
         if (get_env("NIXL_EP_ADAPTIVE_PROFILE", 0))
             flags += " -DEP_ADAPTIVE_PROFILE=1";
-        // Extra flags for experiments (e.g. `-DEP_COMBINE_RING_INTERVAL=3`)
+        // Extra flags for experiments
         if (const auto extra_flags = get_env<std::string>("NIXL_EP_JIT_EXTRA_FLAGS"); not extra_flags.empty())
             flags += " " + extra_flags;
     }
