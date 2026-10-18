@@ -254,9 +254,10 @@ public:
     void
     startXfer() {
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
+        const size_t num_chunks = sharedState_->chunks.size();
         sharedState_->status.store(NIXL_SUCCESS);
-        sharedState_->pendingReqs.store(getNumChunks());
-        sharedState_->pendingData.store(getNumChunks());
+        sharedState_->pendingReqs.store(num_chunks);
+        sharedState_->pendingData.store(num_chunks);
         sharedState_->notif = std::exchange(notif, {});
     }
 
