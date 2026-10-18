@@ -214,7 +214,7 @@ env:
   # Internal HuggingFace mirror the sanity script prefetches the model through. Pulling from
   # huggingface.co directly gets the shared CI egress IP rate-limited (429); the mirror has no
   # such limit and allows anonymous reads, so no token is needed.
-  SANITY_HF_ENDPOINT: "https://urm.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
+  SANITY_HF_ENDPOINT: "https://artifactory.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
   # The vLLM/SGLang upstream bases are pinned to concrete versions in
   # .ci/dockerfiles/Dockerfile.{vllm,sglang}-base and not restated here: an
   # override at this level silently won over the Dockerfile, so the upgrade in

@@ -36,7 +36,7 @@ env:
   LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
   # Internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable).
-  APT_MIRROR: "https://urm.nvidia.com/artifactory/ubuntu-public"
+  APT_MIRROR: "https://artifactory.nvidia.com/artifactory/ubuntu-public"
 
 taskName: "${BUILD_TARGET}/${arch}"
 
