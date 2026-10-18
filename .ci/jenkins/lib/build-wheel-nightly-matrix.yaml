@@ -16,11 +16,15 @@ timeout_minutes: 180
 
 # registry_auth/registry_path are what ci-demo pushes wheel_base under; both are
 # required now that this job builds an image rather than only pulling.
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
+  # IL: wheel_base (CI image). artifactory.nvidia.com: wheel publishing.
+  - credentialsId: 'svc-nixl-il-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USER'
+    passwordVariable: 'ARTIFACTORY_TOKEN'
   - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
@@ -31,7 +35,6 @@ credentials:
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'
 
@@ -121,7 +124,7 @@ steps:
   - name: Prepare
     containerSelector: "{name: 'manylinux'}"
     credentialsId:
-      - 'svc-nixl-new-artifactory-token'
+      - 'svc-nixl-il-artifactory-token'
       - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |

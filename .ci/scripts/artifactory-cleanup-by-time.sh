@@ -9,7 +9,7 @@
 #   ./artifactory-cleanup-by-time.sh [--dry-run] --spec <cleanup-spec.json>
 #
 # Environment:
-#   ARTIFACTORY_URL       Base Artifactory URL (default: https://artifactory.nvidia.com/artifactory)
+#   ARTIFACTORY_URL       Base Artifactory URL (default: https://il.artifactory.nvidia.com/artifactory)
 #   ARTIFACTORY_USER      Artifactory username (required)
 #   ARTIFACTORY_TOKEN     Password or API key (required)
 #   ARTIFACTORY_API_KEY   Alternative to ARTIFACTORY_TOKEN
@@ -33,7 +33,7 @@ done
 [[ -z "$SPEC" ]] && { echo "Usage: $0 [--dry-run] --spec <cleanup-spec.json>" >&2; exit 1; }
 [[ -f "$SPEC" ]] || { echo "Spec file not found: $SPEC" >&2; exit 1; }
 
-ARTIFACTORY_URL="${ARTIFACTORY_URL:-https://artifactory.nvidia.com/artifactory}"
+ARTIFACTORY_URL="${ARTIFACTORY_URL:-https://il.artifactory.nvidia.com/artifactory}"
 TOKEN="${ARTIFACTORY_TOKEN:-${ARTIFACTORY_API_KEY:?Set ARTIFACTORY_TOKEN or ARTIFACTORY_API_KEY}}"
 USER="${ARTIFACTORY_USER:?Set ARTIFACTORY_USER}"
 
@@ -43,13 +43,16 @@ jf config add artifactory \
     --artifactory-url "${ARTIFACTORY_URL}" \
     --password "${TOKEN}" \
     --user "${USER}" \
-    --interactive=false
+    --interactive=false \
+    --overwrite
 
 jf rt ping
 
 # For Docker: delete the tag directory (repo/path/) recursively.
 # For PyPI: delete the .whl file directly.
+# Never delete anything under <repo>/static/, whatever the spec matches.
 if ! targets=$(jf rt search --spec "$SPEC" | jq -r '.[] | .path | ltrimstr("/") |
+    select(split("/")[1] != "static") |
     if endswith("/manifest.json") or endswith("/list.manifest.json")
     then split("/")[:-1] | join("/") | . + "/"
     else .

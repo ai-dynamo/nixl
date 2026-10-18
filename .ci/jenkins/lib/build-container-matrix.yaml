@@ -270,7 +270,7 @@ steps:
         INFINIA_FLAG=""
         if [[ "${BUILD_INFINIA}" == "true" ]]; then
             INFINIA_FLAG="--build-infinia"
-            echo "# --build-infinia needs harbor.mellanox.com reachable"
+            echo "# --build-infinia needs il.artifactory.nvidia.com reachable"
         fi
         echo "export UCX_REF=${UCX_VERSION}"
         echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache ${NIXL_EP_FLAG} ${SPCX_FLAG} ${INFINIA_FLAG}"
