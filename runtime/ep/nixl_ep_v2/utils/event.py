@@ -18,8 +18,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Callable, Optional, Tuple
+
 import torch
-from typing import Any, Optional, Tuple, Callable
 
 # noinspection PyUnresolvedReferences
 from .._C import EventHandle
@@ -34,7 +35,11 @@ class EventOverlap:
         extra_tensors: an easier way to simulate PyTorch tensor `record_stream`, may be useful with CUDA graph.
     """
 
-    def __init__(self, event: Optional[EventHandle] = None, extra_tensors: Optional[Tuple[torch.Tensor]] = None) -> None:
+    def __init__(
+        self,
+        event: Optional[EventHandle] = None,
+        extra_tensors: Optional[Tuple[torch.Tensor]] = None,
+    ) -> None:
         """
         Initialize the class.
 
@@ -77,7 +82,9 @@ class EventOverlap:
         """
         Register a hook, which will be invoked after `self.current_stream_wait()`
         """
-        assert self.hook_after_wait is None, "A hook is already registered on this `EventOverlap`"
+        assert (
+            self.hook_after_wait is None
+        ), "A hook is already registered on this `EventOverlap`"
         self.hook_after_wait = hook_after_wait
 
     def __call__(self, release_handle: bool = False) -> "EventOverlap":

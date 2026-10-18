@@ -18,9 +18,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Optional
-import weakref
 import functools
+import weakref
+from typing import Any, Optional
+
 
 def value_or(value: Optional[Any], default: Any) -> Any:
     return default if value is None else value
@@ -32,6 +33,7 @@ def weak_lru(maxsize: Optional[int] = 128, typed: bool = False):
     Useful for caching methods in classes that may cause memory leaks if `functools.lru_cache` is used directly.
     From https://stackoverflow.com/a/68052994/16569836
     """
+
     def wrapper(func):
 
         @functools.lru_cache(maxsize, typed)

@@ -47,12 +47,19 @@ import json
 import os
 import time
 from datetime import timedelta
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import torch
 import torch.distributed as dist
-
-from test_adaptive_elastic import Case, GraphCase, init_test_environment, run_eager, add_common_arguments, make_buffer, expected_mode
+from test_adaptive_elastic import (
+    Case,
+    GraphCase,
+    add_common_arguments,
+    expected_mode,
+    init_test_environment,
+    make_buffer,
+    run_eager,
+)
 
 
 def store_barrier(store: dist.Store, key: str, count: int, timeout_secs: float) -> None:
@@ -64,7 +71,9 @@ def store_barrier(store: dist.Store, key: str, count: int, timeout_secs: float) 
         arrived = store.add(key, 0)
         if arrived >= count:
             return
-        assert time.time() < deadline, f'Barrier {key}: {arrived}/{count} arrivals after {timeout_secs} s'
+        assert (
+            time.time() < deadline
+        ), f"Barrier {key}: {arrived}/{count} arrivals after {timeout_secs} s"
         time.sleep(0.02)
 
 
@@ -87,48 +96,90 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     t0 = pc()
     # This step's own cohort (one invocation, `WORLD_SIZE` unset or 1): no process group, no rendezvous port
     rank_idx, num_ranks = init_test_environment(local_rank, num_local_ranks, args.seed)
-    assert num_ranks == num_local_ranks, 'A step is one invocation: launch it with WORLD_SIZE unset (or 1)'
-    store = dist.TCPStore(args.store_host, args.store_port, is_master=False,
-                          timeout=timedelta(seconds=args.store_timeout_secs))
-    barrier = lambda key, count: store_barrier(store, args.run_tag + key, count, args.store_timeout_secs)   # one key space per run
+    assert (
+        num_ranks == num_local_ranks
+    ), "A step is one invocation: launch it with WORLD_SIZE unset (or 1)"
+    store = dist.TCPStore(
+        args.store_host,
+        args.store_port,
+        is_master=False,
+        timeout=timedelta(seconds=args.store_timeout_secs),
+    )
+
+    def barrier(key: str, count: int) -> None:
+        # One key space per run
+        store_barrier(store, args.run_tag + key, count, args.store_timeout_secs)
+
     plan = json.loads(args.plan)
     me = args.scaleout_idx * args.max_scaleup_ranks + args.position_offset + local_rank
     start = args.start_phase
-    assert me in plan[start] and (start == 0 or me not in plan[start - 1]), \
-        f'Rank {me} does not join at phase {start} of {plan}'
+    assert me in plan[start] and (
+        start == 0 or me not in plan[start - 1]
+    ), f"Rank {me} does not join at phase {start} of {plan}"
     # A namespace of this cohort alone (steps start concurrently and restart at the same ids)
-    bootstrap_id = 'adaptive-processes/' + json.dumps(
-        [args.run_tag, args.scaleout_idx, args.position_offset, num_ranks, args.start_phase])
-    peer_prefix = f'{args.run_tag}EP_NIXL'
+    bootstrap_id = "adaptive-processes/" + json.dumps(
+        [
+            args.run_tag,
+            args.scaleout_idx,
+            args.position_offset,
+            num_ranks,
+            args.start_phase,
+        ]
+    )
+    peer_prefix = f"{args.run_tag}EP_NIXL"
     t_init = pc()
 
     # `--num-experts` is the expert slot count of the declared maximum world; the slots per rank are fixed from it
     max_num_ranks = args.max_scaleout_ranks * args.max_scaleup_ranks
-    assert args.num_experts % max_num_ranks == 0, f'{args.num_experts} experts do not divide by the {max_num_ranks} ranks of the declared world'
-    buffer = make_buffer(args, rank_idx, num_ranks, store, bootstrap_id=bootstrap_id,
-                         max_num_scaleout_ranks=args.max_scaleout_ranks, max_num_scaleup_ranks=args.max_scaleup_ranks,
-                         num_experts_per_rank=args.num_experts // max_num_ranks,
-                         scaleout_rank_idx=args.scaleout_idx, scaleup_rank_idx=args.position_offset + local_rank)
+    assert (
+        args.num_experts % max_num_ranks == 0
+    ), f"{args.num_experts} experts do not divide by the {max_num_ranks} ranks of the declared world"
+    buffer = make_buffer(
+        args,
+        rank_idx,
+        num_ranks,
+        store,
+        bootstrap_id=bootstrap_id,
+        max_num_scaleout_ranks=args.max_scaleout_ranks,
+        max_num_scaleup_ranks=args.max_scaleup_ranks,
+        num_experts_per_rank=args.num_experts // max_num_ranks,
+        scaleout_rank_idx=args.scaleout_idx,
+        scaleup_rank_idx=args.position_offset + local_rank,
+    )
     assert me == buffer.rank_id
     t_buffer = pc()
-    buffer.publish(key_prefix=peer_prefix)   # other steps connect to us through the store
+    buffer.publish(
+        key_prefix=peer_prefix
+    )  # other steps connect to us through the store
     t_publish = pc()
-    startup = dict(init_ms=(t_init - t0) * 1e3, buffer_ms=(t_buffer - t_init) * 1e3, publish_ms=(t_publish - t_buffer) * 1e3)
+    startup = dict(
+        init_ms=(t_init - t0) * 1e3,
+        buffer_ms=(t_buffer - t_init) * 1e3,
+        publish_ms=(t_publish - t_buffer) * 1e3,
+    )
     mode, num_active_sms = buffer.get_topology()
-    step_ids = sorted(buffer.get_active_ranks())   # the constructor made only this step's cohort the initial world
-    assert mode == expected_mode(step_ids, args.max_scaleup_ranks), f'the constructor derived {mode} for {step_ids}'
+    step_ids = sorted(
+        buffer.get_active_ranks()
+    )  # the constructor made only this step's cohort the initial world
+    assert mode == expected_mode(
+        step_ids, args.max_scaleup_ranks
+    ), f"the constructor derived {mode} for {step_ids}"
     for phase in plan:
-        assert all(0 <= r < args.max_scaleout_ranks * args.max_scaleup_ranks for r in phase) and len(set(phase)) == len(phase)
-        buffer.masks_of(phase)   # product-set check
+        assert all(
+            0 <= r < args.max_scaleout_ranks * args.max_scaleup_ranks for r in phase
+        ) and len(set(phase)) == len(phase)
+        buffer.masks_of(phase)  # product-set check
 
     def log(msg: str):
         if local_rank == 0:
-            print(f'[step {step_ids} host {os.uname().nodename}] {msg}', flush=True)
+            print(f"[step {step_ids} host {os.uname().nodename}] {msg}", flush=True)
 
-    log(f'joined at phase {start}: rank id {me} = ({buffer.scaleout_rank_idx}, {buffer.scaleup_rank_idx}) of '
-        f'{args.max_scaleout_ranks}x{args.max_scaleup_ranks}, connected {buffer.get_connected_ranks()}, plan {plan}')
+    log(
+        f"joined at phase {start}: rank id {me} = ({buffer.scaleout_rank_idx}, {buffer.scaleup_rank_idx}) of "
+        f"{args.max_scaleout_ranks}x{args.max_scaleup_ranks}, connected {buffer.get_connected_ranks()}, plan {plan}"
+    )
     case = Case(buffer, args)
-    graph = None
+    graph: Any = None
 
     for k in range(start, len(plan)):
         phase, prev = list(plan[k]), (list(plan[k - 1]) if k > 0 else [])
@@ -137,64 +188,83 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         # The host derives the mode at `stage_topology` (direct while exactly one domain is live, whatever its index,
         # hybrid otherwise); checked against the rule once committed
         want_mode = expected_mode(phase, args.max_scaleup_ranks)
-        role = 'join' if me in joiners else ('leave' if me not in phase else 'stay')
-        ta = pc()
-        barrier(f'phase/{k}/arrive', len(set(prev) | set(phase)))   # everyone alive at the start of the phase
-        tb = pc()
+        role = "join" if me in joiners else ("leave" if me not in phase else "stay")
+        t_a = pc()
+        barrier(
+            f"phase/{k}/arrive", len(set(prev) | set(phase))
+        )  # everyone alive at the start of the phase
+        t_b = pc()
 
         if me not in phase:
             # Leaver: a one-rank world (in the mode the host derives for it; nothing launches on it), every connection
             # dropped, teardown, exit; the survivors drop us on their side without waiting
             buffer.stage_topology(num_active_sms=num_active_sms, active_ranks=[me])
             buffer.commit_topology()
-            tc = pc()
+            t_c = pc()
             buffer.disconnect_ranks(buffer.get_connected_ranks())
             buffer.commit_topology()
-            td = pc()
+            t_d = pc()
             buffer.destroy()
-            te = pc()
-            print(f'PROC tag={args.run_tag or "run"} phase={k} rank={me} local={local_rank} role=leave t_entry={t_entry:.3f} '
-                  f'arrive_wait_ms={(tb - ta) * 1e3:.1f} shrink_commit_ms={(tc - tb) * 1e3:.2f} '
-                  f'disconnect_commit_ms={(td - tc) * 1e3:.2f} destroy_ms={(te - td) * 1e3:.1f}', flush=True)
-            log(f'left at phase {k}, process exits')
+            t_e = pc()
+            print(
+                f'PROC tag={args.run_tag or "run"} phase={k} rank={me} local={local_rank} role=leave t_entry={t_entry:.3f} '
+                f"arrive_wait_ms={(t_b - t_a) * 1e3:.1f} shrink_commit_ms={(t_c - t_b) * 1e3:.2f} "
+                f"disconnect_commit_ms={(t_d - t_c) * 1e3:.2f} destroy_ms={(t_e - t_d) * 1e3:.1f}",
+                flush=True,
+            )
+            log(f"left at phase {k}, process exits")
             return
 
         # Stayer or joiner: joiners connect everyone, stayers connect the joiners (both sides must call it)
         connected = set(buffer.get_connected_ranks())
-        to_connect = sorted(((set(phase) if me in joiners else set(joiners)) - {me}) - connected)
-        buffer.connect_ranks(to_connect, store=store, key_prefix=peer_prefix, timeout_secs=args.store_timeout_secs)
-        tc = pc()
-        barrier(f'phase/{k}/connected', len(phase))
-        td = pc()
+        to_connect = sorted(
+            ((set(phase) if me in joiners else set(joiners)) - {me}) - connected
+        )
+        buffer.connect_ranks(
+            to_connect,
+            store=store,
+            key_prefix=peer_prefix,
+            timeout_secs=args.store_timeout_secs,
+        )
+        t_c = pc()
+        barrier(f"phase/{k}/connected", len(phase))
+        t_d = pc()
 
-        ev0 = torch.cuda.Event(enable_timing=True); ev0.record()
+        ev0 = torch.cuda.Event(enable_timing=True)
+        ev0.record()
         buffer.stage_topology(num_active_sms=num_active_sms, active_ranks=phase)
         buffer.commit_topology()
-        ev1 = torch.cuda.Event(enable_timing=True); ev1.record()
-        te = pc()
+        ev1 = torch.cuda.Event(enable_timing=True)
+        ev1.record()
+        t_e = pc()
         gone = sorted(set(leavers) & set(buffer.get_connected_ranks()))
         if gone:
             buffer.disconnect_ranks(gone)
             buffer.commit_topology()
-        tf = pc()
-        barrier(f'phase/{k}/live', len(phase))
-        tg = pc()
-        assert buffer.is_participant and buffer.get_active_ranks() == sorted(phase), \
-            f'live world {buffer.get_active_ranks()} != phase {phase}'
+        t_f = pc()
+        barrier(f"phase/{k}/live", len(phase))
+        t_g = pc()
+        assert buffer.is_participant and buffer.get_active_ranks() == sorted(
+            phase
+        ), f"live world {buffer.get_active_ranks()} != phase {phase}"
         phase_mode = buffer.get_topology()[0]
-        assert phase_mode == want_mode, f'mode {phase_mode} on {phase}, expected {want_mode}'
+        assert (
+            phase_mode == want_mode
+        ), f"mode {phase_mode} on {phase}, expected {want_mode}"
         so_bound, su_bound = case.bounds(phase)
-        tag = f'{phase_mode} phase {k} {phase} (bounds {so_bound}x{su_bound})'
+        tag = f"{phase_mode} phase {k} {phase} (bounds {so_bound}x{su_bound})"
 
         # Joiners capture now, stayers run the warm-ups with them; every barrier goes through the store
         n_graph_barriers = [0]
 
         def graph_barrier():
             n_graph_barriers[0] += 1
-            barrier(f'phase/{k}/graph/{n_graph_barriers[0]}', len(phase))
+            barrier(f"phase/{k}/graph/{n_graph_barriers[0]}", len(phase))
 
         captured = capture_phase_of(plan, k)
-        t_first_kernel = time.time()   # the warm-up launches of the capture are the first kernels of this phase
+        t_first_kernel = (
+            time.time()
+        )  # the warm-up launches of the capture are the first kernels of this phase
         if me in joiners:
             graph = GraphCase(case, phase, captured, barrier_fn=graph_barrier)
             graph.capture()
@@ -203,41 +273,89 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
             graph.capture_phase_of = captured
             if joiners:
                 graph.capture(accompany=True)
-        th = pc()
+        t_h = pc()
 
         num_recv = run_eager(case, k, phase, tag)
-        ti = pc()
+        t_i = pc()
         num_recv_graph = graph.replay_and_check(phase, tag)
-        tj = pc()
+        t_j = pc()
         torch.cuda.synchronize()
-        print(f'PROC tag={args.run_tag or "run"} phase={k} rank={me} local={local_rank} role={role} mode={phase_mode} '
-              f'live={len(phase)} t_entry={t_entry:.3f} t_first_kernel={t_first_kernel:.3f} '
-              f'init_ms={startup["init_ms"]:.0f} buffer_ms={startup["buffer_ms"]:.0f} publish_ms={startup["publish_ms"]:.0f} '
-              f'arrive_wait_ms={(tb - ta) * 1e3:.1f} num_connect={len(to_connect)} connect_ms={(tc - tb) * 1e3:.1f} '
-              f'connected_wait_ms={(td - tc) * 1e3:.1f} stage_commit_ms={(te - td) * 1e3:.2f} commit_dev_ms={ev0.elapsed_time(ev1):.3f} '
-              f'num_disconnect={len(gone)} disconnect_commit_ms={(tf - te) * 1e3:.2f} live_wait_ms={(tg - tf) * 1e3:.1f} '
-              f'capture_ms={(th - tg) * 1e3:.0f} eager_ms={(ti - th) * 1e3:.0f} replay_ms={(tj - ti) * 1e3:.1f}', flush=True)
+        print(
+            f'PROC tag={args.run_tag or "run"} phase={k} rank={me} local={local_rank} role={role} mode={phase_mode} '
+            f"live={len(phase)} t_entry={t_entry:.3f} t_first_kernel={t_first_kernel:.3f} "
+            f'init_ms={startup["init_ms"]:.0f} buffer_ms={startup["buffer_ms"]:.0f} publish_ms={startup["publish_ms"]:.0f} '
+            f"arrive_wait_ms={(t_b - t_a) * 1e3:.1f} num_connect={len(to_connect)} connect_ms={(t_c - t_b) * 1e3:.1f} "
+            f"connected_wait_ms={(t_d - t_c) * 1e3:.1f} stage_commit_ms={(t_e - t_d) * 1e3:.2f} commit_dev_ms={ev0.elapsed_time(ev1):.3f} "
+            f"num_disconnect={len(gone)} disconnect_commit_ms={(t_f - t_e) * 1e3:.2f} live_wait_ms={(t_g - t_f) * 1e3:.1f} "
+            f"capture_ms={(t_h - t_g) * 1e3:.0f} eager_ms={(t_i - t_h) * 1e3:.0f} replay_ms={(t_j - t_i) * 1e3:.1f}",
+            flush=True,
+        )
         if me == min(phase):
-            print(f' > [{tag}] joined {joiners}, left {leavers}; eager: {num_recv} tokens received, bitwise match; '
-                  f'graph replay (captured at phase {graph.captured_at}): {num_recv_graph} tokens received, bitwise match',
-                  flush=True)
-        barrier(f'phase/{k}/done', len(phase))
+            print(
+                f" > [{tag}] joined {joiners}, left {leavers}; eager: {num_recv} tokens received, bitwise match; "
+                f"graph replay (captured at phase {graph.captured_at}): {num_recv_graph} tokens received, bitwise match",
+                flush=True,
+            )
+        barrier(f"phase/{k}/done", len(phase))
 
-    log(f'plan finished at phase {len(plan) - 1}, process exits')
+    log(f"plan finished at phase {len(plan) - 1}, process exits")
     buffer.destroy()
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Adaptive EP kernels: processes that start later and processes that exit')
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Adaptive EP kernels: processes that start later and processes that exit"
+    )
     add_common_arguments(parser)
-    parser.add_argument('--plan', type=str, required=True, help='JSON list of phases (lists of dense rank ids)')
-    parser.add_argument('--start-phase', type=int, required=True, help='the phase this step joins at (not inferred: a rank that leaves and returns has two)')
-    parser.add_argument('--scaleout-idx', type=int, default=0, help='the NVLink domain (scale-out index) of this step')
-    parser.add_argument('--max-scaleout-ranks', type=int, default=1, help='declared maximum world: domains')
-    parser.add_argument('--max-scaleup-ranks', type=int, default=4, help='declared maximum world: positions per domain')
-    parser.add_argument('--store-host', type=str, default=os.environ.get('STORE_HOST', '127.0.0.1'))
-    parser.add_argument('--store-port', type=int, default=int(os.environ.get('STORE_PORT', '8400')))
-    parser.add_argument('--run-tag', type=str, default='', help='prefix of the barrier keys (one per plan run sharing a store)')
-    parser.add_argument('--num-cpu-timeout-secs', type=int, default=300, help='CPU-sync timeout of the eager dispatch')
+    parser.add_argument(
+        "--plan",
+        type=str,
+        required=True,
+        help="JSON list of phases (lists of dense rank ids)",
+    )
+    parser.add_argument(
+        "--start-phase",
+        type=int,
+        required=True,
+        help="the phase this step joins at (not inferred: a rank that leaves and returns has two)",
+    )
+    parser.add_argument(
+        "--scaleout-idx",
+        type=int,
+        default=0,
+        help="the NVLink domain (scale-out index) of this step",
+    )
+    parser.add_argument(
+        "--max-scaleout-ranks",
+        type=int,
+        default=1,
+        help="declared maximum world: domains",
+    )
+    parser.add_argument(
+        "--max-scaleup-ranks",
+        type=int,
+        default=4,
+        help="declared maximum world: positions per domain",
+    )
+    parser.add_argument(
+        "--store-host", type=str, default=os.environ.get("STORE_HOST", "127.0.0.1")
+    )
+    parser.add_argument(
+        "--store-port", type=int, default=int(os.environ.get("STORE_PORT", "8400"))
+    )
+    parser.add_argument(
+        "--run-tag",
+        type=str,
+        default="",
+        help="prefix of the barrier keys (one per plan run sharing a store)",
+    )
+    parser.add_argument(
+        "--num-cpu-timeout-secs",
+        type=int,
+        default=300,
+        help="CPU-sync timeout of the eager dispatch",
+    )
     args = parser.parse_args()
-    torch.multiprocessing.spawn(step_loop, args=(args.num_processes, args), nprocs=args.num_processes)
+    torch.multiprocessing.spawn(
+        step_loop, args=(args.num_processes, args), nprocs=args.num_processes
+    )

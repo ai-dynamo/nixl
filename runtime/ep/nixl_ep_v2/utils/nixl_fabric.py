@@ -22,9 +22,8 @@
 evidence otherwise. No CUDA/NVML initialization at import time; GPUs are resolved in NVML by UUID."""
 
 import ctypes
-from pathlib import Path
 import uuid
-
+from pathlib import Path
 
 # Public NVML constant
 _NVML_GPU_FABRIC_STATE_COMPLETED = 3
@@ -58,54 +57,82 @@ def _fabric_info(pynvml, handle):
 def _fabric_handle_supported(device_idx):
     # The CUDA driver attribute `HANDLE_TYPE_FABRIC_SUPPORTED`, read by the extension (no driver binding of our own)
     from .. import _C
+
     return bool(_C.is_fabric_handle_supported(device_idx))
 
 
 def validate_fabric_record(record):
     """Require one completed fabric enrollment."""
-    required = {"gpu_uuid", "cluster_uuid", "clique_id", "state", "status", "handle_supported"}
-    if not isinstance(record, dict) or not required.issubset(record) or record.get("error"):
+    required = {
+        "gpu_uuid",
+        "cluster_uuid",
+        "clique_id",
+        "state",
+        "status",
+        "handle_supported",
+    }
+    if (
+        not isinstance(record, dict)
+        or not required.issubset(record)
+        or record.get("error")
+    ):
         raise ValueError(f"Missing/failed fabric evidence: {record!r}")
     if _gpu_uuid(record["gpu_uuid"]) != record["gpu_uuid"]:
         raise ValueError("Noncanonical GPU UUID in fabric evidence")
     cluster = record["cluster_uuid"]
-    if (not isinstance(cluster, str) or len(cluster) != 32
-            or any(char not in "0123456789abcdef" for char in cluster) or int(cluster, 16) == 0):
+    if (
+        not isinstance(cluster, str)
+        or len(cluster) != 32
+        or any(char not in "0123456789abcdef" for char in cluster)
+        or int(cluster, 16) == 0
+    ):
         raise ValueError("Invalid or unset fabric cluster UUID")
     if type(record["clique_id"]) is not int or not 0 <= record["clique_id"] < 2**32:
         raise ValueError("Invalid fabric clique ID")
-    if (type(record["state"]) is not int or record["state"] != _NVML_GPU_FABRIC_STATE_COMPLETED
-            or type(record["status"]) is not int or record["status"] != 0
-            or record["handle_supported"] is not True):
-        raise ValueError(f"Fabric registration incomplete, failed or unsupported: {record!r}")
+    if (
+        type(record["state"]) is not int
+        or record["state"] != _NVML_GPU_FABRIC_STATE_COMPLETED
+        or type(record["status"]) is not int
+        or record["status"] != 0
+        or record["handle_supported"] is not True
+    ):
+        raise ValueError(
+            f"Fabric registration incomplete, failed or unsupported: {record!r}"
+        )
 
 
 def inspect_topology_device():
     """Inspect the current CUDA device: its UUID, the host's boot id, its NVLink P2P peers (NVML) and, when enrolled,
     its fabric clique. Without the NVML fabric API a domain spanning hosts is seen as per-host domains.
     """
-    import torch
     import pynvml
+    import torch
 
     device_idx = torch.cuda.current_device()
     raw_uuid = bytes(torch.cuda.get_device_properties(device_idx).uuid.bytes)
-    device_uuid = 'GPU-' + str(uuid.UUID(bytes=raw_uuid))
-    host_id = str(uuid.UUID(Path('/proc/sys/kernel/random/boot_id').read_text().strip()))
+    device_uuid = "GPU-" + str(uuid.UUID(bytes=raw_uuid))
+    host_id = str(
+        uuid.UUID(Path("/proc/sys/kernel/random/boot_id").read_text().strip())
+    )
     pynvml.nvmlInit()
     try:
         handle = pynvml.nvmlDeviceGetHandleByUUID(device_uuid)
         if pynvml.nvmlDeviceIsMigDeviceHandle(handle):
-            raise ValueError('MIG is unsupported for NIXL NVLink topology discovery')
+            raise ValueError("MIG is unsupported for NIXL NVLink topology discovery")
         fabric = None
         info = _fabric_info(pynvml, handle)
         if info is not None:
             cluster = bytes(info.clusterUuid)
             # A zero cluster means this GPU is not enrolled in a fabric; a partial enrollment fails closed below
             if any(cluster):
-                fabric = dict(gpu_uuid=device_uuid, cluster_uuid=cluster.hex(),
-                              clique_id=int(info.cliqueId), state=int(info.state),
-                              status=int(info.status),
-                              handle_supported=_fabric_handle_supported(device_idx))
+                fabric = dict(
+                    gpu_uuid=device_uuid,
+                    cluster_uuid=cluster.hex(),
+                    clique_id=int(info.cliqueId),
+                    state=int(info.state),
+                    status=int(info.status),
+                    handle_supported=_fabric_handle_supported(device_idx),
+                )
         # A completed fabric clique proves the connectivity; local P2P enumeration is the fallback only
         peers = []
         if fabric is None:
@@ -116,12 +143,19 @@ def inspect_topology_device():
                     other_uuid = _gpu_uuid(pynvml.nvmlDeviceGetUUID(other))
                     if other_uuid == device_uuid:
                         continue
-                    status = pynvml.nvmlDeviceGetP2PStatus(handle, other, pynvml.NVML_P2P_CAPS_INDEX_NVLINK)
+                    status = pynvml.nvmlDeviceGetP2PStatus(
+                        handle, other, pynvml.NVML_P2P_CAPS_INDEX_NVLINK
+                    )
                 except (pynvml.NVMLError, ValueError):
                     continue
                 if status == pynvml.NVML_P2P_STATUS_OK:
                     peers.append(other_uuid)
-        return dict(gpu_uuid=device_uuid, host_id=host_id, nvlink_peers=sorted(peers), fabric=fabric)
+        return dict(
+            gpu_uuid=device_uuid,
+            host_id=host_id,
+            nvlink_peers=sorted(peers),
+            fabric=fabric,
+        )
     finally:
         pynvml.nvmlShutdown()
 
@@ -133,45 +167,58 @@ def validate_topology_records(records, requested_scaleup=None):
     ``(num_scaleout_ranks, num_scaleup_ranks)``.
     """
     if not records:
-        raise ValueError('Empty topology cohort')
-    if requested_scaleup is not None and (type(requested_scaleup) is not int or requested_scaleup <= 0 or
-                                         len(records) % requested_scaleup):
-        raise ValueError('Requested scale-up size must be positive and divide the cohort world')
+        raise ValueError("Empty topology cohort")
+    if requested_scaleup is not None and (
+        type(requested_scaleup) is not int
+        or requested_scaleup <= 0
+        or len(records) % requested_scaleup
+    ):
+        raise ValueError(
+            "Requested scale-up size must be positive and divide the cohort world"
+        )
     identities = set()
     for rank, record in enumerate(records):
-        if not isinstance(record, dict) or record.get('error'):
-            raise ValueError(f'Failed topology evidence at cohort rank {rank}: {record!r}')
-        required = {'gpu_uuid', 'host_id', 'nvlink_peers', 'fabric'}
+        if not isinstance(record, dict) or record.get("error"):
+            raise ValueError(
+                f"Failed topology evidence at cohort rank {rank}: {record!r}"
+            )
+        required = {"gpu_uuid", "host_id", "nvlink_peers", "fabric"}
         if not required.issubset(record):
-            raise ValueError(f'Incomplete topology evidence at cohort rank {rank}')
-        identity = _gpu_uuid(record['gpu_uuid'])
-        if identity != record['gpu_uuid'] or identity in identities:
-            raise ValueError(f'Duplicate/noncanonical GPU identity at cohort rank {rank}')
+            raise ValueError(f"Incomplete topology evidence at cohort rank {rank}")
+        identity = _gpu_uuid(record["gpu_uuid"])
+        if identity != record["gpu_uuid"] or identity in identities:
+            raise ValueError(
+                f"Duplicate/noncanonical GPU identity at cohort rank {rank}"
+            )
         identities.add(identity)
-        if not isinstance(record['host_id'], str) or not record['host_id']:
-            raise ValueError(f'Missing host identity at cohort rank {rank}')
-        if not isinstance(record['nvlink_peers'], (list, tuple)):
-            raise ValueError(f'Invalid NVLink peer evidence at cohort rank {rank}')
-        for peer in record['nvlink_peers']:
+        if not isinstance(record["host_id"], str) or not record["host_id"]:
+            raise ValueError(f"Missing host identity at cohort rank {rank}")
+        if not isinstance(record["nvlink_peers"], (list, tuple)):
+            raise ValueError(f"Invalid NVLink peer evidence at cohort rank {rank}")
+        for peer in record["nvlink_peers"]:
             if _gpu_uuid(peer) != peer:
-                raise ValueError('Noncanonical NVLink peer identity')
-        if record['fabric'] is not None:
-            validate_fabric_record(record['fabric'])
-            if record['fabric']['gpu_uuid'] != identity:
-                raise ValueError('Fabric evidence identifies a different GPU')
+                raise ValueError("Noncanonical NVLink peer identity")
+        if record["fabric"] is not None:
+            validate_fabric_record(record["fabric"])
+            if record["fabric"]["gpu_uuid"] != identity:
+                raise ValueError("Fabric evidence identifies a different GPU")
 
     def linked(a, b):
         left, right = records[a], records[b]
-        lf, rf = left['fabric'], right['fabric']
+        lf, rf = left["fabric"], right["fabric"]
         if lf is not None or rf is not None:
-            return lf is not None and rf is not None and \
-                (lf['cluster_uuid'], lf['clique_id']) == (rf['cluster_uuid'], rf['clique_id'])
-        if left['host_id'] != right['host_id']:
+            return (
+                lf is not None
+                and rf is not None
+                and (lf["cluster_uuid"], lf["clique_id"])
+                == (rf["cluster_uuid"], rf["clique_id"])
+            )
+        if left["host_id"] != right["host_id"]:
             return False
-        forward = right['gpu_uuid'] in left['nvlink_peers']
-        reverse = left['gpu_uuid'] in right['nvlink_peers']
+        forward = right["gpu_uuid"] in left["nvlink_peers"]
+        reverse = left["gpu_uuid"] in right["nvlink_peers"]
         if forward != reverse:
-            raise ValueError('Asymmetric NVLink capability evidence')
+            raise ValueError("Asymmetric NVLink capability evidence")
         return forward and reverse
 
     if requested_scaleup is not None:
@@ -179,8 +226,10 @@ def validate_topology_records(records, requested_scaleup=None):
             for i in range(first, first + requested_scaleup):
                 for j in range(first, i):
                     if not linked(i, j):
-                        raise ValueError(f'Declared scale-up domain [{first}, {first + requested_scaleup}) '
-                                         f'lacks NVLink connectivity between cohort ranks {j} and {i}')
+                        raise ValueError(
+                            f"Declared scale-up domain [{first}, {first + requested_scaleup}) "
+                            f"lacks NVLink connectivity between cohort ranks {j} and {i}"
+                        )
         return len(records) // requested_scaleup, requested_scaleup
 
     adjacency = [{i} for i in range(len(records))]
@@ -197,14 +246,18 @@ def validate_topology_records(records, requested_scaleup=None):
             domain.update(frontier)
             frontier = set().union(*(adjacency[i] for i in frontier)) - domain
         if any(adjacency[i] != domain for i in domain):
-            raise ValueError('NVLink domain lacks complete pairwise connectivity evidence')
+            raise ValueError(
+                "NVLink domain lacks complete pairwise connectivity evidence"
+            )
         ordered = sorted(domain)
         if ordered != list(range(first, first + len(domain))):
-            raise ValueError('NVLink domains must be contiguous in constructor-cohort rank order')
+            raise ValueError(
+                "NVLink domains must be contiguous in constructor-cohort rank order"
+            )
         unseen.difference_update(domain)
         domains.append(ordered)
     sizes = {len(domain) for domain in domains}
     if len(sizes) != 1:
-        raise ValueError('Constructor cohort has nonuniform NVLink domain sizes')
+        raise ValueError("Constructor cohort has nonuniform NVLink domain sizes")
     scaleup = sizes.pop()
     return len(domains), scaleup

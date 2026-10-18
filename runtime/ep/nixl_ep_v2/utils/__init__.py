@@ -20,4 +20,4 @@
 
 # For forward compatibility
 # noinspection PyUnresolvedReferences
-from .event import EventHandle
+from .event import EventHandle  # noqa: F401
