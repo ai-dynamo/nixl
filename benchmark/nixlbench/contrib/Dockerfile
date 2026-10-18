@@ -24,6 +24,7 @@ ARG CUOBJ_DEV_IMAGE="nvcr.io/nvidia/cuda-dl-base:26.08-cuda13.4-inference-devel-
 # UCX argument is either "upstream" (default installed in base image) or "custom" (build from source)
 ARG UCX="upstream"
 ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG WGET_RETRY_OPTS="--tries=10 --waitretry=15 --retry-connrefused --retry-on-http-error=429,500,502,503,504 --no-http-keep-alive --timeout=30 --read-timeout=60"
 
 FROM ${CUOBJ_DEV_IMAGE} AS cuobj_dev
 RUN set -e; \
@@ -65,6 +66,7 @@ RUN set -e; \
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION
 ARG APT_MIRROR=""
+ARG WGET_RETRY_OPTS
 
 # Optional apt mirror override, e.g. for CI environments with an internal
 # Ubuntu mirror. Empty (default) keeps the public archive/ports.ubuntu.com.
@@ -109,7 +111,7 @@ RUN apt-get update -y && \
 # Skip only the DOCA SDK install when the base image already ships it.
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    wget ${WGET_RETRY_OPTS} --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -126,7 +128,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     libnuma-dev librdmacm-dev ibverbs-providers
 
 # Install AWS CLI
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
+RUN curl -fL --retry 9 --retry-delay 5 --retry-connrefused --connect-timeout 30 "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip aws
 
 # Install Azure CLI
@@ -180,6 +182,7 @@ ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 ARG BUILD_TYPE="release"
 ARG LIBFABRIC_VERSION="v1.21.0"
+ARG WGET_RETRY_OPTS
 ARG NPROC
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
@@ -232,7 +235,7 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-
     ldconfig
 
 # Build libfabric from source
-RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+RUN wget ${WGET_RETRY_OPTS} \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
     cd libfabric-* && \
