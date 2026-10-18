@@ -327,7 +327,7 @@ proxyEngine::prepProxyMemView(const DlistT &dlist, nixlMemViewH &mvh) const {
         return status;
     }
 
-    status = nixl::deviceMemViewAllocate(ops_, nixl_device_exec_mode_t::PROXY, proxy_mvh, mvh);
+    status = nixl::deviceMemViewAllocate(ops_, nixl::gpu::exec_mode_t::PROXY, proxy_mvh, mvh);
     if (status != NIXL_SUCCESS) {
         runtime_->releaseMemView(proxy_mvh);
     }
