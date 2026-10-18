@@ -85,10 +85,11 @@ run_elastic_test() {
         unset NIXL_ETCD_ENDPOINTS NIXL_ETCD_PEER_URLS NIXL_ETCD_NAMESPACE
         if [[ "$extra_flags" == *--disable-ll-nvlink* ]]; then
             # RDMA: all ranks share one node, so with UCX defaults it prefers the intra-node
-            # cuda_ipc/sm lanes and never builds the rc_gda device lane, or picks a lane on a
-            # non-IB HCA (mlx5_4/mlx5_5) where no device EP can be created. Exclude the
-            # intra-node transports and pin the active IB HCAs.
-            export UCX_TLS=^cuda_ipc,sm
+            # cuda_ipc/sm lanes and never builds the rc_gda device lane. A deny-list such as
+            # ^cuda_ipc,sm was not enough (UCX fell back to lanes with no device support and
+            # ucp_device_remote_mem_list_create() failed), so allow only the IB lanes, with
+            # rc_gda for the device lane and cuda_copy for GPU memory support.
+            export UCX_TLS=rc_gda,rc_mlx5,ud_mlx5,cuda_copy
             export UCX_NET_DEVICES="$(rdma_ucx_net_devices)"
         else
             # NVLink: let UCX auto-select a GPU-capable transport, without the GDA lane.
