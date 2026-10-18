@@ -39,7 +39,7 @@ by a launcher once phase k-1 is done (the counter `{run_tag}phase/{k-1}/done` at
 the same plan and declared maximum world. Plans sharing one server use distinct `--run-tag`s, and a failed run is never
 retried under its tag (its counters, metadata and bootstrap namespaces all derive from it).
     PLAN='[[0,1,2,3],[0,1,2,3,4,5,6,7],[0,1,2,3],[0,1,2,3,4,5,6,7],[4,5,6,7],[0,1,2,3,4,5,6,7]]'
-    node 0: test_adaptive_processes.py --plan "$PLAN" --scaleout-idx 0 --start-phase 0 --max-scaleout-ranks 2 ...
+    node 0: test_adaptive_processes.py --plan "$PLAN" --scaleout-idx 0 --start-phase 0 --max-scaleout-ranks 2 ...   (exits at phase 4; back at 5 as new processes with --start-phase 5)
     node 1: test_adaptive_processes.py --plan "$PLAN" --scaleout-idx 1 --start-phase 1 --max-scaleout-ranks 2 ...   (exits at phase 2; back at 3 as new processes with --start-phase 3)
 """
 import argparse

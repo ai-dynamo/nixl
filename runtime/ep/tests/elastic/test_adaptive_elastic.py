@@ -31,6 +31,13 @@ the first phase they took part in against the reference of the current phase (se
 left are dropped). Non-participants mirror every collective and touch no kernel. `--perf-phases` and `--feed-pairs` add
 the PERF and TRANS timing lines.
 
+Mode: the test never chooses it. The host derives it when a phase stages its live world: direct when exactly one NVLink
+domain is live (any domain), hybrid otherwise (`NIXL_EP_ADAPTIVE_MODE=hybrid` forces hybrid on one domain). After every
+commit the test checks that mode. A plan may start in one domain (direct) and grow to several (hybrid); each rank's
+graph then replays across the switch.
+
+`--plan` is inline JSON or the path of a JSON file, a list of phases of dense rank ids.
+
 Launch: one invocation per node (`--num-processes` GPUs each) under the node-level `WORLD_SIZE` / `RANK` of `init_dist`,
 no process group; the rank 0 process serves a TCPStore on `MASTER_ADDR` / `MASTER_PORT` (127.0.0.1:8361) for the whole
 run and keeps it alive until every peer has torn down (if a previous run still holds the port, choose another).
@@ -41,6 +48,7 @@ slots in every world (fixed expert slots), and a world's expert count is its bou
 64..71 of a 1 x 72 world (72 ranks: `--num-experts 288` = 4 slots per rank).
     python tests/elastic/test_adaptive_elastic.py --num-processes 4 --num-tokens 512 --hidden 7168 --num-topk 8 --num-experts 192
     python tests/elastic/test_adaptive_elastic.py --plan '[[0,1,2,3,4,5,6,7],[0,1,2,3],[0,1,2,3,4,5,6,7]]' ...
+    python tests/elastic/test_adaptive_elastic.py --plan tests/elastic/plans/two_domains.json ...
 """
 import argparse
 import json
@@ -158,6 +166,14 @@ def default_plan(max_su: int, present: List[int]) -> List[List[int]]:
             [ids([0], range(4)), ids([0], range(3)), ids([0, 1], range(3)), all_ranks]
         )
     return phases
+
+
+def load_plan(spec: str) -> List[List[int]]:
+    """`--plan`: inline JSON or a JSON file, a list of phases of dense rank ids"""
+    if os.path.isfile(spec):
+        with open(spec) as f:
+            spec = f.read()
+    return [[int(r) for r in phase] for phase in json.loads(spec)]
 
 
 class Case:
@@ -861,7 +877,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     assert mode == expected_mode(
         present, max_su
     ), f"the constructor derived {mode} for {present}"
-    plan = json.loads(args.plan) if args.plan else default_plan(max_su, present)
+    plan = load_plan(args.plan) if args.plan else default_plan(max_su, present)
     full = sorted(present)
     cohort_print(
         f"Elastic test: world {max_so}x{max_su}, rank id {buffer.rank_id} = ({buffer.scaleout_rank_idx}, {buffer.scaleup_rank_idx}), "
@@ -1042,7 +1058,7 @@ if __name__ == "__main__":
         "--plan",
         type=str,
         default="",
-        help="JSON list of phases (lists of dense rank ids); default: a built-in plan",
+        help="phases as inline JSON or a JSON file (see the module docstring); default: a built-in plan",
     )
     parser.add_argument(
         "--perf-phases",
