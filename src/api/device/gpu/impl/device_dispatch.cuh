@@ -59,8 +59,6 @@ getPtr(nixlMemViewH, size_t) {
 } // namespace nixl::gpu::impl::ucx
 #endif
 
-// The proxy implementation needs only CUDA, so unlike the UCX arm it is always
-// present and needs no capability gate.
 #include "proxy/device_proxy.cuh"
 
 namespace nixl::gpu::impl {
@@ -73,7 +71,7 @@ namespace detail {
     }
 
     template<exec_mode_t mode>
-    inline constexpr bool buildable = mode != exec_mode_t::UCX_DIRECT || ucx::available;
+    inline constexpr bool buildable = (mode != exec_mode_t::UCX_DIRECT) || ucx::available;
 
     template<exec_mode_t mode>
     __device__ __forceinline__ exec_mode_t
@@ -105,7 +103,7 @@ namespace detail {
                        nixl_status_t submission_status,
                        exec_mode_t execution_mode) {
         if constexpr (mode == exec_mode_t::DYNAMIC) {
-            if (status != nullptr && submission_status >= 0 && isLeader<level>()) {
+            if ((status != nullptr) && (submission_status >= 0) && isLeader<level>()) {
                 status->mode = execution_mode;
             }
             // Collective pollers share the leader's tag.
@@ -123,9 +121,8 @@ getXferStatus(xferStatusH &xfer_status) {
         return ucx::getXferStatus<level>(xfer_status);
     case exec_mode_t::PROXY:
         return proxy::getXferStatus<level>(xfer_status);
-    default:
-        return NIXL_ERR_INVALID_PARAM;
     }
+    return NIXL_ERR_INVALID_PARAM;
 }
 
 template<level_t level, exec_mode_t mode>
@@ -187,9 +184,8 @@ getPtr(nixlMemViewH mvh, size_t index) {
         return ucx::getPtr(view->backend_memview, index);
     case exec_mode_t::PROXY:
         return proxy::getPtr(view->backend_memview, index);
-    default:
-        return nullptr;
     }
+    return nullptr;
 }
 
 } // namespace nixl::gpu::impl

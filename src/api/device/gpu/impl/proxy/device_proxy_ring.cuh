@@ -27,7 +27,7 @@
 namespace nixl::gpu::impl::proxy {
 
 // Overlay struct written into xferStatusH::storage by enqueue()
-// and read back by pollXferStatus().  Must fit within the 64-byte opaque blob.
+// and read back by pollXferStatus().
 struct proxyXferStatus {
     nixlProxyCompletionSlot *slot; // device pointer to the channel's nixlProxyCompletionSlot
     uint64_t opIdx;
@@ -133,7 +133,7 @@ struct proxyDeviceContext : nixlProxyDeviceContextData {
         if (failed_idx != 0 && pxs->opIdx >= failed_idx) {
             return pxs->slot->completion_status;
         }
-        return completed_idx >= pxs->opIdx ? NIXL_SUCCESS : NIXL_IN_PROG;
+        return (completed_idx >= pxs->opIdx) ? NIXL_SUCCESS : NIXL_IN_PROG;
     }
 };
 
