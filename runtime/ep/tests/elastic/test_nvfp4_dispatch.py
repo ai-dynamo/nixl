@@ -21,7 +21,7 @@
 """
 NVFP4 on the dispatch wire (adaptive kernels on NIXL): caller-quantised rows, e2m1 codes `[tokens, hidden // 2]` uint8 and
 e4m3 block scales `[tokens, hidden // 16]`, moved as bytes in the record's hidden and scale-factor slots; the combine stays BF16.
-Every check is bitwise. The reference is `nixl_ep_v2.utils.refs.dispatch` called once per payload (the codes, the scales as
+Every check is bitwise. The reference is `nixl.runtime.ep.utils.refs.dispatch` called once per payload (the codes, the scales as
 uint8) with the same routing (`ref_dispatch_nvfp4`), the received rows sorted by source token as in test_ep.py; the scales are
 compared as uint8 views throughout.
 Cases (`--cases main`, in the mode the buffer starts in: direct on one domain, `NIXL_EP_ADAPTIVE_MODE=hybrid` for the forwarder
@@ -53,14 +53,14 @@ import torch
 import torch.distributed as dist
 from typing import Optional, Tuple
 
-import nixl_ep_v2
-from nixl_ep_v2.utils.envs import init_dist, dist_print
-from nixl_ep_v2.utils.gate import get_unbalanced_scores
-from nixl_ep_v2.utils.math import align, calc_diff, count_bytes, per_token_cast_to_fp8, safe_div
-from nixl_ep_v2.utils.refs import dispatch as ref_dispatch
-from nixl_ep_v2.utils.refs import combine as ref_combine
-from nixl_ep_v2.utils.refs import generate_pre_combine_data, ordered_accumulate
-from nixl_ep_v2.utils.testing import bench_kineto
+from nixl.runtime import ep
+from nixl.runtime.ep.utils.envs import init_dist, dist_print
+from nixl.runtime.ep.utils.gate import get_unbalanced_scores
+from nixl.runtime.ep.utils.math import align, calc_diff, count_bytes, per_token_cast_to_fp8, safe_div
+from nixl.runtime.ep.utils.refs import dispatch as ref_dispatch
+from nixl.runtime.ep.utils.refs import combine as ref_combine
+from nixl.runtime.ep.utils.refs import generate_pre_combine_data, ordered_accumulate
+from nixl.runtime.ep.utils.testing import bench_kineto
 
 from test_ep import fold_expanded
 
@@ -115,7 +115,7 @@ def make_buffer(group, args, **overrides):
                   num_gpu_timeout_secs=args.num_gpu_timeout_secs,
                   num_cpu_timeout_secs=args.num_cpu_timeout_secs)
     kwargs.update(overrides)
-    return nixl_ep_v2.ElasticBuffer(group, **kwargs)
+    return ep.ElasticBuffer(group, **kwargs)
 
 
 class Setup:
@@ -129,7 +129,7 @@ class Setup:
         self.num_sms = buffer.get_theoretical_num_sms(args.num_topk) if args.num_sms == 0 else args.num_sms
         scores = get_unbalanced_scores(self.num_tokens, self.num_experts, dist.get_world_size(), args.num_topk, 1.0, False)
         self.topk_weights, topk_idx = torch.topk(scores, args.num_topk, dim=-1, largest=True, sorted=False)
-        self.topk_idx = topk_idx.to(nixl_ep_v2.topk_idx_t)
+        self.topk_idx = topk_idx.to(ep.topk_idx_t)
         self.common = dict(topk_idx=self.topk_idx, topk_weights=self.topk_weights, num_sms=self.num_sms,
                            num_max_tokens_per_rank=args.num_tokens)
         dist_print(f'Config: ranks {self.num_scaleout_ranks} x {self.num_scaleup_ranks}, mode {buffer.get_topology()[0]}, '

@@ -22,12 +22,12 @@ import argparse
 import torch
 import torch.distributed as dist
 
-import nixl_ep_v2
-from nixl_ep_v2.utils.envs import init_dist, dist_print
-from nixl_ep_v2.utils.testing import bench_kineto
+from nixl.runtime import ep
+from nixl.runtime.ep.utils.envs import init_dist, dist_print
+from nixl.runtime.ep.utils.testing import bench_kineto
 
 
-def test_barrier(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
+def test_barrier(buffer: ep.ElasticBuffer, args: argparse.Namespace):
     dist_print('Profiling barrier:', once_in_node=True)
     num_scaleout_ranks, num_scaleup_ranks = buffer.get_logical_domain_size()
     dist_print(f'Config:\n'
@@ -52,7 +52,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
 
     do_pressure_test = args.do_pressure_test
     for i in range(int(1e9) if do_pressure_test else 1):
-        buffer = nixl_ep_v2.ElasticBuffer(
+        buffer = ep.ElasticBuffer(
             group, num_bytes=2 ** 30,
             explicitly_destroy=True
         )

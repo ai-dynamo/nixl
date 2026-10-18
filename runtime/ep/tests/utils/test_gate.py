@@ -20,8 +20,8 @@
 
 import torch
 
-from nixl_ep_v2.utils.math import ceil_div
-from nixl_ep_v2.utils.gate import get_unbalanced_scores
+from nixl.runtime.ep.utils.math import ceil_div
+from nixl.runtime.ep.utils.gate import get_unbalanced_scores
 
 
 def test_unbalanced_scores():

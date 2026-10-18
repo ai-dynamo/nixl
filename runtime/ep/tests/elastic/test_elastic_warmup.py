@@ -72,7 +72,7 @@ import time
 import torch
 import torch.distributed as dist
 
-from nixl_ep_v2.utils.nixl_bootstrap import NixlBootstrap
+from nixl.runtime.ep.utils.nixl_bootstrap import NixlBootstrap
 from test_adaptive_elastic import Case, GraphCase, add_common_arguments, init_test_environment, make_buffer, expected_mode
 
 

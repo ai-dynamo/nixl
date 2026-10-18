@@ -35,12 +35,12 @@ import argparse
 import torch
 import torch.distributed as dist
 
-import nixl_ep_v2
-from nixl_ep_v2.utils.envs import init_dist, dist_print
-from nixl_ep_v2.utils.gate import get_unbalanced_scores
-from nixl_ep_v2.utils.math import per_token_cast_to_fp8, calc_diff
-from nixl_ep_v2.utils.refs import combine as ref_combine
-from nixl_ep_v2.utils.refs import generate_pre_combine_data, ordered_accumulate
+from nixl.runtime import ep
+from nixl.runtime.ep.utils.envs import init_dist, dist_print
+from nixl.runtime.ep.utils.gate import get_unbalanced_scores
+from nixl.runtime.ep.utils.math import per_token_cast_to_fp8, calc_diff
+from nixl.runtime.ep.utils.refs import combine as ref_combine
+from nixl.runtime.ep.utils.refs import generate_pre_combine_data, ordered_accumulate
 
 TAG_PERIOD = 254   # `WorkspaceLayout::zc_call_tag`: ((index >> 1) % 127) + 1, pinned by the static_asserts in layout.cuh
 
@@ -60,7 +60,7 @@ def make_buffer(group, args, use_fp8: bool, one_domain: bool = True, use_nvfp4: 
                   max_num_scaleup_ranks=args.max_num_scaleup_ranks,
                   num_zero_copy_slots=2)
     kwargs.update(overrides)
-    buffer = nixl_ep_v2.ElasticBuffer(group, **kwargs)
+    buffer = ep.ElasticBuffer(group, **kwargs)
     if one_domain:
         num_scaleout_ranks, _ = buffer.get_topology_ranks()
         assert num_scaleout_ranks == 1, 'The zero-copy test needs one NVLink domain (direct mode)'
@@ -74,7 +74,7 @@ def make_inputs(args, use_fp8: bool, seed_offset: int = 0, num_tokens: int = 0, 
     torch.manual_seed(args.seed + seed_offset + 1000 * dist.get_rank())
     scores = get_unbalanced_scores(num_tokens, num_experts or args.num_experts, num_ranks or dist.get_world_size(), args.num_topk, 1.0, False)
     topk_weights, topk_idx = torch.topk(scores, args.num_topk, dim=-1, largest=True, sorted=False)
-    topk_idx = topk_idx.to(nixl_ep_v2.topk_idx_t)
+    topk_idx = topk_idx.to(ep.topk_idx_t)
     if use_nvfp4:
         # Opaque NVFP4 bytes (two e2m1 codes per byte, one e4m3 scale per 16 elements): the dispatch moves them as bytes
         x = (torch.randint(0, 256, (num_tokens, args.hidden // 2), dtype=torch.uint8, device='cuda'),

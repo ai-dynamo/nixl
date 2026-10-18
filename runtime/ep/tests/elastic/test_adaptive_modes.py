@@ -49,25 +49,25 @@ import argparse
 import torch
 import torch.distributed as dist
 
-import nixl_ep_v2
-from nixl_ep_v2.utils.envs import init_dist, dist_print
-from nixl_ep_v2.utils.gate import get_unbalanced_scores
-from nixl_ep_v2.utils.refs import combine as ref_combine
-from nixl_ep_v2.utils.refs import generate_pre_combine_data, ordered_accumulate
-from nixl_ep_v2.utils.math import calc_diff, ceil_div
+from nixl.runtime import ep
+from nixl.runtime.ep.utils.envs import init_dist, dist_print
+from nixl.runtime.ep.utils.gate import get_unbalanced_scores
+from nixl.runtime.ep.utils.refs import combine as ref_combine
+from nixl.runtime.ep.utils.refs import generate_pre_combine_data, ordered_accumulate
+from nixl.runtime.ep.utils.math import calc_diff, ceil_div
 
 from test_ep import test_dispatch_combine
 from test_deterministic_sort import check_deterministic_sort
 
 
-def combine_recipe(buffer: nixl_ep_v2.ElasticBuffer, allow_multiple_reduction: bool, do_expand: bool = False):
+def combine_recipe(buffer: ep.ElasticBuffer, allow_multiple_reduction: bool, do_expand: bool = False):
     if not allow_multiple_reduction:
         # The combine input is already reduced within the rank, as in `test_ep.py`; the expanded layout is not
         return (not do_expand, False)
     return (True, True) if buffer.combine_is_hybrid else (True, False)
 
 
-def make_graph_case(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
+def make_graph_case(buffer: ep.ElasticBuffer, args: argparse.Namespace):
     num_max_tokens_per_rank, hidden = args.num_tokens, args.hidden
     num_tokens = max(1, args.num_tokens - dist.get_rank())
     num_topk = args.num_topk
@@ -79,7 +79,7 @@ def make_graph_case(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
     # Fixed routing and data (the graph bakes in the addresses; the contents stay the same across replays)
     scores = get_unbalanced_scores(num_tokens, num_experts, capture_so * capture_su, num_topk, 1.0, False)
     topk_weights, topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)
-    topk_idx = topk_idx.to(nixl_ep_v2.topk_idx_t)
+    topk_idx = topk_idx.to(ep.topk_idx_t)
     x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
 
     # The combine input is a function of the dispatch output (which rows arrived); it is produced inside the
@@ -139,7 +139,7 @@ def capture(forward):
     return graph, outputs
 
 
-def run_graph_retention(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace, first_mode: str, second_mode: str):
+def run_graph_retention(buffer: ep.ElasticBuffer, args: argparse.Namespace, first_mode: str, second_mode: str):
     if buffer.get_topology_ranks()[0] > 1:
         return  # both modes are legal on one NVLink domain only
     forward, check = make_graph_case(buffer, args)
@@ -171,7 +171,7 @@ def run_graph_retention(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespa
     torch.cuda.synchronize()
 
 
-def run_world_retention(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
+def run_world_retention(buffer: ep.ElasticBuffer, args: argparse.Namespace):
     # One graph captured at the full world keeps working after a commit of the topology descriptor (`EPTopology`) to a
     # sub-world in either mode (1 x N: half the positions; S x N: the first domain alone, across a domain boundary) and back
     num_scaleout_ranks, num_scaleup_ranks = buffer.get_topology_ranks()
@@ -230,7 +230,7 @@ def run_world_retention(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespa
     torch.cuda.synchronize()
 
 
-def check_handle_sizing(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
+def check_handle_sizing(buffer: ep.ElasticBuffer, args: argparse.Namespace):
     # Tensors stored for the declared maximum world and the whole launch grid, live shapes reported, the exact count in its slot
     forward, _ = make_graph_case(buffer, args)
     _, _, handle = forward()
@@ -264,7 +264,7 @@ def check_handle_sizing(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespa
                f'in a {handle.num_recv_tokens}-row output', once_in_node=True)
 
 
-def run_fixed_slot_graph_cases(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
+def run_fixed_slot_graph_cases(buffer: ep.ElasticBuffer, args: argparse.Namespace):
     # Capture small, grow, shrink, change the routing and replay empty rounds, over the (expanded output, deterministic,
     # expert alignment) combinations, with the elastic test's `Case` and `GraphCase`
     from test_adaptive_elastic import Case, GraphCase, switch_world   # not at the top: that module imports `combine_recipe` from this one
@@ -337,7 +337,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     rank_idx, num_ranks, group = init_dist(local_rank, num_local_ranks, seed=args.seed)
     # `--num-experts` is the expert count of the cohort's world; the slots per rank are fixed from it
     assert args.num_experts % num_ranks == 0, f'{args.num_experts} experts do not divide by {num_ranks} ranks'
-    buffer = nixl_ep_v2.ElasticBuffer(group,
+    buffer = ep.ElasticBuffer(group,
                                    num_experts_per_rank=args.num_experts // num_ranks,
                                    num_max_tokens_per_rank=args.num_tokens, hidden=args.hidden,
                                    deterministic=args.deterministic,

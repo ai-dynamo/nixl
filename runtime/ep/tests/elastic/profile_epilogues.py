@@ -41,11 +41,11 @@ import os
 import torch
 import torch.distributed as dist
 
-import nixl_ep_v2
-from nixl_ep_v2.utils.envs import init_dist
-from nixl_ep_v2.utils.gate import get_unbalanced_scores
-from nixl_ep_v2.utils.math import per_token_cast_to_fp8
-from nixl_ep_v2.utils.testing import bench_kineto
+from nixl.runtime import ep
+from nixl.runtime.ep.utils.envs import init_dist
+from nixl.runtime.ep.utils.gate import get_unbalanced_scores
+from nixl.runtime.ep.utils.math import per_token_cast_to_fp8
+from nixl.runtime.ep.utils.testing import bench_kineto
 
 # Profile slots (see impls/adaptive/*.cuh): dispatch main entry 0 -> end barrier done 7, copy epilogue 12->13,
 # combine main 14->15, reduce epilogue 16->17
@@ -76,7 +76,7 @@ def median(xs):
 def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     rank_idx, num_ranks, group = init_dist(local_rank, num_local_ranks, seed=0)
     assert args.num_experts % num_ranks == 0
-    buffer = nixl_ep_v2.ElasticBuffer(group, num_max_tokens_per_rank=args.num_tokens, hidden=args.hidden,
+    buffer = ep.ElasticBuffer(group, num_max_tokens_per_rank=args.num_tokens, hidden=args.hidden,
                                    num_experts_per_rank=args.num_experts // num_ranks,
                                    allow_multiple_reduction=True, prefer_overlap_with_compute=bool(args.prefer_overlap_with_compute),
                                    explicitly_destroy=True)
@@ -84,7 +84,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     num_sms = args.num_sms or buffer.get_theoretical_num_sms(num_topk)
     scores = get_unbalanced_scores(num_tokens, num_experts, num_ranks, num_topk, 1.0, False)
     topk_weights, topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)
-    topk_idx = topk_idx.to(nixl_ep_v2.topk_idx_t)
+    topk_idx = topk_idx.to(ep.topk_idx_t)
     x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     use_fp8 = bool(args.fp8)
     if use_fp8:

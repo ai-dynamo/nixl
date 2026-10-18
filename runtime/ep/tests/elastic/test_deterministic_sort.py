@@ -22,7 +22,7 @@
 CUDA graph and replayed with other receive counts, as a serving loop does after the world changed under fixed slots."""
 import torch
 
-from nixl_ep_v2 import EPHandle
+from nixl.runtime.ep import EPHandle
 
 
 def make_handle(metadata, count, do_expand=False, ends=None, counts=None, linked_list=None):

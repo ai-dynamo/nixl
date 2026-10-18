@@ -35,14 +35,14 @@ import os
 import torch
 import torch.distributed as dist
 
-import nixl_ep_v2
-from nixl_ep_v2.utils.math import per_token_cast_back, per_token_cast_to_fp8
-from nixl_ep_v2.utils.gate import get_unbalanced_scores
-from nixl_ep_v2.utils.envs import init_dist, dist_print
-from nixl_ep_v2.utils.refs import dispatch as ref_dispatch
-from nixl_ep_v2.utils.refs import combine as ref_combine
-from nixl_ep_v2.utils.refs import generate_pre_combine_data, ordered_accumulate
-from nixl_ep_v2.utils.testing import bench_kineto
+from nixl.runtime import ep
+from nixl.runtime.ep.utils.math import per_token_cast_back, per_token_cast_to_fp8
+from nixl.runtime.ep.utils.gate import get_unbalanced_scores
+from nixl.runtime.ep.utils.envs import init_dist, dist_print
+from nixl.runtime.ep.utils.refs import dispatch as ref_dispatch
+from nixl.runtime.ep.utils.refs import combine as ref_combine
+from nixl.runtime.ep.utils.refs import generate_pre_combine_data, ordered_accumulate
+from nixl.runtime.ep.utils.testing import bench_kineto
 
 
 def parse_int_list(s: str):
@@ -88,7 +88,7 @@ def sweep_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     use_fp8 = bool(args.fp8_dispatch)
     # Zero copy: a one-slot arena of the sweep's wire; every dispatch writes slot 0 in place (the handle's metadata lives in
     # the slot, so the timed dispatches overwrite what the timed combines read: fine for timing, the checks run first)
-    buffer = nixl_ep_v2.ElasticBuffer(group,
+    buffer = ep.ElasticBuffer(group,
                                       num_experts_per_rank=args.num_experts // num_ranks,
                                       num_max_tokens_per_rank=args.num_max_tokens_per_rank, hidden=args.hidden,
                                       num_topk=args.num_topk, use_fp8_dispatch=use_fp8, zc_use_fp8_dispatch=use_fp8,
@@ -118,7 +118,7 @@ def sweep_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         torch.manual_seed(args.seed + rank_idx)
         scores = get_unbalanced_scores(num_tokens, num_experts, num_ranks, num_topk, 1.0, False)
         topk_weights, topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)
-        topk_idx = topk_idx.to(nixl_ep_v2.topk_idx_t)
+        topk_idx = topk_idx.to(ep.topk_idx_t)
         x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
         x_in = per_token_cast_to_fp8(x) if use_fp8 else x
 
