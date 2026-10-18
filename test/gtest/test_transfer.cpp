@@ -27,7 +27,9 @@
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -649,6 +651,76 @@ TEST_P(TestTransfer, EmptyNotificationPayload) {
     constexpr size_t num_threads = 2;
     doNotificationTest(
         getAgent(0), getAgentName(0), getAgent(1), getAgentName(1), repeat, num_threads, "");
+}
+
+TEST_P(TestTransfer, NotifArrivesWithoutStatusCheck) {
+    // Without the thread pool the notification still waits for the initiator's status check
+    if (getNumThreads() == 0) {
+        GTEST_SKIP() << "Needs the UCX thread pool";
+    }
+
+    // At least split_batch_size descriptors (32 in getBackendParams()), so the
+    // thread pool runs the transfer
+    constexpr size_t size = 4096;
+    constexpr size_t count = 64;
+    constexpr nixl_mem_t mem_type = DRAM_SEG;
+    const std::string notif_msg = "notif_arrives_without_status_check";
+    std::vector<MemBuffer> local_buffers, remote_buffers;
+
+    createRegisteredMem(getAgent(0), size, count, mem_type, local_buffers);
+    createRegisteredMem(getAgent(1), size, count, mem_type, remote_buffers);
+    exchangeMD(0, 1);
+
+    const auto fill = [](const std::vector<MemBuffer> &buffers, uint8_t value) {
+        for (const auto &buffer : buffers) {
+            std::memset(reinterpret_cast<void *>(uintptr_t(buffer)), value, buffer.getSize());
+        }
+    };
+    const auto holds = [](const std::vector<MemBuffer> &buffers, uint8_t value) {
+        return std::all_of(buffers.begin(), buffers.end(), [value](const MemBuffer &buffer) {
+            const auto *bytes = reinterpret_cast<const uint8_t *>(uintptr_t(buffer));
+            return std::all_of(
+                bytes, bytes + buffer.getSize(), [value](uint8_t byte) { return byte == value; });
+        });
+    };
+
+    for (const auto op : {NIXL_WRITE, NIXL_READ}) {
+        const auto &src = (op == NIXL_WRITE) ? local_buffers : remote_buffers;
+        const auto &dst = (op == NIXL_WRITE) ? remote_buffers : local_buffers;
+
+        nixl_opt_args_t extra_params;
+        extra_params.notif = notif_msg;
+        nixlXferReqH *xfer_req = nullptr;
+        ASSERT_EQ(NIXL_SUCCESS,
+                  getAgent(0).createXferReq(op,
+                                            makeDescList<nixlBasicDesc>(local_buffers, mem_type),
+                                            makeDescList<nixlBasicDesc>(remote_buffers, mem_type),
+                                            getAgentName(1),
+                                            xfer_req,
+                                            &extra_params));
+
+        // The second post checks that a reposted request notifies again
+        for (const uint8_t pattern : {uint8_t{0x11}, uint8_t{0x22}}) {
+            fill(src, pattern);
+            fill(dst, 0);
+            const nixl_status_t status = getAgent(0).postXferReq(xfer_req);
+            ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+
+            // The initiator neither checks the status nor progresses (no sender
+            // passed) until the target has its notification
+            verifyNotifs(getAgent(1), getAgentName(0), 1, notif_msg);
+            EXPECT_TRUE(holds(dst, pattern))
+                << "data was not in place when the notification arrived";
+            ASSERT_TRUE(wait_until_true(
+                [&]() { return getAgent(0).getXferStatus(xfer_req) == NIXL_SUCCESS; }));
+        }
+
+        EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(xfer_req));
+    }
+
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), local_buffers, mem_type);
+    deregisterMem(getAgent(1), remote_buffers, mem_type);
 }
 
 class TestListener : public TestTransfer {};
