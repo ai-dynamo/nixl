@@ -63,19 +63,9 @@ echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 
-# CX-7 HCAs and IB port the RDMA (--disable-ll-nvlink) elastic tests use. The PORT_ACTIVE gate
-# and the UCX_NET_DEVICES pin below are both derived from these so they always match.
+# CX-7 HCAs and IB port the RDMA (--disable-ll-nvlink) elastic tests need active before running.
 RDMA_HCAS=(mlx5_0 mlx5_1 mlx5_2 mlx5_3)
 RDMA_PORT=1
-
-rdma_ucx_net_devices() {
-    local hca devs=()
-    for hca in "${RDMA_HCAS[@]}"; do
-        devs+=("${hca}:${RDMA_PORT}")
-    done
-    local IFS=,
-    echo "${devs[*]}"
-}
 
 run_elastic_test() {
     local plan_file=$1
@@ -84,13 +74,12 @@ run_elastic_test() {
     (
         unset NIXL_ETCD_ENDPOINTS NIXL_ETCD_PEER_URLS NIXL_ETCD_NAMESPACE
         if [[ "$extra_flags" == *--disable-ll-nvlink* ]]; then
-            # RDMA: all ranks share one node, so with UCX defaults it prefers the intra-node
-            # cuda_ipc/sm lanes and never builds the rc_gda device lane. A deny-list such as
-            # ^cuda_ipc,sm was not enough (UCX fell back to lanes with no device support and
-            # ucp_device_remote_mem_list_create() failed), so allow only the IB lanes, with
-            # rc_gda for the device lane and cuda_copy for GPU memory support.
-            export UCX_TLS=rc_gda,rc_mlx5,ud_mlx5,cuda_copy
-            export UCX_NET_DEVICES="$(rdma_ucx_net_devices)"
+            # RDMA: leave UCX_TLS/UCX_NET_DEVICES to the backend and Buffer defaults. Pinning
+            # them (^cuda_ipc,sm or an IB allow-list, plus all four HCAs) did not fix
+            # "Failed to create device memory list(remote): Invalid parameter". Log the
+            # transport/lane selection to diagnose it.
+            unset UCX_NET_DEVICES UCX_TLS
+            export UCX_LOG_LEVEL=info
         else
             # NVLink: let UCX auto-select a GPU-capable transport, without the GDA lane.
             unset UCX_NET_DEVICES
@@ -113,7 +102,7 @@ run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
 
 # Only run the --disable-ll-nvlink (RDMA) elastic tests when port RDMA_PORT of every HCA in
-# RDMA_HCAS (the ones pinned through UCX_NET_DEVICES) reports PORT_ACTIVE.
+# RDMA_HCAS reports PORT_ACTIVE.
 all_rdma_nics_active() {
     local hca
     for hca in "${RDMA_HCAS[@]}"; do
