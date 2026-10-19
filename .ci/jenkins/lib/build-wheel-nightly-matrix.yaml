@@ -291,6 +291,7 @@ steps:
         || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
       . ./wheel_build_ids.env
       . ./cell.env
+      CELL_SPCX_REF="${UCX_SPCX_PLUGIN_REF}"
 
       # Outside the build_options.env guard below: the release folder no longer
       # carries the sha, so NIXL_SHA must be set even for a ref that predates
@@ -305,6 +306,8 @@ steps:
       # so an older built ref without this flag just skips them.
       if [ -f build_options.env ]; then
         . ./build_options.env
+        # The plugin job's provenance beats the built ref's own default.
+        [ -z "${CELL_SPCX_REF}" ] || UCX_SPCX_PLUGIN_REF="${CELL_SPCX_REF}"
         [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
         [ -n "${UCX_SHA:-}" ] && PROPERTIES+=";UCX_SHA=${UCX_SHA}"
         [ -n "${CUDA_VERSION:-}" ] && PROPERTIES+=";CUDA_VERSION=${CUDA_VERSION}"
@@ -438,17 +441,23 @@ pipeline_stop:
         map
     }
 
+    // Other jobs can write the PVC, so nothing read from it is ever
+    // interpolated into a shell command: the staging dir is copied into the
+    // workspace once, and only directory names that are cell keys are opened.
+    def cellKeyRegex = /^[A-Za-z0-9._-]+$/
     def readCells = { String dir ->
         def cells = []
-        def names = sh(returnStdout: true, script: "ls -1 '${dir}' 2>/dev/null || true").trim()
+        sh "rm -rf manifest-fragments && mkdir -p manifest-fragments && if [ -d '${dir}' ]; then cp -a '${dir}/.' manifest-fragments/; fi"
+        def names = sh(returnStdout: true, script: "ls -1 manifest-fragments").trim()
         if (!names) return cells
         for (name in names.split('\n')) {
-            def cdir = "${dir}/${name}"
-            def c = [key: name, cell: [:], ids: [:], opts: [:], sidecar: null, sidecars: 0]
+            def c = [key: name, cell: [:], ids: [:], opts: [:], sidecar: null, sidecars: 0, valid: (name ==~ cellKeyRegex)]
+            if (!c.valid) { cells << c; continue }
+            def cdir = "manifest-fragments/${name}"
             if (fileExists("${cdir}/cell.env")) c.cell = parseEnv(readFile("${cdir}/cell.env"))
             if (fileExists("${cdir}/wheel_build_ids.env")) c.ids = parseEnv(readFile("${cdir}/wheel_build_ids.env"))
             if (fileExists("${cdir}/build_options.env")) c.opts = parseEnv(readFile("${cdir}/build_options.env"))
-            def jsons = sh(returnStdout: true, script: "ls -1 '${cdir}'/*.build-info.json 2>/dev/null || true").trim()
+            def jsons = sh(returnStdout: true, script: "ls -1 ${cdir}/*.build-info.json 2>/dev/null || true").trim()
             if (jsons) {
                 def files = jsons.split('\n')
                 c.sidecars = files.size()
@@ -461,24 +470,28 @@ pipeline_stop:
 
     // Only HTTP 200 is conclusive, as in the poller.
     def curlJson = { String url ->
-        def code = sh(returnStdout: true, script: """
-            set +x
-            curl -sS -o manifest-query.json -w '%{http_code}' --retry 3 --retry-delay 2 \
-              -u "\$ARTIFACTORY_USER:\$ARTIFACTORY_TOKEN" '${url}'
-        """).trim()
+        def code = withEnv(["QUERY_URL=${url}"]) {
+            sh(returnStdout: true, script: '''
+                set +x
+                curl -sS -o manifest-query.json -w '%{http_code}' --retry 3 --retry-delay 2 \
+                  -u "$ARTIFACTORY_USER:$ARTIFACTORY_TOKEN" "$QUERY_URL"
+            ''').trim()
+        }
         if (code != '200') throw new Exception("GET ${url} returned ${code}")
         new groovy.json.JsonSlurperClassic().parseText(readFile('manifest-query.json'))
     }
 
     // name -> [sha256, size] for every file in the folder, from Artifactory.
+    // Names come from the listing; only plain ones are ever put into a URL.
+    def fileNameRegex = /^[A-Za-z0-9._+-]+$/
     def artifactoryFiles = { String folder ->
         def listing = curlJson("${env.WHEEL_REPO_API}/${folder}?list&deep=0&listFolders=0")
         def files = [:]
         for (f in (listing.files ?: [])) {
             files[f.uri.toString().replaceFirst('^/', '')] = [sha256: f.sha2 ?: null, size: f.size]
         }
-        for (name in files.keySet()) {
-            if (!files[name].sha256) {
+        for (name in files.keySet().toList()) {
+            if (!files[name].sha256 && name ==~ fileNameRegex) {
                 def one = curlJson("${env.WHEEL_REPO_API}/${folder}/${name}")
                 files[name].sha256 = one.checksums?.sha256 ?: null
             }
@@ -488,7 +501,9 @@ pipeline_stop:
 
     // Validates the fragments (rules below) and builds the manifest document.
     // Every problem goes onto `errors`; the caller decides what to do with it.
-    def assemble = { List cells, Map files, List errors ->
+    def assemble = { List allCells, Map files, List errors ->
+        for (c in allCells.findAll { !it.valid }) errors << "staging entry '${c.key}' is not a cell key - ignored"
+        def cells = allCells.findAll { it.valid }
         def expected = Integer.parseInt(env.EXPECTED_WHEEL_CELLS ?: '20')
         if (cells.size() != expected) errors << "expected ${expected} cell fragments, found ${cells.size()}"
 
@@ -539,7 +554,8 @@ pipeline_stop:
         def torchRequested = perCuda('TORCH_VERSIONS_REQUESTED') { it.cell.TORCH_VERSIONS_REQUESTED }
 
         // Declared (host-side build_options.env) vs measured (inside the image).
-        if (ucxBranch && ucxRef && ucxBranch != ucxRef) errors << "UCX in the image is branch '${ucxBranch}' but the build declared '${ucxRef}'"
+        // A tag or sha UCX_REF is checked out detached, so ucx_info reports 'HEAD'; the revision check below covers it.
+        if (ucxBranch && ucxBranch != 'HEAD' && ucxRef && ucxBranch != ucxRef) errors << "UCX in the image is branch '${ucxBranch}' but the build declared '${ucxRef}'"
         if (ucxRevision && ucxSha && !(ucxSha.startsWith(ucxRevision) || ucxRevision.startsWith(ucxSha))) errors << "UCX revision in the image (${ucxRevision}) does not match the declared commit (${ucxSha})"
         if (imageCommit && nixlSha && !imageCommit.startsWith(nixlSha)) errors << "NIXL commit in the image (${imageCommit}) does not start with NIXL_SHA (${nixlSha})"
 
@@ -557,7 +573,7 @@ pipeline_stop:
         if (metaCells.size() != 1) errors << "expected exactly one meta wheel, found ${metaCells.keySet()}"
         def allNames = binaryNames + metaCells.keySet().toList()
         for (name in allNames) { if (!files.containsKey(name)) errors << "${name} is not in Artifactory folder ${folder}" }
-        def unexpected = files.keySet().findAll { !allNames.contains(it) }.toList().sort()
+        def unexpected = files.keySet().findAll { !allNames.contains(it) && it != 'build-manifest.json' }.toList().sort()
 
         def wheels = []
         def builtAll = []
