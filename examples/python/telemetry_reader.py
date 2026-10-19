@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants from telemetry_event.h
-TELEMETRY_VERSION = 5
+TELEMETRY_VERSION = 6
 DESTRUCTIVE_INTERFERENCE_SIZE = 256
 
 # NIXL telemetry event types (nixl_telemetry_event_type_t)
