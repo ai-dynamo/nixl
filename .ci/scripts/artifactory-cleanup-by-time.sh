@@ -39,10 +39,12 @@ USER="${ARTIFACTORY_USER:?Set ARTIFACTORY_USER}"
 
 export JFROG_CLI_LOG_LEVEL=ERROR
 
+# Skip jf's token exchange (api/security/token), which rejects reference tokens.
 jf config add artifactory \
     --artifactory-url "${ARTIFACTORY_URL}" \
     --password "${TOKEN}" \
     --user "${USER}" \
+    --basic-auth-only \
     --interactive=false \
     --overwrite
 
