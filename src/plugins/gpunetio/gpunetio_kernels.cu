@@ -100,25 +100,60 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
 #endif
 }
 
-__global__ void
-kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint32_t pos) {
+__device__ __forceinline__ bool
+nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
+                              struct docaXferReqGpu *xferReqRing,
+                              uint32_t pos) {
     uint64_t wqe_idx = 0;
     doca_gpu_dev_verbs_wqe *wqe_ptr;
     enum doca_gpu_dev_verbs_wqe_ctrl_flags cflag = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE;
     uint32_t tot_wqe, idx = 0;
     __shared__ uint64_t base_wqe_idx;
+    __shared__ bool abort_write;
 
     // Warmup
     if (xferReqRing == nullptr) {
-        return;
+        return false;
     }
 
     tot_wqe = xferReqRing[pos].num;
 
     if (threadIdx.x == 0) {
-        base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+        abort_write = false;
+        for (uint32_t dependency = 0; dependency < xferReqRing[pos].wait_completion_count;
+             ++dependency) {
+            const uint32_t id = xferReqRing[pos].wait_completion_ids[dependency];
+            while (DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].completion_list[id].completed) == 0) {
+                if (DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].wait_exit) != 0) {
+                    abort_write = true;
+                    break;
+                }
+            }
+            if (abort_write) {
+                break;
+            }
+        }
+        if (xferReqRing[pos].peer_write_completed != nullptr) {
+            while (!abort_write &&
+                   DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].peer_write_completed) <
+                       xferReqRing[pos].write_ticket - 1) {
+                if (DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].wait_exit) != 0) {
+                    abort_write = true;
+                }
+            }
+        }
+        if (!abort_write) {
+            if (xferReqRing[pos].wait_completion_count != 0 ||
+                xferReqRing[pos].peer_write_completed != nullptr) {
+                doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+            }
+            base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+        }
     }
     __syncthreads();
+    if (abort_write) {
+        return false;
+    }
 
     for (idx = threadIdx.x; idx < tot_wqe; idx += blockDim.x) {
         wqe_idx = base_wqe_idx + idx;
@@ -176,10 +211,47 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
     if (threadIdx.x == 0) {
         printf(">>>>>>> CUDA rdma write kernel pos %d posted %d buffers from base_wqe_idx %ld\n",
                pos,
-               xferReqRing[pos].num,
+               tot_wqe,
                base_wqe_idx);
     }
 #endif
+    return true;
+}
+
+__global__ void
+kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint32_t pos) {
+    nixl_gpunetio_dev_write_chunk(qp, xferReqRing, pos);
+}
+
+__global__ void
+kernel_write_striped(struct docaXferReqGpu *xferReqRing, docaStripedWriteLaunch launch) {
+    if (xferReqRing == nullptr) {
+        return;
+    }
+    __shared__ bool final_owner;
+    const uint32_t final_pos = launch.positions[launch.count - 1];
+
+    for (uint32_t ordinal = blockIdx.x; ordinal + 1 < launch.count; ordinal += gridDim.x) {
+        const uint32_t pos = launch.positions[ordinal];
+        const bool posted =
+            nixl_gpunetio_dev_write_chunk(xferReqRing[pos].qp_data, xferReqRing, pos);
+        // Reuse the helper's CTA-local state only after the posting lane finishes.
+        __syncthreads();
+        if (!posted) {
+            break;
+        }
+    }
+
+    if (threadIdx.x == 0) {
+        final_owner = cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(
+                          xferReqRing[final_pos].posting_ctas_done)
+                          .fetch_add(1U, cuda::std::memory_order_acq_rel) == gridDim.x - 1;
+    }
+    __syncthreads();
+    if (final_owner) {
+        // The last arrival acquired every CTA's completed posting publications.
+        nixl_gpunetio_dev_write_chunk(xferReqRing[final_pos].qp_data, xferReqRing, final_pos);
+    }
 }
 
 __global__ void
@@ -259,6 +331,10 @@ kernel_progress(struct docaXferCompletion *completion_list,
 #endif
                         }
 
+                        if (req->peer_write_completed != nullptr) {
+                            doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+                            DOCA_GPUNETIO_VOLATILE(*req->peer_write_completed) = req->write_ticket;
+                        }
                         DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) = 1;
                         index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
                     }
@@ -403,6 +479,26 @@ doca_kernel_write(cudaStream_t stream,
     }
 
     return DOCA_SUCCESS;
+}
+
+doca_error_t
+doca_kernel_write_striped(cudaStream_t stream,
+                          struct docaXferReqGpu *xferReqRing,
+                          docaStripedWriteLaunch launch,
+                          uint32_t qp_count) {
+    if (xferReqRing != nullptr &&
+        (launch.count == 0 || launch.count > DOCA_XFER_REQ_MAX || qp_count < 2 ||
+         qp_count > DOCA_POST_STREAM_NUM)) {
+        return DOCA_ERROR_INVALID_VALUE;
+    }
+    cudaError_t result = cudaGetLastError();
+    if (result != cudaSuccess) {
+        return DOCA_ERROR_BAD_STATE;
+    }
+    const uint32_t cta_count = xferReqRing == nullptr ? 1U : qp_count;
+    kernel_write_striped<<<cta_count, DOCA_XFER_REQ_SIZE, 0, stream>>>(xferReqRing, launch);
+    result = cudaGetLastError();
+    return result == cudaSuccess ? DOCA_SUCCESS : DOCA_ERROR_BAD_STATE;
 }
 
 doca_error_t

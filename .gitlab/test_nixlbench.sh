@@ -133,6 +133,37 @@ done
 #     done
 # fi
 
+capture_gpunetio_hang() {
+    local group=$1 child= pid
+    # Keep the watcher and its timer/debugger from surviving a completed case.
+    trap 'if [[ -n "${child:-}" ]]; then kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; fi' EXIT
+    trap 'exit 0' TERM INT
+    sleep "${2:-30}" & child=$!
+    wait "$child" || exit 0
+    child=
+    echo "GPUNETIO diagnostic: workers still running after the capture delay"
+    uname -m || true
+    printf 'CUDA_DEVICE_MAX_CONNECTIONS=%s CUDA_LAUNCH_BLOCKING=%s CUDA_MODULE_LOADING=%s\n' \
+        "${CUDA_DEVICE_MAX_CONNECTIONS:-unset}" "${CUDA_LAUNCH_BLOCKING:-unset}" "${CUDA_MODULE_LOADING:-unset}"
+    nvidia-smi --query-gpu=name,driver_version,compute_cap --format=csv || true
+    sha256sum ./bin/nixlbench "${NIXL_PLUGIN_DIR:-.}/libplugin_GPUNETIO.so" || true
+    # The generated group is unique to this case; never attach to other GPU users.
+    for pid in $(pgrep -f -- "^./bin/nixlbench .*--benchmark_group $group( |$)" || true); do
+        echo "GPUNETIO diagnostic: worker PID $pid"
+        ps -L -p "$pid" -o pid,tid,stat,wchan:32 || true
+        if command -v gdb >/dev/null 2>&1; then
+            timeout --kill-after=2s 10s gdb -batch \
+                -ex 'set pagination off' -ex 'set print frame-arguments none' \
+                -ex 'info sharedlibrary' -ex 'thread apply all bt' -p "$pid" & child=$!
+            wait "$child" || echo "GPUNETIO diagnostic: gdb capture failed for PID $pid"
+            child=
+        else
+            echo "GPUNETIO diagnostic: gdb unavailable; CPU wait channels shown above"
+        fi
+    done
+    exit 0
+}
+
 run_nixlbench_two_workers_gpunetio() {
     local benchmark_group port0 port1 command_line
     # Take the OOB ports from the reserved range: ephemeral ports (get_random_tcp_port) can be
@@ -140,7 +171,7 @@ run_nixlbench_two_workers_gpunetio() {
     port0=$(get_next_tcp_port)
     port1=$(get_next_tcp_port)
     benchmark_group=${port0}-$$
-    command_line="timeout --signal=INT --kill-after=15s 180s ./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group gpunetio-$benchmark_group $*"
+    command_line="timeout --signal=INT --kill-after=15s 360s ./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group gpunetio-$benchmark_group $*"
     # Each worker keeps a GPUNetIO progress kernel running, and two processes on
     # one GPU get time-sliced: give each worker its own GPU when there are two.
     local gpus gpu0 gpu1
@@ -149,9 +180,14 @@ run_nixlbench_two_workers_gpunetio() {
     gpu1=${gpus[1]:-$gpu0}
     # Each local worker owns its listener; never share an SO_REUSEPORT endpoint.
     # Bound a failed case even if its peer is still waiting for a notification.
+    local diagnostic_pid status=0
+    capture_gpunetio_hang "gpunetio-$benchmark_group" & diagnostic_pid=$!
     parallel --line-buffer --halt now,fail=1 ::: \
         "CUDA_VISIBLE_DEVICES=$gpu0 $command_line --gpunetio_oob_port=$port0" \
-        "sleep 4 ; CUDA_VISIBLE_DEVICES=$gpu1 $command_line --gpunetio_oob_port=$port1"
+        "sleep 4 ; CUDA_VISIBLE_DEVICES=$gpu1 $command_line --gpunetio_oob_port=$port1" || status=$?
+    kill "$diagnostic_pid" 2>/dev/null || true
+    wait "$diagnostic_pid" 2>/dev/null || true
+    return "$status"
 }
 
 if $HAS_GPU ; then
@@ -159,7 +195,9 @@ if $HAS_GPU ; then
     for op_type in WRITE READ; do
         for initiator in $seg_types; do
             for target in $seg_types; do
-                run_nixlbench_two_workers_gpunetio --backend GPUNETIO --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+                for qp_count in 1 2 4; do
+                    run_nixlbench_two_workers_gpunetio --backend GPUNETIO --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency --gpunetio_data_qp_count=$qp_count
+                done
             done
         done
     done

@@ -17,6 +17,14 @@ limitations under the License.
 
 # NIXL Benchmark
 
+GPUNetIO supports optional WRITE striping with `--gpunetio_data_qp_count=N` (1–4)
+(default 1). Use the same value on both endpoints. Compare counts with identical
+bytes, descriptors, pipeline depth and consistency checking; one GPU per worker
+avoids single-GPU scheduling time-slicing. The flag does not enable peer-MR or
+change SGE construction. Multi-QP mode allocates the selected WRITE QPs plus a
+dedicated READ QP. A striped request uses one kernel launch with one block per
+WRITE QP on a shared internal posting stream.
+
 A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) that supports multiple coordination backends. NIXLBench provides performance testing across multiple communication backends and storage systems, making it ideal for evaluating high-performance data transfer scenarios in distributed computing environments.
 
 **Coordination Options:**
