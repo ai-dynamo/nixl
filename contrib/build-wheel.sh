@@ -306,7 +306,7 @@ get_wheel_path() {
 write_build_info() {
     local WHL=$1
     shift
-    mkdir -p "$BUILD_INFO_DIR"
+    mkdir -p "$BUILD_INFO_DIR" || { echo "WARNING: build-info: cannot create $BUILD_INFO_DIR" >&2; return 0; }
     ./contrib/wheel_build_info.py sidecar \
         --wheel "$WHL" \
         --out "$BUILD_INFO_DIR/$(basename "$WHL").build-info.json" \
