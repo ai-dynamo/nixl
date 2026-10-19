@@ -163,6 +163,39 @@ TEST_F(telemetryTest, ReaderReattachSeedsCachedPos) {
     EXPECT_FALSE(producer.full());
 }
 
+TEST_F(telemetryTest, PushReloadsCachedReadPosWhenFull) {
+    // push() only re-reads read_pos when the ring looks full: fill the ring,
+    // fail one push, free one slot and push again to cover both reload outcomes
+    auto path = std::string(testDir_.string()) + "/" + testFile_;
+    sharedRingBuffer<nixlTelemetryEvent> producer(path, true, TELEMETRY_VERSION, 8);
+    sharedRingBuffer<nixlTelemetryEvent> consumer(path, false, TELEMETRY_VERSION);
+    nixlTelemetryEvent out;
+
+    for (size_t i = 0; i < 7; i++) {
+        EXPECT_TRUE(producer.push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
+    }
+    // full: push reloads the cached read_pos and fails
+    EXPECT_FALSE(producer.push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
+
+    EXPECT_TRUE(consumer.pop(out));
+    EXPECT_EQ(out.value_, 0u);
+    // one slot freed: the reload lets the push through
+    EXPECT_TRUE(producer.push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
+
+    for (size_t i = 1; i <= 7; i++) {
+        EXPECT_TRUE(consumer.pop(out));
+        EXPECT_EQ(out.value_, i);
+    }
+    // empty: pop reloads the cached write_pos and fails
+    EXPECT_FALSE(consumer.pop(out));
+
+    // test the same for cached write_pos
+    EXPECT_TRUE(producer.push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 8}));
+    EXPECT_TRUE(consumer.pop(out));
+    EXPECT_EQ(out.value_, 8u);
+    EXPECT_FALSE(consumer.pop(out));
+}
+
 TEST_F(telemetryTest, ConsumerSurvivesProducerRestart) {
     // An attached consumer must see the events left unread by the old producer
     auto path = std::string(testDir_.string()) + "/" + testFile_;
