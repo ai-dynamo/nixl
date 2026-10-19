@@ -277,6 +277,10 @@ nixlLibfabricCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &wa
     if (dev != expected_dev) {
         return -1;
     }
+    // Context-independent allocations need the per-device primary-context path.
+    if (ctx == nullptr) {
+        return -1;
+    }
 
     if (pthrCudaCtx_) {
         if (pthrCudaCtx_ != ctx) {
@@ -1023,8 +1027,8 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
             if (use_cuda_addr_wa) {
                 bool need_restart;
                 if (vramUpdateCtx((void *)mem.addr, mem.devId, need_restart)) {
-                    NIXL_INFO << "Multi-GPU detected (device " << mem.devId
-                              << "), using cudaSetDevice fallback";
+                    NIXL_INFO << "CUDA pointer context unavailable or incompatible (device "
+                              << mem.devId << "), using cudaSetDevice fallback";
                     {
                         const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
                         cuda_addr_wa_ = false;
