@@ -7,7 +7,13 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
+
+#ifdef HAVE_CUDA
+#include <cuda.h>
+#include <cuda_runtime.h>
+#endif
 
 #include "client.h"
 #include "object/engine_utils.h"
@@ -16,6 +22,58 @@
 #include "common/nixl_log.h"
 
 namespace {
+
+#ifdef HAVE_CUDA
+/**
+ * @brief Makes a buffer's CUDA device current for the lifetime of the object.
+ *
+ * cuObject registers device memory in the calling thread's current CUDA context.
+ * A thread that never selected a device has none, so the buffer's device is
+ * selected for the registration. The caller's context, or the absence of one, is
+ * restored afterwards. If the caller's context cannot be read, the device is not
+ * selected, so the caller's context is never lost.
+ */
+class scopedCudaDevice {
+public:
+    explicit scopedCudaDevice(int device) {
+        const CUresult rc = cuCtxGetCurrent(&saved_);
+        if (rc != CUDA_SUCCESS) {
+            error_ = "cuCtxGetCurrent failed: " + std::to_string(rc);
+            return;
+        }
+        restore_ = true;
+        const cudaError_t err = cudaSetDevice(device);
+        if (err != cudaSuccess) {
+            error_ =
+                "cudaSetDevice(" + std::to_string(device) + ") failed: " + cudaGetErrorString(err);
+        }
+    }
+
+    ~scopedCudaDevice() {
+        if (restore_ && cuCtxSetCurrent(saved_) != CUDA_SUCCESS) {
+            NIXL_WARN << "Failed to restore the caller's CUDA context";
+        }
+    }
+
+    scopedCudaDevice(const scopedCudaDevice &) = delete;
+    scopedCudaDevice &
+    operator=(const scopedCudaDevice &) = delete;
+
+    /**
+     * @brief Why the device could not be selected.
+     * @return An empty string on success, otherwise the failure.
+     */
+    [[nodiscard]] const std::string &
+    error() const {
+        return error_;
+    }
+
+private:
+    CUcontext saved_ = nullptr;
+    bool restore_ = false;
+    std::string error_;
+};
+#endif
 
 // Registered-memory metadata for the accel engine. It records what to clean up
 // on deregister: an OBJ_SEG key mapping, or a DRAM/VRAM buffer pinned for RDMA.
@@ -112,6 +170,17 @@ S3AccelObjEngineImpl::registerMem(const nixlBlobDesc &mem,
     // fast path is ready a registration failure is a hard error rather than a
     // silent success that fails later at transfer time.
     if (rdmaEngReady()) {
+#ifdef HAVE_CUDA
+        std::optional<scopedCudaDevice> device;
+        if (nixl_mem == VRAM_SEG) {
+            device.emplace(static_cast<int>(mem.devId));
+            if (!device->error().empty()) {
+                NIXL_ERROR << "Cannot register VRAM on device " << mem.devId << ": "
+                           << device->error();
+                return NIXL_ERR_BACKEND;
+            }
+        }
+#endif
         auto *rdma = nixl_obj_rdma::SharedCuObjClient::instance();
         if (!rdma || !rdma->registerBuffer(reinterpret_cast<void *>(mem.addr), mem.len)) {
             NIXL_ERROR << "RDMA buffer registration failed; the accelerated path has no HTTP "

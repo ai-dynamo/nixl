@@ -48,6 +48,7 @@ public:
     [[nodiscard]] nixl_status_t
     prepRemote(const nixl_remote_meta_dlist_t &dlist,
                const std::vector<void *> &direct_ptrs,
+               const std::vector<uint32_t> &peers,
                proxy_view_handle_t &out);
 
     /** Releases the view after all GPU/CPU operations using it have completed. */
@@ -57,7 +58,10 @@ public:
 private:
     template<typename DlistT>
     [[nodiscard]] nixl_status_t
-    createView(const DlistT &dlist, const std::vector<void *> &direct_ptrs, proxyHostView *&out);
+    createView(const DlistT &dlist,
+               const std::vector<void *> &direct_ptrs,
+               const std::vector<uint32_t> &peers,
+               proxyHostView *&out);
 
     template<typename DlistT>
     static void

@@ -178,7 +178,9 @@ memory-mapped file in a shared directory; the processes race for an exclusive
 scrape port and serves `/metrics` by reading and republishing all live processes'
 files on each scrape (one series set per agent name, host and `local_rank`). The losers run as writers only, so
 losing is benign and no rank is dropped, and a writer re-runs the election as it
-exports so the owner's death costs a gap rather than the rest of the run. If the
+exports so the owner's death costs a gap rather than the rest of the run. The
+agents of one process share its endpoint: only the first one elects, and the
+endpoint stays up until the process's last agent is destroyed. If the
 winner cannot bind, nothing aggregates the directory and it says so. Should the
 lock itself be unusable, every process warns and falls back to the port bind
 deciding. Full details:
@@ -189,17 +191,19 @@ deciding. Full details:
 | Variable | Description | Default |
 | -------- | ----------- | ------- |
 | `NIXL_TELEMETRY_EXPORTER` | Set to `prometheus_mp` to select this exporter | - |
-| `NIXL_TELEMETRY_MULTIPROC_DIR` | Shared directory for per-process store files (all ranks to be aggregated must use the same path). **Required.** | - |
-| `NIXL_TELEMETRY_PROMETHEUS_PORT` | Scrape port (shared with the `prometheus` exporter) | `9090` |
+| `NIXL_TELEMETRY_MULTIPROC_DIR` | Shared directory for per-process store files (all ranks to be aggregated must use the same path). Optional: unset or empty, it is named after the effective uid and the port, under the system temp directory when `/dev/shm` is not writable | `/dev/shm/nixl-telemetry-<euid>-<port>` |
+| `NIXL_TELEMETRY_PROMETHEUS_PORT` | Scrape port (shared with the `prometheus` exporter); also names the default `NIXL_TELEMETRY_MULTIPROC_DIR` | `9090` |
 | `NIXL_TELEMETRY_PROMETHEUS_LOCAL` | Bind `127.0.0.1` instead of `0.0.0.0` | `false` |
 | `NIXL_TELEMETRY_RANK_ENV` | Name of the env var holding the rank for the optional `local_rank` label; no label if that env var is unset | `LOCAL_RANK` |
 | `NIXL_TELEMETRY_MP_STALE_TTL` | Seconds after a dead process's last update before its store is stale and reaped. A departing rank leaves its store behind so its final values can still be scraped (unless a successor under its name supersedes them), so keep this at or above the scrape interval | `30` |
 | `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Shared with the other exporters, but capped at 32 bounds by the fixed-layout store | built-in µs defaults |
 
-Unlike a bind collision, a configuration error here is fatal: a missing
-`NIXL_TELEMETRY_MULTIPROC_DIR` and an over-long
+Unlike a bind collision, a configuration error here is fatal: an explicitly set
+`NIXL_TELEMETRY_MULTIPROC_DIR` that cannot be created and an over-long
 `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` both throw out of the `nixlAgent`
-constructor rather than leaving the rank running without telemetry.
+constructor rather than leaving the rank running without telemetry. A default
+directory that the process cannot create, or cannot create its store in, is not a
+configuration error: that process warns and runs without telemetry.
 
 Series are labeled by `hostname`, `agent_name`, and optionally `local_rank` (the
 local/per-GPU rank, not Dynamo's data-parallel `dp_rank`). `agent_errors_total`
@@ -218,8 +222,15 @@ the owner warns once, naming the first such name.
 convention: a shared **local** folder (not NFS), one per pod / process-family,
 treated as ephemeral (e.g. a per-pod Kubernetes `emptyDir`). Because NIXL is a
 library loaded independently per rank -- with no parent to propagate the path as in
-Dynamo -- the launcher/operator must set the **same** directory for every rank, so
-it is required rather than auto-defaulted.
+Dynamo -- the default is built from what the ranks of a run already share, their
+user and their port, so it aggregates with no configuration the processes of that
+user and port that see the same `/dev/shm` (or, where `/dev/shm` is not writable,
+resolve the same temp directory), unrelated jobs included; give concurrent jobs
+different ports to keep them apart. Containers that do not share `/dev/shm`, ranks
+with different temp directories on that fallback, and runs on hosts shared with
+other users, need an explicit directory;
+see the README for these cases and for the files the default directory keeps between
+runs.
 
 Whether a rank is still alive is decided by the lock it holds on its own store,
 not by its pid: a store is `flock`-ed before it is given a name and stays locked
@@ -245,7 +256,9 @@ It therefore **cannot represent a metric with a dynamic / high-cardinality label
 that varies per observation. No NIXL metric needs that today; if one is ever added,
 a different (keyed) store would be required.
 
-The owner's death is survived rather than fatal, but not instantly: the kernel
+Within a process, agents come and go without a gap: they share the endpoint, which
+stays up until the last of them is destroyed. Between processes, the owner's death
+is survived rather than fatal, but not instantly: the kernel
 releases its lock, and a writer re-running the election -- which it does from its
 export path, a few times a second at most -- takes the endpoint and the reaping
 over. The endpoint is therefore unreachable for that gap plus up to one scrape

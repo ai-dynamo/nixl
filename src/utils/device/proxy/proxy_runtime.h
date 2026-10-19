@@ -24,6 +24,7 @@
 #include <mutex>
 #include <stop_token>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "backend_aux.h"
@@ -50,36 +51,26 @@ public:
     operator=(const proxyRuntime &) = delete;
 
     /**
-     * Build without starting workers. The runtime owns the transport; the allocator
-     * must outlive the runtime.
-     * @retval NIXL_ERR_INVALID_PARAM No transport, or an invalid config.
+     * Build and start the workers. The runtime owns the transport; the allocator must outlive
+     * the runtime.
+     * @throws std::runtime_error on no transport, an invalid config, or a failed build or start.
      */
-    [[nodiscard]] static nixl_status_t
+    [[nodiscard]] static std::unique_ptr<proxyRuntime>
     create(std::unique_ptr<proxyTransport> transport,
            const proxyConfig &config,
-           std::unique_ptr<proxyRuntime> &out,
            deviceOps &allocator);
 
     [[nodiscard]] nixl_status_t
     prepMemView(const nixl_meta_dlist_t &dlist, proxy_view_handle_t *proxy_memview);
 
-    /** Resolves the transport's direct pointers first; it may offer none. */
+    /** Resolves the transport's direct pointers first; it may offer none. Gives each remote
+     *  agent a peer the first time a view names it. */
     [[nodiscard]] nixl_status_t
     prepMemView(const nixl_remote_meta_dlist_t &dlist, proxy_view_handle_t *proxy_memview);
 
-    [[nodiscard]] nixl_status_t
+    /** Logs a warning if the view cannot be released. */
+    void
     releaseMemView(proxy_view_handle_t proxy_memview);
-
-    [[nodiscard]] nixl_status_t
-    startWorkers();
-
-    nixl_status_t
-    shutdown();
-
-    const nixlProxyRingDesc *
-    deviceChannelViews() const {
-        return device_channel_views_.empty() ? nullptr : device_channel_views_.data();
-    }
 
     nixlProxyDeviceContextData *
     deviceContext() const {
@@ -87,8 +78,7 @@ public:
     }
 
 private:
-    /** INITIALIZED: the transport's init() succeeded, so shutdown() must call its shutdown(). */
-    enum class state_t { CREATED, INITIALIZED, BUILT, RUNNING, STOPPED };
+    enum class state_t { CREATED, BUILT, RUNNING };
 
     proxyRuntime(std::unique_ptr<proxyTransport> transport,
                  const proxyConfig &config,
@@ -102,6 +92,13 @@ private:
     nixl_status_t
     build();
 
+    nixl_status_t
+    start();
+
+    /** Stop and join the workers, then release what build() allocated. */
+    void
+    shutdown() noexcept;
+
     void
     joinWorkerThreads() noexcept;
 
@@ -112,7 +109,6 @@ private:
     mutable std::mutex control_mutex_;
     std::vector<proxyChannel> channels_;
     std::unique_ptr<proxyControlBuffer> control_slots_;
-    std::vector<nixlProxyRingDesc> device_channel_views_;
     deviceMem device_channel_views_mem_;
     deviceMem device_context_mem_;
     /** Shared by the workers; destroyed after them. */
@@ -120,10 +116,12 @@ private:
     std::vector<std::unique_ptr<proxyWorker>> workers_;
     /** Created after the device context; destroyed after workers stop. */
     std::unique_ptr<proxyMemViewManager> memview_manager_;
+    /** Each remote agent's peer, kept for the runtime's lifetime. */
+    std::unordered_map<std::string, uint32_t> peers_;
     std::stop_source stop_source_;
     /** Bumped once per drain; each worker acks it when it has applied it. */
     alignas(64) std::atomic<uint64_t> drain_requested_{0};
-    uint64_t *shutdown_word_dev_ = nullptr;
+    std::atomic<bool> shutting_down_{false};
     state_t state_ = state_t::CREATED;
 };
 

@@ -42,7 +42,8 @@ public:
     recordPhase(nixl_trace_phase_t phase,
                 std::string_view label,
                 nixlTime::us_t timestamp,
-                std::span<const nixlBackendTraceAttr> attrs) noexcept override;
+                std::span<const nixlBackendTraceAttr> attrs,
+                const TraceContext *context) noexcept override;
 
 private:
     Tracer &tracer_;
