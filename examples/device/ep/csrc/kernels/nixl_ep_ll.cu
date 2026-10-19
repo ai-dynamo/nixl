@@ -1165,7 +1165,7 @@ __forceinline__ __device__ void barrier(nixl_ep::gpu_nixl_ctx nixl_ctx, int* mas
                     put_status = nixlGpuGetXferStatus<nixl_gpu_level_t::THREAD>(xfer_status);
                 if (!recv_done)
                     recv_done = (ld_acquire_sys_global(nixl_ctx.sync_buffer_ptr + dst_rank) == expected_cnt);
-            } while (((put_status == NIXL_IN_PROG) || !recv_done) && (clock64() - start_time <= timeout_cycles));
+            } while (((put_status == NIXL_IN_PROG) || ((put_status == NIXL_SUCCESS) && !recv_done)) && (clock64() - start_time <= timeout_cycles));
 
             if ((put_status != NIXL_SUCCESS) || !recv_done) {
                 printf("Warning: NixlEP timeout for barrier, rank %d, thread %d, dst_rank %d, expected value %d, actual value %d, put status %d\n",
