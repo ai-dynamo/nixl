@@ -237,7 +237,8 @@ protected:
     }
 
     void
-    expectSenderPhases(const nixl::trace::TraceContext &context,
+    expectSenderPhases(std::string_view agent,
+                       const nixl::trace::TraceContext &context,
                        size_t posts,
                        size_t notifying_posts) const {
         ASSERT_TRUE(context.sampled());
@@ -250,7 +251,7 @@ protected:
              {"nixl::wire.submitted", posts},
              {"nixl::notif.sent", notifying_posts}}};
         for (const auto &[phase, count] : expected_counts) {
-            const auto spans = recordedSpans(traceFile, sender_name, phase);
+            const auto spans = recordedSpans(traceFile, agent, phase);
             EXPECT_EQ(spans.size(), count) << phase;
             for (const auto &span : spans) {
                 EXPECT_THAT(span, testing::IsSupersetOf(expected)) << phase;
@@ -452,13 +453,13 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_THAT(received[0],
                 testing::IsSupersetOf(
                     {correlation, traceparent, std::string("nixl.remote_agent=") + sender_name}));
-    expectSenderPhases(context, 1, 1);
+    expectSenderPhases(sender_name, context, 1, 1);
 }
 
 TEST_F(ucxTraceContextPropagation, SenderRecordsItsPhasesOncePerPost) {
     nixl::trace::TraceContext context;
     ASSERT_NO_FATAL_FAILURE(writeToSelf(sender_name, {}, 1, {tagged_msg, std::nullopt}, context));
-    expectSenderPhases(context, 2, 1);
+    expectSenderPhases(sender_name, context, 2, 1);
 }
 
 TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsItsPhasesOncePerPostNotPerChunk) {
@@ -468,7 +469,7 @@ TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsItsPhasesOncePerPostNotPerCh
                                         2,
                                         {tagged_msg, std::nullopt},
                                         context));
-    expectSenderPhases(context, 2, 1);
+    expectSenderPhases(sender_name, context, 2, 1);
 }
 
 TEST_F(ucxTraceContextPropagation, DeferredNotificationIsRecordedByTheStatusCheck) {
@@ -520,7 +521,7 @@ TEST_F(ucxTraceContextPropagation, DeferredNotificationIsRecordedByTheStatusChec
     ASSERT_EQ(sender.invalidateRemoteMD(target_name), NIXL_SUCCESS);
     ASSERT_EQ(sender.deregisterMem(sender_regs), NIXL_SUCCESS);
     ASSERT_EQ(target.deregisterMem(target_regs), NIXL_SUCCESS);
-    expectSenderPhases(context, 1, 1);
+    expectSenderPhases(sender_name, context, 1, 1);
 }
 
 TEST_F(ucxTraceContextPropagation, UnsampledAndUntracedPostsRecordNoPhases) {

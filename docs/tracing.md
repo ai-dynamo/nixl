@@ -232,13 +232,15 @@ On the sender, UCX records three phases for every post of a sampled request,
 each under the request's context: `nixl::submit` when `postXfer` accepts the
 post, `nixl::wire.submitted` once all of its puts or gets and the flushes behind
 them are posted to UCX, and `nixl::notif.sent` when the notification is posted.
-A post that passes validation but then fails before reaching the transport, for
-example because the peer disconnected, records `nixl::submit` alone.
+If handing a validated post to UCX fails, at a put, a get or the flush, for
+example because the peer disconnected, only `nixl::submit` is recorded.
 The notification goes out from `postXfer` if the transfer has already completed,
 and otherwise from the first status check that finds it complete, so
 `notif.sent` appears once per notifying post, from either call. UCX records no
-`nixl::wire.completed`: it learns of completion only when the application checks
-the status, so the stamp would time the poll rather than the transport.
+`nixl::wire.completed`: a transfer as a whole is seen to complete only when the
+application checks its status, even on the thread-pool engine, whose dedicated
+threads see each chunk finish, so the stamp would time the poll rather than the
+transport.
 
 A backend that carries the context to its peer says so by overriding
 `supportsTraceContext()`, which defaults to `false`; core reads it once, when
