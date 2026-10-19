@@ -30,9 +30,9 @@
 
 namespace {
 
-[[nodiscard]] std::vector<std::uint64_t> &
-correlationStack() noexcept {
-    static thread_local std::vector<std::uint64_t> stack;
+[[nodiscard]] std::vector<nixl::trace::TraceContext> &
+contextStack() noexcept {
+    static thread_local std::vector<nixl::trace::TraceContext> stack;
     return stack;
 }
 
@@ -87,8 +87,10 @@ public:
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
     beginSpan(std::string_view name, nixl::trace::Kind) override {
         std::string line = agent_ + " " + std::string(name);
-        if (!correlationStack().empty()) {
-            line += " correlation=" + std::to_string(correlationStack().back());
+        if (!contextStack().empty()) {
+            const nixl::trace::TraceContext &context = contextStack().back();
+            line += " correlation=" + std::to_string(context.correlationId64()) +
+                " context=" + nixl::trace::formatTraceparent(context);
         }
         return std::make_unique<recordingSpan>(fd_, std::move(line));
     }
@@ -97,14 +99,14 @@ public:
     mark(std::string_view, nixl::trace::Kind) override {}
 
     void
-    pushCorrelationId(std::uint64_t id) override {
-        correlationStack().push_back(id);
+    pushContext(const nixl::trace::TraceContext &context) override {
+        contextStack().push_back(context);
     }
 
     void
-    popCorrelationId() override {
-        if (!correlationStack().empty()) {
-            correlationStack().pop_back();
+    popContext() override {
+        if (!contextStack().empty()) {
+            contextStack().pop_back();
         }
     }
 
@@ -134,7 +136,7 @@ private:
 extern "C" NIXL_TRACE_PLUGIN_EXPORT nixlTracePlugin *
 nixl_trace_plugin_init() {
     return nixlTracePluginCreator<recordingBackend>::create(
-        nixl_trace_plugin_api_version::V1, "recorder", "0.1.0");
+        nixl_trace_plugin_api_version::V2, "recorder", "0.1.0");
 }
 
 extern "C" NIXL_TRACE_PLUGIN_EXPORT void
