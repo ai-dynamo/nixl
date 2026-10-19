@@ -313,6 +313,8 @@ Telemetry data is stored in shared memory files with the agent name passed when 
 
 ### Using Telemetry Readers
 
+Readers attach to the file by agent name and can outlive the producer. When a producer restarts under the same agent name it reuses the existing file and its positions if the version and capacity match, so an attached reader keeps its unread events. Otherwise the file is replaced on a new inode and the old reader is unaffected: its mapping stays valid and it drains exactly the events it already had, without ever seeing the new producer's writes. In that case a new reader must be started to see the new producer's events.
+
 ### C++ Telemetry Reader
 
 The C++ telemetry reader (`telemetry_reader.cpp`) provides a robust way to read and display telemetry events.
