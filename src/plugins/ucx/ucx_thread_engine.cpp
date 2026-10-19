@@ -74,7 +74,7 @@ protected:
                 ret = eventfd_write(controlFd_.get(), 1);
             } while ((ret < 0) && (errno == EINTR));
             if (ret < 0) {
-                NIXL_PERROR << "Failed to write to progress thread control eventfd");
+                NIXL_PERROR << "Failed to write to progress thread control eventfd";
             }
         });
 
