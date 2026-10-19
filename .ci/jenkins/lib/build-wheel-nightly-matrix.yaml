@@ -97,7 +97,8 @@ env:
   NPROC: 16
   GRPC_NPROC: 10
   # CUDA 12 base image is pinned here (unlikely to change); CUDA 13 passes
-  # nothing and relies on build-container.sh's own default.
+  # nothing and relies on the Dockerfile's own ARG default, which
+  # build-container.sh records in build_options.env.
   CU12_BASE_IMAGE: "nvcr.io/nvidia/cuda"
   CU12_BASE_TAG: "12.9.1-devel-ubi8"
   CU12_CUDA_VERSION: "12.9"
@@ -109,6 +110,12 @@ env:
   # wheel_base images above and staged per-arch on the shared PVC. Which plugin
   # ref gets built is that job's own default, owned by the plugin developers.
   SPCX_STAGING_ROOT: "/mnt/pvc/${JOB_BASE_NAME}-spcx"
+  # Per-cell provenance fragments, merged by pipeline_stop into the build
+  # manifest and removed again on every run.
+  MANIFEST_STAGING_ROOT: "/mnt/pvc/${JOB_BASE_NAME}-manifest"
+  # Product of the matrix axes above - update both together. pipeline_stop
+  # refuses to publish a manifest assembled from fewer fragments.
+  EXPECTED_WHEEL_CELLS: "20"
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
   # SWX team's NIXL pypi repo (publish target).
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
@@ -166,7 +173,7 @@ steps:
       # Carried to Publish (folder key). UCX ref is not pinned here; it's
       # build-container.sh's own default and gets recorded in
       # build_options.env by the Build Wheel step instead.
-      printf 'NIXL_SHA=%s\n' "${NIXL_SHA}" > wheel_build_ids.env
+      printf 'NIXL_SHA=%s\nNIXL_COMMIT=%s\n' "${NIXL_SHA}" "$(git -C nixl-src rev-parse HEAD)" > wheel_build_ids.env
 
   - name: Build Wheel
     containerSelector: "{name: 'manylinux'}"
@@ -199,6 +206,50 @@ steps:
           ;;
       esac
       export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
+      WHEEL_BASE_IMAGE="${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}-cu${cuda}:${WHEEL_BASE_TAG}"
+      CELL_KEY="${manylinux}_${arch}_py${python_version}_cu${cuda}"
+
+      # Ref + commit of the staged plugin module, written by
+      # nixl-ci-compile-ucx-plugin next to the per-arch dirs. Another job
+      # wrote it, so it is parsed key by key and validated, never sourced. A
+      # malformed file is a plugin-job bug; an absent one is an older plugin
+      # job, and the manifest records the plugin as unknown.
+      SPCX_PROV="${SPCX_STAGING_ROOT}/${BUILD_NUMBER}/cu${cuda}/spcx-provenance.env"
+      UCX_SPCX_PLUGIN_REF=""; UCX_SPCX_PLUGIN_COMMIT=""; SPCX_FLAGS=""
+      if [ -f "${SPCX_PROV}" ]; then
+        UCX_SPCX_PLUGIN_REF="$(grep -m1 '^UCX_SPCX_PLUGIN_REF=' "${SPCX_PROV}" | cut -d= -f2-)"
+        UCX_SPCX_PLUGIN_COMMIT="$(grep -m1 '^UCX_SPCX_PLUGIN_COMMIT=' "${SPCX_PROV}" | cut -d= -f2-)"
+        [[ "${UCX_SPCX_PLUGIN_REF}" =~ ^[A-Za-z0-9._/-]+$ ]] \
+          || { echo "ERROR: malformed UCX_SPCX_PLUGIN_REF in ${SPCX_PROV}"; exit 1; }
+        [[ "${UCX_SPCX_PLUGIN_COMMIT}" =~ ^[0-9a-f]{40}$ ]] \
+          || { echo "ERROR: malformed UCX_SPCX_PLUGIN_COMMIT in ${SPCX_PROV}"; exit 1; }
+        SPCX_FLAGS="--ucx-spcx-plugin-ref ${UCX_SPCX_PLUGIN_REF}"
+        # Puts the "SPCX Plugin:" line back into the wheel README, which
+        # build-container.sh only sets on its clone path. Refs that predate
+        # the README block merely warn about an unconsumed build-arg.
+        DOCKER_BUILD_EXTRA_ARGS+=" --build-arg UCX_SPCX_PLUGIN_VERSION=${UCX_SPCX_PLUGIN_COMMIT}"
+      fi
+
+      # Cell facts for the fragment Publish deposits, written before the
+      # build so a failed cell leaves nothing behind.
+      if [ -x nixl-src/contrib/wheel_build_info.py ]; then
+        BUILD_INFO_SUPPORTED=true
+      else
+        BUILD_INFO_SUPPORTED=false
+      fi
+      {
+        echo "CELL_KEY=${CELL_KEY}"
+        echo "CUDA=${cuda}"
+        echo "ARCH=${arch}"
+        echo "PYTHON_VERSION=${python_version}"
+        echo "MANYLINUX=${manylinux}"
+        echo "TORCH_VERSIONS_REQUESTED=${TORCH_VERSIONS}"
+        echo "WHEEL_BASE_IMAGE=${WHEEL_BASE_IMAGE}"
+        echo "UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
+        echo "UCX_SPCX_PLUGIN_COMMIT=${UCX_SPCX_PLUGIN_COMMIT}"
+        echo "BUILD_INFO_SUPPORTED=${BUILD_INFO_SUPPORTED}"
+      } > cell.env
+
       cd nixl-src
       ./contrib/build-container.sh \
         ${BASE_IMAGE_FLAGS} \
@@ -208,8 +259,9 @@ steps:
         --torch-versions "${TORCH_VERSIONS}" \
         --tag "${WHEEL_IMAGE_TAG}" \
         --dockerfile contrib/Dockerfile.manylinux \
-        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}-cu${cuda}:${WHEEL_BASE_TAG}" \
+        --wheel-base-image "${WHEEL_BASE_IMAGE}" \
         --ucx-spcx-plugin-install "${SPCX_STAGING_ROOT}/${BUILD_NUMBER}/cu${cuda}/${arch}" \
+        ${SPCX_FLAGS} \
         --build-infinia \
         --build-options-file ../build_options.env
 
@@ -223,6 +275,10 @@ steps:
       rm -rf dist && mkdir -p dist
       cid=$(docker create "${WHEEL_IMAGE_TAG}")
       docker cp "${cid}:/workspace/nixl/dist/." ./dist/
+      # Sidecars from contrib/build-wheel.sh; refs that predate it have none.
+      rm -rf build-info && mkdir -p build-info
+      docker cp "${cid}:/workspace/nixl/build-info/." ./build-info/ 2>/dev/null \
+        || echo "build-info/: not in the image (built ref predates it)"
       docker rm -f "${cid}" || true
       ls -l dist/
 
@@ -234,6 +290,7 @@ steps:
       [[ "${PUBLISH_DIR}" =~ ^(verification|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
         || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
       . ./wheel_build_ids.env
+      . ./cell.env
 
       # Outside the build_options.env guard below: the release folder no longer
       # carries the sha, so NIXL_SHA must be set even for a ref that predates
@@ -259,6 +316,10 @@ steps:
         # the whole if-block with a non-zero status.
         true
       fi
+      # From the plugin job's provenance file (cell.env), not build_options.env.
+      if [ -n "${UCX_SPCX_PLUGIN_COMMIT:-}" ]; then
+        PROPERTIES+=";UCX_SPCX_PLUGIN_COMMIT=${UCX_SPCX_PLUGIN_COMMIT}"
+      fi
 
       # verification/ keeps its g<nixl-sha>.ucx<ucx-sha> schema (consumed by the
       # build-llm-container verification pipeline) and is shared between builds;
@@ -282,6 +343,18 @@ steps:
         curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -X PUT \
           "${PROPS_DEST}/$(basename "${whl}")?properties=${PROPERTIES}" || rc=1
       done
+      # Deposit this cell's fragment for pipeline_stop's manifest. Best effort:
+      # a missing fragment makes the manifest step mark the build UNSTABLE, it
+      # must not fail a published wheel.
+      if [ "$rc" -eq 0 ]; then
+        WHEELS="$(cd dist && ls nixl*.whl | tr '\n' ' ')"
+        printf 'PUBLISH_FOLDER=%s\nWHEELS="%s"\n' "${PUBLISH_DIR}/${FOLDER}" "${WHEELS% }" >> cell.env
+        CELL_DIR="${MANIFEST_STAGING_ROOT}/${BUILD_NUMBER}/${CELL_KEY}"
+        { mkdir -p "${CELL_DIR}" && cp cell.env wheel_build_ids.env "${CELL_DIR}/" \
+          && { [ ! -f build_options.env ] || cp build_options.env "${CELL_DIR}/"; } \
+          && { ! ls build-info/*.build-info.json >/dev/null 2>&1 || cp build-info/*.build-info.json "${CELL_DIR}/"; }; } \
+          || echo "WARNING: manifest fragment not deposited under ${CELL_DIR}"
+      fi
       exit $rc
 
 taskName: '${name}_${manylinux}/${arch}/python_${python_version}/cu${cuda}'
