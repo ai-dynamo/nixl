@@ -21,9 +21,14 @@
 
 namespace nixl {
 
-proxyWorker::proxyWorker(const proxyWorkerContext &ctx, uint32_t worker_index) noexcept
+proxyWorker::proxyWorker(const proxyWorkerContext &ctx,
+                         uint32_t worker_index,
+                         std::span<proxyChannel> channels,
+                         proxyPeerSlice peers) noexcept
     : ctx_(ctx),
-      index_(worker_index) {}
+      index_(worker_index),
+      channels_(channels),
+      peers_(peers) {}
 
 proxyWorker::~proxyWorker() {
     join();
@@ -55,10 +60,10 @@ proxyWorker::join() noexcept {
 
 void
 proxyWorker::selectOwnedDevice() noexcept {
-    if (index_ >= ctx_.channels.size()) {
+    if (channels_.empty()) {
         return;
     }
-    const proxyRing &ring = ctx_.channels[index_].ring(0);
+    const proxyRing &ring = channels_.front().ring(peers_.first);
     if (ring.allocated() && ring.selectDevice() != NIXL_SUCCESS) {
         NIXL_FATAL << "Failed to select proxy ring device";
     }
@@ -67,18 +72,19 @@ proxyWorker::selectOwnedDevice() noexcept {
 template<typename Fn>
 void
 proxyWorker::forEachOwnedChannel(Fn &&fn) {
-    for (size_t channel_id = index_; channel_id < ctx_.channels.size();
-         channel_id += ctx_.worker_count) {
-        fn(ctx_.channels[channel_id]);
+    for (proxyChannel &channel : channels_) {
+        fn(channel);
     }
 }
 
 void
 proxyWorker::passOwnedChannels() {
-    forEachOwnedChannel([this](proxyChannel &channel) { channel.submitReady(ctx_.transport); });
-    forEachOwnedChannel([this](proxyChannel &channel) { channel.progress(ctx_.transport); });
     forEachOwnedChannel(
-        [this](proxyChannel &channel) { channel.publishCompletions(ctx_.transport); });
+        [this](proxyChannel &channel) { channel.submitReady(ctx_.transport, peers_); });
+    forEachOwnedChannel(
+        [this](proxyChannel &channel) { channel.progress(ctx_.transport, peers_); });
+    forEachOwnedChannel(
+        [this](proxyChannel &channel) { channel.publishCompletions(ctx_.transport, peers_); });
 }
 
 void
@@ -97,7 +103,7 @@ bool
 proxyWorker::ownedChannelsDrained() {
     bool all_drained = true;
     forEachOwnedChannel(
-        [&](proxyChannel &channel) { all_drained = all_drained && channel.drained(); });
+        [&](proxyChannel &channel) { all_drained = all_drained && channel.drained(peers_); });
     return all_drained;
 }
 
@@ -105,7 +111,7 @@ void
 proxyWorker::logUndrainedRings() {
     forEachOwnedChannel([this](proxyChannel &channel) {
         auto rings = channel.rings();
-        for (size_t peer = 0; peer < rings.size(); ++peer) {
+        for (size_t peer = peers_.first; peer < rings.size(); peer += peers_.stride) {
             if (rings[peer].drained()) {
                 continue;
             }
@@ -125,7 +131,7 @@ bool
 proxyWorker::skipOwnedAbandonedTickets() {
     bool skipped = false;
     forEachOwnedChannel(
-        [&](proxyChannel &channel) { skipped = channel.skipAbandonedTickets() || skipped; });
+        [&](proxyChannel &channel) { skipped = channel.skipAbandonedTickets(peers_) || skipped; });
     return skipped;
 }
 
@@ -145,7 +151,8 @@ proxyWorker::drainOwnedChannels() {
         }
     }
 
-    forEachOwnedChannel([this](proxyChannel &channel) { channel.drainAndRearm(ctx_.transport); });
+    forEachOwnedChannel(
+        [this](proxyChannel &channel) { channel.drainAndRearm(ctx_.transport, peers_); });
 }
 
 } // namespace nixl

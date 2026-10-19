@@ -52,7 +52,8 @@ endif
 subdir('mocks')
 subdir('plugins')
 
-if ucx_gpu_device_api_available
+# The UCX device API tests also run the proxy mode, which needs only CUDA and the UCX backend.
+if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
     subdir('device_api')
 endif
 
@@ -124,10 +125,13 @@ gtest_sources = [
     '../../src/utils/common/nixl_log_file_sink.cpp',
     ]
 
-if ucx_gpu_device_api_available
+if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
     gtest_sources += device_api_test_sources
-    device_api_inc = [nixl_device_inc_dirs, include_directories('device_api')]
-    device_api_dep = [ucx_dep, doca_gpunetio_dep]
+    device_api_inc = nixl_device_api_inc_dirs + [include_directories('device_api')]
+    device_api_dep = [ucx_dep]
+    if ucx_gpu_device_api_available
+        device_api_dep += [doca_gpunetio_dep]
+    endif
 else
     device_api_inc = []
     device_api_dep = []
