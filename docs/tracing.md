@@ -290,13 +290,25 @@ The facade unit tests run against mock backends (no plugin needed); the real-age
 NVTX active:
 
 ```bash
-ninja -C build test/gtest/unit/unit test/gtest/gtest
+ninja -C build test/gtest/unit/unit test/gtest/gtest test/gtest/ucx_trace_receiver \
+    test/gtest/mocks/libtrace_backend_recorder.so
 # facade unit suite (no backend plugin needed):
 ./build/test/gtest/unit/unit --gtest_filter='Tracing.*'
 # real-agent NVTX suite (loads libtrace_backend_nvtx.so from the build tree):
 ./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
     --gtest_filter='*TestTransferTracing*'
+# two-process UCX test, one trace id on both agents:
+./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
+    --gtest_filter='ucxTraceContextPropagation.*'
 ```
+
+The two-process test starts its receiver agent as a separate executable,
+`ucx_trace_receiver`, which is built and installed next to `gtest`, and checks the
+spans both agents record against the sender's request; with `-Dwith_trace=false`,
+which compiles the sender's span out, it checks the receiver's alone. Both agents
+trace through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in the
+mocks directory) that appends one line per finished span to the file named by
+`NIXL_TEST_TRACE_FILE`; the test sets both variables itself.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
 test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically

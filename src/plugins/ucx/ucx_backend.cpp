@@ -16,6 +16,7 @@
  */
 
 #include "ucx_backend.h"
+#include "ucx_proxy_engine.h"
 #include "ucx_thread_engine.h"
 #include "ucx_thread_pool_engine.h"
 #include "ucx_backend_req.h"
@@ -35,6 +36,7 @@
 
 #include "device/device_memview.h"
 #include "device/device_ops.h"
+#include "device/proxy/proxy_config.h"
 
 namespace {
 [[nodiscard]] bool
@@ -68,7 +70,19 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
     nixlUcxEngine *engine;
     const size_t num_threads =
         nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
-    if (num_threads > 0) {
+
+    nixl::proxyConfig proxy_config;
+    if (nixl::parseProxyConfig(init_params, proxy_config) != NIXL_SUCCESS) {
+        nixl::throwRuntimeError("invalid device proxy configuration");
+    }
+
+    if (proxy_config.enabled) {
+        if (num_threads > 0) {
+            nixl::throwRuntimeError(
+                "num_threads is not supported with device_proxy=true; use proxy_thread_count");
+        }
+        engine = new nixl::ucx::proxyEngine(init_params, proxy_config);
+    } else if (num_threads > 0) {
         engine = new nixlUcxThreadPoolEngine(init_params, num_threads);
     } else if (init_params.enableProgTh) {
         engine = new nixlUcxThreadEngine(init_params);
@@ -796,9 +810,8 @@ nixlUcxEngine::prepMemViewImpl(const DlistT &dlist,
         return NIXL_ERR_BACKEND;
     }
 
-    // Device code reaches an implementation through the handle, not through a
-    // build-time choice, so what leaves here is a tagged wrapper rather than
-    // the bare backend handle.
+    // Device code takes the backend handle out of a tagged wrapper: the tag picks the
+    // implementation at run time, or checks a mode a caller fixed at compile time.
     const nixl_status_t status =
         nixl::deviceMemViewAllocate(*ops, nixl_device_exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
     if (status != NIXL_SUCCESS) {
