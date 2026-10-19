@@ -222,7 +222,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 ### `nixl-ci-cleanup-artifacts` (standalone)
 - **Trigger:** Daily cron at 6 AM, or manual run with optional `DRY_RUN=true` parameter.
 - **What it does:** Deletes stale Artifactory artifacts based on `.ci/cleanup-spec.json` — PR Docker images older than 1 day, CI base images not pulled in 2 weeks, verification Docker images and PyPI wheels older than 3 months. The same spec runs against il.artifactory.nvidia.com (CI images) and artifactory.nvidia.com (verification images and wheels, until they move to IL too). Images under `static/` (e.g. `static/infinia-libs`) are never deleted: the script skips that folder regardless of what the spec matches.
-- **Matrix:** `.ci/jenkins/lib/cleanup-matrix.yaml`. Runs on an Ubuntu 24.04 container with `jf` and `jq` installed at runtime.
+- **Matrix:** `.ci/jenkins/lib/cleanup-matrix.yaml`. Runs on an Ubuntu 24.04 container with `jf` and `jq` installed at runtime. `jf` is configured with `--basic-auth-only`: the IL credential is a reference token, and jf's default token auto-refresh (`api/security/token`) rejects reference tokens.
 - **Automatic on every PR:** No — standalone/scheduled + manual only.
 
 ### `nixl-ci-test-llm-container` (standalone)
