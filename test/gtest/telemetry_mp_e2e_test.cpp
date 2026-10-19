@@ -34,6 +34,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -42,6 +43,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -82,6 +84,24 @@ runWriterChild(int go_fd, int ready_fd, int quit_fd, const std::string &agent, u
             ::_exit(4);
         }
         // Block until the parent closes the quit pipe.
+        while (::read(quit_fd, &c, 1) > 0) {}
+    }
+    catch (...) {
+        rc = 3;
+    }
+    ::_exit(rc);
+}
+
+void
+runOwnerChild(int ready_fd, int quit_fd, const std::string &agent) {
+    int rc = 0;
+    try {
+        nixlTelemetryPrometheusMpExporter exporter(initParams(agent));
+        const char ok = 1;
+        if (!exporter.isExporter() || ::write(ready_fd, &ok, 1) != 1) {
+            ::_exit(4);
+        }
+        char c = 0;
         while (::read(quit_fd, &c, 1) > 0) {}
     }
     catch (...) {
@@ -261,6 +281,53 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     EXPECT_EQ(countStores(dead_prefix), 0u);
 
     // The remaining children are released and reaped by TearDown().
+}
+
+TEST_F(MpE2ETest, WriterTakesOverWhenTheOwnerProcessExits) {
+    int ready_pipe[2];
+    int quit_pipe[2];
+    ASSERT_EQ(::pipe(ready_pipe), 0);
+    scopedFd ready_read(ready_pipe[0]);
+    scopedFd ready_write(ready_pipe[1]);
+    ASSERT_EQ(::pipe(quit_pipe), 0);
+    scopedFd quit_read(quit_pipe[0]);
+    scopedFd quit_write(quit_pipe[1]);
+
+    const pid_t owner = ::fork();
+    ASSERT_GE(owner, 0);
+    if (owner == 0) {
+        ready_read.reset();
+        quit_write.reset();
+        runOwnerChild(ready_write.get(), quit_read.get(), "agent-owner");
+    }
+    children_.push_back(owner);
+    ready_write.reset();
+    quit_read.reset();
+
+    pollfd pfd{ready_read.get(), POLLIN, 0};
+    ASSERT_GT(::poll(&pfd, 1, 30000), 0) << "the owner never signalled readiness";
+    char c = 0;
+    ASSERT_EQ(::read(ready_read.get(), &c, 1), 1) << "the forked owner does not serve";
+
+    nixlTelemetryPrometheusMpExporter writer(initParams("agent-writer"));
+    ASSERT_FALSE(writer.isExporter());
+    writer.exportEvent({TX_BYTES, 1});
+    ASSERT_FALSE(writer.isExporter()) << "took the address from a live owner";
+
+    quit_write.reset();
+    int status = 0;
+    ASSERT_EQ(::waitpid(owner, &status, 0), owner);
+    children_.clear();
+    EXPECT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0) << "status " << status;
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!writer.isExporter() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        writer.exportEvent({TX_BYTES, 1});
+    }
+    ASSERT_TRUE(writer.isExporter());
+    EXPECT_EQ(seriesByAgent(scrapeMetrics(port_), "agent_tx_bytes_total").count("agent-writer"),
+              1u);
 }
 
 TEST_F(MpE2ETest, RanksConfiguredWithOnlyAPortAggregateBehindIt) {

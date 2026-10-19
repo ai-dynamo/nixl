@@ -178,7 +178,9 @@ memory-mapped file in a shared directory; the processes race for an exclusive
 scrape port and serves `/metrics` by reading and republishing all live processes'
 files on each scrape (one series set per agent name, host and `local_rank`). The losers run as writers only, so
 losing is benign and no rank is dropped, and a writer re-runs the election as it
-exports so the owner's death costs a gap rather than the rest of the run. If the
+exports so the owner's death costs a gap rather than the rest of the run. The
+agents of one process share its endpoint: only the first one elects, and the
+endpoint stays up until the process's last agent is destroyed. If the
 winner cannot bind, nothing aggregates the directory and it says so. Should the
 lock itself be unusable, every process warns and falls back to the port bind
 deciding. Full details:
@@ -254,7 +256,9 @@ It therefore **cannot represent a metric with a dynamic / high-cardinality label
 that varies per observation. No NIXL metric needs that today; if one is ever added,
 a different (keyed) store would be required.
 
-The owner's death is survived rather than fatal, but not instantly: the kernel
+Within a process, agents come and go without a gap: they share the endpoint, which
+stays up until the last of them is destroyed. Between processes, the owner's death
+is survived rather than fatal, but not instantly: the kernel
 releases its lock, and a writer re-running the election -- which it does from its
 export path, a few times a second at most -- takes the endpoint and the reaping
 over. The endpoint is therefore unreachable for that gap plus up to one scrape

@@ -43,6 +43,9 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   ("owner") binds the scrape port and runs the HTTP endpoint plus a collector that,
   on each scrape, reads every live process's file and republishes them as one
   exposition. The processes that lose run in **writer-only** mode and never bind.
+  The agents of one process share its endpoint: the process's first agent for a
+  directory, address and stale TTL runs the election, and later agents join that
+  endpoint instead of electing, so a process serves or writes as a whole.
   Losing is therefore benign -- every process gets a valid telemetry sink; no rank
   is dropped and no scary error is logged. The lock, not the bind, is what elects:
   two ranks binding concurrently cannot tell which of them got there first, so
@@ -124,18 +127,20 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   them on the first scrape after they go stale, which is its first scrape unless it
   started within the TTL, and until then publishes them like any other departed
   store.
-- **The owner's death is survived, not fatal.** The kernel releases the lock when
-  the owner dies, so a writer re-running the election wins it, binds the port and
-  starts aggregating -- reaping the dead owner's own store included. Writers
-  re-elect from their export path, a few times a second at most, which makes the
-  endpoint unreachable for that gap plus up to one scrape interval rather than for
-  the rest of the run. Two consequences worth knowing: a process that exports
-  nothing never re-elects, so a run that goes fully idle at the wrong moment stays
-  down until any rank produces telemetry again; and when the port is held from
-  outside the run, the re-election backs off to every few seconds instead of
-  hammering a bind that cannot succeed. Alert on the scrape target's `up` metric
-  rather than on absent series -- a gap looks to Prometheus like the target going
-  down, not like the ranks going idle.
+- **The owner's death is survived, not fatal.** Within a process, agents come and
+  go without a gap: the endpoint stays up until the process's last agent is
+  destroyed, whichever agent created it. Between processes, the kernel releases
+  the lock when the owner dies, so a writer re-running the election wins it, binds
+  the port and starts aggregating -- reaping the dead owner's own store included.
+  Writers re-elect from their export path, a few times a second at most, which
+  makes the endpoint unreachable for that gap plus up to one scrape interval
+  rather than for the rest of the run. Two consequences worth knowing: a process
+  that exports nothing never re-elects, so a run that goes fully idle at the wrong
+  moment stays down until any rank produces telemetry again; and when the port is
+  held from outside the run, the re-election backs off to every few seconds
+  instead of hammering a bind that cannot succeed. Alert on the scrape target's
+  `up` metric rather than on absent series -- a gap looks to Prometheus like the
+  target going down, not like the ranks going idle.
 
 ## Configuration
 

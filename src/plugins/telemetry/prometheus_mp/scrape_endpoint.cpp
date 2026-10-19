@@ -61,6 +61,7 @@ scrapeEndpoint::scrapeEndpoint(std::filesystem::path dir,
 
 scrapeEndpoint::status
 scrapeEndpoint::claim() {
+    const std::lock_guard lock(mutex_);
     election_.emplace(dir_, bindAddress_);
     if (!election_->won()) {
         election_.reset();
@@ -71,15 +72,22 @@ scrapeEndpoint::claim() {
 
 void
 scrapeEndpoint::reclaim(std::chrono::nanoseconds now) noexcept {
+    if (now < nextAttempt_.load(std::memory_order_relaxed)) {
+        return;
+    }
+    const std::unique_lock lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        return;
+    }
     // Re-electing while serving would give up the lock this process holds:
     // emplace destroys the election in place before running the new one.
     if (serving()) {
         return;
     }
-    if (now - lastAttempt_ < retryInterval_) {
+    if (now < nextAttempt_.load(std::memory_order_relaxed)) {
         return;
     }
-    lastAttempt_ = now;
+    nextAttempt_.store(now + retryInterval_, std::memory_order_relaxed);
     try {
         // Quiet: an unusable lock file is the condition claim() already warned
         // about once, and repeating it every retry would bury the log.
@@ -91,6 +99,7 @@ scrapeEndpoint::reclaim(std::chrono::nanoseconds now) noexcept {
         if (!serve()) {
             election_.reset();
             retryInterval_ = backoff;
+            nextAttempt_.store(now + backoff, std::memory_order_relaxed);
             return;
         }
         NIXL_INFO << "prometheus_mp: no process owns telemetry dir " << dir_.string()
@@ -122,6 +131,7 @@ scrapeEndpoint::serve() {
         exposer->RegisterCollectable(collector);
         collector_ = std::move(collector);
         exposer_ = std::move(exposer);
+        serving_.store(true, std::memory_order_release);
         return true;
     }
     catch (const std::exception &e) {
