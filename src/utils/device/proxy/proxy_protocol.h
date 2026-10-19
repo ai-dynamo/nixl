@@ -32,6 +32,8 @@
 #define NIXL_PROXY_PROTO_FN inline
 #endif
 
+namespace nixl {
+
 enum class nixl_proxy_opcode_t : uint8_t {
     PUT = 0,
     ATOMIC_ADD = 1,
@@ -184,5 +186,7 @@ static_assert(sizeof(nixlProxyDeviceContextData) == 24,
               "nixlProxyDeviceContextData layout changed");
 static_assert(offsetof(nixlProxyDeviceContextData, rings) == 0,
               "nixlProxyDeviceContextData layout changed");
+
+} // namespace nixl
 
 #endif // NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_PROTOCOL_H
