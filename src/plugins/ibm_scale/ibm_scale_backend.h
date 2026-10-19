@@ -105,7 +105,7 @@ struct nixlScaleIODesc {
 // ---------------------------------------------------------------------------
 class nixlScaleBackendReqH : public nixlBackendReqH {
 public:
-    explicit nixlScaleBackendReqH(nixl_xfer_op_t op, size_t desc_count, unsigned ring_size)
+    nixlScaleBackendReqH(nixl_xfer_op_t op, size_t desc_count, unsigned ring_size)
         : operation_(op),
           expected_((int)desc_count),
           completed_(0),
@@ -125,6 +125,7 @@ public:
 
     ~nixlScaleBackendReqH() override {
         if (ringOk_) {
+            drainInFlight();
             io_uring_queue_exit(&ring_);
         }
     }
@@ -192,6 +193,27 @@ public:
     void
     decInFlight(int n = 1) noexcept {
         inFlight_.fetch_sub(n, std::memory_order_relaxed);
+    }
+
+    void
+    drainInFlight() noexcept {
+        if (!ringOk_) {
+            return;
+        }
+        while (inFlight_.load(std::memory_order_relaxed) > 0) {
+            struct io_uring_cqe *cqe = nullptr;
+            int ret = io_uring_wait_cqe(&ring_, &cqe);
+            if (ret < 0) {
+                if (ret == -EINTR) {
+                    continue;
+                }
+                break;
+            }
+            if (cqe) {
+                io_uring_cqe_seen(&ring_, cqe);
+                decInFlight();
+            }
+        }
     }
 
     void

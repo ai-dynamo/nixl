@@ -54,24 +54,11 @@
 #include <gpfs_fcntl.h>
 #endif
 
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "file/file_utils.h"
 
 namespace {
-
-long long
-scaleParamLl(const nixl_b_params_t *params, const char *key, long long def) {
-    if (!params) {
-        return def;
-    }
-    auto it = params->find(key);
-    if (it == params->end()) {
-        return def;
-    }
-    char *end = nullptr;
-    long long v = strtoll(it->second.c_str(), &end, 10);
-    return (end && *end == '\0') ? v : def;
-}
 
 nixlScaleBackendReqH &
 castScaleHandle(nixlBackendReqH *handle) {
@@ -129,12 +116,12 @@ nixlScaleEngine::nixlScaleEngine(const nixlBackendInitParams *init_params)
     // customParams override env vars.
     if (init_params->customParams) {
         const nixl_b_params_t *p = init_params->customParams;
-        long long rs = scaleParamLl(p, "nixl_scale_ring_size", (long long)ringSize_);
-        unsigned clamped = nextPow2((unsigned)(rs > 1 ? rs : ringSize_));
+        unsigned rs = nixl::getBackendParamDefaulted(p, "nixl_scale_ring_size", ringSize_);
+        unsigned clamped = nextPow2(rs > 1 ? rs : ringSize_);
         ringSize_ = (clamped > 32768u) ? 32768u : clamped;
 
         disableMarHints_ =
-            scaleParamLl(p, "nixl_scale_disable_mar_hints", disableMarHints_ ? 1 : 0) != 0;
+            nixl::getBackendParamDefaulted(p, "nixl_scale_disable_mar_hints", disableMarHints_);
     }
 
     NIXL_INFO << "IBM_SCALE: init ring_size=" << ringSize_
@@ -415,23 +402,7 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
     nixlScaleBackendReqH &req = castScaleHandle(handle);
 
     // ── Quiesce any outstanding operations from a prior run on this handle ──
-    if (req.ringOk()) {
-        while (req.inFlight() > 0) {
-            struct io_uring_cqe *cqe = nullptr;
-            int ret = io_uring_wait_cqe(req.ring(), &cqe);
-            if (ret < 0) {
-                if (ret == -EINTR) {
-                    continue;
-                }
-                NIXL_ERROR << "IBM_SCALE: postXfer quiescing wait_cqe failed: " << -ret;
-                break;
-            }
-            if (cqe) {
-                io_uring_cqe_seen(req.ring(), cqe);
-                req.decInFlight();
-            }
-        }
-    }
+    req.drainInFlight();
 
     req.resetState();
 
@@ -492,6 +463,7 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
                     NIXL_ERROR << "IBM_SCALE: postXfer SQ full even after flush"
                                << " idx=" << idx << " descs=" << req.descs().size();
                     req.markError();
+                    req.drainInFlight();
                     return NIXL_ERR_BACKEND;
                 }
             }
@@ -517,6 +489,7 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
                 NIXL_ERROR << "IBM_SCALE: postXfer io_uring_submit failed: " << -ret << " ("
                            << strerror(-ret) << ")";
                 req.markError();
+                req.drainInFlight();
                 return NIXL_ERR_BACKEND;
             }
             req.addInFlight(ret);
