@@ -28,8 +28,8 @@ namespace nixl {
 
 proxyMemViewManager::proxyMemViewManager(deviceOps &allocator,
                                          const nixlProxyDeviceContextData *device_context)
-    : allocator_(allocator),
-      device_context_(device_context) {}
+    : deviceOps_(allocator),
+      deviceContext_(device_context) {}
 
 template<typename DlistT>
 nixl_status_t
@@ -47,31 +47,31 @@ proxyMemViewManager::createView(const DlistT &dlist,
 
     const nixlProxyDeviceMemView memview_contents{
         static_cast<uint64_t>(reinterpret_cast<uintptr_t>(host_view.get())),
-        device_context_,
+        deviceContext_,
         static_cast<uint32_t>(direct_ptrs.size()),
         static_cast<uint32_t>(peers.size())};
 
     // GPU: allocate the device memview and copy the contents, direct pointers and peers into it.
     deviceMem device_memview_mem;
-    if (allocator_.allocDeviceMem(nixlProxyDeviceMemViewBytes(direct_ptrs.size(), peers.size()),
+    if (deviceOps_.allocDeviceMem(nixlProxyDeviceMemViewBytes(direct_ptrs.size(), peers.size()),
                                   device_memview_mem) != NIXL_SUCCESS) {
         NIXL_ERROR << "proxyMemViewManager: failed to allocate device memview";
         return NIXL_ERR_BACKEND;
     }
     auto *device_memview = static_cast<nixlProxyDeviceMemView *>(device_memview_mem.get());
-    nixl_status_t copy_status = allocator_.copy(device_memview,
+    nixl_status_t copy_status = deviceOps_.copy(device_memview,
                                                 &memview_contents,
                                                 sizeof(memview_contents),
                                                 deviceOps::copyDirection::HostToDevice);
     if (copy_status == NIXL_SUCCESS && !direct_ptrs.empty()) {
-        copy_status = allocator_.copy(nixlProxyDeviceMemViewDirectPtrs(device_memview),
+        copy_status = deviceOps_.copy(nixlProxyDeviceMemViewDirectPtrs(device_memview),
                                       direct_ptrs.data(),
                                       direct_ptrs.size() * sizeof(void *),
                                       deviceOps::copyDirection::HostToDevice);
     }
     if (copy_status == NIXL_SUCCESS && !peers.empty()) {
         copy_status =
-            allocator_.copy(nixlProxyDeviceMemViewDirectPtrs(device_memview) + direct_ptrs.size(),
+            deviceOps_.copy(nixlProxyDeviceMemViewDirectPtrs(device_memview) + direct_ptrs.size(),
                             peers.data(),
                             peers.size() * sizeof(peers[0]),
                             deviceOps::copyDirection::HostToDevice);

@@ -67,8 +67,8 @@ private:
     static void
     fillDescs(const DlistT &dlist, std::vector<proxyHostView::storedDesc> &out);
 
-    deviceOps &allocator_;
-    const nixlProxyDeviceContextData *device_context_;
+    deviceOps &deviceOps_;
+    const nixlProxyDeviceContextData *deviceContext_;
     /** Workers never access this ownership map. */
     std::unordered_map<proxy_view_handle_t, std::unique_ptr<proxyHostView>> views_;
 };
