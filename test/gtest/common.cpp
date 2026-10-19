@@ -58,6 +58,12 @@ ScopedEnv::popVar() {
     m_vars.pop();
 }
 
+ScopedEnv::~ScopedEnv() {
+    while (!m_vars.empty()) {
+        m_vars.pop();
+    }
+}
+
 ScopedEnv::Variable::Variable(const std::string &name, const std::optional<std::string> &value)
     : m_name(name) {
     const char* backup = getenv(name.c_str());
