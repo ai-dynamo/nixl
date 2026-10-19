@@ -43,17 +43,12 @@ class nixlUcxMem;
 
 class nixlUcxEp {
 private:
-    ucp_ep_h eph{nullptr};
-    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::UNINITIALIZED};
+    ucp_ep_h eph_{nullptr};
+    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::CONNECTED};
+    const uint32_t closeFlags_;
 
-    void
-    setState(nixl::ucx::ep_state_t new_state);
     nixl_status_t
-    closeImpl();
-
-    /* Connection */
-    nixl_status_t
-    disconnect_nb();
+    disconnect();
 
     static void
     sendAmCallback(void *request, ucs_status_t status, void *user_data);
@@ -95,18 +90,20 @@ public:
          nixlUcxReq &req);
     [[nodiscard]] nixl_status_t
     write(void *laddr,
-          nixlUcxMem &mem,
+          const nixlUcxMem &mem,
           uint64_t raddr,
           const nixl::ucx::rkey &rkey,
           size_t size,
           nixlUcxReq &req);
+    [[nodiscard]] nixl_status_t
+    atomicAdd(uint64_t value, uint64_t raddr, const nixl::ucx::rkey &rkey, nixlUcxReq &req) const;
     nixl_status_t
     estimateCost(size_t size,
                  std::chrono::microseconds &duration,
                  std::chrono::microseconds &err_margin,
                  nixl_cost_t &method);
     nixl_status_t
-    flushEp(nixlUcxReq &req);
+    flushEp(nixlUcxReq &req) const noexcept;
 
 #ifdef HAVE_UCX_SGL_API
     /* Scatter-gather list (SGL) operations */
@@ -119,7 +116,7 @@ public:
 
     [[nodiscard]] ucp_ep_h
     getEp() const noexcept {
-        return eph;
+        return eph_;
     }
 };
 

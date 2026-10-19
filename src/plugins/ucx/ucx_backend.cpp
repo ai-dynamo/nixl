@@ -16,6 +16,7 @@
  */
 
 #include "ucx_backend.h"
+#include "ucx_proxy_engine.h"
 #include "ucx_thread_engine.h"
 #include "ucx_thread_pool_engine.h"
 #include "ucx_backend_req.h"
@@ -37,6 +38,7 @@
 
 #include "device/device_memview.h"
 #include "device/device_ops.h"
+#include "device/proxy/proxy_config.h"
 
 namespace {
 [[nodiscard]] bool
@@ -70,7 +72,19 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params, nixl::ucx::Memor
     nixlUcxEngine *engine;
     const size_t num_threads =
         nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
-    if (num_threads > 0) {
+
+    nixl::proxyConfig proxy_config;
+    if (nixl::parseProxyConfig(init_params, proxy_config) != NIXL_SUCCESS) {
+        nixl::throwRuntimeError("invalid device proxy configuration");
+    }
+
+    if (proxy_config.enabled) {
+        if (num_threads > 0) {
+            nixl::throwRuntimeError(
+                "num_threads is not supported with device_proxy=true; use proxy_thread_count");
+        }
+        engine = new nixl::ucx::proxyEngine(init_params, proxy_config, std::move(policy));
+    } else if (num_threads > 0) {
         engine = new nixlUcxThreadPoolEngine(init_params, num_threads, std::move(policy));
     } else if (init_params.enableProgTh) {
         engine = new nixlUcxThreadEngine(init_params, 0, std::move(policy));
@@ -508,13 +522,7 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
         return post_ret;
     }
 
-    nixlUcxReq flush_req;
-    const nixl_status_t flush_ret = ep->flushEp(flush_req);
-    if (int_handle->append(flush_ret, flush_req) != NIXL_SUCCESS) {
-        return flush_ret;
-    }
-
-    return NIXL_SUCCESS;
+    return int_handle->flush();
 }
 #endif
 
@@ -592,13 +600,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
      * Flush keeps int_handle non-empty until the operation is actually
      * completed, which can happen after local requests completion.
      */
-    nixlUcxReq flush_req;
-    const nixl_status_t flush_ret = ep->flushEp(flush_req);
-    if (int_handle->append(flush_ret, flush_req) != NIXL_SUCCESS) {
-        return flush_ret;
-    }
-
-    return NIXL_SUCCESS;
+    return int_handle->flush();
 }
 
 nixl_status_t
@@ -627,18 +629,15 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     ret = int_handle->status();
-    if (opt_args && opt_args->hasNotif) {
-        auto notif = buildNotif(opt_args->notifMsg, opt_args->traceContext);
+    if (opt_args && opt_args->hasNotif && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
+        int_handle->notif = buildNotif(opt_args->notifMsg, opt_args->traceContext);
         if (ret == NIXL_SUCCESS) {
-            nixlUcxReq req;
-            ret = sendNotif(std::move(notif), int_handle->getEp(), &req);
-            if (int_handle->append(ret, req) != NIXL_SUCCESS) {
+            ret = int_handle->sendNotif();
+            if (ret != NIXL_SUCCESS) {
                 return ret;
             }
 
             ret = int_handle->status();
-        } else if (ret == NIXL_IN_PROG) {
-            int_handle->notif = std::move(notif);
         }
     }
 
@@ -659,11 +658,8 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
         return handle_status;
     }
 
-    nixlUcxReq req;
-    const nixl_status_t status = sendNotif(std::move(int_handle->notif), int_handle->getEp(), &req);
-    int_handle->notif.clear();
-
-    if (int_handle->append(status, req) != NIXL_SUCCESS) {
+    const nixl_status_t status = int_handle->sendNotif();
+    if (status != NIXL_SUCCESS) {
         return status;
     }
 
@@ -715,7 +711,7 @@ nixl::ucx::serializeNotif(const std::string &agent,
             ser_des.addBuf("tctx", record.data(), *size);
         }
     }
-    return ser_des.exportStr();
+    return std::move(ser_des).exportMoveStr();
 }
 
 nixl::ucx::notifMessage
@@ -746,16 +742,12 @@ nixlUcxEngine::buildNotif(const std::string &msg,
 }
 
 nixl_status_t
-nixlUcxEngine::sendNotif(std::string &&msg, const nixlUcxEp &ep, nixlUcxReq *req) {
-    return ep.sendAm(nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(msg), UCP_AM_SEND_FLAG_EAGER, req);
-}
-
-nixl_status_t
 nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::string &msg,
                              const nixlUcxEp &ep,
                              nixlUcxReq *req) const {
-    return sendNotif(buildNotif(msg, nullptr), ep, req);
+    return ep.sendAm(
+        nixl::ucx::am_cb_op_t::NOTIF_STR, buildNotif(msg, nullptr), UCP_AM_SEND_FLAG_EAGER, req);
 }
 
 ucx_connection_ptr_t
@@ -865,9 +857,8 @@ nixlUcxEngine::prepMemViewImpl(const DlistT &dlist,
         return NIXL_ERR_BACKEND;
     }
 
-    // Device code reaches an implementation through the handle, not through a
-    // build-time choice, so what leaves here is a tagged wrapper rather than
-    // the bare backend handle.
+    // Device code takes the backend handle out of a tagged wrapper: the tag picks the
+    // implementation at run time, or checks a mode a caller fixed at compile time.
     const nixl_status_t status =
         nixl::deviceMemViewAllocate(*ops, nixl_device_exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
     if (status != NIXL_SUCCESS) {

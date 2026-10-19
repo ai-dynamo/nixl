@@ -621,7 +621,7 @@
           default: false
           description: >
             Build the Infinia DDN plugin into the image (pass
-            <code>--build-infinia</code>; harbor.mellanox.com must be reachable to
+            <code>--build-infinia</code>; il.artifactory.nvidia.com must be reachable to
             pull the DDN libs).<br/>
             Applies to the <b>nixl</b> target only; nixlbench builds ignore it.<br/>
             Off by default — the DDN libs come from an external registry, so the

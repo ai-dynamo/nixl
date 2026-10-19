@@ -21,8 +21,8 @@
 ---
 job: nixl-ci-test-sanitizers
 
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 # Fail job if one of the steps fails or continue
@@ -33,7 +33,6 @@ timeout_minutes: 240
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   limits: "{memory: 16Gi, cpu: 8000m}"
   requests: "{memory: 16Gi, cpu: 8000m}"
 
@@ -97,10 +96,15 @@ taskName: "${arch}/${sanitizer}/${name}/${axis_index}"
 
 steps:
   - name: Build
+    credentialsId: 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       export PRE_INSTALLED_ENV="true"
       export PRE_INSTALLED_UCX_ENV="true"
+      # Authenticate meson's [wrap-git] subproject clones (taskflow, prometheus-cpp) with the
+      # github.com credential; git's environment config is inherited by every git it runs.
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
+      export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=/tmp/ghconfig
       # Map the sanitizer variant to the meson -Dsanitizer option (wired in
       # meson.build, which applies -fsanitize plus the third-party workarounds).
       case "${sanitizer}" in
