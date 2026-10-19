@@ -93,6 +93,8 @@ class TestUcclBackend : public testing::Test {
         void
         loadRemoteMD(const std::string &remote_name);
         nixl_status_t
+        invalidateRemoteMD();
+        nixl_status_t
         createXferReq(const nixl_xfer_op_t &op,
                       nixl_xfer_dlist_t &sReq_descs,
                       nixl_xfer_dlist_t &rReq_descs,
@@ -119,6 +121,7 @@ class TestUcclBackend : public testing::Test {
 protected:
     enum class TestType {
         BASIC_XFER,
+        INVALIDATE_AFTER_POST,
         LOAD_REMOTE_THEN_FAIL,
         XFER_THEN_FAIL,
         XFER_FAIL_RESTORE,
@@ -192,6 +195,11 @@ void
 TestUcclBackend::Agent::loadRemoteMD(const std::string &remote_name) {
     EXPECT_EQ(NIXL_SUCCESS, m_priv->loadRemoteMD(remote_name, m_MetaRemote))
         << "Agent " << m_name << " failed to load remote metadata";
+}
+
+nixl_status_t
+TestUcclBackend::Agent::invalidateRemoteMD() {
+    return m_priv->invalidateRemoteMD(m_MetaRemote);
 }
 
 nixl_status_t
@@ -273,6 +281,9 @@ TestUcclBackend::testXfer() {
         } else {
             // Transfer was posted, wait for completion
             nixlXferReqH *req_handle = std::get<nixlXferReqH *>(result);
+            if constexpr (test_type == TestType::INVALIDATE_AFTER_POST) {
+                ASSERT_EQ(NIXL_SUCCESS, m_Initiator.invalidateRemoteMD());
+            }
             status = m_Initiator.waitForCompletion(req_handle);
         }
 
@@ -288,7 +299,7 @@ TestUcclBackend::testXfer() {
                 exchangeMetaData();
             }
         } else {
-            EXPECT_EQ(NIXL_SUCCESS, status);
+            ASSERT_EQ(NIXL_SUCCESS, status);
             EXPECT_EQ(NIXL_SUCCESS, m_Target.waitForNotif("notification"));
             EXPECT_TRUE(m_Target.dataCmp(m_Initiator));
 
@@ -300,6 +311,7 @@ TestUcclBackend::testXfer() {
 
     switch (test_type) {
     case TestType::BASIC_XFER:
+    case TestType::INVALIDATE_AFTER_POST:
     case TestType::XFER_FAIL_RESTORE:
         m_Target.destroy();
         m_Initiator.destroy();
@@ -317,6 +329,7 @@ bool
 TestUcclBackend::failBeforePost(size_t iter) {
     switch (test_type) {
     case TestType::BASIC_XFER:
+    case TestType::INVALIDATE_AFTER_POST:
         return false;
     case TestType::LOAD_REMOTE_THEN_FAIL:
         return iter == 0;
@@ -345,6 +358,7 @@ size_t
 TestUcclBackend::numIter() {
     switch (test_type) {
     case TestType::BASIC_XFER:
+    case TestType::INVALIDATE_AFTER_POST:
     case TestType::LOAD_REMOTE_THEN_FAIL:
         return 1;
     case TestType::XFER_THEN_FAIL:
@@ -384,6 +398,9 @@ TestUcclBackend::postXfer(enum nixl_xfer_op_t op, size_t iter) {
     }
 
     status = m_Initiator.postXferReq(req_handle);
+    if constexpr (test_type == TestType::INVALIDATE_AFTER_POST) {
+        EXPECT_EQ(NIXL_IN_PROG, status);
+    }
 
     if (failAfterPost<test_type>(iter)) {
         m_Target.destroy();
@@ -402,6 +419,12 @@ TEST_F(TestUcclBackend, BasicXfer) {
     testXfer<TestType::BASIC_XFER, NIXL_READ>();
     std::this_thread::sleep_for(std::chrono::seconds(1));
     testXfer<TestType::BASIC_XFER, NIXL_WRITE>();
+}
+
+TEST_F(TestUcclBackend, PollAfterInvalidation) {
+    testXfer<TestType::INVALIDATE_AFTER_POST, NIXL_READ>();
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    testXfer<TestType::INVALIDATE_AFTER_POST, NIXL_WRITE>();
 }
 
 // TODO: Enable failure tests after hardening corner cases
