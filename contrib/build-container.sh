@@ -55,10 +55,11 @@ BUILD_TYPE="release"
 CUDA_VERSION_DEFAULT="13.2"
 CUDA_VERSION=${CUDA_VERSION:-}
 BUILD_INFINIA="false"
-INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.5.0-rcx.1"
+INFINIA_LIBS_IMAGE="il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/static/infinia-libs:v2.5.0-rcx.1"
 APT_MIRROR=""
 BUILD_UCX_SPCX_PLUGIN="false"
 UCX_SPCX_PLUGIN_REF="v0.3.x"
+UCX_SPCX_PLUGIN_INSTALL=""
 BUILD_OPTIONS_FILE=""
 
 get_options() {
@@ -211,6 +212,15 @@ get_options() {
         --ucx-spcx-plugin-ref)
             if [ "$2" ]; then
                 UCX_SPCX_PLUGIN_REF=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --ucx-spcx-plugin-install)
+            if [ "$2" ]; then
+                UCX_SPCX_PLUGIN_INSTALL=$2
+                BUILD_UCX_SPCX_PLUGIN="true"
                 shift
             else
                 missing_requirement $1
@@ -380,6 +390,7 @@ show_help() {
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
     echo "  [--build-ucx-spcx-plugin build the UCX spcx external plugin (requires NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL in the environment) (requires --dockerfile contrib/Dockerfile or contrib/Dockerfile.manylinux; bundled into the wheel only on the manylinux path)]"
     echo "  [--ucx-spcx-plugin-ref git ref of ucx-spcx-plugin to build (default: ${UCX_SPCX_PLUGIN_REF})]"
+    echo "  [--ucx-spcx-plugin-install directory holding a pre-built plugin module to install instead of building one (implies --build-ucx-spcx-plugin; no gitlab credentials needed)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
@@ -387,10 +398,11 @@ show_help() {
   [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
   [--manylinux-image-tag pinned PyPA manylinux image tag (default: ${MANYLINUX_IMAGE_TAG})]"
     echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
-    echo "  [--build-infinia build and bundle the Infinia DDN plugin (requires --dockerfile contrib/Dockerfile.manylinux; harbor.mellanox.com must be reachable)]"
+    echo "  [--build-infinia build and bundle the Infinia DDN plugin (requires --dockerfile contrib/Dockerfile.manylinux; il.artifactory.nvidia.com must be reachable)]"
     echo "  [--infinia-image full image reference for infinia-libs (default: ${INFINIA_LIBS_IMAGE})]"
     echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
     echo "  [--build-options-file path to write the resolved build options as KEY=VALUE lines]"
+    echo "  [DOCKER_BUILD_EXTRA_ARGS env var: extra arguments passed through to docker build, e.g. --secret id=ghconfig,src=<file>; word-split, so paths with spaces are not supported]"
     exit 0
 }
 
@@ -438,12 +450,46 @@ BUILD_ARGS+=" --build-arg BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
 # any docker builder. The token stays out of URLs and argv (git credential
 # helper reading the environment) so git errors cannot leak it.
 SPCX_SRC_DIR="$BUILD_CONTEXT/ucx-spcx-plugin-src"
-rm -rf "$SPCX_SRC_DIR"
-if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
+SPCX_INSTALL_DIR="$BUILD_CONTEXT/ucx-spcx-plugin-install"
+
+# Checked before the staging dirs are cleaned below: they live in the build
+# context, so a caller pointing --ucx-spcx-plugin-install at one would have it
+# deleted out from under them.
+if [ -n "$UCX_SPCX_PLUGIN_INSTALL" ]; then
+    if [ -z "$(ls -A "$UCX_SPCX_PLUGIN_INSTALL" 2>/dev/null)" ]; then
+        error "ERROR:" "--ucx-spcx-plugin-install directory is empty or missing: $UCX_SPCX_PLUGIN_INSTALL"
+    fi
+    spcx_install_real=$(cd "$UCX_SPCX_PLUGIN_INSTALL" && pwd -P)
+    for staging in "$SPCX_SRC_DIR" "$SPCX_INSTALL_DIR"; do
+        staging_real="$(cd "$(dirname "$staging")" && pwd -P)/$(basename "$staging")"
+        case "$spcx_install_real" in
+            "$staging_real"|"$staging_real"/*)
+                error "ERROR:" "--ucx-spcx-plugin-install must be outside the build context staging dir ($staging_real); it is cleaned before the build"
+                ;;
+        esac
+    done
+fi
+
+rm -rf "$SPCX_SRC_DIR" "$SPCX_INSTALL_DIR"
+
+# Pre-built plugin: the module was compiled elsewhere (nixl-ci-compile-ucx-plugin,
+# or by hand) and is staged into the context for the Dockerfile to install. No
+# clone, so no gitlab credentials and no plugin source in the build context.
+if [ -n "$UCX_SPCX_PLUGIN_INSTALL" ]; then
+    trap 'rm -rf "$SPCX_INSTALL_DIR"' EXIT
+    mkdir -p "$SPCX_INSTALL_DIR"
+    cp -a "$UCX_SPCX_PLUGIN_INSTALL/." "$SPCX_INSTALL_DIR/"
+    echo "ucx-spcx-plugin: using pre-built module from $UCX_SPCX_PLUGIN_INSTALL"
+elif [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
     # Ask the dockerfile itself rather than matching paths: only the ones with
     # the plugin build block declare the ARG, so this cannot drift.
     if ! grep -q '^ARG BUILD_UCX_SPCX_PLUGIN' "$DOCKER_FILE"; then
         error "ERROR:" "--build-ucx-spcx-plugin requires a dockerfile that consumes it (contrib/Dockerfile or contrib/Dockerfile.manylinux); $DOCKER_FILE does not"
+    fi
+    # The manylinux path installs a pre-built module and no longer compiles one,
+    # so staging source there would silently produce a plugin-less wheel.
+    if grep -q 'ucx-spcx-plugin-install' "$DOCKER_FILE"; then
+        error "ERROR:" "$DOCKER_FILE installs a pre-built plugin module; use --ucx-spcx-plugin-install <dir> instead of --build-ucx-spcx-plugin"
     fi
     if [ -z "${NIXL_GITLAB_TOKEN:-}" ]; then
         error "ERROR:" "--build-ucx-spcx-plugin requires the NIXL_GITLAB_TOKEN environment variable"
@@ -479,9 +525,9 @@ if [ -n "$WHEEL_BASE_IMAGE" ]; then
     DOCKER_BUILD_TARGET="--target wheel"
 fi
 
-# Infinia DDN libs: pre-pulled from harbor on the host and placed flat into
+# Infinia DDN libs: pre-pulled from Artifactory on the host and placed flat into
 # infinia-libs/ in the build context. The Dockerfile's BUILD_INFINIA RUN block
-# copies them to /opt/ddn/red/ — no harbor reference in the Dockerfile. The whole
+# copies them to /opt/ddn/red/ — no registry reference in the Dockerfile. The whole
 # block is guarded so external docker build runs are unaffected when
 # BUILD_INFINIA=false (default): no filesystem writes and no EXIT trap installed.
 if [ "$BUILD_INFINIA" = "true" ]; then
@@ -517,4 +563,7 @@ fi
 show_build_options
 [ -n "$BUILD_OPTIONS_FILE" ] && write_build_options_file
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT
+# The Dockerfiles use RUN --mount, which the legacy builder rejects. Default to
+# BuildKit for Docker releases that do not already (pre-23); podman ignores this.
+export DOCKER_BUILDKIT=${DOCKER_BUILDKIT:-1}
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS ${DOCKER_BUILD_EXTRA_ARGS:-} $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT

@@ -32,6 +32,7 @@ constexpr std::array kKnownProxyParams = {
     nixl::kProxyThreadCountParam,
     nixl::kProxyMaxPeersParam,
     nixl::kProxyRingDepthParam,
+    nixl::kProxyDrainTimeoutParam,
 };
 
 [[nodiscard]] bool
@@ -81,11 +82,14 @@ parseProxyConfig(const nixlBackendInitParams &init_params, proxyConfig &config) 
             getBackendParamOptional<uint32_t>(params, std::string(kProxyMaxPeersParam));
         const auto ring_depth =
             getBackendParamOptional<uint32_t>(params, std::string(kProxyRingDepthParam));
+        const auto drain_timeout_ms =
+            getBackendParamOptional<uint32_t>(params, std::string(kProxyDrainTimeoutParam));
 
         parsed.channel_count = channel_count.value_or(kDefaultProxyChannelCount);
         parsed.thread_count = thread_count.value_or(parsed.channel_count);
         parsed.max_peers = max_peers.value_or(kDefaultProxyMaxPeers);
         parsed.ring_depth = ring_depth.value_or(kDefaultProxyRingDepth);
+        parsed.drain_timeout_ms = drain_timeout_ms.value_or(kDefaultProxyDrainTimeoutMs);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Failed to parse device proxy backend parameters: " << e.what();
@@ -122,11 +126,12 @@ parseProxyConfig(const nixlBackendInitParams &init_params, proxyConfig &config) 
         return NIXL_ERR_NOT_ALLOWED;
     }
 
-    if (parsed.thread_count > parsed.channel_count) {
-        NIXL_INFO << "Device proxy " << kProxyThreadCountParam << "=" << parsed.thread_count
-                  << " exceeds " << kProxyChannelCountParam << "=" << parsed.channel_count
-                  << "; only " << parsed.effectiveThreadCount()
-                  << " thread(s) will be started (channels are striped across threads)";
+    if (!parsed.evenThreadSplit()) {
+        NIXL_ERROR << "Device proxy " << kProxyThreadCountParam << "=" << parsed.thread_count
+                   << " must divide " << kProxyChannelCountParam << "=" << parsed.channel_count
+                   << ", or be a multiple of it that divides the " << parsed.ringCount()
+                   << " ring(s) (" << kProxyMaxPeersParam << "=" << parsed.max_peers << ")";
+        return NIXL_ERR_INVALID_PARAM;
     }
 
     config = parsed;

@@ -35,14 +35,17 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 ## How it works
 
 - **Every process writes its own metric state** to a per-process memory-mapped
-  file in a shared directory (`NIXL_TELEMETRY_MULTIPROC_DIR`). Updates are
-  lock-free; there is no serialization.
+  file in a shared directory (`NIXL_TELEMETRY_MULTIPROC_DIR`, by default one per
+  user and port under `/dev/shm`). Updates are lock-free; there is no serialization.
 - **Locked owner election, one per address.** On startup -- and, for a process
   that is not serving, again as it exports -- each process races for an `flock` on
   `nixl-owner.<address:port>.lock` in the shared directory. The one that wins
   ("owner") binds the scrape port and runs the HTTP endpoint plus a collector that,
   on each scrape, reads every live process's file and republishes them as one
   exposition. The processes that lose run in **writer-only** mode and never bind.
+  The agents of one process share its endpoint: the process's first agent for a
+  directory, address and stale TTL runs the election, and later agents join that
+  endpoint instead of electing, so a process serves or writes as a whole.
   Losing is therefore benign -- every process gets a valid telemetry sink; no rank
   is dropped and no scary error is logged. The lock, not the bind, is what elects:
   two ranks binding concurrently cannot tell which of them got there first, so
@@ -77,14 +80,16 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   Ranks split across *directories* are only detected from the abandoned side. The
   directory that did elect an owner cannot tell that ranks it never saw went
   elsewhere: it aggregates a subset and looks healthy.
-- **Per-process series.** Each process is exported as its own series (cumulative
-  counters, last-operation gauges and duration histograms), never summed across
-  processes, so per-process values stay correct and monotonic.
+- **Per-agent series.** Each agent (host, name and `local_rank`) is exported as its
+  own series (cumulative counters, last-operation gauges and duration histograms),
+  never summed across processes. A successor under the same name takes over the
+  series, its counters restarting from zero (see "Design scope & limitations").
 - **Liveness is a lock, not a pid.** Each process `flock`s its store *before* the
   file has a name, keeps it locked for as long as it lives, and only then links it
-  into the directory. So a reader that manages to take the lock knows the writer
-  is gone for good -- no other process ever locks a store it did not create -- and
-  a store it cannot lock belongs to a live writer. The kernel releases the lock
+  into the directory. So, as long as that `flock` succeeded, a reader that
+  manages to take the lock knows the writer is gone for good -- no other process
+  ever locks a store exclusively -- and a store it cannot lock belongs to a live
+  writer ("Stale handling" covers a failed `flock`). The kernel releases the lock
   however the process died, so nothing needs cleaning up, and none of this needs
   pids, `/proc`, or a PID namespace shared with the writers. Creating the store
   nameless (`O_TMPFILE`) is what closes the last window: a reader can never find a
@@ -99,8 +104,9 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 - **Stale handling.** A departing process leaves its store file behind, whether it
   exits cleanly or is killed: its last values are usually not scraped yet, and
   unlinking on exit would drop everything produced since the previous scrape. The
-  owner keeps publishing them until *both* the writer has released the store and
-  its last update has aged past the TTL; only then are the series dropped and the
+  owner keeps publishing them, unless a store of the same name outranks them (see
+  "Metric labels"), until *both* the writer has released the store and its last
+  update has aged past the TTL; only then are the series dropped and the
   file reaped. Both are evaluated during a scrape, so a live process is never
   dropped for being idle, and a dead one keeps being published until the first
   scrape after its TTL expires. Keep the TTL at or above the Prometheus scrape
@@ -115,45 +121,90 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   can lock at all, the readers' probes fail too and nothing is reaped, so departed
   ranks stay published indefinitely instead.
 
-  This leaves at most one file per run on disk -- the last process to exit has no
-  owner left to reap it. It is harmless: the next run reaps it on its first scrape,
-  since it is both dead and stale.
-- **The owner's death is survived, not fatal.** The kernel releases the lock when
-  the owner dies, so a writer re-running the election wins it, binds the port and
-  starts aggregating -- reaping the dead owner's own store included. Writers
-  re-elect from their export path, a few times a second at most, which makes the
-  endpoint unreachable for that gap plus up to one scrape interval rather than for
-  the rest of the run. Two consequences worth knowing: a process that exports
-  nothing never re-elects, so a run that goes fully idle at the wrong moment stays
-  down until any rank produces telemetry again; and when the port is held from
-  outside the run, the re-election backs off to every few seconds instead of
-  hammering a bind that cannot succeed. Alert on the scrape target's `up` metric
-  rather than on absent series -- a gap looks to Prometheus like the target going
-  down, not like the ranks going idle.
+  Reaping needs a live owner scraping after the TTL, so a run leaves the stores of
+  the processes that exited last on disk -- one per agent after a normal teardown,
+  when every rank exits at about the same time. It is harmless: the next run reaps
+  them on the first scrape after they go stale, which is its first scrape unless it
+  started within the TTL, and until then publishes them like any other departed
+  store.
+- **The owner's death is survived, not fatal.** Within a process, agents come and
+  go without a gap: the endpoint stays up until the process's last agent is
+  destroyed, whichever agent created it. Between processes, the kernel releases
+  the lock when the owner dies, so a writer re-running the election wins it, binds
+  the port and starts aggregating -- reaping the dead owner's own store included.
+  Writers re-elect from their export path, a few times a second at most, which
+  makes the endpoint unreachable for that gap plus up to one scrape interval
+  rather than for the rest of the run. Two consequences worth knowing: a process
+  that exports nothing never re-elects, so a run that goes fully idle at the wrong
+  moment stays down until any rank produces telemetry again; and when the port is
+  held from outside the run, the re-election backs off to every few seconds
+  instead of hammering a bind that cannot succeed. Alert on the scrape target's
+  `up` metric rather than on absent series -- a gap looks to Prometheus like the
+  target going down, not like the ranks going idle.
 
 ## Configuration
 
 ```bash
 export NIXL_TELEMETRY_ENABLE="y"
 export NIXL_TELEMETRY_EXPORTER="prometheus_mp" # selects libtelemetry_exporter_prometheus_mp.so
-export NIXL_TELEMETRY_MULTIPROC_DIR="/run/nixl_metrics" # REQUIRED: shared by all ranks in the pod
 ```
 
-Configuration errors here are **fatal, unlike a bind collision**: a missing (or
-uncreatable) `NIXL_TELEMETRY_MULTIPROC_DIR`, and a
+That is enough: the processes of a run that use the same
+`NIXL_TELEMETRY_PROMETHEUS_PORT` are exported behind that port.
+
+`NIXL_TELEMETRY_MULTIPROC_DIR`, the directory those processes share, is optional.
+Unset or empty, it defaults to `/dev/shm/nixl-telemetry-<euid>-<port>`, named after
+the process's effective uid and its `NIXL_TELEMETRY_PROMETHEUS_PORT`. When `/dev/shm`
+is not a writable directory, the system temp directory (`TMPDIR`, else `/tmp`) takes
+its place, and only processes that resolve the same temp directory aggregate there:
+ranks given different `TMPDIR`s, as some schedulers do per job, need an explicit
+shared directory. The exporter logs the path it chose at INFO. Processes that share
+a port therefore aggregate, and processes given different ports keep separate
+endpoints, with no rank configuration. The name knows nothing about runs, though:
+unrelated jobs of one user on one host that use the same port share the directory
+too, publish each other's series behind one endpoint, and when the job serving it
+ends, the other takes the port over. Give concurrent jobs different ports to keep
+them apart. An explicit directory always wins:
+
+```bash
+export NIXL_TELEMETRY_MULTIPROC_DIR="/run/nixl_metrics" # the same for every rank to aggregate
+```
+
+The default only reaches processes that run as the same user and see the same
+`/dev/shm` (or, on the fallback, the same temp directory). The processes of one
+container always do. Separate containers do only
+if they share `/dev/shm`: those of a Kubernetes pod normally do, unless one of them
+mounts its own. Containers that share a network namespace (one pod, or a host
+network) but not a `/dev/shm` get a directory each, even on one port: the first
+owner to bind exports only its own container's processes, and the ranks of the
+other containers warn that the port is held by a process outside their run.
+Nothing crashes, but nothing aggregates them either; give them an explicit
+`NIXL_TELEMETRY_MULTIPROC_DIR` on a local volume they all mount.
+
+The default directory outlives the run. It keeps the owner lock files and the
+stores of the processes that exited last, one per agent after a normal teardown,
+since reaping needs a live owner scraping after the TTL (see "Stale handling"); the
+next run on the same port reaps them on the first scrape after they go stale. On a
+host shared with other users, `/dev/shm` is world-writable and the default name is
+predictable, so another user can take `/dev/shm/nixl-telemetry-<your euid>-<port>`
+first. If what they put there leaves this process unable to create its directory or
+its store, the process warns and runs without telemetry instead of failing agent
+construction. If it is a directory this process can write to, the exporter warns
+that another uid owns it but uses it, and that user can remove your store files.
+Either way, set an explicit private `NIXL_TELEMETRY_MULTIPROC_DIR` on such hosts.
+
+Configuration errors here are **fatal, unlike a bind collision**: an explicitly set
+`NIXL_TELEMETRY_MULTIPROC_DIR` that cannot be created, and a
 `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` list longer than 32 bounds, throw out of the
 `nixlAgent` constructor rather than leaving the rank running without telemetry.
-Selecting this exporter and forgetting the directory therefore fails every rank at
-startup, loudly, instead of exporting nothing.
 
 This mirrors Dynamo's `PROMETHEUS_MULTIPROC_DIR` convention (a shared folder that
 every related process writes into, one leader exports): all ranks that should be
-aggregated together must point `NIXL_TELEMETRY_MULTIPROC_DIR` at the **same**
-directory. Unlike Dynamo -- which auto-creates a temp dir in the parent and lets
-child engine processes inherit it -- NIXL is a library loaded independently in each
-rank, so there is no parent to propagate the path; the launcher/operator must set
-the same directory for every rank (hence it is required, not auto-defaulted, so a
-per-process temp dir can never silently break aggregation).
+aggregated together must use the **same** directory. Unlike Dynamo -- which
+auto-creates a temp dir in the parent and lets child engine processes inherit it --
+NIXL is a library loaded independently in each rank, so there is no parent to
+propagate the path. The default is therefore built from what the ranks of a run
+already share, their user and their port, rather than created per process.
 
 Recommended, following Dynamo's model: a shared **local** folder, one per pod /
 process-family, treated as ephemeral (e.g. a per-pod Kubernetes `emptyDir`, or a
@@ -180,18 +231,22 @@ warning when it is group- or world-writable.
 All aggregated ranks must also share a **time namespace**: staleness compares a
 host-wide `CLOCK_MONOTONIC`, so the ranks have to agree on it. No PID namespace
 requirement -- liveness is the store's lock, which the kernel resolves regardless
-of which namespace the writer's pid lives in. The `pid` label is then only a label
-(and part of the file name), never something a reader interprets.
+of which namespace the writer's pid lives in. The pid is then only part of the file
+name and, for duplicate live agent names, a label -- never something a reader
+interprets. Across PID namespaces, `pid` and `agent_instance` may not tell duplicate
+names apart: two such agents can have the same pid and instance number, and then
+their series collide.
 
 ### Optional configuration
 
 ```bash
 # Scrape port (default 9090) and bind scope -- shared with the prometheus plug-in.
+# The port also names the default NIXL_TELEMETRY_MULTIPROC_DIR.
 export NIXL_TELEMETRY_PROMETHEUS_PORT="<port_num>"
 export NIXL_TELEMETRY_PROMETHEUS_LOCAL="y" # bind 127.0.0.1 instead of 0.0.0.0
 
 # Optional local_rank label: names the env var that holds the rank (default LOCAL_RANK).
-# If that env var is unset, no local_rank label is emitted (series stay unique via pid).
+# If that env var is unset, no local_rank label is emitted (agent_name tells the ranks apart).
 export NIXL_TELEMETRY_RANK_ENV="LOCAL_RANK"
 
 # Seconds after a dead process's last update before its store is considered stale
@@ -211,22 +266,41 @@ Every series is labeled by:
 
 - `hostname` -- host where the agent runs.
 - `agent_name` -- the agent name given at initialization.
-- `pid` -- the producing process id. This guarantees each process is a distinct
-  series even if agent names collide; it is deliberately **not** named `instance`
-  (a reserved Prometheus target label).
-- `agent_instance` -- a per-process counter distinguishing multiple agents created
-  in the same process (which share `pid`, `hostname`, and `agent_name`), so their
-  series never collide. `0` for the common single-agent-per-process case.
 - `local_rank` -- **optional**, present only when a rank env var (see
   `NIXL_TELEMETRY_RANK_ENV`) is set. This is the local/per-GPU (TP) rank, distinct
   from Dynamo's data-parallel `dp_rank`.
 - `status` -- only on `agent_errors_total`, bounded by the fixed `AGENT_ERR_*` set.
 
+One process with one agent is therefore labeled as by the single-process
+`prometheus` exporter, apart from `local_rank`, and so are several processes whose
+agents have unique names. On each scrape the collector groups the stores by
+`hostname`, `agent_name` and `local_rank`, and for each group publishes:
+
+- **One live writer:** that writer's store. Departed stores of the same name are
+  not published, and are still reaped once stale.
+- **No live writer:** the most recently updated departed store.
+- **Two or more live writers:** every live store, with two more labels to keep them
+  apart, and a warning, once per owner, naming the first such name. Peers look
+  agents up by name, so this is a misconfiguration.
+  - `pid` -- the producing process id. It is deliberately **not** named `instance`
+    (a reserved Prometheus target label).
+  - `agent_instance` -- a per-process counter distinguishing agents created in the
+    same process, which share `pid`.
+
+  A series that started without `pid` and `agent_instance` gains them when the
+  duplicate appears, and drops them again once only one live writer is left. The
+  base series then resumes at the survivor's cumulative total, so a
+  `sum without (pid, agent_instance)` over a window spanning both changes counts
+  the survivor's increments in between twice.
+
+What is published depends only on the directory's contents, so an owner failover
+publishes the same series.
+
 The metric names, types, semantics, and events are identical to the single-process
 [`prometheus`](../prometheus/README.md) exporter (same shared descriptor). That
 includes the transfer-duration histograms `agent_xfer_time_us` and
 `agent_xfer_post_time_us`, exposed as the usual `_bucket{le="..."}` / `_sum` /
-`_count` series per process.
+`_count` series per agent.
 
 ## Design scope & limitations
 
@@ -247,15 +321,29 @@ not reuse, Python `prometheus_client`'s multiprocess format):
   high-cardinality label** whose value varies per observation. No NIXL metric has
   such a label today; if one is ever added, this exporter would need a different
   (keyed) store.
-- **Process churn creates new series.** `pid` and `agent_instance` are what keep
-  each process's counters monotonic, but they also mean a restarted rank is a
-  fresh series rather than a continuation: it gets a new `pid`, and the instance
-  counter restarts at `0`. The exposition only ever contains live processes, so
-  scrape size is bounded by the current process count -- but the TSDB accumulates
-  one series set per process seen within the retention window, so a crash-looping
-  deployment grows cardinality at the restart rate. Aggregate the churning labels
-  away (`sum without (pid, agent_instance) (...)`) for stable per-rank or
-  per-host views.
+- **A restart under the same name continues its series.** A rank restarted, or an
+  agent re-created in its process, under the same agent name (and `local_rank`)
+  takes over its predecessor's series, with its counters starting again from
+  zero. Prometheus detects that as a counter reset only if the next scrape reads
+  a lower value; a successor that has already passed its predecessor's last
+  scraped value is undercounted by that value. Whatever the predecessor recorded
+  after the last scrape is lost either way. The single-process `prometheus`
+  exporter behaves the same on every restart. Without a successor, a departed
+  process's final values stay published until the stale TTL expires (see "Stale
+  handling"); a successor under its name ends that early. If a scrape cannot read
+  the successor's store (`EMFILE`, `ENOMEM`) while its predecessor is still inside
+  the TTL, that scrape publishes the predecessor's values on the shared series.
+  Names that change on every restart (a UUID per worker, say) start new series
+  instead. The exposition only ever contains the live processes plus, per agent, at
+  most one departed store still inside the stale TTL, so scrape size stays
+  bounded -- but the TSDB accumulates one series set per name seen
+  within the retention window, so a crash-looping deployment with such names grows
+  cardinality at the restart rate. Aggregate `agent_name` away
+  (`sum without (agent_name) (...)`) for stable per-host or, with `local_rank`,
+  per-rank views. Where no process can lock its store, every store reads as held,
+  so a restart under the same name is warned about and labeled as a duplicate live
+  name: both stores stay published, with `pid` and `agent_instance`, since nothing
+  is reaped in that mode either.
 
 This is the native, dependency-free path. For aggregation through an external
 telemetry service, use the DOCA/CollectX exporter (IPC to DTS) instead.
