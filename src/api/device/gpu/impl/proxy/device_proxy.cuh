@@ -58,6 +58,7 @@ put(const memViewElem &src,
                                                .src_index = static_cast<uint32_t>(src.index),
                                                .dst_index = static_cast<uint32_t>(dst.index),
                                                .opcode = nixl_proxy_opcode_t::PUT},
+                              nixlProxyDeviceMemViewPeer(dst_memview, dst.index),
                               channel_id,
                               xfer_status);
     }
@@ -80,6 +81,7 @@ atomicAdd(uint64_t value,
                                                .dst_view = proxyHostViewFromHandle(counter.mvh),
                                                .dst_index = static_cast<uint32_t>(counter.index),
                                                .opcode = nixl_proxy_opcode_t::ATOMIC_ADD},
+                              nixlProxyDeviceMemViewPeer(memview, counter.index),
                               channel_id,
                               xfer_status);
     }
