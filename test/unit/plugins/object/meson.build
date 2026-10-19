@@ -14,7 +14,7 @@
 # limitations under the License.
 
 cpp_flags = []
-object_test_deps = [nixl_dep, nixl_infra, nixl_common_dep,
+object_test_deps = [nixl_dep, nixl_infra, nixl_common_dep, aws_sdk_headers,
                     aws_s3.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)]
 
 if cuda_dep.found()
