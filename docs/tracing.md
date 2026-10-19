@@ -290,7 +290,8 @@ The facade unit tests run against mock backends (no plugin needed); the real-age
 NVTX active:
 
 ```bash
-ninja -C build test/gtest/unit/unit test/gtest/gtest
+ninja -C build test/gtest/unit/unit test/gtest/gtest test/gtest/ucx_trace_receiver \
+    test/gtest/mocks/libtrace_backend_recorder.so
 # facade unit suite (no backend plugin needed):
 ./build/test/gtest/unit/unit --gtest_filter='Tracing.*'
 # real-agent NVTX suite (loads libtrace_backend_nvtx.so from the build tree):

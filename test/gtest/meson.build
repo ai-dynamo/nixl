@@ -171,8 +171,9 @@ test_exe = executable('gtest',
     install : true
 )
 
+gtest_depends = []
 if ucx_dep.found() and is_variable('ucx_backend_interface')
-    executable('ucx_trace_receiver',
+    ucx_trace_receiver = executable('ucx_trace_receiver',
         sources : ['main.cpp', 'common.cpp', 'ucx_trace_receiver.cpp'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         cpp_args : cpp_flags,
@@ -180,6 +181,7 @@ if ucx_dep.found() and is_variable('ucx_backend_interface')
         link_with: [nixl_build_lib],
         install : true
     )
+    gtest_depends += [ucx_trace_receiver, trace_recorder_plugin]
 endif
 
 # MetadataExchangeTestFixture rapidly creates and tears down comm-thread agents,
@@ -191,7 +193,8 @@ gtest_args = [plugin_dirs_arg]
 if get_option('sanitizer') != 'none'
     gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*'
 endif
-test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer')
+test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer',
+     depends: gtest_depends)
 
 # Telemetry hot-path microbenchmark (NVBug 5876558). The cases are DISABLED_ so
 # they never run in the normal 'gtest' suite; this dedicated entry opts them in.

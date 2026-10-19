@@ -54,7 +54,7 @@ mock_bind_failed_telemetry_plugin = shared_library('libtelemetry_exporter_mock_b
                install: true,
                install_dir: plugin_install_dir)
 
-shared_library('libtrace_backend_recorder', ['trace_recorder_plugin.cpp'],
+trace_recorder_plugin = shared_library('libtrace_backend_recorder', ['trace_recorder_plugin.cpp'],
                dependencies: [nixl_common_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                name_prefix: '',
