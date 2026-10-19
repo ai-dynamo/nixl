@@ -82,8 +82,8 @@ proxyMemViewManager::createView(const DlistT &dlist,
     }
 
     // Link: the host view owns its device memview, and the map owns the host view.
-    host_view->proxy_memview = device_memview;
-    host_view->proxy_memview_mem = std::move(device_memview_mem);
+    host_view->proxyMemView = device_memview;
+    host_view->proxyMemViewMem = std::move(device_memview_mem);
     out = host_view.get();
     views_.emplace(device_memview, std::move(host_view));
     return NIXL_SUCCESS;
@@ -97,7 +97,7 @@ proxyMemViewManager::prepLocal(const nixl_meta_dlist_t &dlist, proxy_view_handle
         return status;
     }
 
-    out = host_view->proxy_memview;
+    out = host_view->proxyMemView;
     NIXL_DEBUG << "proxyMemViewManager::prepLocal: host_view=" << host_view
                << " descs=" << dlist.descCount();
     return NIXL_SUCCESS;
@@ -119,7 +119,7 @@ proxyMemViewManager::prepRemote(const nixl_remote_meta_dlist_t &dlist,
         return status;
     }
 
-    out = host_view->proxy_memview;
+    out = host_view->proxyMemView;
     NIXL_DEBUG << "proxyMemViewManager::prepRemote: host_view=" << host_view
                << " descs=" << dlist.descCount() << " direct_ptrs=" << direct_ptrs.size();
     return NIXL_SUCCESS;
