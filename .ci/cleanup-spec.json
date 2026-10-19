@@ -62,7 +62,10 @@
           "$and": [
             { "repo": "sw-nbu-swx-nixl-pypi-local" },
             { "path": { "$match": "verification/**" } },
-            { "name": { "$match": "*.whl" } },
+            { "$or": [
+              { "name": { "$match": "*.whl" } },
+              { "name": "build-manifest.json" }
+            ]},
             { "modified": { "$before": "3mo" } }
           ]
         }
