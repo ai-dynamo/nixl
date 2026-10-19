@@ -197,31 +197,32 @@ TEST_F(telemetryTest, PushReloadsCachedReadPosWhenFull) {
 }
 
 TEST_F(telemetryTest, ConsumerSurvivesProducerRestart) {
-    // An attached consumer must see the events left unread by the old producer
+    // An attached consumer must see the events left unread by the old producer,
+    // and a producer restarted on a full ring must seed its cached read_pos from
+    // the kept header: its first push fails until the consumer frees a slot
     auto path = std::string(testDir_.string()) + "/" + testFile_;
     auto producer =
         std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 8);
     sharedRingBuffer<nixlTelemetryEvent> consumer(path, false, TELEMETRY_VERSION);
     nixlTelemetryEvent out;
 
-    for (size_t i = 0; i < 4; i++) {
+    for (size_t i = 0; i < 7; i++) {
         EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
     }
-    for (size_t i = 0; i < 2; i++) {
-        EXPECT_TRUE(consumer.pop(out));
-        EXPECT_EQ(out.value_, i);
-    }
+    EXPECT_FALSE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
 
-    // Producer exits with 2 events unread and restarts with the same path and capacity
+    // Producer exits with the ring full and restarts with the same path and capacity
     producer.reset();
     producer =
         std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 8);
-    for (size_t i = 4; i < 6; i++) {
-        EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
-    }
+    EXPECT_FALSE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
 
-    EXPECT_EQ(consumer.size(), 4u);
-    for (size_t i = 2; i < 6; i++) {
+    EXPECT_TRUE(consumer.pop(out));
+    EXPECT_EQ(out.value_, 0u);
+    EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
+
+    EXPECT_EQ(consumer.size(), 7u);
+    for (size_t i = 1; i <= 7; i++) {
         EXPECT_TRUE(consumer.pop(out));
         EXPECT_EQ(out.value_, i);
     }
@@ -231,7 +232,7 @@ TEST_F(telemetryTest, ConsumerSurvivesProducerRestart) {
 TEST_F(telemetryTest, IncompatibleBufferIsReplaced) {
     // A restarted producer with incompatible header replaces the file on a new inode: the old
     // consumer keeps its mapping and only drains what it has left, a new consumer attaches to the
-    // new producer and sees only its events
+    // new producer and sees only its events. The old ring is full, the new one starts empty
     auto path = std::string(testDir_.string()) + "/" + testFile_;
     auto producer =
         std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 8);
@@ -239,15 +240,12 @@ TEST_F(telemetryTest, IncompatibleBufferIsReplaced) {
     nixlTelemetryEvent out;
     struct stat old_st{}, new_st{};
 
-    for (size_t i = 0; i < 4; i++) {
+    for (size_t i = 0; i < 7; i++) {
         EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
     }
-    for (size_t i = 0; i < 2; i++) {
-        EXPECT_TRUE(consumer.pop(out));
-        EXPECT_EQ(out.value_, i);
-    }
+    EXPECT_FALSE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
 
-    // Producer exits with 2 events unread and restarts with a bigger capacity
+    // Producer exits with the ring full and restarts with a bigger capacity
     EXPECT_EQ(stat(path.c_str(), &old_st), 0);
     producer.reset();
     producer =
@@ -255,19 +253,21 @@ TEST_F(telemetryTest, IncompatibleBufferIsReplaced) {
     EXPECT_EQ(stat(path.c_str(), &new_st), 0);
     EXPECT_NE(old_st.st_ino, new_st.st_ino);
     sharedRingBuffer<nixlTelemetryEvent> consumer2(path, false, TELEMETRY_VERSION);
-    for (size_t i = 4; i < 8; i++) {
+    // The new ring starts empty: fill it until a push fails
+    for (size_t i = 7; i < 22; i++) {
         EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
     }
+    EXPECT_FALSE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 22}));
 
-    EXPECT_EQ(consumer.size(), 2u);
-    for (size_t i = 2; i < 4; i++) {
+    EXPECT_EQ(consumer.size(), 7u);
+    for (size_t i = 0; i < 7; i++) {
         EXPECT_TRUE(consumer.pop(out));
         EXPECT_EQ(out.value_, i);
     }
     EXPECT_FALSE(consumer.pop(out));
 
-    EXPECT_EQ(consumer2.size(), 4u);
-    for (size_t i = 4; i < 8; i++) {
+    EXPECT_EQ(consumer2.size(), 15u);
+    for (size_t i = 7; i < 22; i++) {
         EXPECT_TRUE(consumer2.pop(out));
         EXPECT_EQ(out.value_, i);
     }
