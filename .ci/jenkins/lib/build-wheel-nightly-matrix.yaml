@@ -1,6 +1,7 @@
 # Nightly NIXL wheel verification build. The source ref (NIXL_VERSION) is
 # cloned into nixl-src. Nightly/verification runs execute this config from
-# main; release runs are spawned by the poller with ci_refspec = the release
+# main (a manual run from whatever ci_refspec it passes, default main);
+# release runs are spawned by the poller with ci_refspec = the release
 # commit, so for them this file, cidemo-init.sh, the wheel_base Dockerfile
 # and contrib/ are all one commit (CI fixes reach a live release branch by
 # whole-commit cherry-pick). Wheels publish to
