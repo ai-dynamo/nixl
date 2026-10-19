@@ -151,13 +151,32 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     agent->getPluginParams(backend_name, mems, backend_params);
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
-        backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
-        if (xferBenchConfig::use_device_api) {
-            backend_params["ucx_num_device_channels"] =
+        const bool device_proxy = xferBenchConfig::use_device_api &&
+            xferBenchConfig::device_mode == XFERBENCH_DEVICE_MODE_PROXY;
+        if (device_proxy) {
+            // Pairwise: each process talks to exactly one remote agent.
+            backend_params["device_proxy"] = "true";
+            backend_params["proxy_channel_count"] =
                 std::to_string(xferBenchConfig::device_channel_num);
+            backend_params["proxy_max_peers"] = "1";
+            if (xferBenchConfig::device_proxy_threads > 0) {
+                backend_params["proxy_thread_count"] =
+                    std::to_string(xferBenchConfig::device_proxy_threads);
+            }
+            // UCX host atomics need err-mode none.
+            backend_params["ucx_error_handling_mode"] = "none";
+            backend_params["engine_config"] = "FENCE_MODE=ep_based";
+        } else {
+            backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
+            if (xferBenchConfig::use_device_api) {
+                backend_params["ucx_num_device_channels"] =
+                    std::to_string(xferBenchConfig::device_channel_num);
+            }
+        }
+        if (xferBenchConfig::use_device_api) {
             std::cout << "Device API mode: configuring " << xferBenchConfig::device_channel_num
-                      << " UCX device channels for " << xferBenchConfig::deviceGroupNum()
-                      << " execution groups" << std::endl;
+                      << (device_proxy ? " CPU proxy" : " UCX device") << " channels for "
+                      << xferBenchConfig::deviceGroupNum() << " execution groups" << std::endl;
         }
 
         // No need to set device_list if all is specified
@@ -175,7 +194,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
             exit(EXIT_FAILURE);
         }
 
-        backend_params["num_workers"] = std::to_string(xferBenchConfig::num_threads + 1);
+        if (!device_proxy) {
+            backend_params["num_workers"] = std::to_string(xferBenchConfig::num_threads + 1);
+        }
 
         std::cout << "Init nixl worker, dev "
                   << (("all" == devices[0]) ? "all" : backend_params["device_list"]) << " rank "

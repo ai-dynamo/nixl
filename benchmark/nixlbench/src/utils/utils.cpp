@@ -343,9 +343,17 @@ NB_ARG_BOOL(use_device_api,
             "multiple of 32), and the internal CPU thread count is forced to 1.");
 NB_ARG_INT32(device_channel_num,
              1,
-             "Number of logical UCX Device API channels, default to 1. "
+             "Number of logical Device API channels, default to 1. "
              "0 means one channel per execution group. "
              "Only used when --use_device_api is enabled.");
+NB_ARG_STRING(device_mode,
+              XFERBENCH_DEVICE_MODE_DIRECT,
+              "Device API execution mode: direct (UCX GPU-initiated) or proxy (CPU proxy). "
+              "Only used when --use_device_api is enabled.");
+NB_ARG_UINT32(device_proxy_threads,
+              0,
+              "Number of CPU proxy threads draining the device channels, 0 for one per channel. "
+              "Only used with --device_mode=proxy.");
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT32
@@ -434,6 +442,8 @@ std::optional<nixl_b_params_t> xferBenchConfig::plugin_parameters = std::nullopt
 bool xferBenchConfig::use_device_api = false;
 int xferBenchConfig::block_threads = 1;
 int xferBenchConfig::device_channel_num = 0;
+std::string xferBenchConfig::device_mode = XFERBENCH_DEVICE_MODE_DIRECT;
+uint32_t xferBenchConfig::device_proxy_threads = 0;
 
 static bool
 validateDeviceAPIConfig() {
@@ -455,7 +465,20 @@ validateDeviceAPIConfig() {
         xferBenchConfig::target_seg_type != XFERBENCH_SEG_TYPE_VRAM) {
         return reject("initiator_seg_type and target_seg_type must be VRAM");
     }
-    if (!xferBenchConfig::enable_pt) {
+    const bool proxy = xferBenchConfig::device_mode == XFERBENCH_DEVICE_MODE_PROXY;
+    if (!proxy && xferBenchConfig::device_mode != XFERBENCH_DEVICE_MODE_DIRECT) {
+        return reject("device_mode must be direct or proxy");
+    }
+    if (proxy) {
+        if (xferBenchConfig::progress_threads != 0) {
+            return reject("--progress_threads is not supported with device_mode=proxy");
+        }
+        if (xferBenchConfig::enable_pt) {
+            std::cout << "WARNING: Disabling --enable_pt; device_mode=proxy runs its own "
+                      << "progress threads" << std::endl;
+            xferBenchConfig::enable_pt = false;
+        }
+    } else if (!xferBenchConfig::enable_pt) {
         return reject("--enable_pt must be set");
     }
     if (xferBenchConfig::mode != XFERBENCH_MODE_SG) {
@@ -467,7 +490,7 @@ validateDeviceAPIConfig() {
     if (xferBenchConfig::pipeline_depth != 1) {
         return reject("pipeline_depth must be 1");
     }
-    if (std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr) {
+    if (!proxy && std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr) {
         return reject("UCX_RC_GDA_NUM_CHANNELS must not be set; "
                       "use --device_channel_num to configure Device API channels");
     }
@@ -782,6 +805,8 @@ xferBenchConfig::loadParams(void) {
     }
     use_device_api = NB_ARG(use_device_api);
     device_channel_num = NB_ARG(device_channel_num);
+    device_mode = NB_ARG(device_mode);
+    device_proxy_threads = NB_ARG(device_proxy_threads);
     if (use_device_api && (!validateDeviceAPIConfig() || !setupDeviceAPIConfig())) {
         return -1;
     }
@@ -1137,6 +1162,11 @@ xferBenchConfig::printConfig() {
                     std::to_string(block_threads));
         printOption("Device API channels (--device_channel_num=N)",
                     std::to_string(device_channel_num));
+        printOption("Device API mode (--device_mode=[direct,proxy])", device_mode);
+        if (device_mode == XFERBENCH_DEVICE_MODE_PROXY) {
+            printOption("Device API proxy threads (--device_proxy_threads=N)",
+                        std::to_string(device_proxy_threads));
+        }
     }
     printSeparator('-');
     std::cout << std::endl;

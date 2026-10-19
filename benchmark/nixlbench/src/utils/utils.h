@@ -84,6 +84,10 @@
 // CUDA warp size, to derive Device API group number from block_threads
 #define XFERBENCH_DEVICE_WARP_SIZE 32
 
+// Device API execution modes
+#define XFERBENCH_DEVICE_MODE_DIRECT "direct"
+#define XFERBENCH_DEVICE_MODE_PROXY "proxy"
+
 // Runtime types
 #define XFERBENCH_RT_ETCD "ETCD"
 #define XFERBENCH_RT_ASIO "ASIO"
@@ -244,6 +248,8 @@ public:
     static bool use_device_api;
     static int block_threads;
     static int device_channel_num;
+    static std::string device_mode;
+    static uint32_t device_proxy_threads;
 
     /* Number of independent groups Device API kernel runs with. */
     static int
