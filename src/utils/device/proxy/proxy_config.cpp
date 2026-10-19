@@ -85,11 +85,11 @@ parseProxyConfig(const nixlBackendInitParams &init_params, proxyConfig &config) 
         const auto drain_timeout_ms =
             getBackendParamOptional<uint32_t>(params, std::string(kProxyDrainTimeoutParam));
 
-        parsed.channel_count = channel_count.value_or(kDefaultProxyChannelCount);
-        parsed.thread_count = thread_count.value_or(parsed.channel_count);
-        parsed.max_peers = max_peers.value_or(kDefaultProxyMaxPeers);
-        parsed.ring_depth = ring_depth.value_or(kDefaultProxyRingDepth);
-        parsed.drain_timeout_ms = drain_timeout_ms.value_or(kDefaultProxyDrainTimeoutMs);
+        parsed.channelCount = channel_count.value_or(kDefaultProxyChannelCount);
+        parsed.threadCount = thread_count.value_or(parsed.channelCount);
+        parsed.maxPeers = max_peers.value_or(kDefaultProxyMaxPeers);
+        parsed.ringDepth = ring_depth.value_or(kDefaultProxyRingDepth);
+        parsed.drainTimeoutMs = drain_timeout_ms.value_or(kDefaultProxyDrainTimeoutMs);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Failed to parse device proxy backend parameters: " << e.what();
@@ -106,16 +106,16 @@ parseProxyConfig(const nixlBackendInitParams &init_params, proxyConfig &config) 
         return NIXL_SUCCESS;
     }
 
-    if (parsed.channel_count == 0 || parsed.thread_count == 0 || parsed.max_peers == 0) {
+    if (parsed.channelCount == 0 || parsed.threadCount == 0 || parsed.maxPeers == 0) {
         NIXL_ERROR << "Device proxy counts must be positive: " << kProxyChannelCountParam << "="
-                   << parsed.channel_count << " " << kProxyThreadCountParam << "="
-                   << parsed.thread_count << " " << kProxyMaxPeersParam << "=" << parsed.max_peers;
+                   << parsed.channelCount << " " << kProxyThreadCountParam << "="
+                   << parsed.threadCount << " " << kProxyMaxPeersParam << "=" << parsed.maxPeers;
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    if (!isPowerOfTwo(parsed.ring_depth)) {
+    if (!isPowerOfTwo(parsed.ringDepth)) {
         NIXL_ERROR << "Device proxy " << kProxyRingDepthParam
-                   << " must be a non-zero power of two: " << parsed.ring_depth;
+                   << " must be a non-zero power of two: " << parsed.ringDepth;
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -127,10 +127,10 @@ parseProxyConfig(const nixlBackendInitParams &init_params, proxyConfig &config) 
     }
 
     if (!parsed.evenThreadSplit()) {
-        NIXL_ERROR << "Device proxy " << kProxyThreadCountParam << "=" << parsed.thread_count
-                   << " must divide " << kProxyChannelCountParam << "=" << parsed.channel_count
+        NIXL_ERROR << "Device proxy " << kProxyThreadCountParam << "=" << parsed.threadCount
+                   << " must divide " << kProxyChannelCountParam << "=" << parsed.channelCount
                    << ", or be a multiple of it that divides the " << parsed.ringCount()
-                   << " ring(s) (" << kProxyMaxPeersParam << "=" << parsed.max_peers << ")";
+                   << " ring(s) (" << kProxyMaxPeersParam << "=" << parsed.maxPeers << ")";
         return NIXL_ERR_INVALID_PARAM;
     }
 

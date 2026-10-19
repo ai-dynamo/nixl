@@ -45,7 +45,7 @@ class proxyEngine::transport final : public nixl::proxyTransport {
 public:
     transport(worker_span_t workers, const nixl::proxyConfig &config) noexcept
         : workers_(workers),
-          max_peers_(config.max_peers) {}
+          max_peers_(config.maxPeers) {}
 
     nixl_status_t
     submit(const nixl::proxyBackendSubmission &submission,
@@ -293,9 +293,9 @@ proxyEngine::proxyEngine(const nixlBackendInitParams &init_params, const nixl::p
       runtime_(nixl::proxyRuntime::create(std::make_unique<transport>(getSharedWorkers(), config),
                                           config,
                                           ops_)) {
-    NIXL_INFO << "Engine-owned device proxy enabled: " << config.channel_count << " channel(s), "
-              << config.thread_count << " thread(s), max_peers=" << config.max_peers
-              << ", ring_depth=" << config.ring_depth;
+    NIXL_INFO << "Engine-owned device proxy enabled: " << config.channelCount << " channel(s), "
+              << config.threadCount << " thread(s), max_peers=" << config.maxPeers
+              << ", ring_depth=" << config.ringDepth;
 }
 
 proxyEngine::~proxyEngine() = default;

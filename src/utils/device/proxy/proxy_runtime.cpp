@@ -45,21 +45,21 @@ std::unique_ptr<proxyRuntime>
 proxyRuntime::create(std::unique_ptr<proxyTransport> transport,
                      const proxyConfig &config,
                      deviceOps &allocator) {
-    NIXL_INFO << "ProxyRuntime::create: max_peers=" << config.max_peers
-              << " channel_count=" << config.channel_count
-              << " thread_count=" << config.thread_count << " ring_depth=" << config.ring_depth;
+    NIXL_INFO << "ProxyRuntime::create: max_peers=" << config.maxPeers
+              << " channel_count=" << config.channelCount << " thread_count=" << config.threadCount
+              << " ring_depth=" << config.ringDepth;
 
     if (!transport) {
         throwRuntimeError("ProxyRuntime::create: no transport");
     }
-    if (config.max_peers == 0 || config.channel_count == 0 || !config.evenThreadSplit() ||
-        config.ring_depth == 0) {
+    if (config.maxPeers == 0 || config.channelCount == 0 || !config.evenThreadSplit() ||
+        config.ringDepth == 0) {
         throwRuntimeError("ProxyRuntime::create: invalid config");
     }
     // The GPU masks ring indices.
-    if ((config.ring_depth & (config.ring_depth - 1)) != 0) {
+    if ((config.ringDepth & (config.ringDepth - 1)) != 0) {
         throwRuntimeError("ProxyRuntime::create: ring_depth must be a power of two: ",
-                          config.ring_depth);
+                          config.ringDepth);
     }
 
     std::unique_ptr<proxyRuntime> runtime(
@@ -77,9 +77,9 @@ proxyRuntime::create(std::unique_ptr<proxyTransport> transport,
 
 nixl_status_t
 proxyRuntime::build() {
-    const uint32_t max_peers = config_.max_peers;
-    const uint32_t channel_count = config_.channel_count;
-    const uint32_t worker_count = config_.thread_count;
+    const uint32_t max_peers = config_.maxPeers;
+    const uint32_t channel_count = config_.channelCount;
+    const uint32_t worker_count = config_.threadCount;
 
     const size_t channel_slots = config_.ringCount();
     if (channel_slots > std::numeric_limits<size_t>::max() / sizeof(nixlProxyRingDesc)) {
@@ -100,7 +100,7 @@ proxyRuntime::build() {
     device_channel_views.reserve(channel_slots);
     for (uint32_t channel_idx = 0; channel_idx < channel_count; channel_idx++) {
         channels_.emplace_back(channel_idx, max_peers);
-        rc = channels_.back().allocate(allocator_, config_.ring_depth, *control_slots_);
+        rc = channels_.back().allocate(allocator_, config_.ringDepth, *control_slots_);
         if (rc != NIXL_SUCCESS) {
             return rc;
         }
@@ -140,7 +140,7 @@ proxyRuntime::build() {
         workers_.push_back(std::make_unique<proxyWorker>(
             *worker_context_,
             worker_idx,
-            std::span<proxyChannel>(channels_).subspan(share.first_channel, share.channel_count),
+            std::span<proxyChannel>(channels_).subspan(share.firstChannel, share.channelCount),
             share.peers));
     }
 
@@ -184,9 +184,9 @@ proxyRuntime::prepMemView(const nixl_remote_meta_dlist_t &dlist,
             peers.push_back(0);
             continue;
         }
-        if ((peers_.count(desc.remoteAgent) == 0) && (peers_.size() == config_.max_peers)) {
+        if ((peers_.count(desc.remoteAgent) == 0) && (peers_.size() == config_.maxPeers)) {
             NIXL_ERROR << "ProxyRuntime::prepMemView: remote agent " << desc.remoteAgent
-                       << " exceeds proxy_max_peers=" << config_.max_peers;
+                       << " exceeds proxy_max_peers=" << config_.maxPeers;
             return NIXL_ERR_INVALID_PARAM;
         }
         peers.push_back(peers_.try_emplace(desc.remoteAgent, peers_.size()).first->second);
@@ -222,7 +222,7 @@ proxyRuntime::drainChannels() noexcept {
 
     const uint64_t requested = drain_requested_.fetch_add(1, std::memory_order_acq_rel) + 1;
     const auto start = std::chrono::steady_clock::now();
-    const std::chrono::milliseconds timeout(config_.drain_timeout_ms);
+    const std::chrono::milliseconds timeout(config_.drainTimeoutMs);
     auto next_warning = start + proxy_drain_warning_interval;
     for (size_t worker_idx = 0; worker_idx < workers_.size(); ++worker_idx) {
         while (workers_[worker_idx]->drainAcked() < requested) {
