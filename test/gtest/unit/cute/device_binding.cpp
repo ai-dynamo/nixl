@@ -138,6 +138,15 @@ TEST(CuteDeviceBinding, ProgressPerformsExactlyOneNativePoll) {
     }
 }
 
+TEST(CuteDeviceBinding, NullProgressRequestDoesNotCallBackend) {
+    submits = polls = 0;
+    for (int level : {-1, 0, 1, 2, 3}) {
+        EXPECT_EQ(cute_nixl_get_xfer_status(0, level), NIXL_ERR_INVALID_PARAM);
+    }
+    EXPECT_EQ(submits, 0);
+    EXPECT_EQ(polls, 0);
+}
+
 TEST(CuteDeviceBinding, UnsupportedCooperationDoesNotCallBackend) {
     nixlGpuXferStatusH request;
     const auto address = reinterpret_cast<uint64_t>(&request);

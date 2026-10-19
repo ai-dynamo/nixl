@@ -21,13 +21,16 @@ From the repository root, set `UCX_PREFIX` to that UCX installation:
 ```sh
 python src/bindings/cute/build.py --ucx "$UCX_PREFIX" --arch sm_100
 export PYTHONPATH="$PWD/src/bindings/cute:${PYTHONPATH:-}"
-torchrun --standalone --nproc-per-node=2 examples/python/cute/compute_put.py
+timeout --signal=TERM --kill-after=10s 120s \
+  torchrun --standalone --nproc-per-node=2 examples/python/cute/compute_put.py
 ```
 
 Select `--level thread|warp|block`, `--defer` and `--elements N` as needed.
 Gloo exchanges host metadata and coordinates validation/buffer reuse; NIXL moves
 the GPU payload. The example checks three generations and guard regions.
 Its host synchronization is for correctness, not a performance benchmark.
+GNU `timeout` bounds the job; Gloo's timeout does not stop GPU waits. On timeout,
+abort the run rather than attempting buffer reuse or recovery.
 
 ## Device contract
 
@@ -36,11 +39,13 @@ Its host synchronization is for correctness, not a performance benchmark.
 byte offsets, channels, flags and status.
 
 - Use a compile-time THREAD/WARP/BLOCK level; all participants enter uniformly.
-- Each participating thread owns a zeroed, 64-byte request aligned to 16 bytes.
+- The validated CUDA-IPC example uses a zeroed, 64-byte request per thread,
+  aligned to 16 bytes. GDA request ownership and cooperative progress are unqualified.
   Keep requests, buffers and views alive until completion.
 - Poll only after `IN_PROGRESS`, at the same cooperation level; stop on success
   or error. `get_xfer_status` performs one poll, not a completion loop.
 - `request=0` forwards a native null request; it does not select blocking mode.
+  Polling zero is invalid and returns `NIXL_ERR_INVALID_PARAM`.
 - No wrapper wait, fence, allocation or launch is added. Native submission may
   do inline work; `DEFER` permits deferral but does not guarantee overlap.
 - Producer publication, receiver acquire and safe buffer reuse belong to the

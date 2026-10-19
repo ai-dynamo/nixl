@@ -79,12 +79,14 @@ def put(
         local: Local memory-view handle.
         remote: Remote memory-view handle.
         size: Bytes to transfer.
-        request: Private request address per participating thread, or zero to
-            pass a native null request (not a blocking-mode selector).
+        request: GPU request address, or zero to pass a native null request
+            (not a blocking-mode selector).
 
     Other arguments directly select native descriptors, byte offsets, channel,
     flags and cooperation level. Keep the buffers/views/request alive until the
     operation completes. DEFER permits, but does not guarantee, deferral.
+    The validated CUDA-IPC example uses private request storage per thread;
+    GDA request ownership and cooperative progress remain unqualified.
     """
     return _status(
         _put(
@@ -131,7 +133,7 @@ def get_xfer_status(request, *, level=THREAD):
 
     Call only after IN_PROGRESS, using the submission's cooperation level.
     Do not poll after success/error, or after an untracked (null-request) call.
-    All participating threads must enter cooperative calls with uniform
-    arguments, except their private request addresses.
+    All participating threads must enter cooperative calls uniformly; request
+    ownership follows put(). A zero request returns NIXL_ERR_INVALID_PARAM.
     """
     return _status(_get_xfer_status(cutlass.Uint64(request), cutlass.Int32(level)))

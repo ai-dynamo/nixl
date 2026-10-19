@@ -78,6 +78,9 @@ cute_nixl_atomic_add(uint64_t value,
 
 extern "C" __device__ __attribute__((always_inline)) int
 cute_nixl_get_xfer_status(uint64_t request, int level) {
+    if (request == 0) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     auto &status = *reinterpret_cast<nixlGpuXferStatusH *>(request);
     switch (level) {
     case 0:
