@@ -157,16 +157,15 @@ recordedSpans(const std::filesystem::path &path, std::string_view agent, std::st
     return spans;
 }
 
-[[nodiscard]] std::string
+[[nodiscard]] testing::Matcher<const std::string &>
 phaseEventTime(const span_record_t &span) {
     constexpr std::string_view key = "nixl.phase.timestamp_us=";
     for (const auto &field : span) {
         if (field.starts_with(key)) {
-            return "at_us=" + field.substr(key.size());
+            return testing::Eq("at_us=" + field.substr(key.size()));
         }
     }
-    ADD_FAILURE() << "no " << key << " in " << testing::PrintToString(span);
-    return {};
+    return testing::StartsWith(std::string(key));
 }
 
 class ucxTraceContextPropagation : public testing::Test {
@@ -470,8 +469,8 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
                 testing::IsSupersetOf({correlation,
                                        "context=" + traceparent,
                                        "nixl.traceparent=" + traceparent,
-                                       phaseEventTime(received[0]),
                                        std::string("nixl.remote_agent=") + sender_name}));
+    EXPECT_THAT(received[0], testing::Contains(phaseEventTime(received[0])));
     expectSenderPhases(sender_name, context, 1, 1);
 }
 
