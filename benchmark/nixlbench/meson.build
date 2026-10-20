@@ -102,13 +102,19 @@ cuda_detected = cuda_available
 
 # ROCm / HIP. As in the root project, ROCm is requested by setting
 # -Drocm_path=<prefix>; an empty rocm_path means ROCm is not requested, so it is
-# never enabled implicitly from the environment. Detection probes for
-# libamdhip64 itself rather than stat'ing <prefix>, because ROCm >= 7.13 makes
-# the install root an alternatives symlink; the prefix-scoped header check stops
-# a system-wide libamdhip64 from satisfying a wrong rocm_path.
+# never enabled implicitly from the environment. The only exception is if the
+# deprecated option `use_rocm=true` is set and `rocm_path` is unset, then we
+# default to /opt/rocm
+rocm_path = get_option('rocm_path')
+if rocm_path == '' and get_option('use_rocm')
+    rocm_path = '/opt/rocm'
+endif
+
+# Detection probes for libamdhip64 itself rather than stat'ing <prefix>, because
+# ROCm >= 7.13 makes the install root an alternatives symlink; the prefix-scoped
+# header check stops a system-wide libamdhip64 from satisfying a wrong rocm_path.
 rocm_available = false
 rocm_dep = declare_dependency()
-rocm_path = get_option('rocm_path')
 if rocm_path != ''
     rocm_lib_path = rocm_path + '/lib'
     rocm_inc = include_directories(rocm_path + '/include')
@@ -127,12 +133,10 @@ endif
 rocm_detected = rocm_available
 
 # One translation unit cannot include CUDA and HIP headers together, so a single
-# build targets exactly one stack. nixlbench_gpu is the one control that picks
-# it. use_rocm predates it and only asserted "ROCm must be present" without
-# selecting it, so -Duse_rocm=true on a host with both SDKs configured a CUDA
-# binary despite ROCm being demanded. It is kept as a compatibility alias that
-# now forces the rocm flavor, and contradicting it is an error rather than a
-# silent CUDA build.
+# build targets exactly one stack, chosen by nixlbench_gpu. use_rocm=true
+# predates it and selected ROCm by skipping CUDA; it is kept as a deprecated
+# alias that forces the rocm flavor, and combining it with nixlbench_gpu=cuda
+# is an error.
 gpu_flavor = get_option('nixlbench_gpu')
 if get_option('use_rocm')
     if gpu_flavor == 'cuda'

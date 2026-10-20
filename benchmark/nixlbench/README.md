@@ -417,7 +417,7 @@ build directories.
 - `nvshmem_lib_path`: Path to NVSHMEM library directory
 - `rocm_path`: Path to ROCm installation; required for any ROCm build (default: empty, ROCm not used)
 - `nixlbench_gpu`: GPU stack to build against: `auto`, `cuda`, or `rocm` (default: auto)
-- `use_rocm`: Deprecated alias for `nixlbench_gpu=rocm` (default: false)
+- `use_rocm`: Deprecated alias for `nixlbench_gpu=rocm`; an empty `rocm_path` then defaults to `/opt/rocm` (default: false)
 - `build_raw_cli`: Build the experimental CLI11-based raw command path (default: false)
 - `build_tests`: Build NIXLBench tests for non-release builds (default: true)
 - `buildtype`: Build type: `debug`, `release`, `debugoptimized` (default: release)
