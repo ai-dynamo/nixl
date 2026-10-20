@@ -1586,9 +1586,9 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
         return x.first == mem.devId;
     });
 
-    if (it == gdevs.end()) {
+    if (nixl_mem == VRAM_SEG && it == gdevs.end()) {
         int device_count = 0;
-        if (nixl_mem != VRAM_SEG || cudaGetDeviceCount(&device_count) != cudaSuccess ||
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess ||
             mem.devId >= static_cast<uint64_t>(device_count)) {
             NIXL_ERROR << "Can't register memory for unknown device " << mem.devId;
             return NIXL_ERR_INVALID_PARAM;
@@ -1596,7 +1596,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
     }
 
     // A foreign payload GPU has no engine-owned DOCA handle; use its PeerDirect MR.
-    doca_gpu *memory_gpu = it == gdevs.end() ? nullptr : it->second;
+    doca_gpu *memory_gpu = nixl_mem == VRAM_SEG && it != gdevs.end() ? it->second : nullptr;
     nixl::doca::cudaDeviceGuard memory_device(
         nixl_mem == VRAM_SEG ? static_cast<uint32_t>(mem.devId) : gdevs[0].first);
     if (memory_device.status() != cudaSuccess) {
