@@ -120,6 +120,29 @@ Tracer::popContext() {
     }
 }
 
+void
+Tracer::emitSpan(std::string_view name,
+                 Kind kind,
+                 const TraceContext &context,
+                 nixlTime::us_t start,
+                 nixlTime::us_t end,
+                 std::span<const Attribute> attrs) {
+    for (auto &backend : backends_) {
+        backend->emitSpan(name, kind, context, start, end, attrs);
+    }
+}
+
+void
+Tracer::emitEvent(std::string_view name,
+                  Kind kind,
+                  const TraceContext &context,
+                  nixlTime::us_t at,
+                  std::span<const Attribute> attrs) {
+    for (auto &backend : backends_) {
+        backend->emitEvent(name, kind, context, at, attrs);
+    }
+}
+
 /*** Factory ***/
 
 std::unique_ptr<Tracer>
