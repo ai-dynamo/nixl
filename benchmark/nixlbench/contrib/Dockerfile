@@ -264,7 +264,7 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 
 
 # Build hiredis from source via cmake (make is avoided: LIBRARY_PATH set by the CUDA base image
 # contaminates the Makefile's pkgconfig install path).
-RUN wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+RUN wget -q ${WGET_RETRY_OPTS} "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
         -O "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" && \
     tar -xzf "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" -C /tmp && \
     mkdir -p "/tmp/hiredis-${HIREDIS_VERSION}/build" && \
