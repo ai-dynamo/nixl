@@ -23,18 +23,17 @@
 
 #include "nixl_md_config.h"
 #include "nixl_metadata_backend.h"
-#include "nixl_metadata_worker.h"
 
 #include <chrono>
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <unordered_set>
 
+#include <asio.hpp>
+
 class nixlMetadataContext;
-class nixlTcpStoreClient;
+class nixlTcpStoreClientAsync;
 
 /**
  * @class nixlTcpStoreMetadataBackend
@@ -59,7 +58,9 @@ class nixlTcpStoreMetadataBackend : public nixlMetadataBackend {
 public:
     // Parses NIXL_TCPSTORE_ENDPOINT (host:port) and throws when it is malformed.
     // Does no I/O: start() connects on the worker thread.
-    nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx, const nixlMDConfig &config);
+    nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx,
+                                const nixlMDConfig &config,
+                                asio::io_context &io_context);
 
     ~nixlTcpStoreMetadataBackend() override;
 
@@ -95,38 +96,24 @@ public:
     invalidateLocal(const nixl_opt_args_t *extra_params) override;
 
 private:
-    // Re-probe the fetches whose key was not published yet. Worker poll.
-    void
-    serviceEvents();
-
-    // A fetch waiting for its key to appear in the store.
-    struct pendingFetch {
-        std::string remoteName;
-        std::chrono::steady_clock::time_point deadline;
-    };
-
     // Publish blob under key, tracking it so invalidateLocal can remove it.
-    [[nodiscard]] nixl_status_t
+    void
     publishKey(const std::string &key, const nixl_blob_t &blob);
 
-    // One fetch attempt. False means "not published yet, or the store was
-    // unreachable" - i.e. worth retrying; true means the fetch is settled
-    // (loaded, or rejected for a reason a retry cannot fix).
-    [[nodiscard]] bool
-    tryFetch(const std::string &remote_name, const std::string &key);
+    // One fetch attempt.
+    void
+    tryFetch(const std::string &remote_name,
+             const std::string &key,
+             std::chrono::steady_clock::time_point deadline,
+             std::chrono::milliseconds retry_delay);
 
     nixlMetadataContext &ctx_;
     const std::chrono::milliseconds fetchTimeout_;
-    const std::chrono::microseconds workerDelay_;
-    const std::unique_ptr<nixlTcpStoreClient> client_;
+    asio::io_context &ioContext_;
+    const std::unique_ptr<nixlTcpStoreClientAsync> client_;
     // Keys this agent has published; TCPStore has no recursive delete, so
     // invalidateLocal removes exactly these.
     std::unordered_set<std::string> publishedKeys_;
-    // Store key -> in-flight fetch. Keyed by the store key, not the agent name:
-    // one peer can have a fetch pending per metadata label.
-    std::unordered_map<std::string, pendingFetch> pendingFetches_;
-    // Declared last so it joins before the state its tasks touch is destroyed.
-    nixlMetadataWorker worker_;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_TCPSTORE_METADATA_BACKEND_H
