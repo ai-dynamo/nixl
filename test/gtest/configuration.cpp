@@ -19,10 +19,14 @@
 #include "common/configuration.h"
 #include "gtest/gtest.h"
 #include "common.h"
+#include "nixl.h"
 
+#include <algorithm>
 #include <limits>
+#include <optional>
 #include <stdlib.h>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -328,6 +332,86 @@ TEST(Config, ReadConfigFile) {
     {
         // Check that conversion failure on env var does not trigger lookup in config file.
         EXPECT_THROW((void)nixl::config::getValue<int>(env2name), std::runtime_error);
+    }
+}
+
+namespace {
+
+    const std::string ucx_vram_memtype_hint_key = "ucx_vram_memtype_hint";
+
+    // Creates a UCX backend with the given VRAM memtype hint in a fresh agent, since an agent holds
+    // at most one backend per type. Returns std::nullopt when the UCX plugin is not built.
+    [[nodiscard]] std::optional<nixl_status_t>
+    createUcxBackendWithHint(const std::string &hint) {
+        gtest::ScopedEnv env;
+        env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
+
+        nixlAgentConfig cfg;
+        nixlAgent agent("ucx_vram_memtype_hint_" + hint, cfg);
+
+        std::vector<nixl_backend_t> plugins;
+        EXPECT_EQ(agent.getAvailPlugins(plugins), NIXL_SUCCESS);
+        if (std::find(plugins.begin(), plugins.end(), "UCX") == plugins.end()) {
+            return std::nullopt;
+        }
+
+        nixl_mem_list_t mems;
+        nixl_b_params_t params;
+        EXPECT_EQ(agent.getPluginParams("UCX", mems, params), NIXL_SUCCESS);
+        EXPECT_EQ(params[ucx_vram_memtype_hint_key], "auto");
+        params[ucx_vram_memtype_hint_key] = hint;
+
+        nixlBackendH *backend = nullptr;
+        const auto status = agent.createBackend("UCX", params, backend);
+        EXPECT_EQ(status == NIXL_SUCCESS, backend != nullptr) << "hint '" << hint << "'";
+        return status;
+    }
+
+} // namespace
+
+TEST(Config, UcxVramMemtypeHint) {
+    // auto and none never require a memory type from the UCX context.
+    for (const std::string hint : {"auto", "none"}) {
+        const auto status = createUcxBackendWithHint(hint);
+        if (!status) {
+            GTEST_SKIP() << "UCX plugin not available";
+        }
+        EXPECT_EQ(*status, NIXL_SUCCESS) << "hint '" << hint << "'";
+    }
+
+    // Matching is case-sensitive.
+    const gtest::LogIgnoreGuard lig_invalid(
+        "Failed to create engine: Invalid VRAM memtype hint mode: .*");
+    const gtest::LogIgnoreGuard lig_backend(
+        "backend (creation failed|initialization error) for 'UCX'");
+    const auto status = createUcxBackendWithHint("CUDA");
+    ASSERT_TRUE(status.has_value());
+    EXPECT_NE(*status, NIXL_SUCCESS);
+    EXPECT_EQ(lig_invalid.getIgnoredCount(), 1u);
+}
+
+TEST(Config, UcxVramMemtypeHintUnsupportedByContext) {
+    const gtest::LogIgnoreGuard lig_unsupported(
+        "Failed to create engine: Configured VRAM memtype hint '.*' is not supported by "
+        "current UCX context");
+    const gtest::LogIgnoreGuard lig_backend(
+        "backend (creation failed|initialization error) for 'UCX'");
+
+    // An explicit hint either succeeds or is rejected as unsupported by the UCX context.
+    size_t rejected = 0;
+    for (const std::string hint : {"cuda", "cuda-managed", "rocm", "ze-device"}) {
+        const auto status = createUcxBackendWithHint(hint);
+        if (!status) {
+            GTEST_SKIP() << "UCX plugin not available";
+        }
+        if (*status != NIXL_SUCCESS) {
+            ++rejected;
+        }
+    }
+
+    EXPECT_EQ(lig_unsupported.getIgnoredCount(), rejected);
+    if (rejected == 0) {
+        GTEST_SKIP() << "UCX context supports every explicit hint, no rejection exercised";
     }
 }
 
