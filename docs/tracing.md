@@ -328,12 +328,12 @@ In NIXL tracing, "correlation" can mean two different things:
   part of the NVTX backend.
 - **Cross-thread within a process** -- attributing spans emitted on different threads
   (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
-  same request. Implemented via the backend-agnostic `pushCorrelationId()` /
-  `popCorrelationId()` API: NIXL wraps `postXferReq` and the `xfer.complete` marker in a
-  correlation scope keyed on the span id of the request's trace context, and the NVTX
-  backend records that id as the event's `uint64` payload -- so a post and its completion
-  carry the same id on the timeline regardless of which thread emitted each. A request
-  without a valid context carries no id.
+  same request. Implemented via the backend-agnostic `pushContext()` / `popContext()`
+  API: NIXL wraps `postXferReq` and the `xfer.complete` marker in a correlation scope
+  that hands every backend the request's whole trace context, sampled or not. The NVTX
+  backend records the context's span id as the event's `uint64` payload -- so a post and
+  its completion carry the same id on the timeline regardless of which thread emitted
+  each. A request without a valid context pushes nothing.
 
 ## Planned work
 
