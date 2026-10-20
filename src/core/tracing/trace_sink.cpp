@@ -16,13 +16,38 @@
  */
 #include "tracing/trace_sink.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 #include "common/nixl_log.h"
 #include "telemetry.h"
 #include "tracing/trace_context.h"
 
 namespace nixl::trace {
+namespace {
+
+    constexpr std::size_t max_core_attrs = 4;
+
+    [[nodiscard]] constexpr Kind
+    phaseKind(nixl_trace_phase_t phase) noexcept {
+        switch (phase) {
+        case nixl_trace_phase_t::NOTIF_SENT:
+            return Kind::CommSend;
+        case nixl_trace_phase_t::NOTIF_RECEIVED:
+            return Kind::CommRecv;
+        case nixl_trace_phase_t::SUBMIT:
+        case nixl_trace_phase_t::WIRE_SUBMITTED:
+        case nixl_trace_phase_t::WIRE_COMPLETED:
+        case nixl_trace_phase_t::REMOTE_OBSERVED:
+        case nixl_trace_phase_t::OTHER:
+            return Kind::Metadata;
+        }
+        return Kind::Metadata;
+    }
+
+} // namespace
 
 void
 TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
@@ -31,25 +56,29 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
                              std::span<const nixlBackendTraceAttr> attrs,
                              const TraceContext *context) noexcept {
     try {
-        const CorrelationScope correlation{&tracer_,
-                                           context != nullptr ? *context : TraceContext{}};
-        const bool named = (phase == nixl_trace_phase_t::OTHER) && !label.empty();
-        Span span = tracer_.beginSpan(named ? label : toStringView(phase), Kind::Metadata);
-        if (!span.active()) {
-            return;
-        }
-
-        span.addAttribute("nixl.backend", backend_);
-        span.addAttribute("nixl.phase.timestamp_us", static_cast<std::int64_t>(timestamp));
-        if ((context != nullptr) && context->valid()) {
-            span.addAttribute("nixl.traceparent", formatTraceparent(*context));
+        const TraceContext event_context = (context != nullptr) ? *context : TraceContext{};
+        std::string traceparent;
+        std::vector<Attribute> event_attrs;
+        event_attrs.reserve(max_core_attrs + attrs.size());
+        event_attrs.push_back({"nixl.backend", backend_});
+        event_attrs.push_back({"nixl.phase.timestamp_us", static_cast<std::int64_t>(timestamp)});
+        if (event_context.valid()) {
+            traceparent = formatTraceparent(event_context);
+            event_attrs.push_back({"nixl.traceparent", traceparent});
         }
         if (!label.empty()) {
-            span.addAttribute("nixl.phase.label", label);
+            event_attrs.push_back({"nixl.phase.label", label});
         }
         for (const auto &attr : attrs) {
-            span.addAttribute(attr.key, attr.value);
+            event_attrs.push_back({attr.key, attr.value});
         }
+
+        const bool named = (phase == nixl_trace_phase_t::OTHER) && !label.empty();
+        tracer_.emitEvent(named ? label : toStringView(phase),
+                          phaseKind(phase),
+                          event_context,
+                          timestamp,
+                          event_attrs);
     }
     catch (...) {
         if (telemetry_ != nullptr) {
