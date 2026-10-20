@@ -36,7 +36,7 @@ if not is_variable('obj_utils_interface')
     subdir_done()
 endif
 
-obj_plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface, dependency('asio', required: true)]
+obj_plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface]
 obj_compile_flags = []
 
 if cuobj_dep.found()
@@ -88,14 +88,15 @@ else
     endif
 endif
 
-# obj_backend.h publicly includes <asio.hpp>, so propagate the asio dependency
-# (include dirs) to consumers of this interface, e.g. the plugins gtest.
+# obj_backend.h publicly includes <asio.hpp> and AWS SDK headers; propagate
+# both (obj_utils_interface carries asio via nixl_common_dep) to consumers of
+# this interface, e.g. the plugins gtest.
 if 'OBJ' in static_plugins
     obj_backend_interface = declare_dependency(
         link_whole: obj_backend_lib,
-        dependencies: dependency('asio', required: true))
+        dependencies: obj_utils_interface)
 else
     obj_backend_interface = declare_dependency(
         link_with: obj_backend_lib,
-        dependencies: dependency('asio', required: true))
+        dependencies: obj_utils_interface)
 endif
