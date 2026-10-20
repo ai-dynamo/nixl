@@ -25,13 +25,120 @@
 
 #define ENABLE_DEBUG 0
 
+__device__ uint32_t
+nixl_gpunetio_dev_load_host_state(uint32_t &state) {
+    return cuda::atomic_ref<uint32_t, cuda::thread_scope_system>(state).load(
+        cuda::std::memory_order_acquire);
+}
+
+__device__ void
+nixl_gpunetio_dev_store_host_state(uint32_t &state, uint32_t value) {
+    cuda::atomic_ref<uint32_t, cuda::thread_scope_system>(state).store(
+        value, cuda::std::memory_order_release);
+}
+
+__device__ bool
+nixl_gpunetio_dev_has_sq_credit(doca_gpu_dev_verbs_qp *qp, uint32_t count) {
+    auto *cq = doca_gpu_dev_verbs_qp_get_cq_sq(qp);
+    const uint64_t reserved = atomicAdd((unsigned long long *)&qp->sq_rsvd_index, 0);
+    const uint64_t completed = atomicAdd((unsigned long long *)&cq->cqe_ci, 0);
+    return reserved + count <= completed + __ldg(&qp->sq_wqe_num);
+}
+
+__device__ void
+nixl_gpunetio_dev_mark_failed(docaProgressState *progress_state) {
+    nixl_gpunetio_dev_store_host_state(progress_state->failed, 1U);
+    nixl_gpunetio_dev_store_host_state(progress_state->host->failed, 1U);
+}
+
+__device__ void
+nixl_gpunetio_dev_finish_request(docaProgressState *progress_state,
+                                 uint32_t pos,
+                                 uint32_t terminal) {
+    auto *completion = &progress_state->host->completions[pos];
+    cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(progress_state->active_bitmap)
+        .fetch_and(~(1U << pos), cuda::std::memory_order_release);
+    // Last publication: CPU may rearm/release the slot immediately afterwards.
+    nixl_gpunetio_dev_store_host_state(completion->state, terminal);
+}
+
+__device__ void
+nixl_gpunetio_dev_terminal_error(docaProgressState *progress_state, uint32_t pos) {
+    nixl_gpunetio_dev_finish_request(progress_state, pos, DOCA_XFER_STATE_ERROR);
+}
+
+__device__ void
+nixl_gpunetio_dev_fail_request(docaProgressState *progress_state, uint32_t pos) {
+    nixl_gpunetio_dev_mark_failed(progress_state);
+    nixl_gpunetio_dev_terminal_error(progress_state, pos);
+}
+
+__device__ void
+nixl_gpunetio_dev_complete_request(docaXferReqGpu *request,
+                                   docaProgressState *progress_state,
+                                   uint32_t pos) {
+    if (request->peer_write_completed != nullptr) {
+        doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+        DOCA_GPUNETIO_VOLATILE(*request->peer_write_completed) = request->write_ticket;
+    }
+    nixl_gpunetio_dev_finish_request(progress_state, pos, DOCA_XFER_STATE_COMPLETE);
+}
+
+__device__ bool
+nixl_gpunetio_dev_reserve_data(docaXferReqGpu *request,
+                               uint32_t count,
+                               docaProgressState *progress_state,
+                               uint32_t *exit_flag,
+                               uint64_t *base_wqe_idx) {
+    docaQpProgress *progress = request->qp_progress;
+    while (nixl_gpunetio_dev_load_host_state(*exit_flag) == 0U &&
+           nixl_gpunetio_dev_load_host_state(progress_state->failed) == 0U) {
+        if (atomicCAS(&progress->data_producer_lock, 0U, 1U) != 0U) {
+            continue;
+        }
+        if (nixl_gpunetio_dev_load_host_state(progress_state->failed) != 0U) {
+            atomicExch(&progress->data_producer_lock, 0U);
+            return false;
+        }
+        if (!nixl_gpunetio_dev_has_sq_credit(request->qp_data, count)) {
+            atomicExch(&progress->data_producer_lock, 0U);
+            continue;
+        }
+
+        *base_wqe_idx =
+            doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+                                                DOCA_GPUNETIO_VERBS_QP_SQ>(
+                request->qp_data, count, DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_SKIP_AVAILABILITY_CHECK);
+        request->data_ticket = atomicAdd((unsigned long long *)&progress->next_data_ticket, 1ULL);
+        return true;
+    }
+    return false;
+}
+
+__device__ void
+nixl_gpunetio_dev_publish_data(docaXferReqGpu *request,
+                               docaProgressState *progress_state,
+                               uint32_t pos) {
+    atomicExch(&request->data_state, DOCA_XFER_DATA_POSTED);
+    nixl_gpunetio_dev_store_host_state(request->state, DOCA_XFER_STATE_DATA_POSTED);
+    cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(progress_state->active_bitmap)
+        .fetch_or(1U << pos, cuda::std::memory_order_release);
+}
+
 __global__ void
-kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint32_t pos) {
+kernel_read(doca_gpu_dev_verbs_qp *qp,
+            struct docaXferReqGpu *xferReqRing,
+            docaProgressState *progress_state,
+            uint32_t *exit_flag,
+            uint32_t pos,
+            bool wait_for_completion) {
     uint64_t wqe_idx = 0;
     doca_gpu_dev_verbs_wqe *wqe_ptr;
     enum doca_gpu_dev_verbs_wqe_ctrl_flags cflag = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE;
     uint32_t tot_wqe, idx = 0;
     __shared__ uint64_t base_wqe_idx;
+    __shared__ uint64_t last_wqe_idx;
+    __shared__ uint32_t reserved;
 
     // Warmup
     if (xferReqRing == nullptr) {
@@ -41,13 +148,22 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
     tot_wqe = xferReqRing[pos].num;
 
     if (threadIdx.x == 0) {
-        if (qp->need_mcst == true) {
-            base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe + 1);
+        if (nixl_gpunetio_dev_load_host_state(xferReqRing[pos].state) != DOCA_XFER_STATE_PREPARED) {
+            reserved = 0U;
+            nixl_gpunetio_dev_fail_request(progress_state, pos);
         } else {
-            base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+            const uint32_t count = tot_wqe + (qp->need_mcst ? 1 : 0);
+            reserved = nixl_gpunetio_dev_reserve_data(
+                &xferReqRing[pos], count, progress_state, exit_flag, &base_wqe_idx);
+            if (reserved == 0U) {
+                nixl_gpunetio_dev_fail_request(progress_state, pos);
+            }
         }
     }
     __syncthreads();
+    if (reserved == 0U) {
+        return;
+    }
 
     for (idx = threadIdx.x; idx < tot_wqe; idx += blockDim.x) {
         wqe_idx = base_wqe_idx + idx;
@@ -65,29 +181,36 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
     }
     __syncthreads();
 
-    if ((idx - blockDim.x) == (tot_wqe - 1)) {
+    if (threadIdx.x == 0) {
+        last_wqe_idx = base_wqe_idx + tot_wqe - 1;
         if (qp->need_mcst == true) {
-            wqe_idx++;
-            wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, wqe_idx);
+            ++last_wqe_idx;
+            wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, last_wqe_idx);
 
             doca_gpu_dev_verbs_wqe_prepare_dump(qp,
                                                 wqe_ptr,
-                                                wqe_idx,
+                                                last_wqe_idx,
                                                 DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE,
                                                 (uint64_t)(xferReqRing[pos].lbuf[tot_wqe - 1]),
                                                 xferReqRing[pos].lkey[tot_wqe - 1],
                                                 1);
         }
-        doca_gpu_dev_verbs_mark_wqes_ready(qp, base_wqe_idx, wqe_idx);
-        doca_gpu_dev_verbs_submit(qp, wqe_idx + 1);
-        // Wait for final CQE in block of iterations
-        if (doca_gpu_dev_verbs_poll_cq_at(qp, wqe_idx) != 0) {
-            printf("kernel_read: Error CQE!\n");
+        docaQpProgress *const progress = xferReqRing[pos].qp_progress;
+        const uint64_t data_ticket = xferReqRing[pos].data_ticket;
+        doca_gpu_dev_verbs_mark_wqes_ready(qp, base_wqe_idx, last_wqe_idx);
+        doca_gpu_dev_verbs_submit(qp, last_wqe_idx + 1);
+        xferReqRing[pos].last_wqe = last_wqe_idx;
+        atomicExch(&xferReqRing[pos].qp_progress->data_producer_lock, 0U);
+        nixl_gpunetio_dev_publish_data(&xferReqRing[pos], progress_state, pos);
+        if (wait_for_completion) {
+            while (nixl_gpunetio_dev_load_host_state(*exit_flag) == 0U &&
+                   nixl_gpunetio_dev_load_host_state(progress_state->failed) == 0U &&
+                   atomicAdd((unsigned long long *)&progress->head_data_ticket, 0ULL) <=
+                       data_ticket) {}
+            if (atomicAdd((unsigned long long *)&progress->head_data_ticket, 0ULL) > data_ticket) {
+                doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+            }
         }
-
-        DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].last_wqe) = wqe_idx;
-        doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
-        DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].in_use) = 1;
     }
 
 #if ENABLE_DEBUG == 1
@@ -103,13 +226,15 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
 __device__ __forceinline__ bool
 nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
                               struct docaXferReqGpu *xferReqRing,
+                              docaProgressState *progress_state,
+                              uint32_t *exit_flag,
                               uint32_t pos) {
     uint64_t wqe_idx = 0;
     doca_gpu_dev_verbs_wqe *wqe_ptr;
     enum doca_gpu_dev_verbs_wqe_ctrl_flags cflag = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE;
     uint32_t tot_wqe, idx = 0;
     __shared__ uint64_t base_wqe_idx;
-    __shared__ bool abort_write;
+    __shared__ uint32_t reserved;
 
     // Warmup
     if (xferReqRing == nullptr) {
@@ -119,39 +244,51 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
     tot_wqe = xferReqRing[pos].num;
 
     if (threadIdx.x == 0) {
-        abort_write = false;
+        reserved = 1U;
         for (uint32_t dependency = 0; dependency < xferReqRing[pos].wait_completion_count;
              ++dependency) {
-            const uint32_t id = xferReqRing[pos].wait_completion_ids[dependency];
-            while (DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].completion_list[id].completed) == 0) {
-                if (DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].wait_exit) != 0) {
-                    abort_write = true;
+            const uint32_t position = xferReqRing[pos].wait_completion_positions[dependency];
+            while (atomicAdd(&xferReqRing[position].data_state, 0U) != DOCA_XFER_DATA_COMPLETE) {
+                if (nixl_gpunetio_dev_load_host_state(*exit_flag) != 0U ||
+                    nixl_gpunetio_dev_load_host_state(progress_state->failed) != 0U) {
+                    reserved = 0U;
                     break;
                 }
             }
-            if (abort_write) {
+            if (reserved == 0U) {
                 break;
             }
         }
         if (xferReqRing[pos].peer_write_completed != nullptr) {
-            while (!abort_write &&
+            while (reserved != 0U &&
                    DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].peer_write_completed) <
                        xferReqRing[pos].write_ticket - 1) {
-                if (DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].wait_exit) != 0) {
-                    abort_write = true;
+                if (nixl_gpunetio_dev_load_host_state(*exit_flag) != 0U ||
+                    nixl_gpunetio_dev_load_host_state(progress_state->failed) != 0U) {
+                    reserved = 0U;
                 }
             }
         }
-        if (!abort_write) {
+        if (reserved != 0U) {
             if (xferReqRing[pos].wait_completion_count != 0 ||
                 xferReqRing[pos].peer_write_completed != nullptr) {
                 doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
             }
-            base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+        }
+        if (reserved == 0U ||
+            nixl_gpunetio_dev_load_host_state(xferReqRing[pos].state) != DOCA_XFER_STATE_PREPARED) {
+            reserved = 0U;
+            nixl_gpunetio_dev_fail_request(progress_state, pos);
+        } else {
+            reserved = nixl_gpunetio_dev_reserve_data(
+                &xferReqRing[pos], tot_wqe, progress_state, exit_flag, &base_wqe_idx);
+            if (reserved == 0U) {
+                nixl_gpunetio_dev_fail_request(progress_state, pos);
+            }
         }
     }
     __syncthreads();
-    if (abort_write) {
+    if (reserved == 0U) {
         return false;
     }
 
@@ -198,13 +335,13 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
     }
     __syncthreads();
 
-    if ((idx - blockDim.x) == (tot_wqe - 1)) {
-        doca_gpu_dev_verbs_mark_wqes_ready(qp, base_wqe_idx, wqe_idx);
-        doca_gpu_dev_verbs_submit(qp, wqe_idx + 1);
-
-        DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].last_wqe) = wqe_idx;
-        doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
-        DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].in_use) = 1;
+    if (threadIdx.x == 0) {
+        const uint64_t last_wqe_idx = base_wqe_idx + tot_wqe - 1;
+        doca_gpu_dev_verbs_mark_wqes_ready(qp, base_wqe_idx, last_wqe_idx);
+        doca_gpu_dev_verbs_submit(qp, last_wqe_idx + 1);
+        xferReqRing[pos].last_wqe = last_wqe_idx;
+        atomicExch(&xferReqRing[pos].qp_progress->data_producer_lock, 0U);
+        nixl_gpunetio_dev_publish_data(&xferReqRing[pos], progress_state, pos);
     }
 
 #if ENABLE_DEBUG == 1
@@ -219,12 +356,19 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
 }
 
 __global__ void
-kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint32_t pos) {
-    nixl_gpunetio_dev_write_chunk(qp, xferReqRing, pos);
+kernel_write(doca_gpu_dev_verbs_qp *qp,
+             struct docaXferReqGpu *xferReqRing,
+             docaProgressState *progress_state,
+             uint32_t *exit_flag,
+             uint32_t pos) {
+    nixl_gpunetio_dev_write_chunk(qp, xferReqRing, progress_state, exit_flag, pos);
 }
 
 __global__ void
-kernel_write_striped(struct docaXferReqGpu *xferReqRing, docaStripedWriteLaunch launch) {
+kernel_write_striped(struct docaXferReqGpu *xferReqRing,
+                     docaProgressState *progress_state,
+                     uint32_t *exit_flag,
+                     docaStripedWriteLaunch launch) {
     if (xferReqRing == nullptr) {
         return;
     }
@@ -233,13 +377,10 @@ kernel_write_striped(struct docaXferReqGpu *xferReqRing, docaStripedWriteLaunch 
 
     for (uint32_t ordinal = blockIdx.x; ordinal + 1 < launch.count; ordinal += gridDim.x) {
         const uint32_t pos = launch.positions[ordinal];
-        const bool posted =
-            nixl_gpunetio_dev_write_chunk(xferReqRing[pos].qp_data, xferReqRing, pos);
+        nixl_gpunetio_dev_write_chunk(
+            xferReqRing[pos].qp_data, xferReqRing, progress_state, exit_flag, pos);
         // Reuse the helper's CTA-local state only after the posting lane finishes.
         __syncthreads();
-        if (!posted) {
-            break;
-        }
     }
 
     if (threadIdx.x == 0) {
@@ -250,80 +391,80 @@ kernel_write_striped(struct docaXferReqGpu *xferReqRing, docaStripedWriteLaunch 
     __syncthreads();
     if (final_owner) {
         // The last arrival acquired every CTA's completed posting publications.
-        nixl_gpunetio_dev_write_chunk(xferReqRing[final_pos].qp_data, xferReqRing, final_pos);
+        nixl_gpunetio_dev_write_chunk(
+            xferReqRing[final_pos].qp_data, xferReqRing, progress_state, exit_flag, final_pos);
     }
 }
 
 __global__ void
-kernel_progress(struct docaXferCompletion *completion_list,
+kernel_progress(struct docaXferReqGpu *xfer_req_ring,
+                struct docaProgressState *progress_state,
                 struct docaNotif *notif_fill,
                 struct docaNotif *notif_progress,
                 struct docaNotif *notif_send_gpu,
                 uint32_t *exit_flag) {
-    uint32_t index = 0;
-    doca_gpu_dev_verbs_ticket_t out_ticket;
-
-    // Warmup
-    if (completion_list == nullptr) {
+    if (xfer_req_ring == nullptr) {
         return;
     }
 
-    // Wait Xfer & notify
+    doca_gpu_dev_verbs_ticket_t out_ticket;
+
+    // Data QPs progress independently; notification SEND remains synchronous.
     if (blockIdx.x == 0) {
-        while (DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0) {
-            // Check xfer completion and send notif
-            // The host resets this slot (pointer to nullptr, completed to 0) in postXfer while we
-            // poll it: read the pointer once, so a null check and the later dereferences cannot
-            // see different values.
-            struct docaXferReqGpu *const req =
-                DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu);
-            if (req != nullptr) {
-                if (DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) == 0 &&
-                    DOCA_GPUNETIO_VOLATILE(req->in_use) == 1) {
-                    // Wait for final CQE in block of iterations
-                    int poll_status = nixl_gpunetio_dev_poll_one_cq_at<
+        while (nixl_gpunetio_dev_load_host_state(*exit_flag) == 0U) {
+            const uint32_t active =
+                cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(progress_state->active_bitmap)
+                    .load(cuda::std::memory_order_acquire);
+            const uint32_t start = atomicAdd(&progress_state->progress_cursor, 0U);
+
+            uint32_t pending = __funnelshift_r(active, active, start);
+            while (pending != 0U) {
+                const uint32_t offset = __ffs(pending) - 1;
+                pending &= pending - 1;
+                const uint32_t pos = (start + offset) & DOCA_XFER_REQ_MASK;
+
+                docaXferReqGpu *request = &xfer_req_ring[pos];
+                docaQpProgress *progress = request->qp_progress;
+                const uint32_t request_state = nixl_gpunetio_dev_load_host_state(request->state);
+
+                if (request_state == DOCA_XFER_STATE_DATA_POSTED &&
+                    request->data_ticket ==
+                        atomicAdd((unsigned long long *)&progress->head_data_ticket, 0ULL)) {
+                    const int poll_status = nixl_gpunetio_dev_poll_one_cq_at<
                         DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-                        DOCA_GPUNETIO_VERBS_QP_SQ>(doca_gpu_dev_verbs_qp_get_cq_sq(req->qp_data),
-                                                   DOCA_GPUNETIO_VOLATILE(req->last_wqe));
-                    if (poll_status == EBUSY) {
-                        /* Not completed yet, continue progress loop to check exit_flag */
-                        continue;
-                    } else if (poll_status != 0) {
-                        DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
-                        printf("kernel_progress: block %d error CQE! poll_status %d wqe %ld index "
-                               "%d\n",
-                               blockIdx.x,
-                               poll_status,
-                               DOCA_GPUNETIO_VOLATILE(req->last_wqe),
-                               index);
-                        break;
-                    } else {
-                        if (DOCA_GPUNETIO_VOLATILE(req->has_notif_msg_idx) != DOCA_NOTIF_NULL) {
+                        DOCA_GPUNETIO_VERBS_QP_SQ>(
+                        doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_data), request->last_wqe);
+                    if (poll_status == 0) {
+                        atomicAdd((unsigned long long *)&progress->head_data_ticket, 1ULL);
+                        atomicExch(&request->data_state, DOCA_XFER_DATA_COMPLETE);
+                        if (DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx) != DOCA_NOTIF_NULL) {
 #if ENABLE_DEBUG == 1
                             printf("Notif after completion at %d id %d sz %d\n",
-                                   index,
-                                   DOCA_GPUNETIO_VOLATILE(req->has_notif_msg_idx),
-                                   (int)req->msg_sz);
+                                   pos,
+                                   DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx),
+                                   (int)request->msg_sz);
 #endif
                             doca_gpu_dev_verbs_send(
-                                req->qp_notif,
-                                doca_gpu_dev_verbs_addr{.addr = (uint64_t)(req->lbuf_notif),
-                                                        .key = req->lkey_notif},
-                                req->msg_sz,
+                                request->qp_notif,
+                                doca_gpu_dev_verbs_addr{.addr = (uint64_t)(request->lbuf_notif),
+                                                        .key = request->lkey_notif},
+                                request->msg_sz,
                                 &out_ticket);
                             int notif_status;
                             do {
                                 notif_status = nixl_gpunetio_dev_poll_one_cq_at<
                                     DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                     DOCA_GPUNETIO_VERBS_QP_SQ>(
-                                    doca_gpu_dev_verbs_qp_get_cq_sq(req->qp_notif), out_ticket);
-                            } while (notif_status == EBUSY &&
-                                     DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0);
+                                    doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_notif), out_ticket);
+                            } while (
+                                notif_status == EBUSY && DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0 &&
+                                nixl_gpunetio_dev_load_host_state(progress_state->failed) == 0U);
                             if (notif_status != 0) {
-                                DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
+                                nixl_gpunetio_dev_mark_failed(progress_state);
                                 printf("kernel_progress: notification CQ error %d wqe %ld\n",
                                        notif_status,
                                        out_ticket);
+                                nixl_gpunetio_dev_terminal_error(progress_state, pos);
                                 continue;
                             }
 #if ENABLE_DEBUG == 1
@@ -331,17 +472,16 @@ kernel_progress(struct docaXferCompletion *completion_list,
 #endif
                         }
 
-                        if (req->peer_write_completed != nullptr) {
-                            doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
-                            DOCA_GPUNETIO_VOLATILE(*req->peer_write_completed) = req->write_ticket;
-                        }
-                        DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) = 1;
-                        index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+                        nixl_gpunetio_dev_complete_request(request, progress_state, pos);
+                    } else if (poll_status != EBUSY) {
+                        atomicAdd((unsigned long long *)&progress->head_data_ticket, 1ULL);
+                        nixl_gpunetio_dev_fail_request(progress_state, pos);
                     }
                 }
             }
+            atomicExch(&progress_state->progress_cursor, (start + 1) & DOCA_XFER_REQ_MASK);
         }
-    } // Block 0
+    }
 
     // Receive notif: fill recv in new queue and progress queue
     if (blockIdx.x == 1) {
@@ -386,7 +526,7 @@ kernel_progress(struct docaXferCompletion *completion_list,
 #endif
                     DOCA_GPUNETIO_VOLATILE(notif_progress->msg_num) = 0;
                     if (ret < 0) {
-                        DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
+                        nixl_gpunetio_dev_mark_failed(progress_state);
                     }
                     doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
                     DOCA_GPUNETIO_VOLATILE(notif_progress->qp_gpu) = nullptr;
@@ -432,9 +572,10 @@ kernel_progress(struct docaXferCompletion *completion_list,
                         DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                         DOCA_GPUNETIO_VERBS_QP_SQ>(
                         doca_gpu_dev_verbs_qp_get_cq_sq(notif_send_gpu->qp_gpu), out_ticket);
-                } while (notif_status == EBUSY && DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0);
+                } while (notif_status == EBUSY && DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0 &&
+                         nixl_gpunetio_dev_load_host_state(progress_state->failed) == 0U);
                 if (notif_status != 0) {
-                    DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
+                    nixl_gpunetio_dev_mark_failed(progress_state);
                     printf("kernel_progress: standalone notification CQ error %d wqe %ld\n",
                            notif_status,
                            out_ticket);
@@ -459,6 +600,8 @@ doca_error_t
 doca_kernel_write(cudaStream_t stream,
                   doca_gpu_dev_verbs_qp *qp,
                   struct docaXferReqGpu *xferReqRing,
+                  struct docaProgressState *progress_state,
+                  uint32_t *exit_flag,
                   uint32_t pos) {
     cudaError_t result = cudaSuccess;
 
@@ -470,7 +613,8 @@ doca_kernel_write(cudaStream_t stream,
         return DOCA_ERROR_BAD_STATE;
     }
 
-    kernel_write<<<1, DOCA_XFER_REQ_SIZE, 0, stream>>>(qp, xferReqRing, pos);
+    kernel_write<<<1, DOCA_XFER_REQ_SIZE, 0, stream>>>(
+        qp, xferReqRing, progress_state, exit_flag, pos);
     result = cudaGetLastError();
     if (result != cudaSuccess) {
         fprintf(
@@ -484,6 +628,8 @@ doca_kernel_write(cudaStream_t stream,
 doca_error_t
 doca_kernel_write_striped(cudaStream_t stream,
                           struct docaXferReqGpu *xferReqRing,
+                          struct docaProgressState *progress_state,
+                          uint32_t *exit_flag,
                           docaStripedWriteLaunch launch,
                           uint32_t qp_count) {
     if (xferReqRing != nullptr &&
@@ -496,7 +642,8 @@ doca_kernel_write_striped(cudaStream_t stream,
         return DOCA_ERROR_BAD_STATE;
     }
     const uint32_t cta_count = xferReqRing == nullptr ? 1U : qp_count;
-    kernel_write_striped<<<cta_count, DOCA_XFER_REQ_SIZE, 0, stream>>>(xferReqRing, launch);
+    kernel_write_striped<<<cta_count, DOCA_XFER_REQ_SIZE, 0, stream>>>(
+        xferReqRing, progress_state, exit_flag, launch);
     result = cudaGetLastError();
     return result == cudaSuccess ? DOCA_SUCCESS : DOCA_ERROR_BAD_STATE;
 }
@@ -505,7 +652,10 @@ doca_error_t
 doca_kernel_read(cudaStream_t stream,
                  doca_gpu_dev_verbs_qp *qp,
                  struct docaXferReqGpu *xferReqRing,
-                 uint32_t pos) {
+                 struct docaProgressState *progress_state,
+                 uint32_t *exit_flag,
+                 uint32_t pos,
+                 bool wait_for_completion) {
     cudaError_t result = cudaSuccess;
 
     /* Check no previous CUDA errors */
@@ -516,7 +666,8 @@ doca_kernel_read(cudaStream_t stream,
         return DOCA_ERROR_BAD_STATE;
     }
 
-    kernel_read<<<1, DOCA_XFER_REQ_SIZE, 0, stream>>>(qp, xferReqRing, pos);
+    kernel_read<<<1, DOCA_XFER_REQ_SIZE, 0, stream>>>(
+        qp, xferReqRing, progress_state, exit_flag, pos, wait_for_completion);
     result = cudaGetLastError();
     if (result != cudaSuccess) {
         fprintf(
@@ -529,7 +680,8 @@ doca_kernel_read(cudaStream_t stream,
 
 doca_error_t
 doca_kernel_progress(cudaStream_t stream,
-                     struct docaXferCompletion *completion_list,
+                     struct docaXferReqGpu *xfer_req_ring,
+                     struct docaProgressState *progress_state,
                      struct docaNotif *notif_fill,
                      struct docaNotif *notif_progress,
                      struct docaNotif *notif_send_gpu,
@@ -545,7 +697,7 @@ doca_kernel_progress(cudaStream_t stream,
     }
 
     kernel_progress<<<3, 1, 0, stream>>>(
-        completion_list, notif_fill, notif_progress, notif_send_gpu, exit_flag);
+        xfer_req_ring, progress_state, notif_fill, notif_progress, notif_send_gpu, exit_flag);
     result = cudaGetLastError();
     if (result != cudaSuccess) {
         fprintf(
