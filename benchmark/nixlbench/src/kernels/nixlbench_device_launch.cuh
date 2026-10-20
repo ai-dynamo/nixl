@@ -10,6 +10,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct nixlbenchDeviceCounters {
+    uint64_t done;
+    uint64_t error;
+};
+
 /**
  * @brief Parameters for @ref nixlbenchPutKernel (passed by value to the device).
  *
@@ -19,15 +24,15 @@
  *
  * @a numRegions is data region count: group @c g owns indices @c g*numRegions .. @c
  * (g+1)*numRegions-1. The host must append a counter buffer after all data descriptors, at index @a
- * counterIndex. The counter buffer stores:
+ * counterIndex. The counter buffer contains one @ref nixlbenchDeviceCounters slot per channel.
+ * Within each slot it stores:
  * - done counter at byte offset @a completionCounterOffsetBytes
  * - error counter at byte offset @a errorCounterOffsetBytes
  *
  * Every group in the launched block transfers @a numIterations times.
  * The block as a whole performs @c numIterations * num_groups list transfers.
  *
- * Each group signals independently using @c nixlAtomicAdd on @c { remoteMvh, counterIndex, offset }
- * over channel @c group_id%channelNum to add @a numIterations to the done counter.
+ * Each group signals independently using @c nixlAtomicAdd over channel @c group_id%channelNum.
  * Duration outputs contain @c numIterations * num_groups entries in iteration-major order.
  */
 struct nixlbenchDeviceXferParams {
@@ -40,8 +45,8 @@ struct nixlbenchDeviceXferParams {
     unsigned channelNum; ///< Logical channels shared by groups using group_id % channelNum
     uint64_t *postDurationNs; ///< Per-iteration, per-group PUT posting duration output
     uint64_t *xferDurationNs; ///< Per-iteration, per-group completion polling duration output
-    size_t completionCounterOffsetBytes; ///< Done counter offset in the counter region
-    size_t errorCounterOffsetBytes; ///< Error counter offset in the counter region
+    size_t completionCounterOffsetBytes; ///< Done counter offset within a channel slot
+    size_t errorCounterOffsetBytes; ///< Error counter offset within a channel slot
 };
 
 /**
