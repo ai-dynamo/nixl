@@ -1182,9 +1182,11 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     NIXL_TRACE_ATTR(trace_span, "bytes", static_cast<std::int64_t>(req_hndl->telemetry.totalBytes));
     NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", std::to_string(req_hndl->traceRequestId()));
 
+    chrono_point_t start_time;
+    std::optional<nixlTime::nixlDuration> timer;
     if (data->telemetry_) {
-        req_hndl->telemetry.startTime = std::chrono::steady_clock::now();
-        req_hndl->timer.restart();
+        start_time = std::chrono::steady_clock::now();
+        timer.emplace();
     }
 
     std::shared_lock<nixlLock> read_lock(data->lock);
@@ -1204,9 +1206,13 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                      req_hndl->backendHandle);
         if (req_hndl->status == NIXL_SUCCESS) {
             traceXferComplete(data->tracer_.get(), *req_hndl);
+            if (data->telemetry_) {
+                req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_FINISH);
+            }
         }
         if (req_hndl->status == NIXL_IN_PROG) {
             NIXL_ERROR_FUNC << "transfer request is still in progress and cannot be reposted";
+            data->addErrorTelemetry(NIXL_ERR_REPOST_ACTIVE);
             return NIXL_ERR_REPOST_ACTIVE;
         }
 
@@ -1214,6 +1220,10 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
             return NIXL_ERR_REMOTE_DISCONNECT;
+        }
+
+        if (req_hndl->status < 0) {
+            data->addErrorTelemetry(req_hndl->status);
         }
     }
 
@@ -1255,6 +1265,11 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
     NIXL_TRACE_ATTR(
         trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(req_hndl->traceExecution()));
+
+    if (timer) {
+        req_hndl->telemetry.startTime = start_time;
+        req_hndl->timer = *timer;
+    }
 
     // If status is not NIXL_IN_PROG we can repost,
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,
@@ -1369,6 +1384,11 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
                                      req_hndl->backendHandle);
         if (req_hndl->status == NIXL_SUCCESS) {
             traceXferComplete(data->tracer_.get(), *req_hndl);
+            if (data->telemetry_) {
+                req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_FINISH);
+            }
+        } else if (req_hndl->status < 0) {
+            data->addErrorTelemetry(req_hndl->status);
         }
 
         if(req_hndl->status == NIXL_IN_PROG) {
