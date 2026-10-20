@@ -391,23 +391,41 @@ namespace agent {
         }
 
         [[nodiscard]] std::vector<std::vector<std::string>>
-        completionMarks() const {
-            std::vector<std::vector<std::string>> marks;
+        records(std::string_view name) const {
+            std::vector<std::vector<std::string>> records;
             std::ifstream file(trace_file_);
             for (std::string line; std::getline(file, line);) {
                 std::istringstream fields(line);
-                std::vector<std::string> mark{std::istream_iterator<std::string>(fields),
-                                              std::istream_iterator<std::string>()};
-                if ((mark.size() >= 2) && (mark[1] == "nixl::xfer.complete")) {
-                    marks.push_back(std::move(mark));
+                std::vector<std::string> record{std::istream_iterator<std::string>(fields),
+                                                std::istream_iterator<std::string>()};
+                if ((record.size() >= 2) && (record[1] == name)) {
+                    records.push_back(std::move(record));
                 }
             }
-            return marks;
+            return records;
+        }
+
+        [[nodiscard]] std::vector<std::vector<std::string>>
+        completionMarks() const {
+            return records("nixl::xfer.complete");
         }
 
         [[nodiscard]] static auto
         correlatedWith(const nixlXferReqH *req) {
             return testing::Contains("correlation=" + std::to_string(req->traceCorrelationId64()));
+        }
+
+        [[nodiscard]] static auto
+        identifies(const nixlXferReqH *req) {
+            return testing::Contains("nixl.xfer_request_id=" +
+                                     std::to_string(req->traceRequestId()));
+        }
+
+        [[nodiscard]] static auto
+        postedAs(const nixlXferReqH *req, int execution) {
+            return testing::AllOf(
+                identifies(req),
+                testing::Contains("nixl.xfer_execution=" + std::to_string(execution)));
         }
     };
 
@@ -455,6 +473,7 @@ namespace agent {
         EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
         EXPECT_THAT(completionMarks(),
                     testing::ElementsAre(correlatedWith(req), correlatedWith(req)));
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(postedAs(req, 1), postedAs(req, 2)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -470,12 +489,14 @@ namespace agent {
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, completed), NIXL_SUCCESS);
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, cancelled), NIXL_SUCCESS);
         const auto completed_mark = correlatedWith(completed);
+        const auto completed_post = postedAs(completed, 1);
 
         EXPECT_EQ(agent->postXferReq(completed), NIXL_IN_PROG);
         EXPECT_EQ(agent->postXferReq(cancelled), NIXL_IN_PROG);
         EXPECT_EQ(agent->releaseXferReq(completed), NIXL_SUCCESS);
         EXPECT_EQ(agent->releaseXferReq(cancelled), NIXL_SUCCESS);
         EXPECT_THAT(completionMarks(), testing::ElementsAre(completed_mark));
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(completed_post));
     }
 
     TEST_F(recorderTracingAgentFixture, EveryPostCompletedAtOnceIsMarked) {
@@ -501,6 +522,118 @@ namespace agent {
         EXPECT_EQ(agent->getXferStatus(req), NIXL_ERR_BACKEND);
         EXPECT_TRUE(completionMarks().empty());
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(recorderTracingAgentFixture, RequestIdIsOnCreationPostAndCompletion) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+        EXPECT_NE(req->traceRequestId(), 0u);
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_THAT(records("nixl::createXferReq"), testing::ElementsAre(identifies(req)));
+        EXPECT_THAT(records("nixl::postXferReq.write"), testing::ElementsAre(postedAs(req, 1)));
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(postedAs(req, 1)));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(recorderTracingAgentFixture, RepostTakesTheNextExecution) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(req->traceExecution(), 2u);
+        EXPECT_THAT(records("nixl::postXferReq.write"),
+                    testing::ElementsAre(postedAs(req, 1), postedAs(req, 2)));
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(postedAs(req, 1), postedAs(req, 2)));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(recorderTracingAgentFixture, RejectedRepostTakesNoExecution) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+        EXPECT_CALL(engine, postXfer)
+            .WillOnce(testing::Return(NIXL_IN_PROG))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        EXPECT_CALL(engine, checkXfer)
+            .WillOnce(testing::Return(NIXL_IN_PROG))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_IN_PROG);
+        EXPECT_EQ(agent->postXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+        EXPECT_EQ(agent->getXferStatus(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        const auto rejected = testing::AllOf(
+            identifies(req),
+            testing::Not(testing::Contains(testing::StartsWith("nixl.xfer_execution="))));
+        EXPECT_THAT(records("nixl::postXferReq.write"),
+                    testing::ElementsAre(postedAs(req, 1), rejected, postedAs(req, 2)));
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(postedAs(req, 1), postedAs(req, 2)));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(recorderTracingAgentFixture, FailedPostTakesAnExecution) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        EXPECT_CALL(agent_helper_->getGMockEngine(), postXfer)
+            .WillOnce(testing::Return(NIXL_ERR_BACKEND))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_ERR_BACKEND);
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_THAT(records("nixl::postXferReq.write"),
+                    testing::ElementsAre(postedAs(req, 1), postedAs(req, 2)));
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(postedAs(req, 2)));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(recorderTracingAgentFixture, RequestsHaveDistinctIds) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        nixlXferReqH *first = nullptr;
+        nixlXferReqH *second = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, first), NIXL_SUCCESS);
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, second), NIXL_SUCCESS);
+        EXPECT_NE(first->traceRequestId(), 0u);
+        EXPECT_NE(second->traceRequestId(), 0u);
+        EXPECT_NE(first->traceRequestId(), second->traceRequestId());
+
+        EXPECT_EQ(agent->postXferReq(second), NIXL_SUCCESS);
+        EXPECT_EQ(agent->postXferReq(first), NIXL_SUCCESS);
+        EXPECT_THAT(records("nixl::createXferReq"),
+                    testing::ElementsAre(identifies(first), identifies(second)));
+        EXPECT_THAT(records("nixl::postXferReq.write"),
+                    testing::ElementsAre(postedAs(second, 1), postedAs(first, 1)));
+        EXPECT_EQ(agent->releaseXferReq(first), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releaseXferReq(second), NIXL_SUCCESS);
+    }
+
+    TEST_F(recorderTracingAgentFixture, PreppedRequestHasAnId) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        nixlDlistH *local_side = nullptr;
+        nixlDlistH *remote_side = nullptr;
+        ASSERT_EQ(agent->prepXferDlist(setup_.xferDlist, local_side), NIXL_SUCCESS);
+        ASSERT_EQ(agent->prepXferDlist(local_agent_name, setup_.xferDlist, remote_side),
+                  NIXL_SUCCESS);
+
+        const std::vector<int> indices{0};
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(
+            agent->makeXferReq(
+                NIXL_WRITE, *local_side, indices, *remote_side, indices, req, &setup_.extraParams),
+            NIXL_SUCCESS);
+        EXPECT_NE(req->traceRequestId(), 0u);
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_THAT(records("nixl::makeXferReq"), testing::ElementsAre(identifies(req)));
+        EXPECT_THAT(records("nixl::postXferReq.write"), testing::ElementsAre(postedAs(req, 1)));
+
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
     }
 
     class singleAgentSessionFixture : public testing::Test {
@@ -643,6 +776,18 @@ namespace agent {
         EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
         EXPECT_THAT(engine.observedTraceContext(), testing::Optional(req->traceContext()));
 
+        EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(singleAgentSessionFixture, TracingOffDrawsNoRequestId) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(req->traceRequestId(), 0u);
+        EXPECT_EQ(req->traceExecution(), 0u);
         EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
     }
 
