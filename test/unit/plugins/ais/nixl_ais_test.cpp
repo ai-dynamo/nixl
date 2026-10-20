@@ -222,7 +222,7 @@ format_duration(nixlTime::us_t us) {
 //
 // Related hipFile environment variables:
 //   HIPFILE_UNSUPPORTED_FILE_SYSTEMS=true  allow filesystems without AIS support
-//   HIPFILE_ALLOW_COMPAT_MODE=true         allow buffer-registration fallback
+//   HIPFILE_ALLOW_COMPAT_MODE=false        disable hipFile's POSIX fallback I/O
 //
 // The raw-fd benchmark body below is separate: it takes its directory as a
 // positional argument and opens the files itself.

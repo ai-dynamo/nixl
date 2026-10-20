@@ -19,20 +19,9 @@
 #include <utility>
 
 #include "ais_utils.h"
-#include "common/configuration.h"
 #include "common/nixl_log.h"
 
 namespace nixl::rocm::ais {
-
-namespace {
-    // hipFile buffer registration fails on setups without the AIS fast path. Opting
-    // in lets the transfer fall back to the compatibility path instead of aborting
-    // registration outright.
-    [[nodiscard]] bool
-    aisCompatModeAllowed() {
-        return nixl::config::getValueDefaulted<bool>("HIPFILE_ALLOW_COMPAT_MODE", false);
-    }
-} // namespace
 
 aisDriverHandle::aisDriverHandle() {
     const hipFileError_t status = hipFileDriverOpen();
@@ -49,13 +38,8 @@ aisDriverHandle::~aisDriverHandle() {
 aisMemBuf::aisMemBuf(void *ptr, size_t sz, int flags) : base_(ptr) {
     const hipFileError_t status = hipFileBufRegister(ptr, sz, flags);
     if (status.err != hipFileSuccess) {
-        if (aisCompatModeAllowed()) {
-            NIXL_WARN << "AIS: buffer registration failed - compat mode: err=" << status.err;
-            return;
-        }
-        throw std::runtime_error(
-            "AIS: hipFileBufRegister failed (err=" + std::to_string(status.err) +
-            "); set HIPFILE_ALLOW_COMPAT_MODE=true to allow fallback");
+        NIXL_WARN << "AIS: buffer registration failed, continuing unregistered: err=" << status.err;
+        return;
     }
     registered_ = true;
 }
