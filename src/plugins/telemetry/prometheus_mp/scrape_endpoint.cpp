@@ -44,9 +44,9 @@ namespace {
     // milliseconds.
     constexpr std::chrono::nanoseconds backoff = std::chrono::seconds(5);
 
-    // civetweb reports a failed port bind with this exact text (as used by the
-    // single-process prometheus exporter). Only this case is treated as a benign
-    // bind collision; any other Exposer failure is a genuine error.
+    // civetweb reports a failed port bind with this exact text. Only this case is
+    // treated as a benign bind collision; any other Exposer failure is a genuine
+    // error.
     constexpr char bindFailureMarker[] = "Failed to setup server ports";
 
 } // namespace

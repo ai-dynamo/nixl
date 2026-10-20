@@ -60,8 +60,7 @@ inline constexpr std::size_t MP_STORE_SLOT_COUNT =
 
 // Most histogram bucket boundaries the fixed layout can hold (the built-in set
 // uses 18). A NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US override with more bounds than
-// this is rejected rather than silently truncated -- the single-process exporter,
-// which keeps its buckets on the heap, has no such limit.
+// this is rejected rather than silently truncated.
 inline constexpr std::size_t MP_STORE_MAX_BUCKETS = 32;
 
 /**

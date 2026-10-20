@@ -19,12 +19,16 @@
 #include "scrape_util.h"
 
 #include "doca_exporter.h"
-#include "prometheus_exporter.h"
+#include "prometheus_mp_exporter.h"
 #include "telemetry_event.h"
+
+#include <unistd.h>
 
 #include <array>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
+#include <system_error>
 
 #include <gtest/gtest.h>
 
@@ -38,6 +42,7 @@ constexpr char prometheusPortVar[] = "NIXL_TELEMETRY_PROMETHEUS_PORT";
 constexpr char prometheusLocalVar[] = "NIXL_TELEMETRY_PROMETHEUS_LOCAL";
 constexpr char docaPrometheusPortVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_PORT";
 constexpr char docaPrometheusLocalVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_LOCAL";
+constexpr char multiprocDirVar[] = "NIXL_TELEMETRY_MULTIPROC_DIR";
 
 } // namespace
 
@@ -55,6 +60,13 @@ protected:
         ASSERT_EQ(::setenv(prometheusPortVar, std::to_string(prometheus_port_).c_str(), 1), 0);
         ASSERT_EQ(::setenv(docaPrometheusLocalVar, "y", 1), 0);
         ASSERT_EQ(::setenv(docaPrometheusPortVar, std::to_string(doca_port_).c_str(), 1), 0);
+
+        dir_ = std::filesystem::path(::testing::TempDir()) /
+            ("nixl_histogram_parity_" + std::to_string(::getpid()));
+        std::filesystem::create_directories(dir_);
+        std::filesystem::permissions(
+            dir_, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
+        ASSERT_EQ(::setenv(multiprocDirVar, dir_.c_str(), 1), 0);
     }
 
     void
@@ -63,17 +75,21 @@ protected:
         ::unsetenv(prometheusPortVar);
         ::unsetenv(docaPrometheusLocalVar);
         ::unsetenv(docaPrometheusPortVar);
+        ::unsetenv(multiprocDirVar);
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec);
     }
 
     uint16_t prometheus_port_ = 0;
     uint16_t doca_port_ = 0;
+    std::filesystem::path dir_;
 };
 
 TEST_F(histogramExporterParityTest, XferDurationHistogramPayloadMatchesAcrossExporters) {
     constexpr char agentName[] = "histogram_parity_agent";
     const nixlTelemetryExporterInitParams params{agentName, 4096};
 
-    nixlTelemetryPrometheusExporter prometheus_exporter(params);
+    nixlTelemetryPrometheusMpExporter prometheus_exporter(params);
     nixlTelemetryDocaExporter doca_exporter(params);
 
     constexpr std::array<uint64_t, 4> xfer_time_values{5, 30, 200, 700};

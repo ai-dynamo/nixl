@@ -13,9 +13,8 @@ Custom telemetry exporter plug-ins can be created according to [src/plugins/tele
 1. **Telemetry Collection**: Built into the NIXL core library, collects events and metrics
 2. **Shared Memory Buffer**: Statically-linked built in implementation of telemetry exporter. Uses shared memory cyclic buffer for efficient event storage and export.
 3. **Telemetry Readers**: C++ and Python applications to read and display telemetry data from the cyclic buffer.
-4. **Prometheus exporter**: EXPERIMENTAL (beta) Prometheus compatible telemetry exporter, see [src/plugins/telemetry/prometheus/README.md](../src/plugins/telemetry/prometheus/README.md).
-5. **Multi-process Prometheus exporter (`prometheus_mp`)**: EXPERIMENTAL native aggregation of all processes of a multi-process run behind one scrape endpoint, without an external service. See [src/plugins/telemetry/prometheus_mp/README.md](../src/plugins/telemetry/prometheus_mp/README.md) and "Multi-process aggregation" below.
-6. **DOCA exporter**: EXPERIMENTAL DOCA/CollectX telemetry exporter. Drives one or more delivery backends (`NIXL_TELEMETRY_DOCA_BACKENDS`, default `scrape`): a local Prometheus scrape endpoint and/or `ipc` push to the DOCA Telemetry Service (DTS) for single-endpoint multi-process aggregation. See [src/plugins/telemetry/doca/README.md](../src/plugins/telemetry/doca/README.md).
+4. **Prometheus exporter** (`prometheus`, also selectable as `prometheus_mp`): EXPERIMENTAL Prometheus compatible telemetry exporter that serves all processes of a multi-process run behind one scrape endpoint, without an external service. See [src/plugins/telemetry/prometheus_mp/README.md](../src/plugins/telemetry/prometheus_mp/README.md) and "Multi-process aggregation" below.
+5. **DOCA exporter**: EXPERIMENTAL DOCA/CollectX telemetry exporter. Drives one or more delivery backends (`NIXL_TELEMETRY_DOCA_BACKENDS`, default `scrape`): a local Prometheus scrape endpoint and/or `ipc` push to the DOCA Telemetry Service (DTS) for single-endpoint multi-process aggregation. See [src/plugins/telemetry/doca/README.md](../src/plugins/telemetry/doca/README.md).
 
 ### Event Structure
 
@@ -63,14 +62,14 @@ stream:
 - **Last-operation gauges**: the value of the most recent operation, re-emitted
   unchanged (e.g. `agent_tx_last_bytes`). For example, TX byte sizes `10, 20, 35`
   yield a counter `agent_tx_bytes_total` of `65` and a gauge `agent_tx_last_bytes`
-  of `35`. The Prometheus, multi-process Prometheus and DOCA exporters share
+  of `35`. The Prometheus and DOCA exporters share
   **identical** metric definitions -- the same names, types, and semantics --
   derived from one shared metric descriptor
   (`nixlEnumStrings::telemetryMetricDescriptor` in `telemetry_event.h`). The
-  emitted series are not always identical: `prometheus_mp` adds `local_rank` when
-  a rank env var is set, and `pid` and `agent_instance` when two live agents on
+  emitted series are not always identical: the Prometheus exporter adds `local_rank`
+  when a rank env var is set, and `pid` and `agent_instance` when two live agents on
   one host share a name and `local_rank` (see "Multi-process aggregation" below).
-  All three
+  Both
   expose `agent_tx_bytes_total` / `agent_rx_bytes_total` (counters, OpenMetrics
   `_total` suffix) alongside `agent_tx_last_bytes` / `agent_rx_last_bytes`
   (gauges). The memory events likewise expose both a cumulative `_total` counter
@@ -80,8 +79,8 @@ stream:
   type is emitted and the buffer format is unchanged.
 - **Latency histograms**: the transfer-time events additionally feed distribution
   histograms `agent_xfer_time_us` / `agent_xfer_post_time_us` (microseconds) on
-  the Prometheus, multi-process Prometheus and DOCA exporters, at parity (same
-  names, buckets, and semantics; `prometheus_mp` carries its extra labels here too).
+  the Prometheus and DOCA exporters, at parity (same names, buckets, and
+  semantics; the Prometheus exporter carries its extra labels here too).
   Each is exposed as the standard `_bucket{le="..."}` / `_sum` / `_count` series
   alongside the existing counter and gauge. Bucket boundaries default to a
   microsecond range covering ~10us..~10s and are overridable via
@@ -89,10 +88,10 @@ stream:
   strictly-increasing positive microsecond upper bounds; when absent or empty the
   built-in defaults are used, while a non-empty but invalid value is rejected and
   the exporter fails to initialize rather than silently using the defaults).
-  `prometheus_mp` additionally caps the override at 32 bounds, since its buckets
+  The Prometheus exporter additionally caps the override at 32 bounds, since its buckets
   live in a fixed-layout shared-memory store. Like the other views this is an
   exporter-side derivation with no new event type.
-- **Error counters**: the Prometheus, multi-process Prometheus and DOCA exporters
+- **Error counters**: the Prometheus and DOCA exporters
   expose error events as
   `agent_errors_total{status="<status>"}`. The `status` label is bounded by the
   fixed `AGENT_ERR_*` event set: `not_posted`, `invalid_param`, `backend`,
@@ -104,7 +103,7 @@ stream:
   (`updateData`, or the whole 4-event `addXferStats` batch), the event is dropped
   and counted. On each flush the core emits the count of new drops since the last
   flush as a synthetic `AGENT_TELEMETRY_EVENTS_DROPPED` event, which flows through
-  the shared descriptor as `agent_telemetry_events_dropped_total` on all three
+  the shared descriptor as `agent_telemetry_events_dropped_total` on both
   metric exporters and into the raw BUFFER stream. This counts only staging-queue loss
   (events that never reach an exporter); it does **not** count BUFFER cyclic-ring
   loss from a slow downstream reader, which is a separate, uncounted condition.
@@ -157,7 +156,7 @@ Telemetry is configured by environment variables:
 | `NIXL_TELEMETRY_BUFFER_SIZE` | Number of events in buffer | `4096` |
 | `NIXL_TELEMETRY_RUN_INTERVAL` | Flush interval (ms) | `100` |
 | `NIXL_TELEMETRY_EXPORTER` | Name of the exporter plugin to use | - |
-| `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Comma-separated microsecond bucket bounds for the transfer-time histograms (`prometheus`, `prometheus_mp`, DOCA); `prometheus_mp` accepts at most 32 bounds | built-in µs defaults |
+| `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Comma-separated microsecond bucket bounds for the transfer-time histograms (Prometheus and DOCA exporters); the Prometheus exporter accepts at most 32 bounds | built-in µs defaults |
 | `NIXL_TELEMETRY_ENABLED_METRICS` | Comma-separated allowlist of metric names to export (glob) | all |
 
 - `NIXL_TELEMETRY_ENABLE` can be set to `y`/`yes`/`on`/`true`/`enable`/`1` to be enabled, and `n`/`no`/`off`/`false`/`disable`/`0` (or not set) to be disabled. Matching is case insensitive.
@@ -166,11 +165,10 @@ Telemetry is configured by environment variables:
 - When telemetry is requested but no output sink is configured (neither `NIXL_TELEMETRY_EXPORTER` nor `NIXL_TELEMETRY_DIR`), it falls back to the collect-only NOP exporter: events are collected in-process so `getXferTelemetry()` / `get_xfer_telemetry()` works, but nothing is written out.
 - If telemetry is enabled but no exporter is set, or the exporter name is empty, then the sink depends on `NIXL_TELEMETRY_DIR` as explained below (falling back to NOP when it is unset).
 - Set `NIXL_TELEMETRY_EXPORTER=NOP` to explicitly keep telemetry active (events are collected and `getXferTelemetry()` works) while discarding all output. It needs no sink and writes nothing, so it can be used to measure the overhead of the telemetry collection path in isolation.
-- The single-process `prometheus` exporter binds one port per process, so under multi-process runs (e.g. tensor/data parallelism) every rank tries to bind the same port and only one wins. Losing that race is benign and non-fatal: the affected process logs a single warning and runs without a telemetry sink instead of failing agent construction (see [src/plugins/telemetry/prometheus/README.md](../src/plugins/telemetry/prometheus/README.md)). To instead export **every** rank behind one endpoint, use the `prometheus_mp` exporter, where the ranks elect one process to bind rather than racing for the port (see "Multi-process aggregation" below).
 
-## Multi-process aggregation (`prometheus_mp`)
+## Multi-process aggregation (`prometheus`)
 
-The `prometheus_mp` exporter aggregates the telemetry of all processes of a
+The Prometheus exporter (`prometheus`, also selectable as `prometheus_mp`) aggregates the telemetry of all processes of a
 multi-process NIXL run behind a **single** Prometheus scrape endpoint, natively
 (no DOCA/DTS). Every process writes its own metric state to a per-process
 memory-mapped file in a shared directory; the processes race for an exclusive
@@ -190,13 +188,13 @@ deciding. Full details:
 
 | Variable | Description | Default |
 | -------- | ----------- | ------- |
-| `NIXL_TELEMETRY_EXPORTER` | Set to `prometheus_mp` to select this exporter | - |
+| `NIXL_TELEMETRY_EXPORTER` | Set to `prometheus` (or `prometheus_mp`) to select this exporter | - |
 | `NIXL_TELEMETRY_MULTIPROC_DIR` | Shared directory for per-process store files (all ranks to be aggregated must use the same path). Optional: unset or empty, it is named after the effective uid and the port, under the system temp directory when `/dev/shm` is not writable | `/dev/shm/nixl-telemetry-<euid>-<port>` |
-| `NIXL_TELEMETRY_PROMETHEUS_PORT` | Scrape port (shared with the `prometheus` exporter); also names the default `NIXL_TELEMETRY_MULTIPROC_DIR` | `9090` |
+| `NIXL_TELEMETRY_PROMETHEUS_PORT` | Scrape port; also names the default `NIXL_TELEMETRY_MULTIPROC_DIR` | `9090` |
 | `NIXL_TELEMETRY_PROMETHEUS_LOCAL` | Bind `127.0.0.1` instead of `0.0.0.0` | `false` |
 | `NIXL_TELEMETRY_RANK_ENV` | Name of the env var holding the rank for the optional `local_rank` label; no label if that env var is unset | `LOCAL_RANK` |
 | `NIXL_TELEMETRY_MP_STALE_TTL` | Seconds after a dead process's last update before its store is stale and reaped. A departing rank leaves its store behind so its final values can still be scraped (unless a successor under its name supersedes them), so keep this at or above the scrape interval | `30` |
-| `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Shared with the other exporters, but capped at 32 bounds by the fixed-layout store | built-in µs defaults |
+| `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Shared with the DOCA exporter, but capped at 32 bounds by the fixed-layout store | built-in µs defaults |
 
 Unlike a bind collision, a configuration error here is fatal: an explicitly set
 `NIXL_TELEMETRY_MULTIPROC_DIR` that cannot be created and an over-long
@@ -207,13 +205,12 @@ configuration error: that process warns and runs without telemetry.
 
 Series are labeled by `hostname`, `agent_name`, and optionally `local_rank` (the
 local/per-GPU rank, not Dynamo's data-parallel `dp_rank`). `agent_errors_total`
-additionally includes the bounded `status` label. Metric names, types, and
-semantics are identical to the single-process `prometheus` exporter. Each scrape
+additionally includes the bounded `status` label. Each scrape
 publishes one store per `hostname`, `agent_name` and `local_rank`: the live
 writer's, or with none left, the most recently updated departed one. A rank
 restarted under the same name therefore continues its series, its counters
-restarting from zero as under the single-process exporter; Prometheus detects
-that reset only if the next scrape reads a lower value. Only when two or more
+restarting from zero; Prometheus detects that reset only if the next scrape
+reads a lower value. Only when two or more
 live agents share a name -- a misconfiguration, since peers look agents up by
 name -- does each get `pid` and `agent_instance` labels to stay distinct, and
 the owner warns once, naming the first such name.
@@ -247,7 +244,7 @@ stay published.
 
 ### Scope & limitations
 
-`prometheus_mp` is purpose-built for NIXL's telemetry model, **not** a generic
+The Prometheus exporter is purpose-built for NIXL's telemetry model, **not** a generic
 Prometheus multiprocess store, and it does not reuse Python `prometheus_client`'s
 multiprocess format. The metric set is fixed at compile time (positional slots;
 names are not stored) and per-process label values are captured once at startup and

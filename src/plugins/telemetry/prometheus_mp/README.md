@@ -15,22 +15,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# NIXL multi-process Prometheus Telemetry exporter plug-in (`prometheus_mp`)
+# NIXL Prometheus Telemetry exporter plug-in
 
-`prometheus_mp` exposes the telemetry of **all** processes of a multi-process
-NIXL run (e.g. tensor/data parallelism) behind a **single** Prometheus scrape
-endpoint, without any DOCA/DTS dependency.
+This plug-in exports NIXL telemetry in Prometheus format on an HTTP endpoint that
+Prometheus scrapes. It exposes the telemetry of **all** processes of a multi-process
+NIXL run (e.g. tensor/data parallelism) behind a **single** endpoint, without any
+DOCA/DTS dependency. Select it with `NIXL_TELEMETRY_EXPORTER=prometheus`;
+`prometheus_mp`, the name it shipped under in v1.5.0, selects the same plug-in.
 
-It complements the single-process [`prometheus`](../prometheus/README.md) exporter
-(which binds one port per process, so only one rank's metrics are scraped) and the
-DOCA/CollectX exporter (which aggregates via an external DTS service). Use
-`prometheus_mp` when you want all ranks aggregated natively with no extra
-infrastructure. General NIXL telemetry background: [docs/telemetry.md](../../../../docs/telemetry.md).
+It replaces the former single-process `prometheus` exporter, which bound one port
+per process, so only one rank's metrics were scraped. For aggregation through an
+external service, use the DOCA/CollectX exporter (IPC to DTS) instead. General NIXL
+telemetry background: [docs/telemetry.md](../../../../docs/telemetry.md).
 
 ## Dependencies
 
-Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
-`libcurl` (`libcurl4-openssl-dev` / `libcurl-devel`).
+The prometheus-cpp library, built from the bundled subproject with only its
+scrape-endpoint (pull) support. Nothing else needs installing.
 
 ## How it works
 
@@ -146,7 +147,7 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 
 ```bash
 export NIXL_TELEMETRY_ENABLE="y"
-export NIXL_TELEMETRY_EXPORTER="prometheus_mp" # selects libtelemetry_exporter_prometheus_mp.so
+export NIXL_TELEMETRY_EXPORTER="prometheus" # or "prometheus_mp"; both load libtelemetry_exporter_prometheus_mp.so
 ```
 
 That is enough: the processes of a run that use the same
@@ -240,7 +241,7 @@ their series collide.
 ### Optional configuration
 
 ```bash
-# Scrape port (default 9090) and bind scope -- shared with the prometheus plug-in.
+# Scrape port (default 9090) and bind scope.
 # The port also names the default NIXL_TELEMETRY_MULTIPROC_DIR.
 export NIXL_TELEMETRY_PROMETHEUS_PORT="<port_num>"
 export NIXL_TELEMETRY_PROMETHEUS_LOCAL="y" # bind 127.0.0.1 instead of 0.0.0.0
@@ -253,11 +254,21 @@ export NIXL_TELEMETRY_RANK_ENV="LOCAL_RANK"
 # and reaped (default 30). A live process is always published regardless of age.
 export NIXL_TELEMETRY_MP_STALE_TTL="30"
 
-# Histogram bucket upper bounds in microseconds -- shared with the prometheus and
-# DOCA exporters. This exporter keeps its buckets in the fixed-layout store, so at
-# most 32 bounds are accepted; a longer list fails agent construction rather than
-# being silently truncated.
+# Histogram bucket upper bounds in microseconds -- shared with the DOCA exporter.
+# Strictly increasing and positive; an invalid list fails agent construction rather
+# than falling back to the defaults. This exporter keeps its buckets in the
+# fixed-layout store, so at most 32 bounds are accepted; a longer list fails agent
+# construction rather than being silently truncated.
 export NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US="10,100,1000"
+
+# Comma-separated glob allowlist matched against the base event names (unset exports
+# everything). A name selects every series for that event (counter, gauge, and the
+# transfer-time histogram where applicable). Unmatched tokens are ignored with a
+# warning; deactivated metrics are skipped before staging.
+export NIXL_TELEMETRY_ENABLED_METRICS="agent_tx_bytes,agent_rx_bytes,agent_err_*"
+
+# Where to look for plug-in .so files (the same variable serves backend plug-ins).
+export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 ```
 
 ## Metric labels
@@ -271,9 +282,9 @@ Every series is labeled by:
   from Dynamo's data-parallel `dp_rank`.
 - `status` -- only on `agent_errors_total`, bounded by the fixed `AGENT_ERR_*` set.
 
-One process with one agent is therefore labeled as by the single-process
-`prometheus` exporter, apart from `local_rank`, and so are several processes whose
-agents have unique names. On each scrape the collector groups the stores by
+One process with one agent therefore carries only `hostname` and `agent_name`
+(plus `local_rank` when set), the labels of the former single-process exporter, and
+so do several processes whose agents have unique names. On each scrape the collector groups the stores by
 `hostname`, `agent_name` and `local_rank`, and for each group publishes:
 
 - **One live writer:** that writer's store. Departed stores of the same name are
@@ -296,11 +307,30 @@ agents have unique names. On each scrape the collector groups the stores by
 What is published depends only on the directory's contents, so an owner failover
 publishes the same series.
 
-The metric names, types, semantics, and events are identical to the single-process
-[`prometheus`](../prometheus/README.md) exporter (same shared descriptor). That
-includes the transfer-duration histograms `agent_xfer_time_us` and
-`agent_xfer_post_time_us`, exposed as the usual `_bucket{le="..."}` / `_sum` /
-`_count` series per agent.
+## Metrics & events
+
+| Event Name | Counter | Gauge | Histogram |
+| ---------- | ------- | ----- | --------- |
+| `agent_memory_registered` | Yes | Yes | No |
+| `agent_memory_deregistered` | Yes | Yes | No |
+| `agent_tx_bytes` | Yes | Yes | No |
+| `agent_rx_bytes` | Yes | Yes | No |
+| `agent_tx_requests_num` | Yes | No | No |
+| `agent_rx_requests_num` | Yes | No | No |
+| `agent_xfer_time` | Yes | Yes | Yes |
+| `agent_xfer_post_time` | Yes | Yes | Yes |
+| `agent_trace_phases_dropped` | Yes | No | No |
+| `agent_telemetry_events_dropped` | Yes | No | No |
+| Error event types (`agent_err_*`) | Yes | No | No |
+
+The names, types and semantics come from the descriptor shared with the DOCA exporter.
+
+- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values. Counter metrics have suffix '_total'
+- Error events are exposed as one labeled counter: `agent_errors_total{status="..."}`. The `status` label is bounded by the fixed `AGENT_ERR_*` event set.
+- `agent_telemetry_events_dropped_total` is the cumulative count of telemetry events dropped at the producer-side staging queue (when the queue is full and an event cannot be enqueued for export). It does not count BUFFER cyclic-ring loss.
+- `agent_trace_phases_dropped_total` is the cumulative count of backend trace phases that could not be recorded because the trace backend failed, reported per flush outside the staging queue.
+- **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte gauges follow the `agent_<subject>_last_<unit>` convention (the `_last` qualifier precedes the unit, keeping it distinct from the cumulative `_total` counter of the same base name): `agent_tx_last_bytes` / `agent_rx_last_bytes` carry the byte size of the latest TX/RX request, while `agent_tx_bytes_total` / `agent_rx_bytes_total` carry the running total. The memory gauges follow the same convention -- `agent_memory_registered_last_bytes` / `agent_memory_deregistered_last_bytes` -- and report the byte size of the last (de)registration, distinct from the cumulative `agent_memory_registered_total` / `agent_memory_deregistered_total` counters. The transfer-time events likewise publish both a cumulative `_total` counter and a last-operation gauge (`agent_xfer_time` / `agent_xfer_post_time`).
+- **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details. The transfer-time events additionally publish latency-distribution histograms `agent_xfer_time_us` and `agent_xfer_post_time_us` (microseconds), exposed as the usual `_bucket{le="..."}` / `_sum` / `_count` series per agent alongside the existing counter and gauge. Bucket boundaries default to a microsecond range covering ~10us..~10s and can be overridden with `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` (see "Optional configuration").
 
 ## Design scope & limitations
 
@@ -327,8 +357,8 @@ not reuse, Python `prometheus_client`'s multiprocess format):
   zero. Prometheus detects that as a counter reset only if the next scrape reads
   a lower value; a successor that has already passed its predecessor's last
   scraped value is undercounted by that value. Whatever the predecessor recorded
-  after the last scrape is lost either way. The single-process `prometheus`
-  exporter behaves the same on every restart. Without a successor, a departed
+  after the last scrape is lost either way. The former single-process exporter
+  behaved the same on every restart. Without a successor, a departed
   process's final values stay published until the stale TTL expires (see "Stale
   handling"); a successor under its name ends that early. If a scrape cannot read
   the successor's store (`EMFILE`, `ENOMEM`) while its predecessor is still inside
@@ -344,6 +374,3 @@ not reuse, Python `prometheus_client`'s multiprocess format):
   so a restart under the same name is warned about and labeled as a duplicate live
   name: both stores stay published, with `pid` and `agent_instance`, since nothing
   is reaped in that mode either.
-
-This is the native, dependency-free path. For aggregation through an external
-telemetry service, use the DOCA/CollectX exporter (IPC to DTS) instead.
