@@ -105,3 +105,15 @@ After completing the runtime dependency path and checking the loader, the
 three GPUNETIO cases above passed. A fresh UCX comparison, larger wrap/fault
 qualification and supported balanced-LAG integration remain Draft exit gates.
 No comparative performance claim is made for this refreshed head.
+
+Follow-up: a clean build of UCX main
+`010d0965d74db7ee17ec864bf2a2bb33ce81497a` (2026-10-19, API 1.24.0)
+passes standalone pre/post-init CUDA allocation map/query, explicit CUDA hint
+and HOST controls on both endpoints. Using this runtime, the unchanged public
+PD runner passes one pair of 20 measured + two warmup requests per arm, all
+four workers exit zero with GPU payload/hole/marker validation. The registration
+blocker is no longer reproduced with this runtime. Its build includes CUDA,
+IB, MT and experimental API, with optional GDA disabled; GDA is not qualified.
+No UCX source fix or upstream issue was needed. The old runtime's exact failure
+cause remains unproven, and the small smoke is not five-pair performance evidence.
+Supported LAG integration and full final-head acceptance remain Draft gates.
