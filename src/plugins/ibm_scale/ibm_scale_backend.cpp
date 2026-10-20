@@ -106,7 +106,7 @@ nixlScaleEngine::nixlScaleEngine(const nixlBackendInitParams *init_params)
         return (end && *end == '\0') ? r : def;
     };
 
-    ringSize_ = nextPow2((unsigned)envLl("NIXL_SCALE_RING_SIZE", 128));
+    ringSize_ = nextPow2(static_cast<unsigned>(envLl("NIXL_SCALE_RING_SIZE", 128)));
     if (ringSize_ > 32768u) {
         ringSize_ = 32768u;
     }
@@ -289,11 +289,13 @@ nixlScaleEngine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
     if (local.getType() != DRAM_SEG) {
-        NIXL_ERROR << "IBM_SCALE: prepXfer local must be DRAM_SEG, got " << (int)local.getType();
+        NIXL_ERROR << "IBM_SCALE: prepXfer local must be DRAM_SEG, got "
+                   << static_cast<int>(local.getType());
         return NIXL_ERR_INVALID_PARAM;
     }
     if (remote.getType() != FILE_SEG) {
-        NIXL_ERROR << "IBM_SCALE: prepXfer remote must be FILE_SEG, got " << (int)remote.getType();
+        NIXL_ERROR << "IBM_SCALE: prepXfer remote must be FILE_SEG, got "
+                   << static_cast<int>(remote.getType());
         return NIXL_ERR_INVALID_PARAM;
     }
     if (local.descCount() != remote.descCount()) {
@@ -309,7 +311,7 @@ nixlScaleEngine::prepXfer(const nixl_xfer_op_t &operation,
     // Pass 1: capture all descriptors verbatim, validating metadata pointers
     // and length consistency.
     std::vector<nixlScaleIODesc> raw;
-    raw.reserve((size_t)local.descCount());
+    raw.reserve(static_cast<size_t>(local.descCount()));
 
     for (auto [l_it, r_it] = std::make_pair(local.begin(), remote.begin());
          l_it != local.end() && r_it != remote.end();
@@ -360,7 +362,7 @@ nixlScaleEngine::prepXfer(const nixl_xfer_op_t &operation,
     NIXL_DEBUG << "IBM_SCALE: prepXfer op=" << (operation == NIXL_READ ? "READ" : "WRITE")
                << " raw=" << raw.size() << " coalesced=" << coalesced.size();
 
-    unsigned ringDepth = nextPow2((unsigned)coalesced.size() * 2);
+    unsigned ringDepth = nextPow2(static_cast<unsigned>(coalesced.size() * 2));
     if (ringDepth < ringSize_) {
         ringDepth = ringSize_;
     }
@@ -403,6 +405,12 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // ── Quiesce any outstanding operations from a prior run on this handle ──
     req.drainInFlight();
+
+    // If a previous submission encountered an error, reinitialize the ring so no
+    // stale unsubmitted SQEs remain in the submission queue on repost.
+    if (req.hasError() && req.ringOk()) {
+        req.reinitRing();
+    }
 
     req.resetState();
 
@@ -456,7 +464,7 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
                 int flushed = io_uring_submit(ring);
                 if (flushed > 0) {
                     req.addInFlight(flushed);
-                    queued -= (size_t)flushed;
+                    queued -= static_cast<size_t>(flushed);
                 }
                 sqe = io_uring_get_sqe(ring);
                 if (!sqe) {
@@ -475,7 +483,7 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
             } else {
                 io_uring_prep_write(sqe, d.fd, d.buf, submitLen, d.offset);
             }
-            io_uring_sqe_set_data64(sqe, (uint64_t)idx);
+            io_uring_sqe_set_data64(sqe, static_cast<uint64_t>(idx));
             ++queued;
         }
 
@@ -493,7 +501,7 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
                 return NIXL_ERR_BACKEND;
             }
             req.addInFlight(ret);
-            queued -= (size_t)ret;
+            queued -= static_cast<size_t>(ret);
         }
 
         NIXL_DEBUG << "IBM_SCALE: postXfer submitted " << req.descs().size()
@@ -502,11 +510,16 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     // ── Synchronous fallback (io_uring unavailable) ────────────────────────
+    static std::atomic<bool> warnedSyncFallback{false};
+    if (!warnedSyncFallback.exchange(true, std::memory_order_relaxed)) {
+        NIXL_WARN << "IBM_SCALE: io_uring unavailable, falling back to synchronous pread/pwrite";
+    }
+
     for (nixlScaleIODesc &d : req.descs()) {
         while (d.done < d.len) {
             char *ptr = static_cast<char *>(d.buf) + d.done;
             size_t remain = d.len - d.done;
-            off_t off = d.offset + (off_t)d.done;
+            off_t off = d.offset + static_cast<off_t>(d.done);
 
             ssize_t n = isRead ? pread(d.fd, ptr, remain, off) : pwrite(d.fd, ptr, remain, off);
             if (n < 0) {
@@ -514,22 +527,24 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
                     continue;
                 }
                 NIXL_ERROR << "IBM_SCALE: postXfer sync " << (isRead ? "pread" : "pwrite")
-                           << " fd=" << d.fd << " off=" << (long long)off << " len=" << remain
-                           << " errno=" << errno << " (" << strerror(errno) << ")";
+                           << " fd=" << d.fd << " off=" << static_cast<long long>(off)
+                           << " len=" << remain << " errno=" << errno << " (" << strerror(errno)
+                           << ")";
                 req.markError();
                 return NIXL_ERR_BACKEND;
             }
             if (n == 0) {
                 NIXL_ERROR << "IBM_SCALE: postXfer sync unexpected EOF fd=" << d.fd
-                           << " off=" << (long long)off << " done=" << d.done << " total=" << d.len;
+                           << " off=" << static_cast<long long>(off) << " done=" << d.done
+                           << " total=" << d.len;
                 req.markError();
                 return NIXL_ERR_BACKEND;
             }
-            d.done += (size_t)n;
+            d.done += static_cast<size_t>(n);
         }
     }
 
-    req.markCompleted((int)req.descs().size());
+    req.markCompleted(static_cast<int>(req.descs().size()));
     return NIXL_IN_PROG;
 }
 
@@ -602,7 +617,7 @@ nixlScaleEngine::checkXfer(nixlBackendReqH *handle) const {
             req.markError();
             continue;
         }
-        d.done += (size_t)res;
+        d.done += static_cast<size_t>(res);
 
         if (d.done < d.len) {
             // Short I/O — re-submit for the remaining bytes.

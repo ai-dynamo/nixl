@@ -19,6 +19,7 @@
 #define NIXL_SRC_PLUGINS_IBM_SCALE_IBM_SCALE_BACKEND_H
 
 #include <atomic>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <vector>
@@ -27,6 +28,7 @@
 #include <sys/types.h>
 #include <sys/vfs.h>
 
+#include "common/nixl_log.h"
 #include "backend/backend_engine.h"
 #include "file/file_path_mode.h"
 #include "nixl_types.h"
@@ -107,15 +109,14 @@ class nixlScaleBackendReqH : public nixlBackendReqH {
 public:
     nixlScaleBackendReqH(nixl_xfer_op_t op, size_t desc_count, unsigned ring_size)
         : operation_(op),
-          expected_((int)desc_count),
+          expected_(static_cast<int>(desc_count)),
           completed_(0),
           error_(false),
           ringOk_(false),
+          ringDepth_((ring_size > 32768u) ? 32768u : ring_size),
           inFlight_(0) {
         descs_.reserve(desc_count);
-        // Cap at the io_uring hard limit of 32768 entries.
-        unsigned depth = (ring_size > 32768u) ? 32768u : ring_size;
-        int ret = io_uring_queue_init(depth, &ring_, 0);
+        int ret = io_uring_queue_init(ringDepth_, &ring_, 0);
         if (ret == 0) {
             ringOk_ = true;
         } else {
@@ -167,7 +168,8 @@ public:
 
     [[nodiscard]] bool
     allDone() const noexcept {
-        return completed_.load(std::memory_order_relaxed) >= (int)expected_;
+        return completed_.load(std::memory_order_relaxed) >=
+            expected_.load(std::memory_order_relaxed);
     }
 
     void
@@ -207,12 +209,30 @@ public:
                 if (ret == -EINTR) {
                     continue;
                 }
+                NIXL_ERROR << "IBM_SCALE: drainInFlight wait_cqe failed: " << -ret << " ("
+                           << strerror(-ret) << ")";
                 break;
             }
             if (cqe) {
                 io_uring_cqe_seen(&ring_, cqe);
                 decInFlight();
             }
+        }
+    }
+
+    void
+    reinitRing() noexcept {
+        if (ringOk_) {
+            drainInFlight();
+            io_uring_queue_exit(&ring_);
+            ringOk_ = false;
+        }
+        int ret = io_uring_queue_init(ringDepth_, &ring_, 0);
+        if (ret == 0) {
+            ringOk_ = true;
+            ringInitErr_ = std::nullopt;
+        } else {
+            ringInitErr_ = -ret;
         }
     }
 
@@ -232,6 +252,7 @@ private:
     std::atomic<bool> error_;
     bool ringOk_;
     std::optional<int> ringInitErr_;
+    unsigned ringDepth_;
 
     struct io_uring ring_{};
 
