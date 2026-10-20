@@ -77,8 +77,7 @@ class Buffer:
         self.tcp_store_group = tcp_store_group
 
         if disable_ll_nvlink:
-            # Keep a caller-provided UCX_TLS (e.g. CI pinning the RDMA runs to IB only).
-            os.environ.setdefault("UCX_TLS", "^cuda_ipc")
+            os.environ["UCX_TLS"] = "^cuda_ipc"
 
         self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy, timeout_ms)
 
