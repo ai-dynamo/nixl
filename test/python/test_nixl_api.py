@@ -218,6 +218,23 @@ def test_empty_notif_tag(two_connected_agents):
         found = agent2.check_remote_xfer_done(agent1.name, b"")
 
 
+@pytest.mark.timeout(5, func_only=True)
+@pytest.mark.parametrize("message", [b"", b"notification"])
+@pytest.mark.parametrize("tag_is_prefix", [True, False])
+def test_notification_is_consumed_once(two_connected_agents, message, tag_is_prefix):
+    agent1, agent2 = two_connected_agents
+    agent1.send_notif(agent2.name, message)
+
+    while not agent2.check_remote_xfer_done(
+        agent1.name, message, tag_is_prefix=tag_is_prefix
+    ):
+        pass
+
+    assert not agent2.check_remote_xfer_done(
+        agent1.name, message, tag_is_prefix=tag_is_prefix
+    )
+
+
 def test_improper_get_xfer_descs(one_empty_agent, one_reg_list):
     # xfer list should be 3-tuple, not 4-tuple
     bad_list = [(1, 2, 3, 4)]
