@@ -182,9 +182,6 @@ private:
     struct docaNotif *notif_progress_gpu;
     struct docaNotif *notif_progress_cpu;
 
-    struct docaNotif *notif_send_gpu;
-    struct docaNotif *notif_send_cpu;
-
     // Map of agent name to saved nixlDocaConnection info
     std::unordered_map<std::string, nixlDocaConnection> remoteConnMap;
     std::unordered_map<std::string, struct nixlDocaRdmaQp *> qpMap;
@@ -234,8 +231,6 @@ private:
     connectClientRdmaQp(int oob_sock_client, const std::string &remote_agent);
     nixl_status_t
     nixlDocaDestroyNotif(doca_gpu *gpu, struct nixlDocaNotif *notif);
-
-    mutable std::mutex notifSendLock;
 };
 
 #endif
