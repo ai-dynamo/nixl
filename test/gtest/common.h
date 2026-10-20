@@ -72,6 +72,8 @@ public:
 
 class ScopedEnv {
 public:
+    ~ScopedEnv();
+
     void
     addVar(const std::string &name, const std::string &value);
     /** @brief Remove a variable for the scope's lifetime, for tests that need

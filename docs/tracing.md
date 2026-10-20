@@ -196,8 +196,8 @@ phase vocabulary is closed so that timelines stay comparable across backends:
 
 The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. UCX emits
-`nixl::notif.received`, described below; its other phases, and libfabric's, come
-in later PRs.
+`nixl::submit`, `nixl::wire.submitted`, `nixl::notif.sent` and
+`nixl::notif.received`, described below; libfabric's phases come in later PRs.
 
 Recording a phase never fails the transfer: if the trace backend throws, the
 phase is dropped and the first drop per backend is logged. With telemetry
@@ -227,6 +227,20 @@ id in `nixl.traceparent`, and the same correlation id as the sender's
 `nixl::postXferReq.write` or `.read` span. Writes and reads without a
 notification give the receiver nothing to observe, so they are traced on the
 sender only.
+
+On the sender, UCX records up to three phases for every post of a sampled request,
+each under the request's context: `nixl::submit` when `postXfer` accepts the
+post, `nixl::wire.submitted` once all of its puts or gets and the flushes behind
+them are posted to UCX, and `nixl::notif.sent` when the notification is posted.
+If handing a validated post to UCX fails, at a put, a get or the flush, for
+example because the peer disconnected, only `nixl::submit` is recorded.
+The notification goes out from `postXfer` if the transfer has already completed,
+and otherwise from the first status check that finds it complete, so
+`notif.sent` appears once per notifying post, from either call. UCX records no
+`nixl::wire.completed`: a transfer as a whole is seen to complete only when the
+application checks its status, even on the thread-pool engine, whose dedicated
+threads see each chunk finish, so the stamp would time the poll rather than the
+transport.
 
 A backend that carries the context to its peer says so by overriding
 `supportsTraceContext()`, which defaults to `false`; core reads it once, when
@@ -297,7 +311,7 @@ ninja -C build test/gtest/unit/unit test/gtest/gtest test/gtest/ucx_trace_receiv
 # real-agent NVTX suite (loads libtrace_backend_nvtx.so from the build tree):
 ./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
     --gtest_filter='*TestTransferTracing*'
-# two-process UCX test, one trace id on both agents:
+# UCX tests: one trace id on two agents, and the sender's phases:
 ./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
     --gtest_filter='ucxTraceContextPropagation.*'
 ```
@@ -305,10 +319,17 @@ ninja -C build test/gtest/unit/unit test/gtest/gtest test/gtest/ucx_trace_receiv
 The two-process test starts its receiver agent as a separate executable,
 `ucx_trace_receiver`, which is built and installed next to `gtest`, and checks the
 spans both agents record against the sender's request; with `-Dwith_trace=false`,
-which compiles the sender's span out, it checks the receiver's alone. Both agents
-trace through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in the
-mocks directory) that appends one line per finished span to the file named by
-`NIXL_TEST_TRACE_FILE`; the test sets both variables itself.
+which compiles the sender's `postXferReq` span out, it checks only the phases, which
+go through the sink either way. Four single-process tests in the same suite check
+the sender's phases. Transfers to the agent itself, on the default and the
+thread-pool engine, record `nixl::submit` and `nixl::wire.submitted` once per post
+and `nixl::notif.sent` once per notifying post. A transfer to a second agent that
+nothing progresses cannot finish inside `postXfer`, so its `notif.sent` must come
+from the status check. An unsampled request, or an agent with tracing off, records
+none of them. The agents trace through `recorder`, a test-only backend
+(`libtrace_backend_recorder.so` in the mocks directory) that appends one line per
+finished span to the file named by `NIXL_TEST_TRACE_FILE`; the tests set both
+variables themselves.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
 test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically
@@ -344,6 +365,8 @@ In NIXL tracing, "correlation" can mean two different things:
   separate NIXL-architecture effort). UCX carries it in notifications (see "Backend
   phase spans"); the libfabric, gpunetio, mooncake and uccl carriers come next.
 
-- **Backend phase emission** — the sink described under "Backend phase spans" exists,
-  and UCX records `nixl::notif.received` through it; the remaining phases are not
-  recorded by any plugin yet.
+- **Backend phase emission** — UCX records `nixl::submit`, `nixl::wire.submitted`,
+  `nixl::notif.sent` and `nixl::notif.received` through the sink described under
+  "Backend phase spans". Not recorded yet: an accurate `nixl::wire.completed`,
+  which needs a completion point that does not depend on how often the
+  application polls, and the other backends' phases.
