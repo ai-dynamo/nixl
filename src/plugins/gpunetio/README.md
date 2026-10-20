@@ -32,6 +32,8 @@ Stream attached mode is optimal when the application has a sequence of CUDA task
 
 Stream pool mode instead is when applications mostly wants to process data on the CPU but still wants to take the advange of GPU taking care of network communications in a parallel way (every CUDA communication kernel will be executed in parallel to others on a different stream).
 
+Transfer completions are tracked by a persistent progress kernel with one lane per transfer ring slot. Every posted chunk is polled on each pass, so a slow transfer, or a notification SEND waiting for its completion, does not delay transfers posted after it. Completions are reported to `checkXfer` through per-slot flags in host memory.
+
 ## Input parameters
 
 `data_qp_count` optionally selects 1–4 WRITE QPs per peer (default 1). Both peers

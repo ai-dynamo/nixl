@@ -95,8 +95,6 @@ canPairWrite(uintptr_t address,
 
 } // namespace nixl::gpunetio
 
-constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
-constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT_MASK = (DOCA_MAX_COMPLETION_INFLIGHT - 1);
 constexpr uint32_t RDMA_SEND_QUEUE_SIZE = 2048;
 constexpr uint32_t RDMA_RECV_QUEUE_SIZE = (RDMA_SEND_QUEUE_SIZE * 2);
 constexpr uint32_t DOCA_POST_STREAM_NUM = 4;
@@ -120,14 +118,16 @@ constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
 #endif
 
 struct docaXferReqGpu {
-    uint32_t id;
     uintptr_t lbuf[DOCA_XFER_REQ_SIZE];
     uintptr_t rbuf[DOCA_XFER_REQ_SIZE];
     size_t size[DOCA_XFER_REQ_SIZE];
     uint32_t lkey[DOCA_XFER_REQ_SIZE];
     uint32_t rkey[DOCA_XFER_REQ_SIZE];
     uint16_t num;
+    // Set by the posting kernel once last_wqe is valid; cleared by kernel_progress on completion.
     uint8_t in_use;
+    // Cleared by the host before posting; set by kernel_progress when the chunk completes.
+    uint32_t done;
     uint32_t conn_idx;
     uint32_t has_notif_msg_idx;
     uint32_t msg_sz;
@@ -139,10 +139,10 @@ struct docaXferReqGpu {
     nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
     doca_gpu_dev_verbs_qp *qp_data;
     doca_gpu_dev_verbs_qp *qp_notif;
-    struct docaXferCompletion *completion_list;
     uint32_t *wait_exit;
     uint16_t wait_completion_count;
-    uint16_t wait_completion_ids[DOCA_XFER_REQ_MAX];
+    // Ring positions whose chunks must complete before this chunk is posted.
+    uint16_t wait_positions[DOCA_XFER_REQ_MAX];
     uint64_t *peer_write_completed;
     uint64_t write_ticket;
     uint32_t posting_ctas_done;
@@ -168,11 +168,6 @@ struct nixlDocaNotif {
     uint8_t *recv_addr = nullptr;
     std::atomic<uint32_t> recv_pi;
     std::unique_ptr<nixl::doca::verbs::mr> recv_mr;
-};
-
-struct docaXferCompletion {
-    uint8_t completed;
-    struct docaXferReqGpu *xferReqRingGpu;
 };
 
 struct docaNotif {
@@ -315,7 +310,8 @@ doca_kernel_read(cudaStream_t stream,
                  uint32_t pos);
 doca_error_t
 doca_kernel_progress(cudaStream_t stream,
-                     struct docaXferCompletion *completion_list,
+                     struct docaXferReqGpu *xfer_req_ring,
+                     uint32_t *slot_done,
                      struct docaNotif *notif_fill,
                      struct docaNotif *notif_progress,
                      struct docaNotif *notif_send_gpu,

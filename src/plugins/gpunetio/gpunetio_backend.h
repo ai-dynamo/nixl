@@ -164,7 +164,6 @@ private:
     cudaStream_t post_stream[DOCA_POST_STREAM_NUM]{};
     cudaStream_t wait_stream;
     mutable std::atomic<uint32_t> xferStream;
-    mutable std::atomic<uint32_t> lastPostedReq;
     mutable std::mutex postLock_;
 
     struct docaXferReqGpu *xferReqRingGpu;
@@ -172,8 +171,9 @@ private:
     mutable std::atomic<uint32_t> xferRingPos;
     mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved_;
 
-    struct docaXferCompletion *completion_list_gpu;
-    struct docaXferCompletion *completion_list_cpu;
+    // Per ring slot, in host memory: cleared before posting, set by kernel_progress on completion.
+    uint32_t *slot_done_gpu;
+    uint32_t *slot_done_cpu;
     uint32_t *wait_exit_gpu;
     uint32_t *wait_exit_cpu;
     struct docaNotif *notif_fill_gpu;

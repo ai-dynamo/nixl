@@ -122,8 +122,8 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
         abort_write = false;
         for (uint32_t dependency = 0; dependency < xferReqRing[pos].wait_completion_count;
              ++dependency) {
-            const uint32_t id = xferReqRing[pos].wait_completion_ids[dependency];
-            while (DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].completion_list[id].completed) == 0) {
+            const uint32_t position = xferReqRing[pos].wait_positions[dependency];
+            while (DOCA_GPUNETIO_VOLATILE(xferReqRing[position].done) == 0) {
                 if (DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].wait_exit) != 0) {
                     abort_write = true;
                     break;
@@ -254,94 +254,115 @@ kernel_write_striped(struct docaXferReqGpu *xferReqRing, docaStripedWriteLaunch 
     }
 }
 
+// Block 0 of kernel_progress is one warp with a lane per transfer ring slot.
+constexpr uint32_t NIXL_GPUNETIO_PROGRESS_LANES = 32;
+static_assert(DOCA_XFER_REQ_MAX <= NIXL_GPUNETIO_PROGRESS_LANES,
+              "kernel_progress polls every ring slot from its own lane of one warp");
+
+enum nixlGpunetioSlotPhase : uint32_t {
+    NIXL_GPUNETIO_SLOT_IDLE, // waiting for a posting kernel to set in_use
+    NIXL_GPUNETIO_SLOT_DATA, // polling the data CQ at the chunk's last WQE
+    NIXL_GPUNETIO_SLOT_SEND, // data complete, notification SEND not posted yet
+    NIXL_GPUNETIO_SLOT_NOTIF, // polling the notification CQ at the SEND WQE
+};
+
 __global__ void
-kernel_progress(struct docaXferCompletion *completion_list,
+kernel_progress(struct docaXferReqGpu *xfer_req_ring,
+                uint32_t *slot_done,
                 struct docaNotif *notif_fill,
                 struct docaNotif *notif_progress,
                 struct docaNotif *notif_send_gpu,
                 uint32_t *exit_flag) {
-    uint32_t index = 0;
     doca_gpu_dev_verbs_ticket_t out_ticket;
 
     // Warmup
-    if (completion_list == nullptr) {
+    if (xfer_req_ring == nullptr) {
         return;
     }
 
-    // Wait Xfer & notify
+    // Wait Xfer & notify. Each posted chunk is polled on every pass, so a slow chunk delays only
+    // itself. An RC QP completes its WQEs in order and DOCA treats indexes below the CQ consumer
+    // index as complete, so chunks of one QP can be polled in any order.
     if (blockIdx.x == 0) {
-        while (DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0) {
-            // Check xfer completion and send notif
-            // The host resets this slot (pointer to nullptr, completed to 0) in postXfer while we
-            // poll it: read the pointer once, so a null check and the later dereferences cannot
-            // see different values.
-            struct docaXferReqGpu *const req =
-                DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu);
-            if (req != nullptr) {
-                if (DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) == 0 &&
-                    DOCA_GPUNETIO_VOLATILE(req->in_use) == 1) {
-                    // Wait for final CQE in block of iterations
-                    int poll_status = nixl_gpunetio_dev_poll_one_cq_at<
-                        DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-                        DOCA_GPUNETIO_VERBS_QP_SQ>(doca_gpu_dev_verbs_qp_get_cq_sq(req->qp_data),
-                                                   DOCA_GPUNETIO_VOLATILE(req->last_wqe));
-                    if (poll_status == EBUSY) {
-                        /* Not completed yet, continue progress loop to check exit_flag */
-                        continue;
-                    } else if (poll_status != 0) {
-                        DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
-                        printf("kernel_progress: block %d error CQE! poll_status %d wqe %ld index "
-                               "%d\n",
-                               blockIdx.x,
-                               poll_status,
-                               DOCA_GPUNETIO_VOLATILE(req->last_wqe),
-                               index);
-                        break;
-                    } else {
-                        if (DOCA_GPUNETIO_VOLATILE(req->has_notif_msg_idx) != DOCA_NOTIF_NULL) {
-#if ENABLE_DEBUG == 1
-                            printf("Notif after completion at %d id %d sz %d\n",
-                                   index,
-                                   DOCA_GPUNETIO_VOLATILE(req->has_notif_msg_idx),
-                                   (int)req->msg_sz);
-#endif
-                            doca_gpu_dev_verbs_send(
-                                req->qp_notif,
-                                doca_gpu_dev_verbs_addr{.addr = (uint64_t)(req->lbuf_notif),
-                                                        .key = req->lkey_notif},
-                                req->msg_sz,
-                                &out_ticket);
-                            int notif_status;
-                            do {
-                                notif_status = nixl_gpunetio_dev_poll_one_cq_at<
-                                    DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-                                    DOCA_GPUNETIO_VERBS_QP_SQ>(
-                                    doca_gpu_dev_verbs_qp_get_cq_sq(req->qp_notif), out_ticket);
-                            } while (notif_status == EBUSY &&
-                                     DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0);
-                            if (notif_status != 0) {
-                                DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
-                                printf("kernel_progress: notification CQ error %d wqe %ld\n",
-                                       notif_status,
-                                       out_ticket);
-                                continue;
-                            }
-#if ENABLE_DEBUG == 1
-                            printf("Notif correctly sent %ld\n", out_ticket);
-#endif
-                        }
+        const uint32_t lane = threadIdx.x;
+        const bool owns_slot = lane < DOCA_XFER_REQ_MAX;
+        struct docaXferReqGpu *const req = &xfer_req_ring[owns_slot ? lane : 0];
+        uint32_t phase = NIXL_GPUNETIO_SLOT_IDLE;
+        doca_gpu_dev_verbs_cq *cq = nullptr;
+        uint64_t wait_wqe = 0;
 
+        // A warp-wide exit decision keeps every lane in the ballot below.
+        while (__all_sync(0xffffffffU, DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0)) {
+            if (owns_slot && phase == NIXL_GPUNETIO_SLOT_IDLE &&
+                DOCA_GPUNETIO_VOLATILE(req->in_use) == 1) {
+                // Pairs with the posting kernel's release of last_wqe before in_use.
+                doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
+                cq = doca_gpu_dev_verbs_qp_get_cq_sq(req->qp_data);
+                wait_wqe = req->last_wqe;
+                phase = NIXL_GPUNETIO_SLOT_DATA;
+            }
+
+            if (phase == NIXL_GPUNETIO_SLOT_DATA || phase == NIXL_GPUNETIO_SLOT_NOTIF) {
+                const int poll_status =
+                    nixl_gpunetio_dev_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+                                                     DOCA_GPUNETIO_VERBS_QP_SQ>(cq, wait_wqe);
+                if (poll_status == 0) {
+                    if (phase == NIXL_GPUNETIO_SLOT_DATA &&
+                        req->has_notif_msg_idx != DOCA_NOTIF_NULL) {
+                        phase = NIXL_GPUNETIO_SLOT_SEND;
+                    } else {
                         if (req->peer_write_completed != nullptr) {
                             doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
                             DOCA_GPUNETIO_VOLATILE(*req->peer_write_completed) = req->write_ticket;
                         }
-                        DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) = 1;
-                        index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+                        DOCA_GPUNETIO_VOLATILE(req->done) = 1;
+                        DOCA_GPUNETIO_VOLATILE(req->in_use) = 0;
+                        // The host may repost the slot as soon as it sees slot_done.
+                        doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+                        DOCA_GPUNETIO_VOLATILE(slot_done[lane]) = 1;
+                        phase = NIXL_GPUNETIO_SLOT_IDLE;
                     }
+                } else if (poll_status != EBUSY) {
+                    DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
+                    printf("kernel_progress: slot %u %s CQ error %d wqe %llu\n",
+                           lane,
+                           phase == NIXL_GPUNETIO_SLOT_NOTIF ? "notification" : "data",
+                           poll_status,
+                           (unsigned long long)wait_wqe);
                 }
             }
+
+            // Slots of one peer share its notification QP: post their SENDs one lane at a time.
+            uint32_t senders = __ballot_sync(0xffffffffU, phase == NIXL_GPUNETIO_SLOT_SEND);
+            while (senders != 0U) {
+                if (lane == static_cast<uint32_t>(__ffs(senders) - 1)) {
+#if ENABLE_DEBUG == 1
+                    printf("Notif after completion at slot %u id %u sz %u\n",
+                           lane,
+                           req->has_notif_msg_idx,
+                           req->msg_sz);
+#endif
+                    doca_gpu_dev_verbs_send(
+                        req->qp_notif,
+                        doca_gpu_dev_verbs_addr{.addr = (uint64_t)(req->lbuf_notif),
+                                                .key = req->lkey_notif},
+                        req->msg_sz,
+                        &out_ticket);
+                    cq = doca_gpu_dev_verbs_qp_get_cq_sq(req->qp_notif);
+                    wait_wqe = out_ticket;
+                    phase = NIXL_GPUNETIO_SLOT_NOTIF;
+                }
+                senders &= senders - 1;
+                __syncwarp();
+            }
         }
-    } // Block 0
+        return;
+    }
+
+    // The notification blocks run on one thread.
+    if (threadIdx.x != 0) {
+        return;
+    }
 
     // Receive notif: fill recv in new queue and progress queue
     if (blockIdx.x == 1) {
@@ -529,7 +550,8 @@ doca_kernel_read(cudaStream_t stream,
 
 doca_error_t
 doca_kernel_progress(cudaStream_t stream,
-                     struct docaXferCompletion *completion_list,
+                     struct docaXferReqGpu *xfer_req_ring,
+                     uint32_t *slot_done,
                      struct docaNotif *notif_fill,
                      struct docaNotif *notif_progress,
                      struct docaNotif *notif_send_gpu,
@@ -544,8 +566,8 @@ doca_kernel_progress(cudaStream_t stream,
         return DOCA_ERROR_BAD_STATE;
     }
 
-    kernel_progress<<<3, 1, 0, stream>>>(
-        completion_list, notif_fill, notif_progress, notif_send_gpu, exit_flag);
+    kernel_progress<<<3, NIXL_GPUNETIO_PROGRESS_LANES, 0, stream>>>(
+        xfer_req_ring, slot_done, notif_fill, notif_progress, notif_send_gpu, exit_flag);
     result = cudaGetLastError();
     if (result != cudaSuccess) {
         fprintf(

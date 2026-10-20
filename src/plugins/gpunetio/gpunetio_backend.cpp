@@ -483,19 +483,19 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
     xferStream = 0;
 
+    // Host memory: checkXfer polls it locally, the GPU only writes it.
     result = doca_gpu_mem_alloc(gdevs[0].second,
-                                sizeof(struct docaXferCompletion) * DOCA_MAX_COMPLETION_INFLIGHT,
+                                sizeof(uint32_t) * DOCA_XFER_REQ_MAX,
                                 4096,
                                 DOCA_GPU_MEM_TYPE_CPU_GPU,
-                                (void **)&completion_list_gpu,
-                                (void **)&completion_list_cpu);
-    if (result != DOCA_SUCCESS || completion_list_gpu == nullptr ||
-        completion_list_cpu == nullptr) {
+                                (void **)&slot_done_gpu,
+                                (void **)&slot_done_cpu);
+    if (result != DOCA_SUCCESS || slot_done_gpu == nullptr || slot_done_cpu == nullptr) {
         NIXL_ERROR << "Function doca_gpu_mem_alloc return " << doca_error_get_descr(result);
+        throw std::invalid_argument("Can't allocate memory");
     }
 
-    memset(
-        completion_list_cpu, 0, sizeof(struct docaXferCompletion) * DOCA_MAX_COMPLETION_INFLIGHT);
+    memset(slot_done_cpu, 0, sizeof(uint32_t) * DOCA_XFER_REQ_MAX);
 
     // DOCA_GPU_MEM_TYPE_GPU_CPU == GDRCopy
     result = doca_gpu_mem_alloc(gdevs[0].second,
@@ -566,17 +566,22 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     nixlDocaEngineCheckCudaError(cudaStreamSynchronize(0), "stream synchronize");
 
     // Warmup
-    doca_kernel_progress(
-        wait_stream, nullptr, notif_fill_gpu, notif_progress_gpu, notif_send_gpu, wait_exit_gpu);
+    doca_kernel_progress(wait_stream,
+                         nullptr,
+                         nullptr,
+                         notif_fill_gpu,
+                         notif_progress_gpu,
+                         notif_send_gpu,
+                         wait_exit_gpu);
     nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
     doca_kernel_progress(wait_stream,
-                         completion_list_gpu,
+                         xferReqRingGpu,
+                         slot_done_gpu,
                          notif_fill_gpu,
                          notif_progress_gpu,
                          notif_send_gpu,
                          wait_exit_gpu);
 
-    lastPostedReq = 0;
     xferRingPos = 0;
 
     if (progressThreadStart() != NIXL_SUCCESS) {
@@ -654,7 +659,7 @@ nixlDocaEngine::~nixlDocaEngine() {
     doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_send_gpu);
-    doca_gpu_mem_free(gdevs[0].second, completion_list_gpu);
+    doca_gpu_mem_free(gdevs[0].second, slot_done_gpu);
 
     result = doca_gpu_destroy(gdevs[0].second);
     if (result != DOCA_SUCCESS) {
@@ -1898,12 +1903,9 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
         return postStripedWrite(treq, remote_agent);
     }
     for (uint32_t idx : treq->positions) {
-        std::lock_guard<std::mutex> lock(postLock_);
-        const uint32_t completion_index =
-            lastPostedReq.load(std::memory_order_relaxed) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
-        xferReqRingCpu[idx].id = completion_index;
-        completion_list_cpu[completion_index].xferReqRingGpu = nullptr;
-        completion_list_cpu[completion_index].completed = 0;
+        // kernel_progress sets both flags when this chunk completes.
+        xferReqRingCpu[idx].done = 0;
+        slot_done_cpu[idx] = 0;
 
         const doca_error_t result = operation == NIXL_READ ?
             doca_kernel_read(treq->stream, xferReqRingCpu[idx].qp_data, xferReqRingGpu, idx) :
@@ -1912,8 +1914,6 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
             treq->postStatus = NIXL_ERR_BACKEND;
             break;
         }
-        completion_list_cpu[completion_index].xferReqRingGpu = xferReqRingGpu + idx;
-        lastPostedReq.fetch_add(1, std::memory_order_relaxed);
         ++treq->postedCount;
     }
 
@@ -1946,28 +1946,27 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
     // Publish all dependencies before any kernel can consume the final chunk.
     docaStripedWriteLaunch launch{};
     launch.count = static_cast<uint32_t>(request->positions.size());
-    const uint32_t first_id = lastPostedReq.load(std::memory_order_relaxed);
     for (size_t ordinal = 0; ordinal < request->positions.size(); ++ordinal) {
-        launch.positions[ordinal] = request->positions[ordinal];
-        auto &entry = xferReqRingCpu[request->positions[ordinal]];
-        entry.id = (first_id + ordinal) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+        const uint32_t position = request->positions[ordinal];
+        launch.positions[ordinal] = position;
+        auto &entry = xferReqRingCpu[position];
         entry.qp_data = peer->qp_write[ordinal % dataQpCount_]->get_qp_gpu_dev();
-        entry.completion_list = completion_list_gpu;
         entry.wait_exit = wait_exit_gpu;
         entry.wait_completion_count = 0;
         entry.peer_write_completed = nullptr;
         entry.write_ticket = 0;
-        completion_list_cpu[entry.id].xferReqRingGpu = nullptr;
-        completion_list_cpu[entry.id].completed = 0;
+        // kernel_progress sets both flags when this chunk completes.
+        entry.done = 0;
+        slot_done_cpu[position] = 0;
     }
     auto &last = xferReqRingCpu[request->positions.back()];
     last.posting_ctas_done = 0;
     last.peer_write_completed = peer->writeCompletedGpu.get();
     last.write_ticket = ++peer->postedWriteTicket;
     for (size_t ordinal = 0; ordinal + 1 < request->positions.size(); ++ordinal) {
-        last.wait_completion_ids[last.wait_completion_count++] =
-            xferReqRingCpu[request->positions[ordinal]].id;
+        last.wait_positions[ordinal] = request->positions[ordinal];
     }
+    last.wait_completion_count = static_cast<uint16_t>(request->positions.size() - 1);
     std::atomic_thread_fence(std::memory_order_release);
 
     // One stream orders all grids, including the previous same-peer final post.
@@ -1980,11 +1979,7 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
         return request->postStatus;
     }
     // A successful launch owns every chunk, even if a later GPU failure aborts it.
-    for (uint32_t position : request->positions) {
-        completion_list_cpu[xferReqRingCpu[position].id].xferReqRingGpu = xferReqRingGpu + position;
-        lastPostedReq.fetch_add(1, std::memory_order_relaxed);
-        ++request->postedCount;
-    }
+    request->postedCount = request->positions.size();
     return NIXL_IN_PROG;
 }
 
@@ -1995,7 +1990,6 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
         return completion_status;
     }
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
-    uint32_t completion_index;
 
     auto state = treq->completionState.load(std::memory_order_acquire);
     if (state == nixlDocaBckndReq::completion_state::COMPLETE) {
@@ -2007,10 +2001,7 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
     }
 
     for (size_t i = 0; i < treq->postedCount; ++i) {
-        const uint32_t idx = treq->positions[i];
-        completion_index = xferReqRingCpu[idx].id & (DOCA_MAX_COMPLETION_INFLIGHT_MASK);
-
-        if (((volatile docaXferCompletion *)completion_list_cpu)[completion_index].completed != 1) {
+        if (((volatile uint32_t *)slot_done_cpu)[treq->positions[i]] != 1) {
             return NIXL_IN_PROG;
         }
     }
@@ -2034,10 +2025,9 @@ nixlDocaEngine::retireRequest(nixlDocaBckndReq *request) const {
     auto expected = nixlDocaBckndReq::completion_state::IN_PROGRESS;
     if (request->completionState.compare_exchange_strong(
             expected, nixlDocaBckndReq::completion_state::COMPLETING, std::memory_order_acq_rel)) {
+        // kernel_progress already cleared in_use when each chunk completed.
         for (size_t i = 0; i < request->postedCount; ++i) {
-            const uint32_t idx = request->positions[i];
-            *((volatile uint8_t *)&xferReqRingCpu[idx].in_use) = 0;
-            NIXL_INFO << "DOCA retireRequest pos " << idx << " COMPLETED!";
+            NIXL_INFO << "DOCA retireRequest pos " << request->positions[i] << " COMPLETED!";
         }
         request->completionState.store(nixlDocaBckndReq::completion_state::COMPLETE,
                                        std::memory_order_release);
