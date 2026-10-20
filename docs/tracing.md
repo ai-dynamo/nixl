@@ -47,8 +47,8 @@ execution-trace tools.
   `dlopen`s them on demand by the `libtrace_backend_` prefix — the same machinery used
   for data backends and telemetry exporters. The plugin contract lives in
   `src/core/tracing/trace_plugin.h`.
-- **`Kind`** — the operation kind attached to a span. It selects an NVTX color and
-  maps 1:1 onto the Chakra `NodeType` vocabulary:
+- **`Kind`** — the operation kind attached to a span or event. It selects an NVTX
+  color and maps 1:1 onto the Chakra `NodeType` vocabulary:
   `Generic`, `Compute`, `MemoryR`, `MemoryW`, `CommSend`, `CommRecv`, `CommColl`,
   `Metadata`.
 
@@ -182,7 +182,7 @@ backend (e.g. NVTX attaches attributes as typed payloads on the range via
 `nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
 record them).
 
-### Backend phase spans
+### Backend phases
 
 A backend plugin can record a phase of its own work through
 the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core records
@@ -237,7 +237,7 @@ receiver, which stops reading after `msg`, is unaffected; unsampled requests and
 `genNotif` add nothing. When the notification arrives at an agent with tracing
 on, UCX records `nixl::notif.received` under the sender's context, with
 `nixl.remote_agent` naming the sender; an agent with tracing off skips the record
-without reading it. The span thus carries the request's trace
+without reading it. The event thus carries the request's trace
 id in `nixl.traceparent`, and the same correlation id as the sender's
 `nixl::postXferReq.write` or `.read` span. Writes and reads without a
 notification give the receiver nothing to observe, so they are traced on the
@@ -337,7 +337,7 @@ In NIXL tracing, "correlation" can mean two different things:
   processes. NVTX has **no** native cross-process linkage: each process is its own
   timeline that Nsight aligns best-effort by clock. What NIXL adds is the id: over UCX
   notifications the receiver's `nixl::notif.received` carries the sender's correlation id
-  and `nixl.traceparent` (see "Backend phase spans"), so the two ranges can be matched
+  and `nixl.traceparent` (see "Backend phases"), so the two ranges can be matched
   across timelines. Structured linking is a **Chakra** capability (one trace per rank,
   joined offline by `chakra_trace_link` from matching send/recv); it is planned, and not
   part of the NVTX backend.
@@ -357,7 +357,7 @@ In NIXL tracing, "correlation" can mean two different things:
 - **Cross-rank correlation** — propagate a globally unique request id on the wire so
   sender and receiver spans can be linked across processes (distributed tracing; a
   separate NIXL-architecture effort). UCX carries it in notifications (see "Backend
-  phase spans"); the libfabric, gpunetio, mooncake and uccl carriers come next.
+  phases"); the libfabric, gpunetio, mooncake and uccl carriers come next.
 
 - **Backend phase emission** — the sink described under "Backend phase spans" exists,
   and UCX records `nixl::notif.received` through it; the remaining phases are not
