@@ -656,10 +656,10 @@ public:
     mark(std::string_view, nixl::trace::Kind) override {}
 
     void
-    pushCorrelationId(std::uint64_t) override {}
+    pushContext(const nixl::trace::TraceContext &) override {}
 
     void
-    popCorrelationId() override {}
+    popContext() override {}
 
     [[nodiscard]] std::string_view
     name() const noexcept override {

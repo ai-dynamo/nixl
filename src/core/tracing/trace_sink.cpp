@@ -32,7 +32,7 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
                              const TraceContext *context) noexcept {
     try {
         const CorrelationScope correlation{&tracer_,
-                                           context != nullptr ? context->correlationId64() : 0};
+                                           context != nullptr ? *context : TraceContext{}};
         const bool named = (phase == nixl_trace_phase_t::OTHER) && !label.empty();
         Span span = tracer_.beginSpan(named ? label : toStringView(phase), Kind::Metadata);
         if (!span.active()) {
