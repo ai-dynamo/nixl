@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: Copyright (c) 2026 Yunxiao Ning
+# SPDX-FileCopyrightText: Copyright (c) 2026 Yunxiao Ning. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 nixl_include=${1:?NIXL installed include directory}

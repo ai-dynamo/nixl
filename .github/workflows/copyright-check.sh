@@ -5,11 +5,12 @@ set -euo pipefail
 
 failures=()
 
-# Accepted copyright holders. Add new orgs here — each must appear in a header line as:
+# Accepted copyright holders. Add new holders here — each must appear in a header line as:
 #   SPDX-FileCopyrightText: Copyright (c) YYYY(-YYYY) <AUTHOR>. All rights reserved.
 AUTHORS=(
   "NVIDIA CORPORATION & AFFILIATES"
   "Advanced Micro Devices, Inc"
+  "Yunxiao Ning"
 )
 
 # Base defaults to the PR merge ref's first parent; locally pass e.g. upstream/main.

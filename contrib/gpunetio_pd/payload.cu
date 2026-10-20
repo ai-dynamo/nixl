@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 Yunxiao Ning
+ * SPDX-FileCopyrightText: Copyright (c) 2026 Yunxiao Ning. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cuda/atomic>
