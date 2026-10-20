@@ -67,6 +67,8 @@
 //   thread, and thus does not need to be protected by a mutex.
 // - The send queue and the receive queue can be processed concurrently.
 
+constexpr std::int32_t max_connection_retry_count = 10;
+constexpr std::chrono::milliseconds connection_retry_interval = std::chrono::seconds(1);
 
 namespace tcpstore {
 // c10d TCPStore wire constants (torch 2.x). Keys carry the same "/" prefix the
@@ -202,6 +204,7 @@ nixlTcpStoreClientAsync::nixlTcpStoreClientAsync(std::string host,
                                                  asio::io_context &io_context) noexcept
     : host_(host),
       port_(port),
+      portStr_(std::to_string(port)),
       connectTimeout_(connect_timeout),
       opTimeout_(op_timeout),
       ioContext_(io_context),
@@ -212,32 +215,68 @@ nixlTcpStoreClientAsync::~nixlTcpStoreClientAsync() = default;
 
 void
 nixlTcpStoreClientAsync::connect() {
-    asio::post(ioContext_, [this]() { doConnect(connectTimeout_); });
+    asio::post(ioContext_, [this]() { doResolve(connectTimeout_); });
 }
 
 // This function must be called from the I/O context.
 void
-nixlTcpStoreClientAsync::doConnect(std::chrono::milliseconds timeout) {
+nixlTcpStoreClientAsync::doResolve(std::chrono::milliseconds timeout) {
     if (connectionState_ != connection_state_t::CLOSED) {
         NIXL_INFO << "TCPStore client is already connected";
         return;
     }
-    NIXL_INFO << "TCPStore client: connecting to " << host_ << ":" << port_;
+    NIXL_INFO << "TCPStore client: connecting to " << host_ << ":" << portStr_;
     connectionState_ = connection_state_t::CONNECTING;
     generation_++;
+    connectionRetryCount_++;
 
     const auto deadline = std::chrono::steady_clock::now() + timeout;
 
-    socket_.async_connect(
-        asio::ip::tcp::endpoint(asio::ip::make_address(host_), port_),
-        cancelAndErrorAdapter("connect", deadline, [this, deadline](asio::error_code error) {
-            if (!error && connectionState_ == connection_state_t::CONNECTING) {
-                // Attempt to set keep-alive and ignore the error.
-                asio::error_code ec;
-                socket_.set_option(asio::socket_base::keep_alive(true), ec);
-                doValidate(deadline);
-            }
-        }));
+    if (resolvedEndpoints_.empty()) {
+        auto resolver = std::make_unique<asio::ip::tcp::resolver>(ioContext_);
+        resolver->async_resolve(
+            host_,
+            portStr_,
+            cancelAndErrorAdapter(
+                "resolve",
+                deadline,
+                [this, deadline, resolver = std::move(resolver)](
+                    asio::error_code error, asio::ip::tcp::resolver::results_type results) {
+                    if (!error && connectionState_ == connection_state_t::CONNECTING) {
+                        resolvedEndpoints_ = results;
+                        doConnect(resolvedEndpoints_.begin(), deadline);
+                    }
+                }));
+    } else {
+        doConnect(resolvedEndpoints_.begin(), deadline);
+    }
+}
+
+// This function must be called from the I/O context.
+void
+nixlTcpStoreClientAsync::doConnect(asio::ip::tcp::resolver::results_type::const_iterator endpoint,
+                                   deadline_t deadline) {
+    if (endpoint == resolvedEndpoints_.end()) {
+        onError("connect", asio::error::host_not_found, false, generation_);
+        return;
+    } else {
+        socket_.async_connect(
+            *endpoint,
+            cancelAndErrorAdapter(
+                "connect", deadline, [this, deadline, endpoint](asio::error_code error) mutable {
+                    if (!error && connectionState_ == connection_state_t::CONNECTING) {
+                        // Attempt to set keep-alive and ignore the error.
+                        asio::error_code ec;
+                        socket_.set_option(asio::socket_base::keep_alive(true), ec);
+                        doValidate(deadline);
+                    } else if (connectionState_ == connection_state_t::CONNECTING &&
+                               std::chrono::steady_clock::now() < deadline) {
+                        // Try the next endpoint.
+                        endpoint++;
+                        doConnect(endpoint, deadline);
+                    }
+                }));
+    }
 }
 
 // This function must be called from the I/O context.
@@ -288,6 +327,7 @@ nixlTcpStoreClientAsync::doVerifyNonce(std::uint32_t nonce, deadline_t deadline)
                 std::uint32_t echoed = *reinterpret_cast<std::uint32_t *>(response.getRef().data());
                 if (echoed == nonce) {
                     connectionState_ = connection_state_t::CONNECTED;
+                    connectionRetryCount_ = 0;
                     NIXL_INFO << "[TCPStore client][Server: " << host_ << ":" << port_ << "]: "
                               << "connected. Connection generation: " << generation_;
 
@@ -329,11 +369,15 @@ void
 nixlTcpStoreClientAsync::doShutdown() {
     assert(connectionState_ == connection_state_t::SHUTTING_DOWN);
 
-    socket_.shutdown(asio::ip::tcp::socket::shutdown_both);
-    socket_.close();
+    asio::error_code ec;
+    socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    socket_.close(ec);
     shutdownTimer_.cancel();
-    connectionState_ = connection_state_t::SHUTDOWN;
 
+    drainSendQueue();
+    drainRecvQueue();
+
+    connectionState_ = connection_state_t::SHUTDOWN;
     NIXL_INFO << "[TCPStore client][Server: " << host_ << ":" << port_ << "]: "
               << "shutdown completed.";
 }
@@ -362,9 +406,9 @@ nixlTcpStoreClientAsync::set(const std::string &key,
 
         nixl::byteBuffer
         requestMessage() override {
-            return {static_cast<std::uint8_t>(tcpstore::query_type_t::SET),
-                    tcpstore::key_prefix + key_,
-                    value_};
+            return nixl::byteBuffer{static_cast<std::uint8_t>(tcpstore::query_type_t::SET),
+                                    tcpstore::key_prefix + key_,
+                                    value_};
         }
 
         std::size_t
@@ -410,8 +454,8 @@ nixlTcpStoreClientAsync::get(
 
         nixl::byteBuffer
         requestMessage() override {
-            return {static_cast<std::uint8_t>(tcpstore::query_type_t::GET),
-                    tcpstore::key_prefix + key_};
+            return nixl::byteBuffer{static_cast<std::uint8_t>(tcpstore::query_type_t::GET),
+                                    tcpstore::key_prefix + key_};
         }
 
         std::size_t
@@ -453,9 +497,9 @@ nixlTcpStoreClientAsync::get(
 
         nixl::byteBuffer
         requestMessage() override {
-            return {static_cast<std::uint8_t>(tcpstore::query_type_t::CHECK),
-                    static_cast<std::uint64_t>(1),
-                    tcpstore::key_prefix + key_};
+            return nixl::byteBuffer{static_cast<std::uint8_t>(tcpstore::query_type_t::CHECK),
+                                    static_cast<std::uint64_t>(1),
+                                    tcpstore::key_prefix + key_};
         }
 
         std::size_t
@@ -510,8 +554,8 @@ nixlTcpStoreClientAsync::deleteKey(const std::string &key,
 
         nixl::byteBuffer
         requestMessage() override {
-            return {static_cast<std::uint8_t>(tcpstore::query_type_t::DELETE_KEY),
-                    tcpstore::key_prefix + key_};
+            return nixl::byteBuffer{static_cast<std::uint8_t>(tcpstore::query_type_t::DELETE_KEY),
+                                    tcpstore::key_prefix + key_};
         }
 
         std::size_t
@@ -565,9 +609,7 @@ void
 nixlTcpStoreClientAsync::processSendQueue() {
     switch (connectionState_) {
     case connection_state_t::CLOSED:
-        if (autoConnect_) {
-            doConnect(opTimeout_);
-        }
+        doResolve(opTimeout_);
         return;
     case connection_state_t::CONNECTING:
         // Wait for the connection to be established. When the connection
@@ -730,7 +772,7 @@ nixlTcpStoreClientAsync::processRecvQueue() {
         if (connectionState_ == connection_state_t::SHUTTING_DOWN) {
             bool has_work_left = false;
             {
-                std::lock_guard<std::mutex> lock(sendQueueMutex_);
+                const std::lock_guard lock(sendQueueMutex_);
                 has_work_left = (hasInflightSend_ || !sendQueue_.empty());
             }
             if (!has_work_left) {
@@ -738,6 +780,30 @@ nixlTcpStoreClientAsync::processRecvQueue() {
             }
         }
     }
+}
+
+// This function must be called from the I/O context.
+void
+nixlTcpStoreClientAsync::drainSendQueue() {
+    std::deque<std::unique_ptr<Request>> requests;
+    {
+        const std::lock_guard lock(sendQueueMutex_);
+        requests.swap(sendQueue_);
+    }
+
+    for (auto &r : requests) {
+        r->onComplete(asio::error::connection_reset, nixl::byteBuffer());
+    }
+    requests.clear();
+}
+
+// This function must be called from the I/O context.
+void
+nixlTcpStoreClientAsync::drainRecvQueue() {
+    for (auto &request : recvQueue_) {
+        request->onComplete(asio::error::connection_reset, nixl::byteBuffer());
+    }
+    recvQueue_.clear();
 }
 
 // This function must be called from the I/O context.
@@ -773,25 +839,26 @@ nixlTcpStoreClientAsync::onError(std::string what,
         // There is no need to drain the send queue because those are requests
         // that have not been sent to the server yet. They will be executed
         // when the connection is established again.
-        for (auto &request : recvQueue_) {
-            request->onComplete(asio::error::connection_reset, nixl::byteBuffer());
-        }
-        recvQueue_.clear();
+        drainRecvQueue();
 
         if (connectionState_ == connection_state_t::CONNECTING ||
             connectionState_ == connection_state_t::CONNECTED) {
             connectionState_ = connection_state_t::CLOSED;
+            if (connectionRetryCount_ < max_connection_retry_count) {
+                auto timer =
+                    std::make_unique<asio::steady_timer>(ioContext_, connection_retry_interval);
+                timer->async_wait([this, timer = std::move(timer)](asio::error_code error) {
+                    doResolve(opTimeout_);
+                });
+            } else {
+                NIXL_ERROR << "[TCPStore client][Server: " << host_ << ":" << port_
+                           << "]: " << "Max connection retry count reached. Close the connection.";
+                drainSendQueue();
+            }
         } else if (connectionState_ == connection_state_t::SHUTTING_DOWN) {
             // Fail all pending send requests. Because we do not allow new
             // connections after shutdown, these requests will never be sent.
-            {
-                std::lock_guard<std::mutex> lock(sendQueueMutex_);
-                for (auto &request : sendQueue_) {
-                    request->onComplete(asio::error::connection_reset, nixl::byteBuffer());
-                }
-                sendQueue_.clear();
-            }
-
+            drainSendQueue();
             connectionState_ = connection_state_t::SHUTDOWN;
         }
     }

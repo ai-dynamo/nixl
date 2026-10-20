@@ -114,9 +114,13 @@ private:
     // Forward declaration. The base class for all TCPStore requests.
     class Request;
 
+    // Resolve the hostname to the TCPStore server.
+    void
+    doResolve(std::chrono::milliseconds timeout);
+
     // Connect to the TCPStore server.
     void
-    doConnect(std::chrono::milliseconds timeout);
+    doConnect(asio::ip::tcp::resolver::results_type::const_iterator endpoint, deadline_t deadline);
 
     // VALIDATE with the TCPStore server.
     void
@@ -148,6 +152,14 @@ private:
     // Process the receive queue.
     void
     processRecvQueue();
+
+    // Drain the send queue.
+    void
+    drainSendQueue();
+
+    // Drain the receive queue.
+    void
+    drainRecvQueue();
 
     // Handle I/O error.
     void
@@ -191,6 +203,7 @@ private:
     // Client configuration.
     const std::string host_;
     const std::uint16_t port_;
+    const std::string portStr_;
     const std::chrono::milliseconds connectTimeout_;
     const std::chrono::milliseconds opTimeout_;
 
@@ -212,14 +225,16 @@ private:
         SHUTTING_DOWN,
         SHUTDOWN,
     };
+    // The resolved endpoints of the TCPStore server.
+    asio::ip::tcp::resolver::results_type resolvedEndpoints_;
     // The socket to the TCPStore server.
     asio::ip::tcp::socket socket_;
     // Whether the connection is established.
     connection_state_t connectionState_ = connection_state_t::CLOSED;
     // The generation of the current connection.
     std::int32_t generation_ = 0;
-    // Whether auto connect is enabled.
-    bool autoConnect_ = true;
+    // The number of times the connection has been retried.
+    std::int32_t connectionRetryCount_ = 0;
     // The timer for the shutdown grace period.
     asio::steady_timer shutdownTimer_;
 

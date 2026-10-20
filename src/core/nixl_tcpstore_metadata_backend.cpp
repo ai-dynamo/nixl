@@ -96,7 +96,7 @@ nixlTcpStoreMetadataBackend::nixlTcpStoreMetadataBackend(nixlMetadataContext &ct
                                                          const nixlMDConfig &config,
                                                          asio::io_context &io_context)
     : ctx_(ctx),
-      fetchTimeout_(std::chrono::seconds(1)),
+      fetchTimeout_(bringUpTimeout()),
       ioContext_(io_context),
       client_(makeClient(io_context)) {
     NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore backend ready";
@@ -112,6 +112,7 @@ nixlTcpStoreMetadataBackend::start() {
 void
 nixlTcpStoreMetadataBackend::stop() {
     client_->close();
+    stopCalled_ = true;
 }
 
 void
@@ -211,10 +212,16 @@ nixlTcpStoreMetadataBackend::tryFetch(const std::string &remote_name,
                     NIXL_DEBUG << "[" << ctx_.agentName()
                                << "] TCPStore key not yet present: " << key;
                 }
-                auto timer = std::make_unique<asio::steady_timer>(ioContext_, retry_delay);
-                timer->async_wait(
-                    [this, remote, key, deadline, retry_delay, timer = std::move(timer)](
-                        asio::error_code) { tryFetch(remote, key, deadline, retry_delay); });
+                if (!stopCalled_) {
+                    auto timer = std::make_unique<asio::steady_timer>(ioContext_, retry_delay);
+                    timer->async_wait(
+                        [this, remote, key, deadline, retry_delay, timer = std::move(timer)](
+                            asio::error_code) {
+                            if (!stopCalled_) {
+                                tryFetch(remote, key, deadline, retry_delay);
+                            }
+                        });
+                }
             }
         });
 }

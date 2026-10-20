@@ -20,13 +20,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <type_traits>
 #include <vector>
 
 namespace nixl {
 
 /**
- * @class ByteBuffer
+ * @class byteBuffer
  * @brief A simple byte buffer that can be used to store and manipulate binary data.
  *        Arithmetic values are stored in native byte order, and byte sequences are
  *        stored as their length followed by the bytes.
@@ -38,15 +39,17 @@ public:
     /**
      * @brief Construct a new empty byte buffer.
      */
-    explicit byteBuffer() {}
+    byteBuffer() = default;
 
     /**
      * @brief Construct a new byte buffer and copy the given arguments into it.
      * @param args The arguments to construct the buffer with.
      */
-    template<typename... Args> byteBuffer(Args &&...args) {
-        data_.reserve(getSize(std::forward<Args>(args)...));
-        put(std::forward<Args>(args)...);
+    template<typename... Args>
+        requires(!std::is_same_v<std::decay_t<Args>, byteBuffer> && ...)
+    explicit byteBuffer(Args &&...args) {
+        data_.reserve(getSize(args...));
+        put(args...);
     }
 
     // Move constructor and assignment operator.
@@ -105,7 +108,7 @@ public:
     byteBuffer &
     put(T &&value, Args &&...args) {
         put(value);
-        put(std::forward<Args>(args)...);
+        put(args...);
         return *this;
     }
 

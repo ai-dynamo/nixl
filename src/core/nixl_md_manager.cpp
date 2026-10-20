@@ -180,5 +180,7 @@ nixlMDManager::stop() {
         backend_->stop();
     }
     workGuard_.reset();
-    ioThread_.join();
+    if (ioThread_.joinable()) {
+        ioThread_.join();
+    }
 }

@@ -24,6 +24,7 @@
 #include "nixl_md_config.h"
 #include "nixl_metadata_backend.h"
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -114,6 +115,9 @@ private:
     // Keys this agent has published; TCPStore has no recursive delete, so
     // invalidateLocal removes exactly these.
     std::unordered_set<std::string> publishedKeys_;
+
+    // Whether stop() has been called.
+    std::atomic<bool> stopCalled_ = false;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_TCPSTORE_METADATA_BACKEND_H
