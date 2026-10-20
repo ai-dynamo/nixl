@@ -53,11 +53,12 @@ nixlbenchPostPut(const nixlbenchDeviceXferParams &params,
 template<nixl_gpu_level_t Level>
 __device__ nixl_status_t
 nixlbenchSignalCounter(const nixlbenchDeviceXferParams &params,
-                       size_t counter_offset,
+                       size_t field_offset,
                        uint64_t value,
                        unsigned channel_id,
                        nixlGpuXferStatusH &xfer_status,
                        const char *counter_name) {
+    const size_t counter_offset = channel_id * sizeof(nixlbenchDeviceCounters) + field_offset;
     const nixlMemViewElem counter{params.remoteMvh, params.counterIndex, counter_offset};
     nixl_status_t status = nixlAtomicAdd<Level>(value, counter, channel_id, 0, &xfer_status);
     status = nixlbenchPollXferStatus<Level>(status, xfer_status);
