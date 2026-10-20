@@ -51,6 +51,21 @@
 // - If any message connot be written or read in its entirety, we must close
 //   the socket, fail all pending requests and reconnect. Request-level
 //   retry is handled by the upper layer.
+// - Each TCPStore request is executed in two phases: a send phase and a
+//   receive phase.
+// - The send and receive phases are each serialized on its own queue. Each
+//   phase uses a hasInflight flag to block the next request from being initiated
+//   until the previous request has been completed.
+// - The send queue is accessed from both the caller thread and the I/O thread,
+//   and thus must be protected by a mutex. The reason for this is two fold:
+//   - The I/O thread may have exited, so the caller must determine if the
+//     request can be queued in its own thread.
+//   - Inserting the request must be synchronized with the SHUTDOWN sequence.
+//     We must make sure that if the request is queued, the SHUTDOWN sequence
+//     must see the request.
+// - On the other hand, the receive queue is accessed exclusively from the I/O
+//   thread, and thus does not need to be protected by a mutex.
+// - The send queue and the receive queue can be processed concurrently.
 
 
 namespace tcpstore {
