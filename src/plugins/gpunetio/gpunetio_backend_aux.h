@@ -20,10 +20,15 @@
 
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cstring>
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <optional>
+#include <stdexcept>
+#include <string_view>
+#include <system_error>
 #include <sys/types.h>
 #include <thread>
 #include <vector>
@@ -93,6 +98,54 @@ canPairWrite(uintptr_t address,
         next_length <= max_length && length <= max_length - next_length;
 }
 
+struct stridedWritePlan {
+    uint32_t rows;
+    uint32_t itemSize;
+    uint32_t localStride;
+    uint32_t remoteStride;
+};
+
+inline std::optional<stridedWritePlan>
+parseStridedWritePlan(std::string_view text) {
+    constexpr std::string_view prefix = "gpunetio_strided_write_v1=";
+    if (!text.starts_with(prefix)) {
+        return std::nullopt;
+    }
+    text.remove_prefix(prefix.size());
+    std::array<uint32_t, 4> values{};
+    for (size_t i = 0; i < values.size(); ++i) {
+        const size_t comma = text.find(',');
+        const auto part = text.substr(0, comma);
+        const auto result = std::from_chars(part.data(), part.data() + part.size(), values[i]);
+        if (part.empty() || result.ec != std::errc{} || result.ptr != part.data() + part.size() ||
+            values[i] == 0 || (i + 1 < values.size()) != (comma != std::string_view::npos)) {
+            throw std::invalid_argument("Invalid GPUNETIO strided WRITE geometry");
+        }
+        if (comma != std::string_view::npos) {
+            text.remove_prefix(comma + 1);
+        }
+    }
+    return stridedWritePlan{values[0], values[1], values[2], values[3]};
+}
+
+inline bool
+stridedSpanCovered(uintptr_t address,
+                   size_t rows,
+                   size_t itemSize,
+                   size_t rowStrideBytes,
+                   uintptr_t mrAddress,
+                   size_t mrSize) {
+    const auto max = std::numeric_limits<size_t>::max();
+    if (rows == 0 || itemSize == 0 || rowStrideBytes < itemSize || address < mrAddress ||
+        rows - 1 > (max - itemSize) / rowStrideBytes) {
+        return false;
+    }
+    const size_t span = (rows - 1) * rowStrideBytes + itemSize;
+    const size_t offset = address - mrAddress;
+    return span <= std::numeric_limits<uintptr_t>::max() - address && offset <= mrSize &&
+        span <= mrSize - offset;
+}
+
 } // namespace nixl::gpunetio
 
 constexpr uint32_t RDMA_SEND_QUEUE_SIZE = 2048;
@@ -101,6 +154,7 @@ constexpr uint32_t DOCA_POST_STREAM_NUM = 4;
 constexpr uint32_t DOCA_XFER_REQ_SIZE = 512;
 constexpr uint32_t DOCA_XFER_REQ_MAX = 32;
 constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
+constexpr uint32_t DOCA_STRIDED_WRITE_RUNS = 16;
 constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
@@ -159,6 +213,28 @@ struct docaStripedWriteLaunch {
     uint32_t positions[DOCA_XFER_REQ_MAX];
 };
 
+struct docaStridedWriteRun {
+    uintptr_t localAddress;
+    uintptr_t remoteAddress;
+    uint32_t localKey;
+    uint32_t remoteKey;
+};
+
+struct docaStridedWriteLaunch {
+    docaStridedWriteRun runs[DOCA_STRIDED_WRITE_RUNS];
+    uint32_t count;
+    uint32_t rows;
+    uint32_t itemSize;
+    uint32_t pairRows;
+    size_t localStrideBytes;
+    size_t remoteStrideBytes;
+    uintptr_t tailLocal;
+    uintptr_t tailRemote;
+    uint32_t tailLocalKey;
+    uint32_t tailRemoteKey;
+    uint32_t tailSize;
+};
+
 enum docaXferState : uint32_t {
     DOCA_XFER_STATE_FREE,
     DOCA_XFER_STATE_PREPARED,
@@ -173,6 +249,7 @@ enum docaXferDataState : uint32_t {
     DOCA_XFER_DATA_NONE,
     DOCA_XFER_DATA_POSTED,
     DOCA_XFER_DATA_COMPLETE,
+    DOCA_XFER_DATA_ERROR,
 };
 
 enum docaXferNotifState : uint32_t {
@@ -182,6 +259,8 @@ enum docaXferNotifState : uint32_t {
     DOCA_XFER_NOTIF_COMPLETE,
 };
 
+constexpr uint32_t DOCA_PROGRESS_SHARDS = 4;
+
 struct docaQpProgress {
     uint32_t data_producer_lock;
     uint32_t notif_producer_lock;
@@ -189,6 +268,7 @@ struct docaQpProgress {
     uint64_t head_data_ticket;
     uint64_t next_notif_ticket;
     uint64_t head_notif_ticket;
+    uint32_t owner;
 };
 
 struct docaHostCompletion {
@@ -207,7 +287,7 @@ static_assert(DOCA_XFER_REQ_MAX > 0 && DOCA_XFER_REQ_MAX <= 32 &&
 
 struct docaProgressState {
     docaHostState *host;
-    uint32_t active_bitmap;
+    uint32_t active_bitmaps[DOCA_PROGRESS_SHARDS];
     uint32_t progress_cursor;
     uint32_t failed;
     uint32_t active_generation[DOCA_XFER_REQ_MAX];
@@ -230,7 +310,7 @@ struct docaNotif {
     uintptr_t msg_buf;
     size_t msg_size;
     uint32_t msg_num;
-    uint32_t msg_last;
+    uint32_t msg_last; // CPU-consumed watermark (low32) for the queried peer.
 };
 
 class nixlDocaConnection : public nixlBackendConnMD {
@@ -363,6 +443,13 @@ doca_kernel_write_striped(cudaStream_t stream,
                           docaStripedWriteLaunch launch,
                           uint32_t qp_count);
 doca_error_t
+doca_kernel_write_strided(cudaStream_t stream,
+                          struct docaXferReqGpu *xferReqRing,
+                          struct docaProgressState *progress_state,
+                          uint32_t *exit_flag,
+                          uint32_t pos,
+                          const docaStridedWriteLaunch &launch);
+doca_error_t
 doca_kernel_read(cudaStream_t stream,
                  doca_gpu_dev_verbs_qp *qp_gpu,
                  struct docaXferReqGpu *xferReqRing,
@@ -381,6 +468,7 @@ doca_kernel_progress(cudaStream_t stream,
                      struct docaProgressState *progress_state,
                      struct docaNotif *notif_fill,
                      struct docaNotif *notif_progress,
-                     uint32_t *exit_flag);
+                     uint32_t *exit_flag,
+                     uint32_t owner_count = 1);
 
 #endif /* GPUNETIO_BACKEND_AUX_H */

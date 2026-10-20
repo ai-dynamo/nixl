@@ -60,6 +60,8 @@ get_backend_options() {
     params["cuda_streams"] = "";
     params["gid_index"] = "";
     params["data_qp_count"] = "";
+    params["progress_owners"] = "1";
+    params["ordered_notifications"] = "0";
     return params;
 }
 

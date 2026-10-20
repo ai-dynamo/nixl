@@ -153,6 +153,8 @@ private:
     std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
     int nstreams;
     uint32_t dataQpCount_ = 1;
+    uint32_t progressOwnerCount_ = 1;
+    bool orderedNotifications_ = false;
 
     uint16_t local_port;
     int noSyncIters;
@@ -203,6 +205,7 @@ private:
         uint32_t devId;
         std::vector<uint32_t> positions;
         std::vector<uint32_t> generations;
+        std::vector<docaStridedWriteLaunch> stridedLaunches;
         doca_gpu_dev_verbs_qp *qp_data = nullptr;
         uintptr_t backendHandleGpu;
         size_t postedCount = 0;
