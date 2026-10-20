@@ -25,11 +25,20 @@ execution-trace tools.
 ## Architecture
 
 - **`nixl::trace::Tracer`** — a composite tracer **owned by each `nixlAgent`** (no
-  singleton; injected into call sites). One `beginSpan()`/`mark()` call fans out to
-  every active backend.
+  singleton; injected into call sites). One `beginSpan()`, `mark()`, `emitSpan()` or
+  `emitEvent()` call fans out to every active backend.
 - **`nixl::trace::Span`** — a move-only handle returned by `beginSpan()`. It forwards
   attributes/dependencies to each backend span and **ends them all on destruction**
   (RAII), so a span covers the scope in which it is declared.
+- **`emitSpan()` / `emitEvent()`** — record a span or a point event after the fact,
+  with its times, trace context, kind and typed attributes passed explicitly instead
+  of taken from the clock and the active correlation scope. They are for records
+  timed elsewhere or reported from another thread, such as the backend phases below.
+  Times are `nixlTime` microseconds on `std::chrono::steady_clock`
+  (`nixlTime::getUs()`), not a wall clock; a backend that needs wall-clock time
+  converts at export. NVTX can draw only at the moment of the call, so it draws both
+  as zero-length ranges there, and an emitted span carries its times as the
+  `nixl.start_us` and `nixl.end_us` attributes.
 - **`TraceBackend` / `SpanBackend`** — the backend interfaces. Each backend
   implementation provides them.
 - **Backend plugins** — each backend is a `libtrace_backend_<name>.so` that exports
@@ -176,23 +185,29 @@ record them).
 ### Backend phase spans
 
 A backend plugin can record a phase of its own work through
-the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core turns
-each recorded phase into a momentary span carrying `nixl.backend` (the recording
-backend's type), `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
+the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core records
+each phase as a point event through `emitEvent()`, at the plugin's timestamp and
+under the context the plugin passed, so the event keeps its time whichever thread
+reports it. The event carries `nixl.backend` (the recording backend's type),
+`nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
 `nixl.phase.label` when the plugin supplied one, and any plugin-supplied
 attributes. A phase recorded under a trace context also carries the context as
 `nixl.traceparent` and is correlated on it, like the agent's own spans. The
-phase vocabulary is closed so that timelines stay comparable across backends:
+phase vocabulary is closed so that timelines stay comparable across backends,
+and each phase has a fixed kind. A notification's two ends are `CommSend` and
+`CommRecv`, so a backend that builds a graph can pair them; the other phases are
+`Metadata`, since whether a wire phase sends or receives depends on the
+operation:
 
-| Span | Phase enumerator | Meaning |
-| ---- | ---------------- | ------- |
-| `nixl::submit` | `SUBMIT` | the backend accepted the operation |
-| `nixl::wire.submitted` | `WIRE_SUBMITTED` | handed to the transport |
-| `nixl::wire.completed` | `WIRE_COMPLETED` | transport signalled completion |
-| `nixl::notif.sent` | `NOTIF_SENT` | notification posted to the wire |
-| `nixl::notif.received` | `NOTIF_RECEIVED` | notification observed locally |
-| `nixl::remote.observed` | `REMOTE_OBSERVED` | the peer's side was observed |
-| `nixl::phase` | `OTHER` | generic escape hatch; the plugin's label becomes the span name |
+| Name | Phase enumerator | Kind | Meaning |
+| ---- | ---------------- | ---- | ------- |
+| `nixl::submit` | `SUBMIT` | `Metadata` | the backend accepted the operation |
+| `nixl::wire.submitted` | `WIRE_SUBMITTED` | `Metadata` | handed to the transport |
+| `nixl::wire.completed` | `WIRE_COMPLETED` | `Metadata` | transport signalled completion |
+| `nixl::notif.sent` | `NOTIF_SENT` | `CommSend` | notification posted to the wire |
+| `nixl::notif.received` | `NOTIF_RECEIVED` | `CommRecv` | notification observed locally |
+| `nixl::remote.observed` | `REMOTE_OBSERVED` | `Metadata` | the peer's side was observed |
+| `nixl::phase` | `OTHER` | `Metadata` | generic escape hatch; the plugin's label becomes the event name |
 
 The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. UCX emits

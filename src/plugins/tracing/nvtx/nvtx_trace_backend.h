@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -40,6 +41,21 @@ public:
 
     void
     mark(std::string_view name, Kind kind) override;
+
+    void
+    emitSpan(std::string_view name,
+             Kind kind,
+             const TraceContext &context,
+             nixlTime::us_t start,
+             nixlTime::us_t end,
+             std::span<const Attribute> attrs) override;
+
+    void
+    emitEvent(std::string_view name,
+              Kind kind,
+              const TraceContext &context,
+              nixlTime::us_t at,
+              std::span<const Attribute> attrs) override;
 
     void
     pushContext(const TraceContext &context) override;
