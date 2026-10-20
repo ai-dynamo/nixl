@@ -197,8 +197,9 @@ private:
 using random_bytes_fn_t = void (*)(std::uint8_t *, std::size_t);
 
 /**
- * @brief Composite tracer owned by the Agent. A single beginSpan()/mark() call
- *        fans out to every enabled backend. No singleton; injected explicitly.
+ * @brief Composite tracer owned by the Agent. A single beginSpan(), mark(),
+ *        emitSpan() or emitEvent() call fans out to every enabled backend. No
+ *        singleton; injected explicitly.
  */
 class Tracer {
 public:
