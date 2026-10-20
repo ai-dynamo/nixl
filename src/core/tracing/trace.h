@@ -23,8 +23,8 @@
  * A single set of call sites fans out to every enabled tracing backend at
  * runtime (NVTX today; Chakra and others later). This is an internal core API
  * (compiled into libnixl, not installed as a public header). It is kept
- * deliberately self-contained -- depending only on standard headers and on no
- * other NIXL type -- so it stays easy to reason about and could be promoted to
+ * deliberately self-contained -- depending only on standard headers and on
+ * trace_context.h -- so it stays easy to reason about and could be promoted to
  * a public header later without churn if an external consumer appears.
  */
 
@@ -35,6 +35,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "tracing/trace_context.h"
 
 namespace nixl::trace {
 
@@ -97,9 +99,9 @@ public:
     mark(std::string_view name, Kind kind) = 0;
 
     virtual void
-    pushCorrelationId(std::uint64_t id) = 0;
+    pushContext(const TraceContext &context) = 0;
     virtual void
-    popCorrelationId() = 0;
+    popContext() = 0;
 
     [[nodiscard]] virtual std::string_view
     name() const noexcept = 0;
@@ -209,9 +211,9 @@ public:
     mark(std::string_view name, Kind kind = Kind::Metadata);
 
     void
-    pushCorrelationId(std::uint64_t id);
+    pushContext(const TraceContext &context);
     void
-    popCorrelationId();
+    popContext();
 
 private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;
@@ -221,25 +223,25 @@ private:
 };
 
 /**
- * @brief RAII guard that keeps a correlation id active on the tracer for its
- *        lifetime, so every span/mark created while it is in scope is tagged
- *        with that id. Null-tracer-safe; an id of 0, which an invalid context
- *        projects to, pushes nothing. Used to link spans emitted on different
- *        threads (e.g. postXferReq on the caller thread vs. the completion on
- *        the polling thread) to the same logical request.
+ * @brief RAII guard that keeps a trace context active on the tracer for its
+ *        lifetime, so every span/mark created while it is in scope carries
+ *        that context. Null-tracer-safe; an invalid context pushes nothing.
+ *        Used to link spans emitted on different threads (e.g. postXferReq on
+ *        the caller thread vs. the completion on the polling thread) to the
+ *        same logical request.
  */
 class CorrelationScope {
 public:
-    [[nodiscard]] CorrelationScope(Tracer *tracer, std::uint64_t id)
-        : tracer_(id == 0 ? nullptr : tracer) {
+    [[nodiscard]] CorrelationScope(Tracer *tracer, const TraceContext &context)
+        : tracer_(((tracer != nullptr) && context.valid()) ? tracer : nullptr) {
         if (tracer_ != nullptr) {
-            tracer_->pushCorrelationId(id);
+            tracer_->pushContext(context);
         }
     }
 
     ~CorrelationScope() {
         if (tracer_ != nullptr) {
-            tracer_->popCorrelationId();
+            tracer_->popContext();
         }
     }
 
