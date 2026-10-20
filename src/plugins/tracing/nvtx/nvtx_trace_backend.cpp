@@ -79,12 +79,12 @@ NvtxTraceBackend::mark(const std::string_view name, const Kind kind) {
 }
 
 void
-NvtxTraceBackend::pushCorrelationId(const std::uint64_t id) {
-    correlationStack().push(id);
+NvtxTraceBackend::pushContext(const TraceContext &context) {
+    correlationStack().push(context.correlationId64());
 }
 
 void
-NvtxTraceBackend::popCorrelationId() {
+NvtxTraceBackend::popContext() {
     correlation_stack_t &stack = correlationStack();
     if (!stack.empty()) {
         stack.pop();

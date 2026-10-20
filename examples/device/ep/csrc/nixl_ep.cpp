@@ -774,8 +774,17 @@ void Buffer::_nixl_ep_destroy(void) {
 
 void Buffer::_nixl_agent_init() {
     std::string agent_name = std::to_string(rank);
+
+    const char *mode_env = std::getenv("NIXL_EP_DEVICE_MODE");
+    const std::string mode = mode_env ? mode_env : "direct";
+    if (mode != "direct" && mode != "proxy") {
+        throw std::runtime_error("NIXL_EP_DEVICE_MODE must be 'direct' or 'proxy'; got '" + mode + "'");
+    }
+    const bool device_proxy = mode == "proxy";
+
     nixlAgentConfig cfg;
-    cfg.useProgThread = true;
+    // The proxy threads drive progress.
+    cfg.useProgThread = !device_proxy;
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     cfg.etcdWatchTimeout = NIXL_ETCD_WATCH_TIMEOUT;
     auto agent = std::make_shared<nixlAgent>(agent_name, cfg);
@@ -791,9 +800,21 @@ void Buffer::_nixl_agent_init() {
     }
 
     const char* num_channels_env = std::getenv("NIXL_EP_NUM_CHANNELS");
-    init_params["ucx_num_device_channels"] = num_channels_env ? num_channels_env : "4";
+    const std::string num_channels = num_channels_env ? num_channels_env : "4";
     init_params["ucx_error_handling_mode"] = "none";
     init_params["num_workers"] = std::to_string(1);
+    if (device_proxy) {
+        init_params["device_proxy"] = "true";
+        init_params["proxy_channel_count"] = num_channels;
+        init_params["proxy_max_peers"] = std::to_string(max_num_ranks);
+        if (const char *threads = std::getenv("NIXL_EP_PROXY_THREADS")) {
+            init_params["proxy_thread_count"] = threads;
+        }
+        init_params["ucx_num_device_channels"] = "1";
+        init_params["engine_config"] = "FENCE_MODE=ep_based";
+    } else {
+        init_params["ucx_num_device_channels"] = num_channels;
+    }
 
     nixlBackendH* ucx_backend = nullptr;
     status = agent->createBackend("UCX", init_params, ucx_backend);
