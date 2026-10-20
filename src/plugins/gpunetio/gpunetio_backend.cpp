@@ -2195,16 +2195,6 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
         if (status == NIXL_IN_PROG) {
             return NIXL_ERR_REPOST_ACTIVE;
         }
-        if (status != NIXL_SUCCESS) {
-            for (size_t i = 0; i < treq->positions.size(); ++i) {
-                auto &completion = host_state_cpu_->completions[treq->positions[i]];
-                const auto terminal =
-                    std::atomic_ref<uint32_t>(completion.state).load(std::memory_order_acquire);
-                if (terminal != DOCA_XFER_STATE_COMPLETE && terminal != DOCA_XFER_STATE_ERROR) {
-                    return NIXL_ERR_REPOST_ACTIVE;
-                }
-            }
-        }
     }
 
     for (uint32_t idx : treq->positions) {
