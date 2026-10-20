@@ -111,7 +111,7 @@ protected:
 
 private:
     std::chrono::milliseconds delay_;
-    nixl::scopedFd controlFd_;
+    const nixl::scopedFd controlFd_;
     std::vector<pollfd> pollFds_;
     std::jthread thread_;
 };
