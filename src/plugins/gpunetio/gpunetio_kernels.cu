@@ -109,7 +109,6 @@ nixl_gpunetio_dev_reserve_data(docaXferReqGpu *request,
             doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                                 DOCA_GPUNETIO_VERBS_QP_SQ>(
                 request->qp_data, count, DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_SKIP_AVAILABILITY_CHECK);
-        request->data_ticket = atomicAdd((unsigned long long *)&progress->next_data_ticket, 1ULL);
         return true;
     }
     return false;
@@ -195,8 +194,8 @@ kernel_read(doca_gpu_dev_verbs_qp *qp,
                                                 xferReqRing[pos].lkey[tot_wqe - 1],
                                                 1);
         }
-        docaQpProgress *const progress = xferReqRing[pos].qp_progress;
-        const uint64_t data_ticket = xferReqRing[pos].data_ticket;
+        doca_gpu_dev_verbs_cq *const cq = doca_gpu_dev_verbs_qp_get_cq_sq(qp);
+        const uint64_t completion_wqe = last_wqe_idx;
         doca_gpu_dev_verbs_mark_wqes_ready(qp, base_wqe_idx, last_wqe_idx);
         doca_gpu_dev_verbs_submit(qp, last_wqe_idx + 1);
         xferReqRing[pos].last_wqe = last_wqe_idx;
@@ -205,9 +204,8 @@ kernel_read(doca_gpu_dev_verbs_qp *qp,
         if (wait_for_completion) {
             while (nixl_gpunetio_dev_load_host_state(*exit_flag) == 0U &&
                    nixl_gpunetio_dev_load_host_state(progress_state->failed) == 0U &&
-                   atomicAdd((unsigned long long *)&progress->head_data_ticket, 0ULL) <=
-                       data_ticket) {}
-            if (atomicAdd((unsigned long long *)&progress->head_data_ticket, 0ULL) > data_ticket) {
+                   atomicAdd((unsigned long long *)&cq->cqe_ci, 0ULL) <= completion_wqe) {}
+            if (atomicAdd((unsigned long long *)&cq->cqe_ci, 0ULL) > completion_wqe) {
                 doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
             }
         }
@@ -424,18 +422,14 @@ kernel_progress(struct docaXferReqGpu *xfer_req_ring,
                 const uint32_t pos = (start + offset) & DOCA_XFER_REQ_MASK;
 
                 docaXferReqGpu *request = &xfer_req_ring[pos];
-                docaQpProgress *progress = request->qp_progress;
                 const uint32_t request_state = nixl_gpunetio_dev_load_host_state(request->state);
 
-                if (request_state == DOCA_XFER_STATE_DATA_POSTED &&
-                    request->data_ticket ==
-                        atomicAdd((unsigned long long *)&progress->head_data_ticket, 0ULL)) {
+                if (request_state == DOCA_XFER_STATE_DATA_POSTED) {
                     const int poll_status = nixl_gpunetio_dev_poll_one_cq_at<
                         DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                         DOCA_GPUNETIO_VERBS_QP_SQ>(
                         doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_data), request->last_wqe);
                     if (poll_status == 0) {
-                        atomicAdd((unsigned long long *)&progress->head_data_ticket, 1ULL);
                         atomicExch(&request->data_state, DOCA_XFER_DATA_COMPLETE);
                         if (DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx) != DOCA_NOTIF_NULL) {
 #if ENABLE_DEBUG == 1
@@ -474,7 +468,6 @@ kernel_progress(struct docaXferReqGpu *xfer_req_ring,
 
                         nixl_gpunetio_dev_complete_request(request, progress_state, pos);
                     } else if (poll_status != EBUSY) {
-                        atomicAdd((unsigned long long *)&progress->head_data_ticket, 1ULL);
                         nixl_gpunetio_dev_fail_request(progress_state, pos);
                     }
                 }

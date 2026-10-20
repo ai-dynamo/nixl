@@ -127,7 +127,6 @@ struct docaXferReqGpu {
     uint32_t has_notif_msg_idx;
     uint32_t msg_sz;
     uint64_t last_wqe;
-    uint64_t data_ticket;
     uint32_t state;
     uint32_t data_state;
     uintptr_t lbuf_notif;
@@ -155,8 +154,7 @@ struct docaStripedWriteLaunch {
 };
 
 enum docaXferState : uint32_t {
-    DOCA_XFER_STATE_FREE,
-    DOCA_XFER_STATE_PREPARED,
+    DOCA_XFER_STATE_PREPARED = 1,
     DOCA_XFER_STATE_DATA_POSTED,
     DOCA_XFER_STATE_COMPLETE,
     DOCA_XFER_STATE_ERROR,
@@ -169,9 +167,8 @@ enum docaXferDataState : uint32_t {
 };
 
 struct docaQpProgress {
+    // Keep SQ credit checking and posting ordered while waits remain cancellable.
     uint32_t data_producer_lock;
-    uint64_t next_data_ticket;
-    uint64_t head_data_ticket;
 };
 
 struct docaHostCompletion {
