@@ -17,10 +17,14 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <unistd.h>
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <random>
+#include <sstream>
 
 #include "common.h"
 #include "nixl.h"
@@ -349,6 +353,113 @@ namespace agent {
         EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
         EXPECT_EQ(untraced.count(), 0u);
+    }
+
+    class recorderTracingAgentFixture : public testing::Test {
+    protected:
+        const std::filesystem::path trace_file_ = std::filesystem::temp_directory_path() /
+            ("nixl_agent_trace_" + std::to_string(::getpid()) + ".spans");
+        ScopedEnv env_;
+        selfXferSetup setup_;
+        std::unique_ptr<agentHelper> agent_helper_;
+
+        static void
+        SetUpTestSuite() {
+            static bool added = false;
+            if (!added) {
+                nixlPluginManager::getInstance().addPluginDirectory(std::string(BUILD_DIR) +
+                                                                    "/test/gtest/mocks");
+                added = true;
+            }
+        }
+
+        void
+        SetUp() override {
+#if !defined(NIXL_TRACE_ENABLED)
+            GTEST_SKIP() << "the agent's trace call sites are compiled out";
+#endif
+            std::filesystem::remove(trace_file_);
+            env_.addVar("NIXL_TEST_TRACE_FILE", trace_file_.string());
+            agent_helper_ = std::make_unique<agentHelper>(local_agent_name, "recorder");
+            agent_helper_->setupSelfXfer(setup_);
+        }
+
+        void
+        TearDown() override {
+            agent_helper_.reset();
+            std::filesystem::remove(trace_file_);
+        }
+
+        [[nodiscard]] std::vector<std::vector<std::string>>
+        completionMarks() const {
+            std::vector<std::vector<std::string>> marks;
+            std::ifstream file(trace_file_);
+            for (std::string line; std::getline(file, line);) {
+                std::istringstream fields(line);
+                std::vector<std::string> mark{std::istream_iterator<std::string>(fields),
+                                              std::istream_iterator<std::string>()};
+                if ((mark.size() >= 2) && (mark[1] == "nixl::xfer.complete")) {
+                    marks.push_back(std::move(mark));
+                }
+            }
+            return marks;
+        }
+
+        [[nodiscard]] static auto
+        correlatedWith(const nixlXferReqH *req) {
+            return testing::Contains("correlation=" + std::to_string(req->traceCorrelationId64()));
+        }
+    };
+
+    TEST_F(recorderTracingAgentFixture, PostCompletedAtOnceIsMarkedOnce) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(correlatedWith(req)));
+        EXPECT_EQ(agent->getXferStatus(req), NIXL_SUCCESS);
+        EXPECT_EQ(completionMarks().size(), 1u);
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(recorderTracingAgentFixture, PostCompletedLaterIsMarkedByTheStatusCheck) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        EXPECT_CALL(agent_helper_->getGMockEngine(), postXfer)
+            .WillOnce(testing::Return(NIXL_IN_PROG));
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_IN_PROG);
+        EXPECT_TRUE(completionMarks().empty());
+        EXPECT_EQ(agent->getXferStatus(req), NIXL_SUCCESS);
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(correlatedWith(req)));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(recorderTracingAgentFixture, EveryPostCompletedAtOnceIsMarked) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_THAT(completionMarks(),
+                    testing::ElementsAre(correlatedWith(req), correlatedWith(req)));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(recorderTracingAgentFixture, FailedPostIsNotMarked) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        EXPECT_CALL(agent_helper_->getGMockEngine(), postXfer)
+            .WillOnce(testing::Return(NIXL_ERR_BACKEND));
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_ERR_BACKEND);
+        EXPECT_EQ(agent->getXferStatus(req), NIXL_ERR_BACKEND);
+        EXPECT_TRUE(completionMarks().empty());
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
     class singleAgentSessionFixture : public testing::Test {

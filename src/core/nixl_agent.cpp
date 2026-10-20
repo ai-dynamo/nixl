@@ -1249,6 +1249,10 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         }
     }
 
+    if (req_hndl->status == NIXL_SUCCESS) {
+        NIXL_TRACE_MARK(data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
+    }
+
     if (data->telemetry_) {
         NIXL_DEBUG << req_hndl->initiatorDescs.to_string(true);
 
