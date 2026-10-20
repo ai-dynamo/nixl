@@ -48,7 +48,7 @@
 // - Accesses to the socket object must be scheduled on the I/O context. This
 //   ensures that the socket object is not accessed concurrently, and thus
 //   avoids the need to synchronize explicitly.
-// - If any message connot be written or read in its entirety, we must close
+// - If any message cannot be written or read in its entirety, we must close
 //   the socket, fail all pending requests and reconnect. Request-level
 //   retry is handled by the upper layer.
 // - Each TCPStore request is executed in two phases: a send phase and a

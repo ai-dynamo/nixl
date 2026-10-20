@@ -16,7 +16,7 @@
  */
 /**
  * @file nixl_tcpstore_client_async.h
- * @brief Asyncronous in-house client for the PyTorch c10d TCPStore wire protocol.
+ * @brief Asynchronous in-house client for the PyTorch c10d TCPStore wire protocol.
  *
  * Core-internal: speaks to the same server torch.distributed.TCPStore connects
  * to (no libtorch dependency). Only the subset nixlTcpStoreMetadataBackend
