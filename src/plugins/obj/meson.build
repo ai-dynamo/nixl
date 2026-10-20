@@ -88,14 +88,15 @@ else
     endif
 endif
 
-# obj_backend.h publicly includes <asio.hpp>, so propagate the asio dependency
-# (include dirs) to consumers of this interface, e.g. the plugins gtest.
+# obj_backend.h publicly includes <asio.hpp> and AWS SDK headers, so propagate
+# both to consumers of this interface, e.g. the plugins gtest.
+obj_interface_deps = [obj_utils_interface, dependency('asio', required: true)]
 if 'OBJ' in static_plugins
     obj_backend_interface = declare_dependency(
         link_whole: obj_backend_lib,
-        dependencies: dependency('asio', required: true))
+        dependencies: obj_interface_deps)
 else
     obj_backend_interface = declare_dependency(
         link_with: obj_backend_lib,
-        dependencies: dependency('asio', required: true))
+        dependencies: obj_interface_deps)
 endif
