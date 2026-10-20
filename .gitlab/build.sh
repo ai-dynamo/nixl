@@ -277,7 +277,7 @@ else
                   --disable-rstream \
                   --enable-efa && \
       make -j"$NPROC" && \
-      make install && \
+      $SUDO make install && \
       $SUDO ldconfig && \
       cd .. && \
       rm -rf libfabric-*
