@@ -169,13 +169,6 @@ TEST_P(objParamTestFixture, RegisterMemoryDramSeg) {
     }
 }
 
-TEST_P(objParamTestFixture, RegisterMemoryVramSeg) {
-    if (!GetParam().supportsVram) {
-        GTEST_SKIP() << "Test requires VRAM support";
-    }
-    GTEST_SKIP() << "Actual VRAM registration is covered by DellVramXferTest in plugins_gtest";
-}
-
 TEST_P(objParamTestFixture, NullHandlePostXfer) {
     nixlBackendReqH *handle = nullptr;
     nixl_meta_dlist_t local_descs(DRAM_SEG);
