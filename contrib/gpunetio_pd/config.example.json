@@ -1,0 +1,63 @@
+{
+  "pairs": 5,
+  "iterations": 600,
+  "warmup": 20,
+  "progress_owners": 4,
+  "ordered_notifications": true,
+  "receiver_ip": "RECEIVER_IP",
+  "control_port": 18080,
+  "device": "RDMA_DEVICE",
+  "interface": "OOB_INTERFACE",
+  "gid_index": 0,
+  "sender": {
+    "shell_prefix": [
+      "ssh",
+      "USER@SENDER_HOST"
+    ],
+    "executable": "/PATH/TO/REPLAY",
+    "gpu": 0,
+    "cpu": 0,
+    "oob_port": 18040,
+    "identity_files": [
+      "/PATH/TO/NIXL/libnixl.so",
+      "/PATH/TO/NIXL/libnixl_build.so",
+      "/PATH/TO/PLUGINS/libplugin_GPUNETIO.so",
+      "/PATH/TO/PLUGINS/libplugin_UCX.so",
+      "/PATH/TO/UCX/libucp.so.0",
+      "/PATH/TO/DOCA/libdoca_gpunetio.so"
+    ],
+    "env": {
+      "LD_LIBRARY_PATH": "/PATH/TO/NIXL:/PATH/TO/UCX:/PATH/TO/DOCA:/PATH/TO/CUDA/lib64",
+      "NIXL_PLUGIN_DIR": "/PATH/TO/PLUGINS",
+      "UCX_MODULE_DIR": "/PATH/TO/UCX/ucx",
+      "UCX_NET_DEVICES": "RDMA_DEVICE:1",
+      "UCX_IB_GID_INDEX": "0"
+    }
+  },
+  "receiver": {
+    "shell_prefix": [
+      "ssh",
+      "USER@RECEIVER_HOST"
+    ],
+    "executable": "/PATH/TO/REPLAY",
+    "gpu": 0,
+    "cpu": 0,
+    "oob_port": 18050,
+    "identity_files": [
+      "/PATH/TO/NIXL/libnixl.so",
+      "/PATH/TO/NIXL/libnixl_build.so",
+      "/PATH/TO/PLUGINS/libplugin_GPUNETIO.so",
+      "/PATH/TO/PLUGINS/libplugin_UCX.so",
+      "/PATH/TO/UCX/libucp.so.0",
+      "/PATH/TO/DOCA/libdoca_gpunetio.so"
+    ],
+    "env": {
+      "LD_LIBRARY_PATH": "/PATH/TO/NIXL:/PATH/TO/UCX:/PATH/TO/DOCA:/PATH/TO/CUDA/lib64",
+      "NIXL_PLUGIN_DIR": "/PATH/TO/PLUGINS",
+      "UCX_MODULE_DIR": "/PATH/TO/UCX/ucx",
+      "UCX_NET_DEVICES": "RDMA_DEVICE:1",
+      "UCX_IB_GID_INDEX": "0"
+    }
+  },
+  "min_free_mib": 4096
+}
