@@ -848,7 +848,7 @@ class nixl_agent:
                     message = msg
                     found = True
                     break
-        if message:
+        if message is not None:
             self.notifs[remote_agent_name].remove(message)
         return found
 

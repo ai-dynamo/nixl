@@ -290,13 +290,25 @@ The facade unit tests run against mock backends (no plugin needed); the real-age
 NVTX active:
 
 ```bash
-ninja -C build test/gtest/unit/unit test/gtest/gtest
+ninja -C build test/gtest/unit/unit test/gtest/gtest test/gtest/ucx_trace_receiver \
+    test/gtest/mocks/libtrace_backend_recorder.so
 # facade unit suite (no backend plugin needed):
 ./build/test/gtest/unit/unit --gtest_filter='Tracing.*'
 # real-agent NVTX suite (loads libtrace_backend_nvtx.so from the build tree):
 ./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
     --gtest_filter='*TestTransferTracing*'
+# two-process UCX test, one trace id on both agents:
+./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
+    --gtest_filter='ucxTraceContextPropagation.*'
 ```
+
+The two-process test starts its receiver agent as a separate executable,
+`ucx_trace_receiver`, which is built and installed next to `gtest`, and checks the
+spans both agents record against the sender's request; with `-Dwith_trace=false`,
+which compiles the sender's span out, it checks the receiver's alone. Both agents
+trace through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in the
+mocks directory) that appends one line per finished span to the file named by
+`NIXL_TEST_TRACE_FILE`; the test sets both variables itself.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
 test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically
@@ -316,12 +328,12 @@ In NIXL tracing, "correlation" can mean two different things:
   part of the NVTX backend.
 - **Cross-thread within a process** -- attributing spans emitted on different threads
   (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
-  same request. Implemented via the backend-agnostic `pushCorrelationId()` /
-  `popCorrelationId()` API: NIXL wraps `postXferReq` and the `xfer.complete` marker in a
-  correlation scope keyed on the span id of the request's trace context, and the NVTX
-  backend records that id as the event's `uint64` payload -- so a post and its completion
-  carry the same id on the timeline regardless of which thread emitted each. A request
-  without a valid context carries no id.
+  same request. Implemented via the backend-agnostic `pushContext()` / `popContext()`
+  API: NIXL wraps `postXferReq` and the `xfer.complete` marker in a correlation scope
+  that hands every backend the request's whole trace context, sampled or not. The NVTX
+  backend records the context's span id as the event's `uint64` payload -- so a post and
+  its completion carry the same id on the timeline regardless of which thread emitted
+  each. A request without a valid context pushes nothing.
 
 ## Planned work
 
