@@ -76,3 +76,32 @@ not yet qualified. Do not cast opaque QP handles or require unsupported symbols.
 These results do not replace qualification of the exact submitted source,
 plugin ABI and immutable configuration. The native command in README does not
 reproduce the historical 35.4% configuration without the LAG path.
+
+## Refreshed native Draft qualification
+
+Current main base: `56c1c2f7` (plugin API V2), with the three #2222 dependency
+commits and PD implementation `261faca2`. Fresh full release/werror build on
+DOCA 3.5.0098/CUDA 12.8 and the manual replay build pass. The CPU payload
+identity checker validates 103,680 distinct identities.
+
+Three bounded cross-host GPUNETIO correctness cases pass, each 20 measured
+and two warmup dispatches; all six workers exit zero:
+
+- Compact WRITE, four progress owners, ordered notifications enabled.
+- Ordinary WRITE, one owner, ordered notifications disabled (backend defaults).
+- Compact WRITE with 63 rows, per-layer MRs, five reposts, two standalone
+  notifications, and six rejected invalid-plan cases.
+
+Full GPU payload/hole/marker validation passes, with no transfer CQE failures.
+Known SDK initialization capability diagnostics are still present; this is
+not a claim that initialization logs are error-free. No LAG override, private
+adapter or new serving code was used. No GTest files were modified.
+
+A paired UCX smoke on the refreshed main stopped before transfer because its
+VRAM registration check reported HOST memory. That check was not bypassed.
+Initial GPUNETIO launches also exposed missing CUDA12/etcd dependency search
+paths in the freshly copied runtime; those invalid launches are not evidence.
+After completing the runtime dependency path and checking the loader, the
+three GPUNETIO cases above passed. A fresh UCX comparison, larger wrap/fault
+qualification and supported balanced-LAG integration remain Draft exit gates.
+No comparative performance claim is made for this refreshed head.
