@@ -437,6 +437,47 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
+    TEST_F(recorderTracingAgentFixture, PostCompletedLaterIsMarkedByTheRepostCheck) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+        EXPECT_CALL(engine, postXfer)
+            .WillOnce(testing::Return(NIXL_IN_PROG))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        EXPECT_CALL(engine, checkXfer)
+            .WillOnce(testing::Return(NIXL_IN_PROG))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_IN_PROG);
+        EXPECT_EQ(agent->postXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+        EXPECT_TRUE(completionMarks().empty());
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_THAT(completionMarks(),
+                    testing::ElementsAre(correlatedWith(req), correlatedWith(req)));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(recorderTracingAgentFixture, PostCompletedLaterIsMarkedByRelease) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+        EXPECT_CALL(engine, postXfer).Times(2).WillRepeatedly(testing::Return(NIXL_IN_PROG));
+        EXPECT_CALL(engine, checkXfer)
+            .WillOnce(testing::Return(NIXL_SUCCESS))
+            .WillOnce(testing::Return(NIXL_IN_PROG));
+        nixlXferReqH *completed = nullptr;
+        nixlXferReqH *cancelled = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, completed), NIXL_SUCCESS);
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, cancelled), NIXL_SUCCESS);
+        const auto completed_mark = correlatedWith(completed);
+
+        EXPECT_EQ(agent->postXferReq(completed), NIXL_IN_PROG);
+        EXPECT_EQ(agent->postXferReq(cancelled), NIXL_IN_PROG);
+        EXPECT_EQ(agent->releaseXferReq(completed), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releaseXferReq(cancelled), NIXL_SUCCESS);
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(completed_mark));
+    }
+
     TEST_F(recorderTracingAgentFixture, EveryPostCompletedAtOnceIsMarked) {
         nixlAgent *agent = agent_helper_->getAgent();
         nixlXferReqH *req = nullptr;

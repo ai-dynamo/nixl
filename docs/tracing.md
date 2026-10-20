@@ -176,8 +176,9 @@ backends/PRs):
 | `nixl::releaseMemView` | `Generic` | - |
 
 Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
-by `postXferReq` when the backend completes the transfer at once, and otherwise by
-the first `getXferStatus` that observes success. How a backend renders attributes and
+once per completed post, by the first call that sees the transfer complete:
+`postXferReq` when the backend completes it at once, and otherwise `getXferStatus`,
+a repost of the same request, or `releaseXferReq`. How a backend renders attributes and
 dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each
 backend (e.g. NVTX attaches attributes as typed payloads on the range via
 `nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
