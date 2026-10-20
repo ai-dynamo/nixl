@@ -240,6 +240,9 @@ kernel_write_strided(docaXferReqGpu *requests,
                      uint32_t *exit_flag,
                      uint32_t pos,
                      docaStridedWriteLaunch launch) {
+    if (requests == nullptr) {
+        return;
+    }
     __shared__ uint64_t base_wqe_idx;
     __shared__ uint32_t reserved;
     const uint32_t group = launch.pairRows ? 2 : 1;

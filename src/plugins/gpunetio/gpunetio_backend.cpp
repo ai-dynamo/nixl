@@ -548,6 +548,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     // We may need a GPU warmup with relevant DOCA engine kernels
     doca_kernel_write(0, nullptr, nullptr, nullptr, nullptr, 0);
+    doca_kernel_write_strided(0, nullptr, nullptr, nullptr, 0, {});
     if (dataQpCount_ > 1) {
         doca_kernel_write_striped(0, nullptr, nullptr, nullptr, {}, dataQpCount_);
     }
