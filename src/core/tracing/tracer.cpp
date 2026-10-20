@@ -107,16 +107,16 @@ Tracer::mark(std::string_view name, Kind kind) {
 }
 
 void
-Tracer::pushCorrelationId(std::uint64_t id) {
+Tracer::pushContext(const TraceContext &context) {
     for (auto &backend : backends_) {
-        backend->pushCorrelationId(id);
+        backend->pushContext(context);
     }
 }
 
 void
-Tracer::popCorrelationId() {
+Tracer::popContext() {
     for (auto &backend : backends_) {
-        backend->popCorrelationId();
+        backend->popContext();
     }
 }
 

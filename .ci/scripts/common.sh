@@ -47,7 +47,7 @@ get_next_tcp_port() {
     local next_port=$((current_port + 1))
 
     # Check if the port is already in use
-    while ss -tuln | grep -q :$next_port; do
+    while ss -Htuln | awk '{print $5}' | grep -qE "[:.]${next_port}$"; do
         next_port=$((next_port + 1))
     done
 
