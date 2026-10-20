@@ -133,21 +133,21 @@ wait_for_etcd() {
 
 wait_for_redis_server() {
     local port=$1
-    local timeout=30
-    command -v redis-cli >/dev/null 2>&1 || { echo "ERROR: redis-cli not found — install redis-tools"; exit 1; }
-    echo "Waiting for Redis to be ready on port ${port} (timeout: ${timeout}s)..."
+    local retries=30
+    command -v redis-cli >/dev/null 2>&1 || { echo "ERROR: redis-cli not found — install redis-tools" >&2; exit 1; }
+    echo "Waiting for Redis to be ready on port ${port} (timeout: ${retries}s)..."
     while ! timeout 1 redis-cli -p "${port}" ping 2>&1 | grep -q 'PONG'; do
         if ! kill -0 "${REDIS_PID:-}" 2>/dev/null; then
-            echo "Redis process (pid=${REDIS_PID}) exited before becoming ready"
-            echo "Redis server log:"; cat "${REDIS_LOG:-/dev/null}"
+            echo "Redis process (pid=${REDIS_PID}) exited before becoming ready" >&2
+            echo "Redis server log:" >&2; cat "${REDIS_LOG:-/dev/null}" >&2
             exit 1
         fi
-        timeout=$((timeout - 1))
-        if [ $timeout -eq 0 ]; then
-            echo "Redis failed to start on port ${port}"
-            ss -tulnp 2>/dev/null | grep ":${port}" || echo "(no socket found on port ${port})"
-            kill -0 "${REDIS_PID:-}" 2>/dev/null && echo "redis-server pid=${REDIS_PID} is alive" || echo "redis-server pid=${REDIS_PID} is dead"
-            echo "Redis server log:"; cat "${REDIS_LOG:-/dev/null}"
+        retries=$((retries - 1))
+        if [ $retries -eq 0 ]; then
+            echo "Redis failed to start on port ${port}" >&2
+            ss -tulnp 2>/dev/null | grep ":${port}" || echo "(no socket found on port ${port})" >&2
+            kill -0 "${REDIS_PID:-}" 2>/dev/null && echo "redis-server pid=${REDIS_PID} is alive" >&2 || echo "redis-server pid=${REDIS_PID} is dead" >&2
+            echo "Redis server log:" >&2; cat "${REDIS_LOG:-/dev/null}" >&2
             kill -9 "${REDIS_PID:-}" 2>/dev/null || true
             exit 1
         fi

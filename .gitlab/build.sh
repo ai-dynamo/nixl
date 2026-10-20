@@ -183,7 +183,9 @@ else
       make -j"$NPROC" && \
       $SUDO make install && \
       $SUDO ldconfig && \
-      $SUDO chown -R "$(id -u):$(id -g)" "${INSTALL_DIR}" && \
+      $SUDO chown -R "$(id -u):$(id -g)" "${INSTALL_DIR}"/lib/libhiredis* \
+          "${INSTALL_DIR}/lib/pkgconfig/hiredis.pc" "${INSTALL_DIR}/include/hiredis" \
+          "${INSTALL_DIR}/lib/cmake/hiredis" && \
       pkg-config --atleast-version=1.0.1 hiredis && \
       cd "${BUILD_TMP}" && \
       rm -rf "hiredis-${HIREDIS_VERSION}" "hiredis-${HIREDIS_VERSION}.tar.gz" \
