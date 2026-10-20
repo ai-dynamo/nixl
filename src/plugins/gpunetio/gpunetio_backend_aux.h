@@ -95,15 +95,12 @@ canPairWrite(uintptr_t address,
 
 } // namespace nixl::gpunetio
 
-constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
-constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT_MASK = (DOCA_MAX_COMPLETION_INFLIGHT - 1);
 constexpr uint32_t RDMA_SEND_QUEUE_SIZE = 2048;
 constexpr uint32_t RDMA_RECV_QUEUE_SIZE = (RDMA_SEND_QUEUE_SIZE * 2);
 constexpr uint32_t DOCA_POST_STREAM_NUM = 4;
 constexpr uint32_t DOCA_XFER_REQ_SIZE = 512;
 constexpr uint32_t DOCA_XFER_REQ_MAX = 32;
 constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
-constexpr uint32_t DOCA_ENG_MAX_CONN = 20;
 constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
@@ -120,29 +117,32 @@ constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
 #endif
 
 struct docaXferReqGpu {
-    uint32_t id;
     uintptr_t lbuf[DOCA_XFER_REQ_SIZE];
     uintptr_t rbuf[DOCA_XFER_REQ_SIZE];
     size_t size[DOCA_XFER_REQ_SIZE];
     uint32_t lkey[DOCA_XFER_REQ_SIZE];
     uint32_t rkey[DOCA_XFER_REQ_SIZE];
     uint16_t num;
-    uint8_t in_use;
     uint32_t conn_idx;
     uint32_t has_notif_msg_idx;
     uint32_t msg_sz;
     uint64_t last_wqe;
+    uint64_t data_ticket;
+    uint64_t notif_wqe;
+    uint64_t notif_ticket;
+    uint32_t generation;
+    uint32_t state;
+    uint32_t data_state;
+    uint32_t notif_state;
     uintptr_t lbuf_notif;
     uint32_t lkey_notif;
-    uint64_t *last_rsvd;
-    uint64_t *last_posted;
     nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
     doca_gpu_dev_verbs_qp *qp_data;
     doca_gpu_dev_verbs_qp *qp_notif;
-    struct docaXferCompletion *completion_list;
-    uint32_t *wait_exit;
+    struct docaQpProgress *qp_progress;
+    struct docaQpProgress *notif_progress;
     uint16_t wait_completion_count;
-    uint16_t wait_completion_ids[DOCA_XFER_REQ_MAX];
+    uint16_t wait_completion_positions[DOCA_XFER_REQ_MAX];
     uint64_t *peer_write_completed;
     uint64_t write_ticket;
     uint32_t posting_ctas_done;
@@ -159,6 +159,60 @@ struct docaStripedWriteLaunch {
     uint32_t positions[DOCA_XFER_REQ_MAX];
 };
 
+enum docaXferState : uint32_t {
+    DOCA_XFER_STATE_FREE,
+    DOCA_XFER_STATE_PREPARED,
+    DOCA_XFER_STATE_DATA_POSTED,
+    DOCA_XFER_STATE_NOTIF_PENDING,
+    DOCA_XFER_STATE_NOTIF_POSTED,
+    DOCA_XFER_STATE_COMPLETE,
+    DOCA_XFER_STATE_ERROR,
+};
+
+enum docaXferDataState : uint32_t {
+    DOCA_XFER_DATA_NONE,
+    DOCA_XFER_DATA_POSTED,
+    DOCA_XFER_DATA_COMPLETE,
+};
+
+enum docaXferNotifState : uint32_t {
+    DOCA_XFER_NOTIF_NONE,
+    DOCA_XFER_NOTIF_PENDING,
+    DOCA_XFER_NOTIF_POSTED,
+    DOCA_XFER_NOTIF_COMPLETE,
+};
+
+struct docaQpProgress {
+    uint32_t data_producer_lock;
+    uint32_t notif_producer_lock;
+    uint64_t next_data_ticket;
+    uint64_t head_data_ticket;
+    uint64_t next_notif_ticket;
+    uint64_t head_notif_ticket;
+};
+
+struct docaHostCompletion {
+    uint32_t generation;
+    uint32_t state;
+};
+
+struct docaHostState {
+    uint32_t failed;
+    docaHostCompletion completions[DOCA_XFER_REQ_MAX];
+};
+
+static_assert(DOCA_XFER_REQ_MAX > 0 && DOCA_XFER_REQ_MAX <= 32 &&
+                  (DOCA_XFER_REQ_MAX & (DOCA_XFER_REQ_MAX - 1)) == 0,
+              "GPUNETIO progress requires a power-of-two ring with at most 32 slots");
+
+struct docaProgressState {
+    docaHostState *host;
+    uint32_t active_bitmap;
+    uint32_t progress_cursor;
+    uint32_t failed;
+    uint32_t active_generation[DOCA_XFER_REQ_MAX];
+};
+
 struct nixlDocaNotif {
     uint32_t elems_num;
     uint32_t elems_size;
@@ -168,11 +222,6 @@ struct nixlDocaNotif {
     uint8_t *recv_addr = nullptr;
     std::atomic<uint32_t> recv_pi;
     std::unique_ptr<nixl::doca::verbs::mr> recv_mr;
-};
-
-struct docaXferCompletion {
-    uint8_t completed;
-    struct docaXferReqGpu *xferReqRingGpu;
 };
 
 struct docaNotif {
@@ -260,6 +309,7 @@ struct nixlDocaRdmaQp {
         }
         return closed;
     }
+    struct docaQpProgress *progress_gpu = nullptr;
 };
 
 struct nixlDocaEngine;
@@ -302,23 +352,35 @@ doca_error_t
 doca_kernel_write(cudaStream_t stream,
                   doca_gpu_dev_verbs_qp *qp_gpu,
                   struct docaXferReqGpu *xferReqRing,
+                  struct docaProgressState *progress_state,
+                  uint32_t *exit_flag,
                   uint32_t pos);
 doca_error_t
 doca_kernel_write_striped(cudaStream_t stream,
                           struct docaXferReqGpu *xferReqRing,
+                          struct docaProgressState *progress_state,
+                          uint32_t *exit_flag,
                           docaStripedWriteLaunch launch,
                           uint32_t qp_count);
 doca_error_t
 doca_kernel_read(cudaStream_t stream,
                  doca_gpu_dev_verbs_qp *qp_gpu,
                  struct docaXferReqGpu *xferReqRing,
-                 uint32_t pos);
+                 struct docaProgressState *progress_state,
+                 uint32_t *exit_flag,
+                 uint32_t pos,
+                 bool wait_for_completion);
+doca_error_t
+doca_kernel_publish_notif(cudaStream_t stream,
+                          struct docaXferReqGpu *xfer_req_ring,
+                          struct docaProgressState *progress_state,
+                          uint32_t pos);
 doca_error_t
 doca_kernel_progress(cudaStream_t stream,
-                     struct docaXferCompletion *completion_list,
+                     struct docaXferReqGpu *xfer_req_ring,
+                     struct docaProgressState *progress_state,
                      struct docaNotif *notif_fill,
                      struct docaNotif *notif_progress,
-                     struct docaNotif *notif_send_gpu,
                      uint32_t *exit_flag);
 
 #endif /* GPUNETIO_BACKEND_AUX_H */
