@@ -535,15 +535,10 @@ kernel_progress(struct docaXferReqGpu *xfer_req_ring,
                     request->notif_ticket ==
                         atomicAdd((unsigned long long *)&request->notif_progress->head_notif_ticket,
                                   0ULL)) {
-                    int poll_status;
-                    do {
-                        poll_status = nixl_gpunetio_dev_poll_one_cq_at<
-                            DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-                            DOCA_GPUNETIO_VERBS_QP_SQ>(
-                            doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_notif), request->notif_wqe);
-                    } while (poll_status == EBUSY &&
-                             nixl_gpunetio_dev_load_host_state(*exit_flag) == 0U &&
-                             nixl_gpunetio_dev_load_host_state(progress_state->failed) == 0U);
+                    const int poll_status = nixl_gpunetio_dev_poll_one_cq_at<
+                        DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+                        DOCA_GPUNETIO_VERBS_QP_SQ>(
+                        doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_notif), request->notif_wqe);
                     if (poll_status == 0) {
                         atomicAdd((unsigned long long *)&request->notif_progress->head_notif_ticket,
                                   1ULL);
