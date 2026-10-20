@@ -370,16 +370,16 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const n
     }
 }
 
-std::optional<nixl::trace::TraceContext>
-nixlUcxEngine::sampledTraceContext(const nixl_opt_b_args_t *opt_args) const noexcept {
-    if ((traceSink_ == nullptr) || (opt_args == nullptr) || (opt_args->traceContext == nullptr) ||
+namespace {
+
+[[nodiscard]] std::optional<nixl::trace::TraceContext>
+sampledTraceContext(const nixlBackendTraceSink *sink, const nixl_opt_b_args_t *opt_args) noexcept {
+    if ((sink == nullptr) || (opt_args == nullptr) || (opt_args->traceContext == nullptr) ||
         !opt_args->traceContext->sampled()) {
         return std::nullopt;
     }
     return *opt_args->traceContext;
 }
-
-namespace {
 
 void
 recordPhase(nixlBackendTraceSink *sink,
@@ -406,9 +406,7 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
 
     const size_t worker_id = getSharedWorkerId(opt_args);
     /* TODO: try to get from a pool first */
-    const auto int_handle = new nixlUcxBackendReqH(getSharedWorker(worker_id).get());
-    int_handle->traceContext = sampledTraceContext(opt_args);
-    handle = int_handle;
+    handle = new nixlUcxBackendReqH(getSharedWorker(worker_id).get());
 
 #ifdef HAVE_UCX_SGL_API
     if (sglEnabled_ && operation == NIXL_WRITE) {
@@ -604,6 +602,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    int_handle->traceContext = sampledTraceContext(traceSink_, opt_args);
     recordPhase(traceSink_, nixl_trace_phase_t::SUBMIT, *int_handle);
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion

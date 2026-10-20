@@ -58,6 +58,8 @@ ScopedEnv::popVar() {
     m_vars.pop();
 }
 
+// Pop in reverse order: destroying m_vars directly runs front first, which
+// restores a variable set more than once to an intermediate value.
 ScopedEnv::~ScopedEnv() {
     while (!m_vars.empty()) {
         m_vars.pop();

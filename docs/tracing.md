@@ -228,7 +228,7 @@ id in `nixl.traceparent`, and the same correlation id as the sender's
 notification give the receiver nothing to observe, so they are traced on the
 sender only.
 
-On the sender, UCX records three phases for every post of a sampled request,
+On the sender, UCX records up to three phases for every post of a sampled request,
 each under the request's context: `nixl::submit` when `postXfer` accepts the
 post, `nixl::wire.submitted` once all of its puts or gets and the flushes behind
 them are posted to UCX, and `nixl::notif.sent` when the notification is posted.
