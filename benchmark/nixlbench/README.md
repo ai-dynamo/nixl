@@ -827,6 +827,20 @@ For pairwise UCX runs, `--device_list` must match the configured initiator and t
 The examples below write their files into `/mnt/storage/testdir`. Create it on
 the device you want to measure first: `mkdir -p /mnt/storage/testdir`.
 
+**DOCA_MEMOS object keys:**
+
+DOCA_MEMOS uses a fresh random 128-bit object key for each registered thread/device/batch
+entry. Keys are supplied through `metaInfo` as 32 hexadecimal characters, which the backend
+decodes into 16 binary bytes. The descriptor `dev_id` remains a local numeric identifier;
+it is not used as the object key. This avoids small-integer keys with mostly constant bytes
+and gives independent clients independent object sets, with negligible collision probability.
+
+Keys are generated from OS entropy during registration, independently of
+`randomize_location_mode_seed`. The same registered keys are reused for READ prepopulation,
+verification, and timed iterations; separate runs generate new keys. This does not add a
+hash-library dependency or change the DOCA_MEMOS backend. Confirm placement with per-target
+counters when measuring a distributed deployment; random keys alone do not verify routing.
+
 **GDS (GPU Direct Storage):**
 ```bash
 # Basic GDS benchmark (no ETCD needed for single instance)
