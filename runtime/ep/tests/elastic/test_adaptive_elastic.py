@@ -28,8 +28,14 @@ commits it, connections kept (with `--reconnect-on-leave` a leave is a symmetric
 `connect_ranks`). Participants run one eager dispatch (CPU sync) + combine routed over the LIVE experts, checked without
 any collective (every rank regenerates every other rank's routing from a seed), then replay the CUDA graph captured at
 the first phase they took part in against the reference of the current phase (selections of experts owned by ranks that
-left are dropped). Non-participants mirror every collective and touch no kernel. `--perf-phases` and `--feed-pairs` add
-the PERF and TRANS timing lines.
+left are dropped). Non-participants mirror every collective and touch no kernel.
+
+Performance: by default every live rank times one dispatch + combine pair per phase with CUDA events (L2 flushed) and
+prints its bandwidth and avg / min / max time; the bandwidth counts the scale-up bytes of both (the tokens a rank
+receives and returns, local traffic included). `--kineto` adds the per-kernel timings with scale-out (SO) and scale-up
+(SU) bandwidths (PERF lines) to every phase; `--feed-pairs` adds the TRANS lines of every world switch.
+`--skip-perf-test` drops the default pair timing: the correctness checks only, or the per-kernel timings only with
+`--kineto`. `--save-output [PATH]` also writes the run's configuration and every rank's PERF / TRANS records as one JSON file (stdout is unchanged).
 
 Mode: the test never chooses it. The host derives it when a phase stages its live world: direct when exactly one NVLink
 domain is live (any domain), hybrid otherwise (`NIXL_EP_ADAPTIVE_MODE=hybrid` forces hybrid on one domain). After every
@@ -49,13 +55,15 @@ slots in every world (fixed expert slots), and a world's expert count is its bou
     python tests/elastic/test_adaptive_elastic.py --num-processes 4 --num-tokens 512 --hidden 7168 --num-topk 8 --num-experts 192
     python tests/elastic/test_adaptive_elastic.py --plan '[[0,1,2,3,4,5,6,7],[0,1,2,3],[0,1,2,3,4,5,6,7]]' ...
     python tests/elastic/test_adaptive_elastic.py --plan tests/elastic/plans/two_domains.json ...
+    python tests/elastic/test_adaptive_elastic.py --kineto --save-output results.json ...
 """
 import argparse
 import json
+import math
 import os
 import random
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from statistics import median_high as median
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, cast
 
@@ -64,7 +72,13 @@ import torch.distributed as dist
 from test_adaptive_modes import combine_recipe
 
 from nixl.runtime import ep  # type: ignore[attr-defined]
-from nixl.runtime.ep.utils.math import calc_diff, ceil_div, per_token_cast_to_fp8
+from nixl.runtime.ep.utils.math import (
+    calc_diff,
+    ceil_div,
+    count_bytes,
+    per_token_cast_to_fp8,
+    safe_div,
+)
 from nixl.runtime.ep.utils.nixl_bootstrap import NixlBootstrap
 from nixl.runtime.ep.utils.refs import combine as ref_combine
 from nixl.runtime.ep.utils.refs import generate_pre_combine_data, ordered_accumulate
@@ -391,16 +405,122 @@ def run_eager(case: Case, phase_idx: int, phase: List[int], tag: str):
     return num_recv
 
 
+def pair_bytes(case: Case, pc: "PairCase", phase: List[int]) -> Dict[str, float]:
+    """Bytes of one dispatch + combine pair of this rank (local traffic included):
+    scale-up = the tokens this rank receives in the dispatch and returns in the combine, scale-out = the tokens that
+    cross NVLink domains (none when one domain is live), `copy` / `reduce` = the traffic of the dispatch copy and the
+    combine reduction epilogues
+    """
+    _, su_bound = case.bounds(phase)
+    epr = case.num_experts_per_rank
+    num_live_domains = len({r // case.max_su for r in phase})
+
+    def num_destinations(dst: torch.Tensor) -> int:
+        # (token, destination) pairs, every destination counted once per token, -1 ignored
+        dst = dst.to(torch.int64)
+        valid = dst >= 0
+        if not valid.any():
+            return 0
+        rows = torch.arange(dst.size(0), device=dst.device)[:, None].expand_as(dst)
+        return torch.unique(
+            rows[valid] * (int(dst.max().item()) + 1) + dst[valid]
+        ).numel()
+
+    dst_rank = pc.topk_idx // epr
+    dst_domain = pc.topk_idx // (epr * su_bound)
+    multi_domain = num_live_domains > 1
+    num_so_dispatch = num_destinations(dst_domain) if multi_domain else 0
+    if case.args.allow_multiple_reduction:
+        # The combine returns exactly the tokens of the dispatch
+        num_so_combine = num_so_dispatch
+        num_reduce_read = num_destinations(
+            dst_domain if case.buffer.combine_is_hybrid else dst_rank
+        )
+    else:
+        num_so_combine = num_destinations(dst_rank) if multi_domain else 0
+        num_reduce_read = num_destinations(dst_rank)
+    return dict(
+        dispatch_so=pc.dispatch_bytes_per_token * num_so_dispatch,
+        dispatch_su=pc.dispatch_bytes_per_token * pc.num_recv,
+        copy=2 * pc.dispatch_bytes_per_token * pc.num_recv,
+        combine_so=pc.combine_bytes_per_token * num_so_combine,
+        combine_su=pc.combine_bytes_per_token * pc.num_recv,
+        reduce=pc.combine_bytes_per_token * num_reduce_read + pc.reduction_write_bytes,
+    )
+
+
+def gbps(num_bytes: float, seconds: float) -> float:
+    # Kineto reports 0 for a kernel it did not see
+    return num_bytes / seconds / 1e9 if seconds > 0 else 0.0
+
+
+def phase_record(
+    case: Case, phase_idx: int, phase: List[int], mode: str, pc: "PairCase"
+) -> Dict[str, Any]:
+    so_bound, su_bound = case.bounds(phase)
+    return dict(
+        phase_idx=phase_idx,
+        ranks=list(phase),
+        rank=case.buffer.rank_id,
+        mode=mode,
+        live=len(phase),
+        bounds=[so_bound, su_bound],
+        tokens=pc.num_tokens,
+        num_recv=pc.num_recv,
+        bytes=pair_bytes(case, pc, phase),
+    )
+
+
+def run_pair_bench(
+    case: Case,
+    phase_idx: int,
+    phase: List[int],
+    mode: str,
+    pc: Optional["PairCase"] = None,
+) -> Dict[str, Any]:
+    """CUDA-event timing of one dispatch + combine pair on the LIVE world of a phase (L2 flushed) and the pair
+    bandwidth: the scale-up bytes of the dispatch and the combine over the average time. One line per live rank; every
+    live rank must call it (the pairs are collective)
+    """
+    pc = pc if pc is not None else PairCase(case, phase_idx, phase, case.args)
+    avg_t, min_t, max_t = bench(pc.pair, flush_l2=True)
+    torch.cuda.synchronize()
+    record = phase_record(case, phase_idx, phase, mode, pc)
+    b = record["bytes"]
+    record["pair"] = dict(
+        avg_us=float(avg_t) * 1e6,
+        min_us=float(min_t) * 1e6,
+        max_us=float(max_t) * 1e6,
+        bandwidth_gbps=gbps(b["dispatch_su"] + b["combine_su"], float(avg_t)),
+    )
+    p = record["pair"]
+    so_bound, su_bound = record["bounds"]
+    print(
+        f"[rank {record['rank']}] phase {phase_idx} ({mode}, live {len(phase)}, bounds {so_bound}x{su_bound}, "
+        f"{pc.num_tokens} tokens, {pc.num_recv} received) | Dispatch + combine bandwidth: {p['bandwidth_gbps']:.2f} GB/s, "
+        f"avg_t={p['avg_us']:.2f} us, min_t={p['min_us']:.2f} us, max_t={p['max_us']:.2f} us",
+        flush=True,
+    )
+    return record
+
+
 def run_perf(
-    case: Case, phase_idx: int, phase: List[int], mode: str, args: argparse.Namespace
-) -> None:
-    """Kernel timings of the LIVE world of a phase as `test_ep.py` measures them (Kineto per kernel, L2 flushed, a
-    live-world barrier per iteration) plus the CUDA-event wall time of one dispatch + combine pair: is a world that GREW
-    or SHRANK into this shape as fast as one that started in it? One `PERF` line per live rank
+    case: Case,
+    phase_idx: int,
+    phase: List[int],
+    mode: str,
+    args: argparse.Namespace,
+    pc: Optional["PairCase"] = None,
+    pair_avg_t: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Kernel timings of the LIVE world of a phase (Kineto per kernel, L2 flushed, a live-world barrier per iteration)
+    plus the CUDA-event wall time of one dispatch + combine pair (`pair_avg_t` when the pair was already timed): is a
+    world that GREW or SHRANK into this shape as fast as one that started in it? One `PERF` line per live rank, with the
+    scale-out (SO) and scale-up (SU) bandwidths; returns the phase record with a `kineto` entry
     """
     buffer = case.buffer
     me = buffer.rank_id
-    pc = PairCase(case, phase_idx, phase, args)
+    pc = pc if pc is not None else PairCase(case, phase_idx, phase, args)
     t_d, copy_d = bench_kineto(
         lambda: buffer.dispatch(**pc.dispatch_args),
         kernel_names=("dispatch_impl", "dispatch_copy_epilogue_impl"),
@@ -413,15 +533,34 @@ def run_perf(
         barrier_comm_profiling=True,
         barrier=buffer.barrier,
     )
-    wall, _, _ = bench(pc.pair, num_warmups=5, num_tests=20, flush_l2=True)
+    if pair_avg_t is None:
+        pair_avg_t, _, _ = bench(pc.pair, num_warmups=5, num_tests=20, flush_l2=True)
     torch.cuda.synchronize()
-    so_bound, su_bound = case.bounds(phase)
+    record = phase_record(case, phase_idx, phase, mode, pc)
+    b = record["bytes"]
+    record["kineto"] = k = dict(
+        dispatch_us=t_d * 1e6,
+        copy_us=copy_d * 1e6,
+        combine_us=t_c * 1e6,
+        reduce_us=red_c * 1e6,
+        pair_wall_us=float(pair_avg_t) * 1e6,
+        dispatch_so_gbps=gbps(b["dispatch_so"], t_d),
+        dispatch_su_gbps=gbps(b["dispatch_su"], t_d),
+        copy_gbps=gbps(b["copy"], copy_d),
+        combine_so_gbps=gbps(b["combine_so"], t_c),
+        combine_su_gbps=gbps(b["combine_su"], t_c),
+        reduce_gbps=gbps(b["reduce"], red_c),
+    )
+    so_bound, su_bound = record["bounds"]
     print(
         f"PERF tag={args.perf_tag} mode={mode} phase={phase_idx} live={len(phase)} bounds={so_bound}x{su_bound} rank={me} "
-        f"tokens={pc.num_tokens} dispatch_us={t_d * 1e6:.1f} copy_us={copy_d * 1e6:.1f} combine_us={t_c * 1e6:.1f} "
-        f"reduce_us={red_c * 1e6:.1f} pair_wall_us={wall * 1e6:.1f}",
+        f"tokens={pc.num_tokens} dispatch_us={k['dispatch_us']:.1f} copy_us={k['copy_us']:.1f} combine_us={k['combine_us']:.1f} "
+        f"reduce_us={k['reduce_us']:.1f} pair_wall_us={k['pair_wall_us']:.1f} "
+        f"dispatch_so_gbps={k['dispatch_so_gbps']:.1f} dispatch_su_gbps={k['dispatch_su_gbps']:.1f} copy_gbps={k['copy_gbps']:.1f} "
+        f"combine_so_gbps={k['combine_so_gbps']:.1f} combine_su_gbps={k['combine_su_gbps']:.1f} reduce_gbps={k['reduce_gbps']:.1f}",
         flush=True,
     )
+    return record
 
 
 class PairCase:
@@ -459,7 +598,15 @@ class PairCase:
         )
         self.first_event = torch.cuda.Event(enable_timing=True)
         self.first_event.record()
-        recv_x, _, recv_topk_weights, handle, _ = buffer.dispatch(**self.dispatch_args)
+        recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(
+            **self.dispatch_args
+        )
+        self.topk_idx = topk_idx
+        self.num_recv = handle.psum_num_recv_tokens_per_scaleup_rank[-1].item()
+        self.dispatch_bytes_per_token = safe_div(
+            count_bytes(recv_x, recv_topk_idx, recv_topk_weights),
+            recv_topk_idx.size(0),
+        )
         num_recv_rows = (recv_x[0] if isinstance(recv_x, tuple) else recv_x).size(0)
         self.y = torch.randn(
             num_recv_rows, case.hidden, dtype=torch.bfloat16, device="cuda", generator=g
@@ -470,7 +617,11 @@ class PairCase:
             handle=handle,
             num_sms=case.num_sms,
         )
-        buffer.combine(**self.combine_args)
+        combined_x, combined_topk_weights, _ = buffer.combine(**self.combine_args)
+        self.combine_bytes_per_token = safe_div(
+            count_bytes(self.y, recv_topk_weights), self.y.size(0)
+        )
+        self.reduction_write_bytes = count_bytes(combined_x, combined_topk_weights)
         torch.cuda.synchronize()
 
     def pair(self):
@@ -566,7 +717,7 @@ class GraphCase:
         else:
             local_y[recv_topk_idx == -1] = 0
             y = ordered_accumulate(local_y)
-        # The expanded layout takes weights only with multiple reduction (as in `test_ep.py`)
+        # The expanded layout takes weights only with multiple reduction
         combined_x, combined_topk_weights, _ = case.buffer.combine(
             x=y,
             topk_weights=(
@@ -821,6 +972,65 @@ def switch_world(
     )
 
 
+def json_safe(value: Any) -> Any:
+    # NaN and infinity (e.g. no previous phase for a transition) are not JSON
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+    return value
+
+
+def save_results(
+    args: argparse.Namespace,
+    case: Case,
+    plan: List[List[int]],
+    gathered: List[Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]],
+) -> None:
+    """Job rank 0 with `--save-output`: one JSON file with the run's configuration and every rank's phase and transition
+    records
+    """
+    records = sorted(
+        (r for recs, _ in gathered for r in recs),
+        key=lambda r: (r["phase_idx"], r["rank"]),
+    )
+    transitions = sorted(
+        (t for _, trans in gathered for t in trans),
+        key=lambda t: (t["to_phase"], t["rank"]),
+    )
+    phases = [
+        dict(
+            phase_idx=phase_idx,
+            ranks=list(phase),
+            mode=expected_mode(phase, case.max_su),
+            bounds=list(case.bounds(phase)),
+            per_rank=[r for r in records if r["phase_idx"] == phase_idx],
+        )
+        for phase_idx, phase in enumerate(plan)
+    ]
+    result = dict(
+        test="test_adaptive_elastic",
+        timestamp=datetime.now().isoformat(timespec="seconds"),
+        config=vars(args),
+        world=dict(
+            max_num_scaleout_ranks=case.max_so,
+            max_num_scaleup_ranks=case.max_su,
+            num_ranks=len(gathered),
+            num_experts_per_rank=case.num_experts_per_rank,
+            num_sms=case.num_sms,
+        ),
+        plan=plan,
+        phases=phases,
+        transitions=transitions,
+    )
+    os.makedirs(os.path.dirname(os.path.abspath(args.save_output)), exist_ok=True)
+    with open(args.save_output, "w") as f:
+        json.dump(json_safe(result), f, indent=2)
+    print(f"Saved the performance results to {args.save_output}", flush=True)
+
+
 @torch.inference_mode()
 def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     rank_idx, num_ranks = init_test_environment(local_rank, num_local_ranks, args.seed)
@@ -901,11 +1111,6 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         (me, buffer.get_local_metadata(), buffer.get_local_peer_info())
     )
     case = Case(buffer, args)
-    # Phases whose live world gets the kernel timings (`run_perf`), e.g. the phase a world grew or shrank into
-    perf_phases = set(int(p) for p in args.perf_phases.split(",") if p.strip() != "")
-    assert all(
-        0 <= p < len(plan) for p in perf_phases
-    ), f"--perf-phases {sorted(perf_phases)} outside the plan of {len(plan)} phases"
 
     # The phase each rank captures its graph at: the first phase of the plan it takes part in (reversed: the first wins)
     capture_phase_of = {r: list(phase) for phase in reversed(plan) for r in phase}
@@ -917,6 +1122,9 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     captured: Set[int] = set()
     # (PairCase, end events, times) of the pairs this rank ran at the end of the previous phase
     pre: Optional[Tuple[PairCase, List[torch.cuda.Event], List[float]]] = None
+    # This rank's performance records, gathered by job rank 0 at the end
+    phase_records: List[Dict[str, Any]] = []
+    trans_records: List[Dict[str, Any]] = []
     for phase_idx, phase in enumerate(plan):
         tim: Dict[str, Any] = {}
         switch_world(
@@ -942,10 +1150,12 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
             )
             gpu_gap = first = after = float("nan")  # noqa: F841
             first_list = ""
+            first_times: List[float] = []
             if buffer.is_participant:
                 pc = PairCase(case, phase_idx, phase, args)
                 _, _, times = run_feed(pc, feed)
-                first_list = ",".join(f"{v:.0f}" for v in times[:3])
+                first_times = times[:3]
+                first_list = ",".join(f"{v:.0f}" for v in first_times)
                 after = median(times[3:]) if len(times) > 3 else median(times)
                 if pre is not None:
                     gpu_gap = pre[1][-1].elapsed_time(
@@ -953,6 +1163,30 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
                     )  # ms, same stream and device
             before = median(pre[2]) if pre is not None else float("nan")
             dev_ms = tim["ev_stage"].elapsed_time(tim["ev_commit"])
+            trans_records.append(
+                dict(
+                    mode=live_mode,
+                    from_phase=phase_idx - 1,
+                    to_phase=phase_idx,
+                    rank=me,
+                    role=role,
+                    live_before=len(prev),
+                    live_after=len(phase),
+                    num_connect=tim["num_connect"],
+                    num_disconnect=tim["num_disconnect"],
+                    connect_ms=tim["connect"],
+                    stage_ms=tim["stage"],
+                    commit_ms=tim["commit"],
+                    disconnect_ms=tim["disconnect"],
+                    barrier_ms=tim["barrier"],
+                    switch_ms=tim["total"],
+                    commit_dev_ms=dev_ms,
+                    gpu_gap_ms=gpu_gap,
+                    before_us=before,
+                    first_us=first_times,
+                    after_us=after,
+                )
+            )
             print(
                 f"TRANS tag={args.perf_tag} mode={live_mode} from={phase_idx - 1} to={phase_idx} rank={me} role={role} "
                 f'live_before={len(prev)} live_after={len(phase)} num_connect={tim["num_connect"]} num_disconnect={tim["num_disconnect"]} '
@@ -985,8 +1219,23 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
                     f"graph replay (captured at phase {active_graph.captured_at}): {num_recv_graph} tokens received, bitwise match",
                     flush=True,
                 )
-            if phase_idx in perf_phases:
-                run_perf(case, phase_idx, phase, live_mode, args)
+            # Every live rank makes the same collective pair calls; the Kineto timings follow on the same inputs
+            record = None
+            perf_pc = None
+            if not args.skip_perf_test:
+                perf_pc = PairCase(case, phase_idx, phase, args)
+                record = run_pair_bench(case, phase_idx, phase, live_mode, perf_pc)
+            if args.kineto:
+                pair_avg_t = None if record is None else record["pair"]["avg_us"] / 1e6
+                kineto_record = run_perf(
+                    case, phase_idx, phase, live_mode, args, perf_pc, pair_avg_t
+                )
+                if record is None:
+                    record = kineto_record
+                else:
+                    record["kineto"] = kineto_record["kineto"]
+            if record is not None:
+                phase_records.append(record)
             barrier()
         else:
             # Mirror the participants' collectives
@@ -1002,6 +1251,12 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         barrier()
     if graph is not None:
         graph.release()
+
+    if args.save_output:
+        gathered = cohort._all_gather("perf-results", (phase_records, trans_records))
+        if rank_idx == 0:
+            save_results(args, case, plan, gathered)
+        barrier()
 
     # Back to the full world (the host derives its mode) before tearing down
     switch_world(buffer, infos, full, num_active_sms, barrier, args.reconnect_on_leave)
@@ -1061,12 +1316,6 @@ if __name__ == "__main__":
         help="phases as inline JSON or a JSON file (see the module docstring); default: a built-in plan",
     )
     parser.add_argument(
-        "--perf-phases",
-        type=str,
-        default="",
-        help="comma-separated phases whose live world gets kernel timings (PERF lines)",
-    )
-    parser.add_argument(
         "--perf-tokens",
         type=int,
         default=0,
@@ -1081,6 +1330,24 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--perf-tag", type=str, default="run", help="label of the PERF and TRANS lines"
+    )
+    parser.add_argument(
+        "--skip-perf-test",
+        action="store_true",
+        help="skip the default per-phase dispatch + combine timing and bandwidth (correctness only, unless --kineto)",
+    )
+    parser.add_argument(
+        "--kineto",
+        action="store_true",
+        help="Kineto per-kernel timings and SO/SU bandwidths (PERF lines) in every phase",
+    )
+    parser.add_argument(
+        "--save-output",
+        type=str,
+        nargs="?",
+        const="adaptive_elastic_results.json",
+        default="",
+        help="also write the performance results as JSON (job rank 0; default path adaptive_elastic_results.json)",
     )
     parser.add_argument(
         "--feed-pairs",

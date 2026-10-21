@@ -109,14 +109,25 @@ also put the installed Python packages and the `nixl` dispatcher on `PYTHONPATH`
 
 ```bash
 export PYTHONPATH=<nixl-prefix>/lib/python3.<minor>/site-packages:<nixl-source>/src/bindings/python/nixl-meta:$PYTHONPATH
-python tests/elastic/test_ep.py --num-processes 4 --test-first-only --skip-perf-test
 python tests/elastic/test_adaptive_elastic.py --num-processes 4 --num-tokens 512 --hidden 7168 --num-topk 8 --num-experts 192
+python tests/elastic/test_ep.py --num-processes 4 --test-first-only --skip-perf-test
 python tests/elastic/test_adaptive_modes.py --num-processes 4 --num-tokens 1024 --hidden 7168 --num-topk 8 --num-experts 256
 ```
 
-The other scripts under `tests/` cover narrower cases; each one's docstring
-gives its launch command:
+`tests/elastic/test_adaptive_elastic.py` is an elastic, correctness and
+performance test. It runs a plan of live worlds (phases) that grow and shrink
+the expert-parallel world over NVLink and RDMA without reallocating the buffer.
+In every phase it checks dispatch + combine bit-exactly, both eagerly and by
+replaying a CUDA graph captured in an earlier phase. By default it also prints
+the dispatch + combine bandwidth of every phase. Add `--kineto` for per-kernel
+timings, or `--save-output results.json` to also save the results as JSON.
 
+The other scripts under `tests/` are listed below:
+
+- `tests/elastic/test_ep.py`: dispatch and combine correctness tests on a fixed
+  world, checked against a `torch.distributed` reference.
+- `tests/elastic/test_adaptive_modes.py`: direct and hybrid mode, handle
+  sizing, and CUDA-graph replay across mode and world switches.
 - `tests/elastic/test_barrier.py` and `tests/utils/test_gate.py`: the barrier
   kernel and the gate-score generator.
 - `tests/elastic/test_adaptive_processes.py`: processes that join late and
