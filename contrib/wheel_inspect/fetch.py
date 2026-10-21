@@ -21,6 +21,7 @@ import base64
 import hashlib
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,6 +41,8 @@ PYPI_PACKAGES = ("nixl", "nixl-cu12", "nixl-cu13")
 PYPI_INDEX = "https://pypi.org/pypi"
 ARTIFACTORY_REPO_PATH = "/artifactory/sw-nbu-swx-nixl-pypi-local/"
 REPORT_FILES = ("wheel-inspection.json", "wheel-inspection.md", "wheel-inspection.html")
+DOWNLOAD_ATTEMPTS = 4
+RETRY_DELAY_SECONDS = 5.0
 
 Opener = Callable[[urllib.request.Request], Any]
 Auth = Optional[tuple[str, str]]
@@ -180,10 +183,19 @@ def artifactory_files(folder_url: str, auth: Auth, opener: Opener) -> list[FileR
     return refs
 
 
-def download(ref: FileRef, dest_dir: Path, opener: Opener, auth: Auth = None) -> Path:
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    target = dest_dir / ref.filename
-    part = dest_dir / (ref.filename + ".part")
+class _TransientError(FetchError):
+    """A failure worth retrying: timeout, connection reset, HTTP 5xx."""
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _stream(ref: FileRef, part: Path, opener: Opener, auth: Auth) -> str:
     digest = hashlib.sha256()
     try:
         with opener(_request(ref.url, auth)) as resp, part.open("wb") as out:
@@ -195,14 +207,35 @@ def download(ref: FileRef, dest_dir: Path, opener: Opener, auth: Auth = None) ->
                 out.write(chunk)
     except urllib.error.HTTPError as exc:
         part.unlink(missing_ok=True)
+        if exc.code >= 500:
+            raise _TransientError(f"GET {ref.url} returned {exc.code}") from exc
         raise FetchError(f"GET {ref.url} returned {exc.code}") from exc
     except (urllib.error.URLError, OSError) as exc:
         part.unlink(missing_ok=True)
-        raise FetchError(f"GET {ref.url} failed: {exc}") from exc
-    if ref.sha256 and digest.hexdigest() != ref.sha256:
+        raise _TransientError(f"GET {ref.url} failed: {exc}") from exc
+    return digest.hexdigest()
+
+
+def download(ref: FileRef, dest_dir: Path, opener: Opener, auth: Auth = None) -> Path:
+    """Download ``ref`` into ``dest_dir``, verifying sha256 when known; reuses a verified existing file."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    target = dest_dir / ref.filename
+    if target.is_file() and ref.sha256 and _sha256_file(target) == ref.sha256:
+        return target
+    part = dest_dir / (ref.filename + ".part")
+    actual = ""
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            actual = _stream(ref, part, opener, auth)
+            break
+        except _TransientError as exc:
+            if attempt == DOWNLOAD_ATTEMPTS:
+                raise FetchError(f"{exc} (after {attempt} attempts)") from exc
+            time.sleep(RETRY_DELAY_SECONDS * attempt)
+    if ref.sha256 and actual != ref.sha256:
         part.unlink(missing_ok=True)
         raise FetchError(
-            f"{ref.filename}: sha256 mismatch (expected {ref.sha256}, got {digest.hexdigest()})"
+            f"{ref.filename}: sha256 mismatch (expected {ref.sha256}, got {actual})"
         )
     part.replace(target)
     return target

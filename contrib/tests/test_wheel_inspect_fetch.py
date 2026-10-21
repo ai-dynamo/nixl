@@ -317,3 +317,67 @@ def test_release_run_fetch_error_exits_2(tmp_path, fake_opener, monkeypatch, cap
         ]
     )
     assert rc == 2 and "9.9.9" in capsys.readouterr().err
+
+
+class FlakyOpener(FakeOpener):
+    """Fails the first N calls for a URL with a timeout, then serves it."""
+
+    def __init__(self, failures: int):
+        super().__init__()
+        self.failures = failures
+        self.seen: dict[str, int] = {}
+
+    def __call__(self, request):
+        url = request.full_url
+        self.seen[url] = self.seen.get(url, 0) + 1
+        if self.seen[url] <= self.failures and url.startswith(
+            "https://files.pythonhosted.org/"
+        ):
+            raise urllib.error.URLError("The read operation timed out")
+        return super().__call__(request)
+
+
+def test_download_retries_transient_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+    body = b"wheel"
+    opener = FlakyOpener(failures=2)
+    opener.add("https://files.pythonhosted.org/a.whl", body)
+    ref = fetch.FileRef(
+        "https://files.pythonhosted.org/a.whl",
+        "nixl-1.5.0-x.whl",
+        hashlib.sha256(body).hexdigest(),
+        len(body),
+    )
+    assert fetch.download(ref, tmp_path, opener).read_bytes() == body
+    assert opener.seen["https://files.pythonhosted.org/a.whl"] == 3
+
+
+def test_download_gives_up_after_max_attempts(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+    opener = FlakyOpener(failures=99)
+    opener.add("https://files.pythonhosted.org/a.whl", b"x")
+    ref = fetch.FileRef(
+        "https://files.pythonhosted.org/a.whl", "nixl-1.5.0-x.whl", None, None
+    )
+    with pytest.raises(fetch.FetchError, match="timed out"):
+        fetch.download(ref, tmp_path, opener)
+    assert (
+        opener.seen["https://files.pythonhosted.org/a.whl"] == fetch.DOWNLOAD_ATTEMPTS
+    )
+    assert not (tmp_path / "nixl-1.5.0-x.whl").exists()
+
+
+def test_download_reuses_verified_existing_file(tmp_path, fake_opener):
+    body = b"already here"
+    (tmp_path / "nixl-1.5.0-x.whl").write_bytes(body)
+    ref = fetch.FileRef(
+        "https://files.pythonhosted.org/a.whl",
+        "nixl-1.5.0-x.whl",
+        hashlib.sha256(body).hexdigest(),
+        len(body),
+    )
+    assert fetch.download(ref, tmp_path, fake_opener) == tmp_path / "nixl-1.5.0-x.whl"
+    assert fake_opener.requests == []
+    (tmp_path / "nixl-1.5.0-x.whl").write_bytes(b"corrupt")
+    fake_opener.add("https://files.pythonhosted.org/a.whl", body)
+    assert fetch.download(ref, tmp_path, fake_opener).read_bytes() == body
