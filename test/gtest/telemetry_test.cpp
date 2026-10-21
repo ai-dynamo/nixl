@@ -797,6 +797,15 @@ protected:
         return std::ranges::count(events, type, &nixlTelemetryEvent::eventType_);
     }
 
+    [[nodiscard]] static std::ptrdiff_t
+    finishes(const std::vector<nixlTelemetryEvent> &events) {
+        const auto requests = countOf(events, et::AGENT_TX_REQUESTS_NUM);
+        EXPECT_EQ(countOf(events, et::AGENT_TX_BYTES), requests);
+        EXPECT_EQ(countOf(events, et::AGENT_XFER_TIME), requests);
+        EXPECT_EQ(countOf(events, et::AGENT_XFER_POST_TIME), requests);
+        return requests;
+    }
+
     [[nodiscard]] static uint64_t
     sumOf(const std::vector<nixlTelemetryEvent> &events, et type) {
         uint64_t sum = 0;
@@ -823,7 +832,7 @@ TEST_F(telemetryXferTest, PostCompletedAtOnceIsCountedOnce) {
     EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
 
     const auto events = flushedEvents();
-    EXPECT_EQ(countOf(events, et::AGENT_TX_REQUESTS_NUM), 1);
+    EXPECT_EQ(finishes(events), 1);
     EXPECT_EQ(sumOf(events, et::AGENT_TX_BYTES), buffer_.size());
 }
 
@@ -839,7 +848,7 @@ TEST_F(telemetryXferTest, CompletionSeenByTheRepostCheckIsCounted) {
     EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
 
     const auto events = flushedEvents();
-    EXPECT_EQ(countOf(events, et::AGENT_TX_REQUESTS_NUM), 2);
+    EXPECT_EQ(finishes(events), 2);
     EXPECT_EQ(sumOf(events, et::AGENT_TX_BYTES), 2 * buffer_.size());
 }
 
@@ -858,7 +867,7 @@ TEST_F(telemetryXferTest, CompletionSeenByReleaseIsCountedButCancelledIsNot) {
     EXPECT_EQ(agent_->releaseXferReq(cancelled), NIXL_SUCCESS);
 
     const auto events = flushedEvents();
-    EXPECT_EQ(countOf(events, et::AGENT_TX_REQUESTS_NUM), 1);
+    EXPECT_EQ(finishes(events), 1);
     EXPECT_EQ(sumOf(events, et::AGENT_TX_BYTES), buffer_.size());
 }
 
@@ -897,7 +906,7 @@ TEST_F(telemetryXferTest, ErrorSeenByTheRepostCheckIsCountedOnce) {
 
     const auto events = flushedEvents();
     EXPECT_EQ(countOf(events, et::AGENT_ERR_BACKEND), 1);
-    EXPECT_EQ(countOf(events, et::AGENT_TX_REQUESTS_NUM), 1);
+    EXPECT_EQ(finishes(events), 1);
 }
 
 TEST_F(telemetryXferTest, ErrorSeenByReleaseIsCountedOnce) {
@@ -910,7 +919,7 @@ TEST_F(telemetryXferTest, ErrorSeenByReleaseIsCountedOnce) {
 
     const auto events = flushedEvents();
     EXPECT_EQ(countOf(events, et::AGENT_ERR_BACKEND), 1);
-    EXPECT_EQ(countOf(events, et::AGENT_TX_REQUESTS_NUM), 0);
+    EXPECT_EQ(finishes(events), 0);
 }
 
 TEST_F(telemetryXferTest, RejectedRepostIsCountedAsRepostActive) {
@@ -928,5 +937,5 @@ TEST_F(telemetryXferTest, RejectedRepostIsCountedAsRepostActive) {
 
     const auto events = flushedEvents();
     EXPECT_EQ(countOf(events, et::AGENT_ERR_REPOST_ACTIVE), 1);
-    EXPECT_EQ(countOf(events, et::AGENT_TX_REQUESTS_NUM), 1);
+    EXPECT_EQ(finishes(events), 1);
 }
