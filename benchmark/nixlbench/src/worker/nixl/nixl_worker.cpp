@@ -75,14 +75,12 @@ resolveVramSegment() {
         _seg_type;                                                                          \
     })
 
-constexpr size_t kDeviceCounterDoneOffsetBytes = offsetof(nixlbenchDeviceCounters, done);
-constexpr size_t kDeviceCounterErrorOffsetBytes = offsetof(nixlbenchDeviceCounters, error);
-constexpr size_t kDeviceCounterSlotBytes = sizeof(nixlbenchDeviceCounters);
 constexpr uint64_t kUnwrittenDeviceDurationNs = std::numeric_limits<uint64_t>::max();
 
 static size_t
 deviceCounterBytes() {
-    return static_cast<size_t>(xferBenchConfig::device_channel_num) * kDeviceCounterSlotBytes;
+    return static_cast<size_t>(xferBenchConfig::device_channel_num) *
+        sizeof(nixlbenchDeviceCounters);
 }
 
 // Reuse parser from utils
@@ -1582,9 +1580,11 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 std::exit(EXIT_FAILURE);
             }
             completion_counter_iov = cc_iovs[0];
-            if (completion_counter_iov->len < deviceCounterBytes()) {
-                std::cerr << "NIXL: completion counter descriptor too small: "
-                          << completion_counter_iov->len << " bytes" << std::endl;
+            if (completion_counter_iov->len != deviceCounterBytes()) {
+                std::cerr << "NIXL: completion counter descriptor size mismatch: received "
+                          << completion_counter_iov->len << " bytes, expected "
+                          << deviceCounterBytes() << " bytes for "
+                          << xferBenchConfig::device_channel_num << " channels" << std::endl;
                 std::exit(EXIT_FAILURE);
             }
         }
@@ -2074,8 +2074,6 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     params.channelNum = static_cast<unsigned>(xferBenchConfig::device_channel_num);
     params.postDurationNs = device_post_duration_ns;
     params.xferDurationNs = device_xfer_duration_ns;
-    params.completionCounterOffsetBytes = kDeviceCounterDoneOffsetBytes;
-    params.errorCounterOffsetBytes = kDeviceCounterErrorOffsetBytes;
     xferBenchTimer total_timer;
     nixl_status_t st = nixlbenchLaunchDevicePut(params, static_cast<unsigned>(block_threads));
     const nixlTime::us_t total_duration = total_timer.lap();
@@ -2144,12 +2142,6 @@ xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_
         return true;
     }
     const uint64_t channel_num = xferBenchConfig::device_channel_num;
-    if ((expected_value % channel_num) != 0) {
-        std::cerr << "NIXL Device API: " << phase << " expected completion count " << expected_value
-                  << " is not divisible by channel number " << channel_num << std::endl;
-        terminate.store(1);
-        return false;
-    }
     const uint64_t expected_per_channel = expected_value / channel_num;
     CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId), "Failed to set completion counter device");
     std::vector<nixlbenchDeviceCounters> counters(static_cast<size_t>(channel_num));
