@@ -249,5 +249,4 @@ Fastpath Read Unaligned Count: 0
 Fastpath Write Unaligned Count: 0
 Fallback Read Unaligned Count: 0
 Fallback Write Unaligned Count: 0
-OK: hipFile stats report fastpath I/O.
 ```

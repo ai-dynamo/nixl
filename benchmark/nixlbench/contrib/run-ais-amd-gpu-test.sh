@@ -4,8 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Run nixlbench with the AIS backend on AMD VRAM against files under
-# FILEPATH, wrapped in hipFile's ais-stats so HIPFILE_STATS_LEVEL output can
-# confirm whether the fastpath was used.
+# FILEPATH. ais-stats wraps the run to report the per-path I/O counters.
 #
 # Meant to run inside a ROCm container built from .ci/dockerfiles/Dockerfile.rocm
 # with an NVMe-backed directory bind-mounted in. See docs/rocm-ci.md for the
@@ -69,6 +68,9 @@ case "$arch" in
     *)       libarch="${arch}-linux-gnu" ;;
 esac
 export ROCM_PATH HIPFILE_STATS_LEVEL
+# Force hipFile to only use the fastpath for IO transfers.
+export HIPFILE_ALLOW_COMPAT_MODE=false
+export HIPFILE_FORCE_COMPAT_MODE=false
 export LD_LIBRARY_PATH="${NIXL_PREFIX}/lib:${NIXL_PREFIX}/lib/${libarch}:${NIXL_PREFIX}/lib/${libarch}/plugins:${ROCM_PATH}/lib:${LD_LIBRARY_PATH:-}"
 export NIXL_PLUGIN_DIR="${NIXL_PREFIX}/lib/${libarch}/plugins"
 
@@ -114,27 +116,16 @@ if [[ -n "${NIXLBENCH_EXTRA:-}" ]]; then
     nb_cmd+=(${NIXLBENCH_EXTRA})
 fi
 
-report="$(mktemp -t ais-stats.XXXXXX.log)"
-trap 'rm -f "$report"' EXIT
-
 echo "HIPFILE_STATS_LEVEL=${HIPFILE_STATS_LEVEL}"
 echo "Running: ${nb_cmd[*]}"
 if [[ "$SKIP_AIS_STATS" = 1 ]]; then
-    "${nb_cmd[@]}" 2>&1 | tee "$report"
+    "${nb_cmd[@]}"
 else
-    "${AIS_STATS_BIN}" "${nb_cmd[@]}" 2>&1 | tee "$report"
-fi
-
-# hipFile reports the fastpath in its stats output; a fallback means the I/O
-# did not take the AIS path, which is usually the point of running this.
-if grep -Eiq 'fastpath|fast[[:space:]]*path' "$report"; then
-    echo "OK: hipFile stats report fastpath I/O."
-elif grep -Eiq 'fallback' "$report"; then
-    echo "FAIL: hipFile stats report fallback I/O, not fastpath." >&2
-    # Keep the log: it is the only record of why hipFile fell back.
-    trap - EXIT
-    echo "Log retained: $report" >&2
-    exit 1
-else
-    echo "WARN: no fastpath/fallback token in output; try HIPFILE_STATS_LEVEL=2." >&2
+    # ais-stats exits 0 without reporting its child's exit status, so run
+    # nixlbench here and attach ais-stats by PID; `wait` then fails the script
+    # if nixlbench failed.
+    "${nb_cmd[@]}" &
+    nb_pid=$!
+    "${AIS_STATS_BIN}" -p "$nb_pid" || echo "WARN: ais-stats could not report on nixlbench." >&2
+    wait "$nb_pid"
 fi
