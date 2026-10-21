@@ -114,6 +114,7 @@ private:
     const std::unique_ptr<nixlTcpStoreClientAsync> client_;
     // Keys this agent has published; TCPStore has no recursive delete, so
     // invalidateLocal removes exactly these.
+    std::mutex publishedKeysMutex_;
     std::unordered_set<std::string> publishedKeys_;
 
     // Whether stop() has been called.

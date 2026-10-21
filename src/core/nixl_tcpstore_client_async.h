@@ -230,7 +230,7 @@ private:
     // The socket to the TCPStore server.
     asio::ip::tcp::socket socket_;
     // Whether the connection is established.
-    connection_state_t connectionState_ = connection_state_t::CLOSED;
+    std::atomic<connection_state_t> connectionState_ = connection_state_t::CLOSED;
     // The generation of the current connection.
     std::int32_t generation_ = 0;
     // The number of times the connection has been retried.

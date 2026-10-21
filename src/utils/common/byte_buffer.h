@@ -41,21 +41,15 @@ public:
      */
     byteBuffer() = default;
 
-    /**
-     * @brief Construct a new byte buffer and copy the given arguments into it.
-     * @param args The arguments to construct the buffer with.
-     */
-    template<typename... Args>
-        requires(!std::is_same_v<std::decay_t<Args>, byteBuffer> && ...)
-    explicit byteBuffer(Args &&...args) {
-        data_.reserve(getSize(args...));
-        put(args...);
-    }
-
     // Move constructor and assignment operator.
     byteBuffer(byteBuffer &&) noexcept = default;
     byteBuffer &
     operator=(byteBuffer &&) noexcept = default;
+
+    // Copy constructor and assignment operator.
+    byteBuffer(const byteBuffer &) = delete;
+    byteBuffer &
+    operator=(const byteBuffer &) = delete;
 
     ~byteBuffer() = default;
 
@@ -78,6 +72,7 @@ public:
         requires std::is_arithmetic_v<T>
     byteBuffer &
     put(T value) {
+        static_assert(std::is_same_v<std::uint8_t, unsigned char>);
         const auto *begin = reinterpret_cast<const std::uint8_t *>(&value);
         data_.insert(data_.end(), begin, begin + sizeof(T));
         return *this;
@@ -104,11 +99,12 @@ public:
      * @param args The rest of the values to put into the buffer.
      * @return this.
      */
-    template<typename T, typename... Args>
+    template<typename... Args>
+        requires(!std::is_same_v<std::decay_t<Args>, byteBuffer> && ...)
     byteBuffer &
-    put(T &&value, Args &&...args) {
-        put(value);
-        put(args...);
+    putValues(Args &&...args) {
+        data_.reserve(getSize(args...));
+        putValuesInternal(args...);
         return *this;
     }
 
@@ -117,7 +113,7 @@ public:
      * @return A const reference to the internal data.
      */
     std::vector<std::uint8_t> const &
-    getRef() const {
+    getRef() const noexcept {
         return data_;
     }
 
@@ -126,36 +122,46 @@ public:
      * @return A reference to the internal data.
      */
     std::vector<std::uint8_t> &
-    getRef() {
+    getRef() noexcept {
         return data_;
     }
 
 private:
     template<typename T>
         requires std::is_arithmetic_v<T>
-    std::size_t
-    getSize(T value) const {
+    [[nodiscard]] std::size_t
+    getSize(T value) const noexcept {
         return sizeof(T);
     }
 
     template<typename T>
         requires(sizeof(typename std::decay_t<T>::value_type) == sizeof(std::uint8_t) &&
                  std::input_iterator<typename std::decay_t<T>::iterator>)
-    std::size_t
-    getSize(T &&value) const {
+    [[nodiscard]] std::size_t
+    getSize(T &&value) const noexcept {
         return sizeof(std::uint64_t) + value.size();
     }
 
     template<typename T, typename... Args>
-    std::size_t
-    getSize(T &&value, Args &&...args) const {
+    [[nodiscard]] std::size_t
+    getSize(T &&value, Args &&...args) const noexcept {
         return getSize(value) + getSize(std::forward<Args>(args)...);
+    }
+
+    template<typename T, typename... Args>
+    byteBuffer &
+    putValuesInternal(T &&value, Args &&...args) {
+        put(value);
+        if constexpr (sizeof...(args) > 0) {
+            putValuesInternal(args...);
+        }
+        return *this;
     }
 
     std::vector<std::uint8_t> data_;
 };
 
-inline static nixl::byteBuffer
+[[nodiscard]] inline static nixl::byteBuffer
 make_receive_buffer(std::size_t size) {
     nixl::byteBuffer buf;
     buf.resize(size);

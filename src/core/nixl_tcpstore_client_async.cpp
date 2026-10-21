@@ -269,8 +269,7 @@ nixlTcpStoreClientAsync::doConnect(asio::ip::tcp::resolver::results_type::const_
                         asio::error_code ec;
                         socket_.set_option(asio::socket_base::keep_alive(true), ec);
                         doValidate(deadline);
-                    } else if (connectionState_ == connection_state_t::CONNECTING &&
-                               std::chrono::steady_clock::now() < deadline) {
+                    } else if (error && std::chrono::steady_clock::now() < deadline) {
                         // Try the next endpoint.
                         endpoint++;
                         doConnect(endpoint, deadline);
@@ -282,8 +281,9 @@ nixlTcpStoreClientAsync::doConnect(asio::ip::tcp::resolver::results_type::const_
 // This function must be called from the I/O context.
 void
 nixlTcpStoreClientAsync::doValidate(deadline_t deadline) {
-    nixl::byteBuffer validate_msg{static_cast<std::uint8_t>(tcpstore::query_type_t::VALIDATE),
-                                  tcpstore::validation_magic};
+    nixl::byteBuffer validate_msg;
+    validate_msg.putValues(static_cast<std::uint8_t>(tcpstore::query_type_t::VALIDATE),
+                           tcpstore::validation_magic);
 
     initiateAsync<io_op_t::WRITE>(
         std::move(validate_msg),
@@ -300,7 +300,8 @@ nixlTcpStoreClientAsync::doValidate(deadline_t deadline) {
 void
 nixlTcpStoreClientAsync::doPing(deadline_t deadline) {
     const auto nonce = static_cast<std::uint32_t>(::getpid());
-    nixl::byteBuffer ping_msg{static_cast<std::uint8_t>(tcpstore::query_type_t::PING), nonce};
+    nixl::byteBuffer ping_msg;
+    ping_msg.putValues(static_cast<std::uint8_t>(tcpstore::query_type_t::PING), nonce);
 
     initiateAsync<io_op_t::WRITE>(
         std::move(ping_msg),
@@ -406,9 +407,10 @@ nixlTcpStoreClientAsync::set(const std::string &key,
 
         nixl::byteBuffer
         requestMessage() override {
-            return nixl::byteBuffer{static_cast<std::uint8_t>(tcpstore::query_type_t::SET),
-                                    tcpstore::key_prefix + key_,
-                                    value_};
+            return std::move(
+                nixl::byteBuffer().putValues(static_cast<std::uint8_t>(tcpstore::query_type_t::SET),
+                                             tcpstore::key_prefix + key_,
+                                             value_));
         }
 
         std::size_t
@@ -454,8 +456,9 @@ nixlTcpStoreClientAsync::get(
 
         nixl::byteBuffer
         requestMessage() override {
-            return nixl::byteBuffer{static_cast<std::uint8_t>(tcpstore::query_type_t::GET),
-                                    tcpstore::key_prefix + key_};
+            return std::move(
+                nixl::byteBuffer().putValues(static_cast<std::uint8_t>(tcpstore::query_type_t::GET),
+                                             tcpstore::key_prefix + key_));
         }
 
         std::size_t
@@ -497,9 +500,10 @@ nixlTcpStoreClientAsync::get(
 
         nixl::byteBuffer
         requestMessage() override {
-            return nixl::byteBuffer{static_cast<std::uint8_t>(tcpstore::query_type_t::CHECK),
-                                    static_cast<std::uint64_t>(1),
-                                    tcpstore::key_prefix + key_};
+            return std::move(nixl::byteBuffer().putValues(
+                static_cast<std::uint8_t>(tcpstore::query_type_t::CHECK),
+                static_cast<std::uint64_t>(1),
+                tcpstore::key_prefix + key_));
         }
 
         std::size_t
@@ -554,8 +558,9 @@ nixlTcpStoreClientAsync::deleteKey(const std::string &key,
 
         nixl::byteBuffer
         requestMessage() override {
-            return nixl::byteBuffer{static_cast<std::uint8_t>(tcpstore::query_type_t::DELETE_KEY),
-                                    tcpstore::key_prefix + key_};
+            return std::move(nixl::byteBuffer().putValues(
+                static_cast<std::uint8_t>(tcpstore::query_type_t::DELETE_KEY),
+                tcpstore::key_prefix + key_));
         }
 
         std::size_t
@@ -587,7 +592,7 @@ void
 nixlTcpStoreClientAsync::scheduleRequest(std::unique_ptr<Request> request) {
     bool is_queued = false;
     {
-        std::lock_guard<std::mutex> lock(sendQueueMutex_);
+        const std::lock_guard lock(sendQueueMutex_);
         if (connectionState_ != connection_state_t::SHUTTING_DOWN &&
             connectionState_ != connection_state_t::SHUTDOWN) {
             sendQueue_.push_back(std::move(request));
@@ -625,7 +630,7 @@ nixlTcpStoreClientAsync::processSendQueue() {
         } else {
             std::unique_ptr<Request> request;
             {
-                std::lock_guard<std::mutex> lock(sendQueueMutex_);
+                const std::lock_guard lock(sendQueueMutex_);
                 if (!sendQueue_.empty()) {
                     request = std::move(sendQueue_.front());
                     sendQueue_.pop_front();
@@ -670,7 +675,7 @@ nixlTcpStoreClientAsync::processSendQueue() {
         }
         break;
     case connection_state_t::SHUTDOWN: {
-        std::lock_guard<std::mutex> lock(sendQueueMutex_);
+        const std::lock_guard lock(sendQueueMutex_);
         assert(sendQueue_.empty());
         break;
     }

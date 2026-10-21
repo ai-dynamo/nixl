@@ -117,9 +117,12 @@ nixlTcpStoreMetadataBackend::stop() {
 
 void
 nixlTcpStoreMetadataBackend::publishKey(const std::string &key, const nixl_blob_t &blob) {
+    {
+        const std::lock_guard lock(publishedKeysMutex_);
+        publishedKeys_.insert(key);
+    }
     client_->set(key, blob, [this, key = key](asio::error_code error) {
         if (!error) {
-            publishedKeys_.insert(key);
             NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore published key " << key;
         } else {
             NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore set failed for key " << key << ": "
@@ -228,23 +231,24 @@ nixlTcpStoreMetadataBackend::tryFetch(const std::string &remote_name,
 
 nixl_status_t
 nixlTcpStoreMetadataBackend::invalidateLocal(const nixl_opt_args_t * /*extra_params*/) {
-    // Access the published keys from the I/O thread, so we do not need to
-    // protect it with a mutex.
-    asio::post(ioContext_, [this]() {
-        for (const auto &key : publishedKeys_) {
-            client_->deleteKey(key, [this, key = key](asio::error_code error, bool success) {
-                if (!error && success) {
-                    NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore invalidated key " << key;
-                } else if (error) {
-                    NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore invalidate failed for key "
-                               << key << ": " << error.message();
-                } else {
-                    NIXL_INFO << "[" << ctx_.agentName() << "] TCPStore invalidate skipped for key "
-                              << key << ": key does not exist";
-                }
-            });
-        }
-        publishedKeys_.clear();
-    });
+    std::unordered_set<std::string> keys;
+    {
+        const std::lock_guard lock(publishedKeysMutex_);
+        keys.swap(publishedKeys_);
+    }
+
+    for (const auto &key : keys) {
+        client_->deleteKey(key, [this, key = key](asio::error_code error, bool success) {
+            if (!error && success) {
+                NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore invalidated key " << key;
+            } else if (error) {
+                NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore invalidate failed for key "
+                           << key << ": " << error.message();
+            } else {
+                NIXL_INFO << "[" << ctx_.agentName() << "] TCPStore invalidate skipped for key "
+                          << key << ": key does not exist";
+            }
+        });
+    }
     return NIXL_SUCCESS;
 }
