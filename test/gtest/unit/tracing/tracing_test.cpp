@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -255,6 +256,13 @@ public:
 void
 failRandomBytes(std::uint8_t *, std::size_t) {
     throw std::system_error(ENOSYS, std::generic_category(), "getentropy failed");
+}
+
+int zero_draws_left = 0;
+
+void
+zeroFirstRandomBytes(std::uint8_t *bytes, std::size_t size) {
+    std::fill_n(bytes, size, (zero_draws_left-- > 0) ? 0 : 0x5a);
 }
 
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
@@ -644,11 +652,19 @@ TEST(Tracing, RequestStoresFixedCorrelationContext) {
     context.spanId = {0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7};
     context.flags = 0x03;
 
-    const nixlXferReqH request(
-        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, context);
+    const nixlXferReqH request("remote",
+                               NIXL_WRITE,
+                               DRAM_SEG,
+                               DRAM_SEG,
+                               0,
+                               nixl_remote_section_weak_t{},
+                               context,
+                               0x0123456789abcdefULL);
 
     EXPECT_EQ(request.traceCorrelationId64(), 0x00f067aa0ba902b7ULL);
     EXPECT_EQ(request.traceContext(), context);
+    EXPECT_EQ(request.traceRequestId(), 0x0123456789abcdefULL);
+    EXPECT_EQ(request.traceExecution(), 0u);
 }
 
 TEST(Tracing, RequestContextsAreDistinctAndStable) {
@@ -658,14 +674,16 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
                              DRAM_SEG,
                              0,
                              nixl_remote_section_weak_t{},
-                             nixl::trace::generateTraceContext());
+                             nixl::trace::generateTraceContext(),
+                             0);
     const nixlXferReqH second("remote",
                               NIXL_WRITE,
                               DRAM_SEG,
                               DRAM_SEG,
                               0,
                               nixl_remote_section_weak_t{},
-                              nixl::trace::generateTraceContext());
+                              nixl::trace::generateTraceContext(),
+                              0);
     const auto first_id = first.traceCorrelationId64();
 
     EXPECT_NE(first_id, second.traceCorrelationId64());
@@ -679,7 +697,8 @@ TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
                                DRAM_SEG,
                                0,
                                nixl_remote_section_weak_t{},
-                               nixl::trace::TraceContext{});
+                               nixl::trace::TraceContext{},
+                               0);
 
     EXPECT_EQ(request.traceCorrelationId64(), 0u);
 }
@@ -727,6 +746,24 @@ TEST(Tracing, ContextGenerationFailureIsUntracedAndLoggedOncePerTracer) {
     const auto other_tracer = makeMockTracer(c, d, 0, 0, 1.0, failRandomBytes);
     EXPECT_EQ(nixl::trace::TraceContext{other_tracer.get()}, nixl::trace::TraceContext{});
     EXPECT_EQ(failures.count(), 2u);
+}
+
+TEST(Tracing, RequestIdIsDrawnAgainWhileZero) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    zero_draws_left = 2;
+
+    EXPECT_EQ(nixl::trace::generateRequestId(tracer.get()), 0x5a5a5a5a5a5a5a5aULL);
+}
+
+TEST(Tracing, RequestIdIsNoneWithoutTracerOrSource) {
+    gtest::LogMessageCounter failures("could not generate a trace context");
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, failRandomBytes);
+
+    EXPECT_EQ(nixl::trace::generateRequestId(nullptr), 0u);
+    EXPECT_EQ(nixl::trace::generateRequestId(tracer.get()), 0u);
+    EXPECT_EQ(failures.count(), 1u);
 }
 
 // A phase recorded through the plugin-facing sink reaches every enabled trace

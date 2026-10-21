@@ -155,18 +155,18 @@ string.
 
 ## Instrumented operations
 
-The following Agent operations emit spans/markers (more will be added in later
+The following Agent operations emit spans or events (more will be added in later
 backends/PRs):
 
-| Span / marker | Kind | Attributes |
+| Span / event | Kind | Attributes |
 | ------------- | ---- | ---------- |
 | `nixl::registerMem` | `MemoryW` | `mem_type` |
 | `nixl::deregisterMem` | `Generic` | `mem_type` |
-| `nixl::makeXferReq` | `Generic` | `desc_count` |
-| `nixl::createXferReq` | `Generic` | `remote_agent`, `desc_count` |
-| `nixl::postXferReq.write` | `CommSend` | `remote_agent`, `bytes` |
-| `nixl::postXferReq.read` | `CommRecv` | `remote_agent`, `bytes` |
-| `nixl::xfer.complete` | `Metadata` (marker) | - |
+| `nixl::makeXferReq` | `Generic` | `desc_count`, `nixl.xfer_request_id` |
+| `nixl::createXferReq` | `Generic` | `remote_agent`, `desc_count`, `nixl.xfer_request_id` |
+| `nixl::postXferReq.write` | `CommSend` | `remote_agent`, `bytes`, `nixl.xfer_request_id`, `nixl.xfer_execution` |
+| `nixl::postXferReq.read` | `CommRecv` | `remote_agent`, `bytes`, `nixl.xfer_request_id`, `nixl.xfer_execution` |
+| `nixl::xfer.complete` | `Metadata` (event) | `nixl.xfer_request_id`, `nixl.xfer_execution` |
 | `nixl::makeConnection` | `Generic` | `remote_agent` |
 | `nixl::genNotif` | `Metadata` | `remote_agent` |
 | `nixl::getNotifs` | `Metadata` | - |
@@ -175,7 +175,7 @@ backends/PRs):
 | `nixl::prepMemView` | `MemoryR` | `mem_type`, `desc_count` |
 | `nixl::releaseMemView` | `Generic` | - |
 
-Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
+Spans cover the synchronous call only; the `nixl::xfer.complete` event is emitted
 once per completed post, by the first call that sees the transfer complete:
 `postXferReq` when the backend completes it at once, and otherwise `getXferStatus`,
 a repost of the same request, or `releaseXferReq`. How a backend renders attributes and
@@ -183,6 +183,23 @@ dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with
 backend (e.g. NVTX attaches attributes as typed payloads on the range via
 `nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
 record them).
+
+### Request id and execution number
+
+While tracing is active, each request gets a request id when `createXferReq` or
+`makeXferReq` creates it: 64 random bits, fixed for the request's life and recorded
+as `nixl.xfer_request_id`. Each post that passes `postXferReq`'s checks and reaches
+the backend takes the request's next execution number, `nixl.xfer_execution`,
+starting at 1, whether or not the backend then fails it. A post rejected before
+that, such as a repost refused with `NIXL_ERR_REPOST_ACTIVE`, takes none, so its
+span carries the request id but no execution number. A post's `nixl::xfer.complete`
+carries the same pair as its span. The id is recorded as an unsigned decimal string,
+since an `int64_t` attribute would show half of all ids as negative; the execution
+number is an `int64_t`. With no tracing backend active, a request has neither. A
+drawn id is never 0: if the agent's random source fails while drawing it, the
+request's records carry `nixl.xfer_request_id=0` and `nixl.xfer_execution=0`, meaning
+none. Both are attributes only: the wire and the NVTX payload carry the trace context
+(see "Correlation").
 
 ### Backend phases
 
@@ -367,11 +384,12 @@ In NIXL tracing, "correlation" can mean two different things:
 - **Cross-thread within a process** -- attributing spans emitted on different threads
   (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
   same request. Implemented via the backend-agnostic `pushContext()` / `popContext()`
-  API: NIXL wraps `postXferReq` and the `xfer.complete` marker in a correlation scope
-  that hands every backend the request's whole trace context, sampled or not. The NVTX
-  backend records the context's span id as the event's `uint64` payload -- so a post and
-  its completion carry the same id on the timeline regardless of which thread emitted
-  each. A request without a valid context pushes nothing.
+  API: NIXL wraps `postXferReq` in a correlation scope that hands every backend the
+  request's whole trace context, sampled or not, and passes the same context to the
+  `xfer.complete` event explicitly. The NVTX backend records the context's span id as
+  the event's `uint64` payload -- so a post and its completion carry the same id on the
+  timeline regardless of which thread emitted each. A request without a valid context
+  pushes nothing.
 
 ## Planned work
 

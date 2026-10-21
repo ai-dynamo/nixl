@@ -309,3 +309,23 @@ nixl::trace::generateTraceContext(double sample_ratio) {
     generateInto(context, sample_ratio, nullptr);
     return context;
 }
+
+std::uint64_t
+nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
+    if (tracer == nullptr) {
+        return 0;
+    }
+    const auto fill =
+        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : nixl::generateRandomBytes;
+    std::uint64_t id = 0;
+    try {
+        do {
+            fill(reinterpret_cast<std::uint8_t *>(&id), sizeof(id));
+        } while (id == 0);
+    }
+    catch (const std::exception &e) {
+        tracer->reportContextFailure(e.what());
+        return 0;
+    }
+    return id;
+}
