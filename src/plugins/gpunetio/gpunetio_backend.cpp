@@ -1789,7 +1789,6 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         docaXferReqGpu staged_req{};
         staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
         staged_req.state = DOCA_XFER_STATE_PREPARED;
-        staged_req.data_state = DOCA_XFER_DATA_NONE;
 
         uint32_t chunk_desc_count = 0;
         while (desc_offset < lcnt && staged_req.num < DOCA_XFER_REQ_SIZE &&
@@ -1975,7 +1974,6 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
 
             auto &request = xferReqRingCpu[idx];
             // Submission rewrites WQE/ticket fields before publishing their state.
-            request.data_state = DOCA_XFER_DATA_NONE;
             std::atomic_ref<uint32_t>(completion.state)
                 .store(DOCA_XFER_STATE_PREPARED, std::memory_order_release);
             std::atomic_ref<uint32_t>(request.state)

@@ -125,8 +125,6 @@ __device__ void
 nixl_gpunetio_dev_publish_data(docaXferReqGpu *request,
                                docaProgressState *progress_state,
                                uint32_t pos) {
-    cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(request->data_state)
-        .store(DOCA_XFER_DATA_POSTED, cuda::std::memory_order_relaxed);
     nixl_gpunetio_dev_store_host_state(request->state, DOCA_XFER_STATE_DATA_POSTED);
     cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(progress_state->active_bitmap)
         .fetch_or(1U << pos, cuda::std::memory_order_release);
@@ -259,9 +257,8 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
         for (uint32_t dependency = 0; dependency < xferReqRing[pos].wait_completion_count;
              ++dependency) {
             const uint32_t position = xferReqRing[pos].wait_completion_positions[dependency];
-            while (cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(
-                       xferReqRing[position].data_state)
-                       .load(cuda::std::memory_order_acquire) != DOCA_XFER_DATA_COMPLETE) {
+            while (nixl_gpunetio_dev_load_host_state(xferReqRing[position].state) !=
+                   DOCA_XFER_STATE_DATA_COMPLETE) {
                 if (nixl_gpunetio_dev_load_host_state(*exit_flag) != 0U ||
                     nixl_gpunetio_dev_load_host_state(progress_state->failed) != 0U) {
                     reserved = 0U;
@@ -451,8 +448,8 @@ kernel_progress(struct docaXferReqGpu *xfer_req_ring,
                         DOCA_GPUNETIO_VERBS_QP_SQ>(
                         doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_data), request->last_wqe);
                     if (poll_status == 0) {
-                        cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(request->data_state)
-                            .store(DOCA_XFER_DATA_COMPLETE, cuda::std::memory_order_release);
+                        cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(request->state)
+                            .store(DOCA_XFER_STATE_DATA_COMPLETE, cuda::std::memory_order_release);
                         if (DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx) != DOCA_NOTIF_NULL) {
                             send_notification = true;
                         } else {

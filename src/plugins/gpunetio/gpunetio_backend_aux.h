@@ -128,7 +128,6 @@ struct docaXferReqGpu {
     uint32_t msg_sz;
     uint64_t last_wqe;
     uint32_t state;
-    uint32_t data_state;
     uintptr_t lbuf_notif;
     uint32_t lkey_notif;
     nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
@@ -158,12 +157,8 @@ enum docaXferState : uint32_t {
     DOCA_XFER_STATE_DATA_POSTED,
     DOCA_XFER_STATE_COMPLETE,
     DOCA_XFER_STATE_ERROR,
-};
-
-enum docaXferDataState : uint32_t {
-    DOCA_XFER_DATA_NONE,
-    DOCA_XFER_DATA_POSTED,
-    DOCA_XFER_DATA_COMPLETE,
+    // GPU data CQ completed; notification and CPU terminal publication may still be pending.
+    DOCA_XFER_STATE_DATA_COMPLETE,
 };
 
 struct docaQpProgress {
