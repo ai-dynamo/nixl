@@ -25,9 +25,7 @@ struct nixlbenchDeviceCounters {
  * @a numRegions is data region count: group @c g owns indices @c g*numRegions .. @c
  * (g+1)*numRegions-1. The host must append a counter buffer after all data descriptors, at index @a
  * counterIndex. The counter buffer contains one @ref nixlbenchDeviceCounters slot per channel.
- * Within each slot it stores:
- * - done counter at byte offset @a completionCounterOffsetBytes
- * - error counter at byte offset @a errorCounterOffsetBytes
+ * Each slot contains a done counter and an error counter.
  *
  * Every group in the launched block transfers @a numIterations times.
  * The block as a whole performs @c numIterations * num_groups list transfers.
@@ -45,8 +43,6 @@ struct nixlbenchDeviceXferParams {
     unsigned channelNum; ///< Logical channels shared by groups using group_id % channelNum
     uint64_t *postDurationNs; ///< Per-iteration, per-group PUT posting duration output
     uint64_t *xferDurationNs; ///< Per-iteration, per-group completion polling duration output
-    size_t completionCounterOffsetBytes; ///< Done counter offset within a channel slot
-    size_t errorCounterOffsetBytes; ///< Error counter offset within a channel slot
 };
 
 /**

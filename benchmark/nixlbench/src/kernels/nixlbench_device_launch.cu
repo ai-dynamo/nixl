@@ -78,7 +78,7 @@ nixlbenchSignalCompletion(const nixlbenchDeviceXferParams &params,
                           unsigned channel_id,
                           nixlGpuXferStatusH &xfer_status) {
     return nixlbenchSignalCounter<Level>(params,
-                                         params.completionCounterOffsetBytes,
+                                         offsetof(nixlbenchDeviceCounters, done),
                                          num_iterations,
                                          channel_id,
                                          xfer_status,
@@ -91,7 +91,7 @@ nixlbenchSignalError(const nixlbenchDeviceXferParams &params,
                      unsigned channel_id,
                      nixlGpuXferStatusH &xfer_status) {
     return nixlbenchSignalCounter<Level>(
-        params, params.errorCounterOffsetBytes, 1ull, channel_id, xfer_status, "error");
+        params, offsetof(nixlbenchDeviceCounters, error), 1ull, channel_id, xfer_status, "error");
 }
 
 /**
