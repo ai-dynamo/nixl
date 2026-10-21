@@ -62,6 +62,34 @@ def test_list():
     test_list.addDesc((2000, 100, 0))
 
 
+@pytest.mark.parametrize(
+    "dlist_cls, descs",
+    [
+        (nixl.nixlXferDList, [(1000, 105, 0), (2000, 30, 0)]),
+        (nixl.nixlRemoteDList, [(1000, 105, 0, "agent"), (2000, 30, 0, "agent")]),
+        (nixl.nixlRegDList, [(1000, 105, 0, b"meta"), (2000, 30, 0, b"meta")]),
+    ],
+)
+def test_list_indexing(dlist_cls, descs):
+    test_list = dlist_cls(nixl.DRAM_SEG, descs)
+    count = test_list.descCount()
+
+    for index in (count, count + 5, -count - 1):
+        with pytest.raises(IndexError):
+            test_list[index]
+        with pytest.raises(IndexError):
+            test_list[index] = descs[0]
+
+    # Iteration stops at the end of the list instead of reading past it.
+    assert list(test_list) == descs
+    assert test_list[-1] == test_list[count - 1] == descs[-1]
+    assert test_list[-count] == descs[0]
+
+    test_list[-1] = descs[0]
+    assert test_list[count - 1] == descs[0]
+    assert test_list.descCount() == count
+
+
 def test_agent():
     os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
     # getXferTelemetry() needs an active telemetry sink; without one, telemetry
