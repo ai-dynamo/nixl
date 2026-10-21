@@ -461,7 +461,10 @@ pipeline_stop:
             if (jsons) {
                 def files = jsons.split('\n')
                 c.sidecars = files.size()
-                c.sidecar = new groovy.json.JsonSlurperClassic().parseText(readFile(files[0]))
+                // Step result into a variable first: a step inside the slurper's
+                // argument list would have to persist the (non-serializable) slurper.
+                def sidecarText = readFile(files[0])
+                c.sidecar = new groovy.json.JsonSlurperClassic().parseText(sidecarText)
             }
             cells << c
         }
@@ -478,7 +481,8 @@ pipeline_stop:
             ''').trim()
         }
         if (code != '200') throw new Exception("GET ${url} returned ${code}")
-        new groovy.json.JsonSlurperClassic().parseText(readFile('manifest-query.json'))
+        def body = readFile('manifest-query.json')
+        new groovy.json.JsonSlurperClassic().parseText(body)
     }
 
     // name -> [sha256, size] for every file in the folder, from Artifactory.
