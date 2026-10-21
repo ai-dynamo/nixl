@@ -120,7 +120,7 @@ private:
 
     // Connect to the TCPStore server.
     void
-    doConnect(asio::ip::tcp::resolver::results_type::const_iterator endpoint, deadline_t deadline);
+    doConnect(deadline_t deadline);
 
     // VALIDATE with the TCPStore server.
     void

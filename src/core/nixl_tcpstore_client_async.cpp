@@ -246,39 +246,31 @@ nixlTcpStoreClientAsync::doResolve(std::chrono::milliseconds timeout) {
                     asio::error_code error, asio::ip::tcp::resolver::results_type results) {
                     if (!error && connectionState_ == connection_state_t::CONNECTING) {
                         resolvedEndpoints_ = results;
-                        doConnect(resolvedEndpoints_.begin(), deadline);
+                        doConnect(deadline);
                     }
                 }));
     } else {
-        doConnect(resolvedEndpoints_.begin(), deadline);
+        doConnect(deadline);
     }
 }
 
 // This function must be called from the I/O context.
 void
-nixlTcpStoreClientAsync::doConnect(asio::ip::tcp::resolver::results_type::const_iterator endpoint,
-                                   deadline_t deadline) {
-    if (endpoint == resolvedEndpoints_.end()) {
-        onError("connect", asio::error::host_not_found, false, generation_);
-        return;
-    } else {
-        socket_.async_connect(
-            *endpoint,
-            cancelAndErrorAdapter(
-                "connect", deadline, [this, deadline, endpoint](asio::error_code error) mutable {
-                    if (!error && connectionState_ == connection_state_t::CONNECTING) {
-                        // Attempt to set keep-alive and ignore the error.
-                        asio::error_code ec;
-                        socket_.set_option(asio::socket_base::keep_alive(true), ec);
-                        doValidate(deadline);
-                    } else if (error && std::chrono::steady_clock::now() < deadline) {
-                        // Try the next endpoint.
-                        connectionState_ = connection_state_t::CONNECTING;
-                        endpoint++;
-                        doConnect(endpoint, deadline);
-                    }
-                }));
-    }
+nixlTcpStoreClientAsync::doConnect(deadline_t deadline) {
+    asio::async_connect(
+        socket_,
+        resolvedEndpoints_,
+        cancelAndErrorAdapter(
+            "connect",
+            deadline,
+            [this, deadline](asio::error_code error, const asio::ip::tcp::endpoint &) mutable {
+                if (!error && connectionState_ == connection_state_t::CONNECTING) {
+                    // Attempt to set keep-alive and ignore the error.
+                    asio::error_code ec;
+                    socket_.set_option(asio::socket_base::keep_alive(true), ec);
+                    doValidate(deadline);
+                }
+            }));
 }
 
 // This function must be called from the I/O context.
@@ -662,7 +654,7 @@ nixlTcpStoreClientAsync::processSendQueue() {
                 // Otherwise, the I/O operation will timeout immediately and
                 // trigger error handling which close the connection unnecessarily.
                 request->onComplete(asio::error::timed_out, nixl::byteBuffer());
-                processSendQueue();
+                asio::post(ioContext_, [this]() { processSendQueue(); });
                 return;
             }
 

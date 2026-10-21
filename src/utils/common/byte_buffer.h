@@ -45,7 +45,7 @@ public:
      * @brief Move constructor.
      * @param other The other byte buffer to move from.
      */
-    byteBuffer(byteBuffer &&) noexcept = default;
+    byteBuffer(byteBuffer &&other) noexcept = default;
 
     /**
      * @brief Move assignment operator.
@@ -53,7 +53,7 @@ public:
      * @return this.
      */
     byteBuffer &
-    operator=(byteBuffer &&) noexcept = default;
+    operator=(byteBuffer &&other) noexcept = default;
 
     // Delete copy constructor and assignment operator.
     byteBuffer(const byteBuffer &) = delete;
