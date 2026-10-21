@@ -34,6 +34,25 @@ Stream pool mode instead is when applications mostly wants to process data on th
 
 ## Input parameters
 
+`progress_owners` selects 1–4 independent GPU progress owners (default 1).
+A peer's data QPs and notification CQ remain with one owner, including striped
+WRITE, while different peers can progress concurrently. Separate active masks
+prevent a stale cross-owner slot snapshot from being treated as a new request.
+
+`ordered_notifications=1` routes data through the existing notification RC QP
+and may prepost a fenced SEND behind the data prefix. It still waits for both
+data and SEND completion before reporting success and drains a preposted SEND
+before releasing an errored request. The default is 0; this option currently
+requires `data_qp_count=1`. Set both options at backend creation.
+
+Compact affine WRITE uses the opt-in request parameter
+`gpunetio_strided_write_v1=rows,item_size,local_stride,remote_stride`.
+Strides are in items. Each payload descriptor represents one affine run; the
+last descriptor is an ordinary ordering marker. Expanded spans must fit their
+registered MRs. See the manual [PD replay](../../../contrib/gpunetio_pd/README.md).
+The historical balanced-LAG result there is not a default-path guarantee;
+supported LAG integration remains a Draft qualification item.
+
 `data_qp_count` optionally selects 1–4 WRITE QPs per peer (default 1). Both peers
 must use the same count. Counts above 1 retain a dedicated READ QP, stripe WRITE
 chunks over one block per QP in a single kernel launch and require
