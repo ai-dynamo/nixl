@@ -90,6 +90,16 @@ else
     SUDO=""
 fi
 
+# Install prefixes may live under a root-owned parent (e.g. /opt). Create and
+# own them once up front so the builds below install without sudo; sudo-created
+# dirs would otherwise be root-owned and break later non-sudo steps.
+_prefixes=("$INSTALL_DIR" "$LIBFABRIC_INSTALL_DIR")
+# A pre-installed UCX is not rebuilt, so its prefix is left untouched.
+[ -z "$PRE_INSTALLED_UCX_ENV" ] && _prefixes+=("$UCX_INSTALL_DIR")
+for _prefix in "${_prefixes[@]}"; do
+    $SUDO mkdir -p "$_prefix" && $SUDO chown -R "$(id -u):$(id -g)" "$_prefix"
+done
+
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
@@ -176,16 +186,14 @@ else
       mkdir -p "hiredis-${HIREDIS_VERSION}/build" && \
       cd "hiredis-${HIREDIS_VERSION}/build" && \
       cmake .. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig && \
-      $SUDO chown -R "$(id -u):$(id -g)" "${INSTALL_DIR}"/lib/libhiredis* \
-          "${INSTALL_DIR}/lib/pkgconfig/hiredis.pc" "${INSTALL_DIR}/include/hiredis" \
-          "${INSTALL_DIR}/lib/cmake/hiredis" && \
       pkg-config --atleast-version=1.0.1 hiredis && \
       cd "${BUILD_TMP}" && \
       rm -rf "hiredis-${HIREDIS_VERSION}" "hiredis-${HIREDIS_VERSION}.tar.gz" \
@@ -277,7 +285,7 @@ else
                   --disable-rstream \
                   --enable-efa && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig && \
       cd .. && \
       rm -rf libfabric-*
@@ -300,7 +308,7 @@ else
           -DABSL_PROPAGATE_CXX_STD=ON \
           -DABSL_ENABLE_INSTALL=ON && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig && \
       cd ${BUILD_TMP} && \
       rm -rf abseil-cpp \
@@ -328,7 +336,7 @@ else
           -DgRPC_PROTOBUF_PROVIDER=module \
           -DgRPC_ZLIB_PROVIDER=package && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig && \
       cd ${BUILD_TMP} && \
       rm -rf grpc \
@@ -350,7 +358,7 @@ else
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig \
     )
 
@@ -457,7 +465,7 @@ else
             --without-gdrcopy \
             ${UCX_CUDA_BUILD_ARGS} && \
           make -j"$NPROC" && \
-          $SUDO make -j install-strip && \
+          make -j install-strip && \
           $SUDO ldconfig \
     )
 fi # PRE_INSTALLED_UCX_ENV end
