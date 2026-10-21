@@ -24,18 +24,22 @@
  * runtime (NVTX today; Chakra and others later). This is an internal core API
  * (compiled into libnixl, not installed as a public header). It is kept
  * deliberately self-contained -- depending only on standard headers and on
- * trace_context.h -- so it stays easy to reason about and could be promoted to
- * a public header later without churn if an external consumer appears.
+ * trace_context.h and nixl_time.h -- so it stays easy to reason about and
+ * could be promoted to a public header later without churn if an external
+ * consumer appears.
  */
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
+#include "common/nixl_time.h"
 #include "tracing/trace_context.h"
 
 namespace nixl::trace {
@@ -61,6 +65,15 @@ enum class Kind : std::uint8_t {
  */
 struct SpanId {
     std::uint64_t value{0};
+};
+
+/**
+ * @brief Typed attribute of an emitted span or event. The key and a string
+ *        value are views, valid only for the call.
+ */
+struct Attribute {
+    std::string_view key;
+    std::variant<std::string_view, std::int64_t, double> value;
 };
 
 /**
@@ -105,6 +118,26 @@ public:
 
     [[nodiscard]] virtual std::string_view
     name() const noexcept = 0;
+
+    /**
+     * @brief Record a span from @p start to @p end, or an event at @p at, that
+     *        already happened. Times are `nixlTime` microseconds on
+     *        `std::chrono::steady_clock`; @p context is the record's own, not
+     *        the pushed one, and an invalid context means none.
+     */
+    virtual void
+    emitSpan(std::string_view name,
+             Kind kind,
+             const TraceContext &context,
+             nixlTime::us_t start,
+             nixlTime::us_t end,
+             std::span<const Attribute> attrs) = 0;
+    virtual void
+    emitEvent(std::string_view name,
+              Kind kind,
+              const TraceContext &context,
+              nixlTime::us_t at,
+              std::span<const Attribute> attrs) = 0;
 };
 
 class Tracer;
@@ -164,8 +197,9 @@ private:
 using random_bytes_fn_t = void (*)(std::uint8_t *, std::size_t);
 
 /**
- * @brief Composite tracer owned by the Agent. A single beginSpan()/mark() call
- *        fans out to every enabled backend. No singleton; injected explicitly.
+ * @brief Composite tracer owned by the Agent. A single beginSpan(), mark(),
+ *        emitSpan() or emitEvent() call fans out to every enabled backend. No
+ *        singleton; injected explicitly.
  */
 class Tracer {
 public:
@@ -214,6 +248,20 @@ public:
     pushContext(const TraceContext &context);
     void
     popContext();
+
+    void
+    emitSpan(std::string_view name,
+             Kind kind,
+             const TraceContext &context,
+             nixlTime::us_t start,
+             nixlTime::us_t end,
+             std::span<const Attribute> attrs);
+    void
+    emitEvent(std::string_view name,
+              Kind kind,
+              const TraceContext &context,
+              nixlTime::us_t at,
+              std::span<const Attribute> attrs);
 
 private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;

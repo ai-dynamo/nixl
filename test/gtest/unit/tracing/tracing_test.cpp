@@ -23,11 +23,14 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "common.h"
@@ -50,6 +53,18 @@ namespace {
 
 constexpr const char *kUnloadableBackend = "definitely-not-a-backend";
 
+using attr_value_t = std::variant<std::string, std::int64_t, double>;
+using attr_t = std::pair<std::string, attr_value_t>;
+using attr_list_t = std::vector<attr_t>;
+
+struct EmittedRecord {
+    std::string name;
+    nixl::trace::Kind kind;
+    nixl::trace::TraceContext context;
+    std::vector<nixlTime::us_t> times;
+    attr_list_t attrs;
+};
+
 // Records the calls a single backend receives, so tests can assert that one
 // call site fanned out to every backend.
 struct CallLog {
@@ -63,7 +78,32 @@ struct CallLog {
     std::vector<nixl::trace::TraceContext> pushedContexts;
     std::vector<nixl::trace::TraceContext> activeContexts;
     std::vector<nixl::trace::TraceContext> poppedContexts;
+    std::vector<EmittedRecord> emittedSpans;
+    std::vector<EmittedRecord> emittedEvents;
 };
+
+[[nodiscard]] EmittedRecord
+makeRecord(std::string_view name,
+           nixl::trace::Kind kind,
+           const nixl::trace::TraceContext &context,
+           std::vector<nixlTime::us_t> times,
+           std::span<const nixl::trace::Attribute> attrs) {
+    EmittedRecord record{std::string(name), kind, context, std::move(times), {}};
+    for (const auto &attr : attrs) {
+        record.attrs.emplace_back(
+            std::string(attr.key),
+            std::visit(
+                [](const auto value) -> attr_value_t {
+                    if constexpr (std::is_same_v<decltype(value), const std::string_view>) {
+                        return std::string(value);
+                    } else {
+                        return value;
+                    }
+                },
+                attr.value));
+    }
+    return record;
+}
 
 class MockSpan final : public nixl::trace::SpanBackend {
 public:
@@ -128,6 +168,25 @@ public:
     }
 
     void
+    emitSpan(std::string_view name,
+             nixl::trace::Kind kind,
+             const nixl::trace::TraceContext &context,
+             nixlTime::us_t start,
+             nixlTime::us_t end,
+             std::span<const nixl::trace::Attribute> attrs) override {
+        log_->emittedSpans.push_back(makeRecord(name, kind, context, {start, end}, attrs));
+    }
+
+    void
+    emitEvent(std::string_view name,
+              nixl::trace::Kind kind,
+              const nixl::trace::TraceContext &context,
+              nixlTime::us_t at,
+              std::span<const nixl::trace::Attribute> attrs) override {
+        log_->emittedEvents.push_back(makeRecord(name, kind, context, {at}, attrs));
+    }
+
+    void
     pushContext(const nixl::trace::TraceContext &context) override {
         log_->pushedContexts.push_back(context);
         log_->activeContexts.push_back(context);
@@ -161,6 +220,25 @@ public:
 
     void
     mark(std::string_view, nixl::trace::Kind) override {}
+
+    void
+    emitSpan(std::string_view,
+             nixl::trace::Kind,
+             const nixl::trace::TraceContext &,
+             nixlTime::us_t,
+             nixlTime::us_t,
+             std::span<const nixl::trace::Attribute>) override {
+        throw std::runtime_error("emitSpan failed");
+    }
+
+    void
+    emitEvent(std::string_view,
+              nixl::trace::Kind,
+              const nixl::trace::TraceContext &,
+              nixlTime::us_t,
+              std::span<const nixl::trace::Attribute>) override {
+        throw std::runtime_error("emitEvent failed");
+    }
 
     void
     pushContext(const nixl::trace::TraceContext &) override {}
@@ -270,6 +348,34 @@ TEST(Tracing, MarkFanOut) {
     EXPECT_EQ(b.marks, 2);
 }
 
+TEST(Tracing, EmittedRecordsFanOutToAllBackends) {
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+    const auto context = testContext(0x21, 0x02);
+    const nixl::trace::Attribute attrs[] = {
+        {"peer", std::string_view{"agent_1"}}, {"bytes", std::int64_t{4096}}, {"ratio", 0.5}};
+    const attr_list_t expected{
+        {"peer", std::string("agent_1")}, {"bytes", std::int64_t{4096}}, {"ratio", 0.5}};
+
+    tracer->emitSpan("span", nixl::trace::Kind::CommSend, context, 10, 25, attrs);
+    tracer->emitEvent("event", nixl::trace::Kind::CommRecv, context, 42, attrs);
+
+    for (const CallLog *log : {&a, &b}) {
+        ASSERT_EQ(log->emittedSpans.size(), 1u);
+        EXPECT_EQ(log->emittedSpans[0].name, "span");
+        EXPECT_EQ(log->emittedSpans[0].kind, nixl::trace::Kind::CommSend);
+        EXPECT_EQ(log->emittedSpans[0].context, context);
+        EXPECT_EQ(log->emittedSpans[0].times, (std::vector<nixlTime::us_t>{10, 25}));
+        EXPECT_EQ(log->emittedSpans[0].attrs, expected);
+        ASSERT_EQ(log->emittedEvents.size(), 1u);
+        EXPECT_EQ(log->emittedEvents[0].name, "event");
+        EXPECT_EQ(log->emittedEvents[0].kind, nixl::trace::Kind::CommRecv);
+        EXPECT_EQ(log->emittedEvents[0].context, context);
+        EXPECT_EQ(log->emittedEvents[0].times, std::vector<nixlTime::us_t>{42});
+        EXPECT_EQ(log->emittedEvents[0].attrs, expected);
+    }
+}
+
 // Span::id() reports the first non-zero backend id, independent of ordering:
 // a backend with no id (e.g. NVTX, id {0}) must not mask a later backend's id.
 TEST(Tracing, SpanIdFromFirstNonZeroBackend) {
@@ -297,6 +403,8 @@ TEST(Tracing, EmptyTracerIsInert) {
     span.addCtrlDep(nixl::trace::SpanId{7});
     EXPECT_EQ(span.id().value, 0u);
     tracer.mark("m"); // no crash
+    tracer.emitSpan("s", nixl::trace::Kind::Generic, testContext(0x23), 1, 2, {});
+    tracer.emitEvent("e", nixl::trace::Kind::Metadata, testContext(0x23), 3, {});
 }
 
 // A default-constructed Span (what the macros bind when the tracer is null) is
@@ -631,20 +739,18 @@ TEST(TracePhaseSink, RecordedPhaseReachesEveryBackend) {
     sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 1234, {}, nullptr);
 
     for (const CallLog *log : {&a, &b}) {
-        EXPECT_EQ(log->spansBegun, 1);
-        EXPECT_EQ(log->spansEnded, 1);
-        ASSERT_EQ(log->spanNames.size(), 1u);
-        EXPECT_EQ(log->spanNames[0], "nixl::wire.submitted");
-        ASSERT_EQ(log->strAttrs.size(), 1u);
-        EXPECT_EQ(log->strAttrs[0].first, "nixl.backend");
-        EXPECT_EQ(log->strAttrs[0].second, "UCX");
-        ASSERT_EQ(log->intAttrs.size(), 1u);
-        EXPECT_EQ(log->intAttrs[0].first, "nixl.phase.timestamp_us");
-        EXPECT_EQ(log->intAttrs[0].second, 1234);
+        EXPECT_EQ(log->spansBegun, 0);
+        ASSERT_EQ(log->emittedEvents.size(), 1u);
+        const EmittedRecord &event = log->emittedEvents[0];
+        EXPECT_EQ(event.name, "nixl::wire.submitted");
+        EXPECT_EQ(event.times, std::vector<nixlTime::us_t>{1234});
+        EXPECT_EQ(event.attrs,
+                  (attr_list_t{{"nixl.backend", std::string("UCX")},
+                               {"nixl.phase.timestamp_us", std::int64_t{1234}}}));
     }
 }
 
-// Every enumerator maps to a distinct span name, so timelines stay comparable
+// Every enumerator maps to a distinct event name, so timelines stay comparable
 // across plugins.
 TEST(TracePhaseSink, PhaseVocabularyIsDistinct) {
     constexpr nixl_trace_phase_t kPhases[] = {nixl_trace_phase_t::SUBMIT,
@@ -662,7 +768,32 @@ TEST(TracePhaseSink, PhaseVocabularyIsDistinct) {
     EXPECT_EQ(names.size(), std::size(kPhases));
 }
 
-// The generic phase carries a plugin-supplied label as the span name; an empty
+TEST(TracePhaseSink, NotificationPhasesAreSendAndReceive) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+    constexpr std::pair<nixl_trace_phase_t, nixl::trace::Kind> kKinds[] = {
+        {nixl_trace_phase_t::SUBMIT, nixl::trace::Kind::Metadata},
+        {nixl_trace_phase_t::WIRE_SUBMITTED, nixl::trace::Kind::Metadata},
+        {nixl_trace_phase_t::WIRE_COMPLETED, nixl::trace::Kind::Metadata},
+        {nixl_trace_phase_t::NOTIF_SENT, nixl::trace::Kind::CommSend},
+        {nixl_trace_phase_t::NOTIF_RECEIVED, nixl::trace::Kind::CommRecv},
+        {nixl_trace_phase_t::REMOTE_OBSERVED, nixl::trace::Kind::Metadata},
+        {nixl_trace_phase_t::OTHER, nixl::trace::Kind::Metadata}};
+
+    for (const auto &[phase, kind] : kKinds) {
+        sink.recordPhase(phase, {}, 1, {}, nullptr);
+    }
+
+    for (const CallLog *log : {&a, &b}) {
+        ASSERT_EQ(log->emittedEvents.size(), std::size(kKinds));
+        for (std::size_t i = 0; i < std::size(kKinds); ++i) {
+            EXPECT_EQ(log->emittedEvents[i].kind, kKinds[i].second) << log->emittedEvents[i].name;
+        }
+    }
+}
+
+// The generic phase carries a plugin-supplied label as the event name; an empty
 // label falls back to the enum's own name.
 TEST(TracePhaseSink, GenericPhaseUsesPluginLabel) {
     CallLog a, b;
@@ -672,13 +803,13 @@ TEST(TracePhaseSink, GenericPhaseUsesPluginLabel) {
     sink.recordPhase(nixl_trace_phase_t::OTHER, "post_write", 1, {}, nullptr);
     sink.recordPhase(nixl_trace_phase_t::OTHER, {}, 2, {}, nullptr);
 
-    ASSERT_EQ(a.spanNames.size(), 2u);
-    EXPECT_EQ(a.spanNames[0], "post_write");
-    EXPECT_EQ(a.spanNames[1], "nixl::phase");
+    ASSERT_EQ(a.emittedEvents.size(), 2u);
+    EXPECT_EQ(a.emittedEvents[0].name, "post_write");
+    EXPECT_EQ(a.emittedEvents[1].name, "nixl::phase");
 }
 
 // A label passed with any phase is recorded, not just the generic one: the
-// span name stays the fixed vocabulary entry, and the label rides along as an
+// event name stays the fixed vocabulary entry, and the label rides along as an
 // attribute so it cannot be silently dropped.
 TEST(TracePhaseSink, LabelIsRecordedForEveryPhase) {
     CallLog a, b;
@@ -687,11 +818,12 @@ TEST(TracePhaseSink, LabelIsRecordedForEveryPhase) {
 
     sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, "rail0", 5, {}, nullptr);
 
-    ASSERT_EQ(a.spanNames.size(), 1u);
-    EXPECT_EQ(a.spanNames[0], "nixl::wire.submitted");
-    ASSERT_EQ(a.strAttrs.size(), 2u);
-    EXPECT_EQ(a.strAttrs[1].first, "nixl.phase.label");
-    EXPECT_EQ(a.strAttrs[1].second, "rail0");
+    ASSERT_EQ(a.emittedEvents.size(), 1u);
+    EXPECT_EQ(a.emittedEvents[0].name, "nixl::wire.submitted");
+    EXPECT_EQ(a.emittedEvents[0].attrs,
+              (attr_list_t{{"nixl.backend", std::string("LIBFABRIC")},
+                           {"nixl.phase.timestamp_us", std::int64_t{5}},
+                           {"nixl.phase.label", std::string("rail0")}}));
 }
 
 // An unlabelled phase adds no label attribute at all.
@@ -702,7 +834,8 @@ TEST(TracePhaseSink, EmptyLabelAddsNoAttribute) {
 
     sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 5, {}, nullptr);
 
-    for (const auto &attr : a.strAttrs) {
+    ASSERT_EQ(a.emittedEvents.size(), 1u);
+    for (const auto &attr : a.emittedEvents[0].attrs) {
         EXPECT_NE(attr.first, "nixl.phase.label");
     }
 }
@@ -716,11 +849,12 @@ TEST(TracePhaseSink, PluginAttributesAreForwarded) {
     const nixlBackendTraceAttr attrs[] = {{"rail", "0"}, {"op", "write"}};
     sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 7, attrs, nullptr);
 
-    ASSERT_EQ(a.strAttrs.size(), 3u);
-    EXPECT_EQ(a.strAttrs[1].first, "rail");
-    EXPECT_EQ(a.strAttrs[1].second, "0");
-    EXPECT_EQ(a.strAttrs[2].first, "op");
-    EXPECT_EQ(a.strAttrs[2].second, "write");
+    ASSERT_EQ(a.emittedEvents.size(), 1u);
+    EXPECT_EQ(a.emittedEvents[0].attrs,
+              (attr_list_t{{"nixl.backend", std::string("LIBFABRIC")},
+                           {"nixl.phase.timestamp_us", std::int64_t{7}},
+                           {"rail", std::string("0")},
+                           {"op", std::string("write")}}));
 }
 
 TEST(TracePhaseSink, ValidContextCorrelatesAndRecordsTraceparent) {
@@ -738,28 +872,34 @@ TEST(TracePhaseSink, ValidContextCorrelatesAndRecordsTraceparent) {
     sink.recordPhase(nixl_trace_phase_t::NOTIF_RECEIVED, {}, 3, {}, &*context);
 
     for (const CallLog *log : {&a, &b}) {
-        EXPECT_EQ(log->pushedContexts, std::vector{*context});
-        EXPECT_EQ(log->poppedContexts, std::vector{*context});
-        ASSERT_EQ(log->strAttrs.size(), 4u);
-        EXPECT_EQ(log->strAttrs[3].first, "nixl.traceparent");
-        EXPECT_EQ(log->strAttrs[3].second, traceparent);
+        EXPECT_TRUE(log->pushedContexts.empty());
+        ASSERT_EQ(log->emittedEvents.size(), 3u);
+        EXPECT_EQ(log->emittedEvents[0].context, nixl::trace::TraceContext{});
+        EXPECT_EQ(log->emittedEvents[1].context, zeroed);
+        EXPECT_EQ(log->emittedEvents[2].context, *context);
+        EXPECT_EQ(log->emittedEvents[0].attrs.size(), 2u);
+        EXPECT_EQ(log->emittedEvents[1].attrs.size(), 2u);
+        ASSERT_EQ(log->emittedEvents[2].attrs.size(), 3u);
+        EXPECT_EQ(log->emittedEvents[2].attrs[2],
+                  (attr_t{"nixl.traceparent", std::string(traceparent)}));
     }
 }
 
 // A backend may decline a span; Tracer drops the null, leaving the Span
 // inactive even though the tracer has a backend. Nothing must be recorded and
 // no null span may be dereferenced.
-TEST(TracePhaseSink, InactiveSpanRecordsNothing) {
+TEST(Tracing, InactiveSpanRecordsNothing) {
     CallLog a;
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     backends.push_back(std::make_unique<MockBackend>("a", &a, 0, /*null_spans=*/true));
     nixl::trace::Tracer tracer{std::move(backends)};
-    nixl::trace::TracerPhaseSink sink{tracer, "UCX"};
+    auto span = tracer.beginSpan("op");
 
-    const nixlBackendTraceAttr attrs[] = {{"rail", "0"}};
-    sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 1, attrs, nullptr);
+    span.addAttribute("rail", std::string_view{"0"});
+    span.addAttribute("bytes", std::int64_t{1});
 
     EXPECT_FALSE(tracer.empty());
+    EXPECT_FALSE(span.active());
     EXPECT_EQ(a.spansBegun, 1);
     EXPECT_EQ(a.spansEnded, 0);
     EXPECT_TRUE(a.strAttrs.empty());

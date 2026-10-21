@@ -25,11 +25,20 @@ execution-trace tools.
 ## Architecture
 
 - **`nixl::trace::Tracer`** — a composite tracer **owned by each `nixlAgent`** (no
-  singleton; injected into call sites). One `beginSpan()`/`mark()` call fans out to
-  every active backend.
+  singleton; injected into call sites). One `beginSpan()`, `mark()`, `emitSpan()` or
+  `emitEvent()` call fans out to every active backend.
 - **`nixl::trace::Span`** — a move-only handle returned by `beginSpan()`. It forwards
   attributes/dependencies to each backend span and **ends them all on destruction**
   (RAII), so a span covers the scope in which it is declared.
+- **`emitSpan()` / `emitEvent()`** — record a span or a point event after the fact,
+  with its times, trace context, kind and typed attributes passed explicitly instead
+  of taken from the clock and the active correlation scope. They are for records
+  timed elsewhere or reported from another thread, such as the backend phases below.
+  Times are `nixlTime` microseconds on `std::chrono::steady_clock`
+  (`nixlTime::getUs()`), not a wall clock; a backend that needs wall-clock time
+  converts at export. NVTX can draw only at the moment of the call, so it draws both
+  as zero-length ranges there, and an emitted span carries its times as the
+  `nixl.start_us` and `nixl.end_us` attributes.
 - **`TraceBackend` / `SpanBackend`** — the backend interfaces. Each backend
   implementation provides them.
 - **Backend plugins** — each backend is a `libtrace_backend_<name>.so` that exports
@@ -38,8 +47,8 @@ execution-trace tools.
   `dlopen`s them on demand by the `libtrace_backend_` prefix — the same machinery used
   for data backends and telemetry exporters. The plugin contract lives in
   `src/core/tracing/trace_plugin.h`.
-- **`Kind`** — the operation kind attached to a span. It selects an NVTX color and
-  maps 1:1 onto the Chakra `NodeType` vocabulary:
+- **`Kind`** — the operation kind attached to a span or event. It selects an NVTX
+  color and maps 1:1 onto the Chakra `NodeType` vocabulary:
   `Generic`, `Compute`, `MemoryR`, `MemoryW`, `CommSend`, `CommRecv`, `CommColl`,
   `Metadata`.
 
@@ -173,31 +182,37 @@ backend (e.g. NVTX attaches attributes as typed payloads on the range via
 `nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
 record them).
 
-### Backend phase spans
+### Backend phases
 
 A backend plugin can record a phase of its own work through
-the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core turns
-each recorded phase into a momentary span carrying `nixl.backend` (the recording
-backend's type), `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
+the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core records
+each phase as a point event through `emitEvent()`, at the plugin's timestamp and
+under the context the plugin passed, so the event keeps its time whichever thread
+reports it. The event carries `nixl.backend` (the recording backend's type),
+`nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
 `nixl.phase.label` when the plugin supplied one, and any plugin-supplied
 attributes. A phase recorded under a trace context also carries the context as
 `nixl.traceparent` and is correlated on it, like the agent's own spans. The
-phase vocabulary is closed so that timelines stay comparable across backends:
+phase vocabulary is closed so that timelines stay comparable across backends,
+and each phase has a fixed kind. A notification's two ends are `CommSend` and
+`CommRecv`, so a backend that builds a graph can pair them; the other phases are
+`Metadata`, since whether a wire phase sends or receives depends on the
+operation:
 
-| Span | Phase enumerator | Meaning |
-| ---- | ---------------- | ------- |
-| `nixl::submit` | `SUBMIT` | the backend accepted the operation |
-| `nixl::wire.submitted` | `WIRE_SUBMITTED` | handed to the transport |
-| `nixl::wire.completed` | `WIRE_COMPLETED` | transport signalled completion |
-| `nixl::notif.sent` | `NOTIF_SENT` | notification posted to the wire |
-| `nixl::notif.received` | `NOTIF_RECEIVED` | notification observed locally |
-| `nixl::remote.observed` | `REMOTE_OBSERVED` | the peer's side was observed |
-| `nixl::phase` | `OTHER` | generic escape hatch; the plugin's label becomes the span name |
+| Name | Phase enumerator | Kind | Meaning |
+| ---- | ---------------- | ---- | ------- |
+| `nixl::submit` | `SUBMIT` | `Metadata` | the backend accepted the operation |
+| `nixl::wire.submitted` | `WIRE_SUBMITTED` | `Metadata` | handed to the transport |
+| `nixl::wire.completed` | `WIRE_COMPLETED` | `Metadata` | transport signalled completion |
+| `nixl::notif.sent` | `NOTIF_SENT` | `CommSend` | notification posted to the wire |
+| `nixl::notif.received` | `NOTIF_RECEIVED` | `CommRecv` | notification observed locally |
+| `nixl::remote.observed` | `REMOTE_OBSERVED` | `Metadata` | the peer's side was observed |
+| `nixl::phase` | `OTHER` | `Metadata` | generic escape hatch; the plugin's label becomes the event name |
 
 The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. UCX emits
-`nixl::notif.received`, described below; its other phases, and libfabric's, come
-in later PRs.
+`nixl::submit`, `nixl::wire.submitted`, `nixl::notif.sent` and
+`nixl::notif.received`, described below; libfabric's phases come in later PRs.
 
 Recording a phase never fails the transfer: if the trace backend throws, the
 phase is dropped and the first drop per backend is logged. With telemetry
@@ -222,11 +237,25 @@ receiver, which stops reading after `msg`, is unaffected; unsampled requests and
 `genNotif` add nothing. When the notification arrives at an agent with tracing
 on, UCX records `nixl::notif.received` under the sender's context, with
 `nixl.remote_agent` naming the sender; an agent with tracing off skips the record
-without reading it. The span thus carries the request's trace
+without reading it. The event thus carries the request's trace
 id in `nixl.traceparent`, and the same correlation id as the sender's
 `nixl::postXferReq.write` or `.read` span. Writes and reads without a
 notification give the receiver nothing to observe, so they are traced on the
 sender only.
+
+On the sender, UCX records up to three phases for every post of a sampled request,
+each under the request's context: `nixl::submit` when `postXfer` accepts the
+post, `nixl::wire.submitted` once all of its puts or gets and the flushes behind
+them are posted to UCX, and `nixl::notif.sent` when the notification is posted.
+If handing a validated post to UCX fails, at a put, a get or the flush, for
+example because the peer disconnected, only `nixl::submit` is recorded.
+The notification goes out from `postXfer` if the transfer has already completed,
+and otherwise from the first status check that finds it complete, so
+`notif.sent` appears once per notifying post, from either call. UCX records no
+`nixl::wire.completed`: a transfer as a whole is seen to complete only when the
+application checks its status, even on the thread-pool engine, whose dedicated
+threads see each chunk finish, so the stamp would time the poll rather than the
+transport.
 
 A backend that carries the context to its peer says so by overriding
 `supportsTraceContext()`, which defaults to `false`; core reads it once, when
@@ -297,7 +326,7 @@ ninja -C build test/gtest/unit/unit test/gtest/gtest test/gtest/ucx_trace_receiv
 # real-agent NVTX suite (loads libtrace_backend_nvtx.so from the build tree):
 ./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
     --gtest_filter='*TestTransferTracing*'
-# two-process UCX test, one trace id on both agents:
+# UCX tests: one trace id on two agents, and the sender's phases:
 ./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
     --gtest_filter='ucxTraceContextPropagation.*'
 ```
@@ -305,10 +334,17 @@ ninja -C build test/gtest/unit/unit test/gtest/gtest test/gtest/ucx_trace_receiv
 The two-process test starts its receiver agent as a separate executable,
 `ucx_trace_receiver`, which is built and installed next to `gtest`, and checks the
 spans both agents record against the sender's request; with `-Dwith_trace=false`,
-which compiles the sender's span out, it checks the receiver's alone. Both agents
-trace through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in the
-mocks directory) that appends one line per finished span to the file named by
-`NIXL_TEST_TRACE_FILE`; the test sets both variables itself.
+which compiles the sender's `postXferReq` span out, it checks only the phases, which
+go through the sink either way. Four single-process tests in the same suite check
+the sender's phases. Transfers to the agent itself, on the default and the
+thread-pool engine, record `nixl::submit` and `nixl::wire.submitted` once per post
+and `nixl::notif.sent` once per notifying post. A transfer to a second agent that
+nothing progresses cannot finish inside `postXfer`, so its `notif.sent` must come
+from the status check. An unsampled request, or an agent with tracing off, records
+none of them. The agents trace through `recorder`, a test-only backend
+(`libtrace_backend_recorder.so` in the mocks directory) that appends one line per
+finished or emitted span and per emitted event to the file named by
+`NIXL_TEST_TRACE_FILE`; the tests set both variables themselves.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
 test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically
@@ -322,7 +358,7 @@ In NIXL tracing, "correlation" can mean two different things:
   processes. NVTX has **no** native cross-process linkage: each process is its own
   timeline that Nsight aligns best-effort by clock. What NIXL adds is the id: over UCX
   notifications the receiver's `nixl::notif.received` carries the sender's correlation id
-  and `nixl.traceparent` (see "Backend phase spans"), so the two ranges can be matched
+  and `nixl.traceparent` (see "Backend phases"), so the two ranges can be matched
   across timelines. Structured linking is a **Chakra** capability (one trace per rank,
   joined offline by `chakra_trace_link` from matching send/recv); it is planned, and not
   part of the NVTX backend.
@@ -342,8 +378,10 @@ In NIXL tracing, "correlation" can mean two different things:
 - **Cross-rank correlation** — propagate a globally unique request id on the wire so
   sender and receiver spans can be linked across processes (distributed tracing; a
   separate NIXL-architecture effort). UCX carries it in notifications (see "Backend
-  phase spans"); the libfabric, gpunetio, mooncake and uccl carriers come next.
+  phases"); the libfabric, gpunetio, mooncake and uccl carriers come next.
 
-- **Backend phase emission** — the sink described under "Backend phase spans" exists,
-  and UCX records `nixl::notif.received` through it; the remaining phases are not
-  recorded by any plugin yet.
+- **Backend phase emission** — UCX records `nixl::submit`, `nixl::wire.submitted`,
+  `nixl::notif.sent` and `nixl::notif.received` through the sink described under
+  "Backend phases". Not recorded yet: an accurate `nixl::wire.completed`,
+  which needs a completion point that does not depend on how often the
+  application polls, and the other backends' phases.

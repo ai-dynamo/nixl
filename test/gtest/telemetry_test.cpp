@@ -28,6 +28,7 @@
 #include <climits>
 #include <atomic>
 #include <cstdint>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 
@@ -654,6 +655,25 @@ public:
 
     void
     mark(std::string_view, nixl::trace::Kind) override {}
+
+    void
+    emitSpan(std::string_view,
+             nixl::trace::Kind,
+             const nixl::trace::TraceContext &,
+             nixlTime::us_t,
+             nixlTime::us_t,
+             std::span<const nixl::trace::Attribute>) override {
+        throw std::runtime_error("emitSpan failed");
+    }
+
+    void
+    emitEvent(std::string_view,
+              nixl::trace::Kind,
+              const nixl::trace::TraceContext &,
+              nixlTime::us_t,
+              std::span<const nixl::trace::Attribute>) override {
+        throw std::runtime_error("emitEvent failed");
+    }
 
     void
     pushContext(const nixl::trace::TraceContext &) override {}
