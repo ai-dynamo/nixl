@@ -31,13 +31,23 @@ def parse_version(text: str) -> Optional[tuple[int, ...]]:
     return tuple(int(part) for part in text.split("."))
 
 
+def _canonical(parts: tuple[int, ...]) -> tuple[int, ...]:
+    """Drop trailing zeros so that "1.6" and "1.6.0" compare equal, as PEP 440 says."""
+    end = len(parts)
+    while end > 0 and parts[end - 1] == 0:
+        end -= 1
+    return parts[:end]
+
+
 def highest_below(candidates: Iterable[str], candidate: str) -> Optional[str]:
-    target = parse_version(candidate)
-    if target is None:
+    parsed_target = parse_version(candidate)
+    if parsed_target is None:
         return None
+    target = _canonical(parsed_target)
     best: Optional[tuple[tuple[int, ...], str]] = None
     for text in candidates:
-        parsed = parse_version(text)
+        raw = parse_version(text)
+        parsed = _canonical(raw) if raw is not None else None
         if parsed is None or parsed >= target:
             continue
         if best is None or parsed > best[0]:

@@ -299,9 +299,13 @@ def render_html(doc: dict[str, Any]) -> str:
 def write_reports(doc: dict[str, Any], out_dir: Path) -> None:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / f"{REPORT_BASENAME}.json").write_text(json.dumps(doc, indent=2) + "\n")
-    (out_dir / f"{REPORT_BASENAME}.md").write_text(render_markdown(doc))
-    (out_dir / f"{REPORT_BASENAME}.html").write_text(render_html(doc))
+    (out_dir / f"{REPORT_BASENAME}.json").write_text(
+        json.dumps(doc, indent=2) + "\n", encoding="utf-8"
+    )
+    (out_dir / f"{REPORT_BASENAME}.md").write_text(
+        render_markdown(doc), encoding="utf-8"
+    )
+    (out_dir / f"{REPORT_BASENAME}.html").write_text(render_html(doc), encoding="utf-8")
 
 
 def results_table(doc: dict[str, Any]) -> str:
@@ -316,7 +320,7 @@ def results_table(doc: dict[str, Any]) -> str:
 
 def load_document(path: Path) -> Optional[dict[str, Any]]:
     try:
-        loaded = json.loads(Path(path).read_text())
+        loaded = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return loaded if isinstance(loaded, dict) else None

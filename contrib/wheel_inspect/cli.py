@@ -50,7 +50,7 @@ def _inspect_dirs(
     try:
         cand = load_side(candidate, candidate_manifest, candidate_label)
         ref = load_side(reference, reference_manifest, reference_label)
-    except (WheelSetError, InventoryError, OSError) as exc:
+    except (WheelSetError, InventoryError, OSError, ValueError) as exc:
         return _fail(str(exc))
     findings = run_checks(cand, ref, cuobjdump)
     doc = report.build_document(cand, ref, findings, report.tool_version())
@@ -228,4 +228,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return EXIT_OK if exc.code == 0 else EXIT_USAGE
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except Exception as exc:
+        return _fail(f"{type(exc).__name__}: {exc}")

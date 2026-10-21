@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -29,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from wheel_inspect.versions import highest_below
+from wheel_inspect.versions import highest_below, parse_version
 
 ALLOWED_HOSTS = (
     "pypi.org",
@@ -68,9 +70,33 @@ def env_auth() -> Auth:
 
 
 def _check_host(url: str) -> None:
-    host = urllib.parse.urlparse(url).hostname or ""
-    if host not in ALLOWED_HOSTS:
-        raise FetchError(f"host not allowed: {host or url}")
+    parts = urllib.parse.urlparse(url)
+    if parts.scheme != "https" or (parts.hostname or "") not in ALLOWED_HOSTS:
+        raise FetchError(
+            f"host not allowed (https to {', '.join(ALLOWED_HOSTS)}): {url}"
+        )
+
+
+class _RedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only to allowed hosts; never carry credentials to another host."""
+
+    def redirect_request(  # type: ignore[override]
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> Optional[urllib.request.Request]:
+        _check_host(newurl)
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and (
+            urllib.parse.urlparse(newurl).netloc
+            != urllib.parse.urlparse(req.full_url).netloc
+        ):
+            new.remove_header("Authorization")
+        return new
 
 
 def _request(
@@ -125,6 +151,10 @@ def pypi_versions(
 def resolve_reference(
     candidate_version: str, opener: Opener, index_url: str = PYPI_INDEX
 ) -> str:
+    if parse_version(candidate_version) is None:
+        raise FetchError(
+            f"candidate version {candidate_version!r} is not a plain release; pass --reference explicitly"
+        )
     found = highest_below(pypi_versions(opener, index_url), candidate_version)
     if found is None:
         raise FetchError(f"no released version below {candidate_version} on PyPI")
@@ -138,8 +168,11 @@ def pypi_files(
     for package in PYPI_PACKAGES:
         doc = _get_json(f"{index_url}/{package}/{version}/json", opener)
         for item in doc.get("urls") or []:
-            if not item.get("filename", "").endswith(".whl") or item.get("yanked"):
+            name = str(item.get("filename", ""))
+            if not name.endswith(".whl") or item.get("yanked"):
                 continue
+            if "/" in name or name.startswith("."):
+                raise FetchError(f"refusing PyPI filename {name!r}")
             refs.append(
                 FileRef(
                     item["url"],
@@ -184,7 +217,7 @@ def artifactory_files(folder_url: str, auth: Auth, opener: Opener) -> list[FileR
 
 
 class _TransientError(FetchError):
-    """A failure worth retrying: timeout, connection reset, HTTP 5xx."""
+    """A failure worth retrying: timeout, connection reset, HTTP 5xx/429, short or corrupt body."""
 
 
 def _sha256_file(path: Path) -> str:
@@ -195,50 +228,62 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _stream(ref: FileRef, part: Path, opener: Opener, auth: Auth) -> str:
+def _stream(ref: FileRef, part: Path, opener: Opener, auth: Auth) -> None:
+    """One download attempt into ``part``; raises _TransientError for anything worth retrying."""
     digest = hashlib.sha256()
+    written = 0
     try:
-        with opener(_request(ref.url, auth)) as resp, part.open("wb") as out:
+        out = part.open("wb")
+    except OSError as exc:
+        raise FetchError(f"cannot write {part}: {exc}") from exc
+    try:
+        with out, opener(_request(ref.url, auth)) as resp:
             while True:
                 chunk = resp.read(1 << 20)
                 if not chunk:
                     break
                 digest.update(chunk)
-                out.write(chunk)
+                try:
+                    out.write(chunk)
+                except OSError as exc:
+                    raise FetchError(f"cannot write {part}: {exc}") from exc
+                written += len(chunk)
     except urllib.error.HTTPError as exc:
-        part.unlink(missing_ok=True)
-        if exc.code >= 500:
+        if exc.code >= 500 or exc.code == 429:
             raise _TransientError(f"GET {ref.url} returned {exc.code}") from exc
         raise FetchError(f"GET {ref.url} returned {exc.code}") from exc
-    except (urllib.error.URLError, OSError) as exc:
-        part.unlink(missing_ok=True)
+    except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
         raise _TransientError(f"GET {ref.url} failed: {exc}") from exc
-    return digest.hexdigest()
+    if ref.size is not None and written != ref.size:
+        raise _TransientError(f"{ref.filename}: got {written} of {ref.size} bytes")
+    actual = digest.hexdigest()
+    if ref.sha256 and actual != ref.sha256:
+        raise _TransientError(
+            f"{ref.filename}: sha256 mismatch (expected {ref.sha256}, got {actual})"
+        )
 
 
 def download(ref: FileRef, dest_dir: Path, opener: Opener, auth: Auth = None) -> Path:
-    """Download ``ref`` into ``dest_dir``, verifying sha256 when known; reuses a verified existing file."""
+    """Download ``ref`` into ``dest_dir``, verifying size and sha256 when known; reuses a verified existing file."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     target = dest_dir / ref.filename
     if target.is_file() and ref.sha256 and _sha256_file(target) == ref.sha256:
         return target
     part = dest_dir / (ref.filename + ".part")
-    actual = ""
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
         try:
-            actual = _stream(ref, part, opener, auth)
-            break
+            _stream(ref, part, opener, auth)
+            part.replace(target)
+            return target
         except _TransientError as exc:
+            part.unlink(missing_ok=True)
             if attempt == DOWNLOAD_ATTEMPTS:
                 raise FetchError(f"{exc} (after {attempt} attempts)") from exc
             time.sleep(RETRY_DELAY_SECONDS * attempt)
-    if ref.sha256 and actual != ref.sha256:
-        part.unlink(missing_ok=True)
-        raise FetchError(
-            f"{ref.filename}: sha256 mismatch (expected {ref.sha256}, got {actual})"
-        )
-    part.replace(target)
-    return target
+        except FetchError:
+            part.unlink(missing_ok=True)
+            raise
+    raise AssertionError("unreachable")
 
 
 def fetch(
@@ -265,6 +310,14 @@ def fetch(
         refs = artifactory_files(value, auth, opener)
     for ref in refs:
         download(ref, dest, opener, auth)
+    keep = {ref.filename for ref in refs}
+    for stale in sorted(dest.iterdir()):
+        if stale.name in keep or not (
+            stale.suffix in (".whl", ".part") or stale.name == "build-manifest.json"
+        ):
+            continue
+        stale.unlink()
+        print(f"wheel_inspect: removed stale {stale}", file=sys.stderr)
     return dest
 
 
@@ -272,7 +325,7 @@ def publish_report(
     folder_url: str, report_dir: Path, auth: Auth, opener: Opener
 ) -> None:
     _check_host(folder_url)
-    if ARTIFACTORY_REPO_PATH not in folder_url:
+    if not urllib.parse.urlparse(folder_url).path.startswith(ARTIFACTORY_REPO_PATH):
         raise FetchError(
             f"refusing to publish outside the wheel repo prefix {ARTIFACTORY_REPO_PATH}: {folder_url}"
         )
@@ -295,4 +348,5 @@ def publish_report(
 
 
 def default_opener() -> Opener:
-    return lambda request: urllib.request.urlopen(request, timeout=60)
+    opener = urllib.request.build_opener(_RedirectHandler())
+    return lambda request: opener.open(request, timeout=60)

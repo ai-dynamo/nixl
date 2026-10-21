@@ -30,7 +30,7 @@ from typing import Any, Callable, Iterable, Optional
 
 from wheel_inspect.buildinfo import WheelFacts, wheel_facts
 from wheel_inspect.elf import parse_elf
-from wheel_inspect.inventory import Member, diff_pair, inventory
+from wheel_inspect.inventory import InventoryError, Member, diff_pair, inventory
 from wheel_inspect.wheelset import (
     ARCH_ORDER,
     CUDA_ORDER,
@@ -58,7 +58,7 @@ BIG_DELTA_BYTES = 1_000_000
 
 _UCX_MODULE = re.compile(r"^nixl_cu\d+\.libs/ucx/([^/]+\.so\.0\.0\.0)$")
 _NIXL_PLUGIN = re.compile(r"^nixl_cu\d+\.libs/nixl/([^/]+\.so)$")
-_RED_LIB = re.compile(r"^nixl_cu\d+\.libs/libred_[^/]*$")
+_RED_LIB = re.compile(r"^(?:.*/)?libred_[^/]*$")
 _MESONPY = re.compile(r"^\.nixl_cu\d+\.mesonpy\.libs/((?:plugins/)?[^/]+)$")
 _EP_MODULE = re.compile(r"^nixl_ep_cu\d+/.+\.so$")
 _SM_ARCH = re.compile(r"sm_\d+[af]?")
@@ -81,6 +81,7 @@ class Side:
     inventories: dict[Cell, dict[str, Member]]
     facts: dict[Cell, WheelFacts]
     manifest: Optional[dict[str, Any]]
+    manifest_error: Optional[str] = None
 
     @property
     def binary_cells(self) -> list[Cell]:
@@ -96,21 +97,39 @@ def load_side(
 ) -> Side:
     directory = Path(directory)
     wheelset = load_wheelset(directory)
-    inventories = {cell: inventory(wf.path) for cell, wf in wheelset.wheels.items()}
-    facts = {
-        cell: wheel_facts(wf.path, wf.package, wf.version)
-        for cell, wf in wheelset.wheels.items()
-    }
+    inventories: dict[Cell, dict[str, Member]] = {}
+    facts: dict[Cell, WheelFacts] = {}
+    for cell, wf in wheelset.wheels.items():
+        try:
+            inventories[cell] = inventory(wf.path)
+            facts[cell] = wheel_facts(wf.path, wf.package, wf.version)
+        except zipfile.BadZipFile as exc:
+            raise InventoryError(f"{wf.name}: {exc}") from exc
     manifest_path = Path(manifest) if manifest else directory / "build-manifest.json"
     manifest_doc: Optional[dict[str, Any]] = None
+    manifest_error: Optional[str] = None
     if manifest_path.is_file():
         try:
-            loaded = json.loads(manifest_path.read_text())
-            manifest_doc = loaded if isinstance(loaded, dict) else None
-        except ValueError:
-            manifest_doc = None
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            manifest_error = f"{manifest_path.name}: not valid JSON ({exc})"
+        else:
+            if isinstance(loaded, dict):
+                manifest_doc = loaded
+            else:
+                manifest_error = f"{manifest_path.name}: not a JSON object"
+    elif manifest:
+        raise FileNotFoundError(f"manifest not found: {manifest_path}")
+    if manifest and manifest_error:
+        raise ValueError(manifest_error)
     return Side(
-        label or wheelset.version, directory, wheelset, inventories, facts, manifest_doc
+        label or wheelset.version,
+        directory,
+        wheelset,
+        inventories,
+        facts,
+        manifest_doc,
+        manifest_error,
     )
 
 
@@ -132,7 +151,7 @@ def fold_scope(cells: Iterable[Cell], universe: Iterable[Cell]) -> str:
     if not chosen:
         return "meta"
     if chosen >= set(everything):
-        return "all"
+        return "all; meta" if has_meta else "all"
     by_cuda: dict[str, set[tuple[str, str]]] = defaultdict(set)
     full: dict[str, set[tuple[str, str]]] = defaultdict(set)
     for c in chosen:
@@ -311,11 +330,14 @@ def check_spcx_ref(cand: Side, ref: Side) -> Finding:
         "bundled": bundled,
     }
     if cblock is None:
+        details["manifest_error"] = cand.manifest_error
+        reason = (
+            f"build manifest unusable ({cand.manifest_error})"
+            if cand.manifest_error
+            else "no build manifest for the candidate"
+        )
         return _finding(
-            3,
-            "SKIPPED",
-            "no build manifest for the candidate; SPCX ref and commit not recorded",
-            details,
+            3, "SKIPPED", f"{reason}; SPCX ref and commit not recorded", details
         )
     if rblock is not None:
         details["changed"] = (cblock["ref"], cblock["commit"]) != (
@@ -349,11 +371,14 @@ def _ucx_summary(side: Side) -> dict[str, Any]:
     scanned_values: set[str] = set()
     revision = branch = None
     disagree = []
+    unreadable = []
     for cell in side.binary_cells:
         facts = side.facts[cell]
         readme = facts.build_info.ucx_release if facts.build_info else None
         scanned = facts.ucx_release_scanned
         per_wheel.append({"cell": cell.label, "readme": readme, "scanned": scanned})
+        if not readme and not scanned:
+            unreadable.append(cell)
         if readme:
             readme_values.add(readme)
         if scanned:
@@ -372,6 +397,7 @@ def _ucx_summary(side: Side) -> dict[str, Any]:
         "scanned": scanned_values,
         "values": readme_values | scanned_values,
         "disagree": disagree,
+        "unreadable": unreadable,
         "revision": revision or manifest_ucx.get("revision"),
         "branch": branch or manifest_ucx.get("branch"),
         "manifest_release": manifest_ucx.get("release"),
@@ -398,6 +424,7 @@ def check_ucx(cand: Side, ref: Side) -> Finding:
         "declared_commit": c["declared_commit"],
         "declared_ref": c["declared_ref"],
         "reference": {"release": one(r["values"]), "revision": r["revision"]},
+        "unreadable": fold_scope(c["unreadable"], cand.binary_cells),
     }
     universe = cand.binary_cells
     if not c["values"]:
@@ -427,6 +454,14 @@ def check_ucx(cand: Side, ref: Side) -> Finding:
             4,
             "FAIL",
             f"wheels carry UCX {release} but the manifest says {c['manifest_release']}",
+            details,
+        )
+    if c["unreadable"]:
+        return _finding(
+            4,
+            "SKIPPED",
+            f"UCX {release} in {len(universe) - len(c['unreadable'])} of {len(universe)} binary wheels; "
+            f"not readable in {details['unreadable']}",
             details,
         )
     text = f"UCX {release} in all {len(universe)} binary wheels"

@@ -15,6 +15,7 @@
 
 import hashlib
 import json
+import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -72,6 +73,11 @@ def fake_opener():
     return FakeOpener()
 
 
+@pytest.fixture(autouse=True)
+def no_retry_sleep(monkeypatch):
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+
+
 def test_parse_version_and_highest_below():
     assert versions.parse_version("1.6.0") == (1, 6, 0)
     assert (
@@ -90,6 +96,8 @@ def test_parse_version_and_highest_below():
     )
     assert versions.highest_below(["1.10.0", "1.9.0"], "1.11.0") == "1.10.0"
     assert versions.highest_below(["1.6.0"], "1.6.0") is None
+    assert versions.highest_below(["1.6", "1.5.0"], "1.6.0") == "1.5.0"
+    assert versions.highest_below(["1.5"], "1.5.0.1") == "1.5"
 
 
 def test_resolve_reference_skips_yanked_and_prerelease(fake_opener):
@@ -108,6 +116,8 @@ def test_resolve_reference_skips_yanked_and_prerelease(fake_opener):
     assert fetch.resolve_reference("1.6.0", fake_opener) == "1.4.1"
     with pytest.raises(fetch.FetchError):
         fetch.resolve_reference("1.4.1", fake_opener)
+    with pytest.raises(fetch.FetchError, match="1.6.0rc1.*not a plain release"):
+        fetch.resolve_reference("1.6.0rc1", fake_opener)
 
 
 def test_parse_source_forms_and_host_allowlist(tmp_path):
@@ -121,6 +131,9 @@ def test_parse_source_forms_and_host_allowlist(tmp_path):
     )
     with pytest.raises(fetch.FetchError):
         fetch.parse_source("ftp:nope")
+    for url in ("http://pypi.org/x", "ftp://artifactory.nvidia.com/x"):
+        with pytest.raises(fetch.FetchError, match="host"):
+            fetch._check_host(url)
     with pytest.raises(fetch.FetchError, match="host"):
         fetch.fetch(
             "artifactory:https://evil.example/repo/release/1.6.0/1",
@@ -164,6 +177,19 @@ def test_fetch_pypi_downloads_and_verifies_sha(fake_opener, tmp_path):
         "nixl_cu13-1.5.0-x.whl",
     ]
     assert (out / "nixl-1.5.0-x.whl").read_bytes() == body
+
+
+def test_pypi_files_rejects_filenames_with_paths(fake_opener):
+    fake_opener.add(
+        "https://pypi.org/pypi/nixl/1.5.0/json",
+        {
+            "urls": [
+                {"url": "https://files.pythonhosted.org/a.whl", "filename": "../x.whl"}
+            ]
+        },
+    )
+    with pytest.raises(fetch.FetchError, match="filename"):
+        fetch.pypi_files("1.5.0", fake_opener)
 
 
 def test_fetch_sha_mismatch_raises_and_leaves_no_file(fake_opener, tmp_path):
@@ -232,13 +258,177 @@ def test_publish_report_puts_three_files(fake_opener, tmp_path):
         )
     fetch.publish_report(folder, tmp_path, ("u", "t"), fake_opener)
     assert [r.get_method() for r in fake_opener.requests] == ["PUT"] * 3
-    with pytest.raises(fetch.FetchError, match="prefix"):
-        fetch.publish_report(
-            "https://artifactory.nvidia.com/artifactory/other-repo/x",
-            tmp_path,
-            ("u", "t"),
-            fake_opener,
+    for folder in (
+        "https://artifactory.nvidia.com/artifactory/other-repo/x",
+        "https://artifactory.nvidia.com/artifactory/other-repo/x?p=/artifactory/sw-nbu-swx-nixl-pypi-local/",
+    ):
+        with pytest.raises(fetch.FetchError, match="prefix"):
+            fetch.publish_report(folder, tmp_path, ("u", "t"), fake_opener)
+
+
+def test_redirects_stay_on_allowed_hosts_and_drop_auth_on_host_change():
+    handler = fetch._RedirectHandler()
+    req = fetch._request("https://artifactory.nvidia.com/artifactory/r/x", ("u", "t"))
+    same = handler.redirect_request(
+        req, None, 302, "Found", {}, "https://artifactory.nvidia.com/artifactory/r/y"
+    )
+    assert same is not None and same.get_header("Authorization", "").startswith(
+        "Basic "
+    )
+    other = handler.redirect_request(
+        req, None, 302, "Found", {}, "https://il.artifactory.nvidia.com/artifactory/r/x"
+    )
+    assert other is not None and other.get_header("Authorization") is None
+    with pytest.raises(fetch.FetchError, match="host"):
+        handler.redirect_request(req, None, 302, "Found", {}, "https://evil.example/x")
+
+
+class TruncatingOpener(FakeOpener):
+    """Serves only the first ``keep`` bytes of a body for the first ``times`` calls."""
+
+    def __init__(self, keep: int, times: int):
+        super().__init__()
+        self.keep, self.times, self.calls = keep, times, 0
+
+    def __call__(self, request):
+        resp = super().__call__(request)
+        self.calls += 1
+        if self.calls <= self.times:
+            resp._body = resp._body[: self.keep]
+        return resp
+
+
+def test_download_short_body_is_retried_then_fails(tmp_path):
+    body = b"0123456789"
+    ref = fetch.FileRef(
+        "https://files.pythonhosted.org/a.whl", "nixl-1.5.0-x.whl", None, len(body)
+    )
+    opener = TruncatingOpener(keep=5, times=1)
+    opener.add(ref.url, body)
+    assert (
+        fetch.download(ref, tmp_path, opener).read_bytes() == body and opener.calls == 2
+    )
+    opener = TruncatingOpener(keep=5, times=99)
+    opener.add(ref.url, body)
+    with pytest.raises(fetch.FetchError, match="5 of 10 bytes"):
+        fetch.download(ref, tmp_path / "b", opener)
+    assert opener.calls == fetch.DOWNLOAD_ATTEMPTS and not list(
+        (tmp_path / "b").iterdir()
+    )
+
+
+def test_download_sha_mismatch_is_retried(tmp_path):
+    body = b"good"
+    ref = fetch.FileRef(
+        "https://files.pythonhosted.org/a.whl",
+        "nixl-1.5.0-x.whl",
+        hashlib.sha256(body).hexdigest(),
+        None,
+    )
+
+    class CorruptOnce(FakeOpener):
+        def __call__(self, request):
+            resp = super().__call__(request)
+            if len(self.requests) == 1:
+                resp._body = b"bad!"
+            return resp
+
+    opener = CorruptOnce()
+    opener.add(ref.url, body)
+    assert (
+        fetch.download(ref, tmp_path, opener).read_bytes() == body
+        and len(opener.requests) == 2
+    )
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_download_local_write_error_is_not_retried(tmp_path, fake_opener):
+    ref = fetch.FileRef(
+        "https://files.pythonhosted.org/a.whl", "nixl-1.5.0-x.whl", None, None
+    )
+    fake_opener.add(ref.url, b"x")
+    dest = tmp_path / "ro"
+    dest.mkdir()
+    dest.chmod(0o500)
+    try:
+        with pytest.raises(fetch.FetchError, match="cannot write"):
+            fetch.download(ref, dest, fake_opener)
+    finally:
+        dest.chmod(0o700)
+    assert fake_opener.requests == []
+
+
+def test_fetch_removes_stale_wheels_from_dest(fake_opener, tmp_path, capsys):
+    body = b"w"
+    fake_opener.add(
+        "https://pypi.org/pypi/nixl/1.5.0/json",
+        {
+            "urls": [
+                {
+                    "url": "https://files.pythonhosted.org/a.whl",
+                    "filename": "nixl-1.5.0-x.whl",
+                    "digests": {"sha256": hashlib.sha256(body).hexdigest()},
+                    "size": 1,
+                    "yanked": False,
+                }
+            ]
+        },
+    )
+    for pkg in ("nixl-cu12", "nixl-cu13"):
+        fake_opener.add(f"https://pypi.org/pypi/{pkg}/1.5.0/json", {"urls": []})
+    fake_opener.add("https://files.pythonhosted.org/a.whl", body)
+    dest = tmp_path / "d"
+    dest.mkdir()
+    for name in (
+        "nixl-1.4.1-x.whl",
+        "nixl-1.4.1-x.whl.part",
+        "build-manifest.json",
+        "notes.txt",
+    ):
+        (dest / name).write_text("old")
+    fetch.fetch("pypi:1.5.0", dest, opener=fake_opener)
+    assert sorted(p.name for p in dest.iterdir()) == ["nixl-1.5.0-x.whl", "notes.txt"]
+    assert "stale" in capsys.readouterr().err
+
+
+def test_release_run_publishes_report_for_artifactory_candidate(
+    tmp_path, fake_opener, monkeypatch
+):
+    make_set(tmp_path / "c", "1.6.1")
+    make_set(tmp_path / "r", "1.6.0")
+    folder = "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local/release/1.6.1/7"
+    monkeypatch.setenv("ARTIFACTORY_USER", "u")
+    monkeypatch.setenv("ARTIFACTORY_TOKEN", "t")
+    monkeypatch.setattr(cli, "default_opener", lambda: fake_opener)
+    monkeypatch.setattr(
+        cli,
+        "fetch_source",
+        lambda source, dest, opener=None, auth=None: tmp_path
+        / ("c" if "artifactory" in source else "r"),
+    )
+    argv = [
+        "release-run",
+        "--candidate",
+        f"artifactory:{folder}",
+        "--reference",
+        f"dir:{tmp_path / 'r'}",
+        "--out-dir",
+        str(tmp_path / "out"),
+    ]
+
+    for ext in ("json", "md", "html"):
+        fake_opener.add(
+            f"{folder}/wheel-inspection.{ext}", b"", status=201, method="PUT"
         )
+    assert cli.main(argv) == 0
+    doc = json.loads((tmp_path / "out" / "wheel-inspection.json").read_text())
+    assert doc["publish"] == {"ok": True, "folder": folder}
+    assert [r.get_method() for r in fake_opener.requests] == ["PUT"] * 3
+
+    fake_opener.add(f"{folder}/wheel-inspection.json", b"", status=403, method="PUT")
+    assert cli.main(argv) == 0
+    doc = json.loads((tmp_path / "out" / "wheel-inspection.json").read_text())
+    assert doc["publish"]["ok"] is False and "403" in doc["publish"]["error"]
 
 
 def test_release_run_end_to_end_with_dir_sources(tmp_path):
@@ -337,8 +527,7 @@ class FlakyOpener(FakeOpener):
         return super().__call__(request)
 
 
-def test_download_retries_transient_errors(tmp_path, monkeypatch):
-    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+def test_download_retries_transient_errors(tmp_path):
     body = b"wheel"
     opener = FlakyOpener(failures=2)
     opener.add("https://files.pythonhosted.org/a.whl", body)
@@ -352,8 +541,7 @@ def test_download_retries_transient_errors(tmp_path, monkeypatch):
     assert opener.seen["https://files.pythonhosted.org/a.whl"] == 3
 
 
-def test_download_gives_up_after_max_attempts(tmp_path, monkeypatch):
-    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+def test_download_gives_up_after_max_attempts(tmp_path):
     opener = FlakyOpener(failures=99)
     opener.add("https://files.pythonhosted.org/a.whl", b"x")
     ref = fetch.FileRef(

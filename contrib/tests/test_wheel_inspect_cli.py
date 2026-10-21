@@ -69,6 +69,62 @@ def test_inspect_cli_short_set_exits_2(tmp_path, capsys):
     assert not (tmp_path / "out" / "wheel-inspection.json").exists()
 
 
+def test_inspect_cli_corrupt_wheel_exits_2(tmp_path, capsys):
+    d = make_set(tmp_path / "c", "1.6.1")
+    bad = next(d.glob("nixl_cu12-*x86_64.whl"))
+    bad.write_bytes(b"not a zip")
+    make_set(tmp_path / "r", "1.6.0")
+    rc = cli.main(
+        [
+            "inspect",
+            "--candidate",
+            str(d),
+            "--reference",
+            str(tmp_path / "r"),
+            "--out-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert rc == 2 and bad.name in capsys.readouterr().err
+
+
+def test_inspect_cli_unwritable_out_dir_exits_2(tmp_path, capsys):
+    make_set(tmp_path / "c", "1.6.1")
+    make_set(tmp_path / "r", "1.6.0")
+    (tmp_path / "file").write_text("x")
+    rc = cli.main(
+        [
+            "inspect",
+            "--candidate",
+            str(tmp_path / "c"),
+            "--reference",
+            str(tmp_path / "r"),
+            "--out-dir",
+            str(tmp_path / "file" / "out"),
+        ]
+    )
+    assert rc == 2 and "wheel_inspect:" in capsys.readouterr().err
+
+
+def test_inspect_cli_explicit_missing_manifest_exits_2(tmp_path, capsys):
+    make_set(tmp_path / "c", "1.6.1")
+    make_set(tmp_path / "r", "1.6.0")
+    rc = cli.main(
+        [
+            "inspect",
+            "--candidate",
+            str(tmp_path / "c"),
+            "--reference",
+            str(tmp_path / "r"),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--candidate-manifest",
+            str(tmp_path / "nope.json"),
+        ]
+    )
+    assert rc == 2 and "nope.json" in capsys.readouterr().err
+
+
 def test_inspect_cli_missing_dir_exits_2(tmp_path, capsys):
     make_set(tmp_path / "r", "1.6.0")
     rc = cli.main(

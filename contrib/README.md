@@ -41,5 +41,10 @@ The result is `wheel-inspection.{json,md,html}` in `--out-dir`. Both sides
 must be complete sets (every CUDA x Python x arch cell plus the meta wheel), or
 the run stops before making any claim. A `build-manifest.json` next to the
 wheels, written by the nightly wheel build, feeds the SPCX and UCX checks;
-without it those are reported from what the wheel itself carries. Unit tests
-live in `contrib/tests`.
+without it those are reported from what the wheel itself carries. Downloads
+land in `--out-dir/{candidate,reference}`; wheels already there are reused when
+their checksum still matches and wheels from another version are removed, so
+the same `--out-dir` can serve successive runs. Exit code 0 means no check
+failed, 1 means at least one `FAIL`, 2 means no trustworthy report could be
+produced (bad input, download or write error). Unit tests live in
+`contrib/tests`.

@@ -15,6 +15,7 @@
 
 import json
 
+import pytest
 from wheel_inspect import checks
 from wheel_inspect.wheelset import Cell
 from wheel_inspect_fixtures import make_set
@@ -47,6 +48,8 @@ def test_fold_scope_strings():
         [Cell("cu12", "cp310", "x86_64"), Cell("cu13", "cp310", "x86_64")], U
     ) == ("cu12: cp310 x x86_64; cu13: cp310 x x86_64")
     assert checks.fold_scope([], U) == "none"
+    assert checks.fold_scope(U + [Cell.META], U) == "all; meta"
+    assert checks.fold_scope([Cell.META], U) == "meta"
 
 
 def test_all_pass_on_identical_sets(tmp_path):
@@ -77,6 +80,12 @@ def test_spcx_missing_in_one_cell_fails(tmp_path):
 
 def test_infinia_bundled_red_lib_fails(tmp_path):
     c, r = sides(tmp_path, vendored={"libred_client-0a0a0a0a.so.2": b"x"})
+    f = checks.check_infinia(c, r)
+    assert f.state == "FAIL" and f.details["bundled_red_libs"]
+
+
+def test_infinia_red_lib_anywhere_in_the_wheel_fails(tmp_path):
+    c, r = sides(tmp_path, extra={"*:nixl_cuXX/libred_async.so": b"x"})
     f = checks.check_infinia(c, r)
     assert f.state == "FAIL" and f.details["bundled_red_libs"]
 
@@ -146,6 +155,31 @@ def test_ucx_manifest_mismatch_fails_and_readme_wins(tmp_path):
 def test_ucx_skipped_when_unreadable(tmp_path):
     c, r = sides(tmp_path, ucx_release="x")
     assert checks.check_ucx(c, r).state == "SKIPPED"
+
+
+def test_ucx_skipped_when_a_subset_is_unreadable(tmp_path):
+    c, r = sides(
+        tmp_path,
+        vendored_by_cell={
+            "cu12/cp310/x86_64": {"libucp-deadbeef.so.0.0.0": b"\0junk\0"}
+        },
+    )
+    f = checks.check_ucx(c, r)
+    assert f.state == "SKIPPED" and "1.23.0" in f.finding and "7 of 8" in f.finding
+    assert f.details["unreadable"] == "cu12: cp310 x x86_64"
+
+
+def test_malformed_default_manifest_is_named_in_check_3(tmp_path):
+    c, r = sides(tmp_path)
+    (c.dir / "build-manifest.json").write_text("{not json")
+    c = checks.load_side(c.dir)
+    assert c.manifest is None and "not valid JSON" in (c.manifest_error or "")
+    f = checks.check_spcx_ref(c, r)
+    assert f.state == "SKIPPED" and "build-manifest.json" in f.finding
+    with pytest.raises(ValueError, match="not valid JSON"):
+        checks.load_side(c.dir, c.dir / "build-manifest.json")
+    with pytest.raises(FileNotFoundError):
+        checks.load_side(c.dir, c.dir / "nope.json")
 
 
 def test_files_new_cu13_only_folds(tmp_path):
