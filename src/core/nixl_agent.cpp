@@ -1258,7 +1258,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     opt_args.traceRequestId = req_hndl->traceRequestId();
     opt_args.traceExecution = req_hndl->traceExecution();
     NIXL_TRACE_ATTR(
-        trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(req_hndl->traceExecution()));
+        trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(opt_args.traceExecution));
 
     // If status is not NIXL_IN_PROG we can repost,
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,
