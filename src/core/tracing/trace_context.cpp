@@ -23,6 +23,7 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/uuid_v4.h"
+#include "log_once.h"
 #include "trace.h"
 #include "trace_context.h"
 
@@ -100,13 +101,16 @@ traceIdRandomness(const nixl::trace::TraceContext &context) noexcept {
 }
 
 void
-generateInto(nixl::trace::TraceContext &context, double sample_ratio) {
+generateInto(nixl::trace::TraceContext &context,
+             double sample_ratio,
+             nixl::trace::random_bytes_fn_t random_bytes) {
+    const auto fill = (random_bytes != nullptr) ? random_bytes : nixl::generateRandomBytes;
     do {
-        nixl::generateRandomBytes(context.traceId.data(), context.traceId.size());
+        fill(context.traceId.data(), context.traceId.size());
     } while (isAllZero(context.traceId));
 
     do {
-        nixl::generateRandomBytes(context.spanId.data(), context.spanId.size());
+        fill(context.spanId.data(), context.spanId.size());
     } while (isAllZero(context.spanId));
 
     context.flags = 0x02;
@@ -125,9 +129,24 @@ appendByte(std::string &result, std::uint8_t value) {
 } // namespace
 
 nixl::trace::TraceContext::TraceContext(const nixl::trace::Tracer *tracer) {
-    if (tracer != nullptr) {
-        generateInto(*this, tracer->sampleRatio());
+    if (tracer == nullptr) {
+        return;
     }
+    try {
+        generateInto(*this, tracer->sampleRatio(), tracer->randomBytes());
+    }
+    catch (const std::exception &e) {
+        *this = TraceContext{};
+        tracer->reportContextFailure(e.what());
+    }
+}
+
+void
+nixl::trace::Tracer::reportContextFailure(std::string_view reason) const noexcept {
+    logOnce(contextFailureLogged_, [reason] {
+        NIXL_ERROR << "nixl::trace: could not generate a trace context (" << reason
+                   << "); the request continues untraced and further failures are not logged";
+    });
 }
 
 bool
@@ -287,6 +306,26 @@ nixl::trace::resolveTraceSampleRatio() {
 nixl::trace::TraceContext
 nixl::trace::generateTraceContext(double sample_ratio) {
     nixl::trace::TraceContext context;
-    generateInto(context, sample_ratio);
+    generateInto(context, sample_ratio, nullptr);
     return context;
+}
+
+std::uint64_t
+nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
+    if (tracer == nullptr) {
+        return 0;
+    }
+    const auto fill =
+        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : nixl::generateRandomBytes;
+    std::uint64_t id = 0;
+    try {
+        do {
+            fill(reinterpret_cast<std::uint8_t *>(&id), sizeof(id));
+        } while (id == 0);
+    }
+    catch (const std::exception &e) {
+        tracer->reportContextFailure(e.what());
+        return 0;
+    }
+    return id;
 }

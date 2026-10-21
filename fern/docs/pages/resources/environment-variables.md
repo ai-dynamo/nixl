@@ -25,6 +25,9 @@ These variables control fundamental NIXL behavior across all backends.
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `NIXL_LOG_LEVEL` | String | `WARN` | Controls log verbosity. Values: `ERROR`, `WARN`, `INFO`, `DEBUG`, `TRACE`. |
+| `NIXL_LOG_FILE` | String (path) | Not set (file logging disabled) | Also writes log records to this file, in addition to stderr. The path supports [per-process filename escapes](/nixl/user-guide/logging-guide#one-file-per-process). |
+| `NIXL_LOG_FILE_SIZE` | At least `16K`, optionally suffixed `K`, `M` or `G` | Not set (no limit) | Sets the rotation size for `NIXL_LOG_FILE`, keeping one rotated generation. See [existing-file behavior](/nixl/user-guide/logging-guide#bounding-the-size). |
+| `NIXL_LOG_FILE_ERROR_IS_FATAL` | Boolean | `false` | Makes a `NIXL_LOG_FILE` setup failure fatal instead of disabling file logging. See [failure behavior](/nixl/user-guide/logging-guide#when-logging-itself-fails). |
 | `NIXL_PLUGIN_DIR` | String (path) | System default | Custom directory to search for backend plug-in shared libraries. |
 | `NIXL_DISABLE_CUDA_ADDR_WA` | Boolean (presence) | Not set (workaround enabled) | Disables CUDA address workaround in the Libfabric backend. Set this variable to any value to disable the workaround. |
 
@@ -55,6 +58,9 @@ These variables control NIXL's built-in telemetry collection and export system.
 | `NIXL_TELEMETRY_DIR` | String (path) | None | Directory for shared memory telemetry files used by the cyclic buffer exporter. If telemetry is enabled but this is not set, no telemetry file is generated. |
 | `NIXL_TELEMETRY_PROMETHEUS_PORT` | Integer | `9090` | HTTP listen port for the Prometheus telemetry exporter. |
 | `NIXL_TELEMETRY_PROMETHEUS_LOCAL` | Boolean | `false` | When `true`, binds the Prometheus exporter to localhost only (`127.0.0.1`) instead of all interfaces (`0.0.0.0`). |
+| `NIXL_TELEMETRY_MULTIPROC_DIR` | String (path) | `/dev/shm/nixl-telemetry-<euid>-<port>` | Directory shared by the processes that the Prometheus exporter aggregates behind one endpoint. Unset or empty, it is named after the effective uid and `NIXL_TELEMETRY_PROMETHEUS_PORT`, under the system temp directory when `/dev/shm` is not writable. |
+| `NIXL_TELEMETRY_RANK_ENV` | String | `LOCAL_RANK` | Name of the environment variable whose value the Prometheus exporter adds as the `local_rank` label. No label is added when that variable is unset. |
+| `NIXL_TELEMETRY_MP_STALE_TTL` | Integer (s) | `30` | Seconds after an exited process's last update before the Prometheus exporter drops its series and removes its store file. Keep it at or above the scrape interval. |
 
 <Tip>
 For the full telemetry architecture and usage examples, see the [Telemetry Guide](/nixl/user-guide/telemetry-guide).

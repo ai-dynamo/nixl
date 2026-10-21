@@ -196,6 +196,21 @@ TEST_F(LoadedPluginTestFixture, DeferredDiscoveryTest) {
     EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
 }
 
+TEST_F(LoadedPluginTestFixture, StaleTelemetryPluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+    const LogIgnoreGuard lig_missing("Plugin file does not exist");
+
+    EXPECT_EQ(plugin_manager_.loadTelemetryPlugin("mock_stale"), nullptr);
+    EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
+}
+
+TEST_F(LoadedPluginTestFixture, StaleTracePluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+
+    EXPECT_EQ(plugin_manager_.loadTracePlugin("mock_stale"), nullptr);
+    EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
+}
+
 TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {
     const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
     const LogIgnoreGuard lig_missing("Plugin file does not exist");
@@ -211,7 +226,7 @@ TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {
 
 TEST_F(LoadedPluginTestFixture, CurrentPluginApiVersionIsAccepted) {
     EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
-    EXPECT_EQ(NIXL_PLUGIN_API_VERSION, 2);
+    EXPECT_EQ(NIXL_PLUGIN_API_VERSION, 3);
 }
 
 TEST_F(LoadedPluginTestFixture, LoadSinglePluginTest) {

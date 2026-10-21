@@ -36,6 +36,7 @@
 
 enum class nixl_trace_plugin_api_version : unsigned int {
     V1 = 1,
+    V2 = 2,
 };
 
 // Parameters passed to a trace backend at creation time.

@@ -79,6 +79,20 @@ export NIXL_TELEMETRY_DOCA_IPC_SOCKETS_DIR="/path/to/ipc_sockets"
 
 Other CollectX outputs (Remote Write, OTLP, Fluent Bit) are **DTS-side onward backends**, not exporter flags — reach them by enabling `ipc` and configuring DTS. Deploying DTS alongside NIXL is a separate operational step.
 
+### Source identity
+
+DOCA identifies the exporter's data source by a source id and a tag. The source id defaults to the host name and the tag to `nixl`:
+
+```bash
+export NIXL_TELEMETRY_DOCA_SOURCE_ID="<id>"
+export NIXL_TELEMETRY_DOCA_SOURCE_TAG="<tag>"
+```
+
+- An unset variable uses the default, and a set value is used as is, including an empty one. A value containing `/` is rejected, because DOCA uses both values in data-file paths.
+- Like the port and backends, they are read by the agent that creates the process's shared DOCA context, and every agent created while that context exists uses them.
+- Neither value is added as a metric label; DTS receives them with the metrics pushed over `ipc`.
+- When several NIXL processes on one host push to DTS, give each process a unique source id, for example `NIXL_TELEMETRY_DOCA_SOURCE_ID="$(hostname)-${LOCAL_RANK}"`.
+
 You can alter where to look for plug-in .so files
 NOTE: the same var is used for backend plug-ins search
 
@@ -98,6 +112,7 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 | `agent_rx_requests_num` | Yes | No | No |
 | `agent_xfer_time` | Yes | Yes | Yes |
 | `agent_xfer_post_time` | Yes | Yes | Yes |
+| `agent_trace_phases_dropped` | Yes | No | No |
 | `agent_telemetry_events_dropped` | Yes | No | No |
 | Error event types (`agent_err_*`) | Yes | No | No |
 
@@ -106,6 +121,7 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 - **Counter**: Instance lifetime count of the related value. Summed over the separate events' values. Counter metrics have the `_total` suffix. The native Prometheus and DOCA exporters emit identical series (same names, types, labels) from one shared metric descriptor.
 - Error events are exposed as one labeled counter: `agent_errors_total{status="..."}`. The `status` label is bounded by the fixed `AGENT_ERR_*` event set.
 - `agent_telemetry_events_dropped_total` is the cumulative count of telemetry events dropped at the producer-side staging queue (when the queue is full and an event cannot be enqueued for export). It does not count BUFFER cyclic-ring loss. Emitted through the standard counter path (identical to `agent_tx_bytes`), not any DOCA-native "dropped metrics" feature.
+- `agent_trace_phases_dropped_total` is the cumulative count of backend trace phases that could not be recorded because the trace backend failed, reported per flush outside the staging queue. It uses the same standard counter path.
 - **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte events publish both a cumulative counter and a last-operation gauge: `agent_tx_bytes_total` / `agent_rx_bytes_total` carry the running total, while `agent_tx_last_bytes` / `agent_rx_last_bytes` (the `agent_<subject>_last_<unit>` convention) carry the byte size of the latest TX/RX request. The memory gauges follow the same convention -- `agent_memory_registered_last_bytes` / `agent_memory_deregistered_last_bytes` -- and report the byte size of the last (de)registration. The transfer-time events likewise publish both a cumulative `_total` counter and a last-operation gauge (`agent_xfer_time` / `agent_xfer_post_time`).
 - **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details. The transfer-time events additionally publish latency-distribution histograms `agent_xfer_time_us` and `agent_xfer_post_time_us` (microseconds), exposed as the usual `_bucket{le="..."}` / `_sum` / `_count` series alongside the existing counter and gauge, at parity with the native Prometheus exporter. Bucket boundaries default to a microsecond range covering ~10us..~10s and can be overridden (see below).
 

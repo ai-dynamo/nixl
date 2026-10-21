@@ -23,16 +23,24 @@
  * A single set of call sites fans out to every enabled tracing backend at
  * runtime (NVTX today; Chakra and others later). This is an internal core API
  * (compiled into libnixl, not installed as a public header). It is kept
- * deliberately self-contained -- depending only on standard headers and on no
- * other NIXL type -- so it stays easy to reason about and could be promoted to
- * a public header later without churn if an external consumer appears.
+ * deliberately self-contained -- depending only on standard headers and on
+ * trace_context.h and nixl_time.h -- so it stays easy to reason about and
+ * could be promoted to a public header later without churn if an external
+ * consumer appears.
  */
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
+
+#include "common/nixl_time.h"
+#include "tracing/trace_context.h"
 
 namespace nixl::trace {
 
@@ -57,6 +65,15 @@ enum class Kind : std::uint8_t {
  */
 struct SpanId {
     std::uint64_t value{0};
+};
+
+/**
+ * @brief Typed attribute of an emitted span or event. The key and a string
+ *        value are views, valid only for the call.
+ */
+struct Attribute {
+    std::string_view key;
+    std::variant<std::string_view, std::int64_t, double> value;
 };
 
 /**
@@ -95,12 +112,32 @@ public:
     mark(std::string_view name, Kind kind) = 0;
 
     virtual void
-    pushCorrelationId(std::uint64_t id) = 0;
+    pushContext(const TraceContext &context) = 0;
     virtual void
-    popCorrelationId() = 0;
+    popContext() = 0;
 
     [[nodiscard]] virtual std::string_view
     name() const noexcept = 0;
+
+    /**
+     * @brief Record a span from @p start to @p end, or an event at @p at, that
+     *        already happened. Times are `nixlTime` microseconds on
+     *        `std::chrono::steady_clock`; @p context is the record's own, not
+     *        the pushed one, and an invalid context means none.
+     */
+    virtual void
+    emitSpan(std::string_view name,
+             Kind kind,
+             const TraceContext &context,
+             nixlTime::us_t start,
+             nixlTime::us_t end,
+             std::span<const Attribute> attrs) = 0;
+    virtual void
+    emitEvent(std::string_view name,
+              Kind kind,
+              const TraceContext &context,
+              nixlTime::us_t at,
+              std::span<const Attribute> attrs) = 0;
 };
 
 class Tracer;
@@ -153,13 +190,22 @@ private:
 };
 
 /**
- * @brief Composite tracer owned by the Agent. A single beginSpan()/mark() call
- *        fans out to every enabled backend. No singleton; injected explicitly.
+ * @brief Fills its buffer with random bytes for trace-context ids, or throws a
+ *        std::exception. An all-zero id is drawn again; null selects the default
+ *        getentropy-backed source.
+ */
+using random_bytes_fn_t = void (*)(std::uint8_t *, std::size_t);
+
+/**
+ * @brief Composite tracer owned by the Agent. A single beginSpan(), mark(),
+ *        emitSpan() or emitEvent() call fans out to every enabled backend. No
+ *        singleton; injected explicitly.
  */
 class Tracer {
 public:
     explicit Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
-                    double sample_ratio = 0.0) noexcept;
+                    double sample_ratio = 0.0,
+                    random_bytes_fn_t random_bytes = nullptr) noexcept;
     ~Tracer();
     Tracer(const Tracer &) = delete;
     Tracer &
@@ -180,6 +226,18 @@ public:
         return sampleRatio_;
     }
 
+    /** @brief Random-byte source for this agent's trace contexts; null means the
+     *         default. Carried here for the same reason as sampleRatio(). */
+    [[nodiscard]] random_bytes_fn_t
+    randomBytes() const noexcept {
+        return randomBytes_;
+    }
+
+    /** @brief Logs this tracer's first trace-context generation failure at ERROR;
+     *         later ones are not logged. */
+    void
+    reportContextFailure(std::string_view reason) const noexcept;
+
     [[nodiscard]] Span
     beginSpan(std::string_view name, Kind kind = Kind::Generic);
 
@@ -187,33 +245,51 @@ public:
     mark(std::string_view name, Kind kind = Kind::Metadata);
 
     void
-    pushCorrelationId(std::uint64_t id);
+    pushContext(const TraceContext &context);
     void
-    popCorrelationId();
+    popContext();
+
+    void
+    emitSpan(std::string_view name,
+             Kind kind,
+             const TraceContext &context,
+             nixlTime::us_t start,
+             nixlTime::us_t end,
+             std::span<const Attribute> attrs);
+    void
+    emitEvent(std::string_view name,
+              Kind kind,
+              const TraceContext &context,
+              nixlTime::us_t at,
+              std::span<const Attribute> attrs);
 
 private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;
     const double sampleRatio_;
+    const random_bytes_fn_t randomBytes_;
+    mutable std::atomic<bool> contextFailureLogged_ = false;
 };
 
 /**
- * @brief RAII guard that keeps a correlation id active on the tracer for its
- *        lifetime, so every span/mark created while it is in scope is tagged
- *        with that id. Null-tracer-safe. Used to link spans emitted on different
- *        threads (e.g. postXferReq on the caller thread vs. the completion on
- *        the polling thread) to the same logical request.
+ * @brief RAII guard that keeps a trace context active on the tracer for its
+ *        lifetime, so every span/mark created while it is in scope carries
+ *        that context. Null-tracer-safe; an invalid context pushes nothing.
+ *        Used to link spans emitted on different threads (e.g. postXferReq on
+ *        the caller thread vs. the completion on the polling thread) to the
+ *        same logical request.
  */
 class CorrelationScope {
 public:
-    [[nodiscard]] CorrelationScope(Tracer *tracer, std::uint64_t id) : tracer_(tracer) {
+    [[nodiscard]] CorrelationScope(Tracer *tracer, const TraceContext &context)
+        : tracer_(((tracer != nullptr) && context.valid()) ? tracer : nullptr) {
         if (tracer_ != nullptr) {
-            tracer_->pushCorrelationId(id);
+            tracer_->pushContext(context);
         }
     }
 
     ~CorrelationScope() {
         if (tracer_ != nullptr) {
-            tracer_->popCorrelationId();
+            tracer_->popContext();
         }
     }
 
