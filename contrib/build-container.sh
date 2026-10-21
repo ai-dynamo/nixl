@@ -291,7 +291,7 @@ get_options() {
 
     if [[ $OS == "ubuntu22" ]]; then
         BASE_IMAGE=nvidia/cuda
-        BASE_IMAGE_TAG=13.0.1-devel-ubuntu22.04
+        BASE_IMAGE_TAG=13.4.2-devel-ubuntu22.04
         WHL_BASE=${WHL_BASE:-manylinux_2_34}
     fi
 
