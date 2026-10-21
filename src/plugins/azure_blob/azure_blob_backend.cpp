@@ -76,23 +76,46 @@ public:
     ~nixlAzureBlobBackendReqH() = default;
 
     std::vector<std::future<nixl_status_t>> statusFutures_;
+    nixl_status_t errorStatus_ = NIXL_SUCCESS;
 
+    // A terminal status is reported only after every posted operation has
+    // finished. Returning an error early would tell the caller it can reuse
+    // its buffers while sibling uploads or downloads are still in flight.
     nixl_status_t
     getOverallStatus() {
-        while (!statusFutures_.empty()) {
-            if (statusFutures_.back().wait_for(std::chrono::seconds(0)) ==
-                std::future_status::ready) {
-                auto current_status = statusFutures_.back().get();
-                if (current_status != NIXL_SUCCESS) {
-                    statusFutures_.clear();
-                    return current_status;
-                }
-                statusFutures_.pop_back();
-            } else {
-                return NIXL_IN_PROG;
+        std::vector<std::future<nixl_status_t>> pending;
+        pending.reserve(statusFutures_.size());
+
+        for (auto &fut : statusFutures_) {
+            if (!fut.valid()) {
+                continue;
+            }
+            if (fut.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+                pending.push_back(std::move(fut));
+                continue;
+            }
+
+            const nixl_status_t current_status = fut.get();
+            if (current_status != NIXL_SUCCESS && errorStatus_ == NIXL_SUCCESS) {
+                errorStatus_ = current_status;
             }
         }
-        return NIXL_SUCCESS;
+
+        statusFutures_ = std::move(pending);
+        if (!statusFutures_.empty()) {
+            return NIXL_IN_PROG;
+        }
+        return errorStatus_;
+    }
+
+    void
+    waitForCompletion() {
+        for (auto &fut : statusFutures_) {
+            if (fut.valid()) {
+                fut.wait();
+            }
+        }
+        statusFutures_.clear();
     }
 };
 
@@ -340,7 +363,14 @@ nixlAzureBlobEngine::checkXfer(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlAzureBlobEngine::releaseReqH(nixlBackendReqH *handle) const {
+    if (!handle) {
+        NIXL_ERROR << "Transfer request handle is null";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     nixlAzureBlobBackendReqH *req_h = static_cast<nixlAzureBlobBackendReqH *>(handle);
+    // Block until Azure I/O has finished touching caller buffers.
+    req_h->waitForCompletion();
     delete req_h;
     return NIXL_SUCCESS;
 }
