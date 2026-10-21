@@ -41,12 +41,21 @@ public:
      */
     byteBuffer() = default;
 
-    // Move constructor and assignment operator.
+    /**
+     * @brief Move constructor.
+     * @param other The other byte buffer to move from.
+     */
     byteBuffer(byteBuffer &&) noexcept = default;
+
+    /**
+     * @brief Move assignment operator.
+     * @param other The other byte buffer to move from.
+     * @return this.
+     */
     byteBuffer &
     operator=(byteBuffer &&) noexcept = default;
 
-    // Copy constructor and assignment operator.
+    // Delete copy constructor and assignment operator.
     byteBuffer(const byteBuffer &) = delete;
     byteBuffer &
     operator=(const byteBuffer &) = delete;
@@ -80,7 +89,8 @@ public:
 
     /**
      * @brief Put a byte sequence into the buffer.
-     * @param value The byte sequence to put into the buffer.
+     * @param value The byte sequence to put into the buffer. The given sequence
+     *        must NOT come from this buffer.
      * @return this.
      */
     template<typename T>
@@ -167,7 +177,7 @@ private:
  * @return A receive buffer of the given size.
  */
 [[nodiscard]] inline static nixl::byteBuffer
-make_receive_buffer(std::size_t size) {
+makeReceiveBuffer(std::size_t size) {
     nixl::byteBuffer buf;
     buf.resize(size);
     return buf;

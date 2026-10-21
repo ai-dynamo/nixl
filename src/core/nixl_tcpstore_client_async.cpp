@@ -264,21 +264,20 @@ nixlTcpStoreClientAsync::doConnect(asio::ip::tcp::resolver::results_type::const_
     } else {
         socket_.async_connect(
             *endpoint,
-            asio::cancel_at(deadline,
-                            asio::cancellation_type::terminal,
-                            [this, deadline, endpoint](asio::error_code error) mutable {
-                                if (!error && connectionState_ == connection_state_t::CONNECTING) {
-                                    // Attempt to set keep-alive and ignore the error.
-                                    asio::error_code ec;
-                                    socket_.set_option(asio::socket_base::keep_alive(true), ec);
-                                    doValidate(deadline);
-                                } else if (connectionState_ == connection_state_t::CONNECTING &&
-                                           std::chrono::steady_clock::now() < deadline) {
-                                    // Try the next endpoint.
-                                    endpoint++;
-                                    doConnect(endpoint, deadline);
-                                }
-                            }));
+            cancelAndErrorAdapter(
+                "connect", deadline, [this, deadline, endpoint](asio::error_code error) mutable {
+                    if (!error && connectionState_ == connection_state_t::CONNECTING) {
+                        // Attempt to set keep-alive and ignore the error.
+                        asio::error_code ec;
+                        socket_.set_option(asio::socket_base::keep_alive(true), ec);
+                        doValidate(deadline);
+                    } else if (error && std::chrono::steady_clock::now() < deadline) {
+                        // Try the next endpoint.
+                        connectionState_ = connection_state_t::CONNECTING;
+                        endpoint++;
+                        doConnect(endpoint, deadline);
+                    }
+                }));
     }
 }
 
@@ -321,7 +320,7 @@ nixlTcpStoreClientAsync::doPing(deadline_t deadline) {
 // This function must be called from the I/O context.
 void
 nixlTcpStoreClientAsync::doVerifyNonce(std::uint32_t nonce, deadline_t deadline) {
-    nixl::byteBuffer response = nixl::make_receive_buffer(sizeof(std::uint32_t));
+    nixl::byteBuffer response = nixl::makeReceiveBuffer(sizeof(std::uint32_t));
 
     initiateAsync<io_op_t::READ>(
         std::move(response),
@@ -658,6 +657,15 @@ nixlTcpStoreClientAsync::processSendQueue() {
                 return;
             }
 
+            if (std::chrono::steady_clock::now() >= request->deadline_) {
+                // Fail expired requests without initiating any I/O operations.
+                // Otherwise, the I/O operation will timeout immediately and
+                // trigger error handling which close the connection unnecessarily.
+                request->onComplete(asio::error::timed_out, nixl::byteBuffer());
+                processSendQueue();
+                return;
+            }
+
             hasInflightSend_ = true;
 
             request->connectionGeneration_ = generation_;
@@ -738,13 +746,13 @@ nixlTcpStoreClientAsync::processRecvQueue() {
             };
 
             if (response_size != std::dynamic_extent) {
-                nixl::byteBuffer response = nixl::make_receive_buffer(response_size);
+                nixl::byteBuffer response = nixl::makeReceiveBuffer(response_size);
                 initiateAsync<io_op_t::READ>(std::move(response),
                                              request_ptr->name(),
                                              request_ptr->deadline_,
                                              recv_complete);
             } else {
-                nixl::byteBuffer msg_size_buf = nixl::make_receive_buffer(sizeof(std::uint64_t));
+                nixl::byteBuffer msg_size_buf = nixl::makeReceiveBuffer(sizeof(std::uint64_t));
                 initiateAsync<io_op_t::READ>(
                     std::move(msg_size_buf),
                     request_ptr->name(),
@@ -768,7 +776,7 @@ nixlTcpStoreClientAsync::processRecvQueue() {
                                         generation_);
                                 recv_complete(nixl::byteBuffer(), asio::error::message_size, 0);
                             } else {
-                                nixl::byteBuffer response = nixl::make_receive_buffer(msg_size);
+                                nixl::byteBuffer response = nixl::makeReceiveBuffer(msg_size);
                                 initiateAsync<io_op_t::READ>(std::move(response),
                                                              request_ptr->name(),
                                                              request_ptr->deadline_,

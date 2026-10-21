@@ -82,7 +82,7 @@ TEST(ByteBuffer, VarArg) {
 }
 
 TEST(ByteBuffer, MakeReceiveBuffer) {
-    EXPECT_EQ(make_receive_buffer(10).getRef().size(), 10);
+    EXPECT_EQ(makeReceiveBuffer(10).getRef().size(), 10);
 }
 
 TEST(ByteBuffer, Resize) {

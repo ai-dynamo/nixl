@@ -76,11 +76,9 @@ public:
         return true;
     }
 
-    // Start the connection to the store.
     void
     start() override;
 
-    // Initiate the shutdown of the connection to the store.
     void
     stop() override;
 
