@@ -22,18 +22,27 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
 
-[[nodiscard]] std::vector<std::uint64_t> &
-correlationStack() noexcept {
-    static thread_local std::vector<std::uint64_t> stack;
+[[nodiscard]] std::vector<nixl::trace::TraceContext> &
+contextStack() noexcept {
+    static thread_local std::vector<nixl::trace::TraceContext> stack;
     return stack;
+}
+
+void
+addAttributes(nixl::trace::SpanBackend &record, std::span<const nixl::trace::Attribute> attrs) {
+    for (const nixl::trace::Attribute &attr : attrs) {
+        std::visit([&](const auto value) { record.addAttribute(attr.key, value); }, attr.value);
+    }
 }
 
 class recordingSpan final : public nixl::trace::SpanBackend {
@@ -86,25 +95,48 @@ public:
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
     beginSpan(std::string_view name, nixl::trace::Kind) override {
-        std::string line = agent_ + " " + std::string(name);
-        if (!correlationStack().empty()) {
-            line += " correlation=" + std::to_string(correlationStack().back());
-        }
-        return std::make_unique<recordingSpan>(fd_, std::move(line));
+        const auto &stack = contextStack();
+        return std::make_unique<recordingSpan>(
+            fd_, lineFor(name, stack.empty() ? nullptr : &stack.back()));
     }
 
     void
     mark(std::string_view, nixl::trace::Kind) override {}
 
     void
-    pushCorrelationId(std::uint64_t id) override {
-        correlationStack().push_back(id);
+    emitSpan(std::string_view name,
+             nixl::trace::Kind,
+             const nixl::trace::TraceContext &context,
+             nixlTime::us_t start,
+             nixlTime::us_t end,
+             std::span<const nixl::trace::Attribute> attrs) override {
+        recordingSpan span(fd_,
+                           lineFor(name, context.valid() ? &context : nullptr) + " start_us=" +
+                               std::to_string(start) + " end_us=" + std::to_string(end));
+        addAttributes(span, attrs);
     }
 
     void
-    popCorrelationId() override {
-        if (!correlationStack().empty()) {
-            correlationStack().pop_back();
+    emitEvent(std::string_view name,
+              nixl::trace::Kind,
+              const nixl::trace::TraceContext &context,
+              nixlTime::us_t at,
+              std::span<const nixl::trace::Attribute> attrs) override {
+        recordingSpan event(fd_,
+                            lineFor(name, context.valid() ? &context : nullptr) +
+                                " at_us=" + std::to_string(at));
+        addAttributes(event, attrs);
+    }
+
+    void
+    pushContext(const nixl::trace::TraceContext &context) override {
+        contextStack().push_back(context);
+    }
+
+    void
+    popContext() override {
+        if (!contextStack().empty()) {
+            contextStack().pop_back();
         }
     }
 
@@ -114,6 +146,16 @@ public:
     }
 
 private:
+    [[nodiscard]] std::string
+    lineFor(std::string_view name, const nixl::trace::TraceContext *context) const {
+        std::string line = agent_ + " " + std::string(name);
+        if (context != nullptr) {
+            line += " correlation=" + std::to_string(context->correlationId64()) +
+                " context=" + nixl::trace::formatTraceparent(*context);
+        }
+        return line;
+    }
+
     [[nodiscard]] static int
     openTraceFile() {
         const char *path = std::getenv("NIXL_TEST_TRACE_FILE");
@@ -134,7 +176,7 @@ private:
 extern "C" NIXL_TRACE_PLUGIN_EXPORT nixlTracePlugin *
 nixl_trace_plugin_init() {
     return nixlTracePluginCreator<recordingBackend>::create(
-        nixl_trace_plugin_api_version::V1, "recorder", "0.1.0");
+        nixl_trace_plugin_api_version::V2, "recorder", "0.1.0");
 }
 
 extern "C" NIXL_TRACE_PLUGIN_EXPORT void
