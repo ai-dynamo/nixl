@@ -17,6 +17,7 @@
 
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <algorithm>
 #include <cassert>
@@ -34,16 +35,15 @@
 #include "common/nixl_time.h"
 #include "path_mode_common.h"
 
-#define DEFAULT_NUM_TRANSFERS 250
-#define DEFAULT_TRANSFER_SIZE (10 * 1024 * 1024)
-#define DEFAULT_ITERATIONS 1
-#define TEST_PHRASE "NIXL Storage Test Pattern 2025"
-#define TEST_PHRASE_LEN (sizeof(TEST_PHRASE) - 1)
-#define DEFAULT_NUM_GPUS 1
+constexpr int DEFAULT_NUM_TRANSFERS = 250;
+constexpr size_t DEFAULT_TRANSFER_SIZE = 10 * 1024 * 1024;
+constexpr int DEFAULT_ITERATIONS = 1;
+constexpr std::string_view TEST_PHRASE = "NIXL Storage Test Pattern 2025";
+constexpr int DEFAULT_NUM_GPUS = 1;
 
-static size_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
+static const size_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
 
-#define PROGRESS_WIDTH 50
+constexpr int PROGRESS_WIDTH = 50;
 
 [[nodiscard]] size_t
 parse_size(const char *size_str) {
@@ -142,13 +142,13 @@ validateBuffer(void *expected, void *actual, size_t size, const char *operation)
 void
 fill_test_pattern(void *buffer, size_t size) {
     char *buf = static_cast<char *>(buffer);
-    size_t phrase_len = TEST_PHRASE_LEN;
+    size_t phrase_len = TEST_PHRASE.size();
     size_t offset = 0;
 
     while (offset < size) {
         size_t remaining = size - offset;
         size_t copy_len = (remaining < phrase_len) ? remaining : phrase_len;
-        memcpy(buf + offset, TEST_PHRASE, copy_len);
+        memcpy(buf + offset, TEST_PHRASE.data(), copy_len);
         offset += copy_len;
     }
 }
