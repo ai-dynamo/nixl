@@ -635,7 +635,7 @@ nixlScaleEngine::checkXfer(nixlBackendReqH *handle) const {
 
             char *ptr = static_cast<char *>(d.buf) + d.done;
             size_t remain = d.len - d.done;
-            off_t off = d.offset + (off_t)d.done;
+            off_t off = d.offset + static_cast<off_t>(d.done);
 
             const auto submitLen = static_cast<unsigned>(
                 std::min(remain, static_cast<size_t>(std::numeric_limits<unsigned>::max())));
