@@ -101,7 +101,9 @@ public:
     }
 
     void
-    mark(std::string_view, nixl::trace::Kind) override {}
+    mark(std::string_view name, nixl::trace::Kind kind) override {
+        static_cast<void>(beginSpan(name, kind));
+    }
 
     void
     emitSpan(std::string_view name,

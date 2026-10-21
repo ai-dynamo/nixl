@@ -1183,6 +1183,10 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (req_hndl->status == NIXL_IN_PROG) {
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
+        if (req_hndl->status == NIXL_SUCCESS) {
+            NIXL_TRACE_MARK(
+                data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
+        }
         if (req_hndl->status == NIXL_IN_PROG) {
             NIXL_ERROR_FUNC << "transfer request is still in progress and cannot be reposted";
             return NIXL_ERR_REPOST_ACTIVE;
@@ -1247,6 +1251,10 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                             << "' failed to post the transfer request with status "
                             << req_hndl->status;
         }
+    }
+
+    if (req_hndl->status == NIXL_SUCCESS) {
+        NIXL_TRACE_MARK(data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
     }
 
     if (data->telemetry_) {
@@ -1338,6 +1346,11 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
     if(req_hndl->status == NIXL_IN_PROG) {
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
+        if (req_hndl->status == NIXL_SUCCESS) {
+            NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), req_hndl->traceContext());
+            NIXL_TRACE_MARK(
+                data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
+        }
 
         if(req_hndl->status == NIXL_IN_PROG) {
 
