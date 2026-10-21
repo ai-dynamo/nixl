@@ -16,7 +16,6 @@
  */
 
 #include "gpunetio_backend.h"
-#include "gpunetio_completion_status.h"
 #include "gpunetio_cuda_device_guard.h"
 #include "serdes/serdes.h"
 #include <algorithm>
@@ -591,7 +590,6 @@ nixlDocaEngine::~nixlDocaEngine() {
     NIXL_DEBUG << "Before progressThreadStop ";
     progressThreadStop();
 
-    stopped_.store(1, std::memory_order_release);
     std::atomic_ref<uint32_t>(*wait_exit_cpu).store(1, std::memory_order_release);
     nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
     if (cuda_device.status() != cudaSuccess) {
@@ -1055,14 +1053,8 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
 
     try {
         qp_progress_gpu_.push_back(rdma_qp->progress_gpu);
-        const auto [qp_it, inserted] = qpMap.emplace(remote_agent, rdma_qp.get());
-        if (!inserted) {
-            qp_progress_gpu_.pop_back();
-            doca_gpu_mem_free(gdevs[0].second, rdma_qp->progress_gpu);
-            rdma_qp->progress_gpu = nullptr;
-            close_or_retain();
-            return NIXL_IN_PROG;
-        }
+        [[maybe_unused]] const bool inserted = qpMap.emplace(remote_agent, rdma_qp.get()).second;
+        assert(inserted);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Failed to track QP progress state: " << e.what();
@@ -1903,12 +1895,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         }
 
         auto &final_request = xferReqRingCpu[final_pos];
+        final_request.has_notif_msg_idx = notif->send_pi.fetch_add(1) & (notif->elems_num - 1);
         notif_addr =
-            (uintptr_t)nixl::gpunetio::reserveNotificationSlot(notif->send_pi,
-                                                               notif->elems_num,
-                                                               notif->send_addr,
-                                                               notif->elems_size,
-                                                               final_request.has_notif_msg_idx);
+            (uintptr_t)(notif->send_addr + final_request.has_notif_msg_idx * notif->elems_size);
         final_request.msg_sz = newMsg.size() + 1;
         final_request.lbuf_notif = notif_addr;
         final_request.lkey_notif = notif->send_mr->get_lkey();
@@ -2119,8 +2108,7 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
 
 bool
 nixlDocaEngine::hasFailed() const {
-    return stopped_.load(std::memory_order_acquire) != 0 ||
-        std::atomic_ref<uint32_t>(host_state_cpu_->failed).load(std::memory_order_acquire) != 0;
+    return std::atomic_ref<uint32_t>(host_state_cpu_->failed).load(std::memory_order_acquire) != 0;
 }
 
 void
@@ -2171,15 +2159,6 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
         }
     }
     if (treq->postedCount == 0) {
-        // Prepared-only handles, including failures before the first enqueue.
-        for (size_t i = 0; i < treq->positions.size(); ++i) {
-            auto &completion = host_state_cpu_->completions[treq->positions[i]];
-            const auto state =
-                std::atomic_ref<uint32_t>(completion.state).load(std::memory_order_acquire);
-            if (state != DOCA_XFER_STATE_PREPARED && state != DOCA_XFER_STATE_ERROR) {
-                return NIXL_ERR_REPOST_ACTIVE;
-            }
-        }
         for (uint32_t idx : treq->positions) {
             xferReqReserved_[idx].store(false, std::memory_order_release);
         }

@@ -27,7 +27,6 @@ public:
     std::atomic<int> activeOobSocket{-1};
     mutable std::mutex notifLock;
     mutable std::mutex qpLock;
-    mutable std::mutex postLock_;
     std::mutex connectLock;
     mutable std::mutex remoteConnLock;
     std::vector<std::pair<uint32_t, doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
@@ -163,12 +162,12 @@ private:
     cudaStream_t post_stream[DOCA_POST_STREAM_NUM]{};
     cudaStream_t wait_stream;
     mutable std::atomic<uint32_t> xferStream;
+    mutable std::mutex postLock_;
 
     struct docaXferReqGpu *xferReqRingGpu;
     struct docaXferReqGpu *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
     mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved_;
-    std::atomic<uint32_t> stopped_{0};
     docaHostState *host_state_cpu_ = nullptr;
     docaHostState *host_state_gpu_ = nullptr;
 
