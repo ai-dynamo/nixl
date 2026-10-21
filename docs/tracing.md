@@ -176,7 +176,9 @@ backends/PRs):
 | `nixl::releaseMemView` | `Generic` | - |
 
 Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
-when `getXferStatus` first observes success. How a backend renders attributes and
+once per completed post, by the first call that sees the transfer complete:
+`postXferReq` when the backend completes it at once, and otherwise `getXferStatus`,
+a repost of the same request, or `releaseXferReq`. How a backend renders attributes and
 dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each
 backend (e.g. NVTX attaches attributes as typed payloads on the range via
 `nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
@@ -343,8 +345,8 @@ nothing progresses cannot finish inside `postXfer`, so its `notif.sent` must com
 from the status check. An unsampled request, or an agent with tracing off, records
 none of them. The agents trace through `recorder`, a test-only backend
 (`libtrace_backend_recorder.so` in the mocks directory) that appends one line per
-finished span to the file named by `NIXL_TEST_TRACE_FILE`; the tests set both
-variables themselves.
+finished or emitted span, per emitted event and per mark to the file named by
+`NIXL_TEST_TRACE_FILE`; the tests set both variables themselves.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
 test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically
@@ -382,6 +384,6 @@ In NIXL tracing, "correlation" can mean two different things:
 
 - **Backend phase emission** — UCX records `nixl::submit`, `nixl::wire.submitted`,
   `nixl::notif.sent` and `nixl::notif.received` through the sink described under
-  "Backend phase spans". Not recorded yet: an accurate `nixl::wire.completed`,
+  "Backend phases". Not recorded yet: an accurate `nixl::wire.completed`,
   which needs a completion point that does not depend on how often the
   application polls, and the other backends' phases.

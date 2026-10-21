@@ -157,6 +157,17 @@ recordedSpans(const std::filesystem::path &path, std::string_view agent, std::st
     return spans;
 }
 
+[[nodiscard]] testing::Matcher<const std::string &>
+phaseEventTime(const span_record_t &span) {
+    constexpr std::string_view key = "nixl.phase.timestamp_us=";
+    for (const auto &field : span) {
+        if (field.starts_with(key)) {
+            return testing::Eq("at_us=" + field.substr(key.size()));
+        }
+    }
+    return testing::StartsWith(std::string(key));
+}
+
 class ucxTraceContextPropagation : public testing::Test {
 protected:
     void
@@ -244,6 +255,7 @@ protected:
         ASSERT_TRUE(context.sampled());
         const std::vector<std::string> expected{
             "correlation=" + std::to_string(context.correlationId64()),
+            "context=" + nixl::trace::formatTraceparent(context),
             "nixl.traceparent=" + nixl::trace::formatTraceparent(context),
             "nixl.backend=UCX"};
         const std::array<std::pair<const char *, size_t>, 3> expected_counts{
@@ -255,6 +267,7 @@ protected:
             EXPECT_EQ(spans.size(), count) << phase;
             for (const auto &span : spans) {
                 EXPECT_THAT(span, testing::IsSupersetOf(expected)) << phase;
+                EXPECT_THAT(span, testing::Contains(phaseEventTime(span))) << phase;
             }
         }
     }
@@ -441,18 +454,23 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
 
     const std::string correlation = "correlation=" + std::to_string(context.correlationId64());
-    const std::string traceparent = "nixl.traceparent=" + nixl::trace::formatTraceparent(context);
+    const std::string traceparent = nixl::trace::formatTraceparent(context);
 #if defined(NIXL_TRACE_ENABLED)
     const auto posted = recordedSpans(traceFile, sender_name, "nixl::postXferReq.write");
     ASSERT_EQ(posted.size(), 1u);
-    EXPECT_THAT(posted[0],
-                testing::IsSupersetOf({correlation, std::string("remote_agent=") + receiver_name}));
+    EXPECT_THAT(
+        posted[0],
+        testing::IsSupersetOf(
+            {correlation, "context=" + traceparent, std::string("remote_agent=") + receiver_name}));
 #endif
     const auto received = recordedSpans(traceFile, receiver_name, "nixl::notif.received");
     ASSERT_EQ(received.size(), 1u);
     EXPECT_THAT(received[0],
-                testing::IsSupersetOf(
-                    {correlation, traceparent, std::string("nixl.remote_agent=") + sender_name}));
+                testing::IsSupersetOf({correlation,
+                                       "context=" + traceparent,
+                                       "nixl.traceparent=" + traceparent,
+                                       std::string("nixl.remote_agent=") + sender_name}));
+    EXPECT_THAT(received[0], testing::Contains(phaseEventTime(received[0])));
     expectSenderPhases(sender_name, context, 1, 1);
 }
 
