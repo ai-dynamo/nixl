@@ -171,9 +171,9 @@ to_stride_dlist(nixl_mem_t mem, const py::array &descs) {
 
 // Resolves a Python index into a descriptor list. Negative indices count from the end, and an
 // index outside the list raises IndexError, which is also what stops Python's iteration over it.
-template<typename DlistT>
+template<typename dlistT>
 size_t
-checked_index(const DlistT &list, py::ssize_t i) {
+checkedIndex(const dlistT &list, py::ssize_t i) {
     const py::ssize_t n = list.descCount();
     if (i < 0) {
         i += n;
@@ -354,12 +354,12 @@ PYBIND11_MODULE(_bindings, m) {
         .def(py::self == py::self)
         .def("__getitem__",
              [](nixl_xfer_dlist_t &list, py::ssize_t i) -> py::tuple {
-                 nixlBasicDesc &desc = list[checked_index(list, i)];
+                 nixlBasicDesc &desc = list[checkedIndex(list, i)];
                  return py::make_tuple(desc.addr, desc.len, desc.devId);
              })
         .def("__setitem__",
              [](nixl_xfer_dlist_t &list, py::ssize_t i, const py::tuple &desc) {
-                 const size_t idx = checked_index(list, i);
+                 const size_t idx = checkedIndex(list, i);
                  list[idx] = nixlBasicDesc(
                      desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint64_t>());
              })
@@ -428,12 +428,12 @@ PYBIND11_MODULE(_bindings, m) {
         .def(py::self == py::self)
         .def("__getitem__",
              [](nixl_remote_dlist_t &list, py::ssize_t i) -> py::tuple {
-                 nixlRemoteDesc &desc = list[checked_index(list, i)];
+                 nixlRemoteDesc &desc = list[checkedIndex(list, i)];
                  return py::make_tuple(desc.addr, desc.len, desc.devId, desc.remoteAgent);
              })
         .def("__setitem__",
              [](nixl_remote_dlist_t &list, py::ssize_t i, const py::tuple &desc) {
-                 const size_t idx = checked_index(list, i);
+                 const size_t idx = checkedIndex(list, i);
                  list[idx] = nixlRemoteDesc(desc[0].cast<uintptr_t>(),
                                             desc[1].cast<size_t>(),
                                             desc[2].cast<uint64_t>(),
@@ -512,12 +512,12 @@ PYBIND11_MODULE(_bindings, m) {
         .def(py::self == py::self)
         .def("__getitem__",
              [](nixl_reg_dlist_t &list, py::ssize_t i) -> py::tuple {
-                 nixlBlobDesc desc = list[checked_index(list, i)];
+                 nixlBlobDesc desc = list[checkedIndex(list, i)];
                  return py::make_tuple(desc.addr, desc.len, desc.devId, py::bytes(desc.metaInfo));
              })
         .def("__setitem__",
              [](nixl_reg_dlist_t &list, py::ssize_t i, const py::tuple &desc) {
-                 const size_t idx = checked_index(list, i);
+                 const size_t idx = checkedIndex(list, i);
                  list[idx] = nixlBlobDesc(desc[0].cast<uintptr_t>(),
                                           desc[1].cast<size_t>(),
                                           desc[2].cast<uint64_t>(),
