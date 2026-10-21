@@ -245,6 +245,15 @@ def test_notification_is_consumed_once(
     )
 
 
+@pytest.mark.timeout(5, func_only=True)
+def test_send_notif_with_backend(two_connected_agents, backend_name):
+    agent1, agent2 = two_connected_agents
+    agent1.send_notif(agent2.name, b"with-backend", backend=backend_name)
+
+    while not agent2.check_remote_xfer_done(agent1.name, b"with-backend"):
+        pass
+
+
 def test_improper_get_xfer_descs(one_empty_agent, one_reg_list):
     # xfer list should be 3-tuple, not 4-tuple
     bad_list = [(1, 2, 3, 4)]
