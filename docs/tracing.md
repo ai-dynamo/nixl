@@ -192,14 +192,14 @@ as `nixl.xfer_request_id`. Each post that passes `postXferReq`'s checks and reac
 the backend takes the request's next execution number, `nixl.xfer_execution`,
 starting at 1, whether or not the backend then fails it. A post rejected before
 that, such as a repost refused with `NIXL_ERR_REPOST_ACTIVE`, takes none, so its
-span carries only the request id. A post's `nixl::xfer.complete` carries the same
-pair as its span. The id is recorded as an unsigned decimal string, since an
-`int64_t` attribute would show half of all ids as negative; the execution number is
-an `int64_t`. With no tracing backend active, a request has neither. A drawn id is
-never 0: if the agent's random source fails, which also leaves the request without a
-trace context, its records carry `nixl.xfer_request_id=0` and `nixl.xfer_execution=0`,
-meaning none. Both are attributes only: the wire and the NVTX payload carry the trace
-context (see "Correlation").
+span carries the request id but no execution number. A post's `nixl::xfer.complete`
+carries the same pair as its span. The id is recorded as an unsigned decimal string,
+since an `int64_t` attribute would show half of all ids as negative; the execution
+number is an `int64_t`. With no tracing backend active, a request has neither. A
+drawn id is never 0: if the agent's random source fails, which also leaves the
+request without a trace context, its records carry `nixl.xfer_request_id=0` and
+`nixl.xfer_execution=0`, meaning none. Both are attributes only: the wire and the
+NVTX payload carry the trace context (see "Correlation").
 
 ### Backend phases
 
