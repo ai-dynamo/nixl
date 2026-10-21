@@ -144,3 +144,143 @@ def make_elf(
     out = ehdr + phdrs + body + shdrs
     assert len(out) == file_size
     return out
+
+
+DEFAULT_UCX = (
+    "libucm_cuda",
+    "libuct_cma",
+    "libuct_cuda",
+    "libuct_ib",
+    "libuct_ib_mlx5",
+    "libuct_ib_mlx5_gda",
+    "libuct_ib_efa",
+    "libucx_perftest_cuda",
+    "libucx_perftest_mad",
+    "libuct_ib_mlx5_ext",
+    "libuct_ib_mlx5_gdp",
+)
+DEFAULT_NIXL = (
+    "libplugin_UCX.so",
+    "libplugin_GDS.so",
+    "libplugin_GDS_MT.so",
+    "libplugin_POSIX.so",
+    "libplugin_OBJ.so",
+    "libplugin_AZURE_BLOB.so",
+    "libplugin_GPUNETIO.so",
+    "libplugin_LIBFABRIC.so",
+    "libplugin_GUSLI.so",
+    "libplugin_INFINIA.so",
+    "libtelemetry_exporter_prometheus.so",
+    "libtelemetry_exporter_doca.so",
+)
+CU13_ONLY_NIXL = ("libtrace_backend_nvtx.so",)
+INFINIA_NEEDED = ["libred_client.so.2", "libred_async.so", "libc.so.6"]
+INFINIA_RUNPATH = "$ORIGIN/..:$ORIGIN:/opt/ddn/red//lib"
+
+
+def _cell_label(cu: str, py: str, arch: str) -> str:
+    return f"{cu}/{py}/{arch}"
+
+
+def _selected(selector: str, cu: str, py: str, arch: str) -> str | None:
+    """Selector forms: '<cu>/<py>/<arch>:<path>', '<cu>:*:<path>', '*:<path>'. Returns the path or None."""
+    if selector.startswith("*:"):
+        return selector[2:]
+    head, sep, path = selector.partition(":")
+    if not sep:
+        return None
+    if head == _cell_label(cu, py, arch):
+        return path
+    if path.startswith("*:") and head == cu:
+        return path[2:]
+    return None
+
+
+def make_set(
+    root: Path,
+    version: str,
+    *,
+    cudas=("cu12", "cu13"),
+    pys=("cp310", "cp311"),
+    arches=("x86_64", "aarch64"),
+    extra: dict[str, bytes] | None = None,
+    drop: set[str] | None = None,
+    ucx_modules=DEFAULT_UCX,
+    nixl_plugins=DEFAULT_NIXL,
+    vendored: dict[str, bytes] | None = None,
+    vendored_by_cell: dict[str, dict[str, bytes]] | None = None,
+    readme_block: str = "",
+    ucx_release: str = "1.23.0",
+) -> Path:
+    """A complete synthetic wheel set with the real path shapes (see the design §3)."""
+    root.mkdir(parents=True, exist_ok=True)
+    for cu in cudas:
+        for py in pys:
+            for arch in arches:
+                label = _cell_label(cu, py, arch)
+                pkg = f"nixl_{cu}"
+                members: dict[str, MemberSpec] = {}
+                for m in ucx_modules:
+                    members[f"{pkg}.libs/ucx/{m}.so.0.0.0"] = f"{m} {arch}".encode()
+                    members[f"{pkg}.libs/ucx/{m}.la"] = b"# libtool\n"
+                plugins = tuple(nixl_plugins) + (CU13_ONLY_NIXL if cu == "cu13" else ())
+                for p in plugins:
+                    if p == "libplugin_INFINIA.so":
+                        members[f"{pkg}.libs/nixl/{p}"] = make_elf(
+                            INFINIA_NEEDED, INFINIA_RUNPATH
+                        )
+                    else:
+                        members[f"{pkg}.libs/nixl/{p}"] = f"{p} {arch}".encode()
+                    members[f".{pkg}.mesonpy.libs/plugins/{p}"] = (
+                        f"{p} build-tree".encode()
+                    )
+                members[f".{pkg}.mesonpy.libs/libnixl.so"] = b"libnixl build-tree"
+                members[
+                    f"{pkg}.libs/libucp-{abs(hash((cu, arch))) % 10**8:08x}.so.0.0.0"
+                ] = (b"\0ucp\0" + ucx_release.encode() + b"\0")
+                members[f"{pkg}.libs/libucs-aaaaaaaa.so.0.0.0"] = b"ucs"
+                for name, data in (vendored or {}).items():
+                    members[f"{pkg}.libs/{name}"] = data
+                for name, data in ((vendored_by_cell or {}).get(label) or {}).items():
+                    if name.startswith("libucp-"):
+                        for existing in [
+                            k for k in members if k.startswith(f"{pkg}.libs/libucp-")
+                        ]:
+                            del members[existing]
+                    members[f"{pkg}.libs/{name}"] = data
+                members[
+                    f"nixl_ep_{cu}/nixl_ep_cpp_torch213.{py}-{arch}-linux-gnu.so"
+                ] = (b"\0" * 2048)
+                members[f"{pkg}/__init__.py"] = b"# nixl\n"
+                members[f"{pkg}-{version}.data/headers/asio.hpp"] = b"// asio\n"
+                members[f"{pkg}-{version}.dist-info/METADATA"] = (
+                    f"Metadata-Version: 2.1\nName: nixl-{cu}\nVersion: {version}\n\n# NIXL\n{readme_block}"
+                ).encode()
+                members[f"{pkg}-{version}.dist-info/WHEEL"] = (
+                    b"Wheel-Version: 1.0\nGenerator: meson\n"
+                )
+                members[f"{pkg}-{version}.dist-info/RECORD"] = version.encode()
+                for selector, data in (extra or {}).items():
+                    path = _selected(selector, cu, py, arch)
+                    if path is not None:
+                        members[path.replace("nixl_cuXX", pkg)] = data
+                for selector in drop or set():
+                    path = _selected(selector, cu, py, arch)
+                    if path is not None:
+                        members.pop(path.replace("nixl_cuXX", pkg), None)
+                make_wheel(
+                    root / f"{pkg}-{version}-{py}-{py}-manylinux_2_28_{arch}.whl",
+                    members,
+                )
+    make_wheel(
+        root / f"nixl-{version}-py3-none-any.whl",
+        {
+            f"nixl-{version}.dist-info/METADATA": (
+                f"Metadata-Version: 2.1\nName: nixl\nVersion: {version}\n"
+                f"Requires-Dist: nixl-cu12=={version}\nRequires-Dist: nixl-cu13=={version}\n"
+            ).encode(),
+            f"nixl-{version}.dist-info/WHEEL": b"Wheel-Version: 1.0\nGenerator: setuptools (80.9.0)\n",
+            f"nixl-{version}.dist-info/RECORD": version.encode(),
+        },
+    )
+    return root
