@@ -22,7 +22,6 @@
 #include "common/str_util.h"
 #include "histogram_buckets.h"
 
-#include <absl/strings/ascii.h>
 #include <doca_telemetry_exporter.h>
 #include <doca_error.h>
 #include <array>
@@ -88,11 +87,7 @@ getIpcSocketsDir() {
 
 [[nodiscard]] std::string
 getSourceAttribute(const char *var, const std::string &fallback) {
-    const std::string raw = nixl::config::getValueDefaulted<std::string>(var, std::string());
-    std::string value(absl::StripAsciiWhitespace(raw));
-    if (value.empty()) {
-        value = fallback;
-    }
+    const std::string value = nixl::config::getValueDefaulted<std::string>(var, fallback);
     if (value.find('/') != std::string::npos) {
         nixl::throwRuntimeError(var, ": '", value, "' must not contain '/'");
     }

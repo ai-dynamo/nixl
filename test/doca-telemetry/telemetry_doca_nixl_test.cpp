@@ -495,8 +495,8 @@ TEST_F(docaNixlExporterTest, SourceIdentityDefaultsToHostNameAndNixl) {
 }
 
 TEST_F(docaNixlExporterTest, SourceIdentityReadsEnvironment) {
-    ASSERT_EQ(::setenv(docaSourceIdVar, "  node-7.cluster_a-rank3  ", 1), 0);
-    ASSERT_EQ(::setenv(docaSourceTagVar, "\tnixl_custom\n", 1), 0);
+    ASSERT_EQ(::setenv(docaSourceIdVar, "node-7.cluster_a-rank3", 1), 0);
+    ASSERT_EQ(::setenv(docaSourceTagVar, "nixl_custom", 1), 0);
 
     constexpr char agentName[] = "nixl_doca_source_env_test";
     const nixlTelemetryExporterInitParams params{agentName, 4096};
@@ -519,15 +519,15 @@ TEST_F(docaNixlExporterTest, SourceIdentityReadsEnvironment) {
     EXPECT_EQ(metrics.latestValue(metric, labels), std::optional<double>(321.0));
 }
 
-TEST_F(docaNixlExporterTest, SourceIdentityBlankUsesDefaults) {
+TEST_F(docaNixlExporterTest, SourceIdentityKeepsEmptyValues) {
     ASSERT_EQ(::setenv(docaSourceIdVar, "", 1), 0);
-    ASSERT_EQ(::setenv(docaSourceTagVar, "   ", 1), 0);
+    ASSERT_EQ(::setenv(docaSourceTagVar, "", 1), 0);
 
-    const nixlTelemetryExporterInitParams params{"nixl_doca_source_blank_test", 4096};
+    const nixlTelemetryExporterInitParams params{"nixl_doca_source_empty_test", 4096};
     nixlTelemetryDocaExporter exporter(params);
 
-    EXPECT_EQ(exporter.sourceId(), nixl::getHostname().value_or("unknown"));
-    EXPECT_EQ(exporter.sourceTag(), "nixl");
+    EXPECT_EQ(exporter.sourceId(), "");
+    EXPECT_EQ(exporter.sourceTag(), "");
 }
 
 TEST_F(docaNixlExporterTest, SourceIdentityRejectsSlash) {

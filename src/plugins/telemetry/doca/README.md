@@ -88,7 +88,7 @@ export NIXL_TELEMETRY_DOCA_SOURCE_ID="<id>"
 export NIXL_TELEMETRY_DOCA_SOURCE_TAG="<tag>"
 ```
 
-- An unset, empty or whitespace-only value uses the default, and surrounding whitespace is trimmed. A value containing `/` is rejected, because DOCA uses both values in data-file paths.
+- An unset variable uses the default, and a set value is used as is, including an empty one. A value containing `/` is rejected, because DOCA uses both values in data-file paths.
 - Like the port and backends, they are read by the agent that creates the process's shared DOCA context, and every agent created while that context exists uses them.
 - Neither value is added as a metric label; DTS receives them with the metrics pushed over `ipc`.
 - When several NIXL processes on one host push to DTS, give each process a unique source id, for example `NIXL_TELEMETRY_DOCA_SOURCE_ID="$(hostname)-${LOCAL_RANK}"`.
