@@ -209,6 +209,7 @@ nixlTcpStoreClientAsync::nixlTcpStoreClientAsync(std::string host,
       opTimeout_(op_timeout),
       ioContext_(io_context),
       socket_(ioContext_),
+      connectionRetryTimer_(ioContext_),
       shutdownTimer_(ioContext_) {}
 
 nixlTcpStoreClientAsync::~nixlTcpStoreClientAsync() = default;
@@ -221,6 +222,7 @@ nixlTcpStoreClientAsync::connect() {
 // This function must be called from the I/O context.
 void
 nixlTcpStoreClientAsync::doResolve(std::chrono::milliseconds timeout) {
+    connectionRetryTimer_.cancel();
     if (connectionState_ != connection_state_t::CLOSED) {
         NIXL_INFO << "TCPStore client is already connected";
         return;
@@ -262,19 +264,21 @@ nixlTcpStoreClientAsync::doConnect(asio::ip::tcp::resolver::results_type::const_
     } else {
         socket_.async_connect(
             *endpoint,
-            cancelAndErrorAdapter(
-                "connect", deadline, [this, deadline, endpoint](asio::error_code error) mutable {
-                    if (!error && connectionState_ == connection_state_t::CONNECTING) {
-                        // Attempt to set keep-alive and ignore the error.
-                        asio::error_code ec;
-                        socket_.set_option(asio::socket_base::keep_alive(true), ec);
-                        doValidate(deadline);
-                    } else if (error && std::chrono::steady_clock::now() < deadline) {
-                        // Try the next endpoint.
-                        endpoint++;
-                        doConnect(endpoint, deadline);
-                    }
-                }));
+            asio::cancel_at(deadline,
+                            asio::cancellation_type::terminal,
+                            [this, deadline, endpoint](asio::error_code error) mutable {
+                                if (!error && connectionState_ == connection_state_t::CONNECTING) {
+                                    // Attempt to set keep-alive and ignore the error.
+                                    asio::error_code ec;
+                                    socket_.set_option(asio::socket_base::keep_alive(true), ec);
+                                    doValidate(deadline);
+                                } else if (connectionState_ == connection_state_t::CONNECTING &&
+                                           std::chrono::steady_clock::now() < deadline) {
+                                    // Try the next endpoint.
+                                    endpoint++;
+                                    doConnect(endpoint, deadline);
+                                }
+                            }));
     }
 }
 
@@ -325,7 +329,8 @@ nixlTcpStoreClientAsync::doVerifyNonce(std::uint32_t nonce, deadline_t deadline)
         deadline,
         [this, nonce](nixl::byteBuffer response, asio::error_code error, std::size_t) {
             if (!error && connectionState_ == connection_state_t::CONNECTING) {
-                std::uint32_t echoed = *reinterpret_cast<std::uint32_t *>(response.getRef().data());
+                std::uint32_t echoed;
+                memcpy(&echoed, response.getRef().data(), sizeof(std::uint32_t));
                 if (echoed == nonce) {
                     connectionState_ = connection_state_t::CONNECTED;
                     connectionRetryCount_ = 0;
@@ -352,6 +357,7 @@ nixlTcpStoreClientAsync::initiateShutdown(std::chrono::milliseconds grace_period
     if (connectionState_ != connection_state_t::SHUTTING_DOWN &&
         connectionState_ != connection_state_t::SHUTDOWN) {
         connectionState_ = connection_state_t::SHUTTING_DOWN;
+        connectionRetryTimer_.cancel();
         processSendQueue();
 
         if (connectionState_ != connection_state_t::SHUTDOWN) {
@@ -518,8 +524,8 @@ nixlTcpStoreClientAsync::get(
                 return;
             }
 
-            tcpstore::check_response_t response =
-                *reinterpret_cast<tcpstore::check_response_t *>(buf.getRef().data());
+            tcpstore::check_response_t response;
+            memcpy(&response, buf.getRef().data(), sizeof(tcpstore::check_response_t));
             if (response == tcpstore::check_response_t::READY) {
                 client_.scheduleRequest(
                     std::make_unique<getRequest>(client_, deadline_, key_, onComplete_));
@@ -573,7 +579,8 @@ nixlTcpStoreClientAsync::deleteKey(const std::string &key,
             if (error) {
                 onComplete_(error, false);
             } else {
-                std::int64_t num_deleted = *reinterpret_cast<std::int64_t *>(buf.getRef().data());
+                std::int64_t num_deleted;
+                memcpy(&num_deleted, buf.getRef().data(), sizeof(std::int64_t));
                 onComplete_(asio::error_code(), (num_deleted == 1));
             }
         }
@@ -592,6 +599,12 @@ void
 nixlTcpStoreClientAsync::scheduleRequest(std::unique_ptr<Request> request) {
     bool is_queued = false;
     {
+        // Concurrent correctness:
+        // We must check the connection state under the lock, so that:
+        //   - either we see the SHUTDOWN/SHUTTING_DOWN state and fail the
+        //     request in-place; or,
+        //   - the processSendQueue() called after setting the SHUTTING_DOWN
+        //     inside initiateShutdown() sees our inserted request.
         const std::lock_guard lock(sendQueueMutex_);
         if (connectionState_ != connection_state_t::SHUTTING_DOWN &&
             connectionState_ != connection_state_t::SHUTDOWN) {
@@ -743,8 +756,8 @@ nixlTcpStoreClientAsync::processRecvQueue() {
                         if (!error && generation_ == request_ptr->connectionGeneration_ &&
                             (connectionState_ == connection_state_t::CONNECTED ||
                              connectionState_ == connection_state_t::SHUTTING_DOWN)) {
-                            std::uint64_t msg_size =
-                                *reinterpret_cast<std::uint64_t *>(msg_size_buf.getRef().data());
+                            std::uint64_t msg_size;
+                            memcpy(&msg_size, msg_size_buf.getRef().data(), sizeof(std::uint64_t));
 
                             if (msg_size == 0) {
                                 recv_complete(nixl::byteBuffer(), asio::error_code(), 0);
@@ -850,14 +863,15 @@ nixlTcpStoreClientAsync::onError(std::string what,
             connectionState_ == connection_state_t::CONNECTED) {
             connectionState_ = connection_state_t::CLOSED;
             if (connectionRetryCount_ < max_connection_retry_count) {
-                auto timer =
-                    std::make_unique<asio::steady_timer>(ioContext_, connection_retry_interval);
-                timer->async_wait([this, timer = std::move(timer)](asio::error_code error) {
-                    doResolve(opTimeout_);
+                connectionRetryTimer_.expires_after(connection_retry_interval);
+                connectionRetryTimer_.async_wait([this](asio::error_code error) {
+                    if (!error) {
+                        doResolve(opTimeout_);
+                    }
                 });
             } else {
-                NIXL_ERROR << "[TCPStore client][Server: " << host_ << ":" << port_
-                           << "]: " << "Max connection retry count reached. Close the connection.";
+                NIXL_ERROR << "[TCPStore client][Server: " << host_ << ":" << port_ << "]: "
+                           << "Max connection retry count reached. Close the connection.";
                 drainSendQueue();
             }
         } else if (connectionState_ == connection_state_t::SHUTTING_DOWN) {

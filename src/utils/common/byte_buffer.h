@@ -161,6 +161,11 @@ private:
     std::vector<std::uint8_t> data_;
 };
 
+/**
+ * @brief Make a receive buffer of the given size.
+ * @param size The size of the receive buffer.
+ * @return A receive buffer of the given size.
+ */
 [[nodiscard]] inline static nixl::byteBuffer
 make_receive_buffer(std::size_t size) {
     nixl::byteBuffer buf;

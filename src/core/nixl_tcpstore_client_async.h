@@ -229,12 +229,14 @@ private:
     asio::ip::tcp::resolver::results_type resolvedEndpoints_;
     // The socket to the TCPStore server.
     asio::ip::tcp::socket socket_;
-    // Whether the connection is established.
+    // The state of the connection.
     std::atomic<connection_state_t> connectionState_ = connection_state_t::CLOSED;
     // The generation of the current connection.
     std::int32_t generation_ = 0;
     // The number of times the connection has been retried.
     std::int32_t connectionRetryCount_ = 0;
+    // The timer for the connection retry.
+    asio::steady_timer connectionRetryTimer_;
     // The timer for the shutdown grace period.
     asio::steady_timer shutdownTimer_;
 

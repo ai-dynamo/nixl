@@ -76,11 +76,11 @@ public:
         return true;
     }
 
-    // Starts the worker and connects on it, so an unreachable store is reported
-    // at bring-up without agent construction waiting for it.
+    // Start the connection to the store.
     void
     start() override;
 
+    // Initiate the shutdown of the connection to the store.
     void
     stop() override;
 
