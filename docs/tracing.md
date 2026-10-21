@@ -345,7 +345,7 @@ nothing progresses cannot finish inside `postXfer`, so its `notif.sent` must com
 from the status check. An unsampled request, or an agent with tracing off, records
 none of them. The agents trace through `recorder`, a test-only backend
 (`libtrace_backend_recorder.so` in the mocks directory) that appends one line per
-finished or emitted span and per emitted event to the file named by
+finished or emitted span, per emitted event and per mark to the file named by
 `NIXL_TEST_TRACE_FILE`; the tests set both variables themselves.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
