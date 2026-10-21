@@ -405,23 +405,28 @@ kernel_progress(struct docaXferReqGpu *xfer_req_ring,
         return;
     }
 
+    // Only the data scheduler uses a warp; notification blocks retain one worker.
+    if (blockIdx.x != 0 && threadIdx.x != 0) {
+        return;
+    }
+
     doca_gpu_dev_verbs_ticket_t out_ticket;
 
     // Data QPs progress independently; notification SEND remains synchronous.
     if (blockIdx.x == 0) {
-        while (nixl_gpunetio_dev_load_host_state(*exit_flag) == 0U) {
-            const uint32_t active =
-                cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(progress_state->active_bitmap)
-                    .load(cuda::std::memory_order_acquire);
-            const uint32_t start = atomicAdd(&progress_state->progress_cursor, 0U);
-
-            uint32_t pending = __funnelshift_r(active, active, start);
-            while (pending != 0U) {
-                const uint32_t offset = __ffs(pending) - 1;
-                pending &= pending - 1;
-                const uint32_t pos = (start + offset) & DOCA_XFER_REQ_MASK;
-
-                docaXferReqGpu *request = &xfer_req_ring[pos];
+        static_assert(DOCA_XFER_REQ_MAX == 32, "One warp owns the data request slots");
+        const uint32_t pos = threadIdx.x;
+        while (__all_sync(0xffffffffU, nixl_gpunetio_dev_load_host_state(*exit_flag) == 0U)) {
+            uint32_t active = 0;
+            if (pos == 0) {
+                active = cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(
+                             progress_state->active_bitmap)
+                             .load(cuda::std::memory_order_acquire);
+            }
+            active = __shfl_sync(0xffffffffU, active, 0);
+            docaXferReqGpu *request = &xfer_req_ring[pos];
+            bool send_notification = false;
+            if ((active & (1U << pos)) != 0U) {
                 const uint32_t request_state = nixl_gpunetio_dev_load_host_state(request->state);
 
                 if (request_state == DOCA_XFER_STATE_DATA_POSTED) {
@@ -432,47 +437,55 @@ kernel_progress(struct docaXferReqGpu *xfer_req_ring,
                     if (poll_status == 0) {
                         atomicExch(&request->data_state, DOCA_XFER_DATA_COMPLETE);
                         if (DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx) != DOCA_NOTIF_NULL) {
-#if ENABLE_DEBUG == 1
-                            printf("Notif after completion at %d id %d sz %d\n",
-                                   pos,
-                                   DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx),
-                                   (int)request->msg_sz);
-#endif
-                            doca_gpu_dev_verbs_send(
-                                request->qp_notif,
-                                doca_gpu_dev_verbs_addr{.addr = (uint64_t)(request->lbuf_notif),
-                                                        .key = request->lkey_notif},
-                                request->msg_sz,
-                                &out_ticket);
-                            int notif_status;
-                            do {
-                                notif_status = nixl_gpunetio_dev_poll_one_cq_at<
-                                    DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-                                    DOCA_GPUNETIO_VERBS_QP_SQ>(
-                                    doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_notif), out_ticket);
-                            } while (
-                                notif_status == EBUSY && DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0 &&
-                                nixl_gpunetio_dev_load_host_state(progress_state->failed) == 0U);
-                            if (notif_status != 0) {
-                                nixl_gpunetio_dev_mark_failed(progress_state);
-                                printf("kernel_progress: notification CQ error %d wqe %ld\n",
-                                       notif_status,
-                                       out_ticket);
-                                nixl_gpunetio_dev_terminal_error(progress_state, pos);
-                                continue;
-                            }
-#if ENABLE_DEBUG == 1
-                            printf("Notif correctly sent %ld\n", out_ticket);
-#endif
+                            send_notification = true;
+                        } else {
+                            nixl_gpunetio_dev_complete_request(request, progress_state, pos);
                         }
-
-                        nixl_gpunetio_dev_complete_request(request, progress_state, pos);
                     } else if (poll_status != EBUSY) {
                         nixl_gpunetio_dev_fail_request(progress_state, pos);
                     }
                 }
             }
-            atomicExch(&progress_state->progress_cursor, (start + 1) & DOCA_XFER_REQ_MASK);
+
+            // Keep the baseline's synchronous notification and shared-QP ordering.
+            uint32_t senders = __ballot_sync(0xffffffffU, send_notification);
+            while (senders != 0U) {
+                if (pos == static_cast<uint32_t>(__ffs(senders) - 1)) {
+#if ENABLE_DEBUG == 1
+                    printf("Notif after completion at %d id %d sz %d\n",
+                           pos,
+                           DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx),
+                           (int)request->msg_sz);
+#endif
+                    doca_gpu_dev_verbs_send(
+                        request->qp_notif,
+                        doca_gpu_dev_verbs_addr{.addr = (uint64_t)(request->lbuf_notif),
+                                                .key = request->lkey_notif},
+                        request->msg_sz,
+                        &out_ticket);
+                    int notif_status;
+                    do {
+                        notif_status = nixl_gpunetio_dev_poll_one_cq_at<
+                            DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+                            DOCA_GPUNETIO_VERBS_QP_SQ>(
+                            doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_notif), out_ticket);
+                    } while (notif_status == EBUSY && DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0 &&
+                             nixl_gpunetio_dev_load_host_state(progress_state->failed) == 0U);
+                    if (notif_status != 0) {
+                        nixl_gpunetio_dev_mark_failed(progress_state);
+                        printf("kernel_progress: notification CQ error %d wqe %ld\n",
+                               notif_status,
+                               out_ticket);
+                        nixl_gpunetio_dev_terminal_error(progress_state, pos);
+                    } else {
+                        nixl_gpunetio_dev_complete_request(request, progress_state, pos);
+                    }
+#if ENABLE_DEBUG == 1
+                    printf("Notif correctly sent %ld\n", out_ticket);
+#endif
+                }
+                senders &= senders - 1;
+            }
         }
     }
 
@@ -689,7 +702,7 @@ doca_kernel_progress(cudaStream_t stream,
         return DOCA_ERROR_BAD_STATE;
     }
 
-    kernel_progress<<<3, 1, 0, stream>>>(
+    kernel_progress<<<3, 32, 0, stream>>>(
         xfer_req_ring, progress_state, notif_fill, notif_progress, notif_send_gpu, exit_flag);
     result = cudaGetLastError();
     if (result != cudaSuccess) {
