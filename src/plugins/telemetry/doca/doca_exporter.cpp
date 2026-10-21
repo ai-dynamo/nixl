@@ -89,9 +89,9 @@ getIpcSocketsDir() {
 [[nodiscard]] std::string
 getSourceAttribute(const char *var, const std::string &fallback) {
     const std::string raw = nixl::config::getValueDefaulted<std::string>(var, std::string());
-    const std::string value(absl::StripAsciiWhitespace(raw));
+    std::string value(absl::StripAsciiWhitespace(raw));
     if (value.empty()) {
-        return fallback;
+        value = fallback;
     }
     if (value.find('/') != std::string::npos) {
         nixl::throwRuntimeError(var, ": '", value, "' must not contain '/'");
