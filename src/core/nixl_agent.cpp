@@ -1216,14 +1216,14 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
             return NIXL_ERR_REPOST_ACTIVE;
         }
 
+        if (req_hndl->status < 0) {
+            data->addErrorTelemetry(req_hndl->status);
+        }
+
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
             return NIXL_ERR_REMOTE_DISCONNECT;
-        }
-
-        if (req_hndl->status < 0) {
-            data->addErrorTelemetry(req_hndl->status);
         }
     }
 
@@ -1283,6 +1283,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
+            data->addErrorTelemetry(NIXL_ERR_REMOTE_DISCONNECT);
             return NIXL_ERR_REMOTE_DISCONNECT;
         } else {
             NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1327,6 +1328,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
         if (req_hndl->status < 0) {
             if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
+                data->addErrorTelemetry(NIXL_ERR_REMOTE_DISCONNECT);
                 return NIXL_ERR_REMOTE_DISCONNECT;
             } else {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1400,6 +1402,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
                                 << "' could not release transfer request and returned error status "
                                 << release_status;
+                data->addErrorTelemetry(NIXL_ERR_REPOST_ACTIVE);
                 return NIXL_ERR_REPOST_ACTIVE; // Might need renaming
             }
             req_hndl->status = release_status;

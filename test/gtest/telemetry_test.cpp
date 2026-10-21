@@ -939,3 +939,58 @@ TEST_F(telemetryXferTest, RejectedRepostIsCountedAsRepostActive) {
     EXPECT_EQ(countOf(events, et::AGENT_ERR_REPOST_ACTIVE), 1);
     EXPECT_EQ(finishes(events), 1);
 }
+
+TEST_F(telemetryXferTest, DisconnectSeenByThePostIsCounted) {
+    const gtest::LogIgnoreGuard lig("was disconnected");
+    EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_ERR_REMOTE_DISCONNECT));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    const auto events = flushedEvents();
+    EXPECT_EQ(countOf(events, et::AGENT_ERR_REMOTE_DISCONNECT), 1);
+    EXPECT_EQ(finishes(events), 0);
+}
+
+TEST_F(telemetryXferTest, DisconnectSeenByTheRepostCheckIsCounted) {
+    const gtest::LogIgnoreGuard lig("was disconnected");
+    EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+    EXPECT_CALL(engine_, checkXfer).WillOnce(testing::Return(NIXL_ERR_REMOTE_DISCONNECT));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    EXPECT_EQ(countOf(flushedEvents(), et::AGENT_ERR_REMOTE_DISCONNECT), 1);
+}
+
+TEST_F(telemetryXferTest, DisconnectSeenByTheStatusCheckIsCounted) {
+    EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+    EXPECT_CALL(engine_, checkXfer).WillOnce(testing::Return(NIXL_ERR_REMOTE_DISCONNECT));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->getXferStatus(req), NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    EXPECT_EQ(countOf(flushedEvents(), et::AGENT_ERR_REMOTE_DISCONNECT), 1);
+}
+
+TEST_F(telemetryXferTest, FailedReleaseIsCountedAsRepostActive) {
+    const gtest::LogIgnoreGuard lig("could not release transfer request");
+    EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+    EXPECT_CALL(engine_, checkXfer)
+        .WillOnce(testing::Return(NIXL_IN_PROG))
+        .WillOnce(testing::Return(NIXL_SUCCESS));
+    EXPECT_CALL(engine_, releaseReqH).WillOnce(testing::Return(NIXL_ERR_BACKEND));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+    EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    EXPECT_EQ(countOf(flushedEvents(), et::AGENT_ERR_REPOST_ACTIVE), 1);
+}
