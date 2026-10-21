@@ -741,10 +741,7 @@ protected:
         ASSERT_EQ(agent_->createBackend(gtest::GetMockBackendName(), params, backend),
                   NIXL_SUCCESS);
         extraParams_.backends.push_back(backend);
-
-        nixl_reg_dlist_t reg_dlist(DRAM_SEG);
-        reg_dlist.addDesc(nixlBlobDesc(bufferDesc(), ""));
-        ASSERT_EQ(agent_->registerMem(reg_dlist, &extraParams_), NIXL_SUCCESS);
+        ASSERT_EQ(agent_->registerMem(bufferRegDlist(), &extraParams_), NIXL_SUCCESS);
     }
 
     void
@@ -759,6 +756,13 @@ protected:
         return nixlBasicDesc(reinterpret_cast<uintptr_t>(buffer_.data()), buffer_.size(), 0);
     }
 
+    [[nodiscard]] nixl_reg_dlist_t
+    bufferRegDlist() const {
+        nixl_reg_dlist_t reg_dlist(DRAM_SEG);
+        reg_dlist.addDesc(nixlBlobDesc(bufferDesc(), ""));
+        return reg_dlist;
+    }
+
     [[nodiscard]] nixlXferReqH *
     createLoopbackReq() const {
         nixl_xfer_dlist_t xfer_dlist(DRAM_SEG);
@@ -771,14 +775,20 @@ protected:
     }
 
     [[nodiscard]] std::vector<nixlTelemetryEvent>
-    flushedEvents() const {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    flushedEvents() {
+        EXPECT_EQ(agent_->deregisterMem(bufferRegDlist(), &extraParams_), NIXL_SUCCESS);
         sharedRingBuffer<nixlTelemetryEvent> ring(
             (testDir_ / agentName_).string(), false, TELEMETRY_VERSION);
         std::vector<nixlTelemetryEvent> events;
-        for (nixlTelemetryEvent event; ring.pop(event);) {
-            events.push_back(event);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (countOf(events, et::AGENT_MEMORY_DEREGISTERED) == 0 &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            for (nixlTelemetryEvent event; ring.pop(event);) {
+                events.push_back(event);
+            }
         }
+        EXPECT_EQ(countOf(events, et::AGENT_MEMORY_DEREGISTERED), 1);
         return events;
     }
 
