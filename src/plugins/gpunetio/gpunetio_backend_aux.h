@@ -168,7 +168,7 @@ enum docaXferDataState : uint32_t {
 
 struct docaQpProgress {
     // Keep SQ credit checking and posting ordered while waits remain cancellable.
-    uint32_t data_producer_lock;
+    int data_producer_lock;
 };
 
 struct docaHostCompletion {

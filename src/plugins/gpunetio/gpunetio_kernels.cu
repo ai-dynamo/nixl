@@ -40,8 +40,12 @@ nixl_gpunetio_dev_store_host_state(uint32_t &state, uint32_t value) {
 __device__ bool
 nixl_gpunetio_dev_has_sq_credit(doca_gpu_dev_verbs_qp *qp, uint32_t count) {
     auto *cq = doca_gpu_dev_verbs_qp_get_cq_sq(qp);
-    const uint64_t reserved = atomicAdd((unsigned long long *)&qp->sq_rsvd_index, 0);
-    const uint64_t completed = atomicAdd((unsigned long long *)&cq->cqe_ci, 0);
+    const uint64_t reserved =
+        doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+            &qp->sq_rsvd_index);
+    const uint64_t completed =
+        doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+            &cq->cqe_ci);
     return reserved + count <= completed + __ldg(&qp->sq_wqe_num);
 }
 
@@ -93,15 +97,18 @@ nixl_gpunetio_dev_reserve_data(docaXferReqGpu *request,
     docaQpProgress *progress = request->qp_progress;
     while (nixl_gpunetio_dev_load_host_state(*exit_flag) == 0U &&
            nixl_gpunetio_dev_load_host_state(progress_state->failed) == 0U) {
-        if (atomicCAS(&progress->data_producer_lock, 0U, 1U) != 0U) {
+        if (atomicCAS(&progress->data_producer_lock, 0, 1) != 0) {
             continue;
         }
+        doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
         if (nixl_gpunetio_dev_load_host_state(progress_state->failed) != 0U) {
-            atomicExch(&progress->data_producer_lock, 0U);
+            doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+                &progress->data_producer_lock);
             return false;
         }
         if (!nixl_gpunetio_dev_has_sq_credit(request->qp_data, count)) {
-            atomicExch(&progress->data_producer_lock, 0U);
+            doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+                &progress->data_producer_lock);
             continue;
         }
 
@@ -118,7 +125,8 @@ __device__ void
 nixl_gpunetio_dev_publish_data(docaXferReqGpu *request,
                                docaProgressState *progress_state,
                                uint32_t pos) {
-    atomicExch(&request->data_state, DOCA_XFER_DATA_POSTED);
+    cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(request->data_state)
+        .store(DOCA_XFER_DATA_POSTED, cuda::std::memory_order_relaxed);
     nixl_gpunetio_dev_store_host_state(request->state, DOCA_XFER_STATE_DATA_POSTED);
     cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(progress_state->active_bitmap)
         .fetch_or(1U << pos, cuda::std::memory_order_release);
@@ -199,13 +207,18 @@ kernel_read(doca_gpu_dev_verbs_qp *qp,
         doca_gpu_dev_verbs_mark_wqes_ready(qp, base_wqe_idx, last_wqe_idx);
         doca_gpu_dev_verbs_submit(qp, last_wqe_idx + 1);
         xferReqRing[pos].last_wqe = last_wqe_idx;
-        atomicExch(&xferReqRing[pos].qp_progress->data_producer_lock, 0U);
+        doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+            &xferReqRing[pos].qp_progress->data_producer_lock);
         nixl_gpunetio_dev_publish_data(&xferReqRing[pos], progress_state, pos);
         if (wait_for_completion) {
             while (nixl_gpunetio_dev_load_host_state(*exit_flag) == 0U &&
                    nixl_gpunetio_dev_load_host_state(progress_state->failed) == 0U &&
-                   atomicAdd((unsigned long long *)&cq->cqe_ci, 0ULL) <= completion_wqe) {}
-            if (atomicAdd((unsigned long long *)&cq->cqe_ci, 0ULL) > completion_wqe) {
+                   doca_gpu_dev_verbs_atomic_read<uint64_t,
+                                                  DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+                       &cq->cqe_ci) <= completion_wqe) {}
+            if (doca_gpu_dev_verbs_atomic_read<uint64_t,
+                                               DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+                    &cq->cqe_ci) > completion_wqe) {
                 doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
             }
         }
@@ -246,7 +259,9 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
         for (uint32_t dependency = 0; dependency < xferReqRing[pos].wait_completion_count;
              ++dependency) {
             const uint32_t position = xferReqRing[pos].wait_completion_positions[dependency];
-            while (atomicAdd(&xferReqRing[position].data_state, 0U) != DOCA_XFER_DATA_COMPLETE) {
+            while (cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(
+                       xferReqRing[position].data_state)
+                       .load(cuda::std::memory_order_acquire) != DOCA_XFER_DATA_COMPLETE) {
                 if (nixl_gpunetio_dev_load_host_state(*exit_flag) != 0U ||
                     nixl_gpunetio_dev_load_host_state(progress_state->failed) != 0U) {
                     reserved = 0U;
@@ -338,7 +353,8 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
         doca_gpu_dev_verbs_mark_wqes_ready(qp, base_wqe_idx, last_wqe_idx);
         doca_gpu_dev_verbs_submit(qp, last_wqe_idx + 1);
         xferReqRing[pos].last_wqe = last_wqe_idx;
-        atomicExch(&xferReqRing[pos].qp_progress->data_producer_lock, 0U);
+        doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+            &xferReqRing[pos].qp_progress->data_producer_lock);
         nixl_gpunetio_dev_publish_data(&xferReqRing[pos], progress_state, pos);
     }
 
@@ -435,7 +451,8 @@ kernel_progress(struct docaXferReqGpu *xfer_req_ring,
                         DOCA_GPUNETIO_VERBS_QP_SQ>(
                         doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_data), request->last_wqe);
                     if (poll_status == 0) {
-                        atomicExch(&request->data_state, DOCA_XFER_DATA_COMPLETE);
+                        cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(request->data_state)
+                            .store(DOCA_XFER_DATA_COMPLETE, cuda::std::memory_order_release);
                         if (DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx) != DOCA_NOTIF_NULL) {
                             send_notification = true;
                         } else {
