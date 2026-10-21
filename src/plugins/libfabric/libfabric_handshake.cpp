@@ -236,12 +236,66 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
             }
             NIXL_INFO << "Peer '" << peer_agent_name
                       << "' re-established its side; replying so its handshake wait completes";
-            nixl_status_t status = sendHandshakeTo(*conn);
-            if (status != NIXL_SUCCESS) {
-                NIXL_WARN << "Replying to re-establishment handshake from '" << peer_agent_name
-                          << "' failed (non-fatal; re-triggers on the peer's next re-add): status="
-                          << status;
+            if (progress_thread_enabled_) {
+                // handleHandshake runs on the progress thread here, and postSend()
+                // retries FI_EAGAIN without draining its own completions when the
+                // progress thread owns them — an inline reply could wedge the only
+                // thread that can make progress. Hand the reply to the CM thread.
+                queueHandshakeReply(conn);
+            } else {
+                nixl_status_t status = sendHandshakeTo(*conn);
+                if (status != NIXL_SUCCESS) {
+                    NIXL_WARN << "Replying to re-establishment handshake from '" << peer_agent_name
+                              << "' failed (non-fatal; re-triggers on the peer's next re-add): "
+                                 "status="
+                              << status;
+                }
             }
+        }
+    }
+}
+
+void
+nixlLibfabricEngine::queueHandshakeReply(std::shared_ptr<nixlLibfabricConnection> conn) {
+    {
+        const std::lock_guard<std::mutex> lock(cm_mutex_);
+        if (cm_thread_stop_) {
+            return; // engine teardown; the peer's next re-add re-triggers the reply
+        }
+        pending_replies_.push_back(std::move(conn));
+        if (!cm_thread_.joinable()) {
+            cm_thread_ = std::thread(&nixlLibfabricEngine::cmThread, this);
+        }
+    }
+    cm_cv_.notify_one();
+}
+
+void
+nixlLibfabricEngine::cmThread() {
+    while (true) {
+        std::shared_ptr<nixlLibfabricConnection> conn;
+        {
+            std::unique_lock<std::mutex> lock(cm_mutex_);
+            cm_cv_.wait(lock, [this]() { return cm_thread_stop_ || !pending_replies_.empty(); });
+            if (cm_thread_stop_) {
+                return; // pending replies are dropped: teardown makes them moot
+            }
+            conn = std::move(pending_replies_.front());
+            pending_replies_.pop_front();
+        }
+        if (conn->overall_state_.load(std::memory_order_acquire) == ConnectionState::DISCONNECTED) {
+            // Only a connected holder needs this reply: a still-establishing peer's own
+            // outgoing handshake completes the re-establisher's wait, and a peer we
+            // deliberately disconnected from must not get further traffic.
+            NIXL_DEBUG << "Skipping re-establishment reply to '" << conn->remoteAgent_
+                       << "': connection disconnected while the reply was queued";
+            continue;
+        }
+        nixl_status_t status = sendHandshakeTo(*conn);
+        if (status != NIXL_SUCCESS) {
+            NIXL_WARN << "Replying to re-establishment handshake from '" << conn->remoteAgent_
+                      << "' failed (non-fatal; re-triggers on the peer's next re-add): status="
+                      << status;
         }
     }
 }

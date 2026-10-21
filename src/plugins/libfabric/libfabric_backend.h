@@ -28,6 +28,7 @@
 #include <chrono>
 #include <unordered_map>
 #include <unordered_set>
+#include <deque>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -211,10 +212,13 @@ private:
     mutable std::vector<std::string> agent_names_; // List of agent names for easy access
 
     // Threading infrastructure - remaining members
-    // Connection Management (CM) thread
+    // Connection Management (CM) thread: sends re-establishment replies queued by the
+    // progress thread (handleHandshake), which must not post from its own completion context
     std::mutex cm_mutex_;
     std::thread cm_thread_;
     std::condition_variable cm_cv_;
+    std::deque<std::shared_ptr<nixlLibfabricConnection>> pending_replies_;
+    bool cm_thread_stop_{false};
 
     // Progress thread for rail CQs
     std::thread progress_thread_;
@@ -351,6 +355,12 @@ private:
     // Will load the peer's connection info from the handshake payload, if it's a new peer.
     void
     handleHandshake(const std::string &raw_payload);
+    // Queues a re-establishment reply for the CM thread; dropped once teardown started.
+    void
+    queueHandshakeReply(std::shared_ptr<nixlLibfabricConnection> conn);
+    // CM thread body: sends queued re-establishment replies off the progress thread.
+    void
+    cmThread();
     // Marks a peer rejected for its protocol version; establishConnection() then fails fast.
     void
     rejectHandshake(const std::string &peer_agent_name, uint16_t peer_proto_ver);

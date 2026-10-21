@@ -655,6 +655,17 @@ nixlLibfabricEngine::~nixlLibfabricEngine() {
     NIXL_DEBUG
         << "Destructor starting, stopping all threads FIRST to prevent timing report interruption";
 
+    // Stop the CM thread first: an in-flight reply send may be waiting on the progress
+    // thread to drain its completions, so the progress thread must stop after it.
+    {
+        const std::lock_guard<std::mutex> lock(cm_mutex_);
+        cm_thread_stop_ = true;
+    }
+    cm_cv_.notify_all();
+    if (cm_thread_.joinable()) {
+        cm_thread_.join();
+    }
+
     post_thread_pool_.reset();
     if (progress_thread_enabled_) {
         progress_thread_stop_.store(true);
