@@ -92,6 +92,41 @@ main() {
     cout << "libfabric_backend_test OK: initial handshake " << initial_ms
          << " ms, re-establishment " << elapsed << " ms" << endl;
 
+    // A holder that registered a peer but never called connect() still owes the
+    // reply: its connection is DISCONNECTED by default until connect(), and only
+    // a removed registration (an actual disconnect) means no reply.
+    auto *c = createEngine("AgentC");
+    auto *d = createEngine("AgentD");
+    string conn_c, conn_d;
+    nixl_exit_on_failure(c->getConnInfo(conn_c) == NIXL_SUCCESS, "getConnInfo(C) failed");
+    nixl_exit_on_failure(d->getConnInfo(conn_d) == NIXL_SUCCESS, "getConnInfo(D) failed");
+    nixl_exit_on_failure(c->loadRemoteConnInfo("AgentD", conn_d) == NIXL_SUCCESS,
+                         "loadRemoteConnInfo(C, D) failed");
+    nixl_exit_on_failure(d->loadRemoteConnInfo("AgentC", conn_c) == NIXL_SUCCESS,
+                         "loadRemoteConnInfo(D, C) failed");
+    nixl_exit_on_failure(c->connect("AgentD") == NIXL_SUCCESS,
+                         "Initial connect C->D failed (D's handshake should arrive without D "
+                         "ever connecting)");
+    status = c->disconnect("AgentD");
+    nixl_exit_on_failure(status == NIXL_SUCCESS, "disconnect(C -> D) failed");
+    status = c->loadRemoteConnInfo("AgentD", conn_d);
+    nixl_exit_on_failure(status == NIXL_SUCCESS, "loadRemoteConnInfo(C, D) after teardown failed");
+    t0 = steady_clock::now();
+    status = c->connect("AgentD");
+    elapsed = duration_cast<milliseconds>(steady_clock::now() - t0).count();
+    nixl_exit_on_failure(status == NIXL_SUCCESS,
+                         "Re-establishment from a registered-but-never-connected peer failed: "
+                         "the holder's reply was dropped");
+    nixl_exit_on_failure(milliseconds(elapsed) < kMaxHandshakeWait,
+                         "Re-establishment from an unconnected holder hit the handshake deadline");
+    cout << "libfabric_backend_test OK: unconnected-holder re-establishment " << elapsed << " ms"
+         << endl;
+
+    c->disconnect("AgentD");
+    d->disconnect("AgentC");
+    delete c;
+    delete d;
+
     a->disconnect("AgentB");
     b->disconnect("AgentA");
     delete a;

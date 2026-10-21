@@ -283,13 +283,18 @@ nixlLibfabricEngine::cmThread() {
             conn = std::move(pending_replies_.front());
             pending_replies_.pop_front();
         }
-        if (conn->overall_state_.load(std::memory_order_acquire) == ConnectionState::DISCONNECTED) {
-            // Only a connected holder needs this reply: a still-establishing peer's own
-            // outgoing handshake completes the re-establisher's wait, and a peer we
-            // deliberately disconnected from must not get further traffic.
-            NIXL_DEBUG << "Skipping re-establishment reply to '" << conn->remoteAgent_
-                       << "': connection disconnected while the reply was queued";
-            continue;
+        // DISCONNECTED is also the pre-connect state of a live registration, so the
+        // state cannot decide this: only a registration that is gone (disconnect()
+        // removes it) means no reply. An unconnected holder still owes one — nothing
+        // else completes the re-establishing peer's wait.
+        {
+            std::lock_guard<std::mutex> lock(connection_state_mutex_);
+            auto it = connections_.find(conn->remoteAgent_);
+            if (it == connections_.end() || it->second != conn) {
+                NIXL_DEBUG << "Skipping re-establishment reply to '" << conn->remoteAgent_
+                           << "': connection no longer registered";
+                continue;
+            }
         }
         nixl_status_t status = sendHandshakeTo(*conn);
         if (status != NIXL_SUCCESS) {
