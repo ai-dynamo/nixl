@@ -1332,11 +1332,12 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
          * is only needed when validating data. It was moved from the initBasicDescDram function to
          * here to avoid memsetting the memory again.
          */
-        if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
+        const bool fill_initiator = isInitiator() && xferBenchConfig::fill_value >= 0;
+        if (seg_type == DRAM_SEG && (xferBenchConfig::check_consistency || fill_initiator)) {
             for (auto &iov : local_regs_.back().iovs()) {
                 if (isInitiator()) {
                     memset((void *)iov.addr, xferBenchInitiatorFillByte(), iov.len);
-                } else if (isTarget()) {
+                } else if (isTarget() && xferBenchConfig::check_consistency) {
                     memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, iov.len);
                 }
             }
@@ -1501,7 +1502,12 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     const size_t entries_per_device = (cfg_num_devices > 0 && !iov_list.empty()) ?
                         std::max<size_t>(1, iov_list.size() / cfg_num_devices) :
                         1;
-                    const size_t odm_dev = devidx / entries_per_device;
+                    const size_t odm_dev = static_cast<size_t>(iov.devId);
+                    if (odm_dev >= remote_regs_[0].iovs().size()) {
+                        std::cerr << "ODM: invalid device id " << iov.devId << " (max "
+                                  << remote_regs_[0].iovs().size() - 1 << ")" << std::endl;
+                        return {};
+                    }
                     const size_t block_in_dev = devidx % entries_per_device;
                     const size_t buffer_size = xferBenchConfig::total_buffer_size /
                         (cfg_num_devices * xferBenchConfig::num_threads);
