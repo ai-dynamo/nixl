@@ -105,6 +105,9 @@ public:
     }
 
 private:
+    nixl_status_t
+    ensureInitialized() const;
+
     std::shared_ptr<asio::thread_pool> executor_;
     std::shared_ptr<iBlobClient> blobClient_;
     std::unordered_map<uint64_t, std::string> devIdToBlobName_;
