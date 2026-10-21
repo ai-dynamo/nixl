@@ -77,31 +77,42 @@ runHipFileOp(const aisXferReq *req, std::atomic<nixl_status_t> *overall_status) 
         }
     }
 
-    ssize_t nbytes = 0;
-    if (req->op == hipFileBatchRead) {
-        nbytes = hipFileRead(req->fh, req->addr, req->size, req->file_offset, 0);
-        if (nbytes < 0) {
-            NIXL_ERROR << "AIS: hipFileRead failed: " << describeHipFileIoError(nbytes);
-            overall_status->store(NIXL_ERR_BACKEND);
-            return;
-        }
-    } else if (req->op == hipFileBatchWrite) {
-        nbytes = hipFileWrite(req->fh, req->addr, req->size, req->file_offset, 0);
-        if (nbytes < 0) {
-            NIXL_ERROR << "AIS: hipFileWrite failed: " << describeHipFileIoError(nbytes);
-            overall_status->store(NIXL_ERR_BACKEND);
-            return;
-        }
-    } else {
+    if ((req->op != hipFileBatchRead) && (req->op != hipFileBatchWrite)) {
         overall_status->store(NIXL_ERR_INVALID_PARAM);
         return;
     }
 
-    if (static_cast<size_t>(nbytes) != req->size) {
-        NIXL_ERROR << "AIS: error: short " << ((req->op == hipFileBatchRead) ? "read: " : "write: ")
-                   << nbytes << " out of " << req->size << " bytes - address=" << req->addr;
-        overall_status->store(NIXL_ERR_BACKEND);
-        return;
+    // Like pread/pwrite, one hipFile call moves at most the kernel's
+    // MAX_RW_COUNT (just under 2 GiB) and returns the bytes it moved, so
+    // resubmit the remainder until the whole request is transferred.
+    size_t done = 0;
+    while (done < req->size) {
+        const size_t remaining = req->size - done;
+        const hoff_t file_offset = static_cast<hoff_t>(req->file_offset + done);
+        const hoff_t buffer_offset = static_cast<hoff_t>(done);
+
+        ssize_t nbytes = 0;
+        if (req->op == hipFileBatchRead) {
+            nbytes = hipFileRead(req->fh, req->addr, remaining, file_offset, buffer_offset);
+        } else {
+            nbytes = hipFileWrite(req->fh, req->addr, remaining, file_offset, buffer_offset);
+        }
+
+        if (nbytes < 0) {
+            NIXL_ERROR << "AIS: hipFile" << ((req->op == hipFileBatchRead) ? "Read" : "Write")
+                       << " failed after " << done << " out of " << req->size
+                       << " bytes: " << describeHipFileIoError(nbytes);
+            overall_status->store(NIXL_ERR_BACKEND);
+            return;
+        }
+        if (nbytes == 0) {
+            NIXL_ERROR << "AIS: error: short "
+                       << ((req->op == hipFileBatchRead) ? "read: " : "write: ") << done
+                       << " out of " << req->size << " bytes - address=" << req->addr;
+            overall_status->store(NIXL_ERR_BACKEND);
+            return;
+        }
+        done += static_cast<size_t>(nbytes);
     }
 }
 } // namespace
