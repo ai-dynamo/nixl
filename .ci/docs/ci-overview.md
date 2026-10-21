@@ -69,6 +69,7 @@ All files below live in `.github/workflows/`.
 ### Python Checks (`python-checks.yml`)
 - **Trigger:** `pull_request`.
 - **What it does:** Runs `.ci/scripts/check_prints.sh` against `./src`, `./test`, `./benchmark`, `./examples/python` to flag stray `print()` calls.
+- **`contrib-tests` job:** runs `pytest contrib/tests` on Python 3.10 and 3.12. These are unit tests of the build/CI tooling under `contrib/` (pure Python, no NIXL build), kept apart from `test/python`, which is the product suite run against a built NIXL.
 - **Automatic on every PR:** Yes.
 
 ### Run Pre-Commit Hooks (`pre-commit.yml`)
