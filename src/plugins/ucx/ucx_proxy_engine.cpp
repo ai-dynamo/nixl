@@ -56,10 +56,10 @@ public:
         nixlUcxReq req = nullptr;
         nixl_status_t status = NIXL_ERR_NOT_SUPPORTED;
         switch (submission.opcode) {
-        case nixl_proxy_opcode_t::PUT:
+        case proxy_opcode_t::PUT:
             status = postPut(submission, worker_id, req);
             break;
-        case nixl_proxy_opcode_t::ATOMIC_ADD:
+        case proxy_opcode_t::ATOMIC_ADD:
             status = postAtomicAdd(submission, worker_id, req);
             break;
         }
@@ -67,7 +67,7 @@ public:
         if (status == NIXL_IN_PROG) {
             request = nixl::proxyBackendRequest{tokenFrom(req)};
         }
-        if (submission.opcode == nixl_proxy_opcode_t::PUT) {
+        if (submission.opcode == proxy_opcode_t::PUT) {
             NIXL_DEBUG << "device proxy submit: PUT src_addr=" << std::hex << submission.local.addr
                        << " dst_addr=" << submission.remote.addr << std::dec
                        << " size=" << submission.size << " token=" << request.token

@@ -46,7 +46,7 @@ proxyControlBuffer::create(deviceOps &ops,
 }
 
 nixl_status_t
-proxyControlBuffer::publishShutdown(nixl_proxy_control_state_t state) noexcept {
+proxyControlBuffer::publishShutdown(proxy_control_state_t state) noexcept {
     return mem_->publish(sizeof(uint64_t) * shutdownSlot(), static_cast<uint64_t>(state));
 }
 
