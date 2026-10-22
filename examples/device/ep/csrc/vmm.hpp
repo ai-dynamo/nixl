@@ -25,7 +25,9 @@ namespace nixl_ep {
 
 class vmm_region {
 public:
-    explicit vmm_region(size_t size);
+    /** A region that is not exportable gets no FABRIC handle, for example
+     * so a process checkpoint never holds one. */
+    explicit vmm_region(size_t size, bool exportable = true);
 
     ~vmm_region();
 
@@ -35,6 +37,10 @@ public:
     vmm_region(vmm_region &&) = delete;
     vmm_region &
     operator=(vmm_region &&) = delete;
+
+    /** Back the region with new memory at the same address. */
+    void
+    rebind(bool exportable);
 
     [[nodiscard]] void *
     ptr() const noexcept {
