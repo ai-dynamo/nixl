@@ -702,7 +702,7 @@ TEST_F(telemetryTest, TracePhaseDropsAreCounted) {
         nixl::trace::Tracer tracer(std::move(backends), 0.0);
         nixl::trace::TracerPhaseSink sink{tracer, "UCX", &telemetry};
         for (uint64_t i = 0; i < kDrops; ++i) {
-            sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, i, {}, nullptr);
+            sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, i, {}, nullptr, 0, 0);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }

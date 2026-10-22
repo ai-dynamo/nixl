@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H
 #define NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,6 +39,8 @@ public:
     std::string notif;
 
     std::optional<nixl::trace::TraceContext> traceContext;
+    std::uint64_t traceRequestId = 0;
+    std::uint64_t traceExecution = 0;
 
 #ifdef HAVE_UCX_SGL_API
     std::optional<nixl::ucx::sglXfer> sgl;

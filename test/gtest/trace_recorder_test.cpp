@@ -110,7 +110,7 @@ TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
         ASSERT_NE(tracer, nullptr);
         nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
         const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", "sender"}};
-        sink.recordPhase(nixl_trace_phase_t::NOTIF_RECEIVED, {}, 1234, attrs, &context);
+        sink.recordPhase(nixl_trace_phase_t::NOTIF_RECEIVED, {}, 1234, attrs, &context, 0, 0);
     }
 
     const std::string traceparent = nixl::trace::formatTraceparent(context);

@@ -393,7 +393,13 @@ recordPhase(nixlBackendTraceSink *sink,
             nixl_trace_phase_t phase,
             const nixlUcxBackendReqH &handle) noexcept {
     if ((sink != nullptr) && handle.traceContext) {
-        sink->recordPhase(phase, {}, nixlTime::getUs(), {}, &*handle.traceContext);
+        sink->recordPhase(phase,
+                          {},
+                          nixlTime::getUs(),
+                          {},
+                          &*handle.traceContext,
+                          handle.traceRequestId,
+                          handle.traceExecution);
     }
 }
 
@@ -610,6 +616,8 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     int_handle->traceContext = sampledTraceContext(traceSink_, opt_args);
+    int_handle->traceRequestId = int_handle->traceContext ? opt_args->traceRequestId : 0;
+    int_handle->traceExecution = int_handle->traceContext ? opt_args->traceExecution : 0;
     recordPhase(traceSink_, nixl_trace_phase_t::SUBMIT, *int_handle);
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
