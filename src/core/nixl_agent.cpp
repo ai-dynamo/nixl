@@ -948,6 +948,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
     opt_args.traceContext = &handle->traceContext();
+    opt_args.traceRequestId = handle->traceRequestId();
     ret = handle->engine->prepXfer(handle->backendOp,
                                    handle->initiatorDescs,
                                    handle->targetDescs,
@@ -1099,6 +1100,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
     opt_args.traceContext = &handle->traceContext();
+    opt_args.traceRequestId = handle->traceRequestId();
     ret1 = handle->engine->prepXfer(handle->backendOp,
                                     handle->initiatorDescs,
                                     handle->targetDescs,
@@ -1253,8 +1255,10 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (req_hndl->traceRequestId_ != 0) {
         req_hndl->traceExecution_.fetch_add(1, std::memory_order_relaxed);
     }
+    opt_args.traceRequestId = req_hndl->traceRequestId();
+    opt_args.traceExecution = req_hndl->traceExecution();
     NIXL_TRACE_ATTR(
-        trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(req_hndl->traceExecution()));
+        trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(opt_args.traceExecution));
 
     // If status is not NIXL_IN_PROG we can repost,
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,

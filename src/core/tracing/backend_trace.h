@@ -124,6 +124,10 @@ public:
      *                  own for a local phase, the sender's for a phase observed on
      *                  receipt. Valid for the call only; recorded as
      *                  `nixl.traceparent`, and the event is correlated on it.
+     * @param request_id Request id of the phase's transfer request, or 0 for none;
+     *                   recorded as `nixl.xfer_request_id` when non-zero.
+     * @param execution Execution number of the post the phase belongs to, or 0 for
+     *                  none; recorded as `nixl.xfer_execution` when non-zero.
      *
      * Safe to call concurrently from any thread, including a progress thread;
      * each call records one point event, whichever thread makes it. `noexcept`
@@ -136,7 +140,9 @@ public:
                 std::string_view label,
                 nixlTime::us_t timestamp,
                 std::span<const nixlBackendTraceAttr> attrs = {},
-                const nixl::trace::TraceContext *context = nullptr) noexcept = 0;
+                const nixl::trace::TraceContext *context = nullptr,
+                std::uint64_t request_id = 0,
+                std::uint64_t execution = 0) noexcept = 0;
 };
 
 #endif // NIXL_SRC_CORE_TRACING_BACKEND_TRACE_H

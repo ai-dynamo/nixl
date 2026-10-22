@@ -201,6 +201,10 @@ request's records carry `nixl.xfer_request_id=0` and `nixl.xfer_execution=0`, me
 none. Both are attributes only: the wire and the NVTX payload carry the trace context
 (see "Correlation").
 
+Backend phases carry the pair too: a plugin receives it with the request's trace
+context and passes it back when it records a phase (see "Backend phases"). UCX's
+sender phases carry it; the receiver's `nixl::notif.received` does not.
+
 ### Backend phases
 
 A backend plugin can record a phase of its own work through
@@ -211,8 +215,11 @@ reports it. The event carries `nixl.backend` (the recording backend's type),
 `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
 `nixl.phase.label` when the plugin supplied one, and any plugin-supplied
 attributes. A phase recorded under a trace context also carries the context as
-`nixl.traceparent` and is correlated on it, like the agent's own spans. The
-phase vocabulary is closed so that timelines stay comparable across backends,
+`nixl.traceparent` and is correlated on it, like the agent's own spans. A phase
+recorded for a request also carries the request's `nixl.xfer_request_id` and,
+when it belongs to a post, that post's `nixl.xfer_execution`; either is left out
+when the plugin passes 0. The phase vocabulary is closed so that timelines stay
+comparable across backends,
 and each phase has a fixed kind. A notification's two ends are `CommSend` and
 `CommRecv`, so a backend that builds a graph can pair them; the other phases are
 `Metadata`, since whether a wire phase sends or receives depends on the
@@ -248,7 +255,12 @@ engine is called directly. The pointer is valid only for the call: a plugin that
 needs the context later, at completion or when building a notification, copies
 the value onto its own request handle. A carrier that puts it on the wire calls
 `encodeTraceContext` itself. `TraceContext` is internal like the sink, so only
-in-tree plugins can read it.
+in-tree plugins can read it. Next to `traceContext`, `traceRequestId` and
+`traceExecution` hold the request's id and the number of the post being executed,
+0 meaning none: the id is the same at prep and at every post, the execution number
+is 0 at prep, and both are 0 when tracing is off. They are plain integers that any
+plugin can read; a plugin that records phases later copies them with the context
+and passes them back to `recordPhase`.
 
 UCX is the first such carrier. For a sampled request it appends the 26-byte
 record as a `tctx` tag after the notification's `name` and `msg`, so an older
@@ -270,7 +282,8 @@ If handing a validated post to UCX fails, at a put, a get or the flush, for
 example because the peer disconnected, only `nixl::submit` is recorded.
 The notification goes out from `postXfer` if the transfer has already completed,
 and otherwise from the first status check that finds it complete, so
-`notif.sent` appears once per notifying post, from either call. UCX records no
+`notif.sent` appears once per notifying post, from either call, with that post's
+execution number. UCX records no
 `nixl::wire.completed`: a transfer as a whole is seen to complete only when the
 application checks its status, even on the thread-pool engine, whose dedicated
 threads see each chunk finish, so the stamp would time the poll rather than the
