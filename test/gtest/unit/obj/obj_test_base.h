@@ -127,7 +127,7 @@ public:
         }
 
         pendingCallbacks_.push_back(
-            /** @brief Apply the configured delay and report the mock WRITE result. */
+            // Apply the configured delay and report the mock WRITE result.
             [callback, success, simulate_error, delay]() {
                 if (delay.count() > 0) {
                     std::this_thread::sleep_for(delay);
@@ -164,7 +164,7 @@ public:
         }
 
         pendingCallbacks_.push_back(
-            /** @brief Fill successful READs with the object pattern, then report completion. */
+            // Fill successful READs with the object pattern, then report completion.
             [callback, data_ptr, data_len, offset, success, simulate_error, delay]() {
                 if (delay.count() > 0) {
                     std::this_thread::sleep_for(delay);

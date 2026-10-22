@@ -643,7 +643,7 @@ TEST_P(objCrtRoutingTest, CrtFailurePropagates) {
 INSTANTIATE_TEST_SUITE_P(ClientRouting,
                          objCrtRoutingTest,
                          testing::Values(NIXL_READ, NIXL_WRITE),
-                         /** @brief Use the transfer operation as the parameterized case suffix. */
+                         // Use the transfer operation as the parameterized case suffix.
                          [](const testing::TestParamInfo<nixl_xfer_op_t> &info) {
                              return info.param == NIXL_READ ? "Read" : "Write";
                          });
