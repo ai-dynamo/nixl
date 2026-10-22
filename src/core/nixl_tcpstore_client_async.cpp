@@ -348,6 +348,7 @@ nixlTcpStoreClientAsync::initiateShutdown(std::chrono::milliseconds grace_period
     switch (connectionState_) {
     case connection_state_t::CLOSED:
     case connection_state_t::CONNECTING:
+        connectionState_ = connection_state_t::SHUTTING_DOWN;
         doShutdown();
         return;
     case connection_state_t::CONNECTED:
