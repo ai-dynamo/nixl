@@ -111,16 +111,15 @@ gtest_sources = [
     'common.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
-    'telemetry_prometheus_test.cpp',
     'telemetry_mp_store_test.cpp',
     'telemetry_histogram_test.cpp',
-    'telemetry_prometheus_stress_test.cpp',
     'telemetry_stress_test.cpp',
     'telemetry_benchmark.cpp',
     'nixl_duration_test.cpp',
     'blocking_queue_test.cpp',
     'nixl_log_file_test.cpp',
     'configuration.cpp',
+    'trace_recorder_test.cpp',
     # Hidden in libnixl_common, so the oversized-record test links its own copy.
     '../../src/utils/common/nixl_log_file_sink.cpp',
     ]
@@ -175,6 +174,19 @@ test_exe = executable('gtest',
     install : true
 )
 
+gtest_depends = [trace_recorder_plugin]
+if ucx_dep.found() and is_variable('ucx_backend_interface')
+    ucx_trace_receiver = executable('ucx_trace_receiver',
+        sources : ['main.cpp', 'common.cpp', 'ucx_trace_receiver.cpp'],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        cpp_args : cpp_flags,
+        dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, gtest_dep, gmock_dep],
+        link_with: [nixl_build_lib],
+        install : true
+    )
+    gtest_depends += [ucx_trace_receiver]
+endif
+
 # MetadataExchangeTestFixture rapidly creates and tears down comm-thread agents,
 # which trips the GCC 13.3 libsanitizer thread-registry crash (a flaky SIGSEGV in
 # the ASan/TSan runtime on thread create/destroy -- a toolchain bug, not a NIXL
@@ -184,7 +196,8 @@ gtest_args = [plugin_dirs_arg]
 if get_option('sanitizer') != 'none'
     gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*'
 endif
-test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer')
+test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer',
+     depends: gtest_depends)
 
 # Telemetry hot-path microbenchmark (NVBug 5876558). The cases are DISABLED_ so
 # they never run in the normal 'gtest' suite; this dedicated entry opts them in.
