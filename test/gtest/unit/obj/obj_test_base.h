@@ -232,6 +232,7 @@ public:
         }
     }
 
+    /** @brief Return the number of queued callbacks that execAsync() has not drained. */
     size_t
     getPendingCount() const {
         return pendingCallbacks_.size();

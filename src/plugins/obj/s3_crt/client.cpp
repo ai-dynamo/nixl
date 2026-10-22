@@ -18,6 +18,7 @@
 #include <iostream>
 #include "common/nixl_log.h"
 
+/** @brief Configure CRT credentials, addressing, multipart sizes, and throughput target. */
 awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
                                std::shared_ptr<Aws::Utils::Threading::Executor> executor)
     : awsS3Client(custom_params, executor) {
@@ -64,12 +65,19 @@ awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
             use_virtual_addressing);
 }
 
+/** @brief Reject executor changes because the SDK fixes its executor at construction. */
 void
 awsS3CrtClient::setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) {
     throw std::runtime_error("awsS3CrtClient::setExecutor() not supported - "
                              "AWS SDK doesn't allow changing executor after client creation");
 }
 
+/**
+ * @brief Write a whole object through CRT; reject nonzero object offsets.
+ *
+ * Keep caller-owned source memory valid until the callback completes. Captures
+ * retain the request, input stream, and buffer view while CRT uses them.
+ */
 void
 awsS3CrtClient::putObjectAsync(std::string_view key,
                                uintptr_t data_ptr,
@@ -159,6 +167,12 @@ awsS3CrtClient::getObjectAsync(std::string_view key,
         nullptr);
 }
 
+/**
+ * @brief Query object presence through CRT and classify its missing-object errors.
+ *
+ * Report true for an existing object, false for a missing object, and std::nullopt
+ * for other reported SDK errors.
+ */
 void
 awsS3CrtClient::checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) {
     Aws::S3Crt::Model::HeadObjectRequest request;

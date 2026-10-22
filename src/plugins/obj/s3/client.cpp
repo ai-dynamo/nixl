@@ -28,6 +28,7 @@
 #include <aws/core/utils/memory/stl/AWSStringStream.h>
 #include <absl/strings/str_format.h>
 
+/** @brief Configure the Standard client, bucket, credentials, and optional executor. */
 awsS3Client::awsS3Client(nixl_b_params_t *custom_params,
                          std::shared_ptr<Aws::Utils::Threading::Executor> executor) {
     // Initialize AWS SDK (thread-safe, only happens once)
@@ -54,12 +55,19 @@ awsS3Client::awsS3Client(nixl_b_params_t *custom_params,
             use_virtual_addressing);
 }
 
+/** @brief Reject executor changes because the SDK fixes its executor at construction. */
 void
 awsS3Client::setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) {
     throw std::runtime_error("AwsS3Client::setExecutor() not supported - "
                              "AWS SDK doesn't allow changing executor after client creation");
 }
 
+/**
+ * @brief Write a whole object from caller-owned memory; reject nonzero offsets.
+ *
+ * Keep the source buffer valid until the callback completes. Captures retain the
+ * stream and its buffer view for the asynchronous request.
+ */
 void
 awsS3Client::putObjectAsync(std::string_view key,
                             uintptr_t data_ptr,
@@ -135,6 +143,12 @@ awsS3Client::getObjectAsync(std::string_view key,
         nullptr);
 }
 
+/**
+ * @brief Query object presence with HEAD and report the result through a callback.
+ *
+ * Report true for an existing object, false for a missing object, and std::nullopt
+ * for other reported SDK errors.
+ */
 void
 awsS3Client::checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) {
     Aws::S3::Model::HeadObjectRequest request;

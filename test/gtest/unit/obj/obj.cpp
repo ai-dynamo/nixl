@@ -362,6 +362,7 @@ INSTANTIATE_TEST_SUITE_P(ObjClientTests,
 #endif
 
 // Specialized tests for non-parameterized fixture
+/** @brief Release a pending transfer handle before running its completion callback. */
 TEST_F(objTestFixture, CancelTransfer) {
     mockS3Client_->setSimulateSuccess(true);
 
@@ -494,6 +495,7 @@ TEST_F(objCrtTestFixture, TransferBelowThreshold) {
     testTransferWithSize(NIXL_READ, 1048576, "-crt-below");
 }
 
+/** @brief Complete WRITE descriptors on opposite sides of the configured CRT threshold. */
 TEST_F(objCrtTestFixture, MixedSizeThreshold) {
     // Mixed: 1 MiB (standard client) + 6 MiB (CRT client via MPU)
     testMultiDescriptorWithSizes(NIXL_WRITE, 1048576, 6291456, "-crt-mixed");
