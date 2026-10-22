@@ -17,6 +17,7 @@
 #ifndef __BACKEND_AUX_H_
 #define __BACKEND_AUX_H_
 
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include "common/nixl_log.h"
@@ -44,6 +45,8 @@ struct nixlBackendOptionalArgs {
     // that request: valid for the call only, so copy it once at prep to keep it.
     // Null when no request is involved (prepMemView).
     const nixl::trace::TraceContext *traceContext = nullptr;
+    std::uint64_t traceRequestId = 0;
+    std::uint64_t traceExecution = 0;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;

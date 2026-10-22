@@ -32,6 +32,8 @@
  * actually active.
  */
 
+#include <initializer_list>
+
 #include "tracing/trace.h"
 
 #if defined(NIXL_TRACE_ENABLED)
@@ -50,10 +52,22 @@
         }                                                       \
     } while (0)
 
-// Declare before NIXL_TRACE_SCOPE so the span is created while the id is active.
+#define NIXL_TRACE_EVENT(tracer_ptr, event_name, event_kind, event_context, ...) \
+    do {                                                                         \
+        if (auto *nixl_trace_tracer_ = (tracer_ptr)) {                           \
+            nixl_trace_tracer_->emitEvent(                                       \
+                (event_name),                                                    \
+                (event_kind),                                                    \
+                (event_context),                                                 \
+                ::nixlTime::getUs(),                                             \
+                std::initializer_list<::nixl::trace::Attribute>{__VA_ARGS__});   \
+        }                                                                        \
+    } while (0)
+
+// Declare before NIXL_TRACE_SCOPE so the span is created while the context is active.
 // One per scope.
-#define NIXL_TRACE_CORRELATION_SCOPE(tracer_ptr, id) \
-    ::nixl::trace::CorrelationScope nixl_trace_correlation_scope_((tracer_ptr), (id))
+#define NIXL_TRACE_CORRELATION_SCOPE(tracer_ptr, context) \
+    ::nixl::trace::CorrelationScope nixl_trace_correlation_scope_((tracer_ptr), (context))
 
 #define NIXL_TRACE_ATTR(span, attr_key, attr_value)        \
     do {                                                   \
@@ -70,11 +84,14 @@
 #define NIXL_TRACE_MARK(tracer_ptr, mark_name, mark_kind) \
     do {                                                  \
     } while (0)
+#define NIXL_TRACE_EVENT(tracer_ptr, event_name, event_kind, event_context, ...) \
+    do {                                                                         \
+    } while (0)
 #define NIXL_TRACE_ATTR(span, attr_key, attr_value) \
     do {                                            \
     } while (0)
-#define NIXL_TRACE_CORRELATION_SCOPE(tracer_ptr, id) \
-    do {                                             \
+#define NIXL_TRACE_CORRELATION_SCOPE(tracer_ptr, context) \
+    do {                                                  \
     } while (0)
 
 #endif // NIXL_TRACE_ENABLED
