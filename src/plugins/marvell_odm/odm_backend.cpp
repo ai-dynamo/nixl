@@ -198,8 +198,8 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
     cudaError_t err = cudaGetDeviceCount(&device_count);
     if (err != cudaSuccess || device_count == 0) {
         NIXL_WARN << "ODM: CUDA GPU not available ("
-                << (err != cudaSuccess ? cudaGetErrorString(err) : "0 GPUs detected")
-                << "); VRAM transfers disabled, DRAM_SEG host-VA path still available";
+                  << (err != cudaSuccess ? cudaGetErrorString(err) : "0 GPUs detected")
+                  << "); VRAM transfers disabled, DRAM_SEG host-VA path still available";
         cuda_available_ = false;
         dmabuf_supported_ = false;
     } else {
@@ -563,7 +563,7 @@ nixlOdmEngine::prepXfer(const nixl_xfer_op_t &operation,
         NIXL_DEBUG << "ODM prepXfer: DRAM<->DRAM op=" << (operation == NIXL_READ ? "READ" : "WRITE")
                    << " -> "
                    << (req->direction == OdmDirection::Outbound ? "READ (device->host)" :
-                                                                   "WRITE (host->device)")
+                                                                  "WRITE (host->device)")
                    << " segments=" << n;
     } else {
         /* Destination side decides direction (VRAM dma-buf path):
@@ -575,7 +575,7 @@ nixlOdmEngine::prepXfer(const nixl_xfer_op_t &operation,
         NIXL_DEBUG << "ODM prepXfer: VRAM<->DRAM op=" << (operation == NIXL_READ ? "READ" : "WRITE")
                    << " -> "
                    << (req->direction == OdmDirection::Outbound ? "READ_FD (device->VRAM)" :
-                                                                   "WRITE_FD (VRAM->device)")
+                                                                  "WRITE_FD (VRAM->device)")
                    << " segments=" << n;
     }
 
@@ -952,6 +952,8 @@ namespace {
 
 #if defined(HAVE_ODM_IO_URING_CMD128) || defined(HAVE_ODM_IO_URING_SQE128)
 constexpr unsigned kOdmUringSqeBytes = 128;
+static_assert(sizeof(mrvl_dma_xfer_commands_fd_spray) <= 80,
+              "spray command must fit the SQE128 cmd area");
 #else
 constexpr unsigned kOdmUringSqeBytes = 64;
 #endif
@@ -1011,10 +1013,12 @@ void
 nixlOdmEngine::odmUringInit() {
     struct io_uring_params params{};
 #if defined(HAVE_ODM_IO_URING_CMD128) || defined(HAVE_ODM_IO_URING_SQE128)
-    /* ODM kernel driver requires 128-byte SQE rings for uring_cmd spray ioctls. */
     params.flags = IORING_SETUP_SQE128;
 #else
-    params.flags = 0;
+    NIXL_WARN << "ODM: liburing lacks SQE128 support; the ODM spray command does not fit "
+                 "a 64-byte SQE. Falling back to ioctl";
+    use_io_uring_.store(false);
+    return;
 #endif
     const int rc = io_uring_queue_init_params(32, &uring_, &params);
     if (rc < 0) {
@@ -1071,16 +1075,22 @@ nixlOdmEngine::postOdmDmabufUring(nixlOdmBackendReqH *req) const {
     (void)req;
     return NIXL_ERR_NOT_SUPPORTED;
 #else
-    std::lock_guard<std::mutex> uring_lk(uring_mtx_);
+    std::unique_lock<std::mutex> uring_lk(uring_mtx_);
+    if (!use_io_uring_.load()) {
+        /* Another thread disabled the ring after a wait/drain failure; its CQE may still be
+         * pending. */
+        uring_lk.unlock();
+        return postOdmDmabuf(req);
+    }
     nixl_status_t cst = ensureCudaContext(req->gpu_id);
     if (cst != NIXL_SUCCESS) {
         return cst;
     }
 
-    const int uring_op = (req->direction == OdmDirection::Outbound) ? ODM_URING_CMD_READ_FD :
-                                                                      ODM_URING_CMD_WRITE_FD;
-    const uint32_t xfer_type = (req->direction == OdmDirection::Outbound) ? ODM_XTYPE_OUTBOUND :
-                                                                            ODM_XTYPE_INBOUND;
+    const int uring_op =
+        (req->direction == OdmDirection::Outbound) ? ODM_URING_CMD_READ_FD : ODM_URING_CMD_WRITE_FD;
+    const uint32_t xfer_type =
+        (req->direction == OdmDirection::Outbound) ? ODM_XTYPE_OUTBOUND : ODM_XTYPE_INBOUND;
 
     for (const auto &seg : req->segments) {
         uint64_t remaining = seg.len;
@@ -1166,8 +1176,8 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
     unsigned int ioctl_cmd = (req->direction == OdmDirection::Outbound) ?
         MRVL_CXL_DMA_READ_COMMAND_FD :
         MRVL_CXL_DMA_WRITE_COMMAND_FD;
-    uint32_t xfer_type = (req->direction == OdmDirection::Outbound) ? ODM_XTYPE_OUTBOUND :
-                                                                      ODM_XTYPE_INBOUND;
+    uint32_t xfer_type =
+        (req->direction == OdmDirection::Outbound) ? ODM_XTYPE_OUTBOUND : ODM_XTYPE_INBOUND;
 
     /*
      * Single queue (no pool): run inline on the caller thread, pinned to one
@@ -1305,8 +1315,8 @@ nixlOdmEngine::postOdmHostVa(nixlOdmBackendReqH *req) const {
     const unsigned int ioctl_cmd = (req->direction == OdmDirection::Outbound) ?
         MRVL_CXL_DMA_READ_COMMAND :
         MRVL_CXL_DMA_WRITE_COMMAND;
-    const uint32_t xfer_type = (req->direction == OdmDirection::Outbound) ? ODM_XTYPE_OUTBOUND :
-                                                                            ODM_XTYPE_INBOUND;
+    const uint32_t xfer_type =
+        (req->direction == OdmDirection::Outbound) ? ODM_XTYPE_OUTBOUND : ODM_XTYPE_INBOUND;
     const uint16_t req_qid = nextQid();
     const int lock_slot = static_cast<int>(req_qid) - static_cast<int>(qid_start_);
     std::lock_guard<std::mutex> qlk(qid_locks_[(lock_slot >= 0 && lock_slot < odm_num_queues_) ?
