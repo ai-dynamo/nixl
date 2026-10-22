@@ -34,6 +34,17 @@ namespace {
     // Long enough to interleave, short enough to keep the suite quick.
     constexpr auto step = std::chrono::microseconds(50);
 
+    // Waits for a condition the scheduler decides, instead of guessing how long
+    // that takes on a loaded runner. The deadline only bounds a genuine hang.
+    template<typename Pred>
+    void
+    waitUntil(Pred pred) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!pred() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
     class overlapDetector {
     public:
         void
@@ -121,8 +132,9 @@ TEST(MetadataWorker, ShutdownKeepsUpWithSubmitters) {
     }
 
     for (int round = 0; round < 20; ++round) {
+        const int before = submitted.load();
         worker.start([] {}, std::chrono::microseconds(100));
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        waitUntil([&] { return submitted.load() > before; });
         // Draining the queue to empty here would never finish while the
         // submitters run, so this is what catches a shutdown that waits for one.
         worker.stop();
@@ -150,7 +162,7 @@ TEST(MetadataWorker, ShutdownRunsWhatThePollSubmitted) {
             ++submitted;
         },
         std::chrono::microseconds(100));
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    waitUntil([&] { return submitted.load() > 0; });
     worker.stop();
 
     EXPECT_GT(submitted.load(), 0);
