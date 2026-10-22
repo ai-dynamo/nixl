@@ -55,7 +55,7 @@ deviceMemViewGetBackend(deviceOps &ops,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    gpu::memViewWrapper host_wrapper{};
+    gpu::memViewWrapper host_wrapper;
     const auto status = ops.copy(
         &host_wrapper, wrapper, sizeof(host_wrapper), deviceOps::copyDirection::DeviceToHost);
     if (status != NIXL_SUCCESS) {

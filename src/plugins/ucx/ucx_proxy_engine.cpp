@@ -41,16 +41,15 @@ namespace nixl::ucx {
  * (channel, peer) ring. Nested in the engine, it reads the workers with the engine's own
  * access.
  */
-class proxyEngine::transport final : public nixl::proxyTransport {
+class proxyEngine::transport final : public proxyTransport {
 public:
-    transport(worker_span_t workers, const nixl::proxyConfig &config) noexcept
+    transport(worker_span_t workers, const proxyConfig &config) noexcept
         : workers_(workers),
           max_peers_(config.max_peers) {}
 
     nixl_status_t
-    submit(const nixl::proxyBackendSubmission &submission,
-           nixl::proxyBackendRequest &request) override {
-        request = nixl::proxyBackendRequest{};
+    submit(const proxyBackendSubmission &submission, proxyBackendRequest &request) override {
+        request = proxyBackendRequest{};
         const size_t worker_id = workerId(submission.channel_id, submission.peer_index);
 
         nixlUcxReq req = nullptr;
@@ -65,7 +64,7 @@ public:
         }
 
         if (status == NIXL_IN_PROG) {
-            request = nixl::proxyBackendRequest{tokenFrom(req)};
+            request = proxyBackendRequest{tokenFrom(req)};
         }
         if (submission.opcode == nixl_proxy_opcode_t::PUT) {
             NIXL_DEBUG << "device proxy submit: PUT src_addr=" << std::hex << submission.local.addr
@@ -81,13 +80,13 @@ public:
     }
 
     nixl_status_t
-    checkCompletion(uint32_t, uint32_t, const nixl::proxyBackendRequest &request) override {
+    checkCompletion(uint32_t, uint32_t, const proxyBackendRequest &request) override {
         if (!request) {
             return NIXL_ERR_INVALID_PARAM;
         }
 
         const nixlUcxReq req = reqFrom(request);
-        const nixl_status_t status = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
+        const nixl_status_t status = ucsToNixlStatus(ucp_request_check_status(req));
         if (status == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
         }
@@ -108,7 +107,7 @@ public:
         const ucp_request_param_t params{};
         auto *request = ucp_worker_flush_nbx(worker->get(), &params);
         if (UCS_PTR_IS_ERR(request)) {
-            return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+            return ucsToNixlStatus(UCS_PTR_STATUS(request));
         }
         if (request == nullptr) {
             return NIXL_SUCCESS;
@@ -119,7 +118,7 @@ public:
             status = ucp_request_check_status(request);
         } while (status == UCS_INPROGRESS);
         worker->reqRelease(request);
-        return nixl::ucx::ucsToNixlStatus(status);
+        return ucsToNixlStatus(status);
     }
 
     /** Any worker's rkey resolves the same address; worker 0 always exists. */
@@ -161,9 +160,7 @@ private:
 
     /** Post one put on the endpoint that reaches the submission's peer. */
     nixl_status_t
-    postPut(const nixl::proxyBackendSubmission &submission,
-            size_t worker_id,
-            nixlUcxReq &req) const {
+    postPut(const proxyBackendSubmission &submission, size_t worker_id, nixlUcxReq &req) const {
         req = nullptr;
         const nixlMetaDesc &local = submission.local;
         const nixlMetaDesc &remote = submission.remote;
@@ -192,7 +189,7 @@ private:
     }
 
     nixl_status_t
-    postAtomicAdd(const nixl::proxyBackendSubmission &submission,
+    postAtomicAdd(const proxyBackendSubmission &submission,
                   size_t worker_id,
                   nixlUcxReq &req) const {
         req = nullptr;
@@ -213,8 +210,7 @@ private:
 
         // Order the counter update after the puts already posted on this worker:
         // the receiver treats the counter as the signal that the data has landed.
-        const auto status =
-            nixl::ucx::ucsToNixlStatus(ucp_worker_fence(workers_[worker_id]->get()));
+        const auto status = ucsToNixlStatus(ucp_worker_fence(workers_[worker_id]->get()));
         if (status != NIXL_SUCCESS) {
             return status;
         }
@@ -230,7 +226,7 @@ private:
     }
 
     [[nodiscard]] static nixlUcxReq
-    reqFrom(const nixl::proxyBackendRequest &request) noexcept {
+    reqFrom(const proxyBackendRequest &request) noexcept {
         return reinterpret_cast<nixlUcxReq>(request.token);
     }
 
@@ -286,13 +282,13 @@ proxyInitParams(const nixlBackendInitParams &init_params,
 } // namespace
 
 namespace nixl::ucx {
-proxyEngine::proxyEngine(const nixlBackendInitParams &init_params, const nixl::proxyConfig &config)
+proxyEngine::proxyEngine(const nixlBackendInitParams &init_params, const proxyConfig &config)
     // The temporary params outlive the base constructor, the only place they are read.
     : nixlUcxEngine(proxyInitParams(init_params, config, nixl_b_params_t{})),
       ops_(requireDeviceOps()),
-      runtime_(nixl::proxyRuntime::create(std::make_unique<transport>(getSharedWorkers(), config),
-                                          config,
-                                          ops_)) {
+      runtime_(proxyRuntime::create(std::make_unique<transport>(getSharedWorkers(), config),
+                                    config,
+                                    ops_)) {
     NIXL_INFO << "Engine-owned device proxy enabled: " << config.channel_count << " channel(s), "
               << config.thread_count << " thread(s), max_peers=" << config.max_peers
               << ", ring_depth=" << config.ring_depth;
@@ -327,7 +323,7 @@ proxyEngine::prepProxyMemView(const DlistT &dlist, nixlMemViewH &mvh) const {
         return status;
     }
 
-    status = nixl::deviceMemViewAllocate(ops_, nixl::gpu::exec_mode_t::PROXY, proxy_mvh, mvh);
+    status = deviceMemViewAllocate(ops_, gpu::exec_mode_t::PROXY, proxy_mvh, mvh);
     if (status != NIXL_SUCCESS) {
         runtime_->releaseMemView(proxy_mvh);
     }
@@ -355,11 +351,11 @@ proxyEngine::releaseMemView(nixlMemViewH mem_view) const {
     }
 
     nixlMemViewH proxy_mvh = nullptr;
-    if (nixl::deviceMemViewGetBackend(ops_, mem_view, proxy_mvh) != NIXL_SUCCESS) {
+    if (deviceMemViewGetBackend(ops_, mem_view, proxy_mvh) != NIXL_SUCCESS) {
         NIXL_FATAL << "Failed to read proxy memory view before retirement";
     }
 
     runtime_->releaseMemView(proxy_mvh);
-    nixl::deviceMemViewFree(ops_, mem_view);
+    deviceMemViewFree(ops_, mem_view);
 }
 } // namespace nixl::ucx
