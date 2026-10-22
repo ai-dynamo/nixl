@@ -55,10 +55,11 @@ uint64_t milliseconds_to_cycles(uint64_t milliseconds, int device_clock_rate_khz
 
 namespace nixl_ep {
 
-void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes)
+void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes,
+                                   bool init_transport)
 {
     if (!available) {
-        init(num_ranks, num_experts_per_rank, num_rdma_bytes);
+        init(num_ranks, num_experts_per_rank, num_rdma_bytes, init_transport);
         available = true;
     } else {
         throw std::runtime_error("Multiple calls to update_memory_buffers are not supported");
@@ -104,7 +105,7 @@ int Buffer::get_rank_bound(std::optional<int> num_experts) const {
     return *num_experts / num_experts_per_rank;
 }
 
-void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes)
+void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, bool init_transport)
 {
     EP_HOST_ASSERT(num_ranks > 0);
     EP_HOST_ASSERT(num_experts_per_rank > 0);
@@ -168,9 +169,19 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     nixl_peer_info.resize(max_num_ranks);
     nixl_peer_info[rank] = my_peer_info;
 
-    _nixl_agent_init();
+    // A process that is checkpointed before it joins defers the agent: the
+    // buffers and device context that CUDA graphs reference exist without any
+    // NIXL or UCX state, which a process checkpoint must not contain.
+    if (init_transport)
+        _nixl_agent_init();
 
     _nixl_ep_init();
+}
+
+void Buffer::init_transport() {
+    EP_HOST_ASSERT(available and "update_memory_buffers must be called first");
+    if (nixl_agent_info == nullptr)
+        _nixl_agent_init();
 }
 
 Buffer::~Buffer() noexcept {
@@ -333,6 +344,8 @@ void Buffer::_nixl_agents_peer_info_gather(std::vector<int>& ranks) {
 void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds, bool activate) {
     EP_HOST_ASSERT(!remote_ranks_list.empty());
     EP_HOST_ASSERT(!remote_mds.has_value() || remote_mds->size() == remote_ranks_list.size());
+
+    init_transport();
 
     std::vector<int> new_ranks;
     std::vector<nixl_blob_t> new_ranks_mds;
@@ -900,7 +913,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
     pybind11::class_<nixl_ep::Buffer>(m, "Buffer")
         .def(pybind11::init<int, bool, int>())
-        .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers)
+        .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers, py::arg("num_ranks"), py::arg("num_experts_per_rank"), py::arg("num_rdma_bytes"), py::arg("init_transport") = true)
+        .def("init_transport", &nixl_ep::Buffer::init_transport)
         .def("barrier", &nixl_ep::Buffer::barrier)
         .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, bool activate) {
             buffer.connect_ranks(remote_ranks, nixl_ep::convert_mds(remote_mds), activate);
