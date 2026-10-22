@@ -8,10 +8,19 @@
 # set and is owned by this build alone - which is what lets pipeline_stop delete
 # it on failure and mark it, only on SUCCESS, for the release poller.
 #
-# On SUCCESS (release or verification), pipeline_stop also fires a GitHub
-# repository_dispatch (nixl-wheels-published, credential
-# svc-nixl-github-dispatch-token) so ai-dynamo/nixl's nixl-compliance.yml
-# doesn't have to poll Artifactory for this commit's wheels itself.
+# On a release build (PUBLISH_DIR=release/<ver>), pipeline_stop also triggers
+# the dl/ai-dynamo/release-automation GitLab pipeline directly (project 191080,
+# credential svc-nixl-gitlab-trigger-token) once the wheel set is marked, instead
+# of GitHub polling Artifactory for this commit's wheels. Nightly/verification
+# builds (PUBLISH_DIR empty) do NOT trigger GitLab - only a real release build
+# should kick off scans/compliance/publish.
+#
+# OPEN GAP: the crate (nixl-sys) still publishes from GitHub on the v* tag push
+# (dynamo-parity split - GitHub stages to Artifactory, GitLab only consumes it).
+# This trigger does not wait for that crate publish to land, so there is a race
+# between "Jenkins wheels done -> GitLab pipeline starts" and "GitHub crate
+# publish finishes." Needs a resolution (GitLab-side wait-for-crate step, or
+# some other ordering guarantee) before this is relied on for a real release.
 
 ---
 job: nixl-ci-build-wheel-nightly
@@ -410,31 +419,52 @@ pipeline_stop:
         }
     }
 
-    // Notify GitHub so nixl-compliance.yml's wait-for-wheels job doesn't have
-    // to poll Artifactory from the scarce gitlab_ci_runners pool. Fires for
-    // both release and verification builds - GitHub re-derives the actual
-    // folder itself via an AQL lookup keyed on nixl_sha, so this is just the
-    // "go check now" nudge, not an exact path (the UCX sha in a verification/
-    // folder name isn't known at this pipeline level anyway). Best-effort: a
-    // GitHub outage must not fail an otherwise-successful wheel build, so
-    // dispatch failures are caught and only logged.
-    if (jobStatus == 'SUCCESS') {
+    // Trigger the release-automation GitLab pipeline directly - only for a real
+    // release build (PUBLISH_DIR=release/<ver>), not nightly/verification runs,
+    // which have no RC tag/crate version and shouldn't kick off scans/publish.
+    // Best-effort: GitLab being unreachable must not fail an otherwise-successful
+    // wheel build, so trigger failures are caught and only logged.
+    if (jobStatus == 'SUCCESS' && isRelease) {
         try {
+            // WHEEL_VERSION from the release folder itself (release/1.4.0 -> 1.4.0).
+            // RC_TAG/CRATE_VERSION: best-effort from NIXL_VERSION if it looks like a
+            // v* tag (the poller/manual run names one); otherwise left blank and
+            // release-automation's own defaults/manual input have to cover it.
+            def wheelVersion = publishDir.replaceFirst(/^release\//, '')
+            def rcTag = params.NIXL_VERSION ==~ /v[0-9].*/ ? params.NIXL_VERSION : ''
+            def crateVersion = rcTag ? rcTag.replaceFirst(/^v/, '') : ''
             withCredentials([string(
-                    credentialsId: 'svc-nixl-github-dispatch-token',
-                    variable: 'GH_TOKEN')]) {
-                sh """
-                    set +x
-                    curl -fsSL -X POST --retry 3 --retry-delay 2 \
-                      -H "Authorization: Bearer \$GH_TOKEN" \
-                      -H "Accept: application/vnd.github+json" \
-                      https://api.github.com/repos/ai-dynamo/nixl/dispatches \
-                      -d '{"event_type":"nixl-wheels-published","client_payload":{"nixl_sha":"${sha}","publish_dir":"${publishDir ?: 'verification'}","build_number":"${env.BUILD_NUMBER}","job_url":"${env.BUILD_URL}"}}'
-                """
+                    credentialsId: 'svc-nixl-gitlab-trigger-token',
+                    variable: 'GITLAB_TRIGGER_TOKEN')]) {
+                def tf = sh(returnStdout: true, script: 'mktemp').trim()
+                sh "chmod 600 '${tf}'"
+                writeFile(file: tf, text: GITLAB_TRIGGER_TOKEN)
+                try {
+                    sh """
+                        set +x
+                        curl -fsSL -X POST --retry 3 --retry-delay 2 \
+                          "https://gitlab-master.nvidia.com/api/v4/projects/191080/trigger/pipeline" \
+                          --form "token=<${tf}" \
+                          --form "ref=main" \
+                          --form "variables[PIPELINE_TYPE]=rc" \
+                          --form "variables[RELEASE_TYPE]=rc" \
+                          --form "variables[PROJECT]=nixl" \
+                          --form "variables[RC_TAG]=${rcTag}" \
+                          --form "variables[WHEEL_VERSION]=${wheelVersion}" \
+                          --form "variables[CRATE_VERSION]=${crateVersion}" \
+                          --form "variables[ARTIFACTS]=wheel,crate" \
+                          --form "variables[COMMIT_SHA]=${sha}" \
+                          --form "variables[ARTIFACTORY_PYPI_URL]=https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-swx-nixl-pypi-local/simple" \
+                          --form "variables[SONAR_BRANCH]=release/${wheelVersion}" \
+                          --form "variables[JENKINS_BUILD_URL]=${env.BUILD_URL}"
+                    """
+                } finally {
+                    sh "rm -f '${tf}'"
+                }
             }
-            echo "Notified GitHub: nixl-wheels-published (nixl_sha=${sha})"
+            echo "Triggered release-automation GitLab pipeline (nixl_sha=${sha}, wheel_version=${wheelVersion}, rc_tag=${rcTag})"
         } catch (err) {
-            echo "WARNING: GitHub dispatch notification failed (wheels are still published fine): ${err}"
+            echo "WARNING: GitLab pipeline trigger failed (wheels are still published fine): ${err}"
         }
     }
 
