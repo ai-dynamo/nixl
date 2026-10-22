@@ -734,7 +734,7 @@ addRequestTag(nixlSerDes &ser_des, std::uint64_t request_id, std::uint64_t execu
 
 void
 readRequestTag(nixlSerDes &ser_des, nixl::ucx::notifMessage &notif) {
-    std::array<std::uint8_t, request_tag_size> value;
+    std::array<std::uint8_t, request_tag_size> value{};
     if ((ser_des.peekBufLen("treq") != value.size()) ||
         (ser_des.getBuf("treq", value.data(), value.size()) != NIXL_SUCCESS)) {
         return;
