@@ -74,6 +74,7 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
       remoteAgent(remote_agent),
       remoteSection(remote_section_ref),
       traceContext_(trace_context),
+      tracePostContext_(trace_context),
       traceRequestId_(trace_request_id),
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
@@ -202,7 +203,7 @@ traceXferComplete(nixl::trace::Tracer *tracer, const nixlXferReqH &req) {
     NIXL_TRACE_EVENT(tracer,
                      "nixl::xfer.complete",
                      nixl::trace::Kind::Metadata,
-                     req.traceContext(),
+                     req.tracePostContext(),
                      req.traceRequestId(),
                      {"nixl.xfer_request_id", std::to_string(req.traceRequestId())},
                      {"nixl.xfer_execution", static_cast<std::int64_t>(req.traceExecution())});
@@ -1174,8 +1175,15 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    NIXL_TRACE_CORRELATION_SCOPE(
-        data->tracer_.get(), req_hndl->traceContext(), req_hndl->traceRequestId());
+    nixl::trace::TraceContext call_context = req_hndl->traceContext();
+    if (call_context.sampled()) {
+        if (req_hndl->traceSpanIdTaken_) {
+            call_context = nixl::trace::generatePostContext(call_context, data->tracer_.get());
+        }
+        req_hndl->traceSpanIdTaken_ = true;
+    }
+
+    NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), call_context, req_hndl->traceRequestId());
     NIXL_TRACE_SCOPE(trace_span,
                      data->tracer_.get(),
                      req_hndl->backendOp == NIXL_WRITE ? "nixl::postXferReq.write" :
@@ -1263,7 +1271,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_BACKEND;
     }
 
-    opt_args.traceContext = &req_hndl->traceContext();
+    req_hndl->tracePostContext_ = call_context;
+    opt_args.traceContext = &req_hndl->tracePostContext();
     if (req_hndl->traceRequestId_ != 0) {
         req_hndl->traceExecution_.fetch_add(1, std::memory_order_relaxed);
     }
