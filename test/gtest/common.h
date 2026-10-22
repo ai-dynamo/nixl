@@ -18,6 +18,7 @@
 #define TEST_GTEST_COMMON_H
 
 #include <atomic>
+#include <chrono>
 #include <iostream>
 #include <iomanip>
 #include <cassert>
@@ -32,6 +33,7 @@
 #include <vector>
 #include <string>
 #include <string_view>
+#include <thread>
 #include "gtest/gtest.h"
 #include "absl/log/log_sink.h"
 #include "absl/log/log_entry.h"
@@ -56,6 +58,22 @@ hasCudaGpu() {
 constexpr const char *
 GetMockBackendName() {
     return "MOCK_BACKEND";
+}
+
+// Waits for a condition the scheduler decides, instead of guessing how long it
+// takes on a loaded runner. The deadline only bounds a genuine hang; callers
+// must assert the result.
+template<typename Pred>
+[[nodiscard]] bool
+waitUntil(Pred pred, std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!pred()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
 }
 
 class Logger {
