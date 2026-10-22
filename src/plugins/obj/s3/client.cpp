@@ -24,6 +24,7 @@
 #include <aws/s3/model/HeadObjectRequest.h>
 #include <aws/s3/S3Errors.h>
 #include <aws/core/utils/stream/PreallocatedStreamBuf.h>
+#include <aws/core/utils/memory/AWSMemory.h>
 #include <aws/core/utils/memory/stl/AWSStringStream.h>
 #include <absl/strings/str_format.h>
 
@@ -101,7 +102,8 @@ awsS3Client::getObjectAsync(std::string_view key,
         "GetObjectStreamBuf", reinterpret_cast<unsigned char *>(data_ptr), data_len);
     auto stream_factory = Aws::MakeShared<Aws::IOStreamFactory>(
         "GetObjectStreamFactory", [preallocated_stream_buf]() -> Aws::IOStream * {
-            return new Aws::IOStream(preallocated_stream_buf.get());
+            return Aws::New<Aws::IOStream>("GetObjectResponseStream",
+                                           preallocated_stream_buf.get());
         });
 
     Aws::S3::Model::GetObjectRequest request;

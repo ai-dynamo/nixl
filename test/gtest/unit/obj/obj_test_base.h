@@ -30,6 +30,7 @@
 #include <map>
 #include <set>
 #include <optional>
+#include <span>
 
 #include "s3/client.h"
 #include "obj_backend.h"
@@ -301,7 +302,9 @@ protected:
     nixl_b_params_t customParams_;
 
     void
-    setupEngine(const std::string &agentName, nixl_b_params_t params = {}) {
+    setupEngine(const std::string &agentName,
+                nixl_b_params_t params = {},
+                std::shared_ptr<mockS3Client> crt_client = nullptr) {
         customParams_ = params;
         initParams_.localAgent = agentName;
         initParams_.type = "OBJ";
@@ -317,7 +320,15 @@ protected:
             throw std::runtime_error("No registered mock for engine type '" + type + "'");
         }
         mockS3Client_ = mock ? mock : std::make_shared<mockS3Client>();
-        objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockS3Client_);
+        objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockS3Client_, crt_client);
+    }
+
+    static void
+    expectReadPattern(std::span<const char> buffer, size_t offset = 0) {
+        for (size_t i = 0; i < buffer.size(); ++i) {
+            ASSERT_EQ(buffer[i], static_cast<char>('A' + ((i + offset) % 26)))
+                << "Unexpected read data at byte " << i;
+        }
     }
 
     void
@@ -371,10 +382,7 @@ protected:
         EXPECT_EQ(status, NIXL_SUCCESS);
 
         if (operation == NIXL_READ) {
-            if (test_buffer.size() > 0) {
-                EXPECT_TRUE(std::all_of(
-                    test_buffer.begin(), test_buffer.end(), [](char c) { return c == 'A'; }));
-            }
+            expectReadPattern(test_buffer);
         }
 
         objEngine_->releaseReqH(handle);
@@ -453,8 +461,8 @@ protected:
         EXPECT_EQ(status, NIXL_SUCCESS);
 
         if (operation == NIXL_READ) {
-            EXPECT_EQ(test_buffer0[0], 'A');
-            EXPECT_EQ(test_buffer1[0], 'A');
+            expectReadPattern(test_buffer0);
+            expectReadPattern(test_buffer1);
         }
 
         objEngine_->releaseReqH(handle);

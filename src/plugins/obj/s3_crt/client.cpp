@@ -12,6 +12,7 @@
 #include <aws/s3-crt/model/HeadObjectRequest.h>
 #include <aws/s3-crt/S3CrtErrors.h>
 #include <aws/core/utils/stream/PreallocatedStreamBuf.h>
+#include <aws/core/utils/memory/AWSMemory.h>
 #include <aws/core/utils/memory/stl/AWSStringStream.h>
 #include <absl/strings/str_format.h>
 #include <iostream>
@@ -118,7 +119,8 @@ awsS3CrtClient::getObjectAsync(std::string_view key,
         "GetObjectStreamBuf", reinterpret_cast<unsigned char *>(data_ptr), data_len);
     auto stream_factory = Aws::MakeShared<Aws::IOStreamFactory>(
         "GetObjectStreamFactory", [preallocated_stream_buf]() -> Aws::IOStream * {
-            return new Aws::IOStream(preallocated_stream_buf.get());
+            return Aws::New<Aws::IOStream>("GetObjectResponseStream",
+                                           preallocated_stream_buf.get());
         });
 
     // Heap-allocate the request for the same reason as putObjectAsync: the SDK

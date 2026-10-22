@@ -460,7 +460,9 @@ TEST_F(objTestFixture, ReadFromOffset) {
     mockS3Client_->execAsync();
     status = objEngine_->checkXfer(handle);
     EXPECT_EQ(status, NIXL_SUCCESS);
-    EXPECT_EQ(test_buffer[0], 'A' + (offset % 26));
+    expectReadPattern({test_buffer.data(), length}, offset);
+    EXPECT_TRUE(std::all_of(
+        test_buffer.begin() + length, test_buffer.end(), [](char c) { return c == '\0'; }));
 
     objEngine_->releaseReqH(handle);
     objEngine_->deregisterMem(local_metadata);
@@ -495,6 +497,126 @@ TEST_F(objCrtTestFixture, MixedSizeThreshold) {
     // Mixed: 1 MiB (standard client) + 6 MiB (CRT client via MPU)
     testMultiDescriptorWithSizes(NIXL_WRITE, 1048576, 6291456, "-crt-mixed");
 }
+
+// Exercise client selection through postXfer with distinct clients so that a
+// transfer routed to the wrong client cannot pass unnoticed.
+class objCrtRoutingTest : public objTestBase, public testing::TestWithParam<nixl_xfer_op_t> {
+protected:
+    void
+    testRouting(nixl_b_params_t params,
+                const std::vector<size_t> &sizes,
+                const std::vector<bool> &use_crt,
+                bool fail_standard = false,
+                bool fail_crt = false) {
+        ASSERT_EQ(sizes.size(), use_crt.size());
+        auto crt_client = std::make_shared<mockS3Client>();
+        setupEngine("test-routing-agent", std::move(params), crt_client);
+        mockS3Client_->setSimulateSuccess(!fail_standard);
+        crt_client->setSimulateSuccess(!fail_crt);
+
+        std::vector<std::vector<char>> buffers;
+        std::vector<nixlBackendMD *> local_metadata(sizes.size(), nullptr);
+        std::vector<nixlBackendMD *> remote_metadata(sizes.size(), nullptr);
+        nixl_meta_dlist_t local_descs(DRAM_SEG);
+        nixl_meta_dlist_t remote_descs(OBJ_SEG);
+        for (size_t i = 0; i < sizes.size(); ++i) {
+            buffers.emplace_back(sizes[i], '?');
+            nixlBlobDesc local_desc(
+                reinterpret_cast<uintptr_t>(buffers.back().data()), sizes[i], 1, "");
+            nixlBlobDesc remote_desc(0, sizes[i], i + 2, "routing-key-" + std::to_string(i));
+            ASSERT_EQ(objEngine_->registerMem(local_desc, DRAM_SEG, local_metadata[i]),
+                      NIXL_SUCCESS);
+            ASSERT_EQ(objEngine_->registerMem(remote_desc, OBJ_SEG, remote_metadata[i]),
+                      NIXL_SUCCESS);
+            local_descs.addDesc(nixlMetaDesc(local_desc.addr, sizes[i], local_desc.devId));
+            // Nonzero, distinct offsets also exercise read-pattern validation.
+            remote_descs.addDesc(nixlMetaDesc(7 + i * 29, sizes[i], remote_desc.devId));
+        }
+
+        nixlBackendReqH *handle = nullptr;
+        ASSERT_EQ(
+            objEngine_->prepXfer(
+                GetParam(), local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+            NIXL_SUCCESS);
+        ASSERT_NE(handle, nullptr);
+        EXPECT_EQ(
+            objEngine_->postXfer(
+                GetParam(), local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+            NIXL_IN_PROG);
+        const size_t crt_count = std::count(use_crt.begin(), use_crt.end(), true);
+        EXPECT_EQ(mockS3Client_->getPendingCount(), sizes.size() - crt_count);
+        EXPECT_EQ(crt_client->getPendingCount(), crt_count);
+        EXPECT_EQ(objEngine_->checkXfer(handle), NIXL_IN_PROG);
+
+        crt_client->execAsync();
+        if (crt_count > 0 && crt_count < sizes.size()) {
+            EXPECT_EQ(objEngine_->checkXfer(handle), NIXL_IN_PROG);
+        }
+        mockS3Client_->execAsync();
+        bool failed = false;
+        for (size_t i = 0; i < sizes.size(); ++i) {
+            const bool client_failed = use_crt[i] ? fail_crt : fail_standard;
+            failed |= client_failed;
+            if (GetParam() == NIXL_READ) {
+                if (client_failed) {
+                    EXPECT_EQ(buffers[i], std::vector<char>(sizes[i], '?'));
+                } else {
+                    expectReadPattern(buffers[i], 7 + i * 29);
+                }
+            }
+        }
+        EXPECT_EQ(objEngine_->checkXfer(handle), failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS);
+        EXPECT_EQ(objEngine_->releaseReqH(handle), NIXL_SUCCESS);
+        for (size_t i = 0; i < sizes.size(); ++i) {
+            EXPECT_EQ(objEngine_->deregisterMem(local_metadata[i]), NIXL_SUCCESS);
+            EXPECT_EQ(objEngine_->deregisterMem(remote_metadata[i]), NIXL_SUCCESS);
+        }
+    }
+};
+
+TEST_P(objCrtRoutingTest, DisabledUsesStandard) {
+    testRouting({}, {1023, 1024, 1025}, {false, false, false});
+}
+
+TEST_P(objCrtRoutingTest, ZeroDisablesCrt) {
+    testRouting({{"crtMinLimit", "0"}}, {1023, 1024, 1025}, {false, false, false});
+}
+
+TEST_P(objCrtRoutingTest, BelowThresholdUsesStandard) {
+    testRouting({{"crtMinLimit", "1024"}}, {1023}, {false});
+}
+
+TEST_P(objCrtRoutingTest, AtThresholdUsesCrt) {
+    testRouting({{"crtMinLimit", "1024"}}, {1024}, {true});
+}
+
+TEST_P(objCrtRoutingTest, AboveThresholdUsesCrt) {
+    testRouting({{"crtMinLimit", "1024"}}, {1025}, {true});
+}
+
+TEST_P(objCrtRoutingTest, MixedDescriptorsUseBothClients) {
+    testRouting({{"crtMinLimit", "1024"}}, {1023, 1024, 1025}, {false, true, true});
+}
+
+TEST_P(objCrtRoutingTest, CrtOnlyUsesCrt) {
+    testRouting({{"crtMinLimit", "1"}}, {1, 1024}, {true, true});
+}
+
+TEST_P(objCrtRoutingTest, StandardFailurePropagates) {
+    testRouting({{"crtMinLimit", "1024"}}, {1023}, {false}, true);
+}
+
+TEST_P(objCrtRoutingTest, CrtFailurePropagates) {
+    testRouting({{"crtMinLimit", "1024"}}, {1024}, {true}, false, true);
+}
+
+INSTANTIATE_TEST_SUITE_P(ClientRouting,
+                         objCrtRoutingTest,
+                         testing::Values(NIXL_READ, NIXL_WRITE),
+                         [](const testing::TestParamInfo<nixl_xfer_op_t> &info) {
+                             return info.param == NIXL_READ ? "Read" : "Write";
+                         });
+
 
 // ---------------------------------------------------------------------------
 // Exact-once callback guard tests
