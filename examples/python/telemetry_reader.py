@@ -17,6 +17,7 @@
 
 import argparse
 import ctypes
+import fcntl
 import logging
 import mmap
 import os
@@ -150,6 +151,17 @@ class SharedRingBuffer:
     def _open_file(self):
         """Open existing file"""
         self.file_fd = os.open(self.file_path, os.O_RDWR)
+        # shared lock for the object's lifetime, tells a restarting producer a consumer is attached
+        try:
+            fcntl.flock(self.file_fd, fcntl.LOCK_SH)
+        except OSError as e:
+            # not fatal: the ring is still read, only this consumer's presence stops being provable
+            logger.warning(
+                "Cannot lock telemetry buffer %s (%s); a restarting producer cannot tell "
+                "this consumer is attached and will not keep the buffer for it",
+                self.file_path,
+                e,
+            )
 
     def _map_memory(self):
         """Map the file into memory"""

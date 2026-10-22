@@ -25,6 +25,8 @@
 #include <string>
 #include <memory>
 
+#include "scoped_fd.h"
+
 template<typename T> class sharedRingBuffer {
 public:
     sharedRingBuffer(const std::string &name, bool create, int version, size_t size = 0);
@@ -83,6 +85,7 @@ private:
     size_t cachedWritePos_ = 0;
     size_t cachedReadPos_ = 0;
     size_t cachedMask_ = 0;
+    nixl::scopedFd fd_;
 };
 
 #include "cyclic_buffer.tpp"
