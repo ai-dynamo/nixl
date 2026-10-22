@@ -17,6 +17,7 @@
  */
 
 #include <climits>
+#include <cstdlib>
 #include <cstring>
 #include <cerrno>
 #include <cstdint>
@@ -47,6 +48,22 @@ constexpr uint64_t ODM_QSPLIT_ALIGN = 0x10000ULL;
 constexpr uint64_t ODM_QSPLIT_MIN_PIECE_READ = 0x400000ULL; /* 4 MiB */
 constexpr uint64_t ODM_QSPLIT_MIN_PIECE_WRITE = 0x400000ULL; /* 4 MiB */
 constexpr uint64_t ODM_QSPLIT_WRITE_SINGLE_QUEUE_BELOW = 0x800000ULL; /* 8 MiB */
+constexpr unsigned long ODM_MAX_QID = 15;
+constexpr size_t kMaxTrackedThreads = 1024;
+
+bool
+parseOdmQid(const std::string &s, const char *name, uint16_t &out) {
+    errno = 0;
+    char *end = nullptr;
+    const unsigned long v = std::strtoul(s.c_str(), &end, 10);
+    if (s.empty() || errno != 0 || end == s.c_str() || *end != '\0' || v > ODM_MAX_QID) {
+        NIXL_ERROR << "ODM: invalid " << name << "='" << s << "' (expected integer 0.."
+                   << ODM_MAX_QID << ")";
+        return false;
+    }
+    out = static_cast<uint16_t>(v);
+    return true;
+}
 
 void
 logOdmDeviceOpenError(const std::string &device_path, const char *operation) {
@@ -117,31 +134,34 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
             dev_name = it->second;
         }
         it = init_params->customParams->find("odm_qid");
-        if (it != init_params->customParams->end()) {
-            try {
-                qid_ = static_cast<uint16_t>(std::stoul(it->second));
-            }
-            catch (...) { /* keep 0 */
+        if (it != init_params->customParams->end() && !it->second.empty()) {
+            if (!parseOdmQid(it->second, "odm_qid", qid_)) {
+                initErr = true;
+                return;
             }
         }
         /* Multi-queue spraying range; defaults to the single odm_qid. */
         qid_start_ = qid_;
         qid_end_ = qid_;
         it = init_params->customParams->find("odm_qid_start");
-        if (it != init_params->customParams->end()) {
-            try {
-                qid_start_ = static_cast<uint16_t>(std::stoul(it->second));
-            }
-            catch (...) { /* keep */
+        if (it != init_params->customParams->end() && !it->second.empty()) {
+            if (!parseOdmQid(it->second, "odm_qid_start", qid_start_)) {
+                initErr = true;
+                return;
             }
         }
         it = init_params->customParams->find("odm_qid_end");
-        if (it != init_params->customParams->end()) {
-            try {
-                qid_end_ = static_cast<uint16_t>(std::stoul(it->second));
+        if (it != init_params->customParams->end() && !it->second.empty()) {
+            if (!parseOdmQid(it->second, "odm_qid_end", qid_end_)) {
+                initErr = true;
+                return;
             }
-            catch (...) { /* keep */
-            }
+        }
+        if (qid_start_ > qid_end_) {
+            NIXL_ERROR << "ODM: invalid queue range: odm_qid_start=" << qid_start_
+                       << " > odm_qid_end=" << qid_end_;
+            initErr = true;
+            return;
         }
 #ifdef HAVE_CUDA
         /* Max dma-buf exports kept open (LRU cap); bounds open-fd growth. */
@@ -155,16 +175,6 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
             }
         }
 #endif
-        /* Clamp to the ODM driver's 0..15 queue range and normalize order. */
-        if (qid_start_ > 15) {
-            qid_start_ = 15;
-        }
-        if (qid_end_ > 15) {
-            qid_end_ = 15;
-        }
-        if (qid_start_ > qid_end_) {
-            std::swap(qid_start_, qid_end_);
-        }
     }
 
     /* Accept either a bare device name (resolved under /dev) or an absolute
@@ -277,6 +287,13 @@ nixlOdmEngine::~nixlOdmEngine() {
 #ifdef HAVE_CUDA
     odmPoolStop();
     closeDmabufCache();
+    {
+        std::lock_guard<std::mutex> lk(cuda_ctx_mtx_);
+        for (auto &entry : retained_ctx_) {
+            cuDevicePrimaryCtxRelease(entry.second.first);
+        }
+        retained_ctx_.clear();
+    }
 #endif
     closeDevice();
 }
@@ -312,9 +329,19 @@ nixlOdmEngine::nextQid() const {
     }
 
     const uint32_t span = static_cast<uint32_t>(qid_end_ - qid_start_ + 1);
-    const uint16_t assigned = static_cast<uint16_t>(qid_start_ + (next_thread_slot_ % span));
-    next_thread_slot_++;
+    uint16_t assigned;
+    if (thread_qid_.size() >= kMaxTrackedThreads) {
+        const auto oldest = thread_order_.front();
+        thread_order_.pop_front();
+        auto old_it = thread_qid_.find(oldest);
+        assigned = old_it->second;
+        thread_qid_.erase(old_it);
+    } else {
+        assigned = static_cast<uint16_t>(qid_start_ + (next_thread_slot_ % span));
+        next_thread_slot_++;
+    }
     thread_qid_[tid] = assigned;
+    thread_order_.push_back(tid);
     NIXL_DEBUG << "ODM: assigned thread to ODM qid " << assigned;
     return assigned;
 }
@@ -522,6 +549,12 @@ nixlOdmEngine::prepXfer(const nixl_xfer_op_t &operation,
     auto *req = new nixlOdmBackendReqH();
     req->is_dram_to_dram = dram_to_dram;
 
+#ifdef HAVE_ODM_IO_URING
+    if (dram_to_dram && use_io_uring_.load() && !warned_uring_host_.exchange(true)) {
+        NIXL_WARN << "ODM: odm_use_io_uring is ignored for DRAM_SEG host-VA transfers";
+    }
+#endif
+
     if (dram_to_dram) {
         /* Local = host DRAM (userspace VA), remote = Structera device IOVA.
          * WRITE: host -> device; READ: device -> host. */
@@ -609,11 +642,6 @@ nixlOdmEngine::prepXfer(const nixl_xfer_op_t &operation,
 #ifdef HAVE_CUDA
 nixl_status_t
 nixlOdmEngine::ensureCudaContext(uint32_t dev) const {
-    CUcontext cur = nullptr;
-    if (cuCtxGetCurrent(&cur) == CUDA_SUCCESS && cur != nullptr) {
-        return NIXL_SUCCESS; /* already bound on this thread */
-    }
-
     CUdevice cudev;
     CUresult cr = cuDeviceGet(&cudev, static_cast<int>(dev));
     if (cr != CUDA_SUCCESS) {
@@ -622,15 +650,39 @@ nixlOdmEngine::ensureCudaContext(uint32_t dev) const {
         NIXL_ERROR << "ODM: cuDeviceGet(" << dev << ") failed: " << (es ? es : "?");
         return NIXL_ERR_BACKEND;
     }
+
+    CUcontext cur = nullptr;
+    CUdevice cur_dev;
+    if (cuCtxGetCurrent(&cur) == CUDA_SUCCESS && cur != nullptr &&
+        cuCtxGetDevice(&cur_dev) == CUDA_SUCCESS && cur_dev == cudev) {
+        return NIXL_SUCCESS;
+    }
+
     CUcontext pctx = nullptr;
-    cr = cuDevicePrimaryCtxRetain(&pctx, cudev);
+    {
+        std::lock_guard<std::mutex> lk(cuda_ctx_mtx_);
+        auto ctx_it = retained_ctx_.find(static_cast<int>(dev));
+        if (ctx_it == retained_ctx_.end()) {
+            cr = cuDevicePrimaryCtxRetain(&pctx, cudev);
+            if (cr != CUDA_SUCCESS) {
+                const char *es = nullptr;
+                cuGetErrorString(cr, &es);
+                NIXL_ERROR << "ODM: cuDevicePrimaryCtxRetain(" << dev
+                           << ") failed: " << (es ? es : "?");
+                return NIXL_ERR_BACKEND;
+            }
+            retained_ctx_[static_cast<int>(dev)] = {cudev, pctx};
+        } else {
+            pctx = ctx_it->second.second;
+        }
+    }
+    cr = cuCtxSetCurrent(pctx);
     if (cr != CUDA_SUCCESS) {
         const char *es = nullptr;
         cuGetErrorString(cr, &es);
-        NIXL_ERROR << "ODM: cuDevicePrimaryCtxRetain(" << dev << ") failed: " << (es ? es : "?");
+        NIXL_ERROR << "ODM: cuCtxSetCurrent(" << dev << ") failed: " << (es ? es : "?");
         return NIXL_ERR_BACKEND;
     }
-    cuCtxSetCurrent(pctx); /* bind primary ctx for driver + runtime APIs */
     return NIXL_SUCCESS;
 }
 
@@ -988,6 +1040,31 @@ nixlOdmEngine::odmUringDestroy() {
     }
 }
 
+void
+nixlOdmEngine::odmUringDropSqe(struct io_uring_sqe *sqe) const {
+    memset(sqe, 0, kOdmUringSqeBytes);
+    sqe->opcode = IORING_OP_NOP;
+    io_uring_sqe_set_data64(sqe, 0);
+    int rc = 0;
+    do {
+        rc = io_uring_submit_and_wait(&uring_, 1);
+    } while (rc == -EINTR);
+    if (rc >= 0) {
+        struct io_uring_cqe *cqe = nullptr;
+        do {
+            rc = io_uring_wait_cqe(&uring_, &cqe);
+        } while (rc == -EINTR);
+        if (rc == 0) {
+            io_uring_cqe_seen(&uring_, cqe);
+        }
+    }
+    if (rc < 0) {
+        NIXL_ERROR << "ODM: failed to drain stale io_uring SQE: " << strerror(-rc)
+                   << "; disabling io_uring submit path";
+        use_io_uring_.store(false);
+    }
+}
+
 nixl_status_t
 nixlOdmEngine::postOdmDmabufUring(nixlOdmBackendReqH *req) const {
 #ifndef HAVE_CUDA
@@ -1043,6 +1120,7 @@ nixlOdmEngine::postOdmDmabufUring(nixlOdmBackendReqH *req) const {
 
             const int submit_rc = io_uring_submit(&uring_);
             if (submit_rc < 0) {
+                odmUringDropSqe(sqe);
                 releaseVramDmabuf(gpu_va, chunk);
                 NIXL_ERROR << "ODM: io_uring_submit failed: " << strerror(-submit_rc);
                 return NIXL_ERR_BACKEND;
@@ -1193,6 +1271,7 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
 
     batch.remaining.store(items.size(), std::memory_order_relaxed);
     batch.status.store(NIXL_SUCCESS, std::memory_order_relaxed);
+    req->dispatched = true;
 
     /* Enqueue each item to its queue's worker. */
     for (const auto &w : items) {
@@ -1286,8 +1365,10 @@ nixlOdmEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    /* Transfers complete synchronously inside postXfer; NIXL may repost completed handles. */
+    /* NIXL may repost completed handles; multi-queue pool work may finish asynchronously. */
     req->posted = false;
+    req->dispatched = false;
+    req->status = NIXL_SUCCESS;
     nixl_status_t st;
     if (req->is_dram_to_dram) {
         st = postOdmHostVa(req);
@@ -1298,11 +1379,12 @@ nixlOdmEngine::postXfer(const nixl_xfer_op_t &operation,
         st = postOdmDmabuf(req);
 #endif
     }
-    if (st != NIXL_SUCCESS) {
+    if (st != NIXL_SUCCESS && !req->dispatched) {
         return st;
     }
+    req->status = st;
     req->posted = true;
-    return NIXL_SUCCESS;
+    return (st == NIXL_SUCCESS) ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
 nixl_status_t
@@ -1311,7 +1393,7 @@ nixlOdmEngine::checkXfer(nixlBackendReqH *handle) const {
     if (!req) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    return req->posted ? NIXL_SUCCESS : NIXL_ERR_NOT_POSTED;
+    return req->posted ? req->status : NIXL_ERR_NOT_POSTED;
 }
 
 nixl_status_t

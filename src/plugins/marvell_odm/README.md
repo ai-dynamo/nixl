@@ -26,7 +26,8 @@ meson setup build -Denable_plugins=MARVELL_ODM
 ninja -C build
 ```
 
-Disable with `-Ddisable_odm_backend=true`.
+The CUDA toolkit must be available at configure time (the plugin is not built
+without it). Disable with `-Ddisable_odm_backend=true`.
 
 ## Requirements
 
@@ -62,8 +63,7 @@ SQE128 rings are used when supported by the kernel and liburing.
 | `odm_qid` | Primary queue ID | `0` |
 | `odm_qid_start` | First queue in range | `0` |
 | `odm_qid_end` | Last queue in range | `0` (plugin default; nixlbench passes `15` unless overridden) |
-| `odm_use_io_uring` | Enable io_uring submit | off |
-| `num_threads` | Worker thread count | `1` |
+| `odm_use_io_uring` | Enable io_uring submit (dma-buf path only) | off |
 
 ## nixlbench
 
@@ -98,8 +98,9 @@ ninja -C build test/unit/plugins/marvell_odm/marvell_odm_nixl_test
   --odm_qid_start 0 --odm_qid_end 15
 ```
 
-Register in meson test suite with `-Denable_odm_hw_tests=true` when hardware is
-present.
+`marvell_odm_plugin_test` is registered in the default meson test suite and
+skips (exit 77) when `/dev/odm0` is absent. Use `-Denable_odm_hw_tests=true` to
+fail instead of skip when the device is missing.
 
 ## See Also
 

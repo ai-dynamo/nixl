@@ -33,6 +33,7 @@
 #include <memory>
 #include <queue>
 #include <list>
+#include <deque>
 
 #include <nixl.h>
 #include <nixl_types.h>
@@ -126,12 +127,16 @@ public:
     OdmDirection direction;
     bool is_dram_to_dram; /* host DRAM <-> device DRAM (host-VA ioctl path) */
     bool posted;
+    bool dispatched; /* true once multi-queue pool work has been queued */
+    nixl_status_t status;
 
     nixlOdmBackendReqH()
         : gpu_id(0),
           direction(OdmDirection::Outbound),
           is_dram_to_dram(false),
-          posted(false) {}
+          posted(false),
+          dispatched(false),
+          status(NIXL_SUCCESS) {}
 
     ~nixlOdmBackendReqH() override = default;
 };
@@ -264,12 +269,15 @@ private:
      */
     mutable std::mutex thread_assign_lock_;
     mutable std::unordered_map<std::thread::id, uint16_t> thread_qid_;
+    mutable std::deque<std::thread::id> thread_order_;
     mutable uint32_t next_thread_slot_{0};
     [[nodiscard]] uint16_t
     nextQid() const;
 #ifdef HAVE_CUDA
     bool cuda_available_;
     bool dmabuf_supported_;
+    mutable std::mutex cuda_ctx_mtx_;
+    mutable std::map<int, std::pair<CUdevice, CUcontext>> retained_ctx_;
 #endif
 
     nixl_status_t
@@ -295,9 +303,12 @@ private:
     odmUringInit();
     void
     odmUringDestroy();
+    void
+    odmUringDropSqe(struct io_uring_sqe *sqe) const;
 
     mutable struct io_uring uring_;
     mutable std::atomic<bool> use_io_uring_{false};
+    mutable std::atomic<bool> warned_uring_host_{false};
     /*
      * liburing rings are not thread-safe. nixlbench posts from many threads on
      * one engine; without this gate concurrent submit/wait corrupts the ring
