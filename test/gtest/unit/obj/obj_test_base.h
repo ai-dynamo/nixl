@@ -53,6 +53,7 @@ private:
     bool simulateError_ = false;
     std::shared_ptr<asioThreadPoolExecutor> executor_;
     std::vector<std::function<void()>> pendingCallbacks_;
+    std::vector<std::string> requestedKeys_;
     std::set<std::string> checkedKeys_;
     std::map<std::string, bool> keyOutcomes_;
     std::map<std::string, std::chrono::milliseconds> keyDelays_;
@@ -98,6 +99,7 @@ public:
         executor_ = std::dynamic_pointer_cast<asioThreadPoolExecutor>(executor);
     }
 
+    /** Record the WRITE key and defer its configured result until execAsync(). */
     void
     putObjectAsync(std::string_view key,
                    uintptr_t data_ptr,
@@ -105,6 +107,7 @@ public:
                    size_t offset,
                    put_object_callback_t callback) override {
         std::string key_str(key);
+        requestedKeys_.push_back(key_str);
 
         // Per-key error overrides global simulateError_
         bool simulate_error = keyErrors_.count(key_str) > 0 || simulateError_;
@@ -131,6 +134,7 @@ public:
         });
     }
 
+    /** Record the READ key and defer its offset-dependent payload and result. */
     void
     getObjectAsync(std::string_view key,
                    uintptr_t data_ptr,
@@ -138,6 +142,7 @@ public:
                    size_t offset,
                    get_object_callback_t callback) override {
         std::string key_str(key);
+        requestedKeys_.push_back(key_str);
 
         // Per-key error overrides global simulateError_
         bool simulate_error = keyErrors_.count(key_str) > 0 || simulateError_;
@@ -229,6 +234,12 @@ public:
         return pendingCallbacks_.size();
     }
 
+    /** Return all READ and WRITE keys in submission order, including duplicates. */
+    const std::vector<std::string> &
+    getRequestedKeys() const {
+        return requestedKeys_;
+    }
+
     const std::set<std::string> &
     getCheckedKeys() const {
         return checkedKeys_;
@@ -301,6 +312,12 @@ protected:
     nixlBackendInitParams initParams_;
     nixl_b_params_t customParams_;
 
+    /**
+     * @brief Create a test engine with the registered mock and an optional CRT mock.
+     * @param agentName Local agent name used by transfer preparation.
+     * @param params Backend settings that select the engine and CRT threshold.
+     * @param crt_client Separate CRT mock for observing descriptor routing.
+     */
     void
     setupEngine(const std::string &agentName,
                 nixl_b_params_t params = {},
@@ -323,6 +340,11 @@ protected:
         objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockS3Client_, crt_client);
     }
 
+    /**
+     * @brief Check every byte against the mock's repeating alphabet pattern.
+     * @param buffer Destination bytes that the READ must fill.
+     * @param offset Starting byte offset in the mock object.
+     */
     static void
     expectReadPattern(std::span<const char> buffer, size_t offset = 0) {
         for (size_t i = 0; i < buffer.size(); ++i) {
@@ -331,6 +353,7 @@ protected:
         }
     }
 
+    /** Complete one transfer and verify the full payload for a READ. */
     void
     testTransferWithSize(nixl_xfer_op_t operation,
                          size_t buffer_size,
@@ -390,6 +413,7 @@ protected:
         objEngine_->deregisterMem(remote_metadata);
     }
 
+    /** Complete two descriptors and verify each READ buffer independently. */
     void
     testMultiDescriptorWithSizes(nixl_xfer_op_t operation,
                                  size_t size0,

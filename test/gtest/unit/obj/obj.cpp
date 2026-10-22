@@ -417,6 +417,7 @@ TEST_F(objTestFixture, CancelTransfer) {
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
+/** Read the requested object range and leave the unused destination tail zeroed. */
 TEST_F(objTestFixture, ReadFromOffset) {
     mockS3Client_->setSimulateSuccess(true);
 
@@ -498,10 +499,17 @@ TEST_F(objCrtTestFixture, MixedSizeThreshold) {
     testMultiDescriptorWithSizes(NIXL_WRITE, 1048576, 6291456, "-crt-mixed");
 }
 
-// Exercise client selection through postXfer with distinct clients so that a
-// transfer routed to the wrong client cannot pass unnoticed.
+/** Exercise descriptor routing with independently observable Standard and CRT clients. */
 class objCrtRoutingTest : public objTestBase, public testing::TestWithParam<nixl_xfer_op_t> {
 protected:
+    /**
+     * @brief Check routing, completion, payloads, failures, and descriptor cleanup.
+     * @param params Backend settings, including the CRT selection threshold.
+     * @param sizes Byte count for each transfer descriptor.
+     * @param use_crt Expected client for each descriptor; true selects CRT.
+     * @param fail_standard Make Standard callbacks report failure.
+     * @param fail_crt Make CRT callbacks report failure.
+     */
     void
     testRouting(nixl_b_params_t params,
                 const std::vector<size_t> &sizes,
@@ -546,6 +554,16 @@ protected:
         const size_t crt_count = std::count(use_crt.begin(), use_crt.end(), true);
         EXPECT_EQ(mockS3Client_->getPendingCount(), sizes.size() - crt_count);
         EXPECT_EQ(crt_client->getPendingCount(), crt_count);
+        std::multiset<std::string> expected_standard_keys, expected_crt_keys;
+        for (size_t i = 0; i < sizes.size(); ++i) {
+            (use_crt[i] ? expected_crt_keys : expected_standard_keys)
+                .insert("routing-key-" + std::to_string(i));
+        }
+        const auto &standard_keys = mockS3Client_->getRequestedKeys();
+        const auto &crt_keys = crt_client->getRequestedKeys();
+        EXPECT_EQ(std::multiset<std::string>(standard_keys.begin(), standard_keys.end()),
+                  expected_standard_keys);
+        EXPECT_EQ(std::multiset<std::string>(crt_keys.begin(), crt_keys.end()), expected_crt_keys);
         EXPECT_EQ(objEngine_->checkXfer(handle), NIXL_IN_PROG);
 
         crt_client->execAsync();
@@ -574,42 +592,52 @@ protected:
     }
 };
 
+/** An absent CRT threshold sends every descriptor to Standard. */
 TEST_P(objCrtRoutingTest, DisabledUsesStandard) {
     testRouting({}, {1023, 1024, 1025}, {false, false, false});
 }
 
+/** An explicit zero threshold disables CRT for every descriptor. */
 TEST_P(objCrtRoutingTest, ZeroDisablesCrt) {
     testRouting({{"crtMinLimit", "0"}}, {1023, 1024, 1025}, {false, false, false});
 }
 
+/** A descriptor one byte below the threshold uses Standard. */
 TEST_P(objCrtRoutingTest, BelowThresholdUsesStandard) {
     testRouting({{"crtMinLimit", "1024"}}, {1023}, {false});
 }
 
+/** A descriptor exactly at the threshold uses CRT. */
 TEST_P(objCrtRoutingTest, AtThresholdUsesCrt) {
     testRouting({{"crtMinLimit", "1024"}}, {1024}, {true});
 }
 
+/** A descriptor one byte above the threshold uses CRT. */
 TEST_P(objCrtRoutingTest, AboveThresholdUsesCrt) {
     testRouting({{"crtMinLimit", "1024"}}, {1025}, {true});
 }
 
+/** Route each descriptor by size and wait for both clients to complete. */
 TEST_P(objCrtRoutingTest, MixedDescriptorsUseBothClients) {
     testRouting({{"crtMinLimit", "1024"}}, {1023, 1024, 1025}, {false, true, true});
 }
 
+/** A threshold of one selects CRT for every tested descriptor. */
 TEST_P(objCrtRoutingTest, CrtOnlyUsesCrt) {
     testRouting({{"crtMinLimit", "1"}}, {1, 1024}, {true, true});
 }
 
+/** A failed Standard callback becomes a backend error without changing READ data. */
 TEST_P(objCrtRoutingTest, StandardFailurePropagates) {
     testRouting({{"crtMinLimit", "1024"}}, {1023}, {false}, true);
 }
 
+/** A failed CRT callback becomes a backend error without changing READ data. */
 TEST_P(objCrtRoutingTest, CrtFailurePropagates) {
     testRouting({{"crtMinLimit", "1024"}}, {1024}, {true}, false, true);
 }
 
+/** Run every routing case for READ and WRITE with descriptive operation suffixes. */
 INSTANTIATE_TEST_SUITE_P(ClientRouting,
                          objCrtRoutingTest,
                          testing::Values(NIXL_READ, NIXL_WRITE),

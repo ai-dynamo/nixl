@@ -92,6 +92,12 @@ awsS3Client::putObjectAsync(std::string_view key,
         nullptr);
 }
 
+/**
+ * @brief Read an object range asynchronously into caller-owned memory.
+ *
+ * The caller must keep the destination buffer valid until the callback completes.
+ * The SDK owns each response stream and releases it through Aws::Delete.
+ */
 void
 awsS3Client::getObjectAsync(std::string_view key,
                             uintptr_t data_ptr,
@@ -100,6 +106,7 @@ awsS3Client::getObjectAsync(std::string_view key,
                             get_object_callback_t callback) {
     auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf>(
         "GetObjectStreamBuf", reinterpret_cast<unsigned char *>(data_ptr), data_len);
+    /** Create SDK-owned streams with the allocator required by Aws::Delete. */
     auto stream_factory = Aws::MakeShared<Aws::IOStreamFactory>(
         "GetObjectStreamFactory", [preallocated_stream_buf]() -> Aws::IOStream * {
             return Aws::New<Aws::IOStream>("GetObjectResponseStream",
