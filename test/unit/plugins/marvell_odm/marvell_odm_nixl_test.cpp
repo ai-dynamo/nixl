@@ -45,6 +45,7 @@ constexpr const char *kAgentName = "MarvellOdmNixlTestAgent";
 constexpr size_t kDefaultTransferSize = 65536;
 constexpr unsigned char kTestPattern = 0x33;
 constexpr int kMesonSkip = 77;
+constexpr const char *kDeviceIovaMeta = "device_iova";
 
 bool g_require_device = false;
 
@@ -129,7 +130,130 @@ printUsage(const char *prog) {
 }
 
 nixl_status_t
-waitForXfer(nixlAgent &agent, nixlXferReqH *req, bool sync_cuda = true) {
+waitForXfer(nixlAgent &agent, nixlXferReqH *req, bool sync_cuda = true);
+
+int
+runDramSemanticsTests(nixlAgent &agent,
+                      void *host_buf,
+                      size_t transfer_size,
+                      unsigned char test_pattern,
+                      nixl_reg_dlist_t &host_list,
+                      nixl_reg_dlist_t &dev_auto,
+                      nixl_opt_args_t &extra) {
+    int failures = 0;
+    auto fail = [&](const char *msg) {
+        std::cerr << "ODM dram semantics test failed: " << msg << std::endl;
+        ++failures;
+    };
+
+    std::vector<nixl_query_resp_t> q_host;
+    if (agent.queryMem(host_list, q_host, &extra) != NIXL_SUCCESS || q_host.size() != 1) {
+        fail("queryMem host list");
+    } else if (q_host[0].has_value()) {
+        fail("queryMem host should not return device_iova");
+    }
+
+    std::vector<nixl_query_resp_t> q_dev;
+    if (agent.queryMem(dev_auto, q_dev, &extra) != NIXL_SUCCESS || q_dev.size() != 1 ||
+        !q_dev[0].has_value()) {
+        fail("queryMem auto device should return device_iova");
+    } else {
+        const auto &params = q_dev[0].value();
+        const auto it = params.find("device_iova");
+        if (it == params.end() || it->second.empty()) {
+            fail("queryMem missing device_iova key");
+        }
+    }
+
+    nixlXferReqH *bad_req = nullptr;
+    if (agent.createXferReq(
+            NIXL_WRITE, dev_auto.trim(), host_list.trim(), kAgentName, bad_req, &extra) !=
+        NIXL_ERR_INVALID_PARAM) {
+        fail("swapped DRAM roles should be rejected");
+        if (bad_req) {
+            agent.releaseXferReq(bad_req);
+        }
+    }
+
+    uint64_t device_iova = 0;
+    if (q_dev[0].has_value()) {
+        const auto &params = q_dev[0].value();
+        device_iova = std::strtoull(params.at("device_iova").c_str(), nullptr, 0);
+    }
+    if (device_iova != 0) {
+        nixl_reg_dlist_t dev_explicit(DRAM_SEG);
+        nixlBlobDesc blob_explicit;
+        blob_explicit.addr = static_cast<uintptr_t>(device_iova);
+        blob_explicit.len = transfer_size;
+        blob_explicit.devId = 0;
+        blob_explicit.metaInfo = kDeviceIovaMeta;
+        dev_explicit.addDesc(blob_explicit);
+        if (agent.registerMem(dev_explicit, &extra) != NIXL_SUCCESS) {
+            fail("registerMem explicit device_iova");
+        } else {
+            std::vector<nixl_query_resp_t> q_explicit;
+            if (agent.queryMem(dev_explicit, q_explicit, &extra) != NIXL_SUCCESS ||
+                !q_explicit[0].has_value()) {
+                fail("queryMem explicit device_iova");
+            }
+            fillPattern(host_buf, transfer_size, test_pattern);
+            nixlXferReqH *wreq = nullptr;
+            if (agent.createXferReq(
+                    NIXL_WRITE, host_list.trim(), dev_explicit.trim(), kAgentName, wreq, &extra) !=
+                NIXL_SUCCESS) {
+                fail("createXferReq host->explicit device");
+            } else {
+                waitForXfer(agent, wreq, false);
+                agent.releaseXferReq(wreq);
+            }
+            std::memset(host_buf, 0, transfer_size);
+            nixlXferReqH *rreq = nullptr;
+            if (agent.createXferReq(
+                    NIXL_READ, host_list.trim(), dev_auto.trim(), kAgentName, rreq, &extra) !=
+                NIXL_SUCCESS) {
+                fail("createXferReq device->host via auto region");
+            } else {
+                const nixl_status_t st = waitForXfer(agent, rreq, false);
+                agent.releaseXferReq(rreq);
+                if (st != NIXL_SUCCESS || !validatePattern(host_buf, transfer_size, test_pattern)) {
+                    fail("explicit device_iova round-trip data");
+                }
+            }
+            agent.deregisterMem(dev_explicit, &extra);
+        }
+    }
+
+    void *gpu_buf = nullptr;
+    if (cudaMalloc(&gpu_buf, transfer_size) == cudaSuccess) {
+        nixl_reg_dlist_t vram_list(VRAM_SEG);
+        nixlBlobDesc blob_vram;
+        blob_vram.addr = reinterpret_cast<uintptr_t>(gpu_buf);
+        blob_vram.len = transfer_size;
+        blob_vram.devId = 0;
+        vram_list.addDesc(blob_vram);
+        if (agent.registerMem(vram_list, &extra) == NIXL_SUCCESS) {
+            nixlXferReqH *vreq = nullptr;
+            if (agent.createXferReq(
+                    NIXL_WRITE, host_list.trim(), vram_list.trim(), kAgentName, vreq, &extra) !=
+                NIXL_ERR_INVALID_PARAM) {
+                fail("host DRAM local with VRAM remote should be rejected");
+                if (vreq) {
+                    agent.releaseXferReq(vreq);
+                }
+            }
+            agent.deregisterMem(vram_list, &extra);
+        }
+        cudaFree(gpu_buf);
+    }
+
+    if (failures == 0) {
+        std::cout << "ODM DRAM host/device semantics tests PASSED" << std::endl;
+    }
+    return failures;
+}
+
+nixl_status_t
+waitForXfer(nixlAgent &agent, nixlXferReqH *req, bool sync_cuda) {
     nixl_status_t status = agent.postXferReq(req);
     if (status < NIXL_SUCCESS) {
         return status;
@@ -375,6 +499,8 @@ main(int argc, char **argv) {
             result = 1;
         } else {
             std::cout << "ODM host DRAM round-trip validation PASSED" << std::endl;
+            result += runDramSemanticsTests(
+                agent, host_buf, transfer_size, test_pattern, host_list, dev_list, extra);
         }
 
         agent.deregisterMem(host_list, &extra);

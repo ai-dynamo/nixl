@@ -377,6 +377,7 @@ nixlOdmEngine::registerMem(const nixlBlobDesc &mem,
                 return NIXL_ERR_BACKEND;
             }
             md->dma_addr = cmd.target_iova_addr;
+            md->dram_kind = OdmDramKind::Device;
             md->iova_allocated = true;
             {
                 const OdmRegKey key{mem.addr, mem.len, static_cast<uint32_t>(mem.devId)};
@@ -399,8 +400,23 @@ nixlOdmEngine::registerMem(const nixlBlobDesc &mem,
             }
             NIXL_DEBUG << "ODM: auto-allocated device IOVA 0x" << std::hex << md->dma_addr
                        << std::dec << " size " << mem.len;
+        } else if (mem.metaInfo == ODM_META_DEVICE_IOVA) {
+            md->dram_kind = OdmDramKind::Device;
+            md->dma_addr = mem.addr;
+            md->iova_allocated = false;
+            NIXL_DEBUG << "ODM: registered caller-owned device IOVA 0x" << std::hex << md->dma_addr
+                       << std::dec << " size " << mem.len;
+        } else if (mem.metaInfo.empty()) {
+            md->dram_kind = OdmDramKind::Host;
+            md->dma_addr = 0;
+            NIXL_DEBUG << "ODM: registered host DRAM VA 0x" << std::hex << mem.addr << std::dec
+                       << " size " << mem.len;
         } else {
-            md->dma_addr = mem.addr; /* caller-supplied host VA or device IOVA */
+            NIXL_ERROR << "ODM: invalid DRAM_SEG metaInfo='" << mem.metaInfo
+                       << "' (use empty for host VA or '" << ODM_META_DEVICE_IOVA
+                       << "' for caller-owned device IOVA)";
+            delete md;
+            return NIXL_ERR_INVALID_PARAM;
         }
     } else if (nixl_mem == VRAM_SEG) {
 #ifdef HAVE_CUDA
@@ -506,7 +522,7 @@ nixlOdmEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_re
             // devId} key; we cannot tell which one the caller means, so
             // report "unknown" instead of guessing wrong.
             resp[i] = std::nullopt;
-        } else if (mem.addr != 0) {
+        } else if (mem.addr != 0 && mem.metaInfo == ODM_META_DEVICE_IOVA) {
             nixl_b_params_t params;
             params["device_iova"] = std::to_string(mem.addr);
             resp[i] = std::move(params);
@@ -599,6 +615,27 @@ nixlOdmEngine::prepXfer(const nixl_xfer_op_t &operation,
         if (!lmd || !rmd || local[i].len != remote[i].len) {
             delete req;
             return NIXL_ERR_INVALID_PARAM;
+        }
+        if (dram_to_dram) {
+            if (lmd->dram_kind != OdmDramKind::Host || rmd->dram_kind != OdmDramKind::Device) {
+                NIXL_ERROR << "ODM: DRAM<->DRAM requires local host DRAM and remote device "
+                              "DRAM (remote must use addr=0 GET_IOVA or metaInfo='"
+                           << ODM_META_DEVICE_IOVA << "')";
+                delete req;
+                return NIXL_ERR_INVALID_PARAM;
+            }
+        } else if (lt == VRAM_SEG) {
+            if (rmd->dram_kind != OdmDramKind::Device) {
+                NIXL_ERROR << "ODM: VRAM<->DRAM requires device DRAM on the DRAM side";
+                delete req;
+                return NIXL_ERR_INVALID_PARAM;
+            }
+        } else {
+            if (lmd->dram_kind != OdmDramKind::Device) {
+                NIXL_ERROR << "ODM: VRAM<->DRAM requires device DRAM on the DRAM side";
+                delete req;
+                return NIXL_ERR_INVALID_PARAM;
+            }
         }
         OdmSegment seg;
         seg.len = local[i].len;

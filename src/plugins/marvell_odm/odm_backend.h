@@ -78,6 +78,15 @@ enum class OdmDirection : std::uint8_t {
     Inbound = 1, /* host DRAM or GPU VRAM -> device (WRITE / WRITE_FD) */
 };
 
+/** What a DRAM_SEG registration refers to. */
+enum class OdmDramKind : std::uint8_t {
+    Host, /* userspace VA; dma_addr is unused (0) */
+    Device, /* Structera device IOVA in dma_addr */
+};
+
+/** metaInfo value for caller-owned device IOVA (addr != 0 at registerMem). */
+inline constexpr const char *ODM_META_DEVICE_IOVA = "device_iova";
+
 /**
  * @class nixlOdmMetadata
  * @brief Metadata for a registered ODM memory region.
@@ -86,10 +95,11 @@ class nixlOdmMetadata : public nixlBackendMD {
 public:
     uint64_t addr;
     uint64_t size;
-    uint64_t dma_addr; /* ODM device-local base (DRAM_SEG) */
+    uint64_t dma_addr; /* device IOVA when dram_kind==Device; else 0 */
     nixl_mem_t type;
     uint32_t dev_id;
-    bool iova_allocated; /* true when dma_addr came from GET_IOVA (addr==0 at register) */
+    OdmDramKind dram_kind;
+    bool iova_allocated; /* true when plugin allocated dma_addr via GET_IOVA */
 #ifdef HAVE_CUDA
     std::vector<std::pair<uint64_t, uint64_t>> vram_preexport_chunks;
 #endif
@@ -101,6 +111,7 @@ public:
           dma_addr(0),
           type(VRAM_SEG),
           dev_id(0),
+          dram_kind(OdmDramKind::Host),
           iova_allocated(false) {}
 
     ~nixlOdmMetadata() override = default;

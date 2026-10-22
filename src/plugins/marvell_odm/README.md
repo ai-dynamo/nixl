@@ -9,9 +9,12 @@ using the ODM DMA controller. Two transfer modes are supported:
 | host-VA | `DRAM_SEG` <-> `DRAM_SEG` | `READ/WRITE_COMMAND` | No |
 
 For the host-VA path, **local** `DRAM_SEG` is host DRAM (userspace virtual
-address) and **remote** `DRAM_SEG` is Structera device DRAM. Register remote
-`DRAM_SEG` with `addr=0` to auto-allocate device IOVA inside the plugin; any
-other address is treated as caller-supplied host VA or pre-allocated IOVA:
+address) and **remote** `DRAM_SEG` is Structera device DRAM. Registration
+rules for `DRAM_SEG`:
+
+- `addr=0`: plugin allocates device IOVA via GET_IOVA (device memory).
+- `addr!=0` with empty `metaInfo`: host userspace VA (`dma_addr` is not used).
+- `addr!=0` with `metaInfo="device_iova"`: caller-owned device IOVA in `addr`.
 
 - **WRITE**: host DRAM -> device DRAM
 - **READ**: device DRAM -> host DRAM
@@ -40,9 +43,9 @@ without it). Disable with `-Ddisable_odm_backend=true`.
 ## Addressing
 
 Device DRAM registrations use mailbox-allocated IOVA from `GET_IOVA` on
-`/dev/odm0` when registered with `addr=0`. The plugin frees IOVA on
-`deregisterMem`. Register with a non-zero address only when supplying a
-caller-owned host VA or pre-allocated device IOVA.
+`/dev/odm0` when registered with `addr=0` (freed on `deregisterMem`). Caller-owned
+device IOVA uses `addr` plus `metaInfo="device_iova"` (not freed by the plugin).
+Host DRAM uses a non-zero userspace `addr` and empty `metaInfo`.
 
 ## io_uring / SQE128
 
