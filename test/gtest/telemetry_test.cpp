@@ -16,6 +16,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <chrono>
@@ -32,6 +33,7 @@
 #include <stdexcept>
 #include <string_view>
 
+#include "nixl.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 #include "tracing/trace.h"
@@ -51,7 +53,7 @@ class telemetryTest : public ::testing::Test {
 protected:
     void
     SetUp() override {
-        testDir_ = "/tmp/telemetry_test_files";
+        testDir_ = fs::temp_directory_path() / "telemetry_test_files";
         testFile_ = "test_telemetry";
         try {
             if (!fs::exists(testDir_)) {
@@ -720,4 +722,275 @@ TEST_F(telemetryTest, TracePhaseDropsAreCounted) {
     EXPECT_EQ(dropped, kDrops);
 
     envHelper_.popVar();
+}
+
+class telemetryXferTest : public telemetryTest {
+protected:
+    using et = nixl_telemetry_event_type_t;
+
+    void
+    SetUp() override {
+        telemetryTest::SetUp();
+        envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+        agentName_ = testing::UnitTest::GetInstance()->current_test_info()->name();
+        agent_ = std::make_unique<nixlAgent>(agentName_, nixlAgentConfig());
+
+        nixl_b_params_t params;
+        engine_.SetToParams(params);
+        nixlBackendH *backend = nullptr;
+        ASSERT_EQ(agent_->createBackend(gtest::GetMockBackendName(), params, backend),
+                  NIXL_SUCCESS);
+        extraParams_.backends.push_back(backend);
+        ASSERT_EQ(agent_->registerMem(bufferRegDlist(), &extraParams_), NIXL_SUCCESS);
+    }
+
+    void
+    TearDown() override {
+        agent_.reset();
+        envHelper_.popVar();
+        telemetryTest::TearDown();
+    }
+
+    [[nodiscard]] nixlBasicDesc
+    bufferDesc() const {
+        return nixlBasicDesc(reinterpret_cast<uintptr_t>(buffer_.data()), buffer_.size(), 0);
+    }
+
+    [[nodiscard]] nixl_reg_dlist_t
+    bufferRegDlist() const {
+        nixl_reg_dlist_t reg_dlist(DRAM_SEG);
+        reg_dlist.addDesc(nixlBlobDesc(bufferDesc(), ""));
+        return reg_dlist;
+    }
+
+    [[nodiscard]] nixlXferReqH *
+    createLoopbackReq() const {
+        nixl_xfer_dlist_t xfer_dlist(DRAM_SEG);
+        xfer_dlist.addDesc(bufferDesc());
+        nixlXferReqH *req = nullptr;
+        EXPECT_EQ(agent_->createXferReq(
+                      NIXL_WRITE, xfer_dlist, xfer_dlist, agentName_, req, &extraParams_),
+                  NIXL_SUCCESS);
+        return req;
+    }
+
+    [[nodiscard]] std::vector<nixlTelemetryEvent>
+    flushedEvents() {
+        EXPECT_EQ(agent_->deregisterMem(bufferRegDlist(), &extraParams_), NIXL_SUCCESS);
+        sharedRingBuffer<nixlTelemetryEvent> ring(
+            (testDir_ / agentName_).string(), false, TELEMETRY_VERSION);
+        std::vector<nixlTelemetryEvent> events;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (countOf(events, et::AGENT_MEMORY_DEREGISTERED) == 0 &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            for (nixlTelemetryEvent event; ring.pop(event);) {
+                events.push_back(event);
+            }
+        }
+        EXPECT_EQ(countOf(events, et::AGENT_MEMORY_DEREGISTERED), 1);
+        return events;
+    }
+
+    [[nodiscard]] static std::ptrdiff_t
+    countOf(const std::vector<nixlTelemetryEvent> &events, et type) {
+        return std::ranges::count(events, type, &nixlTelemetryEvent::eventType_);
+    }
+
+    [[nodiscard]] static std::ptrdiff_t
+    finishes(const std::vector<nixlTelemetryEvent> &events) {
+        const auto requests = countOf(events, et::AGENT_TX_REQUESTS_NUM);
+        EXPECT_EQ(countOf(events, et::AGENT_TX_BYTES), requests);
+        EXPECT_EQ(countOf(events, et::AGENT_XFER_TIME), requests);
+        EXPECT_EQ(countOf(events, et::AGENT_XFER_POST_TIME), requests);
+        return requests;
+    }
+
+    [[nodiscard]] static uint64_t
+    sumOf(const std::vector<nixlTelemetryEvent> &events, et type) {
+        uint64_t sum = 0;
+        for (const auto &event : events) {
+            if (event.eventType_ == type) {
+                sum += event.value_;
+            }
+        }
+        return sum;
+    }
+
+    testing::NiceMock<mocks::GMockBackendEngine> engine_;
+    std::vector<char> buffer_ = std::vector<char>(1024);
+    std::string agentName_;
+    std::unique_ptr<nixlAgent> agent_;
+    nixl_opt_args_t extraParams_;
+};
+
+TEST_F(telemetryXferTest, PostCompletedAtOnceIsCountedOnce) {
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+    EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    const auto events = flushedEvents();
+    EXPECT_EQ(finishes(events), 1);
+    EXPECT_EQ(sumOf(events, et::AGENT_TX_BYTES), buffer_.size());
+}
+
+TEST_F(telemetryXferTest, CompletionSeenByTheRepostCheckIsCounted) {
+    EXPECT_CALL(engine_, postXfer)
+        .WillOnce(testing::Return(NIXL_IN_PROG))
+        .WillOnce(testing::Return(NIXL_SUCCESS));
+    EXPECT_CALL(engine_, checkXfer).WillOnce(testing::Return(NIXL_SUCCESS));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    const auto events = flushedEvents();
+    EXPECT_EQ(finishes(events), 2);
+    EXPECT_EQ(sumOf(events, et::AGENT_TX_BYTES), 2 * buffer_.size());
+}
+
+TEST_F(telemetryXferTest, CompletionSeenByReleaseIsCountedButCancelledIsNot) {
+    EXPECT_CALL(engine_, postXfer).Times(2).WillRepeatedly(testing::Return(NIXL_IN_PROG));
+    EXPECT_CALL(engine_, checkXfer)
+        .WillOnce(testing::Return(NIXL_SUCCESS))
+        .WillOnce(testing::Return(NIXL_IN_PROG));
+    EXPECT_CALL(engine_, releaseReqH).WillOnce(testing::Return(NIXL_SUCCESS));
+    nixlXferReqH *completed = createLoopbackReq();
+    nixlXferReqH *cancelled = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(completed), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->postXferReq(cancelled), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->releaseXferReq(completed), NIXL_SUCCESS);
+    EXPECT_EQ(agent_->releaseXferReq(cancelled), NIXL_SUCCESS);
+
+    const auto events = flushedEvents();
+    EXPECT_EQ(finishes(events), 1);
+    EXPECT_EQ(sumOf(events, et::AGENT_TX_BYTES), buffer_.size());
+}
+
+TEST_F(telemetryXferTest, RejectedRepostKeepsTheInFlightTiming) {
+    constexpr auto in_flight = std::chrono::milliseconds(50);
+    const gtest::LogIgnoreGuard lig("cannot be reposted");
+    EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+    EXPECT_CALL(engine_, checkXfer)
+        .WillOnce(testing::Return(NIXL_IN_PROG))
+        .WillOnce(testing::Return(NIXL_SUCCESS));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
+    std::this_thread::sleep_for(in_flight);
+    const auto rejected_at = std::chrono::steady_clock::now();
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+    EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
+
+    nixl_xfer_telem_t telemetry{};
+    EXPECT_EQ(agent_->getXferTelemetry(req, telemetry), NIXL_SUCCESS);
+    EXPECT_LT(telemetry.startTime, rejected_at);
+    EXPECT_GE(telemetry.xferDuration, in_flight);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+}
+
+TEST_F(telemetryXferTest, ErrorSeenByTheRepostCheckIsCountedOnce) {
+    EXPECT_CALL(engine_, postXfer)
+        .WillOnce(testing::Return(NIXL_IN_PROG))
+        .WillOnce(testing::Return(NIXL_SUCCESS));
+    EXPECT_CALL(engine_, checkXfer).WillOnce(testing::Return(NIXL_ERR_BACKEND));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    const auto events = flushedEvents();
+    EXPECT_EQ(countOf(events, et::AGENT_ERR_BACKEND), 1);
+    EXPECT_EQ(finishes(events), 1);
+}
+
+TEST_F(telemetryXferTest, ErrorSeenByReleaseIsCountedOnce) {
+    EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+    EXPECT_CALL(engine_, checkXfer).WillOnce(testing::Return(NIXL_ERR_BACKEND));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    const auto events = flushedEvents();
+    EXPECT_EQ(countOf(events, et::AGENT_ERR_BACKEND), 1);
+    EXPECT_EQ(finishes(events), 0);
+}
+
+TEST_F(telemetryXferTest, RejectedRepostIsCountedAsRepostActive) {
+    const gtest::LogIgnoreGuard lig("cannot be reposted");
+    EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+    EXPECT_CALL(engine_, checkXfer)
+        .WillOnce(testing::Return(NIXL_IN_PROG))
+        .WillOnce(testing::Return(NIXL_SUCCESS));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+    EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    const auto events = flushedEvents();
+    EXPECT_EQ(countOf(events, et::AGENT_ERR_REPOST_ACTIVE), 1);
+    EXPECT_EQ(finishes(events), 1);
+}
+
+TEST_F(telemetryXferTest, DisconnectSeenByThePostIsCounted) {
+    const gtest::LogIgnoreGuard lig("was disconnected");
+    EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_ERR_REMOTE_DISCONNECT));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    const auto events = flushedEvents();
+    EXPECT_EQ(countOf(events, et::AGENT_ERR_REMOTE_DISCONNECT), 1);
+    EXPECT_EQ(finishes(events), 0);
+}
+
+TEST_F(telemetryXferTest, DisconnectSeenByTheRepostCheckIsCounted) {
+    const gtest::LogIgnoreGuard lig("was disconnected");
+    EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+    EXPECT_CALL(engine_, checkXfer).WillOnce(testing::Return(NIXL_ERR_REMOTE_DISCONNECT));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    EXPECT_EQ(countOf(flushedEvents(), et::AGENT_ERR_REMOTE_DISCONNECT), 1);
+}
+
+TEST_F(telemetryXferTest, DisconnectSeenByTheStatusCheckIsCounted) {
+    EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+    EXPECT_CALL(engine_, checkXfer).WillOnce(testing::Return(NIXL_ERR_REMOTE_DISCONNECT));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->getXferStatus(req), NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    EXPECT_EQ(countOf(flushedEvents(), et::AGENT_ERR_REMOTE_DISCONNECT), 1);
+}
+
+TEST_F(telemetryXferTest, FailedReleaseIsCountedAsRepostActive) {
+    const gtest::LogIgnoreGuard lig("could not release transfer request");
+    EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+    EXPECT_CALL(engine_, checkXfer)
+        .WillOnce(testing::Return(NIXL_IN_PROG))
+        .WillOnce(testing::Return(NIXL_SUCCESS));
+    EXPECT_CALL(engine_, releaseReqH).WillOnce(testing::Return(NIXL_ERR_BACKEND));
+    nixlXferReqH *req = createLoopbackReq();
+
+    EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+    EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
+    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+
+    EXPECT_EQ(countOf(flushedEvents(), et::AGENT_ERR_REPOST_ACTIVE), 1);
 }
