@@ -387,8 +387,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
 
     ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
 
-    ASSERT_TRUE(waitUntil(
-        [&] { return dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) == NIXL_SUCCESS; }));
+    ASSERT_TRUE(
+        waitUntil([&] { return dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) == NIXL_SUCCESS; }));
 
     ASSERT_EQ(src.agent->invalidateLocalMD(&send_args), NIXL_SUCCESS);
 
@@ -433,16 +433,16 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
     fetch_args.port = src.port;
 
     ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &fetch_args), NIXL_SUCCESS);
-    ASSERT_TRUE(waitUntil(
-        [&] { return dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) == NIXL_SUCCESS; }));
+    ASSERT_TRUE(
+        waitUntil([&] { return dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) == NIXL_SUCCESS; }));
 
     nixl_opt_args_t invalidate_args;
     invalidate_args.ipAddr = dst.ip;
     invalidate_args.port = dst.port;
 
     ASSERT_EQ(src.agent->invalidateLocalMD(&invalidate_args), NIXL_SUCCESS);
-    ASSERT_TRUE(waitUntil(
-        [&] { return dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) != NIXL_SUCCESS; }));
+    ASSERT_TRUE(
+        waitUntil([&] { return dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) != NIXL_SUCCESS; }));
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
