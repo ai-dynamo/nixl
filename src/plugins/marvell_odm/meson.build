@@ -33,7 +33,6 @@ endif
 if has_io_uring
     odm_deps += [io_uring_dep]
     odm_compile_flags += ['-DHAVE_ODM_IO_URING']
-    _odm_uring_cmd128 = false
     if io_uring_dep.type_name() == 'internal'
         liburing_subproj = subproject('liburing')
         _odm_uring_cmd128 = cpp.has_header_symbol('liburing.h', 'io_uring_prep_uring_cmd128',
@@ -59,7 +58,7 @@ if has_io_uring
             odm_compile_flags += ['-DHAVE_ODM_IO_URING_SQE128']
             message('ODM plugin: SQE128 ring enabled (manual URING_CMD prep)')
         else
-            message('ODM plugin: using 64-byte URING_CMD SQEs')
+            message('ODM plugin: liburing lacks SQE128; io_uring submit disabled at runtime (ioctl fallback)')
         endif
     endif
 endif
