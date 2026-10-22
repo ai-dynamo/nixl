@@ -173,7 +173,6 @@ private:
 
     struct docaProgressState *progress_state_gpu = nullptr;
     struct docaProgressState *progress_state_cpu = nullptr;
-    std::vector<struct docaQpProgress *> qp_progress_gpu_;
     uint32_t *wait_exit_gpu;
     uint32_t *wait_exit_cpu;
     struct docaNotif *notif_fill_gpu;
@@ -218,8 +217,6 @@ private:
     retireRequest(nixlDocaBckndReq *request) const;
     void
     markFailed() const;
-    bool
-    hasFailed() const;
     nixl_status_t
     postStripedWrite(nixlDocaBckndReq *request, const std::string &remote_agent) const;
 

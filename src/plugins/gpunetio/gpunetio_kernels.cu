@@ -101,11 +101,6 @@ nixl_gpunetio_dev_reserve_data(docaXferReqGpu *request,
             continue;
         }
         doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
-        if (nixl_gpunetio_dev_load_host_state(progress_state->failed) != 0U) {
-            doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
-                &progress->data_producer_lock);
-            return false;
-        }
         if (!nixl_gpunetio_dev_has_sq_credit(request->qp_data, count)) {
             doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
                 &progress->data_producer_lock);
@@ -243,7 +238,7 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
     enum doca_gpu_dev_verbs_wqe_ctrl_flags cflag = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE;
     uint32_t tot_wqe, idx = 0;
     __shared__ uint64_t base_wqe_idx;
-    __shared__ uint32_t reserved;
+    __shared__ bool abort_write;
 
     // Warmup
     if (xferReqRing == nullptr) {
@@ -253,7 +248,7 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
     tot_wqe = xferReqRing[pos].num;
 
     if (threadIdx.x == 0) {
-        reserved = 1U;
+        abort_write = false;
         for (uint32_t dependency = 0; dependency < xferReqRing[pos].wait_completion_count;
              ++dependency) {
             const uint32_t position = xferReqRing[pos].wait_completion_positions[dependency];
@@ -261,44 +256,44 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
                    DOCA_XFER_STATE_DATA_COMPLETE) {
                 if (nixl_gpunetio_dev_load_host_state(*exit_flag) != 0U ||
                     nixl_gpunetio_dev_load_host_state(progress_state->failed) != 0U) {
-                    reserved = 0U;
+                    abort_write = true;
                     break;
                 }
             }
-            if (reserved == 0U) {
+            if (abort_write) {
                 break;
             }
         }
         if (xferReqRing[pos].peer_write_completed != nullptr) {
-            while (reserved != 0U &&
+            while (!abort_write &&
                    DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].peer_write_completed) <
                        xferReqRing[pos].write_ticket - 1) {
                 if (nixl_gpunetio_dev_load_host_state(*exit_flag) != 0U ||
                     nixl_gpunetio_dev_load_host_state(progress_state->failed) != 0U) {
-                    reserved = 0U;
+                    abort_write = true;
                 }
             }
         }
-        if (reserved != 0U) {
+        if (!abort_write) {
             if (xferReqRing[pos].wait_completion_count != 0 ||
                 xferReqRing[pos].peer_write_completed != nullptr) {
                 doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
             }
         }
-        if (reserved == 0U ||
+        if (abort_write ||
             nixl_gpunetio_dev_load_host_state(xferReqRing[pos].state) != DOCA_XFER_STATE_PREPARED) {
-            reserved = 0U;
+            abort_write = true;
             nixl_gpunetio_dev_fail_request(progress_state, pos);
         } else {
-            reserved = nixl_gpunetio_dev_reserve_data(
+            abort_write = !nixl_gpunetio_dev_reserve_data(
                 &xferReqRing[pos], tot_wqe, progress_state, exit_flag, &base_wqe_idx);
-            if (reserved == 0U) {
+            if (abort_write) {
                 nixl_gpunetio_dev_fail_request(progress_state, pos);
             }
         }
     }
     __syncthreads();
-    if (reserved == 0U) {
+    if (abort_write) {
         return;
     }
 
