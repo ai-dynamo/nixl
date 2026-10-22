@@ -126,24 +126,29 @@ configureBackend(const std::vector<std::string> &devices,
     backend_params["odm_qid"] = std::to_string(xferBenchConfig::odm_qid_start);
     backend_params["odm_qid_start"] = std::to_string(xferBenchConfig::odm_qid_start);
     backend_params["odm_qid_end"] = std::to_string(xferBenchConfig::odm_qid_end);
-    backend_params["num_threads"] = std::to_string(xferBenchConfig::num_threads);
+    const bool host_va_path = (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_DRAM);
     bool use_io_uring = xferBenchConfig::odm_use_io_uring;
-    if (!use_io_uring) {
-        if (const char *uring_env = getenv("ODM_USE_IO_URING")) {
-            if (uring_env[0] == '1' || strcasecmp(uring_env, "true") == 0 ||
-                strcasecmp(uring_env, "yes") == 0) {
-                use_io_uring = true;
+    if (!host_va_path) {
+        if (!use_io_uring) {
+            if (const char *uring_env = getenv("ODM_USE_IO_URING")) {
+                if (uring_env[0] == '1' || strcasecmp(uring_env, "true") == 0 ||
+                    strcasecmp(uring_env, "yes") == 0) {
+                    use_io_uring = true;
+                }
             }
         }
-    }
-    if (use_io_uring) {
-        backend_params["odm_use_io_uring"] = "1";
+        if (use_io_uring) {
+            backend_params["odm_use_io_uring"] = "1";
+        }
+    } else {
+        use_io_uring = false;
     }
     std::cout << "MARVELL_ODM backend: dma_device=" << odm_device
               << " qid=" << xferBenchConfig::odm_qid_start
               << " qid_range=" << xferBenchConfig::odm_qid_start << ".."
               << xferBenchConfig::odm_qid_end << " threads=" << xferBenchConfig::num_threads
-              << " io_uring=" << (use_io_uring ? "on" : "off")
+              << " io_uring=" << (use_io_uring ? "on" :
+                                   (host_va_path ? "off (host-VA path is ioctl-only)" : "off"))
               << " engine=ODM/dma-buf (both directions)"
               << " device_iova=auto (plugin GET_IOVA)" << std::endl;
 }

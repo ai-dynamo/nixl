@@ -14,9 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ODM dma-buf export of GPU VRAM (cuMemGetHandleForAddressRange) requires the
-# CUDA driver API. Without CUDA the plugin still builds but refuses to
-# initialize at runtime (see nixlOdmEngine constructor).
+# Built only when CUDA is found (see src/plugins/meson.build). HAVE_CUDA is always
+# set in this target. The host-VA path runs when the toolkit is present and
+# cudaGetDeviceCount() is 0.
 
 odm_sources = ['odm_plugin.cpp', 'odm_backend.cpp', 'odm_backend.h', 'odm_ioctl.h']
 odm_deps = [nixl_infra, nixl_common_dep]
@@ -27,9 +27,7 @@ if cuda_dep.found()
     odm_compile_flags += ['-DHAVE_CUDA']
     message('ODM plugin: CUDA found, enabling GPU VRAM dma-buf export (ODM controller path)')
 else
-    # ODM has no fallback: without CUDA the plugin still builds but refuses to
-    # initialize at runtime (see nixlOdmEngine constructor).
-    message('ODM plugin: CUDA NOT found — plugin will refuse to initialize at runtime (no fallback)')
+    message('ODM plugin: CUDA NOT found — MARVELL_ODM plugin is not built')
 endif
 
 if has_io_uring

@@ -1506,7 +1506,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     if (odm_dev >= remote_regs_[0].iovs().size()) {
                         std::cerr << "ODM: invalid device id " << iov.devId << " (max "
                                   << remote_regs_[0].iovs().size() - 1 << ")" << std::endl;
-                        return {};
+                        exit(EXIT_FAILURE);
                     }
                     const size_t block_in_dev = devidx % entries_per_device;
                     const size_t buffer_size = xferBenchConfig::total_buffer_size /

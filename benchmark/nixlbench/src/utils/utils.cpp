@@ -717,10 +717,11 @@ xferBenchConfig::loadParams(void) {
             odm_use_io_uring = NB_ARG(odm_use_io_uring);
             odm_qid_start = NB_ARG(odm_qid_start);
             odm_qid_end = NB_ARG(odm_qid_end);
-            if (odm_qid_start < 0 || odm_qid_end < odm_qid_start) {
+            if (odm_qid_start < 0 || odm_qid_end < odm_qid_start || odm_qid_start > 15 ||
+                odm_qid_end > 15) {
                 std::cerr << "Invalid ODM queue range: --odm_qid_start=" << odm_qid_start
-                          << " --odm_qid_end=" << odm_qid_end << " (require 0 <= start <= end)"
-                          << std::endl;
+                          << " --odm_qid_end=" << odm_qid_end
+                          << " (require 0 <= start <= end <= 15)" << std::endl;
                 return -1;
             }
         }

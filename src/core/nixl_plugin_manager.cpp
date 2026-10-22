@@ -865,7 +865,9 @@ void nixlPluginManager::registerBuiltinPlugins() {
 #endif
 
 #ifdef STATIC_PLUGIN_MARVELL_ODM
+#ifndef DISABLE_ODM_BACKEND
     NIXL_REGISTER_STATIC_PLUGIN(Backend, MARVELL_ODM)
+#endif
 #endif
 
 #ifdef STATIC_PLUGIN_MOONCAKE
