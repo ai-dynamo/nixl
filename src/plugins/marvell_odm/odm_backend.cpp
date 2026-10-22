@@ -224,7 +224,7 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
             odmUringInit();
         }
     }
-    if (!use_io_uring_) {
+    if (!use_io_uring_.load()) {
         const char *env = getenv("ODM_USE_IO_URING");
         if (env && want_io_uring(env)) {
             odmUringInit();
@@ -242,7 +242,7 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
      * caller thread fans each transfer across all queues in parallel. */
 #ifdef HAVE_CUDA
 #if defined(HAVE_ODM_IO_URING)
-    if (odm_num_queues_ > 1 && !use_io_uring_) {
+    if (odm_num_queues_ > 1 && !use_io_uring_.load()) {
 #else
     if (odm_num_queues_ > 1) {
 #endif
@@ -254,7 +254,7 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
               << " qid_range=[" << qid_start_ << "," << qid_end_ << "]"
               << " internal_queues=" << odm_num_queues_
 #ifdef HAVE_ODM_IO_URING
-              << " io_uring=" << (use_io_uring_ ? "on" : "off")
+              << " io_uring=" << (use_io_uring_.load() ? "on" : "off")
 #endif
               << " engine=ODM/dma-buf (both directions)";
     initErr = false;
@@ -525,24 +525,24 @@ nixlOdmEngine::prepXfer(const nixl_xfer_op_t &operation,
     if (dram_to_dram) {
         /* Local = host DRAM (userspace VA), remote = Structera device IOVA.
          * WRITE: host -> device; READ: device -> host. */
-        req->direction = (operation == NIXL_READ) ? ODM_DIR_OUTBOUND : ODM_DIR_INBOUND;
+        req->direction = (operation == NIXL_READ) ? OdmDirection::Outbound : OdmDirection::Inbound;
         req->gpu_id = 0;
         NIXL_DEBUG << "ODM prepXfer: DRAM<->DRAM op=" << (operation == NIXL_READ ? "READ" : "WRITE")
                    << " -> "
-                   << (req->direction == ODM_DIR_OUTBOUND ? "READ (device->host)" :
-                                                            "WRITE (host->device)")
+                   << (req->direction == OdmDirection::Outbound ? "READ (device->host)" :
+                                                                   "WRITE (host->device)")
                    << " segments=" << n;
     } else {
         /* Destination side decides direction (VRAM dma-buf path):
-         *   data into VRAM (ODM -> VRAM)  => ODM_DIR_OUTBOUND  (READ_FD)
-         *   data into ODM  (VRAM -> ODM)  => ODM_DIR_INBOUND (WRITE_FD) */
+         *   data into VRAM (ODM -> VRAM)  => Outbound  (READ_FD)
+         *   data into ODM  (VRAM -> ODM)  => Inbound (WRITE_FD) */
         bool dest_is_vram = (operation == NIXL_READ) ? (lt == VRAM_SEG) : (rt == VRAM_SEG);
-        req->direction = dest_is_vram ? ODM_DIR_OUTBOUND : ODM_DIR_INBOUND;
+        req->direction = dest_is_vram ? OdmDirection::Outbound : OdmDirection::Inbound;
         req->gpu_id = static_cast<uint32_t>((lt == VRAM_SEG) ? local[0].devId : remote[0].devId);
         NIXL_DEBUG << "ODM prepXfer: VRAM<->DRAM op=" << (operation == NIXL_READ ? "READ" : "WRITE")
                    << " -> "
-                   << (req->direction == ODM_DIR_OUTBOUND ? "READ_FD (device->VRAM)" :
-                                                            "WRITE_FD (VRAM->device)")
+                   << (req->direction == OdmDirection::Outbound ? "READ_FD (device->VRAM)" :
+                                                                   "WRITE_FD (VRAM->device)")
                    << " segments=" << n;
     }
 
@@ -968,10 +968,10 @@ nixlOdmEngine::odmUringInit() {
     if (rc < 0) {
         NIXL_WARN << "ODM: io_uring_queue_init_params failed: " << strerror(-rc)
                   << "; falling back to ioctl";
-        use_io_uring_ = false;
+        use_io_uring_.store(false);
         return;
     }
-    use_io_uring_ = true;
+    use_io_uring_.store(true);
     warnIfKernelOdmUringDisabled(device_path_);
 #if defined(HAVE_ODM_IO_URING_CMD128) || defined(HAVE_ODM_IO_URING_SQE128)
     NIXL_INFO << "ODM: io_uring submit enabled (SQE128 kernel-side queue spray)";
@@ -982,9 +982,9 @@ nixlOdmEngine::odmUringInit() {
 
 void
 nixlOdmEngine::odmUringDestroy() {
-    if (use_io_uring_) {
+    if (use_io_uring_.load()) {
         io_uring_queue_exit(&uring_);
-        use_io_uring_ = false;
+        use_io_uring_.store(false);
     }
 }
 
@@ -1000,10 +1000,10 @@ nixlOdmEngine::postOdmDmabufUring(nixlOdmBackendReqH *req) const {
         return cst;
     }
 
-    const int uring_op =
-        (req->direction == ODM_DIR_OUTBOUND) ? ODM_URING_CMD_READ_FD : ODM_URING_CMD_WRITE_FD;
-    const uint32_t xfer_type =
-        (req->direction == ODM_DIR_OUTBOUND) ? ODM_XTYPE_OUTBOUND : ODM_XTYPE_INBOUND;
+    const int uring_op = (req->direction == OdmDirection::Outbound) ? ODM_URING_CMD_READ_FD :
+                                                                      ODM_URING_CMD_WRITE_FD;
+    const uint32_t xfer_type = (req->direction == OdmDirection::Outbound) ? ODM_XTYPE_OUTBOUND :
+                                                                            ODM_XTYPE_INBOUND;
 
     for (const auto &seg : req->segments) {
         uint64_t remaining = seg.len;
@@ -1049,10 +1049,15 @@ nixlOdmEngine::postOdmDmabufUring(nixlOdmBackendReqH *req) const {
             }
 
             struct io_uring_cqe *cqe = nullptr;
-            const int wait_rc = io_uring_wait_cqe(&uring_, &cqe);
+            int wait_rc = 0;
+            do {
+                wait_rc = io_uring_wait_cqe(&uring_, &cqe);
+            } while (wait_rc == -EINTR);
             if (wait_rc < 0) {
-                releaseVramDmabuf(gpu_va, chunk);
-                NIXL_ERROR << "ODM: io_uring_wait_cqe failed: " << strerror(-wait_rc);
+                /* DMA may still be in flight; do not unpin or consume a stale CQE later. */
+                NIXL_ERROR << "ODM: io_uring_wait_cqe failed: " << strerror(-wait_rc)
+                           << "; disabling io_uring submit path";
+                use_io_uring_.store(false);
                 return NIXL_ERR_BACKEND;
             }
             const int res = cqe->res;
@@ -1080,10 +1085,11 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
     NIXL_ERROR << "ODM: ODM/dma-buf path requires CUDA to export VRAM";
     return NIXL_ERR_NOT_SUPPORTED;
 #else
-    unsigned int ioctl_cmd = (req->direction == ODM_DIR_OUTBOUND) ? MRVL_CXL_DMA_READ_COMMAND_FD :
-                                                                    MRVL_CXL_DMA_WRITE_COMMAND_FD;
-    uint32_t xfer_type =
-        (req->direction == ODM_DIR_OUTBOUND) ? ODM_XTYPE_OUTBOUND : ODM_XTYPE_INBOUND;
+    unsigned int ioctl_cmd = (req->direction == OdmDirection::Outbound) ?
+        MRVL_CXL_DMA_READ_COMMAND_FD :
+        MRVL_CXL_DMA_WRITE_COMMAND_FD;
+    uint32_t xfer_type = (req->direction == OdmDirection::Outbound) ? ODM_XTYPE_OUTBOUND :
+                                                                      ODM_XTYPE_INBOUND;
 
     /*
      * Single queue (no pool): run inline on the caller thread, pinned to one
@@ -1099,11 +1105,11 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
             OdmWork w{seg.host_addr,
                       seg.dma_dev_addr,
                       seg.len,
-                      req_qid,
+                      nullptr,
                       ioctl_cmd,
                       xfer_type,
                       req->gpu_id,
-                      nullptr};
+                      req_qid};
             nixl_status_t st = odmDoWork(w);
             if (st != NIXL_SUCCESS) {
                 return st;
@@ -1133,10 +1139,11 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
             continue;
         }
         uint64_t nq;
-        if (req->direction == ODM_DIR_INBOUND && seg.len < ODM_QSPLIT_WRITE_SINGLE_QUEUE_BELOW) {
+        if (req->direction == OdmDirection::Inbound &&
+            seg.len < ODM_QSPLIT_WRITE_SINGLE_QUEUE_BELOW) {
             nq = 1;
         } else {
-            const uint64_t min_piece = (req->direction == ODM_DIR_INBOUND) ?
+            const uint64_t min_piece = (req->direction == OdmDirection::Inbound) ?
                 ODM_QSPLIT_MIN_PIECE_WRITE :
                 ODM_QSPLIT_MIN_PIECE_READ;
             nq = seg.len / min_piece;
@@ -1159,11 +1166,11 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
             items.push_back(OdmWork{seg.host_addr + off,
                                     seg.dma_dev_addr + off,
                                     len,
-                                    static_cast<uint16_t>(qid_start_ + (g % odm_num_queues_)),
+                                    &batch,
                                     ioctl_cmd,
                                     xfer_type,
                                     req->gpu_id,
-                                    &batch});
+                                    static_cast<uint16_t>(qid_start_ + (g % odm_num_queues_))});
             off += len;
             ++g;
         }
@@ -1216,11 +1223,11 @@ nixlOdmEngine::postOdmHostVa(nixlOdmBackendReqH *req) const {
      * host-VA path. Those optimizations would require kernel module changes
      * (host-VA spray ioctl and register-time pin_user_pages support).
      */
-    const unsigned int ioctl_cmd = (req->direction == ODM_DIR_OUTBOUND) ?
+    const unsigned int ioctl_cmd = (req->direction == OdmDirection::Outbound) ?
         MRVL_CXL_DMA_READ_COMMAND :
         MRVL_CXL_DMA_WRITE_COMMAND;
-    const uint32_t xfer_type =
-        (req->direction == ODM_DIR_OUTBOUND) ? ODM_XTYPE_OUTBOUND : ODM_XTYPE_INBOUND;
+    const uint32_t xfer_type = (req->direction == OdmDirection::Outbound) ? ODM_XTYPE_OUTBOUND :
+                                                                            ODM_XTYPE_INBOUND;
     const uint16_t req_qid = nextQid();
     const int lock_slot = static_cast<int>(req_qid) - static_cast<int>(qid_start_);
     std::lock_guard<std::mutex> qlk(qid_locks_[(lock_slot >= 0 && lock_slot < odm_num_queues_) ?
@@ -1279,16 +1286,14 @@ nixlOdmEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    if (req->posted) {
-        NIXL_ERROR << "ODM: postXfer called twice on same handle";
-        return NIXL_ERR_INVALID_PARAM;
-    }
+    /* Transfers complete synchronously inside postXfer; NIXL may repost completed handles. */
+    req->posted = false;
     nixl_status_t st;
     if (req->is_dram_to_dram) {
         st = postOdmHostVa(req);
     } else {
 #ifdef HAVE_ODM_IO_URING
-        st = use_io_uring_ ? postOdmDmabufUring(req) : postOdmDmabuf(req);
+        st = use_io_uring_.load() ? postOdmDmabufUring(req) : postOdmDmabuf(req);
 #else
         st = postOdmDmabuf(req);
 #endif
