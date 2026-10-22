@@ -232,7 +232,7 @@ kernel_read(doca_gpu_dev_verbs_qp *qp,
 #endif
 }
 
-__device__ __forceinline__ bool
+__device__ __forceinline__ void
 nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
                               struct docaXferReqGpu *xferReqRing,
                               docaProgressState *progress_state,
@@ -247,7 +247,7 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
 
     // Warmup
     if (xferReqRing == nullptr) {
-        return false;
+        return;
     }
 
     tot_wqe = xferReqRing[pos].num;
@@ -299,7 +299,7 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
     }
     __syncthreads();
     if (reserved == 0U) {
-        return false;
+        return;
     }
 
     for (idx = threadIdx.x; idx < tot_wqe; idx += blockDim.x) {
@@ -363,7 +363,6 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
                base_wqe_idx);
     }
 #endif
-    return true;
 }
 
 __global__ void

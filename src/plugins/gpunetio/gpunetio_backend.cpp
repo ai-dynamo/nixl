@@ -1955,12 +1955,6 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
         for (size_t i = 0; i < treq->positions.size(); ++i) {
             const uint32_t idx = treq->positions[i];
             auto &completion = host_state_cpu_->completions[idx];
-            if (std::atomic_ref<uint32_t>(completion.state).load(std::memory_order_acquire) !=
-                DOCA_XFER_STATE_COMPLETE) {
-                treq->postStatus = NIXL_ERR_BACKEND;
-                return NIXL_ERR_BACKEND;
-            }
-
             auto &request = xferReqRingCpu[idx];
             // Submission rewrites WQE/ticket fields before publishing their state.
             std::atomic_ref<uint32_t>(completion.state)

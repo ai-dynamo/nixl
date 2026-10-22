@@ -182,7 +182,6 @@ static_assert(DOCA_XFER_REQ_MAX > 0 && DOCA_XFER_REQ_MAX <= 32 &&
 struct docaProgressState {
     docaHostState *host;
     uint32_t active_bitmap;
-    uint32_t progress_cursor;
     uint32_t failed;
 };
 
