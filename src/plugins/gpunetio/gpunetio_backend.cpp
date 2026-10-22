@@ -16,8 +16,8 @@
  */
 
 #include "gpunetio_backend.h"
-#include "gpunetio_completion_status.h"
 #include "gpunetio_cuda_device_guard.h"
+#include "gpunetio_completion_status.h"
 #include "serdes/serdes.h"
 #include <algorithm>
 #include <arpa/inet.h>
