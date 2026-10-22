@@ -813,6 +813,14 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
 
     nixl_status_t status = it->second->disconnect();
     connections_.erase(it);
+    // Drop queued replies for this peer so teardown never posts toward it from the CM thread.
+    {
+        const std::lock_guard<std::mutex> cm_lock(cm_mutex_);
+        std::erase_if(pending_replies_,
+                      [&remote_agent](const std::shared_ptr<nixlLibfabricConnection> &pending) {
+                          return pending->remoteAgent_ == remote_agent;
+                      });
+    }
     return status;
 }
 

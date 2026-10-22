@@ -74,6 +74,12 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     }
 
     constexpr size_t kRailId = 0;
+    auto rail_it = conn.rail_remote_addr_list_.find(kRailId);
+    if (rail_it == conn.rail_remote_addr_list_.end() || rail_it->second.empty()) {
+        NIXL_WARN << "No remote rail addresses on record for '" << conn.remoteAgent_
+                  << "'; cannot send handshake";
+        return NIXL_ERR_BACKEND;
+    }
     nixlLibfabricReq *req = rail_manager_.getRail(kRailId).allocateControlRequest(
         payload.size(), LibfabricUtils::getNextXferId());
     if (!req) {
@@ -88,9 +94,8 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     NIXL_DEBUG << "Sending handshake to '" << conn.remoteAgent_ << "' proto_ver=" << proto_ver
                << " (my agent_name='" << my_name
                << "', piggybacked_conn_info_len=" << piggybacked_conn_info.size() << ")";
-    return rail_manager_.postControlMessage(nixlLibfabricRailManager::ControlMessageType::HANDSHAKE,
-                                            req,
-                                            conn.rail_remote_addr_list_.at(kRailId)[0]);
+    return rail_manager_.postControlMessage(
+        nixlLibfabricRailManager::ControlMessageType::HANDSHAKE, req, rail_it->second[0]);
 }
 
 void
@@ -282,6 +287,9 @@ nixlLibfabricEngine::cmThread() {
             }
             conn = std::move(pending_replies_.front());
             pending_replies_.pop_front();
+        }
+        if (cm_thread_stop_) {
+            continue; // teardown started: drop the popped reply
         }
         // DISCONNECTED is also the pre-connect state of a live registration, so the
         // state cannot decide this: only a registration that is gone (disconnect()

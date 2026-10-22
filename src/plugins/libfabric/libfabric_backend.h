@@ -218,7 +218,7 @@ private:
     std::thread cm_thread_;
     std::condition_variable cm_cv_;
     std::deque<std::shared_ptr<nixlLibfabricConnection>> pending_replies_;
-    bool cm_thread_stop_{false};
+    std::atomic<bool> cm_thread_stop_{false};
 
     // Progress thread for rail CQs
     std::thread progress_thread_;

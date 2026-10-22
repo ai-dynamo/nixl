@@ -124,12 +124,15 @@ main() {
 
     c->disconnect("AgentD");
     d->disconnect("AgentC");
-    delete c;
+    // Delete the replyer (D) first: its CM thread must be gone before the peer
+    // it replies to frees its receive buffers.
     delete d;
+    delete c;
 
     a->disconnect("AgentB");
     b->disconnect("AgentA");
-    delete a;
+    // Same ordering: B is the holder replying to A.
     delete b;
+    delete a;
     return 0;
 }
