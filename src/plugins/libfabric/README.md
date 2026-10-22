@@ -193,4 +193,23 @@ fi_info -l
 fi_info -p efa
 ```
 
+**Slow same-host transfers on EFA with many small descriptors:**
+
+On EFA, libfabric routes transfers between processes on the same host through its shared-memory (shm) provider by default. For CUDA device memory this path is limited by descriptor rate, about 40K descriptors per second. A transfer request with thousands of small descriptors, such as a KV cache pull with one descriptor per block per layer, is therefore limited to a few hundred MB/s. Set the libfabric EFA variable `FI_EFA_ENABLE_SHM_TRANSFER=0` in every process to keep same-host transfers on EFA:
+
+```bash
+FI_EFA_ENABLE_SHM_TRANSFER=0 <your NIXL application>
+```
+
+Measured on one p6-b200.48xlarge (libfabric 2.6.0amzn1.0), reading a 256 MB VRAM buffer from another process on the same host in one transfer request:
+
+| Descriptor size | Count | shm on (default) | `FI_EFA_ENABLE_SHM_TRANSFER=0` |
+|--|--|--|--|
+| 16 KB | 16,384 | 0.65 GB/s | 7.7 GB/s |
+| 64 KB | 4,096 | 2.5 GB/s | 29.4 GB/s |
+| 1 MB | 256 | 29.4 GB/s | 47.8 GB/s |
+| 256 MB | 1 | 34.2 GB/s | 48.3 GB/s |
+
+The EFA path was also faster at every descriptor size for WRITE, and for single 4 KB latency. Transfers between hosts never use shm. On Neuron hosts the plugin already disables shm on every rail.
+
 For additional support, check the NIXL documentation and Libfabric provider-specific guides.
