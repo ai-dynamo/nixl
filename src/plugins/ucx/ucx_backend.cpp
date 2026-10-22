@@ -622,6 +622,13 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
+    const bool has_notif = opt_args && opt_args->hasNotif;
+    // A composite request sends its notification from the dedicated thread that
+    // completes it, which can happen before sendXferRange() returns
+    if (has_notif && int_handle->isComposite()) {
+        int_handle->notif = buildNotif(opt_args->notifMsg, opt_args->traceContext);
+    }
+
     ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
     if (ret != NIXL_SUCCESS) {
         return ret;
@@ -630,7 +637,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     recordPhase(traceSink_, nixl_trace_phase_t::WIRE_SUBMITTED, *int_handle);
 
     ret = int_handle->status();
-    if (opt_args && opt_args->hasNotif && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
+    if (has_notif && !int_handle->isComposite() && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
         int_handle->notif = buildNotif(opt_args->notifMsg, opt_args->traceContext);
         if (ret == NIXL_SUCCESS) {
             ret = int_handle->sendNotif();
@@ -660,6 +667,8 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
         return handle_status;
     }
 
+    // A composite request has no endpoint of its own; its last chunk sends the notification
+    NIXL_ASSERT(!int_handle->isComposite());
     const nixl_status_t status = int_handle->sendNotif();
     if (status != NIXL_SUCCESS) {
         return status;
