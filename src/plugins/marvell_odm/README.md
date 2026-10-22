@@ -53,7 +53,9 @@ kernel module is loaded with `odm_use_io_uring=1`:
 export ODM_USE_IO_URING=1
 ```
 
-SQE128 rings are used when supported by the kernel and liburing.
+The io_uring submit path requires liburing with SQE128 (or `uring_cmd128`) support
+and the ODM kernel module loaded with `odm_use_io_uring=1`. Without SQE128,
+`odm_use_io_uring` is ignored and transfers use ioctl.
 
 ## Plugin Parameters
 
