@@ -16,6 +16,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <array>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -528,6 +529,72 @@ TEST_F(DocMemosBackendTest, PostXferHandleReuse) {
     free(reinterpret_cast<void *>(local_desc.addr));
     engine_->deregisterMem(remote_desc.metadataP);
     engine_->releaseReqH(handle);
+}
+
+// Exercise a NIXLBench-shaped 128-bit hex key through the real plugin STORE
+// and RETRIEVE paths while the DOCA device is replaced by the in-memory mock.
+TEST_F(DocMemosBackendTest, Hex128BitKeyWriteReadRoundTrip) {
+    setupInitParams(false, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE);
+    createEngine();
+    auto &mock = DocaMockControl::instance();
+    mock.auto_complete_tasks = true;
+
+    std::array<char, 16> decoded_key{};
+    for (size_t i = 0; i < decoded_key.size(); i++) {
+        decoded_key[i] = static_cast<char>(i);
+    }
+    const std::string expected_device_key(decoded_key.data(), decoded_key.size());
+    ASSERT_EQ(hexKey(expected_device_key), "000102030405060708090a0b0c0d0e0f");
+
+    std::vector<uint8_t> write_buffer(256);
+    for (size_t i = 0; i < write_buffer.size(); i++) {
+        write_buffer[i] = static_cast<uint8_t>(i);
+    }
+    std::vector<uint8_t> read_buffer(write_buffer.size(), 0);
+
+    nixlMetaDesc remote_desc;
+    remote_desc.addr = 0;
+    remote_desc.len = write_buffer.size();
+    remote_desc.devId = 9201;
+    remote_desc.metadataP = registerMemory(remote_desc.devId, expected_device_key);
+    ASSERT_NE(remote_desc.metadataP, nullptr);
+
+    auto run_transfer = [&](nixl_xfer_op_t operation, std::vector<uint8_t> &buffer) {
+        nixl_meta_dlist_t local_dlist(DRAM_SEG), remote_dlist(OBJ_SEG);
+        nixlMetaDesc local_desc;
+        local_desc.addr = reinterpret_cast<uintptr_t>(buffer.data());
+        local_desc.len = buffer.size();
+        local_desc.devId = 0;
+        local_dlist.addDesc(local_desc);
+        remote_dlist.addDesc(remote_desc);
+
+        nixlBackendReqH *handle = nullptr;
+        EXPECT_EQ(engine_->prepXfer(operation, local_dlist, remote_dlist, "", handle),
+                  NIXL_SUCCESS);
+        if (handle == nullptr) {
+            return NIXL_ERR_BACKEND;
+        }
+        EXPECT_EQ(engine_->postXfer(operation, local_dlist, remote_dlist, "", handle),
+                  NIXL_IN_PROG);
+
+        nixl_status_t status = NIXL_IN_PROG;
+        for (int i = 0; i < 100 && status == NIXL_IN_PROG; i++) {
+            status = engine_->checkXfer(handle);
+        }
+        engine_->releaseReqH(handle);
+        return status;
+    };
+
+    ASSERT_EQ(run_transfer(NIXL_WRITE, write_buffer), NIXL_SUCCESS);
+    ASSERT_EQ(mock.kv_store.size(), 1u);
+    const auto stored = mock.kv_store.find(expected_device_key);
+    ASSERT_NE(stored, mock.kv_store.end());
+    EXPECT_EQ(stored->second, write_buffer);
+
+    ASSERT_EQ(run_transfer(NIXL_READ, read_buffer), NIXL_SUCCESS);
+    EXPECT_EQ(read_buffer, write_buffer);
+
+    engine_->deregisterMem(remote_desc.metadataP);
 }
 
 // ============================================================================
