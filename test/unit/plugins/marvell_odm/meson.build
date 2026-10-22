@@ -26,7 +26,5 @@ marvell_odm_nixl_test = executable('marvell_odm_nixl_test',
                           include_directories('../../../../src/plugins/marvell_odm')],
     install: true)
 
-# Hardware-only: run manually with `meson test --suite odm-hw` when /dev/odm0 is present.
-if get_option('enable_odm_hw_tests')
-    test('marvell_odm_plugin_test', marvell_odm_nixl_test, suite: 'odm-hw')
-endif
+odm_test_args = get_option('enable_odm_hw_tests') ? ['--require-device'] : []
+test('marvell_odm_plugin_test', marvell_odm_nixl_test, args: odm_test_args, suite: 'odm')

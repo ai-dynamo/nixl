@@ -46,6 +46,8 @@ constexpr size_t kDefaultTransferSize = 65536;
 constexpr unsigned char kTestPattern = 0x33;
 constexpr int kMesonSkip = 77;
 
+bool g_require_device = false;
+
 void
 logOdmDeviceError(const std::string &path, const char *operation, int err) {
     switch (err) {
@@ -77,7 +79,10 @@ logOdmDeviceError(const std::string &path, const char *operation, int err) {
 
 int
 odmDeviceFailureExitCode(int err) {
-    return (err == ENOENT) ? kMesonSkip : 1;
+    if (err == ENOENT && !g_require_device) {
+        return kMesonSkip;
+    }
+    return 1;
 }
 
 std::string
@@ -116,6 +121,7 @@ printUsage(const char *prog) {
               << "  --pattern BYTE          Fill/verify byte pattern (default: 0x33)\n"
               << "  --odm_use_io_uring      Use io_uring kernel-side queue spray for transfers\n"
               << "  --host-dram             Test host DRAM <-> device DRAM (host-VA ioctl path)\n"
+              << "  --require-device        Fail instead of skip when ODM device is absent\n"
               << "  --help                  Show this help\n"
               << "\n"
               << "Default: VRAM -> ODM write, ODM -> VRAM read, validate GPU round-trip.\n"
@@ -168,12 +174,13 @@ main(int argc, char **argv) {
         {"pattern", required_argument, nullptr, 'p'},
         {"odm_use_io_uring", no_argument, nullptr, 'u'},
         {"host-dram", no_argument, nullptr, 'H'},
+        {"require-device", no_argument, nullptr, 'r'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0},
     };
 
     int opt = 0;
-    while ((opt = getopt_long(argc, argv, "D:q:Q:R:s:p:uHh", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "D:q:Q:R:s:p:uHrh", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'D':
             dev_name = optarg;
@@ -217,6 +224,9 @@ main(int argc, char **argv) {
         case 'H':
             host_dram = true;
             break;
+        case 'r':
+            g_require_device = true;
+            break;
         case 'h':
             printUsage(argv[0]);
             return 0;
@@ -235,23 +245,13 @@ main(int argc, char **argv) {
         }
     }
 
-    if (!host_dram) {
-        int device_count = 0;
-        const cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
-        if (cuda_err != cudaSuccess || device_count == 0) {
-            std::cerr << "Error: CUDA GPU not available: " << cudaGetErrorString(cuda_err)
-                      << std::endl;
-            return 1;
-        }
-    }
-
     const std::string path = devicePath(dev_name);
     if (access(path.c_str(), F_OK) != 0) {
         const int access_err = errno;
         logOdmDeviceError(path, "access", access_err);
         if (access_err == ENOENT) {
             std::cout << "SKIP: ODM device not present at " << path << std::endl;
-            return kMesonSkip;
+            return odmDeviceFailureExitCode(access_err);
         }
         return 1;
     }
@@ -262,6 +262,13 @@ main(int argc, char **argv) {
     }
 
     if (!host_dram) {
+        int device_count = 0;
+        const cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
+        if (cuda_err != cudaSuccess || device_count == 0) {
+            std::cerr << "Error: CUDA GPU not available: " << cudaGetErrorString(cuda_err)
+                      << std::endl;
+            return 1;
+        }
         CUresult cu_res = cuInit(0);
         if (cu_res != CUDA_SUCCESS) {
             std::cerr << "Error: cuInit failed" << std::endl;
