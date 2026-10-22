@@ -99,7 +99,7 @@ public:
         executor_ = std::dynamic_pointer_cast<asioThreadPoolExecutor>(executor);
     }
 
-    /** Record the WRITE key and defer its configured result until execAsync(). */
+    /** @brief Record the WRITE key and defer its configured result until execAsync(). */
     void
     putObjectAsync(std::string_view key,
                    uintptr_t data_ptr,
@@ -126,15 +126,17 @@ public:
             delay = delay_it->second;
         }
 
-        pendingCallbacks_.push_back([callback, success, simulate_error, delay]() {
-            if (delay.count() > 0) {
-                std::this_thread::sleep_for(delay);
-            }
-            callback(simulate_error ? false : success);
-        });
+        pendingCallbacks_.push_back(
+            /** @brief Apply the configured delay and report the mock WRITE result. */
+            [callback, success, simulate_error, delay]() {
+                if (delay.count() > 0) {
+                    std::this_thread::sleep_for(delay);
+                }
+                callback(simulate_error ? false : success);
+            });
     }
 
-    /** Record the READ key and defer its offset-dependent payload and result. */
+    /** @brief Record the READ key and defer its offset-dependent payload and result. */
     void
     getObjectAsync(std::string_view key,
                    uintptr_t data_ptr,
@@ -162,6 +164,7 @@ public:
         }
 
         pendingCallbacks_.push_back(
+            /** @brief Fill successful READs with the object pattern, then report completion. */
             [callback, data_ptr, data_len, offset, success, simulate_error, delay]() {
                 if (delay.count() > 0) {
                     std::this_thread::sleep_for(delay);
@@ -234,7 +237,7 @@ public:
         return pendingCallbacks_.size();
     }
 
-    /** Return all READ and WRITE keys in submission order, including duplicates. */
+    /** @brief Return all READ and WRITE keys in submission order, including duplicates. */
     const std::vector<std::string> &
     getRequestedKeys() const {
         return requestedKeys_;
@@ -353,7 +356,7 @@ protected:
         }
     }
 
-    /** Complete one transfer and verify the full payload for a READ. */
+    /** @brief Complete one transfer and verify the full payload for a READ. */
     void
     testTransferWithSize(nixl_xfer_op_t operation,
                          size_t buffer_size,
@@ -413,7 +416,7 @@ protected:
         objEngine_->deregisterMem(remote_metadata);
     }
 
-    /** Complete two descriptors and verify each READ buffer independently. */
+    /** @brief Complete two descriptors and verify each READ buffer independently. */
     void
     testMultiDescriptorWithSizes(nixl_xfer_op_t operation,
                                  size_t size0,

@@ -124,9 +124,13 @@ awsS3CrtClient::getObjectAsync(std::string_view key,
                                get_object_callback_t callback) {
     auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf>(
         "GetObjectStreamBuf", reinterpret_cast<unsigned char *>(data_ptr), data_len);
-    /** Create SDK-owned streams with the allocator required by Aws::Delete. */
     auto stream_factory = Aws::MakeShared<Aws::IOStreamFactory>(
-        "GetObjectStreamFactory", [preallocated_stream_buf]() -> Aws::IOStream * {
+        "GetObjectStreamFactory",
+        /**
+         * @brief Create a stream over the retained destination-buffer view.
+         * @return SDK-owned stream allocated to match Aws::Delete cleanup.
+         */
+        [preallocated_stream_buf]() -> Aws::IOStream * {
             return Aws::New<Aws::IOStream>("GetObjectResponseStream",
                                            preallocated_stream_buf.get());
         });
@@ -142,6 +146,7 @@ awsS3CrtClient::getObjectAsync(std::string_view key,
 
     s3CrtClient_->GetObjectAsync(
         *request,
+        /** @brief Log READ failures and report the result while retaining SDK request state. */
         [callback, stream_factory, request](
             const Aws::S3Crt::S3CrtClient *,
             const Aws::S3Crt::Model::GetObjectRequest &,

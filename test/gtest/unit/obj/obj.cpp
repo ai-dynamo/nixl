@@ -417,7 +417,7 @@ TEST_F(objTestFixture, CancelTransfer) {
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
-/** Read the requested object range and leave the unused destination tail zeroed. */
+/** @brief Read the requested object range and leave the unused destination tail zeroed. */
 TEST_F(objTestFixture, ReadFromOffset) {
     mockS3Client_->setSimulateSuccess(true);
 
@@ -499,7 +499,7 @@ TEST_F(objCrtTestFixture, MixedSizeThreshold) {
     testMultiDescriptorWithSizes(NIXL_WRITE, 1048576, 6291456, "-crt-mixed");
 }
 
-/** Exercise descriptor routing with independently observable Standard and CRT clients. */
+/** @brief Exercise descriptor routing with independently observable Standard and CRT clients. */
 class objCrtRoutingTest : public objTestBase, public testing::TestWithParam<nixl_xfer_op_t> {
 protected:
     /**
@@ -592,55 +592,56 @@ protected:
     }
 };
 
-/** An absent CRT threshold sends every descriptor to Standard. */
+/** @brief An absent CRT threshold sends every descriptor to Standard. */
 TEST_P(objCrtRoutingTest, DisabledUsesStandard) {
     testRouting({}, {1023, 1024, 1025}, {false, false, false});
 }
 
-/** An explicit zero threshold disables CRT for every descriptor. */
+/** @brief An explicit zero threshold disables CRT for every descriptor. */
 TEST_P(objCrtRoutingTest, ZeroDisablesCrt) {
     testRouting({{"crtMinLimit", "0"}}, {1023, 1024, 1025}, {false, false, false});
 }
 
-/** A descriptor one byte below the threshold uses Standard. */
+/** @brief A descriptor one byte below the threshold uses Standard. */
 TEST_P(objCrtRoutingTest, BelowThresholdUsesStandard) {
     testRouting({{"crtMinLimit", "1024"}}, {1023}, {false});
 }
 
-/** A descriptor exactly at the threshold uses CRT. */
+/** @brief A descriptor exactly at the threshold uses CRT. */
 TEST_P(objCrtRoutingTest, AtThresholdUsesCrt) {
     testRouting({{"crtMinLimit", "1024"}}, {1024}, {true});
 }
 
-/** A descriptor one byte above the threshold uses CRT. */
+/** @brief A descriptor one byte above the threshold uses CRT. */
 TEST_P(objCrtRoutingTest, AboveThresholdUsesCrt) {
     testRouting({{"crtMinLimit", "1024"}}, {1025}, {true});
 }
 
-/** Route each descriptor by size and wait for both clients to complete. */
+/** @brief Route each descriptor by size and wait for both clients to complete. */
 TEST_P(objCrtRoutingTest, MixedDescriptorsUseBothClients) {
     testRouting({{"crtMinLimit", "1024"}}, {1023, 1024, 1025}, {false, true, true});
 }
 
-/** A threshold of one selects CRT for every tested descriptor. */
+/** @brief A threshold of one selects CRT for every tested descriptor. */
 TEST_P(objCrtRoutingTest, CrtOnlyUsesCrt) {
     testRouting({{"crtMinLimit", "1"}}, {1, 1024}, {true, true});
 }
 
-/** A failed Standard callback becomes a backend error without changing READ data. */
+/** @brief A failed Standard callback becomes a backend error without changing READ data. */
 TEST_P(objCrtRoutingTest, StandardFailurePropagates) {
     testRouting({{"crtMinLimit", "1024"}}, {1023}, {false}, true);
 }
 
-/** A failed CRT callback becomes a backend error without changing READ data. */
+/** @brief A failed CRT callback becomes a backend error without changing READ data. */
 TEST_P(objCrtRoutingTest, CrtFailurePropagates) {
     testRouting({{"crtMinLimit", "1024"}}, {1024}, {true}, false, true);
 }
 
-/** Run every routing case for READ and WRITE with descriptive operation suffixes. */
+/** @brief Run every routing case for READ and WRITE with descriptive operation suffixes. */
 INSTANTIATE_TEST_SUITE_P(ClientRouting,
                          objCrtRoutingTest,
                          testing::Values(NIXL_READ, NIXL_WRITE),
+                         /** @brief Use the transfer operation as the parameterized case suffix. */
                          [](const testing::TestParamInfo<nixl_xfer_op_t> &info) {
                              return info.param == NIXL_READ ? "Read" : "Write";
                          });
