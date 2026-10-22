@@ -105,8 +105,9 @@ nixlMDManager::nixlMDManager(nixlMetadataContext &ctx, const nixlMDConfig &confi
       p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx, config)),
       backend_(makeBackend(ctx, config, ioContext_)) {}
 
-// Each backend joins its own thread as it is destroyed, so nothing to do here.
-nixlMDManager::~nixlMDManager() = default;
+nixlMDManager::~nixlMDManager() {
+    stop();
+}
 
 nixlMetadataBackend *
 nixlMDManager::select(const nixl_opt_args_t *extra_params) const noexcept {

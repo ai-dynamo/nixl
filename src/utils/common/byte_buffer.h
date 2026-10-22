@@ -113,7 +113,7 @@ public:
         requires(!std::is_same_v<std::decay_t<Args>, byteBuffer> && ...)
     byteBuffer &
     putValues(Args &&...args) {
-        data_.reserve(getSize(args...));
+        data_.reserve(data_.size() + getSize(args...));
         putValuesInternal(args...);
         return *this;
     }

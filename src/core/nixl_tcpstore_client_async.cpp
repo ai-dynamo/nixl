@@ -345,8 +345,12 @@ nixlTcpStoreClientAsync::close() {
 // This function must be called from the I/O context.
 void
 nixlTcpStoreClientAsync::initiateShutdown(std::chrono::milliseconds grace_period) {
-    if (connectionState_ != connection_state_t::SHUTTING_DOWN &&
-        connectionState_ != connection_state_t::SHUTDOWN) {
+    switch (connectionState_) {
+    case connection_state_t::CLOSED:
+    case connection_state_t::CONNECTING:
+        doShutdown();
+        return;
+    case connection_state_t::CONNECTED:
         connectionState_ = connection_state_t::SHUTTING_DOWN;
         connectionRetryTimer_.cancel();
         processSendQueue();
@@ -359,6 +363,10 @@ nixlTcpStoreClientAsync::initiateShutdown(std::chrono::milliseconds grace_period
                 }
             });
         }
+        break;
+    case connection_state_t::SHUTTING_DOWN:
+    case connection_state_t::SHUTDOWN:
+        break;
     }
 }
 
@@ -832,7 +840,7 @@ nixlTcpStoreClientAsync::onError(std::string what,
                                  std::int32_t op_generation) {
     if (is_timeout) {
         NIXL_ERROR << "[TCPStore client][Server: " << host_ << ":" << port_ << "]: " << what
-                   << "timed out. Close the connection.";
+                   << " timed out. Close the connection.";
     } else {
         NIXL_ERROR << "[TCPStore client][Server: " << host_ << ":" << port_ << "]: " << what
                    << " failed: " << error.message() << ". Close the connection.";
