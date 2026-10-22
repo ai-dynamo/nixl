@@ -177,8 +177,12 @@ overridden before passing it to `createBackend` in C++ or `create_backend` in Py
 | ---------- | ------- | ----------- |
 | `ucx_error_handling_mode` | `peer` | UCX endpoint error handling policy. `peer` requests peer failure reporting; `none` disables it. |
 | `ucx_vram_memtype_hint` | `auto` | Controls how NIXL hints the UCX memory type during VRAM registration. Supported values are exactly: `auto`, `none`, `cuda`, `cuda-managed`, `rocm`, `ze-device`. |
+| `device_list` | empty | For InfiniBand HCAs: comma-separated devices to restrict UCX to, for example `mlx5_0,mlx5_1`. An entry without a port gets port 1 (`mlx5_0:1`), so a non-IB device such as `eth0` becomes `eth0:1` and matches nothing; use `ucx_net_devices` for those. Overrides `UCX_NET_DEVICES`. |
+| `ucx_net_devices` | empty | Passed to UCX as `NET_DEVICES` unchanged, so it accepts any UCX device list, including ports, non-IB devices such as `eth0`, and `^` exclusions such as `^tun0,docker0`. `UCX_NET_DEVICES` in the environment takes precedence (NIXL logs a warning when it does). |
 
-The two options are independent; you do not need to set one to use the other.
+`ucx_error_handling_mode` and `ucx_vram_memtype_hint` are independent; you do not need to set one to use the other.
+
+UCX `NET_DEVICES` precedence: `device_list` overrides `UCX_NET_DEVICES` in the environment; `UCX_NET_DEVICES` overrides `ucx_net_devices`; `NET_DEVICES` in `engine_config` applies only when neither parameter is set. Setting `device_list` together with `ucx_net_devices`, or either of them together with `NET_DEVICES` in `engine_config`, fails backend creation.
 
 `ucx_error_handling_mode` affects UCP transport lane selection, not only error reporting.
 NIXL creates endpoints with `err_mode` set from this option, and UCP only selects lanes whose
