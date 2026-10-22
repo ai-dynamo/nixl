@@ -71,17 +71,23 @@ odmSupportedMems() {
 #endif
 }
 
+/** ODM transfer direction (from the device's perspective). */
+enum class OdmDirection : std::uint8_t {
+    Outbound = 0, /* device -> host DRAM or GPU VRAM (READ / READ_FD) */
+    Inbound = 1, /* host DRAM or GPU VRAM -> device (WRITE / WRITE_FD) */
+};
+
 /**
  * @class nixlOdmMetadata
  * @brief Metadata for a registered ODM memory region.
  */
 class nixlOdmMetadata : public nixlBackendMD {
 public:
-    nixl_mem_t type;
     uint64_t addr;
     uint64_t size;
-    uint32_t dev_id;
     uint64_t dma_addr; /* ODM device-local base (DRAM_SEG) */
+    nixl_mem_t type;
+    uint32_t dev_id;
     bool iova_allocated; /* true when dma_addr came from GET_IOVA (addr==0 at register) */
 #ifdef HAVE_CUDA
     std::vector<std::pair<uint64_t, uint64_t>> vram_preexport_chunks;
@@ -89,11 +95,11 @@ public:
 
     nixlOdmMetadata()
         : nixlBackendMD(true),
-          type(VRAM_SEG),
           addr(0),
           size(0),
-          dev_id(0),
           dma_addr(0),
+          type(VRAM_SEG),
+          dev_id(0),
           iova_allocated(false) {}
 
     ~nixlOdmMetadata() override = default;
@@ -116,14 +122,14 @@ struct OdmSegment {
 class nixlOdmBackendReqH : public nixlBackendReqH {
 public:
     std::vector<OdmSegment> segments;
-    int direction; /* ODM_DIR_OUTBOUND / ODM_DIR_INBOUND */
     uint32_t gpu_id; /* CUDA device of the VRAM buffer (for ctx binding) */
+    OdmDirection direction;
     bool is_dram_to_dram; /* host DRAM <-> device DRAM (host-VA ioctl path) */
     bool posted;
 
     nixlOdmBackendReqH()
-        : direction(ODM_DIR_OUTBOUND),
-          gpu_id(0),
+        : gpu_id(0),
+          direction(OdmDirection::Outbound),
           is_dram_to_dram(false),
           posted(false) {}
 
@@ -213,14 +219,14 @@ private:
         uint64_t len;
         uint32_t dev_id;
 
-        bool
+        [[nodiscard]] bool
         operator==(const OdmRegKey &o) const {
             return addr == o.addr && len == o.len && dev_id == o.dev_id;
         }
     };
 
     struct OdmRegKeyHash {
-        size_t
+        [[nodiscard]] size_t
         operator()(const OdmRegKey &k) const {
             return std::hash<uint64_t>{}(k.addr) ^ (std::hash<uint64_t>{}(k.len) << 1) ^
                 (std::hash<uint32_t>{}(k.dev_id) << 2);
@@ -259,7 +265,7 @@ private:
     mutable std::mutex thread_assign_lock_;
     mutable std::unordered_map<std::thread::id, uint16_t> thread_qid_;
     mutable uint32_t next_thread_slot_{0};
-    uint16_t
+    [[nodiscard]] uint16_t
     nextQid() const;
 #ifdef HAVE_CUDA
     bool cuda_available_;
@@ -291,7 +297,7 @@ private:
     odmUringDestroy();
 
     mutable struct io_uring uring_;
-    bool use_io_uring_{false};
+    mutable std::atomic<bool> use_io_uring_{false};
     /*
      * liburing rings are not thread-safe. nixlbench posts from many threads on
      * one engine; without this gate concurrent submit/wait corrupts the ring
@@ -316,11 +322,11 @@ private:
         uint64_t gpu_va;
         uint64_t iova;
         uint64_t len;
-        uint16_t qid;
+        OdmBatch *batch;
         unsigned int ioctl_cmd;
         uint32_t xfer_type;
         uint32_t gpu_id;
-        OdmBatch *batch;
+        uint16_t qid;
     };
 
     struct OdmQueueWorker {
