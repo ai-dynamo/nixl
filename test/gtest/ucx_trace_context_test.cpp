@@ -75,7 +75,7 @@ constexpr std::array<const char *, 3> sender_phases{"nixl::submit",
 constexpr std::uint64_t tagged_request_id = 0x8090a0b0c0d0e0f0;
 constexpr std::uint64_t tagged_execution = 0x0102030405060708;
 constexpr std::string_view tagged_request_bytes =
-    "\x80\x90\xa0\xb0\xc0\xd0\xe0\xf0\x01\x02\x03\x04\x05\x06\x07\x08";
+    "\xf0\xe0\xd0\xc0\xb0\xa0\x90\x80\x08\x07\x06\x05\x04\x03\x02\x01";
 
 [[nodiscard]] std::string
 olderSenderNotif(const std::string &agent, const std::string &msg) {
@@ -394,7 +394,7 @@ TEST(UcxTraceContextWire, SampledContextRoundTrips) {
     EXPECT_EQ(notif.traceExecution, tagged_execution);
 }
 
-TEST(UcxTraceContextWire, RequestTagHoldsTheIdThenTheExecutionBigEndian) {
+TEST(UcxTraceContextWire, RequestTagHoldsTheIdThenTheExecutionLittleEndian) {
     const auto context = nixl::trace::generateTraceContext(1.0);
 
     EXPECT_EQ(nixl::ucx::serializeNotif(

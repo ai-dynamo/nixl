@@ -266,7 +266,7 @@ and passes them back to `recordPhase`.
 UCX is the first such carrier. For a sampled request it appends the 26-byte
 record as a `tctx` tag after the notification's `name` and `msg`, then, when the
 request has an id, a 16-byte `treq` tag: the request id and the post's execution
-number, each 8 bytes big-endian. An older receiver stops reading after the tags it
+number, each 8 bytes little-endian. An older receiver stops reading after the tags it
 knows, so it is unaffected; unsampled requests and `genNotif` add nothing. When the
 notification arrives at an agent with tracing on, UCX records `nixl::notif.received`
 under the sender's context, with `nixl.remote_agent` naming the sender and, from

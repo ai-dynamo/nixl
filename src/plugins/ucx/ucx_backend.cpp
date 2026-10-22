@@ -29,6 +29,7 @@
 #include "tracing/backend_trace.h"
 
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <optional>
 #include <string.h>
@@ -705,44 +706,26 @@ nixlUcxEngine::progressLoop() {
 
 namespace {
 
-constexpr size_t request_tag_size = 2 * sizeof(std::uint64_t);
+static_assert(std::endian::native == std::endian::little);
 
-void
-putBigEndian(std::uint64_t value, std::span<std::uint8_t, sizeof(std::uint64_t)> bytes) noexcept {
-    for (auto byte = bytes.rbegin(); byte != bytes.rend(); ++byte) {
-        *byte = static_cast<std::uint8_t>(value);
-        value >>= 8;
-    }
-}
-
-[[nodiscard]] std::uint64_t
-getBigEndian(std::span<const std::uint8_t, sizeof(std::uint64_t)> bytes) noexcept {
-    std::uint64_t value = 0;
-    for (const auto byte : bytes) {
-        value = (value << 8) | byte;
-    }
-    return value;
-}
+struct requestTag {
+    std::uint64_t requestId;
+    std::uint64_t execution;
+};
 
 void
 addRequestTag(nixlSerDes &ser_des, std::uint64_t request_id, std::uint64_t execution) {
-    std::array<std::uint8_t, request_tag_size> value;
-    putBigEndian(request_id, std::span(value).first<sizeof(std::uint64_t)>());
-    putBigEndian(execution, std::span(value).last<sizeof(std::uint64_t)>());
-    ser_des.addBuf("treq", value.data(), value.size());
+    const requestTag tag{request_id, execution};
+    ser_des.addBuf("treq", &tag, sizeof(tag));
 }
 
 void
 readRequestTag(nixlSerDes &ser_des, nixl::ucx::notifMessage &notif) {
-    std::array<std::uint8_t, request_tag_size> value{};
-    if ((ser_des.peekBufLen("treq") != value.size()) ||
-        (ser_des.getBuf("treq", value.data(), value.size()) != NIXL_SUCCESS)) {
-        return;
-    }
-    const std::uint64_t request_id = getBigEndian(std::span(value).first<sizeof(std::uint64_t)>());
-    if (request_id != 0) {
-        notif.traceRequestId = request_id;
-        notif.traceExecution = getBigEndian(std::span(value).last<sizeof(std::uint64_t)>());
+    requestTag tag;
+    if ((ser_des.peekBufLen("treq") == sizeof(tag)) &&
+        (ser_des.getBuf("treq", &tag, sizeof(tag)) == NIXL_SUCCESS) && (tag.requestId != 0)) {
+        notif.traceRequestId = tag.requestId;
+        notif.traceExecution = tag.execution;
     }
 }
 
