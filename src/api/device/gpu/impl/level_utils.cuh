@@ -40,7 +40,7 @@ laneId() {
 
 /** Whether this thread acts for all the threads that make one call at `level`. */
 template<level_t level>
-__device__ __forceinline__ bool
+[[nodiscard]] __device__ __forceinline__ bool
 isLeader() {
     return laneId<level>() == 0;
 }
@@ -60,7 +60,7 @@ sync() {
 
 /** A barrier that also hands every thread the leader's status; only a barrier at grid level. */
 template<level_t level>
-__device__ __forceinline__ nixl_status_t
+[[nodiscard]] __device__ __forceinline__ nixl_status_t
 broadcastStatus(nixl_status_t status) {
     if constexpr (level == level_t::WARP) {
         status = static_cast<nixl_status_t>(__shfl_sync(0xffffffff, static_cast<int>(status), 0));
