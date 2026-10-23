@@ -67,14 +67,9 @@ nixl_gpunetio_dev_finish_request(docaProgressState *progress_state,
 }
 
 __device__ void
-nixl_gpunetio_dev_terminal_error(docaProgressState *progress_state, uint32_t pos) {
-    nixl_gpunetio_dev_finish_request(progress_state, pos, DOCA_XFER_STATE_ERROR);
-}
-
-__device__ void
 nixl_gpunetio_dev_fail_request(docaProgressState *progress_state, uint32_t pos) {
     nixl_gpunetio_dev_mark_failed(progress_state);
-    nixl_gpunetio_dev_terminal_error(progress_state, pos);
+    nixl_gpunetio_dev_finish_request(progress_state, pos, DOCA_XFER_STATE_ERROR);
 }
 
 __device__ void
@@ -148,16 +143,11 @@ kernel_read(doca_gpu_dev_verbs_qp *qp,
     tot_wqe = xferReqRing[pos].num;
 
     if (threadIdx.x == 0) {
-        if (nixl_gpunetio_dev_load_host_state(xferReqRing[pos].state) != DOCA_XFER_STATE_PREPARED) {
-            reserved = 0U;
+        const uint32_t count = tot_wqe + (qp->need_mcst ? 1 : 0);
+        reserved = nixl_gpunetio_dev_reserve_data(
+            &xferReqRing[pos], count, progress_state, exit_flag, &base_wqe_idx);
+        if (reserved == 0U) {
             nixl_gpunetio_dev_fail_request(progress_state, pos);
-        } else {
-            const uint32_t count = tot_wqe + (qp->need_mcst ? 1 : 0);
-            reserved = nixl_gpunetio_dev_reserve_data(
-                &xferReqRing[pos], count, progress_state, exit_flag, &base_wqe_idx);
-            if (reserved == 0U) {
-                nixl_gpunetio_dev_fail_request(progress_state, pos);
-            }
         }
     }
     __syncthreads();
@@ -280,9 +270,7 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
                 doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
             }
         }
-        if (abort_write ||
-            nixl_gpunetio_dev_load_host_state(xferReqRing[pos].state) != DOCA_XFER_STATE_PREPARED) {
-            abort_write = true;
+        if (abort_write) {
             nixl_gpunetio_dev_fail_request(progress_state, pos);
         } else {
             abort_write = !nixl_gpunetio_dev_reserve_data(
@@ -484,7 +472,8 @@ kernel_progress(struct docaXferReqGpu *xfer_req_ring,
                         printf("kernel_progress: notification CQ error %d wqe %ld\n",
                                notif_status,
                                out_ticket);
-                        nixl_gpunetio_dev_terminal_error(progress_state, pos);
+                        nixl_gpunetio_dev_finish_request(
+                            progress_state, pos, DOCA_XFER_STATE_ERROR);
                     } else {
                         nixl_gpunetio_dev_complete_request(request, progress_state, pos);
                     }
@@ -495,7 +484,7 @@ kernel_progress(struct docaXferReqGpu *xfer_req_ring,
                 senders &= senders - 1;
             }
         }
-    }
+    } // Block 0
 
     // Receive notif: fill recv in new queue and progress queue
     if (blockIdx.x == 1) {

@@ -215,6 +215,7 @@ private:
 
     void
     retireRequest(nixlDocaBckndReq *request) const;
+
     void
     markFailed() const;
     nixl_status_t
