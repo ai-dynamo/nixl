@@ -41,7 +41,6 @@ nixlDocaGpuCounterDeleter::operator()(uint64_t *counter) const {
     }
 }
 
-
 namespace {
 template<typename unsignedType>
 inline bool
@@ -422,7 +421,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     // DOCA_GPU_MEM_TYPE_GPU_CPU == GDRCopy
     result = doca_gpu_mem_alloc(gdevs[0].second,
-                                sizeof(struct docaXferReqGpu) * DOCA_XFER_REQ_MAX,
+                                sizeof(struct docaSlotDesc) * DOCA_XFER_REQ_MAX,
                                 4096,
                                 DOCA_GPU_MEM_TYPE_GPU_CPU,
                                 (void **)&xferReqRingGpu,
@@ -432,7 +431,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
                    << doca_error_get_descr(result);
         NIXL_ERROR << "Allocating memory with DOCA_GPU_MEM_TYPE_CPU_GPU";
         result = doca_gpu_mem_alloc(gdevs[0].second,
-                                    sizeof(struct docaXferReqGpu) * DOCA_XFER_REQ_MAX,
+                                    sizeof(struct docaSlotDesc) * DOCA_XFER_REQ_MAX,
                                     4096,
                                     DOCA_GPU_MEM_TYPE_CPU_GPU,
                                     (void **)&xferReqRingGpu,
@@ -445,7 +444,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
 
     nixlDocaEngineCheckCudaError(
-        cudaMemset(xferReqRingGpu, 0, sizeof(struct docaXferReqGpu) * DOCA_XFER_REQ_MAX),
+        cudaMemset(xferReqRingGpu, 0, sizeof(struct docaSlotDesc) * DOCA_XFER_REQ_MAX),
         "Failed to memset GPU memory");
 
     nixlDocaEngineCheckCudaError(cudaStreamCreateWithFlags(&wait_stream, cudaStreamNonBlocking),
@@ -458,24 +457,24 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     xferStream = 0;
 
     result = doca_gpu_mem_alloc(gdevs[0].second,
-                                sizeof(struct docaProgressState),
+                                sizeof(struct docaGpuState),
                                 4096,
                                 DOCA_GPU_MEM_TYPE_GPU_CPU,
-                                (void **)&progress_state_gpu,
-                                (void **)&progress_state_cpu);
-    if (result != DOCA_SUCCESS || progress_state_gpu == nullptr || progress_state_cpu == nullptr) {
+                                (void **)&gpu_state_gpu,
+                                (void **)&gpu_state_cpu);
+    if (result != DOCA_SUCCESS || gpu_state_gpu == nullptr || gpu_state_cpu == nullptr) {
         result = doca_gpu_mem_alloc(gdevs[0].second,
-                                    sizeof(struct docaProgressState),
+                                    sizeof(struct docaGpuState),
                                     4096,
                                     DOCA_GPU_MEM_TYPE_CPU_GPU,
-                                    (void **)&progress_state_gpu,
-                                    (void **)&progress_state_cpu);
+                                    (void **)&gpu_state_gpu,
+                                    (void **)&gpu_state_cpu);
     }
-    if (result != DOCA_SUCCESS || progress_state_gpu == nullptr || progress_state_cpu == nullptr) {
+    if (result != DOCA_SUCCESS || gpu_state_gpu == nullptr || gpu_state_cpu == nullptr) {
         throw std::runtime_error("Failed to allocate GPUNETIO progress state");
     }
 
-    memset(progress_state_cpu, 0, sizeof(struct docaProgressState));
+    memset(gpu_state_cpu, 0, sizeof(struct docaGpuState));
     result = doca_gpu_mem_alloc(gdevs[0].second,
                                 sizeof(docaHostState),
                                 4096,
@@ -486,34 +485,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         throw std::runtime_error("Failed to allocate GPUNETIO host completion state");
     }
     memset(host_state_cpu_, 0, sizeof(docaHostState));
-    progress_state_cpu->host = host_state_gpu_;
     std::atomic_thread_fence(std::memory_order_seq_cst);
-
-    // DOCA_GPU_MEM_TYPE_GPU_CPU == GDRCopy
-    result = doca_gpu_mem_alloc(gdevs[0].second,
-                                sizeof(uint32_t),
-                                4096,
-                                DOCA_GPU_MEM_TYPE_GPU_CPU,
-                                (void **)&wait_exit_gpu,
-                                (void **)&wait_exit_cpu);
-    if (result != DOCA_SUCCESS || wait_exit_gpu == nullptr || wait_exit_cpu == nullptr) {
-        NIXL_ERROR << "Function doca_gpu_mem_alloc with DOCA_GPU_MEM_TYPE_GPU_CPU returned "
-                   << doca_error_get_descr(result);
-        NIXL_ERROR << "Allocating memory with DOCA_GPU_MEM_TYPE_CPU_GPU";
-        result = doca_gpu_mem_alloc(gdevs[0].second,
-                                    sizeof(uint32_t),
-                                    4096,
-                                    DOCA_GPU_MEM_TYPE_CPU_GPU,
-                                    (void **)&wait_exit_gpu,
-                                    (void **)&wait_exit_cpu);
-        if (result != DOCA_SUCCESS || wait_exit_gpu == nullptr || wait_exit_cpu == nullptr) {
-            NIXL_ERROR << "Function doca_gpu_mem_alloc with DOCA_GPU_MEM_TYPE_CPU_GPU returned "
-                       << doca_error_get_descr(result);
-            throw std::invalid_argument("Can't allocate memory");
-        }
-    }
-
-    *reinterpret_cast<volatile uint32_t *>(wait_exit_cpu) = 0;
 
     result = doca_gpu_mem_alloc(gdevs[0].second,
                                 sizeof(struct docaNotif),
@@ -564,15 +536,15 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
                          notif_fill_gpu,
                          notif_progress_gpu,
                          notif_send_gpu,
-                         wait_exit_gpu);
+                         host_state_gpu_);
     nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
     doca_kernel_progress(wait_stream,
                          xferReqRingGpu,
-                         progress_state_gpu,
+                         gpu_state_gpu,
                          notif_fill_gpu,
                          notif_progress_gpu,
                          notif_send_gpu,
-                         wait_exit_gpu);
+                         host_state_gpu_);
 
     xferRingPos = 0;
 
@@ -592,7 +564,8 @@ nixlDocaEngine::~nixlDocaEngine() {
     NIXL_DEBUG << "Before progressThreadStop ";
     progressThreadStop();
 
-    *reinterpret_cast<volatile uint32_t *>(wait_exit_cpu) = 1;
+    *reinterpret_cast<volatile uint32_t *>(&gpu_state_cpu->control) =
+        DOCA_GPU_EXIT | DOCA_GPU_ABORT;
     nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
     if (cuda_device.status() != cudaSuccess) {
         NIXL_ERROR << "Cannot select GPUNETIO engine device; retaining device resources";
@@ -645,9 +618,8 @@ nixlDocaEngine::~nixlDocaEngine() {
     }
     notifMap.clear();
 
-    doca_gpu_mem_free(gdevs[0].second, wait_exit_gpu);
     doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
-    doca_gpu_mem_free(gdevs[0].second, progress_state_gpu);
+    doca_gpu_mem_free(gdevs[0].second, gpu_state_gpu);
     doca_gpu_mem_free(gdevs[0].second, host_state_gpu_);
     doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
@@ -1763,7 +1735,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     uint32_t desc_offset = 0;
     do {
-        docaXferReqGpu staged_req{};
+        docaSlotDesc staged_req{};
         staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
 
         uint32_t chunk_desc_count = 0;
@@ -1841,7 +1813,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         staged_req.qp_notif = rdma_qp->qp_notif->get_qp_gpu_dev();
         staged_req.qp_progress = rdma_qp->progress_gpu;
         const size_t publish_size =
-            staged_req.has_two_sge ? sizeof(staged_req) : offsetof(docaXferReqGpu, lbuf2);
+            staged_req.has_two_sge ? sizeof(staged_req) : offsetof(docaSlotDesc, lbuf2);
         memcpy(&xferReqRingCpu[pos], &staged_req, publish_size);
 
         if (desc_offset < lcnt && !reserve_position()) {
@@ -1932,9 +1904,7 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     for (uint32_t idx : treq->positions) {
-        std::atomic_ref<uint32_t>(host_state_cpu_->completions[idx].state)
-            .store(DOCA_XFER_STATE_PREPARED, std::memory_order_release);
-        std::atomic_ref<uint32_t>(xferReqRingCpu[idx].state)
+        std::atomic_ref<uint32_t>(host_state_cpu_->slot[idx])
             .store(DOCA_XFER_STATE_PREPARED, std::memory_order_release);
     }
 
@@ -1950,15 +1920,15 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
             doca_kernel_read(treq->stream,
                              xferReqRingCpu[idx].qp_data,
                              xferReqRingGpu,
-                             progress_state_gpu,
-                             wait_exit_gpu,
+                             gpu_state_gpu,
+                             host_state_gpu_,
                              idx,
                              treq->attachedStream) :
             doca_kernel_write(treq->stream,
                               xferReqRingCpu[idx].qp_data,
                               xferReqRingGpu,
-                              progress_state_gpu,
-                              wait_exit_gpu,
+                              gpu_state_gpu,
+                              host_state_gpu_,
                               idx);
         if (result != DOCA_SUCCESS) {
             treq->postStatus = NIXL_ERR_BACKEND;
@@ -2003,7 +1973,7 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
         auto &entry = xferReqRingCpu[request->positions[ordinal]];
         entry.qp_data = peer->qp_write[ordinal % dataQpCount_]->get_qp_gpu_dev();
         entry.qp_progress = peer->progress_gpu + 1 + ordinal % dataQpCount_;
-        entry.wait_completion_count = 0;
+        entry.wait_completion_mask = 0;
         entry.peer_write_completed = nullptr;
         entry.write_ticket = 0;
     }
@@ -2012,14 +1982,14 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
     last.peer_write_completed = peer->writeCompletedGpu.get();
     last.write_ticket = ++peer->postedWriteTicket;
     for (size_t ordinal = 0; ordinal + 1 < request->positions.size(); ++ordinal) {
-        last.wait_completion_positions[last.wait_completion_count++] = request->positions[ordinal];
+        last.wait_completion_mask |= 1U << request->positions[ordinal];
     }
     std::atomic_thread_fence(std::memory_order_release);
 
     // One stream orders all grids, including the previous same-peer final post.
     // This can reduce overlap between requests compared with per-QP streams.
     const auto result = doca_kernel_write_striped(
-        post_stream[0], xferReqRingGpu, progress_state_gpu, wait_exit_gpu, launch, dataQpCount_);
+        post_stream[0], xferReqRingGpu, gpu_state_gpu, host_state_gpu_, launch, dataQpCount_);
     if (result != DOCA_SUCCESS) {
         request->postStatus = NIXL_ERR_BACKEND;
         markFailed();
@@ -2045,9 +2015,9 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
     bool request_error = false;
     for (size_t i = 0; i < treq->postedCount; ++i) {
         const uint32_t idx = treq->positions[i];
-        auto &completion = host_state_cpu_->completions[idx];
+        auto &completion = host_state_cpu_->slot[idx];
         const uint32_t req_state =
-            std::atomic_ref<uint32_t>(completion.state).load(std::memory_order_acquire);
+            std::atomic_ref<uint32_t>(completion).load(std::memory_order_acquire);
         if (req_state != DOCA_XFER_STATE_COMPLETE && req_state != DOCA_XFER_STATE_ERROR) {
             return NIXL_IN_PROG;
         }
@@ -2068,7 +2038,7 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
 
 void
 nixlDocaEngine::markFailed() const {
-    std::atomic_ref<uint32_t>(progress_state_cpu->failed).store(1, std::memory_order_release);
+    *reinterpret_cast<volatile uint32_t *>(&gpu_state_cpu->control) = DOCA_GPU_ABORT;
     std::atomic_thread_fence(std::memory_order_seq_cst);
     std::atomic_ref<uint32_t>(host_state_cpu_->failed).store(1, std::memory_order_release);
 }

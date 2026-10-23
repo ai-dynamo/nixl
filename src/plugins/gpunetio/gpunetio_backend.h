@@ -164,17 +164,15 @@ private:
     mutable std::atomic<uint32_t> xferStream;
     mutable std::mutex postLock_;
 
-    struct docaXferReqGpu *xferReqRingGpu;
-    struct docaXferReqGpu *xferReqRingCpu;
+    struct docaSlotDesc *xferReqRingGpu;
+    struct docaSlotDesc *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
     mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved_;
     docaHostState *host_state_cpu_ = nullptr;
     docaHostState *host_state_gpu_ = nullptr;
 
-    struct docaProgressState *progress_state_gpu = nullptr;
-    struct docaProgressState *progress_state_cpu = nullptr;
-    uint32_t *wait_exit_gpu;
-    uint32_t *wait_exit_cpu;
+    struct docaGpuState *gpu_state_gpu = nullptr;
+    struct docaGpuState *gpu_state_cpu = nullptr;
     struct docaNotif *notif_fill_gpu;
     struct docaNotif *notif_fill_cpu;
     struct docaNotif *notif_progress_gpu;
