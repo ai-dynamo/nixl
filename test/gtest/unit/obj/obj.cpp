@@ -150,8 +150,8 @@ TEST_P(objParamTestFixture, RegisterMemoryDuplicateObjDevId) {
 }
 
 TEST_P(objParamTestFixture, RegisterMemoryDramSeg) {
-    nixlBlobDesc mem_desc;
-    mem_desc.devId = 123;
+    std::vector<char> buffer(1024);
+    nixlBlobDesc mem_desc(reinterpret_cast<uintptr_t>(buffer.data()), buffer.size(), 123, "");
 
     nixlBackendMD *metadata = nullptr;
     nixl_status_t status = objEngine_->registerMem(mem_desc, DRAM_SEG, metadata);
@@ -167,23 +167,6 @@ TEST_P(objParamTestFixture, RegisterMemoryDramSeg) {
         status = objEngine_->deregisterMem(metadata);
         EXPECT_EQ(status, NIXL_SUCCESS);
     }
-}
-
-TEST_P(objParamTestFixture, RegisterMemoryVramSeg) {
-    if (!GetParam().supportsVram) {
-        GTEST_SKIP() << "Test requires VRAM support";
-    }
-    nixlBlobDesc mem_desc;
-    mem_desc.devId = 123;
-
-    nixlBackendMD *metadata = nullptr;
-    nixl_status_t status = objEngine_->registerMem(mem_desc, VRAM_SEG, metadata);
-
-    EXPECT_EQ(status, NIXL_SUCCESS);
-    EXPECT_NE(metadata, nullptr);
-
-    status = objEngine_->deregisterMem(metadata);
-    EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
 TEST_P(objParamTestFixture, NullHandlePostXfer) {

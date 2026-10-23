@@ -164,3 +164,18 @@ The Dell ObjectScale Object Storage backend supports read and write operations b
 - Operation completion is tracked through the request handle
 - The `checkXfer` function can be used to poll for operation completion
 - The request handle must be released using `releaseReqH` after the operation is complete
+
+### RDMA token lifecycle
+
+The Dell engine uses the process-wide cuObject client shared with the generic
+accelerated engine. It registers buffers once, mints a fresh token for each
+posted transfer through `cuMemObjGetRDMAToken`, and sends the token in Dell's
+`x-rdma-info` header. Tokens remain owned until the asynchronous S3 request
+completes, retaining the buffer registration even if its owner deregisters it.
+Transfers may address a subrange of a registered buffer; the shared client
+translates the address to the registered base and buffer offset.
+
+Construction fails when the RDMA fabric is unavailable. Token generation or
+S3 request failure becomes `NIXL_ERR_BACKEND` through `checkXfer`, with no HTTP
+fallback. Read offsets remain supported; nonzero write offsets and mismatched
+descriptor counts are rejected before sending any request in a batch.
