@@ -45,6 +45,11 @@ if 'REDIS' in static_plugins
     nixl_lib_deps += [ redis_backend_interface ]
 endif
 
+disable_odm_backend = get_option('disable_odm_backend')
+if not disable_odm_backend and is_variable('odm_backend_interface') and 'MARVELL_ODM' in static_plugins
+    nixl_lib_deps += [ odm_backend_interface ]
+endif
+
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and 'GDS' in static_plugins
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
