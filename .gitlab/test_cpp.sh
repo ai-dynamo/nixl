@@ -117,6 +117,7 @@ done
 
 # shellcheck disable=SC2154
 gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+./bin/unit --gtest_filter='TransferCompletion/invalidatedTransferFixture.*'
 ./bin/test_plugin
 
 # Redis unit tests

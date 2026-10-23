@@ -19,6 +19,7 @@
 
 #include <vector>
 #include <array>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -36,6 +37,8 @@
 
 class nixlUcclBackendMD;
 class nixlUcclReqH;
+
+using uccl_connection_ptr_t = std::shared_ptr<uccl_conn_t>;
 
 class nixlUcclEngine : public nixlBackendEngine {
 public:
@@ -133,7 +136,7 @@ private:
     std::string local_agent_name_;
     mutable std::string pending_local_agent_; // deferred local connect
     std::unordered_map<uint64_t, nixlUcclBackendMD *> mem_reg_info_;
-    mutable std::unordered_map<std::string, uint64_t> connected_agents_; // agent name -> conn_id
+    mutable std::unordered_map<std::string, uccl_connection_ptr_t> connected_agents_;
     std::thread listener_thread_;
     std::atomic<bool> stop_listener_;
 };
@@ -160,11 +163,11 @@ public:
 // UCCL Backend Request Handle
 class nixlUcclReqH : public nixlBackendReqH {
 public:
-    nixlUcclReqH(uccl_conn_t *conn) : conn(conn) {}
+    nixlUcclReqH(const uccl_connection_ptr_t &conn) : conn(conn) {}
 
     virtual ~nixlUcclReqH() {}
 
-    uccl_conn_t *conn;
+    uccl_connection_ptr_t conn;
     uint64_t transfer_id;
     nixl_blob_t notif_msg;
     std::vector<FifoItem> fifo_items;
