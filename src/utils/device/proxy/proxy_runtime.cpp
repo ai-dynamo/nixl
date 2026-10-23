@@ -45,21 +45,21 @@ std::unique_ptr<proxyRuntime>
 proxyRuntime::create(std::unique_ptr<proxyTransport> transport,
                      const proxyConfig &config,
                      deviceOps &allocator) {
-    NIXL_INFO << "ProxyRuntime::create: max_peers=" << config.max_peers
-              << " channel_count=" << config.channel_count
-              << " thread_count=" << config.thread_count << " ring_depth=" << config.ring_depth;
+    NIXL_INFO << "ProxyRuntime::create: max_peers=" << config.maxPeers
+              << " channel_count=" << config.channelCount << " thread_count=" << config.threadCount
+              << " ring_depth=" << config.ringDepth;
 
     if (!transport) {
         throwRuntimeError("ProxyRuntime::create: no transport");
     }
-    if (config.max_peers == 0 || config.channel_count == 0 || !config.evenThreadSplit() ||
-        config.ring_depth == 0) {
+    if (config.maxPeers == 0 || config.channelCount == 0 || !config.evenThreadSplit() ||
+        config.ringDepth == 0) {
         throwRuntimeError("ProxyRuntime::create: invalid config");
     }
     // The GPU masks ring indices.
-    if ((config.ring_depth & (config.ring_depth - 1)) != 0) {
+    if ((config.ringDepth & (config.ringDepth - 1)) != 0) {
         throwRuntimeError("ProxyRuntime::create: ring_depth must be a power of two: ",
-                          config.ring_depth);
+                          config.ringDepth);
     }
 
     std::unique_ptr<proxyRuntime> runtime(
@@ -77,17 +77,17 @@ proxyRuntime::create(std::unique_ptr<proxyTransport> transport,
 
 nixl_status_t
 proxyRuntime::build() {
-    const uint32_t max_peers = config_.max_peers;
-    const uint32_t channel_count = config_.channel_count;
-    const uint32_t worker_count = config_.thread_count;
+    const uint32_t max_peers = config_.maxPeers;
+    const uint32_t channel_count = config_.channelCount;
+    const uint32_t worker_count = config_.threadCount;
 
     const size_t channel_slots = config_.ringCount();
-    if (channel_slots > std::numeric_limits<size_t>::max() / sizeof(nixlProxyRingDesc)) {
+    if (channel_slots > std::numeric_limits<size_t>::max() / sizeof(proxyRingDesc)) {
         NIXL_ERROR << "ProxyRuntime::build: invalid ring-view size: " << channel_slots
                    << " ring(s)";
         return NIXL_ERR_INVALID_PARAM;
     }
-    const size_t device_channel_views_bytes = sizeof(nixlProxyRingDesc) * channel_slots;
+    const size_t device_channel_views_bytes = sizeof(proxyRingDesc) * channel_slots;
     nixl_status_t rc = proxyControlBuffer::create(allocator_, channel_slots, control_slots_);
     if (rc != NIXL_SUCCESS) {
         NIXL_ERROR << "ProxyRuntime::build: failed to create GPU-visible control slab";
@@ -96,11 +96,11 @@ proxyRuntime::build() {
     uint64_t *const shutdown_word_dev =
         control_slots_->devicePointer(proxyControlBuffer::shutdownSlot());
     channels_.reserve(channel_count);
-    std::vector<nixlProxyRingDesc> device_channel_views;
+    std::vector<proxyRingDesc> device_channel_views;
     device_channel_views.reserve(channel_slots);
     for (uint32_t channel_idx = 0; channel_idx < channel_count; channel_idx++) {
         channels_.emplace_back(channel_idx, max_peers);
-        rc = channels_.back().allocate(allocator_, config_.ring_depth, *control_slots_);
+        rc = channels_.back().allocate(allocator_, config_.ringDepth, *control_slots_);
         if (rc != NIXL_SUCCESS) {
             return rc;
         }
@@ -117,12 +117,12 @@ proxyRuntime::build() {
         return NIXL_ERR_BACKEND;
     }
 
-    const nixlProxyDeviceContextData device_context{
-        .rings = static_cast<nixlProxyRingDesc *>(device_channel_views_mem_.get()),
+    const proxyDeviceContextData device_context{
+        .rings = static_cast<proxyRingDesc *>(device_channel_views_mem_.get()),
         .max_peers = max_peers,
         .num_channels = channel_count,
         .shutdown_word = shutdown_word_dev};
-    if (allocator_.allocDeviceMem(sizeof(nixlProxyDeviceContextData), device_context_mem_) !=
+    if (allocator_.allocDeviceMem(sizeof(proxyDeviceContextData), device_context_mem_) !=
             NIXL_SUCCESS ||
         allocator_.copy(device_context_mem_.get(),
                         &device_context,
@@ -140,7 +140,7 @@ proxyRuntime::build() {
         workers_.push_back(std::make_unique<proxyWorker>(
             *worker_context_,
             worker_idx,
-            std::span<proxyChannel>(channels_).subspan(share.first_channel, share.channel_count),
+            std::span<proxyChannel>(channels_).subspan(share.firstChannel, share.channelCount),
             share.peers));
     }
 
@@ -184,9 +184,9 @@ proxyRuntime::prepMemView(const nixl_remote_meta_dlist_t &dlist,
             peers.push_back(0);
             continue;
         }
-        if ((peers_.count(desc.remoteAgent) == 0) && (peers_.size() == config_.max_peers)) {
+        if ((peers_.count(desc.remoteAgent) == 0) && (peers_.size() == config_.maxPeers)) {
             NIXL_ERROR << "ProxyRuntime::prepMemView: remote agent " << desc.remoteAgent
-                       << " exceeds proxy_max_peers=" << config_.max_peers;
+                       << " exceeds proxy_max_peers=" << config_.maxPeers;
             return NIXL_ERR_INVALID_PARAM;
         }
         peers.push_back(peers_.try_emplace(desc.remoteAgent, peers_.size()).first->second);
@@ -222,7 +222,7 @@ proxyRuntime::drainChannels() noexcept {
 
     const uint64_t requested = drain_requested_.fetch_add(1, std::memory_order_acq_rel) + 1;
     const auto start = std::chrono::steady_clock::now();
-    const std::chrono::milliseconds timeout(config_.drain_timeout_ms);
+    const std::chrono::milliseconds timeout(config_.drainTimeoutMs);
     auto next_warning = start + proxy_drain_warning_interval;
     for (size_t worker_idx = 0; worker_idx < workers_.size(); ++worker_idx) {
         while (workers_[worker_idx]->drainAcked() < requested) {
@@ -249,7 +249,7 @@ proxyRuntime::start() {
     const std::lock_guard lock(control_mutex_);
     NIXL_INFO << "ProxyRuntime::start: launching " << workers_.size() << " worker thread(s)";
     const nixl_status_t publish_status =
-        control_slots_->publishShutdown(nixl_proxy_control_state_t::RUNNING);
+        control_slots_->publishShutdown(proxy_control_state_t::RUNNING);
     if (publish_status != NIXL_SUCCESS) {
         NIXL_ERROR << "ProxyRuntime::start: failed to publish RUNNING state";
         return publish_status;
@@ -259,8 +259,7 @@ proxyRuntime::start() {
         if (worker->start() != NIXL_SUCCESS) {
             // Stop the workers already started; shutdown() then releases the runtime as built.
             NIXL_ERROR << "ProxyRuntime::start: failed to start a worker thread";
-            if (control_slots_->publishShutdown(nixl_proxy_control_state_t::SHUTDOWN) !=
-                NIXL_SUCCESS) {
+            if (control_slots_->publishShutdown(proxy_control_state_t::SHUTDOWN) != NIXL_SUCCESS) {
                 NIXL_FATAL << "Failed to publish proxy shutdown";
             }
             stop_source_.request_stop();
@@ -285,7 +284,7 @@ proxyRuntime::shutdown() noexcept {
     const std::lock_guard lock(control_mutex_);
     shutting_down_.store(true, std::memory_order_release);
     if (state_ == state_t::RUNNING &&
-        control_slots_->publishShutdown(nixl_proxy_control_state_t::SHUTDOWN) != NIXL_SUCCESS) {
+        control_slots_->publishShutdown(proxy_control_state_t::SHUTDOWN) != NIXL_SUCCESS) {
         NIXL_FATAL << "Failed to publish proxy shutdown";
     }
     // A failed build has never handed a context to a producer.

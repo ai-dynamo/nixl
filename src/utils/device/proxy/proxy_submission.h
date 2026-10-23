@@ -39,7 +39,7 @@ namespace nixl {
  * @retval NIXL_ERR_NOT_SUPPORTED Unknown opcode.
  */
 [[nodiscard]] nixl_status_t
-resolveSubmission(const nixlProxyCommand &command,
+resolveSubmission(const proxyCommand &command,
                   uint32_t channel,
                   uint32_t peer,
                   proxyBackendSubmission &out) noexcept;

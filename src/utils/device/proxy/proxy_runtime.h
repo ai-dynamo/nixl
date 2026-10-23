@@ -72,9 +72,9 @@ public:
     void
     releaseMemView(proxy_view_handle_t proxy_memview);
 
-    nixlProxyDeviceContextData *
+    proxyDeviceContextData *
     deviceContext() const {
-        return static_cast<nixlProxyDeviceContextData *>(device_context_mem_.get());
+        return static_cast<proxyDeviceContextData *>(device_context_mem_.get());
     }
 
 private:
