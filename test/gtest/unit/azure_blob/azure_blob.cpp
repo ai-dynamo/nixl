@@ -25,6 +25,9 @@
 #include <functional>
 #include <map>
 #include <thread>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <asio.hpp>
 
 #include "azure_blob_client.h"
@@ -151,6 +154,122 @@ public:
     hasExecutor() const {
         return executor_ != nullptr;
     }
+};
+
+// Runs blob I/O on its own threads and can hold completion until the test
+// opens the gate. Used to prove caller buffers stay live until the backend
+// reports completion or releaseReqH returns.
+class gatedBlobClient : public iBlobClient {
+public:
+    struct behavior {
+        bool success = true;
+        bool waitForGate = true;
+        bool writeStamp = false;
+        bool captureUserByte = false;
+        char stamp = '\0';
+    };
+
+    ~gatedBlobClient() override {
+        allowCompletion();
+        joinWorkers();
+    }
+
+    void
+    setKeyBehavior(const std::string &key, behavior behavior) {
+        behaviors_[key] = behavior;
+    }
+
+    void
+    allowCompletion() {
+        std::lock_guard<std::mutex> lock(mu_);
+        open_ = true;
+        cv_.notify_all();
+    }
+
+    int
+    startedCount() const {
+        return started_.load();
+    }
+
+    int
+    capturedUserByte() const {
+        return capturedUserByte_.load();
+    }
+
+    void
+    setExecutor(std::shared_ptr<asio::thread_pool> executor) override {
+        executor_ = std::move(executor);
+    }
+
+    void
+    putBlobAsync(std::string_view key,
+                 uintptr_t data_ptr,
+                 size_t data_len,
+                 size_t,
+                 put_blob_callback_t callback) override {
+        launch(std::string(key), data_ptr, data_len, std::move(callback));
+    }
+
+    void
+    getBlobAsync(std::string_view key,
+                 uintptr_t data_ptr,
+                 size_t data_len,
+                 size_t,
+                 get_blob_callback_t callback) override {
+        launch(std::string(key), data_ptr, data_len, std::move(callback));
+    }
+
+    void
+    checkBlobExistsAsync(std::string_view, check_blob_callback_t callback) override {
+        callback(true);
+    }
+
+private:
+    void
+    launch(std::string key,
+           uintptr_t data_ptr,
+           size_t data_len,
+           std::function<void(bool)> callback) {
+        const behavior job = behaviors_.contains(key) ? behaviors_.at(key) : behavior{};
+        std::lock_guard<std::mutex> lock(workersMu_);
+        workers_.emplace_back([this, data_ptr, data_len, callback, job]() {
+            started_.fetch_add(1);
+            if (job.waitForGate) {
+                std::unique_lock<std::mutex> gate_lock(mu_);
+                cv_.wait(gate_lock, [this]() { return open_; });
+            }
+            if (data_ptr != 0 && data_len > 0) {
+                auto *buffer = reinterpret_cast<char *>(data_ptr);
+                if (job.captureUserByte) {
+                    capturedUserByte_.store(static_cast<unsigned char>(buffer[0]));
+                }
+                if (job.writeStamp) {
+                    buffer[0] = job.stamp;
+                }
+            }
+            callback(job.success);
+        });
+    }
+
+    void
+    joinWorkers() {
+        std::lock_guard<std::mutex> lock(workersMu_);
+        for (auto &worker : workers_) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+    }
+
+    std::shared_ptr<asio::thread_pool> executor_;
+    std::map<std::string, behavior> behaviors_;
+    std::mutex mu_;
+    std::mutex workersMu_;
+    std::condition_variable cv_;
+    bool open_ = false;
+    std::atomic<int> started_{0};
+    std::atomic<int> capturedUserByte_{-1};
+    std::vector<std::thread> workers_;
 };
 
 // Mock that fires the checkBlobExistsAsync callback twice to exercise
@@ -537,59 +656,220 @@ TEST_F(azureBlobTestFixture, RegisterUnsupportedMemType) {
     EXPECT_EQ(metadata, nullptr);
 }
 
-TEST_F(azureBlobTestFixture, CancelTransfer) {
-    mockBlobClient_->setSimulateSuccess(true);
+TEST_F(azureBlobTestFixture, ReleaseReqHRejectsNullHandle) {
+    EXPECT_EQ(blobEngine_->releaseReqH(nullptr), NIXL_ERR_INVALID_PARAM);
+}
 
-    nixlBlobDesc local_desc, remote_desc;
+class azureBlobGatedIoFixture : public testing::Test {
+protected:
+    std::unique_ptr<nixlAzureBlobEngine> blobEngine_;
+    std::shared_ptr<gatedBlobClient> client_;
+    nixlBackendInitParams initParams_{};
+    nixl_b_params_t customParams_;
+
+    void
+    SetUp() override {
+        initParams_.localAgent = "test-gated-io";
+        initParams_.type = "AZURE_BLOB";
+        initParams_.customParams = &customParams_;
+        initParams_.enableProgTh = false;
+        initParams_.pthrDelay = 0;
+        initParams_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+
+        client_ = std::make_shared<gatedBlobClient>();
+        initTestBlobEngine(&initParams_, client_, blobEngine_);
+    }
+
+    bool
+    waitUntilStarted(int count) {
+        for (int i = 0; i < 200 && client_->startedCount() < count; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return client_->startedCount() >= count;
+    }
+};
+
+TEST_F(azureBlobGatedIoFixture, ReleaseReqHWaitsUntilReadWritesTheBuffer) {
+    client_->setKeyBehavior("read-blob", {.writeStamp = true, .stamp = 'Q'});
+
+    nixlBlobDesc local_desc;
     local_desc.devId = 1;
+    nixlBlobDesc remote_desc;
     remote_desc.devId = 2;
-    remote_desc.metaInfo = "test-cancel-key";
-
+    remote_desc.metaInfo = "read-blob";
     nixlBackendMD *local_metadata = nullptr;
     nixlBackendMD *remote_metadata = nullptr;
-
     ASSERT_EQ(blobEngine_->registerMem(local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
     ASSERT_EQ(blobEngine_->registerMem(remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
 
+    std::vector<char> buffer(32, '\0');
     nixl_meta_dlist_t local_descs(DRAM_SEG);
     nixl_meta_dlist_t remote_descs(OBJ_SEG);
-
-    std::vector<char> test_buffer(1024);
-    nixlMetaDesc local_meta_desc(
-        reinterpret_cast<uintptr_t>(test_buffer.data()), test_buffer.size(), 1);
-    local_descs.addDesc(local_meta_desc);
-
-    nixlMetaDesc remote_meta_desc(0, test_buffer.size(), 2);
-    remote_descs.addDesc(remote_meta_desc);
+    local_descs.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(buffer.data()), buffer.size(), 1));
+    remote_descs.addDesc(nixlMetaDesc(0, buffer.size(), 2));
 
     nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(blobEngine_->prepXfer(
+                  NIXL_READ, local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+              NIXL_SUCCESS);
+    ASSERT_EQ(blobEngine_->postXfer(
+                  NIXL_READ, local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+              NIXL_IN_PROG);
+    ASSERT_TRUE(waitUntilStarted(1));
 
+    std::atomic<bool> release_returned{false};
+    std::thread releaser([&]() {
+        EXPECT_EQ(blobEngine_->releaseReqH(handle), NIXL_SUCCESS);
+        release_returned.store(true);
+    });
+
+    struct joinOnExit {
+        std::thread &thread;
+        gatedBlobClient *client;
+
+        ~joinOnExit() {
+            client->allowCompletion();
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+    } guard{releaser, client_.get()};
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    EXPECT_FALSE(release_returned.load());
+    EXPECT_EQ(buffer[0], '\0');
+
+    client_->allowCompletion();
+    releaser.join();
+
+    EXPECT_TRUE(release_returned.load());
+    EXPECT_EQ(buffer[0], 'Q');
+    blobEngine_->deregisterMem(local_metadata);
+    blobEngine_->deregisterMem(remote_metadata);
+}
+
+TEST_F(azureBlobGatedIoFixture, ReleaseReqHWaitsUntilWriteReadsTheBuffer) {
+    client_->setKeyBehavior("write-blob", {.captureUserByte = true});
+
+    nixlBlobDesc local_desc;
+    local_desc.devId = 1;
+    nixlBlobDesc remote_desc;
+    remote_desc.devId = 2;
+    remote_desc.metaInfo = "write-blob";
+    nixlBackendMD *local_metadata = nullptr;
+    nixlBackendMD *remote_metadata = nullptr;
+    ASSERT_EQ(blobEngine_->registerMem(local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
+    ASSERT_EQ(blobEngine_->registerMem(remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
+
+    std::vector<char> buffer(32, 'W');
+    nixl_meta_dlist_t local_descs(DRAM_SEG);
+    nixl_meta_dlist_t remote_descs(OBJ_SEG);
+    local_descs.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(buffer.data()), buffer.size(), 1));
+    remote_descs.addDesc(nixlMetaDesc(0, buffer.size(), 2));
+
+    nixlBackendReqH *handle = nullptr;
     ASSERT_EQ(blobEngine_->prepXfer(
                   NIXL_WRITE, local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
               NIXL_SUCCESS);
-    ASSERT_NE(handle, nullptr);
+    ASSERT_EQ(blobEngine_->postXfer(
+                  NIXL_WRITE, local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+              NIXL_IN_PROG);
+    ASSERT_TRUE(waitUntilStarted(1));
 
-    nixl_status_t status = blobEngine_->postXfer(
-        NIXL_WRITE, local_descs, remote_descs, initParams_.localAgent, handle, nullptr);
-    EXPECT_EQ(status, NIXL_IN_PROG);
-    EXPECT_EQ(mockBlobClient_->getPendingCount(), 1);
+    std::atomic<bool> release_returned{false};
+    std::thread releaser([&]() {
+        EXPECT_EQ(blobEngine_->releaseReqH(handle), NIXL_SUCCESS);
+        release_returned.store(true);
+    });
 
-    status = blobEngine_->checkXfer(handle);
-    EXPECT_EQ(status, NIXL_IN_PROG);
+    struct joinOnExit {
+        std::thread &thread;
+        gatedBlobClient *client;
 
-    // Cancel the transfer before completion by releasing the handle
-    // This simulates the cancellation behavior from nixlAgent::releaseXferReq
-    status = blobEngine_->releaseReqH(handle);
-    EXPECT_EQ(status, NIXL_SUCCESS);
-    mockBlobClient_->execAsync();
+        ~joinOnExit() {
+            client->allowCompletion();
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+    } guard{releaser, client_.get()};
 
-    // After cancellation/release, we can't check the transfer status anymore
-    // as the handle has been released. This verifies that cancelling pending
-    // async tasks is handled correctly by properly cleaning up resources.
-    status = blobEngine_->deregisterMem(local_metadata);
-    EXPECT_EQ(status, NIXL_SUCCESS);
-    status = blobEngine_->deregisterMem(remote_metadata);
-    EXPECT_EQ(status, NIXL_SUCCESS);
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    EXPECT_FALSE(release_returned.load());
+    EXPECT_EQ(client_->capturedUserByte(), -1);
+
+    client_->allowCompletion();
+    releaser.join();
+
+    EXPECT_TRUE(release_returned.load());
+    EXPECT_EQ(client_->capturedUserByte(), static_cast<int>('W'));
+    blobEngine_->deregisterMem(local_metadata);
+    blobEngine_->deregisterMem(remote_metadata);
+}
+
+TEST_F(azureBlobGatedIoFixture, CheckXferReportsErrorOnlyAfterSiblingIoFinishes) {
+    // The failing descriptor is posted second, so it becomes ready first.
+    // The slow descriptor must still finish writing the caller buffer before
+    // checkXfer returns that error.
+    client_->setKeyBehavior("slow-blob", {.writeStamp = true, .stamp = 'Q'});
+    client_->setKeyBehavior("fail-blob", {.success = false, .waitForGate = false});
+
+    nixlBlobDesc local_desc;
+    local_desc.devId = 1;
+    nixlBlobDesc slow_desc;
+    slow_desc.devId = 2;
+    slow_desc.metaInfo = "slow-blob";
+    nixlBlobDesc fail_desc;
+    fail_desc.devId = 3;
+    fail_desc.metaInfo = "fail-blob";
+
+    nixlBackendMD *local_metadata = nullptr;
+    nixlBackendMD *slow_metadata = nullptr;
+    nixlBackendMD *fail_metadata = nullptr;
+    ASSERT_EQ(blobEngine_->registerMem(local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
+    ASSERT_EQ(blobEngine_->registerMem(slow_desc, OBJ_SEG, slow_metadata), NIXL_SUCCESS);
+    ASSERT_EQ(blobEngine_->registerMem(fail_desc, OBJ_SEG, fail_metadata), NIXL_SUCCESS);
+
+    std::vector<char> slow_buffer(16, '\0');
+    std::vector<char> fail_buffer(16, '\0');
+    nixl_meta_dlist_t local_descs(DRAM_SEG);
+    nixl_meta_dlist_t remote_descs(OBJ_SEG);
+    local_descs.addDesc(
+        nixlMetaDesc(reinterpret_cast<uintptr_t>(slow_buffer.data()), slow_buffer.size(), 1));
+    local_descs.addDesc(
+        nixlMetaDesc(reinterpret_cast<uintptr_t>(fail_buffer.data()), fail_buffer.size(), 1));
+    remote_descs.addDesc(nixlMetaDesc(0, slow_buffer.size(), slow_desc.devId));
+    remote_descs.addDesc(nixlMetaDesc(0, fail_buffer.size(), fail_desc.devId));
+
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(blobEngine_->prepXfer(
+                  NIXL_READ, local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+              NIXL_SUCCESS);
+    ASSERT_EQ(blobEngine_->postXfer(
+                  NIXL_READ, local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+              NIXL_IN_PROG);
+    ASSERT_TRUE(waitUntilStarted(2));
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    EXPECT_EQ(blobEngine_->checkXfer(handle), NIXL_IN_PROG);
+    EXPECT_EQ(slow_buffer[0], '\0');
+
+    client_->allowCompletion();
+
+    nixl_status_t status = NIXL_IN_PROG;
+    for (int i = 0; i < 200 && status == NIXL_IN_PROG; ++i) {
+        status = blobEngine_->checkXfer(handle);
+        if (status == NIXL_IN_PROG) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+
+    EXPECT_EQ(status, NIXL_ERR_BACKEND);
+    EXPECT_EQ(slow_buffer[0], 'Q');
+    EXPECT_EQ(blobEngine_->releaseReqH(handle), NIXL_SUCCESS);
+    blobEngine_->deregisterMem(local_metadata);
+    blobEngine_->deregisterMem(slow_metadata);
+    blobEngine_->deregisterMem(fail_metadata);
 }
 
 TEST_F(azureBlobTestFixture, ReadFromOffset) {
