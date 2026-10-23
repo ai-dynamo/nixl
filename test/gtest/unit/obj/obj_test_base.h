@@ -30,6 +30,7 @@
 #include <map>
 #include <set>
 #include <optional>
+#include <span>
 
 #include "s3/client.h"
 #include "obj_backend.h"
@@ -52,6 +53,7 @@ private:
     bool simulateError_ = false;
     std::shared_ptr<asioThreadPoolExecutor> executor_;
     std::vector<std::function<void()>> pendingCallbacks_;
+    std::vector<std::string> requestedKeys_;
     std::set<std::string> checkedKeys_;
     std::map<std::string, bool> keyOutcomes_;
     std::map<std::string, std::chrono::milliseconds> keyDelays_;
@@ -97,6 +99,7 @@ public:
         executor_ = std::dynamic_pointer_cast<asioThreadPoolExecutor>(executor);
     }
 
+    /** @brief Record the WRITE key and defer its configured result until execAsync(). */
     void
     putObjectAsync(std::string_view key,
                    uintptr_t data_ptr,
@@ -104,39 +107,7 @@ public:
                    size_t offset,
                    put_object_callback_t callback) override {
         std::string key_str(key);
-
-        // Per-key error overrides global simulateError_
-        bool simulate_error = keyErrors_.count(key_str) > 0 || simulateError_;
-
-        // Per-key outcome overrides global simulateSuccess_
-        bool success = simulateSuccess_;
-        auto outcome_it = keyOutcomes_.find(key_str);
-        if (outcome_it != keyOutcomes_.end()) {
-            success = outcome_it->second;
-        }
-
-        // Per-key delay (defaults to no delay)
-        std::chrono::milliseconds delay{0};
-        auto delay_it = keyDelays_.find(key_str);
-        if (delay_it != keyDelays_.end()) {
-            delay = delay_it->second;
-        }
-
-        pendingCallbacks_.push_back([callback, success, simulate_error, delay]() {
-            if (delay.count() > 0) {
-                std::this_thread::sleep_for(delay);
-            }
-            callback(simulate_error ? false : success);
-        });
-    }
-
-    void
-    getObjectAsync(std::string_view key,
-                   uintptr_t data_ptr,
-                   size_t data_len,
-                   size_t offset,
-                   get_object_callback_t callback) override {
-        std::string key_str(key);
+        requestedKeys_.push_back(key_str);
 
         // Per-key error overrides global simulateError_
         bool simulate_error = keyErrors_.count(key_str) > 0 || simulateError_;
@@ -156,6 +127,44 @@ public:
         }
 
         pendingCallbacks_.push_back(
+            // Apply the configured delay and report the mock WRITE result.
+            [callback, success, simulate_error, delay]() {
+                if (delay.count() > 0) {
+                    std::this_thread::sleep_for(delay);
+                }
+                callback(simulate_error ? false : success);
+            });
+    }
+
+    /** @brief Record the READ key and defer its offset-dependent payload and result. */
+    void
+    getObjectAsync(std::string_view key,
+                   uintptr_t data_ptr,
+                   size_t data_len,
+                   size_t offset,
+                   get_object_callback_t callback) override {
+        std::string key_str(key);
+        requestedKeys_.push_back(key_str);
+
+        // Per-key error overrides global simulateError_
+        bool simulate_error = keyErrors_.count(key_str) > 0 || simulateError_;
+
+        // Per-key outcome overrides global simulateSuccess_
+        bool success = simulateSuccess_;
+        auto outcome_it = keyOutcomes_.find(key_str);
+        if (outcome_it != keyOutcomes_.end()) {
+            success = outcome_it->second;
+        }
+
+        // Per-key delay (defaults to no delay)
+        std::chrono::milliseconds delay{0};
+        auto delay_it = keyDelays_.find(key_str);
+        if (delay_it != keyDelays_.end()) {
+            delay = delay_it->second;
+        }
+
+        pendingCallbacks_.push_back(
+            // Fill successful READs with the object pattern, then report completion.
             [callback, data_ptr, data_len, offset, success, simulate_error, delay]() {
                 if (delay.count() > 0) {
                     std::this_thread::sleep_for(delay);
@@ -223,9 +232,16 @@ public:
         }
     }
 
+    /** @brief Return the number of queued callbacks that execAsync() has not drained. */
     size_t
     getPendingCount() const {
         return pendingCallbacks_.size();
+    }
+
+    /** @brief Return all READ and WRITE keys in submission order, including duplicates. */
+    const std::vector<std::string> &
+    getRequestedKeys() const {
+        return requestedKeys_;
     }
 
     const std::set<std::string> &
@@ -300,8 +316,16 @@ protected:
     nixlBackendInitParams initParams_;
     nixl_b_params_t customParams_;
 
+    /**
+     * @brief Create a test engine with the registered mock and an optional CRT mock.
+     * @param agentName Local agent name used by transfer preparation.
+     * @param params Backend settings that select the engine and CRT threshold.
+     * @param crt_client Separate CRT mock for observing descriptor routing.
+     */
     void
-    setupEngine(const std::string &agentName, nixl_b_params_t params = {}) {
+    setupEngine(const std::string &agentName,
+                nixl_b_params_t params = {},
+                std::shared_ptr<mockS3Client> crt_client = nullptr) {
         customParams_ = params;
         initParams_.localAgent = agentName;
         initParams_.type = "OBJ";
@@ -317,9 +341,23 @@ protected:
             throw std::runtime_error("No registered mock for engine type '" + type + "'");
         }
         mockS3Client_ = mock ? mock : std::make_shared<mockS3Client>();
-        objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockS3Client_);
+        objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockS3Client_, crt_client);
     }
 
+    /**
+     * @brief Check every byte against the mock's repeating alphabet pattern.
+     * @param buffer Destination bytes that the READ must fill.
+     * @param offset Starting byte offset in the mock object.
+     */
+    static void
+    expectReadPattern(std::span<const char> buffer, size_t offset = 0) {
+        for (size_t i = 0; i < buffer.size(); ++i) {
+            ASSERT_EQ(buffer[i], static_cast<char>('A' + ((i + offset) % 26)))
+                << "Unexpected read data at byte " << i;
+        }
+    }
+
+    /** @brief Complete one transfer and verify the full payload for a READ. */
     void
     testTransferWithSize(nixl_xfer_op_t operation,
                          size_t buffer_size,
@@ -371,10 +409,7 @@ protected:
         EXPECT_EQ(status, NIXL_SUCCESS);
 
         if (operation == NIXL_READ) {
-            if (test_buffer.size() > 0) {
-                EXPECT_TRUE(std::all_of(
-                    test_buffer.begin(), test_buffer.end(), [](char c) { return c == 'A'; }));
-            }
+            expectReadPattern(test_buffer);
         }
 
         objEngine_->releaseReqH(handle);
@@ -382,6 +417,7 @@ protected:
         objEngine_->deregisterMem(remote_metadata);
     }
 
+    /** @brief Complete two descriptors and verify each READ buffer independently. */
     void
     testMultiDescriptorWithSizes(nixl_xfer_op_t operation,
                                  size_t size0,
@@ -453,8 +489,8 @@ protected:
         EXPECT_EQ(status, NIXL_SUCCESS);
 
         if (operation == NIXL_READ) {
-            EXPECT_EQ(test_buffer0[0], 'A');
-            EXPECT_EQ(test_buffer1[0], 'A');
+            expectReadPattern(test_buffer0);
+            expectReadPattern(test_buffer1);
         }
 
         objEngine_->releaseReqH(handle);
