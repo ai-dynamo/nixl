@@ -141,8 +141,12 @@ class SharedRingBuffer:
         self.cached_write_pos = 0
         self.cached_mask = 0
 
-        self._open_file()
-        self._map_memory()
+        try:
+            self._open_file()
+            self._map_memory()
+        except Exception:
+            self.close()
+            raise
 
         # Seed the cached positions on attaching to an existing buffer
         self.cached_write_pos = self.header.write_pos
@@ -242,19 +246,46 @@ class SharedRingBuffer:
             if read_pos == self.cached_write_pos:
                 return None
 
-        event = self.data[read_pos]
+        # copy before releasing the slot, the producer may reuse it
+        event = NixlTelemetryEvent.from_buffer_copy(
+            self.data, read_pos * ctypes.sizeof(NixlTelemetryEvent)
+        )
 
         next_read = (read_pos + 1) & self.cached_mask
         self.header.read_pos = next_read
 
         return event
 
+    def close(self):
+        """Release the mapping, the lock and the file"""
+        # the views pin the mapping, drop them before closing it
+        self.header = None
+        self.data = None
+        if self.mmap_obj is not None:
+            try:
+                self.mmap_obj.close()
+                self.mmap_obj = None
+            except BufferError as e:
+                logger.warning(
+                    "Cannot unmap telemetry buffer %s (%s), view of it may still be held",
+                    self.file_path,
+                    e,
+                )
+        if self.file_fd != -1:
+            try:
+                fcntl.flock(self.file_fd, fcntl.LOCK_UN)
+            except OSError as e:
+                logger.warning(
+                    "Cannot unlock telemetry buffer %s (%s)",
+                    self.file_path,
+                    e,
+                )
+            os.close(self.file_fd)
+            self.file_fd = -1
+
     def __del__(self):
         """Cleanup resources"""
-        # if self.mmap_obj:
-        #     self.mmap_obj.close()
-        if self.file_fd != -1:
-            os.close(self.file_fd)
+        self.close()
 
 
 def format_bytes(bytes_val):
