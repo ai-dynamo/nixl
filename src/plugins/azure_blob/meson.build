@@ -43,7 +43,7 @@ if 'AZURE_BLOB' in static_plugins
         'AZURE_BLOB',
         azure_sources,
         dependencies: azure_deps,
-        cpp_args: compile_defs + compile_flags,
+        cpp_args: [],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
         name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
@@ -52,7 +52,7 @@ else
         'AZURE_BLOB',
         azure_sources,
         dependencies: azure_deps,
-        cpp_args: compile_defs + ['-fPIC'],
+        cpp_args: ['-fPIC'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
         name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
@@ -66,4 +66,6 @@ else
     endif
 endif
 
-azure_blob_backend_interface = declare_dependency(link_with: azure_blob_backend_lib)
+azure_blob_backend_interface = declare_dependency(
+    link_with: azure_blob_backend_lib,
+    dependencies: dependency('asio', required: true))
