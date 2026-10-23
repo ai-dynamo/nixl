@@ -153,7 +153,7 @@ struct docaStripedWriteLaunch {
     uint32_t positions[DOCA_XFER_REQ_MAX];
 };
 
-enum docaXferState : uint32_t {
+enum docaSlotState : uint32_t {
     DOCA_XFER_STATE_PREPARED = 1,
     DOCA_XFER_STATE_DATA_POSTED,
     // GPU data CQ completed; notification and CPU terminal publication may still be pending.

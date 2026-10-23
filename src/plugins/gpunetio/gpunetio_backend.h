@@ -202,7 +202,6 @@ private:
         bool attachedStream = false;
         uint32_t devId;
         std::vector<uint32_t> positions;
-        doca_gpu_dev_verbs_qp *qp_data = nullptr;
         uintptr_t backendHandleGpu;
         size_t postedCount = 0;
         nixl_status_t postStatus = NIXL_SUCCESS;

@@ -1721,7 +1721,6 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     }
 
     treq = new nixlDocaBckndReq;
-    treq->qp_data = rdma_qp->qp_data->get_qp_gpu_dev();
     auto abandon_request = [&]() {
         for (uint32_t reserved_pos : treq->positions) {
             xferReqReserved_[reserved_pos].store(false, std::memory_order_release);
@@ -1949,14 +1948,14 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     for (uint32_t idx : treq->positions) {
         const doca_error_t result = operation == NIXL_READ ?
             doca_kernel_read(treq->stream,
-                             treq->qp_data,
+                             xferReqRingCpu[idx].qp_data,
                              xferReqRingGpu,
                              progress_state_gpu,
                              wait_exit_gpu,
                              idx,
                              treq->attachedStream) :
             doca_kernel_write(treq->stream,
-                              treq->qp_data,
+                              xferReqRingCpu[idx].qp_data,
                               xferReqRingGpu,
                               progress_state_gpu,
                               wait_exit_gpu,
