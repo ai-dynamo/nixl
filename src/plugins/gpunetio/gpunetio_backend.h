@@ -18,6 +18,7 @@
 #ifndef GPUNETIO_BACKEND_H
 #define GPUNETIO_BACKEND_H
 
+#include <bitset>
 #include "gpunetio_backend_aux.h"
 
 class nixlDocaEngine : public nixlBackendEngine {
@@ -166,6 +167,7 @@ private:
     mutable std::atomic<uint32_t> xferStream;
     mutable std::atomic<uint32_t> lastPostedReq;
     mutable std::mutex postLock_;
+    mutable std::bitset<DOCA_MAX_COMPLETION_INFLIGHT> completionReserved;
 
     struct docaXferReqGpu *xferReqRingGpu;
     struct docaXferReqGpu *xferReqRingCpu;
@@ -197,26 +199,23 @@ private:
     class nixlDocaBckndReq : public nixlBackendReqH {
     private:
     public:
-        enum class completion_state : uint8_t { IN_PROGRESS, COMPLETING, COMPLETE };
-
         cudaStream_t stream;
         uint32_t devId;
         std::vector<uint32_t> positions;
         uintptr_t backendHandleGpu;
-        size_t postedCount = 0;
+        std::vector<uint32_t> completion_ids;
         nixl_status_t postStatus = NIXL_SUCCESS;
-        std::atomic<completion_state> completionState{completion_state::IN_PROGRESS};
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
 
         ~nixlDocaBckndReq() {}
     };
 
-    void
-    retireRequest(nixlDocaBckndReq *request) const;
-
+    // Called by postXfer with postLock_ held and the completion range checked.
     nixl_status_t
-    postStripedWrite(nixlDocaBckndReq *request, const std::string &remote_agent) const;
+    postStripedWrite(nixlDocaBckndReq *request,
+                     const std::string &remote_agent,
+                     uint32_t completion_start) const;
 
     nixl_status_t
     progressThreadStart();

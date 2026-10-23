@@ -95,25 +95,30 @@ canPairWrite(uintptr_t address,
 
 } // namespace nixl::gpunetio
 
-constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
-constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT_MASK = (DOCA_MAX_COMPLETION_INFLIGHT - 1);
-constexpr uint32_t RDMA_SEND_QUEUE_SIZE = 2048;
-constexpr uint32_t RDMA_RECV_QUEUE_SIZE = (RDMA_SEND_QUEUE_SIZE * 2);
-constexpr uint32_t DOCA_POST_STREAM_NUM = 4;
-constexpr uint32_t DOCA_XFER_REQ_SIZE = 512;
-constexpr uint32_t DOCA_XFER_REQ_MAX = 32;
-constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
-constexpr uint32_t DOCA_ENG_MAX_CONN = 20;
-constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
+inline constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
+inline constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT_MASK = (DOCA_MAX_COMPLETION_INFLIGHT - 1);
+inline constexpr uint8_t DOCA_COMPLETION_PENDING = 0;
+inline constexpr uint8_t DOCA_COMPLETION_DONE = 1;
+inline constexpr uint8_t DOCA_COMPLETION_RELEASED = 2;
+inline constexpr uint8_t DOCA_COMPLETION_ABORTED = 3;
+inline constexpr uint8_t DOCA_COMPLETION_SKIP = 4;
+inline constexpr uint32_t RDMA_SEND_QUEUE_SIZE = 2048;
+inline constexpr uint32_t RDMA_RECV_QUEUE_SIZE = (RDMA_SEND_QUEUE_SIZE * 2);
+inline constexpr uint32_t DOCA_POST_STREAM_NUM = 4;
+inline constexpr uint32_t DOCA_XFER_REQ_SIZE = 512;
+inline constexpr uint32_t DOCA_XFER_REQ_MAX = 32;
+inline constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
+inline constexpr uint32_t DOCA_ENG_MAX_CONN = 20;
+inline constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define DOCA_RDMA_SERVER_ADDR_LEN \
     (MAX(MAX(DOCA_DEVINFO_IPV4_ADDR_SIZE, DOCA_DEVINFO_IPV6_ADDR_SIZE), DOCA_GID_BYTE_LENGTH))
 // Pre-fill the whole recv queue with notif once
-constexpr uint32_t DOCA_MAX_NOTIF_INFLIGHT = RDMA_RECV_QUEUE_SIZE;
-constexpr uint32_t DOCA_MAX_NOTIF_MESSAGE_SIZE = 8192;
-constexpr time_t DOCA_OOB_SOCKET_TIMEOUT_SEC = 10;
-constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
+inline constexpr uint32_t DOCA_MAX_NOTIF_INFLIGHT = RDMA_RECV_QUEUE_SIZE;
+inline constexpr uint32_t DOCA_MAX_NOTIF_MESSAGE_SIZE = 8192;
+inline constexpr time_t DOCA_OOB_SOCKET_TIMEOUT_SEC = 10;
+inline constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
 
 #ifndef ACCESS_ONCE
 #define ACCESS_ONCE(x) (*(volatile uint8_t *)&(x))
@@ -163,7 +168,6 @@ struct nixlDocaNotif {
     uint32_t elems_num;
     uint32_t elems_size;
     uint8_t *send_addr = nullptr;
-    std::atomic<uint32_t> send_pi;
     std::unique_ptr<nixl::doca::verbs::mr> send_mr;
     uint8_t *recv_addr = nullptr;
     std::atomic<uint32_t> recv_pi;
