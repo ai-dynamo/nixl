@@ -198,12 +198,13 @@ since an `int64_t` attribute would show half of all ids as negative; the executi
 number is an `int64_t`. With no tracing backend active, a request has neither. A
 drawn id is never 0: if the agent's random source fails while drawing it, the
 request's records carry `nixl.xfer_request_id=0` and `nixl.xfer_execution=0`, meaning
-none. Both are attributes only: the wire and the NVTX payload carry the trace context
-(see "Correlation").
+none. Both are attributes, which UCX also carries to the receiver (see "Backend
+phases"); the NVTX payload carries the trace context (see "Correlation").
 
 Backend phases carry the pair too: a plugin receives it with the request's trace
 context and passes it back when it records a phase (see "Backend phases"). UCX's
-sender phases carry it; the receiver's `nixl::notif.received` does not.
+sender phases carry it, and so does the receiver's `nixl::notif.received`, which
+reads it from the notification, so the records of both sides join on the pair.
 
 ### Backend phases
 
@@ -263,14 +264,18 @@ plugin can read; a plugin that records phases later copies them with the context
 and passes them back to `recordPhase`.
 
 UCX is the first such carrier. For a sampled request it appends the 26-byte
-record as a `tctx` tag after the notification's `name` and `msg`, so an older
-receiver, which stops reading after `msg`, is unaffected; unsampled requests and
-`genNotif` add nothing. When the notification arrives at an agent with tracing
-on, UCX records `nixl::notif.received` under the sender's context, with
-`nixl.remote_agent` naming the sender; an agent with tracing off skips the record
-without reading it. The event thus carries the request's trace
-id in `nixl.traceparent`, and the same correlation id as the sender's
-`nixl::postXferReq.write` or `.read` span. Writes and reads without a
+record as a `tctx` tag after the notification's `name` and `msg`, then, when the
+request has an id, a 16-byte `treq` tag: the request id and the post's execution
+number, each 8 bytes little-endian. An older receiver stops reading after the tags it
+knows, so it is unaffected; unsampled requests and `genNotif` add nothing. When the
+notification arrives at an agent with tracing on, UCX records `nixl::notif.received`
+under the sender's context, with `nixl.remote_agent` naming the sender and, from
+`treq`, the sender's `nixl.xfer_request_id` and `nixl.xfer_execution`; a missing or
+malformed `treq` costs the event only the pair. An agent with tracing off skips
+both tags without reading them. The event thus carries the request's trace id in
+`nixl.traceparent`, the same correlation id as the sender's
+`nixl::postXferReq.write` or `.read` span, and the same request id and execution
+number as the sender's records of that post. Writes and reads without a
 notification give the receiver nothing to observe, so they are traced on the
 sender only.
 
@@ -367,16 +372,18 @@ The two-process test starts its receiver agent as a separate executable,
 `ucx_trace_receiver`, which is built and installed next to `gtest`, and checks the
 spans both agents record against the sender's request; with `-Dwith_trace=false`,
 which compiles the sender's `postXferReq` span out, it checks only the phases, which
-go through the sink either way. Four single-process tests in the same suite check
-the sender's phases. Transfers to the agent itself, on the default and the
+go through the sink either way. Five single-process tests in the same suite check
+the phases. Transfers to the agent itself, on the default and the
 thread-pool engine, record `nixl::submit` and `nixl::wire.submitted` once per post
 and `nixl::notif.sent` once per notifying post. A transfer to a second agent that
 nothing progresses cannot finish inside `postXfer`, so its `notif.sent` must come
 from the status check. An unsampled request, or an agent with tracing off, records
-none of them. The agents trace through `recorder`, a test-only backend
-(`libtrace_backend_recorder.so` in the mocks directory) that appends one line per
-finished or emitted span, per emitted event and per mark to the file named by
-`NIXL_TEST_TRACE_FILE`; the tests set both variables themselves.
+none of them. An agent that sends itself two notifications records
+`nixl::notif.received` for each, with that post's execution number. The agents
+trace through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in
+the mocks directory) that appends one line per finished or emitted span, per
+emitted event and per mark to the file named by `NIXL_TEST_TRACE_FILE`; the tests
+set both variables themselves.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
 test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically
