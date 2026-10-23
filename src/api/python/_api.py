@@ -861,12 +861,12 @@ class nixl_agent:
             remote_agent_name: Name of the remote agent.
             notif_msg: Message to send, it will be received as bytes.
                 notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
-            backends: Optional a backend name to use to send the notifications.
+            backend: Optional a backend name to use to send the notifications.
         """
         if backend is None:
             self.agent.genNotif(remote_agent_name, notif_msg)
         else:
-            self.agent.genNotif(remote_agent_name, notif_msg, self.backends[backend])
+            self.agent.genNotif(remote_agent_name, notif_msg, [self.backends[backend]])
 
     def get_agent_metadata(self) -> bytes:
         """Get the full metadata of the local agent.
