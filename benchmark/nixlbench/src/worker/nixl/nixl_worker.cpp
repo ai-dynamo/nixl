@@ -525,6 +525,11 @@ makeHugepagesAlloc(size_t size) {
         std::cerr << "Hugepages may not be available. Check /proc/sys/vm/nr_hugepages and "
                   << "ensure sufficient hugepages are configured, or run without "
                   << "--use_hugepages" << std::endl;
+        if (xferBenchConfig::numa_node >= 0) {
+            std::cerr << "With --numa_node, hugepages must be reserved on node "
+                      << xferBenchConfig::numa_node << " (see /sys/devices/system/node/node"
+                      << xferBenchConfig::numa_node << "/hugepages)" << std::endl;
+        }
         return nullptr;
     }
 
