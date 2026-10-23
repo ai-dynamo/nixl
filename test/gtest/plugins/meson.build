@@ -13,6 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if enabled_plugins.get('MOONCAKE') and is_variable('mooncake_backend_interface')
+    subdir('mooncake')
+endif
+
 if enabled_plugins.get('UCCL')
     subdir('uccl')
 endif
