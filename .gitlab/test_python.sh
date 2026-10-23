@@ -69,6 +69,7 @@ start_etcd_server "/nixl/python_ci"
 
 echo "==== Running python tests ===="
 pytest -s test/python
+pytest -s benchmark/kvbench/test/test_gds_profile.py
 
 if $TEST_LIBFABRIC ; then
     cat /sys/devices/virtual/dmi/id/product_name
