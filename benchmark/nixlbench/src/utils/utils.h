@@ -418,6 +418,10 @@ private:
 public:
     static bool
     debugEnabled(); // Whether NIXLBENCH_LOG_LEVEL is DEBUG or TRACE
+    /* True when Level Zero (Intel Xe / XPU) should supply VRAM. The single place this is decided:
+       allocation and the --check_consistency copy-back must agree on which runtime owns a buffer. */
+    static bool
+    useZeVram();
     static void
     setRT(xferBenchRT *rt);
     static void

@@ -16,15 +16,9 @@
 
 # LibFabric plugin configuration
 
-# AMD ROCm/HIP support (rocm_dep, hipify_src) is defined once in the root
-# meson.build and consumed here. On ROCm builds (-Drocm_path=<prefix>) the CUDA
-# sources are translated to HIP with hipify-perl; on CUDA-only builds they are
-# used verbatim.
-if rocm_dep.found()
-    libfabric_backend_src = hipify_src.process('libfabric_backend.cpp', extra_args: ['-o'])
-else
-    libfabric_backend_src = files('libfabric_backend.cpp')
-endif
+# No hipify step: the backend makes no accelerator vendor calls. Every vendor, AMD included, is
+# reached through the HMEM shim in src/utils/libfabric.
+libfabric_backend_src = files('libfabric_backend.cpp')
 
 # Enable libfabric utils layer
 libfabric_plugin_deps = [
@@ -38,15 +32,19 @@ libfabric_plugin_deps = [
 
 compile_flags = ['-DHAVE_LIBFABRIC']
 
-# Add GPU support: HIP/ROCm when rocm_path is set, CUDA otherwise. The GPU code
-# paths are guarded by HAVE_CUDA; on ROCm the hipified sources compile those
-# paths against HIP via rocm_dep.
+# GPU runtime libraries, for the HMEM shim the utils layer links in: libfabric_utils_dep is a static
+# library whose own external dependencies do not carry through, and the shim's CUDA vendor calls
+# libcuda directly.
 if rocm_dep.found()
     libfabric_plugin_deps += [rocm_dep]
-    compile_flags += ['-DHAVE_CUDA']
 elif cuda_dep.found()
     libfabric_plugin_deps += [cuda_dep]
-    compile_flags += ['-DHAVE_CUDA']
+endif
+
+# Add Level Zero (Intel Xe / XPU) support if available. Headers only: libze_loader is dlopen'd
+# by the utils layer, so nothing is added to libfabric_plugin_deps.
+if have_ze
+    compile_flags += ['-DHAVE_ZE']
 endif
 
 # Build as static or shared library based on configuration

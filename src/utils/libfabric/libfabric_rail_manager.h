@@ -26,15 +26,10 @@
 #include <mutex>
 #include <atomic>
 #include "libfabric_rail.h"
+#include "libfabric_accel.h"
 
-#ifdef HAVE_CUDA
-#ifdef __HIP_PLATFORM_AMD__
-#include <hip/hip_runtime.h>
-#else
-#include <cuda.h>
-#include <cuda_runtime.h>
-#endif
-#endif
+/** @brief No peer rail shares this local rail's fabric; fall back to index order. */
+static constexpr size_t NIXL_LF_NO_PEER_RAIL = static_cast<size_t>(-1);
 
 // Forward declarations
 class nixlLibfabricTopology;
@@ -109,13 +104,13 @@ public:
     init(const nixl_b_params_t &custom_params);
 
     // Rail management
-    /** Create rails for high-bandwidth transfers (one per EFA device)
-     * @param efa_devices List of EFA device names to create rails on
-     * @param provider_name Provider name ("efa" or "efa-direct")
+    /** Create rails for high-bandwidth transfers (one per device)
+     * @param nic_devices List of libfabric domain names to create rails on
+     * @param provider_name Core provider name, e.g. "efa", "efa-direct", "cxi", "verbs", "tcp"
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
-    createRails(const std::vector<std::string> &efa_devices, const std::string &provider_name);
+    createRails(const std::vector<std::string> &nic_devices, const std::string &provider_name);
 
     // Access rails
     /** Get reference to rail by ID */
@@ -136,6 +131,20 @@ public:
         return rails_.size();
     }
 
+    /** Peer rail for each entry of @p selected_rails when the fast path -- its fabric-matched peer
+     * rail registered the buffer -- does not apply to every rail. Steps and rationale are described
+     * in prepareAndSubmitTransfer(). One-to-one wherever there are enough registered peer rails.
+     * @param selected_rails Local rails of the buffer, in any order
+     * @param remote_selected_endpoints Peer rails that registered the buffer, ascending
+     * @param peer_rail_for_local_rail computeRailPeering() result: empty when fabric ids were
+     *        unreadable, NIXL_LF_NO_PEER_RAIL for a rail with no peer on its fabric
+     * @return Peer rail per entry of @p selected_rails, indexed like it
+     */
+    static std::vector<size_t>
+    assignFallbackPeerRails(const std::vector<size_t> &selected_rails,
+                            const std::vector<size_t> &remote_selected_endpoints,
+                            const std::vector<size_t> &peer_rail_for_local_rail);
+
     /** Round-robin index of a descriptor into a selection array of `count` entries.
      * batch_write groups NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE consecutive descriptors per entry.
      * The FI_MORE flush precompute and the rail selection must agree, so both call this. */
@@ -153,8 +162,11 @@ public:
      * @param length Buffer size in bytes
      * @param mem_type Memory type (DRAM_SEG or VRAM_SEG)
      * @param device_id Device ID (used for VRAM_SEG, ignored for DRAM_SEG)
-     * @param device_pci_bus_id PCI bus ID for VRAM device (queried in backend layer), empty for
-     * DRAM
+     * @param hmem_info What the backend resolved for @p buffer -- its single nfi_hmem_query_ptr()
+     * probe, plus the accelUnclaimedVramIface() fallback for a VRAM_SEG no runtime claimed: the
+     * HMEM interface, the libfabric device ordinal and the PCI bus ID used for rail selection.
+     * Registered exactly as given, and passed down rather than re-derived here so there is
+     * exactly one probe per registration and no way for two layers to disagree about a pointer.
      * @param mr_list_out Memory registration handles, indexed by rail ID
      * @param key_list_out Remote access keys, indexed by rail ID
      * @param selected_rails_out List of rail IDs where memory was registered
@@ -165,7 +177,7 @@ public:
                    size_t length,
                    nixl_mem_t mem_type,
                    int device_id,
-                   const std::string &device_pci_bus_id,
+                   const struct nfi_hmem_info &hmem_info,
                    std::vector<struct fid_mr *> &mr_list_out,
                    std::vector<uint64_t> &key_list_out,
                    std::vector<size_t> &selected_rails_out);
@@ -187,11 +199,29 @@ public:
      * @param ep_names_out Local endpoint names for reference
      * @return NIXL_SUCCESS on success, error code on failure
      */
+    /**
+     * @brief Pairs each local rail with the peer rail on its own fabric segment.
+     *
+     * @param endpoints The peer's rail endpoint names, in the peer's rail order.
+     * @return One entry per local rail: an index into @p endpoints, or @ref NIXL_LF_NO_PEER_RAIL.
+     *         Empty if no local rail has a readable fabric identity, which leaves pairing as it was.
+     */
+    std::vector<size_t>
+    computeRailPeering(const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints) const;
+
     nixl_status_t
     insertAllAddresses(const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints,
                        uint32_t agent_idx,
                        std::unordered_map<size_t, std::vector<fi_addr_t>> &fi_addrs_out,
                        std::vector<char *> &ep_names_out);
+    /** Drop the source-address mappings insertAllAddresses() made for @p agent_idx, keeping the
+     *  address vector entries. See nixlLibfabricRail::unmapSourceAddress().
+     * @param fi_addrs The addresses insertAllAddresses() returned, keyed by rail id
+     */
+    void
+    unmapAgentAddresses(const std::unordered_map<size_t, std::vector<fi_addr_t>> &fi_addrs,
+                        uint32_t agent_idx);
+
     /** Clean up connection resources for rails
      * @param fi_addrs_to_remove Libfabric addresses to remove
      * @return NIXL_SUCCESS on success, error code on failure
@@ -219,8 +249,9 @@ public:
      *        (posted with FI_MORE); false flushes the rail's batch. The caller passes false for
      *        a rail's last post and when a batch reaches NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE.
      *        Defaults to false so an unmarked descriptor flushes safely.
-     * @param device_id Device id when multi-GPU is enabled.
-     * @param is_cuda_device Specifies whether this is CUDA-VRAM transfer.
+     * @param hmem_info What the HMEM shim said about the local buffer at registration. Carried so a
+     *        deferred post can bind the progress thread to the owning accelerator device; ignored
+     *        for host memory and for runtimes with no thread-current state.
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
@@ -233,6 +264,7 @@ public:
                              const std::vector<struct fid_mr *> &local_mrs,
                              const std::vector<uint64_t> &remote_keys,
                              const std::vector<size_t> &remote_selected_endpoints,
+                             const std::vector<size_t> &peer_rail_for_local_rail,
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
                              uint16_t xfer_id,
                              std::function<void(nixl_status_t)> completion_callback,
@@ -240,16 +272,14 @@ public:
                              int desc_idx,
                              size_t base_offset,
                              bool apply_fi_more = false,
-                             int device_id = -1,
-                             bool is_cuda_vram = false);
+                             const struct nfi_hmem_info &hmem_info = nfi_hmem_info{});
 
     void
     deferTransferRequest(nixlLibfabricReq::OpType op_type,
                          uint16_t xfer_id,
                          uint64_t fi_flags,
                          fi_addr_t dest_addr,
-                         int device_id,
-                         bool is_cuda_vram,
+                         const struct nfi_hmem_info &hmem_info,
                          size_t rail_id,
                          nixlLibfabricReq *req);
 
@@ -280,13 +310,17 @@ public:
      * @param req Control request with data buffer
      * @param dest_addr Destination address
      * @param completion_callback Optional completion callback
-     * @return NIXL_SUCCESS on success, error code on failure
+     * @param blocking When false, a send that would block returns NIXL_IN_PROG instead of
+     *        retrying; @p req is released either way, so the caller rebuilds it to retry
+     * @return NIXL_SUCCESS on success, NIXL_IN_PROG if non-blocking and the send would block,
+     *         error code on failure
      */
     nixl_status_t
     postControlMessage(ControlMessageType msg_type,
                        nixlLibfabricReq *req,
                        fi_addr_t dest_addr,
-                       std::function<void(nixl_status_t)> completion_callback = nullptr);
+                       std::function<void(nixl_status_t)> completion_callback = nullptr,
+                       bool blocking = true);
     // Progress APIs
     /** Process completions on active rails only (optimized for CPU overhead)
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
@@ -377,12 +411,6 @@ public:
         return dram_rail_selection_policy_;
     }
 
-    /** Get the system's runtime type.
-     * @return fi_hmem_iface runtime type (CUDA, NEURON, or SYSTEM)
-     */
-    fi_hmem_iface
-    getRuntime() const;
-
 private:
     size_t striping_threshold_;
 
@@ -393,9 +421,6 @@ private:
     enum class DmabufMappingMode { Auto, ForcePcie, ForceDefault, Off };
     DmabufMappingMode dmabuf_mapping_mode_ = DmabufMappingMode::Auto;
 
-    // System runtime type (determined once at initialization)
-    fi_hmem_iface runtime_;
-
     // Rail allocation
     std::vector<std::unique_ptr<nixlLibfabricRail>> rails_;
 
@@ -403,12 +428,19 @@ private:
 
     std::unique_ptr<nixlLibfabricTopology> topology;
 
-    // EFA device to rail mapping
-    std::unordered_map<std::string, size_t> efa_device_to_rail_map;
+    // NIC domain name to rail mapping
+    std::unordered_map<std::string, size_t> nic_device_to_rail_map;
 
     // active rails with reference counting (always positive)
     std::unordered_map<size_t, size_t> active_rails_;
     mutable std::mutex active_rails_mutex_;
+
+    // Rails a control message has been sent from, indexed by rail id and sized once in
+    // createRails(). Control messages arrive on the peer's rail 0, but their send completions land
+    // on the sending rail -- nixlLibfabricConnection::control_rail_, which need not be 0 nor hold
+    // any registration -- so progressActiveRails() must read these too. Atomic flags rather than a
+    // set under active_rails_mutex_, since every notification posts through here.
+    std::unique_ptr<std::atomic<bool>[]> control_rail_used_;
 
     // rail selection policy for DRAM memory type
     std::unique_ptr<nixlLibfabricRailSelectionPolicy> dram_rail_selection_policy_;

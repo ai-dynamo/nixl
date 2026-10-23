@@ -34,6 +34,7 @@
 #include "backend/backend_aux.h"
 #include "libfabric/libfabric_common.h"
 #include "libfabric/libfabric_cuda_dmabuf.h"
+#include "nfi_hmem.h"
 
 // Forward declarations
 class nixlLibfabricConnection;
@@ -389,17 +390,30 @@ struct nixlLibfabricPostRequest {
     uint64_t remote_key;
     nixlLibfabricReq *req;
     uint64_t fi_flags;
-    int device_id; // CUDA device ordinal for cudaSetDevice in PT
-    bool is_cuda_vram;
+    /** What the HMEM shim said about this request's local buffer, copied from its registration.
+     *  The progress thread binds from this before posting -- a no-op for host memory and for every
+     *  runtime that keeps no thread-current state, so no separate flag is needed. */
+    struct nfi_hmem_info hmem_info;
 };
 
 /** Individual libfabric rail managing fabric, domain, endpoint, CQ, and AV */
 class nixlLibfabricRail {
 public:
     uint16_t rail_id; ///< Unique rail identifier
-    std::string device_name; ///< EFA device name for this rail
-    std::string provider_name; ///< Provider name (e.g., "efa", "efa-direct")
+    std::string device_name; ///< Libfabric domain name for this rail
+    std::string provider_name; ///< Core provider name (e.g., "efa", "efa-direct", "verbs")
     char ep_name[LF_EP_NAME_MAX_LEN]; ///< Endpoint name for connection setup
+    size_t ep_name_len = 0; ///< Valid bytes in @ref ep_name, as fi_getname() reported
+    uint32_t addr_format = FI_FORMAT_UNSPEC; ///< fi_info::addr_format, for reading @ref ep_name
+
+    /**
+     * @brief Where this rail sits on the fabric, for pairing with a peer's rails.
+     *
+     * Includes the local netmask, so it is the side of a @ref LibfabricUtils::sameFabric comparison
+     * that decides which peer rails share this rail's segment. Invalid when the provider's address
+     * format cannot be read, which makes pairing fall back to rail index order.
+     */
+    LibfabricUtils::nixlLibfabricFabricId fabric_id;
     struct fid_ep *endpoint; ///< Libfabric endpoint handle
 
     /** Initialize libfabric rail with all resources */
@@ -431,13 +445,16 @@ public:
     /** Register memory buffer with libfabric.
      *  The rail registers the region with FI_MR_DMABUF when dmabuf carries an fd and
      *  canRegisterWithDmabuf() holds for this registration, and by virtual address
-     *  otherwise. A FI_MR_DMABUF registration that fails retries by virtual address. */
+     *  otherwise. A FI_MR_DMABUF registration that fails retries by virtual address.
+     * @param hmem_info What the HMEM shim learned about @p buffer. Opaque here -- this layer never
+     * interprets it, it only hands it to nfi_hmem_fill_mr_attr(). In particular hmem_info.device is
+     * a libfabric device ordinal, not a nixl device index.
+     */
     nixl_status_t
     registerMemory(void *buffer,
                    size_t length,
                    nixl_mem_t mem_type,
-                   int device_id,
-                   enum fi_hmem_iface iface,
+                   const struct nfi_hmem_info &hmem_info,
                    struct fid_mr **mr_out,
                    uint64_t *key_out,
                    const LibfabricUtils::CudaDmabufExport *dmabuf = nullptr) const;
@@ -465,6 +482,12 @@ public:
     nixl_status_t
     removeAddress(fi_addr_t fi_addr) const;
 
+    /** Drop fi_addr's source-address mapping if it still names agent_idx, leaving the address
+     *  vector entry in place. For a disconnect, so a reconnect under a fresh agent index maps
+     *  afresh rather than re-mapping -- which is otherwise only expected of a real conflict. */
+    void
+    unmapSourceAddress(fi_addr_t fi_addr, uint32_t agent_idx) const;
+
     /** Resolve a fi_cq_readfrom() source address to a local agent index. Returns
      *  kUnknownAgentIdx if it is FI_ADDR_NOTAVAIL or unmapped; callers must then drop it. */
     [[nodiscard]] uint32_t
@@ -484,9 +507,14 @@ public:
     nixl_status_t
     postRecv(nixlLibfabricReq *req) const;
 
-    /** Post send operation with immediate data */
+    /** Post send operation with immediate data.
+     *  @param blocking When false, return NIXL_IN_PROG on -FI_EAGAIN instead of retrying, for a
+     *         caller that cannot wait because it is the thread that would make progress. */
     nixl_status_t
-    postSend(uint64_t immediate_data, fi_addr_t dest_addr, nixlLibfabricReq *req);
+    postSend(uint64_t immediate_data,
+             fi_addr_t dest_addr,
+             nixlLibfabricReq *req,
+             bool blocking = true);
 
     /** Post RDMA write operation with immediate data */
     nixl_status_t

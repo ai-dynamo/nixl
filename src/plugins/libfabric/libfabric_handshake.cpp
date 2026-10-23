@@ -41,7 +41,27 @@
 // Sized to fit inside one libfabric control buffer
 // (NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE = 8 KiB).
 nixl_status_t
-nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const {
+nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn, bool blocking) const {
+    if (blocking && onProgressThread()) {
+        const auto now = std::chrono::steady_clock::now();
+        deferred_handshakes_.push_back(
+            {conn.remoteAgent_, now + std::chrono::seconds(NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S), now});
+        // Queued counts as sent: a handshake arriving before the flush must not draw a second one.
+        conn.handshake_sent_.store(true, std::memory_order_release);
+        NIXL_DEBUG << "Deferring handshake to '" << conn.remoteAgent_
+                   << "' until the progress thread is outside its CQ callbacks";
+        return NIXL_SUCCESS;
+    }
+
+    const nixl_status_t status = postHandshakeTo(conn, blocking);
+    // NIXL_IN_PROG is a non-blocking send that would have blocked and stays queued for a retry.
+    conn.handshake_sent_.store(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
+                               std::memory_order_release);
+    return status;
+}
+
+nixl_status_t
+nixlLibfabricEngine::postHandshakeTo(const nixlLibfabricConnection &conn, bool blocking) const {
     const uint16_t proto_ver = static_cast<uint16_t>(NIXL_LIBFABRIC_PROTO_VERSION);
     const std::string &my_name = localAgent;
 
@@ -73,7 +93,9 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
         return NIXL_ERR_BACKEND;
     }
 
-    constexpr size_t kRailId = 0;
+    // Departure rail chosen so the message arrives on the peer's rail 0, where the handshake
+    // callback lives; see nixlLibfabricConnection::control_rail_.
+    const size_t kRailId = conn.control_rail_;
     nixlLibfabricReq *req = rail_manager_.getRail(kRailId).allocateControlRequest(
         payload.size(), LibfabricUtils::getNextXferId());
     if (!req) {
@@ -90,7 +112,69 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
                << "', piggybacked_conn_info_len=" << piggybacked_conn_info.size() << ")";
     return rail_manager_.postControlMessage(nixlLibfabricRailManager::ControlMessageType::HANDSHAKE,
                                             req,
-                                            conn.rail_remote_addr_list_.at(kRailId)[0]);
+                                            conn.rail_remote_addr_list_.at(kRailId)[0],
+                                            /*completion_callback=*/nullptr,
+                                            blocking);
+}
+
+void
+nixlLibfabricEngine::flushDeferredHandshakes() {
+    // Spacing between attempts at a send that would block. Long next to a progress-loop pass, so a
+    // stuck peer costs little; short next to the peer's handshake timeout, so it adds no real delay.
+    constexpr auto kRetryInterval = std::chrono::milliseconds(1);
+
+    // Progress thread only, like the deferral itself; see deferred_handshakes_.
+    if (deferred_handshakes_.empty()) {
+        return;
+    }
+
+    // Swapped out so the walk below owns its entries outright.
+    std::vector<DeferredHandshake> pending;
+    pending.swap(deferred_handshakes_);
+
+    const auto now = std::chrono::steady_clock::now();
+    std::vector<DeferredHandshake> retry;
+    for (auto &entry : pending) {
+        if (now < entry.next_attempt) {
+            retry.push_back(std::move(entry));
+            continue;
+        }
+
+        std::shared_ptr<nixlLibfabricConnection> conn;
+        {
+            const std::lock_guard<std::mutex> lock(connection_state_mutex_);
+            auto it = connections_.find(entry.peer);
+            if (it != connections_.end()) {
+                conn = it->second;
+            }
+        }
+        if (!conn) {
+            NIXL_DEBUG << "Dropping deferred handshake to '" << entry.peer
+                       << "': connection is gone";
+            continue;
+        }
+
+        const nixl_status_t status = sendHandshakeTo(*conn, /*blocking=*/false);
+        if (status == NIXL_IN_PROG) {
+            if (now >= entry.deadline) {
+                conn->handshake_sent_.store(false, std::memory_order_release);
+                NIXL_ERROR << "Handshake to '" << entry.peer << "' could not be sent within "
+                           << NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S
+                           << "s (send kept returning -FI_EAGAIN); the peer's connection to this "
+                              "agent will time out";
+                continue;
+            }
+            entry.next_attempt = now + kRetryInterval;
+            retry.push_back(std::move(entry));
+        } else if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "Deferred handshake to '" << entry.peer << "' failed with status "
+                       << status << "; the peer's connection to this agent will time out";
+        }
+    }
+
+    for (auto &entry : retry) {
+        deferred_handshakes_.push_back(std::move(entry));
+    }
 }
 
 void
@@ -212,13 +296,36 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
                     // buffered handshake as part of connection creation.
         }
     } else {
+        bool had_handshake = false;
         {
             std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
+            had_handshake = conn->handshake_received_.load(std::memory_order_acquire);
             conn->handshake_received_.store(true, std::memory_order_release);
         }
         conn->handshake_cv_.notify_all();
         NIXL_INFO << "Handshake stored: peer='" << peer_agent_name
                   << "' — it has our endpoints in its address vectors, so it can attribute "
                      "our transfers and we may start sending";
+
+        // Connection info in the handshake means the peer has not heard from us on its current
+        // connection, and it is blocked in establishConnection() until it does. Answer when our
+        // earlier handshake cannot have reached it:
+        //  - this connection had already received a handshake, so the peer dropped and recreated
+        //    its connection to us -- its metadata for us was invalidated -- while ours survived; or
+        //  - our own handshake to it never went out: the send failed, or a deferred one was dropped
+        //    at its deadline. Nothing else would ever resend it.
+        // Not otherwise: on a normal first handshake ours is already sent or queued, and answering
+        // would only double the handshakes of every symmetric connection setup. The reply carries no
+        // connection info (handshake_received_ is now set), so it does not trigger a reply in turn.
+        // On the progress thread sendHandshakeTo() defers the send rather than posting from this
+        // callback.
+        const bool ours_sent = conn->handshake_sent_.load(std::memory_order_acquire);
+        if (has_conn && (had_handshake || !ours_sent)) {
+            nixl_status_t hs = sendHandshakeTo(*conn);
+            if (hs != NIXL_SUCCESS) {
+                NIXL_ERROR << "Handshake reply to '" << peer_agent_name
+                           << "' failed with status " << hs;
+            }
+        }
     }
 }

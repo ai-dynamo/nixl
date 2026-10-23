@@ -35,9 +35,6 @@
 #include <stdexcept>
 #include <thread>
 
-/****************************************
- * Neuron Address Query
- *****************************************/
 namespace {
 
 constexpr size_t NIXL_LIBFABRIC_DEFAULT_POST_THREADS = 0;
@@ -137,253 +134,25 @@ private:
     bool stop_ = false;
 };
 
-namespace {
-
-void *
-dlopen_libnrt() {
-    static void *const handle = dlopen("libnrt.so.1", RTLD_NOW);
-    return handle;
-}
-
-template<class Fn>
-Fn *
-_load_nrt_symbol(const char *fn_name, Fn *) {
-    void *libnrt_handle = dlopen_libnrt();
-    if (libnrt_handle) {
-        return reinterpret_cast<Fn *>(dlsym(libnrt_handle, fn_name));
-    }
-    return nullptr;
-}
-
-#define LOAD_NRT_SYMBOL(sym) _load_nrt_symbol(#sym, &sym)
-
-int
-nrt_get_attached_efa_bdf(const void *va, char *efa_bdf, size_t *len) {
-    static const auto fn = LOAD_NRT_SYMBOL(nrt_get_attached_efa_bdf);
-    if (fn == nullptr) {
-        NIXL_ERROR << "Could not resolve libnrt symbol: " << __func__;
-        return -1;
-    }
-    return fn(va, efa_bdf, len);
-}
-
-int
-nrtQueryAddr(const void *va, std::string *efa_bdf) {
-    char buf[] = "0000:00:00.0";
-    size_t buflen = sizeof(buf);
-
-    if (nrt_get_attached_efa_bdf(va, buf, &buflen) == 0) {
-        efa_bdf->assign(buf, buflen);
-        return 0;
-    }
-
-    return -1;
-}
-
-} // namespace
-
-#ifdef HAVE_CUDA
-// CUDA error checking macros
-#define CHECK_CUDA_ERROR(result, message)                                                         \
-    do {                                                                                          \
-        if (result != cudaSuccess) {                                                              \
-            NIXL_ERROR << "CUDA Error: " << message << " (" << cudaGetErrorString(result) << ")"; \
-            return NIXL_ERR_BACKEND;                                                              \
-        }                                                                                         \
-    } while (0)
-
-#define CHECK_CUDA_DRIVER_ERROR(result, message)                                        \
-    do {                                                                                \
-        if (result != CUDA_SUCCESS) {                                                   \
-            const char *error_str;                                                      \
-            cuGetErrorString(result, &error_str);                                       \
-            NIXL_ERROR << "CUDA Driver Error: " << message << " (" << error_str << ")"; \
-            return NIXL_ERR_BACKEND;                                                    \
-        }                                                                               \
-    } while (0)
-#endif
-
-/****************************************
- * CUDA Context Management
- *****************************************/
-
-#ifdef HAVE_CUDA
-static int
-cudaQueryAddr(void *address, bool &is_dev, CUdevice &dev, CUcontext &ctx, std::string &pci_bus_id) {
-    CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
-    uint32_t is_managed = 0;
-    CUpointer_attribute attr_type[4];
-    void *attr_data[4];
-    CUresult result;
-
-    attr_type[0] = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
-    attr_data[0] = &mem_type;
-    attr_type[1] = CU_POINTER_ATTRIBUTE_IS_MANAGED;
-    attr_data[1] = &is_managed;
-    attr_type[2] = CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
-    attr_data[2] = &dev;
-    attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
-    attr_data[3] = &ctx;
-
-    result = cuPointerGetAttributes(4, attr_type, attr_data, (CUdeviceptr)address);
-    is_dev = (mem_type == CU_MEMORYTYPE_DEVICE);
-
-    // Get PCI bus ID if device memory
-    if (result == CUDA_SUCCESS && is_dev) {
-        char pci_buf[32];
-        CUresult pci_result = cuDeviceGetPCIBusId(pci_buf, sizeof(pci_buf), dev);
-        if (pci_result == CUDA_SUCCESS) {
-            pci_bus_id = std::string(pci_buf);
-        } else {
-            pci_bus_id = "";
-        }
-    } else {
-        pci_bus_id = "";
-    }
-
-    return (CUDA_SUCCESS != result);
-}
-
-void
-nixlLibfabricCudaCtx::cudaResetCtxPtr() {
-    pthrCudaCtx_ = NULL;
-    myDevId_ = -1;
-}
-
-int
-nixlLibfabricCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated) {
-    bool is_dev;
-    CUdevice dev;
-    CUcontext ctx;
-    std::string pci_bus_id; // Not used here, but required by cudaQueryAddr
-    int ret;
-
-    was_updated = false;
-
-    if (expected_dev == -1) {
-        return -1;
-    }
-    if (myDevId_ != -1 && expected_dev != myDevId_) {
-        return -1;
-    }
-
-    ret = cudaQueryAddr(address, is_dev, dev, ctx, pci_bus_id);
-    if (ret) {
-        return ret;
-    }
-    if (!is_dev) {
-        return 0;
-    }
-    if (dev != expected_dev) {
-        return -1;
-    }
-    // Context-independent allocations need the per-device primary-context path.
-    if (ctx == nullptr) {
-        return -1;
-    }
-
-    if (pthrCudaCtx_) {
-        if (pthrCudaCtx_ != ctx) {
-            return -1;
-        }
-        return 0;
-    }
-
-    pthrCudaCtx_ = ctx;
-    was_updated = true;
-    myDevId_ = expected_dev;
-
-    return 0;
-}
-
-int
-nixlLibfabricCudaCtx::cudaSetCtx() {
-    CUresult result;
-    if (NULL == pthrCudaCtx_) {
-        return 0;
-    }
-
-    result = cuCtxSetCurrent(pthrCudaCtx_);
-    return (CUDA_SUCCESS == result);
-}
-
-class nixlLibfaricCudaCtxEngineMediator : public LibfabricUtils::nixlLibfaricCudaCtxMediator {
-public:
-    nixlLibfaricCudaCtxEngineMediator(nixlLibfabricEngine *engine) : engine_(engine) {}
-
-    ~nixlLibfaricCudaCtxEngineMediator() override {}
-
-    nixl_status_t
-    cudaSetCtx(bool &use_cuda_addr_wa) override {
-        if (engine_ == nullptr) {
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        return engine_->vramApplyCtxEx(use_cuda_addr_wa);
-    }
-
-private:
-    nixlLibfabricEngine *engine_;
-};
-
-void
-nixlLibfabricEngine::vramInitCtx() {
-    cudaCtx_ = std::make_unique<nixlLibfabricCudaCtx>();
-
-    // install a mediator so that the progress thread can also use this
-    // NOTE: the mediator is stateless and therefore it cannot be involved in a race
-    std::unique_ptr<LibfabricUtils::nixlLibfaricCudaCtxMediator> mediator;
-    mediator.reset(new (std::nothrow) nixlLibfaricCudaCtxEngineMediator(this));
-    setCudaCtxMediator(std::move(mediator));
-}
-
-int
-nixlLibfabricEngine::vramUpdateCtx(void *address, uint64_t devId, bool &restart_reqd) {
-    int ret;
-    bool was_updated;
-
-    restart_reqd = false;
-
-    const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
-    if (!cuda_addr_wa_) {
-        return 0; // Nothing to do
-    }
-
-    ret = cudaCtx_->cudaUpdateCtxPtr(address, devId, was_updated);
-    if (ret) {
-        return ret;
-    }
-
-    restart_reqd = was_updated;
-    return 0;
-}
-
-int
-nixlLibfabricEngine::vramApplyCtx() {
-    const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
-    if (!cuda_addr_wa_) {
-        return 0; // Nothing to do
-    }
-    return cudaCtx_->cudaSetCtx();
-}
-
-void
-nixlLibfabricEngine::vramFiniCtx() {
-    const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
-    cudaCtx_.reset();
-    LibfabricUtils::clearCudaCtxMediator();
-}
-
-nixl_status_t
-nixlLibfabricEngine::vramApplyCtxEx(bool &use_cuda_addr_wa) const {
-    const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
-    use_cuda_addr_wa = cuda_addr_wa_;
-    if (use_cuda_addr_wa && cudaCtx_ && !cudaCtx_->cudaSetCtx()) {
-        NIXL_ERROR << "Failed to set CUDA context before posting descriptors";
-        return NIXL_ERR_BACKEND;
-    }
-    return NIXL_SUCCESS;
-}
-#endif
+// Accelerator vendor knowledge lives in two places now, neither of them here:
+//   - src/utils/libfabric/nfi_hmem.cpp, the libfabric HMEM shim -- pointer attribution, the
+//     fi_mr_attr::device arm, and thread-context push/pop. C-compatible interface, meant to be
+//     donated upstream.
+//   - src/utils/libfabric/libfabric_accel.{h,cpp}, the nixl-side policy and hwloc matching.
+//
+// What used to be here was a binder hierarchy plus a mediator so the progress thread could reach
+// it. All of it is gone, and the reason is an ordering correction rather than a refactor: the old
+// code bound a CUDA context *before* probing a pointer, on the belief that
+// cuPointerGetAttributes() only sees pointers whose context is current. It does not -- unified
+// virtual addressing lets the driver attribute any allocation in the process. What actually needs a
+// current context is *registration*, because libfabric exports a dmabuf handle from inside
+// fi_mr_regattr() for providers configured that way. UCX draws the line in the same place, for the
+// same stated reason (uct_cuda_copy_md_mem_query).
+//
+// Probing first and binding second means there is nothing to latch, so the whole "address
+// workaround" mode machine -- which existed only because it latched a context observed on the first
+// registered pointer, and which permanently degraded the moment a second device appeared -- has no
+// reason to exist. nixlAccelScope brackets the two operations that need a context.
 
 /****************************************
  * Request Management
@@ -486,8 +255,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
       progress_thread_delay_(std::chrono::microseconds(init_params->pthrDelay)),
       rail_manager_(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
       post_thread_count_(NIXL_LIBFABRIC_DEFAULT_POST_THREADS),
-      post_split_batch_size_(NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE),
-      runtime_(FI_HMEM_SYSTEM) {
+      post_split_batch_size_(NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE) {
 
     NIXL_INFO << "Initializing Libfabric Backend";
 
@@ -496,29 +264,15 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         throw std::runtime_error("Failed to initialize the rail manager");
     }
 
-    // Query system runtime type from rail manager (determined once at topology discovery)
-    runtime_ = rail_manager_.getRuntime();
 
-    NIXL_INFO << "System runtime: "
-              << (runtime_ == FI_HMEM_CUDA       ? "CUDA" :
-                      runtime_ == FI_HMEM_ROCR   ? "ROCr" :
-                      runtime_ == FI_HMEM_NEURON ? "NEURON" :
-                                                   "SYSTEM");
-
-#ifdef HAVE_CUDA
-    if (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR) {
-        // Initialize CUDA context management
-        vramInitCtx();
-        // CUDA address workaround
-        if (nixl::config::checkExistence("NIXL_DISABLE_CUDA_ADDR_WA")) {
-            NIXL_INFO << "CUDA address workaround: disabled";
-            cuda_addr_wa_ = false;
-        } else {
-            cuda_addr_wa_ = true;
-            NIXL_INFO << "CUDA address workaround: enabled";
-        }
+    // The CUDA address workaround this used to switch off is gone (see the note above
+    // nixlLibfabricBackendH), so the variable no longer does anything. Say so rather than let a
+    // documented mitigation silently stop working.
+    if (nixl::config::checkExistence("NIXL_DISABLE_CUDA_ADDR_WA")) {
+        NIXL_WARN << "NIXL_DISABLE_CUDA_ADDR_WA is set but no longer has any effect: the libfabric "
+                     "backend binds a CUDA context only around registration and posting, so there "
+                     "is no address workaround to disable";
     }
-#endif
 
     // Parse striping threshold parameter
     std::string threshold_str;
@@ -801,6 +555,11 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
     }
 
     nixl_status_t status = it->second->disconnect();
+    // The address vector keeps the peer's endpoints, so a reconnect gets the same fi_addrs back
+    // under a fresh agent index. Unmapping them here lets that map cleanly; left mapped, the
+    // reconnect would look like two agents claiming one address.
+    rail_manager_.unmapAgentAddresses(it->second->rail_remote_addr_list_,
+                                      static_cast<uint32_t>(it->second->agent_index_));
     connections_.erase(it);
     return status;
 }
@@ -852,6 +611,29 @@ nixlLibfabricEngine::createAgentConnection(
     if (data_status != NIXL_SUCCESS) {
         NIXL_ERROR << "insertAllAddresses failed for rails with status: " << data_status;
         return data_status;
+    }
+
+    /*
+     * Work out which of this peer's rails each local rail should actually post to. Every peer
+     * endpoint was just inserted into every local rail's address vector above, so any pairing is
+     * addressable; the question is only which one is reachable, and that is what this answers.
+     */
+    conn->peer_rail_for_local_rail_ = rail_manager_.computeRailPeering(data_rail_endpoints);
+
+    /*
+     * Control traffic has to land on the peer's rail 0, since that is where the notification and
+     * handshake callbacks are installed. Pick the local rail paired with peer rail 0 so the send is
+     * reachable; rail 0 stays the answer whenever pairing is the identity, which is the common case.
+     */
+    for (size_t rail_id = 0; rail_id < conn->peer_rail_for_local_rail_.size(); ++rail_id) {
+        if (conn->peer_rail_for_local_rail_[rail_id] == 0) {
+            conn->control_rail_ = rail_id;
+            break;
+        }
+    }
+    if (conn->control_rail_ != 0) {
+        NIXL_INFO << "Control traffic to " << agent_name << " will use local rail "
+                  << conn->control_rail_ << ", which is the rail paired with its rail 0";
     }
 
     for (size_t i = 0; i < agent_names_.size(); ++i) {
@@ -979,15 +761,12 @@ nixl_mem_list_t
 nixlLibfabricEngine::getSupportedMems() const {
     nixl_mem_list_t mems;
     mems.push_back(DRAM_SEG);
-#ifdef HAVE_CUDA
-    if (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR) {
-        NIXL_DEBUG << (runtime_ == FI_HMEM_CUDA ? "CUDA" : "ROCr")
-                   << " runtime detected, adding VRAM support";
-        mems.push_back(VRAM_SEG);
-    } else
-#endif
-        if (runtime_ == FI_HMEM_NEURON) {
-        NIXL_DEBUG << "Neuron runtime detected, adding VRAM support";
+
+    // Any usable runtime is enough: VRAM_SEG is vendor-blind, and the shim decides which runtime
+    // owns a given buffer at registration time. Asks every vendor SDK, not just the first usable
+    // one the rail manager names in its log.
+    if (nfi_hmem_available()) {
+        NIXL_DEBUG << "Accelerator runtime available, adding VRAM support";
         mems.push_back(VRAM_SEG);
     } else {
         NIXL_DEBUG << "No accelerator runtime, skipping VRAM support";
@@ -1011,72 +790,61 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     priv->length_ = mem.len;
     priv->device_id_ = mem.devId; // Store device ID
 
-    std::string pci_bus_id = "";
+    struct nfi_hmem_info &hmem_info = priv->hmem_info_;
 
-    // Use system runtime type to determine device-specific operations
     if (nixl_mem == VRAM_SEG) {
-#ifdef HAVE_CUDA
-        if (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR) {
-            // CUDA-specific address query
-            // For multi-GPU support, skip CUDA address workaround
-            bool use_cuda_addr_wa = false;
-            {
-                const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
-                use_cuda_addr_wa = cuda_addr_wa_;
-            }
-            if (use_cuda_addr_wa) {
-                bool need_restart;
-                if (vramUpdateCtx((void *)mem.addr, mem.devId, need_restart)) {
-                    NIXL_INFO << "CUDA pointer context unavailable or incompatible (device "
-                              << mem.devId << "), using cudaSetDevice fallback";
-                    {
-                        const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
-                        cuda_addr_wa_ = false;
-                    }
-                } else if (need_restart) {
-                    NIXL_DEBUG << "CUDA context updated, restarting progress thread";
-                    vramApplyCtx();
-                }
-            }
-            // Fallback: set device via runtime API (uses primary context)
-            {
-                const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
-                use_cuda_addr_wa = cuda_addr_wa_;
-            }
-            if (!use_cuda_addr_wa) {
-                cudaError_t cuda_ret = cudaSetDevice(mem.devId);
-                if (cuda_ret != cudaSuccess) {
-                    NIXL_ERROR << "Failed to set CUDA device " << mem.devId << ": "
-                               << cudaGetErrorString(cuda_ret);
-                    return NIXL_ERR_NOT_SUPPORTED;
-                }
-                NIXL_INFO << "Set CUDA device context to GPU " << mem.devId;
-            }
+        /*
+         * Probe the pointer once, and once only, with no accelerator context bound. Attribution
+         * needs none -- unified virtual addressing lets the driver identify any allocation in the
+         * process -- and the result is threaded down through rail_manager_.registerMemory() rather
+         * than re-derived there, so no two layers can disagree about one address. Binding happens
+         * further down, around the registration calls that actually require it.
+         */
+        if (nfi_hmem_query_ptr((void *)mem.addr, &hmem_info) != 0) {
+            NIXL_ERROR << "Failed to query device from memory " << (void *)mem.addr;
+            return NIXL_ERR_BACKEND;
+        }
 
-            // Query PCI bus ID from memory address (AFTER setting context)
-            bool is_dev;
-            CUdevice dev;
-            CUcontext ctx;
-
-            int ret = cudaQueryAddr((void *)mem.addr, is_dev, dev, ctx, pci_bus_id);
-            if (ret || !is_dev) {
+        if (hmem_info.iface == FI_HMEM_SYSTEM) {
+            const enum fi_hmem_iface fallback_iface = accelUnclaimedVramIface();
+            if (fallback_iface == FI_HMEM_SYSTEM) {
+                // The failure this path has always reported when cudaQueryAddr() said "not device
+                // memory": on a host where CUDA is usable, or with no runtime that could have
+                // missed the pointer, a VRAM_SEG none of them claims is a caller error.
                 NIXL_ERROR << "Failed to query device from memory " << (void *)mem.addr;
                 return NIXL_ERR_BACKEND;
             }
+            /*
+             * Otherwise recoverable, as before. Registering it as host memory would be wrong for a
+             * provider that needs the iface, so guess the runtime that could have missed it and
+             * take nixl's device index as the hmem ordinal. Only reached where CUDA is not usable;
+             * see accelUnclaimedVramIface(). The bus ID stays empty, which makes getNicsForPci()
+             * return every device.
+             *
+             * Resolved here, into priv->hmem_info_, rather than at registration: the context scope
+             * below and every later post bind from this same record, so they must see the guess
+             * too, not the host-memory iface the probe reported.
+             *
+             * A guess on both counts: nixl's public API gives VRAM_SEG no vendor, and mem.devId is
+             * a nixl device index, which only coincides with an hmem ordinal when the runtime
+             * enumerates devices the same way nixl does. It happens to be a valid encoding for the
+             * fi_mr_attr::device arms that take one -- CUDA takes a plain ordinal, and
+             * fi_hmem_ze_device(0, n) == n -- while Neuron gets the -1 sentinel nfi_neuron_query()
+             * would have reported. A vendor whose encoding is not the identity would need this to
+             * go through the shim.
+             */
+            hmem_info.iface = fallback_iface;
+            hmem_info.device = (fallback_iface == FI_HMEM_NEURON) ?
+                static_cast<uint64_t>(-1) :
+                static_cast<uint64_t>(mem.devId);
+            NIXL_WARN << "No accelerator runtime claimed VRAM buffer " << (void *)mem.addr
+                      << ", registering on all rails as iface "
+                      << nfi_hmem_iface_name(fallback_iface) << " device " << mem.devId;
+        }
 
-            NIXL_DEBUG << "Queried PCI bus ID: " << pci_bus_id << " for GPU " << mem.devId;
-        }
-#endif
-        if (runtime_ == FI_HMEM_NEURON) {
-            // Neuron-specific address query
-            int ret = nrtQueryAddr((void *)mem.addr, &pci_bus_id);
-            if (ret) {
-                NIXL_ERROR << "Could not query EFA device from memory " << (void *)mem.addr;
-                // Fall back to all rails.
-            }
-            NIXL_DEBUG << "Queried PCI bus ID: " << pci_bus_id << " for Neuron device "
-                       << mem.devId;
-        }
+        NIXL_DEBUG << "Queried PCI bus ID: " << accelBusIdString(hmem_info) << " (iface "
+                   << nfi_hmem_iface_name(hmem_info.iface) << ", hmem device " << hmem_info.device
+                   << ") for device " << mem.devId;
     }
 
     // Initialize vectors to accommodate all possible rails (for indexing consistency)
@@ -1084,26 +852,40 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     priv->rail_key_list_.clear();
     priv->rail_key_list_.resize(rail_manager_.getNumRails(), FI_KEY_NOTAVAIL);
 
-#ifdef HAVE_CUDA
-    // Set CUDA context before libfabric operations for VRAM
-    if (nixl_mem == VRAM_SEG && (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR)) {
-        vramApplyCtx();
-    }
-#endif
 
     // Use Rail Manager for centralized memory registration with GPU Direct RDMA support
     NIXL_TRACE << "Registering memory: addr=" << (void *)mem.addr << " len=" << mem.len
                << " mem_type=" << nixl_mem << " devId=" << mem.devId
-               << (nixl_mem == VRAM_SEG ? " pci_bus_id=" + pci_bus_id : "");
+               << (nixl_mem == VRAM_SEG ? " pci_bus_id=" + accelBusIdString(hmem_info) : "");
 
-    nixl_status_t status = rail_manager_.registerMemory((void *)mem.addr,
-                                                        mem.len,
-                                                        nixl_mem,
-                                                        mem.devId,
-                                                        pci_bus_id,
-                                                        priv->rail_mr_list_,
-                                                        priv->rail_key_list_,
-                                                        priv->selected_rails_);
+    /*
+     * Bind here, not earlier. fi_mr_regattr() is where libfabric exports a dmabuf handle for
+     * providers configured that way, and that export needs a context on the buffer's device. The
+     * scope is a no-op for a runtime with no thread-current state and for host memory, so it is
+     * constructed unconditionally rather than tested for; it pops on the way out, which is what
+     * keeps an application thread's own context binding intact.
+     */
+    nixl_status_t status;
+    {
+        const nixlAccelScope accel_scope(hmem_info);
+        if (!accel_scope.ok()) {
+            // A runtime with nothing to bind reports success, so this is a real refusal: the
+            // dmabuf export in fi_mr_regattr() would run with no context on the buffer's device.
+            NIXL_ERROR << "Failed to bind accelerator device " << hmem_info.device << " (iface "
+                       << nfi_hmem_iface_name(hmem_info.iface) << ") before registering "
+                       << (void *)mem.addr;
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        status = rail_manager_.registerMemory((void *)mem.addr,
+                                              mem.len,
+                                              nixl_mem,
+                                              mem.devId,
+                                              hmem_info,
+                                              priv->rail_mr_list_,
+                                              priv->rail_key_list_,
+                                              priv->selected_rails_);
+    }
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager registerMemory failed";
         return status;
@@ -1324,6 +1106,41 @@ nixlLibfabricEngine::useFiMore(int desc_idx,
     return true;
 }
 
+namespace {
+uint64_t
+accelBindKey(const struct nfi_hmem_info &info) {
+    return (static_cast<uint64_t>(info.iface) + 1) << 56 | (info.device & ((1ULL << 56) - 1));
+}
+} // namespace
+
+bool
+nixlLibfabricEngine::accelBindKnownOk(const struct nfi_hmem_info &info) const {
+    const uint64_t key = accelBindKey(info);
+    for (const auto &slot : accel_bind_ok_) {
+        const uint64_t v = slot.load(std::memory_order_acquire);
+        if (v == key) {
+            return true;
+        }
+        if (v == 0) {
+            return false; // slots fill in order, so nothing past an empty one
+        }
+    }
+    return false;
+}
+
+void
+nixlLibfabricEngine::accelBindRecordOk(const struct nfi_hmem_info &info) const {
+    const uint64_t key = accelBindKey(info);
+    for (auto &slot : accel_bind_ok_) {
+        uint64_t expected = 0;
+        if (slot.compare_exchange_strong(expected, key, std::memory_order_acq_rel) ||
+            expected == key) {
+            return;
+        }
+    }
+    // Table full: this device will simply be probed again next time.
+}
+
 nixl_status_t
 nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
                                          const nixl_meta_dlist_t &local,
@@ -1337,22 +1154,13 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
                                          size_t &submitted_count) const {
     submitted_count = 0;
 
-#ifdef HAVE_CUDA
-    // NOTE: when progress thread is enabled and the call is deferred via ring-buffer, this should
-    // take place in the context of the progress thread
-    const bool is_cuda_vram =
-        local.getType() == VRAM_SEG && (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR);
-    bool use_cuda_addr_wa = false;
-    int current_cuda_device = -1;
-    if (!progress_thread_enabled_ && is_cuda_vram) {
-        nixl_status_t status = vramApplyCtxEx(use_cuda_addr_wa);
-        if (status != NIXL_SUCCESS) {
-            return status;
-        }
-    }
-#else
-    const bool is_cuda_vram = false;
-#endif
+    /*
+     * A provider may take a host-copy path for a small transfer, which needs a current accelerator
+     * context. When the progress thread is enabled the post is deferred via the ring buffer and the
+     * binding has to happen on that thread instead, which is what the request's iface tells
+     * drainPostQueue() to do; here we are the posting thread and do it ourselves, per descriptor.
+     */
+    const bool bind_accel_ctx = local.getType() == VRAM_SEG && !progress_thread_enabled_;
 
     // A FI_MORE post rings no doorbell; a rail's queued batch is only submitted by a later
     // non-FI_MORE post on the same rail. Rails are resolved per-buffer, so descriptors of one
@@ -1373,6 +1181,15 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         }
     }
 
+    /*
+     * One scope across the descriptors, rebound only when a descriptor's buffer lives on another
+     * device: consecutive descriptors usually share one, and a push/pop per descriptor put driver
+     * calls on every post. Scoped to this call so the caller's own binding survives -- this may be
+     * an application thread. A no-op for a runtime with no thread-current state, which is why it is
+     * not guarded by a needsBinding() test.
+     */
+    std::optional<nixlAccelScope> accel_scope;
+
     for (int desc_idx = start_idx; desc_idx < end_idx; ++desc_idx) {
         const int rail_id = batch_writes ? batchingRail(local, desc_idx, xfer_base_offset) : -1;
         const bool apply_fi_more =
@@ -1385,21 +1202,18 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         size_t transfer_size = local[desc_idx].len;
         int device_id = local[desc_idx].devId;
 
-#ifdef HAVE_CUDA
-        // NOTE: when progress thread is enabled and the call is deferred via ring-buffer, this
-        // should take place in the context of the progress thread
-        if (!progress_thread_enabled_ && is_cuda_vram && !use_cuda_addr_wa &&
-            device_id != current_cuda_device) {
-            cudaError_t cuda_ret = cudaSetDevice(device_id);
-            if (cuda_ret != cudaSuccess) {
-                NIXL_ERROR << "Failed to set CUDA device " << device_id
-                           << " while posting descriptor " << desc_idx << ": "
-                           << cudaGetErrorString(cuda_ret);
+        if (bind_accel_ctx && !(accel_scope && accel_scope->holds(local_md->hmem_info_))) {
+            accel_scope.reset(); // pop the previous device before pushing the next
+            accel_scope.emplace(local_md->hmem_info_);
+            if (!accel_scope->ok()) {
+                // postXfer() checked this device binds before posting anything, so only a
+                // transient failure gets here.
+                NIXL_ERROR << "Failed to bind accelerator device " << local_md->hmem_info_.device
+                           << " (iface " << nfi_hmem_iface_name(local_md->hmem_info_.iface)
+                           << ") while posting descriptor " << desc_idx;
                 return NIXL_ERR_BACKEND;
             }
-            current_cuda_device = device_id;
         }
-#endif
 
         uint64_t remote_target_addr = remote[desc_idx].addr;
         uint64_t remote_registered_base = remote_md->remote_buf_addr_;
@@ -1415,6 +1229,7 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             local_md->rail_mr_list_,
             remote_md->rail_remote_key_list_,
             remote_md->remote_selected_endpoints_,
+            conn->peer_rail_for_local_rail_,
             conn->rail_remote_addr_list_,
             backend_handle->post_xfer_id,
             [backend_handle](nixl_status_t status) {
@@ -1424,8 +1239,7 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             desc_idx,
             xfer_base_offset,
             apply_fi_more,
-            local[desc_idx].devId,
-            is_cuda_vram);
+            local_md->hmem_info_);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
@@ -1524,6 +1338,42 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         if (remote_md->conn_ != conn) {
             NIXL_ERROR << "Connection mismatch for descriptor " << desc_idx;
             return NIXL_ERR_MISMATCH;
+        }
+    }
+
+    /*
+     * Where the posting thread binds accelerator contexts itself (see postXferDescriptors), check
+     * each device binds before anything is posted, for the same reason as the checks above: failing
+     * mid-loop would leave earlier descriptors queued with FI_MORE and no flushing post, and requests
+     * already submitted against a handle the caller then gives up on.
+     *
+     * Checked once per device per process, not per transfer -- probing every time doubled the
+     * driver calls of every post. Done here on the calling thread even when the post thread pool
+     * then posts: what can fail is the device's context, which is process-wide (a primary context),
+     * not something one thread can bind and another cannot. What is left for the in-loop check is a
+     * transient failure, the same exposure as any other mid-loop error -- and as main, which also
+     * returned mid-loop when cudaSetDevice failed.
+     */
+    if (local.getType() == VRAM_SEG && !progress_thread_enabled_) {
+        const struct nfi_hmem_info *last = nullptr;
+        for (int desc_idx = 0; desc_idx < desc_count; ++desc_idx) {
+            const auto &info =
+                static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP)->hmem_info_;
+            if (last && last->iface == info.iface && last->device == info.device) {
+                continue;
+            }
+            last = &info;
+            if (!nfi_hmem_needs_scope(info.iface) || accelBindKnownOk(info)) {
+                continue;
+            }
+            const nixlAccelScope probe(info);
+            if (!probe.ok()) {
+                NIXL_ERROR << "Failed to bind accelerator device " << info.device << " (iface "
+                           << nfi_hmem_iface_name(info.iface) << ") for descriptor " << desc_idx
+                           << "; nothing posted";
+                return NIXL_ERR_BACKEND;
+            }
+            accelBindRecordOk(info);
         }
     }
 
@@ -1865,8 +1715,8 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
                 total_message_length, expected_completions, metadata.agent_name_length);
         }
 
-        // Allocate control request for this notification fragment from rail 0
-        size_t rail_id = 0;
+        // Send from the rail paired with the peer's rail 0; see nixlLibfabricConnection::control_rail_.
+        size_t rail_id = connection->control_rail_;
         size_t max_size = BinaryNotification::MAX_FRAGMENT_SIZE;
         nixlLibfabricReq *control_request =
             rail_manager_.getRail(rail_id).allocateControlRequest(max_size, notif_xfer_id);
@@ -2060,9 +1910,21 @@ nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
  * Progress Thread Function (Data Rails Only)
  *****************************************/
 
+namespace {
+// The engine whose progress thread this is, or null on any other thread. Per engine rather than a
+// flag, so one engine's progress thread is never mistaken for another's.
+thread_local const nixlLibfabricEngine *tls_progress_thread_engine = nullptr;
+} // namespace
+
+bool
+nixlLibfabricEngine::onProgressThread() const {
+    return tls_progress_thread_engine == this;
+}
+
 // Progress thread that continuously processes completions only on rails
 nixl_status_t
 nixlLibfabricEngine::progressThread() {
+    tls_progress_thread_engine = this;
     NIXL_DEBUG << "PT: Thread started successfully for rails only";
     // Main progress loop - continuously process completions only on rails
     while (!progress_thread_stop_.load()) {
@@ -2076,6 +1938,8 @@ nixlLibfabricEngine::progressThread() {
             NIXL_ERROR << "PT: Failed to process completions on rails";
             // Don't return error, continue for robustness
         }
+        // Handshakes requested from inside the CQ callbacks above, sent now that none is running
+        flushDeferredHandshakes();
         if (!any_completions) {
             std::this_thread::sleep_for(progress_thread_delay_);
         }
@@ -2320,10 +2184,6 @@ void
 nixlLibfabricEngine::cleanup() {
     NIXL_DEBUG << "Cleaning up all resources";
     post_thread_pool_.reset();
-#ifdef HAVE_CUDA
-    // Cleanup CUDA context
-    vramFiniCtx();
-#endif
 
     NIXL_DEBUG << "Cleanup all resources complete";
 }

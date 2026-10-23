@@ -19,6 +19,7 @@
 #include "libfabric/libfabric_topology.h"
 #include "libfabric/libfabric_common.h"
 #include "libfabric/libfabric_rail_manager.h"
+#include "libfabric/libfabric_accel.h"
 #include "common/nixl_log.h"
 #include "gpu_utils.h"
 
@@ -599,6 +600,21 @@ testBasicTopology() {
             }
         } else {
             NIXL_INFO << "3. Skipping GPU-specific tests (no GPUs detected)";
+        }
+
+        // Intel Xe / XPU discovery. Checked against live hwloc rather than an XML fixture on
+        // purpose: the ZE is_accel predicate answers by cross-checking against the BDFs the Level
+        // Zero driver enumerated on this machine, so a synthetic topology would be rejected
+        // wholesale and the assertion would be vacuous. See libfabric_hmem_test.cpp for the
+        // predicate's own tests.
+        NIXL_INFO << "4. Intel accelerators detected: " << topology.getNumIntelAccel();
+        if (!nfi_hmem_iface_available(FI_HMEM_ZE)) {
+            if (topology.getNumIntelAccel() != 0) {
+                NIXL_ERROR << "   Level Zero is unavailable but topology reports "
+                           << topology.getNumIntelAccel() << " Intel accelerator(s)";
+                return 1;
+            }
+            NIXL_INFO << "   Level Zero unavailable, correctly reporting no Intel accelerators";
         }
     }
     catch (const std::exception &e) {

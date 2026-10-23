@@ -25,23 +25,13 @@
 #include <algorithm>
 #include <set>
 #include <cmath>
+#include <tuple>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
 
-#ifdef HAVE_CUDA
-#ifdef __HIP_PLATFORM_AMD__
-#include <hip/hip_runtime.h>
-#else
-#include <cuda_runtime.h>
-#endif
-#endif
-
 nixlLibfabricTopology::nixlLibfabricTopology()
-    : num_aws_accel(0),
-      num_nvidia_accel(0),
-      num_amd_accel(0),
-      num_numa_nodes(0),
+    : num_numa_nodes(0),
       num_devices(0),
       topology_discovered(false),
       hwloc_topology(nullptr),
@@ -105,8 +95,8 @@ nixlLibfabricTopology::discoverTopology() {
         }
         return status;
     }
-    // For EFA / CXI devices, build PCIe to Libfabric device mapping and full topology
-    if (provider_name == "efa" || provider_name == "cxi") {
+    // For the RDMA providers, build PCIe to Libfabric device mapping and full topology
+    if (LibfabricUtils::providerNeedsFullTopology(provider_name)) {
         // Discover hardware topology using hwloc
         status = discoverHwlocTopology();
         if (status != NIXL_SUCCESS) {
@@ -114,16 +104,16 @@ nixlLibfabricTopology::discoverTopology() {
             return status;
         }
 
-        // build nic info map regardless of accelerator to EFA / CXI mapping
+        // build nic info map regardless of accelerator to NIC mapping
         buildNicInfoMap();
 
         neuronEfaPreflightForEfaProvider();
 
-        // Build nVidia accelerator to EFA / CXI mapping based on PCIe topology
-        if (num_nvidia_accel > 0 || num_amd_accel > 0) {
-            status = buildAccelToEfaMapping();
+        // Build accelerator to NIC mapping based on PCIe topology
+        if (hasGroupableAccel()) {
+            status = buildAccelToNicMapping();
             if (status != NIXL_SUCCESS) {
-                NIXL_ERROR << "Failed to build accelerator to EFA / CXI mapping";
+                NIXL_ERROR << "Failed to build accelerator to NIC mapping";
                 return status;
             }
         }
@@ -135,8 +125,7 @@ nixlLibfabricTopology::discoverTopology() {
         neuronEfaPreflightForNonEfaProvider();
 
         // Set basic values without hwloc discovery
-        num_nvidia_accel = 0; // TCP doesn't need accelerator topology
-        num_aws_accel = 0; // TCP doesn't need accelerator topology
+        accel_counts.clear(); // TCP doesn't need accelerator topology
         num_numa_nodes = 1; // Simple fallback
 
         // For TCP/sockets devices, no accelerator-mapping required.
@@ -163,6 +152,9 @@ nixlLibfabricTopology::discoverTopology() {
 // (HPE Slingshot) interconnects.
 void
 nixlLibfabricTopology::neuronEfaPreflightForEfaProvider() {
+    // The preflight reasons in Neuron and NVIDIA counts; both come from the per-iface map.
+    const int num_aws_accel = getNumNeuronAccel();
+    const int num_nvidia_accel = getNumNvidiaAccel();
     if (provider_name != "efa") {
         return;
     }
@@ -216,6 +208,9 @@ nixlLibfabricTopology::neuronEfaPreflightForEfaProvider() {
 // cleared in the TCP branch of discoverTopology().
 void
 nixlLibfabricTopology::neuronEfaPreflightForNonEfaProvider() {
+    // The preflight reasons in Neuron and NVIDIA counts; both come from the per-iface map.
+    const int num_aws_accel = getNumNeuronAccel();
+    const int num_nvidia_accel = getNumNvidiaAccel();
     if (!(num_aws_accel > 0 && num_nvidia_accel == 0)) {
         return;
     }
@@ -236,22 +231,26 @@ nixlLibfabricTopology::discoverProviderWithDevices() {
     // Use the utility function from libfabric_common
     auto network_device = LibfabricUtils::getAvailableNetworkDevices();
     provider_name = network_device.first;
-    all_devices = network_device.second;
+    discovered_devices = std::move(network_device.second);
+
+    all_devices.clear();
+    all_devices.reserve(discovered_devices.size());
+    for (const auto &dev : discovered_devices) {
+        all_devices.push_back(dev.domain_name);
+    }
 
     num_devices = all_devices.size();
 
-    // Set device type based on discovered provider
-    if (provider_name == "efa") {
-        NIXL_INFO << "Discovered " << num_devices << " EFA devices";
-    } else if (provider_name == "cxi") {
-        NIXL_INFO << "Discovered " << num_devices << " CXI devices";
-    } else if (provider_name == "tcp" || provider_name == "sockets") {
-        NIXL_INFO << "Discovered " << num_devices << " " << provider_name
-                  << " devices (TCP fallback)";
-    } else if (provider_name == "none" || all_devices.empty()) {
+    if (provider_name == "none" || all_devices.empty()) {
         NIXL_ERROR << "No network devices found";
         return NIXL_ERR_BACKEND;
     }
+
+    const LibfabricUtils::nixlLibfabricProviderInfo *prov_info =
+        LibfabricUtils::findProviderInfo(provider_name);
+    NIXL_INFO << "Discovered " << num_devices << " "
+              << ((prov_info != nullptr) ? prov_info->description : provider_name.c_str())
+              << " devices";
 
     for (size_t i = 0; i < all_devices.size(); ++i) {
         NIXL_TRACE << "Network device " << i << ": " << all_devices[i]
@@ -261,9 +260,9 @@ nixlLibfabricTopology::discoverProviderWithDevices() {
 }
 
 std::vector<std::string>
-nixlLibfabricTopology::getEfaDevicesForPci(const std::string &pci_bus_id) const {
-    // Normalize PCI bus ID format to match hwloc format
-    // CUDA format: "0000:59:00.0" → hwloc format: "0:59:00.0"
+nixlLibfabricTopology::getNicsForPci(const std::string &pci_bus_id) const {
+    // Normalize PCI bus ID format to match hwloc format. Vendor SDKs report a zero-padded domain
+    // ("0000:59:00.0"); hwloc does not ("0:59:00.0").
     unsigned int domain, bus, device, function;
     if (sscanf(pci_bus_id.c_str(), "%x:%x:%x.%x", &domain, &bus, &device, &function) == 4) {
         char normalized_pci[32];
@@ -277,23 +276,23 @@ nixlLibfabricTopology::getEfaDevicesForPci(const std::string &pci_bus_id) const 
         std::string normalized_id(normalized_pci);
 
         // GPU query, lookup based on GPU BDF
-        if (auto it = pci_to_efa_devices.find(normalized_id); it != pci_to_efa_devices.end()) {
-            NIXL_DEBUG << "Found EFA devices for PCI " << pci_bus_id << " (normalized to "
+        if (auto it = pci_to_nic_devices.find(normalized_id); it != pci_to_nic_devices.end()) {
+            NIXL_DEBUG << "Found NICs for PCI " << pci_bus_id << " (normalized to "
                        << normalized_id << ")";
             return it->second;
         }
 
-        // Neuron query, lookup based on EFA BDF
+        // Neuron query, lookup based on NIC BDF
         if (auto it = pcie_to_libfabric_map.find(normalized_id);
             it != pcie_to_libfabric_map.end()) {
-            NIXL_DEBUG << "Found EFA devices for PCI " << pci_bus_id << " (normalized to "
+            NIXL_DEBUG << "Found NICs for PCI " << pci_bus_id << " (normalized to "
                        << normalized_id << ")";
             return {it->second};
         }
 
         // PCI ID parsed successfully but not found in mapping
         NIXL_WARN << "PCI bus ID " << pci_bus_id << " (normalized to " << normalized_id
-                  << ") not found in accelerator-EFA mapping, returning all devices";
+                  << ") not found in accelerator-NIC mapping, returning all devices";
     } else {
         // Failed to parse PCI bus ID format
         NIXL_WARN << "Failed to parse PCI bus ID format: " << pci_bus_id
@@ -304,38 +303,38 @@ nixlLibfabricTopology::getEfaDevicesForPci(const std::string &pci_bus_id) const 
 }
 
 bool
-nixlLibfabricTopology::isValidDevice(const std::string &efa_device) const {
-    return std::find(all_devices.begin(), all_devices.end(), efa_device) != all_devices.end();
+nixlLibfabricTopology::isValidDevice(const std::string &nic_device) const {
+    return std::find(all_devices.begin(), all_devices.end(), nic_device) != all_devices.end();
 }
 
 uint16_t
-nixlLibfabricTopology::getDeviceNumaNode(const std::string &efa_device) const {
+nixlLibfabricTopology::getDeviceNumaNode(const std::string &nic_device) const {
     int device_numa_node = -1;
-    NicInfoMap::const_iterator itr = nic_info_map.find(efa_device);
+    NicInfoMap::const_iterator itr = nic_info_map.find(nic_device);
     if (itr == nic_info_map.end()) {
-        NIXL_WARN << "EFA device " << efa_device << " not found in nic_info_map";
+        NIXL_WARN << "NIC " << nic_device << " not found in nic_info_map";
     } else {
         device_numa_node = itr->second.numa_node_id;
         if (device_numa_node == INVALID_NUMA_NODE_ID) {
-            NIXL_INFO << "EFA device " << efa_device << " is not associated with a NUMA node";
+            NIXL_INFO << "NIC " << nic_device << " is not associated with a NUMA node";
         } else {
-            NIXL_DEBUG << "EFA device " << efa_device << " is on NUMA node " << device_numa_node;
+            NIXL_DEBUG << "NIC " << nic_device << " is on NUMA node " << device_numa_node;
         }
     }
     return device_numa_node;
 }
 
 bool
-nixlLibfabricTopology::getPcieDevData(const std::string &efa_device,
+nixlLibfabricTopology::getPcieDevData(const std::string &nic_device,
                                       uint16_t &numa_node_id,
                                       size_t &device_link_speed,
                                       uint16_t &parent_switch_domain,
                                       uint8_t &parent_switch_bus_id,
                                       size_t &parent_switch_link_speed) const {
     bool found = false;
-    NicInfoMap::const_iterator itr = nic_info_map.find(efa_device);
+    NicInfoMap::const_iterator itr = nic_info_map.find(nic_device);
     if (itr == nic_info_map.end()) {
-        NIXL_WARN << "EFA device " << efa_device << " not found in nic_info_map";
+        NIXL_WARN << "NIC " << nic_device << " not found in nic_info_map";
     } else {
         found = true;
         numa_node_id = itr->second.numa_node_id;
@@ -343,7 +342,7 @@ nixlLibfabricTopology::getPcieDevData(const std::string &efa_device,
         parent_switch_domain = itr->second.parent_switch_domain;
         parent_switch_bus_id = itr->second.parent_switch_bus_id;
         parent_switch_link_speed = itr->second.parent_switch_link_speed;
-        NIXL_DEBUG << "EFA device " << efa_device << " has upstream link speed "
+        NIXL_DEBUG << "NIC " << nic_device << " has upstream link speed "
                    << device_link_speed << " Gbps, and is associated with NUMA node "
                    << numa_node_id << " through PCIe switch on domain/bus-id "
                    << parent_switch_domain << "/" << parent_switch_bus_id
@@ -365,22 +364,21 @@ nixlLibfabricTopology::getNumaRailCount() const {
 void
 nixlLibfabricTopology::printTopologyInfo() const {
     NIXL_INFO << "Topology: " << num_numa_nodes << " NUMA nodes, " << num_devices << " NICs, "
-              << num_nvidia_accel << " NVIDIA GPUs, " << num_amd_accel << " AMD GPUs, "
-              << num_aws_accel << " AWS accelerators";
+              << accelCountsString();
     if (avg_nic_speed > 0) {
         NIXL_INFO << "Avg NIC bandwidth: " << avg_nic_speed << " Gbps";
     }
     NIXL_TRACE << "=== Libfabric Topology Information ===";
     NIXL_TRACE << "Topology discovered: " << (topology_discovered ? "Yes" : "No");
-    NIXL_TRACE << "Number of AWS Neuron accelerators: " << num_aws_accel;
+    NIXL_TRACE << "Number of accelerators: " << getTotalNumAccel();
     NIXL_TRACE << "Number of NUMA nodes: " << num_numa_nodes;
-    NIXL_TRACE << "Number of EFA devices: " << num_devices;
-    NIXL_TRACE << "EFA devices: ";
+    NIXL_TRACE << "Number of NICs: " << num_devices;
+    NIXL_TRACE << "NICs: ";
     for (size_t i = 0; i < all_devices.size(); ++i) {
         NIXL_TRACE << "  [" << i << "] " << all_devices[i];
     }
-    NIXL_TRACE << "Accelerator-PCI → EFA mapping:";
-    for (const auto &pair : pci_to_efa_devices) {
+    NIXL_TRACE << "Accelerator-PCI → NIC mapping:";
+    for (const auto &pair : pci_to_nic_devices) {
         std::stringstream ss;
         ss << "Accelerator-PCI " << pair.first << " → [";
         for (size_t i = 0; i < pair.second.size(); ++i) {
@@ -392,18 +390,27 @@ nixlLibfabricTopology::printTopologyInfo() const {
         ss << "]";
         NIXL_INFO << ss.str();
     }
-    NIXL_TRACE << "Host memory (DRAM) will limit number of EFA devices used per-NUMA node "
+    NIXL_TRACE << "Host memory (DRAM) will limit number of NICs used per-NUMA node "
                   "according to maximum PCIe switch bandwidth";
     NIXL_TRACE << "=====================================";
+}
+
+std::string
+nixlLibfabricTopology::accelCountsString() const {
+    std::stringstream ss;
+    for (const enum fi_hmem_iface iface : nixlAccelKnownIfaces()) {
+        ss << nfi_hmem_iface_name(iface) << "=" << getNumAccel(iface) << " ";
+    }
+    return ss.str();
 }
 
 std::string
 nixlLibfabricTopology::getTopologyString() const {
     std::stringstream ss;
     ss << "Libfabric Topology: ";
-    ss << "AWS_Accelerators=" << num_aws_accel << ", ";
+    ss << "Accelerators=[" << accelCountsString() << "], ";
     ss << "NUMA=" << num_numa_nodes << ", ";
-    ss << "EFA=" << num_devices << ", ";
+    ss << "NICs=" << num_devices << ", ";
     ss << "Discovered=" << (topology_discovered ? "Yes" : "No");
     return ss.str();
 }
@@ -432,7 +439,7 @@ nixlLibfabricTopology::initHwlocTopology() {
         return NIXL_ERR_BACKEND;
     }
 
-    // Enable I/O device discovery - this is the key to seeing EFA devices!
+    // Enable I/O device discovery - this is the key to seeing NIC devices!
 #if (HWLOC_API_VERSION >= 0x00020000)
     enum hwloc_type_filter_e filter = HWLOC_TYPE_FILTER_KEEP_ALL;
     ret = hwloc_topology_set_io_types_filter(hwloc_topology, filter);
@@ -495,7 +502,7 @@ nixlLibfabricTopology::discoverHwlocTopology() {
     // preflight in both the EFA and TCP-fallback paths.
     nixl_status_t status = discoverRDMADevicesWithHwloc();
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to discover EFA devices with hwloc";
+        NIXL_ERROR << "Failed to discover NIC devices with hwloc";
         return status;
     }
     // Discover NUMA topology
@@ -503,70 +510,70 @@ nixlLibfabricTopology::discoverHwlocTopology() {
     if (num_numa_nodes == 0) {
         num_numa_nodes = 1; // Fallback to single NUMA node
     }
-    NIXL_TRACE << "Discovered " << num_aws_accel << " AWS accelerators and " << num_numa_nodes
+    NIXL_TRACE << "Discovered " << getTotalNumAccel() << " accelerators and " << num_numa_nodes
                << " NUMA nodes via hwloc";
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlLibfabricTopology::discoverAccelWithHwloc() {
-    num_aws_accel = 0;
-    num_nvidia_accel = 0;
-    num_amd_accel = 0;
+    accel_counts.clear();
     // Find all PCI devices and log detailed information
     hwloc_obj_t pci_obj = nullptr;
     while ((pci_obj = hwloc_get_next_pcidev(hwloc_topology, pci_obj)) != nullptr) {
-        const bool is_nvidia_accel = isNvidiaAccel(pci_obj);
-        const bool is_neuron_accel = isNeuronAccel(pci_obj);
-        const bool is_amd_accel = isAmdAccel(pci_obj);
-
-        if (is_nvidia_accel || is_neuron_accel || is_amd_accel) {
-            std::string pcie_addr = getPcieAddressFromHwlocObj(pci_obj);
-            // Get device and vendor info
-            uint16_t vendor_id = pci_obj->attr->pcidev.vendor_id;
-            uint16_t device_id = pci_obj->attr->pcidev.device_id;
-            uint16_t class_id = pci_obj->attr->pcidev.class_id;
-
-            const char *vendor_name = is_nvidia_accel ? "NVIDIA" : is_amd_accel ? "AMD" : "NEURON";
-
-            NIXL_TRACE << "Found " << vendor_name << " accelerator: " << pcie_addr
-                       << " (vendor=" << std::hex << vendor_id << ", device=" << device_id
-                       << ", class=" << class_id << std::dec << ")";
-
-            if (is_nvidia_accel) {
-                num_nvidia_accel++;
-            } else if (is_amd_accel) {
-                num_amd_accel++;
-            } else {
-                num_aws_accel++;
-            }
+        const enum fi_hmem_iface iface = accelIfaceOf(pci_obj);
+        if (iface == FI_HMEM_SYSTEM) {
+            continue;
         }
+        accel_counts[static_cast<int>(iface)]++;
+
+        std::string pcie_addr = getPcieAddressFromHwlocObj(pci_obj);
+        // Get device and vendor info
+        uint16_t vendor_id = pci_obj->attr->pcidev.vendor_id;
+        uint16_t device_id = pci_obj->attr->pcidev.device_id;
+        uint16_t class_id = pci_obj->attr->pcidev.class_id;
+
+        NIXL_TRACE << "Found " << nfi_hmem_iface_name(iface) << " accelerator: " << pcie_addr
+                   << " (vendor=" << std::hex << vendor_id << ", device=" << device_id
+                   << ", class=" << class_id << std::dec << ")";
     }
 
-    NIXL_TRACE << "Discovered " << num_nvidia_accel << " NVIDIA, " << num_amd_accel << " AMD, and "
-               << num_aws_accel << " Neuron accelerators via hwloc";
-
-    // If we found more than 8 NVIDIA accelerators on P5en, investigate further
-    if (num_nvidia_accel > 8) {
-        NIXL_WARN << "Found " << num_nvidia_accel
-                  << " NVIDIA accelerators, but P5en should have 8. Investigating...";
-
-        // List all NVIDIA devices to understand what we're seeing
-        pci_obj = nullptr;
-        int accel_count = 0;
-        while ((pci_obj = hwloc_get_next_pcidev(hwloc_topology, pci_obj)) != nullptr) {
-            if (pci_obj->attr->pcidev.vendor_id == 0x10de) { // NVIDIA
-                std::string pcie_addr = getPcieAddressFromHwlocObj(pci_obj);
-                uint16_t device_id = pci_obj->attr->pcidev.device_id;
-                uint16_t class_id = pci_obj->attr->pcidev.class_id;
-
-                NIXL_WARN << "NVIDIA device " << accel_count << ": " << pcie_addr << " (device"
-                          << std::hex << device_id << ", class=" << class_id << std::dec << ")";
-                accel_count++;
-            }
-        }
+    for (const enum fi_hmem_iface iface : nixlAccelKnownIfaces()) {
+        NIXL_TRACE << "Discovered " << getNumAccel(iface) << " " << nfi_hmem_iface_name(iface)
+                   << " devices via hwloc";
     }
     return NIXL_SUCCESS;
+}
+
+enum fi_hmem_iface
+nixlLibfabricTopology::accelIfaceOf(hwloc_obj_t obj) const {
+    // Vendor attribution of an hwloc object is not this class's business; see libfabric_accel.h.
+    return accelIfaceOfHwlocObj(obj);
+}
+
+bool
+nixlLibfabricTopology::isGroupableAccel(hwloc_obj_t obj) const {
+    const enum fi_hmem_iface iface = accelIfaceOf(obj);
+    return iface != FI_HMEM_SYSTEM && accelIfaceIsGroupable(iface);
+}
+
+bool
+nixlLibfabricTopology::hasGroupableAccel() const {
+    for (const auto &[iface, count] : accel_counts) {
+        if (count > 0 && accelIfaceIsGroupable(static_cast<enum fi_hmem_iface>(iface))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int
+nixlLibfabricTopology::getTotalNumAccel() const {
+    int total = 0;
+    for (const auto &entry : accel_counts) {
+        total += entry.second;
+    }
+    return total;
 }
 
 nixl_status_t
@@ -600,86 +607,93 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
     pcie_to_libfabric_map.clear();
     libfabric_to_pcie_map.clear();
 
-    // Get EFA device info with PCIe addresses from libfabric
-    struct fi_info *hints, *info;
+    /*
+     * No fi_getinfo() here. Device discovery already walked libfabric's answer and kept each
+     * selected domain's bus address and link speed, so this function only has to key them the way
+     * the rest of the class looks things up, plus resolve the addresses libfabric declined to give.
+     *
+     * That the second query is gone matters beyond the saved call. It used different hints from
+     * discovery -- no ep_attr->type -- so it also returned the sibling endpoint variants of the same
+     * NICs ("-xrc" and "-dgram" for verbs, "-dgrm" for efa) and needed filtering against
+     * all_devices to stop one of those overwriting the real entry for a BDF in a last-write-wins
+     * map. It also needed cxi's mr_mode repeated in its hints or cxi returned nothing at all. Both
+     * of those were compensation for the two queries being able to disagree; one query cannot.
+     */
+    for (const auto &dev : discovered_devices) {
+        std::string pcie_address = dev.pcie_address;
 
-    hints = fi_allocinfo();
-    if (!hints) {
-        NIXL_ERROR << "Failed to allocate fi_info for PCIe mapping";
-        return NIXL_ERR_BACKEND;
-    }
-
-    // Configure hints for the discovered provider
-    // This ensures consistency between device discovery and PCIe mapping
-    if (provider_name == "cxi") {
-        hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR | FI_MR_ALLOCATED |
-            FI_MR_PROV_KEY | FI_MR_ENDPOINT;
-    }
-    hints->fabric_attr->prov_name = strdup(provider_name.c_str());
-
-    int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
-    if (ret) {
-        NIXL_ERROR << "fi_getinfo failed for PCIe mapping with provider " << provider_name << ": "
-                   << fi_strerror(-ret);
-        fi_freeinfo(hints);
-        return NIXL_ERR_BACKEND;
-    }
-
-    for (struct fi_info *cur = info; cur; cur = cur->next) {
-        if (cur->domain_attr && cur->domain_attr->name && cur->nic && cur->nic->bus_attr) {
-            has_pcie_devices_ = true;
-            std::string libfabric_name = cur->domain_attr->name;
-            // Extract PCIe address from bus_attr if available
-            if (cur->nic->bus_attr->bus_type == FI_BUS_PCI &&
-                cur->nic->bus_attr->attr.pci.domain_id != FI_ADDR_UNSPEC) {
-                char pcie_addr[32];
-                snprintf(pcie_addr,
-                         sizeof(pcie_addr),
-                         "%x:%02x:%02x.%x",
-                         cur->nic->bus_attr->attr.pci.domain_id,
-                         cur->nic->bus_attr->attr.pci.bus_id,
-                         cur->nic->bus_attr->attr.pci.device_id,
-                         cur->nic->bus_attr->attr.pci.function_id);
-
-                std::string pcie_address = pcie_addr;
-                pcie_to_libfabric_map[pcie_address] = libfabric_name;
-                libfabric_to_pcie_map[libfabric_name] = pcie_address;
-
-                // save also speed for rail selection policy
-                size_t nic_speed = 0;
-                if (cur->nic->link_attr != nullptr) {
-                    nic_speed = cur->nic->link_attr->speed;
-                } else {
-                    NIXL_WARN << "Could not get NIC link speed for device " << libfabric_name
-                              << " at PCIe address " << pcie_addr << " (link_attr is null)";
-                }
-                nic_speed_map[pcie_addr] = nic_speed;
-
-                NIXL_TRACE << "Mapped PCIe " << pcie_address << " → Libfabric " << libfabric_name
-                           << " (provider=" << provider_name << ", NIC link speed: " << nic_speed
-                           << ")";
+        if (pcie_address.empty()) {
+            /*
+             * verbs fills nic->link_attr but leaves bus_attr at FI_BUS_UNKNOWN (checked against
+             * libfabric 2.2 on a ConnectX RoCE NIC), so there would be no BDF to group NICs by:
+             * buildTopologyAwareGrouping() would find zero NICs and rail selection would silently
+             * fall back to every rail for every accelerator. hwloc already knows the answer -- a
+             * verbs domain name is the InfiniBand device name, which hwloc reports as an OS device
+             * under its PCI parent. This is the one part that cannot move into device discovery,
+             * which has no hwloc topology to consult.
+             */
+            pcie_address = getPcieAddressForOsDev(dev.domain_name);
+            if (!pcie_address.empty()) {
+                NIXL_DEBUG << "Resolved PCIe address " << pcie_address << " for "
+                           << dev.domain_name << " via hwloc (libfabric reported none)";
             }
         }
+
+        if (pcie_address.empty()) {
+            NIXL_DEBUG << "No PCIe address for " << dev.domain_name
+                       << ", excluding it from proximity grouping";
+            continue;
+        }
+
+        // Only claim PCIe devices once an address was actually resolved: a nic->bus_attr that exists
+        // but reports FI_BUS_UNKNOWN would otherwise set the flag while leaving the maps empty, and
+        // hasPcieDevices() gates NUMA-aware rail selection.
+        has_pcie_devices_ = true;
+        pcie_to_libfabric_map[pcie_address] = dev.domain_name;
+        libfabric_to_pcie_map[dev.domain_name] = pcie_address;
+
+        if (dev.link_speed == 0) {
+            NIXL_WARN << "Could not get NIC link speed for device " << dev.domain_name
+                      << " at PCIe address " << pcie_address;
+        }
+        nic_speed_map[pcie_address] = dev.link_speed;
+
+        NIXL_TRACE << "Mapped PCIe " << pcie_address << " -> Libfabric " << dev.domain_name
+                   << " (provider=" << provider_name << ", NIC link speed: " << dev.link_speed
+                   << ")";
     }
 
-    fi_freeinfo(info);
-    fi_freeinfo(hints);
+    /*
+     * A provider that does proximity-based rail selection and resolved no addresses at all still
+     * "works" -- getNicsForPci() falls back to every NIC for every accelerator -- so the failure is
+     * invisible in a transfer and shows up only as lost affinity. Say so loudly, because the most
+     * likely cause is that this provider does not report nic->bus_attr on the FI_EP_RDM entries that
+     * device discovery asks for, which is exactly the kind of thing that differs per provider.
+     */
+    if (pcie_to_libfabric_map.empty() && !discovered_devices.empty() &&
+        LibfabricUtils::providerNeedsFullTopology(provider_name)) {
+        NIXL_WARN << "Provider " << provider_name << " reported " << discovered_devices.size()
+                  << " device(s) but no PCIe addresses, and hwloc could not resolve their domain "
+                     "names either. PCIe-proximity rail selection is disabled: every accelerator "
+                     "will use every rail.";
+    }
+
     NIXL_TRACE << "Built PCIe to Libfabric mapping for " << pcie_to_libfabric_map.size()
                << " devices using provider " << provider_name;
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlLibfabricTopology::buildAccelToEfaMapping() {
-    pci_to_efa_devices.clear();
-    // Implement NIXL's topology-aware accelerator-EFA grouping algorithm
+nixlLibfabricTopology::buildAccelToNicMapping() {
+    pci_to_nic_devices.clear();
+    // Implement NIXL's topology-aware accelerator-NIC grouping algorithm
     nixl_status_t status = buildTopologyAwareGrouping();
     if (status != NIXL_SUCCESS) {
         NIXL_WARN << "Topology-aware grouping failed, using fallback to use all available devices";
         return buildFallbackMapping();
     }
 
-    NIXL_TRACE << "Built PCI→EFA mapping for " << pci_to_efa_devices.size()
+    NIXL_TRACE << "Built PCI→NIC mapping for " << pci_to_nic_devices.size()
                << " accelerators using topology-aware algorithm";
 
     return NIXL_SUCCESS;
@@ -698,7 +712,10 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
     // Step 2: Discover accelerators (NVIDIA and AMD)
     hwloc_obj_t pci_obj = nullptr;
     while ((pci_obj = hwloc_get_next_pcidev(hwloc_topology, pci_obj)) != nullptr) {
-        if (isNvidiaAccel(pci_obj) || isAmdAccel(pci_obj)) {
+        // AccelInfo carries no vendor and groupNicsWithAccel() only walks hwloc ancestry, so
+        // grouping is vendor-blind past this point. Which vendors get in is the vendor table's
+        // call, via the groupable flag -- see isGroupableAccel().
+        if (isGroupableAccel(pci_obj)) {
             AccelInfo accel;
             accel.hwloc_node = pci_obj;
             accel.domain_id = pci_obj->attr->pcidev.domain;
@@ -722,13 +739,13 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
     if (status != NIXL_SUCCESS) {
         return status;
     }
-    // Step 4: Convert groups to Accelerator→EFA mapping
+    // Step 4: Convert groups to Accelerator→NIC mapping
     for (size_t group_idx = 0; group_idx < nic_groups.size(); ++group_idx) {
         const auto &group = nic_groups[group_idx];
         if (group.has_accel) {
-            std::vector<std::string> accel_efa_devices;
+            std::vector<std::string> accel_nics;
             for (const auto &nic : group.nics) {
-                accel_efa_devices.push_back(nic.libfabric_name);
+                accel_nics.push_back(nic.libfabric_name);
                 // group.common_ancestor is the lowest common ancestor of this NIC and
                 // the group's accelerator: step 2 walks each accelerator up to the node
                 // where it enters the NIC subtree, and step 3 walks these NICs to that
@@ -758,18 +775,16 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
                 // for the NICs under its PCIe switch and one for the NICs it meets at the Grace
                 // Package -- and it should be able to use all of them.
                 std::string pci_bus_id = getPcieAddressFromHwlocObj(group.closest_accel.hwloc_node);
-                auto &efa_devices_for_accel = pci_to_efa_devices[pci_bus_id];
-                efa_devices_for_accel.insert(efa_devices_for_accel.end(),
-                                             accel_efa_devices.begin(),
-                                             accel_efa_devices.end());
+                auto &nics_for_accel = pci_to_nic_devices[pci_bus_id];
+                nics_for_accel.insert(nics_for_accel.end(), accel_nics.begin(), accel_nics.end());
 
                 NIXL_TRACE << "PCI " << pci_bus_id << " (Accelerator " << accel_index << ") → "
-                           << accel_efa_devices.size() << " EFA devices: [";
-                for (size_t i = 0; i < accel_efa_devices.size(); ++i) {
+                           << accel_nics.size() << " NICs: [";
+                for (size_t i = 0; i < accel_nics.size(); ++i) {
                     if (i > 0) {
                         NIXL_TRACE << ", ";
                     }
-                    NIXL_TRACE << accel_efa_devices[i];
+                    NIXL_TRACE << accel_nics[i];
                 }
                 NIXL_TRACE << "]";
             }
@@ -864,8 +879,8 @@ nixl_status_t
 nixlLibfabricTopology::buildFallbackMapping() {
     // Fallback: if specific mapping failed, use simple approach
     // We can't build PCI-based mapping without topology, so just return success
-    // getEfaDevicesForPci() will return all_devices when no mapping is found
-    NIXL_WARN << "Using fallback: all accelerators will use all available EFA devices";
+    // getNicsForPci() will return all_devices when no mapping is found
+    NIXL_WARN << "Using fallback: all accelerators will use all available NICs";
     return NIXL_SUCCESS;
 }
 
@@ -892,57 +907,32 @@ nixlLibfabricTopology::getPcieAddressFromHwlocObj(hwloc_obj_t obj) const {
     return getPcieAddressFromHwlocPcidev(obj->attr->pcidev);
 }
 
-bool
-nixlLibfabricTopology::isNvidiaAccel(hwloc_obj_t obj) const {
-    if (!obj || obj->type != HWLOC_OBJ_PCI_DEVICE) {
-        return false;
+std::string
+nixlLibfabricTopology::getPcieAddressForOsDev(const std::string &osdev_name) const {
+    if (!hwloc_topology || osdev_name.empty()) {
+        return "";
     }
-    // NVIDIA vendor ID is 0x10de
-    if (obj->attr->pcidev.vendor_id != 0x10de) {
-        return false;
+
+    hwloc_obj_t osdev = nullptr;
+    while ((osdev = hwloc_get_next_osdev(hwloc_topology, osdev)) != nullptr) {
+        if (!osdev->name || osdev_name != osdev->name) {
+            continue;
+        }
+        // Not necessarily the immediate parent: hwloc can insert bridge levels between an OS
+        // device and its PCI device.
+        for (hwloc_obj_t parent = osdev->parent; parent != nullptr; parent = parent->parent) {
+            if (parent->type == HWLOC_OBJ_PCI_DEVICE) {
+                return getPcieAddressFromHwlocObj(parent);
+            }
+        }
+        NIXL_DEBUG << "hwloc OS device " << osdev_name << " has no PCI device ancestor";
+        return "";
     }
-    // Only count devices with GPU class (0x300-0x3ff for display controllers)
-    // Class 0x302 is 3D controller (GPU), 0x680 is other devices (network, etc.)
-    uint16_t class_id = obj->attr->pcidev.class_id;
-    return (class_id >= 0x300 && class_id < 0x400);
+
+    NIXL_DEBUG << "No hwloc OS device named " << osdev_name;
+    return "";
 }
 
-bool
-nixlLibfabricTopology::isNeuronAccel(hwloc_obj_t obj) const {
-    if (!obj || obj->type != HWLOC_OBJ_PCI_DEVICE) {
-        return false;
-    }
-    // Amazon vendor ID is 0x1d0f
-    if (obj->attr->pcidev.vendor_id != 0x1d0f) {
-        return false;
-    }
-    static const uint16_t NEURON_DEVICE_IDS[] = {
-        0x7264, // INF2
-        0x7164, // TRN1
-        0x7364, // TRN2
-        0x7564, // TRN3_DEVICE_0
-        0x7565, // TRN3_DEVICE_1
-    };
-    return std::find(std::begin(NEURON_DEVICE_IDS),
-                     std::end(NEURON_DEVICE_IDS),
-                     obj->attr->pcidev.device_id) != std::end(NEURON_DEVICE_IDS);
-}
-
-bool
-nixlLibfabricTopology::isAmdAccel(hwloc_obj_t obj) const {
-    if (!obj || obj->type != HWLOC_OBJ_PCI_DEVICE) {
-        return false;
-    }
-    // AMD vendor ID is 0x1002
-    if (obj->attr->pcidev.vendor_id != 0x1002) {
-        return false;
-    }
-    // Only count devices with GPU class (0x300-0x3ff for display controllers)
-    // Class 0x302 is 3D controller (GPU), 0x680 is other devices (network, etc.)
-    // MI300X uses class 0x1200 (Processing accelerators), consumer GPUs use 0x300-0x3ff
-    uint16_t class_id = obj->attr->pcidev.class_id;
-    return (class_id >= 0x300 && class_id < 0x400) || (class_id >= 0x1200 && class_id < 0x1300);
-}
 
 size_t
 nixlLibfabricTopology::getPcieDevSpeed(const std::string &pcie_addr) {
@@ -1091,7 +1081,7 @@ nixlLibfabricTopology::collectNicInfo(NicInfo &nic,
         nic.parent_switch_bus_id = UINT8_MAX;
     }
     nic_info_map.insert(NicInfoMap::value_type(name, nic));
-    NIXL_DEBUG << "EFA device " << name << " mapped to NUMA node " << nic.numa_node_id
+    NIXL_DEBUG << "NIC " << name << " mapped to NUMA node " << nic.numa_node_id
                << " (PCIe address " << pcie_addr << ", speed: " << nic.line_speed
                << " Gbps, upstream link speed: " << nic.upstream_link_speed
                << " Gbps, parent switch domain/bus-id: " << nic.parent_switch_domain << "/"
@@ -1465,12 +1455,16 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
         const std::vector<AccelInfo> &accel = node_accel[ancestor];
 
         if (num_groups > 0 && !accel.empty()) {
-            // Sort NICs by bus ID for consistent assignment
+            // Sort NICs by full BDF for consistent assignment. The order has to be a total one:
+            // node_nics below is keyed by hwloc object pointer, so the sequence reaching this
+            // sort is in unordered_map iteration order, and std::sort is not stable. Comparing
+            // only bus and device leaves the two ports of a dual-port NIC -- same bus, same
+            // device, differing function -- tied, and their arbitrary relative order then
+            // propagates into pci_to_nic_devices and out through getNicsForPci(), which is what
+            // selectRailsForMemory() turns into a VRAM rail list.
             std::sort(nics.begin(), nics.end(), [](const NicInfo &a, const NicInfo &b) {
-                if (a.bus_id != b.bus_id) {
-                    return a.bus_id < b.bus_id;
-                }
-                return a.device_id < b.device_id;
+                return std::tie(a.domain_id, a.bus_id, a.device_id, a.function_id) <
+                    std::tie(b.domain_id, b.bus_id, b.device_id, b.function_id);
             });
 
             // Split NICs among accelerators

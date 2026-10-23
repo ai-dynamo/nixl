@@ -193,11 +193,7 @@ Alternatively, verify that the device supports the memory type being registered.
 
 **Provider selection issues:** Check available providers with `fi_info`. Ensure the correct provider is being selected for your network fabric.
 
-**CUDA address workaround:** If you encounter issues with CUDA memory addresses on certain providers:
-
-```bash
-export NIXL_DISABLE_CUDA_ADDR_WA=1  # Disable the workaround if it causes issues
-```
+**CUDA memory registration fails:** The Libfabric backend identifies the GPU that owns each buffer from the buffer itself and binds that GPU's CUDA context only while registering memory and posting transfers, so there is no longer a CUDA address workaround to turn off. `NIXL_DISABLE_CUDA_ADDR_WA` has no effect and the backend logs a warning if it is set. If registration of CUDA memory fails, run with `NIXL_LOG_LEVEL=DEBUG` and check which device and interface the backend reports for the buffer.
 
 ### GDS (GPUDirect Storage)
 

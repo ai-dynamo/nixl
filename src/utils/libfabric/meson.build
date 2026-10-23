@@ -14,30 +14,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# AMD ROCm/HIP support (rocm_dep, hipify_src) is defined once in the root
-# meson.build and consumed here. On ROCm builds (-Drocm_path=<prefix>) the CUDA
-# sources are translated to HIP with hipify-perl; on CUDA-only builds they are
-# used verbatim.
-if rocm_dep.found()
-    libfabric_rail_src = hipify_src.process('libfabric_rail.cpp', extra_args: ['-o'])
-    libfabric_topology_src = hipify_src.process('libfabric_topology.cpp', extra_args: ['-o'])
-    libfabric_rail_manager_src = hipify_src.process('libfabric_rail_manager.cpp', extra_args: ['-o'])
-else
-    libfabric_rail_src = files('libfabric_rail.cpp')
-    libfabric_topology_src = files('libfabric_topology.cpp')
-    libfabric_rail_manager_src = files('libfabric_rail_manager.cpp')
-endif
-
-# Source files
-libfabric_utils_sources = [
-    libfabric_rail_src,
+# Source files.
+#
+# nfi_hmem.cpp is the libfabric HMEM shim: everything libfabric knows about attributing a device
+# pointer but does not export. Keep it free of nixl types, nixl logging and hwloc -- see the header
+# for the full set of constraints, which exist so it stays donatable upstream. Every accelerator
+# vendor, AMD included, goes through it, so none of these sources carries vendor calls and none
+# needs the hipify step the plugin used before.
+libfabric_utils_sources = files(
+    'libfabric_rail.cpp',
+    'libfabric_rail_manager.cpp',
     'libfabric_common.cpp',
-    # Kept out of the hipify step below: it calls the CUDA driver API directly and
-    # compiles to stubs unless NIXL_HAVE_CUDA_DRIVER_API is set.
+    # Calls the CUDA driver API directly and compiles to stubs unless NIXL_HAVE_CUDA_DRIVER_API
+    # is set.
     'libfabric_cuda_dmabuf.cpp',
-    libfabric_topology_src,
-    libfabric_rail_manager_src,
-]
+    'libfabric_topology.cpp',
+    'libfabric_accel.cpp',
+    'nfi_hmem.cpp',
+)
 
 # Header files
 libfabric_utils_headers = files(
@@ -46,6 +40,8 @@ libfabric_utils_headers = files(
     'libfabric_common.h',
     'libfabric_cuda_dmabuf.h',
     'libfabric_topology.h',
+    'libfabric_accel.h',
+    'nfi_hmem.h',
 )
 
 # Find hwloc dependency
@@ -54,11 +50,19 @@ hwloc_dep = dependency('hwloc', required: true)
 # Find numa dependency
 numa_dep = dependency('numa', required: true)
 
+# dlopen/dlsym, used by nfi_hmem.cpp to load libnrt and libze_loader at runtime
+dl_dep = dependency('dl', required: true)
+
+# pthread, for the shim's one-time vendor initialisation lock
+thread_dep_libfabric = dependency('threads', required: true)
+
 # Set up dependencies and compile args
 libfabric_utils_deps = [
     libfabric_dep,
     hwloc_dep,
     numa_dep,
+    dl_dep,
+    thread_dep_libfabric,
     absl_log_dep,
 ]
 
@@ -78,10 +82,11 @@ if libfabric_dep.found()
     endif
 endif
 
-# Add GPU support: HIP/ROCm when rocm_path is set, CUDA otherwise.
+# Add GPU support: HIP/ROCm when rocm_path is set, CUDA otherwise. The shim keys its vendors on
+# NIXL_HAVE_ROCM and NIXL_HAVE_CUDA_DRIVER_API, never on HAVE_CUDA, which both arms define.
 if rocm_dep.found()
     libfabric_utils_deps += [rocm_dep]
-    libfabric_utils_cpp_args += ['-DHAVE_CUDA']
+    libfabric_utils_cpp_args += ['-DHAVE_CUDA', '-DNIXL_HAVE_ROCM']
 elif cuda_dep.found()
     libfabric_utils_deps += [cuda_dep]
     libfabric_utils_cpp_args += ['-DHAVE_CUDA']
@@ -99,6 +104,12 @@ elif cuda_dep.found()
     else
         message('CUDA does not support CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE')
     endif
+endif
+
+# Add Level Zero (Intel Xe / XPU) support if the headers are available. Headers only: the
+# loader is dlopen'd, so there is no dependency to add here.
+if have_ze
+    libfabric_utils_cpp_args += ['-DHAVE_ZE']
 endif
 
 # Create static library

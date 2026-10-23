@@ -18,6 +18,8 @@ utils_sources = [
   'neuron.h',
   'utils.cpp',
   'utils.h',
+  'ze.cpp',
+  'ze.h',
   'scope_guard.h'
 ]
 

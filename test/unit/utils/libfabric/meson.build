@@ -97,4 +97,29 @@ if get_option('buildtype') != 'release'
 
     test('libfabric_dmabuf_test', libfabric_dmabuf_test_bin)
 
+    # No libfabric/numa call wrapping: the HMEM detector talks only to the accelerator SDKs and
+    # hwloc, and every assertion is either host-independent or gated on hmemIfaceAvailable().
+    libfabric_hmem_test_bin = executable('libfabric_hmem_test',
+               'libfabric_hmem_test.cpp',
+               dependencies: libfabric_utils_dep + [ hwloc_dep ],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with: libfabric_utils_lib,
+               cpp_args: libfabric_test_cpp_args,
+               install: true)
+
+    test('libfabric_hmem_test', libfabric_hmem_test_bin)
+
+    # No libfabric/numa call wrapping either: this test exercises real provider discovery, so
+    # fi_getinfo must reach the installed libfabric, and every host-specific assertion is gated on
+    # the discovered provider being verbs.
+    libfabric_provider_test_bin = executable('libfabric_provider_test',
+               'libfabric_provider_test.cpp',
+               dependencies: libfabric_utils_dep + [ hwloc_dep ],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with: libfabric_utils_lib,
+               cpp_args: libfabric_test_cpp_args,
+               install: true)
+
+    test('libfabric_provider_test', libfabric_provider_test_bin)
+
 endif

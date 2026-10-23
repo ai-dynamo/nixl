@@ -38,63 +38,35 @@
 #include "libfabric/libfabric_common.h"
 #include "libfabric_connection.h"
 
-#ifdef HAVE_CUDA
-#ifdef __HIP_PLATFORM_AMD__
-#include <hip/hip_runtime.h>
-#include <hip/hip_runtime_api.h>
-// Define CUDA types as HIP equivalents for AMD
-typedef hipCtx_t CUcontext;
-typedef hipDevice_t CUdevice;
-#else
-#include <cuda.h>
-#include <cuda_runtime.h>
-#endif
-#endif
-
 // Forward declarations
 class nixlLibfabricEngine;
 class nixlLibfabricPostThreadPool;
 
-#ifdef HAVE_CUDA
-/** CUDA context management for libfabric backend */
-class nixlLibfabricCudaCtx {
-private:
-    CUcontext pthrCudaCtx_;
-    int myDevId_;
-
-public:
-    nixlLibfabricCudaCtx() {
-        pthrCudaCtx_ = NULL;
-        myDevId_ = -1;
-    }
-
-    /** Reset CUDA context pointer to initial state */
-    void
-    cudaResetCtxPtr();
-
-    /** Update CUDA context pointer for given memory address and device */
-    int
-    cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated);
-
-    /** Set the current CUDA context */
-    int
-    cudaSetCtx();
-};
-#endif
 
 /** Private metadata for locally registered memory */
 class nixlLibfabricPrivateMetadata : public nixlBackendMD {
 private:
     void *buffer_; // Local memory buffer address
     size_t length_; // Buffer length in bytes
-    int device_id_; // Device ID for VRAM, -1 for DRAM
+    int device_id_; // nixl device index for VRAM, -1 for DRAM
+    /**
+     * What the HMEM shim said about this buffer when it was registered.
+     *
+     * Kept rather than re-derived so the post path can bind the right accelerator device without
+     * probing the pointer again -- and so it binds using libfabric's own device ordinal rather than
+     * @ref device_id_, which is a nixl index and only coincides with the runtime's numbering when
+     * the two happen to enumerate devices the same way.
+     */
+    struct nfi_hmem_info hmem_info_;
     std::vector<struct fid_mr *> rail_mr_list_; // Memory registrations, one per rail
     std::vector<uint64_t> rail_key_list_; // Remote access keys, one per rail
     std::vector<char *> src_ep_names_; // Source endpoint names, one per rail
     std::vector<size_t> selected_rails_; // Rails selected based on memory topology
 
 public:
-    nixlLibfabricPrivateMetadata() : nixlBackendMD(true), device_id_(-1) {}
+    nixlLibfabricPrivateMetadata() : nixlBackendMD(true), device_id_(-1), hmem_info_{} {
+        hmem_info_.iface = FI_HMEM_SYSTEM;
+    }
     friend class nixlLibfabricEngine;
 };
 
@@ -223,9 +195,17 @@ private:
     // Mutex for connection state tracking
     mutable std::mutex connection_state_mutex_;
 
+    // Accelerator devices that have bound successfully, so postXfer() probes each one once per
+    // process rather than on every transfer. Each slot packs (iface + 1) << 56 | device, 0 = empty,
+    // filled lock-free; a full table only means probing again, never a wrong answer.
+    static constexpr size_t kAccelBindCacheSlots = 64;
+    mutable std::array<std::atomic<uint64_t>, kAccelBindCacheSlots> accel_bind_ok_{};
 
-    // System runtime type (set during initialization from rail_manager_)
-    fi_hmem_iface runtime_;
+    bool
+    accelBindKnownOk(const struct nfi_hmem_info &info) const;
+    void
+    accelBindRecordOk(const struct nfi_hmem_info &info) const;
+
 
     void
     cleanup();
@@ -279,6 +259,22 @@ private:
     std::unordered_map<std::string, uint16_t> pending_rejected_handshakes_;
     std::mutex pending_handshake_mutex_;
 
+    // Peers owed a handshake that was requested on the progress thread, which cannot send it
+    // there: handshakes are requested from inside the rail-0 receive callback, and a blocking
+    // send waits on -FI_EAGAIN for CQ progress that only this same thread makes. The progress
+    // thread sends them from its loop instead, in flushDeferredHandshakes().
+    struct DeferredHandshake {
+        std::string peer;
+        // Past this the peer has given up waiting (NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S), so stop.
+        std::chrono::steady_clock::time_point deadline;
+        // Retries are spaced out, so a peer that keeps answering -FI_EAGAIN does not cost a
+        // re-serialised handshake on every pass of the progress loop.
+        std::chrono::steady_clock::time_point next_attempt;
+    };
+    // Owned by the progress thread, so unsynchronised: handshakes are only deferred when
+    // sendHandshakeTo() runs there (onProgressThread()), and only flushed from its loop.
+    mutable std::vector<DeferredHandshake> deferred_handshakes_;
+
     // Connection management helpers
     nixl_status_t
     establishConnection(const std::string &remote_agent) const;
@@ -320,18 +316,16 @@ private:
                                 uint32_t &total_message_length,
                                 std::vector<BinaryNotification> &fragments_out) const;
 
-#ifdef HAVE_CUDA
-    // CUDA context management
-    std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;
-    bool cuda_addr_wa_; // CUDA address workaround flag
-    mutable std::mutex cuda_ctx_mutex_; // Protects cudaCtx_ and cuda_addr_wa_.
-#endif
 
     void
     postShutdownCompletion();
     // Progress thread for rail CQs
     nixl_status_t
     progressThread();
+
+    // True when called on this engine's own progress thread.
+    bool
+    onProgressThread() const;
 
 
     // Engine message processing methods.
@@ -344,8 +338,22 @@ private:
     // tells the peer we hold its endpoints in our AV, so we can attribute its traffic.
     // When we decide the peer may not have seen us, i.e. have never sent us a handshake,
     // embed our own connection info in the message.
+    //
+    // On the progress thread the send is deferred to flushDeferredHandshakes() and this returns
+    // NIXL_SUCCESS; @p blocking is false only for that flush, which must not wait on -FI_EAGAIN and
+    // gets NIXL_IN_PROG back instead.
     nixl_status_t
-    sendHandshakeTo(const nixlLibfabricConnection &conn) const;
+    sendHandshakeTo(const nixlLibfabricConnection &conn, bool blocking = true) const;
+
+    // Builds and posts the handshake; sendHandshakeTo() wraps it with the deferral decision and
+    // keeps conn.handshake_sent_ in step with the result.
+    nixl_status_t
+    postHandshakeTo(const nixlLibfabricConnection &conn, bool blocking) const;
+
+    // Send the handshakes deferred by sendHandshakeTo(), from the progress thread's loop. A send
+    // that would block stays queued for the next pass, after the CQs have been progressed.
+    void
+    flushDeferredHandshakes();
 
     // Records that a peer has us in its address vectors, so we may start sending to it.
     // Will load the peer's connection info from the handshake payload, if it's a new peer.
@@ -386,23 +394,6 @@ private:
               int rail_id,
               const std::vector<int> &last_desc_idx_per_rail,
               std::vector<int> &posts_since_flush) const;
-
-#ifdef HAVE_CUDA
-    // CUDA context management methods
-    void
-    vramInitCtx();
-    int
-    vramUpdateCtx(void *address, uint64_t devId, bool &restart_reqd);
-    int
-    vramApplyCtx();
-    void
-    vramFiniCtx();
-
-    // same as vramApplyCtx, but with additional output parameter
-    nixl_status_t
-    vramApplyCtxEx(bool &use_cuda_addr_wa) const;
-    friend class nixlLibfaricCudaCtxEngineMediator;
-#endif
 
 public:
     /** Initialize multi-rail libfabric backend engine */

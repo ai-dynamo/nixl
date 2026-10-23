@@ -169,8 +169,11 @@ testRegisterDeregisterRefcount(nixlLibfabricRailManager &mgr) {
 
     TEST_ASSERT(mgr.getActiveRailCount() == 0, "no active rails before register");
 
-    nixl_status_t st =
-        mgr.registerMemory(buf, sizeof(buf), DRAM_SEG, 0, "", mr_list, key_list, selected_rails);
+    // Default-constructed: DRAM_SEG registration ignores it, and these buffers are host memory
+    const struct nfi_hmem_info hmem_info{};
+
+    nixl_status_t st = mgr.registerMemory(
+        buf, sizeof(buf), DRAM_SEG, 0, hmem_info, mr_list, key_list, selected_rails);
     TEST_ASSERT(st == NIXL_SUCCESS, "registerMemory succeeded");
     TEST_ASSERT(mgr.getActiveRailCount() == NUM_FAKE_RAILS, "all rails active after DRAM register");
 
@@ -178,8 +181,8 @@ testRegisterDeregisterRefcount(nixlLibfabricRailManager &mgr) {
     std::vector<struct fid_mr *> mr_list2;
     std::vector<uint64_t> key_list2;
     std::vector<size_t> selected_rails2;
-    st =
-        mgr.registerMemory(buf, sizeof(buf), DRAM_SEG, 0, "", mr_list2, key_list2, selected_rails2);
+    st = mgr.registerMemory(
+        buf, sizeof(buf), DRAM_SEG, 0, hmem_info, mr_list2, key_list2, selected_rails2);
     TEST_ASSERT(st == NIXL_SUCCESS, "second registerMemory succeeded");
     TEST_ASSERT(mgr.getActiveRailCount() == NUM_FAKE_RAILS,
                 "active count unchanged after second register");
@@ -212,8 +215,8 @@ testDeregisterFailureKeepsRailActive(nixlLibfabricRailManager &mgr) {
     std::vector<uint64_t> key_list;
     std::vector<size_t> selected_rails;
 
-    nixl_status_t st =
-        mgr.registerMemory(buf, sizeof(buf), DRAM_SEG, 0, "", mr_list, key_list, selected_rails);
+    nixl_status_t st = mgr.registerMemory(
+        buf, sizeof(buf), DRAM_SEG, 0, nfi_hmem_info{}, mr_list, key_list, selected_rails);
     TEST_ASSERT(st == NIXL_SUCCESS, "registerMemory succeeded");
     TEST_ASSERT(mgr.getActiveRailCount() == NUM_FAKE_RAILS, "all rails active after register");
 

@@ -19,6 +19,7 @@
 #include "libfabric_common.h"
 #include "common/nixl_log.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
 #include <atomic>
@@ -29,13 +30,310 @@
 
 #include <numa.h>
 
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
 namespace LibfabricUtils {
 
+namespace {
 
-std::pair<std::string, std::vector<std::string>>
+/**
+ * @brief Domain-name suffixes verbs appends for the endpoint variants nixl cannot use.
+ *
+ * verbs names the MSG domain after the device with no suffix at all, and appends "-xrc" for XRC
+ * and "-dgram" for DGRAM (prov/verbs/src/verbs_info.c, verbs_msg_xrc_domain / verbs_dgram_domain).
+ * The test is on the suffix and not on "the name contains a hyphen", which would drop any NIC
+ * whose device name happens to be hyphenated. Note this list is verbs-specific on purpose: efa
+ * spells its two variants "-rdm" and "-dgrm", and there "-rdm" is the one to keep.
+ */
+constexpr const char *k_verbs_unusable_domain_suffixes[] = {"-xrc", "-dgram"};
+
+bool
+hasUnusableVerbsSuffix(const std::string &domain) {
+    for (const char *suffix : k_verbs_unusable_domain_suffixes) {
+        const size_t suffix_len = strlen(suffix);
+        if (domain.size() > suffix_len &&
+            domain.compare(domain.size() - suffix_len, suffix_len, suffix) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+std::string
+baseProviderName(const std::string &prov_name) {
+    const size_t layered = prov_name.find(';');
+    return (layered == std::string::npos) ? prov_name : prov_name.substr(0, layered);
+}
+
+std::vector<std::string>
+selectVerbsDomains(const nixlProviderDeviceMap &provider_device_map) {
+    std::vector<std::string> domains;
+    std::unordered_set<std::string> seen;
+
+    for (const auto &entry : provider_device_map) {
+        if (baseProviderName(entry.first) != "verbs") {
+            continue;
+        }
+        // ofi_rxm layers reliable-datagram semantics over the verbs MSG endpoint and is what
+        // nixl's FI_EP_RDM rails need. ofi_rxd layers over DGRAM instead and reaches the same
+        // NICs, so accepting it would put a second, slower rail on hardware already covered.
+        if (entry.first.find("ofi_rxm") == std::string::npos) {
+            NIXL_DEBUG << "Ignoring verbs variant " << entry.first
+                       << ": nixl rails need the ofi_rxm-layered endpoint";
+            continue;
+        }
+        for (const auto &domain : entry.second) {
+            if (hasUnusableVerbsSuffix(domain)) {
+                NIXL_DEBUG << "Ignoring verbs domain " << domain << ": not an RDM-capable domain";
+                continue;
+            }
+            if (seen.insert(domain).second) {
+                domains.push_back(domain);
+            }
+        }
+    }
+
+    // Sorted because provider_device_map is unordered: rails are addressed by index, and an
+    // index that depends on hash order would differ from run to run on the same host.
+    std::sort(domains.begin(), domains.end());
+    return domains;
+}
+
+/****************************************
+ * Fabric identity
+ *****************************************/
+
+nixlLibfabricFabricId
+fabricIdFromEpName(uint32_t addr_format, const void *ep_name, size_t len) {
+    nixlLibfabricFabricId id;
+
+    if (ep_name == nullptr) {
+        return id;
+    }
+
+    /*
+     * Only FI_SOCKADDR_IN is read. FI_SOCKADDR_IN6 could be added the day a rail comes up on IPv6,
+     * but guessing at a v6 layout with no way to test it would be worse than falling back to index
+     * pairing, which is what an invalid id does.
+     */
+    if (addr_format == FI_SOCKADDR_IN || addr_format == FI_SOCKADDR) {
+        struct sockaddr_in sin;
+        if (len < sizeof(sin)) {
+            return id;
+        }
+        memcpy(&sin, ep_name, sizeof(sin));
+        if (sin.sin_family != AF_INET) {
+            return id;
+        }
+        id.valid = true;
+        id.addr = sin.sin_addr.s_addr;
+    }
+
+    return id;
+}
+
+void
+resolveLocalFabricMask(nixlLibfabricFabricId &id) {
+    if (!id.valid) {
+        return;
+    }
+
+    struct ifaddrs *ifa_list = nullptr;
+    if (getifaddrs(&ifa_list) != 0) {
+        NIXL_DEBUG << "getifaddrs failed, rail pairing will compare addresses exactly";
+        return;
+    }
+
+    for (struct ifaddrs *ifa = ifa_list; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_INET ||
+            ifa->ifa_netmask == nullptr) {
+            continue;
+        }
+        const auto *sin = reinterpret_cast<const struct sockaddr_in *>(ifa->ifa_addr);
+        if (sin->sin_addr.s_addr != id.addr) {
+            continue;
+        }
+        const auto *mask = reinterpret_cast<const struct sockaddr_in *>(ifa->ifa_netmask);
+        id.mask = mask->sin_addr.s_addr;
+        break;
+    }
+
+    freeifaddrs(ifa_list);
+}
+
+bool
+sameFabric(const nixlLibfabricFabricId &local, const nixlLibfabricFabricId &peer) {
+    if (!local.valid || !peer.valid) {
+        return false;
+    }
+    // A zero mask means the address was not found on any local interface, so there is no segment to
+    // compare against; only an exact match can be trusted then.
+    if (local.mask == 0) {
+        return local.addr == peer.addr;
+    }
+    return (local.addr & local.mask) == (peer.addr & local.mask);
+}
+
+/****************************************
+ * Provider table
+ *****************************************/
+
+namespace {
+
+/*
+ * mr_mode shared by every provider that supports advanced memory registration. cxi adds
+ * FI_MR_ENDPOINT on top; tcp and sockets support neither FI_MR_PROV_KEY nor FI_MR_VIRT_ADDR and
+ * get the basic pair instead.
+ */
+constexpr uint64_t k_mr_mode_rdma =
+    FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
+constexpr uint64_t k_mr_mode_basic = FI_MR_LOCAL | FI_MR_ALLOCATED;
+
+const nixlLibfabricProviderInfo k_cxi_provider = {
+    /*name=*/"cxi",
+    /*description=*/"CXI",
+    /*extra_caps=*/FI_RMA_EVENT,
+    /*mr_mode=*/k_mr_mode_rdma | FI_MR_ENDPOINT,
+    // Left to the provider. cxi has always come up this way and supplying a key size here changes
+    // which fi_info entries it returns.
+    /*mr_key_size=*/0,
+    /*needs_prov_name_hint=*/false,
+    /*needs_full_topology=*/true,
+    /*needs_all_rail_progress=*/false,
+    /*single_domain=*/false,
+    /*select_domains=*/nullptr,
+};
+
+const nixlLibfabricProviderInfo k_efa_provider = {
+    /*name=*/"efa",
+    /*description=*/"EFA",
+    /*extra_caps=*/0,
+    /*mr_mode=*/k_mr_mode_rdma,
+    /*mr_key_size=*/2,
+    /*needs_prov_name_hint=*/false,
+    /*needs_full_topology=*/true,
+    /*needs_all_rail_progress=*/false,
+    /*single_domain=*/false,
+    /*select_domains=*/nullptr,
+};
+
+const nixlLibfabricProviderInfo k_verbs_provider = {
+    /*name=*/"verbs",
+    /*description=*/"verbs",
+    /*extra_caps=*/0,
+    /*mr_mode=*/k_mr_mode_rdma,
+    /*mr_key_size=*/2,
+    /*needs_prov_name_hint=*/true,
+    /*needs_full_topology=*/true,
+    // Layered over a connection-oriented core, so the passive side must poll for the accept.
+    /*needs_all_rail_progress=*/true,
+    /*single_domain=*/false,
+    /*select_domains=*/selectVerbsDomains,
+};
+
+const nixlLibfabricProviderInfo k_tcp_provider = {
+    /*name=*/"tcp",
+    /*description=*/"tcp (TCP fallback)",
+    /*extra_caps=*/0,
+    /*mr_mode=*/k_mr_mode_basic,
+    /*mr_key_size=*/0,
+    /*needs_prov_name_hint=*/false,
+    /*needs_full_topology=*/false,
+    /*needs_all_rail_progress=*/false,
+    /*single_domain=*/true,
+    /*select_domains=*/nullptr,
+};
+
+const nixlLibfabricProviderInfo k_sockets_provider = {
+    /*name=*/"sockets",
+    /*description=*/"sockets (TCP fallback)",
+    /*extra_caps=*/0,
+    /*mr_mode=*/k_mr_mode_basic,
+    /*mr_key_size=*/0,
+    /*needs_prov_name_hint=*/false,
+    /*needs_full_topology=*/false,
+    /*needs_all_rail_progress=*/false,
+    /*single_domain=*/true,
+    /*select_domains=*/nullptr,
+};
+
+} // namespace
+
+std::vector<std::string>
+selectDomainsGeneric(const nixlProviderDeviceMap &provider_device_map, const char *name) {
+    std::vector<std::string> domains;
+    std::unordered_set<std::string> seen;
+
+    const auto it = provider_device_map.find(name);
+    if (it == provider_device_map.end()) {
+        return domains;
+    }
+    for (const auto &domain : it->second) {
+        if (seen.insert(domain).second) {
+            domains.push_back(domain);
+        }
+    }
+    return domains;
+}
+
+
+const std::vector<const nixlLibfabricProviderInfo *> &
+knownProviders() {
+    /*
+     * Preference order, highest first. verbs sits below cxi/efa and above tcp: it is a real RDMA
+     * provider, and on a host with an Intel Xe GPU it is the only one that can carry device memory
+     * at all -- efa_hmem_ifaces[] has no FI_HMEM_ZE entry, while verbs carries [FI_HMEM_ZE] = TRY
+     * in its dmabuf failover table (prov/verbs/src/verbs_mr.c).
+     *
+     * Anyone who wants a different choice can restrict what fi_getinfo returns with libfabric's own
+     * FI_PROVIDER, e.g. FI_PROVIDER=tcp or FI_PROVIDER=^verbs; there is deliberately no
+     * nixl-specific knob for it.
+     */
+    static const std::vector<const nixlLibfabricProviderInfo *> providers = {
+        &k_cxi_provider,
+        &k_efa_provider,
+        &k_verbs_provider,
+        &k_tcp_provider,
+        &k_sockets_provider,
+    };
+    return providers;
+}
+
+const nixlLibfabricProviderInfo *
+findProviderInfo(const std::string &prov_name) {
+    const std::string core = baseProviderName(prov_name);
+    for (const nixlLibfabricProviderInfo *provider : knownProviders()) {
+        if (core == provider->name) {
+            return provider;
+        }
+    }
+    return nullptr;
+}
+
+const nixlLibfabricProviderInfo &
+defaultProviderInfo() {
+    return k_efa_provider;
+}
+
+bool
+providerNeedsAllRailProgress(const std::string &prov_name) {
+    const nixlLibfabricProviderInfo *provider = findProviderInfo(prov_name);
+    return (provider != nullptr) && provider->needs_all_rail_progress;
+}
+
+bool
+providerNeedsFullTopology(const std::string &prov_name) {
+    const nixlLibfabricProviderInfo *provider = findProviderInfo(prov_name);
+    return (provider != nullptr) && provider->needs_full_topology;
+}
+
+std::pair<std::string, std::vector<nixlLibfabricDeviceInfo>>
 getAvailableNetworkDevices() {
-    std::vector<std::string> all_devices;
-    std::string provider_name;
 
     std::unordered_map<std::string, std::vector<std::string>> provider_device_map;
     struct fi_info *hints, *info;
@@ -70,7 +368,15 @@ getAvailableNetworkDevices() {
         return {"none", {}};
     }
 
-    // Process devices for this provider
+    /*
+     * One walk, two harvests: the prov_name -> domains map that provider selection works on, and a
+     * side table of each domain's bus address and link speed. The side table is keyed by domain name
+     * alone even though several providers can report the same name -- verbs and psm3 both offer
+     * "rocep153s0f0" -- because a domain name identifies a physical device, so the entries agree.
+     * First non-empty address wins, so a provider that reports nothing cannot erase one that did.
+     */
+    std::unordered_map<std::string, nixlLibfabricDeviceInfo> device_info;
+
     for (struct fi_info *cur = info; cur; cur = cur->next) {
         if (cur->domain_attr && cur->domain_attr->name && cur->fabric_attr &&
             cur->fabric_attr->name) {
@@ -86,6 +392,29 @@ getAvailableNetworkDevices() {
                 provider_device_map[provider_name] = {};
             }
             provider_device_map[provider_name].push_back(device_name);
+
+            nixlLibfabricDeviceInfo &dev = device_info[device_name];
+            dev.domain_name = device_name;
+
+            if (cur->nic == nullptr) {
+                continue;
+            }
+            if (dev.pcie_address.empty() && cur->nic->bus_attr != nullptr &&
+                cur->nic->bus_attr->bus_type == FI_BUS_PCI &&
+                cur->nic->bus_attr->attr.pci.domain_id != FI_ADDR_UNSPEC) {
+                char pcie_addr[32];
+                snprintf(pcie_addr,
+                         sizeof(pcie_addr),
+                         "%x:%02x:%02x.%x",
+                         cur->nic->bus_attr->attr.pci.domain_id,
+                         cur->nic->bus_attr->attr.pci.bus_id,
+                         cur->nic->bus_attr->attr.pci.device_id,
+                         cur->nic->bus_attr->attr.pci.function_id);
+                dev.pcie_address = pcie_addr;
+            }
+            if (dev.link_speed == 0 && cur->nic->link_attr != nullptr) {
+                dev.link_speed = cur->nic->link_attr->speed;
+            }
         }
     }
 
@@ -98,14 +427,38 @@ getAvailableNetworkDevices() {
         }
     }
 
-    if (provider_device_map.find("cxi") != provider_device_map.end()) {
-        return {"cxi", provider_device_map["cxi"]};
-    } else if (provider_device_map.find("efa") != provider_device_map.end()) {
-        return {"efa", provider_device_map["efa"]};
-    } else if (provider_device_map.find("tcp") != provider_device_map.end()) {
-        return {"tcp", {provider_device_map["tcp"][0]}};
-    } else if (provider_device_map.find("sockets") != provider_device_map.end()) {
-        return {"sockets", {provider_device_map["sockets"][0]}};
+    // First table entry with usable domains wins; see knownProviders() for the order and why.
+    for (const nixlLibfabricProviderInfo *provider : knownProviders()) {
+        std::vector<std::string> domains = (provider->select_domains != nullptr) ?
+            provider->select_domains(provider_device_map) :
+            selectDomainsGeneric(provider_device_map, provider->name);
+        if (domains.empty()) {
+            continue;
+        }
+        if (provider->single_domain && domains.size() > 1) {
+            domains.resize(1);
+        }
+
+        // Selection is a name-filtering problem and stays one, so it remains unit-testable against
+        // synthetic maps. Enrichment is a lookup afterwards.
+        std::vector<nixlLibfabricDeviceInfo> devices;
+        devices.reserve(domains.size());
+        for (const auto &domain : domains) {
+            const auto it = device_info.find(domain);
+            if (it != device_info.end()) {
+                devices.push_back(it->second);
+            } else {
+                nixlLibfabricDeviceInfo dev;
+                dev.domain_name = domain;
+                devices.push_back(dev);
+            }
+            NIXL_TRACE << "Selected " << provider->name << " domain " << devices.back().domain_name
+                       << " pcie="
+                       << (devices.back().pcie_address.empty() ? "unknown"
+                                                              : devices.back().pcie_address)
+                       << " link_speed=" << devices.back().link_speed;
+        }
+        return {provider->name, devices};
     }
 
     NIXL_ERROR << "No network devices found with any provider";
@@ -296,26 +649,6 @@ getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, 
         return NIXL_ERR_INVALID_PARAM;
     }
     return NIXL_SUCCESS;
-}
-
-static std::unique_ptr<nixlLibfaricCudaCtxMediator> cuda_ctx_mediator;
-
-void
-setCudaCtxMediator(std::unique_ptr<nixlLibfaricCudaCtxMediator> &&mediator) {
-    cuda_ctx_mediator = std::move(mediator);
-}
-
-void
-clearCudaCtxMediator() {
-    cuda_ctx_mediator.reset(nullptr);
-}
-
-nixl_status_t
-cudaSetCtx(bool &use_cuda_addr_wa) {
-    if (cuda_ctx_mediator.get() == nullptr) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    return cuda_ctx_mediator->cudaSetCtx(use_cuda_addr_wa);
 }
 
 } // namespace LibfabricUtils

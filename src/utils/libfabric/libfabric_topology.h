@@ -19,21 +19,23 @@
 #define NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_TOPOLOGY_H
 
 #include "libfabric_common.h"
+#include "libfabric_accel.h"
 #include "nixl.h"
 #include <hwloc.h>
 #include <unordered_map>
 
 /**
- * @brief Topology discovery and management for AWS instances with EFA devices
+ * @brief Topology discovery and management for the RDMA providers (efa, cxi, verbs)
  *
- * Automatically discovers system topology using hwloc and maps accelerators to EFA devices
- * based on PCIe proximity for optimal performance. Falls back to TCP/sockets
- * when EFA devices are not available.
+ * Automatically discovers system topology using hwloc and maps accelerators to NICs based on PCIe
+ * proximity for optimal performance. Which providers get this treatment is
+ * LibfabricUtils::providerNeedsFullTopology(); the rest (tcp, sockets) reach every peer through the
+ * host stack and use a simplified topology.
  */
 class nixlLibfabricTopology {
 private:
-    // PCI bus ID to EFA device mapping: "0000:72:00.0"→[efa0,efa1], etc.
-    std::unordered_map<std::string, std::vector<std::string>> pci_to_efa_devices;
+    // Accelerator PCI bus ID to NIC domain names: "0000:72:00.0"→[efa0,efa1], etc.
+    std::unordered_map<std::string, std::vector<std::string>> pci_to_nic_devices;
 
     // All available network devices discovered on this system
     std::vector<std::string> all_devices;
@@ -41,10 +43,22 @@ private:
     // Network fabric name (efa-direct, efa, tcp, sockets, etc.)
     std::string provider_name;
 
+    /**
+     * @brief Every selected domain as device discovery saw it, in rail order.
+     *
+     * The source for @ref all_devices and for buildPcieToLibfabricMapping(). Kept rather than
+     * re-queried: a second fi_getinfo() with different hints could disagree with the one that chose
+     * the provider, and used to.
+     */
+    std::vector<LibfabricUtils::nixlLibfabricDeviceInfo> discovered_devices;
+
     // System information
-    int num_aws_accel; // AWS Trainium accelerators
-    int num_nvidia_accel; // NVIDIA GPU accelerators
-    int num_amd_accel; // AMD GPU accelerators
+    /**
+     * Accelerators discovered per HMEM interface, keyed by the vendor table's ifaces. A map rather
+     * than one counter per vendor so that adding a vendor to nixl_accel_vendors[] needs no change
+     * here; absent key means zero.
+     */
+    std::unordered_map<int, int> accel_counts;
     int num_numa_nodes;
     int num_devices;
 
@@ -83,7 +97,7 @@ private:
     nixl_status_t
     discoverRDMADevicesWithHwloc();
     nixl_status_t
-    buildAccelToEfaMapping();
+    buildAccelToNicMapping();
     void
     buildNicInfoMap();
     void
@@ -164,12 +178,33 @@ private:
     getPcieAddressFromHwlocPcidev(const hwloc_obj_attr_u::hwloc_pcidev_attr_s &pcidev) const;
     std::string
     getPcieAddressFromHwlocObj(hwloc_obj_t obj) const;
+    /**
+     * @brief PCIe address of the device behind an hwloc OS device, or "" if there is none.
+     *
+     * @param osdev_name An hwloc OS device name. For verbs this is the libfabric domain name,
+     *                   which is also the InfiniBand device name, e.g. "rocep153s0f0".
+     *
+     * Used when libfabric itself reports no bus info for a NIC; see
+     * @ref buildPcieToLibfabricMapping.
+     */
+    std::string
+    getPcieAddressForOsDev(const std::string &osdev_name) const;
+    /**
+     * @brief HMEM interface of the vendor that claims @p obj, or FI_HMEM_SYSTEM if none does.
+     *
+     * The single place hwloc objects are attributed to a vendor. Asks each entry of the accelerator
+     * vendor table in turn via hmemIsAccel(); there is no vendor knowledge in this class.
+     */
+    enum fi_hmem_iface
+    accelIfaceOf(hwloc_obj_t obj) const;
+
+    /** @brief Whether @p obj is an accelerator that takes part in PCIe-proximity NIC grouping. */
     bool
-    isNvidiaAccel(hwloc_obj_t obj) const;
+    isGroupableAccel(hwloc_obj_t obj) const;
+
+    /** @brief Whether any discovered accelerator takes part in PCIe-proximity NIC grouping. */
     bool
-    isNeuronAccel(hwloc_obj_t obj) const;
-    bool
-    isAmdAccel(hwloc_obj_t obj) const;
+    hasGroupableAccel() const;
 
     // retrieves line speed of NIC from map
     size_t
@@ -220,8 +255,21 @@ public:
     ~nixlLibfabricTopology();
 
     // Accelerator-based queries (main interface)
+    /**
+     * @brief NICs closest to the device at @p pci_bus_id, or every NIC if it is not in the map.
+     *
+     * Named for NICs rather than EFA devices because it also serves cxi, and because the BDF may
+     * be an accelerator's (NVIDIA, Intel) or a NIC's (Neuron, whose Trainium cards carry their
+     * EFA device onboard).
+     */
     std::vector<std::string>
-    getEfaDevicesForPci(const std::string &pci_bus_id) const;
+    getNicsForPci(const std::string &pci_bus_id) const;
+
+    /** @brief Deprecated spelling of @ref getNicsForPci. */
+    std::vector<std::string>
+    getEfaDevicesForPci(const std::string &pci_bus_id) const {
+        return getNicsForPci(pci_bus_id);
+    }
 
     // True when obj is a PCIe switch, that is a bridge whose upstream side is PCI.
     // Applied to the common ancestor of two devices, it reports whether a PCIe path runs
@@ -247,19 +295,43 @@ public:
     nicSharesPcieSwitchWithAccel(const std::string &efa_device) const;
 
     // System information
+
+    /** @brief Accelerators discovered for @p iface, zero if that vendor found none. */
     int
-    getNumAwsAccel() const {
-        return num_aws_accel;
+    getNumAccel(enum fi_hmem_iface iface) const {
+        const auto it = accel_counts.find(static_cast<int>(iface));
+        return (it != accel_counts.end()) ? it->second : 0;
+    }
+
+    /** @brief Accelerators discovered across every vendor. */
+    int
+    getTotalNumAccel() const;
+
+    /** @brief Per-vendor spellings of @ref getNumAccel, kept for existing callers and tests. */
+    int
+    getNumNeuronAccel() const {
+        return getNumAccel(FI_HMEM_NEURON);
     }
 
     int
     getNumNvidiaAccel() const {
-        return num_nvidia_accel;
+        return getNumAccel(FI_HMEM_CUDA);
+    }
+
+    int
+    getNumIntelAccel() const {
+        return getNumAccel(FI_HMEM_ZE);
     }
 
     int
     getNumAmdAccel() const {
-        return num_amd_accel;
+        return getNumAccel(FI_HMEM_ROCR);
+    }
+
+    /** @brief Upstream's spelling of @ref getNumNeuronAccel. */
+    int
+    getNumAwsAccel() const {
+        return getNumNeuronAccel();
     }
 
     const std::vector<std::string> &
@@ -279,18 +351,7 @@ public:
     }
 
     bool
-    isValidDevice(const std::string &efa_device) const;
-
-    enum fi_hmem_iface
-    getMrAttrIface(int device_id) const {
-        if (device_id < num_nvidia_accel) {
-            return FI_HMEM_CUDA;
-        } else if (device_id < num_nvidia_accel + num_amd_accel) {
-            return FI_HMEM_ROCR;
-        } else {
-            return FI_HMEM_NEURON;
-        }
-    }
+    isValidDevice(const std::string &nic_device) const;
 
     /** @brief Invalid NUMA node id constant. */
     static const uint16_t INVALID_NUMA_NODE_ID = UINT16_MAX;
@@ -302,28 +363,41 @@ public:
     }
 
     /**
-     * @brief Retrieves the NUMA node id with which the given EFA device is associated.
-     * @param efa_device The EFA device for which its associated NUMA node is to be retrieved.
+     * @brief PCIe address of @p nic_device in hwloc's normalisation, or "" if it has none.
+     *
+     * Empty means the NIC takes no part in PCIe-proximity grouping -- either libfabric reported no
+     * bus info and hwloc could not resolve the domain name either, or the provider does not do
+     * topology-based rail selection at all.
+     */
+    inline std::string
+    getPcieAddress(const std::string &nic_device) const {
+        const auto it = libfabric_to_pcie_map.find(nic_device);
+        return (it != libfabric_to_pcie_map.end()) ? it->second : std::string();
+    }
+
+    /**
+     * @brief Retrieves the NUMA node id with which the given NIC is associated.
+     * @param nic_device The NIC for which its associated NUMA node is to be retrieved.
      * @return The NUMA node id or @ref INVALID_NUMA_NODE_ID if failed.
      */
     uint16_t
-    getDeviceNumaNode(const std::string &efa_device) const;
+    getDeviceNumaNode(const std::string &nic_device) const;
 
     /**
-     * @brief Retrieves topology info of an EFA device.
-     * @param efa_device The EFA device name.
-     * @param[out] numa_node_id The NUMA node id of the EFA device.
-     * @param[out] device_link_speed The upstream link speed of the EFA device.
+     * @brief Retrieves topology info of a NIC.
+     * @param nic_device The libfabric domain name of the NIC.
+     * @param[out] numa_node_id The NUMA node id of the NIC.
+     * @param[out] device_link_speed The upstream link speed of the NIC.
      * @param[out] parent_switch_domain The PCIe domain of the topmost parent PCIe switch/bridge of
-     * the EFA device.
+     * the NIC.
      * @param[out] parent_switch_bus_id The PCIe bus id of the topmost parent PCIe switch/bridge of
-     * the EFA device.
+     * the NIC.
      * @param[out] parent_switch_link_speed The link speed (in Gbps) of the parent PCI
      * switch/bridge.
-     * @return True if succeeded, otherwise (EFA device not found) false.
+     * @return True if succeeded, otherwise (NIC not found) false.
      */
     bool
-    getPcieDevData(const std::string &efa_device,
+    getPcieDevData(const std::string &nic_device,
                    uint16_t &numa_node_id,
                    size_t &device_link_speed,
                    uint16_t &parent_switch_domain,
@@ -333,7 +407,7 @@ public:
     /**
      * @brief Retrieves the average bandwidth limit per NUMA node. This bandwidth limit of a single
      * NUMA node is the sum of the link speed of all topmost PCIe switches connected to the parent
-     * package of the NUMA node, that have at least one subordinate EFA device.
+     * package of the NUMA node, that have at least one subordinate NIC.
      * @return The average bandwidth limit per NUMA node.
      */
     inline size_t
@@ -379,6 +453,10 @@ public:
     printTopologyInfo() const;
     std::string
     getTopologyString() const;
+
+    /** @brief "CUDA=8 NEURON=0 ZE=0 ", one term per vendor table entry. For logs. */
+    std::string
+    accelCountsString() const;
 };
 
 #endif // NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_TOPOLOGY_H

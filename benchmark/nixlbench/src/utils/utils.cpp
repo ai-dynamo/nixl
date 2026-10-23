@@ -36,6 +36,7 @@
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
+#include "utils/ze.h"
 #include "utils/utils.h"
 
 namespace {
@@ -1253,6 +1254,39 @@ xferBenchUtils::getDevToUse() {
     return dev_to_use;
 }
 
+/* True when Level Zero (Intel Xe / XPU) should supply VRAM.
+ *
+ * CUDA and ROCm keep precedence whenever they have a usable device, because a host with an NVIDIA or
+ * AMD accelerator very often also exposes an Intel integrated GPU to Level Zero, and benchmarking
+ * that instead of the discrete accelerator would silently measure the wrong hardware. The check is
+ * for a device rather than for compile-time support, so a binary built with CUDA enabled still
+ * reaches Xe VRAM when it runs somewhere CUDA has no device -- against a stub libcudart, or simply
+ * on an Intel-GPU host. */
+bool
+xferBenchUtils::useZeVram() {
+    /* Decided once: the devices visible cannot change while the process runs, and every
+       allocation, fill and consistency copy-back asks, so re-querying the drivers each time would
+       cost a driver call per buffer -- and a failing one against a stub libcudart. */
+    static const bool use_ze = []() {
+        if (zeAccelDeviceCount() <= 0) {
+            return false;
+        }
+#if HAVE_CUDA
+        int cuda_devices = 0;
+        if (cudaGetDeviceCount(&cuda_devices) == cudaSuccess && cuda_devices > 0) {
+            return false;
+        }
+#elif HAVE_ROCM
+        int rocm_devices = 0;
+        if (hipGetDeviceCount(&rocm_devices) == hipSuccess && rocm_devices > 0) {
+            return false;
+        }
+#endif
+        return true;
+    }();
+    return use_ze;
+}
+
 static void
 copyVramToHost(void *host_addr, const void *device_addr, size_t len) {
     if (neuronCoreCount() > 0) {
@@ -1261,6 +1295,23 @@ copyVramToHost(void *host_addr, const void *device_addr, size_t len) {
             "nrt_tensor_read failed");
         return;
     }
+#if HAVE_ZE
+    /*
+     * Before the CUDA branch: HAVE_CUDA is defined whenever the CUDA *headers* are present, so on a
+     * host with an Intel GPU and no NVIDIA driver this used to reach cudaMemcpy and die against the
+     * stub library ("CUDA driver is a stub library"). That made --check_consistency unusable for
+     * VRAM on exactly the hardware the Level Zero path exists for.
+     *
+     * The same test the allocation path uses, not merely "a Level Zero device exists": on a CUDA
+     * host that also exposes an Intel iGPU, buffers come from cudaMalloc and must be copied back
+     * with cudaMemcpy.
+     */
+    if (xferBenchUtils::useZeVram()) {
+        CHECK_ZE_ERROR(zeAccelMemcpyDtoH(host_addr, device_addr, len),
+                       "Failed to copy Level Zero device memory to host");
+        return;
+    }
+#endif
 #if HAVE_CUDA
     CHECK_CUDA_ERROR(cudaMemcpy(host_addr, (void *)device_addr, len, cudaMemcpyDeviceToHost),
                      "cudaMemcpy failed");
@@ -1268,7 +1319,7 @@ copyVramToHost(void *host_addr, const void *device_addr, size_t len) {
     CHECK_CUDA_ERROR(hipMemcpy(host_addr, (void *)device_addr, len, hipMemcpyDeviceToHost),
                      "hipMemcpy failed");
 #else
-    std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
+    std::cerr << "VRAM not supported without CUDA, ROCm, Neuron or Level Zero" << std::endl;
     exit(EXIT_FAILURE);
 #endif
 }

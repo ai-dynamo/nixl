@@ -24,6 +24,9 @@ subprojects/*
 # Infinia DDN libs staged into the build context by build-container.sh --build-infinia
 /infinia-libs/
 
+install/
+install-v2/
+
 # ucx-spcx-plugin source/module staged into the build context by build-container.sh
 ucx-spcx-plugin-src/
 ucx-spcx-plugin-install/

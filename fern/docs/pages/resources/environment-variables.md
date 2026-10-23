@@ -29,7 +29,6 @@ These variables control fundamental NIXL behavior across all backends.
 | `NIXL_LOG_FILE_SIZE` | At least `16K`, optionally suffixed `K`, `M` or `G` | Not set (no limit) | Sets the rotation size for `NIXL_LOG_FILE`, keeping one rotated generation. See [existing-file behavior](/nixl/user-guide/logging-guide#bounding-the-size). |
 | `NIXL_LOG_FILE_ERROR_IS_FATAL` | Boolean | `false` | Makes a `NIXL_LOG_FILE` setup failure fatal instead of disabling file logging. See [failure behavior](/nixl/user-guide/logging-guide#when-logging-itself-fails). |
 | `NIXL_PLUGIN_DIR` | String (path) | System default | Custom directory to search for backend plug-in shared libraries. |
-| `NIXL_DISABLE_CUDA_ADDR_WA` | Boolean (presence) | Not set (workaround enabled) | Disables CUDA address workaround in the Libfabric backend. Set this variable to any value to disable the workaround. |
 
 ## etcd Variables
 
