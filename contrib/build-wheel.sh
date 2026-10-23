@@ -104,7 +104,7 @@ if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
     echo "Invalid CUDA_MAJOR: '$CUDA_MAJOR'"
     exit 1
 fi
-AUDITWHEEL_EXCLUDES="--exclude libcuda* --exclude libcufile* --exclude libcuobjclient* --exclude libssl* --exclude libcrypto* --exclude libefa* --exclude libhwloc* --exclude libfabric* --exclude libtorch* --exclude libc10* --exclude libdoca* --exclude libred_client* --exclude libred_async* --exclude liblz4*"
+AUDITWHEEL_EXCLUDES="--exclude libcuda* --exclude libcufile* --exclude libcuobjclient* --exclude libssl* --exclude libcrypto* --exclude libefa* --exclude libhwloc* --exclude libfabric* --exclude libtorch* --exclude libc10* --exclude libdoca* --exclude libred_client* --exclude libred_async* --exclude liblz4* --exclude libibverbs* --exclude libmlx5*"
 
 PKG_NAME="nixl-cu${CUDA_MAJOR}"
 # torch index: --torch-cuda-index, else cu132 for CUDA 13 (PyTorch has no stable
