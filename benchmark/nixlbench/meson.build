@@ -159,7 +159,7 @@ endif
 raw_cli_available = get_option('build_raw_cli') and cli11_dep.found()
 
 # ASIO (usually via libasio-dev package)
-asio_dep = dependency('asio', required: true)
+asio_dep = dependency('asio', version: '>=1.38.2', required: true)
 
 # Check for tomlplusplus (header only)
 tomlplusplus_dep = dependency('tomlplusplus', required: true, default_options: ['build_lib=false', 'compile_library=false'])

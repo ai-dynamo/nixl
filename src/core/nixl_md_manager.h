@@ -31,6 +31,8 @@
 #include <string>
 #include <string_view>
 
+#include <asio.hpp>
+
 class nixlMetadataContext;
 
 /**
@@ -119,6 +121,14 @@ private:
     // name-addressed backend, which is null when none is configured.
     [[nodiscard]] nixlMetadataBackend *
     select(const nixl_opt_args_t *extra_params) const noexcept;
+
+    // The shared I/O context for all metadata backends. Async I/O completion
+    // handlers from all backends are invoked on this context.
+    asio::io_context ioContext_;
+    // Use a work guard to keep the context alive when there is no work to do.
+    asio::executor_work_guard<asio::io_context::executor_type> workGuard_;
+    // The dedicated thread that runs I/O completion handlers.
+    std::thread ioThread_;
 
     // P2P (address-routed), always present.
     const std::unique_ptr<nixlMetadataBackend> p2pBackend_;

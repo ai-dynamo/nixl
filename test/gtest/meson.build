@@ -105,6 +105,7 @@ gtest_sources = [
     'plugin_manager.cpp',
     'error_handling.cpp',
     'test_transfer.cpp',
+    'byte_buffer.cpp',
     'metadata_exchange.cpp',
     'md_manager.cpp',
     'metadata_worker.cpp',
