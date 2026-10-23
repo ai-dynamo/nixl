@@ -21,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "common.h"
 #include "nixl_metadata_worker.h"
 
 // The worker's contract under contention: a submitted task always runs, tasks
@@ -122,7 +123,9 @@ TEST(MetadataWorker, ShutdownKeepsUpWithSubmitters) {
 
     for (int round = 0; round < 20; ++round) {
         worker.start([] {}, std::chrono::microseconds(100));
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // The submitters are already running, so only count what lands after start().
+        const int before = submitted.load();
+        EXPECT_TRUE(waitUntil([&] { return submitted.load() > before; }));
         // Draining the queue to empty here would never finish while the
         // submitters run, so this is what catches a shutdown that waits for one.
         worker.stop();
@@ -150,7 +153,7 @@ TEST(MetadataWorker, ShutdownRunsWhatThePollSubmitted) {
             ++submitted;
         },
         std::chrono::microseconds(100));
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    EXPECT_TRUE(waitUntil([&] { return submitted.load() > 0; }));
     worker.stop();
 
     EXPECT_GT(submitted.load(), 0);
