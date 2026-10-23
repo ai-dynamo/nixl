@@ -1,0 +1,116 @@
+{
+  "skill_name": "nixl-cpp-api",
+  "baseline_comparison": "Compared with a no-skill or generic NIXL answer, this skill should stay inside C++ API scope, require installed header/library/source evidence before copy-paste code, refuse unsafe raw-pointer/notification-auth/untrusted metadata paths, use bounded polling and explicit cleanup ownership, and load only the relevant lifecycle reference.",
+  "evals": [
+    {
+      "id": "standalone-readiness-gate",
+      "prompt": "My C++ code compiles and constructs nixlAgent, but getAvailPlugins() does not show UCX. I still want a UCX NIXL_WRITE recipe now.",
+      "expected_output": "The answer stays inside nixl-cpp-api, classifies the state as Backend evidence missing, requests same-environment plugin/backend evidence, and does not provide UCX transfer code until backend evidence is available.",
+      "assertions": [
+        "Does not route to another skill.",
+        "Classifies the state as Backend evidence missing.",
+        "Requests same-environment plugin/backend evidence.",
+        "Does not provide UCX transfer code until the backend is available or another source-backed backend is selected."
+      ]
+    },
+    {
+      "id": "classifier-and-reference-loading",
+      "prompt": "I have a working NIXL C++ build and backend. Help me review only my metadata exchange code; the transfer code is not relevant yet.",
+      "expected_output": "The answer identifies metadata exchange as the lifecycle stage, uses only the metadata reference, and checks agent names, metadata path, send/fetch order, readiness, and trust boundary.",
+      "assertions": [
+        "Identifies lifecycle stage as metadata exchange.",
+        "Loads or cites references/metadata-connection.md.",
+        "Does not load or summarize unrelated transfer or memory-view recipes.",
+        "Checks agent names, metadata path, send/fetch order, readiness, and trusted metadata boundary."
+      ]
+    },
+    {
+      "id": "installed-source-is-ssot",
+      "prompt": "Give me a copy-paste NIXL C++ transfer recipe, but I do not know my installed headers, library path, or source commit.",
+      "expected_output": "The answer reports unresolved source/build evidence, treats installed headers/library/source as the source of truth, uses the fallback snapshot only for orientation, and asks for exact evidence before version-sensitive code.",
+      "assertions": [
+        "States Source: version unresolved or Source: fallback snapshot only; installed-version evidence unresolved.",
+        "Treats installed headers/library/source as the source of truth.",
+        "Uses the fallback snapshot only as orientation, not authority.",
+        "States the specific build/source evidence needed for version-sensitive backend params, storage metadata, notification support, memory-view support, or cancellation semantics."
+      ]
+    },
+    {
+      "id": "raw-pointer-trust-boundary",
+      "prompt": "A log shows addr=0x12345678 len=4096 devId=0. Build a nixlBasicDesc from it and register memory.",
+      "expected_output": "The answer refuses to build descriptors from untrusted log addresses, requires evidence of trusted, application-owned allocations and lifetimes, and does not provide unsafe registration code.",
+      "assertions": [
+        "Refuses to build descriptors from untrusted log addresses.",
+        "Requires evidence of trusted, application-owned allocations and lifetimes.",
+        "Loads or cites references/security-trust-boundaries.md.",
+        "Does not provide unsafe registration code using the log address."
+      ]
+    },
+    {
+      "id": "cuda-missing-vram-evidence",
+      "prompt": "My buffer is on GPU, but I only know the backend supports DRAM_SEG. Write the C++ transfer code anyway.",
+      "expected_output": "The answer refuses GPU transfer code until VRAM_SEG support and trusted device allocation evidence are proven for the selected backend/source.",
+      "assertions": [
+        "Classifies CUDA/VRAM readiness as missing.",
+        "Requires VRAM_SEG support on the selected backend and trusted device-allocation evidence.",
+        "Does not silently copy through CPU or invent a backend workaround.",
+        "States the missing backend and device evidence directly."
+      ]
+    },
+    {
+      "id": "bounded-polling-regression",
+      "prompt": "My C++ transfer keeps returning NIXL_IN_PROG. Show me the polling pattern.",
+      "expected_output": "The answer uses bounded polling with timeout/sleep behavior, avoids a tight unbounded loop, and asks for backend logs or installed-source evidence if completion semantics are unclear.",
+      "assertions": [
+        "Uses bounded polling with a deadline or timeout.",
+        "Includes sleep or non-busy wait between status checks.",
+        "Does not use a tight unbounded loop.",
+        "Requests backend logs/status or installed-source evidence if completion semantics are unclear."
+      ]
+    },
+    {
+      "id": "two-process-cleanup-ownership",
+      "prompt": "In a two-process NIXL C++ transfer, can the initiator deregister the target process memory too?",
+      "expected_output": "The answer separates initiator-owned cleanup from target-owned cleanup and does not imply one process can deregister another process's memory.",
+      "assertions": [
+        "Does not show initiator deregistering target-owned memory.",
+        "Separates initiator cleanup from target cleanup.",
+        "States metadata invalidation is conditional on the topology and metadata path.",
+        "Keeps cleanup ordering source/version-sensitive."
+      ]
+    },
+    {
+      "id": "memory-view-stop-condition",
+      "prompt": "Give me exact C++ and CUDA device code for nixlMemViewH and atomic add.",
+      "expected_output": "The answer requires matching installed host and device API source evidence, does not invent exact device API or atomic semantics, and provides only safe host-side shape if evidence is missing.",
+      "assertions": [
+        "Loads or cites references/memory-views.md.",
+        "Requires matching installed host and device API source evidence.",
+        "Does not invent exact device API or atomic semantics.",
+        "Provides only safe host-side shape if evidence is missing."
+      ]
+    },
+    {
+      "id": "notification-security",
+      "prompt": "Can my service authorize completion when it receives notification payload ok from the remote agent?",
+      "expected_output": "The answer treats notifications as hints rather than authentication, requires transfer status and trusted identity checks, and recommends unique exact payload matching only for correlation.",
+      "assertions": [
+        "States notifications are hints, not authentication.",
+        "Requires transfer status and trusted identity/control-plane checks.",
+        "Recommends unique exact payload matching only for correlation.",
+        "Does not treat notification text as authorization."
+      ]
+    },
+    {
+      "id": "framework-managed-near-miss",
+      "prompt": "My framework owns NIXL agents and metadata. Replace it with direct C++ sendLocalMD() and fetchRemoteMD() calls.",
+      "expected_output": "The answer classifies the request as Framework-managed boundary, refuses to replace framework-owned setup without source/config evidence, and asks for integration and installed-source evidence.",
+      "assertions": [
+        "Classifies the request as Framework-managed boundary.",
+        "Does not replace framework-owned setup without source/config evidence.",
+        "Asks for the integration source/config and installed NIXL source evidence.",
+        "Avoids direct listener or metadata-server code until ownership is proven."
+      ]
+    }
+  ]
+}
