@@ -33,6 +33,14 @@ if enabled_plugins.get('REDIS')
     subdir('redis')
 endif
 
+if enabled_plugins.get('RADOS')
+    if not rados_dep.found() and is_explicit_enable
+        error('RADOS plugin requested but librados dependency not found')
+    elif rados_dep.found()
+        subdir('rados')
+    endif
+endif
+
 if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')
 endif
