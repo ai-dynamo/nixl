@@ -78,6 +78,39 @@ chooseIpAddress() {
     return nixl::config::getValueDefaulted("NIXL_MOONCAKE_IP_ADDR", fallback);
 }
 
+// Returns NIXL_IN_PROG while the batch is in flight, then NIXL_SUCCESS if every
+// request completed or NIXL_ERR_BACKEND otherwise. Observing completion also
+// lets the Transfer Engine send the notification attached to the batch.
+[[nodiscard]] nixl_status_t
+queryBatchStatus(transfer_engine_t engine,
+                 uint64_t batch_id,
+                 [[maybe_unused]] size_t request_count) {
+#ifdef HAVE_MOONCAKE_BATCH_STATUS
+    // One call per poll instead of one per request. Unlike the per-request
+    // walk, a failure may be reported before the other requests drain.
+    transfer_status_t status;
+    if (getBatchTransferStatus(engine, batch_id, &status) != 0) {
+        return NIXL_ERR_BACKEND;
+    }
+    if (status.status == STATUS_PENDING || status.status == STATUS_WAITING) {
+        return NIXL_IN_PROG;
+    }
+    return status.status == STATUS_COMPLETED ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
+#else
+    bool has_failed = false;
+    for (size_t index = 0; index < request_count; ++index) {
+        transfer_status_t status;
+        int rc = getTransferStatus(engine, batch_id, index, &status);
+        if (rc || status.status == STATUS_FAILED) {
+            has_failed = true;
+        } else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING) {
+            return NIXL_IN_PROG;
+        }
+    }
+    return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
+#endif
+}
+
 } // namespace
 
 nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
@@ -305,16 +338,8 @@ nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     if (priv->batch_id == INVALID_BATCH) {
         return NIXL_SUCCESS;
     }
-    bool has_failed = false;
-    for (size_t index = 0; index < priv->request_count; ++index) {
-        transfer_status_t status;
-        int rc = getTransferStatus(engine_, priv->batch_id, index, &status);
-        if (rc || status.status == STATUS_FAILED)
-            has_failed = true;
-        else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING)
-            return NIXL_IN_PROG;
-    }
-    if (!has_failed) {
+    const nixl_status_t status = queryBatchStatus(engine_, priv->batch_id, priv->request_count);
+    if (status == NIXL_SUCCESS) {
         // Each batch_id has the batch size, and cannot process more requests
         // than the batch size. So, free the batch id here to workaround the issue
         // where the same nixlBackendReqH could be used to post multiple transfer.
@@ -322,7 +347,7 @@ nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
         priv->batch_id = INVALID_BATCH;
         priv->request_count = 0;
     }
-    return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
+    return status;
 }
 
 nixl_status_t

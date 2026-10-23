@@ -18,6 +18,14 @@ mooncake_lib = cpp.find_library('transfer_engine')
 
 compile_flags = []
 
+# Older Transfer Engines (e.g. v0.3.10.post1) only report per-request status.
+if cpp.has_header_symbol('transfer_engine_c.h', 'getBatchTransferStatus')
+    compile_flags += ['-DHAVE_MOONCAKE_BATCH_STATUS']
+    message('Mooncake: checkXfer polls each batch with getBatchTransferStatus')
+else
+    message('Mooncake: no getBatchTransferStatus, checkXfer polls each request')
+endif
+
 # The plugin uses the Transfer Engine C API and can also run without CUDA.
 mooncake_plugin_deps = [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib]
 if cuda_dep.found()
