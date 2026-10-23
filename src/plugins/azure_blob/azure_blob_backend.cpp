@@ -67,6 +67,14 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
         return false;
     }
 
+    if (local.descCount() != remote.descCount()) {
+        NIXL_ERROR << absl::StrFormat(
+            "Error: Local and remote descriptor counts must match, got %d and %d",
+            local.descCount(),
+            remote.descCount());
+        return false;
+    }
+
     return true;
 }
 
@@ -289,7 +297,32 @@ nixlAzureBlobEngine::postXfer(const nixl_xfer_op_t &operation,
                               const std::string &remote_agent,
                               nixlBackendReqH *&handle,
                               const nixl_opt_b_args_t *opt_args) const {
+    if (!handle) {
+        NIXL_ERROR << "Transfer request handle is null";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (local.descCount() != remote.descCount()) {
+        NIXL_ERROR << absl::StrFormat(
+            "Local and remote descriptor counts must match, got %d and %d",
+            local.descCount(),
+            remote.descCount());
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     nixlAzureBlobBackendReqH *req_h = static_cast<nixlAzureBlobBackendReqH *>(handle);
+
+    // Resolve every blob before posting. A later invalid descriptor must not
+    // leave earlier uploads or downloads running.
+    struct resolvedXfer {
+        std::string blobName;
+        uintptr_t dataPtr;
+        size_t dataLen;
+        size_t offset;
+    };
+
+    std::vector<resolvedXfer> ops;
+    ops.reserve(static_cast<size_t>(local.descCount()));
 
     for (int i = 0; i < local.descCount(); ++i) {
         const auto &local_desc = local[i];
@@ -302,31 +335,24 @@ nixlAzureBlobEngine::postXfer(const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
         }
 
+        ops.push_back(resolvedXfer{blob_name_search->second,
+                                   local_desc.addr,
+                                   local_desc.len,
+                                   static_cast<size_t>(remote_desc.addr)});
+    }
+
+    for (const auto &op : ops) {
         auto status_promise = std::make_shared<std::promise<nixl_status_t>>();
         req_h->statusFutures_.push_back(status_promise->get_future());
 
-        uintptr_t data_ptr = local_desc.addr;
-        size_t data_len = local_desc.len;
-        size_t offset = remote_desc.addr;
+        auto callback = [status_promise](bool success) {
+            status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
+        };
 
         if (operation == NIXL_WRITE)
-            blobClient_->putBlobAsync(blob_name_search->second,
-                                      data_ptr,
-                                      data_len,
-                                      offset,
-                                      [status_promise](bool success) {
-                                          status_promise->set_value(success ? NIXL_SUCCESS :
-                                                                              NIXL_ERR_BACKEND);
-                                      });
+            blobClient_->putBlobAsync(op.blobName, op.dataPtr, op.dataLen, op.offset, callback);
         else
-            blobClient_->getBlobAsync(blob_name_search->second,
-                                      data_ptr,
-                                      data_len,
-                                      offset,
-                                      [status_promise](bool success) {
-                                          status_promise->set_value(success ? NIXL_SUCCESS :
-                                                                              NIXL_ERR_BACKEND);
-                                      });
+            blobClient_->getBlobAsync(op.blobName, op.dataPtr, op.dataLen, op.offset, callback);
     }
 
     return NIXL_IN_PROG;
