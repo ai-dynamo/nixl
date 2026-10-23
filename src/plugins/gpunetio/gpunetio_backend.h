@@ -204,7 +204,6 @@ private:
         std::vector<uint32_t> positions;
         uintptr_t backendHandleGpu;
         std::vector<uint32_t> completion_ids;
-        std::vector<bool> completion_done;
         nixl_status_t postStatus = NIXL_SUCCESS;
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
