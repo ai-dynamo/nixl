@@ -111,16 +111,15 @@ gtest_sources = [
     'common.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
-    'telemetry_prometheus_test.cpp',
     'telemetry_mp_store_test.cpp',
     'telemetry_histogram_test.cpp',
-    'telemetry_prometheus_stress_test.cpp',
     'telemetry_stress_test.cpp',
     'telemetry_benchmark.cpp',
     'nixl_duration_test.cpp',
     'blocking_queue_test.cpp',
     'nixl_log_file_test.cpp',
     'configuration.cpp',
+    'trace_recorder_test.cpp',
     # Hidden in libnixl_common, so the oversized-record test links its own copy.
     '../../src/utils/common/nixl_log_file_sink.cpp',
     ]
@@ -175,7 +174,7 @@ test_exe = executable('gtest',
     install : true
 )
 
-gtest_depends = []
+gtest_depends = [trace_recorder_plugin]
 if ucx_dep.found() and is_variable('ucx_backend_interface')
     ucx_trace_receiver = executable('ucx_trace_receiver',
         sources : ['main.cpp', 'common.cpp', 'ucx_trace_receiver.cpp'],
@@ -185,7 +184,7 @@ if ucx_dep.found() and is_variable('ucx_backend_interface')
         link_with: [nixl_build_lib],
         install : true
     )
-    gtest_depends += [ucx_trace_receiver, trace_recorder_plugin]
+    gtest_depends += [ucx_trace_receiver]
 endif
 
 # MetadataExchangeTestFixture rapidly creates and tears down comm-thread agents,

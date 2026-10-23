@@ -419,6 +419,18 @@ TEST_F(MpExporterTest, LoadsThroughPluginManager) {
     EXPECT_FALSE(singleStoreFile().empty());
 }
 
+TEST_F(MpExporterTest, PrometheusIdLoadsTheSamePlugin) {
+    const gtest::LogIgnoreGuard lig("Plugin file does not exist");
+    auto &plugin_manager = nixlPluginManager::getInstance();
+    const auto handle = plugin_manager.loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr);
+    EXPECT_EQ(handle, plugin_manager.loadTelemetryPlugin("prometheus_mp"));
+    EXPECT_STREQ(handle->getName(), "prometheus_mp");
+
+    nixlTelemetry telemetry("agent-alias", "prometheus");
+    EXPECT_FALSE(singleStoreFile().empty());
+}
+
 TEST_F(MpExporterTest, CreatedTelemetryDirIsPrivate) {
     const auto sub = dir_ / "created";
     ASSERT_FALSE(std::filesystem::exists(sub));

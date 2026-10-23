@@ -152,6 +152,7 @@ private:
     std::string msg_tag_end = "DOCAE";
     std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
     int nstreams;
+    uint32_t dataQpCount_ = 1;
 
     uint16_t local_port;
     int noSyncIters;
@@ -210,6 +211,12 @@ private:
 
         ~nixlDocaBckndReq() {}
     };
+
+    // Called by postXfer with postLock_ held and the completion range checked.
+    nixl_status_t
+    postStripedWrite(nixlDocaBckndReq *request,
+                     const std::string &remote_agent,
+                     uint32_t completion_start) const;
 
     nixl_status_t
     progressThreadStart();
