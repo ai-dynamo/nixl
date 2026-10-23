@@ -13,10 +13,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+gds_unit_sources = [
+    'gds.cpp',
+]
+
+gds_unit_deps = [
+    nixl_common_dep,
+]
+
+if is_variable('gds_mt_backend_interface')
+    gds_unit_sources += [
+        'gds_mt_offset_test.cpp',
+    ]
+    gds_unit_deps += [
+        gds_mt_backend_interface,
+    ]
+endif
+
 gds_unit_test_dep = declare_dependency(
-    sources: [
-        'gds.cpp',
+    sources: gds_unit_sources,
+    include_directories: [
+        nixl_inc_dirs,
+        gtest_inc_dirs,
+        include_directories('../../../../src/plugins/cuda_gds'),
     ],
-    include_directories: [nixl_inc_dirs, gtest_inc_dirs],
-    dependencies: [nixl_common_dep],
+    dependencies: gds_unit_deps,
 )
