@@ -26,9 +26,12 @@
 #include "kernels/api.cuh"
 
 #include <pybind11/functional.h>
+#include <pybind11/stl.h>
 
-#include <ATen/cuda/CUDADataType.h>
-#include <torch/python.h>
+#include <torch/csrc/inductor/aoti_torch/c/shim.h>
+#include <torch/csrc/stable/ops.h>
+#include <torch/csrc/stable/pyobject.h>
+#include <torch/headeronly/core/ScalarType.h>
 
 #include <algorithm>
 #include <chrono>
@@ -49,6 +52,153 @@ void sleep_ms(int milliseconds) {
 uint64_t milliseconds_to_cycles(uint64_t milliseconds, int device_clock_rate_khz) {
     EP_HOST_ASSERT(device_clock_rate_khz > 0);
     return milliseconds * static_cast<uint64_t>(device_clock_rate_khz);
+}
+
+int64_t
+scalar_type_element_size(torch::headeronly::ScalarType dtype) {
+#define CASE_ELEMENT_SIZE(ctype, name)        \
+    case torch::headeronly::ScalarType::name: \
+        return static_cast<int64_t>(sizeof(ctype));
+
+    switch (dtype) {
+        AT_FORALL_SCALAR_TYPES_WITH_COMPLEX_AND_QINTS(CASE_ELEMENT_SIZE)
+    default:
+        STD_TORCH_CHECK(false, "Unknown ScalarType");
+    }
+#undef CASE_ELEMENT_SIZE
+}
+
+constexpr torch::headeronly::ScalarType
+topk_idx_scalar_type() {
+#if TOPK_IDX_BITS == 64
+    return torch::headeronly::ScalarType::Long;
+#elif TOPK_IDX_BITS == 32
+    return torch::headeronly::ScalarType::Int;
+#else
+#error "TOPK_IDX_BITS must be 64 or 32"
+#endif
+}
+
+template<size_t N>
+torch::stable::Tensor
+empty_cuda(const int64_t (&sizes)[N],
+           const int64_t (&strides)[N],
+           int32_t aoti_dtype,
+           int device_id) {
+    AtenTensorHandle handle = nullptr;
+    TORCH_ERROR_CODE_CHECK(aoti_torch_empty_strided(static_cast<int64_t>(N),
+                                                    sizes,
+                                                    strides,
+                                                    aoti_dtype,
+                                                    aoti_torch_device_type_cuda(),
+                                                    device_id,
+                                                    &handle));
+    return torch::stable::Tensor(handle);
+}
+
+pybind11::object
+tensor_to_py(const torch::stable::Tensor &t) {
+    return pybind11::reinterpret_steal<pybind11::object>(
+        static_cast<PyObject *>(torch::stable::tensor_to_pyobject(t)));
+}
+
+torch::stable::Tensor
+tensor_from_py(const pybind11::object &obj) {
+    return torch::stable::tensor_from_pyobject(obj.ptr());
+}
+
+std::optional<torch::stable::Tensor>
+optional_tensor_from_py(const pybind11::object &obj) {
+    if (obj.is_none()) {
+        return std::nullopt;
+    }
+    return tensor_from_py(obj);
+}
+
+pybind11::tuple
+dispatch_py(nixl_ep::Buffer &self,
+            const pybind11::object &x,
+            const pybind11::object &topk_idx,
+            const pybind11::object &cumulative_local_expert_recv_stats,
+            const pybind11::object &dispatch_wait_recv_cost_stats,
+            int num_max_dispatch_tokens_per_rank,
+            std::optional<int> num_experts,
+            bool use_fp8,
+            bool round_scale,
+            bool use_ue8m0,
+            bool async,
+            bool return_recv_hook) {
+    auto [recv_x, recv_x_scales, recv_count, src_info, layout_range, event_ptr] =
+        self.dispatch(tensor_from_py(x),
+                      tensor_from_py(topk_idx),
+                      optional_tensor_from_py(cumulative_local_expert_recv_stats),
+                      optional_tensor_from_py(dispatch_wait_recv_cost_stats),
+                      num_max_dispatch_tokens_per_rank,
+                      num_experts,
+                      use_fp8,
+                      round_scale,
+                      use_ue8m0,
+                      async,
+                      return_recv_hook);
+    return pybind11::make_tuple(tensor_to_py(recv_x),
+                                recv_x_scales ? tensor_to_py(*recv_x_scales) :
+                                                pybind11::object(pybind11::none()),
+                                tensor_to_py(recv_count),
+                                tensor_to_py(src_info),
+                                tensor_to_py(layout_range),
+                                event_ptr);
+}
+
+pybind11::tuple
+combine_py(nixl_ep::Buffer &self,
+           const pybind11::object &x,
+           const pybind11::object &topk_idx,
+           const pybind11::object &topk_weights,
+           const pybind11::object &src_info,
+           const pybind11::object &layout_range,
+           const pybind11::object &combine_wait_recv_cost_stats,
+           int num_max_dispatch_tokens_per_rank,
+           bool use_logfmt,
+           bool zero_copy,
+           bool async,
+           bool return_recv_hook,
+           const pybind11::object &out) {
+    auto [combined_x, event_ptr] =
+        self.combine(tensor_from_py(x),
+                     tensor_from_py(topk_idx),
+                     tensor_from_py(topk_weights),
+                     tensor_from_py(src_info),
+                     tensor_from_py(layout_range),
+                     optional_tensor_from_py(combine_wait_recv_cost_stats),
+                     num_max_dispatch_tokens_per_rank,
+                     use_logfmt,
+                     zero_copy,
+                     async,
+                     return_recv_hook,
+                     optional_tensor_from_py(out));
+    return pybind11::make_tuple(tensor_to_py(combined_x), event_ptr);
+}
+
+pybind11::object
+get_local_buffer_tensor_py(const nixl_ep::Buffer &self,
+                           const pybind11::object &dtype_carrier,
+                           int64_t offset) {
+    return tensor_to_py(self.get_local_buffer_tensor(
+        tensor_from_py(dtype_carrier).scalar_type(), offset));
+}
+
+pybind11::object
+get_next_combine_buffer_py(const nixl_ep::Buffer &self,
+                           int num_max_dispatch_tokens_per_rank,
+                           int hidden,
+                           int rank_bound) {
+    return tensor_to_py(
+        self.get_next_combine_buffer(num_max_dispatch_tokens_per_rank, hidden, rank_bound));
+}
+
+void
+query_mask_buffer_py(const nixl_ep::Buffer &self, const pybind11::object &mask_status) {
+    self.query_mask_buffer(tensor_from_py(mask_status));
 }
 
 } // namespace
@@ -190,11 +340,12 @@ int Buffer::get_local_device_id() const {
     return device_id;
 }
 
-torch::Tensor Buffer::get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset) const {
-    torch::ScalarType casted_dtype = torch::python::detail::py_object_to_dtype(dtype);
-    auto element_bytes = static_cast<int64_t>(elementSize(casted_dtype));
+torch::stable::Tensor Buffer::get_local_buffer_tensor(torch::headeronly::ScalarType dtype, int64_t offset) const {
+    const int64_t element_bytes = scalar_type_element_size(dtype);
     auto base_ptr = static_cast<uint8_t*>(rdma_buffer_ptr) + offset;
-    return torch::from_blob(base_ptr, num_rdma_bytes / element_bytes, torch::TensorOptions().dtype(casted_dtype).device(at::kCUDA));
+    const int64_t sizes[] = {num_rdma_bytes / element_bytes};
+    const int64_t strides[] = {1};
+    return torch::stable::from_blob(base_ptr, torch::headeronly::IntHeaderOnlyArrayRef(sizes, 1), torch::headeronly::IntHeaderOnlyArrayRef(strides, 1), torch::stable::Device(torch::headeronly::DeviceType::CUDA, device_id), dtype);
 }
 
 int64_t Buffer::get_comm_stream() const {
@@ -403,32 +554,33 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
     _nixl_ep_memory_views_commit();
 }
 
-std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
-Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
-                             const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
-                             const std::optional<torch::Tensor>& dispatch_wait_recv_cost_stats,
+std::tuple<torch::stable::Tensor, std::optional<torch::stable::Tensor>, torch::stable::Tensor, torch::stable::Tensor, torch::stable::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
+Buffer::dispatch(const torch::stable::Tensor &x, const torch::stable::Tensor &topk_idx,
+                             const std::optional<torch::stable::Tensor> &cumulative_local_expert_recv_stats,
+                             const std::optional<torch::stable::Tensor> &dispatch_wait_recv_cost_stats,
                              int num_max_dispatch_tokens_per_rank, std::optional<int> num_experts,
                              bool use_fp8, bool round_scale, bool use_ue8m0,
                              bool async, bool return_recv_hook) {
     // Tensor checks
     // By default using `ptp128c` FP8 cast
-    EP_HOST_ASSERT(x.dim() == 2 and x.is_contiguous() and x.scalar_type() == torch::kBFloat16);
+    EP_HOST_ASSERT(x.dim() == 2 and x.is_contiguous() and x.scalar_type() == torch::headeronly::ScalarType::BFloat16);
     EP_HOST_ASSERT(x.size(1) % sizeof(int4) == 0 and x.size(1) % 128 == 0);
     EP_HOST_ASSERT(topk_idx.dim() == 2 and topk_idx.is_contiguous());
     EP_HOST_ASSERT(x.size(0) == topk_idx.size(0) and x.size(0) <= num_max_dispatch_tokens_per_rank);
-    EP_HOST_ASSERT(topk_idx.scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
+    EP_HOST_ASSERT(topk_idx.scalar_type() == topk_idx_scalar_type());
     const int rank_bound = get_rank_bound(num_experts);
     const int num_max_recv_tokens = rank_bound * num_max_dispatch_tokens_per_rank;
     EP_HOST_ASSERT(num_max_recv_tokens % 4 == 0 and "TMA requires the number of tokens to be multiple of 4");
+    EP_HOST_ASSERT(not (async and return_recv_hook));
 
     // Diagnosis tensors
     if (cumulative_local_expert_recv_stats.has_value()) {
-        EP_HOST_ASSERT(cumulative_local_expert_recv_stats->scalar_type() == torch::kInt);
+        EP_HOST_ASSERT(cumulative_local_expert_recv_stats->scalar_type() == torch::headeronly::ScalarType::Int);
         EP_HOST_ASSERT(cumulative_local_expert_recv_stats->dim() == 1 and cumulative_local_expert_recv_stats->is_contiguous());
         EP_HOST_ASSERT(cumulative_local_expert_recv_stats->size(0) == num_experts_per_rank);
     }
     if (dispatch_wait_recv_cost_stats.has_value()) {
-        EP_HOST_ASSERT(dispatch_wait_recv_cost_stats->scalar_type() == torch::kInt64);
+        EP_HOST_ASSERT(dispatch_wait_recv_cost_stats->scalar_type() == torch::headeronly::ScalarType::Long);
         EP_HOST_ASSERT(dispatch_wait_recv_cost_stats->dim() == 1 and dispatch_wait_recv_cost_stats->is_contiguous());
         EP_HOST_ASSERT(dispatch_wait_recv_cost_stats->size(0) == rank_bound);
     }
@@ -447,47 +599,62 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
     // NOTES: the hook mode will always use the default stream
     cudaStream_t compute_stream = cuda_stream::get_current();
     cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream;
-    EP_HOST_ASSERT(not (async and return_recv_hook));
     if (not return_recv_hook)
         stream_wait(launch_stream, compute_stream);
 
     // Allocate packed tensors
-    auto packed_recv_x = torch::empty({num_experts_per_rank, num_max_recv_tokens, hidden},
-                                      x.options().dtype(use_fp8 ? torch::kFloat8_e4m3fn: torch::kBFloat16));
-    auto packed_recv_src_info = torch::empty({num_experts_per_rank, num_max_recv_tokens}, torch::dtype(torch::kInt32).device(torch::kCUDA));
-    auto packed_recv_layout_range = torch::empty({num_experts_per_rank, rank_bound}, torch::dtype(torch::kInt64).device(torch::kCUDA));
-    auto packed_recv_count = torch::empty({num_experts_per_rank}, torch::dtype(torch::kInt32).device(torch::kCUDA));
+    const int64_t recv_x_sizes[] = {num_experts_per_rank, num_max_recv_tokens, hidden};
+    const int64_t recv_x_strides[] = {static_cast<int64_t>(num_max_recv_tokens) * hidden, hidden, 1};
+    torch::stable::Tensor packed_recv_x =
+        empty_cuda(recv_x_sizes,
+                   recv_x_strides,
+                   use_fp8 ? aoti_torch_dtype_float8_e4m3fn() : aoti_torch_dtype_bfloat16(),
+                   device_id);
+    const int64_t src_info_sizes[] = {num_experts_per_rank, num_max_recv_tokens};
+    const int64_t src_info_strides[] = {num_max_recv_tokens, 1};
+    torch::stable::Tensor packed_recv_src_info =
+        empty_cuda(src_info_sizes, src_info_strides, aoti_torch_dtype_int32(), device_id);
+    const int64_t layout_sizes[] = {num_experts_per_rank, rank_bound};
+    const int64_t layout_strides[] = {rank_bound, 1};
+    torch::stable::Tensor packed_recv_layout_range =
+        empty_cuda(layout_sizes, layout_strides, aoti_torch_dtype_int64(), device_id);
+    const int64_t count_sizes[] = {num_experts_per_rank};
+    const int64_t count_strides[] = {1};
+    torch::stable::Tensor packed_recv_count =
+        empty_cuda(count_sizes, count_strides, aoti_torch_dtype_int32(), device_id);
 
     // Allocate column-majored scales
-    auto packed_recv_x_scales = std::optional<torch::Tensor>();
+    std::optional<torch::stable::Tensor> packed_recv_x_scales;
     void* packed_recv_x_scales_ptr = nullptr;
     if (use_fp8) {
         // TODO: support unaligned cases
         EP_HOST_ASSERT(hidden % 512 == 0);
-        if (not use_ue8m0) {
-            packed_recv_x_scales = torch::empty({num_experts_per_rank, hidden / 128, num_max_recv_tokens},
-                                                torch::dtype(torch::kFloat32).device(torch::kCUDA));
-        } else {
+        if (use_ue8m0) {
             EP_HOST_ASSERT(round_scale);
-            packed_recv_x_scales = torch::empty({num_experts_per_rank, hidden / 512, num_max_recv_tokens},
-                                                torch::dtype(torch::kInt).device(torch::kCUDA));
         }
-        packed_recv_x_scales = torch::transpose(packed_recv_x_scales.value(), 1, 2);
-        packed_recv_x_scales_ptr = packed_recv_x_scales->data_ptr();
+        const int64_t groups = use_ue8m0 ? hidden / 512 : hidden / 128;
+        const int64_t scale_sizes[] = {num_experts_per_rank, num_max_recv_tokens, groups};
+        const int64_t scale_strides[] = {groups * num_max_recv_tokens, 1, num_max_recv_tokens};
+        packed_recv_x_scales =
+            empty_cuda(scale_sizes,
+                       scale_strides,
+                       use_ue8m0 ? aoti_torch_dtype_int32() : aoti_torch_dtype_float32(),
+                       device_id);
+        packed_recv_x_scales_ptr = packed_recv_x_scales->mutable_data_ptr();
     }
 
     // Kernel launch
     auto next_clean_meta = next_buffer.clean_meta();
     auto launcher = [=, this](int phases) {
-        ep_kernels::dispatch(packed_recv_x.data_ptr(), packed_recv_x_scales_ptr,
-                               packed_recv_src_info.data_ptr<int>(), packed_recv_layout_range.data_ptr<int64_t>(),
-                               packed_recv_count.data_ptr<int>(),
+        ep_kernels::dispatch(packed_recv_x.mutable_data_ptr(), packed_recv_x_scales_ptr,
+                               packed_recv_src_info.mutable_data_ptr<int>(), packed_recv_layout_range.mutable_data_ptr<int64_t>(),
+                               packed_recv_count.mutable_data_ptr<int>(),
                                mask_buffer_ptr,
-                               cumulative_local_expert_recv_stats.has_value() ? cumulative_local_expert_recv_stats->data_ptr<int>() : nullptr,
-                               dispatch_wait_recv_cost_stats.has_value() ? dispatch_wait_recv_cost_stats->data_ptr<int64_t>() : nullptr,
+                               cumulative_local_expert_recv_stats.has_value() ? cumulative_local_expert_recv_stats->mutable_data_ptr<int>() : nullptr,
+                               dispatch_wait_recv_cost_stats.has_value() ? dispatch_wait_recv_cost_stats->mutable_data_ptr<int64_t>() : nullptr,
                                buffer.dispatch_rdma_recv_data_buffer, buffer.dispatch_rdma_recv_count_buffer,
                                buffer.dispatch_rdma_send_buffer,
-                              x.data_ptr(), topk_idx.data_ptr<topk_idx_t>(),
+                               x.const_data_ptr(), topk_idx.const_data_ptr<topk_idx_t>(),
                                next_clean_meta.first, next_clean_meta.second,
                                num_tokens, hidden, num_max_dispatch_tokens_per_rank,
                                num_topk, rank_bound, num_experts_per_rank, rank,
@@ -517,36 +684,37 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
     return {packed_recv_x, packed_recv_x_scales, packed_recv_count, packed_recv_src_info, packed_recv_layout_range, event, recv_hook};
 }
 
-std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
-Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const torch::Tensor& topk_weights,
-                            const torch::Tensor& src_info, const torch::Tensor& layout_range,
-                            const std::optional<torch::Tensor>& combine_wait_recv_cost_stats,
+std::tuple<torch::stable::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
+Buffer::combine(const torch::stable::Tensor& x, const torch::stable::Tensor& topk_idx, const torch::stable::Tensor& topk_weights,
+                            const torch::stable::Tensor& src_info, const torch::stable::Tensor& layout_range,
+                            const std::optional<torch::stable::Tensor>& combine_wait_recv_cost_stats,
                             int num_max_dispatch_tokens_per_rank,
                             bool use_logfmt, bool zero_copy, bool async, bool return_recv_hook,
-                            const std::optional<torch::Tensor>& out) {
+                            const std::optional<torch::stable::Tensor>& out) {
     EP_HOST_ASSERT(layout_range.dim() == 2 and layout_range.is_contiguous());
-    EP_HOST_ASSERT(layout_range.scalar_type() == torch::kInt64);
+    EP_HOST_ASSERT(layout_range.scalar_type() == torch::headeronly::ScalarType::Long);
     EP_HOST_ASSERT(layout_range.size(0) == num_experts_per_rank);
     const int rank_bound = layout_range.size(1);
     EP_HOST_ASSERT(rank_bound >= active_rank_bound and rank_bound <= max_num_ranks);
 
     // Tensor checks
-    EP_HOST_ASSERT(x.dim() == 3 and x.is_contiguous() and x.scalar_type() == torch::kBFloat16);
+    EP_HOST_ASSERT(x.dim() == 3 and x.is_contiguous() and x.scalar_type() == torch::headeronly::ScalarType::BFloat16);
     EP_HOST_ASSERT(x.size(0) == num_experts_per_rank);
     EP_HOST_ASSERT(x.size(1) == rank_bound * num_max_dispatch_tokens_per_rank);
     EP_HOST_ASSERT(x.size(2) % sizeof(int4) == 0 and x.size(2) % 128 == 0);
     EP_HOST_ASSERT(topk_idx.dim() == 2 and topk_idx.is_contiguous());
     EP_HOST_ASSERT(topk_idx.size(0) == topk_weights.size(0) and topk_idx.size(1) == topk_weights.size(1));
-    EP_HOST_ASSERT(topk_idx.scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
+    EP_HOST_ASSERT(topk_idx.scalar_type() == topk_idx_scalar_type());
     EP_HOST_ASSERT(topk_weights.dim() == 2 and topk_weights.is_contiguous());
     EP_HOST_ASSERT(topk_weights.size(0) <= num_max_dispatch_tokens_per_rank);
-    EP_HOST_ASSERT(topk_weights.scalar_type() == torch::kFloat32);
+    EP_HOST_ASSERT(topk_weights.scalar_type() == torch::headeronly::ScalarType::Float);
     EP_HOST_ASSERT(src_info.dim() == 2 and src_info.is_contiguous());
-    EP_HOST_ASSERT(src_info.scalar_type() == torch::kInt32 and x.size(0) == src_info.size(0));
+    EP_HOST_ASSERT(src_info.scalar_type() == torch::headeronly::ScalarType::Int and x.size(0) == src_info.size(0));
     EP_HOST_ASSERT(src_info.size(1) == rank_bound * num_max_dispatch_tokens_per_rank);
+    EP_HOST_ASSERT(not (async and return_recv_hook));
 
     if (combine_wait_recv_cost_stats.has_value()) {
-        EP_HOST_ASSERT(combine_wait_recv_cost_stats->scalar_type() == torch::kInt64);
+        EP_HOST_ASSERT(combine_wait_recv_cost_stats->scalar_type() == torch::headeronly::ScalarType::Long);
         EP_HOST_ASSERT(combine_wait_recv_cost_stats->dim() == 1 and combine_wait_recv_cost_stats->is_contiguous());
         EP_HOST_ASSERT(combine_wait_recv_cost_stats->size(0) == rank_bound);
     }
@@ -566,31 +734,32 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
     // NOTES: the hook mode will always use the default stream
     cudaStream_t compute_stream = cuda_stream::get_current();
     cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream;
-    EP_HOST_ASSERT(not (async and return_recv_hook));
     if (not return_recv_hook)
         stream_wait(launch_stream, compute_stream);
 
     // Allocate output tensor
-    torch::Tensor combined_x;
+    torch::stable::Tensor combined_x;
     if (out.has_value()) {
         EP_HOST_ASSERT(out->dim() == 2 and out->is_contiguous());
         EP_HOST_ASSERT(out->size(0) == num_combined_tokens and out->size(1) == hidden);
         EP_HOST_ASSERT(out->scalar_type() == x.scalar_type());
         combined_x = out.value();
     } else {
-        combined_x = torch::empty({num_combined_tokens, hidden}, x.options());
+        const int64_t sizes[] = {num_combined_tokens, hidden};
+        const int64_t strides[] = {hidden, 1};
+        combined_x = empty_cuda(sizes, strides, aoti_torch_dtype_bfloat16(), device_id);
     }
 
     // Kernel launch
     auto next_clean_meta = next_buffer.clean_meta();
     auto launcher = [=, this](int phases) {
-        ep_kernels::combine(combined_x.data_ptr(),
+        ep_kernels::combine(combined_x.mutable_data_ptr(),
                               buffer.combine_rdma_recv_data_buffer, buffer.combine_rdma_recv_flag_buffer,
                               buffer.combine_rdma_send_buffer,
-                              x.data_ptr(), topk_idx.data_ptr<topk_idx_t>(), topk_weights.data_ptr<float>(),
-                              src_info.data_ptr<int>(), layout_range.data_ptr<int64_t>(),
+                              x.const_data_ptr(), topk_idx.const_data_ptr<topk_idx_t>(), topk_weights.const_data_ptr<float>(),
+                              src_info.const_data_ptr<int>(), layout_range.const_data_ptr<int64_t>(),
                               mask_buffer_ptr,
-                              combine_wait_recv_cost_stats.has_value() ? combine_wait_recv_cost_stats->data_ptr<int64_t>() : nullptr,
+                              combine_wait_recv_cost_stats.has_value() ? combine_wait_recv_cost_stats->mutable_data_ptr<int64_t>() : nullptr,
                               next_clean_meta.first, next_clean_meta.second,
                               num_combined_tokens, hidden, num_max_dispatch_tokens_per_rank,
                               num_topk, rank_bound, num_experts_per_rank, rank,
@@ -619,7 +788,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
     return {combined_x, event, recv_hook};
 }
 
-torch::Tensor
+torch::stable::Tensor
 Buffer::get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden,
                                 int rank_bound) const {
     EP_HOST_ASSERT(rank_bound >= active_rank_bound and rank_bound <= max_num_ranks);
@@ -627,14 +796,21 @@ Buffer::get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden
     EPLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, max_num_ranks, max_num_experts);
 
     auto buffer = layout.buffers[buffer_idx];
-    auto dtype = torch::kBFloat16;
-    auto num_msg_elems = static_cast<int>(buffer.num_bytes_per_combine_msg / elementSize(torch::kBFloat16));
+    constexpr auto dtype_elem_size = sizeof(uint16_t);
+    EP_HOST_ASSERT(buffer.num_bytes_per_combine_msg % dtype_elem_size == 0);
 
-    EP_HOST_ASSERT(buffer.num_bytes_per_combine_msg % elementSize(torch::kBFloat16) == 0);
-    return torch::from_blob(buffer.combine_rdma_send_buffer_data_start,
-                            {num_experts_per_rank, rank_bound * num_max_dispatch_tokens_per_rank, hidden},
-                            {rank_bound * num_max_dispatch_tokens_per_rank * num_msg_elems, num_msg_elems, 1},
-                            torch::TensorOptions().dtype(dtype).device(torch::kCUDA));
+    const auto num_msg_elems = static_cast<int>(buffer.num_bytes_per_combine_msg / dtype_elem_size);
+    const int64_t sizes[] = {
+        num_experts_per_rank, rank_bound * num_max_dispatch_tokens_per_rank, hidden};
+    const int64_t strides[] = {
+        rank_bound * num_max_dispatch_tokens_per_rank * num_msg_elems, num_msg_elems, 1};
+
+    return torch::stable::from_blob(
+        buffer.combine_rdma_send_buffer_data_start,
+        torch::headeronly::IntHeaderOnlyArrayRef(sizes, 3),
+        torch::headeronly::IntHeaderOnlyArrayRef(strides, 3),
+        torch::stable::Device(torch::headeronly::DeviceType::CUDA, device_id),
+        torch::headeronly::ScalarType::BFloat16);
 }
 
 bool is_sm90_compiled() {
@@ -658,14 +834,14 @@ void Buffer::update_mask_buffer(int rank_to_mask, bool mask) {
 }
 
 void
-Buffer::query_mask_buffer(const torch::Tensor &mask_status) const {
+Buffer::query_mask_buffer(const torch::stable::Tensor &mask_status) const {
     EP_HOST_ASSERT(mask_buffer_ptr != nullptr and "Shrink mode must be enabled");
     EP_HOST_ASSERT(mask_status.numel() == max_num_ranks &&
-                   mask_status.scalar_type() == torch::kInt32);
+                   mask_status.scalar_type() == torch::headeronly::ScalarType::Int);
 
     ep_kernels::query_mask_buffer(mask_buffer_ptr,
                                   max_num_ranks,
-                                  mask_status.data_ptr<int>(),
+                                  mask_status.mutable_data_ptr<int>(),
                                   cuda_stream::get_current());
 }
 
@@ -904,22 +1080,23 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("barrier", &nixl_ep::Buffer::barrier)
         .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, bool activate) {
             buffer.connect_ranks(remote_ranks, nixl_ep::convert_mds(remote_mds), activate);
-        }, py::arg("remote_ranks"), py::arg("remote_mds") = std::nullopt, py::arg("activate") = true)
+        }, pybind11::arg("remote_ranks"), pybind11::arg("remote_mds") = std::nullopt, pybind11::arg("activate") = true)
         .def("disconnect_ranks", &nixl_ep::Buffer::disconnect_ranks)
         .def("is_available", &nixl_ep::Buffer::is_available)
         .def("get_local_device_id", &nixl_ep::Buffer::get_local_device_id)
-        .def("get_local_buffer_tensor", &nixl_ep::Buffer::get_local_buffer_tensor)
+        .def("get_local_buffer_tensor", &get_local_buffer_tensor_py)
         .def("get_comm_stream", &nixl_ep::Buffer::get_comm_stream)
         .def("destroy", &nixl_ep::Buffer::destroy)
-        .def("dispatch", &nixl_ep::Buffer::dispatch)
-        .def("combine", &nixl_ep::Buffer::combine)
+        .def("dispatch", &dispatch_py)
+        .def("combine", &combine_py)
         .def("update_mask_buffer", &nixl_ep::Buffer::update_mask_buffer)
-        .def("query_mask_buffer", &nixl_ep::Buffer::query_mask_buffer)
+        .def("query_mask_buffer", &query_mask_buffer_py)
         .def("clean_mask_buffer", &nixl_ep::Buffer::clean_mask_buffer)
-        .def("get_next_combine_buffer", &nixl_ep::Buffer::get_next_combine_buffer)
-        .def("get_local_metadata", [](const nixl_ep::Buffer &buffer) -> pybind11::bytes {
-            return pybind11::bytes(buffer.get_local_metadata());
-        });
-    m.attr("topk_idx_t") = pybind11::cast(c10::CppTypeToScalarType<nixl_ep::topk_idx_t>::value);
+        .def("get_next_combine_buffer", &get_next_combine_buffer_py)
+        .def("get_local_metadata",
+             [](const nixl_ep::Buffer &buffer) -> pybind11::bytes {
+                 return pybind11::bytes(buffer.get_local_metadata());
+             });
+    m.attr("topk_idx_bits") = TOPK_IDX_BITS;
     m.def("is_sm90_compiled", nixl_ep::is_sm90_compiled);
 }

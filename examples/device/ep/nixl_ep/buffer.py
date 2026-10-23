@@ -157,7 +157,9 @@ class Buffer:
             use_rdma_buffer: kept for API compatibility; the RDMA buffer is the only buffer and this must be True.
         """
         assert use_rdma_buffer, "Only the RDMA buffer is supported"
-        tensor = self.runtime.get_local_buffer_tensor(dtype, offset)
+        tensor = self.runtime.get_local_buffer_tensor(
+            torch.empty(0, dtype=dtype, device="meta"), offset
+        )
         if size is None:
             return tensor
 

@@ -105,14 +105,14 @@ In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` 
   --wheel-base "manylinux_2_28" \
   --python-versions "${python_version}" \
   --arch ${arch} \
-  --torch-versions "2.13" \
+  --torch-versions ${torch_version} \
   --dockerfile contrib/Dockerfile.manylinux \
   --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}"
 ```
 
 `--wheel-base-image` causes the script to pass `--build-arg wheel_base=<url> --target wheel`, so only the `wheel` stage runs and the pre-built deps are pulled from Artifactory rather than recompiled.
 
-`--torch-versions "2.13"` limits PR builds to a single torch version. The nightly job builds the full per-CUDA-major matrix.
+`--torch-versions` limits PR builds to a single torch version. The nightly job builds the full per-CUDA-major matrix.
 
 #### User Usage (Full Build)
 Users can build the complete image locally without specifying a target:
@@ -285,7 +285,7 @@ Sets up the podman container runtime and authenticates with Artifactory:
 
 Builds only the `wheel` stage of `Dockerfile.manylinux` by pulling the pre-built `wheel_base` from Artifactory:
 
-- Calls `contrib/build-container.sh` with `--wheel-base-image <artifactory-url>` and `--torch-versions "2.13"`
+- Calls `contrib/build-container.sh` with `--wheel-base-image <artifactory-url>` and `--torch-versions <torch-versions>`
 - The script invokes `docker build --target wheel --build-arg wheel_base=<url>` (podman), which:
   - Pulls the pre-built `nixl-wheel-base-manylinux_2_28:${CI_IMAGE_TAG}` image (all deps already compiled)
   - Builds NIXL from source with meson/ninja

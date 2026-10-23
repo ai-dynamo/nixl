@@ -37,7 +37,7 @@
 
 #include <cuda_runtime.h>
 
-#include <torch/types.h>
+#include <torch/csrc/stable/tensor.h>
 
 #include <pybind11/pytypes.h>
 
@@ -177,38 +177,38 @@ public:
 
     int get_local_device_id() const;
 
-    torch::Tensor get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset) const;
+    torch::stable::Tensor get_local_buffer_tensor(torch::headeronly::ScalarType dtype, int64_t offset) const;
 
     int64_t get_comm_stream() const;
 
     void destroy();
 
-    std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
-    dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
-                         const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
-                         const std::optional<torch::Tensor>& dispatch_wait_recv_cost_stats,
+    std::tuple<torch::stable::Tensor, std::optional<torch::stable::Tensor>, torch::stable::Tensor, torch::stable::Tensor, torch::stable::Tensor, int64_t>
+    dispatch(const torch::stable::Tensor &x, const torch::stable::Tensor &topk_idx,
+                         const std::optional<torch::stable::Tensor> &cumulative_local_expert_recv_stats,
+                         const std::optional<torch::stable::Tensor> &dispatch_wait_recv_cost_stats,
                          int num_max_dispatch_tokens_per_rank, std::optional<int> num_experts,
                          bool use_fp8, bool round_scale, bool use_ue8m0,
                          bool async, bool return_recv_hook);
 
-    std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
-    combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const torch::Tensor& topk_weights,
-                        const torch::Tensor& src_info, const torch::Tensor& layout_range,
-                        const std::optional<torch::Tensor>& combine_wait_recv_cost_stats,
+    std::tuple<torch::stable::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
+    combine(const torch::stable::Tensor &x, const torch::stable::Tensor &topk_idx, const torch::stable::Tensor &topk_weights,
+                        const torch::stable::Tensor &src_info, const torch::stable::Tensor &layout_range,
+                        const std::optional<torch::stable::Tensor> &combine_wait_recv_cost_stats,
                         int num_max_dispatch_tokens_per_rank,
                         bool use_logfmt, bool zero_copy, bool async, bool return_recv_hook,
-                        const std::optional<torch::Tensor>& out = std::nullopt);
+                        const std::optional<torch::stable::Tensor> &out);
 
     void barrier();
 
-    torch::Tensor
+    torch::stable::Tensor
     get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden,
                             int rank_bound) const;
 
     void update_mask_buffer(int rank_to_mask, bool mask);
 
     void
-    query_mask_buffer(const torch::Tensor &mask_status) const;
+    query_mask_buffer(const torch::stable::Tensor &mask_status) const;
 
     void clean_mask_buffer();
 
