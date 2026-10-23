@@ -101,6 +101,7 @@ constexpr uint32_t DOCA_POST_STREAM_NUM = 4;
 constexpr uint32_t DOCA_XFER_REQ_SIZE = 512;
 constexpr uint32_t DOCA_XFER_REQ_MAX = 32;
 constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
+constexpr uint32_t DOCA_ENG_MAX_CONN = 20;
 constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
@@ -155,10 +156,10 @@ struct docaStripedWriteLaunch {
 enum docaXferState : uint32_t {
     DOCA_XFER_STATE_PREPARED = 1,
     DOCA_XFER_STATE_DATA_POSTED,
-    DOCA_XFER_STATE_COMPLETE,
-    DOCA_XFER_STATE_ERROR,
     // GPU data CQ completed; notification and CPU terminal publication may still be pending.
     DOCA_XFER_STATE_DATA_COMPLETE,
+    DOCA_XFER_STATE_COMPLETE,
+    DOCA_XFER_STATE_ERROR,
 };
 
 struct docaQpProgress {

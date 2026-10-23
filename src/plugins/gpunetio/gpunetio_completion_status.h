@@ -27,10 +27,8 @@
 namespace nixl::gpunetio {
 
 inline nixl_status_t
-completionStatus(const uint32_t *error_flag) {
-    return std::atomic_ref<const uint32_t>(*error_flag).load(std::memory_order_acquire) == 0 ?
-        NIXL_SUCCESS :
-        NIXL_ERR_BACKEND;
+completionStatus(const volatile uint32_t *error_flag) {
+    return *error_flag == 0 ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
 }
 
 inline uint8_t *

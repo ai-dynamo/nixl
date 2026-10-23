@@ -468,12 +468,10 @@ kernel_progress(struct docaXferReqGpu *xfer_req_ring,
                     } while (notif_status == EBUSY && DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0 &&
                              nixl_gpunetio_dev_load_host_state(progress_state->failed) == 0U);
                     if (notif_status != 0) {
-                        nixl_gpunetio_dev_mark_failed(progress_state);
+                        nixl_gpunetio_dev_fail_request(progress_state, pos);
                         printf("kernel_progress: notification CQ error %d wqe %ld\n",
                                notif_status,
                                out_ticket);
-                        nixl_gpunetio_dev_finish_request(
-                            progress_state, pos, DOCA_XFER_STATE_ERROR);
                     } else {
                         nixl_gpunetio_dev_complete_request(request, progress_state, pos);
                     }

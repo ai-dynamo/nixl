@@ -513,7 +513,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         }
     }
 
-    std::atomic_ref<uint32_t>(*wait_exit_cpu).store(0, std::memory_order_release);
+    *reinterpret_cast<volatile uint32_t *>(wait_exit_cpu) = 0;
 
     result = doca_gpu_mem_alloc(gdevs[0].second,
                                 sizeof(struct docaNotif),
@@ -592,7 +592,7 @@ nixlDocaEngine::~nixlDocaEngine() {
     NIXL_DEBUG << "Before progressThreadStop ";
     progressThreadStop();
 
-    std::atomic_ref<uint32_t>(*wait_exit_cpu).store(1, std::memory_order_release);
+    *reinterpret_cast<volatile uint32_t *>(wait_exit_cpu) = 1;
     nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
     if (cuda_device.status() != cudaSuccess) {
         NIXL_ERROR << "Cannot select GPUNETIO engine device; retaining device resources";
@@ -645,10 +645,10 @@ nixlDocaEngine::~nixlDocaEngine() {
     }
     notifMap.clear();
 
+    doca_gpu_mem_free(gdevs[0].second, wait_exit_gpu);
     doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
     doca_gpu_mem_free(gdevs[0].second, progress_state_gpu);
     doca_gpu_mem_free(gdevs[0].second, host_state_gpu_);
-    doca_gpu_mem_free(gdevs[0].second, wait_exit_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_send_gpu);
@@ -2036,11 +2036,11 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
     auto state = treq->completionState.load(std::memory_order_acquire);
     if (state == nixlDocaBckndReq::completion_state::COMPLETE) {
-        return NIXL_SUCCESS;
+        return treq->postStatus;
     }
     if (state == nixlDocaBckndReq::completion_state::COMPLETING) {
         treq->completionState.wait(state, std::memory_order_acquire);
-        return checkXfer(handle);
+        return treq->postStatus;
     }
 
     bool request_error = false;
