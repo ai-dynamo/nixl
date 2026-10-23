@@ -37,6 +37,7 @@ if aws_s3.found() and aws_s3_crt.found() and aws_core.found()
         endif
         aws_inc = aws_dep.get_variable(pkgconfig: 'includedir', default_value: '')
         aws_lib = aws_dep.get_variable(pkgconfig: 'libdir', default_value: '')
+        aws_prefix = ''
         if aws_lib != '' and not fs.is_absolute(aws_lib)
             aws_prefix = aws_dep.get_variable(pkgconfig: 'pcfiledir')
             foreach _ : aws_lib.split('/') + ['pkgconfig']
@@ -46,9 +47,12 @@ if aws_s3.found() and aws_s3_crt.found() and aws_core.found()
                 aws_sdk_libs += declare_dependency(link_args: '-L' + (aws_prefix / aws_lib))
                 aws_sdk_libs += cpp.find_library(aws_dep.name(), dirs: aws_prefix / aws_lib, required: false)
             endif
-            if aws_inc != '' and not fs.is_absolute(aws_inc)
-                aws_inc = aws_prefix / aws_inc
-            endif
+        elif aws_lib != ''
+            # An absolute libdir is usually <prefix>/lib.
+            aws_prefix = fs.parent(aws_lib)
+        endif
+        if aws_inc != '' and not fs.is_absolute(aws_inc)
+            aws_inc = aws_prefix / aws_inc
         endif
         if aws_inc != '' and fs.is_absolute(aws_inc) and aws_inc not in aws_sdk_seen_includes and fs.is_dir(aws_inc)
             aws_sdk_seen_includes += aws_inc
