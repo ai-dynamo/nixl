@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <type_traits>
 
@@ -42,6 +43,8 @@ enum class nixl_ucx_vram_memtype_hint_t {
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
 inline constexpr std::string_view nixl_ucx_vram_memtype_hint_param_name = "ucx_vram_memtype_hint";
+inline constexpr std::string_view nixl_ucx_device_list_param_name = "device_list";
+inline constexpr std::string_view nixl_ucx_net_devices_param_name = "ucx_net_devices";
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22
@@ -175,15 +178,16 @@ private:
     supportsMemoryType(ucs_memory_type_t mem_type) const;
 
 public:
-    nixlUcxContext(const std::vector<std::string> &devs,
-                   bool prog_thread,
-                   unsigned long num_workers,
-                   nixl_thread_sync_t sync_mode,
-                   size_t num_device_channels,
-                   const std::string &engine_conf = "",
-                   const std::string &name = "",
-                   nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy =
-                       nixl_ucx_vram_memtype_hint_t::AUTO);
+    nixlUcxContext(
+        const std::vector<std::string> &devs,
+        bool prog_thread,
+        unsigned long num_workers,
+        nixl_thread_sync_t sync_mode,
+        size_t num_device_channels,
+        const std::string &engine_conf = "",
+        const std::string &name = "",
+        nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy = nixl_ucx_vram_memtype_hint_t::AUTO,
+        const std::string &net_devices = "");
     nixlUcxContext(nixlUcxContext &&) = delete;
     nixlUcxContext(const nixlUcxContext &) = delete;
 
@@ -310,5 +314,39 @@ ucx_vram_memtype_hint_to_string(nixl_ucx_vram_memtype_hint_t t);
 
 [[nodiscard]] nixl_ucx_vram_memtype_hint_t
 ucx_vram_memtype_hint_from_string(std::string_view s);
+
+// Splits the "device_list" backend parameter on ',', trimming whitespace around
+// entries and dropping empty ones.
+[[nodiscard]] std::vector<std::string>
+ucx_split_device_list(std::string_view device_list);
+
+// UCX NET_DEVICES value for "device_list" entries. An entry without a port
+// gets port 1 (an IB HCA name such as "mlx5_0" becomes "mlx5_0:1"); an entry
+// that already names a port is kept as is.
+[[nodiscard]] std::string
+ucx_device_list_to_net_devices(const std::vector<std::string> &devs);
+
+// How a UCX backend sets UCX NET_DEVICES, see ucx_net_devices_decide().
+struct nixl_ucx_net_devices_t {
+    // NET_DEVICES to set, if any.
+    std::optional<std::string> value;
+    // Set even when UCX_NET_DEVICES is in the environment (device_list).
+    bool overrideEnv = false;
+    // UCX_NET_DEVICES in the environment discards the value (ucx_net_devices).
+    bool envWins = false;
+};
+
+// Decides UCX NET_DEVICES from the backend parameters. Precedence:
+//  - "device_list" (IB HCAs, see ucx_device_list_to_net_devices()) overrides
+//    UCX_NET_DEVICES in the environment;
+//  - "ucx_net_devices" is passed to UCX verbatim and yields to UCX_NET_DEVICES;
+//  - NET_DEVICES in "engine_config" is applied only when neither is set.
+// Throws std::invalid_argument when "device_list" and "ucx_net_devices" are
+// both set, or when "engine_config" sets NET_DEVICES together with either.
+[[nodiscard]] nixl_ucx_net_devices_t
+ucx_net_devices_decide(const std::vector<std::string> &devs,
+                       std::string_view net_devices,
+                       std::string_view engine_config,
+                       const std::optional<std::string> &env_net_devices);
 
 #endif
