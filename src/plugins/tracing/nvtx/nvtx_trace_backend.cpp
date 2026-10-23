@@ -19,9 +19,11 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <stack>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "nvtx_events.h"
@@ -42,11 +44,30 @@ namespace {
     }
 
     void
+    setCorrelation(nvtxEventAttributes_t &ev, const std::uint64_t correlation_id) noexcept {
+        ev.payloadType = NVTX_PAYLOAD_TYPE_UNSIGNED_INT64;
+        ev.payload.ullValue = correlation_id;
+    }
+
+    void
     applyCorrelation(nvtxEventAttributes_t &ev) noexcept {
         const correlation_stack_t &stack = correlationStack();
         if (!stack.empty()) {
-            ev.payloadType = NVTX_PAYLOAD_TYPE_UNSIGNED_INT64;
-            ev.payload.ullValue = stack.top();
+            setCorrelation(ev, stack.top());
+        }
+    }
+
+    void
+    applyContext(nvtxEventAttributes_t &ev, const TraceContext &context) noexcept {
+        if (context.valid()) {
+            setCorrelation(ev, context.correlationId64());
+        }
+    }
+
+    void
+    addAttributes(NvtxSpan &range, const std::span<const Attribute> attrs) {
+        for (const Attribute &attr : attrs) {
+            std::visit([&](const auto value) { range.addAttribute(attr.key, value); }, attr.value);
         }
     }
 
@@ -79,12 +100,41 @@ NvtxTraceBackend::mark(const std::string_view name, const Kind kind) {
 }
 
 void
-NvtxTraceBackend::pushCorrelationId(const std::uint64_t id) {
-    correlationStack().push(id);
+NvtxTraceBackend::emitSpan(const std::string_view name,
+                           const Kind kind,
+                           const TraceContext &context,
+                           const nixlTime::us_t start,
+                           const nixlTime::us_t end,
+                           const std::span<const Attribute> attrs) {
+    nvtxEventAttributes_t ev = eventForName(name, kind, domain_, registeredHandles_);
+    applyContext(ev, context);
+    NvtxSpan range(domain_, schemaIds_);
+    nvtxDomainRangePushEx(domain_, &ev);
+    range.addAttribute("nixl.start_us", static_cast<std::int64_t>(start));
+    range.addAttribute("nixl.end_us", static_cast<std::int64_t>(end));
+    addAttributes(range, attrs);
 }
 
 void
-NvtxTraceBackend::popCorrelationId() {
+NvtxTraceBackend::emitEvent(const std::string_view name,
+                            const Kind kind,
+                            const TraceContext &context,
+                            nixlTime::us_t,
+                            const std::span<const Attribute> attrs) {
+    nvtxEventAttributes_t ev = eventForName(name, kind, domain_, registeredHandles_);
+    applyContext(ev, context);
+    NvtxSpan range(domain_, schemaIds_);
+    nvtxDomainRangePushEx(domain_, &ev);
+    addAttributes(range, attrs);
+}
+
+void
+NvtxTraceBackend::pushContext(const TraceContext &context) {
+    correlationStack().push(context.correlationId64());
+}
+
+void
+NvtxTraceBackend::popContext() {
     correlation_stack_t &stack = correlationStack();
     if (!stack.empty()) {
         stack.pop();

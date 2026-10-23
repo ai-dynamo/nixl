@@ -83,6 +83,9 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params, nixl::ucx::Memor
             nixl::throwRuntimeError(
                 "num_threads is not supported with device_proxy=true; use proxy_thread_count");
         }
+        if (policy) {
+            nixl::throwRuntimeError("A memory policy is not supported with device_proxy=true");
+        }
         engine = new nixl::ucx::proxyEngine(init_params, proxy_config, std::move(policy));
     } else if (num_threads > 0) {
         engine = new nixlUcxThreadPoolEngine(init_params, num_threads, std::move(policy));
@@ -106,7 +109,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
     if (memoryPolicy_ && memoryPolicy_->deviceMemoryType().empty()) {
         throw std::invalid_argument("A memory policy must name its required device memory type");
     }
-    if (memoryPolicy_ && nixl::config::getValueDefaulted("NIXL_UCX_SGL_ENABLE", false)) {
+    if (memoryPolicy_ && sglEnabled_) {
         throw std::invalid_argument("Strict device memory policies do not support UCX SGL");
     }
     std::vector<std::string> devs; /* Empty vector */
@@ -126,6 +129,12 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
     const size_t num_device_channels =
         nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
 
+    nixl_ucx_vram_memtype_hint_t vram_memtype_hint_policy = nixl_ucx_vram_memtype_hint_t::AUTO;
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(
+            custom_params, std::string(nixl_ucx_vram_memtype_hint_param_name))) {
+        vram_memtype_hint_policy = ucx_vram_memtype_hint_from_string(*opt);
+    }
+
     const auto engine_config =
         nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
 
@@ -137,7 +146,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
                                           engine_config,
                                           localAgent,
                                           memoryPolicy_ ? memoryPolicy_->deviceMemoryType() :
-                                                          std::string_view{});
+                                                          std::string_view{},
+                                          vram_memtype_hint_policy);
 
     if (!memoryPolicy_) {
         uc->warnAboutHardwareSupportMismatch();
@@ -411,6 +421,34 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const n
     }
 }
 
+namespace {
+
+[[nodiscard]] std::optional<nixl::trace::TraceContext>
+sampledTraceContext(const nixlBackendTraceSink *sink, const nixl_opt_b_args_t *opt_args) noexcept {
+    if ((sink == nullptr) || (opt_args == nullptr) || (opt_args->traceContext == nullptr) ||
+        !opt_args->traceContext->sampled()) {
+        return std::nullopt;
+    }
+    return *opt_args->traceContext;
+}
+
+void
+recordPhase(nixlBackendTraceSink *sink,
+            nixl_trace_phase_t phase,
+            const nixlUcxBackendReqH &handle) noexcept {
+    if ((sink != nullptr) && handle.traceContext) {
+        sink->recordPhase(phase,
+                          {},
+                          nixlTime::getUs(),
+                          {},
+                          &*handle.traceContext,
+                          handle.traceRequestId,
+                          handle.traceExecution);
+    }
+}
+
+} // namespace
+
 nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
@@ -621,12 +659,19 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    int_handle->traceContext = sampledTraceContext(traceSink_, opt_args);
+    int_handle->traceRequestId = int_handle->traceContext ? opt_args->traceRequestId : 0;
+    int_handle->traceExecution = int_handle->traceContext ? opt_args->traceExecution : 0;
+    recordPhase(traceSink_, nixl_trace_phase_t::SUBMIT, *int_handle);
+
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
     ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
     if (ret != NIXL_SUCCESS) {
         return ret;
     }
+
+    recordPhase(traceSink_, nixl_trace_phase_t::WIRE_SUBMITTED, *int_handle);
 
     ret = int_handle->status();
     if (opt_args && opt_args->hasNotif && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
@@ -637,6 +682,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
                 return ret;
             }
 
+            recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle);
             ret = int_handle->status();
         }
     }
@@ -663,6 +709,7 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
         return status;
     }
 
+    recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle);
     return int_handle->status();
 }
 
