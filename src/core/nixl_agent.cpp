@@ -17,6 +17,13 @@
 
 #include <iostream>
 #include <chrono>
+#include <bit>
+#include <climits>
+#if defined(__SSE2__)
+#include <immintrin.h>
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 #include <iostream>
 #include <numeric>
 #include <optional>
@@ -46,6 +53,102 @@ namespace {
 const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
 };
+
+#if defined(__SSE2__)
+#define NIXL_SIMD_LOAD(ptr) _mm_loadu_si128(reinterpret_cast<const __m128i *>(ptr))
+#define NIXL_SIMD_SPLAT(value) _mm_set1_epi32(static_cast<int>(value))
+#define NIXL_SIMD_ADD _mm_add_epi32
+#define NIXL_SIMD_EQUAL _mm_cmpeq_epi32
+#define NIXL_SIMD_AND _mm_and_si128
+#define NIXL_SIMD_SUMMARY(matches) static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(matches)))
+#define NIXL_SIMD_ALL_MATCH(summary) ((summary) == 0xf)
+#define NIXL_SIMD_FIRST_MISMATCH(summary, offsets) std::countr_one(summary)
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+#define NIXL_SIMD_LOAD vld1q_u32
+#define NIXL_SIMD_SPLAT vdupq_n_u32
+#define NIXL_SIMD_ADD vaddq_u32
+#define NIXL_SIMD_EQUAL vceqq_u32
+#define NIXL_SIMD_AND vandq_u32
+#define NIXL_SIMD_SUMMARY(matches) (matches)
+#define NIXL_SIMD_ALL_MATCH(summary) (vminvq_u32(summary) == UINT_MAX)
+// Matching lanes stay UINT_MAX; mismatches retain their lane offsets.
+#define NIXL_SIMD_FIRST_MISMATCH(summary, offsets) vminvq_u32(vorrq_u32(summary, offsets))
+#endif
+
+size_t
+countConsecutiveIndices(const unsigned *local,
+                        const unsigned *remote,
+                        size_t local_idx,
+                        size_t remote_idx,
+                        size_t cap) noexcept {
+    size_t count = 1;
+#if defined(__SSE2__) || (defined(__aarch64__) && defined(__ARM_NEON))
+    constexpr size_t lanes = 4;
+    constexpr size_t num_vectors = 2;
+    // Keep the scalar size_t comparisons when expected indices could wrap in 32 bits.
+    if (cap - count >= lanes && local_idx <= UINT_MAX && remote_idx <= UINT_MAX &&
+        cap <= UINT_MAX - std::max(local_idx, remote_idx)) {
+        const unsigned lane_offsets[] = {0, 1, 2, 3};
+        const auto offsets = NIXL_SIMD_LOAD(lane_offsets);
+        using simd_t = decltype(NIXL_SIMD_SPLAT(0));
+        simd_t next[num_vectors];
+        for (size_t i = 0; i < num_vectors; ++i) {
+            next[i] = NIXL_SIMD_SPLAT(static_cast<unsigned>(i * lanes));
+        }
+        const auto step = NIXL_SIMD_SPLAT(num_vectors * lanes);
+        auto local_expected =
+            NIXL_SIMD_ADD(NIXL_SIMD_SPLAT(static_cast<unsigned>(local_idx + count)), offsets);
+        auto remote_expected =
+            NIXL_SIMD_ADD(NIXL_SIMD_SPLAT(static_cast<unsigned>(remote_idx + count)), offsets);
+        while (cap - count >= num_vectors * lanes) {
+            simd_t matches[num_vectors];
+            for (size_t i = 0; i < num_vectors; ++i) {
+                matches[i] =
+                    NIXL_SIMD_AND(NIXL_SIMD_EQUAL(NIXL_SIMD_LOAD(local + count + i * lanes),
+                                                  NIXL_SIMD_ADD(local_expected, next[i])),
+                                  NIXL_SIMD_EQUAL(NIXL_SIMD_LOAD(remote + count + i * lanes),
+                                                  NIXL_SIMD_ADD(remote_expected, next[i])));
+            }
+            const auto all_matches = NIXL_SIMD_AND(matches[0], matches[1]);
+            if (!NIXL_SIMD_ALL_MATCH(NIXL_SIMD_SUMMARY(all_matches))) {
+                for (size_t i = 0; i < num_vectors; ++i) {
+                    const auto summary = NIXL_SIMD_SUMMARY(matches[i]);
+                    if (!NIXL_SIMD_ALL_MATCH(summary)) {
+                        return count + i * lanes + NIXL_SIMD_FIRST_MISMATCH(summary, offsets);
+                    }
+                }
+            }
+            count += num_vectors * lanes;
+            local_expected = NIXL_SIMD_ADD(local_expected, step);
+            remote_expected = NIXL_SIMD_ADD(remote_expected, step);
+        }
+        if (cap - count >= lanes) {
+            const auto matches =
+                NIXL_SIMD_AND(NIXL_SIMD_EQUAL(NIXL_SIMD_LOAD(local + count), local_expected),
+                              NIXL_SIMD_EQUAL(NIXL_SIMD_LOAD(remote + count), remote_expected));
+            const auto summary = NIXL_SIMD_SUMMARY(matches);
+            if (!NIXL_SIMD_ALL_MATCH(summary)) {
+                return count + NIXL_SIMD_FIRST_MISMATCH(summary, offsets);
+            }
+            count += lanes;
+        }
+    }
+#endif
+    while (count < cap && local[count] == local_idx + count &&
+           remote[count] == remote_idx + count) {
+        ++count;
+    }
+    return count;
+}
+
+#undef NIXL_SIMD_LOAD
+#undef NIXL_SIMD_SPLAT
+#undef NIXL_SIMD_ADD
+#undef NIXL_SIMD_EQUAL
+#undef NIXL_SIMD_AND
+#undef NIXL_SIMD_SUMMARY
+#undef NIXL_SIMD_ALL_MATCH
+#undef NIXL_SIMD_FIRST_MISMATCH
 
 } // namespace
 
@@ -884,6 +987,8 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
         (local_size + local_descs.descCount() - 1) / local_descs.descCount();
     const size_t remote_run_size =
         (remote_size + remote_descs.descCount() - 1) / remote_descs.descCount();
+    const nixlMetaStrideDesc *local_cached = &local_descs[0];
+    const nixlMetaStrideDesc *remote_cached = &remote_descs[0];
     size_t seq_count = 1;
 
     for (size_t i = 0; i < static_cast<size_t>(desc_count); i += seq_count) {
@@ -901,9 +1006,14 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
             return NIXL_ERR_INVALID_PARAM;
         }
 
-        // Keep by value to avoid reloads and keep in registers
-        const nixlMetaStrideDesc local_stride = local_descs.find(local_idx, local_run_size);
-        const nixlMetaStrideDesc remote_stride = remote_descs.find(remote_idx, remote_run_size);
+        if (local_idx - local_cached->start_idx >= local_cached->count) {
+            local_cached = &local_descs.find(local_idx, local_run_size);
+        }
+        if (remote_idx - remote_cached->start_idx >= remote_cached->count) {
+            remote_cached = &remote_descs.find(remote_idx, remote_run_size);
+        }
+        const nixlMetaStrideDesc &local_stride = *local_cached;
+        const nixlMetaStrideDesc &remote_stride = *remote_cached;
 
         if (local_stride.len != remote_stride.len) [[unlikely]] {
             NIXL_ERROR_FUNC << "length mismatch at index " << i << " with local index "
@@ -922,9 +1032,10 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
             auto *local_indices_ptr = reinterpret_cast<const unsigned *>(&local_indices[i]);
             auto *remote_indices_ptr = reinterpret_cast<const unsigned *>(&remote_indices[i]);
-            while (seq_count < cap && local_indices_ptr[seq_count] == local_idx + seq_count &&
-                   remote_indices_ptr[seq_count] == remote_idx + seq_count) {
-                ++seq_count;
+            if (cap > 1 && local_indices_ptr[1] == local_idx + 1 &&
+                remote_indices_ptr[1] == remote_idx + 1) {
+                seq_count = countConsecutiveIndices(
+                    local_indices_ptr, remote_indices_ptr, local_idx, remote_idx, cap);
             }
         }
 
