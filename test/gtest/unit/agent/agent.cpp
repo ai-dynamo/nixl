@@ -427,6 +427,16 @@ namespace agent {
                 identifies(req),
                 testing::Contains("nixl.xfer_execution=" + std::to_string(execution)));
         }
+
+        [[nodiscard]] std::vector<std::pair<std::uint64_t, std::uint64_t>>
+        handedToPlugin() const {
+            return agent_helper_->getGMockEngine().observedTraceRequests();
+        }
+
+        [[nodiscard]] static auto
+        handed(const nixlXferReqH *req, std::uint64_t execution) {
+            return testing::Pair(req->traceRequestId(), execution);
+        }
     };
 
     TEST_F(recorderTracingAgentFixture, PostCompletedAtOnceIsMarkedOnce) {
@@ -534,6 +544,7 @@ namespace agent {
         EXPECT_THAT(records("nixl::createXferReq"), testing::ElementsAre(identifies(req)));
         EXPECT_THAT(records("nixl::postXferReq.write"), testing::ElementsAre(postedAs(req, 1)));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(postedAs(req, 1)));
+        EXPECT_THAT(handedToPlugin(), testing::ElementsAre(handed(req, 0), handed(req, 1)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -548,6 +559,8 @@ namespace agent {
         EXPECT_THAT(records("nixl::postXferReq.write"),
                     testing::ElementsAre(postedAs(req, 1), postedAs(req, 2)));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(postedAs(req, 1), postedAs(req, 2)));
+        EXPECT_THAT(handedToPlugin(),
+                    testing::ElementsAre(handed(req, 0), handed(req, 1), handed(req, 2)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -573,6 +586,8 @@ namespace agent {
         EXPECT_THAT(records("nixl::postXferReq.write"),
                     testing::ElementsAre(postedAs(req, 1), rejected, postedAs(req, 2)));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(postedAs(req, 1), postedAs(req, 2)));
+        EXPECT_THAT(handedToPlugin(),
+                    testing::ElementsAre(handed(req, 0), handed(req, 1), handed(req, 2)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -589,6 +604,8 @@ namespace agent {
         EXPECT_THAT(records("nixl::postXferReq.write"),
                     testing::ElementsAre(postedAs(req, 1), postedAs(req, 2)));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(postedAs(req, 2)));
+        EXPECT_THAT(handedToPlugin(),
+                    testing::ElementsAre(handed(req, 0), handed(req, 1), handed(req, 2)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -630,6 +647,7 @@ namespace agent {
         EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
         EXPECT_THAT(records("nixl::makeXferReq"), testing::ElementsAre(identifies(req)));
         EXPECT_THAT(records("nixl::postXferReq.write"), testing::ElementsAre(postedAs(req, 1)));
+        EXPECT_THAT(handedToPlugin(), testing::ElementsAre(handed(req, 0), handed(req, 1)));
 
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
         EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);
@@ -788,6 +806,8 @@ namespace agent {
         EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
         EXPECT_EQ(req->traceRequestId(), 0u);
         EXPECT_EQ(req->traceExecution(), 0u);
+        EXPECT_THAT(agent_helper_->getGMockEngine().observedTraceRequests(),
+                    testing::ElementsAre(testing::Pair(0u, 0u), testing::Pair(0u, 0u)));
         EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
     }
 
