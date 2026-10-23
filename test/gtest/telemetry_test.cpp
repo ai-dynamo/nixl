@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include <cstdlib>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <climits>
 #include <atomic>
@@ -134,6 +135,213 @@ TEST_F(telemetryTest, InvalidBufferSize) {
 
     EXPECT_THROW({ nixlTelemetry telemetry(testFile_, "BUFFER"); }, std::invalid_argument);
     envHelper_.popVar();
+}
+
+TEST_F(telemetryTest, ReaderReattachSeedsCachedPos) {
+    // Cached write and read pos need to be seeded on attach
+    auto path = std::string(testDir_.string()) + "/" + testFile_;
+    sharedRingBuffer<nixlTelemetryEvent> producer(path, true, TELEMETRY_VERSION, 8);
+
+    for (size_t i = 0; i < 3; i++) {
+        EXPECT_TRUE(producer.push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
+    }
+    // First consumer reads part of the stream, then gets destroyed
+    {
+        sharedRingBuffer<nixlTelemetryEvent> consumer1(path, false, TELEMETRY_VERSION);
+        nixlTelemetryEvent out;
+        for (size_t i = 0; i < 2; i++) {
+            EXPECT_TRUE(consumer1.pop(out));
+            EXPECT_EQ(out.value_, i);
+        }
+    }
+    // A second consumer attaches mid-stream, still SPSC
+    {
+        // Must see exactly the one unread event, then empty
+        sharedRingBuffer<nixlTelemetryEvent> consumer2(path, false, TELEMETRY_VERSION);
+        nixlTelemetryEvent out;
+        EXPECT_EQ(consumer2.size(), 1u);
+        EXPECT_TRUE(consumer2.pop(out));
+        EXPECT_EQ(out.value_, 2u);
+        EXPECT_FALSE(consumer2.pop(out));
+    }
+    EXPECT_FALSE(producer.full());
+}
+
+TEST_F(telemetryTest, PushReloadsCachedReadPosWhenFull) {
+    // push() only re-reads read_pos when the ring looks full: fill the ring,
+    // fail one push, free one slot and push again to cover both reload outcomes
+    auto path = std::string(testDir_.string()) + "/" + testFile_;
+    sharedRingBuffer<nixlTelemetryEvent> producer(path, true, TELEMETRY_VERSION, 8);
+    sharedRingBuffer<nixlTelemetryEvent> consumer(path, false, TELEMETRY_VERSION);
+    nixlTelemetryEvent out;
+
+    for (size_t i = 0; i < 7; i++) {
+        EXPECT_TRUE(producer.push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
+    }
+    // full: push reloads the cached read_pos and fails
+    EXPECT_FALSE(producer.push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
+
+    EXPECT_TRUE(consumer.pop(out));
+    EXPECT_EQ(out.value_, 0u);
+    // one slot freed: the reload lets the push through
+    EXPECT_TRUE(producer.push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
+
+    for (size_t i = 1; i <= 7; i++) {
+        EXPECT_TRUE(consumer.pop(out));
+        EXPECT_EQ(out.value_, i);
+    }
+    // empty: pop reloads the cached write_pos and fails
+    EXPECT_FALSE(consumer.pop(out));
+
+    // test the same for cached write_pos
+    EXPECT_TRUE(producer.push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 8}));
+    EXPECT_TRUE(consumer.pop(out));
+    EXPECT_EQ(out.value_, 8u);
+    EXPECT_FALSE(consumer.pop(out));
+}
+
+TEST_F(telemetryTest, NoAttachedConsumerBufferIsReset) {
+    // A restarted producer resets the buffer in place if no consumer is attached, whether none
+    // ever was or the one that was got destroyed
+    auto path = std::string(testDir_.string()) + "/" + testFile_;
+    auto producer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 8);
+    nixlTelemetryEvent out;
+    struct stat old_st{}, new_st{};
+
+    for (size_t i = 0; i < 7; i++) {
+        EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
+    }
+    EXPECT_FALSE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
+
+    // Producer exits with the ring full and restarts with nobody attached
+    EXPECT_EQ(stat(path.c_str(), &old_st), 0);
+    producer.reset();
+    producer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 8);
+    EXPECT_EQ(stat(path.c_str(), &new_st), 0);
+    EXPECT_EQ(old_st.st_ino, new_st.st_ino);
+    EXPECT_EQ(producer->size(), 0u);
+    EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
+    {
+        sharedRingBuffer<nixlTelemetryEvent> consumer(path, false, TELEMETRY_VERSION);
+        EXPECT_EQ(consumer.size(), 1u);
+        EXPECT_TRUE(consumer.pop(out));
+        EXPECT_EQ(out.value_, 7u);
+        EXPECT_FALSE(consumer.pop(out));
+    }
+
+    // Same after a consumer was attached and destroyed: its lock went with it
+    EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 8}));
+    producer.reset();
+    producer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 8);
+    EXPECT_EQ(stat(path.c_str(), &new_st), 0);
+    EXPECT_EQ(old_st.st_ino, new_st.st_ino);
+    EXPECT_EQ(producer->size(), 0u);
+}
+
+TEST_F(telemetryTest, NoAttachedConsumerIncompatibleBufferIsReplaced) {
+    // With no consumer attached a capacity change replaces the file on a new inode, like with
+    // one attached. The pin keeps the old inode alive so the filesystem cannot hand its number
+    // to the new file
+    auto path = std::string(testDir_.string()) + "/" + testFile_;
+    auto producer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 8);
+    struct stat old_st{}, new_st{};
+    EXPECT_EQ(stat(path.c_str(), &old_st), 0);
+    nixl::scopedFd pin(open(path.c_str(), O_RDONLY));
+
+    producer.reset();
+    producer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 16);
+    EXPECT_EQ(stat(path.c_str(), &new_st), 0);
+    EXPECT_NE(old_st.st_ino, new_st.st_ino);
+    EXPECT_EQ(producer->capacity(), 16u);
+
+    sharedRingBuffer<nixlTelemetryEvent> consumer(path, false, TELEMETRY_VERSION);
+    EXPECT_EQ(consumer.capacity(), 16u);
+    EXPECT_EQ(consumer.size(), 0u);
+}
+
+TEST_F(telemetryTest, ConsumerSurvivesProducerRestart) {
+    // The ring being reused depends on the consumer's lock existing and the ring's
+    // compatibility: an attached consumer must see the events left unread by the old
+    // producer, and a producer restarted on a full ring must seed its cached read_pos
+    // from the kept header: its first push fails until the consumer frees a slot
+    auto path = std::string(testDir_.string()) + "/" + testFile_;
+    auto producer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 8);
+    sharedRingBuffer<nixlTelemetryEvent> consumer(path, false, TELEMETRY_VERSION);
+    nixlTelemetryEvent out;
+
+    for (size_t i = 0; i < 7; i++) {
+        EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
+    }
+    EXPECT_FALSE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
+
+    // Producer exits with the ring full and restarts with the same path and capacity
+    producer.reset();
+    producer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 8);
+    EXPECT_FALSE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
+
+    EXPECT_TRUE(consumer.pop(out));
+    EXPECT_EQ(out.value_, 0u);
+    EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
+
+    EXPECT_EQ(consumer.size(), 7u);
+    for (size_t i = 1; i <= 7; i++) {
+        EXPECT_TRUE(consumer.pop(out));
+        EXPECT_EQ(out.value_, i);
+    }
+    EXPECT_FALSE(consumer.pop(out));
+}
+
+TEST_F(telemetryTest, IncompatibleBufferIsReplaced) {
+    // A restarted producer with an incompatible header and a consumer attached replaces the file
+    // on a new inode: the old consumer keeps its mapping and only drains what it has left, a new
+    // consumer attaches to the new producer and sees only its events. The old ring is full, the
+    // new one starts empty
+    auto path = std::string(testDir_.string()) + "/" + testFile_;
+    auto producer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 8);
+    sharedRingBuffer<nixlTelemetryEvent> consumer(path, false, TELEMETRY_VERSION);
+    nixlTelemetryEvent out;
+    struct stat old_st{}, new_st{};
+
+    for (size_t i = 0; i < 7; i++) {
+        EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
+    }
+    EXPECT_FALSE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 7}));
+
+    // Producer exits with the ring full and restarts with a bigger capacity
+    EXPECT_EQ(stat(path.c_str(), &old_st), 0);
+    producer.reset();
+    producer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, true, TELEMETRY_VERSION, 16);
+    EXPECT_EQ(stat(path.c_str(), &new_st), 0);
+    EXPECT_NE(old_st.st_ino, new_st.st_ino);
+    sharedRingBuffer<nixlTelemetryEvent> consumer2(path, false, TELEMETRY_VERSION);
+    // The new ring starts empty: fill it until a push fails
+    for (size_t i = 7; i < 22; i++) {
+        EXPECT_TRUE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
+    }
+    EXPECT_FALSE(producer->push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 22}));
+
+    EXPECT_EQ(consumer.size(), 7u);
+    for (size_t i = 0; i < 7; i++) {
+        EXPECT_TRUE(consumer.pop(out));
+        EXPECT_EQ(out.value_, i);
+    }
+    EXPECT_FALSE(consumer.pop(out));
+
+    EXPECT_EQ(consumer2.size(), 15u);
+    for (size_t i = 7; i < 22; i++) {
+        EXPECT_TRUE(consumer2.pop(out));
+        EXPECT_EQ(out.value_, i);
+    }
+    EXPECT_FALSE(consumer2.pop(out));
 }
 
 TEST_F(telemetryTest, NonexistentExporterThrows) {
@@ -294,7 +502,7 @@ TEST_F(telemetryTest, AddXferStatsRxBranch) {
 TEST_F(telemetryTest, TelemetryEventStructure) {
     nixlTelemetryEvent event1(nixl_telemetry_event_type_t::AGENT_TX_BYTES, 42);
 
-    EXPECT_EQ(TELEMETRY_VERSION, 5);
+    EXPECT_EQ(TELEMETRY_VERSION, 6);
     EXPECT_EQ(sizeof(nixlTelemetryEvent), 16);
     EXPECT_EQ(event1.value_, 42);
     EXPECT_EQ(event1.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
