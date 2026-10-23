@@ -97,7 +97,8 @@ env:
   NPROC: 16
   GRPC_NPROC: 10
   # CUDA 12 base image is pinned here (unlikely to change); CUDA 13 passes
-  # nothing and relies on build-container.sh's own default.
+  # nothing and relies on the Dockerfile's own ARG default, which
+  # build-container.sh records in build_options.env.
   CU12_BASE_IMAGE: "nvcr.io/nvidia/cuda"
   CU12_BASE_TAG: "12.9.1-devel-ubi8"
   CU12_CUDA_VERSION: "12.9"
@@ -109,6 +110,12 @@ env:
   # wheel_base images above and staged per-arch on the shared PVC. Which plugin
   # ref gets built is that job's own default, owned by the plugin developers.
   SPCX_STAGING_ROOT: "/mnt/pvc/${JOB_BASE_NAME}-spcx"
+  # Per-cell provenance fragments, merged by pipeline_stop into the build
+  # manifest and removed again on every run.
+  MANIFEST_STAGING_ROOT: "/mnt/pvc/${JOB_BASE_NAME}-manifest"
+  # Product of the matrix axes above - update both together. pipeline_stop
+  # refuses to publish a manifest assembled from fewer fragments.
+  EXPECTED_WHEEL_CELLS: "20"
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
   # SWX team's NIXL pypi repo (publish target).
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
@@ -166,7 +173,7 @@ steps:
       # Carried to Publish (folder key). UCX ref is not pinned here; it's
       # build-container.sh's own default and gets recorded in
       # build_options.env by the Build Wheel step instead.
-      printf 'NIXL_SHA=%s\n' "${NIXL_SHA}" > wheel_build_ids.env
+      printf 'NIXL_SHA=%s\nNIXL_COMMIT=%s\n' "${NIXL_SHA}" "$(git -C nixl-src rev-parse HEAD)" > wheel_build_ids.env
 
   - name: Build Wheel
     containerSelector: "{name: 'manylinux'}"
@@ -199,6 +206,50 @@ steps:
           ;;
       esac
       export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
+      WHEEL_BASE_IMAGE="${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}-cu${cuda}:${WHEEL_BASE_TAG}"
+      CELL_KEY="${manylinux}_${arch}_py${python_version}_cu${cuda}"
+
+      # Ref + commit of the staged plugin module, written by
+      # nixl-ci-compile-ucx-plugin next to the per-arch dirs. Another job
+      # wrote it, so it is parsed key by key and validated, never sourced. A
+      # malformed file is a plugin-job bug; an absent one is an older plugin
+      # job, and the manifest records the plugin as unknown.
+      SPCX_PROV="${SPCX_STAGING_ROOT}/${BUILD_NUMBER}/cu${cuda}/spcx-provenance.env"
+      UCX_SPCX_PLUGIN_REF=""; UCX_SPCX_PLUGIN_COMMIT=""; SPCX_FLAGS=""
+      if [ -f "${SPCX_PROV}" ]; then
+        UCX_SPCX_PLUGIN_REF="$(grep -m1 '^UCX_SPCX_PLUGIN_REF=' "${SPCX_PROV}" | cut -d= -f2-)"
+        UCX_SPCX_PLUGIN_COMMIT="$(grep -m1 '^UCX_SPCX_PLUGIN_COMMIT=' "${SPCX_PROV}" | cut -d= -f2-)"
+        [[ "${UCX_SPCX_PLUGIN_REF}" =~ ^[A-Za-z0-9._/-]+$ ]] \
+          || { echo "ERROR: malformed UCX_SPCX_PLUGIN_REF in ${SPCX_PROV}"; exit 1; }
+        [[ "${UCX_SPCX_PLUGIN_COMMIT}" =~ ^[0-9a-f]{40}$ ]] \
+          || { echo "ERROR: malformed UCX_SPCX_PLUGIN_COMMIT in ${SPCX_PROV}"; exit 1; }
+        SPCX_FLAGS="--ucx-spcx-plugin-ref ${UCX_SPCX_PLUGIN_REF}"
+        # Puts the "SPCX Plugin:" line back into the wheel README, which
+        # build-container.sh only sets on its clone path. Refs that predate
+        # the README block merely warn about an unconsumed build-arg.
+        DOCKER_BUILD_EXTRA_ARGS+=" --build-arg UCX_SPCX_PLUGIN_VERSION=${UCX_SPCX_PLUGIN_COMMIT}"
+      fi
+
+      # Cell facts for the fragment Publish deposits, written before the
+      # build so a failed cell leaves nothing behind.
+      if [ -x nixl-src/contrib/wheel_build_info.py ]; then
+        BUILD_INFO_SUPPORTED=true
+      else
+        BUILD_INFO_SUPPORTED=false
+      fi
+      {
+        echo "CELL_KEY=${CELL_KEY}"
+        echo "CUDA=${cuda}"
+        echo "ARCH=${arch}"
+        echo "PYTHON_VERSION=${python_version}"
+        echo "MANYLINUX=${manylinux}"
+        echo "TORCH_VERSIONS_REQUESTED=${TORCH_VERSIONS}"
+        echo "WHEEL_BASE_IMAGE=${WHEEL_BASE_IMAGE}"
+        echo "UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
+        echo "UCX_SPCX_PLUGIN_COMMIT=${UCX_SPCX_PLUGIN_COMMIT}"
+        echo "BUILD_INFO_SUPPORTED=${BUILD_INFO_SUPPORTED}"
+      } > cell.env
+
       cd nixl-src
       ./contrib/build-container.sh \
         ${BASE_IMAGE_FLAGS} \
@@ -208,8 +259,9 @@ steps:
         --torch-versions "${TORCH_VERSIONS}" \
         --tag "${WHEEL_IMAGE_TAG}" \
         --dockerfile contrib/Dockerfile.manylinux \
-        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}-cu${cuda}:${WHEEL_BASE_TAG}" \
+        --wheel-base-image "${WHEEL_BASE_IMAGE}" \
         --ucx-spcx-plugin-install "${SPCX_STAGING_ROOT}/${BUILD_NUMBER}/cu${cuda}/${arch}" \
+        ${SPCX_FLAGS} \
         --build-infinia \
         --build-options-file ../build_options.env
 
@@ -223,6 +275,10 @@ steps:
       rm -rf dist && mkdir -p dist
       cid=$(docker create "${WHEEL_IMAGE_TAG}")
       docker cp "${cid}:/workspace/nixl/dist/." ./dist/
+      # Sidecars from contrib/build-wheel.sh; refs that predate it have none.
+      rm -rf build-info && mkdir -p build-info
+      docker cp "${cid}:/workspace/nixl/build-info/." ./build-info/ 2>/dev/null \
+        || echo "build-info/: not in the image (built ref predates it)"
       docker rm -f "${cid}" || true
       ls -l dist/
 
@@ -234,6 +290,8 @@ steps:
       [[ "${PUBLISH_DIR}" =~ ^(verification|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
         || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
       . ./wheel_build_ids.env
+      . ./cell.env
+      CELL_SPCX_REF="${UCX_SPCX_PLUGIN_REF}"
 
       # Outside the build_options.env guard below: the release folder no longer
       # carries the sha, so NIXL_SHA must be set even for a ref that predates
@@ -248,6 +306,8 @@ steps:
       # so an older built ref without this flag just skips them.
       if [ -f build_options.env ]; then
         . ./build_options.env
+        # The plugin job's provenance beats the built ref's own default.
+        [ -z "${CELL_SPCX_REF}" ] || UCX_SPCX_PLUGIN_REF="${CELL_SPCX_REF}"
         [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
         [ -n "${UCX_SHA:-}" ] && PROPERTIES+=";UCX_SHA=${UCX_SHA}"
         [ -n "${CUDA_VERSION:-}" ] && PROPERTIES+=";CUDA_VERSION=${CUDA_VERSION}"
@@ -258,6 +318,10 @@ steps:
         # A trailing `[ ... ] && ...` that does not fire would otherwise leave
         # the whole if-block with a non-zero status.
         true
+      fi
+      # From the plugin job's provenance file (cell.env), not build_options.env.
+      if [ -n "${UCX_SPCX_PLUGIN_COMMIT:-}" ]; then
+        PROPERTIES+=";UCX_SPCX_PLUGIN_COMMIT=${UCX_SPCX_PLUGIN_COMMIT}"
       fi
 
       # verification/ keeps its g<nixl-sha>.ucx<ucx-sha> schema (consumed by the
@@ -282,6 +346,18 @@ steps:
         curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -X PUT \
           "${PROPS_DEST}/$(basename "${whl}")?properties=${PROPERTIES}" || rc=1
       done
+      # Deposit this cell's fragment for pipeline_stop's manifest. Best effort:
+      # a missing fragment makes the manifest step mark the build UNSTABLE, it
+      # must not fail a published wheel.
+      if [ "$rc" -eq 0 ]; then
+        WHEELS="$(cd dist && ls nixl*.whl | tr '\n' ' ')"
+        printf 'PUBLISH_FOLDER=%s\nWHEELS="%s"\n' "${PUBLISH_DIR}/${FOLDER}" "${WHEELS% }" >> cell.env
+        CELL_DIR="${MANIFEST_STAGING_ROOT}/${BUILD_NUMBER}/${CELL_KEY}"
+        { mkdir -p "${CELL_DIR}" && cp cell.env wheel_build_ids.env "${CELL_DIR}/" \
+          && { [ ! -f build_options.env ] || cp build_options.env "${CELL_DIR}/"; } \
+          && { ! ls build-info/*.build-info.json >/dev/null 2>&1 || cp build-info/*.build-info.json "${CELL_DIR}/"; }; } \
+          || echo "WARNING: manifest fragment not deposited under ${CELL_DIR}"
+      fi
       exit $rc
 
 taskName: '${name}_${manylinux}/${arch}/python_${python_version}/cu${cuda}'
@@ -315,10 +391,12 @@ pipeline_start:
       }
     }
 
-# Settles the release folder - mark on SUCCESS, delete otherwise - then mails
-# the unattended nightly only when it fails. A partial wheel set has to be
-# rebuilt anyway, so publishing it would only mislead the poller. verification/
-# folders are shared between builds and are left alone either way.
+# Publishes build-manifest.json from the cells' fragments (UNSTABLE, never
+# FAILURE, if that goes wrong), then settles the release folder - mark on
+# SUCCESS, delete otherwise - and mails the unattended nightly when the result
+# is not SUCCESS. A partial wheel set has to be rebuilt anyway, so publishing
+# it would only mislead the poller. verification/ folders are shared between
+# builds and are left alone either way.
 pipeline_stop:
   shell: action
   module: groovy
@@ -336,6 +414,282 @@ pipeline_stop:
     def folderPath = "${publishDir}/${env.BUILD_NUMBER}"
     def folderUrl = "${env.WHEEL_REPO_UI}/${folderPath}"
     def removedNote = ''
+    def manifestNote = ''
+
+    // --- Build manifest: merge the per-cell fragments Publish deposited on the
+    // PVC, cross-check them against each other and against Artifactory, and
+    // publish build-manifest.json next to the wheels. Any problem here marks
+    // the build UNSTABLE and is reported; it never changes what was published.
+    def stagingRoot = env.MANIFEST_STAGING_ROOT
+    def stagingDir = "${stagingRoot}/${env.BUILD_NUMBER}"
+    // Publish's allowlist plus the folder component. A fragment is data
+    // another step wrote, so the folder is re-checked before any URL is built.
+    def folderRegex = /^(verification\/g[0-9a-f]{8}\.ucx[0-9a-f]{8}|release\/[A-Za-z0-9][A-Za-z0-9._-]*\/[0-9]+)$/
+
+    // KEY=VALUE or KEY="VALUE" lines; blank and # lines are skipped.
+    def parseEnv = { String text ->
+        def map = [:]
+        for (line in text.split('\n')) {
+            def l = line.trim()
+            if (!l || l.startsWith('#')) continue
+            def i = l.indexOf('=')
+            if (i < 1) continue
+            def v = l.substring(i + 1)
+            if (v.length() >= 2 && v.startsWith('"') && v.endsWith('"')) v = v.substring(1, v.length() - 1)
+            map[l.substring(0, i)] = v
+        }
+        map
+    }
+
+    // Other jobs can write the PVC, so nothing read from it is ever
+    // interpolated into a shell command: the staging dir is copied into the
+    // workspace once, and only directory names that are cell keys are opened.
+    def cellKeyRegex = /^[A-Za-z0-9._-]+$/
+    def readCells = { String dir ->
+        def cells = []
+        sh "rm -rf manifest-fragments && mkdir -p manifest-fragments && if [ -d '${dir}' ]; then cp -a '${dir}/.' manifest-fragments/; fi"
+        def names = sh(returnStdout: true, script: "ls -1 manifest-fragments").trim()
+        if (!names) return cells
+        for (name in names.split('\n')) {
+            def c = [key: name, cell: [:], ids: [:], opts: [:], sidecar: null, sidecars: 0, valid: (name ==~ cellKeyRegex)]
+            if (!c.valid) { cells << c; continue }
+            def cdir = "manifest-fragments/${name}"
+            if (fileExists("${cdir}/cell.env")) c.cell = parseEnv(readFile("${cdir}/cell.env"))
+            if (fileExists("${cdir}/wheel_build_ids.env")) c.ids = parseEnv(readFile("${cdir}/wheel_build_ids.env"))
+            if (fileExists("${cdir}/build_options.env")) c.opts = parseEnv(readFile("${cdir}/build_options.env"))
+            def jsons = sh(returnStdout: true, script: "ls -1 ${cdir}/*.build-info.json 2>/dev/null || true").trim()
+            if (jsons) {
+                def files = jsons.split('\n')
+                c.sidecars = files.size()
+                // Step result into a variable first: a step inside the slurper's
+                // argument list would have to persist the (non-serializable) slurper.
+                def sidecarText = readFile(files[0])
+                c.sidecar = new groovy.json.JsonSlurperClassic().parseText(sidecarText)
+            }
+            cells << c
+        }
+        cells
+    }
+
+    // Only HTTP 200 is conclusive, as in the poller.
+    def curlJson = { String url ->
+        def code = withEnv(["QUERY_URL=${url}"]) {
+            sh(returnStdout: true, script: '''
+                set +x
+                curl -sS -o manifest-query.json -w '%{http_code}' --retry 3 --retry-delay 2 \
+                  -u "$ARTIFACTORY_USER:$ARTIFACTORY_TOKEN" "$QUERY_URL"
+            ''').trim()
+        }
+        if (code != '200') throw new Exception("GET ${url} returned ${code}")
+        def body = readFile('manifest-query.json')
+        new groovy.json.JsonSlurperClassic().parseText(body)
+    }
+
+    // name -> [sha256, size] for every file in the folder, from Artifactory.
+    // Names come from the listing; only plain ones are ever put into a URL.
+    def fileNameRegex = /^[A-Za-z0-9._+-]+$/
+    def artifactoryFiles = { String folder ->
+        def listing = curlJson("${env.WHEEL_REPO_API}/${folder}?list&deep=0&listFolders=0")
+        def files = [:]
+        for (f in (listing.files ?: [])) {
+            files[f.uri.toString().replaceFirst('^/', '')] = [sha256: f.sha2 ?: null, size: f.size]
+        }
+        for (name in files.keySet().toList()) {
+            if (!files[name].sha256 && name ==~ fileNameRegex) {
+                def one = curlJson("${env.WHEEL_REPO_API}/${folder}/${name}")
+                files[name].sha256 = one.checksums?.sha256 ?: null
+            }
+        }
+        files
+    }
+
+    // Validates the fragments (rules below) and builds the manifest document.
+    // Every problem goes onto `errors`; the caller decides what to do with it.
+    def assemble = { List allCells, Map files, List errors ->
+        for (c in allCells.findAll { !it.valid }) errors << "staging entry '${c.key}' is not a cell key - ignored"
+        def cells = allCells.findAll { it.valid }
+        def expected = Integer.parseInt(env.EXPECTED_WHEEL_CELLS ?: '20')
+        if (cells.size() != expected) errors << "expected ${expected} cell fragments, found ${cells.size()}"
+
+        // A value every cell must agree on; returns it, or null when absent or in dispute.
+        def agree = { String what, Closure get ->
+            def seen = [:]
+            for (c in cells) { def v = get(c); if (v != null && v != '') seen[v.toString()] = c.key }
+            if (seen.size() > 1) errors << "${what} differs across cells: ${seen}"
+            seen.size() == 1 ? seen.keySet().iterator().next() : null
+        }
+        def perCuda = { String what, Closure get ->
+            def out = [:]
+            for (cu in ['12', '13']) {
+                def seen = [:]
+                for (c in cells.findAll { it.cell.CUDA == cu }) { def v = get(c); if (v != null && v != '') seen[v.toString()] = c.key }
+                if (seen.size() > 1) errors << "${what} differs across cu${cu} cells: ${seen}"
+                out[cu] = seen.size() == 1 ? seen.keySet().iterator().next() : null
+            }
+            out
+        }
+
+        for (c in cells) {
+            if (!c.cell.WHEELS || !c.cell.PUBLISH_FOLDER) errors << "cell ${c.key}: cell.env incomplete"
+            if (c.cell.BUILD_INFO_SUPPORTED == 'true' && c.sidecars != 1) errors << "cell ${c.key}: expected 1 build-info sidecar, found ${c.sidecars}"
+            if (c.sidecar && !(c.cell.WHEELS ?: '').tokenize(' ').contains(c.sidecar.wheel.name)) errors << "cell ${c.key}: sidecar describes ${c.sidecar.wheel.name}, not one of its wheels"
+        }
+
+        def folder = agree('PUBLISH_FOLDER') { it.cell.PUBLISH_FOLDER }
+        if (!(folder ==~ folderRegex)) errors << "publish folder '${folder}' is not an allowed path"
+        def nixlSha = agree('NIXL_SHA') { it.ids.NIXL_SHA }
+        def nixlCommit = agree('NIXL_COMMIT') { it.ids.NIXL_COMMIT }
+        def ucxRepo = agree('UCX_REPO') { it.opts.UCX_REPO }
+        def ucxRef = agree('UCX_REF') { it.opts.UCX_REF }
+        def ucxSha = agree('UCX_SHA') { it.opts.UCX_SHA }
+        def spcxOn = agree('BUILD_UCX_SPCX_PLUGIN') { it.opts.BUILD_UCX_SPCX_PLUGIN }
+        def spcxRef = agree('UCX_SPCX_PLUGIN_REF') { it.cell.UCX_SPCX_PLUGIN_REF }
+        def spcxCommit = agree('UCX_SPCX_PLUGIN_COMMIT') { it.cell.UCX_SPCX_PLUGIN_COMMIT }
+        def infOn = agree('BUILD_INFINIA') { it.opts.BUILD_INFINIA }
+        def infImage = agree('INFINIA_LIBS_IMAGE') { it.opts.INFINIA_LIBS_IMAGE }
+        def infDigest = agree('INFINIA_LIBS_DIGEST') { it.opts.INFINIA_LIBS_DIGEST }
+        def ucxRelease = agree('UCX release (ucx_info)') { it.sidecar?.ucx?.release }
+        def ucxBranch = agree('UCX branch (ucx_info)') { it.sidecar?.ucx?.branch }
+        def ucxRevision = agree('UCX revision (ucx_info)') { it.sidecar?.ucx?.revision }
+        def imageCommit = agree('NIXL commit (image)') { it.sidecar?.nixl?.commit }
+        def baseImage = perCuda('BASE_IMAGE') { it.opts.BASE_IMAGE }
+        def baseTag = perCuda('BASE_IMAGE_TAG') { it.opts.BASE_IMAGE_TAG }
+        def cudaVersion = perCuda('CUDA_VERSION') { it.opts.CUDA_VERSION }
+        def torchRequested = perCuda('TORCH_VERSIONS_REQUESTED') { it.cell.TORCH_VERSIONS_REQUESTED }
+
+        // Declared (host-side build_options.env) vs measured (inside the image).
+        // A tag or sha UCX_REF is checked out detached, so ucx_info reports 'HEAD'; the revision check below covers it.
+        if (ucxBranch && ucxBranch != 'HEAD' && ucxRef && ucxBranch != ucxRef) errors << "UCX in the image is branch '${ucxBranch}' but the build declared '${ucxRef}'"
+        if (ucxRevision && ucxSha && !(ucxSha.startsWith(ucxRevision) || ucxRevision.startsWith(ucxSha))) errors << "UCX revision in the image (${ucxRevision}) does not match the declared commit (${ucxSha})"
+        if (imageCommit && nixlSha && !imageCommit.startsWith(nixlSha)) errors << "NIXL commit in the image (${imageCommit}) does not start with NIXL_SHA (${nixlSha})"
+
+        // Wheel inventory: one distinct binary wheel per cell, one meta wheel shared by the cu12 cells.
+        def binaryNames = []
+        def metaCells = [:]
+        for (c in cells) {
+            for (name in (c.cell.WHEELS ?: '').tokenize(' ')) {
+                if (name.startsWith('nixl-')) metaCells[name] = (metaCells[name] ?: []) + [c.key]
+                else if (binaryNames.contains(name)) errors << "binary wheel ${name} was published by more than one cell"
+                else binaryNames << name
+            }
+        }
+        if (binaryNames.size() != expected) errors << "expected ${expected} binary wheels, found ${binaryNames.size()}"
+        if (metaCells.size() != 1) errors << "expected exactly one meta wheel, found ${metaCells.keySet()}"
+        def allNames = binaryNames + metaCells.keySet().toList()
+        for (name in allNames) { if (!files.containsKey(name)) errors << "${name} is not in Artifactory folder ${folder}" }
+        def unexpected = files.keySet().findAll { !allNames.contains(it) && it != 'build-manifest.json' }.toList().sort()
+
+        def wheels = []
+        def builtAll = []
+        def skippedAll = []
+        def toolSets = [:]
+        for (c in cells) {
+            def s = c.sidecar
+            def name = s ? s.wheel.name : (c.cell.WHEELS ?: '').tokenize(' ').find { !it.startsWith('nixl-') }
+            def art = files[name] ?: [:]
+            def entry = [name: name, kind: 'binary', sha256: art.sha256, size: art.size,
+                         local_sha256_matches: s ? (s.wheel.sha256 == art.sha256) : null,
+                         cuda: c.cell.CUDA, python: c.cell.PYTHON_VERSION, arch: c.cell.ARCH,
+                         platform: s?.wheel?.platform_tag, wheel_base_image: c.cell.WHEEL_BASE_IMAGE, cell: c.key,
+                         build_info: s ? 'available' : (c.cell.BUILD_INFO_SUPPORTED == 'true' ? 'missing' : 'unavailable: built ref predates wheel_build_info.py'),
+                         torch: null, toolchain: null, ucx: null]
+            if (s) {
+                if (art.sha256 && s.wheel.sha256 != art.sha256) errors << "${name}: sha256 in Artifactory differs from the file this build produced"
+                entry.torch = [built: s.torch.built.collect { [version: it.version, channel: it.channel, resolved: it.resolved] }, skipped: s.torch.skipped]
+                entry.toolchain = s.toolchain
+                entry.ucx = [release: s.ucx.release, branch: s.ucx.branch, revision: s.ucx.revision]
+                for (b in s.torch.built) builtAll << b.version.toString()
+                for (k in s.torch.skipped) skippedAll << [version: k.version, python: c.cell.PYTHON_VERSION, cuda: c.cell.CUDA, reason: k.reason]
+                for (tool in s.toolchain.keySet()) {
+                    if (!toolSets.containsKey(tool)) toolSets[tool] = []
+                    if (s.toolchain[tool] != null) toolSets[tool] << s.toolchain[tool].toString()
+                }
+            }
+            wheels << entry
+        }
+        for (name in metaCells.keySet()) {
+            def art = files[name] ?: [:]
+            wheels << [name: name, kind: 'meta', sha256: art.sha256, size: art.size, uploaded_by_cells: metaCells[name].sort()]
+        }
+        def baseBlock = [:]
+        for (cu in ['12', '13']) baseBlock[cu] = [image: baseImage[cu], tag: baseTag[cu], cuda_version: cudaVersion[cu], torch_requested: (torchRequested[cu] ?: '').tokenize(',')]
+        def toolchain = [:]
+        for (tool in toolSets.keySet().toList().sort()) toolchain[tool] = toolSets[tool].unique().sort()
+        def version = binaryNames ? binaryNames[0].tokenize('-')[1] : null
+
+        [folder: folder, doc: [
+            schema_version: 1,
+            generated_at: sh(returnStdout: true, script: 'date -u +%Y-%m-%dT%H:%M:%SZ').trim(),
+            complete: errors.isEmpty(),
+            errors: errors,
+            nixl: [commit: nixlCommit, sha8: nixlSha, ref: params.NIXL_VERSION, version: version],
+            ucx: [repo: ucxRepo, declared_ref: ucxRef, declared_commit: ucxSha, release: ucxRelease, branch: ucxBranch, revision: ucxRevision],
+            spcx: [enabled: spcxOn == 'true', ref: spcxRef, commit: spcxCommit],
+            infinia: [enabled: infOn == 'true', image: infImage, digest: infDigest],
+            base_image: baseBlock,
+            torch: [built: builtAll.unique().sort(), skipped: skippedAll],
+            toolchain: toolchain,
+            jenkins: [job: env.JOB_NAME, build: Integer.parseInt(env.BUILD_NUMBER), url: env.BUILD_URL,
+                      ci_refspec: params.ci_refspec, nixl_version: params.NIXL_VERSION,
+                      publish_dir: publishDir ?: 'verification', folder: folder],
+            wheels: wheels,
+            unexpected_files: unexpected,
+        ]]
+    }
+
+    def publishManifest = { String folder, String json ->
+        writeFile file: 'build-manifest.json', text: json
+        archiveArtifacts artifacts: 'build-manifest.json'
+        def code = sh(returnStdout: true, script: """
+            set +x
+            curl -sS -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 2 \
+              -u "\$ARTIFACTORY_USER:\$ARTIFACTORY_TOKEN" \
+              -T build-manifest.json "${env.WHEEL_REPO_URL}/${folder}/build-manifest.json"
+        """).trim()
+        if (!(code in ['200', '201'])) throw new Exception("PUT build-manifest.json returned ${code}")
+        echo "Published ${env.WHEEL_REPO_UI}/${folder}/build-manifest.json"
+    }
+
+    // Runs before the folder settlement so a marked release folder always has
+    // its manifest; keyed off the status captured above, so a manifest problem
+    // (UNSTABLE) never drops a complete wheel set.
+    try {
+        if (jobStatus == 'SUCCESS') {
+            withCredentials([usernamePassword(
+                    credentialsId: 'svc-nixl-new-artifactory-token',
+                    usernameVariable: 'ARTIFACTORY_USER',
+                    passwordVariable: 'ARTIFACTORY_TOKEN')]) {
+                def errors = []
+                def cells = readCells(stagingDir)
+                def firstFolder = cells ? cells[0].cell.PUBLISH_FOLDER : null
+                def files = (firstFolder && firstFolder ==~ folderRegex) ? artifactoryFiles(firstFolder) : [:]
+                def m = assemble(cells, files, errors)
+                def json = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(m.doc))
+                if (!errors.isEmpty()) {
+                    // Keep the evidence with the build; never upload an incomplete manifest.
+                    writeFile file: 'build-manifest.json', text: json
+                    archiveArtifacts artifacts: 'build-manifest.json'
+                    throw new Exception(errors.join('; '))
+                }
+                publishManifest(m.folder, json)
+            }
+        } else {
+            echo "Build manifest skipped: build result is ${jobStatus}"
+        }
+    } catch (e) {
+        echo "WARNING: build manifest not published: ${e.message}"
+        currentBuild.result = 'UNSTABLE'
+        manifestNote = "<p>Build manifest NOT published: <b>${e.message}</b></p>"
+    } finally {
+        // Always clean this build's staging; prune what a crashed build left
+        // behind, by age, like the plugin job does with its staging root.
+        sh """
+            rm -rf '${stagingDir}'
+            if [ -d '${stagingRoot}' ]; then
+              find '${stagingRoot}' -mindepth 1 -maxdepth 1 -type d -mmin +720 -exec rm -rf {} +
+            fi
+        """
+    }
 
     if (isRelease) {
         withCredentials([usernamePassword(
@@ -401,21 +755,23 @@ pipeline_stop:
         }
     }
 
-    if (jobStatus != 'SUCCESS' && params.MAIL_TO) {
+    def finalStatus = currentBuild.result ?: 'SUCCESS'
+    if (finalStatus != 'SUCCESS' && params.MAIL_TO) {
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
         mail(
             from: env.MAIL_FROM,
             to: params.MAIL_TO,
-            subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${jobStatus}",
+            subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${finalStatus}",
             mimeType: 'text/html',
             body: """
                 <p>Started by: <b>${userName}</b></p>
-                <p>Status: <span style="color: red;"><b>${jobStatus}</b></span></p>
+                <p>Status: <span style="color: red;"><b>${finalStatus}</b></span></p>
                 <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
                 <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
                 <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
                 <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
                 ${removedNote}
+                ${manifestNote}
             """
         )
     }
