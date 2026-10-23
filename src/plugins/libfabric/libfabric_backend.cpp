@@ -2123,10 +2123,10 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
                << " payload_chunk_size=" << payload_chunk.size()
                << " expected_completions=" << expected_completions;
 
+    const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
 
-        const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
         auto [it, inserted] = pending_notifications_.try_emplace(key, notif_xfer_id);
 
         if (inserted) {
@@ -2180,18 +2180,18 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
                    << " received_completions=" << it->second.received_completions;
     }
 
-    // Check if any notifications can now be completed (after releasing the lock)
-    checkPendingNotifications();
+    // Check whether this notification can now be completed (after releasing the lock)
+    checkPendingNotification(key);
 }
 
 void
 nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
                                      uint32_t sender_peer_idx,
                                      uint32_t final_completions) {
+    const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
 
-        const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
         auto [it, inserted] = pending_notifications_.try_emplace(key, notif_xfer_id);
 
         if (inserted) {
@@ -2212,8 +2212,8 @@ nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
                    << "; data for this transfer is incomplete";
     }
 
-    // Check if any notifications can now be completed
-    checkPendingNotifications();
+    // Check whether this notification can now be completed
+    checkPendingNotification(key);
 }
 
 /****************************************
@@ -2222,10 +2222,10 @@ nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
 
 void
 nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id, uint32_t sender_peer_idx) {
+    const uint64_t key = makePendingKey(sender_peer_idx, xfer_id);
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
 
-        const uint64_t key = makePendingKey(sender_peer_idx, xfer_id);
         auto [it, inserted] = pending_notifications_.try_emplace(key, xfer_id);
 
         if (inserted) {
@@ -2245,8 +2245,8 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id, uint32_t sender_peer_id
                    << it->second.expected_completions;
     }
 
-    // Check if any notifications can now be completed (after releasing the lock)
-    checkPendingNotifications();
+    // Check whether this notification can now be completed (after releasing the lock)
+    checkPendingNotification(key);
 }
 
 /****************************************
@@ -2254,10 +2254,10 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id, uint32_t sender_peer_id
  *****************************************/
 
 void
-nixlLibfabricEngine::checkPendingNotifications() {
+nixlLibfabricEngine::checkPendingNotification(uint64_t key) {
     std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
-    auto it = pending_notifications_.begin();
-    while (it != pending_notifications_.end()) {
+    auto it = pending_notifications_.find(key);
+    if (it != pending_notifications_.end()) {
         // Check BOTH conditions: fragments complete AND writes complete
         bool fragments_complete =
             (it->second.received_msg_fragments >= it->second.expected_msg_fragments);
@@ -2309,9 +2309,7 @@ nixlLibfabricEngine::checkPendingNotifications() {
                        << " message_len=" << message.length();
 
             // Remove from pending list
-            it = pending_notifications_.erase(it);
-        } else {
-            ++it;
+            pending_notifications_.erase(it);
         }
     }
 }
