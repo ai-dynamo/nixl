@@ -990,6 +990,95 @@ cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov) {
     }
 }
 
+bool
+xferBenchNixlWorker::objLoopback(const std::vector<xferBenchIOV> &remote_iovs,
+                                 void *local_buf,
+                                 size_t len,
+                                 nixl_xfer_op_t op) {
+    nixl_reg_dlist_t local_reg(DRAM_SEG);
+    nixlBlobDesc reg_desc;
+    reg_desc.addr = (uintptr_t)local_buf;
+    reg_desc.len = len;
+    reg_desc.devId = 0;
+    local_reg.addDesc(reg_desc);
+
+    nixl_opt_args_t opt_args;
+    opt_args.backends.push_back(backend_engine);
+
+    nixl_status_t rc = agent->registerMem(local_reg, &opt_args);
+    if (NIXL_SUCCESS != rc) {
+        std::cerr << "objLoopback: registerMem failed: " << nixlEnumStrings::statusStr(rc)
+                  << std::endl;
+        return false;
+    }
+
+    // Every remote object pairs with the same local buffer, so seeding needs
+    // one scratch buffer regardless of how many objects it writes.
+    std::vector<xferBenchIOV> local_iovs(remote_iovs.size(),
+                                         xferBenchIOV((uintptr_t)local_buf, len, 0));
+    nixl_xfer_dlist_t local_desc(DRAM_SEG);
+    nixl_xfer_dlist_t remote_desc(OBJ_SEG);
+    iovListToNixlXferDlist(local_iovs, local_desc);
+    iovListToNixlXferDlist(remote_iovs, remote_desc);
+
+    bool ok = false;
+    nixlXferReqH *req = nullptr;
+    rc = agent->createXferReq(op, local_desc, remote_desc, name, req, &opt_args);
+    if (NIXL_SUCCESS == rc) {
+        // Once posted, the backend may DMA into local_buf until the request reaches a
+        // terminal state. On signal we stop reporting progress but must keep polling
+        // getXferStatus until the backend is done before releasing the request and
+        // deregistering local_buf, otherwise the caller's free() races with the backend.
+        bool aborted = false;
+        rc = agent->postXferReq(req);
+        while (NIXL_IN_PROG == rc) {
+            if (!aborted && signaled()) {
+                std::cerr << "objLoopback: aborted by signal, draining transfer" << std::endl;
+                aborted = true;
+            }
+            rc = agent->getXferStatus(req);
+        }
+        ok = !aborted && (NIXL_SUCCESS == rc);
+        if (!aborted && !ok) {
+            std::cerr << "objLoopback: transfer failed: " << nixlEnumStrings::statusStr(rc)
+                      << std::endl;
+        }
+        agent->releaseXferReq(req);
+    } else {
+        std::cerr << "objLoopback: createXferReq failed: " << nixlEnumStrings::statusStr(rc)
+                  << std::endl;
+    }
+
+    agent->deregisterMem(local_reg, &opt_args);
+    return ok;
+}
+
+bool
+xferBenchNixlWorker::seedObjectsLoopback(const std::vector<xferBenchIOV> &remote_iovs, size_t len) {
+    auto scratch = nixlAlloc::make(len);
+    if (!scratch) {
+        std::cerr << "seedObjectsLoopback: failed to allocate " << len << " bytes" << std::endl;
+        return false;
+    }
+    memset(scratch->addr(), XFERBENCH_TARGET_BUFFER_ELEMENT, len);
+
+    return objLoopback(remote_iovs, scratch->addr(), len, NIXL_WRITE);
+}
+
+bool
+xferBenchNixlWorker::readRemoteForVerify(const xferBenchIOV &remote_iov, void *dst, size_t len) {
+    if (!xferBenchConfig::isObjStorageBackend()) {
+        std::cerr << "readRemoteForVerify: only supported for OBJ_SEG backends" << std::endl;
+        return false;
+    }
+    if (!dst || len == 0) {
+        std::cerr << "readRemoteForVerify: invalid arguments (dst=" << dst << ", len=" << len << ")"
+                  << std::endl;
+        return false;
+    }
+    return objLoopback({remote_iov}, dst, len, NIXL_READ);
+}
+
 std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset) {
     // The dev_offset represents the LBA (Logical Block Address) offset in the block device
@@ -1133,6 +1222,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
+        const std::string benchmark_group =
+            xferBenchConfig::benchmark_group.empty() ? "default" : xferBenchConfig::benchmark_group;
 
         std::cout << "Using " << num_threads * num_devices << " objects of " << buffer_size
                   << " bytes" << std::endl;
@@ -1140,19 +1231,13 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
-                std::optional<xferBenchIOV> basic_desc;
-                std::string unique_name = "nixlbench_obj" + std::to_string(list_idx) + "_" +
-                    std::to_string(i) + "_" + std::to_string(timestamp);
-
-                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                    if (!xferBenchUtils::putObj(buffer_size, unique_name)) {
-                        std::cerr << "Failed to put object: " << unique_name << std::endl;
-                        continue;
-                    }
-                }
+                std::string unique_name = "nixlbench_obj_" + benchmark_group + "_rank" +
+                    std::to_string(rt->getRank()) + "_pid" + std::to_string(getpid()) + "_" +
+                    std::to_string(list_idx) + "_" + std::to_string(i) + "_" +
+                    std::to_string(timestamp);
 
                 int obj_dev_id = list_idx * num_devices + i;
-                basic_desc = initBasicDescObj(buffer_size, obj_dev_id, unique_name);
+                auto basic_desc = initBasicDescObj(buffer_size, obj_dev_id, unique_name);
                 if (basic_desc) {
                     if (xferBenchUtils::debugEnabled()) {
                         std::cout << "Creating obj: " << unique_name << std::endl;
@@ -1162,6 +1247,13 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
             nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+
+            if (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
+                !seedObjectsLoopback(iov_list, buffer_size)) {
+                std::cerr << "Failed to seed objects for thread " << list_idx << std::endl;
+                exit(EXIT_FAILURE);
+            }
+
             remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
         }
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
