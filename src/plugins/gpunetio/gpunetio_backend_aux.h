@@ -22,6 +22,7 @@
 #include <atomic>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <sys/types.h>
 #include <thread>
@@ -54,6 +55,45 @@
 // Local includes
 #include "common/nixl_time.h"
 #include "gpunetio_oob_endpoint.h"
+
+namespace nixl::gpunetio {
+
+struct readRange {
+    uintptr_t localAddr;
+    uintptr_t remoteAddr;
+    size_t size;
+    uint32_t localKey;
+    uint32_t remoteKey;
+};
+
+/** Merge only adjacent same-key ranges whose combined READ fits the SDK length limit. */
+inline bool
+canCoalesceRead(const readRange &previous, const readRange &next, size_t max_read_size) {
+    return previous.size <= max_read_size && next.size <= max_read_size - previous.size &&
+        previous.localAddr <= std::numeric_limits<uintptr_t>::max() - previous.size &&
+        previous.remoteAddr <= std::numeric_limits<uintptr_t>::max() - previous.size &&
+        previous.localAddr + previous.size == next.localAddr &&
+        previous.remoteAddr + previous.size == next.remoteAddr &&
+        previous.localKey == next.localKey && previous.remoteKey == next.remoteKey;
+}
+
+inline bool
+canPairWrite(uintptr_t address,
+             size_t length,
+             uint32_t key,
+             uintptr_t next_address,
+             size_t next_length,
+             uint32_t next_key,
+             size_t remaining,
+             size_t max_length) {
+    // The final descriptor may carry an arrival marker; never fold it into a pair.
+    return remaining > 2 && length != 0 && next_length != 0 && key == next_key &&
+        next_address >= address && next_address - address == length &&
+        next_length <= std::numeric_limits<uintptr_t>::max() - next_address &&
+        next_length <= max_length && length <= max_length - next_length;
+}
+
+} // namespace nixl::gpunetio
 
 constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
 constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT_MASK = (DOCA_MAX_COMPLETION_INFLIGHT - 1);
@@ -99,6 +139,24 @@ struct docaXferReqGpu {
     nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
     doca_gpu_dev_verbs_qp *qp_data;
     doca_gpu_dev_verbs_qp *qp_notif;
+    struct docaXferCompletion *completion_list;
+    uint32_t *wait_exit;
+    uint16_t wait_completion_count;
+    uint16_t wait_completion_ids[DOCA_XFER_REQ_MAX];
+    uint64_t *peer_write_completed;
+    uint64_t write_ticket;
+    uint32_t posting_ctas_done;
+    uint8_t has_two_sge;
+    // Keep optional fields last so one-SGE requests need not publish them.
+    uintptr_t lbuf2[DOCA_XFER_REQ_SIZE];
+    size_t size2[DOCA_XFER_REQ_SIZE];
+    uint32_t lkey2[DOCA_XFER_REQ_SIZE];
+    uint8_t num_sge[DOCA_XFER_REQ_SIZE];
+};
+
+struct docaStripedWriteLaunch {
+    uint32_t count;
+    uint32_t positions[DOCA_XFER_REQ_MAX];
 };
 
 struct nixlDocaNotif {
@@ -167,6 +225,13 @@ public:
     ~nixlDocaPublicMetadata() {}
 };
 
+struct nixlDocaGpuCounterDeleter {
+    doca_gpu *gpu = nullptr;
+
+    void
+    operator()(uint64_t *counter) const;
+};
+
 struct nixlDocaRdmaQp {
     std::unique_ptr<nixl::doca::verbs::qp> qp_data;
     uint32_t qpn_data;
@@ -179,6 +244,22 @@ struct nixlDocaRdmaQp {
     uint32_t remote_lid = 0;
     bool dataProgrammed = false;
     bool notifProgrammed = false;
+    std::vector<std::unique_ptr<nixl::doca::verbs::qp>> qp_write;
+    std::vector<uint32_t> qpn_write;
+    std::vector<uint32_t> rqpn_write;
+    std::vector<bool> writeProgrammed;
+    std::unique_ptr<uint64_t, nixlDocaGpuCounterDeleter> writeCompletedGpu;
+    uint64_t *writeCompletedCpu = nullptr;
+    uint64_t postedWriteTicket = 0;
+
+    bool
+    closeDataQps() {
+        bool closed = qp_data == nullptr || qp_data->close();
+        for (auto &qp : qp_write) {
+            closed = qp->close() && closed;
+        }
+        return closed;
+    }
 };
 
 struct nixlDocaEngine;
@@ -222,6 +303,11 @@ doca_kernel_write(cudaStream_t stream,
                   doca_gpu_dev_verbs_qp *qp_gpu,
                   struct docaXferReqGpu *xferReqRing,
                   uint32_t pos);
+doca_error_t
+doca_kernel_write_striped(cudaStream_t stream,
+                          struct docaXferReqGpu *xferReqRing,
+                          docaStripedWriteLaunch launch,
+                          uint32_t qp_count);
 doca_error_t
 doca_kernel_read(cudaStream_t stream,
                  doca_gpu_dev_verbs_qp *qp_gpu,

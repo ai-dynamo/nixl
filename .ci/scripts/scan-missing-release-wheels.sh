@@ -26,7 +26,8 @@ git fetch --no-tags "${NIXL_REPO_URL}" \
 : > triggers.txt
 
 # build-container.sh options the nightly always passes: a ref whose copy
-# predates any of them dies at option parsing, so such commits are never queued.
+# predates any of them stops parsing at the first unknown option and silently
+# ignores the rest of the command line, so such commits are never queued.
 REQUIRED_BUILD_OPTS="--build-options-file --ucx-spcx-plugin-install"
 
 branches="$(git for-each-ref --format='%(refname:lstrip=4)' 'refs/remotes/origin/release/*' | sort -V)"
@@ -45,9 +46,10 @@ for ver in ${branches}; do
     continue
   fi
 
-  # The nightly always passes --build-options-file and --ucx-spcx-plugin-install,
-  # so a build-container.sh predating either fails at option parsing. Skip those
-  # rather than fan out builds that cannot succeed. This is only an early filter
+  # The nightly always passes --build-options-file and --ucx-spcx-plugin-install;
+  # a build-container.sh predating either drops them (and anything after them)
+  # and would publish wheels without the plugins. Skip those rather than fan out
+  # builds that cannot be right. This is only an early filter
   # on the branch tip - each candidate commit is checked again below, since a
   # branch that backports the options still has older commits without them.
   release_bcs="$(git show "origin/release/${ver}:contrib/build-container.sh" 2>/dev/null || true)"
