@@ -822,6 +822,72 @@ For pairwise UCX runs, `--device_list` must match the configured initiator and t
   --backend GPUNETIO --gpunetio_device_list 0,1
 ```
 
+#### Single-GPU GPUNETIO tests
+
+Each GPUNETIO worker runs a persistent GPU progress kernel. If two local worker
+processes share one physical GPU without CUDA MPS, their CUDA contexts can be
+time-sliced instead of running concurrently. A correct transfer can then show
+millisecond latency and unexpectedly low bandwidth, rather than a NIC bandwidth
+limit. This is a single-GPU test-placement limitation, not evidence that the
+transport or correctness checker is broken.
+
+Prefer one physical GPU per process (`CUDA_VISIBLE_DEVICES=0` for one worker,
+`CUDA_VISIBLE_DEVICES=1` for the other). Each process then uses visible CUDA
+device `0` for `--gpunetio_device_list`; visible ordinals in different processes
+do not establish whether the physical GPU is shared. Upstream two-GPU correctness
+CI does not need MPS.
+
+If only one physical GPU is available, MPS is an **opt-in local test setup**.
+On a system supporting MPS, launch a private daemon and run both workers from
+the same environment. Do not modify another user's MPS daemon:
+
+```bash
+export CUDA_VISIBLE_DEVICES=0
+mps_test_dir=$(mktemp -d /tmp/nixlbench-mps.XXXXXX)
+export CUDA_MPS_PIPE_DIRECTORY="$mps_test_dir/pipe"
+export CUDA_MPS_LOG_DIRECTORY="$mps_test_dir/log"
+mkdir -p "$CUDA_MPS_PIPE_DIRECTORY" "$CUDA_MPS_LOG_DIRECTORY"
+nvidia-cuda-mps-control -d
+# The daemon remaps its selected GPU to device 0; clients use that mapping.
+unset CUDA_VISIBLE_DEVICES
+trap 'printf "quit\n" | nvidia-cuda-mps-control' EXIT
+
+# Adjust these fabric settings and use three unused TCP ports.
+RDMA_DEVICE=mlx5_0
+OOB_INTERFACE=eth0
+GID_INDEX=0
+nb=(./nixlbench --runtime_type ASIO --asio_address 127.0.0.1 --asio_port 23456
+    --backend GPUNETIO --device_list "$RDMA_DEVICE" --gpunetio_device_list 0
+    --gpunetio_oob_list "$OOB_INTERFACE" --gpunetio_gid_index "$GID_INDEX"
+    --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 4096
+    --start_batch_size 1 --max_batch_size 1 --op_type WRITE
+    --initiator_seg_type VRAM --target_seg_type VRAM --check_consistency)
+"${nb[@]}" --gpunetio_oob_port 23457 > "$mps_test_dir/worker0.log" 2>&1 &
+worker0=$!
+sleep 4
+"${nb[@]}" --gpunetio_oob_port 23458 > "$mps_test_dir/worker1.log" 2>&1 &
+worker1=$!
+
+# Check that a private server and both clients are present while they run:
+printf 'get_server_list\n' | nvidia-cuda-mps-control
+# Replace SERVER_PID with the returned server PID:
+printf 'get_client_list %s\n' SERVER_PID | nvidia-cuda-mps-control
+
+# Wait for both workers before shutting down this task's daemon; check both exits.
+status0=0; wait "$worker0" || status0=$?
+status1=0; wait "$worker1" || status1=$?
+cat "$mps_test_dir/worker0.log" "$mps_test_dir/worker1.log"
+test "$status0" = 0 && test "$status1" = 0
+```
+
+Preserve `--check_consistency` and the same payload, batch size and iteration
+count when comparing single-GPU MPS OFF/ON against a two-GPU run. MPS does not
+fix data corruption, CQE errors or a general hang; if the disparity remains,
+check actual device placement, competing work and error logs before attributing
+the result to context scheduling. See NVIDIA's
+[MPS documentation](https://docs.nvidia.com/deploy/mps/index.html) for platform
+requirements and operational limits.
+
 ### Storage Backends
 
 The examples below write their files into `/mnt/storage/testdir`. Create it on
