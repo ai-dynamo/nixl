@@ -325,6 +325,13 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     dataQpCount_ = parseDataQpCount((*custom_params)["data_qp_count"]);
+    uint32_t byte_striping = 0;
+    const auto byte_option = custom_params->find("write_byte_striping");
+    if (byte_option != custom_params->end() && !byte_option->second.empty() &&
+        (!parseUnsigned(byte_option->second, byte_striping) || byte_striping > 1)) {
+        throw std::invalid_argument("write_byte_striping must be 0 or 1");
+    }
+    writeByteStriping_ = byte_striping != 0;
     if (dataQpCount_ > 1 &&
         (nstreams < static_cast<int>(dataQpCount_) ||
          nstreams > static_cast<int>(DOCA_POST_STREAM_NUM))) {
@@ -1686,6 +1693,27 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         }
     }
 
+    size_t write_bytes = 0;
+    if (operation == NIXL_WRITE && writeByteStriping_ && dataQpCount_ > 1 &&
+        (lcnt + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE < dataQpCount_) {
+        for (uint32_t idx = 0; idx < lcnt; ++idx) {
+            if (local[idx].len > std::numeric_limits<size_t>::max() - write_bytes ||
+                local[idx].addr > std::numeric_limits<uintptr_t>::max() - local[idx].len ||
+                remote[idx].addr > std::numeric_limits<uintptr_t>::max() - remote[idx].len) {
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            write_bytes += local[idx].len;
+        }
+    }
+    const size_t final_bytes = lcnt > 1 && write_bytes != 0 ? local[lcnt - 1].len : 0;
+    const size_t striped_bytes = write_bytes - final_bytes;
+    const bool byte_striping = striped_bytes >= 4 * 1024 * 1024;
+    const size_t ordering_tail = byte_striping && lcnt == 1 ? sizeof(uint64_t) : 0;
+    const size_t bulk_bytes = striped_bytes - ordering_tail;
+    const size_t chunk_bytes_limit = byte_striping ?
+        bulk_bytes / dataQpCount_ + (bulk_bytes % dataQpCount_ != 0) :
+        std::numeric_limits<size_t>::max();
+
     if (operation == NIXL_WRITE && dataQpCount_ > 1 && opt_args != nullptr &&
         !opt_args->customParam.empty()) {
         return NIXL_ERR_NOT_SUPPORTED;
@@ -1745,7 +1773,8 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     };
 
     treq->qpData = rdma_qp->qp_data->get_qp_gpu_dev();
-    treq->positions.reserve((wqe_count + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
+    treq->positions.reserve(byte_striping ? DOCA_XFER_REQ_MAX :
+                                            (wqe_count + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
     if (!reserve_position()) {
         abandon_request();
         return NIXL_ERR_BACKEND;
@@ -1759,9 +1788,16 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
 
         uint32_t chunk_desc_count = 0;
+        size_t chunk_bytes = 0;
         while (desc_offset < lcnt && staged_req.num < DOCA_XFER_REQ_SIZE &&
                (operation == NIXL_READ || chunk_desc_count < DOCA_XFER_REQ_SIZE)) {
             const uint32_t desc_idx = desc_offset;
+
+            if (byte_striping && staged_req.num > 0 &&
+                (chunk_bytes >= chunk_bytes_limit || desc_idx == lcnt - 1 ||
+                 (ordering_tail && local[desc_idx].len - split_offset == ordering_tail))) {
+                break;
+            }
 
             lmd = (nixlDocaPrivateMetadata *)local[desc_idx].metadataP;
             rmd = (nixlDocaPublicMetadata *)remote[desc_idx].metadataP;
@@ -1797,11 +1833,16 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                 continue;
             }
 
-            // A WQE carries at most the SDK transfer limit; the rest of the descriptor goes to the
-            // next WQEs. A descriptor that long is never merged or paired: both cap the total.
             const size_t remaining = local[desc_idx].len - split_offset;
-            const size_t wqe_size =
+            // Split large descriptors at the SDK limit, and eligible WRITEs at their QP byte
+            // budget. For a single range, preserve its final eight bytes as the ordering tail.
+            const size_t bulk_remaining = ordering_tail && remaining > ordering_tail ?
+                remaining - ordering_tail : remaining;
+            const size_t wqe_size = byte_striping && !(lcnt > 1 && desc_idx == lcnt - 1) ?
+                std::min({bulk_remaining, chunk_bytes_limit - chunk_bytes,
+                          size_t(DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE)}) :
                 std::min<size_t>(remaining, DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
+            const size_t piece_offset = split_offset;
             const uint32_t idx = staged_req.num;
             staged_req.lbuf[idx] = local[desc_idx].addr + split_offset;
             staged_req.lkey[idx] = lmd->mr->get_lkey();
@@ -1810,6 +1851,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             staged_req.size[idx] = wqe_size;
             staged_req.num_sge[idx] = 1;
             staged_req.num++;
+            chunk_bytes += wqe_size;
             if (wqe_size < remaining) {
                 split_offset += wqe_size;
                 continue;
@@ -1817,13 +1859,14 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             split_offset = 0;
             ++desc_offset;
 
-            if (operation == NIXL_WRITE && lcnt - desc_idx > 2) {
+            if (operation == NIXL_WRITE && lcnt - desc_idx > 2 && desc_offset == desc_idx + 1 &&
+                (!byte_striping || local[desc_offset].len <= chunk_bytes_limit - chunk_bytes)) {
                 auto *next_lmd =
                     static_cast<nixlDocaPrivateMetadata *>(local[desc_offset].metadataP);
                 auto *next_rmd =
                     static_cast<nixlDocaPublicMetadata *>(remote[desc_offset].metadataP);
-                if (nixl::gpunetio::canPairWrite(remote[desc_idx].addr,
-                                                 remote[desc_idx].len,
+                if (nixl::gpunetio::canPairWrite(remote[desc_idx].addr + piece_offset,
+                                                 wqe_size,
                                                  staged_req.rkey[idx],
                                                  remote[desc_offset].addr,
                                                  remote[desc_offset].len,
@@ -1835,6 +1878,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                     staged_req.size2[idx] = local[desc_offset].len;
                     staged_req.num_sge[idx] = 2;
                     staged_req.has_two_sge = 1;
+                    chunk_bytes += local[desc_offset].len;
                     ++desc_offset;
                 }
             }
@@ -1847,9 +1891,14 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             staged_req.has_two_sge ? sizeof(staged_req) : offsetof(docaSlotDesc, lbuf2);
         memcpy(&xferReqRingCpu[pos], &staged_req, publish_size);
 
+        if (byte_striping) {
+            NIXL_DEBUG << "WRITE byte stripe position " << pos << " bytes " << chunk_bytes;
+        }
+
         if (desc_offset < lcnt && !reserve_position()) {
+            const bool too_large = treq->positions.size() == DOCA_XFER_REQ_MAX;
             abandon_request();
-            return NIXL_ERR_BACKEND;
+            return too_large ? NIXL_ERR_INVALID_PARAM : NIXL_ERR_BACKEND;
         }
     } while (desc_offset < lcnt);
 
