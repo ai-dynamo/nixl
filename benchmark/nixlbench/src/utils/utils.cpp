@@ -273,6 +273,7 @@ NB_ARG_STRING(gpunetio_oob_port,
               "",
               "OOB TCP port for GPUNetIO (only used with nixl worker; default: 6544)");
 NB_ARG_INT32(gpunetio_data_qp_count, 1, "GPUNetIO WRITE QPs per peer [1,4]; default: 1");
+NB_ARG_BOOL(gpunetio_write_byte_striping, false, "Opt in to byte-balanced large GPUNetIO WRITEs");
 
 // OBJ options - only used when backend is OBJ
 NB_ARG_STRING(obj_access_key, "", "Access key for S3 backend");
@@ -403,6 +404,7 @@ std::string xferBenchConfig::gpunetio_oob_list = "";
 std::string xferBenchConfig::gpunetio_gid_index = "0";
 std::string xferBenchConfig::gpunetio_oob_port = "";
 int xferBenchConfig::gpunetio_data_qp_count = 1;
+bool xferBenchConfig::gpunetio_write_byte_striping = false;
 std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
@@ -710,6 +712,7 @@ xferBenchConfig::loadParams(void) {
             gpunetio_gid_index = NB_ARG(gpunetio_gid_index);
             gpunetio_oob_port = NB_ARG(gpunetio_oob_port);
             gpunetio_data_qp_count = NB_ARG(gpunetio_data_qp_count);
+            gpunetio_write_byte_striping = NB_ARG(gpunetio_write_byte_striping);
         }
 
         // Load HD3FS-specific configurations if backend is HD3FS
@@ -1134,6 +1137,8 @@ xferBenchConfig::printConfig() {
             printOption("RoCE GID table index (--gpunetio_gid_index=N)", gpunetio_gid_index);
             printOption("WRITE QPs per peer (--gpunetio_data_qp_count=N)",
                         std::to_string(gpunetio_data_qp_count));
+            printOption("Byte-balanced WRITE (--gpunetio_write_byte_striping=true)",
+                        gpunetio_write_byte_striping ? "true" : "false");
             printOption("OOB TCP port (--gpunetio_oob_port=N)",
                         gpunetio_oob_port.empty() ? "6544" : gpunetio_oob_port);
         }
