@@ -1208,7 +1208,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     std::shared_lock<nixlLock> read_lock(data->lock);
     // The request was created against a specific remote registration generation: refuse to
     // post if that generation was invalidated or replaced by a re-registration meanwhile.
-    if (req_hndl->remoteSection.expired()) {
+    if (!req_hndl->remoteAgent.empty() && req_hndl->remoteSection.expired()) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated or re-registered after transfer request creation; "
                            "not posting stale handle";
