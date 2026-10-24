@@ -28,6 +28,7 @@
 #include <chrono>
 #include <unordered_map>
 #include <unordered_set>
+#include <deque>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -211,10 +212,13 @@ private:
     mutable std::vector<std::string> agent_names_; // List of agent names for easy access
 
     // Threading infrastructure - remaining members
-    // Connection Management (CM) thread
+    // Connection Management (CM) thread: sends re-establishment replies queued by the
+    // progress thread (handleHandshake), which must not post from its own completion context
     std::mutex cm_mutex_;
     std::thread cm_thread_;
     std::condition_variable cm_cv_;
+    std::deque<std::shared_ptr<nixlLibfabricConnection>> pending_replies_;
+    std::atomic<bool> cm_thread_stop_{false};
 
     // Progress thread for rail CQs
     std::thread progress_thread_;
@@ -340,10 +344,10 @@ private:
     void
     processNotification(const std::string &serialized_notif, uint32_t sender_peer_idx);
 
-    // Send the per-peer handshake message to a peer we just created a connection with. It
-    // tells the peer we hold its endpoints in our AV, so we can attribute its traffic.
-    // When we decide the peer may not have seen us, i.e. have never sent us a handshake,
-    // embed our own connection info in the message.
+    // Send the per-peer handshake message to a peer, telling it we hold its endpoints in
+    // our AV, so we can attribute its traffic. Sent when a connection is created, and as
+    // a reply to a peer's fresh (has_conn) handshake. If the peer may not have seen us
+    // (i.e. never sent us a handshake), embed our own connection info in the message.
     nixl_status_t
     sendHandshakeTo(const nixlLibfabricConnection &conn) const;
 
@@ -351,6 +355,12 @@ private:
     // Will load the peer's connection info from the handshake payload, if it's a new peer.
     void
     handleHandshake(const std::string &raw_payload);
+    // Queues a re-establishment reply for the CM thread; dropped once teardown started.
+    void
+    queueHandshakeReply(std::shared_ptr<nixlLibfabricConnection> conn);
+    // CM thread body: sends queued re-establishment replies off the progress thread.
+    void
+    cmThread();
     // Marks a peer rejected for its protocol version; establishConnection() then fails fast.
     void
     rejectHandshake(const std::string &peer_agent_name, uint16_t peer_proto_ver);

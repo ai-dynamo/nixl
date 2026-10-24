@@ -655,6 +655,17 @@ nixlLibfabricEngine::~nixlLibfabricEngine() {
     NIXL_DEBUG
         << "Destructor starting, stopping all threads FIRST to prevent timing report interruption";
 
+    // Stop the CM thread first: an in-flight reply send may be waiting on the progress
+    // thread to drain its completions, so the progress thread must stop after it.
+    {
+        const std::lock_guard<std::mutex> lock(cm_mutex_);
+        cm_thread_stop_ = true;
+    }
+    cm_cv_.notify_all();
+    if (cm_thread_.joinable()) {
+        cm_thread_.join();
+    }
+
     post_thread_pool_.reset();
     if (progress_thread_enabled_) {
         progress_thread_stop_.store(true);
@@ -802,6 +813,14 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
 
     nixl_status_t status = it->second->disconnect();
     connections_.erase(it);
+    // Drop queued replies for this peer so teardown never posts toward it from the CM thread.
+    {
+        const std::lock_guard<std::mutex> cm_lock(cm_mutex_);
+        std::erase_if(pending_replies_,
+                      [&remote_agent](const std::shared_ptr<nixlLibfabricConnection> &pending) {
+                          return pending->remoteAgent_ == remote_agent;
+                      });
+    }
     return status;
 }
 
