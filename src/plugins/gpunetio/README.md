@@ -47,12 +47,85 @@ events while potentially reducing overlap between requests. Attached CUDA
 streams are supported for WRITE only with count 1. Single-QP mode preserves the
 legacy OOB format; multi-QP mode uses a versioned QPN exchange.
 
+With `write_byte_striping=1` (default: `0`), preparation splits ranges with a
+per-chunk byte budget when at least 4 MiB can be spread across QPs and the
+descriptor-count chunks would leave some configured QPs unused. Addresses and
+memory keys stay with each range. For multiple input descriptors, the final
+descriptor remains intact in a separate chunk and is excluded from that byte
+budget. Small requests, requests with enough
+descriptor chunks, READ and the default single-QP mode keep their existing
+mapping. This does not change completion or notification ordering.
+For a single large descriptor, only its final eight payload bytes remain in
+the final chunk, so the bulk can use all configured QPs before that chunk is
+posted. These bytes remain ordinary payload, not a new receiver-ready protocol.
+Splitting uses additional positions in the existing 32-position request ring,
+so fewer prepared handles may fit. The opt-in is local to the sender and does
+not change the QPN exchange or require enabling it on the receiver.
+Payload pieces on different QPs may arrive out of order: consume only after
+completion or notification. An application arrival marker should be a separate
+final descriptor with descriptor merging disabled, not embedded inside a range.
+
+### Reproduce byte-balanced WRITE
+
+Use two distinct GPUs and one common NIXL core/NIXLBench executable, built with
+the same release toolchain/SDK. Set `BASELINE_PLUGIN_DIR` to the main plugin and
+`CANDIDATE_PLUGIN_DIR` to this branch's plugin. Select the NIC, OOB interface,
+GID and GPU/NIC placement for your machine; the loopback address below measures
+a same-host component, not physical-network or serving throughput.
+
+```bash
+export NIXLBENCH=/path/to/nixlbench
+export BASELINE_PLUGIN_DIR=/path/to/main/plugins
+export CANDIDATE_PLUGIN_DIR=/path/to/candidate/plugins
+export NIC=your_rdma_device IFACE=your_oob_interface GID=your_gid_index
+export SOURCE_GPU=0 TARGET_GPU=1
+# Set LD_LIBRARY_PATH to the common NIXL and SDK runtime libraries first.
+mkdir -p byte-write-results
+for repeat in 1 2 3 4 5; do
+  arms=(native1 native4 byte2 byte4)
+  if ((repeat % 2 == 0)); then arms=(byte4 byte2 native4 native1); fi
+  for arm in "${arms[@]}"; do
+    qp=4; enabled=false; plugin="$BASELINE_PLUGIN_DIR"
+    case "$arm" in
+      native1) qp=1;;
+      byte2) qp=2; enabled=true; plugin="$CANDIDATE_PLUGIN_DIR";;
+      byte4) enabled=true; plugin="$CANDIDATE_PLUGIN_DIR";;
+    esac
+    args=(--runtime_type=ASIO --asio_address=127.0.0.1 --asio_port=19000
+      --backend=GPUNETIO --worker_type=nixl --device_list="$NIC"
+      --gpunetio_device_list=0 --gpunetio_oob_list="$IFACE" --gpunetio_gid_index="$GID"
+      --gpunetio_data_qp_count="$qp" --gpunetio_write_byte_striping="$enabled"
+      --initiator_seg_type=VRAM --target_seg_type=VRAM --op_type=WRITE
+      --scheme=pairwise --mode=SG --num_threads=1
+      --num_initiator_dev=1 --num_target_dev=1 --total_buffer_size=67108864
+      --start_block_size=16777216 --max_block_size=16777216
+      --start_batch_size=1 --max_batch_size=1 --pipeline_depth=1
+      --num_iter=1000 --warmup_iter=100 --large_blk_iter_ftr=1 --check_consistency=true)
+    export NIXL_PLUGIN_DIR="$plugin" CUDA_MODULE_LOADING=EAGER
+    CUDA_VISIBLE_DEVICES="$SOURCE_GPU" "$NIXLBENCH" "${args[@]}" \
+      --gpunetio_oob_port=19001 > "byte-write-results/$repeat-$arm-source.log" 2>&1 & p0=$!
+    sleep 0.2
+    CUDA_VISIBLE_DEVICES="$TARGET_GPU" "$NIXLBENCH" "${args[@]}" \
+      --gpunetio_oob_port=19002 > "byte-write-results/$repeat-$arm-target.log" 2>&1 & p1=$!
+    wait "$p0" || exit 1
+    wait "$p1" || exit 1
+    sleep 2
+  done
+done
+```
+
+Keep both endpoints' settings matched. Compare bandwidth, mean latency, Prep,
+Post and Tx p99 separately; preparation is not included in the transfer window.
+Avoid concurrent GPU workloads and pin the same CPUs for both arms when needed.
+More QPs are not always faster: measure the 2-QP and 4-QP alternatives.
+
 DOCA GPUNetIO backend takes these input parameters:
 - network_devices: network device to be used during the execution (e.g. mlx5_0). Current release supports only 1 network device.
 - oob_interface: network interface to be used when exchanging control info during initiator/target connection. Optional parameter, not needed if the network device is set in Ethernet mode.
 - oob_port: TCP port used to listen for OOB connection setup. It must be an integer in the inclusive range [1, 65535] and defaults to 6544. Set a distinct port for each GPUNETIO backend sharing a host network namespace.
 - gid_index: RoCE GID table index, in [0, 255]. Defaults to 0; select the GID for the test fabric when a non-default index is required.
 - gpu_devices: GPU CUDA ID to be used during the execution (e.g. 0). Current release supports only 1 GPU device.
+- write_byte_striping: enable byte-balanced large WRITE preparation with `1`; disabled by default (`0`). NIXLBench exposes this as `--gpunetio_write_byte_striping=true`.
 - cuda_streams: how many CUDA streams the backend should created at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. If this parameter is not specified, default value is `DOCA_POST_STREAM_NUM`.
 
 ## Example
