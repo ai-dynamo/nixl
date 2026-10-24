@@ -1031,10 +1031,15 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             return NIXL_ERR_NOT_FOUND;
         }
 
-        for (auto & elm : *local_set)
+        for (auto &elm : *local_set) {
             if (remote_set->count(elm) != 0) {
+                // For local transfers, skip backends that don't support local operations
+                if (is_local && !elm->supportsLocal()) {
+                    continue;
+                }
                 backend_set.insert(elm);
             }
+        }
 
         if (backend_set.empty()) {
             NIXL_ERROR_FUNC << "no potential backend found to be able to do the transfer";
@@ -1055,8 +1060,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                        local_descs.getType(),
                                        remote_descs.getType(),
                                        local_descs.descCount(),
-                                       is_local ? nixl_remote_section_weak_t()
-                                                : remote_section,
+                                       is_local ? nixl_remote_section_weak_t() : remote_section,
                                        nixl::trace::TraceContext{data->tracer_.get()},
                                        nixl::trace::generateRequestId(data->tracer_.get()));
     NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", std::to_string(handle->traceRequestId()));
@@ -1066,9 +1070,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     for (auto &backend : backend_set) {
         // If populate fails, it clears the resp before return
         ret1 = data->localSection_.populate(local_descs, backend, handle->initiatorDescs);
-        ret2 = is_local ?
-            data->localSection_.populate(remote_descs, backend, handle->targetDescs) :
-            remote_section->populate(remote_descs, backend, handle->targetDescs);
+        ret2 = is_local ? data->localSection_.populate(remote_descs, backend, handle->targetDescs) :
+                          remote_section->populate(remote_descs, backend, handle->targetDescs);
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
             NIXL_DEBUG << "Selected backend: " << backend->getType();
@@ -1337,7 +1340,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
     // Same for users incorrectly recalling this method in error/done.
     if (req_hndl->status == NIXL_IN_PROG) {
         // Check if the remote was invalidated before completion
-        if (req_hndl->remoteSection.expired()) {
+        if (!req_hndl->remoteAgent.empty() && req_hndl->remoteSection.expired()) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was invalidated or re-registered during transfer";
             return NIXL_ERR_NOT_FOUND;
