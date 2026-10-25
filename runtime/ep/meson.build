@@ -51,6 +51,12 @@ if not cpp.has_header('format', args: ['-std=c++20'])
     subdir_done()
 endif
 
+nvcc = meson.get_compiler('cuda')
+if nvcc.version().version_compare('<12.9')
+    warning('NIXL-EP V2 requires CUDA 12.9 or newer, skipping NIXL-EP V2 build')
+    subdir_done()
+endif
+
 if cuda_inc_path != ''
     v2_cuda_include_root = cuda_inc_path
 else
@@ -61,13 +67,19 @@ else
         check: true,
     ).stdout().strip()
 endif
+# CUDA 13 installs the CCCL headers in include/cccl, CUDA 12 in include, which cuda_dep already provides
 v2_cccl_include_root = join_paths(v2_cuda_include_root, 'cccl')
-if not fs.is_dir(v2_cccl_include_root)
-    warning('CUDA CCCL headers not found at ' + v2_cccl_include_root + ', skipping NIXL-EP V2 build')
+if fs.is_dir(v2_cccl_include_root)
+    v2_cccl_args = ['-I' + v2_cccl_include_root]
+    v2_cccl_inc_dirs = [include_directories(v2_cccl_include_root)]
+elif fs.is_dir(join_paths(v2_cuda_include_root, 'cuda', 'std'))
+    v2_cccl_args = []
+    v2_cccl_inc_dirs = []
+else
+    warning('CUDA CCCL headers not found under ' + v2_cuda_include_root + ', skipping NIXL-EP V2 build')
     subdir_done()
 endif
 
-nvcc = meson.get_compiler('cuda')
 have_v2_ucx_device_api = nvcc.compiles('''
         #include <ucp/api/device/ucp_device_impl.h>
         #if !defined(UCT_CUDA_IPC_SUPPORTED) || !UCT_CUDA_IPC_SUPPORTED
@@ -76,7 +88,7 @@ have_v2_ucx_device_api = nvcc.compiles('''
         int main() { return 0; }
     ''',
     dependencies: [ucx_dep, cuda_dep],
-    args: nvcc_flags + ['-I' + v2_cccl_include_root],
+    args: nvcc_flags + v2_cccl_args,
     name: 'NIXL-EP V2 UCX device API with CUDA IPC')
 if not have_v2_ucx_device_api
     warning('UCX device API with CUDA IPC is unavailable, skipping NIXL-EP V2 build')
@@ -118,7 +130,7 @@ v2_inc_dirs = [
     nixl_device_api_inc_dirs,
     include_directories('csrc'),
     include_directories('nixl_ep_v2/include'),
-    include_directories(v2_cccl_include_root),
+    v2_cccl_inc_dirs,
     torch_inc_dirs,
 ]
 

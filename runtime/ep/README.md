@@ -69,10 +69,10 @@ release.
 
 ## Requirements
 
-NIXL-EP V2 requires CUDA tools (`nvcc` and `cuobjdump`), PyTorch, a UCX build
-with its GPU device API and CUDA IPC support, and rdma-core development
-headers. The first operation that needs a JIT kernel compiles it and caches
-the result under `~/.nixl_ep_v2`.
+NIXL-EP V2 requires CUDA 12.9 or newer with its tools (`nvcc` and `cuobjdump`),
+PyTorch, a UCX build with its GPU device API and CUDA IPC support, and
+rdma-core development headers. The first operation that needs a JIT kernel
+compiles it and caches the result under `~/.nixl_ep_v2`.
 
 Runtime and JIT settings use the `NIXL_EP_*` environment-variable prefix. The
 packaged NIXL and UCX headers are used by default; advanced users can override
@@ -84,9 +84,13 @@ Configure paths for dependencies installed outside the system defaults:
 
 ```bash
 export PKG_CONFIG_PATH=<rdma-core-prefix>/lib/pkgconfig:<ucx-prefix>/lib/pkgconfig:$PKG_CONFIG_PATH
-export NIXL_PLUGIN_DIR=<nixl-prefix>/lib/x86_64-linux-gnu/plugins
+export NIXL_PLUGIN_DIR=<nixl-libdir>/plugins
 export LD_LIBRARY_PATH=<rdma-core-prefix>/lib:$LD_LIBRARY_PATH
 ```
+
+`<nixl-libdir>` is `<nixl-prefix>/<libdir>`, where `libdir` is meson's, usually
+`lib/x86_64-linux-gnu` on Debian and Ubuntu (`lib/aarch64-linux-gnu` on Arm) and
+`lib64` on RHEL-like systems. After `meson setup`, `meson configure build` shows it.
 
 Build and install NIXL with both NIXL-EP implementations enabled:
 
@@ -104,14 +108,22 @@ meson install -C build
 ## Local tests
 
 Run these commands from `runtime/ep` after installing NIXL. With a `meson install`,
-also put the installed Python packages and the `nixl` dispatcher on `PYTHONPATH`
-(a pip-installed wheel needs neither):
+also put the installed Python packages and the `nixl` dispatcher on `PYTHONPATH`,
+and the NIXL libraries on `LD_LIBRARY_PATH` (a pip-installed wheel needs none of them).
+`<nixl-python-dir>` is the directory meson installed the `nixl_cu<cuda-major>` package
+into. It follows the Python that meson was configured with:
+`<nixl-prefix>/lib/python3/dist-packages` with the Python of Debian or Ubuntu (also in
+a virtual environment made from it), `<nixl-prefix>/lib64/python3.<minor>/site-packages`
+with the Python of RHEL-like systems, `<nixl-prefix>/lib/python3.<minor>/site-packages`
+with other Pythons, such as a uv-managed one. `find <nixl-prefix> -type d -name 'nixl_cu[0-9]*'`
+prints `<nixl-python-dir>/nixl_cu<cuda-major>`.
 
 ```bash
-export PYTHONPATH=<nixl-prefix>/lib/python3.<minor>/site-packages:<nixl-source>/src/bindings/python/nixl-meta:$PYTHONPATH
-python tests/elastic/test_adaptive_elastic.py --num-processes 4 --num-tokens 512 --hidden 7168 --num-topk 8 --num-experts 192
-python tests/elastic/test_ep.py --num-processes 4 --test-first-only --skip-perf-test
-python tests/elastic/test_adaptive_modes.py --num-processes 4 --num-tokens 1024 --hidden 7168 --num-topk 8 --num-experts 256
+export PYTHONPATH=<nixl-python-dir>:<nixl-source>/src/bindings/python/nixl-meta:$PYTHONPATH
+export LD_LIBRARY_PATH=<nixl-libdir>:$LD_LIBRARY_PATH
+python3 tests/elastic/test_adaptive_elastic.py --num-processes 4 --num-tokens 512 --hidden 7168 --num-topk 8 --num-experts 192
+python3 tests/elastic/test_ep.py --num-processes 4 --test-first-only --skip-perf-test
+python3 tests/elastic/test_adaptive_modes.py --num-processes 4 --num-tokens 1024 --hidden 7168 --num-topk 8 --num-experts 256
 ```
 
 `tests/elastic/test_adaptive_elastic.py` is an elastic, correctness and
