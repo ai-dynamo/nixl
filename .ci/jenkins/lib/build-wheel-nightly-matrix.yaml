@@ -232,7 +232,7 @@ steps:
 
       # Cell facts for the fragment Publish deposits, written before the
       # build so a failed cell leaves nothing behind.
-      if [ -x nixl-src/contrib/wheel_build_info.py ]; then
+      if [ -x nixl-src/.ci/scripts/wheel_build_info.py ]; then
         BUILD_INFO_SUPPORTED=true
       else
         BUILD_INFO_SUPPORTED=false

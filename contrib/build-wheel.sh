@@ -22,6 +22,8 @@ UCX_PLUGINS_DIR="/usr/lib64/ucx"
 NIXL_PLUGINS_DIR="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins"
 OUTPUT_DIR="dist"
 BUILD_INFO_DIR="build-info"
+# CI tooling; a tree without it still builds, just without sidecars.
+BUILD_INFO_TOOL="./.ci/scripts/wheel_build_info.py"
 BUILD_NIXL_EP="false"
 TORCH_VERSIONS=""
 TORCH_CUDA_INDEX=""
@@ -272,7 +274,7 @@ build_wheel() {
     echo "=== Provisioning ${VENV_PATH} (python ${PYTHON_VERSION}${VER:+, torch ${VER} [${CHANNEL}]}) ==="
     uv pip install --python "$VENV_PATH/bin/python" "${BUILD_DEPS[@]}"
     # Captured here because the venv is destroyed at the end of this function.
-    "$VENV_PATH/bin/python" ./contrib/wheel_build_info.py venv-toolchain \
+    [ ! -x "$BUILD_INFO_TOOL" ] || "$VENV_PATH/bin/python" "$BUILD_INFO_TOOL" venv-toolchain \
         --out "$TMP_DIR/toolchain-${VER:-base}.json" ${VER:+--channel "$CHANNEL"} \
         || echo "WARNING: build-info: toolchain capture failed for $VENV_PATH" >&2
 
@@ -328,8 +330,9 @@ get_wheel_path() {
 write_build_info() {
     local WHL=$1
     shift
+    [ -x "$BUILD_INFO_TOOL" ] || { echo "WARNING: build-info: $BUILD_INFO_TOOL not in this tree, no sidecar" >&2; return 0; }
     mkdir -p "$BUILD_INFO_DIR" || { echo "WARNING: build-info: cannot create $BUILD_INFO_DIR" >&2; return 0; }
-    ./contrib/wheel_build_info.py sidecar \
+    "$BUILD_INFO_TOOL" sidecar \
         --wheel "$WHL" \
         --out "$BUILD_INFO_DIR/$(basename "$WHL").build-info.json" \
         --python-version "$PYTHON_VERSION" \
