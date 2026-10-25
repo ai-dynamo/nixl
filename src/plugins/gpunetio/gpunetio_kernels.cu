@@ -92,11 +92,14 @@ nixl_gpunetio_dev_reserve_data(docaSlotDesc *request,
                                docaGpuState *gpu_state,
                                uint64_t *base_wqe_idx) {
     docaQpProgress *progress = request->qp_progress;
-    while (nixl_gpunetio_dev_load_host_state(gpu_state->control) == 0U) {
-        if (atomicCAS(&progress->data_producer_lock, 0, 1) != 0) {
-            continue;
+    while (true) {
+        doca_gpu_dev_verbs_lock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+            &progress->data_producer_lock);
+        if (nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U) {
+            doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+                &progress->data_producer_lock);
+            return false;
         }
-        doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
         if (!nixl_gpunetio_dev_has_sq_credit(request->qp_data, count)) {
             doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
                 &progress->data_producer_lock);
@@ -107,9 +110,10 @@ nixl_gpunetio_dev_reserve_data(docaSlotDesc *request,
             doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                                 DOCA_GPUNETIO_VERBS_QP_SQ>(
                 request->qp_data, count, DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_SKIP_AVAILABILITY_CHECK);
+        doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+            &progress->data_producer_lock);
         return true;
     }
-    return false;
 }
 
 __device__ void
@@ -188,8 +192,6 @@ kernel_read(doca_gpu_dev_verbs_qp *qp,
         doca_gpu_dev_verbs_mark_wqes_ready(qp, base_wqe_idx, last_wqe_idx);
         doca_gpu_dev_verbs_submit(qp, last_wqe_idx + 1);
         xferReqRing[pos].last_wqe = last_wqe_idx;
-        doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
-            &xferReqRing[pos].qp_progress->data_producer_lock);
         nixl_gpunetio_dev_publish_data(gpu_state, pos);
         if (wait_for_completion) {
             while (nixl_gpunetio_dev_load_host_state(gpu_state->control) == 0U &&
@@ -328,8 +330,6 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
         doca_gpu_dev_verbs_mark_wqes_ready(qp, base_wqe_idx, last_wqe_idx);
         doca_gpu_dev_verbs_submit(qp, last_wqe_idx + 1);
         xferReqRing[pos].last_wqe = last_wqe_idx;
-        doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
-            &xferReqRing[pos].qp_progress->data_producer_lock);
         nixl_gpunetio_dev_publish_data(gpu_state, pos);
     }
 
@@ -391,6 +391,9 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
                 struct docaNotif *notif_progress,
                 struct docaNotif *notif_send_gpu,
                 docaHostState *host_state) {
+    doca_gpu_dev_verbs_ticket_t out_ticket;
+
+    // Warmup
     if (xfer_req_ring == nullptr) {
         return;
     }
@@ -399,8 +402,6 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
     if (blockIdx.x != 0 && threadIdx.x != 0) {
         return;
     }
-
-    doca_gpu_dev_verbs_ticket_t out_ticket;
 
     // Data QPs progress independently; notification SEND remains synchronous.
     if (blockIdx.x == 0) {
