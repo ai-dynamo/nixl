@@ -112,6 +112,11 @@ private:
         uint16_t parent_switch_domain;
         uint8_t parent_switch_bus_id;
         size_t parent_switch_link_speed; // Gbps (decimal, as multiple of 10^9, not 2^30)
+        // True when the topmost PCIe bridge/switch above this NIC has a slower uplink than the
+        // NIC's own link, so host memory DMA through this NIC is throttled by that uplink (e.g.
+        // the NICs sharing a PCIe switch with a GPU on p6e-gb200, behind a PCIe Gen4 x1 uplink).
+        // Such NICs are left out of DRAM_SEG NUMA capacity.
+        bool host_dma_starved;
         // True when this NIC and the accelerator paired with it sit under a common PCIe
         // switch. buildTopologyAwareGrouping() sets it from NicGroup::common_ancestor.
         bool accel_via_pcie_switch;

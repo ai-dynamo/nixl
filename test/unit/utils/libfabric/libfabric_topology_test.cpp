@@ -473,6 +473,11 @@ testNumaDramRailSelectionPolicy(const TopologyInfo &topology_info,
 static int
 testNumaDramRailSelectionPolicy(const char *instance_type);
 
+// test DRAM_SEG rail selection on p6e-gb200, whose GPU-sharing PCIe switches cannot carry host
+// memory traffic
+static int
+testStarvedSwitchDramRailSelection();
+
 // test Neuron topology loading (verifies the Neuron/EFA preflight in
 // nixlLibfabricTopology::discoverTopology()). Loads the given lstopo XML and
 // verifies the discovered Neuron accelerator count and EFA NIC count match
@@ -542,6 +547,12 @@ main(int argc, char *argv[]) {
 
     // test for actual rail selection policy
     res = testNumaDramRailSelectionPolicy();
+    if (res != 0) {
+        return res;
+    }
+
+    // test DRAM_SEG rail selection when some PCIe switches cannot carry host memory traffic
+    res = testStarvedSwitchDramRailSelection();
     if (res != 0) {
         return res;
     }
@@ -1618,6 +1629,122 @@ testNumaDramRailSelectionPolicy(const char *instance_type) {
     }
     NIXL_ERROR << "Could not find topology spec for instance type " << instance_type;
     return 2;
+}
+
+// p6e-gb200.36xl: each PCIe switch that a GPU shares with two EFA devices has a PCIe Gen4 x1
+// uplink, so host memory traffic through those devices is capped near 2 GB/s. DRAM_SEG selection
+// has to draw only on the EFA devices under the CPU-attached switches, closest NUMA node first.
+// The uniform-switch checks above cannot describe this, so selections are checked by device name.
+static const TopologyInfo gb200_topologies[] = {
+    {.enable = true,
+     .instance_type = "p6e-gb200.36xl",
+     .topo_file = "p6e-gb200.36xl-topo.xml",
+     .numa_node_count = 2,
+     .nic_count = 16,
+     .nic_line_speed = 400},
+};
+
+// EFA devices with host memory capacity, per NUMA node
+static const std::vector<std::set<std::string>> gb200_dram_devices = {
+    {"rdmap54s0", "rdmap55s0", "rdmap76s0", "rdmap77s0"},
+    {"rdmap169s0", "rdmap170s0", "rdmap191s0", "rdmap192s0"}};
+
+static bool
+validateStarvedSwitchSelection(const std::vector<size_t> &selected_rails,
+                               const nixlLibfabricTopology *topology,
+                               size_t expected_rail_count) {
+    if (selected_rails.size() != expected_rail_count) {
+        NIXL_ERROR << "Expected " << expected_rail_count << " rails, instead got "
+                   << LibfabricUtils::railIdsToString(selected_rails);
+        return false;
+    }
+    const std::vector<std::string> &devices = topology->getAllDevices();
+    std::set<std::string> selected;
+    for (size_t rail_id : selected_rails) {
+        if (rail_id >= devices.size() || !selected.insert(devices[rail_id]).second) {
+            NIXL_ERROR << "Invalid or duplicate rail " << rail_id << " in selection "
+                       << LibfabricUtils::railIdsToString(selected_rails);
+            return false;
+        }
+    }
+    // the buffer's own node first: as many of its devices as the selection holds, then the rest
+    // from the other node
+    const std::set<std::string> &local = gb200_dram_devices[last_buffer_numa_node];
+    const std::set<std::string> &remote = gb200_dram_devices[1 - last_buffer_numa_node];
+    size_t local_count = 0;
+    for (const std::string &device : selected) {
+        if (local.count(device)) {
+            ++local_count;
+        } else if (!remote.count(device)) {
+            NIXL_ERROR << "Selected EFA device " << device
+                       << " sits behind a PCIe uplink without host memory capacity";
+            return false;
+        }
+    }
+    if (local_count != std::min(expected_rail_count, local.size())) {
+        NIXL_ERROR << "Selected " << local_count << " EFA devices of NUMA node "
+                   << last_buffer_numa_node << ", expecting "
+                   << std::min(expected_rail_count, local.size());
+        return false;
+    }
+    return true;
+}
+
+static int
+testStarvedSwitchDramRailSelection(const TopologyInfo &gb200_topology) {
+    NIXL_INFO << "=== Testing DRAM_SEG rail selection with host-starved PCIe switches ("
+              << gb200_topology.instance_type << ") ===";
+    // {bandwidth override (0 = topology-derived limit), expected rail count}
+    // 4 is every capacity-carrying device of one node; 12 is clamped to all 8 such devices
+    const std::vector<std::pair<size_t, size_t>> scenarios = {
+        {0, 4}, {400, 1}, {800, 2}, {3200, 8}, {4800, 8}};
+    for (const auto &scenario : scenarios) {
+        curr_topology = &gb200_topology;
+        setTesting();
+        setenv("HWLOC_XMLFILE", gb200_topology.topo_file, 1);
+        if (scenario.first != 0) {
+            setenv("NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG", std::to_string(scenario.first).c_str(), 1);
+        }
+        int res = 0;
+        {
+            nixlLibfabricRailManager rail_manager(0);
+            if (rail_manager.init(nixl_b_params_t()) != NIXL_SUCCESS) {
+                NIXL_ERROR << "Failed to initialize rail manager";
+                res = 1;
+            }
+            for (size_t i = 0; res == 0 && i < 2 * gb200_topology.numa_node_count; ++i) {
+                std::vector<size_t> selected_rails;
+                if (!rail_manager.getDramRailSelectionPolicy()->selectRails(nullptr,
+                                                                            selected_rails) ||
+                    !validateStarvedSwitchSelection(
+                        selected_rails, rail_manager.getTopology(), scenario.second)) {
+                    NIXL_ERROR << "Invalid DRAM_SEG rail selection with bandwidth override "
+                               << scenario.first;
+                    res = 2;
+                }
+            }
+        }
+        clearTesting();
+        unsetenv("HWLOC_XMLFILE");
+        unsetenv("NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG");
+        if (res != 0) {
+            return res;
+        }
+        NIXL_INFO << "Scenario [bandwidth=" << scenario.first << "] SUCCESS";
+    }
+    NIXL_INFO << "=== Test completed successfully! ===";
+    return 0;
+}
+
+static int
+testStarvedSwitchDramRailSelection() {
+    for (const TopologyInfo &topology : gb200_topologies) {
+        int res = testStarvedSwitchDramRailSelection(topology);
+        if (res != 0) {
+            return res;
+        }
+    }
+    return 0;
 }
 
 int
