@@ -23,6 +23,7 @@
 #pragma once
 
 #include <ATen/cuda/CUDAContext.h>
+#include <fstream>
 
 #include <nixl_ep_v2/common/exception.cuh>
 
@@ -40,13 +41,27 @@ public:
     KernelHandle kernel;
 
     explicit KernelRuntime(const std::filesystem::path& dir_path) {
-        EP_HOST_ASSERT(not cuda_home.empty());
-
         // NOLINT(*-pro-type-member-init)
-        const auto cuobjdump_path = cuda_home / "bin" / "cuobjdump";
         const auto cubin_path = dir_path / "kernel.cubin";
         if (get_env<int>("NIXL_EP_JIT_DEBUG"))
             printf("Loading CUBIN: %s\n", cubin_path.c_str());
+
+        // The symbol the compiler stored next to the CUBIN; a cache directory from before it did gets `cuobjdump`
+        std::string symbol_name;
+        if (std::ifstream in(dir_path / "kernel.symbol"); in)
+            std::getline(in, symbol_name);
+        if (symbol_name.empty())
+            symbol_name = find_kernel_symbol(dir_path);
+
+        // Load from the library
+        kernel = load_kernel(cubin_path, symbol_name, &library);
+    }
+
+    // The only kernel symbol of `dir_path / "kernel.cubin"`, by `cuobjdump` (a fork and exec per call)
+    static std::string find_kernel_symbol(const std::filesystem::path& dir_path) {
+        EP_HOST_ASSERT(not cuda_home.empty());
+        const auto cuobjdump_path = cuda_home / "bin" / "cuobjdump";
+        const auto cubin_path = dir_path / "kernel.cubin";
 
         // Find the only symbol
         // TODO: use kernel enumeration for newer drivers
@@ -75,9 +90,7 @@ public:
             printf("\n");
             EP_HOST_ASSERT(false and "Corrupted JIT cache directory");
         }
-
-        // Load from the library
-        kernel = load_kernel(cubin_path, symbol_names[0], &library);
+        return symbol_names[0];
     }
 
     static void prepare_init(const std::string& cuda_home_path_by_python) {

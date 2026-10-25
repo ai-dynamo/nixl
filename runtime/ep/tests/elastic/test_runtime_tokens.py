@@ -19,6 +19,8 @@ checks at several token counts in one process (the default list holds a count th
 modes on one NVLink domain (direct, and hybrid forced as in `test_adaptive_modes.py`; hybrid only across domains), and
 the JIT cache must hold the same kernel set after every count as after the first (one cubin per kernel serves them all).
 The JIT cache is a fresh directory (`NIXL_EP_JIT_CACHE_DIR`), so the first count compiles every kernel it uses.
+Then every `kernel.symbol` is deleted and fresh processes rerun the first count: they must load the cached kernels the
+way a cache directory from before `kernel.symbol` loads (by `cuobjdump`), with no rebuild.
 Usage: python tests/elastic/test_runtime_tokens.py --num-processes 4 --token-counts 4096,1000,128
 """
 import argparse
@@ -44,13 +46,12 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         args.num_experts % num_ranks == 0
     ), f"{args.num_experts} experts do not divide by {num_ranks} ranks"
     token_counts = [int(count) for count in args.token_counts.split(",")]
-    assert len(set(token_counts)) >= 2, "Needs two different token counts"
 
     # One buffer sized for the largest count; each dispatch passes its own count, which its handle carries to combine
     buffer = ep.ElasticBuffer(
         group,
         num_experts_per_rank=args.num_experts // num_ranks,
-        num_max_tokens_per_rank=max(token_counts),
+        num_max_tokens_per_rank=args.buffer_tokens,
         hidden=args.hidden,
         allow_multiple_reduction=args.allow_multiple_reduction,
         explicitly_destroy=True,
@@ -62,7 +63,8 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     native_mode = buffer.get_topology()[0]
     modes = ["direct", "hybrid"] if native_mode == "direct" else ["hybrid"]
 
-    first_kernels = None
+    # The reload pass expects the first pass's kernels, all without `kernel.symbol`
+    first_kernels = args.expected_kernels
     for num_tokens in token_counts:
         for mode in modes:
             dist_print(f"Token count {num_tokens}, {mode} mode:", once_in_node=True)
@@ -76,20 +78,39 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
 
         # Every local rank shares the cache directory: after the barrier it holds every kernel built so far
         kernels = list_jit_kernels(args.jit_cache_dir)
-        if first_kernels is None:
+        symbol_kernels = {
+            k
+            for k in kernels
+            if os.path.isfile(
+                os.path.join(args.jit_cache_dir, "cache", k, "kernel.symbol")
+            )
+        }
+        if args.expected_kernels is not None:
+            assert (
+                not symbol_kernels
+            ), f"Rebuilt instead of loading by cuobjdump: {sorted(symbol_kernels)}"
+        elif first_kernels is None:
             first_kernels = kernels
             assert any(
                 k.startswith("kernel.adaptive_dispatch.") for k in kernels
             ) and any(
                 k.startswith("kernel.adaptive_combine.") for k in kernels
             ), f"No adaptive kernels in the JIT cache: {sorted(kernels)}"
+            # The compiler stores each kernel's symbol, so loading it needs no `cuobjdump`
+            no_symbol = kernels - symbol_kernels
+            assert not no_symbol, f"No kernel.symbol in {sorted(no_symbol)}"
         assert (
             kernels == first_kernels
         ), f"Token count {num_tokens} built new kernels: {sorted(kernels - first_kernels)}"
         dist_print(f" > {len(kernels)} JIT kernels, none new", once_in_node=True)
         dist.barrier()
 
-    dist_print("PASS: one JIT kernel set for every token count", once_in_node=True)
+    if args.expected_kernels is None:
+        dist_print("PASS: one JIT kernel set for every token count", once_in_node=True)
+    else:
+        dist_print(
+            "PASS: cache without kernel.symbol loads by cuobjdump", once_in_node=True
+        )
     buffer.destroy()
     dist.destroy_process_group()
 
@@ -179,6 +200,22 @@ if __name__ == "__main__":
     for key, value in test_ep_args.items():
         setattr(args, key, value)
 
+    assert (
+        len(set(args.token_counts.split(","))) >= 2
+    ), "Needs two different token counts"
+    args.buffer_tokens = max(int(count) for count in args.token_counts.split(","))
+    args.expected_kernels = None
+    torch.multiprocessing.spawn(
+        test_loop, args=(args.num_processes, args), nprocs=args.num_processes
+    )
+
+    # Strip every `kernel.symbol`, as in a cache built before it existed, and reload in fresh processes
+    cache_path = os.path.join(args.jit_cache_dir, "cache")
+    args.expected_kernels = list_jit_kernels(args.jit_cache_dir)
+    for kernel in args.expected_kernels:
+        os.remove(os.path.join(cache_path, kernel, "kernel.symbol"))
+    print("Reload without kernel.symbol:", flush=True)
+    args.token_counts = args.token_counts.split(",")[0]
     torch.multiprocessing.spawn(
         test_loop, args=(args.num_processes, args), nprocs=args.num_processes
     )

@@ -203,6 +203,9 @@ public:
             disassemble(tmp_cubin_path, tmp_sass_path);
         }
 
+        // Store the kernel symbol, so loading the cache directory needs no `cuobjdump`
+        put(tmp_dir_path / "kernel.symbol", KernelRuntime::find_kernel_symbol(tmp_dir_path));
+
         // Fsync before rename to ensure visibility on distributed filesystems
         fsync_dir(tmp_dir_path);
 

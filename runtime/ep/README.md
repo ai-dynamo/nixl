@@ -129,7 +129,8 @@ The other scripts under `tests/` are listed below:
 - `tests/elastic/test_adaptive_modes.py`: direct and hybrid mode, handle
   sizing, and CUDA-graph replay across mode and world switches.
 - `tests/elastic/test_runtime_tokens.py`: dispatch and combine at several
-  `num_max_tokens_per_rank` values on one buffer, served by one JIT kernel set.
+  `num_max_tokens_per_rank` values on one buffer, served by one JIT kernel set,
+  then a reload of that cache with its `kernel.symbol` files removed.
 - `tests/elastic/test_barrier.py` and `tests/utils/test_gate.py`: the barrier
   kernel and the gate-score generator.
 - `tests/elastic/test_adaptive_processes.py`: processes that join late and
