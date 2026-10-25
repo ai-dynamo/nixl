@@ -201,6 +201,8 @@ On EFA, libfabric routes transfers between processes on the same host through it
 FI_EFA_ENABLE_SHM_TRANSFER=0 <your NIXL application>
 ```
 
+This variable applies to all intra-node communication, not only device-memory transfers, so it also moves same-host host-memory transfers onto EFA. For a mixed workload, benchmark before setting it globally.
+
 Measured on one p6-b200.48xlarge (libfabric 2.6.0amzn1.0), reading a 256 MB VRAM buffer from another process on the same host in one transfer request:
 
 | Descriptor size | Count | shm on (default) | `FI_EFA_ENABLE_SHM_TRANSFER=0` |
@@ -210,6 +212,6 @@ Measured on one p6-b200.48xlarge (libfabric 2.6.0amzn1.0), reading a 256 MB VRAM
 | 1 MB | 256 | 29.4 GB/s | 47.8 GB/s |
 | 256 MB | 1 | 34.2 GB/s | 48.3 GB/s |
 
-The EFA path was also faster at every descriptor size for WRITE, and for single 4 KB latency. Transfers between hosts never use shm. On Neuron hosts the plugin already disables shm on every rail.
+The EFA path was also faster at every descriptor size for WRITE, and for single 4 KB latency. Transfers between hosts never use shm. On AWS Neuron (Trainium) hosts, NIXL v1.5.0 and later already disables shm on every rail; on older releases, set `FI_EFA_ENABLE_SHM_TRANSFER=0` there as well.
 
 For additional support, check the NIXL documentation and Libfabric provider-specific guides.
