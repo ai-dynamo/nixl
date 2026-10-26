@@ -22,8 +22,11 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
+#include <cstdint>
 #include <mutex>
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include "backend/backend_engine.h"
 #include "tracing/trace_context.h"
@@ -80,6 +83,9 @@ public:
 
     [[nodiscard]] std::optional<nixl::trace::TraceContext>
     observedTraceContext() const;
+
+    [[nodiscard]] std::vector<std::pair<std::uint64_t, std::uint64_t>>
+    observedTraceRequests() const;
 
     MOCK_METHOD(bool, supportsRemote, (), (const, override));
     MOCK_METHOD(bool, supportsLocal, (), (const, override));
@@ -178,6 +184,7 @@ private:
     mutable std::mutex observedMutex_;
     std::optional<const nixlBackendTraceSink *> observedTraceSink_;
     std::optional<nixl::trace::TraceContext> observedTraceContext_;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> observedTraceRequests_;
 };
 
 } // namespace mocks
