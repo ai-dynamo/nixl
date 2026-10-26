@@ -25,11 +25,12 @@ execution-trace tools.
 ## Architecture
 
 - **`nixl::trace::Tracer`** — a composite tracer **owned by each `nixlAgent`** (no
-  singleton; injected into call sites). One `beginSpan()`, `mark()`, `emitSpan()` or
-  `emitEvent()` call fans out to every active backend.
-- **`nixl::trace::Span`** — a move-only handle returned by `beginSpan()`. It forwards
-  attributes/dependencies to each backend span and **ends them all on destruction**
-  (RAII), so a span covers the scope in which it is declared.
+  singleton; injected into call sites). One `beginSpan()`, `beginContextSpan()`,
+  `mark()`, `emitSpan()` or `emitEvent()` call fans out to every active backend.
+- **`nixl::trace::Span`** — a move-only handle returned by `beginSpan()` and
+  `beginContextSpan()`. It forwards attributes/dependencies to each backend span and
+  **ends them all on destruction** (RAII), so a span covers the scope in which it is
+  declared.
 - **`emitSpan()` / `emitEvent()`** — record a span or a point event after the fact,
   with its times, trace context, kind and typed attributes passed explicitly instead
   of taken from the clock and the active correlation scope. They are for records
@@ -39,6 +40,10 @@ execution-trace tools.
   converts at export. NVTX can draw only at the moment of the call, so it draws both
   as zero-length ranges there, and an emitted span carries its times as the
   `nixl.start_us` and `nixl.end_us` attributes.
+- **`beginContextSpan()`** — begins the span that a trace context identifies, rather
+  than a span inside the active correlation scope's context as `beginSpan()` does;
+  like `emitSpan()`, it takes the context and the request id explicitly. Every other
+  span and event names its context's span id as its parent.
 - **`TraceBackend` / `SpanBackend`** — the backend interfaces. Each backend
   implementation provides them.
 - **Backend plugins** — each backend is a `libtrace_backend_<name>.so` that exports
@@ -250,14 +255,16 @@ to the same per-metric filter as every other metric (see
 
 A backend also sees the trace context of the request it is executing, as
 `traceContext` in the `nixl_opt_b_args_t` that `prepXfer` and `postXfer` receive.
-It is the same context at prep and at every post of that request, reposts
-included, and the zeroed, invalid context when tracing is off. It is null in
+Its trace id and flags are the same at prep and at every post of that request,
+reposts included, and it is the zeroed, invalid context when tracing is off. For
+a sampled request each post also has a span id of its own: the first `postXferReq`
+call keeps the one prep saw, and each later call draws another. It is null in
 `prepMemView`, which has no request, and `opt_args` itself may be null when an
 engine is called directly. The pointer is valid only for the call: a plugin that
 needs the context later, at completion or when building a notification, copies
-the value onto its own request handle. A carrier that puts it on the wire calls
-`encodeTraceContext` itself. `TraceContext` is internal like the sink, so only
-in-tree plugins can read it. Next to `traceContext`, `traceRequestId` and
+the value onto its own request handle at each post. A carrier that puts it on the
+wire calls `encodeTraceContext` itself. `TraceContext` is internal like the sink,
+so only in-tree plugins can read it. Next to `traceContext`, `traceRequestId` and
 `traceExecution` hold the request's id and the number of the post being executed,
 0 meaning none: the id is the same at prep and at every post, the execution number
 is 0 at prep, and both are 0 when tracing is off. They are plain integers that any
@@ -281,7 +288,7 @@ notification give the receiver nothing to observe, so they are traced on the
 sender only.
 
 On the sender, UCX records up to three phases for every post of a sampled request,
-each under the request's context: `nixl::submit` when `postXfer` accepts the
+each under that post's context: `nixl::submit` when `postXfer` accepts the
 post, `nixl::wire.submitted` once all of its puts or gets and the flushes behind
 them are posted to UCX, and `nixl::notif.sent` when the notification is posted.
 If handing a validated post to UCX fails, at a put, a get or the flush, for
@@ -302,8 +309,9 @@ request on a backend that supports remote transfers but not trace contexts runs
 as usual, its trace just does not reach the remote agent, and core logs a
 warning once per backend in each agent; backends without remote transfers are
 not reported. Likewise, if generating a request's context fails, the request
-runs with the zeroed context, and each agent logs its first such failure as an
-error.
+runs with the zeroed context, and if a later `postXferReq` call cannot draw its
+span id, it keeps the request's span id; each agent logs its first such failure
+as an error.
 
 ## Profiling with NVTX / Nsight Systems
 
@@ -407,12 +415,12 @@ In NIXL tracing, "correlation" can mean two different things:
   (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
   same request. Implemented via the backend-agnostic `pushContext()` / `popContext()`
   API: NIXL wraps `postXferReq` in a correlation scope that hands every backend the
-  request's whole trace context, sampled or not, with its request id, and passes both
-  to the `xfer.complete` event explicitly. The NVTX backend records the request id as
-  the event's `uint64` payload -- so a post and its completion carry the same id on the
-  timeline regardless of which thread emitted each. A record without a request id
-  carries no payload, and a request with neither a valid context nor a request id
-  pushes nothing.
+  call's whole trace context, sampled or not, with the request id, and passes the
+  post's context and the request id to its `xfer.complete` event explicitly. The NVTX
+  backend records the request id as the event's `uint64` payload -- so a post and its
+  completion carry the same id on the timeline regardless of which thread emitted
+  each. A record without a request id carries no payload, and a request with neither
+  a valid context nor a request id pushes nothing.
 
 ## Planned work
 
