@@ -42,13 +42,15 @@
 namespace {
 [[nodiscard]] bool
 sglEnabledFromConfig() {
-    const bool enabled = nixl::config::getValueDefaulted("NIXL_UCX_SGL_ENABLE", false);
+    const bool enabled = nixl::config::getValueDefaulted(
+        "NIXL_PLUGIN_UCX_SGL_ENABLE", "NIXL_UCX_SGL_ENABLE", false);
 #ifdef HAVE_UCX_SGL_API
     NIXL_DEBUG << "UCX SGL offload " << (enabled ? "enabled" : "disabled");
     return enabled;
 #else
     if (enabled) {
-        NIXL_WARN << "NIXL_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL support";
+        NIXL_WARN
+            << "NIXL_PLUGIN_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL support";
     }
     return false;
 #endif
