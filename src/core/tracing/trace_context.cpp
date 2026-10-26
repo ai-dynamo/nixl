@@ -159,19 +159,6 @@ nixl::trace::TraceContext::sampled() const noexcept {
     return (flags & 0x01) != 0;
 }
 
-std::uint64_t
-nixl::trace::TraceContext::correlationId64() const noexcept {
-    if (!valid()) {
-        return 0;
-    }
-
-    std::uint64_t result = 0;
-    for (const auto byte : spanId) {
-        result = (result << 8) | byte;
-    }
-    return result;
-}
-
 std::optional<nixl::trace::TraceContext>
 nixl::trace::parseTraceparent(std::string_view value) {
     if (value.size() != 55 || value[0] != '0' || value[1] != '0' || value[2] != '-' ||

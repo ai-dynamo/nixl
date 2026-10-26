@@ -70,9 +70,6 @@ struct TraceContext {
     [[nodiscard]] bool
     sampled() const noexcept;
 
-    [[nodiscard]] std::uint64_t
-    correlationId64() const noexcept;
-
     [[nodiscard]] bool
     operator==(const TraceContext &) const noexcept = default;
 };

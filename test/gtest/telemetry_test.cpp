@@ -870,6 +870,7 @@ public:
     emitSpan(std::string_view,
              nixl::trace::Kind,
              const nixl::trace::TraceContext &,
+             std::uint64_t,
              nixlTime::us_t,
              nixlTime::us_t,
              std::span<const nixl::trace::Attribute>) override {
@@ -880,13 +881,14 @@ public:
     emitEvent(std::string_view,
               nixl::trace::Kind,
               const nixl::trace::TraceContext &,
+              std::uint64_t,
               nixlTime::us_t,
               std::span<const nixl::trace::Attribute>) override {
         throw std::runtime_error("emitEvent failed");
     }
 
     void
-    pushContext(const nixl::trace::TraceContext &) override {}
+    pushContext(const nixl::trace::TraceContext &, std::uint64_t) override {}
 
     void
     popContext() override {}
