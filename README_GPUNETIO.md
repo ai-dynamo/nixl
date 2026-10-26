@@ -1,172 +1,134 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Native GPUNETIO Device API GTest harness
+# Opt-in native GPUNETIO Device API
 
-## Supported API and lifetime
+This increment adds GPU-initiated PUT/completion to current NIXL main while
+retaining plugin ABI **3**, main's public device-mode dispatch, and the merged
+host GPUNETIO progress implementation. Build with DOCA **3.5 or newer** and
+`-Dgpunetio_device_api=enabled`, then set the backend parameter
+`native_device_api=true`. Default-off host READ/WRITE behavior is retained.
+The legacy DOCA 3.1 profile is not supported by this current-main build.
 
-Build capability and runtime selection are both opt-in. Set the GPUNETIO
-backend parameter `native_device_api=true`; the default remains the legacy
-host READ/WRITE backend. Select that backend explicitly in both memory-view
-preparation calls. An application CUDA thread can then call:
+Prepare local and remote views through `nixlAgent::prepMemView`, selecting the
+native GPUNETIO backend explicitly through the backend hints. The backend
+returns main's public `memViewWrapper`, allocated using `nixl::deviceOps` and
+`deviceMemViewAllocate`. Native execution uses
+`nixl::gpu::exec_mode_t::GPUNETIO_DIRECT` and the typed `xferStatusH::mode` field;
+it does not write a uint32 tag at an assumed byte offset. Main's UCX/proxy
+modes, fixed/dynamic mode templates, and 60-byte request-payload layout remain.
 
 ```cpp
 nixlGpuXferStatusH status{};
 auto rc = nixlPut<nixl_gpu_level_t::THREAD>(
     {local_view, local_index, local_offset},
     {remote_view, remote_index, remote_offset}, bytes, 0, 0, &status);
-// Only an accepted operation (rc == NIXL_IN_PROG) may be polled.
-// Use a bounded polling loop in the caller.
+// Poll only an accepted request (NIXL_IN_PROG), using a bounded caller loop.
 rc = nixlGpuGetXferStatus<nixl_gpu_level_t::THREAD>(status);
 ```
 
-The initial implementation supports one remote peer, one unretired PUT per
-shared data QP, and ordinary registered VRAM on the engine's execution GPU.
-All views of that peer share the same lane. Submission is not completion;
-an occupied lane rejects another request without posting. A terminal status
-is cached; status objects are single-owner and must not be reused in flight.
-Zero-sized transfers, other execution levels, channels/flags, atomics and
-host transfers/notifications in native mode are unsupported. No proxy fallback
-is supplied. This is not a throughput or production receiver-ready protocol.
+The namespaced `nixl::gpu::put/getXferStatus` interface is also supported. A fixed
+`exec_mode_t::GPUNETIO_DIRECT` template mode must use matching native views and
+be polled with that same fixed mode, following main's device API contract.
 
-Prepare/release are cold operations: no capture, no concurrent application
-kernels, and no outstanding work requiring progress in that CUDA context.
-In particular, allocator synchronization must not run alongside a persistent
-legacy kernel in the same context. Views, registrations, remote metadata,
-payload buffers and the engine must outlive all submitted operations.
-Finish application kernels and establish terminal NIC completion before
-normal release. Native local views pin their registrations. A release on a
-non-idle lane retains the backend view and MR pins until QP teardown; it is
-not cancellation and does not permit freeing payload memory or running kernels
-against released public handles. Errors latch the lane; recovery/error teardown
-requires additional validation before production use. The test exits nonzero
-without normal cleanup if accepted operations cannot be safely retired.
+The initial native path supports one peer, one unretired PUT on its shared data
+lane, and ordinary registered VRAM on the execution GPU. It requires one data
+QP. It does not add owner leases, batched commits, warp preparation, atomics,
+channels, flags, READ, notification support, or a receiver-ready protocol.
+Unsupported execution levels/arguments reject without posting. Native mode
+rejects host transfer operations. Initialization, registration, metadata and
+connection setup remain host-managed.
 
-This branch changes the plugin ABI to version 2 and reserves the last four
-bytes of the existing 64-byte device status for a backend tag. Rebuild core,
-plugins and application CUDA extensions together; old-header compatibility
-is not claimed.
+## Lifetime and errors
 
-This harness is a bounded correctness test for the public NIXL GPU Device API.
-It runs one GTest process per endpoint, with one CUDA GPU per process. The
-sender calls only `nixlAgent::prepMemView`, `nixlPut<THREAD>`, and
-`nixlGpuGetXferStatus<THREAD>` for the data path. It does not call host
-`postXfer`, notifications, a CPU proxy, or a GPUNETIO posting kernel.
+Status objects belong to one submitter and remain live until terminal
+completion; do not reuse an active status. All prepared native views share the
+engine lane, and an occupied lane rejects another request. Local views retain
+MR ownership. Finish caller kernels and accepted NIC work before releasing
+views, registrations, payload storage or the engine. Prepare/release are cold
+operations and must not race application kernels or outstanding device work;
+allocation synchronization must not coexist with an unrelated persistent
+kernel in that context.
 
-The receiver flushes GPUDirect RDMA writes with the documented
-`cuFlushGPUDirectRDMAWrites` API before copying and checking the destination.
-If that API is unavailable or unsupported, the test fails; a plain CUDA
-synchronization is not treated as a visibility proof.
+A busy/failed view release retains its storage and MR pins until QP teardown;
+it is not cancellation or permission to free the payload. CQ errors latch the
+native lane. A caller must stop and preserve resources after unresolved work;
+error recovery is not supplied by this increment. All NIXL core/plugin/device
+libraries and application CUDA extensions must be built from matching ABI-3
+headers. Use main's `libdevice_utils.so` / `libnixl_device_ops_cuda.so`, not the
+obsolete device-allocator DSOs from historical runs.
 
-The test covers 4 KiB, 64 KiB, and 1 MiB writes, nonzero descriptor-relative
-offsets, payload and guard validation, cached terminal-status repolling, busy
-lane rejection, invalid index/offset/flags/channel/null-status/zero/oversize
-arguments, and 8,193 sequential 4 KiB writes to distinct destination slots.
-The wrap case is about 34 MiB of payload and the process GPU allocation stays
-below 128 MiB.
+## Build and existing correctness harness
 
-## Configuration
-
-Both processes must use the same fresh coordination directory and run ID.
-The following variables are read by the test:
-
-| Variable | Meaning |
-| --- | --- |
-| `GPUNETIO_DEVICE_API_ROLE` | `sender` or `receiver` |
-| `GPUNETIO_DEVICE_API_COORD_DIR` | unique shared file-exchange directory |
-| `GPUNETIO_DEVICE_API_RUN_ID` | unique run prefix within that directory |
-| `GPUNETIO_DEVICE_API_GPU` | one CUDA ordinal; defaults to `0` |
-| `GPUNETIO_DEVICE_API_RDMA` | optional GPUNETIO `network_devices` value |
-| `GPUNETIO_DEVICE_API_OOB_INTERFACE` | optional GPUNETIO `oob_interface` value |
-| `GPUNETIO_DEVICE_API_GID_INDEX` | optional GPUNETIO `gid_index` value |
-| `GPUNETIO_DEVICE_API_OOB_PORT` | optional per-endpoint GPUNETIO OOB port |
-| `GPUNETIO_DEVICE_API_TARGET_IPV4` | sender’s receiver IPv4 for the control TCP channel |
-| `GPUNETIO_DEVICE_API_CONTROL_PORT` | caller-selected unused control TCP port |
-
-Metadata files are written through a temporary file, `fsync`, atomic `rename`,
-and directory `fsync`. A tiny TCP control channel carries `M` (metadata
-published), `S` (sender setup complete), and per-case `R`/`D`/`V` tokens for
-receiver-ready, sender-data-done, and receiver-validated. The sender opens
-metadata directly only after `M`; there is no filesystem existence polling.
-The control channel has a 45-second socket/connect bound, and the device
-completion poll has a 5-second deadline per request.
-
-Setup is directional. The receiver creates its backend, registers its VRAM,
-and publishes metadata plus the descriptor record, then waits only for the
-sender’s TCP session-ready token. The sender imports the receiver metadata, makes the OOB
-connection, and prepares both public memory views before issuing PUTs. The
-receiver does not call `loadRemoteMD`, `makeConnection`, or `prepMemView`.
-
-## Build and run
-
-Run these commands from the checkout. Select the legacy SDK contract with
-Meson's `gpunetio_device_api_profile=legacy-doca31` option; Meson emits
-`NIXL_ENABLE_GPUNETIO_DEVICE_API=1` and
-`NIXL_GPUNETIO_DEVICE_API_LEGACY_DOCA31=1` for the CUDA target.
+The native test is opt-in and needs CUDA, DOCA 3.5+ and GTest. Select the correct
+SDK/library paths through the existing build environment before setup:
 
 ```bash
-cd /path/to/nixl-checkout
-meson setup build-native -Dbuildtype=debugoptimized -Denable_plugins=GPUNETIO \
-  -Dbuild_examples=false -Dnixl_cuda_arch_list=90 \
-  -Dgpunetio_device_api=enabled -Dgpunetio_device_api_profile=legacy-doca31
-ninja -C build-native src/plugins/gpunetio/libplugin_GPUNETIO.so \
-  src/utils/device/libnixl_device_allocator_cuda.so \
-  test/gtest/native-device-api-test \
-  test/gtest/unit/device_memview/device-memview-test
-./build-native/test/gtest/unit/device_memview/device-memview-test
+meson setup build-native -Dbuildtype=debugoptimized -Dwerror=true \
+  -Denable_plugins=GPUNETIO -Dbuild_tests=true -Dbuild_examples=false \
+  -Dnixl_cuda_arch_list=90 -Dgpunetio_device_api=enabled
+ninja -C build-native src/core/libnixl.so \
+  src/plugins/gpunetio/libplugin_GPUNETIO.so \
+  src/utils/device/libnixl_device_ops_cuda.so \
+  test/gtest/native-device-api-test
 ```
 
-Use the exact installed CUDA/DOCA and NIXL plugin paths for the build. Do not
-run this on a shared GPU unless the owner has explicitly authorized a bounded
-normal-path correctness run; do not add profiling, fault injection, or
-performance workloads to this harness.
+The test target selects `NIXL_ENABLE_GPUNETIO_DEVICE_API=1` and
+`NIXL_GPUNETIO_DEVICE_API_PUBLIC=1`. Application CUDA translation units must
+also define both macros and include/link the matching DOCA SDK; enabling the
+plugin does not change an external application's compiler flags.
+Configure no native capability for the
+ordinary default-off build. No additional plugin ABI version bump is required.
+The CUDA device-ops DSO is loaded lazily as a sibling of `libdevice_utils.so`;
+keep both in the same build/install runtime directory.
 
-Start the receiver first. `coord` must be a new shared directory visible to
-both endpoint processes, and `run_id` must be unique:
+The existing two-process `GpunetioDeviceApiTest` covers 4 KiB, 64 KiB, and
+1 MiB writes; descriptor-relative offsets, full payload/guards, cached terminal
+status, active lane/status rejection, invalid indexes/offsets/channels/flags/
+null status/zero/oversize arguments, and 8,193 sequential 4 KiB writes to distinct
+destination slots. Only its profile guard, typed-status handling, copyright
+header and clock-rate attribute query are adapted to current main/CUDA 13.
+No unrelated test suite is added. Receiver visibility is established using
+`cuFlushGPUDirectRDMAWrites` before D2H verification.
+
+Use a fresh shared coordination directory and run ID. Configure both processes
+with matching runtime/SDK paths; select physical GPUs/fabric for the test host.
+Start one receiver and one sender concurrently (the receiver waits for sender):
 
 ```bash
-: "${SHARED_TEST_DIR:?Set a directory shared by both endpoints}"
-coord=$(mktemp -d "$SHARED_TEST_DIR/nixl-device-api.XXXXXX")
-run_id=$(date +%s)-$$
-export LD_LIBRARY_PATH="/opt/mellanox/doca/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export NIXL_PLUGIN_DIR="$PWD/build-native/src/plugins/gpunetio"
-export LD_LIBRARY_PATH="$NIXL_PLUGIN_DIR:$LD_LIBRARY_PATH"
-export CUDA_MODULE_LOADING=EAGER
-export GPUNETIO_DEVICE_API_COORD_DIR="$coord"
-export GPUNETIO_DEVICE_API_RUN_ID="$run_id"
-export GPUNETIO_DEVICE_API_GPU=0
-export GPUNETIO_DEVICE_API_RDMA=mlx5_0
-export GPUNETIO_DEVICE_API_OOB_INTERFACE=eth0
-export GPUNETIO_DEVICE_API_GID_INDEX=3
-export GPUNETIO_DEVICE_API_OOB_PORT=6544
+export LD_LIBRARY_PATH="$PWD/build-native/src/core:$PWD/build-native/src/infra:$PWD/build-native/src/utils/common:$PWD/build-native/src/utils/serdes:$PWD/build-native/src/utils/stream:$PWD/build-native/src/utils/device${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export GPUNETIO_DEVICE_API_COORD_DIR=/path/to/fresh/shared-directory
+export GPUNETIO_DEVICE_API_RUN_ID=unique-run
+export GPUNETIO_DEVICE_API_RDMA=your_rdma_device
+export GPUNETIO_DEVICE_API_OOB_INTERFACE=your_oob_interface
+export GPUNETIO_DEVICE_API_GID_INDEX=your_gid
 export GPUNETIO_DEVICE_API_CONTROL_PORT=6546
-
-GPUNETIO_DEVICE_API_ROLE=receiver \
-  ./build-native/test/gtest/native-device-api-test \
-  --gtest_filter=GpunetioDeviceApiTest.*
+# Receiver, in its own process:
+GPUNETIO_DEVICE_API_ROLE=receiver GPUNETIO_DEVICE_API_GPU=1 \
+  GPUNETIO_DEVICE_API_OOB_PORT=6544 \
+  ./build-native/test/gtest/native-device-api-test --gtest_filter=GpunetioDeviceApiTest.*
+# Sender, launched concurrently with the same coordination variables:
+GPUNETIO_DEVICE_API_ROLE=sender GPUNETIO_DEVICE_API_GPU=0 \
+  GPUNETIO_DEVICE_API_TARGET_IPV4=receiver_ipv4 GPUNETIO_DEVICE_API_OOB_PORT=6545 \
+  ./build-native/test/gtest/native-device-api-test --gtest_filter=GpunetioDeviceApiTest.*
 ```
 
-Export the same coordination directory, run ID and control port in the sender
-shell, with its own build/library/device configuration. Use the receiver's
-reachable IPv4 address and an unused local OOB port:
+The test bounds device polling and uses metadata/control handshakes. Retain both
+endpoint exits and payload/status results. These commands do not constitute a
+new hardware validation receipt; main owns current-main build/GPU qualification.
 
-```bash
-GPUNETIO_DEVICE_API_ROLE=sender \
-  GPUNETIO_DEVICE_API_TARGET_IPV4="$RECEIVER_IPV4" \
-  GPUNETIO_DEVICE_API_OOB_PORT=6545 \
-  ./build-native/test/gtest/native-device-api-test \
-  --gtest_filter=GpunetioDeviceApiTest.*
-```
+## Evidence and proposed PR description boundary
 
-The receiver and sender must use the endpoint-specific OOB interface, RDMA
-device, GID, and port values valid in their own environment. The commands
-above are an example configuration, not a hardware claim.
+The public increment is native GPU PUT/completion on the current main device
+API. Its feature diff should contain the native mode/dispatcher arm, native
+backend/view implementation, opt-in build wiring, and existing native test.
+Already-merged progress, OOB, lifecycle, generic device-ops/wrapper and proxy
+implementations belong to main and are not reintroduced as feature changes.
 
-## Current boundary
-
-This file intentionally contains the normal-path and bounded argument
-harness only. Host wrapper/tag tests are provided separately. Foreign-engine and wrong-role tests,
-concurrent submitter tests, stale-registration error teardown, and explicit
-native-path tracing remain to be added alongside the corresponding public
-implementation and test wiring. See the PR's validation table for tested
-revisions; no serving, latency or bandwidth improvement is claimed.
+Historical DOCA 3.1 and ABI-2 validation belongs to the old branch/runtime only;
+it does not qualify the API-3/DOCA-3.5 adaptation. Likewise the previously reported
+H20 dependent compute-chain experiment is historical workload evidence, not a
+new latency/bandwidth/serving claim for this merge. Current-main validation must
+name its source head and matching runtime. No owner/warp/consumer experiment or
+related fork's measurements are attributed to this native-only change.

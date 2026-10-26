@@ -3,7 +3,8 @@
 #ifndef NIXL_GPUNETIO_DEVICE_MEMVIEW_H
 #define NIXL_GPUNETIO_DEVICE_MEMVIEW_H
 
-#include "device/device_allocator.h"
+#include "device/device_ops.h"
+#include "device/device_memview.h"
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -18,17 +19,19 @@ class mr;
 struct nixlGpunetioNativeViewStorage {
     std::vector<std::shared_ptr<nixl::doca::verbs::mr>> pins;
     bool remote = false;
-    nixlDeviceMem elements;
-    nixlDeviceMem header;
+    nixl::deviceMem elements;
+    nixl::deviceMem header;
+    nixl::deviceMem wrapper;
 };
 
 struct nixlGpunetioNativeState {
     std::mutex mutex;
     uint64_t cookie = 0;
+    nixl::deviceOps *ops = nullptr;
     std::string peer;
     size_t remoteViews = 0;
-    nixlDeviceMem lane;
-    nixlDeviceMem context;
+    nixl::deviceMem lane;
+    nixl::deviceMem context;
     std::unordered_map<nixlMemViewH, nixlGpunetioNativeViewStorage> views;
 };
 

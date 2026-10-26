@@ -19,26 +19,32 @@
 
 #include "common/nixl_log.h"
 #include "common/nixl_time.h"
+#include "common/scoped_fd.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <vector>
 #include <poll.h>
-#include <unistd.h>
+#include <sys/eventfd.h>
 
 #include "ucx_utils.h"
 
 namespace {
 
-class nixlUcxSharedThread : public nixlUcxThread {
+class nixlUcxSharedThread final : public nixlUcxThread {
 public:
-    nixlUcxSharedThread(const nixlUcxEngine *engine, size_t num_workers, nixlTime::us_t delay)
-        : nixlUcxThread(engine, num_workers) {
-        if (pipe(controlPipe_) < 0) {
-            throw std::runtime_error("Couldn't create progress thread control pipe");
+    nixlUcxSharedThread(const nixlUcxEngine *engine,
+                        std::vector<nixlUcxWorker *> workers,
+                        nixlTime::us_t delay)
+        : nixlUcxThread(engine, std::move(workers)),
+          controlFd_(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)) {
+        if (!controlFd_.valid()) {
+            throw std::runtime_error("Failed to create progress thread control eventfd");
         }
+
         // TODO: We need delay to manual periodic wakeup/polling as a temporary
         // workaround for UCX bug (poll wouldn't wake up some fds in particular
         // circumstances)
@@ -49,39 +55,32 @@ public:
             static_cast<int>(std::min<nixlTime::us_t>(delay, std::numeric_limits<int>::max()));
         delay_ = std::chrono::ceil<std::chrono::milliseconds>(std::chrono::microseconds(delay_us));
 
-        pollFds_.resize(num_workers + 1);
-        pollFds_.back() = {controlPipe_[0], POLLIN, 0};
-    }
-
-    ~nixlUcxSharedThread() {
-        close(controlPipe_[0]);
-        close(controlPipe_[1]);
-    }
-
-    void
-    join() override {
-        const char signal = 'X';
-        int ret = write(controlPipe_[1], &signal, sizeof(signal));
-        if (ret < 0) {
-            NIXL_PERROR << "write to progress thread control pipe failed";
+        pollFds_.reserve(getWorkers().size() + 1);
+        for (const auto *worker : getWorkers()) {
+            pollFds_.push_back({worker->getEfd(), POLLIN, 0});
         }
-        nixlUcxThread::join();
-    }
-
-    void
-    addWorker(nixlUcxWorker *worker) override {
-        pollFds_[getWorkers().size()] = {worker->getEfd(), POLLIN, 0};
-        nixlUcxThread::addWorker(worker);
+        pollFds_.push_back({controlFd_.get(), POLLIN, 0});
+        thread_ = startThread();
     }
 
 protected:
     void
-    run() override {
+    run(std::stop_token token) override {
         NIXL_DEBUG << "shared " << *this << " running";
+        // A stop request wakes the poll below through the control eventfd
+        const std::stop_callback wake(token, [this]() {
+            int ret;
+            do {
+                ret = eventfd_write(controlFd_.get(), 1);
+            } while ((ret < 0) && (errno == EINTR));
+            if (ret < 0) {
+                NIXL_PERROR << "Failed to write to progress thread control eventfd";
+            }
+        });
+
         // Set timeout event so that the main loop would progress all workers on first iteration
         bool timeout = true;
-        bool pthr_stop = false;
-        while (!pthr_stop) {
+        while (!token.stop_requested()) {
             for (size_t i = 0; i < pollFds_.size() - 1; i++) {
                 if (!(pollFds_[i].revents & POLLIN) && !timeout) {
                     continue;
@@ -102,15 +101,8 @@ protected:
             if (!ret) {
                 timeout = true;
             } else if (pollFds_.back().revents & POLLIN) {
-                pollFds_.back().revents = 0;
-
-                char signal;
-                int ret = read(pollFds_.back().fd, &signal, sizeof(signal));
-                if (ret < 0) {
-                    NIXL_PERROR << "read() on control pipe failed";
-                }
-
-                pthr_stop = true;
+                // The eventfd is signaled only for shutdown, no need to read anything.
+                break;
             }
         }
 
@@ -119,8 +111,9 @@ protected:
 
 private:
     std::chrono::milliseconds delay_;
-    int controlPipe_[2];
+    const nixl::scopedFd controlFd_;
     std::vector<pollfd> pollFds_;
+    std::jthread thread_;
 };
 
 } // namespace
@@ -136,18 +129,13 @@ nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_param
         throw std::invalid_argument("UCX library does not support multi-threading");
     }
 
-    const size_t shared_count = getSharedWorkers().size();
-    thread_ = std::make_unique<nixlUcxSharedThread>(this, shared_count, init_params.pthrDelay);
-    for (size_t i = 0; i < shared_count; i++) {
-        thread_->addWorker(getSharedWorkers()[i].get());
+    std::vector<nixlUcxWorker *> workers;
+    workers.reserve(getSharedWorkers().size());
+    for (const auto &worker : getSharedWorkers()) {
+        workers.push_back(worker.get());
     }
-    thread_->start();
-}
-
-nixlUcxThreadEngine::~nixlUcxThreadEngine() {
-    if (thread_) {
-        thread_->join();
-    }
+    thread_ =
+        std::make_unique<nixlUcxSharedThread>(this, std::move(workers), init_params.pthrDelay);
 }
 
 void

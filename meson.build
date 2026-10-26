@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.5.0',
+project('nixl', 'CPP', version: '1.6.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
 
 enabled_plugins = {}
 
@@ -147,10 +147,29 @@ has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', depen
 # Check whether the POSIX plugin is enabled
 has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 
-# Check for CUObject Client library — try newest first so CUDA 13.2+ wheels
-# pick up the versioned pkg-config module that matches the build environment.
+# Check for CUObject Client library. The pkg-config module is versioned as
+# cuobjclient-<major>.<minor>, so ask pkg-config what the build environment
+# actually provides rather than relying only on a hardcoded list, which goes
+# stale with every CUDA release. The static list below is the fallback for
+# environments where pkg-config cannot be invoked directly.
 cuobj_dep = dependency('', required: false)
-foreach _cuobj_pkg : ['cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1']
+_cuobj_modules = []
+_cuobj_probe = run_command('sh', '-c',
+    'pkg-config --list-all 2>/dev/null | cut -d" " -f1 | grep "^cuobjclient-" | sort -V -r',
+    check: false)
+if _cuobj_probe.returncode() == 0
+    foreach _line : _cuobj_probe.stdout().strip().split('\n')
+        if _line != ''
+            _cuobj_modules += _line
+        endif
+    endforeach
+endif
+foreach _fallback : ['cuobjclient-13.4', 'cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1']
+    if _fallback not in _cuobj_modules
+        _cuobj_modules += _fallback
+    endif
+endforeach
+foreach _cuobj_pkg : _cuobj_modules
     _candidate = dependency(_cuobj_pkg, required: false)
     if _candidate.found()
         cuobj_dep = _candidate
@@ -160,6 +179,15 @@ foreach _cuobj_pkg : ['cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1'
 endforeach
 if cuobj_dep.found()
     add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
+    summary({'cuObject (OBJ plugin RDMA)': 'enabled'}, section: 'Dependencies')
+else
+    warning('cuObjClient not found: the OBJ plugin will be built WITHOUT cuObject ' +
+            'RDMA acceleration. Searched pkg-config modules: ' +
+            ', '.join(_cuobj_modules) + '. Install the libcuobjclient development ' +
+            'package, which provides cuobjclient-<version>.pc, and make sure ' +
+            'pkg-config can find it (PKG_CONFIG_PATH).')
+    summary({'cuObject (OBJ plugin RDMA)': 'DISABLED - cuobjclient not found'},
+            section: 'Dependencies')
 endif
 
 # Search for Abseil dependencies in the system first
@@ -312,7 +340,7 @@ if cuda_dep.found()
     message('nvcc version: ' + nvcc.version())
     message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
     if nvcc.version().version_compare('>=12.8')
-        doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
+        doca_gpunetio_dep = dependency('doca-gpunetio', version : '>=3.5', required : false)
     else
         warning('GPUNETIO plugin not supported in CUDA version: ' + nvcc.version())
         doca_gpunetio_dep = disabler()
@@ -447,27 +475,23 @@ else
   libfabric_dep = dependency('libfabric', required: false)
 endif
 
-# UCX GPU device API detection
-if not get_option('gpunetio_device_api').disabled()
+# Native GPUNETIO device API is an explicit build capability.
+if get_option('gpunetio_device_api').enabled()
     if not cuda_dep.found() or not doca_gpunetio_dep.found() or not enabled_plugins.get('GPUNETIO')
         error('GPUNETIO native Device API requires CUDA and the GPUNETIO plugin')
     endif
 endif
 
+# UCX GPU device API detection
 nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
 if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     cuda = meson.get_compiler('cuda')
+    # TODO: Expose doca_gpunetio_dep through UCX
     have_gpu_side = cuda.compiles('''
             #include <ucp/api/device/ucp_device_impl.h>
             int main() { return 0; }
-        ''', dependencies : [ucx_dep], args: nvcc_flags)
-    if not have_gpu_side and doca_gpunetio_dep.found()
-        have_gpu_side = cuda.compiles('''
-            #include <ucp/api/device/ucp_device_impl.h>
-            int main() { return 0; }
-        ''', dependencies: [ucx_dep, doca_gpunetio_dep], args: nvcc_flags)
-    endif
+        ''', dependencies : [ucx_dep, doca_gpunetio_dep], args: nvcc_flags)
 
     have_host_side = cpp.has_function('ucp_device_remote_mem_list_create',
         prefix: '#include <ucp/api/device/ucp_host.h>',
@@ -587,6 +611,10 @@ nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/i
 nixl_device_inc_dirs = include_directories('src/api/device')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
+# The generic GPU API includes the proxy wire protocol as
+# <device/proxy/proxy_protocol.h>. Keep the narrower device include set for
+# consumers that only need headers such as <gpu/device_types.cuh>.
+nixl_device_api_inc_dirs = [nixl_device_inc_dirs, utils_inc_dirs]
 
 subdir('src')
 if get_option('build_tests') and get_option('buildtype') != 'release'
@@ -602,7 +630,6 @@ endif
 if get_option('install_headers')
   install_headers('src/api/cpp/nixl.h', install_dir: prefix_inc)
   install_headers('src/api/cpp/nixl_types.h', install_dir: prefix_inc)
-  install_headers('src/api/cpp/nixl_device_backend_types.h', install_dir: prefix_inc)
   install_headers('src/api/cpp/nixl_params.h', install_dir: prefix_inc)
   install_headers('src/api/cpp/nixl_descriptors.h', install_dir: prefix_inc)
   install_headers('src/utils/serdes/serdes.h', install_dir: prefix_inc + '/utils/serdes')

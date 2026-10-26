@@ -21,6 +21,15 @@ if not gtest_dep.found()
     subdir_done()
 endif
 
+if get_option('gpunetio_device_api').enabled() and is_variable('gpunetio_backend_interface')
+    native_device_test = executable('native-device-api-test',
+        'device_api/gpunetio_device_api_test.cu',
+        include_directories: [nixl_inc_dirs, nixl_device_inc_dirs, utils_inc_dirs],
+        dependencies: [nixl_dep, nixl_infra, cuda_dep, doca_gpunetio_dep, dependency('gtest', main: true)],
+        cuda_args: ['-DNIXL_ENABLE_GPUNETIO_DEVICE_API=1',
+                    '-DNIXL_GPUNETIO_DEVICE_API_PUBLIC=1', '-DNIXL_DISABLE_UCX_DEVICE_API=1'])
+endif
+
 gmock_dep = dependency('gmock', required : false)
 
 if not gmock_dep.found()
@@ -50,18 +59,10 @@ if sanitizer_opts.contains('thread')
 endif
 
 subdir('mocks')
-subdir('unit')
 subdir('plugins')
 
-if not get_option('gpunetio_device_api').disabled()
-    native_device_test = executable('native-device-api-test',
-        'device_api/gpunetio_device_api_test.cu',
-        include_directories: [nixl_inc_dirs, nixl_device_inc_dirs],
-        dependencies: [nixl_dep, nixl_infra, cuda_dep, doca_gpunetio_dep, dependency('gtest', main: true)],
-        cuda_args: native_device_args)
-endif
-
-if ucx_gpu_device_api_available
+# The UCX device API tests also run the proxy mode, which needs only CUDA and the UCX backend.
+if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
     subdir('device_api')
 endif
 
@@ -94,6 +95,8 @@ elif cuda_dep.found()
     cpp_flags += ['-DHAVE_GPU', '-DHAVE_CUDA']
 endif
 
+subdir('unit')
+
 if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     cpp_flags += '-DHAVE_LIBFABRIC'
 endif
@@ -117,21 +120,24 @@ gtest_sources = [
     'common.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
-    'telemetry_prometheus_test.cpp',
     'telemetry_mp_store_test.cpp',
     'telemetry_histogram_test.cpp',
-    'telemetry_prometheus_stress_test.cpp',
     'telemetry_stress_test.cpp',
     'telemetry_benchmark.cpp',
     'nixl_duration_test.cpp',
-    'configuration.cpp'
+    'blocking_queue_test.cpp',
+    'nixl_log_file_test.cpp',
+    'configuration.cpp',
+    'trace_recorder_test.cpp',
+    # Hidden in libnixl_common, so the oversized-record test links its own copy.
+    '../../src/utils/common/nixl_log_file_sink.cpp',
     ]
 
-if ucx_gpu_device_api_available
+if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
     gtest_sources += device_api_test_sources
-    device_api_inc = [nixl_device_inc_dirs, include_directories('device_api')]
+    device_api_inc = nixl_device_api_inc_dirs + [include_directories('device_api')]
     device_api_dep = [ucx_dep]
-    if doca_gpunetio_dep.found()
+    if ucx_gpu_device_api_available
         device_api_dep += [doca_gpunetio_dep]
     endif
 else
@@ -141,6 +147,7 @@ endif
 
 if ucx_dep.found() and is_variable('ucx_backend_interface')
     gtest_sources += 'hw_warning_test.cpp'
+    gtest_sources += 'ucx_trace_context_test.cpp'
     cpp_flags += '-DHAVE_UCX_BACKEND'
     ucx_hw_warning_dep = [ucx_backend_interface, ucx_dep]
 else
@@ -160,6 +167,8 @@ if is_variable('nixl_telemetry_mp_exporter_dep')
     gtest_sources += 'telemetry_mp_exporter_test.cpp'
     gtest_sources += 'telemetry_mp_e2e_test.cpp'
     gtest_sources += 'telemetry_mp_core_test.cpp'
+    gtest_sources += 'telemetry_mp_scrape_test.cpp'
+    gtest_sources += 'telemetry_mp_stress_test.cpp'
     telemetry_mp_exporter_dep = [nixl_telemetry_mp_exporter_dep]
 else
     telemetry_mp_exporter_dep = []
@@ -169,10 +178,23 @@ test_exe = executable('gtest',
     sources : gtest_sources,
     include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../metrics'), include_directories('../../src/plugins/telemetry/common')],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface, nixl_telemetry_mp_store_dep, telemetry_mp_collector_dep, telemetry_mp_exporter_dep],
+    dependencies : [nixl_dep, nixl_common_dep, serdes_interface, gpu_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface, nixl_telemetry_mp_store_dep, telemetry_mp_collector_dep, telemetry_mp_exporter_dep],
     link_with: [nixl_build_lib],
     install : true
 )
+
+gtest_depends = [trace_recorder_plugin]
+if ucx_dep.found() and is_variable('ucx_backend_interface')
+    ucx_trace_receiver = executable('ucx_trace_receiver',
+        sources : ['main.cpp', 'common.cpp', 'ucx_trace_receiver.cpp'],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        cpp_args : cpp_flags,
+        dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, gtest_dep, gmock_dep],
+        link_with: [nixl_build_lib],
+        install : true
+    )
+    gtest_depends += [ucx_trace_receiver]
+endif
 
 # MetadataExchangeTestFixture rapidly creates and tears down comm-thread agents,
 # which trips the GCC 13.3 libsanitizer thread-registry crash (a flaky SIGSEGV in
@@ -183,7 +205,8 @@ gtest_args = [plugin_dirs_arg]
 if get_option('sanitizer') != 'none'
     gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*'
 endif
-test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer')
+test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer',
+     depends: gtest_depends)
 
 # Telemetry hot-path microbenchmark (NVBug 5876558). The cases are DISABLED_ so
 # they never run in the normal 'gtest' suite; this dedicated entry opts them in.

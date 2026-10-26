@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,8 +45,8 @@
 #error "Build this test with NIXL_ENABLE_GPUNETIO_DEVICE_API=1"
 #endif
 
-#if !defined(NIXL_GPUNETIO_DEVICE_API_LEGACY_DOCA31) || !NIXL_GPUNETIO_DEVICE_API_LEGACY_DOCA31
-#error "Build this test with NIXL_GPUNETIO_DEVICE_API_LEGACY_DOCA31=1"
+#if !defined(NIXL_GPUNETIO_DEVICE_API_PUBLIC) || !NIXL_GPUNETIO_DEVICE_API_PUBLIC
+#error "Build this test with NIXL_GPUNETIO_DEVICE_API_PUBLIC=1 (DOCA 3.5+)"
 #endif
 
 namespace {
@@ -62,7 +62,6 @@ constexpr uint64_t kWrapPayloadBytes = 4096;
 constexpr uint64_t kWrapSlotBytes = 4352;
 constexpr auto kWaitTimeout = std::chrono::seconds(45);
 constexpr auto kPollTimeout = std::chrono::seconds(5);
-constexpr size_t kStatusModeTagOffset = sizeof(nixlGpuXferStatusH) - sizeof(uint32_t);
 
 struct DeviceBuffer {
     void *ptr = nullptr;
@@ -196,25 +195,20 @@ putKernel(PutSpec spec, DeviceResult *result, uint64_t timeout_cycles) {
 
 __device__ bool
 sameStatus(const nixlGpuXferStatusH &lhs, const nixlGpuXferStatusH &rhs) {
-    const auto *a = reinterpret_cast<const unsigned char *>(&lhs);
-    const auto *b = reinterpret_cast<const unsigned char *>(&rhs);
-    for (size_t i = 0; i < sizeof(nixlGpuXferStatusH); ++i) {
-        if (a[i] != b[i]) {
+    for (size_t i = 0; i < sizeof(lhs.storage); ++i) {
+        if (lhs.storage[i] != rhs.storage[i]) {
             return false;
         }
     }
-    return true;
+    return lhs.mode == rhs.mode;
 }
 
 __device__ void
 initRejectedStatus(nixlGpuXferStatusH &status) {
-    auto *bytes = reinterpret_cast<unsigned char *>(&status);
-    for (size_t i = 0; i < sizeof(nixlGpuXferStatusH); ++i) {
-        bytes[i] = 0xa5;
+    for (size_t i = 0; i < sizeof(status.storage); ++i) {
+        status.storage[i] = 0xa5;
     }
-    for (size_t i = kStatusModeTagOffset; i < sizeof(nixlGpuXferStatusH); ++i) {
-        bytes[i] = 0;
-    }
+    status.mode = nixl_device_exec_mode_t{};
 }
 
 __global__ void
@@ -473,11 +467,11 @@ copyResult(DeviceBuffer &device_result) {
 
 uint64_t
 pollCycles() {
-    cudaDeviceProp prop{};
-    int device = 0;
+    int device = 0, clock_khz = 0;
     EXPECT_EQ(cudaGetDevice(&device), cudaSuccess);
-    EXPECT_EQ(cudaGetDeviceProperties(&prop, device), cudaSuccess);
-    return static_cast<uint64_t>(prop.clockRate) *
+    EXPECT_EQ(cudaDeviceGetAttribute(&clock_khz, cudaDevAttrClockRate, device), cudaSuccess);
+    EXPECT_GT(clock_khz, 0);
+    return static_cast<uint64_t>(clock_khz) *
         static_cast<uint64_t>(
                std::chrono::duration_cast<std::chrono::milliseconds>(kPollTimeout).count());
 }

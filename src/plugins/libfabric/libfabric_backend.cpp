@@ -277,6 +277,10 @@ nixlLibfabricCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &wa
     if (dev != expected_dev) {
         return -1;
     }
+    // Context-independent allocations need the per-device primary-context path.
+    if (ctx == nullptr) {
+        return -1;
+    }
 
     if (pthrCudaCtx_) {
         if (pthrCudaCtx_ != ctx) {
@@ -389,6 +393,8 @@ nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op, const std::strin
     : completed_requests_(0),
       submitted_requests_(0),
       error_status_(NIXL_SUCCESS),
+      successful_requests_(0),
+      xfer_error_sent_(false),
       operation_(op),
       remote_agent_(remote_agent),
       total_notif_msg_len(0) {
@@ -409,6 +415,7 @@ void
 nixlLibfabricBackendH::init_request_tracking(size_t num_requests) {
     submitted_requests_.store(num_requests);
     completed_requests_.store(0);
+    successful_requests_.store(0);
     error_status_.store(NIXL_SUCCESS);
     NIXL_DEBUG << "Initialized request tracking for " << num_requests << " requests";
 }
@@ -419,6 +426,8 @@ nixlLibfabricBackendH::complete_request(nixl_status_t status) {
         nixl_status_t expected = NIXL_SUCCESS;
         error_status_.compare_exchange_strong(
             expected, status, std::memory_order_relaxed, std::memory_order_relaxed);
+    } else {
+        successful_requests_.fetch_add(1, std::memory_order_relaxed);
     }
     // Release ensures the error store above is visible to any thread that
     // observes the incremented count via an acquire load in is_completed().
@@ -431,6 +440,11 @@ nixlLibfabricBackendH::complete_request(nixl_status_t status) {
 size_t
 nixlLibfabricBackendH::get_completed_requests_count() const {
     return completed_requests_.load();
+}
+
+size_t
+nixlLibfabricBackendH::get_successful_requests_count() const {
+    return successful_requests_.load(std::memory_order_acquire);
 }
 
 size_t
@@ -447,6 +461,11 @@ nixlLibfabricBackendH::adjust_total_submitted_requests(size_t actual_count) {
 nixl_status_t
 nixlLibfabricBackendH::get_error_status() const {
     return error_status_.load(std::memory_order_acquire);
+}
+
+bool
+nixlLibfabricBackendH::claim_xfer_error_send() {
+    return !xfer_error_sent_.exchange(true);
 }
 
 bool
@@ -528,18 +547,24 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         NIXL_DEBUG << "Set notification + handshake processors for rail 0";
         rail_manager_.getRail(notification_rail_id)
             .setNotificationCallback(
-                [this](const std::string &serialized_notif, uint16_t sender_peer_idx) {
+                [this](const std::string &serialized_notif, uint32_t sender_peer_idx) {
                     processNotification(serialized_notif, sender_peer_idx);
                 });
         rail_manager_.getRail(0).setHandshakeCallback(
             [this](const std::string &payload) { handleHandshake(payload); });
+        rail_manager_.getRail(notification_rail_id)
+            .setXferErrorCallback([this](uint16_t notif_xfer_id,
+                                         uint32_t sender_peer_idx,
+                                         uint32_t final_completions) {
+                handleXferError(notif_xfer_id, sender_peer_idx, final_completions);
+            });
 
         // Set up XFER_ID tracking callbacks for all rails
         NIXL_DEBUG << "Setting up XFER_ID tracking callbacks for " << rail_manager_.getNumRails()
                    << " rails";
         for (size_t rail_id = 0; rail_id < rail_manager_.getNumRails(); ++rail_id) {
             rail_manager_.getRail(rail_id).setXferIdCallback(
-                [this](uint64_t imm_data, uint16_t sender_peer_idx) {
+                [this](uint64_t imm_data, uint32_t sender_peer_idx) {
                     uint16_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(imm_data);
                     addReceivedXferId(xfer_id, sender_peer_idx);
                 });
@@ -698,7 +723,7 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
     nixl_status_t status =
         rail_manager_.deserializeConnectionInfo("dest", remote_conn_info, data_endpoints);
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Rail Manager deserializeConnectionInfo failed";
+        NIXL_ERROR << "Rail Manager deserializeConnectionInfo failed with status: " << status;
         return status;
     }
 
@@ -797,12 +822,6 @@ nixlLibfabricEngine::createAgentConnection(
                   << ", remote: " << data_rail_endpoints.size() << ")";
     }
 
-    if (agent_names_.size() > NIXL_AGENT_INDEX_MASK) {
-        NIXL_ERROR << "Cannot add agent '" << agent_name << "': agent index " << agent_names_.size()
-                   << " exceeds 8-bit wire limit (" << NIXL_AGENT_INDEX_MASK << ")";
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
     auto existing = connections_.find(agent_name);
     if (existing != connections_.end()) {
         NIXL_INFO << "Connection already exists for agent: " << agent_name
@@ -816,17 +835,25 @@ nixlLibfabricEngine::createAgentConnection(
         return NIXL_ERR_BACKEND;
     }
 
+    // Claim the index first, so a partial insertAllAddresses() failure can't hand it to the
+    // next peer. The dead name a failure leaves is harmless: agent_names_ is used for its size.
+    agent_names_.push_back(agent_name);
+
     conn->rail_remote_addr_list_.reserve(rail_manager_.getNumRails());
 
     // Process all rails in one operation
-    nixl_status_t data_status = rail_manager_.insertAllAddresses(
-        data_rail_endpoints, conn->rail_remote_addr_list_, conn->src_ep_names_);
+    // The AV insert must happen before sendHandshakeTo() further down the call chain:
+    // the peer treats our handshake as proof that we can attribute its traffic.
+    nixl_status_t data_status =
+        rail_manager_.insertAllAddresses(data_rail_endpoints,
+                                         static_cast<uint32_t>(conn->agent_index_),
+                                         conn->rail_remote_addr_list_,
+                                         conn->src_ep_names_);
     if (data_status != NIXL_SUCCESS) {
         NIXL_ERROR << "insertAllAddresses failed for rails with status: " << data_status;
         return data_status;
     }
 
-    agent_names_.push_back(agent_name);
     for (size_t i = 0; i < agent_names_.size(); ++i) {
         NIXL_DEBUG << "Index " << i << ": " << agent_names_[i];
     }
@@ -836,24 +863,29 @@ nixlLibfabricEngine::createAgentConnection(
     // Drain any handshake the peer already sent us before we'd registered
     // them locally.
     if (agent_name != localAgent) {
-        std::optional<uint16_t> buffered;
+        bool buffered = false;
+        std::optional<uint16_t> rejected_ver;
         {
             std::lock_guard<std::mutex> plk(pending_handshake_mutex_);
-            auto hit = pending_inbound_handshakes_.find(agent_name);
-            if (hit != pending_inbound_handshakes_.end()) {
-                buffered = hit->second;
-                pending_inbound_handshakes_.erase(hit);
+            buffered = (pending_inbound_handshakes_.erase(agent_name) > 0);
+            auto rejected = pending_rejected_handshakes_.find(agent_name);
+            if (rejected != pending_rejected_handshakes_.end()) {
+                rejected_ver = rejected->second;
+                pending_rejected_handshakes_.erase(rejected);
             }
+        }
+        if (rejected_ver) {
+            std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
+            conn->rejected_peer_proto_ver_ = *rejected_ver;
+            conn->handshake_rejected_.store(true, std::memory_order_release);
         }
         if (buffered) {
             {
                 std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
-                conn->local_agent_idx_at_remote_ = *buffered;
                 conn->handshake_received_.store(true, std::memory_order_release);
             }
             conn->handshake_cv_.notify_all();
-            NIXL_INFO << "Applied buffered handshake from '" << agent_name
-                      << "' assigned_idx=" << *buffered;
+            NIXL_INFO << "Applied buffered handshake from '" << agent_name << "'";
         }
     }
 
@@ -892,14 +924,16 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
         const auto deadline = std::chrono::steady_clock::now() +
             std::chrono::seconds(NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S);
 
+        auto handshake_done = [&] {
+            return conn->handshake_received_.load(std::memory_order_acquire) ||
+                conn->handshake_rejected_.load(std::memory_order_acquire);
+        };
         if (progress_thread_enabled_) {
             std::unique_lock<std::mutex> lk(conn->handshake_mutex_);
-            conn->handshake_cv_.wait_until(lk, deadline, [&] {
-                return conn->handshake_received_.load(std::memory_order_acquire);
-            });
+            conn->handshake_cv_.wait_until(lk, deadline, handshake_done);
         } else {
             while (std::chrono::steady_clock::now() < deadline) {
-                if (conn->handshake_received_.load(std::memory_order_acquire)) {
+                if (handshake_done()) {
                     break;
                 }
                 nixl_status_t progress_status = rail_manager_.progressActiveRails();
@@ -911,10 +945,24 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
             }
         }
 
+        if (conn->handshake_rejected_.load(std::memory_order_acquire)) {
+            uint16_t peer_ver;
+            {
+                std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
+                peer_ver = conn->rejected_peer_proto_ver_;
+            }
+            NIXL_ERROR << "Peer '" << remote_agent << "' speaks libfabric-plugin protocol version "
+                       << peer_ver << ", we speak " << NIXL_LIBFABRIC_PROTO_VERSION
+                       << "; connection cannot be established. Upgrade both ends of the cluster "
+                          "to the same NIXL version.";
+            return NIXL_ERR_MISMATCH;
+        }
         if (!conn->handshake_received_.load(std::memory_order_acquire)) {
             NIXL_ERROR << "Handshake from peer '" << remote_agent << "' not received after "
                        << NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S
-                       << "s; connection cannot be established.";
+                       << "s; connection cannot be established. The peer may be unreachable, "
+                          "or speak a different libfabric-plugin protocol version (we speak "
+                       << NIXL_LIBFABRIC_PROTO_VERSION << "); check the peer's log.";
             return NIXL_ERR_REMOTE_DISCONNECT;
         }
     }
@@ -979,8 +1027,8 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
             if (use_cuda_addr_wa) {
                 bool need_restart;
                 if (vramUpdateCtx((void *)mem.addr, mem.devId, need_restart)) {
-                    NIXL_INFO << "Multi-GPU detected (device " << mem.devId
-                              << "), using cudaSetDevice fallback";
+                    NIXL_INFO << "CUDA pointer context unavailable or incompatible (device "
+                              << mem.devId << "), using cudaSetDevice fallback";
                     {
                         const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
                         cuda_addr_wa_ = false;
@@ -1150,7 +1198,7 @@ nixlLibfabricEngine::loadRemoteMD(const nixlBlobDesc &input,
     nixl_status_t status = rail_manager_.deserializeMemoryKeys(
         input.metaInfo, conn->rail_remote_addr_list_.at(0).size(), remote_keys, remote_addr);
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Rail Manager deserializeMemoryKeys failed";
+        NIXL_ERROR << "Rail Manager deserializeMemoryKeys failed with status: " << status;
         return status;
     }
 
@@ -1357,9 +1405,6 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         uint64_t remote_registered_base = remote_md->remote_buf_addr_;
 
         size_t desc_submitted_count = 0;
-        // imm_data.agent_idx = the value the receiver expects (our index in
-        // THEIR agent_names_), supplied by the handshake.
-        const uint16_t imm_agent_idx = senderImmDataAgentIdx(*conn);
         nixl_status_t status = rail_manager_.prepareAndSubmitTransfer(
             op_type,
             transfer_addr,
@@ -1371,7 +1416,6 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             remote_md->rail_remote_key_list_,
             remote_md->remote_selected_endpoints_,
             conn->rail_remote_addr_list_,
-            imm_agent_idx,
             backend_handle->post_xfer_id,
             [backend_handle](nixl_status_t status) {
                 backend_handle->complete_request(status);
@@ -1655,7 +1699,8 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
         // Check if any request completed with error
         nixl_status_t err = backend_handle->get_error_status();
         if (err != NIXL_SUCCESS) {
-            NIXL_ERROR << "Transfer completed with CQ error";
+            NIXL_ERROR << "Transfer completed with CQ error status " << err;
+            notifXferFailure(backend_handle, err);
             return err;
         }
 
@@ -1839,13 +1884,10 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
                    << " payload_chunk_size=" << header.payload_length << "B"
                    << " notif_xfer_id=" << header.notif_xfer_id;
 
-        const uint16_t imm_agent_idx =
-            senderImmDataAgentIdx(const_cast<nixlLibfabricConnection &>(*connection));
         nixl_status_t status = rail_manager_.postControlMessage(
             nixlLibfabricRailManager::ControlMessageType::NOTIFICATION,
             control_request,
-            connection->rail_remote_addr_list_[rail_id][0],
-            imm_agent_idx);
+            connection->rail_remote_addr_list_[rail_id][0]);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "postControlMessage failed on rail " << rail_id << " for fragment "
@@ -1866,6 +1908,107 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
     NIXL_DEBUG << "Successfully sent all " << binary_notifications.size()
                << " notification fragments" << " total_length=" << total_message_length;
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlLibfabricEngine::notifXferErrorPriv(const std::string &remote_agent,
+                                        uint16_t notif_xfer_id,
+                                        uint32_t final_completions) const {
+    std::shared_ptr<nixlLibfabricConnection> connection;
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
+        auto it = connections_.find(remote_agent);
+        if (it == connections_.end()) {
+            NIXL_ERROR << "No connection found for agent: " << remote_agent
+                       << ", cannot report transfer error for XFER_ID=" << notif_xfer_id;
+            return NIXL_ERR_NOT_FOUND;
+        }
+        connection = it->second;
+    }
+
+    const size_t rail_id = 0; // Control messages always travel on rail 0
+    nixlLibfabricReq *control_request = rail_manager_.getRail(rail_id).allocateControlRequest(
+        sizeof(XferErrorPayload), notif_xfer_id);
+    if (!control_request) {
+        NIXL_ERROR << "Failed to allocate control request for transfer error, XFER_ID="
+                   << notif_xfer_id;
+        return NIXL_ERR_BACKEND;
+    }
+
+    XferErrorPayload payload{};
+    payload.final_completions = final_completions;
+    memcpy(control_request->buffer, &payload, sizeof(payload));
+    control_request->buffer_size = sizeof(payload);
+
+    // A successful postControlMessage() only means fi_senddata() accepted the message, so watch
+    // the send completion as well: if it lands in the CQ as an error the target is left waiting
+    // and nothing else reports it. This runs later on the progress thread, by which time the
+    // caller's backend handle may already have been released, so capture values only and never
+    // touch the handle.
+    auto send_completion = [agent = remote_agent,
+                            xfer_id = notif_xfer_id](nixl_status_t send_status) {
+        if (send_status == NIXL_SUCCESS) {
+            return;
+        }
+        NIXL_ERROR << "Transfer-error message to " << agent << " for XFER_ID=" << xfer_id
+                   << " failed in its send CQ with status " << send_status << "; that agent will "
+                   << "keep waiting for writes that never arrive and will not see this transfer's "
+                   << "notification";
+    };
+
+    nixl_status_t status =
+        rail_manager_.postControlMessage(nixlLibfabricRailManager::ControlMessageType::XFER_ERROR,
+                                         control_request,
+                                         connection->rail_remote_addr_list_[rail_id][0],
+                                         std::move(send_completion));
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to send transfer-error message for XFER_ID=" << notif_xfer_id;
+        return NIXL_ERR_BACKEND;
+    }
+
+    // Without a progress thread, progress rail to ensure the message is sent
+    if (!progress_thread_enabled_) {
+        status = rail_manager_.getRail(rail_id).progressCompletionQueue();
+        if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
+            NIXL_ERROR << "Failed to progress rail 0 in notifXferErrorPriv";
+            return status;
+        }
+    }
+
+    NIXL_DEBUG << "Sent transfer-error message to " << remote_agent << " XFER_ID=" << notif_xfer_id
+               << " final_completions=" << final_completions;
+    return NIXL_SUCCESS;
+}
+
+void
+nixlLibfabricEngine::notifXferFailure(nixlLibfabricBackendH *backend_handle,
+                                      nixl_status_t error_status) const {
+    if (!backend_handle->has_notif || backend_handle->operation_ != nixl_xfer_op_t::NIXL_WRITE ||
+        backend_handle->remote_agent_ == localAgent) {
+        return;
+    }
+
+    if (!backend_handle->claim_xfer_error_send()) {
+        return;
+    }
+
+    const uint32_t final_completions =
+        static_cast<uint32_t>(backend_handle->get_successful_requests_count());
+
+    NIXL_ERROR << "Transfer XFER_ID=" << backend_handle->post_xfer_id << " to "
+               << backend_handle->remote_agent_ << " failed with status " << error_status
+               << " after " << final_completions << " of "
+               << backend_handle->get_submitted_requests_count()
+               << " writes completed; notifying target so it does not wait for the rest";
+
+    nixl_status_t status = notifXferErrorPriv(
+        backend_handle->remote_agent_, backend_handle->post_xfer_id, final_completions);
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Could not notify " << backend_handle->remote_agent_
+                   << " of the transfer error for XFER_ID=" << backend_handle->post_xfer_id
+                   << " (status " << status
+                   << "); that agent will keep waiting for writes that never arrive";
+    }
 }
 
 nixl_status_t
@@ -1947,7 +2090,7 @@ nixlLibfabricEngine::progressThread() {
 
 void
 nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
-                                         uint16_t sender_peer_idx) {
+                                         uint32_t sender_peer_idx) {
     NIXL_DEBUG << "Received notification size=" << serialized_notif.size()
                << " sender_peer_idx=" << sender_peer_idx;
 
@@ -2020,7 +2163,12 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
 
         // Update metadata from fragment 0 (agent_name will be extracted after reassembly)
         if (notif_seq_id == 0) {
-            it->second.expected_completions = expected_completions;
+            // A transfer-error message may have arrived first and lowered expected_completions to
+            // the number of writes that actually went out. That count is authoritative, so never
+            // raise it back to the count the initiator optimistically sent at postXfer time.
+            if (!it->second.xfer_failed) {
+                it->second.expected_completions = expected_completions;
+            }
             it->second.total_message_length = total_payload_length;
             it->second.agent_name_length = agent_name_length;
         }
@@ -2036,12 +2184,44 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
     checkPendingNotifications();
 }
 
+void
+nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
+                                     uint32_t sender_peer_idx,
+                                     uint32_t final_completions) {
+    {
+        std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
+
+        const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
+        auto [it, inserted] = pending_notifications_.try_emplace(key, notif_xfer_id);
+
+        if (inserted) {
+            it->second.remote_agent = "";
+            it->second.received_completions = 0;
+            it->second.expected_msg_fragments = 1; // Default to 1 fragment
+            it->second.received_msg_fragments = 0;
+        }
+
+        it->second.xfer_failed = true;
+        it->second.expected_completions = final_completions;
+
+        NIXL_ERROR << "Initiator reported a failed transfer: sender_peer_idx=" << sender_peer_idx
+                   << " notif_xfer_id=" << notif_xfer_id
+                   << " received_completions=" << it->second.received_completions
+                   << " expected_completions=" << it->second.expected_completions
+                   << (inserted ? " (error arrived before the notification)" : "")
+                   << "; data for this transfer is incomplete";
+    }
+
+    // Check if any notifications can now be completed
+    checkPendingNotifications();
+}
+
 /****************************************
  * Receiver Side XFER_ID Tracking Helper Methods
  *****************************************/
 
 void
-nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id, uint16_t sender_peer_idx) {
+nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id, uint32_t sender_peer_idx) {
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
 
@@ -2088,6 +2268,14 @@ nixlLibfabricEngine::checkPendingNotifications() {
                        << "/" << it->second.expected_msg_fragments
                        << " writes=" << it->second.received_completions << "/"
                        << it->second.expected_completions;
+
+            if (it->second.xfer_failed) {
+                NIXL_WARN << "Releasing the notification for notif_xfer_id="
+                          << it->second.notif_xfer_id
+                          << " whose transfer failed on the initiator; only "
+                          << it->second.received_completions
+                          << " writes arrived, so the data for this transfer is incomplete";
+            }
 
             // Reassemble combined payload from fragments
             std::string combined_payload;

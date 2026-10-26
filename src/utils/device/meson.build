@@ -13,18 +13,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-device_allocator_lib = shared_library('nixl_device_allocator',
-           ['device_allocator.cpp', 'device_allocator.h'],
-           include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           dependencies: [dl_dep],
+device_utils_lib = shared_library('device_utils',
+           ['device_ops.cpp', 'device_ops.h',
+            'host_published_mem.cpp', 'host_published_mem.h',
+            'device_memview.cpp', 'device_memview.h'],
+           # nixl_device_inc_dirs resolves <gpu/device_types.cuh>: the memview
+           # wrapper is the device API's dispatch handle, laid out there.
+           include_directories: [nixl_inc_dirs, utils_inc_dirs, nixl_device_inc_dirs],
+           dependencies: [nixl_common_dep, dl_dep],
            install: true)
 
-device_allocator_interface = declare_dependency(link_with: device_allocator_lib)
+device_utils_interface = declare_dependency(link_with: device_utils_lib,
+                                                include_directories: [nixl_device_inc_dirs])
 
 if cuda_dep.found()
-    shared_library('nixl_device_allocator_cuda',
-               'device_allocator_cuda.cpp',
+    shared_library('nixl_device_ops_cuda',
+               ['device_ops_cuda.cpp',
+                'device_ops_cuda_gdrcopy.cpp', 'device_ops_cuda_gdrcopy.h'],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
-               dependencies: [cuda_dep, nixl_common_dep],
+               dependencies: [cuda_dep, nixl_common_dep, dl_dep],
                install: true)
 endif
+
+subdir('proxy')

@@ -17,14 +17,11 @@
 #ifndef __BACKEND_ENGINE_H
 #define __BACKEND_ENGINE_H
 
-#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
-#include <mutex>
 
 #include "nixl_types.h"
-#include "nixl_device_backend_types.h"
 #include "backend_aux.h"
 #include "telemetry_event.h"
 
@@ -77,7 +74,8 @@ class nixlBackendEngine {
     public:
         explicit nixlBackendEngine(const nixlBackendInitParams *init_params)
             : backendType(init_params->type),
-              customParams(*init_params->customParams),
+              customParams(init_params->customParams ? *init_params->customParams :
+                                                       nixl_b_params_t{}),
               localAgent(init_params->localAgent),
               enableTelemetry_(init_params->enableTelemetry_) {}
 
@@ -111,11 +109,6 @@ class nixlBackendEngine {
         // Determines if a backend supports sending notifications. Related methods are not
         // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
         virtual bool supportsNotif() const = 0;
-
-        virtual nixl_device_exec_mode_t
-        getDeviceExecMode() const noexcept {
-            return nixl_device_exec_mode_t::NONE;
-        }
 
         virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
 
@@ -253,6 +246,13 @@ class nixlBackendEngine {
                          nixl_cost_t &method,
                          const nixl_opt_args_t *extra_params = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        // Determines if a backend carries a request's trace context to its peer. Core reads it
+        // once for remote backends and, if false, warns once when a sampled request goes untraced.
+        [[nodiscard]] virtual bool
+        supportsTraceContext() const noexcept {
+            return false;
         }
 };
 #endif

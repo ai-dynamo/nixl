@@ -22,12 +22,20 @@
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
 
+#include <sys/stat.h>
+#include <sys/vfs.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <optional>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 #include <gtest/gtest.h>
@@ -40,6 +48,62 @@ idx(nixl_telemetry_event_type_t t) {
 [[nodiscard]] inline nixlTelemetryExporterInitParams
 initParams(const std::string &agent) {
     return nixlTelemetryExporterInitParams{agent, 4096};
+}
+
+inline constexpr uid_t kNobodyUid = 65534;
+
+[[nodiscard]] inline std::string
+ownershipEnvironment(const std::filesystem::path &path) {
+    std::ostringstream out;
+    out << "euid " << ::geteuid();
+
+    struct statfs fs{};
+    if (::statfs(path.c_str(), &fs) == 0) {
+        out << ", fs type 0x" << std::hex << static_cast<unsigned long>(fs.f_type) << std::dec;
+    }
+
+    std::ifstream status("/proc/self/status");
+    for (std::string line; std::getline(status, line);) {
+        constexpr std::string_view key = "Seccomp:";
+        if (line.starts_with(key)) {
+            const auto value = line.find_first_not_of(" \t", key.size());
+            out << ", seccomp " << (value == std::string::npos ? "?" : line.substr(value));
+            break;
+        }
+    }
+
+    std::ifstream uid_map("/proc/self/uid_map");
+    for (std::string line; std::getline(uid_map, line);) {
+        out << ", uid_map [" << line << "]";
+    }
+    return std::move(out).str();
+}
+
+// A chown that returns 0 is not evidence the owner changed: a root-emulating seccomp filter
+// (enroot's, for one) answers it as a successful no-op, so the owner has to be read back.
+[[nodiscard]] inline std::optional<std::string>
+giveAwayOwnership(const std::filesystem::path &path) {
+    if (::geteuid() == kNobodyUid) {
+        return "already runs as uid " + std::to_string(kNobodyUid) + ", so '" + path.string() +
+            "' cannot be given away to it (" + ownershipEnvironment(path) + ")";
+    }
+    if (::chown(path.c_str(), kNobodyUid, static_cast<gid_t>(-1)) != 0) {
+        const int err = errno;
+        return "cannot give '" + path.string() + "' another owner: " + std::strerror(err) + " (" +
+            ownershipEnvironment(path) + ")";
+    }
+
+    struct stat st{};
+    if (::stat(path.c_str(), &st) != 0) {
+        const int err = errno;
+        return "cannot read back the owner of '" + path.string() + "': " + std::strerror(err);
+    }
+    if (st.st_uid != ::geteuid()) {
+        return std::nullopt;
+    }
+    return "chown to uid " + std::to_string(kNobodyUid) + " reported success but '" +
+        path.string() + "' is still owned by this process's own uid " + std::to_string(st.st_uid) +
+        " (" + ownershipEnvironment(path) + ")";
 }
 
 // A telemetry directory of this test's own, mode 0700: the exporter asks
@@ -68,13 +132,13 @@ protected:
 };
 
 // The multi-process exporter pointed at that directory and a port of its own.
-// Driven both directly (telemetry_mp_exporter_test.cpp) and through the core
-// (telemetry_mp_core_test.cpp): both files name this single fixture class, so
-// gtest groups them into one suite and runs SetUpTestSuite once per iteration.
+// Driven both directly and through the core, from several test files that all
+// name this single fixture class, so gtest groups them into one suite and runs
+// SetUpTestSuite once per iteration.
 class MpExporterTest : public mpTempDirTest {
 protected:
-    // A build tree has no <libnixl.so dir>/plugins, so LoadsThroughPluginManager
-    // finds the plugin only if the build path is registered. Registered once per
+    // A build tree has no <libnixl.so dir>/plugins, so a test that loads the plugin
+    // by name finds it only if the build path is registered. Registered once per
     // process (--gtest_repeat re-enters this hook), and only when it exists:
     // re-registering, or registering a missing directory, logs a warning/error
     // that the gtest main counts as a failure. When it is absent (a binary run
@@ -100,10 +164,36 @@ protected:
         env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", dir_.string());
     }
 
+    void
+    TearDown() override {
+        if (defaultDir_) {
+            std::error_code ec;
+            std::filesystem::remove_all(*defaultDir_, ec);
+        }
+        mpTempDirTest::TearDown();
+    }
+
+    std::filesystem::path
+    scopedDefaultDir() {
+        const std::filesystem::path shm = "/dev/shm";
+        std::error_code ec;
+        const bool shm_writable =
+            std::filesystem::is_directory(shm, ec) && ::access(shm.c_str(), W_OK | X_OK) == 0;
+        defaultDir_ = (shm_writable ? shm : std::filesystem::temp_directory_path()) /
+            ("nixl-telemetry-" + std::to_string(::geteuid()) + "-" + std::to_string(port_));
+        std::filesystem::remove_all(*defaultDir_, ec);
+        return *defaultDir_;
+    }
+
     [[nodiscard]] std::filesystem::path
     singleStoreFile() const {
+        return singleStoreFile(dir_);
+    }
+
+    [[nodiscard]] static std::filesystem::path
+    singleStoreFile(const std::filesystem::path &dir) {
         std::error_code ec;
-        for (const auto &entry : std::filesystem::directory_iterator(dir_, ec)) {
+        for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
             const auto name = entry.path().filename().string();
             if (name.rfind("nixl.", 0) == 0 && name.size() > 5 &&
                 name.substr(name.size() - 5) == ".mmap") {
@@ -115,6 +205,7 @@ protected:
 
     gtest::ScopedEnv env_;
     uint16_t port_ = 0;
+    std::optional<std::filesystem::path> defaultDir_;
 };
 
 #endif // NIXL_TEST_GTEST_MP_TELEMETRY_FIXTURE_H

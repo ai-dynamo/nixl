@@ -21,23 +21,25 @@ job: nixl-ci-gpu
 failFast: false
 
 # Job cap. Axes run in parallel, so this bounds the longest single axis:
-# docker build (~11) + allocation wait (up to immediateTimeout 60) + run steps (110) + stop (~5).
-timeout_minutes: 200
+# docker build (~11) + allocation wait (up to immediateTimeout 60) + run steps (150, incl. the 30 image sync) + stop (~5).
+timeout_minutes: 240
 
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   limits: "{memory: 16Gi, cpu: 16000m}"
   requests: "{memory: 8Gi, cpu: 8000m}"
   privileged: true
 
 credentials:
-  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+  - credentialsId: 'svc-nixl-github-read-only-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
+  - {credentialsId: 'svc-nixl-il-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
 
 env:
   ARTIFACTORY_PATH: /sw-nbu-swx-nixl-docker-local/ci
@@ -49,7 +51,7 @@ env:
   SLURM_GRES: gpu:4
   SLURM_MEM: 128G
   SLURM_MINCPUS: 24
-  SLURM_JOB_TIMEOUT: '02:20:00'
+  SLURM_JOB_TIMEOUT: '02:50:00'
   SLURM_IMMEDIATE_TIMEOUT: "3600"
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
@@ -67,19 +69,28 @@ empty_volumes:
 pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
+# ci-demo builds the images below outside any step; an entry's credentialsId binds
+# the token around its build, and this hook writes the git config the Dockerfile
+# mounts as the "ghconfig" secret. Left empty when nothing is bound.
+pipeline_on_image_build:
+  run: |
+    #!/bin/bash -e
+    . .ci/scripts/common.sh
+    write_github_gitconfig /tmp/ghconfig
+
 # label is defined at jenkins slave configuration, we want to run the job on a gpu agent and be able to esaly replace it without having to change this file
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
-     name: 'nixl-ci-gpu-base-pytorch26.06-cuda13.3-ubuntu24.04',
+     name: 'nixl-ci-gpu-base',
      tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghconfig,src=/tmp/ghconfig',
+     credentialsId: 'svc-nixl-github-read-only-token'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
      name: 'build_helper',
-     tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+     tag: "${CI_IMAGE_TAG}"
     }
 
 matrix:
@@ -93,10 +104,14 @@ taskName: "${name}/${arch}/${axis_index}"
 steps:
   - name: Compiling NIXL Docker Image
     containerSelector: "{name: 'build_helper'}"
-    credentialsId: "svc-nixl-new-artifactory-token"
+    credentialsId:
+      - 'svc-nixl-il-artifactory-token'
+      - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       set -x
+      # github.com credential for build.sh's clones, incl. meson's [wrap-git] subprojects ("ghconfig" build secret).
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
       # Pass UCX_VERSION only when UCX_VER is set (e.g. nightly master);
       # empty falls back to the Dockerfile ARG UCX_VERSION default so the
       # per-branch default lives in one place.
@@ -113,7 +128,8 @@ steps:
       --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
-      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-gpu-base-pytorch26.06-cuda13.3-ubuntu24.04:${CI_IMAGE_TAG} \
+      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-gpu-base:${CI_IMAGE_TAG} \
+      --secret id=ghconfig,src=/tmp/ghconfig \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       for i in {1..6}; do
@@ -142,6 +158,24 @@ steps:
         "--mincpus=${SLURM_MINCPUS}",
         "--mem=${SLURM_MEM}"
       ]
+
+  - name: Sync Container Image
+    # Import the image onto the node before the timed test stages, so a slow
+    # registry pull is not counted against (and does not time out) a test stage.
+    containerSelector: "{name: 'build_helper'}"
+    timeout: 30
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
+      exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
   - name: Run CPP tests
     containerSelector: "{name: 'build_helper'}"

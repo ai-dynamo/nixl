@@ -17,12 +17,19 @@
 #ifndef __BACKEND_AUX_H_
 #define __BACKEND_AUX_H_
 
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
+
+class nixlBackendTraceSink;
+
+namespace nixl::trace {
+struct TraceContext;
+}
 
 // Might be removed to be decided by backend, or changed to high
 // level direction or so.
@@ -34,6 +41,12 @@ struct nixlBackendOptionalArgs {
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
     nixl_blob_t customParam;
+    // The request's trace context, the same in prepXfer and in every postXfer of
+    // that request: valid for the call only, so copy it once at prep to keep it.
+    // Null when no request is involved (prepMemView).
+    const nixl::trace::TraceContext *traceContext = nullptr;
+    std::uint64_t traceRequestId = 0;
+    std::uint64_t traceExecution = 0;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
@@ -54,6 +67,7 @@ class nixlBackendInitParams {
         nixlTime::us_t pthrDelay = 0;
         nixl_thread_sync_t syncMode;
         bool enableTelemetry_ = false;
+        nixlBackendTraceSink *traceSink = nullptr;
 };
 
 // Pure virtual class to have a common pointer type

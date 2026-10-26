@@ -13,7 +13,7 @@
 # dependency layer is pre-built once into the cached wheel_base image (below) and reused
 # via --wheel-base-image, so per-PR wheel builds only compile the wheel stage.
 #
-# CI Usage: build-container.sh --base-image ... --wheel-base ... (builds and packages wheels)
+# CI Usage: build-container.sh --wheel-base ... (builds and packages wheels)
 # User Usage: Full image build via build-container.sh (same script, different invocation)
 #
 # =============================================================================
@@ -36,7 +36,7 @@
 # - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
 # - Docker Images: Specifies the container images used for different build stages
 #   - Uses contrib/Dockerfile.manylinux via contrib/build-container.sh
-#   - Base image: artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09
+#   - Base image: pinned by contrib/Dockerfile.manylinux (ARG BASE_IMAGE/BASE_IMAGE_TAG)
 # - Matrix Axes: Defines build variations (Python versions and architectures)
 # - Build Steps: Sequential steps for building, testing, and wheel generation
 #
@@ -68,12 +68,15 @@ timeout_minutes: 240
 # Container Registry Configuration
 # =============================================================================
 # Artifactory registry for storing build artifacts and base images
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
-  - credentialsId: 'svc-nixl-new-artifactory-token'
+  - credentialsId: 'svc-nixl-github-read-only-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
+  - credentialsId: 'svc-nixl-il-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
 
@@ -84,7 +87,6 @@ credentials:
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   # 24GB memory and 16 CPU cores for parallel compilation and large builds
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'
@@ -97,6 +99,15 @@ empty_volumes:
 # Job-id files for the SLURM sanity allocations live on the shared PVC.
 pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
+
+# ci-demo builds the images below outside any step; an entry's credentialsId binds
+# the token around its build, and this hook writes the git config the Dockerfile
+# mounts as the "ghconfig" secret. Left empty when nothing is bound.
+pipeline_on_image_build:
+  run: |
+    #!/bin/bash -e
+    . .ci/scripts/common.sh
+    write_github_gitconfig /tmp/ghconfig
 
 # =============================================================================
 # Docker Build Configuration
@@ -119,7 +130,8 @@ runs_on_dockers:
       file: 'contrib/Dockerfile.manylinux',
       name: "${WHEEL_BASE_IMAGE_NAME}",
       tag: "${CI_IMAGE_TAG}",
-      build_args: '--build-arg BASE_IMAGE=${BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${BASE_TAG} --build-arg MANYLINUX_IMAGE=${MANYLINUX_IMAGE} --build-arg MANYLINUX_IMAGE_TAG=${MANYLINUX_IMAGE_TAG} --build-arg CUDA_VERSION=${CUDA_VERSION} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
+      build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base --secret id=ghconfig,src=/tmp/ghconfig',
+      credentialsId: 'svc-nixl-github-read-only-token'
     }
   # The custom 'fw' key is injected as an env var into every step of the branch
   # (ci-demo merges the docker entry into the branch axis), so the shared sanity
@@ -129,16 +141,14 @@ runs_on_dockers:
      name: 'build_helper_vllm',
      fw: 'vllm',
      tag: "${CI_IMAGE_TAG}",
-     arch: 'aarch64',
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+     arch: 'aarch64'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
      name: 'build_helper_sglang',
      fw: 'sglang',
      tag: "${CI_IMAGE_TAG}",
-     arch: 'aarch64',
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+     arch: 'aarch64'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.vllm-base',
@@ -146,7 +156,7 @@ runs_on_dockers:
      tag: "${CI_IMAGE_TAG}",
      arch: 'aarch64',
      category: 'tool',
-     build_args: '--build-arg BASE_IMAGE=${VLLM_BASE_UPSTREAM} --build-arg MODEL_ID=${SANITY_MODEL_ID}'
+     build_args: '--build-arg MODEL_ID=${SANITY_MODEL_ID}'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.sglang-base',
@@ -154,7 +164,7 @@ runs_on_dockers:
      tag: "${CI_IMAGE_TAG}",
      arch: 'aarch64',
      category: 'tool',
-     build_args: '--build-arg BASE_IMAGE=${SGLANG_BASE_UPSTREAM} --build-arg MODEL_ID=${SANITY_MODEL_ID}'
+     build_args: '--build-arg MODEL_ID=${SANITY_MODEL_ID}'
     }
 
 # =============================================================================
@@ -182,18 +192,13 @@ matrix:
 env:
   NPROC: 32
   GRPC_NPROC: 10
-  # wheel_base builds on the public PyPA manylinux_2_28 image and copies CUDA
-  # from an el8/ubi8 NGC CUDA *devel* image (BASE_IMAGE:BASE_TAG). 13.2 is the
-  # minimum for cuObject S3-RDMA support (cuobjclient-13.2.pc).
+  # wheel_base builds on the public PyPA manylinux_2_28 image and copies CUDA from
+  # an el8/ubi8 NGC CUDA *devel* image. Those images and CUDA_VERSION are pinned in
+  # contrib/Dockerfile.manylinux and deliberately not restated here, so the cached
+  # wheel_base image and the wheel stage cannot drift apart. Note build-container.sh
+  # reads BASE_IMAGE/CUDA_VERSION from the environment, so setting them here would
+  # override the Dockerfile even without passing the flags.
   # REACHABILITY: the blossom runner must be able to pull nvcr.io and quay.io.
-  BASE_IMAGE: "nvcr.io/nvidia/cuda"
-  BASE_TAG: "13.2.1-devel-ubi8"
-  # CUDA MAJOR.MINOR — drives the torch cuXXX index + cu12/cu13 meta-wheel split.
-  CUDA_VERSION: "13.2"
-  # Pinned PyPA manylinux release — separate image prefix and tag so either can
-  # be overridden independently (e.g. to mirror to Artifactory).
-  MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
-  MANYLINUX_IMAGE_TAG: "2026.06.06-1"
   # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
   # the "CI_MANAGED" placeholder must not be hand-edited.
   CI_IMAGE_TAG: "CI_MANAGED"
@@ -209,10 +214,11 @@ env:
   # Internal HuggingFace mirror the sanity script prefetches the model through. Pulling from
   # huggingface.co directly gets the shared CI egress IP rate-limited (429); the mirror has no
   # such limit and allows anonymous reads, so no token is needed.
-  SANITY_HF_ENDPOINT: "https://urm.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
-  # Pinned upstream bases (concrete versions) so the per-PR sanity gate is reproducible.
-  VLLM_BASE_UPSTREAM: "docker.io/vllm/vllm-openai:v0.23.0"
-  SGLANG_BASE_UPSTREAM: "docker.io/lmsysorg/sglang:v0.5.13.post1"
+  SANITY_HF_ENDPOINT: "https://artifactory.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
+  # The vLLM/SGLang upstream bases are pinned to concrete versions in
+  # .ci/dockerfiles/Dockerfile.{vllm,sglang}-base and not restated here: an
+  # override at this level silently won over the Dockerfile, so the upgrade in
+  # #2073 never reached CI.
   # SLURM (dlcluster gb200nvl72_ci) — sanity test only, aarch64. Accessed over SSH to the
   # dlcluster head node (svc-nixl-ssh_key), same partition/account/mechanism as the
   # nixl-ci-dl-gpu job. (gb300nvl72_ci works too but its queue is much busier.)
@@ -221,11 +227,47 @@ env:
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
   SLURM_ACCOUNT: oberon-gb-ci
-  SLURM_JOB_TIMEOUT: '01:30:00'
+  # Without a GPU count the site plugin forces exclusive mode (whole idle node)
+  SLURM_GRES: gpu:2
+  SLURM_MEM: 128G
+  SLURM_MINCPUS: 24
+  SLURM_JOB_TIMEOUT: '02:00:00'
   SLURM_IMMEDIATE_TIMEOUT: "3600"
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
+  # UCX spcx plugin: compiled by nixl-ci-compile-ucx-plugin (which owns the build
+  # recipe, in the closed-source plugin repo) and staged per-arch on the shared
+  # PVC for the Build Wheel step below. Which plugin ref gets built is that job's
+  # own default, set by the plugin developers who own those updates - deliberately
+  # not pinned here, so a plugin bump needs no change on this side.
+  SPCX_STAGING_ROOT: "/mnt/pvc/${JOB_BASE_NAME}-spcx"
+
+# Compile the closed-source UCX spcx plugin before any wheel is built, so a
+# plugin break fails the job in ~1 minute instead of after the wheel builds.
+#
+# The job lives in the plugin repo (definition, matrix and build scripts) and
+# only runs on this Jenkins instance so it can share the PVC. This repo is
+# public and everything in a PR's checkout is editable by whoever opened it, so
+# the plugin must not be cloned or built here: we pass the wheel_base image name
+# and tag, and get back only the built module. It builds both arches in one run.
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    def staging = "${env.SPCX_STAGING_ROOT}/${env.BUILD_NUMBER}"
+    def res = build job: 'nixl-ci-compile-ucx-plugin',
+      parameters: [
+        string(name: 'WHEEL_BASE_NAME', value: env.WHEEL_BASE_IMAGE_NAME),
+        string(name: 'WHEEL_BASE_TAG',  value: env.CI_IMAGE_TAG),
+        string(name: 'STAGING_DIR',     value: staging),
+      ],
+      propagate: false, wait: true
+    echo "UCX spcx plugin compile: ${res.result} (${res.absoluteUrl})"
+    if (res.result != 'SUCCESS') {
+      error("UCX spcx plugin failed to compile against wheel_base ${env.CI_IMAGE_TAG} - see ${res.absoluteUrl}")
+    }
+    env.SPCX_STAGING_DIR = staging
 
 steps:
   # =============================================================================
@@ -235,7 +277,7 @@ steps:
   # egress workaround is needed here.
   - name: Prepare
     containerSelector: "{name: 'manylinux'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       # Setup podman and dependencies
@@ -253,7 +295,7 @@ steps:
   # to the pod's host network.
   - name: Prepare
     containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       # Setup podman and dependencies
@@ -279,23 +321,23 @@ steps:
   # cached deps image so only the wheel stage compiles.
   - name: Build Wheel
     containerSelector: "{name: 'manylinux|build_helper_(vllm|sglang)'}"
+    credentialsId: 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       set -x
+      # github.com credential for the wheel stage's meson wrap-git clones ("ghconfig" build secret).
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
+      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
       export NPROC=$NPROC
       export GRPC_NPROC=$GRPC_NPROC
       ./contrib/build-container.sh \
-        --base-image "${BASE_IMAGE}" \
-        --base-image-tag "${BASE_TAG}" \
-        --cuda-version "${CUDA_VERSION}" \
-        --manylinux-image "${MANYLINUX_IMAGE}" \
-        --manylinux-image-tag "${MANYLINUX_IMAGE_TAG}" \
         --wheel-base "${WHL_BASE}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
         --torch-versions "${TORCH_VERSIONS}" \
         --dockerfile contrib/Dockerfile.manylinux \
-        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}"
+        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}" \
+        --ucx-spcx-plugin-install "${SPCX_STAGING_DIR}/${arch}"
 
   # =============================================================================
   # Shared sanity steps (both framework helpers, parameterized by ${fw})
@@ -306,7 +348,7 @@ steps:
   # Tagged by BUILD_NUMBER.
   - name: Build sanity image
     containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       set -eux
@@ -357,8 +399,29 @@ steps:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       extraArgs: [
-        "--account=${SLURM_ACCOUNT}"
+        "--account=${SLURM_ACCOUNT}",
+        "--gres=${SLURM_GRES}",
+        "--mem=${SLURM_MEM}",
+        "--mincpus=${SLURM_MINCPUS}"
       ]
+
+  - name: Sync Container Image
+    # Import the image onto the node before the timed test stages, so a slow
+    # registry pull is not counted against (and does not time out) a test stage.
+    containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
+    timeout: 30
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
+      testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      containerName: "nixl-vs-${fw}-${BUILD_NUMBER}"
 
   # The two run steps are identical modulo ${fw} as well, but are kept as separate,
   # explicitly-named steps so the test that failed is obvious at a glance in the UI.
@@ -371,7 +434,7 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} .gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
@@ -387,7 +450,7 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} .gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"

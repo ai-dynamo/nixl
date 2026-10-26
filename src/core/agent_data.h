@@ -22,6 +22,7 @@
 #include "nixl_metadata_context.h"
 #include "telemetry.h"
 #include "tracing/trace.h"
+#include "tracing/trace_context.h"
 #include "sync.h"
 
 #include <atomic>
@@ -29,21 +30,6 @@
 #include <memory>
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
-
-[[nodiscard]] inline bool
-nixlRemoteBackendAdmissionAllowed(const nixl_backend_t &type,
-                                  bool supports_remote,
-                                  bool supports_notif,
-                                  nixl_device_exec_mode_t mode) noexcept {
-    return !supports_remote || supports_notif ||
-        (type == "GPUNETIO" && mode == nixl_device_exec_mode_t::GPUNETIO_DIRECT);
-}
-
-struct nixlDeviceMemViewRecord {
-    nixlBackendEngine *engine = nullptr;
-    nixlMemViewH backend_memview = nullptr;
-    int execution_device = -1;
-};
 
 // Implements nixlMetadataContext, which is the whole surface a metadata backend
 // sees of the agent: serialization, cache load and invalidation, nothing else.
@@ -69,13 +55,19 @@ class nixlAgentData final : public nixlMetadataContext {
         backend_list_t                         notifEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
-        // Bookkeeping from public device-view wrappers to their backend handles.
-        std::unordered_map<nixlMemViewH, nixlDeviceMemViewRecord> mvhToEngine;
+        // Bookkeeping from memory view handles to backend engines
+        std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
 
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
             remoteBackends_;
 
         // The order of the following data members is crucial for destruction.
+        std::unique_ptr<nixlTelemetry> telemetry_;
+        // Composite tracer (fans out to every enabled backend); null when no
+        // backend is active.
+        const std::unique_ptr<nixl::trace::Tracer> tracer_;
+        std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendTraceSink>> traceSinks_;
+        std::unordered_map<nixl_backend_t, std::atomic<bool>> traceContextUnsupported_;
         // Bookkeeping for local connection metadata and user handles per backend
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
@@ -83,10 +75,6 @@ class nixlAgentData final : public nixlMetadataContext {
         // Owning shared_ptr per registration generation; weak refs in handles expire on
         // invalidation or re-registration.
         std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
-        std::unique_ptr<nixlTelemetry> telemetry_;
-        // Composite tracer (fans out to every enabled backend); null when no
-        // backend is active.
-        const std::unique_ptr<nixl::trace::Tracer> tracer_;
         nixlLocalSection localSection_;
 
         // nixlMetadataContext impl; private as before (backends call via the interface).
@@ -113,10 +101,12 @@ class nixlAgentData final : public nixlMetadataContext {
         [[nodiscard]] static backend_set_t
         getBackends(const nixl_opt_args_t *opt_args,
                     const nixlMemSection &section,
-                    nixl_mem_t mem_type,
-                    bool require_device_api = false);
+                    nixl_mem_t mem_type);
         void
         warnAboutEfaHardwareMismatch();
+        void
+        warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
+                                      const nixl::trace::TraceContext &context) noexcept;
 
         template<class dlist_t>
         nixl_status_t

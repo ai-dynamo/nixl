@@ -14,19 +14,59 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
+ARG BASE_IMAGE_TAG="26.08-cuda13.4-devel-ubuntu24.04"
+
+# libcuobjclient dev files: the cuda-dl-base devel images ship the runtime but
+# not libcuobjclient-dev, so the OBJ plugin silently loses cuObject RDMA
+# acceleration. Keep pinned to the same release as BASE_IMAGE_TAG.
+ARG CUOBJ_DEV_IMAGE="nvcr.io/nvidia/cuda-dl-base:26.08-cuda13.4-inference-devel-ubuntu24.04"
 
 # UCX argument is either "upstream" (default installed in base image) or "custom" (build from source)
 ARG UCX="upstream"
 ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG WGET_RETRY_OPTS="--tries=10 --waitretry=15 --retry-connrefused --retry-on-http-error=429,500,502,503,504 --no-http-keep-alive --timeout=30 --read-timeout=60"
+
+FROM ${CUOBJ_DEV_IMAGE} AS cuobj_dev
+RUN set -e; \
+    T="$(echo "$(readlink -f /usr/local/cuda)"/targets/*-linux)"; \
+    mkdir -p /cuobj/include /cuobj/lib /cuobj/pkgconfig; \
+    cp -a "$T"/include/cuobj*.h /cuobj/include/; \
+    cp -a "$T"/lib/libcuobjclient.so /cuobj/lib/; \
+    cp -a /usr/lib/pkgconfig/cuobjclient-*.pc /cuobj/pkgconfig/; \
+    basename "$(ls "$T"/lib/libcuobjclient.so.1.*)" > /cuobj/soname
 
 # --- Stage 1: Common OS setup ---
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS os_setup_stage
+
+# Install them only when the base has a matching runtime and no dev files of
+# its own, so bases that are already correct or have no cuObject are untouched.
+COPY --from=cuobj_dev /cuobj /tmp/cuobj
+RUN set -e; \
+    CUDA_DIR="$(readlink -f /usr/local/cuda)"; \
+    T="$(echo "$CUDA_DIR"/targets/*-linux)"; \
+    have="$(basename "$(ls "$T"/lib/libcuobjclient.so.1.* 2>/dev/null | head -1)" 2>/dev/null)"; \
+    want="$(cat /tmp/cuobj/soname)"; \
+    if [ -e "$T/include/cuobjclient.h" ]; then \
+        echo "cuObject: dev files already present, leaving base untouched"; \
+    elif [ -z "$have" ]; then \
+        echo "cuObject: no runtime in base, skipping dev files"; \
+    elif [ "$have" != "$want" ]; then \
+        echo "cuObject: base runtime $have != dev files $want, skipping"; \
+    else \
+        cp -a /tmp/cuobj/include/*.h "$T/include/"; \
+        cp -a /tmp/cuobj/lib/libcuobjclient.so "$T/lib/"; \
+        PC="$(ls /tmp/cuobj/pkgconfig/cuobjclient-*.pc | head -1)"; \
+        mkdir -p /usr/lib/pkgconfig; \
+        sed "s|^cudaroot=.*|cudaroot=$CUDA_DIR|" "$PC" > "/usr/lib/pkgconfig/$(basename "$PC")"; \
+        echo "cuObject: installed dev files for $want"; \
+    fi; \
+    rm -rf /tmp/cuobj
 
 # Re-declare for use in this stage
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION
 ARG APT_MIRROR=""
+ARG WGET_RETRY_OPTS
 
 # Optional apt mirror override, e.g. for CI environments with an internal
 # Ubuntu mirror. Empty (default) keeps the public archive/ports.ubuntu.com.
@@ -62,13 +102,15 @@ RUN apt-get update -y && \
     libgtest-dev \
     hwloc \
     libhwloc-dev \
-    build-essential
+    build-essential \
+    libevent-dev \
+    redis-tools
 
 # Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
 # Skip only the DOCA SDK install when the base image already ships it.
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    wget ${WGET_RETRY_OPTS} --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -85,7 +127,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     libnuma-dev librdmacm-dev ibverbs-providers
 
 # Install AWS CLI
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
+RUN curl -fL --retry 9 --retry-delay 5 --retry-connrefused --connect-timeout 30 "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip aws
 
 # Install Azure CLI
@@ -130,19 +172,29 @@ FROM ucx_${UCX}_image AS ucx_image
 # --- Stage 4: Final Image Assembly ---
 # Re-declare ARGs needed in this final stage
 ARG ARCH="x86_64"
+# PyTorch publishes wheels for only some CUDA minors, and the base image's own
+# CUDA_VERSION (13.4) has no index. Deliberately not named CUDA_VERSION: the base
+# exports that as ENV, which wins over an ARG of the same name.
+ARG TORCH_CUDA_INDEX="cu130"
 ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 ARG BUILD_TYPE="release"
 ARG LIBFABRIC_VERSION="v1.21.0"
+ARG WGET_RETRY_OPTS
 ARG NPROC
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG HIREDIS_VERSION="1.4.0"
 
 WORKDIR /workspace
 
+# CI supplies a github.com credential as the optional "ghconfig" build secret;
+# without it these clones stay anonymous. RUN --mount needs BuildKit or podman.
+ARG GIT_TERMINAL_PROMPT=0
+
 # Build Abseil from source (required for absl/log).
-RUN git clone https://github.com/abseil/abseil-cpp.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/abseil/abseil-cpp.git && \
     cd abseil-cpp && \
     git fetch --depth 1 origin ${ABSL_TAG} && \
     git checkout ${ABSL_TAG} && \
@@ -159,7 +211,7 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     ldconfig
 
 # Build gRPC from source against /usr/local Abseil.
-RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
     mkdir -p cmake/build && \
     cd cmake/build && \
@@ -183,7 +235,7 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
     ldconfig
 
 # Build libfabric from source
-RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+RUN wget ${WGET_RETRY_OPTS} \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
     cd libfabric-* && \
@@ -203,17 +255,35 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
-RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 -DCMAKE_PREFIX_PATH=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install
 
+# Build hiredis from source via cmake (make is avoided: LIBRARY_PATH set by the CUDA base image
+# contaminates the Makefile's pkgconfig install path).
+RUN wget -q ${WGET_RETRY_OPTS} "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+        -O "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" && \
+    tar -xzf "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" -C /tmp && \
+    mkdir -p "/tmp/hiredis-${HIREDIS_VERSION}/build" && \
+    cd "/tmp/hiredis-${HIREDIS_VERSION}/build" && \
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON && \
+    make -j"${NPROC:-$(nproc)}" && \
+    make install && \
+    ldconfig && \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --atleast-version=1.0.1 hiredis && \
+    rm -rf "/tmp/hiredis-${HIREDIS_VERSION}" "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz"
+
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
 
-RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
     mkdir sdk_build && \
     cd sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_CXX_STANDARD=20 && \
@@ -222,7 +292,7 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
 
 # Install install Azure SDK for C++ dependencies and build
 RUN apt-get update && apt-get install -y libxml2-dev
-RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
     AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON -DCMAKE_CXX_STANDARD=20 && \
@@ -232,7 +302,7 @@ RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch 
     cmake --install sdk/storage/azure-storage-blobs && \
     cmake --install sdk/identity
 
-RUN git clone https://github.com/nvidia/gusli.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/nvidia/gusli.git && \
     cd gusli && \
     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 CXX="g++ -std=c++20" && \
     cd ..
@@ -257,10 +327,11 @@ ENV UV_PYTHON=python${DEFAULT_PYTHON_VERSION}
 RUN uv pip install --system --upgrade \
     meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Use system torch if present (>=2.7), else install it.
-RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then \
+RUN if TORCH_CHECK_ERR=$(/usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then \
         echo "Using PyTorch from system site-packages"; \
     else \
-        export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+        echo "System torch check failed: ${TORCH_CHECK_ERR}" >&2; \
+        export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
         uv pip install --system torch torchvision torchaudio; \
     fi
 # setuptools for PEP 639 license metadata
@@ -271,12 +342,27 @@ COPY --from=nixlbench . /workspace/nixlbench
 
 WORKDIR /workspace/nixl
 
-RUN rm -rf build && \
+# meson setup clones the taskflow and prometheus-cpp [wrap-git] subprojects from github.com.
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     mkdir build && \
     meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install
+
+# Fail the build if cuObject acceleration did not make it into the plugin.
+RUN set -e; \
+    T="$(echo "$(readlink -f /usr/local/cuda)"/targets/*-linux)"; \
+    if ! ls "$T"/lib/libcuobjclient.so.1.* >/dev/null 2>&1; then \
+        echo "cuObject: no runtime in base, skipping OBJ plugin check"; \
+    else \
+        P="$(find /usr/local/nixl -name libplugin_OBJ.so -print -quit)"; \
+        test -n "$P" || { echo "ERROR: libplugin_OBJ.so not found" >&2; exit 1; }; \
+        readelf -d "$P" | grep -q libcuobjclient || { \
+            echo "ERROR: libplugin_OBJ.so is missing libcuobjclient; S3 acceleration is not compiled in" >&2; \
+            exit 1; }; \
+        echo "cuObject: libplugin_OBJ.so links libcuobjclient"; \
+    fi
 
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \

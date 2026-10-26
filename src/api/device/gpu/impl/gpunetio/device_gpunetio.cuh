@@ -162,7 +162,7 @@ putViews(const GpunetioDeviceView *src_view,
     deviceAtomic(lane->active_ticket).store(ticket, cuda::memory_order_relaxed);
 
     // All state becomes visible before POSTED.  The common dispatcher writes
-    // the final four-byte mode tag only after this function returns IN_PROG.
+    // the typed execution-mode field only after this function returns IN_PROG.
     auto *payload = statusPayload(xfer_status);
     payload->lane = lane;
     payload->generation = generation;

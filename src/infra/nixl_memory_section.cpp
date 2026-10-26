@@ -247,9 +247,7 @@ nixlMemSection::addElement(const nixlRemoteDesc &query,
         return NIXL_ERR_UNKNOWN;
     }
 
-    nixlRemoteMetaDesc element{query.addr, query.len, query.devId, base[s_index].metadataP};
-    element.remoteAgent = query.remoteAgent;
-    resp.addDesc(element);
+    resp.addDesc({query.addr, query.len, query.devId, base[s_index].metadataP});
     return NIXL_SUCCESS;
 }
 
