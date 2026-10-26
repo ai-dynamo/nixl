@@ -17,6 +17,8 @@
 #ifndef NIXL_SRC_CORE_TRANSFER_REQUEST_H
 #define NIXL_SRC_CORE_TRANSFER_REQUEST_H
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -50,7 +52,8 @@ public:
                  const nixl_mem_t remote_type,
                  const size_t desc_count,
                  const nixl_remote_section_weak_t &remote_section_ref,
-                 const nixl::trace::TraceContext &trace_context);
+                 const nixl::trace::TraceContext &trace_context,
+                 const std::uint64_t trace_request_id);
 
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
@@ -69,14 +72,19 @@ public:
     void
     updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
 
-    [[nodiscard]] std::uint64_t
-    traceCorrelationId64() const noexcept {
-        return traceContext_.correlationId64();
-    }
-
     [[nodiscard]] const nixl::trace::TraceContext &
     traceContext() const noexcept {
         return traceContext_;
+    }
+
+    [[nodiscard]] std::uint64_t
+    traceRequestId() const noexcept {
+        return traceRequestId_;
+    }
+
+    [[nodiscard]] std::uint64_t
+    traceExecution() const noexcept {
+        return traceExecution_.load(std::memory_order_relaxed);
     }
 
     friend class nixlAgent;
@@ -91,6 +99,8 @@ private:
     const std::string remoteAgent;
     const nixl_remote_section_weak_t remoteSection;
     const nixl::trace::TraceContext traceContext_;
+    const std::uint64_t traceRequestId_;
+    std::atomic<std::uint64_t> traceExecution_ = 0;
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 

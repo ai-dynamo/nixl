@@ -30,14 +30,13 @@ failFast: false
 
 timeout_minutes: 300
 
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   limits: "{memory: 16Gi, cpu: 16000m}"
   requests: "{memory: 8Gi, cpu: 8000m}"
   privileged: true
@@ -46,7 +45,7 @@ credentials:
   - credentialsId: 'svc-nixl-github-read-only-token'
     usernameVariable: 'NIXL_GITHUB_USER'
     passwordVariable: 'NIXL_GITHUB_TOKEN'
-  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+  - {credentialsId: 'svc-nixl-il-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
 
 env:
   ARTIFACTORY_PATH: /sw-nbu-swx-nixl-docker-local/ci
@@ -63,7 +62,7 @@ env:
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   TEST_TIMEOUT: 90
-  VLLM_HF_ENDPOINT: "https://urm.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
+  VLLM_HF_ENDPOINT: "https://artifactory.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
   STORAGE_DRIVER: overlay
   # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
   # the "CI_MANAGED" placeholder must not be hand-edited.
@@ -115,10 +114,14 @@ taskName: "${name}/${arch}/${axis_index}"
 steps:
   - name: Compiling NIXL EP Docker Image for DL
     containerSelector: "{name: 'build_helper_dl_ep'}"
-    credentialsId: "svc-nixl-new-artifactory-token"
+    credentialsId:
+      - 'svc-nixl-il-artifactory-token'
+      - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       set -x
+      # github.com credential for build.sh's clones, incl. meson's [wrap-git] subprojects ("ghconfig" build secret).
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
       # Pass UCX_VERSION only when UCX_VER is set (e.g. nightly master);
       # empty falls back to the Dockerfile ARG UCX_VERSION default so the
       # per-branch default lives in one place.
@@ -136,6 +139,7 @@ steps:
       --build-arg BUILD_NIXL_EP=true \
       --build-arg NIXL_PYTHON=${NIXL_EP_PYTHON} \
       --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base:${CI_IMAGE_TAG} \
+      --secret id=ghconfig,src=/tmp/ghconfig \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       for i in {1..6}; do

@@ -107,16 +107,41 @@ Tracer::mark(std::string_view name, Kind kind) {
 }
 
 void
-Tracer::pushCorrelationId(std::uint64_t id) {
+Tracer::pushContext(const TraceContext &context, std::uint64_t request_id) {
     for (auto &backend : backends_) {
-        backend->pushCorrelationId(id);
+        backend->pushContext(context, request_id);
     }
 }
 
 void
-Tracer::popCorrelationId() {
+Tracer::popContext() {
     for (auto &backend : backends_) {
-        backend->popCorrelationId();
+        backend->popContext();
+    }
+}
+
+void
+Tracer::emitSpan(std::string_view name,
+                 Kind kind,
+                 const TraceContext &context,
+                 std::uint64_t request_id,
+                 nixlTime::us_t start,
+                 nixlTime::us_t end,
+                 std::span<const Attribute> attrs) {
+    for (auto &backend : backends_) {
+        backend->emitSpan(name, kind, context, request_id, start, end, attrs);
+    }
+}
+
+void
+Tracer::emitEvent(std::string_view name,
+                  Kind kind,
+                  const TraceContext &context,
+                  std::uint64_t request_id,
+                  nixlTime::us_t at,
+                  std::span<const Attribute> attrs) {
+    for (auto &backend : backends_) {
+        backend->emitEvent(name, kind, context, request_id, at, attrs);
     }
 }
 

@@ -17,6 +17,14 @@ limitations under the License.
 
 # NIXL Benchmark
 
+GPUNetIO supports optional WRITE striping with `--gpunetio_data_qp_count=N` (1–4)
+(default 1). Use the same value on both endpoints. Compare counts with identical
+bytes, descriptors, pipeline depth and consistency checking; one GPU per worker
+avoids single-GPU scheduling time-slicing. The flag does not enable peer-MR or
+change SGE construction. Multi-QP mode allocates the selected WRITE QPs plus a
+dedicated READ QP. A striped request uses one kernel launch with one block per
+WRITE QP on a shared internal posting stream.
+
 A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) that supports multiple coordination backends. NIXLBench provides performance testing across multiple communication backends and storage systems, making it ideal for evaluating high-performance data transfer scenarios in distributed computing environments.
 
 **Coordination Options:**
@@ -525,10 +533,10 @@ wait
   --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM --enable_vmm --use_localized=0
 
 # Single-instance POSIX storage benchmark
-./nixlbench --backend POSIX --filepath /mnt/storage/testfile
+./nixlbench --backend POSIX --filepath /mnt/storage/testdir
 
 # Single-instance GDS storage benchmark, when GPUDirect Storage is available
-./nixlbench --backend GDS --filepath /mnt/storage/testfile --storage_enable_direct
+./nixlbench --backend GDS --filepath /mnt/storage/testdir --storage_enable_direct
 
 # S3 object storage benchmark
 ./nixlbench --backend OBJ --obj_bucket_name my-bucket \
@@ -603,7 +611,7 @@ devices can differ between the initiator and target processes.
 
 #### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB)
 ```
---filepath PATH            # File path for storage operations
+--filepath DIR             # Existing directory where the benchmark files are created (default: current directory)
 --num_files NUM            # Number of files used by benchmark (default: 1)
 --storage_enable_direct    # Enable direct I/O for storage operations
 --randomize_location_mode MODE    # Controls block location randomization [none, blockaligned, bytealigned] (default: none)
@@ -702,7 +710,7 @@ See src/plugins/infinia/infinia_example.conf for a complete example.
 
 The name of a config file can be specified using the `--config_file` command line parameter. The config file is in TOML format.
 
-Each existing command-line parameter can also be placed in the global scope (no sections) of the configuration file, so the following invocations:
+Each existing command-line parameter can also be placed in the global scope (no sections) of the configuration file, so the following invocations (with `/mnt/test` an existing directory):
 
 ```
 nixlbench --backend POSIX --filepath /mnt/test --posix_api_type AIO --max_block_size 2097152
@@ -768,10 +776,10 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 
 ```bash
 # No ETCD needed - just run directly
-./nixlbench --backend GDS --filepath /mnt/storage/testfile
+./nixlbench --backend GDS --filepath /mnt/storage/testdir
 
 # Or with explicit ETCD if coordination is needed
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile
+./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testdir
 ```
 
 **For ETCD-backed multi-instance benchmarks:**
@@ -882,31 +890,34 @@ requirements and operational limits.
 
 ### Storage Backends
 
+The examples below write their files into `/mnt/storage/testdir`. Create it on
+the device you want to measure first: `mkdir -p /mnt/storage/testdir`.
+
 **GDS (GPU Direct Storage):**
 ```bash
 # Basic GDS benchmark (no ETCD needed for single instance)
-./nixlbench --backend GDS --filepath /mnt/storage/testfile --storage_enable_direct
+./nixlbench --backend GDS --filepath /mnt/storage/testdir --storage_enable_direct
 
 # GDS with ETCD coordination
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile --storage_enable_direct
+./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testdir --storage_enable_direct
 
 # GDS with custom batch settings
-./nixlbench --backend GDS --filepath /mnt/storage/testfile --gds_batch_pool_size 64 --gds_batch_limit 256
+./nixlbench --backend GDS --filepath /mnt/storage/testdir --gds_batch_pool_size 64 --gds_batch_limit 256
 ```
 
 **GDS_MT (Multi-threaded GDS):**
 ```bash
 # Multi-threaded GDS (no ETCD needed for single instance)
-./nixlbench --backend GDS_MT --filepath /mnt/storage/testfile --gds_mt_num_threads 8
+./nixlbench --backend GDS_MT --filepath /mnt/storage/testdir --gds_mt_num_threads 8
 ```
 
 **POSIX Backend:**
 ```bash
 # POSIX with AIO (no ETCD needed for single instance)
-./nixlbench --backend POSIX --filepath /mnt/storage/testfile --posix_api_type AIO
+./nixlbench --backend POSIX --filepath /mnt/storage/testdir --posix_api_type AIO
 
 # POSIX with io_uring
-./nixlbench --backend POSIX --filepath /mnt/storage/testfile --posix_api_type URING --storage_enable_direct
+./nixlbench --backend POSIX --filepath /mnt/storage/testdir --posix_api_type URING --storage_enable_direct
 ```
 
 **GUSLI Backend (G3+ User Space Access Library):**

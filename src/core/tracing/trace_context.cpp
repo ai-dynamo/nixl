@@ -159,19 +159,6 @@ nixl::trace::TraceContext::sampled() const noexcept {
     return (flags & 0x01) != 0;
 }
 
-std::uint64_t
-nixl::trace::TraceContext::correlationId64() const noexcept {
-    if (!valid()) {
-        return 0;
-    }
-
-    std::uint64_t result = 0;
-    for (const auto byte : spanId) {
-        result = (result << 8) | byte;
-    }
-    return result;
-}
-
 std::optional<nixl::trace::TraceContext>
 nixl::trace::parseTraceparent(std::string_view value) {
     if (value.size() != 55 || value[0] != '0' || value[1] != '0' || value[2] != '-' ||
@@ -308,4 +295,24 @@ nixl::trace::generateTraceContext(double sample_ratio) {
     nixl::trace::TraceContext context;
     generateInto(context, sample_ratio, nullptr);
     return context;
+}
+
+std::uint64_t
+nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
+    if (tracer == nullptr) {
+        return 0;
+    }
+    const auto fill =
+        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : nixl::generateRandomBytes;
+    std::uint64_t id = 0;
+    try {
+        do {
+            fill(reinterpret_cast<std::uint8_t *>(&id), sizeof(id));
+        } while (id == 0);
+    }
+    catch (const std::exception &e) {
+        tracer->reportContextFailure(e.what());
+        return 0;
+    }
+    return id;
 }
