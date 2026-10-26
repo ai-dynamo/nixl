@@ -15,6 +15,10 @@
  * limitations under the License.
  */
 #include <iostream>
+#include <array>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <sstream>
 #include <string>
 
@@ -609,6 +613,95 @@ test_inter_agent_transfer(bool p_thread,
     //ucx2->disconnect(agent1);
 }
 
+void
+test_affine_write() {
+    auto *ucx = createEngine("AffineTest", false);
+    std::string connection;
+    nixl_exit_on_failure(ucx->getConnInfo(connection) == NIXL_SUCCESS,
+                         "Failed to get affine connection");
+    nixl_exit_on_failure(ucx->loadRemoteConnInfo("AffineTest", connection) == NIXL_SUCCESS,
+                         "Failed to connect affine loopback");
+
+    constexpr size_t bytes = 512;
+    void *source = nullptr, *target = nullptr;
+    nixlBackendMD *source_md = nullptr, *target_md = nullptr, *remote_md = nullptr;
+    allocateAndRegister(ucx, 0, DRAM_SEG, source, bytes, source_md);
+    allocateAndRegister(ucx, 0, DRAM_SEG, target, bytes, target_md);
+    nixl_exit_on_failure(ucx->loadLocalMD(target_md, remote_md) == NIXL_SUCCESS,
+                         "Failed to load affine remote metadata");
+
+    auto *src = static_cast<uint8_t *>(source);
+    auto *dst = static_cast<uint8_t *>(target);
+    for (size_t i = 0; i < bytes; ++i) {
+        src[i] = static_cast<uint8_t>(i * 17 + 3);
+    }
+    std::memset(dst, 0xa5, bytes);
+    nixl_meta_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+    auto add = [](nixl_meta_dlist_t &list, uintptr_t address, size_t length, nixlBackendMD *md) {
+        nixlMetaDesc desc;
+        desc.addr = address;
+        desc.len = length;
+        desc.devId = 0;
+        desc.metadataP = md;
+        list.addDesc(desc);
+    };
+    for (size_t offset : {size_t{0}, size_t{128}}) {
+        add(local, uintptr_t(src + offset), 32, source_md);
+        add(remote, uintptr_t(dst + offset), 32, remote_md);
+    }
+    add(local, uintptr_t(src + 256), 8, source_md);
+    add(remote, uintptr_t(dst + 256), 8, remote_md);
+
+    nixl_opt_b_args_t options;
+    options.customParam = "ucx_affine_write_v1=2,4,8,16,8;worker_id=0";
+    nixlBackendReqH *request = nullptr;
+    nixl_exit_on_failure(
+        ucx->prepXfer(NIXL_WRITE, local, remote, "AffineTest", request, &options) == NIXL_SUCCESS,
+        "Failed to prepare affine WRITE");
+    auto status = ucx->postXfer(NIXL_WRITE, local, remote, "AffineTest", request, &options);
+    while (status == NIXL_IN_PROG) {
+        status = ucx->checkXfer(request);
+    }
+    nixl_exit_on_failure(status == NIXL_SUCCESS, "Failed affine WRITE");
+    nixl_exit_on_failure(ucx->releaseReqH(request) == NIXL_SUCCESS,
+                         "Failed to release affine request");
+
+    std::array<uint8_t, bytes> expected;
+    expected.fill(0xa5);
+    for (size_t offset : {size_t{0}, size_t{128}}) {
+        for (size_t row = 0; row < 4; ++row) {
+            std::memcpy(expected.data() + offset + row * 8, src + offset + row * 16, 8);
+        }
+    }
+    std::memcpy(expected.data() + 256, src + 256, 8);
+    nixl_exit_on_failure(std::memcmp(dst, expected.data(), bytes) == 0,
+                         "Affine WRITE payload or gaps differ");
+
+    auto reject =
+        [&](const nixl_meta_dlist_t &l, const nixl_meta_dlist_t &r, const char *geometry) {
+            options.customParam = geometry;
+            request = nullptr;
+            nixl_exit_on_failure(ucx->prepXfer(NIXL_WRITE, l, r, "AffineTest", request, &options) ==
+                                         NIXL_ERR_INVALID_PARAM &&
+                                     request == nullptr,
+                                 "Invalid affine plan was accepted");
+        };
+    auto bad_local = local;
+    bad_local[0].addr = uintptr_t(src + bytes - 32);
+    reject(bad_local, remote, "ucx_affine_write_v1=2,4,8,16,8");
+    auto bad_remote = remote;
+    bad_remote[0].addr = uintptr_t(dst + bytes - 32);
+    reject(local, bad_remote, "ucx_affine_write_v1=2,4,8,16,16");
+    reject(local, remote, "ucx_affine_write_v1=0,4,8,16,8");
+
+    ucx->unloadMD(remote_md);
+    deallocateAndDeregister(ucx, 0, DRAM_SEG, source, source_md);
+    deallocateAndDeregister(ucx, 0, DRAM_SEG, target, target_md);
+    ucx->disconnect("AffineTest");
+    delete ucx;
+    std::cout << "Affine SGL WRITE: OK" << std::endl;
+}
+
 int main()
 {
     bool thread_on[2] = {false, true};
@@ -670,5 +763,8 @@ int main()
         for(int j = 0; j < 2; j++) {
             releaseEngine(ucx[i][j]);
         }
+    }
+    if (const char *sgl = std::getenv("NIXL_UCX_SGL_ENABLE"); sgl && std::strcmp(sgl, "1") == 0) {
+        test_affine_write();
     }
 }
