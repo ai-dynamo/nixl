@@ -314,9 +314,13 @@ nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
         // switch, as in G-series), so we test rail count against topology->getTotalNicCount()
         // (which represents the total number of "usable" rails, i.e. that are attached to a PCIe
         // switch) and not against topology->getAllDevices().size()
-        else if (max_rails < topology->getTotalNicCount()) {
-            // bandwidth does not exceed total machine capacity, so use NUMA-aware rail selection
-            // policy
+        // When some of these NICs sit behind a host-starved PCIe uplink, even a limit covering
+        // every NIC stays with the NUMA-aware policy, which clamps it to the rails that can carry
+        // host memory traffic: the all-rails policy would bring the starved rails back.
+        else if (max_rails < topology->getTotalNicCount() ||
+                 topology->getUsableNicCount() < topology->getTotalNicCount()) {
+            // bandwidth does not exceed total machine capacity (or some NICs cannot carry host
+            // memory traffic), so use NUMA-aware rail selection policy
             NIXL_INFO << "Using NUMA-aware rail selection policy for DRAM memory type";
             size_t numa_rail_count = topology->getNumaRailCount(); // NOTE: averaged if non-uniform
             if (max_rails > numa_rail_count) {

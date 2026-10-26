@@ -353,19 +353,30 @@ nixlLibfabricTopology::getPcieDevData(const std::string &efa_device,
 }
 
 size_t
-nixlLibfabricTopology::getNumaRailCount() const {
-    size_t numa_rail_count = 0;
-    size_t numa_node_count = numa_speed_map.size();
-    if (numa_node_count > 0) {
-        size_t usable_nic_count = 0;
-        for (const auto &entry : nic_info_map) {
-            if (!entry.second.host_dma_starved) {
-                ++usable_nic_count;
-            }
+nixlLibfabricTopology::getUsableNicCount() const {
+    size_t usable_nic_count = 0;
+    for (const auto &entry : nic_info_map) {
+        if (!entry.second.host_dma_starved) {
+            ++usable_nic_count;
         }
-        numa_rail_count = usable_nic_count / numa_node_count;
     }
-    return numa_rail_count;
+    return usable_nic_count;
+}
+
+size_t
+nixlLibfabricTopology::getNumaRailCount() const {
+    // a NUMA node whose NICs all sit behind host-starved uplinks has no capacity and no rails, so
+    // average only over nodes with capacity
+    size_t numa_node_count = 0;
+    for (size_t speed : numa_speed_map) {
+        if (speed > 0) {
+            ++numa_node_count;
+        }
+    }
+    if (numa_node_count == 0) {
+        return 0;
+    }
+    return getUsableNicCount() / numa_node_count;
 }
 
 void
@@ -1250,18 +1261,21 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
 void
 nixlLibfabricTopology::calcAvgNumaNodeBandwidth() {
     // calculate average NUMA node capacity, and print warning if not the same on all nodes
-    size_t speed_count = numa_speed_map.size();
-    if (speed_count == 0) {
-        // return early (avoid division by zero)
-        avg_numa_speed = 0;
-        return;
-    }
+    // NOTE: a node without capacity (e.g. all its NICs sit behind host-starved uplinks) stays in
+    // numa_speed_map for NUMA distance ordering, but is left out of the average, which would
+    // otherwise shrink the derived DRAM_SEG rail limit, possibly to zero
+    size_t speed_count = 0;
     bool speed_uniform = true;
     size_t speed = 0;
     bool speed_valid = false;
     size_t total_speed = 0;
-    for (size_t i = 0; i < speed_count; ++i) {
+    for (size_t i = 0; i < numa_speed_map.size(); ++i) {
         size_t curr_speed = numa_speed_map[i];
+        if (curr_speed == 0) {
+            NIXL_TRACE << "NUMA node " << i << " has no PCIe link capacity for host memory traffic";
+            continue;
+        }
+        ++speed_count;
         if (!speed_valid) {
             speed = curr_speed;
             speed_valid = true;
@@ -1274,7 +1288,10 @@ nixlLibfabricTopology::calcAvgNumaNodeBandwidth() {
         }
         total_speed += curr_speed;
     }
-    if (speed_uniform) {
+    if (speed_count == 0) {
+        // nothing usable (avoid division by zero)
+        avg_numa_speed = 0;
+    } else if (speed_uniform) {
         avg_numa_speed = speed;
         NIXL_DEBUG << "NUMA PCIe capacity is uniform across all nodes with link bandwidth: "
                    << avg_numa_speed << " Gbps";
