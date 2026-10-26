@@ -20,6 +20,7 @@
 #include <cassert>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
@@ -1819,7 +1820,13 @@ cleanupSlots(nixlAgent *agent,
                       << "; terminating before memory cleanup" << std::endl;
 #pragma omp critical(nixlbench_fatal_cleanup)
             {
-                runtime->cleanupForExit();
+                try {
+                    runtime->cleanupForExit();
+                }
+                catch (...) {
+                    std::fputs("Runtime cleanup failed; terminating with live transfer resources\n",
+                               stderr);
+                }
                 std::_Exit(EXIT_FAILURE);
             }
         }

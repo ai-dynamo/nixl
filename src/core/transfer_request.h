@@ -72,11 +72,6 @@ public:
     void
     updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
 
-    [[nodiscard]] std::uint64_t
-    traceCorrelationId64() const noexcept {
-        return traceContext_.correlationId64();
-    }
-
     [[nodiscard]] const nixl::trace::TraceContext &
     traceContext() const noexcept {
         return traceContext_;

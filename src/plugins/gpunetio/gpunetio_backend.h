@@ -18,7 +18,6 @@
 #ifndef GPUNETIO_BACKEND_H
 #define GPUNETIO_BACKEND_H
 
-#include <bitset>
 #include "gpunetio_backend_aux.h"
 
 class nixlDocaEngine : public nixlBackendEngine {
@@ -160,24 +159,20 @@ private:
     struct sockaddr oob_saddr;
     struct sockaddr oob_netmask;
     std::thread pthr;
-    uint64_t *last_rsvd_flags;
-    uint64_t *last_posted_flags;
     cudaStream_t post_stream[DOCA_POST_STREAM_NUM]{};
     cudaStream_t wait_stream;
     mutable std::atomic<uint32_t> xferStream;
-    mutable std::atomic<uint32_t> lastPostedReq;
     mutable std::mutex postLock_;
-    mutable std::bitset<DOCA_MAX_COMPLETION_INFLIGHT> completionReserved;
 
-    struct docaXferReqGpu *xferReqRingGpu;
-    struct docaXferReqGpu *xferReqRingCpu;
+    struct docaSlotDesc *xferReqRingGpu;
+    struct docaSlotDesc *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
     mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved_;
+    docaHostState *host_state_cpu_ = nullptr;
+    docaHostState *host_state_gpu_ = nullptr;
 
-    struct docaXferCompletion *completion_list_gpu;
-    struct docaXferCompletion *completion_list_cpu;
-    uint32_t *wait_exit_gpu;
-    uint32_t *wait_exit_cpu;
+    struct docaGpuState *gpu_state_gpu = nullptr;
+    struct docaGpuState *gpu_state_cpu = nullptr;
     struct docaNotif *notif_fill_gpu;
     struct docaNotif *notif_fill_cpu;
     struct docaNotif *notif_progress_gpu;
@@ -199,23 +194,29 @@ private:
     class nixlDocaBckndReq : public nixlBackendReqH {
     private:
     public:
+        enum class completion_state : uint8_t { IN_PROGRESS, COMPLETING, COMPLETE };
+
         cudaStream_t stream;
+        bool attachedStream = false;
         uint32_t devId;
         std::vector<uint32_t> positions;
         uintptr_t backendHandleGpu;
-        std::vector<uint32_t> completion_ids;
+        size_t postedCount = 0;
         nixl_status_t postStatus = NIXL_SUCCESS;
+        std::atomic<completion_state> completionState{completion_state::IN_PROGRESS};
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
 
         ~nixlDocaBckndReq() {}
     };
 
-    // Called by postXfer with postLock_ held and the completion range checked.
+    void
+    retireRequest(nixlDocaBckndReq *request) const;
+
+    void
+    markFailed() const;
     nixl_status_t
-    postStripedWrite(nixlDocaBckndReq *request,
-                     const std::string &remote_agent,
-                     uint32_t completion_start) const;
+    postStripedWrite(nixlDocaBckndReq *request, const std::string &remote_agent) const;
 
     nixl_status_t
     progressThreadStart();
