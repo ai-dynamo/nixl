@@ -845,6 +845,30 @@ TEST(Tracing, RequestIdIsNoneWithoutTracerOrSource) {
     EXPECT_EQ(failures.count(), 1u);
 }
 
+TEST(Tracing, PostContextDrawsOnlyItsSpanIdAgainWhileZero) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);
+    zero_draws_left = 1;
+    const auto request = testContext(0x21, 0x03);
+    auto expected = request;
+    expected.spanId.fill(0x5a);
+
+    EXPECT_EQ(nixl::trace::generatePostContext(request, tracer.get()), expected);
+}
+
+TEST(Tracing, PostContextIsTheRequestsWithoutTracerOrSource) {
+    gtest::LogMessageCounter failures("could not generate a trace context");
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, failRandomBytes);
+    const auto request = testContext(0x22, 0x03);
+
+    EXPECT_EQ(nixl::trace::generatePostContext(request, nullptr), request);
+    for (int i = 0; i < 2; ++i) {
+        EXPECT_EQ(nixl::trace::generatePostContext(request, tracer.get()), request);
+    }
+    EXPECT_EQ(failures.count(), 1u);
+}
+
 // A phase recorded through the plugin-facing sink reaches every enabled trace
 // backend, tagged with the recording backend and the plugin's timestamp.
 TEST(TracePhaseSink, RecordedPhaseReachesEveryBackend) {

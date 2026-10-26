@@ -155,6 +155,14 @@ generateTraceContext(double sample_ratio = 0.0);
 [[nodiscard]] std::uint64_t
 generateRequestId(const Tracer *tracer);
 
+/**
+ * @brief Draw a context for one post of @p request: its trace id and flags with
+ *        a span id from @p tracer's random source, again while it is zero;
+ *        @p request itself when @p tracer is null or its source fails.
+ */
+[[nodiscard]] TraceContext
+generatePostContext(const TraceContext &request, const Tracer *tracer);
+
 } // namespace nixl::trace
 
 #endif
