@@ -18,6 +18,7 @@ import tempfile
 import time
 import uuid
 
+import numpy as np
 import pytest
 import torch
 
@@ -285,6 +286,110 @@ def test_improper_get_reg_descs(one_empty_agent, one_xfer_list):
     # Passing reg list will not work
     ret = one_empty_agent.get_reg_descs(one_xfer_list)
     assert ret is None
+
+
+_DESC_METHODS = {
+    "get_reg_descs": bindings.nixlRegDList,
+    "get_xfer_descs": bindings.nixlXferDList,
+    "get_remote_descs": bindings.nixlRemoteDList,
+}
+
+
+@pytest.mark.parametrize("container", [[], ()])
+@pytest.mark.parametrize("mem_type", ["DRAM", "FILE"])
+@pytest.mark.parametrize("method", list(_DESC_METHODS))
+def test_empty_descriptor_containers(one_empty_agent, container, mem_type, method):
+    """An empty list/tuple with a memory type converts to an empty typed list."""
+    descs = getattr(one_empty_agent, method)(container, mem_type)
+
+    assert isinstance(descs, _DESC_METHODS[method])
+    assert descs.getType() == one_empty_agent.nixl_mems[mem_type]
+    assert descs.descCount() == 0
+    assert descs.isEmpty()
+
+
+@pytest.mark.parametrize("container", [[], ()])
+@pytest.mark.parametrize("method", list(_DESC_METHODS))
+def test_empty_descriptor_containers_without_mem_type(
+    one_empty_agent, container, method
+):
+    """An empty list/tuple without a memory type follows the existing error convention."""
+    descs = getattr(one_empty_agent, method)(container, mem_type=None)
+    assert descs is None
+
+
+@pytest.mark.parametrize("container", [[], ()])
+@pytest.mark.parametrize("method", list(_DESC_METHODS))
+def test_empty_descriptor_containers_invalid_mem_type(
+    one_empty_agent, container, method
+):
+    """An empty list/tuple with an invalid memory type follows the existing KeyError."""
+    with pytest.raises(KeyError):
+        getattr(one_empty_agent, method)(container, "V-RAM")
+
+
+@pytest.mark.parametrize("dtype", [np.uint64, np.int64])
+@pytest.mark.parametrize("method", ["get_reg_descs", "get_xfer_descs"])
+def test_empty_descriptor_numpy_arrays(one_empty_agent, dtype, method):
+    """A zero-row Nx3 numpy array converts to an empty typed list."""
+    descs = getattr(one_empty_agent, method)(np.empty((0, 3), dtype=dtype), "DRAM")
+
+    assert isinstance(descs, _DESC_METHODS[method])
+    assert descs.getType() == bindings.DRAM_SEG
+    assert descs.descCount() == 0
+    assert descs.isEmpty()
+
+
+@pytest.mark.parametrize("method", ["get_reg_descs", "get_xfer_descs"])
+def test_empty_descriptor_numpy_validation(one_empty_agent, method):
+    """Emptiness does not bypass numpy array shape, dtype, and mem-type validation."""
+    # Wrong second dimension
+    descs = getattr(one_empty_agent, method)(np.empty((0, 2), dtype=np.uint64), "DRAM")
+    assert descs is None
+
+    # Unsupported dtype is rejected by the native constructor
+    with pytest.raises(ValueError, match="uint64 or int64"):
+        getattr(one_empty_agent, method)(np.empty((0, 3), dtype=np.float64), "DRAM")
+
+    # Missing memory type
+    descs = getattr(one_empty_agent, method)(
+        np.empty((0, 3), dtype=np.uint64), mem_type=None
+    )
+    assert descs is None
+
+
+@pytest.mark.parametrize("method", list(_DESC_METHODS))
+def test_empty_descriptor_typed_list_passthrough(one_empty_agent, method):
+    """An already-typed empty list is returned as the same object, mem_type or not."""
+    typed = _DESC_METHODS[method](bindings.DRAM_SEG)
+    assert getattr(one_empty_agent, method)(typed) is typed
+    assert getattr(one_empty_agent, method)(typed, "DRAM") is typed
+
+
+def test_empty_descriptor_callers(one_empty_agent):
+    """Higher-level APIs accept empty inputs like their typed-empty equivalents."""
+    if "POSIX" not in one_empty_agent.plugin_list:
+        pytest.skip("POSIX plugin not available")
+    one_empty_agent.create_backend("POSIX")
+    agent = one_empty_agent
+
+    # An empty query returns an empty result list
+    assert agent.query_memory([], "POSIX", "FILE") == []
+    assert agent.query_memory(bindings.nixlRegDList(bindings.FILE_SEG), "POSIX") == []
+
+    # Registration and preparation of an empty list hit the same native behavior as
+    # their typed-empty equivalents (the backend layer rejects empty lists itself).
+    with pytest.raises(bindings.nixlBackendError):
+        agent.register_memory([], "FILE")
+    with pytest.raises(bindings.nixlBackendError):
+        agent.register_memory(bindings.nixlRegDList(bindings.FILE_SEG))
+
+    with pytest.raises(bindings.nixlNotFoundError):
+        agent.prep_xfer_dlist("NIXL_INIT_AGENT", [], "FILE")
+    with pytest.raises(bindings.nixlNotFoundError):
+        agent.prep_xfer_dlist(
+            "NIXL_INIT_AGENT", bindings.nixlXferDList(bindings.FILE_SEG)
+        )
 
 
 def _prep_mem_view_worker(rank, exch_dir, backend_name):

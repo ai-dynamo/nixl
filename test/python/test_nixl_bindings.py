@@ -18,6 +18,7 @@ import pickle
 import shutil
 import tempfile
 
+import numpy as np
 import pytest
 
 import nixl._bindings as nixl
@@ -258,3 +259,33 @@ def test_query_mem():
             os.unlink(temp_file1.name)
         if os.path.exists(temp_file2.name):
             os.unlink(temp_file2.name)
+
+
+@pytest.mark.parametrize("dtype", [np.uint64, np.int64])
+def test_empty_numpy_descriptor_xfer(dtype):
+    """A zero-row Nx3 array constructs an empty xfer descriptor list."""
+    dlist = nixl.nixlXferDList(nixl.DRAM_SEG, np.empty((0, 3), dtype=dtype))
+
+    assert dlist.getType() == nixl.DRAM_SEG
+    assert dlist.descCount() == 0
+    assert dlist.isEmpty()
+
+
+@pytest.mark.parametrize("dtype", [np.uint64, np.int64])
+def test_empty_numpy_descriptor_reg(dtype):
+    """A zero-row Nx3 array constructs an empty reg descriptor list."""
+    dlist = nixl.nixlRegDList(nixl.DRAM_SEG, np.empty((0, 3), dtype=dtype))
+
+    assert dlist.getType() == nixl.DRAM_SEG
+    assert dlist.descCount() == 0
+    assert dlist.isEmpty()
+
+
+@pytest.mark.parametrize("dlist_class", [nixl.nixlXferDList, nixl.nixlRegDList])
+def test_empty_numpy_descriptor_single_row(dlist_class):
+    """One valid row still constructs a one-descriptor list."""
+    dlist = dlist_class(nixl.DRAM_SEG, np.array([[1000, 105, 0]], dtype=np.uint64))
+
+    assert dlist.descCount() == 1
+    assert not dlist.isEmpty()
+    assert dlist[0][:3] == (1000, 105, 0)
