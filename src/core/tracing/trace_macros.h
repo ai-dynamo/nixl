@@ -45,6 +45,21 @@
                                     ::nixl::trace::Span{};                                    \
     }()
 
+// For a sampled `context`, begins the span that `context` identifies, with `request_id` as
+// its own; otherwise a span inside the active context, as NIXL_TRACE_SCOPE does.
+#define NIXL_TRACE_CONTEXT_SPAN(span, tracer_ptr, span_name, span_kind, context, request_id) \
+    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                \
+        auto *nixl_trace_tracer_ = (tracer_ptr);                                             \
+        if (!nixl_trace_tracer_) {                                                           \
+            return ::nixl::trace::Span{};                                                    \
+        }                                                                                    \
+        const ::nixl::trace::TraceContext &nixl_trace_context_ = (context);                  \
+        return nixl_trace_context_.sampled() ?                                               \
+            nixl_trace_tracer_->beginContextSpan(                                            \
+                (span_name), (span_kind), nixl_trace_context_, (request_id)) :               \
+            nixl_trace_tracer_->beginSpan((span_name), (span_kind));                         \
+    }()
+
 #define NIXL_TRACE_MARK(tracer_ptr, mark_name, mark_kind)       \
     do {                                                        \
         if (auto *nixl_trace_tracer_ = (tracer_ptr)) {          \
@@ -65,8 +80,8 @@
         }                                                                                          \
     } while (0)
 
-// Declare before NIXL_TRACE_SCOPE so the span is created while the context is active.
-// One per scope.
+// Declare before NIXL_TRACE_SCOPE or NIXL_TRACE_CONTEXT_SPAN so the span is created while
+// the context is active. One per scope.
 #define NIXL_TRACE_CORRELATION_SCOPE(tracer_ptr, context, request_id) \
     ::nixl::trace::CorrelationScope nixl_trace_correlation_scope_(    \
         (tracer_ptr), (context), (request_id))
@@ -82,6 +97,9 @@
 
 #define NIXL_TRACE_SCOPE(span, tracer_ptr, span_name, span_kind) \
     do {                                                         \
+    } while (0)
+#define NIXL_TRACE_CONTEXT_SPAN(span, tracer_ptr, span_name, span_kind, context, request_id) \
+    do {                                                                                     \
     } while (0)
 #define NIXL_TRACE_MARK(tracer_ptr, mark_name, mark_kind) \
     do {                                                  \
