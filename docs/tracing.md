@@ -304,7 +304,8 @@ request on a backend that supports remote transfers but not trace contexts runs
 as usual, its trace just does not reach the remote agent, and core logs a
 warning once per backend in each agent; backends without remote transfers are
 not reported. Likewise, if generating a request's context fails, the request
-runs with the zeroed context, and each agent logs its first such failure as an
+runs with the zeroed context, and if a later `postXferReq` call cannot draw its
+span id, it keeps the request's; each agent logs its first such failure as an
 error.
 
 ## Profiling with NVTX / Nsight Systems
