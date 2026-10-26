@@ -842,6 +842,8 @@ On a system supporting MPS, launch a private daemon and run both workers from
 the same environment. Do not modify another user's MPS daemon:
 
 ```bash
+(
+set -euo pipefail
 export CUDA_VISIBLE_DEVICES=0
 mps_test_dir=$(mktemp -d /tmp/nixlbench-mps.XXXXXX)
 export CUDA_MPS_PIPE_DIRECTORY="$mps_test_dir/pipe"
@@ -851,6 +853,10 @@ nvidia-cuda-mps-control -d
 # The daemon remaps its selected GPU to device 0; clients use that mapping.
 unset CUDA_VISIBLE_DEVICES
 trap 'printf "quit\n" | nvidia-cuda-mps-control' EXIT
+
+# Verify the private control daemon responds before starting either worker.
+# GPU servers are created on demand when clients connect; an empty list is valid here.
+printf 'get_server_list\n' | nvidia-cuda-mps-control > /dev/null
 
 # Adjust these fabric settings and use three unused TCP ports.
 RDMA_DEVICE=mlx5_0
@@ -868,16 +874,17 @@ sleep 4
 "${nb[@]}" --gpunetio_oob_port 23458 > "$mps_test_dir/worker1.log" 2>&1 &
 worker1=$!
 
-# Check that a private server and both clients are present while they run:
+# Inspect the server while the workers run:
 printf 'get_server_list\n' | nvidia-cuda-mps-control
-# Replace SERVER_PID with the returned server PID:
-printf 'get_client_list %s\n' SERVER_PID | nvidia-cuda-mps-control
+# To inspect its clients, replace SERVER_PID and run this command manually:
+# printf 'get_client_list %s\n' SERVER_PID | nvidia-cuda-mps-control
 
 # Wait for both workers before shutting down this task's daemon; check both exits.
 status0=0; wait "$worker0" || status0=$?
 status1=0; wait "$worker1" || status1=$?
 cat "$mps_test_dir/worker0.log" "$mps_test_dir/worker1.log"
 test "$status0" = 0 && test "$status1" = 0
+)
 ```
 
 Preserve `--check_consistency` and the same payload, batch size and iteration
