@@ -374,6 +374,13 @@ public:
     }
 
     /**
+     * @brief Retrieves the number of NICs, as correlated from hwloc, that can carry host memory
+     * traffic, i.e. that do not sit behind a host-starved PCIe uplink.
+     */
+    size_t
+    getUsableNicCount() const;
+
+    /**
      * @brief Retrieves the average number of rails per NUMA node.
      */
     size_t
