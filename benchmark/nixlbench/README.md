@@ -812,7 +812,7 @@ The workers automatically coordinate ranks through ETCD as they connect. Note, t
   --backend UCX --device_list <ucx-device>
 ```
 
-For pairwise UCX runs, `--device_list` must match the configured initiator and target device counts. For UCX multi-rail experiments, keep `--device_list all` and use UCX environment variables such as `UCX_NET_DEVICES` to constrain NIC selection.
+For pairwise UCX runs, `--device_list` must match the configured initiator and target device counts. For UCX multi-rail experiments, keep `--device_list all` and use UCX environment variables such as `NIXL_UCX_NET_DEVICES` to constrain NIC selection. NIXL reads `NIXL_UCX_<X>` before falling back to `UCX_<X>`; the prefixed form does not affect other UCX users in the same process, such as MPI.
 
 **GPUNETIO Backend:**
 
@@ -1185,6 +1185,8 @@ ucx_info -d  # List UCX devices
 export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging
 
 export UCX_PROTO_INFO=y # See transport used by UCX
+
+export NIXL_UCX_TLS=rc,cuda_copy # Restrict NIXL's UCX transports without affecting MPI/UCC
 ```
 
 #### ETCD Cleanup
