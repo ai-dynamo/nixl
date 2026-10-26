@@ -87,6 +87,7 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
         tracer_.emitEvent(named ? label : toStringView(phase),
                           phaseKind(phase),
                           event_context,
+                          request_id,
                           timestamp,
                           event_attrs);
     }

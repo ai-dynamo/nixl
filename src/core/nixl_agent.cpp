@@ -203,6 +203,7 @@ traceXferComplete(nixl::trace::Tracer *tracer, const nixlXferReqH &req) {
                      "nixl::xfer.complete",
                      nixl::trace::Kind::Metadata,
                      req.traceContext(),
+                     req.traceRequestId(),
                      {"nixl.xfer_request_id", std::to_string(req.traceRequestId())},
                      {"nixl.xfer_execution", static_cast<std::int64_t>(req.traceExecution())});
 }
@@ -1173,7 +1174,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), req_hndl->traceContext());
+    NIXL_TRACE_CORRELATION_SCOPE(
+        data->tracer_.get(), req_hndl->traceContext(), req_hndl->traceRequestId());
     NIXL_TRACE_SCOPE(trace_span,
                      data->tracer_.get(),
                      req_hndl->backendOp == NIXL_WRITE ? "nixl::postXferReq.write" :

@@ -199,7 +199,8 @@ number is an `int64_t`. With no tracing backend active, a request has neither. A
 drawn id is never 0: if the agent's random source fails while drawing it, the
 request's records carry `nixl.xfer_request_id=0` and `nixl.xfer_execution=0`, meaning
 none. Both are attributes, which UCX also carries to the receiver (see "Backend
-phases"); the NVTX payload carries the trace context (see "Correlation").
+phases"), and the request id is also the NVTX payload on both sides (see
+"Correlation").
 
 Backend phases carry the pair too: a plugin receives it with the request's trace
 context and passes it back when it records a phase (see "Backend phases"). UCX's
@@ -216,10 +217,10 @@ reports it. The event carries `nixl.backend` (the recording backend's type),
 `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
 `nixl.phase.label` when the plugin supplied one, and any plugin-supplied
 attributes. A phase recorded under a trace context also carries the context as
-`nixl.traceparent` and is correlated on it, like the agent's own spans. A phase
-recorded for a request also carries the request's `nixl.xfer_request_id` and,
-when it belongs to a post, that post's `nixl.xfer_execution`; either is left out
-when the plugin passes 0. The phase vocabulary is closed so that timelines stay
+`nixl.traceparent`. A phase recorded for a request also carries the request's
+`nixl.xfer_request_id`, which correlates it like the agent's own spans, and, when
+it belongs to a post, that post's `nixl.xfer_execution`; either is left out when
+the plugin passes 0. The phase vocabulary is closed so that timelines stay
 comparable across backends,
 and each phase has a fixed kind. A notification's two ends are `CommSend` and
 `CommRecv`, so a backend that builds a graph can pair them; the other phases are
@@ -273,9 +274,9 @@ under the sender's context, with `nixl.remote_agent` naming the sender and, from
 `treq`, the sender's `nixl.xfer_request_id` and `nixl.xfer_execution`; a missing or
 malformed `treq` costs the event only the pair. An agent with tracing off skips
 both tags without reading them. The event thus carries the request's trace id in
-`nixl.traceparent`, the same correlation id as the sender's
-`nixl::postXferReq.write` or `.read` span, and the same request id and execution
-number as the sender's records of that post. Writes and reads without a
+`nixl.traceparent`, and the same request id and execution number as the sender's
+records of that post, so its correlation id is that of the sender's
+`nixl::postXferReq.write` or `.read` span. Writes and reads without a
 notification give the receiver nothing to observe, so they are traced on the
 sender only.
 
@@ -301,8 +302,8 @@ request on a backend that supports remote transfers but not trace contexts runs
 as usual, its trace just does not reach the remote agent, and core logs a
 warning once per backend in each agent; backends without remote transfers are
 not reported. Likewise, if generating a request's context fails, the request
-runs with the zeroed context and no correlation id, and each agent logs its
-first such failure as an error.
+runs with the zeroed context, and each agent logs its first such failure as an
+error.
 
 ## Profiling with NVTX / Nsight Systems
 
@@ -396,19 +397,21 @@ In NIXL tracing, "correlation" can mean two different things:
 - **Cross-rank / cross-agent** -- linking the sender's span to the receiver's span across
   processes. NVTX has **no** native cross-process linkage: each process is its own
   timeline that Nsight aligns best-effort by clock. What NIXL adds is the id: over UCX
-  notifications the receiver's `nixl::notif.received` carries the sender's correlation id
-  and `nixl.traceparent` (see "Backend phases"), so the two ranges can be matched
-  across timelines. Structured linking is a **Chakra** capability (one trace per rank,
+  notifications the receiver's `nixl::notif.received` carries the sender's request id
+  and `nixl.traceparent` (see "Backend phases"), and NVTX draws the request id as the
+  `uint64` payload on both agents, so the two ranges can be matched across timelines.
+  Structured linking is a **Chakra** capability (one trace per rank,
   joined offline by `chakra_trace_link` from matching send/recv); it is planned, and not
   part of the NVTX backend.
 - **Cross-thread within a process** -- attributing spans emitted on different threads
   (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
   same request. Implemented via the backend-agnostic `pushContext()` / `popContext()`
   API: NIXL wraps `postXferReq` in a correlation scope that hands every backend the
-  request's whole trace context, sampled or not, and passes the same context to the
-  `xfer.complete` event explicitly. The NVTX backend records the context's span id as
+  request's whole trace context, sampled or not, with its request id, and passes both
+  to the `xfer.complete` event explicitly. The NVTX backend records the request id as
   the event's `uint64` payload -- so a post and its completion carry the same id on the
-  timeline regardless of which thread emitted each. A request without a valid context
+  timeline regardless of which thread emitted each. A record without a request id
+  carries no payload, and a request with neither a valid context nor a request id
   pushes nothing.
 
 ## Planned work

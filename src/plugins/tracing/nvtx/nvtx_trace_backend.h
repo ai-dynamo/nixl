@@ -46,6 +46,7 @@ public:
     emitSpan(std::string_view name,
              Kind kind,
              const TraceContext &context,
+             std::uint64_t request_id,
              nixlTime::us_t start,
              nixlTime::us_t end,
              std::span<const Attribute> attrs) override;
@@ -54,11 +55,12 @@ public:
     emitEvent(std::string_view name,
               Kind kind,
               const TraceContext &context,
+              std::uint64_t request_id,
               nixlTime::us_t at,
               std::span<const Attribute> attrs) override;
 
     void
-    pushContext(const TraceContext &context) override;
+    pushContext(const TraceContext &context, std::uint64_t request_id) override;
 
     void
     popContext() override;

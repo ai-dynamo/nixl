@@ -27,9 +27,11 @@ shift
 mkdir -p "${OUT_DIR}/artifacts"
 OUT="${OUT_DIR}/artifacts/nixl_nvtx"
 LOG="${OUT}.log"
+REPORT="${OUT}.json"
+rm -f "${REPORT}"
 
 "${NSYS}" profile --trace=nvtx,osrt --force-overwrite true --output "${OUT}" \
-    "${GTEST}" "$@" --gtest_filter='*Tracing*' >"${LOG}" 2>&1
+    "${GTEST}" "$@" --gtest_filter='*Tracing*' --gtest_output="json:${REPORT}" >"${LOG}" 2>&1
 rc=$?
 
 if [ "${rc}" -ne 0 ]; then
@@ -68,22 +70,29 @@ if ! "${NSYS}" export --type sqlite --force-overwrite true --output "${SQLITE}" 
     echo "tracing_nsys: failed to export ${OUT}.nsys-rep to SQLite" >&2
     exit 1
 fi
-python3 - "${SQLITE}" <<'PY' || exit 1
+python3 - "${SQLITE}" "${REPORT}" <<'PY' || exit 1
+import json
 import sqlite3
 import sys
 
 connection = sqlite3.connect(sys.argv[1])
 rows = connection.execute(
     """
-    SELECT COALESCE(events.text, strings.value), events.uint64Value
+    SELECT COALESCE(events.text, strings.value), events.uint64Value, domains.text
     FROM NVTX_EVENTS AS events
     LEFT JOIN StringIds AS strings ON events.textId = strings.id
+    LEFT JOIN (SELECT DISTINCT domainId, text FROM NVTX_EVENTS
+               WHERE eventType = (SELECT id FROM ENUM_NSYS_EVENT_TYPE
+                                  WHERE name = 'NvtxDomainCreate')) AS domains
+           ON events.domainId = domains.domainId
     WHERE COALESCE(events.text, strings.value) IN
-          ('nixl::postXferReq.write', 'nixl::postXferReq.read', 'nixl::xfer.complete')
+          ('nixl::postXferReq.write', 'nixl::postXferReq.read', 'nixl::xfer.complete',
+           'nixl::createXferReq', 'nixl::submit', 'nixl::wire.submitted', 'nixl::notif.sent',
+           'nixl::notif.received')
     """
 ).fetchall()
-post_ids = [payload for name, payload in rows if name.startswith("nixl::postXferReq.")]
-complete_ids = [payload for name, payload in rows if name == "nixl::xfer.complete"]
+post_ids = [payload for name, payload, _ in rows if name.startswith("nixl::postXferReq.")]
+complete_ids = [payload for name, payload, _ in rows if name == "nixl::xfer.complete"]
 if not post_ids or not complete_ids:
     raise SystemExit("tracing_nsys: missing correlated post or completion events")
 if any(payload is None for payload in post_ids + complete_ids):
@@ -92,6 +101,23 @@ if not set(complete_ids).issubset(set(post_ids)):
     raise SystemExit("tracing_nsys: completion correlation payload was not posted")
 if max(post_ids.count(payload) for payload in set(post_ids)) < 2:
     raise SystemExit("tracing_nsys: no request correlation payload was reused")
+creations = [payload for name, payload, _ in rows if name == "nixl::createXferReq"]
+if not creations or any(payload is not None for payload in creations):
+    raise SystemExit("tracing_nsys: createXferReq carries a payload before the request has an id")
+
+with open(sys.argv[2]) as report:
+    recorded = [test["xfer_request_id"] for suite in json.load(report)["testsuites"]
+                for test in suite["testsuite"] if "xfer_request_id" in test]
+if len(recorded) != 1:
+    raise SystemExit("tracing_nsys: the sampled request's id was not recorded")
+request_id = int(recorded[0])
+placed = [(name, domain, None if payload is None else payload % 2**64)
+          for name, payload, domain in rows]
+for name, domain in (("nixl::postXferReq.write", "agent_0"), ("nixl::xfer.complete", "agent_0"),
+                     ("nixl::submit", "agent_0"), ("nixl::wire.submitted", "agent_0"),
+                     ("nixl::notif.sent", "agent_0"), ("nixl::notif.received", "agent_1")):
+    if placed.count((name, domain, request_id)) != 2:
+        raise SystemExit(f"tracing_nsys: {domain}'s {name} does not carry the sampled request id")
 PY
 
 echo "tracing_nsys: wrote ${OUT}.nsys-rep"

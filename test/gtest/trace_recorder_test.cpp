@@ -39,6 +39,7 @@ namespace {
 using record_t = std::vector<std::string>;
 
 constexpr const char *recorder_agent = "recorder_agent";
+constexpr std::uint64_t recorded_request_id = 0x8090a0b0c0d0e0f0ULL;
 
 class traceRecorder : public testing::Test {
 protected:
@@ -81,10 +82,17 @@ TEST_F(traceRecorder, EmittedSpanRecordsItsTimesAndContext) {
         const std::array attrs{
             nixl::trace::Attribute{"nixl.bytes", std::int64_t{4096}},
             nixl::trace::Attribute{"nixl.remote_agent", std::string_view{"peer"}}};
-        tracer->emitSpan("nixl::test.span", nixl::trace::Kind::CommSend, context, 100, 250, attrs);
+        tracer->emitSpan("nixl::test.span",
+                         nixl::trace::Kind::CommSend,
+                         context,
+                         recorded_request_id,
+                         100,
+                         250,
+                         attrs);
         tracer->emitSpan("nixl::test.untraced",
                          nixl::trace::Kind::Generic,
                          nixl::trace::TraceContext{},
+                         0,
                          7,
                          9,
                          {});
@@ -94,7 +102,7 @@ TEST_F(traceRecorder, EmittedSpanRecordsItsTimesAndContext) {
         records(),
         (std::vector<record_t>{{recorder_agent,
                                 "nixl::test.span",
-                                "correlation=" + std::to_string(context.correlationId64()),
+                                "correlation=" + std::to_string(recorded_request_id),
                                 "context=" + nixl::trace::formatTraceparent(context),
                                 "start_us=100",
                                 "end_us=250",
@@ -110,18 +118,45 @@ TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
         ASSERT_NE(tracer, nullptr);
         nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
         const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", "sender"}};
-        sink.recordPhase(nixl_trace_phase_t::NOTIF_RECEIVED, {}, 1234, attrs, &context, 0, 0);
+        sink.recordPhase(
+            nixl_trace_phase_t::NOTIF_RECEIVED, {}, 1234, attrs, &context, recorded_request_id, 1);
     }
 
     const std::string traceparent = nixl::trace::formatTraceparent(context);
+    const std::string request_id = std::to_string(recorded_request_id);
     EXPECT_EQ(records(),
               (std::vector<record_t>{{recorder_agent,
                                       "nixl::notif.received",
-                                      "correlation=" + std::to_string(context.correlationId64()),
+                                      "correlation=" + request_id,
                                       "context=" + traceparent,
                                       "at_us=1234",
                                       "nixl.backend=UCX",
                                       "nixl.phase.timestamp_us=1234",
                                       "nixl.traceparent=" + traceparent,
+                                      "nixl.xfer_request_id=" + request_id,
+                                      "nixl.xfer_execution=1",
                                       "nixl.remote_agent=sender"}}));
+}
+
+TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
+    const auto context = nixl::trace::generateTraceContext(1.0);
+    {
+        const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
+        ASSERT_NE(tracer, nullptr);
+        {
+            const nixl::trace::CorrelationScope scope(
+                tracer.get(), nixl::trace::TraceContext{}, recorded_request_id);
+            const auto span = tracer->beginSpan("nixl::test.scoped");
+        }
+        tracer->emitEvent("nixl::test.event", nixl::trace::Kind::Metadata, context, 0, 5, {});
+    }
+
+    EXPECT_EQ(records(),
+              (std::vector<record_t>{{recorder_agent,
+                                      "nixl::test.scoped",
+                                      "correlation=" + std::to_string(recorded_request_id)},
+                                     {recorder_agent,
+                                      "nixl::test.event",
+                                      "context=" + nixl::trace::formatTraceparent(context),
+                                      "at_us=5"}}));
 }

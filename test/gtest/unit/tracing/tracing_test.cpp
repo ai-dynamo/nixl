@@ -62,6 +62,7 @@ struct EmittedRecord {
     std::string name;
     nixl::trace::Kind kind;
     nixl::trace::TraceContext context;
+    std::uint64_t requestId;
     std::vector<nixlTime::us_t> times;
     attr_list_t attrs;
 };
@@ -77,6 +78,7 @@ struct CallLog {
     std::vector<std::pair<std::string, std::int64_t>> intAttrs;
     std::vector<std::pair<std::string, double>> dblAttrs;
     std::vector<nixl::trace::TraceContext> pushedContexts;
+    std::vector<std::uint64_t> pushedRequestIds;
     std::vector<nixl::trace::TraceContext> activeContexts;
     std::vector<nixl::trace::TraceContext> poppedContexts;
     std::vector<EmittedRecord> emittedSpans;
@@ -87,9 +89,10 @@ struct CallLog {
 makeRecord(std::string_view name,
            nixl::trace::Kind kind,
            const nixl::trace::TraceContext &context,
+           std::uint64_t request_id,
            std::vector<nixlTime::us_t> times,
            std::span<const nixl::trace::Attribute> attrs) {
-    EmittedRecord record{std::string(name), kind, context, std::move(times), {}};
+    EmittedRecord record{std::string(name), kind, context, request_id, std::move(times), {}};
     for (const auto &attr : attrs) {
         record.attrs.emplace_back(
             std::string(attr.key),
@@ -172,24 +175,28 @@ public:
     emitSpan(std::string_view name,
              nixl::trace::Kind kind,
              const nixl::trace::TraceContext &context,
+             std::uint64_t request_id,
              nixlTime::us_t start,
              nixlTime::us_t end,
              std::span<const nixl::trace::Attribute> attrs) override {
-        log_->emittedSpans.push_back(makeRecord(name, kind, context, {start, end}, attrs));
+        log_->emittedSpans.push_back(
+            makeRecord(name, kind, context, request_id, {start, end}, attrs));
     }
 
     void
     emitEvent(std::string_view name,
               nixl::trace::Kind kind,
               const nixl::trace::TraceContext &context,
+              std::uint64_t request_id,
               nixlTime::us_t at,
               std::span<const nixl::trace::Attribute> attrs) override {
-        log_->emittedEvents.push_back(makeRecord(name, kind, context, {at}, attrs));
+        log_->emittedEvents.push_back(makeRecord(name, kind, context, request_id, {at}, attrs));
     }
 
     void
-    pushContext(const nixl::trace::TraceContext &context) override {
+    pushContext(const nixl::trace::TraceContext &context, std::uint64_t request_id) override {
         log_->pushedContexts.push_back(context);
+        log_->pushedRequestIds.push_back(request_id);
         log_->activeContexts.push_back(context);
     }
 
@@ -226,6 +233,7 @@ public:
     emitSpan(std::string_view,
              nixl::trace::Kind,
              const nixl::trace::TraceContext &,
+             std::uint64_t,
              nixlTime::us_t,
              nixlTime::us_t,
              std::span<const nixl::trace::Attribute>) override {
@@ -236,13 +244,14 @@ public:
     emitEvent(std::string_view,
               nixl::trace::Kind,
               const nixl::trace::TraceContext &,
+              std::uint64_t,
               nixlTime::us_t,
               std::span<const nixl::trace::Attribute>) override {
         throw std::runtime_error("emitEvent failed");
     }
 
     void
-    pushContext(const nixl::trace::TraceContext &) override {}
+    pushContext(const nixl::trace::TraceContext &, std::uint64_t) override {}
 
     void
     popContext() override {}
@@ -365,20 +374,22 @@ TEST(Tracing, EmittedRecordsFanOutToAllBackends) {
     const attr_list_t expected{
         {"peer", std::string("agent_1")}, {"bytes", std::int64_t{4096}}, {"ratio", 0.5}};
 
-    tracer->emitSpan("span", nixl::trace::Kind::CommSend, context, 10, 25, attrs);
-    tracer->emitEvent("event", nixl::trace::Kind::CommRecv, context, 42, attrs);
+    tracer->emitSpan("span", nixl::trace::Kind::CommSend, context, 0x2121, 10, 25, attrs);
+    tracer->emitEvent("event", nixl::trace::Kind::CommRecv, context, 0x2222, 42, attrs);
 
     for (const CallLog *log : {&a, &b}) {
         ASSERT_EQ(log->emittedSpans.size(), 1u);
         EXPECT_EQ(log->emittedSpans[0].name, "span");
         EXPECT_EQ(log->emittedSpans[0].kind, nixl::trace::Kind::CommSend);
         EXPECT_EQ(log->emittedSpans[0].context, context);
+        EXPECT_EQ(log->emittedSpans[0].requestId, 0x2121u);
         EXPECT_EQ(log->emittedSpans[0].times, (std::vector<nixlTime::us_t>{10, 25}));
         EXPECT_EQ(log->emittedSpans[0].attrs, expected);
         ASSERT_EQ(log->emittedEvents.size(), 1u);
         EXPECT_EQ(log->emittedEvents[0].name, "event");
         EXPECT_EQ(log->emittedEvents[0].kind, nixl::trace::Kind::CommRecv);
         EXPECT_EQ(log->emittedEvents[0].context, context);
+        EXPECT_EQ(log->emittedEvents[0].requestId, 0x2222u);
         EXPECT_EQ(log->emittedEvents[0].times, std::vector<nixlTime::us_t>{42});
         EXPECT_EQ(log->emittedEvents[0].attrs, expected);
     }
@@ -411,8 +422,8 @@ TEST(Tracing, EmptyTracerIsInert) {
     span.addCtrlDep(nixl::trace::SpanId{7});
     EXPECT_EQ(span.id().value, 0u);
     tracer.mark("m"); // no crash
-    tracer.emitSpan("s", nixl::trace::Kind::Generic, testContext(0x23), 1, 2, {});
-    tracer.emitEvent("e", nixl::trace::Kind::Metadata, testContext(0x23), 3, {});
+    tracer.emitSpan("s", nixl::trace::Kind::Generic, testContext(0x23), 0x2323, 1, 2, {});
+    tracer.emitEvent("e", nixl::trace::Kind::Metadata, testContext(0x23), 0x2323, 3, {});
 }
 
 // A default-constructed Span (what the macros bind when the tracer is null) is
@@ -550,11 +561,12 @@ TEST(Tracing, ContextFansOutToAllBackends) {
     auto tracer = makeMockTracer(a, b);
     const auto context = testContext(0x11);
 
-    tracer->pushContext(context);
+    tracer->pushContext(context, 0x1111);
     tracer->popContext();
 
     for (const CallLog *log : {&a, &b}) {
         EXPECT_EQ(log->pushedContexts, std::vector{context});
+        EXPECT_EQ(log->pushedRequestIds, std::vector<std::uint64_t>{0x1111});
         EXPECT_EQ(log->poppedContexts, std::vector{context});
     }
 }
@@ -567,7 +579,7 @@ TEST(Tracing, CorrelationScopeBalancesPushPop) {
     const auto context = testContext(0x12);
 
     {
-        const nixl::trace::CorrelationScope scope(tracer.get(), context);
+        const nixl::trace::CorrelationScope scope(tracer.get(), context, 0x1212);
         const auto span = tracer->beginSpan("op");
         for (const CallLog *log : {&a, &b}) {
             EXPECT_EQ(log->activeContexts, std::vector{context});
@@ -577,6 +589,7 @@ TEST(Tracing, CorrelationScopeBalancesPushPop) {
 
     for (const CallLog *log : {&a, &b}) {
         EXPECT_EQ(log->pushedContexts, std::vector{context});
+        EXPECT_EQ(log->pushedRequestIds, std::vector<std::uint64_t>{0x1212});
         EXPECT_EQ(log->poppedContexts, std::vector{context});
         EXPECT_TRUE(log->activeContexts.empty());
     }
@@ -589,22 +602,39 @@ TEST(Tracing, CorrelationScopePushesUnsampledContext) {
     ASSERT_TRUE(unsampled.valid());
     ASSERT_FALSE(unsampled.sampled());
 
-    { const nixl::trace::CorrelationScope scope(tracer.get(), unsampled); }
+    { const nixl::trace::CorrelationScope scope(tracer.get(), unsampled, 0x1313); }
 
     for (const CallLog *log : {&a, &b}) {
         EXPECT_EQ(log->pushedContexts, std::vector{unsampled});
+        EXPECT_EQ(log->pushedRequestIds, std::vector<std::uint64_t>{0x1313});
         EXPECT_EQ(log->poppedContexts, std::vector{unsampled});
+    }
+}
+
+TEST(Tracing, CorrelationScopePushesEitherTheContextOrTheRequestId) {
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+    const auto context = testContext(0x18);
+    const nixl::trace::TraceContext no_context;
+
+    { const nixl::trace::CorrelationScope scope(tracer.get(), context, 0); }
+    { const nixl::trace::CorrelationScope scope(tracer.get(), no_context, 0x1818); }
+
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->pushedContexts, (std::vector{context, no_context}));
+        EXPECT_EQ(log->pushedRequestIds, (std::vector<std::uint64_t>{0, 0x1818}));
+        EXPECT_EQ(log->poppedContexts, (std::vector{context, no_context}));
     }
 }
 
 // A null tracer (no active backend) must make CorrelationScope a safe no-op.
 TEST(Tracing, CorrelationScopeNullTracerIsInert) {
     nixl::trace::Tracer *tracer = nullptr;
-    { const nixl::trace::CorrelationScope scope(tracer, testContext(0x14)); }
+    { const nixl::trace::CorrelationScope scope(tracer, testContext(0x14), 0x1414); }
     SUCCEED();
 }
 
-TEST(Tracing, CorrelationScopeInvalidContextIsInert) {
+TEST(Tracing, CorrelationScopeWithoutContextOrRequestIdIsInert) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     auto no_trace_id = testContext(0x15);
@@ -613,7 +643,7 @@ TEST(Tracing, CorrelationScopeInvalidContextIsInert) {
     no_span_id.spanId.fill(0);
 
     for (const auto &context : {nixl::trace::TraceContext{}, no_trace_id, no_span_id}) {
-        const nixl::trace::CorrelationScope scope(tracer.get(), context);
+        const nixl::trace::CorrelationScope scope(tracer.get(), context, 0);
         const auto span = tracer->beginSpan("op");
     }
 
@@ -631,9 +661,9 @@ TEST(Tracing, NestedCorrelationScopesPopInReverseOrder) {
     const auto inner = testContext(0x17);
 
     {
-        const nixl::trace::CorrelationScope outer_scope(tracer.get(), outer);
+        const nixl::trace::CorrelationScope outer_scope(tracer.get(), outer, 0x1616);
         {
-            const nixl::trace::CorrelationScope inner_scope(tracer.get(), inner);
+            const nixl::trace::CorrelationScope inner_scope(tracer.get(), inner, 0x1717);
             EXPECT_EQ(a.activeContexts, (std::vector{outer, inner}));
         }
         EXPECT_EQ(a.activeContexts, std::vector{outer});
@@ -641,6 +671,7 @@ TEST(Tracing, NestedCorrelationScopesPopInReverseOrder) {
 
     for (const CallLog *log : {&a, &b}) {
         EXPECT_EQ(log->pushedContexts, (std::vector{outer, inner}));
+        EXPECT_EQ(log->pushedRequestIds, (std::vector<std::uint64_t>{0x1616, 0x1717}));
         EXPECT_EQ(log->poppedContexts, (std::vector{inner, outer}));
         EXPECT_TRUE(log->activeContexts.empty());
     }
@@ -661,7 +692,6 @@ TEST(Tracing, RequestStoresFixedCorrelationContext) {
                                context,
                                0x0123456789abcdefULL);
 
-    EXPECT_EQ(request.traceCorrelationId64(), 0x00f067aa0ba902b7ULL);
     EXPECT_EQ(request.traceContext(), context);
     EXPECT_EQ(request.traceRequestId(), 0x0123456789abcdefULL);
     EXPECT_EQ(request.traceExecution(), 0u);
@@ -684,10 +714,10 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
                               nixl_remote_section_weak_t{},
                               nixl::trace::generateTraceContext(),
                               0);
-    const auto first_id = first.traceCorrelationId64();
+    const auto first_context = first.traceContext();
 
-    EXPECT_NE(first_id, second.traceCorrelationId64());
-    EXPECT_EQ(first.traceCorrelationId64(), first_id);
+    EXPECT_NE(first_context, second.traceContext());
+    EXPECT_EQ(first.traceContext(), first_context);
 }
 
 TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
@@ -700,7 +730,7 @@ TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
                                nixl::trace::TraceContext{},
                                0);
 
-    EXPECT_EQ(request.traceCorrelationId64(), 0u);
+    EXPECT_FALSE(request.traceContext().valid());
 }
 
 TEST(Tracing, ActiveTracerConstructsGeneratedContext) {
@@ -712,7 +742,7 @@ TEST(Tracing, ActiveTracerConstructsGeneratedContext) {
 
     EXPECT_TRUE(first.valid());
     EXPECT_TRUE(second.valid());
-    EXPECT_NE(first.correlationId64(), second.correlationId64());
+    EXPECT_NE(first.spanId, second.spanId);
 }
 
 // The tracer carries the sampling ratio to the generation call sites, which only
@@ -934,6 +964,9 @@ TEST(TracePhaseSink, RequestIdAndExecutionAreRecordedWhenNonZero) {
 
     for (const CallLog *log : {&a, &b}) {
         ASSERT_EQ(log->emittedEvents.size(), 3u);
+        EXPECT_EQ(log->emittedEvents[0].requestId, request_id);
+        EXPECT_EQ(log->emittedEvents[1].requestId, request_id);
+        EXPECT_EQ(log->emittedEvents[2].requestId, 0u);
         EXPECT_EQ(log->emittedEvents[0].attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
                                {"nixl.phase.timestamp_us", std::int64_t{1}},

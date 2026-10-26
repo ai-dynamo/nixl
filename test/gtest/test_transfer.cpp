@@ -419,9 +419,9 @@ protected:
                                        &extra_params);
                 ASSERT_EQ(status, NIXL_SUCCESS);
                 EXPECT_NE(xfer_req, nullptr);
-                const auto trace_correlation_id = xfer_req->traceCorrelationId64();
+                const auto trace_request_id = xfer_req->traceRequestId();
                 if (expect_trace_context) {
-                    EXPECT_NE(trace_correlation_id, 0u);
+                    EXPECT_NE(trace_request_id, 0u);
                 }
 
                 auto start_time = absl::Now();
@@ -429,12 +429,12 @@ protected:
                 for (size_t i = 0; i < repeat; i++) {
                     status = from.postXferReq(xfer_req);
                     ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
-                    EXPECT_EQ(xfer_req->traceCorrelationId64(), trace_correlation_id);
+                    EXPECT_EQ(xfer_req->traceRequestId(), trace_request_id);
 
                     for (int i = 0; i < retry_count; i++) {
                         status = from.getXferStatus(xfer_req);
                         EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
-                        EXPECT_EQ(xfer_req->traceCorrelationId64(), trace_correlation_id);
+                        EXPECT_EQ(xfer_req->traceRequestId(), trace_request_id);
                         if (status == NIXL_SUCCESS) {
                             break;
                         }
@@ -920,5 +920,58 @@ TEST_P(TestTransferTracingNsysAuto, AutoEnabledTransferLoop) {
 }
 
 NIXL_INSTANTIATE_TEST(ucx_tracing_nsys_auto, TestTransferTracingNsysAuto, "UCX", true, 2, 0, "");
+
+class TestTransferTracingSampled : public TestTransferTracing {
+protected:
+    void
+    SetUp() override {
+        env.addVar("NIXL_TRACE_SAMPLE_RATIO", "1");
+        TestTransferTracing::SetUp();
+    }
+};
+
+TEST_P(TestTransferTracingSampled, NotifyingWritePostedTwice) {
+    constexpr size_t size = 4096;
+    constexpr size_t posts = 2;
+    const std::string notif_msg = "notification";
+
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(getAgent(0), size, 1, DRAM_SEG, src_buffers);
+    createRegisteredMem(getAgent(1), size, 1, DRAM_SEG, dst_buffers);
+    exchangeMD(0, 1);
+
+    nixl_opt_args_t extra_params;
+    extra_params.notif = notif_msg;
+    nixlXferReqH *xfer_req = nullptr;
+    ASSERT_EQ(getAgent(0).createXferReq(NIXL_WRITE,
+                                        makeDescList<nixlBasicDesc>(src_buffers, DRAM_SEG),
+                                        makeDescList<nixlBasicDesc>(dst_buffers, DRAM_SEG),
+                                        getAgentName(1),
+                                        xfer_req,
+                                        &extra_params),
+              NIXL_SUCCESS);
+    ASSERT_TRUE(xfer_req->traceContext().sampled());
+    ASSERT_NE(xfer_req->traceRequestId(), 0u);
+    RecordProperty("xfer_request_id", std::to_string(xfer_req->traceRequestId()));
+
+    for (size_t post = 0; post < posts; ++post) {
+        nixl_status_t status = getAgent(0).postXferReq(xfer_req);
+        ASSERT_TRUE(wait_until_true([&]() {
+            if (status == NIXL_IN_PROG) {
+                status = getAgent(0).getXferStatus(xfer_req);
+            }
+            return status != NIXL_IN_PROG;
+        }));
+        ASSERT_EQ(status, NIXL_SUCCESS);
+    }
+    ASSERT_EQ(getAgent(0).releaseXferReq(xfer_req), NIXL_SUCCESS);
+    verifyNotifs(getAgent(1), getAgentName(0), posts, notif_msg, {}, &getAgent(0));
+
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
+    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+}
+
+NIXL_INSTANTIATE_TEST(ucx_tracing_sampled, TestTransferTracingSampled, "UCX", true, 2, 0, "");
 
 } // namespace gtest

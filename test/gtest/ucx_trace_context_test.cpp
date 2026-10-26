@@ -292,7 +292,7 @@ protected:
         ASSERT_TRUE(context.sampled());
         ASSERT_NE(request_id, 0u);
         const std::vector<std::string> expected{
-            "correlation=" + std::to_string(context.correlationId64()),
+            "correlation=" + std::to_string(request_id),
             "context=" + nixl::trace::formatTraceparent(context),
             "nixl.traceparent=" + nixl::trace::formatTraceparent(context),
             "nixl.xfer_request_id=" + std::to_string(request_id),
@@ -583,7 +583,7 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_EQ(WEXITSTATUS(receiver_status), 0) << receiverOutput();
     EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
 
-    const std::string correlation = "correlation=" + std::to_string(context.correlationId64());
+    const std::string correlation = "correlation=" + std::to_string(request_id);
     const std::string traceparent = nixl::trace::formatTraceparent(context);
 #if defined(NIXL_TRACE_ENABLED)
     const auto posted = recordedSpans(traceFile, sender_name, "nixl::postXferReq.write");
@@ -626,7 +626,8 @@ TEST_F(ucxTraceContextPropagation, ReceiverRecordsEachNotifyingPostsExecution) {
     for (size_t i = 0; i < received.size(); ++i) {
         EXPECT_THAT(
             received[i],
-            testing::IsSupersetOf({"nixl.traceparent=" + nixl::trace::formatTraceparent(context),
+            testing::IsSupersetOf({"correlation=" + std::to_string(request_id),
+                                   "nixl.traceparent=" + nixl::trace::formatTraceparent(context),
                                    "nixl.xfer_request_id=" + std::to_string(request_id),
                                    "nixl.xfer_execution=" + std::to_string(i + 1),
                                    std::string("nixl.remote_agent=") + sender_name}));
