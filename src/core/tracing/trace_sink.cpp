@@ -28,7 +28,7 @@
 namespace nixl::trace {
 namespace {
 
-    constexpr std::size_t max_core_attrs = 4;
+    constexpr std::size_t max_core_attrs = 6;
 
     [[nodiscard]] constexpr Kind
     phaseKind(nixl_trace_phase_t phase) noexcept {
@@ -54,10 +54,13 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
                              std::string_view label,
                              nixlTime::us_t timestamp,
                              std::span<const nixlBackendTraceAttr> attrs,
-                             const TraceContext *context) noexcept {
+                             const TraceContext *context,
+                             std::uint64_t request_id,
+                             std::uint64_t execution) noexcept {
     try {
         const TraceContext event_context = (context != nullptr) ? *context : TraceContext{};
         std::string traceparent;
+        std::string request_id_text;
         std::vector<Attribute> event_attrs;
         event_attrs.reserve(max_core_attrs + attrs.size());
         event_attrs.push_back({"nixl.backend", backend_});
@@ -65,6 +68,13 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
         if (event_context.valid()) {
             traceparent = formatTraceparent(event_context);
             event_attrs.push_back({"nixl.traceparent", traceparent});
+        }
+        if (request_id != 0) {
+            request_id_text = std::to_string(request_id);
+            event_attrs.push_back({"nixl.xfer_request_id", request_id_text});
+        }
+        if (execution != 0) {
+            event_attrs.push_back({"nixl.xfer_execution", static_cast<std::int64_t>(execution)});
         }
         if (!label.empty()) {
             event_attrs.push_back({"nixl.phase.label", label});

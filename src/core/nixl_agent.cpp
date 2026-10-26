@@ -67,12 +67,14 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_mem_t remote_type,
                            const size_t desc_count,
                            const nixl_remote_section_weak_t &remote_section_ref,
-                           const nixl::trace::TraceContext &trace_context)
+                           const nixl::trace::TraceContext &trace_context,
+                           const std::uint64_t trace_request_id)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
       remoteSection(remote_section_ref),
       traceContext_(trace_context),
+      traceRequestId_(trace_request_id),
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
@@ -193,6 +195,16 @@ makeMDConfig(const nixlAgentConfig &config) {
             config.listenPort,
             config.etcdWatchTimeout,
             std::chrono::microseconds(config.lthrDelay)};
+}
+
+void
+traceXferComplete(nixl::trace::Tracer *tracer, const nixlXferReqH &req) {
+    NIXL_TRACE_EVENT(tracer,
+                     "nixl::xfer.complete",
+                     nixl::trace::Kind::Metadata,
+                     req.traceContext(),
+                     {"nixl.xfer_request_id", std::to_string(req.traceRequestId())},
+                     {"nixl.xfer_execution", static_cast<std::int64_t>(req.traceExecution())});
 }
 
 } // namespace
@@ -851,13 +863,16 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    auto handle = std::make_unique<nixlXferReqH>(remote_side.remoteAgent,
-                                                 operation,
-                                                 local_descs.getType(),
-                                                 remote_descs.getType(),
-                                                 desc_count,
-                                                 remote_side.remoteSectionRef,
-                                                 nixl::trace::TraceContext{data->tracer_.get()});
+    auto handle =
+        std::make_unique<nixlXferReqH>(remote_side.remoteAgent,
+                                       operation,
+                                       local_descs.getType(),
+                                       remote_descs.getType(),
+                                       desc_count,
+                                       remote_side.remoteSectionRef,
+                                       nixl::trace::TraceContext{data->tracer_.get()},
+                                       nixl::trace::generateRequestId(data->tracer_.get()));
+    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", std::to_string(handle->traceRequestId()));
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -933,6 +948,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
     opt_args.traceContext = &handle->traceContext();
+    opt_args.traceRequestId = handle->traceRequestId();
     ret = handle->engine->prepXfer(handle->backendOp,
                                    handle->initiatorDescs,
                                    handle->targetDescs,
@@ -1022,13 +1038,16 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO: merge descriptors back to back in memory (like makeXferReq).
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    auto handle = std::make_unique<nixlXferReqH>(remote_agent,
-                                                 operation,
-                                                 local_descs.getType(),
-                                                 remote_descs.getType(),
-                                                 local_descs.descCount(),
-                                                 rem_sec_it->second,
-                                                 nixl::trace::TraceContext{data->tracer_.get()});
+    auto handle =
+        std::make_unique<nixlXferReqH>(remote_agent,
+                                       operation,
+                                       local_descs.getType(),
+                                       remote_descs.getType(),
+                                       local_descs.descCount(),
+                                       rem_sec_it->second,
+                                       nixl::trace::TraceContext{data->tracer_.get()},
+                                       nixl::trace::generateRequestId(data->tracer_.get()));
+    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", std::to_string(handle->traceRequestId()));
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -1081,6 +1100,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
     opt_args.traceContext = &handle->traceContext();
+    opt_args.traceRequestId = handle->traceRequestId();
     ret1 = handle->engine->prepXfer(handle->backendOp,
                                     handle->initiatorDescs,
                                     handle->targetDescs,
@@ -1162,10 +1182,13 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                                          nixl::trace::Kind::CommRecv);
     NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{req_hndl->remoteAgent});
     NIXL_TRACE_ATTR(trace_span, "bytes", static_cast<std::int64_t>(req_hndl->telemetry.totalBytes));
+    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", std::to_string(req_hndl->traceRequestId()));
 
+    chrono_point_t start_time;
+    std::optional<nixlTime::nixlDuration> timer;
     if (data->telemetry_) {
-        req_hndl->telemetry.startTime = std::chrono::steady_clock::now();
-        req_hndl->timer.restart();
+        start_time = std::chrono::steady_clock::now();
+        timer.emplace();
     }
 
     std::shared_lock<nixlLock> read_lock(data->lock);
@@ -1184,12 +1207,19 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
         if (req_hndl->status == NIXL_SUCCESS) {
-            NIXL_TRACE_MARK(
-                data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
+            traceXferComplete(data->tracer_.get(), *req_hndl);
+            if (data->telemetry_) {
+                req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_FINISH);
+            }
         }
         if (req_hndl->status == NIXL_IN_PROG) {
             NIXL_ERROR_FUNC << "transfer request is still in progress and cannot be reposted";
+            data->addErrorTelemetry(NIXL_ERR_REPOST_ACTIVE);
             return NIXL_ERR_REPOST_ACTIVE;
+        }
+
+        if (req_hndl->status < 0) {
+            data->addErrorTelemetry(req_hndl->status);
         }
 
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
@@ -1232,6 +1262,18 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     opt_args.traceContext = &req_hndl->traceContext();
+    if (req_hndl->traceRequestId_ != 0) {
+        req_hndl->traceExecution_.fetch_add(1, std::memory_order_relaxed);
+    }
+    opt_args.traceRequestId = req_hndl->traceRequestId();
+    opt_args.traceExecution = req_hndl->traceExecution();
+    NIXL_TRACE_ATTR(
+        trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(opt_args.traceExecution));
+
+    if (timer) {
+        req_hndl->telemetry.startTime = start_time;
+        req_hndl->timer = *timer;
+    }
 
     // If status is not NIXL_IN_PROG we can repost,
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,
@@ -1245,6 +1287,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
+            data->addErrorTelemetry(NIXL_ERR_REMOTE_DISCONNECT);
             return NIXL_ERR_REMOTE_DISCONNECT;
         } else {
             NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1254,7 +1297,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     if (req_hndl->status == NIXL_SUCCESS) {
-        NIXL_TRACE_MARK(data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
+        traceXferComplete(data->tracer_.get(), *req_hndl);
     }
 
     if (data->telemetry_) {
@@ -1289,6 +1332,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
         if (req_hndl->status < 0) {
             if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
+                data->addErrorTelemetry(NIXL_ERR_REMOTE_DISCONNECT);
                 return NIXL_ERR_REMOTE_DISCONNECT;
             } else {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1296,9 +1340,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
             }
         }
         if (req_hndl->status == NIXL_SUCCESS) {
-            NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), req_hndl->traceContext());
-            NIXL_TRACE_MARK(
-                data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
+            traceXferComplete(data->tracer_.get(), *req_hndl);
         }
         if (data->telemetry_) {
             if (req_hndl->status == NIXL_SUCCESS) {
@@ -1347,9 +1389,12 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
         if (req_hndl->status == NIXL_SUCCESS) {
-            NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), req_hndl->traceContext());
-            NIXL_TRACE_MARK(
-                data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
+            traceXferComplete(data->tracer_.get(), *req_hndl);
+            if (data->telemetry_) {
+                req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_FINISH);
+            }
+        } else if (req_hndl->status < 0) {
+            data->addErrorTelemetry(req_hndl->status);
         }
 
         if(req_hndl->status == NIXL_IN_PROG) {
@@ -1361,6 +1406,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
                                 << "' could not release transfer request and returned error status "
                                 << release_status;
+                data->addErrorTelemetry(NIXL_ERR_REPOST_ACTIVE);
                 return NIXL_ERR_REPOST_ACTIVE; // Might need renaming
             }
             req_hndl->status = release_status;
