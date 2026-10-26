@@ -700,7 +700,7 @@ DEALINGS IN THE SOFTWARE.
    END OF TERMS AND CONDITIONS
 ```
 
-## LibFabric - 2.3.0
+## LibFabric - 2.7.0
 
 - **Repository URL**: https://github.com/ofiwg/libfabric
 - **License URL**: https://github.com/ofiwg/libfabric/blob/main/COPYING
