@@ -22,11 +22,13 @@
  *
  * When tracing is compiled out (NIXL_TRACE_ENABLED undefined) every macro
  * expands to `do {} while (0)` so call sites cost nothing. When compiled in,
- * NIXL_TRACE_SCOPE declares a caller-named RAII Span and takes a predictable
- * null-check branch on the tracer.
+ * NIXL_TRACE_SCOPE and NIXL_TRACE_CONTEXT_SPAN declare a caller-named RAII Span
+ * and take a predictable null-check branch on the tracer.
  *
- * Usage: NIXL_TRACE_SCOPE(span, tracer, name, kind) declares the local `span`;
- * pass that same `span` to NIXL_TRACE_ATTR(span, key, value) to annotate it.
+ * Usage: NIXL_TRACE_SCOPE(span, tracer, name, kind) or
+ * NIXL_TRACE_CONTEXT_SPAN(span, tracer, name, kind, context, request_id)
+ * declares the local `span`; pass that same `span` to
+ * NIXL_TRACE_ATTR(span, key, value) to annotate it.
  * The explicit name avoids any hidden coupling/shadowing and allows more than
  * one span per scope. Attribute arguments are only evaluated when a backend is
  * actually active.

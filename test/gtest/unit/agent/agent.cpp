@@ -149,9 +149,11 @@ namespace agent {
         }
 
         nixl_status_t
-        createSelfXferReq(selfXferSetup &setup, nixlXferReqH *&req) {
+        createSelfXferReq(selfXferSetup &setup,
+                          nixlXferReqH *&req,
+                          nixl_xfer_op_t op = NIXL_WRITE) {
             return agent_->createXferReq(
-                NIXL_WRITE, setup.xferDlist, setup.xferDlist, name_, req, &setup.extraParams);
+                op, setup.xferDlist, setup.xferDlist, name_, req, &setup.extraParams);
         }
     };
 
@@ -789,6 +791,20 @@ namespace agent {
         EXPECT_NE(post.spanId, request.spanId);
         EXPECT_THAT(records("nixl::postXferReq.write"),
                     testing::ElementsAre(isSpanOf(req, request), isSpanOf(req, post)));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(sampledRecorderTracingAgentFixture, ReadPostIsTheSpanItsContextIdentifies) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req, NIXL_READ), NIXL_SUCCESS);
+        ASSERT_TRUE(req->traceContext().sampled());
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        const auto &post = req->tracePostContext();
+        EXPECT_THAT(records("nixl::postXferReq.read"), testing::ElementsAre(isSpanOf(req, post)));
+        EXPECT_TRUE(records("nixl::postXferReq.write").empty());
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(carries(post)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
