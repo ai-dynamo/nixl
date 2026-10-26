@@ -79,6 +79,20 @@ export NIXL_TELEMETRY_DOCA_IPC_SOCKETS_DIR="/path/to/ipc_sockets"
 
 Other CollectX outputs (Remote Write, OTLP, Fluent Bit) are **DTS-side onward backends**, not exporter flags — reach them by enabling `ipc` and configuring DTS. Deploying DTS alongside NIXL is a separate operational step.
 
+### Source identity
+
+DOCA identifies the exporter's data source by a source id and a tag. The source id defaults to the host name and the tag to `nixl`:
+
+```bash
+export NIXL_TELEMETRY_DOCA_SOURCE_ID="<id>"
+export NIXL_TELEMETRY_DOCA_SOURCE_TAG="<tag>"
+```
+
+- An unset variable uses the default, and a set value is used as is, including an empty one. A value containing `/` is rejected, because DOCA uses both values in data-file paths.
+- Like the port and backends, they are read by the agent that creates the process's shared DOCA context, and every agent created while that context exists uses them.
+- Neither value is added as a metric label; DTS receives them with the metrics pushed over `ipc`.
+- When several NIXL processes on one host push to DTS, give each process a unique source id, for example `NIXL_TELEMETRY_DOCA_SOURCE_ID="$(hostname)-${LOCAL_RANK}"`.
+
 You can alter where to look for plug-in .so files
 NOTE: the same var is used for backend plug-ins search
 
