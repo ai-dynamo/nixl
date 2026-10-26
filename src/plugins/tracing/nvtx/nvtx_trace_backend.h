@@ -39,6 +39,12 @@ public:
     [[nodiscard]] std::unique_ptr<SpanBackend>
     beginSpan(std::string_view name, Kind kind) override;
 
+    [[nodiscard]] std::unique_ptr<SpanBackend>
+    beginContextSpan(std::string_view name,
+                     Kind kind,
+                     const TraceContext &context,
+                     std::uint64_t request_id) override;
+
     void
     mark(std::string_view name, Kind kind) override;
 

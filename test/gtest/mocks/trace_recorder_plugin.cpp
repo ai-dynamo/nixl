@@ -105,6 +105,14 @@ public:
         return std::make_unique<recordingSpan>(fd_, lineFor(name, top.context, top.requestId));
     }
 
+    [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
+    beginContextSpan(std::string_view name,
+                     nixl::trace::Kind,
+                     const nixl::trace::TraceContext &context,
+                     std::uint64_t request_id) override {
+        return std::make_unique<recordingSpan>(fd_, lineFor(name, context, request_id, "span"));
+    }
+
     void
     mark(std::string_view name, nixl::trace::Kind kind) override {
         static_cast<void>(beginSpan(name, kind));
@@ -157,13 +165,14 @@ private:
     [[nodiscard]] std::string
     lineFor(std::string_view name,
             const nixl::trace::TraceContext &context,
-            std::uint64_t request_id) const {
+            std::uint64_t request_id,
+            std::string_view context_key = "context") const {
         std::string line = agent_ + " " + std::string(name);
         if (request_id != 0) {
             line += " correlation=" + std::to_string(request_id);
         }
         if (context.valid()) {
-            line += " context=" + nixl::trace::formatTraceparent(context);
+            line += " " + std::string(context_key) + "=" + nixl::trace::formatTraceparent(context);
         }
         return line;
     }

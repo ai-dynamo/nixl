@@ -99,6 +99,21 @@ Tracer::beginSpan(std::string_view name, Kind kind) {
     return Span{std::move(spans)};
 }
 
+Span
+Tracer::beginContextSpan(std::string_view name,
+                         Kind kind,
+                         const TraceContext &context,
+                         std::uint64_t request_id) {
+    std::vector<std::unique_ptr<SpanBackend>> spans;
+    spans.reserve(backends_.size());
+    for (auto &backend : backends_) {
+        if (auto span = backend->beginContextSpan(name, kind, context, request_id)) {
+            spans.push_back(std::move(span));
+        }
+    }
+    return Span{std::move(spans)};
+}
+
 void
 Tracer::mark(std::string_view name, Kind kind) {
     for (auto &backend : backends_) {

@@ -100,7 +100,11 @@ public:
     id() const noexcept = 0;
 };
 
-/** @brief One enabled backend type (NVTX, Chakra, ...). */
+/**
+ * @brief One enabled backend type (NVTX, Chakra, ...). Each record names the
+ *        span id of its context, pushed or passed, as its parent, except the
+ *        span beginContextSpan() begins, which has that id as its own.
+ */
 class TraceBackend {
 public:
     virtual ~TraceBackend() = default;
@@ -141,6 +145,17 @@ public:
               std::uint64_t request_id,
               nixlTime::us_t at,
               std::span<const Attribute> attrs) = 0;
+
+    /**
+     * @brief Begin the span that @p context identifies, rather than a span
+     *        inside the pushed context. @p context and @p request_id are the
+     *        span's own, as in emitSpan().
+     */
+    [[nodiscard]] virtual std::unique_ptr<SpanBackend>
+    beginContextSpan(std::string_view name,
+                     Kind kind,
+                     const TraceContext &context,
+                     std::uint64_t request_id) = 0;
 };
 
 class Tracer;
@@ -200,9 +215,9 @@ private:
 using random_bytes_fn_t = void (*)(std::uint8_t *, std::size_t);
 
 /**
- * @brief Composite tracer owned by the Agent. A single beginSpan(), mark(),
- *        emitSpan() or emitEvent() call fans out to every enabled backend. No
- *        singleton; injected explicitly.
+ * @brief Composite tracer owned by the Agent. A single beginSpan(),
+ *        beginContextSpan(), mark(), emitSpan() or emitEvent() call fans out to
+ *        every enabled backend. No singleton; injected explicitly.
  */
 class Tracer {
 public:
@@ -243,6 +258,12 @@ public:
 
     [[nodiscard]] Span
     beginSpan(std::string_view name, Kind kind = Kind::Generic);
+
+    [[nodiscard]] Span
+    beginContextSpan(std::string_view name,
+                     Kind kind,
+                     const TraceContext &context,
+                     std::uint64_t request_id);
 
     void
     mark(std::string_view name, Kind kind = Kind::Metadata);

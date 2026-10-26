@@ -25,11 +25,12 @@ execution-trace tools.
 ## Architecture
 
 - **`nixl::trace::Tracer`** — a composite tracer **owned by each `nixlAgent`** (no
-  singleton; injected into call sites). One `beginSpan()`, `mark()`, `emitSpan()` or
-  `emitEvent()` call fans out to every active backend.
-- **`nixl::trace::Span`** — a move-only handle returned by `beginSpan()`. It forwards
-  attributes/dependencies to each backend span and **ends them all on destruction**
-  (RAII), so a span covers the scope in which it is declared.
+  singleton; injected into call sites). One `beginSpan()`, `beginContextSpan()`,
+  `mark()`, `emitSpan()` or `emitEvent()` call fans out to every active backend.
+- **`nixl::trace::Span`** — a move-only handle returned by `beginSpan()` and
+  `beginContextSpan()`. It forwards attributes/dependencies to each backend span and
+  **ends them all on destruction** (RAII), so a span covers the scope in which it is
+  declared.
 - **`emitSpan()` / `emitEvent()`** — record a span or a point event after the fact,
   with its times, trace context, kind and typed attributes passed explicitly instead
   of taken from the clock and the active correlation scope. They are for records
@@ -39,6 +40,10 @@ execution-trace tools.
   converts at export. NVTX can draw only at the moment of the call, so it draws both
   as zero-length ranges there, and an emitted span carries its times as the
   `nixl.start_us` and `nixl.end_us` attributes.
+- **`beginContextSpan()`** — begins the span that a trace context identifies, rather
+  than a span inside the active correlation scope's context as `beginSpan()` does;
+  like `emitSpan()`, it takes the context and the request id explicitly. Every other
+  span and event names its context's span id as its parent.
 - **`TraceBackend` / `SpanBackend`** — the backend interfaces. Each backend
   implementation provides them.
 - **Backend plugins** — each backend is a `libtrace_backend_<name>.so` that exports
