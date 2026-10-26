@@ -1176,11 +1176,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     nixl::trace::TraceContext call_context = req_hndl->traceContext();
-    if (call_context.sampled()) {
-        if (req_hndl->traceSpanIdTaken_) {
-            call_context = nixl::trace::generatePostContext(call_context, data->tracer_.get());
-        }
-        req_hndl->traceSpanIdTaken_ = true;
+    if (call_context.sampled() && req_hndl->traceRequestSpanIdUsed_) {
+        call_context = nixl::trace::generatePostContext(call_context, data->tracer_.get());
     }
 
     NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), call_context, req_hndl->traceRequestId());
@@ -1202,6 +1199,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     std::shared_lock<nixlLock> read_lock(data->lock);
+    req_hndl->traceRequestSpanIdUsed_ = true;
     // The request was created against a specific remote registration generation: refuse to
     // post if that generation was invalidated or replaced by a re-registration meanwhile.
     if (req_hndl->remoteSection.expired()) {

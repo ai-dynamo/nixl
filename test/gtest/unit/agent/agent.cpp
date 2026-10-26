@@ -762,6 +762,28 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
+    TEST_F(sampledRecorderTracingAgentFixture, RejectedFirstCallUsesTheRequestsSpanId) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        ON_CALL(agent_helper_->getGMockEngine(), supportsNotif())
+            .WillByDefault(testing::Return(false));
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+
+        nixl_opt_args_t with_notif;
+        with_notif.notif = "notification";
+        EXPECT_EQ(agent->postXferReq(req, &with_notif), NIXL_ERR_BACKEND);
+        nixl_opt_args_t without_notif;
+        EXPECT_EQ(agent->postXferReq(req, &without_notif), NIXL_SUCCESS);
+
+        const auto &request = req->traceContext();
+        const auto &post = req->tracePostContext();
+        EXPECT_EQ(post.traceId, request.traceId);
+        EXPECT_NE(post.spanId, request.spanId);
+        EXPECT_THAT(records("nixl::postXferReq.write"),
+                    testing::ElementsAre(carries(request), carries(post)));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
     class singleAgentSessionFixture : public testing::Test {
     protected:
         std::unique_ptr<agentHelper> agent_helper_;

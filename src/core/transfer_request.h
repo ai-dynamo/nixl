@@ -107,7 +107,7 @@ private:
     const nixl_remote_section_weak_t remoteSection;
     const nixl::trace::TraceContext traceContext_;
     nixl::trace::TraceContext tracePostContext_;
-    bool traceSpanIdTaken_ = false;
+    bool traceRequestSpanIdUsed_ = false;
     const std::uint64_t traceRequestId_;
     std::atomic<std::uint64_t> traceExecution_ = 0;
     nixl_blob_t notifMsg;
