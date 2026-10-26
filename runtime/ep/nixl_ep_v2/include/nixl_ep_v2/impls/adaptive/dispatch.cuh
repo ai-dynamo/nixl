@@ -43,7 +43,6 @@ template <bool kDoCPUSync, bool kZeroCopy,
           int kNumNotifyWarps, int kNumChannelsPerSM,
           int kNumMaxScaleoutRanks, int kNumMaxScaleupRanks,
           int kNumHiddenBytes, int kNumSFPacks,
-          int kNumMaxTokensPerRank,
           int kNumExpertsPerRank, int kNumTopk, int kExpertAlignment,
           int64_t kNumTimeoutCycles,
           bool kAcquireFlags = false,
@@ -76,7 +75,8 @@ adaptive_dispatch_impl(
     const int zc_sf_token_stride, const int zc_sf_hidden_stride,
     int* zc_count_matrix, const int zc_count_row_stride, const int zc_count_matrix_rows,
     const int zc_slot_idx,
-    const bool dynamic_take) {
+    const bool dynamic_take,
+    const int num_max_tokens_per_rank) {
     EP_STATIC_ASSERT(kNumNotifyWarps % 4 == 0, "Invalid warpgroup size");
     EP_STATIC_ASSERT(kNumMaxScaleoutRanks <= topology::kNumMaxScaleoutRanksCap, "Too many scale-out ranks");
     EP_STATIC_ASSERT(kNumMaxScaleupRanks <= topology::kNumMaxScaleupRanksCap, "Too many scale-up ranks");
@@ -106,7 +106,7 @@ adaptive_dispatch_impl(
     const int num_experts = num_ranks * kNumExpertsPerRank;
     const int num_experts_per_scaleout = num_scaleup_ranks * kNumExpertsPerRank;
     const int num_channels = kNumChannelsPerSM * num_active_sms;
-    const int num_max_tokens_per_channel = math::ceil_div(kNumMaxTokensPerRank, num_channels);
+    const int num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels);
     EP_DEVICE_ASSERT(num_scaleout_ranks <= kNumMaxScaleoutRanks and num_scaleup_ranks <= kNumMaxScaleupRanks);
     EP_DEVICE_ASSERT(num_active_sms <= kNumLaunchSMs and num_active_sms % 2 == 0);
     EP_DEVICE_ASSERT(topo.is_participant() and "A rank outside the live world must not launch");
@@ -197,9 +197,9 @@ adaptive_dispatch_impl(
     // The scale-out send buffer (the RDMA sources) is a region of its own: the NIC reads it after this kernel has ended; the next
     // dispatch rewrites it only past its start barrier, which every receiver reaches after consuming this launch's records (see `comm::gpu_barrier_rt`)
     auto scaleup_buffer = layout::BufferLayout<false>(
-        token_layout, num_scaleup_ranks, num_scaleout_ranks * kNumMaxTokensPerRank, buffer);
+        token_layout, num_scaleup_ranks, num_scaleout_ranks * num_max_tokens_per_rank, buffer);
     auto scaleout_send_buffer = layout::BufferLayout<false>(
-        token_layout, 1, kNumMaxTokensPerRank, send_buffer);
+        token_layout, 1, num_max_tokens_per_rank, send_buffer);
     auto scaleout_recv_buffer = layout::BufferLayout<false>(
         token_layout, num_scaleout_ranks, num_channels * num_max_tokens_per_channel, scaleup_buffer.get_buffer_end_ptr());
 
@@ -882,7 +882,7 @@ adaptive_dispatch_impl(
             // Please ensure no TMA buffer shared memory writes after this part
             if constexpr (not kZeroCopy) {
                 if (ptx::elect_one_sync())
-                    *tma_buffer.get_src_token_global_idx_ptr() = rank_idx * kNumMaxTokensPerRank + token_idx;
+                    *tma_buffer.get_src_token_global_idx_ptr() = rank_idx * num_max_tokens_per_rank + token_idx;
             }
             ptx::tma_store_fence();
             __syncwarp();
@@ -946,7 +946,7 @@ adaptive_dispatch_impl(
                                 dst_ptr[static_cast<int64_t>(r * 32 + lane_idx) * zc_sf_hidden_stride] = zc_sf_regs[r];
                     }
                 };
-                const int src_token_global_idx = rank_idx * kNumMaxTokensPerRank + token_idx;
+                const int src_token_global_idx = rank_idx * num_max_tokens_per_rank + token_idx;
                 for (auto mask = ptx::gather(zc_stored_row >= 0); mask != 0; mask &= mask - 1) {
                     const int k = ptx::ffs(mask);
                     const int dst_rank = ptx::exchange(stored_dst_rank_idx, k);
@@ -1058,7 +1058,7 @@ adaptive_dispatch_impl(
 
             // Add source metadata (rank index and token index)
             if (ptx::elect_one_sync())
-                *tma_buffer.get_src_token_global_idx_ptr() = rank_idx * kNumMaxTokensPerRank + token_idx;
+                *tma_buffer.get_src_token_global_idx_ptr() = rank_idx * num_max_tokens_per_rank + token_idx;
             ptx::tma_store_fence();
             __syncwarp();
 

@@ -37,7 +37,6 @@ namespace nixl_ep_v2::elastic::adaptive {
 template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
           int kNumSMs, int kNumWarps,
           int kHidden,
-          int kNumMaxTokensPerRank,
           int kNumExpertsPerRank, int kNumTopk,
           int64_t kNumTimeoutCycles,
           bool kAcquireFlags = false,
@@ -50,7 +49,8 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
                              void* buffer, void* workspace,
                              void* bias_0, void* bias_1,
                              const int num_combined_tokens,
-                             const topology::EPTopology* topology_ptr) {
+                             const topology::EPTopology* topology_ptr,
+                             const int num_max_tokens_per_rank) {
     // Topology
     const auto topo = topology::load(topology_ptr);
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
@@ -79,11 +79,11 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     extern __shared__ __align__(ptx::kNumTMAAlignBytes) int8_t smem[];
     const auto comm_token_layout = layout::TokenLayout(kNumHiddenBytes, 0, kNumTopk, false);
     const auto scaleup_buffer = layout::BufferLayout<false>(
-        comm_token_layout, num_tokens_in_scaleup_layout, num_scaleout_ranks * kNumMaxTokensPerRank, buffer);
+        comm_token_layout, num_tokens_in_scaleup_layout, num_scaleout_ranks * num_max_tokens_per_rank, buffer);
     // Direct: the rows are the scale-up buffer the combine kernel wrote (its layout, its row stride); hybrid: the
-    // scale-out receive rows after it, one `kNumMaxTokensPerRank` row per reduce rank
+    // scale-out receive rows after it, one `num_max_tokens_per_rank` row per reduce rank
     const auto comm_buffer = is_direct ? scaleup_buffer : layout::BufferLayout<false>(
-        comm_token_layout, num_tokens_in_layout, kNumMaxTokensPerRank, scaleup_buffer.get_buffer_end_ptr());
+        comm_token_layout, num_tokens_in_layout, num_max_tokens_per_rank, scaleup_buffer.get_buffer_end_ptr());
 
     // Store buffers
     const auto output_token_layout = layout::TokenLayout(kNumHiddenBytes, 0, 0, false, nullptr, /* with_flags */ false);

@@ -47,7 +47,6 @@ template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
           int kNumChannelsPerSM,
           int kNumMaxScaleoutRanks, int kNumMaxScaleupRanks,
           int kHidden,
-          int kNumMaxTokensPerRank,
           int kNumExpertsPerRank, int kNumTopk,
           int64_t kNumTimeoutCycles,
           int kNumScaleupRanksPerLane = math::constexpr_ceil_div(kNumMaxScaleupRanks, 32),
@@ -68,7 +67,8 @@ adaptive_combine_impl(nv_bfloat16* x,
                       void* buffer, void* send_buffer, void* workspace,
                       const topology::EPTopology* topology_ptr,
                       int num_reduced_tokens,
-                      const bool dynamic_take) {
+                      const bool dynamic_take,
+                      const int num_max_tokens_per_rank) {
     EP_STATIC_ASSERT(kNumMaxScaleoutRanks <= topology::kNumMaxScaleoutRanksCap, "Too many scale-out ranks");
     EP_STATIC_ASSERT(kNumMaxScaleupRanks <= topology::kNumMaxScaleupRanksCap, "Too many scale-up ranks");
     EP_STATIC_ASSERT(kNumLaunchSMs % 2 == 0, "The adaptive grid is launched in clusters of two");
@@ -89,7 +89,7 @@ adaptive_combine_impl(nv_bfloat16* x,
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
     const int scaleout_rank_idx = topo.scaleout_rank_idx, scaleup_rank_idx = topo.scaleup_rank_idx;
     const int num_channels = kNumChannelsPerSM * topo.num_active_sms;
-    const int num_max_tokens_per_channel = math::ceil_div(kNumMaxTokensPerRank, num_channels);
+    const int num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels);
     EP_DEVICE_ASSERT(num_scaleout_ranks <= kNumMaxScaleoutRanks and num_scaleup_ranks <= kNumMaxScaleupRanks);
     EP_DEVICE_ASSERT(topo.is_participant() and "A rank outside the live world must not launch");
 
@@ -130,10 +130,10 @@ adaptive_combine_impl(nv_bfloat16* x,
 
     // All the buffer layouts
     auto scaleup_buffer = layout::BufferLayout<false>(
-        token_layout, num_tokens_in_scaleup_layout, num_scaleout_ranks * kNumMaxTokensPerRank,
+        token_layout, num_tokens_in_scaleup_layout, num_scaleout_ranks * num_max_tokens_per_rank,
         buffer);
     auto scaleout_recv_buffer = layout::BufferLayout<false>(
-        token_layout, num_tokens_in_scaleout_layout, kNumMaxTokensPerRank,
+        token_layout, num_tokens_in_scaleout_layout, num_max_tokens_per_rank,
         scaleup_buffer.get_buffer_end_ptr());
     auto scaleout_send_buffer = layout::BufferLayout<false>(
         token_layout, kAllowMultipleReduction ? 1 : kNumTopk, num_channels * (num_scaleout_ranks * num_max_tokens_per_channel),
@@ -173,7 +173,7 @@ adaptive_combine_impl(nv_bfloat16* x,
     // rows are the scale-up buffer (`[num_tokens_in_scaleup_layout][num_scaleout_ranks * num_max_tokens_per_rank]` per
     // position: the bound's row stride, whatever the live domain), which is exactly DeepSeek's direct-kernel receive
     // buffer. No forwarding stage, no linked list. A source rank is global
-    // (`src_global_token_idx / kNumMaxTokensPerRank`); its NVLink peer is its position `rank % num_scaleup_ranks`.
+    // (`src_global_token_idx / num_max_tokens_per_rank`); its NVLink peer is its position `rank % num_scaleup_ranks`.
     EP_DEVICE_ASSERT(not is_direct or topo.num_live_scaleout_ranks() == 1);
     if (is_direct) {
         // Rotate the warp index by the rank so that peers spread their writes (as DeepSeek's direct kernel does)
@@ -230,8 +230,8 @@ adaptive_combine_impl(nv_bfloat16* x,
                 // Source token: rank from the global index, master top-k lane from the slot-relative field
                 constexpr int kMetadataStride = 2 + kNumTopk;
                 const int src_global_token_idx = __ldg(src_metadata + i * kMetadataStride);
-                const int src_token_idx = src_global_token_idx % kNumMaxTokensPerRank;
-                const int src_rank_idx = src_global_token_idx / kNumMaxTokensPerRank;
+                const int src_token_idx = src_global_token_idx % num_max_tokens_per_rank;
+                const int src_rank_idx = src_global_token_idx / num_max_tokens_per_rank;
                 const int src_topk_idx = __ldg(src_metadata + i * kMetadataStride + 1) % kNumTopk;
 
                 // Destination row in the source rank's receive rows, addressed over NVLink
@@ -496,8 +496,8 @@ adaptive_combine_impl(nv_bfloat16* x,
                 // Get source metadata and decide the destination buffer
                 constexpr int kMetadataStride = 2 + kNumTopk;
                 const auto src_global_token_idx = __ldg(src_metadata + token_idx * kMetadataStride + 0);
-                const auto src_token_idx = src_global_token_idx % kNumMaxTokensPerRank;
-                const auto src_scaleout_rank_idx = src_global_token_idx / (kNumMaxTokensPerRank * num_scaleup_ranks);
+                const auto src_token_idx = src_global_token_idx % num_max_tokens_per_rank;
+                const auto src_scaleout_rank_idx = src_global_token_idx / (num_max_tokens_per_rank * num_scaleup_ranks);
                 auto token_buffer = [&]() {
                     if (use_scaleup_rank_layout) {
                         const auto src_slot_idx = __ldg(src_metadata + token_idx * kMetadataStride + 1) / kNumTopk;
@@ -506,7 +506,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                         const auto master_topk_idx = __ldg(src_metadata + token_idx * kMetadataStride + 1) % kNumTopk;
                         return scaleup_buffer
                             .get_rank_buffer(master_topk_idx)
-                            .get_token_buffer(src_scaleout_rank_idx * kNumMaxTokensPerRank + src_token_idx);
+                            .get_token_buffer(src_scaleout_rank_idx * num_max_tokens_per_rank + src_token_idx);
                     }
                 }();
                 token_buffer.set_base_ptr(scaleup_peer_ptr(token_buffer.get_base_ptr(), dst_scaleup_rank_idx));
@@ -578,7 +578,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                         // Resolved by the whole warp (warp-uniform inputs): `scaleup_peer_ptr` shuffles the peer's base, every lane takes part
                         const auto dst_token_buffer = scaleup_buffer
                             .get_rank_buffer(k)
-                            .get_token_buffer(src_scaleout_rank_idx * kNumMaxTokensPerRank + src_token_idx);
+                            .get_token_buffer(src_scaleout_rank_idx * num_max_tokens_per_rank + src_token_idx);
                         const auto dst_ptr = scaleup_peer_ptr(dst_token_buffer.get_base_ptr(), dst_scaleup_rank_idx);
                         if (ptx::elect_one_sync()) {
                             // Load
@@ -671,7 +671,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                     __ldg(token_metadata_at_forward + i * kNumForwardMetadataDims) : -1;
                 const auto end_mask = ptx::gather(src_token_global_idx < 0);
                 const int num_valid = end_mask != 0 ? ptx::ffs(end_mask) : 32;
-                const int d = lane_idx < num_valid ? (src_token_global_idx / kNumMaxTokensPerRank) / num_scaleup_ranks : -1;
+                const int d = lane_idx < num_valid ? (src_token_global_idx / num_max_tokens_per_rank) / num_scaleup_ranks : -1;
                 for (int dd = 0; dd < num_scaleout_ranks; ++ dd) {
                     const auto rows_mask = ptx::gather(d == dd);
                     if (lane_idx == dd)
@@ -721,9 +721,9 @@ adaptive_combine_impl(nv_bfloat16* x,
         for (int i = 0; ; ++ i) {
             const auto src_token_global_idx = __ldg(token_metadata_at_forward + i * kNumForwardMetadataDims);
             const auto is_token_last_in_chunk = __ldg(token_metadata_at_forward + i * kNumForwardMetadataDims + 1);
-            const auto src_rank_idx = src_token_global_idx / kNumMaxTokensPerRank;
+            const auto src_rank_idx = src_token_global_idx / num_max_tokens_per_rank;
             const auto src_scaleout_rank_idx = src_rank_idx / num_scaleup_ranks;
-            const auto src_token_idx = src_token_global_idx % kNumMaxTokensPerRank;
+            const auto src_token_idx = src_token_global_idx % num_max_tokens_per_rank;
             auto stored_src_scaleup_rank_idx = lane_idx < kNumTopk ?
                 __ldg(token_metadata_at_forward + i * kNumForwardMetadataDims + 2 + lane_idx) : -1;
             auto stored_src_slot_idx = lane_idx < kNumTopk ?
@@ -785,7 +785,7 @@ adaptive_combine_impl(nv_bfloat16* x,
             if constexpr (not kAllowMultipleReduction) {
                 // Cases where multiple reduction is disabled. We need to forward all data from scaleup peers to scaleout peers
                 // TODO: Let scale-up warps directly put data into `send_buffer`?
-                const auto src_slot_idx = src_scaleout_rank_idx * kNumMaxTokensPerRank + src_token_idx;
+                const auto src_slot_idx = src_scaleout_rank_idx * num_max_tokens_per_rank + src_token_idx;
                 auto topk_valid_mask = kUseExpandedLayout ?
                     ptx::gather(stored_src_scaleup_rank_idx >= 0) :
                     ptx::gather(ptx::deduplicate(stored_src_scaleup_rank_idx, lane_idx) and stored_src_scaleup_rank_idx >= 0);  // Deduplicate w.r.t. scaleup rank index if expanded mode is disabled
@@ -836,7 +836,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                     stored_src_buffer_idx =
                         stored_src_scaleup_rank_idx * scaleup_buffer.num_max_tokens_per_rank + stored_src_slot_idx;
                 } else {
-                    const auto src_slot_idx = src_scaleout_rank_idx * kNumMaxTokensPerRank + src_token_idx;
+                    const auto src_slot_idx = src_scaleout_rank_idx * num_max_tokens_per_rank + src_token_idx;
                     stored_src_buffer_idx = stored_src_slot_idx == -1 ? -1 :
                         lane_idx * scaleup_buffer.num_max_tokens_per_rank + src_slot_idx;
                 }

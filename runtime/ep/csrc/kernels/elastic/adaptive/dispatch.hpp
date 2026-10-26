@@ -47,7 +47,6 @@ public:
         int num_notify_warps, num_channels_per_sm;
         int num_max_scaleout_ranks, num_max_scaleup_ranks;
         int num_hidden_bytes, num_sf_packs;
-        int num_max_tokens_per_rank;
         int num_experts_per_rank, num_topk, expert_alignment;
         int64_t num_timeout_cycles;
         bool acquire_flags;
@@ -71,6 +70,7 @@ public:
         int* zc_count_matrix;
         int zc_count_row_stride, zc_count_matrix_rows, zc_slot_idx;
         bool dynamic_take;
+        int num_max_tokens_per_rank;
 
         jit::LaunchArgs launch_args;
     };
@@ -82,7 +82,7 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
             args.do_cpu_sync, args.zero_copy,
@@ -90,7 +90,6 @@ static void __instantiate_kernel() {{
             args.num_notify_warps, args.num_channels_per_sm,
             args.num_max_scaleout_ranks, args.num_max_scaleup_ranks,
             args.num_hidden_bytes, args.num_sf_packs,
-            args.num_max_tokens_per_rank,
             args.num_experts_per_rank, args.num_topk, args.expert_alignment,
             args.num_timeout_cycles, args.acquire_flags);
     }
@@ -115,7 +114,8 @@ static void __instantiate_kernel() {{
             args.zc_sf_token_stride, args.zc_sf_hidden_stride,
             args.zc_count_matrix, args.zc_count_row_stride, args.zc_count_matrix_rows,
             args.zc_slot_idx,
-            args.dynamic_take));
+            args.dynamic_take,
+            args.num_max_tokens_per_rank));
     }
 };
 
@@ -215,7 +215,6 @@ static void launch_dispatch(void* x, void* sf,
         .num_notify_warps = kNumNotifyWarps, .num_channels_per_sm = num_channels_per_sm,
         .num_max_scaleout_ranks = num_max_scaleout_ranks, .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
-        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk, .expert_alignment = expert_alignment,
         .num_timeout_cycles = num_timeout_cycles,
         .acquire_flags = acquire_flags,
@@ -238,6 +237,7 @@ static void launch_dispatch(void* x, void* sf,
         .zc_count_matrix = zc_count_matrix,
         .zc_count_row_stride = zc_count_row_stride, .zc_count_matrix_rows = zc_count_matrix_rows, .zc_slot_idx = zc_slot_idx,
         .dynamic_take = dynamic_take,
+        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         // NOTES: make cluster dim 2 to overlap with clustered computation kernels
         .launch_args = jit::LaunchArgs(topology::get_num_launch_sms(), num_threads, num_smem_bytes, 2, true)};
     const auto code = DispatchRuntime::generate(args);
@@ -253,7 +253,6 @@ public:
         int num_channels_per_sm;
         int num_warps;
         int num_hidden_bytes, num_sf_packs;
-        int num_max_tokens_per_rank;
         int num_experts_per_rank, num_topk, expert_alignment;
 
         // Parameters
@@ -268,6 +267,7 @@ public:
         int num_recv_tokens, num_max_scaleup_ranks;
         int recv_sf_token_stride, recv_sf_hidden_stride;
         const topology::EPTopology* topology;
+        int num_max_tokens_per_rank;
 
         jit::LaunchArgs launch_args;
     };
@@ -279,13 +279,12 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
                            args.do_expand, args.do_zero_padding, args.zero_copy,
                            args.launch_args.grid_dim.first, args.num_channels_per_sm, args.num_warps,
                            args.num_hidden_bytes, args.num_sf_packs,
-                           args.num_max_tokens_per_rank,
                            args.num_experts_per_rank, args.num_topk, args.expert_alignment);
     }
 
@@ -300,7 +299,8 @@ static void __instantiate_kernel() {{
                                                  args.num_unaligned_recv_tokens_per_expert,
                                                  args.num_recv_tokens, args.num_max_scaleup_ranks,
                                                  args.recv_sf_token_stride, args.recv_sf_hidden_stride,
-                                                 args.topology));
+                                                 args.topology,
+                                                 args.num_max_tokens_per_rank));
     }
 };
 
@@ -333,7 +333,6 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
         .do_expand = do_expand, .do_zero_padding = do_zero_padding, .zero_copy = zero_copy,
         .num_channels_per_sm = num_channels_per_sm, .num_warps = num_warps,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
-        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk, .expert_alignment = expert_alignment,
         .buffer = buffer, .workspace = workspace,
         .psum_num_recv_tokens_per_scaleup_rank = psum_num_recv_tokens_per_scaleup_rank,
@@ -346,6 +345,7 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
         .num_recv_tokens = num_recv_tokens, .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .recv_sf_token_stride = recv_sf_token_stride, .recv_sf_hidden_stride = recv_sf_hidden_stride,
         .topology = topology,
+        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         .launch_args = jit::LaunchArgs(num_sms, num_threads, num_smem_bytes, 1, false, true)};
     const auto code = DispatchCopyEpilogueRuntime::generate(args);
     const auto runtime = jit::compiler->build("adaptive_dispatch_copy_epilogue", code);

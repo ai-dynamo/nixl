@@ -40,7 +40,6 @@ public:
         int num_channels_per_sm;
         int num_max_scaleout_ranks, num_max_scaleup_ranks;
         int hidden;
-        int num_max_tokens_per_rank;
         int num_experts_per_rank;
         int num_topk;
         int64_t num_timeout_cycles;
@@ -57,6 +56,7 @@ public:
         const topology::EPTopology* topology;
         int num_reduced_tokens;
         bool dynamic_take;
+        int num_max_tokens_per_rank;
 
         jit::LaunchArgs launch_args;
     };
@@ -68,7 +68,7 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
                            args.use_expanded_layout, args.allow_multiple_reduction,
@@ -76,7 +76,6 @@ static void __instantiate_kernel() {{
                            args.num_channels_per_sm,
                            args.num_max_scaleout_ranks, args.num_max_scaleup_ranks,
                            args.hidden,
-                           args.num_max_tokens_per_rank,
                            args.num_experts_per_rank,
                            args.num_topk,
                            args.num_timeout_cycles);
@@ -92,7 +91,8 @@ static void __instantiate_kernel() {{
                                                  args.buffer, args.send_buffer, args.workspace,
                                                  args.topology,
                                                  args.num_reduced_tokens,
-                                                 args.dynamic_take));
+                                                 args.dynamic_take,
+                                                 args.num_max_tokens_per_rank));
     }
 };
 
@@ -131,7 +131,6 @@ static void launch_combine(void* x,
         .num_channels_per_sm = num_channels_per_sm,
         .num_max_scaleout_ranks = num_max_scaleout_ranks, .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .hidden = hidden,
-        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         .num_experts_per_rank = num_experts_per_rank,
         .num_topk = num_topk,
         .num_timeout_cycles = num_timeout_cycles,
@@ -145,6 +144,7 @@ static void launch_combine(void* x,
         .topology = topology,
         .num_reduced_tokens = num_reduced_tokens,
         .dynamic_take = dynamic_take,
+        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         // NOTES: make cluster dim 2 to overlap with clustered computation kernels
         .launch_args = jit::LaunchArgs(topology::get_num_launch_sms(), num_threads, num_smem_bytes, 2, true)
     };
@@ -159,7 +159,6 @@ public:
         // Templated arguments
         bool use_expanded_layout, allow_multiple_reduction;
         int hidden;
-        int num_max_tokens_per_rank;
         int num_experts_per_rank, num_topk;
         int64_t num_timeout_cycles;
         bool acquire_flags;
@@ -174,6 +173,7 @@ public:
         void* bias_1;
         int num_combined_tokens;
         const topology::EPTopology* topology;
+        int num_max_tokens_per_rank;
 
         jit::LaunchArgs launch_args;
     };
@@ -185,13 +185,12 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",                        args.use_expanded_layout, args.allow_multiple_reduction,
                            args.launch_args.grid_dim.first,
                            args.launch_args.num_threads / 32,
                            args.hidden,
-                           args.num_max_tokens_per_rank,
                            args.num_experts_per_rank, args.num_topk,
                            args.num_timeout_cycles, args.acquire_flags);
     }
@@ -204,7 +203,8 @@ static void __instantiate_kernel() {{
                                                  args.buffer, args.workspace,
                                                  args.bias_0, args.bias_1,
                                                  args.num_combined_tokens,
-                                                 args.topology));
+                                                 args.topology,
+                                                 args.num_max_tokens_per_rank));
     }
 };
 
@@ -233,7 +233,6 @@ static void launch_combine_reduce_epilogue(void* combined_x,
         .use_expanded_layout = use_expanded_layout,
         .allow_multiple_reduction = allow_multiple_reduction,
         .hidden = hidden,
-        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk,
         .num_timeout_cycles = num_timeout_cycles,
         .acquire_flags = acquire_flags,
@@ -244,6 +243,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
         .bias_0 = bias_0, .bias_1 = bias_1,
         .num_combined_tokens = num_combined_tokens,
         .topology = topology,
+        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         .launch_args = jit::LaunchArgs(num_sms, num_threads, num_smem_bytes, 1, false, true)
     };
     const auto code = CombineReduceEpilogueRuntime::generate(args);
