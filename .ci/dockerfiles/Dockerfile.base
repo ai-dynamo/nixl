@@ -99,7 +99,7 @@ RUN --mount=type=secret,id=ghconfig,target=${_HOME}/.gitconfig,mode=0444 if [ "$
         VENV_PY="${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python"; \
         CUDA_VARIANT=cu130; \
         if [ -z "${VLLM_REF}" ]; then \
-            echo "ERROR: VLLM_REF must be set to a vLLM release tag (e.g. v0.30.0) when BUILD_VLLM_ELASTIC_TEST=true" >&2; \
+            echo "ERROR: VLLM_REF must be set to a vLLM release tag (e.g. v0.33.0) when BUILD_VLLM_ELASTIC_TEST=true" >&2; \
             exit 1; \
         fi && \
         echo "Using vLLM release ${VLLM_REF}" && \
