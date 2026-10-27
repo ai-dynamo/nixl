@@ -133,6 +133,27 @@ def test_nixl_conf_bad_sync_mode():
         nixl_agent_config(sync_mode=1)
 
 
+@pytest.mark.parametrize("delay_us", [None, 0, 50])
+def test_prog_thread_delay_agent(monkeypatch, delay_us):
+    captured = {}
+    real_ctor = bindings.nixlAgent
+
+    def spy_ctor(agent_name, agent_config):
+        captured["pthrDelay"] = agent_config.pthrDelay
+        return real_ctor(agent_name, agent_config)
+
+    monkeypatch.setattr(bindings, "nixlAgent", spy_ctor)
+    kwargs = {} if delay_us is None else {"prog_thread_delay_us": delay_us}
+    nixl_agent(str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[], **kwargs))
+    assert captured["pthrDelay"] == (delay_us or 0)
+
+
+@pytest.mark.parametrize("delay_us", [-1, 1.5, True])
+def test_nixl_conf_bad_prog_thread_delay(delay_us):
+    with pytest.raises(ValueError, match="prog_thread_delay_us must be"):
+        nixl_agent_config(prog_thread_delay_us=delay_us)
+
+
 def test_default_backend_configs_are_independent():
     """Keep each configuration's default backend list independent."""
     first_config = nixl_agent_config()

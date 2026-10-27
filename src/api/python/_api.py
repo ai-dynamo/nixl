@@ -160,6 +160,8 @@ class nixl_agent_config:
             configuration has its own default backend list.
         sync_mode: Thread synchronization mode to use for the agent.
             If None, sync_mode is set based on the enable_listen flag.
+        prog_thread_delay_us: Delay in microseconds between progress thread
+            iterations, for backends that run one. 0 polls continuously.
     """
 
     def __init__(
@@ -171,6 +173,7 @@ class nixl_agent_config:
         num_threads: int = 0,
         backends: Optional[list[str]] = None,
         sync_mode: Optional[nixl_thread_sync_t] = None,
+        prog_thread_delay_us: int = 0,
     ):
         """Initialize the configuration, creating a fresh default backend list."""
         # TODO: add backend init parameters
@@ -186,6 +189,16 @@ class nixl_agent_config:
             )
 
         self.sync_mode = sync_mode
+        if (
+            isinstance(prog_thread_delay_us, bool)
+            or not isinstance(prog_thread_delay_us, int)
+            or prog_thread_delay_us < 0
+        ):
+            raise ValueError(
+                "prog_thread_delay_us must be a non-negative int "
+                f"(got {prog_thread_delay_us!r})"
+            )
+        self.prog_thread_delay_us = prog_thread_delay_us
 
 
 class nixl_agent:
@@ -225,7 +238,7 @@ class nixl_agent:
         agent_config.useListenThread = nixl_conf.enable_listen
         agent_config.listenPort = nixl_conf.port
         agent_config.syncMode = (nixl_conf.sync_mode or default_sync_mode).value
-        agent_config.pthrDelay = 0
+        agent_config.pthrDelay = nixl_conf.prog_thread_delay_us
         agent_config.lthrDelay = 100000
         agent_config.captureTelemetry = nixl_conf.capture_telemetry
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
