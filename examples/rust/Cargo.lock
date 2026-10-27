@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "nixl-sys"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "bindgen",
  "cc",
