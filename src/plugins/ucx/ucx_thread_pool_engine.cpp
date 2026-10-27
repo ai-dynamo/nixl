@@ -186,15 +186,22 @@ nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
     }
     const nixlUcxPostTrace trace = sharedState_->trace;
     const nixlTime::us_t completed_at = (trace.sink != nullptr) ? nixlTime::getUs() : 0;
-    const bool last = (sharedState_->pendingReqs.fetch_sub(1) == 1);
-    if (last && (trace.sink != nullptr) && (sharedState_->status.load() == NIXL_SUCCESS)) {
-        trace.sink->recordPhase(nixl_trace_phase_t::WIRE_COMPLETED,
-                                {},
-                                completed_at,
-                                {},
-                                &trace.context,
-                                trace.requestId,
-                                trace.execution);
+    // Read the status before pendingReqs reaches zero, after which a repost may rewrite it.
+    size_t pending = sharedState_->pendingReqs.load();
+    while ((pending > 1) && !sharedState_->pendingReqs.compare_exchange_weak(pending, pending - 1))
+        ;
+    if (pending == 1) {
+        const bool succeeded = (sharedState_->status.load() == NIXL_SUCCESS);
+        sharedState_->pendingReqs.store(0);
+        if (succeeded && (trace.sink != nullptr)) {
+            trace.sink->recordPhase(nixl_trace_phase_t::WIRE_COMPLETED,
+                                    {},
+                                    completed_at,
+                                    {},
+                                    &trace.context,
+                                    trace.requestId,
+                                    trace.execution);
+        }
     }
     NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
     setWorker(nullptr);
@@ -259,9 +266,7 @@ public:
         nixlUcxBackendReqH::release();
         if (sharedState_) {
             // Set failed status to stop progress chunks
-            if (sharedState_->pendingReqs.load() != 0) {
-                sharedState_->status.store(NIXL_ERR_NOT_FOUND);
-            }
+            sharedState_->status.store(NIXL_ERR_NOT_FOUND);
             // Reset shared state - it will be effectively released when the last chunk
             // resets the shared state pointer
             sharedState_.reset();
