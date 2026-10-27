@@ -209,6 +209,18 @@ traceXferComplete(nixl::trace::Tracer *tracer, const nixlXferReqH &req) {
                      {"nixl.xfer_execution", static_cast<std::int64_t>(req.traceExecution())});
 }
 
+void
+traceXferError(nixl::trace::Tracer *tracer, const nixlXferReqH &req, nixl_status_t status) {
+    NIXL_TRACE_EVENT(tracer,
+                     "nixl::xfer.error",
+                     nixl::trace::Kind::Metadata,
+                     req.tracePostContext(),
+                     req.traceRequestId(),
+                     {"nixl.xfer_request_id", std::to_string(req.traceRequestId())},
+                     {"nixl.xfer_execution", static_cast<std::int64_t>(req.traceExecution())},
+                     {"nixl.status", static_cast<std::int64_t>(status)});
+}
+
 } // namespace
 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
@@ -1181,12 +1193,14 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), call_context, req_hndl->traceRequestId());
-    NIXL_TRACE_SCOPE(trace_span,
-                     data->tracer_.get(),
-                     req_hndl->backendOp == NIXL_WRITE ? "nixl::postXferReq.write" :
-                                                         "nixl::postXferReq.read",
-                     req_hndl->backendOp == NIXL_WRITE ? nixl::trace::Kind::CommSend :
-                                                         nixl::trace::Kind::CommRecv);
+    NIXL_TRACE_CONTEXT_SPAN(trace_span,
+                            data->tracer_.get(),
+                            req_hndl->backendOp == NIXL_WRITE ? "nixl::postXferReq.write" :
+                                                                "nixl::postXferReq.read",
+                            req_hndl->backendOp == NIXL_WRITE ? nixl::trace::Kind::CommSend :
+                                                                nixl::trace::Kind::CommRecv,
+                            call_context,
+                            req_hndl->traceRequestId());
     NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{req_hndl->remoteAgent});
     NIXL_TRACE_ATTR(trace_span, "bytes", static_cast<std::int64_t>(req_hndl->telemetry.totalBytes));
     NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", std::to_string(req_hndl->traceRequestId()));
@@ -1207,6 +1221,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                         << "' was invalidated or re-registered after transfer request creation; "
                            "not posting stale handle";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
+        NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_NOT_FOUND));
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -1223,16 +1238,21 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         if (req_hndl->status == NIXL_IN_PROG) {
             NIXL_ERROR_FUNC << "transfer request is still in progress and cannot be reposted";
             data->addErrorTelemetry(NIXL_ERR_REPOST_ACTIVE);
+            NIXL_TRACE_ATTR(
+                trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_REPOST_ACTIVE));
             return NIXL_ERR_REPOST_ACTIVE;
         }
 
         if (req_hndl->status < 0) {
+            traceXferError(data->tracer_.get(), *req_hndl, req_hndl->status);
             data->addErrorTelemetry(req_hndl->status);
         }
 
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
+            NIXL_TRACE_ATTR(
+                trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_REMOTE_DISCONNECT));
             return NIXL_ERR_REMOTE_DISCONNECT;
         }
     }
@@ -1266,6 +1286,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         NIXL_ERROR_FUNC << "the selected backend '" << req_hndl->engine->getType()
                         << "' does not support notifications";
         data->addErrorTelemetry(NIXL_ERR_BACKEND);
+        NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_BACKEND));
         return NIXL_ERR_BACKEND;
     }
 
@@ -1293,10 +1314,13 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                                   &opt_args);
 
     if (req_hndl->status < 0) {
+        traceXferError(data->tracer_.get(), *req_hndl, req_hndl->status);
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
             data->addErrorTelemetry(NIXL_ERR_REMOTE_DISCONNECT);
+            NIXL_TRACE_ATTR(
+                trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_REMOTE_DISCONNECT));
             return NIXL_ERR_REMOTE_DISCONNECT;
         } else {
             NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1321,6 +1345,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         }
     }
 
+    NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(req_hndl->status));
     return req_hndl->status;
 }
 
@@ -1340,6 +1365,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
 
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
         if (req_hndl->status < 0) {
+            traceXferError(data->tracer_.get(), *req_hndl, req_hndl->status);
             if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
                 data->addErrorTelemetry(NIXL_ERR_REMOTE_DISCONNECT);
                 return NIXL_ERR_REMOTE_DISCONNECT;
@@ -1382,6 +1408,23 @@ nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &tel
 }
 
 nixl_status_t
+nixlAgent::getXferTraceInfo(const nixlXferReqH *req_hndl, nixl_xfer_trace_info_t &info) const {
+    if (!req_hndl) {
+        NIXL_ERROR_FUNC << "transfer request handle is null";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (req_hndl->traceRequestId() == 0) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    info.requestId = req_hndl->traceRequestId();
+    info.execution = req_hndl->traceExecution();
+    info.traceparent = nixl::trace::formatTraceparent(req_hndl->tracePostContext());
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
 nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
                             nixlBackendH* &backend) const {
     NIXL_LOCK_GUARD(data->lock);
@@ -1391,6 +1434,13 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
 
 nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
+    NIXL_TRACE_CORRELATION_SCOPE(
+        data->tracer_.get(), req_hndl->tracePostContext(), req_hndl->traceRequestId());
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::releaseXferReq", nixl::trace::Kind::Generic);
+    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", std::to_string(req_hndl->traceRequestId()));
+    NIXL_TRACE_ATTR(
+        trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(req_hndl->traceExecution()));
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     //attempt to cancel request
@@ -1403,6 +1453,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
                 req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_FINISH);
             }
         } else if (req_hndl->status < 0) {
+            traceXferError(data->tracer_.get(), *req_hndl, req_hndl->status);
             data->addErrorTelemetry(req_hndl->status);
         }
 
@@ -1416,14 +1467,18 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
                                 << "' could not release transfer request and returned error status "
                                 << release_status;
                 data->addErrorTelemetry(NIXL_ERR_REPOST_ACTIVE);
+                NIXL_TRACE_ATTR(
+                    trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_REPOST_ACTIVE));
                 return NIXL_ERR_REPOST_ACTIVE; // Might need renaming
             }
+            traceXferError(data->tracer_.get(), *req_hndl, NIXL_ERR_CANCELED);
             req_hndl->status = release_status;
             // just in case the backend doesn't set to NULL on success
             // this will prevent calling releaseReqH again in destructor
             req_hndl->backendHandle = nullptr;
         }
     }
+    NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_SUCCESS));
     delete req_hndl;
     return NIXL_SUCCESS;
 }
