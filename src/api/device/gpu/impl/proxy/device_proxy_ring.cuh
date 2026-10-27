@@ -58,9 +58,10 @@ struct proxyDeviceContext : nixlProxyDeviceContextData {
 
     __device__ inline nixl_status_t
     enqueue(nixlProxyCommand command,
+            uint32_t peer,
             uint32_t channel_id,
             xferStatusH *xfer_status = nullptr) const {
-        assert(command.peerIndex() < max_peers && num_channels != 0);
+        assert(peer < max_peers && num_channels != 0);
         channel_id %= num_channels;
 
         cuda::atomic_ref<uint64_t, cuda::thread_scope_system> shut(*shutdown_word);
@@ -69,7 +70,7 @@ struct proxyDeviceContext : nixlProxyDeviceContextData {
             return NIXL_ERR_BACKEND;
         }
 
-        nixlProxyRingDesc &ring_desc = rings[ringIndex(command.peerIndex(), channel_id)];
+        nixlProxyRingDesc &ring_desc = rings[ringIndex(peer, channel_id)];
         assert(ring_desc.work_ring != nullptr && ring_desc.completion_slot != nullptr);
         nixlProxyWorkRing *ring = ring_desc.work_ring;
 
