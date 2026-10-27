@@ -310,7 +310,9 @@ descriptors, and at least `num_threads`), from the dedicated thread whose chunk
 completes it last. It records none for a post that fails or is released in
 flight, and none on the default engine, where a transfer is seen to complete
 only when the application checks its status, so a stamp would time the poll
-rather than the transport.
+rather than the transport. A transfer can complete before `postXfer` records
+`nixl::wire.submitted`, so `nixl::wire.completed` can come first; both follow
+`nixl::submit`.
 
 A backend that carries the context to its peer says so by overriding
 `supportsTraceContext()`, which defaults to `false`; core reads it once, when
