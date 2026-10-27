@@ -18,11 +18,7 @@ mooncake_lib = cpp.find_library('transfer_engine')
 
 compile_flags = []
 
-# The plugin uses the Transfer Engine C API and can also run without CUDA.
 mooncake_plugin_deps = [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib]
-if cuda_dep.found()
-    mooncake_plugin_deps += [cuda_dep]
-endif
 
 if 'MOONCAKE' in static_plugins
     mooncake_backend_lib = static_library('MOONCAKE',
