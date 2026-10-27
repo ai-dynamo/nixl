@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "common.h"
+#include "common/nixl_time.h"
 #include "common/scoped_fd.h"
 #include "nixl.h"
 #include "serdes/serdes.h"
@@ -69,6 +70,9 @@ constexpr int wait_timeout_ms = static_cast<int>(std::chrono::milliseconds(wait_
 constexpr const char *target_name = "target";
 constexpr const char *unsampled_name = "unsampled";
 constexpr const char *untraced_name = "untraced";
+constexpr const char *unsplit_name = "unsplit";
+constexpr const char *default_engine_name = "default_engine";
+constexpr size_t split_desc_count = 2;
 constexpr std::array<const char *, 3> sender_phases{"nixl::submit",
                                                     "nixl::wire.submitted",
                                                     "nixl::notif.sent"};
@@ -110,6 +114,18 @@ awaitBytes(int fd, void *data, size_t size) {
         (::read(fd, data, size) == static_cast<ssize_t>(size));
 }
 
+[[nodiscard]] nixlAgentConfig
+idleConfig() {
+    nixlAgentConfig cfg;
+    cfg.useProgThread = false;
+    return cfg;
+}
+
+[[nodiscard]] nixl_b_params_t
+threadPoolParams() {
+    return {{"num_threads", "2"}, {"split_batch_size", std::to_string(split_desc_count)}};
+}
+
 [[nodiscard]] nixl_status_t
 awaitCompletion(nixlAgent &agent, nixlXferReqH *req, nixl_status_t status) {
     const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
@@ -126,9 +142,10 @@ writeToSelf(const std::string &name,
             size_t desc_count,
             const std::vector<std::optional<std::string>> &post_notifs,
             std::vector<nixl::trace::TraceContext> &contexts,
-            std::uint64_t &request_id) {
+            std::uint64_t &request_id,
+            const nixlAgentConfig &config = agentConfig()) {
     const gtest::LogIgnoreGuard efa(efa_warning);
-    nixlAgent agent(name, agentConfig());
+    nixlAgent agent(name, config);
     nixlBackendH *backend = nullptr;
     ASSERT_EQ(agent.createBackend("UCX", backend_params, backend), NIXL_SUCCESS);
     const std::vector<char> src_buffer(desc_count * buffer_size, 'x');
@@ -167,6 +184,49 @@ writeToSelf(const std::string &name,
     ASSERT_EQ(agent.deregisterMem(regs), NIXL_SUCCESS);
 }
 
+template<typename afterPostType>
+void
+splitWriteToIdleTarget(nixl::trace::TraceContext &context,
+                       std::uint64_t &request_id,
+                       afterPostType &&after_post) {
+    const gtest::LogIgnoreGuard efa(efa_warning);
+    nixlAgent target(target_name, idleConfig());
+    nixlBackendH *target_backend = nullptr;
+    ASSERT_EQ(target.createBackend("UCX", {}, target_backend), NIXL_SUCCESS);
+    const std::vector<char> dst_buffer(split_desc_count * buffer_size);
+    nixl_reg_dlist_t target_regs(DRAM_SEG);
+    target_regs.addDesc(nixlBlobDesc(address(dst_buffer), dst_buffer.size(), 0));
+    ASSERT_EQ(target.registerMem(target_regs), NIXL_SUCCESS);
+    std::string target_md;
+    ASSERT_EQ(target.getLocalMD(target_md), NIXL_SUCCESS);
+
+    nixlAgent sender(sender_name, agentConfig());
+    nixlBackendH *sender_backend = nullptr;
+    ASSERT_EQ(sender.createBackend("UCX", threadPoolParams(), sender_backend), NIXL_SUCCESS);
+    const std::vector<char> src_buffer(dst_buffer.size(), 'x');
+    nixl_reg_dlist_t sender_regs(DRAM_SEG);
+    sender_regs.addDesc(nixlBlobDesc(address(src_buffer), src_buffer.size(), 0));
+    ASSERT_EQ(sender.registerMem(sender_regs), NIXL_SUCCESS);
+    std::string loaded_name;
+    ASSERT_EQ(sender.loadRemoteMD(target_md, loaded_name), NIXL_SUCCESS);
+
+    nixl_xfer_dlist_t src(DRAM_SEG);
+    nixl_xfer_dlist_t dst(DRAM_SEG);
+    for (size_t i = 0; i < split_desc_count; ++i) {
+        src.addDesc(nixlBasicDesc(address(src_buffer) + i * buffer_size, buffer_size, 0));
+        dst.addDesc(nixlBasicDesc(address(dst_buffer) + i * buffer_size, buffer_size, 0));
+    }
+    nixlXferReqH *req = nullptr;
+    ASSERT_EQ(sender.createXferReq(NIXL_WRITE, src, dst, target_name, req), NIXL_SUCCESS);
+    request_id = req->traceRequestId();
+    ASSERT_EQ(sender.postXferReq(req), NIXL_IN_PROG);
+    context = req->tracePostContext();
+    ASSERT_NO_FATAL_FAILURE(after_post(sender, target, req));
+    ASSERT_EQ(sender.invalidateRemoteMD(target_name), NIXL_SUCCESS);
+    ASSERT_EQ(sender.deregisterMem(sender_regs), NIXL_SUCCESS);
+    ASSERT_EQ(target.deregisterMem(target_regs), NIXL_SUCCESS);
+}
+
 [[nodiscard]] std::optional<std::string>
 pluginDirsArg() {
     std::ifstream cmdline("/proc/self/cmdline", std::ios::binary);
@@ -202,6 +262,17 @@ phaseEventTime(const span_record_t &span) {
         }
     }
     return testing::StartsWith(std::string(key));
+}
+
+[[nodiscard]] std::uint64_t
+eventTime(const span_record_t &span) {
+    constexpr std::string_view key = "at_us=";
+    for (const auto &field : span) {
+        if (field.starts_with(key)) {
+            return std::stoull(field.substr(key.size()));
+        }
+    }
+    return 0;
 }
 
 class ucxTraceContextPropagation : public testing::Test {
@@ -656,19 +727,112 @@ TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsItsPhasesOncePerPostNotPerCh
     std::vector<nixl::trace::TraceContext> contexts;
     std::uint64_t request_id = 0;
     ASSERT_NO_FATAL_FAILURE(writeToSelf(sender_name,
-                                        {{"num_threads", "2"}, {"split_batch_size", "2"}},
-                                        2,
+                                        threadPoolParams(),
+                                        split_desc_count,
                                         {tagged_msg, std::nullopt},
                                         contexts,
                                         request_id));
     expectSenderPhases(sender_name, contexts, request_id, {1, 2}, {1});
 }
 
+TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsWireCompletedOncePerSplitPost) {
+    std::vector<nixl::trace::TraceContext> contexts;
+    std::uint64_t request_id = 0;
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(sender_name,
+                                        threadPoolParams(),
+                                        split_desc_count,
+                                        {std::nullopt, std::nullopt},
+                                        contexts,
+                                        request_id));
+    const auto submitted = recordedSpans(traceFile, sender_name, "nixl::submit");
+    const auto completed = recordedSpans(traceFile, sender_name, "nixl::wire.completed");
+    ASSERT_EQ(submitted.size(), contexts.size());
+    ASSERT_EQ(completed.size(), contexts.size());
+    for (size_t i = 0; i < completed.size(); ++i) {
+        const std::string traceparent = nixl::trace::formatTraceparent(contexts[i]);
+        EXPECT_THAT(completed[i],
+                    testing::IsSupersetOf({"correlation=" + std::to_string(request_id),
+                                           "context=" + traceparent,
+                                           "nixl.traceparent=" + traceparent,
+                                           "nixl.xfer_request_id=" + std::to_string(request_id),
+                                           "nixl.xfer_execution=" + std::to_string(i + 1),
+                                           std::string("nixl.backend=UCX")}));
+        EXPECT_THAT(completed[i], testing::Contains(phaseEventTime(completed[i])));
+        EXPECT_GE(eventTime(completed[i]), eventTime(submitted[i]));
+    }
+}
+
+TEST_F(ucxTraceContextPropagation, ThreadPoolWireCompletedPrecedesALatePoll) {
+    constexpr std::chrono::milliseconds late_poll{200};
+    nixl::trace::TraceContext context;
+    std::uint64_t request_id = 0;
+    nixlTime::us_t progressed_at = 0;
+    ASSERT_NO_FATAL_FAILURE(splitWriteToIdleTarget(
+        context, request_id, [&](nixlAgent &sender, nixlAgent &target, nixlXferReqH *req) {
+            nixl_notifs_t notifs;
+            progressed_at = nixlTime::getUs();
+            const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
+            while (recordedSpans(traceFile, sender_name, "nixl::wire.completed").empty() &&
+                   (std::chrono::steady_clock::now() < deadline)) {
+                ASSERT_EQ(target.getNotifs(notifs), NIXL_SUCCESS);
+                std::this_thread::sleep_for(poll_interval);
+            }
+            ASSERT_EQ(recordedSpans(traceFile, sender_name, "nixl::wire.completed").size(), 1u);
+            std::this_thread::sleep_for(late_poll);
+            ASSERT_EQ(awaitCompletion(sender, req, sender.getXferStatus(req)), NIXL_SUCCESS);
+            ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
+        }));
+    const auto completed = recordedSpans(traceFile, sender_name, "nixl::wire.completed");
+    ASSERT_EQ(completed.size(), 1u);
+    const std::string traceparent = nixl::trace::formatTraceparent(context);
+    EXPECT_THAT(completed[0],
+                testing::IsSupersetOf({"context=" + traceparent,
+                                       "nixl.xfer_request_id=" + std::to_string(request_id),
+                                       std::string("nixl.xfer_execution=1")}));
+    EXPECT_GE(eventTime(completed[0]), progressed_at);
+#if defined(NIXL_TRACE_ENABLED)
+    const auto observed = recordedSpans(traceFile, sender_name, "nixl::xfer.complete");
+    ASSERT_EQ(observed.size(), 1u);
+    EXPECT_GE(eventTime(observed[0]),
+              eventTime(completed[0]) + std::chrono::microseconds(late_poll).count());
+#endif
+}
+
+TEST_F(ucxTraceContextPropagation, PostsWithoutADedicatedThreadRecordNoWireCompleted) {
+    std::vector<nixl::trace::TraceContext> unsplit;
+    std::uint64_t unsplit_id = 0;
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(
+        unsplit_name, threadPoolParams(), 1, {std::nullopt}, unsplit, unsplit_id, idleConfig()));
+    std::vector<nixl::trace::TraceContext> default_engine;
+    std::uint64_t default_engine_id = 0;
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(default_engine_name,
+                                        {},
+                                        1,
+                                        {std::nullopt},
+                                        default_engine,
+                                        default_engine_id,
+                                        idleConfig()));
+    expectSenderPhases(unsplit_name, unsplit, unsplit_id, {1}, {});
+    expectSenderPhases(default_engine_name, default_engine, default_engine_id, {1}, {});
+    EXPECT_TRUE(recordedSpans(traceFile, unsplit_name, "nixl::wire.completed").empty());
+    EXPECT_TRUE(recordedSpans(traceFile, default_engine_name, "nixl::wire.completed").empty());
+}
+
+TEST_F(ucxTraceContextPropagation, ThreadPoolPostReleasedInFlightRecordsNoWireCompleted) {
+    const gtest::LogIgnoreGuard released("released with [0-9]+ requests in progress");
+    nixl::trace::TraceContext context;
+    std::uint64_t request_id = 0;
+    ASSERT_NO_FATAL_FAILURE(splitWriteToIdleTarget(
+        context, request_id, [](nixlAgent &sender, nixlAgent &, nixlXferReqH *req) {
+            ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
+        }));
+    expectSenderPhases(sender_name, {context}, request_id, {1}, {});
+    EXPECT_TRUE(recordedSpans(traceFile, sender_name, "nixl::wire.completed").empty());
+}
+
 TEST_F(ucxTraceContextPropagation, DeferredNotificationIsRecordedByTheStatusCheck) {
     const gtest::LogIgnoreGuard efa(efa_warning);
-    nixlAgentConfig idle_config;
-    idle_config.useProgThread = false;
-    nixlAgent target(target_name, idle_config);
+    nixlAgent target(target_name, idleConfig());
     nixlBackendH *target_backend = nullptr;
     ASSERT_EQ(target.createBackend("UCX", {}, target_backend), NIXL_SUCCESS);
     const std::vector<char> dst_buffer(buffer_size);

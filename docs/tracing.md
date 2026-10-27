@@ -301,11 +301,13 @@ example because the peer disconnected, only `nixl::submit` is recorded.
 The notification goes out from `postXfer` if the transfer has already completed,
 and otherwise from the first status check that finds it complete, so
 `notif.sent` appears once per notifying post, from either call, with that post's
-execution number. UCX records no
-`nixl::wire.completed`: a transfer as a whole is seen to complete only when the
-application checks its status, even on the thread-pool engine, whose dedicated
-threads see each chunk finish, so the stamp would time the poll rather than the
-transport.
+execution number. UCX records `nixl::wire.completed` only where a thread other
+than the application's sees a transfer complete: on the thread-pool engine, for
+a post split across its dedicated workers (at least `split_batch_size`
+descriptors), from the dedicated thread whose chunk completes it last. It
+records none for a post that fails or is released in flight, and none on the
+default engine, where a transfer is seen to complete only when the application
+checks its status, so a stamp would time the poll rather than the transport.
 
 A backend that carries the context to its peer says so by overriding
 `supportsTraceContext()`, which defaults to `false`; core reads it once, when
@@ -441,6 +443,6 @@ In NIXL tracing, "correlation" can mean two different things:
 
 - **Backend phase emission** — UCX records `nixl::submit`, `nixl::wire.submitted`,
   `nixl::notif.sent` and `nixl::notif.received` through the sink described under
-  "Backend phases". Not recorded yet: an accurate `nixl::wire.completed`,
-  which needs a completion point that does not depend on how often the
-  application polls, and the other backends' phases.
+  "Backend phases". UCX records `nixl::wire.completed` only for the thread-pool
+  engine's split posts (see "Backend phases"); the other backends record no phases
+  yet.
