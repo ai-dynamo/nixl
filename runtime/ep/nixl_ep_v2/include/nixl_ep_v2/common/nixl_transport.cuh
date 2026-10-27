@@ -166,7 +166,8 @@ struct NIXLTransport {
         }
     }
 
-    // Store one word on a peer reachable with stores (the scale-up peers of the hybrid path always are)
+    // Store one value (a word, or the direct dispatch's 16-byte count pair) on a peer reachable with stores (the scale-up peers of the
+    // hybrid path always are)
     template <typename dtype_t>
     __device__ __forceinline__ void put_value(dtype_t* sym_ptr, const dtype_t& value, const int& rid) const {
         const auto dst_ptr = get_p2p_ptr(sym_ptr, rid);

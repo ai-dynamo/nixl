@@ -170,6 +170,7 @@ adaptive_dispatch_impl(
     // Named barrier indices
     constexpr int kNotifyBarrierIndex = 1;
     [[maybe_unused]] constexpr int kCountBarrierIndex = 2, kSweepBarrierIndex = 3;
+    constexpr int kEndBarrierIndex = 4;   // the direct kernels' end sequence (`comm::active_grid_arrive`)
     [[maybe_unused]] constexpr int kNumWarps = kNumThreads / 32;
     [[maybe_unused]] constexpr int kMetadataStride = 2 + kNumTopk;
     EP_STATIC_ASSERT(kMetadataStride <= 32, "The metadata row is written by one lane per entry");
@@ -180,9 +181,14 @@ adaptive_dispatch_impl(
         sm_idx, (warp_idx - kNumNotifyWarps) % kNumChannelsPerSM, ctx.num_channels, warp_idx < kNumNotifyWarps);
     const auto transport = nixl::NIXLTransport(ctx, channel_idx);
 
-    // Global parallel barriers for scale-out subteam and scale-up subteam
-    // Zero copy (direct) skips it: a peer's tagged count row (below) proves it entered this call; nothing is zeroed at entry
-    if (not zc) {
+    // Entry synchronisation. Direct mode without zero copy: per-peer ready/arrived signalling instead of the two full-team
+    // barriers (`comm::kPeerReadyWord`): SM 0 publishes our READY now, every remote write below sits behind its writer's acquire
+    // of the destination's READY, and the grid's last block exchanges the ARRIVED words at the end. Zero copy skips it: a peer's
+    // tagged count row (below) proves it entered this call; nothing is zeroed at entry. Hybrid: the two subteams' barriers
+    const bool use_peer_signalling = is_direct and not zc;
+    if (use_peer_signalling) {
+        comm::peer_ready_publish_rt<kNumThreads, kNumMaxScaleupRanks>(transport, workspace_layout, topo, sm_idx, thread_idx);
+    } else if (not zc) {
         comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kHybridDispatchTag0, kNumMaxScaleupRanks, false, false, true>(
             transport, workspace_layout, topo, sm_idx, thread_idx);
     }
@@ -343,6 +349,7 @@ adaptive_dispatch_impl(
         } else {
             EP_STATIC_ASSERT(kNumTopk <= 32, "Insufficient lanes");
             const auto global_warp_idx = sm_idx * kNumNotifyWarps + warp_idx;
+            // SM-major token order (`num_contributors` below relies on it)
             for (int i = global_warp_idx; i < num_tokens; i += kNumNotifyWarps * num_active_sms) {
                 // Expert choice can not be redundant
                 // NOTES: no assertions here as they are expensive
@@ -370,56 +377,69 @@ adaptive_dispatch_impl(
         EP_PROFILE_STAMP(workspace_layout, 8);
 
         // Do full-grid reduction
-        for (int i = thread_idx; i < num_reduction_entries; i += kNumNotifyThreads) {
-            const int64_t counter = (1ll << 32ll) | rank_expert_count[i];
-            ptx::red_add(workspace_layout.get_notify_reduction_workspace_ptr() + i, counter);
+        // Direct (not zero copy): only the SMs that own tokens in the static partition contribute; the others hold all-zero counts.
+        // The counting loop above gives SM `s` the tokens `s * kNumNotifyWarps + w (mod kNumNotifyWarps * num_active_sms)`, so SM `s`
+        // owns a token iff `s < ceil(num_tokens / kNumNotifyWarps)`. When SM 0 is the only contributor its shared counts are the
+        // global counts: no atomics, no wait
+        const int num_contributors = use_peer_signalling ? min(num_active_sms, math::ceil_div(num_tokens, kNumNotifyWarps)) : num_active_sms;
+        const bool local_reduce = use_peer_signalling and num_contributors <= 1;
+        if (not local_reduce and sm_idx < num_contributors) {
+            for (int i = thread_idx; i < num_reduction_entries; i += kNumNotifyThreads) {
+                const int64_t counter = (1ll << 32ll) | rank_expert_count[i];
+                ptx::red_add(workspace_layout.get_notify_reduction_workspace_ptr() + i, counter);
+            }
         }
 
         // Do the remaining work by SM 0
         if (sm_idx == 0) {
             // Reduce all SM's count
-            // Wait all ACTIVE SMs' arrival
-            for (int i = thread_idx; i < num_reduction_entries; i += kNumNotifyThreads) {
-                comm::timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
-                    const auto status = ptx::ld_volatile<int64_t>(workspace_layout.get_notify_reduction_workspace_ptr() + i);
-                    if ((status >> 32) == num_active_sms) {
-                        // Encode and write into the send buffer (hybrid) or shared memory (direct)
-                        const auto encoded = math::encode_decode_positive<int>(status & 0xffffffffll);
-                        if (is_direct) {
-                            if constexpr (kZeroCopy) {
-                                rank_expert_count[i] = layout::WorkspaceLayout::zc_make_count_word(
-                                    zc_call_tag, zc_slot_idx, false, static_cast<int>(status & 0xffffffffll));
+            // Wait all contributing SMs' arrival (every ACTIVE SM unless the direct partition leaves some without tokens)
+            if (local_reduce) {
+                for (int i = thread_idx; i < num_reduction_entries; i += kNumNotifyThreads)
+                    rank_expert_count[i] = math::encode_decode_positive<int>(rank_expert_count[i]);
+            } else {
+                for (int i = thread_idx; i < num_reduction_entries; i += kNumNotifyThreads) {
+                    comm::timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
+                        const auto status = ptx::ld_volatile<int64_t>(workspace_layout.get_notify_reduction_workspace_ptr() + i);
+                        if ((status >> 32) == num_contributors) {
+                            // Encode and write into the send buffer (hybrid) or shared memory (direct)
+                            const auto encoded = math::encode_decode_positive<int>(status & 0xffffffffll);
+                            if (is_direct) {
+                                if constexpr (kZeroCopy) {
+                                    rank_expert_count[i] = layout::WorkspaceLayout::zc_make_count_word(
+                                        zc_call_tag, zc_slot_idx, false, static_cast<int>(status & 0xffffffffll));
+                                } else {
+                                    rank_expert_count[i] = encoded;
+                                }
                             } else {
-                                rank_expert_count[i] = encoded;
+                                // Hybrid: rank count of rank `i`, expert count of expert `i - num_ranks`, or record count of channel `c`
+                                // towards domain `d`, each into its domain's count row
+                                int d, word;
+                                if (i < num_ranks) {
+                                    d = i / num_scaleup_ranks, word = num_experts_per_scaleout + i % num_scaleup_ranks;
+                                } else if (i < num_ranks + num_experts) {
+                                    d = (i - num_ranks) / num_experts_per_scaleout, word = (i - num_ranks) % num_experts_per_scaleout;
+                                } else {
+                                    const int j = i - num_ranks - num_experts;
+                                    d = j % num_scaleout_ranks, word = num_experts_per_scaleout + num_scaleup_ranks + j / num_scaleout_ranks;
+                                }
+                                *scaleout_count_ptr(d, word) = encoded;
                             }
-                        } else {
-                            // Hybrid: rank count of rank `i`, expert count of expert `i - num_ranks`, or record count of channel `c`
-                            // towards domain `d`, each into its domain's count row
-                            int d, word;
-                            if (i < num_ranks) {
-                                d = i / num_scaleup_ranks, word = num_experts_per_scaleout + i % num_scaleup_ranks;
-                            } else if (i < num_ranks + num_experts) {
-                                d = (i - num_ranks) / num_experts_per_scaleout, word = (i - num_ranks) % num_experts_per_scaleout;
-                            } else {
-                                const int j = i - num_ranks - num_experts;
-                                d = j % num_scaleout_ranks, word = num_experts_per_scaleout + num_scaleup_ranks + j / num_scaleout_ranks;
-                            }
-                            *scaleout_count_ptr(d, word) = encoded;
+
+                            // Clean for the next usage
+                            workspace_layout.get_notify_reduction_workspace_ptr()[i] = 0;
+                            return true;
                         }
 
-                        // Clean for the next usage
-                        workspace_layout.get_notify_reduction_workspace_ptr()[i] = 0;
-                        return true;
-                    }
-
-                    if (is_last_check) {
-                        printf("NIXL EP V2 adaptive notify (GPU reduction) timeout, scale-out: %d/%d, scale-up: %d/%d, "
-                               "thread: %d, status: %d | %d, expected: %d\n",
-                               scaleout_rank_idx, num_scaleout_ranks, scaleup_rank_idx, num_scaleup_ranks, thread_idx,
-                               static_cast<int>(status >> 32), static_cast<int>(status & 0xffffffff), num_active_sms);
-                    }
-                    return false;
-                });
+                        if (is_last_check) {
+                            printf("NIXL EP V2 adaptive notify (GPU reduction) timeout, scale-out: %d/%d, scale-up: %d/%d, "
+                                   "thread: %d, status: %d | %d, expected: %d\n",
+                                   scaleout_rank_idx, num_scaleout_ranks, scaleup_rank_idx, num_scaleup_ranks, thread_idx,
+                                   static_cast<int>(status >> 32), static_cast<int>(status & 0xffffffff), num_contributors);
+                        }
+                        return false;
+                    });
+                }
             }
             if (zc)
                 ptx::tma_store_fence();
@@ -471,24 +491,50 @@ adaptive_dispatch_impl(
                     // position, which the prefix sum, the copy epilogue and the host read), expert counts in GLOBAL space
                     // (slot = the writer's global rank times the slots per rank + the expert, reduced over every rank below)
                     // Issue scaleup rank count writes to peers
+                    // Peer-signalled mode (this branch: direct, not zero copy): a storing thread acquires its destination's READY before
+                    // its first store to it
+                    comm::AcquiredReadyMask<kNumMaxScaleupRanks> acquired_ready;
+                    const auto acquire_ready = [&](const int& pos) {
+                        comm::peer_ready_acquire_rt<kNumTimeoutCycles, comm::kDirectDispatchTag, kNumMaxScaleupRanks>(acquired_ready, workspace_layout, topo, pos);
+                    };
                     for (int i = thread_idx; i < num_scaleup_ranks; i += kNumNotifyThreads) {
                         if (not topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, i))
                             continue;
+                        acquire_ready(i);
                         const auto dst_rank_counter = workspace_layout.get_scaleup_rank_count_ptr<false>() + scaleup_rank_idx;
                         const auto count = rank_count[scaleout_rank_idx * num_scaleup_ranks + i];   // the count of our domain's rank at position `i`
                         transport.put_value<int64_t>(dst_rank_counter, static_cast<int64_t>(count), scaleup_peer_id(i));
                     }
                     __syncwarp();
 
-                    // Issue scaleup expert count writes to peers (per-element NVLink stores)
-                    for (int i = thread_idx; i < num_experts; i += kNumNotifyThreads) {
-                        const auto dst_rank = i / num_experts_per_rank;
-                        if (not is_rank_live(dst_rank))
-                            continue;
-                        const auto idx = num_experts_per_rank * rank_idx + (i % num_experts_per_rank);
-                        transport.put_value<int64_t>(
-                            workspace_layout.get_scaleup_expert_count_ptr<false>() + idx,
-                            static_cast<int64_t>(expert_count[i]), scaleup_peer_id(position_of(dst_rank)));
+                    // Issue scaleup expert count writes to peers
+                    if constexpr (kNumExpertsPerRank % 2 == 0) {
+                        // Packed: two experts (two 64-bit slots, 16 bytes, 16-byte aligned since the slot index is even and the
+                        // slot array is 16-byte aligned) per vector store; a pair never straddles two ranks. The receiver polls each
+                        // element on its own, so only the per-element values matter (the high word is the sign extension).
+                        // The storing lane acquires its destination's READY itself (`acquire_ready`)
+                        for (int j = thread_idx; j < num_experts / 2; j += kNumNotifyThreads) {
+                            const int i = j * 2;
+                            const auto dst_rank = i / num_experts_per_rank;
+                            if (not is_rank_live(dst_rank))
+                                continue;
+                            const int v0 = expert_count[i], v1 = expert_count[i + 1];
+                            const auto idx = num_experts_per_rank * rank_idx + (i % num_experts_per_rank);
+                            acquire_ready(position_of(dst_rank));
+                            transport.put_value(reinterpret_cast<int4*>(workspace_layout.get_scaleup_expert_count_ptr<false>() + idx),
+                                                make_int4(v0, v0 >> 31, v1, v1 >> 31), scaleup_peer_id(position_of(dst_rank)));
+                        }
+                    } else {
+                        for (int i = thread_idx; i < num_experts; i += kNumNotifyThreads) {
+                            const auto dst_rank = i / num_experts_per_rank;
+                            if (not is_rank_live(dst_rank))
+                                continue;
+                            const auto idx = num_experts_per_rank * rank_idx + (i % num_experts_per_rank);
+                            acquire_ready(position_of(dst_rank));
+                            transport.put_value<int64_t>(
+                                workspace_layout.get_scaleup_expert_count_ptr<false>() + idx,
+                                static_cast<int64_t>(expert_count[i]), scaleup_peer_id(position_of(dst_rank)));
+                        }
                     }
 
                     // This is necessary, as the waited results will rewrite the shared memory
@@ -498,31 +544,77 @@ adaptive_dispatch_impl(
                     // Wait for rank and expert count: `num_scaleup_ranks` rank slots (writer = position `i`), then the
                     // `num_experts` expert slots (writer = the global rank owning expert `i - num_scaleup_ranks`)
                     const auto start_clock = clock64();
-                    for (int i = thread_idx; i < num_scaleup_ranks + num_experts; i += kNumNotifyThreads) {
-                        const bool is_rank_slot = i < num_scaleup_ranks;
-                        const int expert_slot = i - num_scaleup_ranks;
-                        const bool live = is_rank_slot ? topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, i)
-                                                       : is_rank_live(expert_slot / num_experts_per_rank);
-                        int* smem_dst = is_rank_slot ? rank_count + i : expert_count + expert_slot;
-                        if (not live) {
-                            *smem_dst = 0;
-                            continue;
-                        }
-                        const auto slot_ptr = workspace_layout.get_scaleup_count_ptr<false>(i, num_scaleup_ranks);
-                        comm::timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
-                            // NOTES: the global memory type has 64 bits
-                            const auto count = static_cast<int>(ptx::ld_volatile<int64_t>(slot_ptr));
-                            const auto decoded = math::encode_decode_positive(count);
-                            if (math::is_decoded_positive_ready(decoded)) {
-                                *slot_ptr = 0;
-                                *smem_dst = decoded;
-                                return true;
+                    if constexpr (kNumExpertsPerRank % 2 == 0) {
+                        // Polled in 16-byte chunks of two 64-bit slots: every element is checked on its own (a chunk is retried until
+                        // all its live elements read as written; a vector load need not be atomic), then the chunk is zeroed for the next call
+                        const int num_rank_chunks = (num_scaleup_ranks + 1) / 2, num_expert_chunks = num_experts / 2;
+                        for (int c = thread_idx; c < num_rank_chunks + num_expert_chunks; c += kNumNotifyThreads) {
+                            const bool is_rank_chunk = c < num_rank_chunks;
+                            const int e0 = is_rank_chunk ? c * 2 : (c - num_rank_chunks) * 2;
+                            int64_t* chunk_ptr = is_rank_chunk ? workspace_layout.get_scaleup_rank_count_ptr<false>() + e0
+                                                               : workspace_layout.get_scaleup_expert_count_ptr<false>() + e0;
+                            // Element liveness (a rank chunk's second element may lie past the live positions)
+                            bool live[2];
+                            #pragma unroll
+                            for (int k = 0; k < 2; ++ k) {
+                                const int e = e0 + k;
+                                live[k] = is_rank_chunk ? (e < num_scaleup_ranks and topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, e))
+                                                        : is_rank_live(e / num_experts_per_rank);
                             }
+                            int* smem_dst = is_rank_chunk ? rank_count + e0 : expert_count + e0;
+                            int decoded[2] = {0, 0};
+                            if (live[0] or live[1]) {
+                                comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
+                                    // NOTES: the low word of each 64-bit slot carries the (encoded) count
+                                    const auto v = ptx::ld_volatile_int4(chunk_ptr);
+                                    const int d0 = math::encode_decode_positive(v.x), d1 = math::encode_decode_positive(v.z);
+                                    if ((not live[0] or math::is_decoded_positive_ready(d0)) and (not live[1] or math::is_decoded_positive_ready(d1))) {
+                                        decoded[0] = d0, decoded[1] = d1;
+                                        return true;
+                                    }
 
-                            if (is_last_check)
-                                printf("NIXL EP V2 adaptive notify (direct) timeout, rank: %d, slot: %d, count: %d\n", rank_idx, i, decoded);
-                            return false;
-                        }, start_clock);
+                                    if (is_last_check)
+                                        printf("NIXL EP V2 adaptive notify (direct) timeout, rank: %d, %s chunk: %d, counts: %d %d\n",
+                                               rank_idx, is_rank_chunk ? "rank" : "expert", e0, d0, d1);
+                                    return false;
+                                }, start_clock);
+                                // Clean for the next call
+                                ptx::st_relaxed_sys(chunk_ptr, make_int4(0, 0, 0, 0));
+                            }
+                            // A rank chunk stays inside the bound: slot `num_scaleup_ranks` (an odd count's pad) is `expert_count[0]`
+                            // when the live domain is domain 0, else an unused rank slot
+                            #pragma unroll
+                            for (int k = 0; k < 2; ++ k)
+                                if (not is_rank_chunk or e0 + k < num_scaleup_ranks)
+                                    smem_dst[k] = live[k] ? decoded[k] : 0;
+                        }
+                    } else {
+                        for (int i = thread_idx; i < num_scaleup_ranks + num_experts; i += kNumNotifyThreads) {
+                            const bool is_rank_slot = i < num_scaleup_ranks;
+                            const int expert_slot = i - num_scaleup_ranks;
+                            const bool live = is_rank_slot ? topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, i)
+                                                           : is_rank_live(expert_slot / num_experts_per_rank);
+                            int* smem_dst = is_rank_slot ? rank_count + i : expert_count + expert_slot;
+                            if (not live) {
+                                *smem_dst = 0;
+                                continue;
+                            }
+                            const auto slot_ptr = workspace_layout.get_scaleup_count_ptr<false>(i, num_scaleup_ranks);
+                            comm::timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
+                                // NOTES: the global memory type has 64 bits
+                                const auto count = static_cast<int>(ptx::ld_volatile<int64_t>(slot_ptr));
+                                const auto decoded = math::encode_decode_positive(count);
+                                if (math::is_decoded_positive_ready(decoded)) {
+                                    *slot_ptr = 0;
+                                    *smem_dst = decoded;
+                                    return true;
+                                }
+
+                                if (is_last_check)
+                                    printf("NIXL EP V2 adaptive notify (direct) timeout, rank: %d, slot: %d, count: %d\n", rank_idx, i, decoded);
+                                return false;
+                            }, start_clock);
+                        }
                     }
                     ptx::named_barrier<kNumNotifyThreads>(kNotifyBarrierIndex);
                     EP_PROFILE_STAMP(workspace_layout, 4);
@@ -803,7 +895,7 @@ adaptive_dispatch_impl(
         // current token's stores drain, so the SMs the fabric's egress arbitration favours send more tokens and every
         // warp ends within one token of the others (per-block stamps: the static shares end up to 1.8x apart from
         // 16 active SMs up, the taken ones within one token). A batch within one wave takes no atomic at all. The
-        // counter is zero at rest (zeroed after the end barrier of every direct launch, see `get_take_counter_ptr`)
+        // counter is zero at rest (zeroed at the end of every direct launch, see `get_take_counter_ptr`)
         const bool take_tokens = dynamic_take and num_tokens > num_data_channels;
         const auto next_token = [&](const int& token_idx) {
             if (not take_tokens)
@@ -813,6 +905,9 @@ adaptive_dispatch_impl(
                 next = num_data_channels + static_cast<int>(atomicAdd(workspace_layout.get_take_counter_ptr(0), 1u));
             return __shfl_sync(0xffffffff, next, 0);
         };
+
+        // Peer-signalled mode: the positions whose READY this lane has acquired
+        [[maybe_unused]] comm::AcquiredReadyMask<kNumMaxScaleupRanks> acquired_ready;
 
         // Iterate all tokens
         for (int token_idx = channel_idx; token_idx < num_tokens; token_idx = next_token(token_idx)) {
@@ -892,6 +987,15 @@ adaptive_dispatch_impl(
             if (ptx::deduplicate(stored_dst_rank_idx, lane_idx) and stored_dst_rank_idx >= 0)
                 stored_dst_slot_idx = atomicAdd(workspace_layout.get_scaleup_atomic_sender_counter() + position_of(stored_dst_rank_idx), 1);
             __syncwarp();
+
+            // Peer-signalled mode (this direct path without zero copy): the lane that stores to a destination acquires that
+            // destination's READY itself (overlapping the token's TMA load); a destination acquired once stays acquired for this launch
+            if constexpr (not kZeroCopy) {
+                if (stored_dst_slot_idx >= 0)
+                    comm::peer_ready_acquire_rt<kNumTimeoutCycles, comm::kDirectDispatchTag, kNumMaxScaleupRanks>(
+                        acquired_ready, workspace_layout, topo, position_of(stored_dst_rank_idx));
+                __syncwarp();
+            }
 
             [[maybe_unused]] int zc_stored_row = -1;
             [[maybe_unused]] uint8_t* zc_stored_peer_base = nullptr;
@@ -1357,9 +1461,26 @@ adaptive_dispatch_impl(
         __syncwarp();
     }
 
+    // The end: the peer-signalled end sequence, or the end barrier
+    EP_PROFILE_STAMP(workspace_layout, 6);
+    if (use_peer_signalling) {
+        const bool is_last = comm::active_grid_arrive<kNumThreads, kEndBarrierIndex>(workspace_layout.get_active_grid_barrier_ptr(), num_active_sms);
+        if (is_last and warp_idx == kNumWarps - 1) {   // the block's last warp
+            // Every block has arrived: no more takes or slot assignments in this launch, so the counters go back to zero
+            if (lane_idx == 0)
+                *workspace_layout.get_take_counter_ptr(0) = 0u;
+            for (int pos = lane_idx; pos < num_scaleup_ranks; pos += 32)
+                workspace_layout.get_scaleup_atomic_sender_counter()[pos] = 0;
+            comm::peer_arrived_exchange_rt<kNumTimeoutCycles, comm::kDirectDispatchTag, kNumMaxScaleupRanks>(transport, workspace_layout, topo, lane_idx);
+            // Trigger the copy epilogue only now: every peer's data has arrived, so no epilogue block parks on an SM while the
+            // peers are still writing (every other block has exited, which counts as triggered)
+            cudaTriggerProgrammaticLaunchCompletion();
+        }
+        EP_PROFILE_STAMP_LAST(workspace_layout, 7);
+        return;
+    }
     // Scale-up barrier to ensure data arrival
     // As scale-out tokens have already been consumed by forwarders, no need to do scale-out barrier again
-    EP_PROFILE_STAMP(workspace_layout, 6);
     comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kHybridDispatchTag1, kNumMaxScaleupRanks, true, true, false>(
         transport, workspace_layout, topo, sm_idx, thread_idx, /* do not scale-out */ false, true);
     EP_PROFILE_STAMP(workspace_layout, 7);

@@ -149,14 +149,17 @@ adaptive_combine_impl(nv_bfloat16* x,
     // Each warp is a channel
     const auto channel_idx = comm::get_channel_idx<kNumLaunchSMs, kNumChannelsPerSM>(sm_idx, warp_idx % kNumChannelsPerSM, ctx.num_channels);
     const auto transport = nixl::NIXLTransport(ctx, channel_idx);
+    constexpr int kEndBarrierIndex = 1;   // the direct kernel's end sequence (`comm::active_grid_arrive`)
 
     // Global parallel barriers for scale-out subteam and scale-up subteam
     // NOTES: the hybrid roles need a grid sync first, as there are channel scale-up tail cleaning before;
     // the direct path has no such cleaning and starts like DeepSeek's direct kernel (no start sync)
     const bool is_direct = topo.mode == topology::kModeDirect;
+    // Direct mode: per-peer ready/arrived signalling instead of the two full-team barriers (`comm::kPeerReadyWord`): SM 0 publishes
+    // our READY now, every remote row write below sits behind its writer's acquire of the destination's READY, and the grid's
+    // last block exchanges the ARRIVED words at the end
     if (is_direct) {
-        comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kCombineTag0, kNumMaxScaleupRanks, false, false, true>(
-            transport, workspace_layout, topo, sm_idx, thread_idx);
+        comm::peer_ready_publish_rt<kNumThreads, kNumMaxScaleupRanks>(transport, workspace_layout, topo, sm_idx, thread_idx);
     } else {
         comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kHybridCombineTag0, kNumMaxScaleupRanks, false, true, true>(
             transport, workspace_layout, topo, sm_idx, thread_idx);
@@ -197,7 +200,7 @@ adaptive_combine_impl(nv_bfloat16* x,
         // rank-wide counter when the previous chunk's stores are committed; the chunk sequence is interleaved over
         // the source-rank regions of the received rows (rows are grouped by source position) and rotated per rank,
         // so a rank's writes spread over all its destinations at every moment and peers start on different ones.
-        // Chunks that fit one wave take no atomic. The counter is zero at rest (zeroed after the end barrier below)
+        // Chunks that fit one wave take no atomic. The counter is zero at rest (zeroed by the end sequence below)
         constexpr int kNumMaxChunkRows = 8, kNumChunkWaves = 4;
         const int num_total_warps = topo.num_active_sms * kNumWarps;
         const int num_tokens_per_warp = math::ceil_div(num_reduced_tokens, num_total_warps);
@@ -219,6 +222,12 @@ adaptive_combine_impl(nv_bfloat16* x,
                 next = num_total_warps + static_cast<int>(atomicAdd(workspace_layout.get_take_counter_ptr(1), 1u));
             return __shfl_sync(0xffffffff, next, 0);
         };
+        // The positions whose READY this warp has acquired (every lane acquires: the lanes that store weights and the elected
+        // lane that stores the row are all behind their own acquire)
+        comm::AcquiredReadyMask<kNumMaxScaleupRanks> acquired_ready;
+        const auto acquire_ready = [&](const int& pos) {
+            comm::peer_ready_acquire_rt<kNumTimeoutCycles, comm::kDirectCombineTag, kNumMaxScaleupRanks>(acquired_ready, workspace_layout, topo, pos);
+        };
         for (int chunk = global_warp_idx; chunk < num_sequence; chunk = next_chunk()) {
             const int mapped_chunk = take_chunks ?
                 ((chunk % num_regions + scaleup_rank_idx) % num_regions) * chunks_per_region + chunk / num_regions : chunk;
@@ -233,6 +242,10 @@ adaptive_combine_impl(nv_bfloat16* x,
                 const int src_token_idx = src_global_token_idx % num_max_tokens_per_rank;
                 const int src_rank_idx = src_global_token_idx / num_max_tokens_per_rank;
                 const int src_topk_idx = __ldg(src_metadata + i * kMetadataStride + 1) % kNumTopk;
+
+                // The destination's NVLink position: every remote store of this row sits behind `acquire_ready(dst_pos)` (all lanes of
+                // the warp, uniform); the no-reduce and reduce arms issue it after the row's local work so the wait overlaps it
+                const int dst_pos = src_rank_idx % num_scaleup_ranks;
 
                 // Destination row in the source rank's receive rows, addressed over NVLink
                 auto master_token_buffer = scaleup_buffer
@@ -262,13 +275,18 @@ adaptive_combine_impl(nv_bfloat16* x,
                     if constexpr (kUseExpandedLayout)
                         token_idx_in_tensor = ptx::exchange(stored_topk_slot_idx, ptx::get_master_lane_idx(reduce_valid_mask));
 
-                    // No reduce
-                    if (ptx::elect_one_sync()) {
+                    // No reduce: the local payload load is issued first, the destination's ready is acquired while it lands,
+                    // and only then does the elected lane (behind its own acquire) store the row
+                    const bool is_elected = ptx::elect_one_sync();
+                    if (is_elected) {
                         const auto load_ptr =
                             math::advance_ptr(x, static_cast<int64_t>(token_idx_in_tensor) * kNumHiddenBytes);
                         ptx::tma_store_wait();
                         ptx::tma_load_1d(tma_buffer.get_base_ptr(), load_ptr, mbarrier_ptr, kNumHiddenBytes);
                         ptx::mbarrier_arrive_and_set_tx(mbarrier_ptr, kNumHiddenBytes);
+                    }
+                    acquire_ready(dst_pos);
+                    if (is_elected) {
                         ptx::mbarrier_wait_and_flip_phase(mbarrier_ptr, phase);
                         ptx::tma_store_1d(master_token_buffer.get_base_ptr(), tma_buffer.get_base_ptr(), kNumHiddenBytes);
                         ptx::tma_store_commit();
@@ -302,6 +320,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                     __syncwarp();
 
                     // Issue TMA stores
+                    acquire_ready(dst_pos);
                     if (ptx::elect_one_sync()) {
                         ptx::tma_store_1d(master_token_buffer.get_base_ptr(), tma_buffer.get_base_ptr(), kNumHiddenBytes);
                         ptx::tma_store_commit();
@@ -309,6 +328,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                     __syncwarp();
                 } else {
                     // No local reduction, send all data (expanded send)
+                    acquire_ready(dst_pos);
                     #pragma unroll
                     for (int k = 0; k < kNumTopk; ++ k) {
                         const auto slot_idx = ptx::exchange(stored_topk_slot_idx, k);
@@ -344,12 +364,18 @@ adaptive_combine_impl(nv_bfloat16* x,
             }
         }
 
-        // Final barrier to ensure data arrival (the hybrid roles synchronise through their tails instead)
-        comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kCombineTag1, kNumMaxScaleupRanks, true, true, false>(
-            transport, workspace_layout, topo, sm_idx, thread_idx);
-        // The row-chunk take counter back to zero for the next direct launch (every take is behind the grid sync above)
-        if (sm_idx == 0 and thread_idx == 0)
-            *workspace_layout.get_take_counter_ptr(1) = 0u;
+        // End sequence: the block's flush and grid arrival; the last block's first warp zeroes the take counter, exchanges the
+        // ARRIVED words and triggers the reduce epilogue
+        const bool is_last = comm::active_grid_arrive<kNumThreads, kEndBarrierIndex>(workspace_layout.get_active_grid_barrier_ptr(), topo.num_active_sms);
+        if (is_last and warp_idx == 0) {
+            // Every block has arrived (every take is behind it): the row-chunk take counter back to zero for the next launch
+            if (lane_idx == 0)
+                *workspace_layout.get_take_counter_ptr(1) = 0u;
+            comm::peer_arrived_exchange_rt<kNumTimeoutCycles, comm::kDirectCombineTag, kNumMaxScaleupRanks>(transport, workspace_layout, topo, lane_idx);
+            // Trigger the reduce epilogue only now: every peer's row has arrived, so no epilogue block parks on an SM while the
+            // peers are still writing (the hybrid combine keeps its implicit trigger at kernel exit)
+            cudaTriggerProgrammaticLaunchCompletion();
+        }
         EP_PROFILE_STAMP_LAST(workspace_layout, 15);  // combine main: last block done
         return;
     }

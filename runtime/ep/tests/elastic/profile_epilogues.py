@@ -24,8 +24,8 @@ Epilogue timing (debug). Three independent measurements of one dispatch and one 
 
   wall     CUDA events around the library call (main kernel + epilogue kernel + launch gaps), event clock
   stamps   `%globaltimer` stamps compiled in with NIXL_EP_ADAPTIVE_PROFILE=1: main kernel SM 0 entry -> end
-           (dispatch: SM 0 past the end barrier; combine: last block done), epilogue block 0 past the
-           grid dependency -> last block done
+           (dispatch: the last warp done in peer-signalled direct mode, otherwise SM 0 past the end barrier; combine: last block done),
+           epilogue block 0 past the grid dependency -> last block done
   kineto   the library's own `bench_kineto` (the numbers tests/elastic/test_ep.py prints). The epilogues are
            launched with PDL, so their Kineto duration includes the time their blocks wait for the main kernel.
 
@@ -48,8 +48,9 @@ from nixl.runtime.ep.utils.gate import get_unbalanced_scores
 from nixl.runtime.ep.utils.math import per_token_cast_to_fp8
 from nixl.runtime.ep.utils.testing import bench_kineto
 
-# Profile slots (see impls/adaptive/*.cuh): dispatch main entry 0 -> end barrier done 7, copy epilogue 12->13,
-# combine main 14->15, reduce epilogue 16->17
+# Profile slots (see impls/adaptive/*.cuh): dispatch main entry 0 -> end done 7 (peer-signalled direct: last warp; otherwise past the
+# end barrier),
+# copy epilogue 12->13, combine main 14->15, reduce epilogue 16->17
 S_DISP_ENTRY, S_DISP_END, S_COPY_START, S_COPY_END = 0, 7, 12, 13
 S_COMB_ENTRY, S_COMB_END, S_RED_START, S_RED_END = 14, 15, 16, 17
 
@@ -70,6 +71,7 @@ DISPATCH_PHASES = [  # (name, from slot, to slot); from slot -1: an accumulator,
     ("so_last", 1, 10),
     ("fwd_last", 1, 11),
     ("t0_end", 1, 6),
+    # all_end, endbar: not in peer-signalled direct mode (slot 9 is the end barrier's start grid sync; the end sequence has none)
     ("all_end", 1, 9),
     ("endbar", 9, 7),
     ("total", 0, 7),
@@ -83,7 +85,10 @@ DISPATCH_PHASES = [  # (name, from slot, to slot); from slot -1: an accumulator,
     ("s_nring", -2, 39),
 ]
 # x_*: the hybrid exchange split; s_*: SM 0's first scale-out sender warp per token; combine rows: its first forward warp per row
+# bar0: entry -> entry sync done (peer-signalled direct: READY published); so_last / fwd_last: in direct mode SM 0's first / last
+# data warp done (slots 10/11)
 COMBINE_PHASES = [
+    # sync0: hybrid only (the direct combine runs no start barrier)
     ("sync0", 14, 9),
     ("su_end", 14, 27),
     ("fwd_end", 14, 31),

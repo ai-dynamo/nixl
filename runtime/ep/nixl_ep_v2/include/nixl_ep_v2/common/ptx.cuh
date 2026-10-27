@@ -204,6 +204,25 @@ __forceinline__ __device__ void named_barrier(const int& idx) {
     asm volatile("bar.sync %0, %1;" ::"r"(idx), "r"(kNumThreads));
 }
 
+// A named CTA barrier whose threads may reach it from different code locations (`barrier.cta.sync` without `.aligned`; `named_barrier`
+// is the `.aligned` form), and the same barrier reducing a predicate over the arriving threads (`barrier.cta.red.or.pred`)
+template <int kNumThreads>
+__forceinline__ __device__ void cta_barrier(const int& idx) {
+    asm volatile("barrier.cta.sync %0, %1;" :: "r"(idx), "r"(kNumThreads) : "memory");
+}
+
+template <int kNumThreads>
+__forceinline__ __device__ bool cta_barrier_or(const int& idx, const bool& pred) {
+    int result;
+    asm volatile("{\n\t"
+                 ".reg .pred p, q;\n\t"
+                 "setp.ne.b32 p, %2, 0;\n\t"
+                 "barrier.cta.red.or.pred q, %1, %3, p;\n\t"
+                 "selp.b32 %0, 1, 0, q;\n\t"
+                 "}" : "=r"(result) : "r"(idx), "r"(static_cast<int>(pred)), "r"(kNumThreads) : "memory");
+    return result != 0;
+}
+
 /// LD/ST instructions
 __forceinline__ __device__ int4 ldg_with_gez_pred(const int4* ptr, const int& value, const TMACacheHint& cache_hint = TMACacheHint::kEvictFirst) {
     int4 ret = make_int4(0, 0, 0, 0);
@@ -327,6 +346,14 @@ __forceinline__ __device__ int4 ld_volatile_int4(const void* ptr) {
     asm volatile("ld.volatile.global.v4.s32 {%0, %1, %2, %3}, [%4];"
                  : "=r"(value.x), "=r"(value.y), "=r"(value.z), "=r"(value.w) : "l"(ptr));
     return value;
+}
+
+// 16-byte relaxed system-scope store, the counterpart of `ld_volatile_int4`: four words another rank polls element by element,
+// so the vector store needs no atomicity beyond its 4-byte elements. Its "memory" clobber, which the scalar overload below lacks,
+// is conservative: nothing is ordered against this store (the polled slots carry their own ready encoding)
+__forceinline__ __device__ void st_relaxed_sys(void* ptr, const int4& value) {
+    asm volatile("st.relaxed.sys.global.v4.u32 [%0], {%1, %2, %3, %4};"
+                 :: "l"(ptr), "r"(value.x), "r"(value.y), "r"(value.z), "r"(value.w) : "memory");
 }
 
 __forceinline__ __device__ void red_add(const int64_t* ptr, const int64_t& value) {

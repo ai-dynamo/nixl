@@ -33,11 +33,11 @@ static constexpr int64_t kNumOneSecCycles = 2000000000;  // An approximation of 
 
 // Some reserved tags
 static constexpr int kKernelBarrierTag = 1;
-static constexpr int kCombineTag0 = 4;
-static constexpr int kCombineTag1 = 5;
 static constexpr int kHybridDispatchTag0 = 6;
 static constexpr int kHybridDispatchTag1 = 7;
 static constexpr int kHybridCombineTag0 = 8;
+static constexpr int kDirectDispatchTag = 9;
+static constexpr int kDirectCombineTag = 10;
 
 template <int64_t kNumTimeoutCycles, typename func_t>
 __device__ __forceinline__ void timeout_while(const bool& condition, const func_t& func,
@@ -173,6 +173,141 @@ __device__ __forceinline__ void peer_barrier_leg_rt(const nixl::NIXLTransport& t
         }
     }
     __syncthreads();
+}
+
+// ---- Direct mode's per-peer signalling (the dispatch and combine kernels without zero copy) ----
+// Instead of the two full-team barriers of `gpu_barrier_rt`, each launch advances a pair's expectation word `e` by exactly 2. A
+// peer's READY is the value e + 1 in its signal word `kPeerReadyWord` (its receive buffers are free: every earlier kernel of its
+// stream has completed, as the direct kernels are never launched as PDL secondaries; SM 0 publishes it at kernel entry), its
+// ARRIVED is e + 2 in word `kPeerArrivedWord` (all its writes into our buffers are done; the grid's last block sends it to each
+// peer after acquiring that peer's READY). Values only grow, so a peer that is ahead satisfies a wait too, and the hybrid kernels'
+// parity-indexed legs above (+1 per leg, word = count & 1) interleave with this scheme safely: every write exceeds the pair's
+// earlier values and every wait is "signal >= threshold". Every remote write of a launch sits behind its writer's own acquire of
+// the destination's READY (`peer_ready_acquire_rt`). Masked peers are skipped; a connect restarts a pair's words (host side), as
+// for the barrier legs
+// Enumerators, not namespace-scope `static constexpr int`s: the waits and the layout accessors take the word by `const int&`, which
+// ODR-uses a variable (undefined in device code) but only materialises a temporary from an enumerator
+enum PeerWord : int { kPeerReadyWord = 0, kPeerArrivedWord = 1 };
+
+// Wait (acquire) until peer `rid` at position `pos` has written at least `threshold` into our copy of its `word`
+template <int64_t kNumTimeoutCycles, int kTag>
+__device__ __forceinline__ void peer_word_wait_rt(const layout::WorkspaceLayout& workspace, const topology::EPTopology& topo,
+                                                  const int& pos, const int& rid, const int& word, const int64_t& threshold) {
+    const auto signal_ptr = workspace.get_peer_barrier_signal_ptr(rid, word);
+    timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
+        const auto signal = ptx::ld_acquire_sys<int64_t>(signal_ptr);
+        if (signal >= threshold)
+            return true;
+        if (is_last_check) {
+            printf("NIXL EP V2 adaptive peer %s timeout, tag: %d, scale-out: %d/%d, scale-up: %d/%d, block: %d, warp: %d, "
+                   "peer position: %d (id %d), signal: %lld, expected: %lld\n", word == kPeerReadyWord ? "ready" : "arrived", kTag,
+                   topo.scaleout_rank_idx, topo.num_scaleout_ranks, topo.scaleup_rank_idx, topo.num_scaleup_ranks,
+                   static_cast<int>(blockIdx.x), static_cast<int>(threadIdx.x / 32), pos, rid,
+                   static_cast<long long>(signal), static_cast<long long>(threshold));
+        }
+        return false;
+    });
+}
+
+// SM 0's thread `pos` publishes our READY (e + 1) to live peer position `pos`
+template <int kNumThreads, int kNumMaxScaleupRanks>
+__device__ __forceinline__ void peer_ready_publish_rt(const nixl::NIXLTransport& transport, const layout::WorkspaceLayout& workspace,
+                                                      const topology::EPTopology& topo, const int& sm_idx, const int& thread_idx) {
+    if (sm_idx > 0)
+        return;
+    const int my_rid = topology::rank_id(topo.scaleout_rank_idx, topo.scaleup_rank_idx, kNumMaxScaleupRanks);
+    for (int pos = thread_idx; pos < topo.num_scaleup_ranks; pos += kNumThreads) {
+        if (pos == topo.scaleup_rank_idx or not topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, pos))
+            continue;
+        const int rid = topology::rank_id(topo.scaleout_rank_idx, pos, kNumMaxScaleupRanks);
+        transport.put_word_rel(workspace.get_peer_barrier_signal_ptr(my_rid, kPeerReadyWord),
+                               workspace.get_peer_barrier_staging_ptr(rid, kPeerReadyWord),
+                               *workspace.get_peer_barrier_expected_ptr(rid) + 1, rid);
+    }
+}
+
+// The positions whose READY a thread has acquired in this launch, one bit per position of the declared maximum (the shape of
+// `topology::ScaleupMask`): a thread acquires each destination once, before its first remote write to it
+template <int kNumMaxScaleupRanks>
+struct AcquiredReadyMask {
+    static constexpr int kNumWords = (kNumMaxScaleupRanks + 63) / 64;
+    uint64_t words[kNumWords] = {};
+
+    // Marks `pos`, a position of the topology (in [0, kNumMaxScaleupRanks)); true when it was not yet marked (a predicate chain, not a
+    // dynamic index, as `ScaleupMask::test`)
+    __device__ __forceinline__ bool set(const int& pos) {
+        const uint64_t bit = 1ull << (pos & 63);
+        bool was_clear = false;
+        #pragma unroll
+        for (int i = 0; i < kNumWords; ++ i) {
+            if ((pos >> 6) == i) {
+                was_clear = (words[i] & bit) == 0;
+                words[i] |= bit;
+            }
+        }
+        return was_clear;
+    }
+};
+
+// Acquire live peer position `pos`'s READY of this launch, once per thread (a thread's own position needs none)
+template <int64_t kNumTimeoutCycles, int kTag, int kNumMaxScaleupRanks>
+__device__ __forceinline__ void peer_ready_acquire_rt(AcquiredReadyMask<kNumMaxScaleupRanks>& acquired, const layout::WorkspaceLayout& workspace,
+                                                      const topology::EPTopology& topo, const int& pos) {
+    if (pos == topo.scaleup_rank_idx or not acquired.set(pos))
+        return;
+    const int rid = topology::rank_id(topo.scaleout_rank_idx, pos, kNumMaxScaleupRanks);
+    peer_word_wait_rt<kNumTimeoutCycles, kTag>(workspace, topo, pos, rid, kPeerReadyWord, *workspace.get_peer_barrier_expected_ptr(rid) + 1);
+}
+
+// The block's end flush and grid arrival: its bulk stores complete, the block arrives on the grid counter (acq_rel: the last
+// arriver has observed every block's completed stores), and the result reaches every thread through a reducing CTA barrier (a
+// synchronizing operation of the memory model), so every lane that then releases a peer word or zeroes a counter is ordered after
+// that acquire. The counter is back to zero for the next launch (no round number: unlike `active_grid_sync`, nothing waits for
+// the arrival). `kBarrierIndex` is a named barrier the block's threads may reach from different code locations
+template <int kNumThreads, int kBarrierIndex>
+__device__ __forceinline__ bool active_grid_arrive(unsigned* grid_barrier_ptr, const int& num_active_blocks) {
+    ptx::tma_store_commit();
+    ptx::tma_store_wait();
+    ptx::cta_barrier<kNumThreads>(kBarrierIndex);
+    bool arrived_last = false;
+    if (threadIdx.x == 0) {
+        arrived_last = ptx::atom_add_acq_rel_gpu(grid_barrier_ptr, 1u) + 1 == static_cast<unsigned>(num_active_blocks);
+        if (arrived_last)
+            ptx::st_relaxed_gpu(grid_barrier_ptr, 0u);
+    }
+    return ptx::cta_barrier_or<kNumThreads>(kBarrierIndex, arrived_last);
+}
+
+// The last block's exchange, run by one warp: for every live peer, acquire its READY (it has entered this launch, so our
+// ARRIVED cannot precede its entry) and release our ARRIVED (e + 2); then wait for every peer's ARRIVED and advance the pair's
+// expectation by exactly 2 (this block is the only writer: every other block read the word before arriving)
+template <int64_t kNumTimeoutCycles, int kTag, int kNumMaxScaleupRanks>
+__device__ __forceinline__ void peer_arrived_exchange_rt(const nixl::NIXLTransport& transport, const layout::WorkspaceLayout& workspace,
+                                                         const topology::EPTopology& topo, const int& lane_idx) {
+    const int my_rid = topology::rank_id(topo.scaleout_rank_idx, topo.scaleup_rank_idx, kNumMaxScaleupRanks);
+    const auto live_peer_rid = [&](const int& pos) {   // -1 for our own or a masked position
+        return pos == topo.scaleup_rank_idx or not topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, pos) ?
+            -1 : topology::rank_id(topo.scaleout_rank_idx, pos, kNumMaxScaleupRanks);
+    };
+    for (int pos = lane_idx; pos < topo.num_scaleup_ranks; pos += 32) {
+        const int rid = live_peer_rid(pos);
+        if (rid < 0)
+            continue;
+        const int64_t expected = *workspace.get_peer_barrier_expected_ptr(rid);
+        peer_word_wait_rt<kNumTimeoutCycles, kTag>(workspace, topo, pos, rid, kPeerReadyWord, expected + 1);
+        transport.put_word_rel(workspace.get_peer_barrier_signal_ptr(my_rid, kPeerArrivedWord),
+                               workspace.get_peer_barrier_staging_ptr(rid, kPeerArrivedWord), expected + 2, rid);
+    }
+    for (int pos = lane_idx; pos < topo.num_scaleup_ranks; pos += 32) {
+        const int rid = live_peer_rid(pos);
+        if (rid < 0)
+            continue;
+        const auto expected_ptr = workspace.get_peer_barrier_expected_ptr(rid);
+        const int64_t expected = *expected_ptr;
+        peer_word_wait_rt<kNumTimeoutCycles, kTag>(workspace, topo, pos, rid, kPeerArrivedWord, expected + 2);
+        *expected_ptr = expected + 2;
+    }
+    __syncwarp();
 }
 
 // No kernel waits for an RDMA completion (the puts carry no status handle): a put has landed once its receiver has

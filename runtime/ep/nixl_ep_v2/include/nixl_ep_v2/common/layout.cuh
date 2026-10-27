@@ -120,15 +120,18 @@ struct WorkspaceLayout {
     // Arrival counter and round number of the active-block grid barrier (two words, padded to a line)
     static constexpr int64_t kNumActiveGridBarrierBytes = 128;
     // Token take counters of the direct paths (`[0]` dispatch tokens, `[1]` combine row chunks), a line of their own:
-    // zero at rest (the workspace is zero-initialised and each direct launch zeroes its counter after its end barrier,
-    // once every take of the launch is behind the barrier's grid sync), so a launch needs no ordering at its start
+    // zero at rest (the workspace is zero-initialised and each direct launch zeroes its counter at its end, once every take
+    // of the launch is behind the grid arrival of the peer-signalled end sequence or the end barrier's grid sync with zero
+    // copy), so a launch needs no ordering at its start
     static constexpr int64_t kNumTakeCounterBytes = 128;
     // Profile slots: stamps below 32 (ns, `%globaltimer`), accumulators and counts above; `read_profile()` zeroes all.
-    // Dispatch stamps: 0 entry, 1 start barrier done, 8 token counting done, 2 grid reduction done, 3/4 peer count
-    // writes issued/arrived (direct), 18/19 around one thread's count put, 20 scale-out count put issued, 21 rank
-    // counts received and forwarded, 22 expert counts received and forwarded (18 to 22 hybrid), 5 prefix sums done,
-    // 6/7 end barrier reached/done, 9 any barrier's start grid sync done, 10/11 first/last data warp of SM 0 done
-    // (direct) or last scale-out sender / last forward warp done (hybrid, max over warps).
+    // Dispatch stamps: 0 entry, 1 entry sync done (hybrid: start barrier; peer-signalled direct: READY published; zero copy: none),
+    // 8 token counting done, 2 grid reduction done, 3/4 peer count writes issued / counts received (direct), 18/19 around one
+    // thread's count put, 20 scale-out count put issued, 21 rank counts received and forwarded, 22 expert counts received and
+    // forwarded (18 to 22 hybrid), 5 prefix sums done, 6 end reached (SM 0), 7 end done (peer-signalled direct: last warp done,
+    // max over warps; otherwise SM 0 past the end barrier), 9 a barrier's start grid sync done (not stamped by the peer-signalled
+    // direct kernels), 10/11 first/last data warp of SM 0 done (direct) or last scale-out sender / last forward warp done (hybrid,
+    // max over warps).
     // Copy epilogue 12 work start / 13 last block done; combine 14 entry / 15 last block done, 27 last scale-up warp /
     // 31 last forward warp done (hybrid, max over warps); reduce epilogue 16 work start / 17 last block done.
     // Dispatch accumulators (SM 0's first scale-out sender warp, per token): 32 loop body, 33 load wait + flag staging
@@ -201,6 +204,12 @@ struct WorkspaceLayout {
     __forceinline__ __device__ __host__ int64_t* get_scaleup_expert_count_ptr() const {
         return get_scaleup_rank_expert_count_ptr<kIsSendBuffer>() + kNumMaxRanks;
     }
+    // The direct dispatch writes and polls the receive-side rank and expert count slots in 16-byte pairs (`ptx::st_relaxed_sys` of an
+    // int4, `ptx::ld_volatile_int4`): both slot bases must stay 16-byte aligned, i.e. an even number of 8-byte words before each. The
+    // rank slots start 2 (kNumMaxRanks + kNumMaxExperts) + kNumMaxChannels * kNumMaxScaleoutRanksCap words into the workspace, the
+    // expert slots kNumMaxRanks words later
+    static_assert((static_cast<int64_t>(kNumMaxChannels) * topology::kNumMaxScaleoutRanksCap) % 2 == 0 and kNumMaxRanks % 2 == 0,
+                  "The receive-side count slots must be 16-byte aligned");
 
     // Word `i` of the contiguous "rank counts then expert counts" view with `num_rank_slots` rank slots
     template <bool kIsSendBuffer>
@@ -252,17 +261,18 @@ struct WorkspaceLayout {
         return math::advance_ptr<int64_t>(get_active_grid_barrier_ptr(), kNumActiveGridBarrierBytes + kNumTakeCounterBytes);
     }
 
-    // Per-peer barrier words: the count peer `rank_id` wrote (word by arrival parity), our expectation, our staged arrival
-    __forceinline__ __device__ __host__ int64_t* get_peer_barrier_signal_ptr(const int& rank_id, const int& parity) const {
-        return math::advance_ptr<int64_t>(get_profile_ptr(), kNumProfileSlots * sizeof(int64_t)) + parity * kNumMaxRanks + rank_id;
+    // Per-peer barrier words: the count peer `rank_id` wrote (the hybrid barrier legs index the word by arrival parity, the direct
+    // kernels give the two words fixed roles, `comm::kPeerReadyWord` / `kPeerArrivedWord`), our expectation, our staged arrival
+    __forceinline__ __device__ __host__ int64_t* get_peer_barrier_signal_ptr(const int& rank_id, const int& word) const {
+        return math::advance_ptr<int64_t>(get_profile_ptr(), kNumProfileSlots * sizeof(int64_t)) + word * kNumMaxRanks + rank_id;
     }
 
     __forceinline__ __device__ __host__ int64_t* get_peer_barrier_expected_ptr(const int& rank_id) const {
         return math::advance_ptr<int64_t>(get_peer_barrier_signal_ptr(0, 0), 2 * kNumMaxRanks * sizeof(int64_t)) + rank_id;
     }
 
-    __forceinline__ __device__ __host__ int64_t* get_peer_barrier_staging_ptr(const int& rank_id, const int& slot) const {
-        return math::advance_ptr<int64_t>(get_peer_barrier_expected_ptr(0), kNumMaxRanks * sizeof(int64_t)) + slot * kNumMaxRanks + rank_id;
+    __forceinline__ __device__ __host__ int64_t* get_peer_barrier_staging_ptr(const int& rank_id, const int& word) const {
+        return math::advance_ptr<int64_t>(get_peer_barrier_expected_ptr(0), kNumMaxRanks * sizeof(int64_t)) + word * kNumMaxRanks + rank_id;
     }
 
     // Zero copy: `[dst position]` -> this rank's first compact row at that destination, epoch-tagged (`encode_zc_base`)

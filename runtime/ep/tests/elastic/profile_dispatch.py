@@ -20,7 +20,8 @@
 
 """
 Phase timing of the dispatch kernel (debug). Run with NIXL_EP_ADAPTIVE_PROFILE=1 so the JIT compiles the
-`EP_PROFILE_STAMP` timestamps in; prints, on rank 0, the time from kernel entry to each phase boundary (all stamps are SM 0's).
+`EP_PROFILE_STAMP` timestamps in; prints, on rank 0, the time from kernel entry to each phase boundary (stamps are SM 0 thread 0's,
+except 7 in peer-signalled direct mode and 10/11 in hybrid: the last warp of any block).
 
     NIXL_EP_ADAPTIVE_PROFILE=1 python tests/elastic/profile_dispatch.py --num-processes 4 --num-sms 26
 """
@@ -36,15 +37,15 @@ from nixl.runtime.ep.utils.gate import get_unbalanced_scores
 
 PHASES = [
     "entry",
-    "start barrier done",
+    "entry sync done (start barrier / READY published / none with zero copy)",
     "notify: grid reduction done",
     "notify: peer writes issued",
     "notify: peer counts arrived",
     "notify: prefix sums done",
-    "end barrier reached",
-    "end barrier done",
+    "end reached (end sequence / end barrier)",
+    "end done (peer-signalled direct: last warp; otherwise SM 0 past the end barrier)",
     "notify: token counting done",
-    "end barrier: local grid sync done",
+    "end barrier: local grid sync done (not in peer-signalled direct)",
     "first data warp / last sender warp done",
     "last data warp / last forward warp done",
 ]
@@ -106,7 +107,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
             deltas = sorted((r[slot] - r[0]) / 1000.0 for r in rows if r[slot] != 0)
             if deltas:
                 print(
-                    f"  {slot:>2} {name:<32} {deltas[len(deltas) // 2]:8.1f}",
+                    f"  {slot:>2} {name:<78} {deltas[len(deltas) // 2]:8.1f}",
                     flush=True,
                 )
     dist.barrier()
