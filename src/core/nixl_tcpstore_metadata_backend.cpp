@@ -257,15 +257,21 @@ nixlTcpStoreMetadataBackend::initiateFetch(const std::string &remote_name,
                 NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore fetched metadata for "
                            << remote << ", size: " << blob->size();
             } else {
-                if (std::chrono::steady_clock::now() >= deadline) {
+                if (!error) {
+                    NIXL_DEBUG << "[" << ctx_.agentName()
+                               << "] TCPStore key not yet present: " << key;
+                }
+
+                auto fetch_deadline = deadline;
+                auto retry_it = fetchRetryKeys_.find(key);
+                if (retry_it != fetchRetryKeys_.end()) {
+                    fetch_deadline = std::max(deadline, retry_it->second.first);
+                }
+                if (std::chrono::steady_clock::now() >= fetch_deadline) {
                     NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore fetch for " << remote
                                << " gave up waiting for key " << key;
                     fetchRetryKeys_.erase(key);
                     return;
-                }
-                if (!error) {
-                    NIXL_DEBUG << "[" << ctx_.agentName()
-                               << "] TCPStore key not yet present: " << key;
                 }
 
                 // A key that is not published yet is kept retrying rather than dropped, so
@@ -291,7 +297,7 @@ nixlTcpStoreMetadataBackend::retryPendingFetches() {
     for (auto it = fetchRetryKeys_.begin(); it != fetchRetryKeys_.end();) {
         const auto &[key, deadline_and_remote] = *it;
         const auto &[deadline, remote] = deadline_and_remote;
-        if (deadline < std::chrono::steady_clock::now()) {
+        if (std::chrono::steady_clock::now() < deadline) {
             initiateFetch(remote, key, deadline, default_retry_delay);
             ++it;
         } else {
@@ -310,6 +316,11 @@ nixlTcpStoreMetadataBackend::invalidateLocal(const nixl_opt_args_t * /*extra_par
 
         void
         initiate() override {
+            if (backend_.publishedKeys_.empty()) {
+                backend_.writeTaskCompleted(this);
+                return;
+            }
+
             pendingCount_ = backend_.publishedKeys_.size();
 
             for (const auto &key : backend_.publishedKeys_) {

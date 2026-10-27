@@ -27,7 +27,7 @@
 namespace nixl {
 
 template<typename R>
-concept byte_range_t = std::ranges::input_range<R> &&
+concept byte_range_t = std::ranges::input_range<R> && std::ranges::sized_range<R> &&
     std::is_convertible_v<std::ranges::range_value_t<R>, std::uint8_t> &&
     sizeof(std::ranges::range_value_t<R>) == sizeof(std::uint8_t);
 
@@ -99,7 +99,7 @@ public:
      */
     byteBuffer &
     put(byte_range_t auto &&value) {
-        put(static_cast<std::uint64_t>(value.size()));
+        put(static_cast<std::uint64_t>(std::ranges::size(value)));
         data_.insert(data_.end(), value.begin(), value.end());
         return *this;
     }
@@ -146,7 +146,7 @@ private:
 
     [[nodiscard]] std::size_t
     getSize(byte_range_t auto &&value) const noexcept {
-        return sizeof(std::uint64_t) + value.size();
+        return sizeof(std::uint64_t) + std::ranges::size(value);
     }
 
     std::vector<std::uint8_t> data_;
