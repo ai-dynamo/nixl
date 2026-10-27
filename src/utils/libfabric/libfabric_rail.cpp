@@ -29,6 +29,22 @@
 #include <stdexcept>
 #include <stack>
 
+/*
+ * The value of the following libfabric EFA provider option is hard-coded on purpose.
+ * FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV first appears in the libfabric 2.5 headers, but NIXL (e.g.
+ * the PyPI wheels) can be built against older headers and still run on libfabric >= 2.5, where
+ * unsolicited write recv is on by default and can silently lose remote write completions. With the
+ * hard-coded value, the LIBFABRIC backend always calls fi_setopt() to disable it whenever the
+ * runtime libfabric supports the option, regardless of the headers it was built against. The value
+ * is ABI-stable, is checked by the static_assert below whenever the headers declare it, and older
+ * runtimes reject it with -FI_ENOPROTOOPT. Remove once all builds use libfabric >= 2.5 headers.
+ */
+#define NIXL_OPT_EFA_USE_UNSOLICITED_WRITE_RECV (-FI_PROV_SPECIFIC_EFA + 8)
+#ifdef HAVE_FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV
+static_assert(NIXL_OPT_EFA_USE_UNSOLICITED_WRITE_RECV == FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV,
+              "NIXL_OPT_EFA_USE_UNSOLICITED_WRITE_RECV does not match libfabric's value");
+#endif
+
 namespace {
 
 // Whether libfabric's shared memory (shm) provider can move data for an HMEM runtime.
@@ -601,12 +617,11 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         }
 
         if (provider_name == "efa") {
-#ifdef HAVE_FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV
             // Disable unsolicited write recv for EFA RDM to reduce CQ overflow likelihood
             const bool use_unsolicited_write_recv = false; // Set to false to disable the feature
             ret = fi_setopt(&endpoint->fid,
                             FI_OPT_ENDPOINT,
-                            FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV,
+                            NIXL_OPT_EFA_USE_UNSOLICITED_WRITE_RECV,
                             &use_unsolicited_write_recv,
                             sizeof(use_unsolicited_write_recv));
             if (ret && ret != -FI_ENOSYS && ret != -FI_ENOPROTOOPT) {
@@ -615,10 +630,10 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             } else if (ret == 0) {
                 NIXL_INFO << "Successfully disabled unsolicited write recv for rail " << rail_id;
             } else if (ret == -FI_ENOSYS || ret == -FI_ENOPROTOOPT) {
-                NIXL_DEBUG << "FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV not supported for rail "
-                           << rail_id << " (provider: " << provider_name << ") - skipping";
+                NIXL_INFO << "FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV not supported for rail "
+                          << rail_id << " (provider: " << provider_name
+                          << ") - skipping. Set FI_EFA_USE_UNSOLICITED_WRITE_RECV=0 to disable";
             }
-#endif
 
             size_t rnr_retry = 7; // EFA_RNR_INFINITE_RETRY
             ret = fi_setopt(&endpoint->fid,
