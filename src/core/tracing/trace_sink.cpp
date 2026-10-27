@@ -108,7 +108,7 @@ TracerPhaseSink::record(std::string_view label_key,
         }
         if (!dropWarned_.test_and_set(std::memory_order_relaxed)) {
             try {
-                NIXL_ERROR << "Dropping a trace phase for backend " << backend_
+                NIXL_ERROR << "Dropping a trace phase or span for backend " << backend_
                            << ": recording threw. Further drops from this sink are not logged.";
             }
             catch (...) {

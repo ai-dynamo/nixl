@@ -944,7 +944,7 @@ TEST_F(telemetryTest, TracePhaseDropsAreCounted) {
 
 TEST_F(telemetryTest, TraceSpanDropsAreCounted) {
     constexpr uint64_t kDrops = 3;
-    const gtest::LogIgnoreGuard lig("Dropping a trace phase");
+    const gtest::LogIgnoreGuard lig("Dropping a trace phase or span");
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
     testFile_ = "test_trace_span_drops";
 

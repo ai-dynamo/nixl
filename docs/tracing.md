@@ -266,8 +266,10 @@ the same clock, and the same context, request id, execution number and
 attributes as a phase. Core records it as a span from the start to the end,
 `CommSend` for a write and `CommRecv` for a read, and counts a span that fails
 to record in `agent_trace_phases_dropped_total`, as it counts a phase. The span
-carries a phase's attributes, except that its label is `nixl.span.label` and it
-has no `nixl.phase.timestamp_us`, since its times are its own.
+carries a phase's attributes, except that its label is `nixl.span.label` and
+there is no `nixl.phase.timestamp_us`: the start and end the plugin passes
+become the span's start and end times (in NVTX, `nixl.start_us` and
+`nixl.end_us`).
 
 | Span | `nixl_trace_span_t` | Interval |
 | ---- | ------------------- | -------- |

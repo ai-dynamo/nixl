@@ -1087,7 +1087,7 @@ TEST(Tracing, InactiveSpanRecordsNothing) {
 // and spans are dropped.
 TEST(TracePhaseSink, ThrowingBackendIsReportedOnce) {
     const auto tracer = makeThrowingTracer();
-    gtest::LogMessageCounter drops("Dropping a trace phase");
+    gtest::LogMessageCounter drops("Dropping a trace phase or span");
     nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
 
     EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 1, {}, nullptr, 0, 0));
