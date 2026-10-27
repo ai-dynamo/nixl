@@ -273,6 +273,12 @@ PYBIND11_MODULE(_bindings, m) {
         .def_readonly("totalBytes", &nixl_xfer_telem_t::totalBytes)
         .def_readonly("descCount", &nixl_xfer_telem_t::descCount);
 
+    py::class_<nixl_xfer_trace_info_t>(m, "nixlXferTraceInfo")
+        .def(py::init<>())
+        .def_readonly("requestId", &nixl_xfer_trace_info_t::requestId)
+        .def_readonly("execution", &nixl_xfer_trace_info_t::execution)
+        .def_readonly("traceparent", &nixl_xfer_trace_info_t::traceparent);
+
 
     py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");
     py::register_exception<nixlInvalidParamError>(m, "nixlInvalidParamError");
@@ -867,6 +873,18 @@ PYBIND11_MODULE(_bindings, m) {
                 nixl_status_t ret = agent.getXferTelemetry((nixlXferReqH *)reqh, telemetry);
                 throw_nixl_exception(ret);
                 return telemetry;
+            },
+            py::arg("reqh"))
+        .def(
+            "getXferTraceInfo",
+            [](nixlAgent &agent, uintptr_t reqh) -> std::optional<nixl_xfer_trace_info_t> {
+                nixl_xfer_trace_info_t info;
+                const nixl_status_t ret = agent.getXferTraceInfo((nixlXferReqH *)reqh, info);
+                if (ret == NIXL_ERR_NOT_FOUND) {
+                    return std::nullopt;
+                }
+                throw_nixl_exception(ret);
+                return info;
             },
             py::arg("reqh"))
         .def("queryXferBackend",

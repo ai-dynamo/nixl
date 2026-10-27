@@ -239,6 +239,9 @@ the request's own, whose span id a sampled request's first `postXferReq` call ta
 refused or not. A post refused by `postXferReq`'s checks changes none of the three.
 A request without an id, such as one created while no tracing backend is active,
 returns `NIXL_ERR_NOT_FOUND`; the getter never enables tracing.
+From Python, `nixl_agent.get_xfer_trace_info(handle)` returns the same three as a
+`nixlXferTraceInfo` (`requestId`, `execution`, `traceparent`), or `None` when the
+request has no identity or the handle has been released.
 
 ### Backend phases
 
