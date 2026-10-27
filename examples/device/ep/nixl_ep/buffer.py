@@ -445,6 +445,12 @@ class Buffer:
         """Create the NIXL agent deferred by `update_memory_buffers`. Idempotent."""
         self.runtime.init_transport()
 
+    def set_rank(self, rank: int) -> None:
+        """Move this buffer to another rank before `init_transport`. Kernels
+        read the rank from device memory, so captured graphs follow it."""
+        self.runtime.set_rank(rank)
+        self.rank = rank
+
     def set_tcp_store_group(self, tcp_store_group: Optional[dist.TCPStore]) -> None:
         """
         Update the TCP Store group for metadata exchange.

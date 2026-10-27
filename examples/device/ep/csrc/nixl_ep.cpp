@@ -199,6 +199,28 @@ void Buffer::init_transport() {
     _nixl_agent_init();
 }
 
+void Buffer::set_rank(int new_rank) {
+    // The agent is named after the rank, and peers address this rank's
+    // slots by it, so the rank can only move before the transport starts.
+    EP_HOST_ASSERT(available and "update_memory_buffers must be called first");
+    EP_HOST_ASSERT(nixl_agent_info == nullptr and "set_rank must precede init_transport");
+    EP_HOST_ASSERT(0 <= new_rank and new_rank < max_num_ranks);
+    if (new_rank == rank)
+        return;
+    CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0xff, sizeof(int)));
+    CUDA_CHECK(cudaMemset(mask_buffer_ptr + new_rank, 0, sizeof(int)));
+    active_ranks[rank] = false;
+    active_ranks[new_rank] = true;
+    nixl_peer_info[rank] = {};
+    rank = new_rank;
+    _refresh_active_rank_bound();
+    my_peer_info.rank = rank;
+    nixl_peer_info[rank] = my_peer_info;
+    // Kernels read the rank from the device context at a fixed address.
+    gpu_ctx.rank = rank;
+    CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
+}
+
 Buffer::~Buffer() noexcept {
     if (not explicitly_destroy) {
         destroy();
@@ -930,6 +952,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def(pybind11::init<int, bool, int>())
         .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers, py::arg("num_ranks"), py::arg("num_experts_per_rank"), py::arg("num_rdma_bytes"), py::arg("init_transport") = true)
         .def("init_transport", &nixl_ep::Buffer::init_transport)
+        .def("set_rank", &nixl_ep::Buffer::set_rank)
         .def("barrier", &nixl_ep::Buffer::barrier)
         .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, bool activate) {
             buffer.connect_ranks(remote_ranks, nixl_ep::convert_mds(remote_mds), activate);
