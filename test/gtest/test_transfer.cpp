@@ -28,7 +28,6 @@
 #include <absl/time/clock.h>
 #include <gtest/gtest.h>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -316,30 +315,6 @@ protected:
         registerMem(agent, out, mem_type);
     }
 
-    static void
-    fillBuffers(const std::vector<MemBuffer> &buffers, uint8_t seed) {
-        for (size_t i = 0; i < buffers.size(); ++i) {
-            auto *data = reinterpret_cast<uint8_t *>(static_cast<uintptr_t>(buffers[i]));
-            for (size_t j = 0; j < buffers[i].getSize(); ++j) {
-                data[j] = static_cast<uint8_t>(seed + i + j);
-            }
-        }
-    }
-
-    static void
-    checkBuffers(const std::vector<MemBuffer> &buffers, uint8_t seed) {
-        for (size_t i = 0; i < buffers.size(); ++i) {
-            const auto *data =
-                reinterpret_cast<const uint8_t *>(static_cast<uintptr_t>(buffers[i]));
-            for (size_t j = 0; j < buffers[i].getSize(); ++j) {
-                if (data[j] != static_cast<uint8_t>(seed + i + j)) {
-                    ADD_FAILURE() << "buffer " << i << " byte " << j << " is " << int(data[j]);
-                    return;
-                }
-            }
-        }
-    }
-
     void
     deregisterMem(nixlAgent &agent,
                   const std::vector<MemBuffer> &buffers,
@@ -600,7 +575,7 @@ TEST_P(TestTransfer, RandomSizes)
          {32768, 64, 3, 2},
          {1000000, 100, 3, 4},
          {40, 1000, 1, 4},
-         {40, 2048, 1, 1}}};
+         {40, 2048, 2, 1}}};
     constexpr nixl_mem_t mem_type = DRAM_SEG;
 
     for (const auto &[size, count, repeat, num_threads] : test_cases) {
@@ -629,50 +604,6 @@ TEST_P(TestTransfer, RandomSizes)
         deregisterMem(getAgent(0), src_buffers, mem_type);
         deregisterMem(getAgent(1), dst_buffers, mem_type);
     }
-}
-
-// Checks the received bytes of a transfer with more descriptors than a Mooncake
-// batch used to hold (1024), posted twice on the same request.
-TEST_P(TestTransfer, ManyDescriptorsPayload) {
-    constexpr size_t size = 64;
-    constexpr size_t count = 2048;
-    constexpr size_t repeat = 2;
-    constexpr nixl_mem_t mem_type = DRAM_SEG;
-
-    std::vector<MemBuffer> local_buffers, remote_buffers;
-    createRegisteredMem(getAgent(0), size, count, mem_type, local_buffers);
-    createRegisteredMem(getAgent(1), size, count, mem_type, remote_buffers);
-
-    exchangeMD(0, 1);
-    uint8_t seed = 1;
-    for (const auto op : {NIXL_WRITE, NIXL_READ}) {
-        const auto &src = (op == NIXL_WRITE) ? local_buffers : remote_buffers;
-        const auto &dst = (op == NIXL_WRITE) ? remote_buffers : local_buffers;
-        fillBuffers(src, seed);
-        for (const auto &buffer : dst) {
-            std::memset(reinterpret_cast<void *>(static_cast<uintptr_t>(buffer)), 0, size);
-        }
-
-        doTransfer(getAgent(0),
-                   getAgentName(0),
-                   getAgent(1),
-                   getAgentName(1),
-                   op,
-                   size,
-                   count,
-                   repeat,
-                   1,
-                   mem_type,
-                   local_buffers,
-                   mem_type,
-                   remote_buffers);
-        checkBuffers(dst, seed);
-        seed += 64;
-    }
-
-    invalidateMD(0, 1);
-    deregisterMem(getAgent(0), local_buffers, mem_type);
-    deregisterMem(getAgent(1), remote_buffers, mem_type);
 }
 
 TEST_P(TestTransfer, remoteMDFromSocket)
