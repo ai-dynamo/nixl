@@ -149,9 +149,11 @@ namespace agent {
         }
 
         nixl_status_t
-        createSelfXferReq(selfXferSetup &setup, nixlXferReqH *&req) {
+        createSelfXferReq(selfXferSetup &setup,
+                          nixlXferReqH *&req,
+                          nixl_xfer_op_t op = NIXL_WRITE) {
             return agent_->createXferReq(
-                NIXL_WRITE, setup.xferDlist, setup.xferDlist, name_, req, &setup.extraParams);
+                op, setup.xferDlist, setup.xferDlist, name_, req, &setup.extraParams);
         }
     };
 
@@ -452,9 +454,16 @@ namespace agent {
             return testing::Contains("context=" + nixl::trace::formatTraceparent(context));
         }
 
+        [[nodiscard]] static auto
+        isSpanOf(const nixlXferReqH *req, const nixl::trace::TraceContext &context) {
+            return testing::AllOf(
+                correlatedWith(req),
+                testing::Contains("span=" + nixl::trace::formatTraceparent(context)),
+                testing::Not(testing::Contains(testing::StartsWith("context="))));
+        }
+
         [[nodiscard]] static nixl::trace::TraceContext
-        contextOf(const std::vector<std::string> &record) {
-            constexpr std::string_view key = "context=";
+        contextOf(const std::vector<std::string> &record, std::string_view key) {
             for (const auto &field : record) {
                 if (field.starts_with(key)) {
                     return nixl::trace::parseTraceparent(field.substr(key.size()))
@@ -724,7 +733,7 @@ namespace agent {
         EXPECT_EQ(second.flags, first.flags);
         EXPECT_NE(second.spanId, first.spanId);
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(carries(first), carries(second)));
+                    testing::ElementsAre(isSpanOf(req, first), isSpanOf(req, second)));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(carries(first), carries(second)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
@@ -751,9 +760,10 @@ namespace agent {
 
         const auto calls = records("nixl::postXferReq.write");
         ASSERT_EQ(calls.size(), 3u);
-        const auto rejected = contextOf(calls[1]);
-        EXPECT_THAT(calls[0], carries(first));
-        EXPECT_THAT(calls[2], carries(last));
+        const auto rejected = contextOf(calls[1], "span=");
+        EXPECT_THAT(calls[0], isSpanOf(req, first));
+        EXPECT_THAT(calls[1], isSpanOf(req, rejected));
+        EXPECT_THAT(calls[2], isSpanOf(req, last));
         EXPECT_EQ(rejected.traceId, first.traceId);
         EXPECT_NE(rejected.spanId, first.spanId);
         EXPECT_NE(last.spanId, rejected.spanId);
@@ -780,7 +790,21 @@ namespace agent {
         EXPECT_EQ(post.traceId, request.traceId);
         EXPECT_NE(post.spanId, request.spanId);
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(carries(request), carries(post)));
+                    testing::ElementsAre(isSpanOf(req, request), isSpanOf(req, post)));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(sampledRecorderTracingAgentFixture, ReadPostIsTheSpanItsContextIdentifies) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req, NIXL_READ), NIXL_SUCCESS);
+        ASSERT_TRUE(req->traceContext().sampled());
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        const auto &post = req->tracePostContext();
+        EXPECT_THAT(records("nixl::postXferReq.read"), testing::ElementsAre(isSpanOf(req, post)));
+        EXPECT_TRUE(records("nixl::postXferReq.write").empty());
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(carries(post)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 

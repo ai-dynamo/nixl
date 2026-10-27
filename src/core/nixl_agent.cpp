@@ -1181,12 +1181,14 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), call_context, req_hndl->traceRequestId());
-    NIXL_TRACE_SCOPE(trace_span,
-                     data->tracer_.get(),
-                     req_hndl->backendOp == NIXL_WRITE ? "nixl::postXferReq.write" :
-                                                         "nixl::postXferReq.read",
-                     req_hndl->backendOp == NIXL_WRITE ? nixl::trace::Kind::CommSend :
-                                                         nixl::trace::Kind::CommRecv);
+    NIXL_TRACE_CONTEXT_SPAN(trace_span,
+                            data->tracer_.get(),
+                            req_hndl->backendOp == NIXL_WRITE ? "nixl::postXferReq.write" :
+                                                                "nixl::postXferReq.read",
+                            req_hndl->backendOp == NIXL_WRITE ? nixl::trace::Kind::CommSend :
+                                                                nixl::trace::Kind::CommRecv,
+                            call_context,
+                            req_hndl->traceRequestId());
     NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{req_hndl->remoteAgent});
     NIXL_TRACE_ATTR(trace_span, "bytes", static_cast<std::int64_t>(req_hndl->telemetry.totalBytes));
     NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", std::to_string(req_hndl->traceRequestId()));

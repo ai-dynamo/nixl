@@ -597,7 +597,7 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_THAT(
         posted[0],
         testing::IsSupersetOf(
-            {correlation, "context=" + traceparent, std::string("remote_agent=") + receiver_name}));
+            {correlation, "span=" + traceparent, std::string("remote_agent=") + receiver_name}));
 #endif
     const auto received = recordedSpans(traceFile, receiver_name, "nixl::notif.received");
     ASSERT_EQ(received.size(), 1u);
@@ -629,6 +629,14 @@ TEST_F(ucxTraceContextPropagation, ReceiverRecordsEachNotifyingPostsExecution) {
     EXPECT_EQ(contexts[1].traceId, contexts[0].traceId);
     ASSERT_NE(contexts[1].spanId, contexts[0].spanId);
     expectSenderPhases(sender_name, contexts, request_id, {1, 2}, {1, 2});
+#if defined(NIXL_TRACE_ENABLED)
+    const auto posted = recordedSpans(traceFile, sender_name, "nixl::postXferReq.write");
+    ASSERT_EQ(posted.size(), contexts.size());
+    for (size_t i = 0; i < posted.size(); ++i) {
+        EXPECT_THAT(posted[i],
+                    testing::Contains("span=" + nixl::trace::formatTraceparent(contexts[i])));
+    }
+#endif
 
     const auto received = recordedSpans(traceFile, sender_name, "nixl::notif.received");
     ASSERT_EQ(received.size(), 2u);

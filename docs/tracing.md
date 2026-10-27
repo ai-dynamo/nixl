@@ -189,6 +189,11 @@ backend (e.g. NVTX attaches attributes as typed payloads on the range via
 `nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
 record them).
 
+For a sampled request, each `postXferReq` span is the span that its call's trace
+context identifies (see "Backend phases"), so the post's `nixl::xfer.complete` and
+backend phases and the receiver's `nixl::notif.received` name it as their parent,
+even after it has ended.
+
 ### Request id and execution number
 
 While tracing is active, each request gets a request id when `createXferReq` or
@@ -280,12 +285,12 @@ notification arrives at an agent with tracing on, UCX records `nixl::notif.recei
 under the sender's context, with `nixl.remote_agent` naming the sender and, from
 `treq`, the sender's `nixl.xfer_request_id` and `nixl.xfer_execution`; a missing or
 malformed `treq` costs the event only the pair. An agent with tracing off skips
-both tags without reading them. The event thus carries the request's trace id in
-`nixl.traceparent`, and the same request id and execution number as the sender's
-records of that post, so its correlation id is that of the sender's
-`nixl::postXferReq.write` or `.read` span. Writes and reads without a
-notification give the receiver nothing to observe, so they are traced on the
-sender only.
+both tags without reading them. The event thus carries, in `nixl.traceparent`, the
+request's trace id and the span id of the sender's `nixl::postXferReq.write` or
+`.read` span, the event's remote parent, and the same request id and execution
+number as the sender's records of that post, so its correlation id is that span's.
+Writes and reads without a notification give the receiver nothing to observe, so
+they are traced on the sender only.
 
 On the sender, UCX records up to three phases for every post of a sampled request,
 each under that post's context: `nixl::submit` when `postXfer` accepts the
@@ -416,11 +421,14 @@ In NIXL tracing, "correlation" can mean two different things:
   same request. Implemented via the backend-agnostic `pushContext()` / `popContext()`
   API: NIXL wraps `postXferReq` in a correlation scope that hands every backend the
   call's whole trace context, sampled or not, with the request id, and passes the
-  post's context and the request id to its `xfer.complete` event explicitly. The NVTX
-  backend records the request id as the event's `uint64` payload -- so a post and its
-  completion carry the same id on the timeline regardless of which thread emitted
-  each. A record without a request id carries no payload, and a request with neither
-  a valid context nor a request id pushes nothing.
+  post's context and the request id to its `xfer.complete` event explicitly. A
+  sampled call begins its span as the span that context identifies
+  (`beginContextSpan()`), so a backend that records parents shows the completion as
+  that span's child. The NVTX backend records the request id as the event's `uint64`
+  payload -- so a post and its completion carry the same id on the timeline
+  regardless of which thread emitted each. A record without a request id carries no
+  payload, and a request with neither a valid context nor a request id pushes
+  nothing.
 
 ## Planned work
 
