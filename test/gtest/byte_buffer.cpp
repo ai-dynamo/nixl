@@ -50,6 +50,24 @@ TEST(ByteBuffer, Put) {
     EXPECT_EQ(b.getRef()[25], 'F');
     EXPECT_EQ(b.getRef()[26], 'o');
     EXPECT_EQ(b.getRef()[27], 'o');
+
+    b.put(std::vector<std::int8_t>{1, 2, 3});
+    EXPECT_EQ(b.getRef().size(), 39);
+    memcpy(&s, &b.getRef()[28], sizeof(std::uint64_t));
+    EXPECT_EQ(s, 3);
+    EXPECT_EQ(b.getRef()[36], 1);
+    EXPECT_EQ(b.getRef()[37], 2);
+    EXPECT_EQ(b.getRef()[38], 3);
+
+    // Enums can be put into the buffer using views::transform.
+    b.put(std::array<std::byte, 3>{std::byte(1), std::byte(2), std::byte(3)} |
+          std::views::transform([](std::byte v) { return static_cast<std::int8_t>(v); }));
+    EXPECT_EQ(b.getRef().size(), 50);
+    memcpy(&s, &b.getRef()[39], sizeof(std::uint64_t));
+    EXPECT_EQ(s, 3);
+    EXPECT_EQ(b.getRef()[47], 1);
+    EXPECT_EQ(b.getRef()[48], 2);
+    EXPECT_EQ(b.getRef()[49], 3);
 }
 
 TEST(ByteBuffer, VarArg) {
@@ -57,8 +75,11 @@ TEST(ByteBuffer, VarArg) {
     b.putValues(static_cast<std::uint8_t>(1),
                 static_cast<std::int32_t>(2),
                 "/" + std::string("Bar"),
-                std::string("Foo"));
-    EXPECT_EQ(b.getRef().size(), 28);
+                std::string("Foo"),
+                std::vector<std::int8_t>{1, 2, 3},
+                std::array<std::byte, 3>{std::byte(1), std::byte(2), std::byte(3)} |
+                    std::views::transform([](std::byte v) { return static_cast<std::int8_t>(v); }));
+    EXPECT_EQ(b.getRef().size(), 50);
 
     EXPECT_EQ(*reinterpret_cast<std::uint8_t *>(&b.getRef()[0]), 1);
 
@@ -79,6 +100,18 @@ TEST(ByteBuffer, VarArg) {
     EXPECT_EQ(b.getRef()[25], 'F');
     EXPECT_EQ(b.getRef()[26], 'o');
     EXPECT_EQ(b.getRef()[27], 'o');
+
+    memcpy(&s, &b.getRef()[28], sizeof(std::uint64_t));
+    EXPECT_EQ(s, 3);
+    EXPECT_EQ(b.getRef()[36], 1);
+    EXPECT_EQ(b.getRef()[37], 2);
+    EXPECT_EQ(b.getRef()[38], 3);
+
+    memcpy(&s, &b.getRef()[39], sizeof(std::uint64_t));
+    EXPECT_EQ(s, 3);
+    EXPECT_EQ(b.getRef()[47], 1);
+    EXPECT_EQ(b.getRef()[48], 2);
+    EXPECT_EQ(b.getRef()[49], 3);
 }
 
 TEST(ByteBuffer, MakeReceiveBuffer) {

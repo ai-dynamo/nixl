@@ -20,11 +20,16 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
+#include <ranges>
 #include <type_traits>
 #include <vector>
 
 namespace nixl {
+
+template<typename R>
+concept byte_range_t = std::ranges::input_range<R> &&
+    std::is_convertible_v<std::ranges::range_value_t<R>, std::uint8_t> &&
+    sizeof(std::ranges::range_value_t<R>) == sizeof(std::uint8_t);
 
 /**
  * @class byteBuffer
@@ -81,7 +86,6 @@ public:
         requires std::is_arithmetic_v<T>
     byteBuffer &
     put(T value) {
-        static_assert(std::is_same_v<std::uint8_t, unsigned char>);
         const auto *begin = reinterpret_cast<const std::uint8_t *>(&value);
         data_.insert(data_.end(), begin, begin + sizeof(T));
         return *this;
@@ -93,11 +97,8 @@ public:
      *        must NOT come from this buffer.
      * @return this.
      */
-    template<typename T>
-        requires(sizeof(typename std::decay_t<T>::value_type) == sizeof(std::uint8_t) &&
-                 std::input_iterator<typename std::decay_t<T>::iterator>)
     byteBuffer &
-    put(T &&value) {
+    put(byte_range_t auto &&value) {
         put(static_cast<std::uint64_t>(value.size()));
         data_.insert(data_.end(), value.begin(), value.end());
         return *this;
@@ -110,11 +111,10 @@ public:
      * @return this.
      */
     template<typename... Args>
-        requires(!std::is_same_v<std::decay_t<Args>, byteBuffer> && ...)
     byteBuffer &
     putValues(Args &&...args) {
-        data_.reserve(data_.size() + getSize(args...));
-        putValuesInternal(args...);
+        data_.reserve(data_.size() + (... + getSize(args)));
+        (put(args), ...);
         return *this;
     }
 
@@ -144,28 +144,9 @@ private:
         return sizeof(T);
     }
 
-    template<typename T>
-        requires(sizeof(typename std::decay_t<T>::value_type) == sizeof(std::uint8_t) &&
-                 std::input_iterator<typename std::decay_t<T>::iterator>)
     [[nodiscard]] std::size_t
-    getSize(T &&value) const noexcept {
+    getSize(byte_range_t auto &&value) const noexcept {
         return sizeof(std::uint64_t) + value.size();
-    }
-
-    template<typename T, typename... Args>
-    [[nodiscard]] std::size_t
-    getSize(T &&value, Args &&...args) const noexcept {
-        return getSize(value) + getSize(std::forward<Args>(args)...);
-    }
-
-    template<typename T, typename... Args>
-    byteBuffer &
-    putValuesInternal(T &&value, Args &&...args) {
-        put(value);
-        if constexpr (sizeof...(args) > 0) {
-            putValuesInternal(args...);
-        }
-        return *this;
     }
 
     std::vector<std::uint8_t> data_;

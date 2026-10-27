@@ -209,25 +209,35 @@ nixlTcpStoreClientAsync::nixlTcpStoreClientAsync(std::string host,
       opTimeout_(op_timeout),
       ioContext_(io_context),
       socket_(ioContext_),
-      connectionRetryTimer_(ioContext_),
+      connectionRetryTimer_(ioContext_, std::chrono::steady_clock::now()),
       shutdownTimer_(ioContext_) {}
 
 nixlTcpStoreClientAsync::~nixlTcpStoreClientAsync() = default;
 
 void
 nixlTcpStoreClientAsync::connect() {
-    asio::post(ioContext_, [this]() { doResolve(connectTimeout_); });
+    asio::post(ioContext_, [this]() {
+        // Reset the connection retry timer. This call also cancels any pending
+        // asynchronous wait operation.
+        connectionRetryTimer_.expires_at(std::chrono::steady_clock::now());
+
+        doResolve(connectTimeout_);
+    });
 }
 
 // This function must be called from the I/O context.
 void
 nixlTcpStoreClientAsync::doResolve(std::chrono::milliseconds timeout) {
-    connectionRetryTimer_.cancel();
     if (connectionState_ != connection_state_t::CLOSED) {
-        NIXL_INFO << "TCPStore client is already connected";
+        NIXL_INFO << "[TCPStore client] Client is already connected or shutdown.";
         return;
     }
-    NIXL_INFO << "TCPStore client: connecting to " << host_ << ":" << portStr_;
+    if (connectionRetryTimer_.expiry() > std::chrono::steady_clock::now()) {
+        NIXL_DEBUG << "[TCPStore client] Connection is broken. Waiting for reconnection.";
+        return;
+    }
+
+    NIXL_INFO << "[TCPStore client] connecting to " << host_ << ":" << portStr_;
     connectionState_ = connection_state_t::CONNECTING;
     generation_++;
     connectionRetryCount_++;
@@ -376,9 +386,12 @@ void
 nixlTcpStoreClientAsync::doShutdown() {
     assert(connectionState_ == connection_state_t::SHUTTING_DOWN);
 
-    asio::error_code ec;
-    socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
-    socket_.close(ec);
+    if (socket_.is_open()) {
+        asio::error_code ec;
+        socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+        socket_.close(ec);
+    }
+    connectionRetryTimer_.cancel();
     shutdownTimer_.cancel();
 
     drainSendQueue();
@@ -884,10 +897,7 @@ nixlTcpStoreClientAsync::onError(std::string what,
                 drainSendQueue();
             }
         } else if (connectionState_ == connection_state_t::SHUTTING_DOWN) {
-            // Fail all pending send requests. Because we do not allow new
-            // connections after shutdown, these requests will never be sent.
-            drainSendQueue();
-            connectionState_ = connection_state_t::SHUTDOWN;
+            doShutdown();
         }
     }
 }

@@ -72,7 +72,6 @@ nixl_lib_sources = [
     'nixl_p2p_metadata_backend.cpp',
     'nixl_etcd_metadata_backend.cpp',
     'nixl_tcpstore_metadata_backend.cpp',
-    'nixl_tcpstore_client.cpp',
     'nixl_tcpstore_client_async.cpp',
     'nixl_plugin_manager.cpp',
     'telemetry/telemetry.cpp',

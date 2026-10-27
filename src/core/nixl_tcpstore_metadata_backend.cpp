@@ -46,7 +46,8 @@ constexpr long default_timeout_ms = 30000;
 // budget so one degraded operation does not hold the worker for the window.
 constexpr long default_op_timeout_ms = 5000;
 
-constexpr std::chrono::milliseconds default_retry_delay = std::chrono::milliseconds(50);
+// Default retry delay for fetch operations.
+constexpr auto default_retry_delay = std::chrono::milliseconds(50);
 
 [[nodiscard]] std::string
 makeKey(const std::string &label, const std::string &src, const std::string &dst) {
@@ -92,13 +93,26 @@ makeClient(asio::io_context &io_context) {
 
 } // namespace
 
+class nixlTcpStoreMetadataBackend::WriteTask {
+public:
+    WriteTask(nixlTcpStoreMetadataBackend &backend) : backend_(backend) {}
+
+    virtual ~WriteTask() = default;
+
+    virtual void
+    initiate() = 0;
+
+    nixlTcpStoreMetadataBackend &backend_;
+};
+
 nixlTcpStoreMetadataBackend::nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx,
                                                          const nixlMDConfig &config,
                                                          asio::io_context &io_context)
-    : ctx_(ctx),
-      fetchTimeout_(bringUpTimeout()),
+    : fetchTimeout_(bringUpTimeout()),
+      ctx_(ctx),
       ioContext_(io_context),
-      client_(makeClient(io_context)) {
+      client_(makeClient(io_context)),
+      fetchRetryTimer_(io_context, std::chrono::steady_clock::now()) {
     NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore backend ready";
 }
 
@@ -111,24 +125,47 @@ nixlTcpStoreMetadataBackend::start() {
 
 void
 nixlTcpStoreMetadataBackend::stop() {
-    client_->close();
-    stopCalled_ = true;
+    asio::post(ioContext_, [this]() {
+        stopCalled_ = true;
+        fetchRetryKeys_.clear();
+        writeQueue_.clear();
+        fetchRetryTimer_.cancel();
+        client_->close();
+    });
 }
 
 void
 nixlTcpStoreMetadataBackend::publishKey(const std::string &key, const nixl_blob_t &blob) {
-    {
-        const std::lock_guard lock(publishedKeysMutex_);
-        publishedKeys_.insert(key);
-    }
-    client_->set(key, blob, [this, key = key](asio::error_code error) {
-        if (!error) {
-            NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore published key " << key;
-        } else {
-            NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore set failed for key " << key << ": "
-                       << error.message();
+    class publishKeyTask : public nixlTcpStoreMetadataBackend::WriteTask {
+    public:
+        publishKeyTask(nixlTcpStoreMetadataBackend &backend,
+                       const std::string &key,
+                       const nixl_blob_t &blob)
+            : WriteTask(backend),
+              key_(key),
+              blob_(blob) {}
+
+        void
+        initiate() override {
+            backend_.client_->set(key_, blob_, [this](asio::error_code error) {
+                if (!error) {
+                    NIXL_DEBUG << "[" << backend_.ctx_.agentName() << "] TCPStore published key "
+                               << key_;
+                    backend_.publishedKeys_.insert(key_);
+                } else {
+                    NIXL_ERROR << "[" << backend_.ctx_.agentName()
+                               << "] TCPStore set failed for key " << key_ << ": "
+                               << error.message();
+                }
+                backend_.writeTaskCompleted(this);
+            });
         }
-    });
+
+        std::string key_;
+        nixl_blob_t blob_;
+    };
+
+    postWriteTask(std::make_unique<publishKeyTask>(*this, key, blob));
 }
 
 nixl_status_t
@@ -167,26 +204,40 @@ nixlTcpStoreMetadataBackend::fetchRemote(const std::string &remote_name,
         extra_params->metadataLabel :
         default_metadata_label;
     const std::string key = makeKey(label, remote_name, nixl_null_agent);
-
-    // The fetch runs on the worker thread; the result lands in the agent cache
-    // (observed via checkRemoteMD), matching the async model of the other backends.
-    // A key that is not published yet is kept pending rather than dropped, so a
-    // caller polling checkRemoteMD still converges once the peer publishes.
     auto deadline = std::chrono::steady_clock::now() + fetchTimeout_;
-    tryFetch(remote_name, key, deadline, default_retry_delay);
+
+    // The fetch runs on the I/O thread. The result lands in the agent cache
+    // (observed via checkRemoteMD), matching the async model of the other backends.
+    asio::post(ioContext_, [this, remote = remote_name, key = key, deadline]() {
+        if (stopCalled_) {
+            return;
+        }
+        auto retry_it = fetchRetryKeys_.find(key);
+        if (retry_it != fetchRetryKeys_.end()) {
+            // Update the deadline and let the retry timer handle the next attempt.
+            retry_it->second.first = std::max(deadline, retry_it->second.first);
+            return;
+        }
+
+        initiateFetch(remote, key, deadline, default_retry_delay);
+    });
+
     return NIXL_SUCCESS;
 }
 
 void
-nixlTcpStoreMetadataBackend::tryFetch(const std::string &remote_name,
-                                      const std::string &key,
-                                      std::chrono::steady_clock::time_point deadline,
-                                      std::chrono::milliseconds retry_delay) {
+nixlTcpStoreMetadataBackend::initiateFetch(const std::string &remote_name,
+                                           const std::string &key,
+                                           std::chrono::steady_clock::time_point deadline,
+                                           std::chrono::milliseconds retry_delay) {
     client_->get(
         key,
         [this, remote = remote_name, key = key, deadline, retry_delay](
             asio::error_code error, std::optional<std::string> blob) {
             if (!error && blob) {
+                // Fetch succeeded.
+                fetchRetryKeys_.erase(key);
+
                 std::string loaded_name;
                 const nixl_status_t ret = ctx_.loadRemoteMD(*blob, loaded_name);
                 if (ret < 0) {
@@ -209,46 +260,120 @@ nixlTcpStoreMetadataBackend::tryFetch(const std::string &remote_name,
                 if (std::chrono::steady_clock::now() >= deadline) {
                     NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore fetch for " << remote
                                << " gave up waiting for key " << key;
+                    fetchRetryKeys_.erase(key);
                     return;
                 }
                 if (!error) {
                     NIXL_DEBUG << "[" << ctx_.agentName()
                                << "] TCPStore key not yet present: " << key;
                 }
+
+                // A key that is not published yet is kept retrying rather than dropped, so
+                // a caller polling checkRemoteMD still converges once the peer publishes.
                 if (!stopCalled_) {
-                    auto timer = std::make_unique<asio::steady_timer>(ioContext_, retry_delay);
-                    timer->async_wait(
-                        [this, remote, key, deadline, retry_delay, timer = std::move(timer)](
-                            asio::error_code) {
-                            if (!stopCalled_) {
-                                tryFetch(remote, key, deadline, retry_delay);
+                    fetchRetryKeys_.try_emplace(key, deadline_and_remote_t(deadline, remote));
+                    if (fetchRetryTimer_.expiry() < std::chrono::steady_clock::now()) {
+                        // Arm the retry timer.
+                        fetchRetryTimer_.expires_after(retry_delay);
+                        fetchRetryTimer_.async_wait([this](asio::error_code error) {
+                            if (!error && !stopCalled_) {
+                                retryPendingFetches();
                             }
                         });
+                    }
                 }
             }
         });
 }
 
+void
+nixlTcpStoreMetadataBackend::retryPendingFetches() {
+    for (auto it = fetchRetryKeys_.begin(); it != fetchRetryKeys_.end();) {
+        const auto &[key, deadline_and_remote] = *it;
+        const auto &[deadline, remote] = deadline_and_remote;
+        if (deadline < std::chrono::steady_clock::now()) {
+            initiateFetch(remote, key, deadline, default_retry_delay);
+            ++it;
+        } else {
+            NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore fetch for " << remote
+                       << " gave up waiting for key " << key;
+            it = fetchRetryKeys_.erase(it);
+        }
+    }
+}
+
 nixl_status_t
 nixlTcpStoreMetadataBackend::invalidateLocal(const nixl_opt_args_t * /*extra_params*/) {
-    std::unordered_set<std::string> keys;
-    {
-        const std::lock_guard lock(publishedKeysMutex_);
-        keys.swap(publishedKeys_);
+    class invalidateLocalTask : public nixlTcpStoreMetadataBackend::WriteTask {
+    public:
+        invalidateLocalTask(nixlTcpStoreMetadataBackend &backend) : WriteTask(backend) {}
+
+        void
+        initiate() override {
+            pendingCount_ = backend_.publishedKeys_.size();
+
+            for (const auto &key : backend_.publishedKeys_) {
+                backend_.client_->deleteKey(
+                    key, [this, key = key](asio::error_code error, bool success) {
+                        if (!error && success) {
+                            NIXL_DEBUG << "[" << backend_.ctx_.agentName()
+                                       << "] TCPStore invalidated key " << key;
+                            backend_.publishedKeys_.erase(key);
+                        } else if (error) {
+                            NIXL_ERROR << "[" << backend_.ctx_.agentName()
+                                       << "] TCPStore invalidate failed for key " << key << ": "
+                                       << error.message();
+                        } else {
+                            NIXL_INFO << "[" << backend_.ctx_.agentName()
+                                      << "] TCPStore invalidate skipped for key " << key
+                                      << ": key does not exist";
+                        }
+
+                        if (--pendingCount_ == 0) {
+                            backend_.writeTaskCompleted(this);
+                        }
+                    });
+            }
+        }
+
+        std::size_t pendingCount_;
+    };
+
+    postWriteTask(std::make_unique<invalidateLocalTask>(*this));
+
+    return NIXL_SUCCESS;
+}
+
+void
+nixlTcpStoreMetadataBackend::postWriteTask(std::unique_ptr<WriteTask> task) {
+    asio::post(ioContext_, [this, task = std::move(task)]() mutable {
+        if (stopCalled_) {
+            return;
+        }
+
+        if (inflightTask_) {
+            writeQueue_.push_back(std::move(task));
+            return;
+        }
+
+        assert(writeQueue_.empty());
+
+        inflightTask_ = std::move(task);
+        inflightTask_->initiate();
+    });
+}
+
+// Must be called from the I/O thread.
+void
+nixlTcpStoreMetadataBackend::writeTaskCompleted(const WriteTask *completed_task) {
+    assert(inflightTask_.get() == completed_task);
+    inflightTask_.reset();
+
+    if (stopCalled_ || writeQueue_.empty()) {
+        return;
     }
 
-    for (const auto &key : keys) {
-        client_->deleteKey(key, [this, key = key](asio::error_code error, bool success) {
-            if (!error && success) {
-                NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore invalidated key " << key;
-            } else if (error) {
-                NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore invalidate failed for key "
-                           << key << ": " << error.message();
-            } else {
-                NIXL_INFO << "[" << ctx_.agentName() << "] TCPStore invalidate skipped for key "
-                          << key << ": key does not exist";
-            }
-        });
-    }
-    return NIXL_SUCCESS;
+    inflightTask_ = std::move(writeQueue_.front());
+    writeQueue_.pop_front();
+    inflightTask_->initiate();
 }
