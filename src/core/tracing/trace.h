@@ -100,7 +100,11 @@ public:
     id() const noexcept = 0;
 };
 
-/** @brief One enabled backend type (NVTX, Chakra, ...). */
+/**
+ * @brief One enabled backend type (NVTX, Chakra, ...). Each record names the
+ *        span id of its context, pushed or passed, as its parent, except the
+ *        span beginContextSpan() begins, which has that id as its own.
+ */
 class TraceBackend {
 public:
     virtual ~TraceBackend() = default;
@@ -112,7 +116,7 @@ public:
     mark(std::string_view name, Kind kind) = 0;
 
     virtual void
-    pushContext(const TraceContext &context) = 0;
+    pushContext(const TraceContext &context, std::uint64_t request_id) = 0;
     virtual void
     popContext() = 0;
 
@@ -123,12 +127,14 @@ public:
      * @brief Record a span from @p start to @p end, or an event at @p at, that
      *        already happened. Times are `nixlTime` microseconds on
      *        `std::chrono::steady_clock`; @p context is the record's own, not
-     *        the pushed one, and an invalid context means none.
+     *        the pushed one, and an invalid context means none. @p request_id
+     *        is likewise the record's own, and 0 means none.
      */
     virtual void
     emitSpan(std::string_view name,
              Kind kind,
              const TraceContext &context,
+             std::uint64_t request_id,
              nixlTime::us_t start,
              nixlTime::us_t end,
              std::span<const Attribute> attrs) = 0;
@@ -136,8 +142,20 @@ public:
     emitEvent(std::string_view name,
               Kind kind,
               const TraceContext &context,
+              std::uint64_t request_id,
               nixlTime::us_t at,
               std::span<const Attribute> attrs) = 0;
+
+    /**
+     * @brief Begin the span that @p context identifies, rather than a span
+     *        inside the pushed context. @p context and @p request_id are the
+     *        span's own, as in emitSpan().
+     */
+    [[nodiscard]] virtual std::unique_ptr<SpanBackend>
+    beginContextSpan(std::string_view name,
+                     Kind kind,
+                     const TraceContext &context,
+                     std::uint64_t request_id) = 0;
 };
 
 class Tracer;
@@ -197,9 +215,9 @@ private:
 using random_bytes_fn_t = void (*)(std::uint8_t *, std::size_t);
 
 /**
- * @brief Composite tracer owned by the Agent. A single beginSpan(), mark(),
- *        emitSpan() or emitEvent() call fans out to every enabled backend. No
- *        singleton; injected explicitly.
+ * @brief Composite tracer owned by the Agent. A single beginSpan(),
+ *        beginContextSpan(), mark(), emitSpan() or emitEvent() call fans out to
+ *        every enabled backend. No singleton; injected explicitly.
  */
 class Tracer {
 public:
@@ -241,11 +259,17 @@ public:
     [[nodiscard]] Span
     beginSpan(std::string_view name, Kind kind = Kind::Generic);
 
+    [[nodiscard]] Span
+    beginContextSpan(std::string_view name,
+                     Kind kind,
+                     const TraceContext &context,
+                     std::uint64_t request_id);
+
     void
     mark(std::string_view name, Kind kind = Kind::Metadata);
 
     void
-    pushContext(const TraceContext &context);
+    pushContext(const TraceContext &context, std::uint64_t request_id);
     void
     popContext();
 
@@ -253,6 +277,7 @@ public:
     emitSpan(std::string_view name,
              Kind kind,
              const TraceContext &context,
+             std::uint64_t request_id,
              nixlTime::us_t start,
              nixlTime::us_t end,
              std::span<const Attribute> attrs);
@@ -260,6 +285,7 @@ public:
     emitEvent(std::string_view name,
               Kind kind,
               const TraceContext &context,
+              std::uint64_t request_id,
               nixlTime::us_t at,
               std::span<const Attribute> attrs);
 
@@ -273,17 +299,20 @@ private:
 /**
  * @brief RAII guard that keeps a trace context active on the tracer for its
  *        lifetime, so every span/mark created while it is in scope carries
- *        that context. Null-tracer-safe; an invalid context pushes nothing.
- *        Used to link spans emitted on different threads (e.g. postXferReq on
- *        the caller thread vs. the completion on the polling thread) to the
- *        same logical request.
+ *        that context. Null-tracer-safe; an invalid context with no request id
+ *        pushes nothing. Used to link spans emitted on different threads (e.g.
+ *        postXferReq on the caller thread vs. the completion on the polling
+ *        thread) to the same logical request.
  */
 class CorrelationScope {
 public:
-    [[nodiscard]] CorrelationScope(Tracer *tracer, const TraceContext &context)
-        : tracer_(((tracer != nullptr) && context.valid()) ? tracer : nullptr) {
+    [[nodiscard]] CorrelationScope(Tracer *tracer,
+                                   const TraceContext &context,
+                                   std::uint64_t request_id)
+        : tracer_(((tracer != nullptr) && (context.valid() || (request_id != 0))) ? tracer :
+                                                                                    nullptr) {
         if (tracer_ != nullptr) {
-            tracer_->pushContext(context);
+            tracer_->pushContext(context, request_id);
         }
     }
 
