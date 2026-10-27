@@ -162,6 +162,10 @@ class nixl_agent_config:
             If None, sync_mode is set based on the enable_listen flag.
         prog_thread_delay_us: Delay in microseconds between progress thread
             iterations, for backends that run one. 0 polls continuously.
+            LIBFABRIC sleeps for exactly this long when no completions are
+            pending. UCX rounds the delay up to whole milliseconds for its
+            poll() timeout (so 50 and 250 both become 1ms) and wakes earlier
+            on pending events.
     """
 
     def __init__(
