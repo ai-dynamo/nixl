@@ -151,13 +151,32 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     agent->getPluginParams(backend_name, mems, backend_params);
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
-        backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
-        if (xferBenchConfig::use_device_api) {
-            backend_params["ucx_num_device_channels"] =
+        const bool device_proxy = xferBenchConfig::use_device_api &&
+            xferBenchConfig::device_mode == XFERBENCH_DEVICE_MODE_PROXY;
+        if (device_proxy) {
+            // Pairwise: each process talks to exactly one remote agent.
+            backend_params["device_proxy"] = "true";
+            backend_params["proxy_channel_count"] =
                 std::to_string(xferBenchConfig::device_channel_num);
+            backend_params["proxy_max_peers"] = "1";
+            if (xferBenchConfig::device_proxy_threads > 0) {
+                backend_params["proxy_thread_count"] =
+                    std::to_string(xferBenchConfig::device_proxy_threads);
+            }
+            // UCX host atomics need err-mode none.
+            backend_params["ucx_error_handling_mode"] = "none";
+            backend_params["engine_config"] = "FENCE_MODE=ep_based";
+        } else {
+            backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
+            if (xferBenchConfig::use_device_api) {
+                backend_params["ucx_num_device_channels"] =
+                    std::to_string(xferBenchConfig::device_channel_num);
+            }
+        }
+        if (xferBenchConfig::use_device_api) {
             std::cout << "Device API mode: configuring " << xferBenchConfig::device_channel_num
-                      << " UCX device channels for " << xferBenchConfig::deviceGroupNum()
-                      << " execution groups" << std::endl;
+                      << (device_proxy ? " CPU proxy" : " UCX device") << " channels for "
+                      << xferBenchConfig::deviceGroupNum() << " execution groups" << std::endl;
         }
 
         // No need to set device_list if all is specified
@@ -175,7 +194,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
             exit(EXIT_FAILURE);
         }
 
-        backend_params["num_workers"] = std::to_string(xferBenchConfig::num_threads + 1);
+        if (!device_proxy) {
+            backend_params["num_workers"] = std::to_string(xferBenchConfig::num_threads + 1);
+        }
 
         std::cout << "Init nixl worker, dev "
                   << (("all" == devices[0]) ? "all" : backend_params["device_list"]) << " rank "
@@ -229,10 +250,18 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
         std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device "
                   << xferBenchConfig::gpunetio_device_list << " OOB interface "
-                  << xferBenchConfig::gpunetio_oob_list << std::endl;
+                  << xferBenchConfig::gpunetio_oob_list << " GID index "
+                  << xferBenchConfig::gpunetio_gid_index << " OOB port "
+                  << (xferBenchConfig::gpunetio_oob_port.empty() ?
+                          "6544" :
+                          xferBenchConfig::gpunetio_oob_port)
+                  << std::endl;
         backend_params["network_devices"] = devices[0];
         backend_params["gpu_devices"] = xferBenchConfig::gpunetio_device_list;
         backend_params["oob_interface"] = xferBenchConfig::gpunetio_oob_list;
+        backend_params["gid_index"] = xferBenchConfig::gpunetio_gid_index;
+        backend_params["data_qp_count"] = std::to_string(xferBenchConfig::gpunetio_data_qp_count);
+        backend_params["oob_port"] = xferBenchConfig::gpunetio_oob_port;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE)) {
         std::cout << "Mooncake backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_HF3FS)) {
@@ -282,8 +311,13 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
             std::cout << "OBJ backend with standard S3 enabled" << std::endl;
         }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_REDIS)) {
-        // REDIS backend: host/port/password via REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
-        std::cout << "REDIS backend configured (using defaults or environment variables)"
+        // getPluginParams() pre-fills the plugin's advertised defaults, which take
+        // precedence over REDIS_* env vars in fromBackendParams. Clear them so
+        // REDIS_HOST, REDIS_PORT, etc. are honoured.
+        for (const char *k : {"host", "port", "username", "password", "db", "pool_size"}) {
+            backend_params.erase(k);
+        }
+        std::cout << "REDIS backend configured (using REDIS_* environment variables or defaults)"
                   << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically

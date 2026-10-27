@@ -98,12 +98,14 @@ The AWS test script:
 1. Generates AWS job configuration from template
 2. Submits a job to AWS
 3. Monitors AWS job execution
-4. Streams logs from the AWS pod
-5. Reports success or failure
+4. Streams logs from the AWS pod, reconnecting if the stream drops while the container is running
+5. Reports success or failure; on failure, prints the Batch status reason and each attempt's pod, node and container exit code
 
 ## Container Image
 
-The script uses the container image: `nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04`
+The script uses the container image: `nvcr.io/nvidia/cuda:13.4.2-devel-ubuntu24.04`
+CUDA 13.1.1+ devel images ship the cuObject client dev package, which the OBJ
+plugin needs to build its S3 accelerated engines; CUDA 13.0 has none.
 You can override this by setting the `CONTAINER_IMAGE` environment variable:
 
 ```bash

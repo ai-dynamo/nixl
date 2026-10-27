@@ -68,15 +68,15 @@ timeout_minutes: 240
 # Container Registry Configuration
 # =============================================================================
 # Artifactory registry for storing build artifacts and base images
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
   - credentialsId: 'svc-nixl-github-read-only-token'
     usernameVariable: 'NIXL_GITHUB_USER'
     passwordVariable: 'NIXL_GITHUB_TOKEN'
-  - credentialsId: 'svc-nixl-new-artifactory-token'
+  - credentialsId: 'svc-nixl-il-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
 
@@ -87,7 +87,6 @@ credentials:
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   # 24GB memory and 16 CPU cores for parallel compilation and large builds
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'
@@ -215,7 +214,7 @@ env:
   # Internal HuggingFace mirror the sanity script prefetches the model through. Pulling from
   # huggingface.co directly gets the shared CI egress IP rate-limited (429); the mirror has no
   # such limit and allows anonymous reads, so no token is needed.
-  SANITY_HF_ENDPOINT: "https://urm.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
+  SANITY_HF_ENDPOINT: "https://artifactory.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
   # The vLLM/SGLang upstream bases are pinned to concrete versions in
   # .ci/dockerfiles/Dockerfile.{vllm,sglang}-base and not restated here: an
   # override at this level silently won over the Dockerfile, so the upgrade in
@@ -228,11 +227,47 @@ env:
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
   SLURM_ACCOUNT: oberon-gb-ci
+  # Without a GPU count the site plugin forces exclusive mode (whole idle node)
+  SLURM_GRES: gpu:2
+  SLURM_MEM: 128G
+  SLURM_MINCPUS: 24
   SLURM_JOB_TIMEOUT: '02:00:00'
   SLURM_IMMEDIATE_TIMEOUT: "3600"
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
+  # UCX spcx plugin: compiled by nixl-ci-compile-ucx-plugin (which owns the build
+  # recipe, in the closed-source plugin repo) and staged per-arch on the shared
+  # PVC for the Build Wheel step below. Which plugin ref gets built is that job's
+  # own default, set by the plugin developers who own those updates - deliberately
+  # not pinned here, so a plugin bump needs no change on this side.
+  SPCX_STAGING_ROOT: "/mnt/pvc/${JOB_BASE_NAME}-spcx"
+
+# Compile the closed-source UCX spcx plugin before any wheel is built, so a
+# plugin break fails the job in ~1 minute instead of after the wheel builds.
+#
+# The job lives in the plugin repo (definition, matrix and build scripts) and
+# only runs on this Jenkins instance so it can share the PVC. This repo is
+# public and everything in a PR's checkout is editable by whoever opened it, so
+# the plugin must not be cloned or built here: we pass the wheel_base image name
+# and tag, and get back only the built module. It builds both arches in one run.
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    def staging = "${env.SPCX_STAGING_ROOT}/${env.BUILD_NUMBER}"
+    def res = build job: 'nixl-ci-compile-ucx-plugin',
+      parameters: [
+        string(name: 'WHEEL_BASE_NAME', value: env.WHEEL_BASE_IMAGE_NAME),
+        string(name: 'WHEEL_BASE_TAG',  value: env.CI_IMAGE_TAG),
+        string(name: 'STAGING_DIR',     value: staging),
+      ],
+      propagate: false, wait: true
+    echo "UCX spcx plugin compile: ${res.result} (${res.absoluteUrl})"
+    if (res.result != 'SUCCESS') {
+      error("UCX spcx plugin failed to compile against wheel_base ${env.CI_IMAGE_TAG} - see ${res.absoluteUrl}")
+    }
+    env.SPCX_STAGING_DIR = staging
 
 steps:
   # =============================================================================
@@ -242,7 +277,7 @@ steps:
   # egress workaround is needed here.
   - name: Prepare
     containerSelector: "{name: 'manylinux'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       # Setup podman and dependencies
@@ -260,7 +295,7 @@ steps:
   # to the pod's host network.
   - name: Prepare
     containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       # Setup podman and dependencies
@@ -286,9 +321,13 @@ steps:
   # cached deps image so only the wheel stage compiles.
   - name: Build Wheel
     containerSelector: "{name: 'manylinux|build_helper_(vllm|sglang)'}"
+    credentialsId: 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       set -x
+      # github.com credential for the wheel stage's meson wrap-git clones ("ghconfig" build secret).
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
+      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
       export NPROC=$NPROC
       export GRPC_NPROC=$GRPC_NPROC
       ./contrib/build-container.sh \
@@ -297,7 +336,8 @@ steps:
         --arch ${arch} \
         --torch-versions "${TORCH_VERSIONS}" \
         --dockerfile contrib/Dockerfile.manylinux \
-        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}"
+        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}" \
+        --ucx-spcx-plugin-install "${SPCX_STAGING_DIR}/${arch}"
 
   # =============================================================================
   # Shared sanity steps (both framework helpers, parameterized by ${fw})
@@ -308,7 +348,7 @@ steps:
   # Tagged by BUILD_NUMBER.
   - name: Build sanity image
     containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       set -eux
@@ -359,7 +399,10 @@ steps:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       extraArgs: [
-        "--account=${SLURM_ACCOUNT}"
+        "--account=${SLURM_ACCOUNT}",
+        "--gres=${SLURM_GRES}",
+        "--mem=${SLURM_MEM}",
+        "--mincpus=${SLURM_MINCPUS}"
       ]
 
   - name: Sync Container Image

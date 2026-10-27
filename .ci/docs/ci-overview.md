@@ -170,7 +170,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 - **What it does:** Fans out in parallel to eight downstream Jenkins jobs, waiting on all of them:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
-  - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com)
+  - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node)
   - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (NIXL EP tests on dlcluster.nvidia.com)
   - `nixl-ci-gpu-vr` — `.ci/jenkins/lib/test-vr-matrix.yaml` (same tests as `nixl-ci-dl-gpu`, on the Vera Rubin `vrnvl72` partition / `rubin` account; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node, so it can run on a partly used node of the busy partition; nodes with a differing configuration are excluded via `SLURM_EXCLUDE`)
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
@@ -188,27 +188,28 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 ### `nixl-ci-build-wheel` (dispatcher-triggered)
 - **Config:** `.ci/jenkins/lib/build-wheel-matrix.yaml`
 - **What it does:** Builds NIXL Python wheels for each Python version × architecture combination. Uses a two-stage `contrib/Dockerfile.manylinux` build: the `wheel_base` stage (all slow deps: UCX, gRPC, Rust, etc.) is pre-built and cached in Artifactory under `CI_IMAGE_TAG`; PR builds pull this pre-built image and run only the `wheel` stage (~16 steps). PR builds also pass `--torch-versions` (set via the `TORCH_VERSIONS` env in the matrix file) to limit the torch extension builds to the latest version. x86_64 wheels build in the `manylinux` (podman-in-container) runner.
-- **vLLM/SGLang NIXL sanity (aarch64):** the same job also gates a 1-prefill/1-decode NIXL KV-transfer sanity for vLLM and SGLang. Each framework runs as its own aarch64 branch (`build_helper_vllm` / `build_helper_sglang`): build the aarch64 wheels (reusing the cached `wheel_base`), layer them onto the pinned framework base image (`.ci/dockerfiles/Dockerfile.{vllm,sglang}-base`, built as `category: tool` by ci-demo), then run the sanity on the `gb200nvl72_ci` dlcluster SLURM partition over SSH (`.gitlab/test_vllm_sglang_sanity.sh`). SGLang additionally asserts a gsm8k accuracy floor on `Qwen/Qwen3-8B`. The aarch64 wheels are built once per framework branch (duplicated) so the two flows stay separate, labeled branches in the Jenkins UI. The sanity model is prefetched through the internal HuggingFace mirror in `SANITY_HF_ENDPOINT` rather than `huggingface.co` (which rate-limits the shared CI egress IP); each sanity step passes it into the SLURM container as `HF_ENDPOINT`.
+- **vLLM/SGLang NIXL sanity (aarch64):** the same job also gates a 1-prefill/1-decode NIXL KV-transfer sanity for vLLM and SGLang. Each framework runs as its own aarch64 branch (`build_helper_vllm` / `build_helper_sglang`): build the aarch64 wheels (reusing the cached `wheel_base`), layer them onto the pinned framework base image (`.ci/dockerfiles/Dockerfile.{vllm,sglang}-base`, built as `category: tool` by ci-demo), then run the sanity on the `gb200nvl72_ci` dlcluster SLURM partition over SSH (`.gitlab/test_vllm_sglang_sanity.sh`), each branch in its own 2-GPU allocation (`--gres=gpu:2`) rather than a whole node. SGLang additionally asserts a gsm8k accuracy floor on `Qwen/Qwen3-8B`. The aarch64 wheels are built once per framework branch (duplicated) so the two flows stay separate, labeled branches in the Jenkins UI. The sanity model is prefetched through the internal HuggingFace mirror in `SANITY_HF_ENDPOINT` rather than `huggingface.co` (which rate-limits the shared CI egress IP); each sanity step passes it into the SLURM container as `HF_ENDPOINT`. The base images replace every apt source of the upstream image (CUDA, devtools, PPAs) with the internal Ubuntu mirror alone, and bound each apt command with `timeout`, so their `apt-get update` never reaches a public host and a stalled mirror fails the build in minutes.
+- **UCX spcx plugin compile check:** `pipeline_start` triggers `nixl-ci-compile-ucx-plugin` and fails the job if it fails, before any wheel is built. That job lives in the closed-source plugin repo (its definition, matrix and build scripts) but runs on this Jenkins instance so it can write to the shared PVC. It builds both arches against the same `wheel_base` image this job uses and stages the module under `SPCX_STAGING_ROOT/<build>/<arch>/`; the Build Wheel step passes that to `build-container.sh --ucx-spcx-plugin-install`, and `wheel_add_ucx_plugins.py` bundles it like any other UCX module. The plugin is never cloned or built here — this repo is public and everything in a PR's checkout is PR-editable, so the plugin's read credential and source stay on the trusted side; only the built module and a pass/fail crosses back. Which plugin ref gets built is that job's own default, owned by the plugin developers, so a plugin bump needs no change here.
 - **`CI_IMAGE_TAG`:** Same convention as the other five matrix files (also tags `build_helper_*` and the sanity `*-nixl-base` images). `contrib/Dockerfile.manylinux` is part of the `CI_FILES` list in `cidemo-init.sh`, so changing it (or any other CI file) automatically derives a new `CI_IMAGE_TAG` and rebuilds the cached `wheel_base` image (see [CI_IMAGE_TAG management](#ci_image_tag-management)).
 
 ### `nixl-ci-build-container` (standalone)
-- **Trigger:** Nightly cron (builds `nixlbench` and `nixl` targets, on both the default CUDA base image and the PyTorch release image `nvcr.io/nvidia/pytorch:26.06-py3`, ~22:00), or manual run with parameters (`BUILD_TARGET`, `NIXL_VERSION`, `UCX_VERSION`, base image overrides, etc.).
-- **What it does:** Builds and pushes x86_64/aarch64 NIXL/NIXLBench container images to Artifactory, then sets build metadata properties on each image via the Artifactory REST API. The Push step runs with `set -eo pipefail` so auth or API failures abort the build immediately. `BUILD_UCX_SPCX_PLUGIN` (default on, `nixl` target only) builds the internal UCX spcx plugin against the image's UCX and installs it into the UCX plugin dir; it needs the `svc-nixl-gitlab-token` + `ucx-plugin-gitlab-url` credentials, bound on the Build NIXL step. `BUILD_NIXL_EP` is on by default and has no off-switch — `contrib/build-container.sh` builds EP regardless. `BUILD_INFINIA` (default off, `nixl` target only) stages the DDN libs from harbor.mellanox.com and builds `libplugin_INFINIA.so` into the image; it is off by default because it adds an external registry dependency.
+- **Trigger:** Nightly cron (builds `nixlbench` and `nixl` targets, on both the default CUDA base image and the PyTorch release image `nvcr.io/nvidia/pytorch:26.08-py3`, ~22:00), or manual run with parameters (`BUILD_TARGET`, `NIXL_VERSION`, `UCX_VERSION`, base image overrides, etc.).
+- **What it does:** Builds and pushes x86_64/aarch64 NIXL/NIXLBench container images to Artifactory, then sets build metadata properties on each image via the Artifactory REST API. The Push step runs with `set -eo pipefail` so auth or API failures abort the build immediately. `BUILD_UCX_SPCX_PLUGIN` (default on, `nixl` target only) builds the internal UCX spcx plugin against the image's UCX and installs it into the UCX plugin dir; it needs the `svc-nixl-gitlab-token` + `ucx-plugin-gitlab-url` credentials, bound on the Build NIXL step. `BUILD_NIXL_EP` is on by default and has no off-switch — `contrib/build-container.sh` builds EP regardless. `BUILD_INFINIA` (default off, `nixl` target only) stages the DDN libs from the `static/infinia-libs` image in Artifactory and builds `libplugin_INFINIA.so` into the image; it is off by default because `build-container.sh` only consumes `--build-infinia` on the manylinux (wheel) path.
 - **Image tag:** `pipeline_start` resolves the NIXL and UCX commits once (`NIXL_SHA`, `UCX_SHA`) and exports `IMAGE_TAG_BASE`; both arches build from those exact commits and tag from that base, and `pipeline_stop` reuses it to name the images. Previously each arch re-resolved UCX independently, so a branch moving mid-build could ship two arches from different UCX commits under one tag.
 - **Completion mail:** When `MAIL_TO` is set, `pipeline_stop` mails the build result, listing the pushed image URLs (and the `-latest` tags when `UPDATE_LATEST`) so the verification team can pull them directly. The list is included only on `SUCCESS` — a failed run may not have pushed, and a link to a missing image is worse than no link.
 - **Automatic on every PR:** No — standalone/nightly + manual only.
 
 ### `nixl-ci-build-wheel-nightly` (standalone)
-- **Trigger:** Nightly cron (one run covering both CUDA majors), triggered by [`nixl-build-wheel-release-poller`](#nixl-build-wheel-release-poller-standalone) for release publishing, or manual run. The pipeline and matrix config run from `ci_refspec` (default `main`; pass `refs/pull/<n>/head` to test CI changes end to end before merge); the NIXL source is cloned inside the build from the `NIXL_VERSION` parameter (branch/tag/PR ref/sha), so any ref is buildable without CI files on it.
-- **What it does:** Reuses the per-PR wheel build path (`contrib/build-container.sh` + `Dockerfile.manylinux`) and publishes wheels to `sw-nbu-swx-nixl-pypi-local`. With `PUBLISH_DIR` empty (the default, and what the nightly cron uses) wheels land under `verification/g<nixl-sha8>.ucx<ucx-sha8>/` — the long-standing schema the `build-llm-container` verification pipeline consumes; the poller and manual release runs pass `release/<ver>`, which publishes to `release/<ver>/<build-number>/`. `cuda` is a matrix axis, so both CUDA lines come out of one run: `13` passes no base-image flags to `build-container.sh` and relies on its own defaults, `12` passes the pinned CUDA 12 base image/tag from the matrix env. That is what keeps a build-number folder meaningful — the folder holds one complete cu12+cu13 set and belongs to exactly one build. The UCX spcx and Infinia DDN plugins are always bundled (`--build-ucx-spcx-plugin --build-infinia`, unconditional — not job parameters); the source ref's `contrib/build-container.sh` must carry both flags and pin their versions.
+- **Trigger:** Nightly cron (one run covering both CUDA majors), triggered by [`nixl-build-wheel-release-poller`](#nixl-build-wheel-release-poller-standalone) for release publishing, or manual run. The pipeline and matrix config run from `ci_refspec` (default `main`; pass `refs/pull/<n>/head` to test CI changes end to end before merge); the NIXL source is cloned inside the build from the `NIXL_VERSION` parameter (branch/tag/PR ref/sha). Nightly runs therefore use main's CI config with any source ref, and a manual run uses whatever `ci_refspec` it passes (default `main`). Poller-spawned release runs pass `ci_refspec` = the release commit, so for them the matrix, `cidemo-init.sh`, the `wheel_base` Dockerfile and `contrib/` are all one commit and the wheel contains only what the release branch declares (CI fixes reach a live release branch by whole-commit cherry-pick).
+- **What it does:** Reuses the per-PR wheel build path (`contrib/build-container.sh` + `Dockerfile.manylinux`) and publishes wheels to `sw-nbu-swx-nixl-pypi-local`. With `PUBLISH_DIR` empty (the default, and what the nightly cron uses) wheels land under `verification/g<nixl-sha8>.ucx<ucx-sha8>/` — the long-standing schema the `build-llm-container` verification pipeline consumes; the poller and manual release runs pass `release/<ver>`, which publishes to `release/<ver>/<build-number>/`. `cuda` is a matrix axis, so both CUDA lines come out of one run: `13` passes no base-image flags to `build-container.sh` and relies on its own defaults, `12` passes the pinned CUDA 12 base image/tag from the matrix env. That is what keeps a build-number folder meaningful — the folder holds one complete cu12+cu13 set and belongs to exactly one build. The Infinia DDN plugin is always bundled (`--build-infinia`, unconditional — not a job parameter) and the source ref's `contrib/build-container.sh` must carry the flag and pin its version; the UCX spcx plugin is compiled by `nixl-ci-compile-ucx-plugin` against the same `wheel_base` images and passed in with `--ucx-spcx-plugin-install`. `wheel_base` is built and pushed per arch and CUDA major by ci-demo before any step runs, so each of the twenty matrix cells pulls it instead of recompiling the dependency stack.
 - **Wheel properties:** Publish attaches `NIXL_SHA`, `NIXL_VERSION`, `JOB_NAME` and `BUILD_NUMBER` to every uploaded wheel unconditionally — `NIXL_SHA` in particular, since the release path no longer carries the sha and the poller looks commits up by it. The resolved build options (base image, UCX ref/sha, plugin flags, etc.) are written to `build_options.env` via `--build-options-file`; Publish reads it and adds `UCX_REF`, `UCX_SHA`, `CUDA_VERSION`, and (when built) `UCX_SPCX_PLUGIN_REF`/`INFINIA_LIBS_IMAGE` (that group is skipped if the built ref's `build-container.sh` predates `--build-options-file`).
 - **Release folder lifecycle:** On a release run `pipeline_stop` owns the folder. Green build: it stamps `NIXL_SHA` as a *folder-level* property and points `currentBuild.description` at the folder in the Artifactory UI. Anything else: it DELETEs the folder outright (404 tolerated, and cleanup never changes the build result) and the failure mail says so. A partial wheel set is not salvageable — it has to be rebuilt — so publishing it would only confuse consumers and make the poller skip the commit. This is safe only because the folder is keyed by build number and therefore owned by one build; `verification/` folders are shared between builds of the same sha pair and are never deleted.
 - **Automatic on every PR:** No — standalone nightly/poller-triggered + manual only.
 
 ### `nixl-build-wheel-release-poller` (standalone)
 
-- **Trigger:** 4-hourly cron (`H H/4 * * *`) or manual run. The pipeline and matrix config (`.ci/jenkins/lib/build-wheel-release-poller-matrix.yaml`) run from `ci_refspec` (default `main`); the poller forwards `ci_refspec` to the builds it triggers, so a pre-merge test run drives the whole chain from one PR ref.
-- **What it does:** Builds release wheels for every `release/*` branch with version >= 1.4.0 whose `contrib/build-container.sh` accepts `--build-options-file` (the nightly always passes it, so older refs would fail at option parsing) - new release branches are picked up automatically, with no CI config anywhere. `.ci/scripts/scan-missing-release-wheels.sh` takes the newest 10 first-parent commits past the merge-base with `main` per release and triggers [`nixl-ci-build-wheel-nightly`](#nixl-ci-build-wheel-nightly-standalone) once per missing commit, passing the commit sha and `PUBLISH_DIR=release/<ver>`. There is no CUDA dimension here — one wheel build covers every CUDA major — so the job has no matrix axes. UCX and the bundled plugins are not passed either: each release builds against the `UCX_REF` and plugin versions pinned in its own `contrib/build-container.sh`.
+- **Trigger:** 4-hourly cron (`H H/4 * * *`) or manual run. The pipeline and matrix config (`.ci/jenkins/lib/build-wheel-release-poller-matrix.yaml`) run from `ci_refspec` (default `main`). The builds it triggers get `ci_refspec` = the release commit they build, not the poller's own, so a release run is pinned end to end; a pre-merge test run of the poller exercises the poller only, and nightly changes are tested by running the nightly manually.
+- **What it does:** Builds release wheels for every `release/*` branch with version >= 1.6.0 whose `contrib/build-container.sh` accepts `--build-options-file` and `--ucx-spcx-plugin-install` (the nightly always passes both, and `build-container.sh` silently drops everything after an option it does not know) - new release branches are picked up automatically, with no CI config anywhere. `.ci/scripts/scan-missing-release-wheels.sh` takes the newest 10 first-parent commits past the merge-base with `main` per release and triggers [`nixl-ci-build-wheel-nightly`](#nixl-ci-build-wheel-nightly-standalone) once per missing commit, passing the commit sha and `PUBLISH_DIR=release/<ver>`. There is no CUDA dimension here — one wheel build covers every CUDA major — so the job has no matrix axes. UCX and the bundled plugins are not passed either: each release builds against the `UCX_REF` and plugin versions pinned in its own `contrib/build-container.sh`.
 - **Published check:** One AQL query per release branch, not one HTTP GET per commit: it collects the `NIXL_SHA` folder property of every completed build folder under `release/<ver>/` and tests the candidate commits against that set locally. Only HTTP 200 is conclusive (an empty result set is a valid 200); anything else skips that release until the next cycle, so an Artifactory hiccup cannot fan out a build for every commit at once. Because the wheel job stamps that property only after a fully green build — and deletes its folder otherwise — a partial upload no longer reads as published, which the old "does `release/<ver>/<sha8>/` list a `nixl_cuNN` wheel" check could not tell apart. A failed build is retried on later cycles while its commit stays within the newest-10 window; to force a rebuild, delete the commit's folder in Artifactory (or just its `NIXL_SHA` property).
 - **In-flight reservations:** Because the marker only appears when a build *ends*, a build still running at the next poll would be triggered a second time — Jenkins does not deduplicate parameterized builds, and the old check was masked from this only because partial uploads used to look complete. Before triggering, the poller writes `release/<ver>/.inflight/<sha8>` and skips any commit whose reservation is newer than `RESERVE_TTL_MIN`. Ageing is done in the scan against the storage API's `lastModified` (AQL rejected the relative date operators this instance offers), so stale reservations need no cleanup and nothing has to release one: `RESERVE_TTL_MIN` is one poll interval, so a build that failed or vanished simply lets its reservation lapse and the commit is retried a cycle later. Keep `RESERVE_TTL_MIN` in step with the cron if either changes.
 - **Automatic on every PR:** No — standalone cron + manual only, never part of the PR CI path.
@@ -220,8 +221,8 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 
 ### `nixl-ci-cleanup-artifacts` (standalone)
 - **Trigger:** Daily cron at 6 AM, or manual run with optional `DRY_RUN=true` parameter.
-- **What it does:** Deletes stale Artifactory artifacts based on `.ci/cleanup-spec.json` — PR Docker images older than 1 day, CI base images not pulled in 2 weeks, verification Docker images and PyPI wheels older than 3 months.
-- **Matrix:** `.ci/jenkins/lib/cleanup-matrix.yaml`. Runs on an Ubuntu 24.04 container with `jf` and `jq` installed at runtime.
+- **What it does:** Deletes stale Artifactory artifacts based on `.ci/cleanup-spec.json` — PR Docker images older than 1 day, CI base images not pulled in 2 weeks, verification Docker images and PyPI wheels older than 3 months. The same spec runs against il.artifactory.nvidia.com (CI images) and artifactory.nvidia.com (verification images and wheels, until they move to IL too). Images under `static/` (e.g. `static/infinia-libs`) are never deleted: the script skips that folder regardless of what the spec matches.
+- **Matrix:** `.ci/jenkins/lib/cleanup-matrix.yaml`. Runs on an Ubuntu 24.04 container with `jf` and `jq` installed at runtime. `jf` is configured with `--basic-auth-only`: the IL credential is a reference token, and jf's default token auto-refresh (`api/security/token`) rejects reference tokens.
 - **Automatic on every PR:** No — standalone/scheduled + manual only.
 
 ### `nixl-ci-test-llm-container` (standalone)
@@ -338,7 +339,9 @@ missing terminal git tried to prompt on, not to DNS or connectivity.
 Every cloning `RUN` mounts an optional build secret,
 `--mount=type=secret,id=ghconfig,target=/root/.gitconfig`, holding
 `http.https://github.com/.extraheader = AUTHORIZATION: basic <base64 user:token>`, so
-every request to github.com is authenticated rather than anonymous.
+every request to github.com is authenticated rather than anonymous. This includes the
+NIXL `meson setup` `RUN`s, which clone the `taskflow` and `prometheus-cpp` `[wrap-git]`
+subprojects implicitly; later meson-python builds reuse the downloaded subprojects.
 `GIT_TERMINAL_PROMPT=0` is an `ARG`, so it applies to these builds without persisting
 into the shipped images.
 
@@ -358,8 +361,8 @@ not only the ones GitHub would have challenged — rotate it before it lapses.
 CI supplies it through `DOCKER_BUILD_EXTRA_ARGS`, a generic passthrough that
 `contrib/build-container.sh` and `benchmark/nixlbench/contrib/build.sh` append to their
 `docker build` command (empty by default; word-split, so no paths with spaces). In
-`build-container-pr-matrix.yaml`, `build-container-matrix.yaml` and
-`build-wheel-nightly-matrix.yaml`:
+`build-container-pr-matrix.yaml`, `build-container-matrix.yaml`,
+`build-wheel-nightly-matrix.yaml` and `build-wheel-matrix.yaml`:
 
 - the setup step binds the token and calls `write_github_gitconfig /tmp/ghconfig`
   (`.ci/scripts/common.sh`), which writes the config with tracing off and mode 600, or an
@@ -375,9 +378,10 @@ The token never lands in an image layer or in `podman history`. Still anonymous:
 ref lookup in `build-container-matrix.yaml`'s Groovy pre-step, which runs before any
 credential is bound.
 
-`build-wheel-matrix.yaml` needs nothing: it passes `--wheel-base-image`, which skips the
-`wheel_base` stage that holds the manylinux clones. That base, and `Dockerfile.base`,
-are built by ci-demo; see the next section.
+`build-wheel-matrix.yaml` passes `--wheel-base-image`, which skips the `wheel_base`
+stage that holds the manylinux clones; its `Build Wheel` step binds the token, writes
+`/tmp/ghconfig` and passes the secret itself, for the `wheel` stage's `meson setup`. That base, and `Dockerfile.base`, are
+built by ci-demo; see the next section.
 
 ## Authenticated clones in ci-demo-built images
 
@@ -400,6 +404,30 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 An unbound or empty secret leaves the clones anonymous, as before. A revoked, expired
 or org-blocked token, however, fails every github.com clone in these builds, since the
 header is sent on every request.
+
+## Authenticated meson subproject clones in the test pipelines
+
+`meson setup` clones the `taskflow` and `prometheus-cpp` `[wrap-git]` subprojects
+(and prometheus-cpp's civetweb and googletest submodules) from github.com. The test
+pipelines run it through `.gitlab/build.sh` outside the image builds above, with the
+same credential:
+
+- The `Build` steps of `build-matrix.yaml` (`nixl-ci-non-gpu`) and
+  `test-sanitizer-matrix.yaml` run `build.sh` in the job container. They bind
+  `svc-nixl-github-read-only-token`, call `write_github_gitconfig /tmp/ghconfig` in a
+  subshell, and export `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=include.path` and
+  `GIT_CONFIG_VALUE_0=/tmp/ghconfig`. Every git process the step starts, including
+  meson's clones and their submodule fetches, inherits that, without changing
+  `~/.gitconfig`; the variables carry only the file's path (git ≥ 2.31).
+- The image-build steps of `test-matrix.yaml`, `test-dl-matrix.yaml`,
+  `test-vr-matrix.yaml` and `test-dl-ep-matrix.yaml` build `Dockerfile.gpu-test` with
+  `podman build`. They bind the token, write `/tmp/ghconfig` and pass
+  `--secret id=ghconfig,src=/tmp/ghconfig`. `Dockerfile.gpu-test` mounts it at the
+  default `/run/secrets/ghconfig` (`mode=0444`, for the non-root build user) on its
+  `build.sh` `RUN` and points `build.sh` at it with the same `GIT_CONFIG_*` variables,
+  so no home directory is involved. A secret mount exists only during that `RUN`.
+
+As above, an empty config leaves the clones anonymous, and an invalid token fails them.
 
 ## Related docs
 

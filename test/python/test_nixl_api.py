@@ -133,6 +133,37 @@ def test_nixl_conf_bad_sync_mode():
         nixl_agent_config(sync_mode=1)
 
 
+def test_default_backend_configs_are_independent():
+    """Keep each configuration's default backend list independent."""
+    first_config = nixl_agent_config()
+    original_backends = first_config.backends.copy()
+    try:
+        second_config = nixl_agent_config()
+        first_config.backends.append("POSIX")
+        assert second_config.backends == ["UCX"]
+        assert nixl_agent_config().backends == ["UCX"]
+    finally:
+        first_config.backends[:] = original_backends
+
+
+def test_default_agent_keeps_ucx_after_another_config_is_cleared():
+    """Retain UCX for a default agent after clearing another configuration."""
+    config = nixl_agent_config()
+    original_backends = config.backends.copy()
+    try:
+        config.backends.clear()
+        agent = nixl_agent(str(uuid.uuid4()))
+        assert "UCX" in agent.backends
+    finally:
+        config.backends[:] = original_backends
+
+
+@pytest.mark.parametrize("backends", [[], ["UCX"], ["POSIX", "UCX"]])
+def test_explicit_backend_config_preserves_selection(backends):
+    """Preserve an explicitly supplied backend selection, including an empty list."""
+    assert nixl_agent_config(backends=backends).backends == backends
+
+
 def test_make_invalid_op(one_empty_agent, two_xfer_lists):
     # Only READ/WRITE are supported
     with pytest.raises(KeyError):
@@ -185,6 +216,33 @@ def test_empty_notif_tag(two_connected_agents):
     while not found:
         # empty bytes will consume any message
         found = agent2.check_remote_xfer_done(agent1.name, b"")
+
+
+@pytest.mark.timeout(5, func_only=True)
+@pytest.mark.parametrize(
+    "message, lookup_tag, tag_is_prefix",
+    [
+        (b"", b"", True),
+        (b"", b"", False),
+        (b"notification", b"not", True),
+        (b"notification", b"fic", False),
+    ],
+)
+def test_notification_is_consumed_once(
+    two_connected_agents, message, lookup_tag, tag_is_prefix
+):
+    """Consume matching notifications once, including empty messages."""
+    agent1, agent2 = two_connected_agents
+    agent1.send_notif(agent2.name, message)
+
+    while not agent2.check_remote_xfer_done(
+        agent1.name, lookup_tag, tag_is_prefix=tag_is_prefix
+    ):
+        pass
+
+    assert not agent2.check_remote_xfer_done(
+        agent1.name, lookup_tag, tag_is_prefix=tag_is_prefix
+    )
 
 
 def test_improper_get_xfer_descs(one_empty_agent, one_reg_list):

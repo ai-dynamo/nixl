@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <cstring>
+#include <utility>
 
 #include "serdes.h"
 #include "common/nixl_log.h"
@@ -168,6 +169,11 @@ nixl_status_t nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len)
 // Buffer management serialization
 std::string nixlSerDes::exportStr() const {
     return workingStr;
+}
+
+std::string
+nixlSerDes::exportMoveStr() && {
+    return std::move(workingStr);
 }
 
 nixl_status_t nixlSerDes::importStr(const std::string &sdbuf) {

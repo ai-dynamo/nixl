@@ -16,6 +16,7 @@
  */
 
 #include "redis_client.h"
+#include <hiredis/adapters/libevent.h>
 #include "common/backend.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
@@ -172,7 +173,10 @@ RedisConnectionPool::RedisConnectionPool(RedisConfig config) : config_(std::move
 
     // Start the single shared event loop thread.
     // All N async connect/auth/select sequences run concurrently on this one thread.
-    eventLoopThread_ = std::thread([this]() { event_base_dispatch(eventBase_); });
+    // A disconnect can remove the last socket event before a selected command is queued.
+    // Keep dispatching until stopEventLoop explicitly exits the loop.
+    eventLoopThread_ =
+        std::thread([this]() { event_base_loop(eventBase_, EVLOOP_NO_EXIT_ON_EMPTY); });
 
     // Wait for every slot to complete initialization (parallel: ~1 RTT regardless of N).
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);

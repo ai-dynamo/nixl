@@ -16,11 +16,11 @@
  */
 
 #include "ucx_backend.h"
+#include "ucx_proxy_engine.h"
 #include "ucx_thread_engine.h"
 #include "ucx_thread_pool_engine.h"
 #include "ucx_backend_req.h"
 #include "ucx_sgl.h"
-#include "registration.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/backend.h"
@@ -29,13 +29,17 @@
 #include "tracing/backend_trace.h"
 
 #include <array>
+#include <absl/cleanup/cleanup.h>
+#include <bit>
 #include <cstdint>
 #include <optional>
 #include <string.h>
+#include <utility>
 #include "absl/strings/str_split.h"
 
 #include "device/device_memview.h"
 #include "device/device_ops.h"
+#include "device/proxy/proxy_config.h"
 
 namespace {
 [[nodiscard]] bool
@@ -69,7 +73,22 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params, nixl::ucx::Memor
     nixlUcxEngine *engine;
     const size_t num_threads =
         nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
-    if (num_threads > 0) {
+
+    nixl::proxyConfig proxy_config;
+    if (nixl::parseProxyConfig(init_params, proxy_config) != NIXL_SUCCESS) {
+        nixl::throwRuntimeError("invalid device proxy configuration");
+    }
+
+    if (proxy_config.enabled) {
+        if (num_threads > 0) {
+            nixl::throwRuntimeError(
+                "num_threads is not supported with device_proxy=true; use proxy_thread_count");
+        }
+        if (policy) {
+            nixl::throwRuntimeError("A memory policy is not supported with device_proxy=true");
+        }
+        engine = new nixl::ucx::proxyEngine(init_params, proxy_config, std::move(policy));
+    } else if (num_threads > 0) {
         engine = new nixlUcxThreadPoolEngine(init_params, num_threads, std::move(policy));
     } else if (init_params.enableProgTh) {
         engine = new nixlUcxThreadEngine(init_params, 0, std::move(policy));
@@ -91,7 +110,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
     if (memoryPolicy_ && memoryPolicy_->deviceMemoryType().empty()) {
         throw std::invalid_argument("A memory policy must name its required device memory type");
     }
-    if (memoryPolicy_ && nixl::config::getValueDefaulted("NIXL_UCX_SGL_ENABLE", false)) {
+    if (memoryPolicy_ && sglEnabled_) {
         throw std::invalid_argument("Strict device memory policies do not support UCX SGL");
     }
     std::vector<std::string> devs; /* Empty vector */
@@ -111,6 +130,12 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
     const size_t num_device_channels =
         nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
 
+    nixl_ucx_vram_memtype_hint_t vram_memtype_hint_policy = nixl_ucx_vram_memtype_hint_t::AUTO;
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(
+            custom_params, std::string(nixl_ucx_vram_memtype_hint_param_name))) {
+        vram_memtype_hint_policy = ucx_vram_memtype_hint_from_string(*opt);
+    }
+
     const auto engine_config =
         nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
 
@@ -122,7 +147,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
                                           engine_config,
                                           localAgent,
                                           memoryPolicy_ ? memoryPolicy_->deviceMemoryType() :
-                                                          std::string_view{});
+                                                          std::string_view{},
+                                          vram_memtype_hint_policy);
 
     if (!memoryPolicy_) {
         uc->warnAboutHardwareSupportMismatch();
@@ -227,23 +253,21 @@ nixlUcxEngine::registerMem(const nixlBlobDesc &mem,
             }
         }
         auto priv = std::make_unique<nixlUcxPrivateMetadata>();
-        const bool registered = nixl::ucx::registrationTransaction(
-            [&] {
-                return uc->memReg(
-                           reinterpret_cast<void *>(mem.addr), mem.len, priv->mem, nixl_mem) == 0;
-            },
-            [&] {
-                priv->rkeyStr = uc->packRkey(priv->mem);
-                return !priv->rkeyStr.empty();
-            },
-            [&]() noexcept { uc->memDereg(priv->mem); });
-        if (!registered) {
+        if (uc->memReg(reinterpret_cast<void *>(mem.addr), mem.len, priv->mem, nixl_mem) != 0) {
             return NIXL_ERR_BACKEND;
         }
+        auto rollback = absl::MakeCleanup([&]() noexcept { uc->memDereg(priv->mem); });
+        priv->rkeyStr = uc->packRkey(priv->mem);
+        if (priv->rkeyStr.empty()) {
+            return NIXL_ERR_BACKEND;
+        }
+        std::move(rollback).Cancel();
         out = priv.release();
         return NIXL_SUCCESS;
     }
-    // The registration transaction has already rolled back mapped memory and packed keys.
+    // UCX returns status codes, but policy validation, metadata allocation, and rkey
+    // serialization are C++ operations that may throw. Convert those failures to
+    // the backend status while the scope cleanup releases any mapped memory.
     catch (const std::exception &error) {
         NIXL_ERROR << "Memory registration failed: " << error.what();
         return NIXL_ERR_BACKEND;
@@ -398,6 +422,34 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const n
     }
 }
 
+namespace {
+
+[[nodiscard]] std::optional<nixl::trace::TraceContext>
+sampledTraceContext(const nixlBackendTraceSink *sink, const nixl_opt_b_args_t *opt_args) noexcept {
+    if ((sink == nullptr) || (opt_args == nullptr) || (opt_args->traceContext == nullptr) ||
+        !opt_args->traceContext->sampled()) {
+        return std::nullopt;
+    }
+    return *opt_args->traceContext;
+}
+
+void
+recordPhase(nixlBackendTraceSink *sink,
+            nixl_trace_phase_t phase,
+            const nixlUcxBackendReqH &handle) noexcept {
+    if ((sink != nullptr) && handle.traceContext) {
+        sink->recordPhase(phase,
+                          {},
+                          nixlTime::getUs(),
+                          {},
+                          &*handle.traceContext,
+                          handle.traceRequestId,
+                          handle.traceExecution);
+    }
+}
+
+} // namespace
+
 nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
@@ -509,13 +561,7 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
         return post_ret;
     }
 
-    nixlUcxReq flush_req;
-    const nixl_status_t flush_ret = ep->flushEp(flush_req);
-    if (int_handle->append(flush_ret, flush_req) != NIXL_SUCCESS) {
-        return flush_ret;
-    }
-
-    return NIXL_SUCCESS;
+    return int_handle->flush();
 }
 #endif
 
@@ -593,13 +639,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
      * Flush keeps int_handle non-empty until the operation is actually
      * completed, which can happen after local requests completion.
      */
-    nixlUcxReq flush_req;
-    const nixl_status_t flush_ret = ep->flushEp(flush_req);
-    if (int_handle->append(flush_ret, flush_req) != NIXL_SUCCESS) {
-        return flush_ret;
-    }
-
-    return NIXL_SUCCESS;
+    return int_handle->flush();
 }
 
 nixl_status_t
@@ -620,6 +660,11 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    int_handle->traceContext = sampledTraceContext(traceSink_, opt_args);
+    int_handle->traceRequestId = int_handle->traceContext ? opt_args->traceRequestId : 0;
+    int_handle->traceExecution = int_handle->traceContext ? opt_args->traceExecution : 0;
+    recordPhase(traceSink_, nixl_trace_phase_t::SUBMIT, *int_handle);
+
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
     ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
@@ -627,19 +672,22 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return ret;
     }
 
+    recordPhase(traceSink_, nixl_trace_phase_t::WIRE_SUBMITTED, *int_handle);
+
     ret = int_handle->status();
-    if (opt_args && opt_args->hasNotif) {
-        auto notif = buildNotif(opt_args->notifMsg, opt_args->traceContext);
+    if (opt_args && opt_args->hasNotif && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
+        int_handle->notif = buildNotif(opt_args->notifMsg,
+                                       opt_args->traceContext,
+                                       int_handle->traceRequestId,
+                                       int_handle->traceExecution);
         if (ret == NIXL_SUCCESS) {
-            nixlUcxReq req;
-            ret = sendNotif(std::move(notif), int_handle->getEp(), &req);
-            if (int_handle->append(ret, req) != NIXL_SUCCESS) {
+            ret = int_handle->sendNotif();
+            if (ret != NIXL_SUCCESS) {
                 return ret;
             }
 
+            recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle);
             ret = int_handle->status();
-        } else if (ret == NIXL_IN_PROG) {
-            int_handle->notif = std::move(notif);
         }
     }
 
@@ -660,14 +708,12 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
         return handle_status;
     }
 
-    nixlUcxReq req;
-    const nixl_status_t status = sendNotif(std::move(int_handle->notif), int_handle->getEp(), &req);
-    int_handle->notif.clear();
-
-    if (int_handle->append(status, req) != NIXL_SUCCESS) {
+    const nixl_status_t status = int_handle->sendNotif();
+    if (status != NIXL_SUCCESS) {
         return status;
     }
 
+    recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle);
     return int_handle->status();
 }
 
@@ -702,10 +748,39 @@ nixlUcxEngine::progressLoop() {
  * Notifications
 *****************************************/
 
+namespace {
+
+static_assert(std::endian::native == std::endian::little);
+
+struct requestTag {
+    std::uint64_t requestId;
+    std::uint64_t execution;
+};
+
+void
+addRequestTag(nixlSerDes &ser_des, std::uint64_t request_id, std::uint64_t execution) {
+    const requestTag tag{request_id, execution};
+    ser_des.addBuf("treq", &tag, sizeof(tag));
+}
+
+void
+readRequestTag(nixlSerDes &ser_des, nixl::ucx::notifMessage &notif) {
+    requestTag tag;
+    if ((ser_des.peekBufLen("treq") == sizeof(tag)) &&
+        (ser_des.getBuf("treq", &tag, sizeof(tag)) == NIXL_SUCCESS) && (tag.requestId != 0)) {
+        notif.traceRequestId = tag.requestId;
+        notif.traceExecution = tag.execution;
+    }
+}
+
+} // namespace
+
 std::string
 nixl::ucx::serializeNotif(const std::string &agent,
                           const std::string &msg,
-                          const nixl::trace::TraceContext *trace_context) {
+                          const nixl::trace::TraceContext *trace_context,
+                          std::uint64_t request_id,
+                          std::uint64_t execution) {
     nixlSerDes ser_des;
 
     ser_des.addStr("name", agent);
@@ -714,9 +789,12 @@ nixl::ucx::serializeNotif(const std::string &agent,
         std::array<std::uint8_t, nixl::trace::traceContextWireSize> record;
         if (const auto size = nixl::trace::encodeTraceContext(*trace_context, record)) {
             ser_des.addBuf("tctx", record.data(), *size);
+            if (request_id != 0) {
+                addRequestTag(ser_des, request_id, execution);
+            }
         }
     }
-    return ser_des.exportStr();
+    return std::move(ser_des).exportMoveStr();
 }
 
 nixl::ucx::notifMessage
@@ -734,6 +812,7 @@ nixl::ucx::deserializeNotif(const std::string &buffer, bool with_trace_context) 
             (nixl::trace::decodeTraceContext(record, context) ==
              nixl::trace::WireDecodeResult::Ok)) {
             notif.traceContext = context;
+            readRequestTag(ser_des, notif);
         }
     }
     return notif;
@@ -741,14 +820,11 @@ nixl::ucx::deserializeNotif(const std::string &buffer, bool with_trace_context) 
 
 std::string
 nixlUcxEngine::buildNotif(const std::string &msg,
-                          const nixl::trace::TraceContext *trace_context) const {
+                          const nixl::trace::TraceContext *trace_context,
+                          std::uint64_t request_id,
+                          std::uint64_t execution) const {
     // TODO: replace with mpool for performance
-    return nixl::ucx::serializeNotif(localAgent, msg, trace_context);
-}
-
-nixl_status_t
-nixlUcxEngine::sendNotif(std::string &&msg, const nixlUcxEp &ep, nixlUcxReq *req) {
-    return ep.sendAm(nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(msg), UCP_AM_SEND_FLAG_EAGER, req);
+    return nixl::ucx::serializeNotif(localAgent, msg, trace_context, request_id, execution);
 }
 
 nixl_status_t
@@ -756,7 +832,8 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::string &msg,
                              const nixlUcxEp &ep,
                              nixlUcxReq *req) const {
-    return sendNotif(buildNotif(msg, nullptr), ep, req);
+    return ep.sendAm(
+        nixl::ucx::am_cb_op_t::NOTIF_STR, buildNotif(msg, nullptr), UCP_AM_SEND_FLAG_EAGER, req);
 }
 
 ucx_connection_ptr_t
@@ -788,8 +865,13 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
         nixl::ucx::deserializeNotif(ser_str, engine->traceSink_ != nullptr);
     if ((engine->traceSink_ != nullptr) && notif.traceContext && notif.traceContext->sampled()) {
         const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", notif.agent}};
-        engine->traceSink_->recordPhase(
-            nixl_trace_phase_t::NOTIF_RECEIVED, {}, nixlTime::getUs(), attrs, &*notif.traceContext);
+        engine->traceSink_->recordPhase(nixl_trace_phase_t::NOTIF_RECEIVED,
+                                        {},
+                                        nixlTime::getUs(),
+                                        attrs,
+                                        &*notif.traceContext,
+                                        notif.traceRequestId,
+                                        notif.traceExecution);
     }
 
     engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
@@ -866,9 +948,8 @@ nixlUcxEngine::prepMemViewImpl(const DlistT &dlist,
         return NIXL_ERR_BACKEND;
     }
 
-    // Device code reaches an implementation through the handle, not through a
-    // build-time choice, so what leaves here is a tagged wrapper rather than
-    // the bare backend handle.
+    // Device code takes the backend handle out of a tagged wrapper: the tag picks the
+    // implementation at run time, or checks a mode a caller fixed at compile time.
     const nixl_status_t status =
         nixl::deviceMemViewAllocate(*ops, nixl_device_exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
     if (status != NIXL_SUCCESS) {
