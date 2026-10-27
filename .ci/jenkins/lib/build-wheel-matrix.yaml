@@ -68,15 +68,15 @@ timeout_minutes: 240
 # Container Registry Configuration
 # =============================================================================
 # Artifactory registry for storing build artifacts and base images
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
   - credentialsId: 'svc-nixl-github-read-only-token'
     usernameVariable: 'NIXL_GITHUB_USER'
     passwordVariable: 'NIXL_GITHUB_TOKEN'
-  - credentialsId: 'svc-nixl-new-artifactory-token'
+  - credentialsId: 'svc-nixl-il-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
 
@@ -87,7 +87,6 @@ credentials:
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   # 24GB memory and 16 CPU cores for parallel compilation and large builds
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'
@@ -215,7 +214,7 @@ env:
   # Internal HuggingFace mirror the sanity script prefetches the model through. Pulling from
   # huggingface.co directly gets the shared CI egress IP rate-limited (429); the mirror has no
   # such limit and allows anonymous reads, so no token is needed.
-  SANITY_HF_ENDPOINT: "https://urm.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
+  SANITY_HF_ENDPOINT: "https://artifactory.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
   # The vLLM/SGLang upstream bases are pinned to concrete versions in
   # .ci/dockerfiles/Dockerfile.{vllm,sglang}-base and not restated here: an
   # override at this level silently won over the Dockerfile, so the upgrade in
@@ -228,6 +227,10 @@ env:
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
   SLURM_ACCOUNT: oberon-gb-ci
+  # Without a GPU count the site plugin forces exclusive mode (whole idle node)
+  SLURM_GRES: gpu:2
+  SLURM_MEM: 128G
+  SLURM_MINCPUS: 24
   SLURM_JOB_TIMEOUT: '02:00:00'
   SLURM_IMMEDIATE_TIMEOUT: "3600"
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
@@ -274,7 +277,7 @@ steps:
   # egress workaround is needed here.
   - name: Prepare
     containerSelector: "{name: 'manylinux'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       # Setup podman and dependencies
@@ -292,7 +295,7 @@ steps:
   # to the pod's host network.
   - name: Prepare
     containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       # Setup podman and dependencies
@@ -345,7 +348,7 @@ steps:
   # Tagged by BUILD_NUMBER.
   - name: Build sanity image
     containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       set -eux
@@ -396,7 +399,10 @@ steps:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       extraArgs: [
-        "--account=${SLURM_ACCOUNT}"
+        "--account=${SLURM_ACCOUNT}",
+        "--gres=${SLURM_GRES}",
+        "--mem=${SLURM_MEM}",
+        "--mincpus=${SLURM_MINCPUS}"
       ]
 
   - name: Sync Container Image

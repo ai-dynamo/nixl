@@ -90,6 +90,16 @@ else
     SUDO=""
 fi
 
+# Install prefixes may live under a root-owned parent (e.g. /opt). Create and
+# own them once up front so the builds below install without sudo; sudo-created
+# dirs would otherwise be root-owned and break later non-sudo steps.
+_prefixes=("$INSTALL_DIR" "$LIBFABRIC_INSTALL_DIR")
+# A pre-installed UCX is not rebuilt, so its prefix is left untouched.
+[ -z "$PRE_INSTALLED_UCX_ENV" ] && _prefixes+=("$UCX_INSTALL_DIR")
+for _prefix in "${_prefixes[@]}"; do
+    $SUDO mkdir -p "$_prefix" && $SUDO chown -R "$(id -u):$(id -g)" "$_prefix"
+done
+
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
@@ -141,6 +151,9 @@ else
                                  protobuf-compiler-grpc \
                                  pybind11-dev \
                                  etcd-server \
+                                 redis-server \
+                                 redis-tools \
+                                 libevent-dev \
                                  net-tools \
                                  iproute2 \
                                  pciutils \
@@ -160,6 +173,31 @@ else
         # Upgrade pip for '--break-system-packages' support
         $SUDO pip3 install --upgrade pip
     fi
+
+    # Build hiredis from source (apt ships 0.14.x on Ubuntu 22.04 and 1.2.0 on
+    # Ubuntu 24.04; build a consistent version everywhere to match contrib/Dockerfile).
+    $SUDO apt-get remove -y libhiredis-dev 2>/dev/null || true
+    HIREDIS_VERSION="1.4.0"
+    ( \
+      cd "${BUILD_TMP}" && \
+      wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+          -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+      tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+      mkdir -p "hiredis-${HIREDIS_VERSION}/build" && \
+      cd "hiredis-${HIREDIS_VERSION}/build" && \
+      cmake .. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=ON && \
+      make -j"$NPROC" && \
+      make install && \
+      $SUDO ldconfig && \
+      pkg-config --atleast-version=1.0.1 hiredis && \
+      cd "${BUILD_TMP}" && \
+      rm -rf "hiredis-${HIREDIS_VERSION}" "hiredis-${HIREDIS_VERSION}.tar.gz" \
+    )
 
     # Install python dependencies and upgrade to latest version
     $SUDO pip3 --no-cache-dir install --break-system-packages \
@@ -270,7 +308,7 @@ else
           -DABSL_PROPAGATE_CXX_STD=ON \
           -DABSL_ENABLE_INSTALL=ON && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig && \
       cd ${BUILD_TMP} && \
       rm -rf abseil-cpp \
@@ -298,7 +336,7 @@ else
           -DgRPC_PROTOBUF_PROVIDER=module \
           -DgRPC_ZLIB_PROVIDER=package && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig && \
       cd ${BUILD_TMP} && \
       rm -rf grpc \
@@ -320,7 +358,7 @@ else
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig \
     )
 
@@ -427,7 +465,7 @@ else
             --without-gdrcopy \
             ${UCX_CUDA_BUILD_ARGS} && \
           make -j"$NPROC" && \
-          $SUDO make -j install-strip && \
+          make -j install-strip && \
           $SUDO ldconfig \
     )
 fi # PRE_INSTALLED_UCX_ENV end
