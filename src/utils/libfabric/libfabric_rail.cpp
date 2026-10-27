@@ -726,6 +726,35 @@ void
 nixlLibfabricRail::cleanup() {
     NIXL_TRACE << "Starting cleanup for rail " << rail_id;
 
+    // STEP 0: Close the tracked memory registrations a consumer never
+    // deregistered, before the endpoint goes away. An MR bound to the endpoint
+    // (FI_MR_ENDPOINT) is a child of that endpoint and must close first, under
+    // the same EP-lock rule deregisterMemory() follows. Every entry still in the
+    // map is referenced: the deregisterMemory() that drops the last reference
+    // erases its entry. Leaving MRs open past the endpoint and domain violates
+    // libfabric's resource lifetime rules and leaks pinned (GDR) memory.
+    // Only tracked MRs are reclaimed here: an untracked MR that a consumer
+    // never deregistered still reaches the domain close, as on main.
+    {
+        const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+        std::unique_lock<std::mutex> ep_lock(ep_mutex_, std::defer_lock);
+        if (info && (info->domain_attr->mr_mode & FI_MR_ENDPOINT)) {
+            ep_lock.lock();
+        }
+        for (auto &entry : mr_cache_) {
+            NIXL_WARN << "MRRC: tracked MR never deregistered, closing it at cleanup on rail "
+                      << rail_id << " buffer=" << (void *)entry.first
+                      << " ref_count=" << entry.second.ref_count.load(std::memory_order_acquire);
+            const int ret = fi_close(&entry.second.mr->fid);
+            if (ret) {
+                NIXL_WARN << "MRRC: fi_close failed at cleanup on rail " << rail_id << ": "
+                          << fi_strerror(-ret);
+            }
+        }
+        mr_cache_.clear();
+        mr_cache_by_mr_.clear();
+    }
+
     // STEP 1: Close endpoint first to stop any new operations
     if (endpoint) {
         NIXL_TRACE << "Closing endpoint for rail " << rail_id;
@@ -760,29 +789,6 @@ nixlLibfabricRail::cleanup() {
     // This ensures all memory registrations (MRs) are properly deregistered before domain closure
     NIXL_TRACE << "Cleaning up request pools for rail " << rail_id;
     control_request_pool_.cleanup();
-
-    // STEP 3b: Close the tracked memory registrations a consumer never
-    // deregistered, before the domain goes away. Every entry still in the map
-    // is referenced: the deregisterMemory() that drops the last reference
-    // erases its entry. Closing the domain with MRs still open violates
-    // libfabric's resource lifetime rules and leaks pinned (GDR) memory.
-    // Only tracked MRs are reclaimed here: an untracked MR that a consumer
-    // never deregistered still reaches the domain close, as on main.
-    {
-        const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
-        for (auto &entry : mr_cache_) {
-            NIXL_WARN << "MRRC: tracked MR never deregistered, closing it at cleanup on rail "
-                      << rail_id << " buffer=" << (void *)entry.first
-                      << " ref_count=" << entry.second.ref_count.load(std::memory_order_acquire);
-            const int ret = fi_close(&entry.second.mr->fid);
-            if (ret) {
-                NIXL_WARN << "MRRC: fi_close failed at cleanup on rail " << rail_id << ": "
-                          << fi_strerror(-ret);
-            }
-        }
-        mr_cache_.clear();
-        mr_cache_by_mr_.clear();
-    }
 
     // STEP 4: Close domain AFTER all MRs, endpoint, CQ, AV are closed
     if (domain) {
