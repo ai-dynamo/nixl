@@ -147,7 +147,20 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     constexpr int kNumChunks = kHiddenVec / kChunkVec;
     constexpr int kNumBytesPerChunk = kChunkVec * static_cast<int>(sizeof(combine_vec_t));
     EP_STATIC_ASSERT(kNumChunks * kNumBytesPerChunk == kNumHiddenBytes, "Invalid chunking");
-    const int num_items_per_token = is_direct ? kNumChunks : 1;
+    // Direct, small batch: 512-byte items (`kSmallBatchChunkVec` vectors, 28 per BF16 7168 row) plus one item for the top-k weight
+    // write: each lane loads one int4 per source row, so a warp's row loads are one batch (`kBatchRowLoads`), and the weights leave
+    // the reduce critical path. The per-item costs (token preprocessing, TMA wait / fence / commit) are paid 4x per byte against
+    // the 2 KB chunks, so the split serves at most `kNumMaxSmallBatchTokens` tokens per rank; larger direct batches keep the chunk
+    // items above. Same slots, same per-element order. The predicate is block-uniform: `num_combined_tokens` is a kernel argument
+    constexpr int kSmallBatchChunkVec = 32;
+    constexpr int kNumSmallBatchChunks = kHiddenVec / kSmallBatchChunkVec;
+    constexpr int kNumBytesPerSmallBatchChunk = kSmallBatchChunkVec * static_cast<int>(sizeof(combine_vec_t));
+    EP_STATIC_ASSERT(kNumSmallBatchChunks * kNumBytesPerSmallBatchChunk == kNumHiddenBytes, "Invalid small-batch chunking");
+    constexpr int kNumMaxSmallBatchTokens = 16;
+    const bool is_small_batch = is_direct and num_combined_tokens <= kNumMaxSmallBatchTokens;
+    const int num_items_per_token = not is_direct ? 1 :
+        is_small_batch ? kNumSmallBatchChunks + (combined_topk_weights != nullptr ? 1 : 0) : kNumChunks;
+    const int num_bytes_per_chunk = is_small_batch ? kNumBytesPerSmallBatchChunk : kNumBytesPerChunk;
     const int num_work_items = num_combined_tokens * num_items_per_token;
 
     // The warp's first token, preprocessed before the dependency wait (a warp-uniform condition)
@@ -172,6 +185,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     for (int item_idx = global_warp_idx; item_idx < num_work_items; item_idx += kNumWarps * kNumSMs) {
         const int token_idx = item_idx / num_items_per_token;
         const int chunk_begin = item_idx % num_items_per_token;   // the item's chunk (direct); 0 for hybrid's whole row
+        const bool is_weights_item = is_small_batch and chunk_begin == kNumSmallBatchChunks;
         // Preprocess all indices (the first token was done above)
         if (token_idx != cached_token_idx) {
             token_indices = preprocess_token(token_idx);
@@ -231,6 +245,15 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
             auto* dst_ptr = static_cast<combine_vec_t*>(tma_buffer.get_base_ptr());
             auto* bias_0_ptr = bias_0 == nullptr ? nullptr : static_cast<combine_vec_t*>(bias_0_buffer.get_token_buffer(token_idx).get_base_ptr());
             auto* bias_1_ptr = bias_1 == nullptr ? nullptr : static_cast<combine_vec_t*>(bias_1_buffer.get_token_buffer(token_idx).get_base_ptr());
+            if (is_small_batch) {
+                // This item's 512-byte chunk, one vector per lane, every row load in flight before the row accumulation
+                const int vec_offset = chunk_begin * kSmallBatchChunkVec;
+                combine_reduce<kSmallBatchChunkVec, 1, kNumTokensInLayout, true>(
+                    lane_idx, topk_slot_idx, dst_ptr + vec_offset,
+                    [=](const int& slot_idx) { return src_ptr(slot_idx) + vec_offset; }, wait_tma_buffer,
+                    bias_0_ptr == nullptr ? nullptr : bias_0_ptr + vec_offset, bias_1_ptr == nullptr ? nullptr : bias_1_ptr + vec_offset);
+                return;
+            }
             // Direct: this item's chunk; hybrid: the whole row, chunk by chunk through the same instantiation. The staging buffer is
             // released once, before the first chunk's write: the row's TMA store is issued after the loop
             const int chunk_end = is_direct ? chunk_begin + 1 : kNumChunks;
@@ -244,27 +267,29 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
                     bias_0_ptr == nullptr ? nullptr : bias_0_ptr + vec_offset, bias_1_ptr == nullptr ? nullptr : bias_1_ptr + vec_offset);
             }
         };
-        switch (num_tokens_in_layout) {
-            case 1: reduce_with.template operator()<1>(); break;
-            case 2: reduce_with.template operator()<2>(); break;
-            case 4: reduce_with.template operator()<(kNumTopk >= 4 ? 4 : kNumTopk)>(); break;
-            default: reduce_with.template operator()<kNumTopk>(); break;
-        }
-        ptx::tma_store_fence();
-        __syncwarp();
+        if (not is_weights_item) {
+            switch (num_tokens_in_layout) {
+                case 1: reduce_with.template operator()<1>(); break;
+                case 2: reduce_with.template operator()<2>(); break;
+                case 4: reduce_with.template operator()<(kNumTopk >= 4 ? 4 : kNumTopk)>(); break;
+                default: reduce_with.template operator()<kNumTopk>(); break;
+            }
+            ptx::tma_store_fence();
+            __syncwarp();
 
-        // Issue TMA copy
-        if (ptx::elect_one_sync()) {
-            const int byte_offset = chunk_begin * kNumBytesPerChunk;
-            const int num_bytes = is_direct ? kNumBytesPerChunk : kNumHiddenBytes;
-            ptx::tma_store_1d(math::advance_ptr<int8_t>(output_buffer.get_token_buffer(token_idx).get_base_ptr(), byte_offset),
-                              math::advance_ptr<int8_t>(tma_buffer.get_base_ptr(), byte_offset), num_bytes);
-            ptx::tma_store_commit();
+            // Issue TMA copy
+            if (ptx::elect_one_sync()) {
+                const int byte_offset = chunk_begin * num_bytes_per_chunk;
+                const int num_bytes = is_direct ? num_bytes_per_chunk : kNumHiddenBytes;
+                ptx::tma_store_1d(math::advance_ptr<int8_t>(output_buffer.get_token_buffer(token_idx).get_base_ptr(), byte_offset),
+                                  math::advance_ptr<int8_t>(tma_buffer.get_base_ptr(), byte_offset), num_bytes);
+                ptx::tma_store_commit();
+            }
+            __syncwarp();
         }
-        __syncwarp();
 
-        // Write top-k weights
-        if (combined_topk_weights != nullptr and chunk_begin == 0) {
+        // Write top-k weights (small-batch direct: the token's weights item; otherwise the token's first item)
+        if (combined_topk_weights != nullptr and (is_small_batch ? is_weights_item : chunk_begin == 0)) {
             const auto master_lane_idx = ptx::get_master_lane_idx(ptx::match(stored_dst_rank_idx));
             if (lane_idx < kNumTopk) {
                 float value = 0;

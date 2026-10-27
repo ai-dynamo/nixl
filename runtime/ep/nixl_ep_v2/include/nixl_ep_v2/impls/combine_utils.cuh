@@ -74,7 +74,11 @@ void compute_topk_slots(int (&topk_slot_idx)[kNumValidTopk], uint32_t mask,
     }
 }
 
-template <int kHiddenVec, int kUnrollFactor, int kNumExpectedTopk, int kNumValidTopk,
+// `kBatchRowLoads`: issue every slot's row loads before the row accumulation (the bias, when present, is added first as in the
+// unflagged path; the bypass path batches its loads already), so a warp's row loads are one batch in flight; a negative slot loads
+// zeros instead of ending the loop. For short rows: one vector per lane per trip (`kUnrollFactor` 1, asserted below). The flag
+// precedes the deduced parameters so that callers name it positionally; a defaulted template parameter may precede deduced ones
+template <int kHiddenVec, int kUnrollFactor, int kNumExpectedTopk, bool kBatchRowLoads = false, int kNumValidTopk,
           typename vec_t, typename get_src_buffer_ptr_func_t, typename wait_buffer_func_t>
 __device__ __forceinline__
 void combine_reduce(const int& lane_idx, int (&topk_slot_idx)[kNumValidTopk],
@@ -85,6 +89,7 @@ void combine_reduce(const int& lane_idx, int (&topk_slot_idx)[kNumValidTopk],
     constexpr int kNumElemsPerVec = sizeof(vec_t) / sizeof(nv_bfloat16);
     EP_STATIC_ASSERT(kNumElemsPerVec % 2 == 0, "Invalid number of elements");
     EP_STATIC_ASSERT(kHiddenVec % (kUnrollFactor * 32) == 0, "Invalid unrolling");
+    EP_STATIC_ASSERT(not kBatchRowLoads or kUnrollFactor == 1, "Batched row loads keep one vector per lane per slot");
 
     // We use BF16 add as much as possible, as casting is slow
     const bool enable_hadd_bypass =
@@ -151,26 +156,47 @@ void combine_reduce(const int& lane_idx, int (&topk_slot_idx)[kNumValidTopk],
             bias_0 != nullptr ? add_bias(bias_0) : void();
             bias_1 != nullptr ? add_bias(bias_1) : void();
 
-            #pragma unroll
-            for (int k = 0; k < kNumValidTopk; ++ k) {
-                // We have a limitation on `k` to reduce the branch instruction count
-                if (k >= kNumExpectedTopk and topk_slot_idx[k] < 0)
-                    break;
-
-                // Read values
-                const auto src_base_ptr = get_src_buffer_ptr_func(topk_slot_idx[k]);
-                vec_t values[kUnrollFactor] = {};
+            if constexpr (kBatchRowLoads) {
+                // Every slot's loads first, then the accumulation
+                vec_t values[kNumValidTopk][kUnrollFactor];
                 #pragma unroll
-                for (int j = 0; j < kUnrollFactor; ++ j) {
-                    values[j] = ptx::ldg_with_gez_pred(
-                        src_base_ptr + (i * (kUnrollFactor * 32) + j * 32 + lane_idx), topk_slot_idx[k]);
+                for (int k = 0; k < kNumValidTopk; ++ k) {
+                    const auto src_base_ptr = get_src_buffer_ptr_func(topk_slot_idx[k]);
+                    #pragma unroll
+                    for (int j = 0; j < kUnrollFactor; ++ j) {
+                        values[k][j] = ptx::ldg_with_gez_pred(
+                            src_base_ptr + (i * (kUnrollFactor * 32) + j * 32 + lane_idx), topk_slot_idx[k]);
+                    }
                 }
-
-                // Reduce
-                const auto bf162_view = reinterpret_cast<nv_bfloat162*>(values);
                 #pragma unroll
-                for (int j = 0; j < kUnrollFactor * kNumElemsPerVec / 2; ++ j)
-                    ptx::accumulate(reduced[j], bf162_view[j]);
+                for (int k = 0; k < kNumValidTopk; ++ k) {
+                    const auto bf162_view = reinterpret_cast<nv_bfloat162*>(values[k]);
+                    #pragma unroll
+                    for (int j = 0; j < kUnrollFactor * kNumElemsPerVec / 2; ++ j)
+                        ptx::accumulate(reduced[j], bf162_view[j]);
+                }
+            } else {
+                #pragma unroll
+                for (int k = 0; k < kNumValidTopk; ++ k) {
+                    // We have a limitation on `k` to reduce the branch instruction count
+                    if (k >= kNumExpectedTopk and topk_slot_idx[k] < 0)
+                        break;
+
+                    // Read values
+                    const auto src_base_ptr = get_src_buffer_ptr_func(topk_slot_idx[k]);
+                    vec_t values[kUnrollFactor] = {};
+                    #pragma unroll
+                    for (int j = 0; j < kUnrollFactor; ++ j) {
+                        values[j] = ptx::ldg_with_gez_pred(
+                            src_base_ptr + (i * (kUnrollFactor * 32) + j * 32 + lane_idx), topk_slot_idx[k]);
+                    }
+
+                    // Reduce
+                    const auto bf162_view = reinterpret_cast<nv_bfloat162*>(values);
+                    #pragma unroll
+                    for (int j = 0; j < kUnrollFactor * kNumElemsPerVec / 2; ++ j)
+                        ptx::accumulate(reduced[j], bf162_view[j]);
+                }
             }
 
             // Wait buffer releases for the first write
