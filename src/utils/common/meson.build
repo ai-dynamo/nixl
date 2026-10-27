@@ -27,6 +27,7 @@ nixl_common_deps = [
     absl_synchronization_dep,
     tomlplusplus_dep,
     dependency('asio', required: true),
+    thread_dep,
 ]
 
 # Get git commit hash

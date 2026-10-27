@@ -61,6 +61,10 @@ if libtransfer_engine.found() and not disable_mooncake_backend and 'Mooncake' in
     nixl_lib_deps += [ mooncake_backend_interface, cuda_dep ]
 endif
 
+if 'TCPXO' in static_plugins and is_variable('tcpxo_backend_interface')
+    nixl_lib_deps += [ tcpxo_backend_interface ]
+endif
+
 # Tracing (nixl::trace). Only the facade (tracer.cpp) and the plugin loader are
 # compiled into libnixl; each backend ships as a separate .so plugin under
 # src/plugins/tracing, loaded on demand by nixlPluginManager.
