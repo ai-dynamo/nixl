@@ -126,9 +126,10 @@ struct WorkspaceLayout {
     static constexpr int64_t kNumTakeCounterBytes = 128;
     // Profile slots: stamps below 32 (ns, `%globaltimer`), accumulators and counts above; `read_profile()` zeroes all.
     // Dispatch stamps: 0 entry, 1 entry sync done (hybrid: start barrier; peer-signalled direct: READY published; zero copy: none),
-    // 8 token counting done, 2 grid reduction done, 3/4 peer count writes issued / counts received (direct), 18/19 around one
-    // thread's count put, 20 scale-out count put issued, 21 rank counts received and forwarded, 22 expert counts received and
-    // forwarded (18 to 22 hybrid), 5 prefix sums done, 6 end reached (SM 0), 7 end done (peer-signalled direct: last warp done,
+    // 8 token counting done, 2 grid reduction done, 3/4 peer count writes issued / counts received (direct; peer-signalled: 3 -> 4
+    // includes SM 0's end-sequence hold for its data warps), 18/19 around one thread's count put, 20 scale-out count put issued,
+    // 21 rank counts received and forwarded, 22 expert counts received and forwarded (18 to 22 hybrid), 5 prefix sums done, 6 end
+    // reached by SM 0 thread 0 (peer-signalled: its end sequence already ran), 7 end done (peer-signalled direct: last warp done,
     // max over warps; otherwise SM 0 past the end barrier), 9 a barrier's start grid sync done (not stamped by the peer-signalled
     // direct kernels), 10/11 first/last data warp of SM 0 done (direct) or last scale-out sender / last forward warp done (hybrid,
     // max over warps).

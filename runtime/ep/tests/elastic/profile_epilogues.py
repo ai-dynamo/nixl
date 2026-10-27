@@ -58,6 +58,7 @@ DISPATCH_PHASES = [  # (name, from slot, to slot); from slot -1: an accumulator,
     ("bar0", 0, 1),
     ("count", 1, 8),
     ("reduce", 8, 2),
+    # xchg (its 3 -> 4 part): in peer-signalled direct mode includes SM 0's end-sequence hold for its data warps
     ("xchg", 2, 5),
     ("x_put", 2, 20),
     ("x_rank", 20, 21),

@@ -323,6 +323,34 @@ adaptive_dispatch_impl(
         }
     };
 
+    // Peer-signalled end sequence (direct, not zero copy; `comm::active_grid_arrive`): the block's end flush and grid arrival, then
+    // in the grid's last block one warp zeroes the counters, exchanges the ARRIVED words and triggers the copy epilogue. Every
+    // thread of a block runs it exactly once: the data warps and the other SMs' notify warps at the kernel's end, SM 0's notify
+    // warps right after their count stores (below), so the grid arrival and the ARRIVED exchange overlap SM 0's count receive and
+    // prefix sums (the arrival's CTA barrier holds SM 0's notify warps until its data warps arrive, so the count receive follows
+    // SM 0's data phase; the deferred tail lies inside the kernel's duration). The ARRIVED exchange runs on the block's last warp,
+    // a data warp, so notify warp 0 stays free to poll the counts; the kernel's only other exit is the surplus-block return above,
+    // before any barrier
+    constexpr int kArrivedExchangeWarpIndex = kNumWarps - 1;
+    EP_STATIC_ASSERT(kArrivedExchangeWarpIndex >= kNumNotifyWarps, "The ARRIVED exchange warp must be a data warp");
+    bool end_sequence_done = false;
+    const auto end_sequence = [&]() {
+        const bool is_last = comm::active_grid_arrive<kNumThreads, kEndBarrierIndex>(workspace_layout.get_active_grid_barrier_ptr(), num_active_sms);
+        if (is_last and warp_idx == kArrivedExchangeWarpIndex) {
+            // Every block has arrived: no more takes or slot assignments in this launch, so the counters go back to zero
+            if (lane_idx == 0)
+                *workspace_layout.get_take_counter_ptr(0) = 0u;
+            for (int pos = lane_idx; pos < num_scaleup_ranks; pos += 32)
+                workspace_layout.get_scaleup_atomic_sender_counter()[pos] = 0;
+            comm::peer_arrived_exchange_rt<kNumTimeoutCycles, comm::kDirectDispatchTag, kNumMaxScaleupRanks>(transport, workspace_layout, topo, lane_idx);
+            // Trigger the copy epilogue only now: every peer's data has arrived, so no epilogue block parks on an SM while the
+            // peers are still writing (every other block has exited, or, when SM 0 is not the last block, SM 0 exits after its
+            // count receive; an exit counts as triggered)
+            cudaTriggerProgrammaticLaunchCompletion();
+        }
+        end_sequence_done = true;
+    };
+
     // Different warp roles
     if (warp_idx < kNumNotifyWarps) {
         // Assign shared memory
@@ -540,6 +568,12 @@ adaptive_dispatch_impl(
                     // This is necessary, as the waited results will rewrite the shared memory
                     ptx::named_barrier<kNumNotifyThreads>(kNotifyBarrierIndex);
                     EP_PROFILE_STAMP(workspace_layout, 3);
+
+                    // Our outgoing stores (data and counts) are complete once the block's end sequence arrives: SM 0's notify warps
+                    // join it now and continue below while the last block exchanges the ARRIVED words. SM 0's count receive, expert
+                    // stats and host words thus follow its data phase; the copy epilogue reads the prefix sums only after
+                    // `griddepcontrol.wait`, i.e. after this kernel's full completion, these warps included
+                    end_sequence();
 
                     // Wait for rank and expert count: `num_scaleup_ranks` rank slots (writer = position `i`), then the
                     // `num_experts` expert slots (writer = the global rank owning expert `i - num_scaleup_ranks`)
@@ -1464,18 +1498,8 @@ adaptive_dispatch_impl(
     // The end: the peer-signalled end sequence, or the end barrier
     EP_PROFILE_STAMP(workspace_layout, 6);
     if (use_peer_signalling) {
-        const bool is_last = comm::active_grid_arrive<kNumThreads, kEndBarrierIndex>(workspace_layout.get_active_grid_barrier_ptr(), num_active_sms);
-        if (is_last and warp_idx == kNumWarps - 1) {   // the block's last warp
-            // Every block has arrived: no more takes or slot assignments in this launch, so the counters go back to zero
-            if (lane_idx == 0)
-                *workspace_layout.get_take_counter_ptr(0) = 0u;
-            for (int pos = lane_idx; pos < num_scaleup_ranks; pos += 32)
-                workspace_layout.get_scaleup_atomic_sender_counter()[pos] = 0;
-            comm::peer_arrived_exchange_rt<kNumTimeoutCycles, comm::kDirectDispatchTag, kNumMaxScaleupRanks>(transport, workspace_layout, topo, lane_idx);
-            // Trigger the copy epilogue only now: every peer's data has arrived, so no epilogue block parks on an SM while the
-            // peers are still writing (every other block has exited, which counts as triggered)
-            cudaTriggerProgrammaticLaunchCompletion();
-        }
+        if (not end_sequence_done)
+            end_sequence();
         EP_PROFILE_STAMP_LAST(workspace_layout, 7);
         return;
     }
