@@ -146,10 +146,11 @@ nixlbench --backend OBJ \
 
 ### INFINIA
 
-Run a single-instance INFINIA benchmark using a backend configuration file. For the file format and backend requirements, see [INFINIA](/nixl/user-guide/backend-selection/infinia).
+Run a single-instance INFINIA benchmark using NIXL's common TOML configuration file. For the file format and backend requirements, see [INFINIA](/nixl/user-guide/backend-selection/infinia).
 
 ```bash
-nixlbench --backend INFINIA --infinia_config_file /path/to/infinia.conf
+export NIXL_CONFIG_FILE=/path/to/nixl-infinia.toml
+nixlbench --backend INFINIA
 ```
 
 For backend-specific options not listed on this page, see the corresponding backend page in the [User Guide](/nixl/user-guide/backend-selection).

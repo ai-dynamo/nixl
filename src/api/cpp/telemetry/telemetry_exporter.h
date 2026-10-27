@@ -26,10 +26,10 @@
 inline constexpr char telemetryExporterVar[] = "NIXL_TELEMETRY_EXPORTER";
 
 /**
- * @brief Thrown by a telemetry exporter when its scrape endpoint could not bind
- *        its port -- typically a benign multi-process collision. Callers may
- *        catch it to continue without a telemetry sink instead of treating the
- *        failure as fatal.
+ * @brief Thrown when a telemetry exporter cannot set up its sink for a reason the
+ *        process should survive: a port it cannot bind, or a default telemetry
+ *        directory it cannot create or write. Callers may catch it to continue
+ *        without a telemetry sink instead of treating the failure as fatal.
  */
 class nixlTelemetryBindFailed : public std::runtime_error {
 public:

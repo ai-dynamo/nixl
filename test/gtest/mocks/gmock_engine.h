@@ -22,7 +22,14 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
+#include <cstdint>
+#include <mutex>
+#include <optional>
+#include <utility>
+#include <vector>
+
 #include "backend/backend_engine.h"
+#include "tracing/trace_context.h"
 
 namespace mocks {
 
@@ -65,9 +72,25 @@ public:
     static GMockBackendEngine *
     GetFromParams(nixl_b_params_t *params);
 
+    void
+    observeTraceSink(const nixlBackendTraceSink *sink);
+
+    void
+    observeTraceContext(const nixl_opt_b_args_t *opt_args);
+
+    [[nodiscard]] std::optional<const nixlBackendTraceSink *>
+    observedTraceSink() const;
+
+    [[nodiscard]] std::optional<nixl::trace::TraceContext>
+    observedTraceContext() const;
+
+    [[nodiscard]] std::vector<std::pair<std::uint64_t, std::uint64_t>>
+    observedTraceRequests() const;
+
     MOCK_METHOD(bool, supportsRemote, (), (const, override));
     MOCK_METHOD(bool, supportsLocal, (), (const, override));
     MOCK_METHOD(bool, supportsNotif, (), (const, override));
+    MOCK_METHOD(bool, supportsTraceContext, (), (const, noexcept, override));
     MOCK_METHOD(nixl_mem_list_t, getSupportedMems, (), (const, override));
     MOCK_METHOD(nixl_status_t,
                 registerMem,
@@ -157,6 +180,11 @@ private:
     setDefaults();
     void
     setOptionalDefaults();
+
+    mutable std::mutex observedMutex_;
+    std::optional<const nixlBackendTraceSink *> observedTraceSink_;
+    std::optional<nixl::trace::TraceContext> observedTraceContext_;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> observedTraceRequests_;
 };
 
 } // namespace mocks

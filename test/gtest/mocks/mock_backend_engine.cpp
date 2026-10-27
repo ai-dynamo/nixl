@@ -22,7 +22,9 @@ namespace mocks {
 MockBackendEngine::MockBackendEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       gmock_backend_engine(GMockBackendEngine::GetFromParams(init_params->customParams)),
-      sharedState(1) {}
+      sharedState(1) {
+    gmock_backend_engine->observeTraceSink(init_params->traceSink);
+}
 
 nixl_status_t
 MockBackendEngine::registerMem(const nixlBlobDesc &mem,
@@ -64,6 +66,7 @@ MockBackendEngine::prepXfer(const nixl_xfer_op_t &operation,
                             nixlBackendReqH *&handle,
                             const nixl_opt_b_args_t *opt_args) const {
     assert(sharedState > 0);
+    gmock_backend_engine->observeTraceContext(opt_args);
     return gmock_backend_engine->prepXfer(operation, local, remote, remote_agent, handle, opt_args);
 }
 
@@ -75,6 +78,7 @@ MockBackendEngine::postXfer(const nixl_xfer_op_t &operation,
                             nixlBackendReqH *&handle,
                             const nixl_opt_b_args_t *opt_args) const {
     assert(sharedState > 0);
+    gmock_backend_engine->observeTraceContext(opt_args);
     return gmock_backend_engine->postXfer(operation, local, remote, remote_agent, handle, opt_args);
 }
 

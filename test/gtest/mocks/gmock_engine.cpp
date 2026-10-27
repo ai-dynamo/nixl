@@ -80,11 +80,49 @@ GMockBackendEngine::setOptionalDefaults() {
     ON_CALL(*this, queryMem(_, _)).WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
     ON_CALL(*this, estimateXferCost(_, _, _, _, _, _, _, _, _))
         .WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
+    ON_CALL(*this, supportsTraceContext()).WillByDefault(Return(false));
 }
 
 void
 GMockBackendEngine::SetToParams(nixl_b_params_t &params) const {
     params[gmock_engine_key] = std::to_string(reinterpret_cast<uintptr_t>(this));
+}
+
+void
+GMockBackendEngine::observeTraceSink(const nixlBackendTraceSink *sink) {
+    const std::lock_guard lock(observedMutex_);
+    observedTraceSink_ = sink;
+}
+
+void
+GMockBackendEngine::observeTraceContext(const nixl_opt_b_args_t *opt_args) {
+    const std::lock_guard lock(observedMutex_);
+    if (opt_args != nullptr && opt_args->traceContext != nullptr) {
+        observedTraceContext_ = *opt_args->traceContext;
+    } else {
+        observedTraceContext_.reset();
+    }
+    if (opt_args != nullptr) {
+        observedTraceRequests_.emplace_back(opt_args->traceRequestId, opt_args->traceExecution);
+    }
+}
+
+std::optional<const nixlBackendTraceSink *>
+GMockBackendEngine::observedTraceSink() const {
+    const std::lock_guard lock(observedMutex_);
+    return observedTraceSink_;
+}
+
+std::optional<nixl::trace::TraceContext>
+GMockBackendEngine::observedTraceContext() const {
+    const std::lock_guard lock(observedMutex_);
+    return observedTraceContext_;
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>>
+GMockBackendEngine::observedTraceRequests() const {
+    const std::lock_guard lock(observedMutex_);
+    return observedTraceRequests_;
 }
 
 GMockBackendEngine *

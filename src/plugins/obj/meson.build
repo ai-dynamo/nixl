@@ -53,6 +53,10 @@ if cuobj_dep.found()
         's3_accel/dell/engine_impl.h',
     ]
     plugin_deps += [ cuobj_dep ]
+    if cuda_dep.found()
+        plugin_deps += [ cuda_dep ]
+        compile_defs += [ '-DHAVE_CUDA' ]
+    endif
 else
     message('Could not find CUObjClient Library. Skipping S3 Accelerated engines')
 endif

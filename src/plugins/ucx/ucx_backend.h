@@ -19,18 +19,41 @@
 
 #include <vector>
 #include <span>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <atomic>
 #include <chrono>
 #include <poll.h>
 #include <optional>
+#include <utility>
 
 #include "backend/backend_engine.h"
+#include "tracing/trace_context.h"
 
 #include "mem_list.h"
 #include "rkey.h"
 #include "ucx_utils.h"
+
+namespace nixl::ucx {
+struct notifMessage {
+    std::string agent;
+    std::string msg;
+    std::optional<nixl::trace::TraceContext> traceContext;
+    std::uint64_t traceRequestId = 0;
+    std::uint64_t traceExecution = 0;
+};
+
+[[nodiscard]] std::string
+serializeNotif(const std::string &agent,
+               const std::string &msg,
+               const nixl::trace::TraceContext *trace_context,
+               std::uint64_t request_id = 0,
+               std::uint64_t execution = 0);
+
+[[nodiscard]] notifMessage
+deserializeNotif(const std::string &buffer, bool with_trace_context);
+} // namespace nixl::ucx
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
@@ -104,6 +127,11 @@ public:
 
     bool
     supportsNotif() const override {
+        return true;
+    }
+
+    [[nodiscard]] bool
+    supportsTraceContext() const noexcept override {
         return true;
     }
 
@@ -199,6 +227,13 @@ public:
 protected:
     using worker_span_t = std::span<const std::unique_ptr<nixlUcxWorker>>;
 
+    template<typename workerType, typename... argTypes>
+    void
+    addWorker(argTypes &&...args) {
+        workers_.emplace_back(std::make_unique<workerType>(
+            *uc, errHandlingMode_, workers_.size(), std::forward<argTypes>(args)...));
+    }
+
     [[nodiscard]] worker_span_t
     getSharedWorkers() const {
         return {workers_.data(), numSharedWorkers_};
@@ -225,6 +260,11 @@ protected:
         return numSharedWorkers_;
     }
 
+    [[nodiscard]] bool
+    isSglEnabled() const noexcept {
+        return sglEnabled_;
+    }
+
     virtual void
     appendNotif(std::string &&remote_name, std::string &&msg);
 
@@ -242,6 +282,14 @@ protected:
     notif_list_t notifList_;
 
 private:
+    /** Shared by the local and remote prepMemView overloads; kind names which. */
+    template<typename DlistT>
+    nixl_status_t
+    prepMemViewImpl(const DlistT &dlist,
+                    nixlMemViewH &mvh,
+                    const nixl_opt_b_args_t *opt_args,
+                    const char *kind) const;
+
     // Memory management helpers
     nixl_status_t
     internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);
@@ -255,11 +303,11 @@ private:
               size_t length,
               const ucp_am_recv_param_t *param);
 
-    [[nodiscard]] std::unique_ptr<std::string>
-    buildNotif(const std::string &msg) const;
-
-    [[nodiscard]] static nixl_status_t
-    sendNotif(std::unique_ptr<std::string> &&msg, const nixlUcxEp &ep, nixlUcxReq *req);
+    [[nodiscard]] std::string
+    buildNotif(const std::string &msg,
+               const nixl::trace::TraceContext *trace_context,
+               std::uint64_t request_id = 0,
+               std::uint64_t execution = 0) const;
 
     nixl_status_t
     notifSendPriv(const std::string &remote_agent,
@@ -291,9 +339,11 @@ private:
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> workers_;
     size_t numSharedWorkers_;
+    const ucp_err_handling_mode_t errHandlingMode_;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
     const bool sglEnabled_;
+    nixlBackendTraceSink *const traceSink_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
