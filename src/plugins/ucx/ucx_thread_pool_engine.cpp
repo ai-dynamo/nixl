@@ -259,7 +259,9 @@ public:
         nixlUcxBackendReqH::release();
         if (sharedState_) {
             // Set failed status to stop progress chunks
-            sharedState_->status.store(NIXL_ERR_NOT_FOUND);
+            if (sharedState_->pendingReqs.load() != 0) {
+                sharedState_->status.store(NIXL_ERR_NOT_FOUND);
+            }
             // Reset shared state - it will be effectively released when the last chunk
             // resets the shared state pointer
             sharedState_.reset();

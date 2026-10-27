@@ -820,6 +820,7 @@ TEST_F(ucxTraceContextPropagation, PostsWithoutADedicatedThreadRecordNoWireCompl
 
 TEST_F(ucxTraceContextPropagation, ThreadPoolPostReleasedInFlightRecordsNoWireCompleted) {
     const gtest::LogIgnoreGuard released("released with [0-9]+ requests in progress");
+    const gtest::LogIgnoreGuard dropped("dropping [0-9]+ requests on exit");
     nixl::trace::TraceContext context;
     std::uint64_t request_id = 0;
     ASSERT_NO_FATAL_FAILURE(splitWriteToIdleTarget(
