@@ -249,8 +249,9 @@ operation:
 
 The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. UCX emits
-`nixl::submit`, `nixl::wire.submitted`, `nixl::notif.sent` and
-`nixl::notif.received`, described below; libfabric's phases come in later PRs.
+`nixl::submit`, `nixl::wire.submitted`, `nixl::wire.completed`, `nixl::notif.sent`
+and `nixl::notif.received`, described below; libfabric's phases come in later
+PRs.
 
 Recording a phase never fails the transfer: if the trace backend throws, the
 phase is dropped and the first drop per backend is logged. With telemetry
@@ -292,10 +293,11 @@ number as the sender's records of that post, so its correlation id is that span'
 Writes and reads without a notification give the receiver nothing to observe, so
 they are traced on the sender only.
 
-On the sender, UCX records up to three phases for every post of a sampled request,
+On the sender, UCX records up to four phases for every post of a sampled request,
 each under that post's context: `nixl::submit` when `postXfer` accepts the
 post, `nixl::wire.submitted` once all of its puts or gets and the flushes behind
-them are posted to UCX, and `nixl::notif.sent` when the notification is posted.
+them are posted to UCX, `nixl::notif.sent` when the notification is posted, and,
+for the posts named below, `nixl::wire.completed` when the transfer completes.
 If handing a validated post to UCX fails, at a put, a get or the flush, for
 example because the peer disconnected, only `nixl::submit` is recorded.
 The notification goes out from `postXfer` if the transfer has already completed,
@@ -388,10 +390,13 @@ The two-process test starts its receiver agent as a separate executable,
 `ucx_trace_receiver`, which is built and installed next to `gtest`, and checks the
 spans both agents record against the sender's request; with `-Dwith_trace=false`,
 which compiles the sender's `postXferReq` span out, it checks only the phases, which
-go through the sink either way. Five single-process tests in the same suite check
+go through the sink either way. Nine single-process tests in the same suite check
 the phases. Transfers to the agent itself, on the default and the
 thread-pool engine, record `nixl::submit` and `nixl::wire.submitted` once per post
-and `nixl::notif.sent` once per notifying post. A transfer to a second agent that
+and `nixl::notif.sent` once per notifying post. A transfer split across the
+thread-pool engine's dedicated workers also records one `nixl::wire.completed` per
+post, before a late status check, and none when released in flight; an unsplit one
+and one on the default engine record none. A transfer to a second agent that
 nothing progresses cannot finish inside `postXfer`, so its `notif.sent` must come
 from the status check. An unsampled request, or an agent with tracing off, records
 none of them. An agent that sends itself two notifications records
