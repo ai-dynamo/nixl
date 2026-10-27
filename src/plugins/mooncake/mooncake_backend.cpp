@@ -78,6 +78,18 @@ chooseIpAddress() {
     return nixl::config::getValueDefaulted("NIXL_MOONCAKE_IP_ADDR", fallback);
 }
 
+// BATCH_CLEANUP_DEFERRED in newer transfer_engine_c.h: the engine took over a
+// batch that is still busy and frees it once its requests drain.
+constexpr int kBatchCleanupDeferred = 5;
+
+void
+freeBatch(transfer_engine_t engine, uint64_t batch_id) {
+    const int rc = freeBatchID(engine, batch_id);
+    if (rc != 0 && rc != kBatchCleanupDeferred) {
+        NIXL_WARN << "Mooncake freeBatchID failed with " << rc << ", leaking batch " << batch_id;
+    }
+}
+
 } // namespace
 
 nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
@@ -289,7 +301,14 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
     } else {
         rc = submitTransfer(engine_, priv->batch_id, request.data(), request_count);
     }
-    if (rc) return NIXL_ERR_BACKEND;
+    if (rc) {
+        // A failed submit can leave queued requests behind. Hand the batch back
+        // so a repost starts fresh; engines without deferred cleanup leak it.
+        freeBatch(engine_, priv->batch_id);
+        priv->batch_id = INVALID_BATCH;
+        priv->request_count = 0;
+        return NIXL_ERR_BACKEND;
+    }
     priv->request_count += request_count;
     return NIXL_IN_PROG;
 }
@@ -318,7 +337,7 @@ nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
         // Each batch_id has the batch size, and cannot process more requests
         // than the batch size. So, free the batch id here to workaround the issue
         // where the same nixlBackendReqH could be used to post multiple transfer.
-        freeBatchID(engine_, priv->batch_id);
+        freeBatch(engine_, priv->batch_id);
         priv->batch_id = INVALID_BATCH;
         priv->request_count = 0;
     }
@@ -329,7 +348,7 @@ nixl_status_t
 nixlMooncakeEngine::releaseReqH(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
     if (priv->batch_id != INVALID_BATCH) {
-        freeBatchID(engine_, priv->batch_id);
+        freeBatch(engine_, priv->batch_id);
     }
     delete priv;
     return NIXL_SUCCESS;
