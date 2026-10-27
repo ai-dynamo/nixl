@@ -47,6 +47,7 @@ buffer.disconnect_ranks(ranks)
 - `Buffer(rank_id, ...)`: Initialize the NIXL communication buffer
 - `update_memory_buffers(num_ranks, num_experts_per_rank, num_rdma_bytes)`: Prepare buffers for up to `num_ranks` ranks and `num_experts_per_rank` experts
   - `init_transport=False` allocates the buffers and device context without a NIXL agent or UCX state, so a process can capture CUDA graphs and be checkpointed before it joins. `init_transport()` or the first `connect_ranks` starts the transport.
+- `set_rank(rank)`: Move a buffer whose transport has not started to another rank. Kernels read the rank from device memory, so CUDA graphs captured before the move stay valid.
 - `connect_ranks(remote_ranks, activate=True)`: Establish NIXL connections to new peers (can be called multiple times); use `activate=False` to keep new peers masked until explicitly unmasked.
 - `disconnect_ranks(remote_ranks)`: Clean up connections to departing peers
 

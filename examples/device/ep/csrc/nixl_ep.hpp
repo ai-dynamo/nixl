@@ -170,6 +170,8 @@ public:
     // deferred it. Idempotent. connect_ranks calls it.
     void init_transport();
 
+    void set_rank(int new_rank);
+
     void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, bool activate = true);
 
     void disconnect_ranks(const std::vector<int>& remote_ranks_list);

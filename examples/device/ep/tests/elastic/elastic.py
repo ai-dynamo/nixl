@@ -511,8 +511,10 @@ def worker(torch_rank: int, args: argparse.Namespace):
     if local_rank == 0:
         print(f"Allocating buffer size: {num_rdma_bytes / 1e6} MB ...", flush=True)
 
+    # A rank can be built as another rank and moved before it connects.
+    initial_rank = (global_rank + args.initial_rank_offset) % max_num_ranks
     buffer = nixl_ep.Buffer(
-        rank=global_rank,
+        rank=initial_rank,
         disable_ll_nvlink=args.disable_ll_nvlink,
         explicitly_destroy=True,
         tcp_store_group=tcp_store,
@@ -524,6 +526,8 @@ def worker(torch_rank: int, args: argparse.Namespace):
         num_rdma_bytes=num_rdma_bytes,
         init_transport=not args.defer_transport,
     )
+    if initial_rank != global_rank:
+        buffer.set_rank(global_rank)
     signal.signal(
         signal.SIGTERM,
         partial(handle_sigterm, buffer=buffer, plan=plan, rank_client=rank_client),
@@ -675,12 +679,21 @@ def main():
         help="Allocate buffers without a NIXL agent; the first connect_ranks creates it",
     )
     parser.add_argument(
+        "--initial-rank-offset",
+        type=non_negative_int,
+        default=0,
+        help="Build each buffer as rank (rank + offset) %% max ranks and move it with "
+        "set_rank before connecting; requires --defer-transport",
+    )
+    parser.add_argument(
         "--validate-phase-failures",
         action="store_true",
         help="Enable strict phase-local validation of observed rank failures against the plan",
     )
 
     args = parser.parse_args()
+    if args.initial_rank_offset and not args.defer_transport:
+        parser.error("--initial-rank-offset requires --defer-transport")
 
     if not args.tcp_server:
         print("Starting TCPStore and rank server locally", flush=True)

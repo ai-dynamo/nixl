@@ -85,6 +85,8 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
          int num_warp_groups, int num_warps_per_group,
          bool round_scale, uint64_t timeout_cycles, int phases, nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
     auto nixl_ctx = *nixl_ctx_ptr;
+    // The rank lives in device memory so a captured graph follows Buffer::set_rank.
+    rank = nixl_ctx.rank;
     const auto sm_id = static_cast<int>(blockIdx.x);
     const auto thread_id = static_cast<int>(threadIdx.x);
     const auto warp_id = thread_id / 32, lane_id = get_lane_id();
@@ -631,6 +633,8 @@ combine(void* combined_x,
         int num_warp_groups, int num_warps_per_group,
         uint64_t timeout_cycles, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
     auto nixl_ctx = *nixl_ctx_ptr;
+    // The rank lives in device memory so a captured graph follows Buffer::set_rank.
+    rank = nixl_ctx.rank;
     const auto sm_id = __shfl_sync(0xffffffff, static_cast<int>(blockIdx.x), 0);
     const auto num_sms = __shfl_sync(0xffffffff, static_cast<int>(gridDim.x), 0);
     const auto thread_id = static_cast<int>(threadIdx.x);
