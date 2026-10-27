@@ -95,20 +95,15 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     const auto bias_0_buffer = layout::BufferLayout<false>(output_token_layout, 1, num_combined_tokens, bias_0);
     const auto bias_1_buffer = layout::BufferLayout<false>(output_token_layout, 1, num_combined_tokens, bias_1);
 
-    // Will block until the main combine kernel has finished and all data are visible
-    // NOTES: PDL is used, please do not use `__ldg`
-    cudaGridDependencySynchronize();
-
-    // Profile slots 16/17: epilogue work start (block 0) / last block done
-#ifdef EP_ADAPTIVE_PROFILE
-    const auto profile_layout = layout::WorkspaceLayout(workspace, num_scaleout_ranks, num_scaleup_ranks, num_ranks * kNumExpertsPerRank);
-    EP_PROFILE_STAMP(profile_layout, 16);
-#endif
-
-    // Read from buffers and do reduction
-    for (int token_idx = global_warp_idx; token_idx < num_combined_tokens; token_idx += kNumWarps * kNumSMs) {
-        // Preprocess all indices
-        // NOTES: the "destination rank" here is the rank owning the expert: its domain (hybrid) or its position (direct)
+    // Per-token preprocessing of the top-k indices, warp-collective (every lane calls it, lane `l` handles selection `l`). It reads
+    // only `combined_topk_idx` (an input of the combine; no kernel of this launch pair writes it) and the topology descriptor, never
+    // the receive rows, so a warp's first token is preprocessed before the dependency wait, off the post-trigger critical path
+    // NOTES: the "destination rank" here is the rank owning the expert: its domain (hybrid) or its position (direct)
+    struct TokenIndices {
+        int stored_dst_rank_idx;
+        unsigned reduce_valid_mask;
+    };
+    const auto preprocess_token = [&](const int& token_idx) -> TokenIndices {
         int stored_dst_rank_idx = -1, stored_dst_expert_idx = -1;
         EP_STATIC_ASSERT(kNumTopk <= 32, "Too many top-k selections");
         if (lane_idx < kNumTopk) {
@@ -135,9 +130,55 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
                 return {true, stored_dst_rank_idx};
             }
         }();
-        auto reduce_valid_mask = should_deduplicate ?
+        const auto reduce_valid_mask = should_deduplicate ?
             ptx::gather(ptx::deduplicate(deduplicate_key, lane_idx) and stored_dst_rank_idx >= 0) :
             ptx::gather(stored_dst_rank_idx >= 0);
+        return {stored_dst_rank_idx, reduce_valid_mask};
+    };
+
+    // Hidden-dimension chunking (direct only): a work item is one (token, chunk) pair, `kChunkVec` vectors wide, so a token's row
+    // is reduced by `kNumChunks` warps on different SMs. Bit-exact with the one-warp row: the slot order and the bypass choice depend
+    // only on the token's indices, and every chunk reduces its own disjoint slice. Hybrid keeps one warp per token (its flag wait,
+    // spill restore and flag clear are per row)
+    using combine_vec_t = typename CombineVecTraits<kNumHiddenBytes>::vec_t;
+    constexpr int kHiddenVec = kNumHiddenBytes / sizeof(combine_vec_t);
+    constexpr int kUnrollFactor = get_max_unroll_factor<kHiddenVec, 4>();
+    constexpr int kChunkVec = kUnrollFactor * 32;
+    constexpr int kNumChunks = kHiddenVec / kChunkVec;
+    constexpr int kNumBytesPerChunk = kChunkVec * static_cast<int>(sizeof(combine_vec_t));
+    EP_STATIC_ASSERT(kNumChunks * kNumBytesPerChunk == kNumHiddenBytes, "Invalid chunking");
+    const int num_items_per_token = is_direct ? kNumChunks : 1;
+    const int num_work_items = num_combined_tokens * num_items_per_token;
+
+    // The warp's first token, preprocessed before the dependency wait (a warp-uniform condition)
+    int cached_token_idx = -1;
+    TokenIndices token_indices = {-1, 0u};
+    if (global_warp_idx < num_work_items) {
+        cached_token_idx = global_warp_idx / num_items_per_token;
+        token_indices = preprocess_token(cached_token_idx);
+    }
+
+    // Will block until the main combine kernel has finished and all data are visible
+    // NOTES: PDL is used, please do not use `__ldg`
+    cudaGridDependencySynchronize();
+
+    // Profile slots 16/17: epilogue work start (block 0) / last block done
+#ifdef EP_ADAPTIVE_PROFILE
+    const auto profile_layout = layout::WorkspaceLayout(workspace, num_scaleout_ranks, num_scaleup_ranks, num_ranks * kNumExpertsPerRank);
+    EP_PROFILE_STAMP(profile_layout, 16);
+#endif
+
+    // Read from buffers and do reduction
+    for (int item_idx = global_warp_idx; item_idx < num_work_items; item_idx += kNumWarps * kNumSMs) {
+        const int token_idx = item_idx / num_items_per_token;
+        const int chunk_begin = item_idx % num_items_per_token;   // the item's chunk (direct); 0 for hybrid's whole row
+        // Preprocess all indices (the first token was done above)
+        if (token_idx != cached_token_idx) {
+            token_indices = preprocess_token(token_idx);
+            cached_token_idx = token_idx;
+        }
+        const int stored_dst_rank_idx = token_indices.stored_dst_rank_idx;
+        const auto reduce_valid_mask = token_indices.reduce_valid_mask;
 
         // Hybrid: the rows came over the scale-out path with their arrival flags inside (see `TokenLayout`); lane `l` waits
         // for the row it reduces, restores the spills, and zeroes the flags once the row is consumed (below)
@@ -172,9 +213,6 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
         // Iterate over per-hidden-chunk stage
         // The number of rows to gather is a runtime value; pick the instantiation DeepSeek's kernels would use
         // (slot array length and expected valid count), so the reduction loop stays as tight
-        using combine_vec_t = typename CombineVecTraits<kHidden * sizeof(nv_bfloat16)>::vec_t;
-        constexpr int kHiddenVec = kHidden * sizeof(nv_bfloat16) / sizeof(combine_vec_t);
-        constexpr int kUnrollFactor = get_max_unroll_factor<kHiddenVec, 4>();
         const auto reduce_with = [&]<int kNumTokensInLayout>() {
             int topk_slot_idx[kNumTokensInLayout];
             compute_topk_slots(
@@ -183,21 +221,28 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
                     return use_rank_layout ? ptx::exchange(stored_dst_rank_idx, idx) : idx;
                 }
             );
-            combine_reduce<kHiddenVec, kUnrollFactor, kNumTokensInLayout>(
-                lane_idx, topk_slot_idx, static_cast<combine_vec_t*>(tma_buffer.get_base_ptr()),
-                /* Get source base */ [=](const int& slot_idx) {
-                    return static_cast<combine_vec_t*>(
-                        comm_buffer.get_rank_buffer(slot_idx).get_token_buffer(token_idx).get_base_ptr());
-                },
-                /* Wait buffer release */ [=]() {
-                    ptx::tma_store_wait();
-                    __syncwarp();
-                },
-                /* Bias 0 */ bias_0 == nullptr ?
-                    nullptr : static_cast<combine_vec_t*>(bias_0_buffer.get_token_buffer(token_idx).get_base_ptr()),
-                /* Bias 1 */ bias_1 == nullptr ?
-                    nullptr : static_cast<combine_vec_t*>(bias_1_buffer.get_token_buffer(token_idx).get_base_ptr())
-            );
+            const auto src_ptr = [=](const int& slot_idx) {
+                return static_cast<combine_vec_t*>(comm_buffer.get_rank_buffer(slot_idx).get_token_buffer(token_idx).get_base_ptr());
+            };
+            const auto wait_tma_buffer = [=]() {
+                ptx::tma_store_wait();
+                __syncwarp();
+            };
+            auto* dst_ptr = static_cast<combine_vec_t*>(tma_buffer.get_base_ptr());
+            auto* bias_0_ptr = bias_0 == nullptr ? nullptr : static_cast<combine_vec_t*>(bias_0_buffer.get_token_buffer(token_idx).get_base_ptr());
+            auto* bias_1_ptr = bias_1 == nullptr ? nullptr : static_cast<combine_vec_t*>(bias_1_buffer.get_token_buffer(token_idx).get_base_ptr());
+            // Direct: this item's chunk; hybrid: the whole row, chunk by chunk through the same instantiation. The staging buffer is
+            // released once, before the first chunk's write: the row's TMA store is issued after the loop
+            const int chunk_end = is_direct ? chunk_begin + 1 : kNumChunks;
+            #pragma unroll 1
+            for (int chunk_idx = chunk_begin; chunk_idx < chunk_end; ++ chunk_idx) {
+                const int vec_offset = chunk_idx * kChunkVec;
+                combine_reduce<kChunkVec, kUnrollFactor, kNumTokensInLayout>(
+                    lane_idx, topk_slot_idx, dst_ptr + vec_offset,
+                    [=](const int& slot_idx) { return src_ptr(slot_idx) + vec_offset; },
+                    [=]() { if (chunk_idx == chunk_begin) wait_tma_buffer(); },
+                    bias_0_ptr == nullptr ? nullptr : bias_0_ptr + vec_offset, bias_1_ptr == nullptr ? nullptr : bias_1_ptr + vec_offset);
+            }
         };
         switch (num_tokens_in_layout) {
             case 1: reduce_with.template operator()<1>(); break;
@@ -210,14 +255,16 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
 
         // Issue TMA copy
         if (ptx::elect_one_sync()) {
-            ptx::tma_store_1d(output_buffer.get_token_buffer(token_idx).get_base_ptr(),
-                              tma_buffer.get_base_ptr(), kNumHiddenBytes);
+            const int byte_offset = chunk_begin * kNumBytesPerChunk;
+            const int num_bytes = is_direct ? kNumBytesPerChunk : kNumHiddenBytes;
+            ptx::tma_store_1d(math::advance_ptr<int8_t>(output_buffer.get_token_buffer(token_idx).get_base_ptr(), byte_offset),
+                              math::advance_ptr<int8_t>(tma_buffer.get_base_ptr(), byte_offset), num_bytes);
             ptx::tma_store_commit();
         }
         __syncwarp();
 
         // Write top-k weights
-        if (combined_topk_weights != nullptr) {
+        if (combined_topk_weights != nullptr and chunk_begin == 0) {
             const auto master_lane_idx = ptx::get_master_lane_idx(ptx::match(stored_dst_rank_idx));
             if (lane_idx < kNumTopk) {
                 float value = 0;
