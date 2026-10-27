@@ -657,7 +657,8 @@ def _xfer_handle(backend_name, prepped=False):
 
 def _post_to_done(agent, handle):
     state = agent.transfer(handle)
-    while state == "PROC":
+    deadline = time.monotonic() + 5
+    while state == "PROC" and time.monotonic() < deadline:
         state = agent.check_xfer_state(handle)
     assert state == "DONE"
 
