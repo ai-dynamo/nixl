@@ -42,14 +42,12 @@ class nixlLibfabricConnection;
 /**
  * @brief Tracked live memory registration of a rail
  *
- * Ref-counted de-duplication of concurrent registrations: while a buffer is
- * registered, a registerMemory() call with the same address, length, memory type
- * and device reuses its MR and increments ref_count instead of calling
- * fi_mr_regattr again. The last deregisterMemory() closes the MR and erases the
- * entry, so a rail never holds an idle registration. A registration whose
- * parameters differ from the one tracked at that address is made on its own and
- * handed out untracked, as at the bound; deregisterMemory() closes it directly.
- * Log lines tagged MRRC come from this tracking.
+ * Ref-counted de-duplication of concurrent registrations: while a buffer is registered,
+ * a registerMemory() call with the same address, length, memory type and device reuses
+ * its MR and increments ref_count instead of calling fi_mr_regattr again. The last
+ * deregisterMemory() closes the MR and erases the entry, so a rail never holds an idle
+ * registration. A registration whose parameters differ from the tracked one is made on
+ * its own and handed out untracked, as at the bound. Log lines tagged MRRC come from here.
  */
 struct MRCacheEntry {
     struct fid_mr *mr; ///< Libfabric memory registration handle
@@ -73,11 +71,10 @@ struct MRCacheEntry {
 /**
  * @brief Default bound on the registrations a rail tracks for de-duplication
  *
- * Set with the "mr_cache_max_entries" backend parameter or the
- * NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES environment variable. It bounds the tracking
- * map only: past it a new registration is still made and returned untracked, so it
- * is not de-duplicated. 1024 is a round default, not a measured value; exceeding it
- * costs de-duplication, not a registration.
+ * Set with the "mr_cache_max_entries" backend parameter or the NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES
+ * environment variable. It bounds the tracking map only: past it a registration is still made and
+ * returned untracked. 1024 is a round default, not a measured value; exceeding it costs
+ * de-duplication, not a registration.
  */
 constexpr size_t NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT = 1024;
 
@@ -695,9 +692,8 @@ private:
 
     // Ref-counted de-duplication of concurrent memory registrations (see MRCacheEntry)
     mutable std::unordered_map<uintptr_t, MRCacheEntry> mr_cache_;
-    // Reverse index (fid_mr* -> buffer address) so deregisterMemory can
-    // resolve its cache entry in O(1) instead of scanning the cache under
-    // the lock. Maintained in lockstep with mr_cache_ under mr_cache_mutex_.
+    // Reverse index (fid_mr* -> buffer address) for O(1) lookup in deregisterMemory().
+    // Maintained in lockstep with mr_cache_ under mr_cache_mutex_.
     mutable std::unordered_map<struct fid_mr *, uintptr_t> mr_cache_by_mr_;
     mutable std::mutex mr_cache_mutex_;
     // Bound on tracked registrations; registrations past it are returned untracked

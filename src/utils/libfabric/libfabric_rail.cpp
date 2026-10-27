@@ -726,15 +726,10 @@ void
 nixlLibfabricRail::cleanup() {
     NIXL_TRACE << "Starting cleanup for rail " << rail_id;
 
-    // STEP 0: Close the tracked memory registrations a consumer never
-    // deregistered, before the endpoint goes away. An MR bound to the endpoint
-    // (FI_MR_ENDPOINT) is a child of that endpoint and must close first, under
-    // the same EP-lock rule deregisterMemory() follows. Every entry still in the
-    // map is referenced: the deregisterMemory() that drops the last reference
-    // erases its entry. Leaving MRs open past the endpoint and domain violates
-    // libfabric's resource lifetime rules and leaks pinned (GDR) memory.
-    // Only tracked MRs are reclaimed here: an untracked MR that a consumer
-    // never deregistered still reaches the domain close, as on main.
+    // STEP 0: Close the tracked MRs a consumer never deregistered, before the endpoint:
+    // an endpoint-bound MR (FI_MR_ENDPOINT) must close first, under the same EP-lock rule
+    // as deregisterMemory(). Every entry still in the map is referenced; leaving it open
+    // leaks the handle and pinned (GDR) memory. Untracked MRs reach the domain close, as on main.
     {
         const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
         std::unique_lock<std::mutex> ep_lock(ep_mutex_, std::defer_lock);
@@ -1743,9 +1738,8 @@ nixlLibfabricRail::registerMemory(void *buffer,
                            << " ref_count=" << entry.ref_count.load() << " key=" << entry.key;
                 return NIXL_SUCCESS;
             }
-            // Parameters differ from the registration tracked at this address. Register this
-            // request on its own and hand it out untracked, as at the bound;
-            // deregisterMemory() closes it on its not-found path.
+            // Parameters differ from the tracked registration: register this request on
+            // its own and hand it out untracked, as at the bound.
             NIXL_DEBUG << "MRRC: parameters differ from the tracked registration on rail "
                        << rail_id << " buffer=" << buffer << " cached_len=" << entry.length
                        << " requested_len=" << length << " cached_mem_type=" << entry.mem_type
@@ -1937,8 +1931,7 @@ nixlLibfabricRail::registerMemory(void *buffer,
         const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
 
         // At the bound, hand the caller the freshly registered MR untracked: the
-        // registration itself succeeded, and deregisterMemory() closes an untracked
-        // MR directly on its not-found path.
+        // registration itself succeeded, and deregisterMemory() closes it directly.
         if (mr_cache_.size() >= mr_cache_max_entries_) {
             if (!mr_cache_bound_warned_) {
                 mr_cache_bound_warned_ = true;
@@ -1960,10 +1953,8 @@ nixlLibfabricRail::registerMemory(void *buffer,
         if (!inserted) {
             const MRCacheEntry &raced = cache_it->second;
             if (raced.length != length || raced.mem_type != mem_type || raced.gpu_id != device_id) {
-                // A concurrent registerMemory() call tracked a registration with different
-                // parameters at this address after the first cache check. That MR does not
-                // describe this request, so keep ours and hand it out untracked;
-                // deregisterMemory() closes it on its not-found path.
+                // A concurrent call tracked different parameters at this address after the
+                // first check. That MR does not describe this request: keep ours, untracked.
                 NIXL_DEBUG << "MRRC: concurrent registration with different parameters on rail "
                            << rail_id << " buffer=" << buffer << " cached_len=" << raced.length
                            << " requested_len=" << length << " cached_mem_type=" << raced.mem_type
@@ -1974,12 +1965,9 @@ nixlLibfabricRail::registerMemory(void *buffer,
                 *key_out = actual_key;
                 return NIXL_SUCCESS;
             }
-            // A concurrent registerMemory() call with the same parameters won the race
-            // between the first cache check and this insert. Our locally
-            // registered MR is now redundant: close it to avoid leaking the
-            // libfabric handle and any pinned GDR memory it holds, then
-            // hand the caller the already-cached registration so a later
-            // deregisterMemory() can find and tear it down via the cache.
+            // A concurrent call with the same parameters won the race between the first
+            // check and this insert. Our MR is redundant: close it (handle and pinned GDR
+            // memory) and hand the caller the tracked registration instead.
             int close_ret;
             {
                 // Same rule as deregisterMemory: only an MR bound to the endpoint needs
@@ -2024,8 +2012,7 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // MRRC: Resolve the cache entry via the reverse index (O(1)) and
-    // decrement its reference count.
+    // MRRC: resolve the entry via the reverse index (O(1)) and drop one reference.
     bool found_in_cache = false;
     {
         const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
@@ -2053,12 +2040,9 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
     }
 
     if (!found_in_cache) {
-        // MR not in cache: an untracked registration handed out by
-        // registerMemory() (the cache was full, or the request's parameters
-        // differed from the registration tracked at that address), or an MR
-        // that predates the cache. The caller is releasing its handle either
-        // way, so close it here — the cache no longer knows about it and
-        // nothing else can.
+        // Untracked MR: handed out past the bound or with parameters that differed
+        // from the tracked registration, or one that predates the tracking. The
+        // caller is releasing its handle, so close it here; nothing else can.
         NIXL_DEBUG << "MRRC: deregistering uncached MR on rail " << rail_id;
     }
 

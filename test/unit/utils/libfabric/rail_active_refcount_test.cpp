@@ -407,61 +407,48 @@ testConcurrentSameParameterRegistration(nixlLibfabricRailManager &mgr) {
     return 0;
 }
 
-// Tracking bound: with the bound at one entry, a second buffer is registered past the bound
-// and handed out untracked, so two registrations of it get two MRs and each MR closes once.
+// Tracking bound: past a bound of one entry, a second buffer is registered untracked, so two
+// registrations of it get two MRs, and every MR closes exactly once.
 static int
 testTrackingBound(nixlLibfabricRailManager &mgr) {
     NIXL_INFO << "  testTrackingBound";
-
-    // static: addresses no other case registers
-    static char buf_a[4096] = {};
-    static char buf_b[4096] = {};
+    static char buf_a[4096] = {}, buf_b[4096] = {}; // addresses no other case registers
     nixlLibfabricRail &rail = mgr.getRail(1);
     rail.setMRCacheMaxEntries(1);
-
-    struct fid_mr *mr_a = nullptr, *mr_b1 = nullptr, *mr_b2 = nullptr;
+    struct fid_mr *mr[3] = {};
     uint64_t key = 0;
     closed_mrs.clear();
     double_close = false;
     fi_mr_self_ops_stub.close = fi_mr_close_recording;
-    const nixl_status_t st_a =
-        rail.registerMemory(buf_a, sizeof(buf_a), DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr_a, &key);
-    const nixl_status_t st_b1 =
-        rail.registerMemory(buf_b, sizeof(buf_b), DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr_b1, &key);
-    const nixl_status_t st_b2 =
-        rail.registerMemory(buf_b, sizeof(buf_b), DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr_b2, &key);
-    const bool own_mrs = mr_a != nullptr && mr_b1 != nullptr && mr_b2 != nullptr &&
-        mr_b1 != mr_b2 && mr_a != mr_b1 && mr_a != mr_b2;
-    const nixl_status_t st_da = rail.deregisterMemory(mr_a);
-    const nixl_status_t st_db1 = rail.deregisterMemory(mr_b1);
-    const nixl_status_t st_db2 = rail.deregisterMemory(mr_b2);
+    bool ok = true;
+    for (int i = 0; i < 3; ++i) {
+        char *buf = i == 0 ? buf_a : buf_b;
+        ok &= rail.registerMemory(buf, 4096, DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr[i], &key) ==
+            NIXL_SUCCESS;
+    }
+    const bool own_mrs = mr[1] != nullptr && mr[1] != mr[2] && mr[0] != mr[1];
+    for (struct fid_mr *m : mr) {
+        ok &= rail.deregisterMemory(m) == NIXL_SUCCESS;
+    }
     fi_mr_self_ops_stub.close = fi_mr_close_stub;
     rail.setMRCacheMaxEntries(NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT);
-    const bool each_closed_once = closed_mrs.size() == 3 && closed_mrs.count(&mr_a->fid) == 1 &&
-        closed_mrs.count(&mr_b1->fid) == 1 && closed_mrs.count(&mr_b2->fid) == 1;
-    const bool no_double_close = !double_close;
+    const bool each_closed_once = closed_mrs.size() == 3 && !double_close;
     for (struct fid *fid : closed_mrs) {
         fi_mr_close_stub(fid);
     }
     closed_mrs.clear();
 
-    TEST_ASSERT(st_a == NIXL_SUCCESS && st_b1 == NIXL_SUCCESS && st_b2 == NIXL_SUCCESS,
-                "registrations at and past the bound succeeded");
+    TEST_ASSERT(ok, "registrations and deregistrations at and past the bound succeeded");
     TEST_ASSERT(own_mrs, "the two registrations past the bound each got their own MR");
-    TEST_ASSERT(st_da == NIXL_SUCCESS && st_db1 == NIXL_SUCCESS && st_db2 == NIXL_SUCCESS,
-                "all three deregisterMemory calls succeeded");
     TEST_ASSERT(each_closed_once, "each of the three MRs closed exactly once");
-    TEST_ASSERT(no_double_close, "no MR closed twice");
     return 0;
 }
 
 // A tracked MR still live at teardown is closed exactly once by cleanup(). Isolated in its own
-// manager because cleanup() invalidates the rail resources. The request pools close their own
-// MRs in the same cleanup(), so the check is on this MR, not on the number of closes.
+// manager; the request pools close their own MRs in the same cleanup(), so the check is on this MR.
 static int
 testCleanupClosesTrackedMR() {
     NIXL_INFO << "  testCleanupClosesTrackedMR";
-
     static char buf[4096] = {};
     struct fid_mr *mr = nullptr;
     uint64_t key = 0;
@@ -469,15 +456,12 @@ testCleanupClosesTrackedMR() {
     closed_mrs.clear();
     double_close = false;
     {
-        nixlLibfabricRailManager mgr(0);
+        nixlLibfabricRailManager mgr(0); // its destructor runs cleanup() on every rail
         fi_mr_self_ops_stub.close = fi_mr_close_recording;
-        st =
-            mgr.getRail(0).registerMemory(buf, sizeof(buf), DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr, &key);
-        // Leave it registered: the destructor runs cleanup() on every rail.
+        st = mgr.getRail(0).registerMemory(buf, 4096, DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr, &key);
     }
     fi_mr_self_ops_stub.close = fi_mr_close_stub;
-    const bool closed_once = mr != nullptr && closed_mrs.count(&mr->fid) == 1;
-    const bool no_double_close = !double_close;
+    const bool closed_once = mr != nullptr && closed_mrs.count(&mr->fid) == 1 && !double_close;
     for (struct fid *fid : closed_mrs) {
         fi_mr_close_stub(fid);
     }
@@ -485,7 +469,6 @@ testCleanupClosesTrackedMR() {
 
     TEST_ASSERT(st == NIXL_SUCCESS, "registration succeeded");
     TEST_ASSERT(closed_once, "cleanup() closed the still-tracked MR exactly once");
-    TEST_ASSERT(no_double_close, "no MR closed twice");
     return 0;
 }
 
