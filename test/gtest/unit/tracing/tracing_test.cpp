@@ -1082,8 +1082,9 @@ TEST(Tracing, InactiveSpanRecordsNothing) {
     EXPECT_TRUE(a.intAttrs.empty());
 }
 
-// recordPhase() is noexcept: a backend that throws must not propagate, and the
-// drop must be reported once per sink however many phases are dropped.
+// recordPhase() and recordSpan() are noexcept: a backend that throws must not
+// propagate, and the drop must be reported once per sink however many phases
+// and spans are dropped.
 TEST(TracePhaseSink, ThrowingBackendIsReportedOnce) {
     const auto tracer = makeThrowingTracer();
     gtest::LogMessageCounter drops("Dropping a trace phase");
@@ -1091,6 +1092,8 @@ TEST(TracePhaseSink, ThrowingBackendIsReportedOnce) {
 
     EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 1, {}, nullptr, 0, 0));
     EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 2, {}, nullptr, 0, 0));
+    EXPECT_NO_THROW(
+        sink.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, NIXL_WRITE, {}, 3, 4, {}, nullptr, 0, 0));
 
     EXPECT_EQ(drops.count(), 1u);
 }
