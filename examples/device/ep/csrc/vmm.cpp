@@ -69,80 +69,101 @@ vmm_region::~vmm_region() {
     release();
 }
 
-vmm_region::vmm_region(size_t size) {
+namespace {
+
+struct cuda_alloc_ctx {
+    bool fabric_supported;
+    CUmemAllocationProp prop;
+    size_t granularity;
+    CUdevice device;
+    CUmemAccessDesc access_desc = {};
+
+    cuda_alloc_ctx() : fabric_supported(false), prop({}), granularity(0) {
+        int version;
+
+        if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
+            throw std::runtime_error("CUDA device should be set before creating a vmm_region");
+        }
+
+        if (cuDriverGetVersion(&version) != CUDA_SUCCESS) {
+            throw std::runtime_error("Failed to get CUDA driver version");
+        }
+
+        if (version < 11000) {
+            return; /* too old — fall back to cudaMalloc */
+        }
+
+        int fab = 0;
+        if ((cuDeviceGetAttribute(&fab,
+                                  CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
+                                  device) != CUDA_SUCCESS) ||
+            (!fab)) {
+            return; /* no fabric — fall back to cudaMalloc */
+        }
+
+        int rdma_vmm_supported = 0;
+        if (cuDeviceGetAttribute(&rdma_vmm_supported,
+                                 CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
+                                 device) != CUDA_SUCCESS) {
+            throw std::runtime_error(
+                "Failed to query GPUDirect RDMA with VMM support attribute");
+        }
+
+        if (!rdma_vmm_supported) {
+            std::cerr << "DIAG: " << k_vmm_ctx
+                      << " - GPUDirect RDMA with CUDA VMM not supported; falling back to "
+                         "cuMemAlloc\n";
+            return;
+        }
+
+        prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+        prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        prop.location.id = device;
+        prop.allocFlags.gpuDirectRDMACapable = 1;
+        prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
+
+        if (cuMemGetAllocationGranularity(
+                &granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM) != CUDA_SUCCESS) {
+            throw std::runtime_error("Failed to get CUDA allocation granularity");
+        }
+
+        access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        access_desc.location.id = device;
+        access_desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+        fabric_supported = true;
+    }
+};
+
+
+cuda_alloc_ctx &
+alloc_ctx() {
+    static cuda_alloc_ctx ctx;
+    return ctx;
+}
+
+/** Allocation properties; a region that is not exportable gets no FABRIC handle. */
+CUmemAllocationProp
+alloc_prop(bool exportable) {
+    CUmemAllocationProp prop = alloc_ctx().prop;
+    if (!exportable) {
+        prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_NONE;
+    }
+    return prop;
+}
+
+} // namespace
+
+vmm_region::vmm_region(size_t size, bool exportable) {
     if (size == 0) {
         throw std::invalid_argument("vmm_region: size must be non-zero");
     }
 
-    struct cuda_alloc_ctx {
-        bool fabric_supported;
-        CUmemAllocationProp prop;
-        size_t granularity;
-        CUdevice device;
-        CUmemAccessDesc access_desc = {};
-
-        cuda_alloc_ctx() : fabric_supported(false), prop({}), granularity(0) {
-            int version;
-
-            if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
-                throw std::runtime_error("CUDA device should be set before creating a vmm_region");
-            }
-
-            if (cuDriverGetVersion(&version) != CUDA_SUCCESS) {
-                throw std::runtime_error("Failed to get CUDA driver version");
-            }
-
-            if (version < 11000) {
-                return; /* too old — fall back to cudaMalloc */
-            }
-
-            int fab = 0;
-            if ((cuDeviceGetAttribute(&fab,
-                                      CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
-                                      device) != CUDA_SUCCESS) ||
-                (!fab)) {
-                return; /* no fabric — fall back to cudaMalloc */
-            }
-
-            int rdma_vmm_supported = 0;
-            if (cuDeviceGetAttribute(&rdma_vmm_supported,
-                                     CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
-                                     device) != CUDA_SUCCESS) {
-                throw std::runtime_error(
-                    "Failed to query GPUDirect RDMA with VMM support attribute");
-            }
-
-            if (!rdma_vmm_supported) {
-                std::cerr << "DIAG: " << k_vmm_ctx
-                          << " - GPUDirect RDMA with CUDA VMM not supported; falling back to "
-                             "cuMemAlloc\n";
-                return;
-            }
-
-            prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-            prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-            prop.location.id = device;
-            prop.allocFlags.gpuDirectRDMACapable = 1;
-            prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
-
-            if (cuMemGetAllocationGranularity(
-                    &granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM) != CUDA_SUCCESS) {
-                throw std::runtime_error("Failed to get CUDA allocation granularity");
-            }
-
-            access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-            access_desc.location.id = device;
-            access_desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-            fabric_supported = true;
-        }
-    };
-
-    static cuda_alloc_ctx ctx;
-
+    cuda_alloc_ctx &ctx = alloc_ctx();
     if (ctx.fabric_supported) {
         size_ = nixl_ep::align_up<size_t>(size, ctx.granularity);
 
-        const CUresult mem_create_status = cuMemCreate(&handle_, size_, &ctx.prop, 0);
+        const CUmemAllocationProp prop = alloc_prop(exportable);
+        const CUresult mem_create_status = cuMemCreate(&handle_, size_, &prop, 0);
         if (mem_create_status != CUDA_SUCCESS) {
             handle_ = 0;
             ctx.fabric_supported = false;
@@ -171,6 +192,33 @@ vmm_region::vmm_region(size_t size) {
     is_cuda_malloc_ = true;
     if (cuMemAlloc(&ptr_, size) != CUDA_SUCCESS) {
         throw std::runtime_error("cuMemAlloc fallback failed");
+    }
+}
+
+void
+vmm_region::rebind(bool exportable) {
+    if (is_cuda_malloc_) {
+        return;
+    }
+    // Back the same virtual addresses with new physical memory, so that
+    // pointers captured in CUDA graphs stay valid. Contents are not kept.
+    if (cuMemUnmap(ptr_, size_) != CUDA_SUCCESS) {
+        throw std::runtime_error("Failed to unmap CUDA VMM memory for rebind");
+    }
+    vmm_mapped_ = false;
+    warn_cu_api(cuMemRelease(handle_), k_vmm_ctx, "cuMemRelease");
+    handle_ = 0;
+    const CUmemAllocationProp prop = alloc_prop(exportable);
+    if (cuMemCreate(&handle_, size_, &prop, 0) != CUDA_SUCCESS) {
+        handle_ = 0;
+        throw std::runtime_error("Failed to create CUDA VMM memory for rebind");
+    }
+    if (cuMemMap(ptr_, size_, 0, handle_, 0) != CUDA_SUCCESS) {
+        throw std::runtime_error("Failed to map CUDA VMM memory for rebind");
+    }
+    vmm_mapped_ = true;
+    if (cuMemSetAccess(ptr_, size_, &alloc_ctx().access_desc, 1) != CUDA_SUCCESS) {
+        throw std::runtime_error("Failed to set CUDA memory access for rebind");
     }
 }
 

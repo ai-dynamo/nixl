@@ -133,17 +133,19 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     EP_HOST_ASSERT(per_channel_bytes < std::numeric_limits<int>::max());
 
     // Create 32 MiB workspace
-    m_workspace_alloc = std::make_unique<vmm_region>(NUM_WORKSPACE_BYTES);
+    // Without a transport, nothing is exportable yet: init_transport re-backs
+    // the regions at the same addresses with exportable memory.
+    m_workspace_alloc = std::make_unique<vmm_region>(NUM_WORKSPACE_BYTES, init_transport);
     workspace = m_workspace_alloc->ptr();
     CUDA_CHECK(cudaMemsetAsync(workspace, 0, NUM_WORKSPACE_BYTES, comm_stream));
 
-    m_rdma_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_rdma_bytes));
+    m_rdma_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_rdma_bytes), init_transport);
     rdma_buffer_ptr = m_rdma_alloc->ptr();
     CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
 
     // Allocate and clean shrink buffer
     int num_mask_buffer_bytes = max_num_ranks * sizeof(int);
-    m_mask_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_mask_buffer_bytes));
+    m_mask_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_mask_buffer_bytes), init_transport);
     mask_buffer_ptr = static_cast<int *>(m_mask_alloc->ptr());
     CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, num_mask_buffer_bytes));
     CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
@@ -152,9 +154,9 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     set_active_rank_bound(rank + 1);
 
     int num_sync_buffer_bytes = max_num_ranks * sizeof(int);
-    m_sync_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes));
+    m_sync_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes), init_transport);
     sync_buffer_ptr = static_cast<int *>(m_sync_alloc->ptr());
-    m_sync_count_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes));
+    m_sync_count_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes), init_transport);
     sync_count_ptr = static_cast<int *>(m_sync_count_alloc->ptr());
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_count_ptr, 0, num_sync_buffer_bytes));
@@ -180,8 +182,21 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
 
 void Buffer::init_transport() {
     EP_HOST_ASSERT(available and "update_memory_buffers must be called first");
-    if (nixl_agent_info == nullptr)
-        _nixl_agent_init();
+    if (nixl_agent_info != nullptr)
+        return;
+    // Back the regions with exportable memory at the same addresses, and
+    // reset what update_memory_buffers initialized.
+    for (auto *region : {m_workspace_alloc.get(), m_rdma_alloc.get(), m_mask_alloc.get(),
+                         m_sync_alloc.get(), m_sync_count_alloc.get()})
+        region->rebind(true);
+    CUDA_CHECK(cudaMemset(workspace, 0, NUM_WORKSPACE_BYTES));
+    CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
+    CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, max_num_ranks * sizeof(int)));
+    CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
+    CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, max_num_ranks * sizeof(int)));
+    CUDA_CHECK(cudaMemset(sync_count_ptr, 0, max_num_ranks * sizeof(int)));
+    CUDA_CHECK(cudaDeviceSynchronize());
+    _nixl_agent_init();
 }
 
 Buffer::~Buffer() noexcept {
