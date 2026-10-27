@@ -849,7 +849,9 @@ void nixlPluginManager::registerBuiltinPlugins() {
 #endif
 
 #ifdef STATIC_PLUGIN_AIS
+#ifndef DISABLE_AIS_BACKEND
     NIXL_REGISTER_STATIC_PLUGIN(Backend, AIS)
+#endif
 #endif
 
 #ifdef STATIC_PLUGIN_POSIX
