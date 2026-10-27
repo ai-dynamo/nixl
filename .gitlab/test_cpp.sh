@@ -85,6 +85,7 @@ cd ${INSTALL_DIR}
 ./bin/nixl_example
 if $TEST_LIBFABRIC ; then
     ./bin/nixl_example LIBFABRIC
+    ./bin/libfabric_backend_test
 fi
 ./bin/nixl_etcd_example
 ./bin/ucx_backend_test
