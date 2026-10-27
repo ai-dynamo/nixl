@@ -24,14 +24,13 @@ failFast: false
 
 timeout_minutes: 240
 
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   limits: "{memory: 16Gi, cpu: 16000m}"
   requests: "{memory: 8Gi, cpu: 8000m}"
   privileged: true
@@ -40,7 +39,7 @@ credentials:
   - credentialsId: 'svc-nixl-github-read-only-token'
     usernameVariable: 'NIXL_GITHUB_USER'
     passwordVariable: 'NIXL_GITHUB_TOKEN'
-  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+  - {credentialsId: 'svc-nixl-il-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
 
 env:
   ARTIFACTORY_PATH: /sw-nbu-swx-nixl-docker-local/ci
@@ -51,6 +50,10 @@ env:
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
   SLURM_ACCOUNT: 'oberon-gb-ci'
+  # Without a GPU count the site plugin forces exclusive mode (whole idle node)
+  SLURM_GRES: gpu:2
+  SLURM_MEM: 128G
+  SLURM_MINCPUS: 24
   SLURM_JOB_TIMEOUT: '01:30:00'
   SLURM_IMMEDIATE_TIMEOUT: 3600
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
@@ -105,10 +108,14 @@ taskName: "${name}/${arch}/${axis_index}"
 steps:
   - name: Compiling NIXL Docker Image for DL
     containerSelector: "{name: 'build_helper_dl'}"
-    credentialsId: "svc-nixl-new-artifactory-token"
+    credentialsId:
+      - 'svc-nixl-il-artifactory-token'
+      - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       set -x
+      # github.com credential for build.sh's clones, incl. meson's [wrap-git] subprojects ("ghconfig" build secret).
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
       # Pass UCX_VERSION only when UCX_VER is set (e.g. nightly master);
       # empty falls back to the Dockerfile ARG UCX_VERSION default so the
       # per-branch default lives in one place.
@@ -124,6 +131,7 @@ steps:
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
       --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-base:${CI_IMAGE_TAG} \
+      --secret id=ghconfig,src=/tmp/ghconfig \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       for i in {1..6}; do
@@ -149,7 +157,10 @@ steps:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       extraArgs: [
-        "--account=${SLURM_ACCOUNT}"
+        "--account=${SLURM_ACCOUNT}",
+        "--gres=${SLURM_GRES}",
+        "--mem=${SLURM_MEM}",
+        "--mincpus=${SLURM_MINCPUS}"
       ]
 
   - name: Sync Container Image
