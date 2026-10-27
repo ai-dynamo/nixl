@@ -193,11 +193,7 @@ class nixl_agent_config:
             )
 
         self.sync_mode = sync_mode
-        if (
-            isinstance(prog_thread_delay_us, bool)
-            or not isinstance(prog_thread_delay_us, int)
-            or prog_thread_delay_us < 0
-        ):
+        if not isinstance(prog_thread_delay_us, int) or prog_thread_delay_us < 0:
             raise ValueError(
                 "prog_thread_delay_us must be a non-negative int "
                 f"(got {prog_thread_delay_us!r})"

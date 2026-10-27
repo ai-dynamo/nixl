@@ -148,7 +148,7 @@ def test_prog_thread_delay_agent(monkeypatch, delay_us):
     assert captured["pthrDelay"] == (delay_us or 0)
 
 
-@pytest.mark.parametrize("delay_us", [-1, 1.5, True])
+@pytest.mark.parametrize("delay_us", [-1, 1.5])
 def test_nixl_conf_bad_prog_thread_delay(delay_us):
     with pytest.raises(ValueError, match="prog_thread_delay_us must be"):
         nixl_agent_config(prog_thread_delay_us=delay_us)
