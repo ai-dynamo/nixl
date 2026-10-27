@@ -123,9 +123,10 @@ public:
      * @param context   Trace context the phase belongs to, or null: the request's
      *                  own for a local phase, the sender's for a phase observed on
      *                  receipt. Valid for the call only; recorded as
-     *                  `nixl.traceparent`, and the event is correlated on it.
+     *                  `nixl.traceparent`.
      * @param request_id Request id of the phase's transfer request, or 0 for none;
-     *                   recorded as `nixl.xfer_request_id` when non-zero.
+     *                   recorded as `nixl.xfer_request_id` when non-zero, and the
+     *                   event is correlated on it.
      * @param execution Execution number of the post the phase belongs to, or 0 for
      *                  none; recorded as `nixl.xfer_execution` when non-zero.
      *
