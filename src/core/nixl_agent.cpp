@@ -1408,6 +1408,23 @@ nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &tel
 }
 
 nixl_status_t
+nixlAgent::getXferTraceInfo(const nixlXferReqH *req_hndl, nixl_xfer_trace_info_t &info) const {
+    if (!req_hndl) {
+        NIXL_ERROR_FUNC << "transfer request handle is null";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (req_hndl->traceRequestId() == 0) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    info.requestId = req_hndl->traceRequestId();
+    info.execution = req_hndl->traceExecution();
+    info.traceparent = nixl::trace::formatTraceparent(req_hndl->tracePostContext());
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
 nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
                             nixlBackendH* &backend) const {
     NIXL_LOCK_GUARD(data->lock);
