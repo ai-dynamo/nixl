@@ -85,7 +85,7 @@ ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
 ENV CMAKE_INSTALL_ALWAYS=1
 
 # === end Option B header ======================================================
-ARG LIBFABRIC_VERSION="v2.7.0"
+ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
 ARG BUILD_NIXL_EP="true"
