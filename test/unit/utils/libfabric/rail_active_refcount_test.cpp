@@ -407,6 +407,88 @@ testConcurrentSameParameterRegistration(nixlLibfabricRailManager &mgr) {
     return 0;
 }
 
+// Tracking bound: with the bound at one entry, a second buffer is registered past the bound
+// and handed out untracked, so two registrations of it get two MRs and each MR closes once.
+static int
+testTrackingBound(nixlLibfabricRailManager &mgr) {
+    NIXL_INFO << "  testTrackingBound";
+
+    // static: addresses no other case registers
+    static char buf_a[4096] = {};
+    static char buf_b[4096] = {};
+    nixlLibfabricRail &rail = mgr.getRail(1);
+    rail.setMRCacheMaxEntries(1);
+
+    struct fid_mr *mr_a = nullptr, *mr_b1 = nullptr, *mr_b2 = nullptr;
+    uint64_t key = 0;
+    closed_mrs.clear();
+    double_close = false;
+    fi_mr_self_ops_stub.close = fi_mr_close_recording;
+    const nixl_status_t st_a =
+        rail.registerMemory(buf_a, sizeof(buf_a), DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr_a, &key);
+    const nixl_status_t st_b1 =
+        rail.registerMemory(buf_b, sizeof(buf_b), DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr_b1, &key);
+    const nixl_status_t st_b2 =
+        rail.registerMemory(buf_b, sizeof(buf_b), DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr_b2, &key);
+    const bool own_mrs = mr_a != nullptr && mr_b1 != nullptr && mr_b2 != nullptr &&
+        mr_b1 != mr_b2 && mr_a != mr_b1 && mr_a != mr_b2;
+    const nixl_status_t st_da = rail.deregisterMemory(mr_a);
+    const nixl_status_t st_db1 = rail.deregisterMemory(mr_b1);
+    const nixl_status_t st_db2 = rail.deregisterMemory(mr_b2);
+    fi_mr_self_ops_stub.close = fi_mr_close_stub;
+    rail.setMRCacheMaxEntries(NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT);
+    const bool each_closed_once = closed_mrs.size() == 3 && closed_mrs.count(&mr_a->fid) == 1 &&
+        closed_mrs.count(&mr_b1->fid) == 1 && closed_mrs.count(&mr_b2->fid) == 1;
+    const bool no_double_close = !double_close;
+    for (struct fid *fid : closed_mrs) {
+        fi_mr_close_stub(fid);
+    }
+    closed_mrs.clear();
+
+    TEST_ASSERT(st_a == NIXL_SUCCESS && st_b1 == NIXL_SUCCESS && st_b2 == NIXL_SUCCESS,
+                "registrations at and past the bound succeeded");
+    TEST_ASSERT(own_mrs, "the two registrations past the bound each got their own MR");
+    TEST_ASSERT(st_da == NIXL_SUCCESS && st_db1 == NIXL_SUCCESS && st_db2 == NIXL_SUCCESS,
+                "all three deregisterMemory calls succeeded");
+    TEST_ASSERT(each_closed_once, "each of the three MRs closed exactly once");
+    TEST_ASSERT(no_double_close, "no MR closed twice");
+    return 0;
+}
+
+// A tracked MR still live at teardown is closed exactly once by cleanup(). Isolated in its own
+// manager because cleanup() invalidates the rail resources. The request pools close their own
+// MRs in the same cleanup(), so the check is on this MR, not on the number of closes.
+static int
+testCleanupClosesTrackedMR() {
+    NIXL_INFO << "  testCleanupClosesTrackedMR";
+
+    static char buf[4096] = {};
+    struct fid_mr *mr = nullptr;
+    uint64_t key = 0;
+    nixl_status_t st = NIXL_ERR_BACKEND;
+    closed_mrs.clear();
+    double_close = false;
+    {
+        nixlLibfabricRailManager mgr(0);
+        fi_mr_self_ops_stub.close = fi_mr_close_recording;
+        st =
+            mgr.getRail(0).registerMemory(buf, sizeof(buf), DRAM_SEG, 0, FI_HMEM_SYSTEM, &mr, &key);
+        // Leave it registered: the destructor runs cleanup() on every rail.
+    }
+    fi_mr_self_ops_stub.close = fi_mr_close_stub;
+    const bool closed_once = mr != nullptr && closed_mrs.count(&mr->fid) == 1;
+    const bool no_double_close = !double_close;
+    for (struct fid *fid : closed_mrs) {
+        fi_mr_close_stub(fid);
+    }
+    closed_mrs.clear();
+
+    TEST_ASSERT(st == NIXL_SUCCESS, "registration succeeded");
+    TEST_ASSERT(closed_once, "cleanup() closed the still-tracked MR exactly once");
+    TEST_ASSERT(no_double_close, "no MR closed twice");
+    return 0;
+}
+
 int
 main() {
     NIXL_INFO << "=== Rail Active Refcount Test ===";
@@ -428,7 +510,10 @@ main() {
     const int diff_len_res = testSameAddressDifferentLength(mgr);
     const int race_res = testConcurrentDifferentLengthRegistration(mgr);
     const int same_race_res = testConcurrentSameParameterRegistration(mgr);
-    if (diff_len_res != 0 || race_res != 0 || same_race_res != 0) {
+    const int bound_res = testTrackingBound(mgr);
+    const int cleanup_res = testCleanupClosesTrackedMR();
+    if (diff_len_res != 0 || race_res != 0 || same_race_res != 0 || bound_res != 0 ||
+        cleanup_res != 0) {
         return 1;
     }
     if ((res = testDeregisterFailureKeepsRailActive(mgr)) != 0) return res;
