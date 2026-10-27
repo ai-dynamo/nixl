@@ -865,8 +865,11 @@ namespace agent {
 
         EXPECT_EQ(agent->postXferReq(req), NIXL_IN_PROG);
         const auto first = req->tracePostContext();
+        const auto posted = traceInfo(req);
         EXPECT_EQ(agent->postXferReq(req), NIXL_ERR_REPOST_ACTIVE);
         EXPECT_EQ(req->tracePostContext(), first);
+        EXPECT_THAT(traceInfo(req),
+                    testing::FieldsAre(posted.requestId, posted.execution, posted.traceparent));
         EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
         const auto last = req->tracePostContext();
         EXPECT_THAT(engine.observedTraceContext(), testing::Optional(last));
@@ -875,6 +878,7 @@ namespace agent {
         ASSERT_EQ(calls.size(), 3u);
         const auto rejected = contextOf(calls[1], "span=");
         EXPECT_THAT(calls[0], isSpanOf(req, first));
+        EXPECT_THAT(calls[0], carriesTraceInfo(posted, "span="));
         EXPECT_THAT(calls[1], isSpanOf(req, rejected));
         EXPECT_THAT(calls[2], isSpanOf(req, last));
         EXPECT_EQ(rejected.traceId, first.traceId);
