@@ -260,6 +260,20 @@ operation:
 | `nixl::remote.observed` | `REMOTE_OBSERVED` | `Metadata` | the peer's side was observed |
 | `nixl::phase` | `OTHER` | `Metadata` | generic escape hatch; the plugin's label becomes the event name |
 
+A backend records an interval with `recordSpan`, from its own closed vocabulary,
+`nixl_trace_span_t`, with the transfer's direction, a start and an end time on
+the same clock, and the same context, request id, execution number and
+attributes as a phase. Core records it as a span from the start to the end,
+`CommSend` for a write and `CommRecv` for a read, and counts a span that fails
+to record in `agent_trace_phases_dropped_total`, as it counts a phase. The span
+carries a phase's attributes, except that its label is `nixl.span.label` and it
+has no `nixl.phase.timestamp_us`, since its times are its own.
+
+| Span | `nixl_trace_span_t` | Interval |
+| ---- | ------------------- | -------- |
+| `nixl::wire.inflight` | `WIRE_INFLIGHT` | the transfer in flight, from `submit` to `wire.completed` |
+| `nixl::span` | `OTHER` | escape hatch; the plugin's label becomes the span name |
+
 The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. UCX emits
 `nixl::submit`, `nixl::wire.submitted`, `nixl::notif.sent` and

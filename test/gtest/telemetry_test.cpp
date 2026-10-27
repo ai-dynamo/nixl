@@ -942,6 +942,41 @@ TEST_F(telemetryTest, TracePhaseDropsAreCounted) {
     envHelper_.popVar();
 }
 
+TEST_F(telemetryTest, TraceSpanDropsAreCounted) {
+    constexpr uint64_t kDrops = 3;
+    const gtest::LogIgnoreGuard lig("Dropping a trace phase");
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    testFile_ = "test_trace_span_drops";
+
+    {
+        nixlTelemetry telemetry(testFile_, "BUFFER");
+        std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+        backends.push_back(std::make_unique<throwingTraceBackend>());
+        nixl::trace::Tracer tracer(std::move(backends), 0.0);
+        nixl::trace::TracerPhaseSink sink{tracer, "UCX", &telemetry};
+        for (uint64_t i = 0; i < kDrops; ++i) {
+            sink.recordSpan(
+                nixl_trace_span_t::WIRE_INFLIGHT, NIXL_WRITE, {}, i, i + 1, {}, nullptr, 0, 0);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    const auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+    uint64_t dropped = 0;
+    nixlTelemetryEvent event;
+    while (buffer->pop(event)) {
+        if (event.eventType_ == nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED) {
+            dropped += event.value_;
+        }
+    }
+    EXPECT_EQ(dropped, kDrops);
+    EXPECT_EQ(lig.getIgnoredCount(), 1u);
+
+    envHelper_.popVar();
+}
+
 class telemetryXferTest : public telemetryTest {
 protected:
     using et = nixl_telemetry_event_type_t;
