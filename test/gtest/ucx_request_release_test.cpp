@@ -30,21 +30,20 @@ class UcxRequestRelease : public testing::TestWithParam<size_t> {};
 
 TEST_P(UcxRequestRelease, ActiveReadRemainsPollableAfterRefusedRelease) {
     gtest::ScopedEnv env;
-    // TCP READ needs target progress; withholding it makes the pending state deterministic.
+    // TCP READ has no asynchronous data progress on the target. Withholding target
+    // progress keeps the request pending. cuda_copy satisfies CUDA-enabled UCX validation.
     env.addVar("UCX_TLS", "tcp,cuda_copy");
     env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
     const gtest::LogIgnoreGuard ib_warning(
         "IB device\\(s\\) were detected, but accelerated IB support was not found");
     const gtest::LogIgnoreGuard efa_warning(
         "Amazon EFA\\(s\\) were detected, but the UCX backend was configured");
-    const gtest::LogIgnoreGuard refused_release(
-        "backend 'UCX' could not release transfer request and returned (error )?status");
     const gtest::LogIgnoreGuard mock_plugin_probe(
         "Plugin file does not exist: .*/test/gtest/mocks/libplugin_UCX.so");
 
     constexpr size_t chunk_size = 4096;
     const std::vector<char> source(2 * chunk_size, 'x');
-    const std::vector<char> destination(2 * chunk_size, 0);
+    std::vector<char> destination(2 * chunk_size, 0);
     nixlAgentConfig cfg;
     cfg.useProgThread = false;
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
@@ -73,26 +72,31 @@ TEST_P(UcxRequestRelease, ActiveReadRemainsPollableAfterRefusedRelease) {
         remote.addDesc(nixlBasicDesc(source_addr + i * chunk_size, chunk_size, 0));
     }
     nixlXferReqH *request = nullptr;
+    // A prepared request that was never posted must remain immediately releasable.
     ASSERT_EQ(initiator.createXferReq(NIXL_READ, local, remote, target_name, request),
               NIXL_SUCCESS);
     ASSERT_EQ(initiator.releaseXferReq(request), NIXL_SUCCESS);
     ASSERT_EQ(initiator.createXferReq(NIXL_READ, local, remote, target_name, request),
               NIXL_SUCCESS);
-    ASSERT_EQ(initiator.postXferReq(request), NIXL_IN_PROG);
+    EXPECT_EQ(initiator.postXferReq(request), NIXL_IN_PROG);
 
-    const nixl_status_t release_status = initiator.releaseXferReq(request);
-    EXPECT_EQ(release_status, NIXL_ERR_REPOST_ACTIVE);
-    if (release_status == NIXL_SUCCESS) {
-        // A regressed implementation deleted request. Never poll that freed handle.
-        return;
+    // Repeated refusals must preserve ownership without logging errors.
+    for (size_t attempt = 0; attempt < 3; ++attempt) {
+        const nixl_status_t release_status = initiator.releaseXferReq(request);
+        EXPECT_EQ(release_status, NIXL_ERR_REPOST_ACTIVE);
+        if (release_status == NIXL_SUCCESS) {
+            // A regressed implementation deleted request. Never poll that freed handle.
+            return;
+        }
     }
-    ASSERT_EQ(initiator.getXferStatus(request), NIXL_IN_PROG);
+    // Continue to drain even if an intermediate expectation fails.
+    EXPECT_EQ(initiator.getXferStatus(request), NIXL_IN_PROG);
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     nixl_notifs_t notifs;
     nixl_status_t status = NIXL_IN_PROG;
     while ((status == NIXL_IN_PROG) && (std::chrono::steady_clock::now() < deadline)) {
-        ASSERT_EQ(target.getNotifs(notifs), NIXL_SUCCESS);
+        EXPECT_EQ(target.getNotifs(notifs), NIXL_SUCCESS);
         status = initiator.getXferStatus(request);
     }
     ASSERT_EQ(status, NIXL_SUCCESS);
