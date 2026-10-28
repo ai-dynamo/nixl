@@ -25,7 +25,12 @@ import torch
 
 import nixl._bindings as bindings
 import nixl._utils as utils
-from nixl._api import nixl_agent, nixl_agent_config, nixl_thread_sync_t
+from nixl._api import (
+    nixl_agent,
+    nixl_agent_config,
+    nixl_thread_sync_t,
+    nixl_xfer_handle,
+)
 
 # NIXL pytest fixtures
 
@@ -728,3 +733,9 @@ def test_xfer_trace_info_after_release(monkeypatch, backend_name):
 def test_xfer_trace_info_binding_rejects_a_null_handle(one_empty_agent):
     with pytest.raises(bindings.nixlInvalidParamError):
         one_empty_agent.agent.getXferTraceInfo(0)
+
+
+def test_xfer_trace_info_released_handle_skips_the_binding(one_empty_agent):
+    handle = nixl_xfer_handle(one_empty_agent.agent, 0)
+    handle._released = True
+    assert one_empty_agent.get_xfer_trace_info(handle) is None
