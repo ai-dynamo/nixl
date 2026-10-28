@@ -182,6 +182,11 @@ steps:
     parallel: false
     run: .ci/scripts/wheel-nightly/build-wheel.sh
 
+  - name: Extract Build Info
+    containerSelector: "{name: 'manylinux'}"
+    parallel: false
+    run: .ci/scripts/wheel-nightly/extract-build-info.sh
+
   - name: Publish
     containerSelector: "{name: 'manylinux'}"
     credentialsId: 'svc-nixl-new-artifactory-token'
