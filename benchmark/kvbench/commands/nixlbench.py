@@ -74,6 +74,7 @@ class NIXLBench:
         obj_use_virtual_addressing=False,
         obj_endpoint_override="",
         obj_req_checksum="supported",
+        obj_ca_bundle="",
         # Additional nixlbench arguments
         large_blk_iter_ftr=16,
         recreate_xfer=False,
@@ -128,6 +129,7 @@ class NIXLBench:
             obj_use_virtual_addressing (bool, optional): Use virtual addressing for OBJ/S3. Defaults to False.
             obj_endpoint_override (str, optional): Endpoint override for OBJ/S3. Defaults to "".
             obj_req_checksum (str, optional): Required checksum for OBJ/S3. Defaults to "supported".
+            obj_ca_bundle (str, optional): Path to a CA bundle for OBJ/S3. Defaults to "".
             large_blk_iter_ftr (int, optional): Factor to reduce iterations for large blocks. Defaults to 16.
         """
         self.model = model
@@ -176,6 +178,7 @@ class NIXLBench:
         self.obj_use_virtual_addressing = obj_use_virtual_addressing
         self.obj_endpoint_override = obj_endpoint_override
         self.obj_req_checksum = obj_req_checksum
+        self.obj_ca_bundle = obj_ca_bundle
         self.large_blk_iter_ftr = large_blk_iter_ftr
         self.recreate_xfer = recreate_xfer
         self._override_defaults()
@@ -228,13 +231,31 @@ class NIXLBench:
             )
 
     def _configure_obj(self, source: str, destination: str):
-        """Configure OBJ plugin for object storage operations"""
-        if source == "memory":
-            self.target_seg_type = "OBJ"
-        elif destination == "memory":
-            self.initiator_seg_type = "OBJ"
+        """Configure OBJ plugin for object storage operations."""
+        arg_to_seg_type = {
+            "memory": "DRAM",
+            "gpu": "VRAM",
+        }
+
+        src_local = source in arg_to_seg_type
+        dst_local = destination in arg_to_seg_type
+
+        if src_local and dst_local:
+            raise ValueError(
+                f"Invalid source/destination for OBJ: source={source}, destination={destination}, "
+                f"both are local — exactly one must be a remote OBJ endpoint"
+            )
+        if src_local:
+            self.op_type = "WRITE"
+            self.initiator_seg_type = arg_to_seg_type[source]
+        elif dst_local:
+            self.op_type = "READ"
+            self.initiator_seg_type = arg_to_seg_type[destination]
         else:
-            raise ValueError(f"Invalid source for OBJ: {source}")
+            raise ValueError(
+                f"Invalid source/destination for OBJ: source={source}, destination={destination}, "
+                f"one of them must be in {list(arg_to_seg_type.keys())}"
+            )
 
     def configure_segment_type(self, backend: str, source: str, destination: str):
         backend_lower = backend.lower()
@@ -336,6 +357,7 @@ class NIXLBench:
             "obj_use_virtual_addressing": self.obj_use_virtual_addressing,
             "obj_endpoint_override": self.obj_endpoint_override,
             "obj_req_checksum": self.obj_req_checksum,
+            "obj_ca_bundle": self.obj_ca_bundle,
             # Additional nixlbench parameters
             "large_blk_iter_ftr": self.large_blk_iter_ftr,
             "recreate_xfer": self.recreate_xfer,
@@ -397,6 +419,7 @@ class NIXLBench:
             "obj_use_virtual_addressing": False,
             "obj_endpoint_override": "",
             "obj_req_checksum": "supported",
+            "obj_ca_bundle": "",
             # Additional nixlbench defaults
             "large_blk_iter_ftr": 16,
             "recreate_xfer": False,

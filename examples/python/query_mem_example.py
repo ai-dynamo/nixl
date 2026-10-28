@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,7 +101,7 @@ if __name__ == "__main__":
             except Exception as e2:
                 logger.exception("MOCK_DRAM also failed: %s", e2)
                 logger.exception("No working backends available")
-                sys.exit(0)
+                sys.exit(1)
 
         # Display results
         logger.info("\nQuery results (%d responses):", len(resp))
@@ -121,9 +121,7 @@ if __name__ == "__main__":
 
     except Exception as e:
         logger.exception("Error in example: %s", e)
-        import traceback
-
-        traceback.print_exc()
+        sys.exit(1)
 
     finally:
         # Clean up temporary files

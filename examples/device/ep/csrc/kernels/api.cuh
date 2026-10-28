@@ -30,8 +30,6 @@
 
 namespace nixl_ep {
 
-// EP kernels
-namespace ep_kernels {
 struct gpu_nixl_ctx {
     nixlMemViewH local_mvh;
     nixlMemViewH barrier_mvh;
@@ -39,17 +37,18 @@ struct gpu_nixl_ctx {
     int *sync_buffer_ptr; // [src_rank]
     int *sync_count_ptr; // [dst_rank]
     void *rdma_buffer_ptr;
+    void **p2p_ptrs;
     int max_num_ranks;
     int rank;
 
-    __device__ inline uint64_t offset_get(uint64_t ptr);
-    __device__ inline void* p2p_ptr_get(uint64_t dst_ptr, int dst_rank);
+    __device__ inline uint64_t offset_get(uint64_t ptr) {
+        return ptr - reinterpret_cast<uint64_t>(rdma_buffer_ptr);
+    }
 };
 
-void clean_buffer(int* clean_0, int num_clean_int_0,
-                              int* clean_1, int num_clean_int_1,
-                              int rank, int num_ranks, int* mask_buffer, int* sync_buffer,
-                              cudaStream_t stream);
+
+// EP kernels
+namespace ep_kernels {
 
 void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               int* packed_recv_src_info, int64_t* packed_recv_layout_range,
@@ -61,10 +60,11 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               const void* x, const topk_idx_t* topk_idx,
               uint64_t* next_clean, int num_next_clean_int,
               int num_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
-              int num_topk, int num_experts, int rank, int num_ranks,
+              int num_topk, int active_rank_bound, int num_experts_per_rank, int rank,
               bool use_fp8, bool round_scale, bool use_ue8m0,
+              uint64_t timeout_cycles,
               void* workspace, int num_device_sms,
-              cudaStream_t stream, int phases, ep_kernels::gpu_nixl_ctx nixl_ctx);
+              cudaStream_t stream, int phases, nixl_ep::gpu_nixl_ctx* nixl_ctx);
 
 void combine(void* combined_x,
              void* rdma_recv_x, uint64_t* rdma_recv_flag, void* rdma_send_x,
@@ -74,18 +74,22 @@ void combine(void* combined_x,
              int64_t* combine_wait_recv_cost_stats,
              uint64_t* next_clean, int num_next_clean_int,
              int num_combined_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
-             int num_topk, int num_experts, int rank, int num_ranks,
-             bool use_logfmt,
+             int num_topk, int active_rank_bound, int num_experts_per_rank, int rank,
+             bool use_logfmt, uint64_t timeout_cycles,
              void* workspace, int num_device_sms,
-             cudaStream_t stream, int phases, bool zero_copy, ep_kernels::gpu_nixl_ctx nixl_ctx);
+             cudaStream_t stream, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx);
 
-void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, cudaStream_t stream);
+void barrier(gpu_nixl_ctx* nixl_ctx, int* mask_buffer_ptr, uint64_t timeout_cycles, cudaStream_t stream);
 
-void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* output_mask_tensor, cudaStream_t stream);
+void
+query_mask_buffer(const int *mask_buffer_ptr,
+                  int num_ranks,
+                  int *output_mask_tensor,
+                  cudaStream_t stream);
 
 void update_mask_buffer(int* mask_buffer_ptr, int rank_to_mask, bool mask, cudaStream_t stream);
 
-void clean_mask_buffer(int* mask_buffer_ptr, int num_ranks, cudaStream_t stream);
+void cache_p2p_ptr(gpu_nixl_ctx* nixl_ctx, int rank_id, cudaStream_t stream);
 
 } // namespace ep_kernels
 

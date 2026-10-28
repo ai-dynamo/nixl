@@ -40,13 +40,14 @@ aws ec2 describe-security-groups --group-ids $CLUSTER_SG \
 ## Files
 
 - **aws_test.sh**: Main script that submits and monitors AWS Batch jobs
+- **aws_test_remote.sh**: Remote test entrypoint executed inside the AWS pod
 - **aws_vars.template**: Template file for AWS Batch job configuration
 - **aws_job_def.json**: Job definition (Registered once, for reference only)
 
 ## GitHub Actions Integration
 
 The script is designed to run in GitHub Actions when branches are updated.
-It relies on the `GITHUB_REF` environment variable to determine which branch or commit to test. The value can be a branch name (e.g., `main`, `feature-xyz`) or a commit SHA.
+It tests the exact commit in `GITHUB_SHA`, so the run is unaffected if the `pull-request/<N>` branch is deleted or force-pushed before the AWS pod starts. If `GITHUB_SHA` is unset, it falls back to `GITHUB_REF`, which can be a branch name (e.g., `main`, `feature-xyz`) or a full commit SHA.
 
 ### Required GitHub Secrets
 
@@ -57,24 +58,37 @@ The following secrets are configured in the GitHub environment:
 
 ## Manual Execution
 
-To run the tests manually:
+`./aws_test.sh` runs the unified flow (build + EFA tests + S3 plugin tests). For manual runs, prepare S3 resources before starting and always clean them up afterward.
 
-1. Set your AWS account using `aws configure` command or env vars.
-2. Substitute GH variables:
+1. Set AWS account credentials for AWS Batch/EKS (`aws configure` or env vars).
+2. Export required GitHub metadata and NIXL S3 credentials.
+3. Run S3 setup, then the AWS validation flow.
+4. Run cleanup when done (or after failures).
 
 ```bash
-# Branch or commit SHA to test
+# Branch or full commit SHA to test
 export GITHUB_REF="main"
 
-# Other required variables
+# Required GitHub metadata
 export GITHUB_SERVER_URL="https://github.com"
 export GITHUB_REPOSITORY="ai-dynamo/nixl"
 
-# Run the script with your test command(s)
-./aws_test.sh ".gitlab/test_cpp.sh /opt/nixl"
+# Required for S3 prep/cleanup scripts (S3 plugin tests)
+export NIXL_AWS_ACCESS_KEY_ID="<nixl-s3-access-key>"
+export NIXL_AWS_SECRET_ACCESS_KEY="<nixl-s3-secret-key>"
 
-# Multiple test commands can be chained with '&&'
-./aws_test.sh ".gitlab/test_cpp.sh /opt/nixl && .test_script2.sh param123"
+# Optional (defaults are used if unset)
+export AWS_DEFAULT_REGION="eu-central-1"
+# export TEST_TIMEOUT=60
+
+# Prepare S3 bucket and inject S3 env vars into aws_vars.template
+./s3_prepare.sh
+
+# Run the AWS validation flow (checkout, build, tests)
+./aws_test.sh
+
+# Cleanup S3 resources created by s3_prepare.sh (recommended in all cases)
+./s3_cleanup.sh
 ```
 
 ## Test Execution Flow
@@ -84,14 +98,18 @@ The AWS test script:
 1. Generates AWS job configuration from template
 2. Submits a job to AWS
 3. Monitors AWS job execution
-4. Streams logs from the AWS pod
-5. Reports success or failure
+4. Streams logs from the AWS pod, reconnecting if the stream drops while the container is running
+5. Reports success or failure; on failure, prints the Batch status reason and each attempt's pod, node and container exit code
 
 ## Container Image
 
-The script uses the container image: `nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04`
+The script uses the container image: `nvcr.io/nvidia/cuda:13.4.2-devel-ubuntu24.04`
+CUDA 13.1.1+ devel images ship the cuObject client dev package, which the OBJ
+plugin needs to build its S3 accelerated engines; CUDA 13.0 has none.
 You can override this by setting the `CONTAINER_IMAGE` environment variable:
 
 ```bash
 export CONTAINER_IMAGE="your-custom-image:tag"
 ```
+
+Inside the pod, apt is pointed at the in-region EC2 Ubuntu mirror (`<AWS_DEFAULT_REGION>.ec2.archive.ubuntu.com`) instead of `archive.ubuntu.com` and `security.ubuntu.com`.

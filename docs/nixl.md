@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -177,3 +177,34 @@ Invalidate local agent metadata()
 deregister memory regions # optional
 delete agent
 ```
+
+# Configuration
+
+NIXL and its plugins have config options that can be set via environment variables and/or a config file.
+
+When a config option named `NIXL_OPTION_FOO` is requested first the environment and then the config file is checked.
+If the option exists in the environment the config file is not consulted, even in case of value conversion errors.
+
+### Config Files
+
+The NIXL config file uses the [TOML](https://toml.io) file format.
+The config file is read once when the first config option is accessed by the library or any of its plugins.
+
+* If the environment variable `NIXL_CONFIG_FILE` is set then its content are used as the name of the config file.
+* Else, if the environment variable `HOME` is set and the file `$HOME/.nixl.cfg` also exists then that is the config file.
+* Else, if the file `/etc/nixl.cfg` exists then that is the config file.
+
+If all three options do not exist then no config file is read and config options are only taken from the environment.
+
+Note that if an attempt to read a config file fails due to e.g. a syntax error there is **no** fallback to the next file option!
+
+### Value Conversion
+
+When string values from environment variables are interpreted as other types the following rules apply.
+
+For integers the values of environment variables should not contain anything beyond the minimal representation of the numeric value.
+Leading or trailing spaces, superfluous positive signs, and leading zeroes must be avoided.
+Unsigned integers can also be specified in hexadecimal with leading `0x`.
+
+For Booleans the following strings are all recognized as **true**, `y`, `yes`, `on`, `1`, `true`, `enable`, and for **false** there are `n`, `no`, `off`, `0`, `false`, `disable`.
+Matching is case insensitve, e.g. `false`, `FALSE` and `FaLSe` are all accepted.

@@ -22,20 +22,12 @@
 # Set initial port number for client/server applications to be updated with
 # function below
 #
-tcp_port_range=1000
+tcp_port_range=300
 min_port_number=10500
-max_port_number=65535
+max_port_number=32500
 
-# GITLAB CI
-if [ -n "$CI_CONCURRENT_ID" ]; then
-    nixl_concurrent_id=$CI_CONCURRENT_ID
-# Jenkins CI
-elif [ -n "$EXECUTOR_NUMBER" ]; then
-    nixl_concurrent_id=$EXECUTOR_NUMBER
-else
-    # Fallback to random number if both CI_CONCURRENT_ID and EXECUTOR_NUMBER are not set
-    nixl_concurrent_id=$((RANDOM % $(((max_port_number - min_port_number) / tcp_port_range))))
-fi
+tcp_port_slots=$(((max_port_number - min_port_number) / tcp_port_range))
+nixl_concurrent_id=$(( ${CI_CONCURRENT_ID:-${EXECUTOR_NUMBER:-$RANDOM}} % tcp_port_slots ))
 
 echo nixl_concurrent_id="$nixl_concurrent_id"
 
@@ -55,7 +47,7 @@ get_next_tcp_port() {
     local next_port=$((current_port + 1))
 
     # Check if the port is already in use
-    while ss -tuln | grep -q :$next_port; do
+    while ss -Htuln | awk '{print $5}' | grep -qE "[:.]${next_port}$"; do
         next_port=$((next_port + 1))
     done
 
@@ -77,7 +69,13 @@ max_gtest_port=$((tcp_port_max + gtest_offset))
 
 # Check if a GPU is present
 if [ -z "${HAS_GPU}" ]; then
-    nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+    if command -v nvidia-smi > /dev/null 2>&1; then
+        nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+    elif command -v amd-smi > /dev/null 2>&1; then
+        amd-smi static -a | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+    else
+        HAS_GPU=false
+    fi
 fi
 
 # Ensure CUDA_HOME is set if CUDA is installed (cuda-dl-base images don't set it by default)
@@ -131,4 +129,92 @@ wait_for_etcd() {
         sleep 1
     done
     echo "Etcd is ready"
+}
+
+wait_for_redis_server() {
+    local port=$1
+    local retries=30
+    command -v redis-cli >/dev/null 2>&1 || { echo "ERROR: redis-cli not found — install redis-tools" >&2; exit 1; }
+    echo "Waiting for Redis to be ready on port ${port} (timeout: ${retries}s)..."
+    while ! timeout 1 redis-cli -p "${port}" ping 2>&1 | grep -q 'PONG'; do
+        if ! kill -0 "${REDIS_PID:-}" 2>/dev/null; then
+            echo "Redis process (pid=${REDIS_PID}) exited before becoming ready" >&2
+            echo "Redis server log:" >&2; cat "${REDIS_LOG:-/dev/null}" >&2
+            exit 1
+        fi
+        retries=$((retries - 1))
+        if [ $retries -eq 0 ]; then
+            echo "Redis failed to start on port ${port}" >&2
+            ss -tulnp 2>/dev/null | grep ":${port}" || echo "(no socket found on port ${port})" >&2
+            kill -0 "${REDIS_PID:-}" 2>/dev/null && echo "redis-server pid=${REDIS_PID} is alive" >&2 || echo "redis-server pid=${REDIS_PID} is dead" >&2
+            echo "Redis server log:" >&2; cat "${REDIS_LOG:-/dev/null}" >&2
+            kill -9 "${REDIS_PID:-}" 2>/dev/null || true
+            exit 1
+        fi
+        sleep 1
+    done
+    echo "Redis is ready"
+}
+
+start_redis_server() {
+    echo "==== Running Redis server ===="
+    redis_port=$(get_next_tcp_port)
+    export REDIS_HOST="127.0.0.1"
+    export REDIS_PORT="${redis_port}"
+    export REDIS_LOG
+    REDIS_LOG=$(mktemp /tmp/redis-XXXXXX.log)
+    local redis_dir
+    redis_dir=$(mktemp -d /tmp/redis-dir-XXXXXX)
+
+    redis-server --port "${redis_port}" --bind 127.0.0.1 --protected-mode yes --daemonize no --loglevel notice \
+                 --dir "${redis_dir}" --save '' --appendonly no --logfile "${REDIS_LOG}" &
+    REDIS_PID=$!
+
+    wait_for_redis_server "${redis_port}"
+}
+
+start_etcd_server() {
+    local namespace_prefix=$1
+    if [ -z "${namespace_prefix}" ]; then
+        echo "Usage: start_etcd_server <namespace_prefix>"
+        exit 1
+    fi
+
+    echo "==== Running ETCD server ===="
+    etcd_port=$(get_next_tcp_port)
+    etcd_peer_port=$(get_next_tcp_port)
+    export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
+    export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
+    export NIXL_ETCD_NAMESPACE="${namespace_prefix}/${etcd_port}"
+
+    etcd --listen-client-urls "${NIXL_ETCD_ENDPOINTS}" --advertise-client-urls "${NIXL_ETCD_ENDPOINTS}" \
+         --listen-peer-urls "${NIXL_ETCD_PEER_URLS}" --initial-advertise-peer-urls "${NIXL_ETCD_PEER_URLS}" \
+         --initial-cluster "default=${NIXL_ETCD_PEER_URLS}" &
+    ETCD_PID=$!
+
+    wait_for_etcd
+}
+
+# Write a git config that authenticates every github.com request with
+# NIXL_GITHUB_USER/NIXL_GITHUB_TOKEN to $1, or an empty file when no token is bound.
+# Used by the CI matrices for image builds (as a build secret) and agent-side clones
+# (via git -c include.path). The token is a fine-grained PAT (github_pat_ followed
+# by letters, digits and underscores); it only ever appears base64-encoded in a header.
+write_github_gitconfig() {
+    local dest="$1"
+    local restore_xtrace=""
+    case "$-" in
+        *x*) restore_xtrace=1; set +x ;;
+    esac
+
+    (umask 077; : > "${dest}")
+    if [ -n "${NIXL_GITHUB_TOKEN:-}" ]; then
+        printf '[http "https://github.com/"]\n\textraheader = AUTHORIZATION: basic %s\n' \
+            "$(printf '%s:%s' "${NIXL_GITHUB_USER:-x-access-token}" "${NIXL_GITHUB_TOKEN}" | base64 -w0)" \
+            > "${dest}"
+    fi
+
+    if [ -n "${restore_xtrace}" ]; then
+        set -x
+    fi
 }

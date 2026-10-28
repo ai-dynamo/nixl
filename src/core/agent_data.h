@@ -17,122 +17,123 @@
 #ifndef NIXL_SRC_CORE_AGENT_DATA_H
 #define NIXL_SRC_CORE_AGENT_DATA_H
 
-#include "common/str_tools.h"
 #include "mem_section.h"
+#include "nixl_md_manager.h"
+#include "nixl_metadata_context.h"
 #include "telemetry.h"
-#include "stream/metadata_stream.h"
+#include "tracing/trace.h"
+#include "tracing/trace_context.h"
 #include "sync.h"
 
+#include <atomic>
+#include <functional>
 #include <memory>
-
-#if HAVE_ETCD
-#include <etcd/SyncClient.hpp>
-
-namespace etcd {
-class SyncClient;
-}
-
-#define NIXL_ETCD_NAMESPACE_DEFAULT "/nixl/agents/"
-#endif // HAVE_ETCD
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
 
-//Internal typedef to define metadata communication request types
-//To be extended with ETCD operations
-enum nixl_comm_t {
-    SOCK_SEND,
-    SOCK_FETCH,
-    SOCK_INVAL,
-    SOCK_MAX,
-#if HAVE_ETCD
-    ETCD_SEND,
-    ETCD_FETCH,
-    ETCD_INVAL
-#endif // HAVE_ETCD
-};
-
-//Command to be sent to listener thread from NIXL API
-// 1) Command type
-// 2) IP Address
-// 3) Port
-// 4) Metadata to send (for sendLocalMD calls)
-using nixl_comm_req_t = std::tuple<nixl_comm_t, std::string, int, nixl_blob_t>;
-
-using nixl_socket_peer_t = std::pair<std::string, int>;
-
-using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
-
-class nixlAgentData {
+// Implements nixlMetadataContext, which is the whole surface a metadata backend
+// sees of the agent: serialization, cache load and invalidation, nothing else.
+// Preserve the grandfathered 8-space class layout below.
+// clang-format off
+class nixlAgentData final : public nixlMetadataContext {
     private:
-        std::string     name;
-        nixlAgentConfig config;
+        const std::string name_;
+        const nixlAgentConfig config_;
+        // Agent-owned metadata manager; always built (single metadata path).
+        // It owns the pluggable backends, which own their own transport state
+        // (sockets/listener for P2P, client for ETCD) and their own threads.
+        // Declared before `lock` because whether any backend runs a thread is
+        // what decides the effective sync mode.
+        nixlMDManager md_;
         nixlLock        lock;
-        bool telemetryEnabled = false;
+        std::atomic<bool> efaWarningChecked = false;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
 
         // Bookkeeping from backend type and memory type to backend engine
         backend_list_t                         notifEngines;
-        backend_map_t                          backendEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
-
-        // Bookkeping for local connection metadata and user handles per backend
-        std::unordered_map<nixl_backend_t, nixlBackendH*> backendHandles;
-        std::unordered_map<nixl_backend_t, nixl_blob_t>   connMD;
 
         // Bookkeeping from memory view handles to backend engines
         std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
 
-        // Local section, and Remote sections and their available common backends
-        std::unique_ptr<nixlLocalSection> memorySection;
+        std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
+            remoteBackends_;
 
-        std::unordered_map<std::string,
-                           std::unordered_map<nixl_backend_t, nixl_blob_t>,
-                           std::hash<std::string>, strEqual>     remoteBackends;
-        std::unordered_map<std::string, nixlRemoteSection*,
-                           std::hash<std::string>, strEqual>     remoteSections;
-
-        // State/methods for listener thread
-        std::unique_ptr<nixlMDStreamListener> listener;
-        nixl_socket_map_t remoteSockets;
-        std::thread commThread;
-        std::vector<nixl_comm_req_t> commQueue;
-        std::mutex commLock;
-        std::atomic<bool> commThreadStop;
-        std::atomic<bool> agentShutdown;
-        bool useEtcd;
+        // The order of the following data members is crucial for destruction.
         std::unique_ptr<nixlTelemetry> telemetry_;
-        std::exception_ptr commThreadException_;
+        // Composite tracer (fans out to every enabled backend); null when no
+        // backend is active.
+        const std::unique_ptr<nixl::trace::Tracer> tracer_;
+        std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendTraceSink>> traceSinks_;
+        std::unordered_map<nixl_backend_t, std::atomic<bool>> traceContextUnsupported_;
+        // Bookkeeping for local connection metadata and user handles per backend
+        std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
+        std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
+        backend_map_t backendEngines_;
+        // Owning shared_ptr per registration generation; weak refs in handles expire on
+        // invalidation or re-registration.
+        std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
+        nixlLocalSection localSection_;
 
-        void
-        commWorker(nixlAgent &myAgent) noexcept;
-        void
-        commWorkerInternal(nixlAgent *myAgent);
-        void enqueueCommWork(nixl_comm_req_t request);
-        void getCommWork(std::vector<nixl_comm_req_t> &req_list);
+        // nixlMetadataContext impl; private as before (backends call via the interface).
+        [[nodiscard]] nixl_status_t
+        getLocalMD(nixl_blob_t &blob) override;
+        [[nodiscard]] nixl_status_t
+        getLocalPartialMD(const nixl_reg_dlist_t &descs,
+                          nixl_blob_t &blob,
+                          const nixl_opt_args_t *extra_params) override;
+        [[nodiscard]] const std::string &
+        agentName() const noexcept override {
+            return name_;
+        }
+        [[nodiscard]] nixl_status_t
+        loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) override;
+        nixl_status_t
+        invalidateRemoteMD(const std::string &remote_name) override;
         nixl_status_t
         loadConnInfo(const std::string &remote_name,
                      const nixl_backend_t &backend,
                      const nixl_blob_t &conn_info);
         nixl_status_t
         loadRemoteSections(const std::string &remote_name, nixlSerDes &sd);
-        nixl_status_t
-        invalidateRemoteData(const std::string &remote_name);
         [[nodiscard]] static backend_set_t
-        getBackends(const nixl_opt_args_t *opt_args, nixlMemSection &section, nixl_mem_t mem_type);
+        getBackends(const nixl_opt_args_t *opt_args,
+                    const nixlMemSection &section,
+                    nixl_mem_t mem_type);
+        void
+        warnAboutEfaHardwareMismatch();
+        void
+        warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
+                                      const nixl::trace::TraceContext &context) noexcept;
+
+        template<class dlist_t>
+        nixl_status_t
+        prepXferDlist(const std::string &agent_name,
+                      const dlist_t &descs,
+                      nixlDlistH *&dlist_hndl,
+                      const nixl_opt_args_t *extra_params);
 
     public:
-        nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
+        nixlAgentData(const std::string &name, const nixlAgentConfig &config);
+
+        // Stops and joins the metadata backends' worker threads before any
+        // member is destroyed, so no backend work can touch the caches
+        // (remoteSections_, backendEngines_) torn down after this body runs.
         ~nixlAgentData();
 
-        inline void
+        void
         addErrorTelemetry(nixl_status_t err_status) {
-            if (telemetry_) telemetry_->updateErrorCount(err_status);
+            if (telemetry_) {
+                telemetry_->updateErrorCount(err_status);
+            }
         }
 
     friend class nixlAgent;
 };
+
+// clang-format on
 
 class nixlBackendEngine;
 
@@ -143,14 +144,29 @@ class nixlBackendH {
 
         explicit nixlBackendH(nixlBackendEngine *engine) noexcept : engine(engine) {}
 
+    public:
         ~nixlBackendH() = default;
 
-    public:
-        nixl_backend_t getType () const { return engine->getType(); }
+        // TODO? engine->getType() returns a const nixl_backend_t&
+        nixl_backend_t
+        getType() const noexcept {
+            return engine->getType();
+        }
 
-        bool supportsRemote () const { return engine->supportsRemote(); }
-        bool supportsLocal  () const { return engine->supportsLocal (); }
-        bool supportsNotif  () const { return engine->supportsNotif (); }
+        bool
+        supportsRemote() const {
+            return engine->supportsRemote();
+        }
+
+        bool
+        supportsLocal() const {
+            return engine->supportsLocal();
+        }
+
+        bool
+        supportsNotif() const {
+            return engine->supportsNotif();
+        }
 
     friend class nixlAgentData;
     friend class nixlAgent;

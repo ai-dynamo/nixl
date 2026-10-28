@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,7 @@
  */
 #include "mooncake_backend.h"
 #include "serdes/serdes.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 
 #include <arpa/inet.h>
@@ -26,6 +27,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+namespace {
 std::vector<std::string>
 findLocalIpAddresses() {
     std::vector<std::string> ips;
@@ -68,14 +70,20 @@ findLocalIpAddresses() {
     return ips;
 }
 
+[[nodiscard]] std::string
+chooseIpAddress() {
+    static const std::string local = "127.0.0.1";
+    static const std::vector<std::string> ips = findLocalIpAddresses();
+    static const std::string &fallback = ips.empty() ? local : ips[0];
+    return nixl::config::getValueDefaulted("NIXL_MOONCAKE_IP_ADDR", fallback);
+}
+
+} // namespace
+
 nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
-    local_agent_name_ = init_params->localAgent;
-    auto ips = findLocalIpAddresses();
-    std::string segment_name = "127.0.0.1";
-    if (!ips.empty()) segment_name = ips[0];
-    if (getenv("NIXL_MOONCAKE_IP_ADDR"))
-        segment_name = std::string(getenv("NIXL_MOONCAKE_IP_ADDR"));
+    : nixlBackendEngine(init_params),
+      local_agent_name_(init_params->localAgent) {
+    const std::string segment_name = chooseIpAddress();
     engine_ = createTransferEngine("P2PHANDSHAKE", segment_name.c_str(), "", 0, true);
 }
 
@@ -218,8 +226,8 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
 
     virtual ~nixlMooncakeBackendReqH() {}
 
-    uint64_t batch_id;
-    size_t request_count;
+    uint64_t batch_id = INVALID_BATCH;
+    size_t request_count = 0;
 };
 
 nixl_status_t
@@ -263,7 +271,7 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     size_t request_count = local.descCount();
-    transfer_request_t *request = new transfer_request_t[request_count];
+    std::vector<transfer_request_t> request(request_count);
     for (size_t index = 0; index < request_count; ++index) {
         if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
         request[index].opcode = (operation == NIXL_READ) ? OPCODE_READ : OPCODE_WRITE;
@@ -273,15 +281,15 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         request[index].target_id = segment_id;
     }
     int rc = 0;
-    if (opt_args->hasNotif) {
+    if (opt_args && opt_args->hasNotif) {
         notify_msg_t notify_msg;
         notify_msg.name = const_cast<char *>(local_agent_name_.c_str());
         notify_msg.msg = const_cast<char *>(opt_args->notifMsg.c_str());
-        rc = submitTransferWithNotify(engine_, priv->batch_id, request, request_count, notify_msg);
+        rc = submitTransferWithNotify(
+            engine_, priv->batch_id, request.data(), request_count, notify_msg);
     } else {
-        rc = submitTransfer(engine_, priv->batch_id, request, request_count);
+        rc = submitTransfer(engine_, priv->batch_id, request.data(), request_count);
     }
-    delete[] request;
     if (rc) return NIXL_ERR_BACKEND;
     priv->request_count += request_count;
     return NIXL_IN_PROG;
@@ -290,6 +298,14 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
 nixl_status_t
 nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
+    // Once every request completed, the batch is freed below and batch_id is
+    // reset to INVALID_BATCH. A later checkXfer() on the same handle must not
+    // reach the engine: getTransferStatus() and freeBatchID() cast the batch
+    // id to a BatchDesc pointer and dereference it, so passing INVALID_BATCH
+    // (UINT64_MAX) crashes. Report the already-reached terminal state instead.
+    if (priv->batch_id == INVALID_BATCH) {
+        return NIXL_SUCCESS;
+    }
     bool has_failed = false;
     for (size_t index = 0; index < priv->request_count; ++index) {
         transfer_status_t status;
@@ -305,6 +321,7 @@ nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
         // where the same nixlBackendReqH could be used to post multiple transfer.
         freeBatchID(engine_, priv->batch_id);
         priv->batch_id = INVALID_BATCH;
+        priv->request_count = 0;
     }
     return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
 }

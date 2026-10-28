@@ -82,24 +82,8 @@ __device__ __forceinline__ void trap() {
     asm("trap;");
 }
 
-__device__ __forceinline__ void memory_fence() {
-    asm volatile("fence.acq_rel.sys;":: : "memory");
-}
-
-__device__  __forceinline__ void st_release_sys_global(const int *ptr, int val) {
-    asm volatile("st.release.sys.global.s32 [%0], %1;"::"l"(ptr), "r"(val) : "memory");
-}
-
 __device__  __forceinline__ void st_release_sys_global(const uint64_t *ptr, uint64_t val) {
     asm volatile("st.release.sys.global.u64 [%0], %1;"::"l"(ptr), "l"(val) : "memory");
-}
-
-__device__  __forceinline__ void st_release_cta(const int *ptr, int val) {
-    asm volatile("st.release.cta.s32 [%0], %1;"::"l"(ptr), "r"(val) : "memory");
-}
-
-__device__  __forceinline__ void st_release_cta(const volatile int *ptr, int val) {
-    asm volatile("st.release.cta.s32 [%0], %1;"::"l"(ptr), "r"(val) : "memory");
 }
 
 __device__ __forceinline__ int ld_acquire_sys_global(const int *ptr) {
@@ -141,7 +125,7 @@ __device__ __forceinline__ int atomic_add_release_global(const uint64_t* ptr, ui
 #ifndef DISABLE_AGGRESSIVE_PTX_INSTRS
 #define LD_NC_FUNC "ld.global.nc.L1::no_allocate.L2::256B"
 #else
-#define LD_NC_FUNC "ld.volatile.global"
+#define LD_NC_FUNC "ld.volatile.global.L2::256B"
 #endif
 
 // `ld.global.nc.L1::no_allocate` will be translated into `LDG.E.NA.[width].CONSTANT` in SASS
@@ -163,13 +147,6 @@ template <>
 __device__  __forceinline__ int ld_nc_global(const int *ptr) {
     int ret;
     asm volatile(LD_NC_FUNC ".s32 %0, [%1];" : "=r"(ret) : "l"(ptr));
-    return ret;
-}
-
-template <>
-__device__  __forceinline__ int64_t ld_nc_global(const int64_t *ptr) {
-    int64_t ret;
-    asm volatile(LD_NC_FUNC ".s64 %0, [%1];" : "=l"(ret) : "l"(ptr));
     return ret;
 }
 
@@ -206,21 +183,6 @@ template <typename dtype_t>
 __device__  __forceinline__ void st_na_global(const dtype_t *ptr, const dtype_t& value) {
     st_na_global(reinterpret_cast<const typename VecInt<sizeof(dtype_t)>::vec_t*>(ptr),
                  *reinterpret_cast<const typename VecInt<sizeof(dtype_t)>::vec_t*>(&value));
-}
-
-template <>
-__device__  __forceinline__ void st_na_global(const int *ptr, const int& value) {
-    asm volatile(ST_NA_FUNC ".s32 [%0], %1;" ::"l"(ptr), "r"(value));
-}
-
-template <>
-__device__  __forceinline__ void st_na_global(const int64_t *ptr, const int64_t& value) {
-    asm volatile(ST_NA_FUNC ".s64 [%0], %1;" ::"l"(ptr), "l"(value));
-}
-
-template <>
-__device__  __forceinline__ void st_na_global(const float *ptr, const float& value) {
-    asm volatile(ST_NA_FUNC ".f32 [%0], %1;" ::"l"(ptr), "f"(value));
 }
 
 template <>
@@ -265,6 +227,11 @@ __device__ __forceinline__ uint32_t elect_one_sync() {
     return get_lane_id() == 0;
 #endif
 }
+
+__device__ __forceinline__ void fence_view_async_shared() {
+    asm volatile("fence.proxy.async.shared::cta; \n" :: );
+}
+
 
 // TMA PTX instructions
 #ifndef DISABLE_SM90_FEATURES
@@ -332,9 +299,9 @@ __device__ __forceinline__ void tma_store_1d(const void* smem_ptr, const void* g
     asm volatile("cp.async.bulk.commit_group;");
 }
 
-template <int N>
+template <int N = 0>
 __device__ __forceinline__ void tma_store_wait() {
-    asm volatile("cp.async.bulk.wait_group.read %0;" :: "n"(N) : "memory");
+    asm volatile("cp.async.bulk.wait_group %0;" :: "n"(N) : "memory");
 }
 
 #endif
@@ -347,13 +314,6 @@ __host__ __device__ constexpr dtype_t ceil_div(dtype_t a, dtype_t b) {
 template <typename dtype_t>
 __host__ __device__ constexpr dtype_t align_up(dtype_t a, dtype_t b) {
     return ceil_div<dtype_t>(a, b) * b;
-}
-
-__forceinline__ __device__ void get_channel_task_range(int num_tokens, int num_sms, int sm_id,
-                                                       int& token_start_idx, int& token_end_idx) {
-    int num_tokens_per_sm = ceil_div(num_tokens, num_sms);
-    token_start_idx = min(num_tokens_per_sm * sm_id, num_tokens);
-    token_end_idx = min(token_start_idx + num_tokens_per_sm, num_tokens);
 }
 
 template <typename dtype_a_t, typename dtype_b_t>
@@ -370,17 +330,6 @@ __device__ __forceinline__ void unpack2(const dtype_b_t& packed, dtype_a_t& x, d
     EP_STATIC_ASSERT(sizeof(dtype_a_t) * 2 == sizeof(dtype_b_t), "Invalid dtypes");
     auto unpacked_ptr = reinterpret_cast<const dtype_a_t*>(&packed);
     x = unpacked_ptr[0], y = unpacked_ptr[1];
-}
-
-template <typename dtype_t>
-__device__ __forceinline__ dtype_t broadcast(dtype_t& ptr, int src_lane_idx) {
-    EP_STATIC_ASSERT(sizeof(dtype_t) % sizeof(int) == 0, "");
-    auto send_int_values = reinterpret_cast<int*>(&ptr);
-    int recv_int_values[sizeof(dtype_t) / sizeof(int)];
-    #pragma unroll
-    for (int i = 0; i < sizeof(dtype_t) / sizeof(int); ++ i)
-        recv_int_values[i] = __shfl_sync(0xffffffff, send_int_values[i], src_lane_idx);
-    return *reinterpret_cast<dtype_t*>(recv_int_values);
 }
 
 

@@ -14,17 +14,61 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
+ARG BASE_IMAGE_TAG="26.08-cuda13.4-devel-ubuntu24.04"
 ARG OS
 
+# libcuobjclient dev files: the cuda-dl-base devel images ship the runtime but
+# not libcuobjclient-dev, so the OBJ plugin silently loses cuObject RDMA
+# acceleration. Keep pinned to the same release as BASE_IMAGE_TAG.
+ARG CUOBJ_DEV_IMAGE="nvcr.io/nvidia/cuda-dl-base:26.08-cuda13.4-inference-devel-ubuntu24.04"
+
+FROM ${CUOBJ_DEV_IMAGE} AS cuobj_dev
+RUN set -e; \
+    T="$(echo "$(readlink -f /usr/local/cuda)"/targets/*-linux)"; \
+    mkdir -p /cuobj/include /cuobj/lib /cuobj/pkgconfig; \
+    cp -a "$T"/include/cuobj*.h /cuobj/include/; \
+    cp -a "$T"/lib/libcuobjclient.so /cuobj/lib/; \
+    cp -a /usr/lib/pkgconfig/cuobjclient-*.pc /cuobj/pkgconfig/; \
+    basename "$(ls "$T"/lib/libcuobjclient.so.1.*)" > /cuobj/soname
+
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+
+# Install them only when the base has a matching runtime and no dev files of
+# its own, so bases that are already correct or have no cuObject are untouched.
+COPY --from=cuobj_dev /cuobj /tmp/cuobj
+RUN set -e; \
+    CUDA_DIR="$(readlink -f /usr/local/cuda)"; \
+    T="$(echo "$CUDA_DIR"/targets/*-linux)"; \
+    have="$(basename "$(ls "$T"/lib/libcuobjclient.so.1.* 2>/dev/null | head -1)" 2>/dev/null)"; \
+    want="$(cat /tmp/cuobj/soname)"; \
+    if [ -e "$T/include/cuobjclient.h" ]; then \
+        echo "cuObject: dev files already present, leaving base untouched"; \
+    elif [ -z "$have" ]; then \
+        echo "cuObject: no runtime in base, skipping dev files"; \
+    elif [ "$have" != "$want" ]; then \
+        echo "cuObject: base runtime $have != dev files $want, skipping"; \
+    else \
+        cp -a /tmp/cuobj/include/*.h "$T/include/"; \
+        cp -a /tmp/cuobj/lib/libcuobjclient.so "$T/lib/"; \
+        PC="$(ls /tmp/cuobj/pkgconfig/cuobjclient-*.pc | head -1)"; \
+        mkdir -p /usr/lib/pkgconfig; \
+        sed "s|^cudaroot=.*|cudaroot=$CUDA_DIR|" "$PC" > "/usr/lib/pkgconfig/$(basename "$PC")"; \
+        echo "cuObject: installed dev files for $want"; \
+    fi; \
+    rm -rf /tmp/cuobj
 
 # Set default OS if not provided
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
+# PyTorch publishes wheels for only some CUDA minors, and the base image's own
+# CUDA_VERSION (13.4) has no index. Deliberately not named CUDA_VERSION: the base
+# exports that as ENV, which wins over an ARG of the same name.
+ARG TORCH_CUDA_INDEX="cu130"
 ARG DEFAULT_PYTHON_VERSION="3.12"
-ARG UCX_REF="v1.20.x"
-ARG BUILD_NIXL_EP="false"
+ARG UCX_REPO="https://github.com/openucx/ucx.git"
+ARG UCX_REF="v1.23.x"
+ARG UCX_SONAME_SUFFIX=""
+ARG BUILD_NIXL_EP="true"
 ARG RDMA_CORE_PREFIX="/usr"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
@@ -36,6 +80,24 @@ ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
+ARG ABSL_TAG="lts_2025_08_14"
+ARG GRPC_TAG="v1.73.0"
+ARG HIREDIS_VERSION="1.4.0"
+ARG APT_MIRROR=""
+ARG WGET_RETRY_OPTS="--tries=10 --waitretry=15 --retry-connrefused --retry-on-http-error=429,500,502,503,504 --no-http-keep-alive --timeout=30 --read-timeout=60"
+
+# Optional apt mirror override, e.g. for CI environments with an internal
+# Ubuntu mirror. Empty (default) keeps the public archive/ports.ubuntu.com.
+RUN if [ -n "$APT_MIRROR" ]; then \
+        . /etc/os-release && \
+        printf '%s\n' \
+            'Types: deb' \
+            "URIs: $APT_MIRROR" \
+            "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+            'Components: main restricted universe multiverse' \
+            'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
+        grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f; \
+    fi
 
 # Install build dependencies from Ubuntu repository
 RUN apt-get update -y && \
@@ -46,15 +108,13 @@ RUN apt-get update -y && \
     libclang-dev \
     cmake \
     libgflags-dev \
-    libgrpc-dev \
-    libgrpc++-dev \
     libprotobuf-dev \
     libaio-dev \
-    liburing-dev \
-    protobuf-compiler-grpc \
     libcpprest-dev \
     etcd-server \
     etcd-client \
+    redis-server \
+    libevent-dev \
     autotools-dev \
     automake \
     libtool \
@@ -62,54 +122,135 @@ RUN apt-get update -y && \
     flex \
     libgtest-dev \
     build-essential \
-    python3.12-dev \
+    redis-tools \
+    python3-dev \
+    libpython3-dev \
+    pybind11-dev \
     clang \
     hwloc \
     libhwloc-dev \
+    pkg-config \
+    wget \
+    git \
     # aws-sdk-cpp dependencies
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
     # azure-sdk-for-cpp dependencies
     libxml2-dev
 
-# Add DOCA repository and install packages
+# Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
+# Skip only the DOCA SDK install when the base image already ships it.
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    wget ${WGET_RETRY_OPTS} --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+    if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then \
+        echo "DOCA SDK already installed in base image, skipping SDK install"; \
+    else \
+        apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev; \
+    fi
 
-# Force reinstall of RDMA packages from DOCA repository
-# Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
-# Upgrade is not sufficient if the version is the same since apt skips the installation.
+# Reinstall RDMA build deps (libfabric --enable-efa needs libibverbs-dev), required even when
+# DOCA is from the base image. --reinstall because apt skips equal versions.
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
     libnuma-dev librdmacm-dev ibverbs-providers
 
 WORKDIR /workspace
-RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+ENV CMAKE_INSTALL_ALWAYS=1
+
+# CI supplies a github.com credential as the optional "ghconfig" build secret;
+# without it these clones stay anonymous. RUN --mount needs BuildKit or podman.
+ARG GIT_TERMINAL_PROMPT=0
+
+# Build Abseil from source (required for absl/log).
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/abseil/abseil-cpp.git && \
+    cd abseil-cpp && \
+    git fetch --depth 1 origin ${ABSL_TAG} && \
+    git checkout ${ABSL_TAG} && \
+    mkdir -p build && cd build && \
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_STANDARD=20 \
+        -DBUILD_SHARED_LIBS=ON \
+        -DABSL_PROPAGATE_CXX_STD=ON \
+        -DABSL_ENABLE_INSTALL=ON && \
+    make -j${NPROC:-$(nproc)} && \
+    make install && \
+    ldconfig
+
+# Build gRPC from source against system/install-prefix Abseil.
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+    cd grpc && \
+    mkdir -p cmake/build && \
+    cd cmake/build && \
+    export CMAKE_PREFIX_PATH="/usr/local${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" && \
+    export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib/${ARCH}-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" && \
+    cmake ../.. \
+        -DgRPC_INSTALL=ON \
+        -DgRPC_BUILD_TESTS=OFF \
+        -DBUILD_SHARED_LIBS=ON \
+        -DCMAKE_CXX_STANDARD=20 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_PREFIX_PATH=/usr/local \
+        -Dabsl_DIR=/usr/local/lib/cmake/absl \
+        -DgRPC_SSL_PROVIDER=package \
+        -DgRPC_ABSL_PROVIDER=package \
+        -DgRPC_PROTOBUF_PROVIDER=module \
+        -DgRPC_ZLIB_PROVIDER=package && \
+    make -j${NPROC:-$(nproc)} && \
+    make install && \
+    ldconfig
+
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
-    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=17 && \
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 -DCMAKE_PREFIX_PATH=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install
 
-RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+# Build hiredis from source via cmake (make is avoided: LIBRARY_PATH set by the CUDA base image
+# contaminates the Makefile's pkgconfig install path).
+RUN wget -q ${WGET_RETRY_OPTS} "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+        -O "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" && \
+    tar -xzf "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" -C /tmp && \
+    mkdir -p "/tmp/hiredis-${HIREDIS_VERSION}/build" && \
+    cd "/tmp/hiredis-${HIREDIS_VERSION}/build" && \
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON && \
+    make -j"${NPROC:-$(nproc)}" && \
+    make install && \
+    ldconfig && \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --atleast-version=1.0.1 hiredis && \
+    rm -rf "/tmp/hiredis-${HIREDIS_VERSION}" "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz"
+
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
-    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_CXX_STANDARD=20 && \
     make -j${NPROC:-$(nproc)} && make install
 
-RUN git clone https://github.com/nvidia/gusli.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
-     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 CXX="g++ -std=c++20" && \
      cd ..
 
-RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
-    AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
-    cmake --build . --target azure-storage-blobs azure-identity && \
+    AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON -DCMAKE_CXX_STANDARD=20 && \
+    cmake --build . --parallel ${NPROC:-$(nproc)} --target azure-storage-blobs azure-identity && \
     cmake --install sdk/core && \
     cmake --install sdk/storage/azure-storage-common && \
     cmake --install sdk/storage/azure-storage-blobs && \
@@ -124,7 +265,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     RUSTARCH=${ARCH}-unknown-linux-gnu
 
 # Download rustup-init and its checksum for the target architecture
-RUN wget --tries=3 --waitretry=5 \
+RUN wget ${WGET_RETRY_OPTS} \
     "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" \
     "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init.sha256" && \
     sha256sum -c rustup-init.sha256 && \
@@ -133,53 +274,70 @@ RUN wget --tries=3 --waitretry=5 \
     rm rustup-init* && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
-RUN rm -rf /usr/lib/ucx
-RUN rm -rf /opt/hpcx/ucx
+RUN rm -rf /usr/lib/ucx /opt/hpcx/ucx
 
-RUN cd /usr/local/src && \
-     git clone https://github.com/openucx/ucx.git && \
-     cd ucx &&                       \
-     if [ "$BUILD_NIXL_EP" = "true" ]; then \
-         echo "=== BUILD_NIXL_EP=true: Using latest UCX master branch (ignoring UCX_REF=$UCX_REF) ===" && \
-         UCX_COMMIT=$(git rev-parse --short HEAD) && \
-         echo "Using UCX commit: $UCX_COMMIT" && \
-         EXPERIMENTAL_API_PARAM="--enable-experimental-api"; \
-     else                            \
-         echo "=== Using UCX_REF=$UCX_REF ===" && \
-         git checkout $UCX_REF &&    \
-         EXPERIMENTAL_API_PARAM="";   \
-     fi &&                           \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src && \
+     git clone "$UCX_REPO" ucx && \
+     cd ucx && \
+     echo "=== Using UCX_REF=$UCX_REF ===" && \
+     git checkout $UCX_REF && \
+     if [ "$BUILD_NIXL_EP" = "true" ]; then EXPERIMENTAL_API_PARAM="--enable-experimental-api"; else EXPERIMENTAL_API_PARAM=""; fi && \
      ./autogen.sh && \
+     if [ -n "$UCX_SONAME_SUFFIX" ]; then \
+         if ./configure --help | grep -q -- "--with-soname-suffix"; then \
+             UCX_SONAME_PARAM="--with-soname-suffix=$UCX_SONAME_SUFFIX"; \
+         else \
+             echo "UCX_REF=$UCX_REF does not support --with-soname-suffix" >&2; \
+             exit 1; \
+         fi; \
+         if ./configure --help | grep -q -- "--enable-module-deepbind"; then \
+             UCX_MODULE_DEEPBIND_PARAM="--enable-module-deepbind"; \
+         else \
+             echo "UCX_REF=$UCX_REF does not support --enable-module-deepbind" >&2; \
+             exit 1; \
+         fi; \
+     else \
+         UCX_SONAME_PARAM=""; \
+         UCX_MODULE_DEEPBIND_PARAM=""; \
+     fi && \
      ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
          --enable-shared             \
          --disable-static            \
          --disable-doxygen-doc       \
          --enable-optimizations      \
+         --without-avx               \
          --enable-cma                \
          --enable-devel-headers      \
          $EXPERIMENTAL_API_PARAM      \
          --with-cuda=/usr/local/cuda \
          --with-verbs                \
          --with-dm                   \
-         --with-gdrcopy=/usr/local   \
-         --with-efa  &&              \
+         --without-gdrcopy           \
+         --with-efa                  \
+         $UCX_SONAME_PARAM           \
+         $UCX_MODULE_DEEPBIND_PARAM && \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
 
-RUN cd /tmp && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /tmp && \
      git clone --depth 1 https://github.com/google/gtest-parallel.git && \
      mkdir -p /usr/local/bin && \
      cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/
 ENV PATH=/usr/local/bin:$PATH
 
 # Build libfabric from source
-RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+RUN wget ${WGET_RETRY_OPTS} \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
     cd libfabric-* && \
     ./autogen.sh && \
+    if [ "${OS}" = "ubuntu22" ] || grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then \
+        GDRCOPY_FLAGS=""; \
+    else \
+        GDRCOPY_FLAGS="--with-gdrcopy --enable-gdrcopy-dlopen"; \
+    fi && \
     ./configure --prefix="${LIBFABRIC_INSTALL_PATH}" \
                 --disable-verbs \
                 --disable-psm3 \
@@ -189,61 +347,125 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
                 --enable-efa \
                 --with-cuda=/usr/local/cuda \
                 --enable-cuda-dlopen \
-                --with-gdrcopy \
-                --enable-gdrcopy-dlopen && \
+                ${GDRCOPY_FLAGS} && \
     make -j${NPROC:-$(nproc)} && \
     make install && \
     ldconfig
 
-# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
-# from the virtual environment. This means that the files reside in /root/.cache/uv,
-# which is not what we want since some systems mount user home dir into /root,
-# in which case the venv is broken when the container is started.
-# Set a custom cache directory inside /workspace to avoid this.
+# Keep uv's cache in /workspace, not /root (some hosts mount $HOME over /root).
 ENV UV_CACHE_DIR=/workspace/.cache/uv
-RUN mkdir -p $UV_CACHE_DIR
 # Disable build isolation, i.e. uv should not create a new virtual environment for
 # building wheels. This is faster as it skips installing dependencies twice.
 ENV UV_NO_BUILD_ISOLATION=1
 # Disable syncing, i.e. uv will not download packages outside uv pip commands.
 ENV UV_NO_SYNC=1
-# Create a new virtual environment
-ENV VIRTUAL_ENV=/workspace/.venv
-RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
-# Activate the virtual environment
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-# Install python dependencies
-RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
-# Install PyTorch
-RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
-    uv pip install torch torchvision torchaudio
-# Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
-RUN uv pip install --upgrade 'setuptools>=80.9.0'
+# Allow installs into PEP 668 externally-managed system Python.
+ENV UV_BREAK_SYSTEM_PACKAGES=1
+# All uv pip commands target the system interpreter.
+ENV UV_PYTHON=python${DEFAULT_PYTHON_VERSION}
+# Build tools into system Python (no venv).
+RUN mkdir -p $UV_CACHE_DIR && uv pip install --system --upgrade \
+    meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
+# Use system torch if present (>=2.7), else install it.
+RUN if TORCH_CHECK_ERR=$(/usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then \
+        echo "Using PyTorch from system site-packages"; \
+    else \
+        echo "System torch check failed: ${TORCH_CHECK_ERR}" >&2; \
+        export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
+        uv pip install --system torch torchvision torchaudio; \
+    fi
+# setuptools for PEP 639 license metadata
+RUN uv pip install --system --upgrade 'setuptools>=80.9.0'
 
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$RDMA_CORE_PREFIX/lib:$LD_LIBRARY_PATH
 
-# Install pybind11 via apt
-RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
+# Opt-in: build the internal ucx-spcx-plugin against the UCX built above and
+# install it into the UCX plugins dir, where UCX loads it like any other module.
+# The plugin source is cloned into the build context (ucx-spcx-plugin-src/) by
+# build-container.sh --build-ucx-spcx-plugin, so this must come after the
+# `COPY . /workspace/nixl` above.
+# FlexIO SDK + dpacc (build-time dependencies of the plugin's DPA transport) come
+# from the doca-host repo added above; libflexio is compile-against only — at
+# runtime it comes from the target machine's DOCA/FlexIO installation.
+# ac_cv_prog_cc_c23=no: on toolchains defaulting to C23, AC_PROG_CC resolves CC to
+# "gcc -std=gnu23". The plugin's src/gdp/Makefile.am passes the compiler through
+# unsplit as -hostcc=$(CC), so dpacc receives a bare -std=gnu23 and rejects it.
+# Drop this once the plugin splits the compiler from its flags.
+ARG BUILD_UCX_SPCX_PLUGIN=false
+RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
+        apt-get update -y && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            flexio-sdk dpacc && \
+        ldconfig && \
+        cd ucx-spcx-plugin-src && \
+        export ACLOCAL_PATH="/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}" && \
+        export ac_cv_prog_cc_c23=no && \
+        ./autogen.sh /usr/local/src/ucx && \
+        ./configure --prefix=$UCX_PREFIX --libdir=$UCX_PREFIX/lib \
+            --enable-shared --disable-static \
+            --with-ucx-src=/usr/local/src/ucx \
+            --with-ucx-build=/usr/local/src/ucx \
+            --with-cuda=/usr/local/cuda \
+            --with-flexio=/opt/mellanox/flexio \
+            --with-dpacc=$DOCA_PREFIX/tools/dpacc \
+            LDFLAGS="-L$UCX_PLUGIN_DIR -L$UCX_PREFIX/lib" && \
+        make -j${NPROC:-$(nproc)} && \
+        make install && \
+        ldconfig && \
+        cd /workspace/nixl && rm -rf ucx-spcx-plugin-src; \
+    fi
+
+# Opt-in: place the pre-staged DDN Infinia libs (from infinia-libs/ in the build
+# context, populated by build-container.sh --build-infinia) into /opt/ddn/red, the
+# infinia_path meson default, so meson auto-detects red_client and builds
+# libplugin_INFINIA.so. No registry pull here: the libs arrive via the COPY above.
+# uuid/uuid.h, included by the DDN red_client headers, comes from the uuid-dev
+# installed with the aws-sdk-cpp deps above.
+ARG BUILD_INFINIA=false
+RUN if [ "$BUILD_INFINIA" = "true" ]; then \
+        if [ -z "$(ls -A /workspace/nixl/infinia-libs 2>/dev/null)" ]; then \
+            echo "ERROR: BUILD_INFINIA=true but /workspace/nixl/infinia-libs is empty (staging failed?)" >&2; \
+            exit 1; \
+        fi; \
+        mkdir -p /opt/ddn/red && \
+        cp -a /workspace/nixl/infinia-libs/. /opt/ddn/red/; \
+    fi
 
 # Set PKG_CONFIG_PATH for NIXL EP dependencies (rdma-core, UCX, DOCA)
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib/$ARCH-linux-gnu/pkgconfig
 ENV PKG_CONFIG_PATH=$RDMA_CORE_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$UCX_PREFIX/lib/pkgconfig:$DOCA_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
 
 ENV NIXL_PREFIX=$NIXL_PREFIX
-RUN rm -rf build && \
+# meson setup clones the taskflow and prometheus-cpp [wrap-git] subprojects from github.com.
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     mkdir build && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \
         echo "=== BUILD_NIXL_EP=true: Building NIXL with NIXL EP support ===" && \
-        NIXL_EP_FLAG="-Dbuild_nixl_ep=true"; \
+        NIXL_EP_FLAG="-Dbuild_nixl_ep=true -Dbuild_examples=true"; \
     else \
         NIXL_EP_FLAG=""; \
     fi && \
     meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
     cd build && \
-    ninja && \
+    ninja -j${NPROC:-$(nproc)} && \
     ninja install
+
+# Fail the build if cuObject acceleration did not make it into the plugin.
+RUN set -e; \
+    T="$(echo "$(readlink -f /usr/local/cuda)"/targets/*-linux)"; \
+    if ! ls "$T"/lib/libcuobjclient.so.1.* >/dev/null 2>&1; then \
+        echo "cuObject: no runtime in base, skipping OBJ plugin check"; \
+    else \
+        P="$(find "$NIXL_PREFIX" -name libplugin_OBJ.so -print -quit)"; \
+        test -n "$P" || { echo "ERROR: libplugin_OBJ.so not found" >&2; exit 1; }; \
+        readelf -d "$P" | grep -q libcuobjclient || { \
+            echo "ERROR: libplugin_OBJ.so is missing libcuobjclient; S3 acceleration is not compiled in" >&2; \
+            exit 1; }; \
+        echo "cuObject: libplugin_OBJ.so links libcuobjclient"; \
+    fi
 
 RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "$NIXL_PLUGIN_DIR" >> /etc/ld.so.conf.d/nixl.conf && \
@@ -255,15 +477,10 @@ ENV PYTHONPATH=/workspace/nixl/build/examples/device/ep
 
 RUN cd src/bindings/rust && cargo build --release --locked
 
-# Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
-RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
-    mkdir -p dist && \
-    ./contrib/build-wheel.sh \
-    --python-version $DEFAULT_PYTHON_VERSION \
-    --platform manylinux_2_39_$ARCH \
-    --ucx-plugins-dir $UCX_PLUGIN_DIR \
-    --nixl-plugins-dir $NIXL_PLUGIN_DIR \
-    --output-dir /workspace/nixl/dist
-
-RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl
+# Install the python bindings from source, built against the container's own
+# torch - works on any base, no dependency on public torch wheels.
+# Redistributable wheels are produced by the wheel CI pipelines, not here.
+RUN CUDA_MAJOR=$(echo "${CUDA_VERSION}" | cut -d. -f1) && \
+    ./contrib/tomlutil.py --wheel-name "nixl-cu${CUDA_MAJOR}" pyproject.toml && \
+    uv pip install --system --no-build-isolation . && \
+    uv pip install --system build/src/bindings/python/nixl-meta/nixl-*.whl

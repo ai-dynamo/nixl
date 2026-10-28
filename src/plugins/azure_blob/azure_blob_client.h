@@ -21,6 +21,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <cstdint>
 #include <azure/storage/blobs.hpp>
@@ -29,6 +30,7 @@
 
 using put_blob_callback_t = std::function<void(bool success)>;
 using get_blob_callback_t = std::function<void(bool success)>;
+using check_blob_callback_t = std::function<void(std::optional<bool> exists)>;
 
 /**
  * Abstract interface for Azure Blob client operations.
@@ -76,12 +78,15 @@ public:
                  get_blob_callback_t callback) = 0;
 
     /**
-     * Check if the blob exists.
+     * Asynchronously check if the blob exists.
+     * Uses check_blob_callback_t: the callback receives a std::optional<bool>
+     * that is true if the blob exists, false if it does not, or std::nullopt
+     * if the request failed (indicating an error).
      * @param blob_name The blob name
-     * @return true if the blob exists, false otherwise
+     * @param callback Callback function invoked with the existence check result
      */
-    virtual bool
-    checkBlobExists(std::string_view blob_name) = 0;
+    virtual void
+    checkBlobExistsAsync(std::string_view blob_name, check_blob_callback_t callback) = 0;
 };
 
 /**
@@ -114,8 +119,8 @@ public:
                  size_t offset,
                  get_blob_callback_t callback) override;
 
-    bool
-    checkBlobExists(std::string_view blob_name) override;
+    void
+    checkBlobExistsAsync(std::string_view blob_name, check_blob_callback_t callback) override;
 
 private:
     std::shared_ptr<asio::thread_pool> executor_;

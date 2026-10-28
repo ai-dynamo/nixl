@@ -68,8 +68,11 @@ void ParseArguments(int argc, char **argv) {
 }
 
 namespace {
-    const std::regex aws_regex("UCX version is less than 1.19, CUDA support is limited, including"
-                               " the lack of support for multi-GPU within a single process.");
+    const std::regex
+        ib_regex("IB device\\(s\\) were detected, but accelerated IB support was not found");
+    const std::regex aws_regex("UCX version is [0-9]+\\.[0-9]+\\.[0-9]+ which is less than"
+                               " 1\\.19, CUDA support is limited, including the lack of support"
+                               " for multi-GPU within a single process.");
     const std::regex non_gpu_regex("[0-9]+ NVIDIA GPU\\(s\\) were detected, but UCX CUDA support "
                                    "was not found! GPU memory is not supported.");
 
@@ -79,6 +82,9 @@ int
 RunAllTests() {
     LogProblemCounter lpc;
     std::list<LogIgnoreGuard> ligs;
+
+    // TODO: Remove after the CI issues spuriously triggering this message are fixed.
+    ligs.emplace_back(ib_regex);
 
     if (std::getenv("AWS_BATCH_JOB_ID") != nullptr) {
         ligs.emplace_back(aws_regex);

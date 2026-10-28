@@ -18,14 +18,546 @@
 
 #include "libfabric/libfabric_topology.h"
 #include "libfabric/libfabric_common.h"
+#include "libfabric/libfabric_rail_manager.h"
 #include "common/nixl_log.h"
+#include "gpu_utils.h"
 
-#ifdef CUDA_FOUND
-#include <cuda_runtime.h>
-#endif
+#include <cmath>
+#include <cassert>
+#include <optional>
+#include <thread>
+#include <bitset>
+#include <algorithm>
+#include <set>
+#include <string>
+#include <vector>
+
+// Renders a device list for an error message.
+static std::string
+joinDevices(const std::vector<std::string> &devices) {
+    std::string joined;
+    for (size_t i = 0; i < devices.size(); ++i) {
+        joined += (i == 0 ? "" : ", ") + devices[i];
+    }
+    return joined;
+}
+
+struct TestScenario {
+    bool override_bandwidth;
+    unsigned bandwidth_limit;
+};
+
+// topology info required for NUMA-aware rail selection testing
+struct TopologyInfo {
+    bool enable;
+    const char *instance_type;
+    const char *topo_file;
+    size_t numa_node_count;
+    size_t nic_count;
+    size_t nic_line_speed; // Gbps 1000^3
+    size_t nic_upstream_link_speed; // GB/s 1024^3
+    size_t switch_count;
+    size_t numa_capacity; // GB/s 1024^3
+    size_t numa_rail_count;
+    std::vector<TestScenario> test_scenarios;
+    // rail partition: node/switch/rail-ids
+    std::vector<std::vector<std::vector<int>>> rail_partition;
+};
+
+// list of all topologies that are to be tested
+static TopologyInfo topologies[] = {
+    //
+    // P-series
+    //
+
+    // p3dn.24xl instance type
+    {.enable = true,
+     .instance_type = "p3dn.24xl",
+     .topo_file = "p3dn.24xl-topo.xml",
+     .numa_node_count = 0, // no NIC is attached to NUMA node, the only NIC is attached to machine
+     .nic_count = 1,
+     .nic_line_speed = 100,
+     .nic_upstream_link_speed = 0,
+     .switch_count = 0,
+     .numa_capacity = 0,
+     .numa_rail_count = 1, // should default to all rails, which is 1
+     .test_scenarios = {{false, 0}, {true, 50}, {true, 100}, {true, 200}},
+     .rail_partition = {{{0}}, {{0}}}}, // pretending single switch in each node, both using rail 0
+
+    // p4d.24xl instance type
+    {.enable = true,
+     .instance_type = "p4d.24xl",
+     .topo_file = "p4d.24xl-topo.xml",
+     .numa_node_count = 2,
+     .nic_count = 4,
+     .nic_line_speed = 100,
+     .nic_upstream_link_speed = 0,
+     .switch_count = 0,
+     .numa_capacity = 0, // no switches, this should default to all-rails selection
+     .numa_rail_count = 4, // should default to all rails, which is 4
+     .test_scenarios = {{false, 0}, {true, 50}, {true, 100}, {true, 200}},
+     .rail_partition = {{{0, 1}}, {{2, 3}}}}, // pretending single switch in each node
+
+    // NOTE: p4de.24xl instance type is similar to p4d
+
+    // p5.48xl instance type
+    {.enable = true,
+     .instance_type = "p5.48xl",
+     .topo_file = "p5.48xl-topo.xml",
+     .numa_node_count = 2,
+     .nic_count = 32,
+     .nic_line_speed = 100,
+     .nic_upstream_link_speed = 16,
+     .switch_count = 4, // 4 switches per numa node
+     .numa_capacity = 64, // each switch has 16 GB/s link speed, fits for one NIC
+     .numa_rail_count = 4, // 1 rail from each switch
+     .test_scenarios = {{false, 0},
+                        {true, 50},
+                        {true, 400},
+                        {true, 800},
+                        {true, 1200},
+                        {true, 1800},
+                        {true, 3000},
+                        {true, 10000}},
+     .rail_partition = {{{15, 20, 22, 26}, {6, 9, 14, 19}, {5, 8, 17, 21}, {3, 11, 12, 16}},
+                        {{24, 25, 27, 30}, {13, 18, 23, 28}, {7, 10, 29, 31}, {0, 1, 2, 4}}}},
+
+    // p5en.48xl instance type
+    {.enable = true,
+     .instance_type = "p5en.48xl",
+     .topo_file = "p5en.48xl-topo.xml",
+     .numa_node_count = 2,
+     .nic_count = 16,
+     .nic_line_speed = 200,
+     .nic_upstream_link_speed = 32,
+     .switch_count = 2,
+     .numa_capacity = 128,
+     .numa_rail_count = 4,
+     .test_scenarios = {{false, 0},
+                        {true, 50},
+                        {true, 800},
+                        {true, 1200},
+                        {true, 1800},
+                        {true, 3000},
+                        {true, 10000}},
+     .rail_partition = {{{0, 2, 3, 10}, {4, 5, 7, 8}}, {{1, 6, 9, 14}, {11, 12, 13, 15}}}},
+
+    // p6-b200.48xl instance type
+    {.enable = true,
+     .instance_type = "p6-b200.48xl",
+     .topo_file = "p6-b200.48xl-topo.xml",
+     .numa_node_count = 2,
+     .nic_count = 8,
+     .nic_line_speed = 400,
+     .nic_upstream_link_speed = 64,
+     .switch_count = 2,
+     .numa_capacity = 128,
+     .numa_rail_count = 2,
+     .test_scenarios = {{false, 0},
+                        {true, 50},
+                        {true, 800},
+                        {true, 1200},
+                        {true, 2000},
+                        {true, 2800},
+                        {true, 10000}},
+     .rail_partition = {{{2, 6}, {3, 7}}, {{0, 4}, {1, 5}}}},
+
+    // NOTE: p6e-gb200.36/72xl instance type is not expected for NIXL
+
+    //
+    // G-series
+    //
+
+    // g5.48xl instance type
+    {.enable = true,
+     .instance_type = "g5.48xl",
+     .topo_file = "g5.48xl-topo.xml",
+     .numa_node_count = 0, // no NIC is attached to NUMA node, the only NIC is attached to machine
+     .nic_count = 1,
+     .nic_line_speed = 100,
+     .nic_upstream_link_speed = 0, // g5 reports upstream link speed 0
+     .switch_count = 0, // no bridge/switch spec other than host bridge with link speed 0
+     .numa_capacity = 0, // topmost switches on g5 report link speed 0
+     .numa_rail_count = 1, // should default to all rails, which is 1
+     .test_scenarios = {{false, 0}, {true, 50}, {true, 100}, {true, 200}},
+     .rail_partition = {{{0}}, {{0}}}}, // pretending single switch in each node, both using rail 0
+
+    // g6.48xl instance type
+    {.enable = true,
+     .instance_type = "g6.48xl",
+     .topo_file = "g6.48xl-topo.xml",
+     .numa_node_count = 1, // single NIC is attached to a NUMA node
+     .nic_count = 1,
+     .nic_line_speed = 100,
+     .nic_upstream_link_speed = 0, // g6 reports NIC upstream link speed 0
+     .switch_count = 1,
+     .numa_capacity = 32, // topmost switch on g6 report link speed 32 GB/s
+     .numa_rail_count = 1, // should default to all rails, which is 1
+     .test_scenarios = {{false, 0}, {true, 50}, {true, 100}, {true, 200}},
+     .rail_partition = {{{0}}, {{0}}}}, // pretending single switch in each node, both using rail 0
+
+    //
+    // C-series
+    //
+
+    // c5.18xl instance type (EFA connected directly to host bridge, no PCIe switch involved)
+    {.enable = true,
+     .instance_type = "c5n.18xl",
+     .topo_file = "c5n.18xl-topo.xml",
+     .numa_node_count = 0, // no NIC is attached to NUMA node, the only NIC is attached to machine
+     .nic_count = 1,
+     .nic_line_speed = 0, // neither fi-info nor hwloc report speed for the NIC
+     .nic_upstream_link_speed = 0, // c5 reports upstream link speed 0
+     .switch_count = 0, // no bridge/switch spec other than host bridge with link speed 0
+     .numa_capacity = 0, // topmost switch/bridge on c5 report link speed 0
+     .numa_rail_count = 1, // should default to all rails, which is 1
+     .test_scenarios = {{false, 0}, {true, 50}, {true, 100}, {true, 200}},
+     .rail_partition = {{{0}}, {{0}}}} // pretending single switch in each node, both using rail 0
+
+    // end of list
+};
+static const size_t topology_count = sizeof(topologies) / sizeof(topologies[0]);
+
+// Neuron topologies (tested separately from the NUMA-aware rail selection tests, which are
+// GPU-specific). These only need to load the XML and verify the discovered accelerator count.
+// Used to exercise the Neuron/EFA preflight in nixlLibfabricTopology::discoverTopology().
+struct NeuronTopologyInfo {
+    bool enable;
+    const char *instance_type;
+    const char *topo_file;
+    int expected_num_aws_accel; // number of Neuron devices discovered via hwloc
+    int expected_nic_count; // number of EFA NICs discovered via hwloc + fi_getinfo
+};
+
+static const NeuronTopologyInfo neuron_topologies[] = {
+    // trn2.48xlarge with all 16 EFA NICs attached at launch (the AWS-tested DI config).
+    // Captured on a live instance via `lstopo-no-graphics --whole-io --of xml`, then
+    // sanitized. Exercises the INFO summary branch of the Neuron/EFA preflight
+    // ("N NIC(s) per Neuron device").
+    {.enable = true,
+     .instance_type = "trn2.48xl",
+     .topo_file = "trn2.48xl-topo.xml",
+     .expected_num_aws_accel = 16,
+     .expected_nic_count = 16},
+
+    // trn2.48xlarge launched WITHOUT any EFA network interfaces attached (the AWS
+    // default `run-instances` behavior only attaches a single ENA NIC). Exercises the
+    // "0 EFA NIC(s)" WARN branch of the Neuron/EFA preflight -- the plugin should
+    // emit an actionable diagnostic prompting the user to relaunch with
+    // `--network-interfaces InterfaceType=efa` per NetworkCardIndex.
+    {.enable = true,
+     .instance_type = "trn2.48xl-no-efa",
+     .topo_file = "trn2.48xl-no-efa-topo.xml",
+     .expected_num_aws_accel = 16,
+     .expected_nic_count = 0},
+
+    // trn2.3xlarge in the AWS-default launch config (no EFA NIC attached). Even
+    // trn2.3xlarge supports one EFA NIC via `--network-interfaces InterfaceType=efa`,
+    // but the AWS default doesn't attach it. Exercises the same "0 EFA NIC(s)" WARN
+    // branch as the trn2.48xl-no-efa case but with a single Neuron device present.
+    {.enable = true,
+     .instance_type = "trn2.3xl",
+     .topo_file = "trn2.3xl-topo.xml",
+     .expected_num_aws_accel = 1,
+     .expected_nic_count = 0},
+
+    // trn1.32xlarge (Trainium1 previous-generation instance) with all 8 EFA NICs
+    // attached at launch. Has 16 TRN1 devices sharing 8 EFA NICs (2:1 ratio by
+    // hardware design). Exercises the "fewer EFA than Neuron" WARN branch of the
+    // preflight, which the message text specifically calls out as an expected /
+    // supported topology on trn1.32xlarge -- the plugin works correctly with this
+    // 2:1 sharing.
+    {.enable = true,
+     .instance_type = "trn1.32xl",
+     .topo_file = "trn1.32xl-topo.xml",
+     .expected_num_aws_accel = 16,
+     .expected_nic_count = 8},
+
+    // trn1.2xlarge (smallest Trainium1 instance) in the AWS-default launch config.
+    // trn1.2xlarge does not support EFA at all (per describe-instance-types:
+    // EfaSupported=False), so this always presents 0 EFA NICs. Exercises the
+    // "0 EFA NIC(s)" WARN branch analogously to trn2.48xl-no-efa / trn2.3xl,
+    // documenting that trn1.2xlarge is not usable for FI_HMEM_NEURON transfers.
+    {.enable = true,
+     .instance_type = "trn1.2xl",
+     .topo_file = "trn1.2xl-topo.xml",
+     .expected_num_aws_accel = 1,
+     .expected_nic_count = 0},
+
+    // end of list
+};
+static const size_t neuron_topology_count =
+    sizeof(neuron_topologies) / sizeof(neuron_topologies[0]);
+
+// Expected CUDA dmabuf mapping per captured topology: whether every EFA NIC on the
+// instance reaches its accelerator through a PCIe switch, which chooses between the GPU's
+// PCIe aperture (BAR1) mapping and the platform default.
+//
+// The table covers NVIDIA hosts (p-series) and Neuron hosts (trn-series). Each row holds
+// one expectation, and default_mapping_exceptions names the devices that answer
+// differently on a platform carrying both routes.
+struct DmabufMappingInfo {
+    bool enable;
+    const char *instance_type;
+    const char *topo_file;
+    size_t nic_count;
+    size_t nic_line_speed; // Gbps; only feeds the fi_getinfo mock
+    bool expect_pcie_mapping; // expectation for every device not named below
+    // devices expected to need the default mapping while the rest need the PCIe one
+    std::vector<std::string> default_mapping_exceptions;
+    // True for instances whose all-false expectation rests on grouping staying idle, which
+    // the test asserts by checking the NVIDIA and AMD accelerator counts.
+    bool expect_grouping_skipped;
+    // EFA devices a VRAM registration can select for each accelerator, keyed by the
+    // accelerator's PCI address. Empty skips the check.
+    //
+    // This guards rail selection, which the mapping expectations above cannot see: swapping
+    // which NICs an accelerator holds leaves every mapping verdict unchanged, because the
+    // verdict is a property of the device rather than of the selection. On a platform
+    // carrying both routes the rows below also state that an accelerator reaches its NICs on
+    // both -- the ones under its PCIe switch and the ones it meets at the CPU.
+    std::vector<std::pair<std::string, std::vector<std::string>>> accel_efa_devices;
+};
+
+static const DmabufMappingInfo dmabuf_mapping_topologies[] = {
+    // p-series captures below place each EFA NIC and its GPU under a common PCIe switch,
+    // so a dmabuf for those NICs has to name BAR1.
+    {.enable = true,
+     .instance_type = "p5en.48xl",
+     .topo_file = "p5en.48xl-topo.xml",
+     .nic_count = 16,
+     .nic_line_speed = 200,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {}},
+
+    {.enable = true,
+     .instance_type = "p6-b200.48xl",
+     .topo_file = "p6-b200.48xl-topo.xml",
+     .nic_count = 8,
+     .nic_line_speed = 400,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {}},
+
+    {.enable = true,
+     .instance_type = "p5.48xl",
+     .topo_file = "p5.48xl-topo.xml",
+     .nic_count = 32,
+     .nic_line_speed = 100,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {}},
+
+    // p4d hangs its NICs and GPUs off separate bridges under one host bridge, so they meet
+    // above PCIe and the platform default mapping is the correct request.
+    {.enable = true,
+     .instance_type = "p4d.24xl",
+     .topo_file = "p4d.24xl-topo.xml",
+     .nic_count = 4,
+     .nic_line_speed = 100,
+     .expect_pcie_mapping = false,
+     .default_mapping_exceptions = {}},
+
+    // Neuron instances. Grouping collects NVIDIA and AMD accelerators and runs on a host
+    // carrying one, so every device on a Neuron-only host answers false, and
+    // expect_grouping_skipped asserts that precondition. Each EFA device on these captures
+    // sits under a common PCI bridge with its Neuron device, so the false answer states that
+    // grouping stayed idle. nic_line_speed feeds the fi_getinfo mock.
+    {.enable = true,
+     .instance_type = "trn2.48xl",
+     .topo_file = "trn2.48xl-topo.xml",
+     .nic_count = 16,
+     .nic_line_speed = 200,
+     .expect_pcie_mapping = false,
+     .default_mapping_exceptions = {},
+     .expect_grouping_skipped = true},
+
+    {.enable = true,
+     .instance_type = "trn1.32xl",
+     .topo_file = "trn1.32xl-topo.xml",
+     .nic_count = 8,
+     .nic_line_speed = 100,
+     .expect_pcie_mapping = false,
+     .default_mapping_exceptions = {},
+     .expect_grouping_skipped = true},
+
+    // p6e-gb200.36xl carries both routes to GPU memory on one machine: eight EFA devices
+    // share a PCIe switch with a GPU, and eight reach GPU memory through the Grace CPU and
+    // meet their nearest GPU at a Package object. Captured on a live instance via
+    // `lstopo-no-graphics --whole-io --of xml`, then sanitized.
+    {.enable = true,
+     .instance_type = "p6e-gb200.36xl",
+     .topo_file = "p6e-gb200.36xl-topo.xml",
+     .nic_count = 16,
+     .nic_line_speed = 400,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {"rdmap54s0",
+                                    "rdmap55s0",
+                                    "rdmap76s0",
+                                    "rdmap77s0",
+                                    "rdmap169s0",
+                                    "rdmap170s0",
+                                    "rdmap191s0",
+                                    "rdmap192s0"},
+     .expect_grouping_skipped = false,
+     // Every GPU reaches four EFA devices: the two under its PCIe switch, which need the
+     // PCIe (BAR1) mapping, and the two it meets at its Grace Package, which need the
+     // platform default one. All 16 devices on the node are selectable.
+     .accel_efa_devices = {{"0000:29:00.0", {"rdmap39s0", "rdmap40s0", "rdmap54s0", "rdmap55s0"}},
+                           {"0000:3f:00.0", {"rdmap61s0", "rdmap62s0", "rdmap76s0", "rdmap77s0"}},
+                           {"0000:9c:00.0",
+                            {"rdmap154s0", "rdmap155s0", "rdmap169s0", "rdmap170s0"}},
+                           {"0000:b2:00.0",
+                            {"rdmap176s0", "rdmap177s0", "rdmap191s0", "rdmap192s0"}}}},
+
+    // end of list
+};
+static const size_t dmabuf_mapping_topology_count =
+    sizeof(dmabuf_mapping_topologies) / sizeof(dmabuf_mapping_topologies[0]);
+
+// current topology pointer - used for mocking/injection
+static const TopologyInfo *curr_topology = nullptr;
+
+// NIC data loaded from hwloc via XML input test file
+struct NicData {
+    std::string name;
+    std::string pcie_addr;
+    int domain;
+    int bus;
+    int dev;
+    int func;
+};
+
+typedef std::unordered_map<std::string, NicData> NicMap;
+
+// testing flag env var name
+static const char *NIXL_LIBFABRIC_TESTING_ENV_VAR = "NIXL_LIBFABRIC_TESTING";
+
+// mock fi_info by current topology in use
+extern "C" int
+__wrap_fi_getinfo(uint32_t version,
+                  const char *node,
+                  const char *service,
+                  uint64_t flags,
+                  const struct fi_info *hints,
+                  struct fi_info **info);
+
+// mock fi_fabric to get past rail manager constructor
+extern "C" int
+__wrap_fi_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric, void *context);
+
+// test basic topology loading (unrelated to NUMA-aware rail selection)
+static int
+testBasicTopology();
+
+// test NUMA-aware rail selection on all enabled topologies
+static int
+testNumaDramTopologies();
+
+// test NUMA-aware rail selection on a single topology
+static int
+testNumaDramTopology(const TopologyInfo &topology);
+
+// test NUMA-aware rail selection on a single topology by instance type
+static int
+testNumaDramTopology(const char *instance_type);
+
+// test NUMA-aware rail selection policy with various topologies and user overrides
+static int
+testNumaDramRailSelectionPolicy();
+
+static int
+testNumaDramRailSelectionPolicy(const TopologyInfo &topology_info,
+                                bool override_bandwidth,
+                                unsigned bandwidth_limit);
+
+// test NUMA-aware rail selection policy on a single topology by instance type
+static int
+testNumaDramRailSelectionPolicy(const char *instance_type);
+
+// test Neuron topology loading (verifies the Neuron/EFA preflight in
+// nixlLibfabricTopology::discoverTopology()). Loads the given lstopo XML and
+// verifies the discovered Neuron accelerator count and EFA NIC count match
+// the expected values. This exercises the preflight code path; log output can
+// be verified by a wrapper script grepping the process's stderr for the
+// expected NIXL_INFO / NIXL_WARN message.
+static int
+testNeuronTopology(const NeuronTopologyInfo &topology_info);
+
+// test Neuron topology loading for all enabled Neuron topologies
+static int
+testNeuronTopologies();
+
+// test Neuron topology loading for a single topology by instance type
+static int
+testNeuronTopology(const char *instance_type);
+
+// test the PCIe-switch classification that the CUDA dmabuf mapping type turns on
+static int
+testDmabufMappingShapes();
+
+// test the dmabuf mapping decision on every enabled captured topology
+static int
+testDmabufMappingTopologies();
+
+// test the dmabuf mapping decision on a single captured topology
+static int
+testDmabufMappingTopology(const DmabufMappingInfo &mapping_info);
 
 int
-main() {
+main(int argc, char *argv[]) {
+    if (argc > 1) {
+        // testing for a single instance type: either NUMA-aware DRAM_SEG rail selection
+        // (default, GPU-oriented) or Neuron preflight (`neuron:<instance>` prefix). Hwloc
+        // caches cannot be flushed once loaded, so only one topology can be tested per
+        // process invocation.
+        char *arg = argv[1];
+        static const char neuron_prefix[] = "neuron:";
+        if (strncmp(arg, neuron_prefix, sizeof(neuron_prefix) - 1) == 0) {
+            const char *instance_type = arg + sizeof(neuron_prefix) - 1;
+            return testNeuronTopology(instance_type);
+        }
+        int res = testNumaDramTopology(arg);
+        if (res != 0) {
+            return res;
+        }
+        return testNumaDramRailSelectionPolicy(arg);
+    }
+
+    // test basic topology
+    int res = testBasicTopology();
+    if (res != 0) {
+        return res;
+    }
+
+    // test Neuron topologies (exercises preflight for AWS Trainium instances)
+    res = testNeuronTopologies();
+    if (res != 0) {
+        return res;
+    }
+
+    // test all topollogies for NUMA-aware DRAM_SEG rail selection
+    res = testNumaDramTopologies();
+    if (res != 0) {
+        return res;
+    }
+
+    // test for actual rail selection policy
+    res = testNumaDramRailSelectionPolicy();
+    if (res != 0) {
+        return res;
+    }
+
+    // test the CUDA dmabuf mapping decision: ancestor classification first (needs no
+    // XML), then the end-to-end decision on every captured topology
+    res = testDmabufMappingShapes();
+    if (res != 0) {
+        return res;
+    }
+
+    return testDmabufMappingTopologies();
+}
+
+int
+testBasicTopology() {
     NIXL_INFO << "=== Testing Libfabric Topology Implementation ===";
     try {
         // Create topology instance - discovery happens automatically in constructor
@@ -39,23 +571,18 @@ main() {
         topology.printTopologyInfo();
 
         // Test GPU-specific queries only if GPUs are detected
-        int num_gpus = topology.getNumNvidiaAccel();
+        int num_gpus = topology.getNumNvidiaAccel() + topology.getNumAmdAccel();
         if (num_gpus > 0) {
             NIXL_INFO << "3. Testing GPU-specific queries (detected " << num_gpus << " GPUs)...";
             int test_gpus = std::min(num_gpus, 3); // Test up to 3 GPUs or all available
             for (int gpu_id = 0; gpu_id < test_gpus; ++gpu_id) {
-#ifdef CUDA_FOUND
+#ifdef HAVE_GPU
                 // Get PCI bus ID for this GPU
-                cudaDeviceProp prop;
-                cudaGetDeviceProperties(&prop, gpu_id);
-
                 char pci_bus_id[32];
-                snprintf(pci_bus_id,
-                         sizeof(pci_bus_id),
-                         "%04x:%02x:%02x.0",
-                         prop.pciDomainID,
-                         prop.pciBusID,
-                         prop.pciDeviceID);
+                if (!gpuGetPciBusId(gpu_id, pci_bus_id, sizeof(pci_bus_id))) {
+                    NIXL_WARN << "   Failed to get properties for GPU " << gpu_id;
+                    continue;
+                }
 
                 auto gpu_devices = topology.getEfaDevicesForPci(pci_bus_id);
 
@@ -67,7 +594,7 @@ main() {
                 NIXL_INFO << "   GPU " << gpu_id << " (PCI: " << pci_bus_id << ") mapped to "
                           << gpu_devices.size() << " EFA devices: " << device_list;
 #else
-                NIXL_INFO << "   Skipping GPU " << gpu_id << " (CUDA not available)";
+                NIXL_INFO << "   Skipping GPU " << gpu_id << " (GPU support not available)";
 #endif
             }
         } else {
@@ -78,6 +605,1239 @@ main() {
         NIXL_ERROR << "   Topology discovery failed: " << e.what();
         return 1;
     }
+    NIXL_INFO << "=== Test completed successfully! ===";
+    return 0;
+}
+
+static bool
+isEfaDevice(hwloc_obj_t obj) {
+    // Amazon EFA vendor ID is 0x1d0f, device ID matches 0xefa* (wildcard for any EFA device)
+    return obj->attr->pcidev.vendor_id == 0x1d0f &&
+        (obj->attr->pcidev.device_id & 0xfff0) == 0xefa0;
+}
+
+// hwloc helper methods
+static std::string
+getPcieAddressFromHwlocPcidev(const hwloc_obj_attr_u::hwloc_pcidev_attr_s &pcidev) {
+    char pcie_addr[32];
+    snprintf(pcie_addr,
+             sizeof(pcie_addr),
+             "%x:%02x:%02x.%x",
+             pcidev.domain,
+             pcidev.bus,
+             pcidev.dev,
+             pcidev.func);
+    return std::string(pcie_addr);
+}
+
+static std::string
+getPcieAddressFromHwlocObj(hwloc_obj_t obj) {
+    if (!obj || obj->type != HWLOC_OBJ_PCI_DEVICE) {
+        return "";
+    }
+    return getPcieAddressFromHwlocPcidev(obj->attr->pcidev);
+}
+
+static void
+getNicData(NicData &nic, hwloc_obj_t pci_obj) {
+    nic.pcie_addr = getPcieAddressFromHwlocObj(pci_obj);
+    nic.domain = pci_obj->attr->pcidev.domain;
+    nic.bus = pci_obj->attr->pcidev.bus;
+    nic.dev = pci_obj->attr->pcidev.dev;
+    nic.func = pci_obj->attr->pcidev.func;
+}
+
+static int
+getEfaDeviceNamesFromHwloc(NicMap &nic_map) {
+    // when testing we load topologies form XML, so we cannot mix that with local machine info that
+    // comes from libfabric's fi_getinfo() - instead we discover network devices from hwloc, but
+    // that is also missing NIC card line speed that comes in multiples of 1000^3. currently this
+    // comes from additional env var NIXL_LIBFABRIC_NIC_SPEED set by testing framework.
+    // unfortunately, there is no way now to mock fi_getinfo from input file
+
+    hwloc_topology_t hwloc_topology = nullptr;
+    int ret = hwloc_topology_init(&hwloc_topology);
+    if (ret != 0) {
+        NIXL_ERROR << "Failed to initialize hwloc topology: " << ret;
+        return 1;
+    }
+
+    // Enable I/O device discovery - this is the key to seeing EFA devices!
+#if (HWLOC_API_VERSION >= 0x00020000)
+    enum hwloc_type_filter_e filter = HWLOC_TYPE_FILTER_KEEP_ALL;
+    ret = hwloc_topology_set_io_types_filter(hwloc_topology, filter);
+    if (ret != 0) {
+        NIXL_ERROR << "Failed to set IO types filter: " << ret << ", continuing anyway";
+        hwloc_topology_destroy(hwloc_topology);
+        return 2;
+    }
+#else
+    unsigned long flags = hwloc_topology_get_flags(hwloc_topology);
+    flags |= HWLOC_TOPOLOGY_FLAG_WHOLE_IO;
+    ret = hwloc_topology_set_flags(hwloc_topology, flags);
+    if (ret != 0) {
+        NIXL_ERROR << "Failed to set WHOLE_IO flag: " << ret << ", continuing anyway";
+        hwloc_topology_destroy(hwloc_topology);
+        return 2;
+    }
+#endif
+
+    // load topology
+    // NOTE: this comes from XML file
+    ret = hwloc_topology_load(hwloc_topology);
+    if (ret != 0) {
+        NIXL_ERROR << "Failed to load hwloc topology: " << ret;
+        hwloc_topology_destroy(hwloc_topology);
+        return 3;
+    }
+
+    // get PCI device list, check if EFA, and build map
+    hwloc_obj_t os_obj = nullptr;
+    while ((os_obj = hwloc_get_next_osdev(hwloc_topology, os_obj)) != nullptr) {
+        if (os_obj->attr->osdev.type == HWLOC_OBJ_OSDEV_OPENFABRICS) {
+            hwloc_obj_t pci_obj = os_obj->parent;
+            if (!pci_obj || pci_obj->type != HWLOC_OBJ_PCI_DEVICE) {
+                NIXL_WARN << "[TEST] OS device " << os_obj->name
+                          << " parent is not a PCI device, skipping";
+                continue;
+            }
+            if (isEfaDevice(pci_obj)) {
+                NicData &nic = nic_map[os_obj->name];
+                nic.name = os_obj->name;
+                getNicData(nic, pci_obj);
+                NIXL_TRACE << "[TEST] Found OS device: " << nic.name << " with PCIe addr "
+                           << nic.pcie_addr;
+            }
+        }
+    }
+
+    hwloc_topology_destroy(hwloc_topology);
+    return 0;
+}
+
+// we need to differentiate normal execution from test scenario
+// this is done via env var
+inline bool
+isTesting() {
+    return (getenv(NIXL_LIBFABRIC_TESTING_ENV_VAR) != nullptr);
+}
+
+inline void
+setTesting() {
+    setenv(NIXL_LIBFABRIC_TESTING_ENV_VAR, "1", 1);
+}
+
+inline void
+clearTesting() {
+    unsetenv(NIXL_LIBFABRIC_TESTING_ENV_VAR);
+}
+
+// we need to declare to prototype for the original function wrappers
+// compiler/linker provides the shim implementation
+extern "C" int
+__real_numa_max_node();
+
+extern "C" int
+__real_numa_num_configured_nodes();
+
+extern "C" int
+__real_numa_distance(int node1, int node2);
+
+extern "C" long
+__real_get_mempolicy(int *mode,
+                     unsigned long *nmask,
+                     unsigned long maxnode,
+                     void *addr,
+                     unsigned flags);
+extern "C" int
+__real_fi_getinfo(uint32_t version,
+                  const char *node,
+                  const char *service,
+                  uint64_t flags,
+                  const struct fi_info *hints,
+                  struct fi_info **info);
+
+extern "C" int
+__real_fi_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric, void *context);
+
+extern "C" int
+__wrap_numa_max_node() {
+    if (!isTesting() || curr_topology == nullptr) {
+        return __real_numa_max_node();
+    }
+
+    size_t node_count = curr_topology->numa_node_count;
+    return node_count > 0 ? static_cast<int>(node_count - 1) : -1;
+}
+
+extern "C" int
+__wrap_numa_num_configured_nodes() {
+    if (!isTesting() || curr_topology == nullptr) {
+        return __real_numa_num_configured_nodes();
+    }
+
+    return curr_topology->numa_node_count;
+}
+
+extern "C" int
+__wrap_numa_distance(int node1, int node2) {
+    if (!isTesting() || curr_topology == nullptr) {
+        return __real_numa_distance(node1, node2);
+    }
+
+    // in all topologies we have only 2 nodes which are adjacent
+    // if this does not hold true in the future, then distance info should be added to static
+    // topology test array
+    return node1 == node2 ? 10 : 20;
+}
+
+// required for verifying rail selection in multi-threaded test
+static thread_local int last_buffer_numa_node = 0;
+
+extern "C" long
+__wrap_get_mempolicy(int *mode,
+                     unsigned long *nmask,
+                     unsigned long maxnode,
+                     void *addr,
+                     unsigned flags) {
+    if (!isTesting() || curr_topology == nullptr) {
+        return __real_get_mempolicy(mode, nmask, maxnode, addr, flags);
+    }
+
+    // if address is null then we do a round robin on all available nodes of the current topology
+    if (curr_topology->numa_node_count == 0) {
+        *mode = 0;
+    } else if (addr == nullptr) {
+        static std::atomic<int> next_node = 0;
+        *mode = next_node.fetch_add(1, std::memory_order_relaxed) % curr_topology->numa_node_count;
+    } else {
+        // otherwise we use address as node id, but we must ensure it does not exceed the number of
+        // nodes in the currently tested topology
+        *mode = ((uint64_t)addr) % curr_topology->numa_node_count;
+    }
+    // save artificial selection for later validation
+    last_buffer_numa_node = *mode;
+    return 0;
+}
+
+// shared stub ops for mocking libfabric objects
+#include "libfabric_mock_stubs.h"
+
+// mock fi_getinfo by current topology in use
+extern "C" int
+__wrap_fi_getinfo(uint32_t version,
+                  const char *node,
+                  const char *service,
+                  uint64_t flags,
+                  const struct fi_info *hints,
+                  struct fi_info **info) {
+    // we need to differentiate normal execution from test scenario
+    // this is done via env var
+    if (!isTesting()) {
+        return __real_fi_getinfo(version, node, service, flags, hints, info);
+    }
+
+    // make sure we have a mock topology in hand (using only NIC speed)
+    assert(curr_topology != nullptr);
+
+    try {
+        *info = malloc_zero<fi_info>();
+        fi_info *itr = *info;
+
+        // load topology from XML file and feed result into fi_getinfo
+        NicMap nic_map;
+        int res = getEfaDeviceNamesFromHwloc(nic_map);
+        if (res != 0) {
+            return res;
+        }
+
+        // build result list (assuming fi_freeinfo() uses simple malloc/free)
+        fi_info *prev = nullptr;
+        for (const auto &entry : nic_map) {
+            if (itr == nullptr) {
+                prev->next = malloc_zero<fi_info>();
+                itr = prev->next;
+            }
+
+            itr->domain_attr = malloc_zero<fi_domain_attr>();
+            itr->domain_attr->name = strdup(entry.second.name.c_str());
+
+            itr->fabric_attr = malloc_zero<fi_fabric_attr>();
+            itr->fabric_attr->prov_name = strdup("efa");
+            itr->fabric_attr->name = strdup("efa");
+
+            itr->ep_attr = malloc_zero<fi_ep_attr>();
+            itr->ep_attr->type = FI_EP_RDM;
+
+            itr->nic = malloc_zero<fid_nic>();
+            itr->nic->bus_attr = malloc_zero<fi_bus_attr>();
+            itr->nic->bus_attr->bus_type = FI_BUS_PCI;
+            itr->nic->bus_attr->attr.pci.domain_id = entry.second.domain;
+            itr->nic->bus_attr->attr.pci.bus_id = entry.second.bus;
+            itr->nic->bus_attr->attr.pci.device_id = entry.second.dev;
+            itr->nic->bus_attr->attr.pci.function_id = entry.second.func;
+
+            itr->nic->link_attr = malloc_zero<fi_link_attr>();
+            itr->nic->link_attr->speed = curr_topology->nic_line_speed * NIXL_LIBFABRIC_GIGA;
+
+            prev = itr;
+            itr = nullptr;
+        }
+    }
+    catch (std::exception &e) {
+        // actually only runtime_error can get us here
+        NIXL_ERROR << "Failed to mock fi_getinfo(): " << e.what();
+        return 1;
+    }
+    return 0; // or FI_SUCCESS
+}
+
+// mock fi_fabric to get past rail manager constructor
+extern "C" int
+__wrap_fi_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric, void *context) {
+    // we need to differentiate normal execution from test scenario
+    // this is done via env var
+    if (!isTesting()) {
+        return __real_fi_fabric(attr, fabric, context);
+    }
+
+    *fabric = mock_fabric_create();
+    return 0;
+}
+
+int
+testNumaDramTopologies() {
+    NIXL_INFO << "=== Testing Libfabric Topology processing for DRAM_SEG NUMA-aware rail selection "
+                 "policy ===";
+    int test_id = 1;
+    for (size_t i = 0; i < topology_count; ++i) {
+        if (topologies[i].enable) {
+            const char *instance_type = topologies[i].instance_type;
+            NIXL_INFO << test_id++ << ". Testing topology processing for instance type "
+                      << instance_type;
+            int res = testNumaDramTopology(topologies[i]);
+            if (res != 0) {
+                NIXL_ERROR << "Test failed with return code: " << res;
+                return res;
+            }
+        }
+    }
+    NIXL_INFO << "=== Test completed successfully! ===";
+    return 0;
+}
+
+int
+testNumaDramTopology(const char *instance_type) {
+    NIXL_INFO << "Testing topology query for DRAM_SEG NUMA-aware rail selection on instance type "
+              << instance_type;
+    for (size_t i = 0; i < topology_count; ++i) {
+        if (topologies[i].enable) {
+            if (strcmp(instance_type, topologies[i].instance_type) == 0) {
+                int res = testNumaDramTopology(topologies[i]);
+                if (res == 0) {
+                    NIXL_INFO << "=== Test completed successfully! ===";
+                    return 0;
+                } else {
+                    NIXL_ERROR << "Test failed with return code: " << res;
+                    return res;
+                }
+            }
+        }
+    }
+    NIXL_ERROR << "Could not find topology spec for instance type " << instance_type;
+    return 2;
+}
+
+int
+testNumaDramTopology(const TopologyInfo &topology_info) {
+    curr_topology = &topology_info; // required for NIC speed injection
+    NIXL_TRACE << "Testing topology: " << topology_info.instance_type;
+
+    // enable topology injection in runtime code
+    setTesting();
+
+    // tell hwloc to load topology from XML file
+    setenv("HWLOC_XMLFILE", topology_info.topo_file, 1);
+
+    // load topology and test
+    nixlLibfabricTopology topology;
+
+    // check NIC count
+    if (topology.getTotalNicCount() != topology_info.nic_count) {
+        NIXL_ERROR << "Invalid NIC count, expecting " << topology_info.nic_count << ", instead got "
+                   << topology.getTotalNicCount();
+        return 1;
+    }
+
+    // NUMA node count test is a bit more complex
+    const std::vector<std::string> &all_devices = topology.getAllDevices();
+    std::vector<bool> nodes;
+    for (const std::string &device : all_devices) {
+        uint16_t node = topology.getDeviceNumaNode(device);
+        // on some instance types (e.g. g5), some NIC cards are not associated with NUMA node
+        if (node != nixlLibfabricTopology::INVALID_NUMA_NODE_ID) {
+            if (node >= nodes.size()) {
+                nodes.resize(node + 1, false);
+            }
+            nodes[node] = true;
+        }
+    }
+    // NOTE: g6 has NIC card on NUMA node 0 so this works, but this might not hold true in future
+    // topologies
+    if (nodes.size() != topology_info.numa_node_count) {
+        NIXL_ERROR << "Invalid NUMA node count, expecting " << topology_info.numa_node_count
+                   << ", instead got " << nodes.size();
+        return 2;
+    }
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (!nodes[i]) {
+            NIXL_ERROR << "No NIC cards found on NUMA node " << i;
+            return 3;
+        }
+    }
+
+    // check NIC line speed (convert from Gbps to GB/s)
+    if (topology.getAvgNicBandwidth() != topology_info.nic_line_speed) {
+        NIXL_ERROR << "Invalid NIC bandwidth, expecting " << topology_info.nic_line_speed
+                   << ", instead got " << topology.getAvgNicBandwidth();
+        return 4;
+    }
+
+    // check NIC upstream link speed (convert from Gbps to GB/s)
+    int speed = (int)topology.getAvgNicUpstreamBandwidth() / 8;
+    if (std::abs(speed - (int)topology_info.nic_upstream_link_speed) > 1) {
+        NIXL_ERROR << "Invalid NIC upstream link bandwidth, expecting "
+                   << topology_info.nic_upstream_link_speed << ", instead got " << speed;
+        return 5;
+    }
+
+    // check single NUMA node capacity (limited by topmost PCIe switch capacity)
+    speed = (int)topology.getAvgNumaNodeBandwidth() / 8;
+    if (std::abs(speed - (int)topology_info.numa_capacity) > 10) {
+        NIXL_ERROR << "Invalid NUMA node bandwidth, expecting " << topology_info.numa_capacity
+                   << ", instead got " << speed;
+        return 6;
+    }
+
+    // finally check for correct rail count
+    size_t rail_count = topology.getTotalNicCount();
+    // if NICs do not report upstream link capacity, then we use all NICs
+    // NOTE: hybrid topologies may be more difficult to handle, right now there is no such case
+    if (topology.getAvgNicUpstreamBandwidth() != 0) {
+        rail_count = topology.getAvgNumaNodeBandwidth() / topology.getAvgNicUpstreamBandwidth();
+    }
+    if (rail_count != topology_info.numa_rail_count) {
+        NIXL_ERROR << "Invalid rail count per NUMA node, expecting "
+                   << topology_info.numa_rail_count << ", instead got " << rail_count;
+        return 7;
+    }
+
+    // clean up
+    clearTesting();
+    unsetenv("HWLOC_XMLFILE");
+
+    NIXL_INFO << "   SUCCESS: Topology calculated correct rail count " << rail_count
+              << " for DRAM_SEG NUMA-aware rail selection policy";
+    return 0;
+}
+
+// Neuron topology test: exercises nixlLibfabricTopology::discoverTopology() with a saved
+// AWS Trainium lstopo XML, verifying that Neuron accelerators and EFA NICs are discovered
+// with the expected counts. The construction of nixlLibfabricTopology also exercises the
+// Neuron/EFA preflight code path; the log output can be verified externally by a wrapper
+// script grepping stderr for the expected NIXL_INFO/NIXL_WARN message.
+//
+// For topologies with 0 EFA NICs (e.g. a Neuron instance launched without any
+// `InterfaceType=efa` network interfaces), the plugin's constructor throws because no
+// libfabric provider can be selected. The test captures this expected failure mode and
+// records that the fatal error surfaces at plugin init -- which is precisely when the
+// preflight WARN would fire in production (before construction throws). Note: for these
+// zero-NIC cases, the `expected_num_aws_accel` field of the NeuronTopologyInfo is not
+// verified (the constructor throws before accelerator-count getters can be called);
+// it is retained purely as documentation of the underlying hardware topology.
+int
+testNeuronTopology(const NeuronTopologyInfo &topology_info) {
+    // pretend an EFA-only topology (curr_topology is unused for accelerator counts, but
+    // the fi_getinfo mock reads curr_topology->nic_line_speed; provide a compatible
+    // dummy).
+    TopologyInfo dummy = {.enable = true,
+                          .instance_type = topology_info.instance_type,
+                          .topo_file = topology_info.topo_file,
+                          .numa_node_count = 0,
+                          .nic_count = static_cast<size_t>(topology_info.expected_nic_count),
+                          .nic_line_speed = 200, // arbitrary; not asserted here
+                          .nic_upstream_link_speed = 0,
+                          .switch_count = 0,
+                          .numa_capacity = 0,
+                          .numa_rail_count = 0,
+                          .test_scenarios = {},
+                          .rail_partition = {}};
+    curr_topology = &dummy;
+    NIXL_TRACE << "Testing Neuron topology: " << topology_info.instance_type;
+
+    // enable topology injection in runtime code
+    setTesting();
+
+    // tell hwloc to load topology from XML file
+    setenv("HWLOC_XMLFILE", topology_info.topo_file, 1);
+
+    // RAII guard: unconditionally undo the env changes above (clear the runtime
+    // testing flag, unset HWLOC_XMLFILE) and drop the dangling `curr_topology`
+    // pointer on every exit path, including any exception thrown from
+    // nixlLibfabricTopology's constructor. Without this, a regression that caused an
+    // unexpected throw in the positive-case branch below would leave
+    // NIXL_LIBFABRIC_TESTING set and HWLOC_XMLFILE pointing at the Trainium fixture,
+    // corrupting the subsequent DRAM_SEG tests in main(). Also nulls curr_topology
+    // to avoid dangling to the stack-local `dummy` below.
+    struct TestEnvGuard {
+        ~TestEnvGuard() {
+            clearTesting();
+            unsetenv("HWLOC_XMLFILE");
+            curr_topology = nullptr;
+        }
+    } env_guard;
+
+    int rc = 0;
+
+    // If the expected EFA NIC count is 0, the plugin's constructor throws because no
+    // libfabric provider can be discovered. This is the expected failure mode for
+    // Neuron instances launched without EFA NICs; the preflight WARN branch would
+    // fire in production before the throw.
+    if (topology_info.expected_nic_count == 0) {
+        bool did_throw = false;
+        try {
+            nixlLibfabricTopology topology;
+        }
+        catch (const std::runtime_error &) {
+            did_throw = true;
+        }
+        if (!did_throw) {
+            NIXL_ERROR << "Expected " << topology_info.instance_type
+                       << " with 0 EFA NICs to throw at topology-discovery time, but no "
+                          "exception was raised; the plugin silently accepted an unusable "
+                          "topology, which contradicts the preflight design.";
+            rc = 1;
+        } else {
+            NIXL_INFO << "   SUCCESS: Neuron topology " << topology_info.instance_type
+                      << " correctly threw at topology-discovery time (0 EFA NICs); "
+                         "in production the preflight WARN would fire before the throw.";
+        }
+    } else {
+        // Load topology and let discoverTopology() run its preflight checks. Catch any
+        // unexpected throw (which would indicate a regression in the "happy path"
+        // Neuron topology) and report it as a test failure rather than aborting the
+        // binary and leaving env vars set.
+        std::optional<nixlLibfabricTopology> topology_holder;
+        try {
+            topology_holder.emplace();
+        }
+        catch (const std::runtime_error &e) {
+            NIXL_ERROR << "Unexpected topology-discovery failure for "
+                       << topology_info.instance_type << ": " << e.what()
+                       << "; expected the topology to load successfully with "
+                       << topology_info.expected_nic_count << " EFA NIC(s).";
+            return 4;
+        }
+        const nixlLibfabricTopology &topology = *topology_holder;
+
+        // verify discovered Neuron accelerator count
+        if (topology.getNumAwsAccel() != topology_info.expected_num_aws_accel) {
+            NIXL_ERROR << "Invalid Neuron accelerator count for " << topology_info.instance_type
+                       << ", expected " << topology_info.expected_num_aws_accel << ", got "
+                       << topology.getNumAwsAccel();
+            rc = 1;
+        }
+
+        // verify discovered NIC count
+        if (static_cast<int>(topology.getTotalNicCount()) != topology_info.expected_nic_count) {
+            NIXL_ERROR << "Invalid EFA NIC count for " << topology_info.instance_type
+                       << ", expected " << topology_info.expected_nic_count << ", got "
+                       << topology.getTotalNicCount();
+            rc = 2;
+        }
+
+        // verify no unexpected NVIDIA accelerators appeared
+        if (topology.getNumNvidiaAccel() != 0) {
+            NIXL_ERROR << "Unexpected NVIDIA accelerator count for " << topology_info.instance_type
+                       << ", expected 0, got " << topology.getNumNvidiaAccel();
+            rc = 3;
+        }
+
+        if (rc == 0) {
+            NIXL_INFO << "   SUCCESS: Neuron topology " << topology_info.instance_type
+                      << " loaded (" << topology.getNumAwsAccel() << " Neuron device(s), "
+                      << topology.getTotalNicCount() << " EFA NIC(s))";
+        }
+    }
+
+    return rc;
+}
+
+int
+testNeuronTopologies() {
+    NIXL_INFO << "=== Testing Libfabric Neuron topology discovery ===";
+    int test_id = 1;
+    for (size_t i = 0; i < neuron_topology_count; ++i) {
+        if (neuron_topologies[i].enable) {
+            const char *instance_type = neuron_topologies[i].instance_type;
+            NIXL_INFO << test_id++ << ". Testing Neuron topology for instance type "
+                      << instance_type;
+            int res = testNeuronTopology(neuron_topologies[i]);
+            if (res != 0) {
+                NIXL_ERROR << "Test failed with return code: " << res;
+                return res;
+            }
+        }
+    }
+    NIXL_INFO << "=== Test completed successfully! ===";
+    return 0;
+}
+
+int
+testNeuronTopology(const char *instance_type) {
+    NIXL_INFO << "Testing Neuron topology loading on instance type " << instance_type;
+    for (size_t i = 0; i < neuron_topology_count; ++i) {
+        if (neuron_topologies[i].enable &&
+            strcmp(instance_type, neuron_topologies[i].instance_type) == 0) {
+            int res = testNeuronTopology(neuron_topologies[i]);
+            if (res == 0) {
+                NIXL_INFO << "=== Test completed successfully! ===";
+                return 0;
+            }
+            NIXL_ERROR << "Test failed with return code: " << res;
+            return res;
+        }
+    }
+    NIXL_ERROR << "Could not find Neuron topology spec for instance type " << instance_type;
+    return 2;
+}
+
+int
+testNumaDramRailSelectionPolicy() {
+    NIXL_INFO << "=== Testing Libfabric DRAM_SEG NUMA-aware rail selection policy ===";
+    int test_id = 1;
+    for (size_t i = 0; i < topology_count; ++i) {
+        if (topologies[i].enable) {
+            const char *instance_type = topologies[i].instance_type;
+            NIXL_INFO << test_id++ << ". Testing rail selection for instance type "
+                      << instance_type;
+            for (size_t j = 0; j < topologies[i].test_scenarios.size(); ++j) {
+                size_t bandwidth = topologies[i].test_scenarios[j].bandwidth_limit;
+                NIXL_INFO << "Running test scenario [bandwidth=" << bandwidth
+                          << "] on instance type " << topologies[i].instance_type;
+                int res = testNumaDramRailSelectionPolicy(
+                    topologies[i], topologies[i].test_scenarios[j].override_bandwidth, bandwidth);
+                if (res != 0) {
+                    NIXL_ERROR << "Test scenario [bandwidth=" << bandwidth << "] on instance type "
+                               << topologies[i].instance_type
+                               << " failed with return code: " << res;
+                    return res;
+                } else {
+                    NIXL_INFO << "Test scenario [bandwidth=" << bandwidth << "] on instance type "
+                              << topologies[i].instance_type << " SUCCESS";
+                }
+            }
+            NIXL_INFO << "SUCCESS for instance type " << instance_type;
+        }
+    }
+    NIXL_INFO << "=== Test completed successfully! ===";
+    return 0;
+}
+
+static std::vector<int>
+prepareNumaNodeArray(int src_numa_node) {
+    std::vector<int> node_ids(curr_topology->numa_node_count, -1);
+    for (size_t i = 0; i < curr_topology->numa_node_count; ++i) {
+        node_ids[i] = i;
+    }
+    std::sort(node_ids.begin(), node_ids.end(), [src_numa_node](int node1, int node2) {
+        return __wrap_numa_distance(src_numa_node, node1) <
+            __wrap_numa_distance(src_numa_node, node2);
+    });
+    return node_ids;
+}
+
+static bool
+removeNodeRails(std::bitset<64> &selected_rails_bs, int node_id) {
+    const std::vector<std::vector<int>> &node_switch_rails = curr_topology->rail_partition[node_id];
+    for (size_t i = 0; i < node_switch_rails.size(); ++i) {
+        const std::vector<int> &switch_rails = node_switch_rails[i];
+        for (size_t j = 0; j < switch_rails.size(); ++j) {
+            if (!selected_rails_bs.test(switch_rails[j])) {
+                NIXL_ERROR << "Missing rail id " << switch_rails[j];
+                return false;
+            }
+            selected_rails_bs.set(switch_rails[j], false);
+        }
+    }
+    return true;
+}
+
+static bool
+removeSwitchRails(std::bitset<64> &selected_rails_bs, int node_id) {
+    const std::vector<std::vector<int>> &node_switch_rails = curr_topology->rail_partition[node_id];
+    // get the capacity of each bridge/switch (i.e. the link speed of each topmost switch)
+    size_t switch_capacity = curr_topology->numa_capacity / node_switch_rails.size();
+    // then compute how many rails fit within one switch
+    size_t switch_rail_count = switch_capacity / curr_topology->nic_upstream_link_speed;
+    for (size_t i = 0; i < node_switch_rails.size(); ++i) {
+        const std::vector<int> &switch_rails = node_switch_rails[i];
+        size_t rails_found = 0;
+        for (size_t j = 0; j < switch_rails.size(); ++j) {
+            if (selected_rails_bs.test(switch_rails[j])) {
+                selected_rails_bs.set(switch_rails[j], false);
+                if (++rails_found == switch_rail_count) {
+                    break;
+                }
+            }
+        }
+        if (rails_found != switch_rail_count) {
+            NIXL_ERROR << "Missing rails from switch " << i << " at node " << node_id;
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool
+verifyRailsSpreadEvenly(std::bitset<64> &selected_rails_bs, int node_id) {
+    // we expect the rest of the rails to be spread eveny among switches, so we count the rails in
+    // each switch, and then make sure that max-switch-rails - min_switch_rails <= 1
+    const std::vector<std::vector<int>> &node_switch_rails = curr_topology->rail_partition[node_id];
+    size_t switch_count = node_switch_rails.size();
+    std::vector<size_t> switch_rail_count(switch_count, 0);
+    for (size_t i = 0; i < node_switch_rails.size(); ++i) {
+        const std::vector<int> &switch_rails = node_switch_rails[i];
+        for (size_t j = 0; j < switch_rails.size(); ++j) {
+            if (selected_rails_bs.test(switch_rails[j])) {
+                selected_rails_bs.set(switch_rails[j], false);
+                ++switch_rail_count[i];
+            }
+        }
+    }
+
+    // check for too high variance (including switches with no rails selected)
+    size_t max_rail_count = 0;
+    size_t max_switch_index = SIZE_MAX;
+    size_t min_rail_count = SIZE_MAX;
+    size_t min_switch_index = SIZE_MAX;
+    for (size_t i = 0; i < switch_rail_count.size(); ++i) {
+        size_t rail_count = switch_rail_count[i];
+        if (rail_count > max_rail_count) {
+            max_rail_count = rail_count;
+            max_switch_index = i;
+        }
+        if (rail_count < min_rail_count) {
+            min_rail_count = rail_count;
+            min_switch_index = i;
+        }
+    }
+
+    if (max_rail_count - min_rail_count > 1) {
+        NIXL_ERROR << "Too many rails (" << max_rail_count << ") selected from switch "
+                   << max_switch_index << ", while too few rails (" << min_rail_count
+                   << ") selected from switch " << min_switch_index << " seen at node " << node_id;
+        return false;
+    }
+    return true;
+}
+
+static bool
+verifySwitchRailsNotBreached(std::bitset<64> &selected_rails_bs, int node_id) {
+    const std::vector<std::vector<int>> &node_switch_rails = curr_topology->rail_partition[node_id];
+    // get the capacity of each bridge/switch (i.e. the link speed of each topmost switch)
+    size_t switch_capacity = curr_topology->numa_capacity / node_switch_rails.size();
+    // then compute how many rails fit within one switch
+    size_t switch_rail_count = switch_capacity / curr_topology->nic_upstream_link_speed;
+
+    // now we verify that if rails from a switch are selected, then the amount does not exceed the
+    // capacity of the switch
+    // we also verify that amount of rails selected in each switch reaches its full capacity, except
+    // maybe for just one switch
+    bool seenNonFullSwitch = false;
+    size_t nonFullSwitchIndex = 0;
+    for (size_t i = 0; i < node_switch_rails.size(); ++i) {
+        const std::vector<int> &switch_rails = node_switch_rails[i];
+        size_t rails_found = 0;
+        for (size_t j = 0; j < switch_rails.size(); ++j) {
+            if (selected_rails_bs.test(switch_rails[j])) {
+                selected_rails_bs.set(switch_rails[j], false);
+                if (++rails_found > switch_rail_count) {
+                    NIXL_ERROR << "Too many rails selected from switch " << i << " at node "
+                               << node_id;
+                    return false;
+                }
+            }
+        }
+        if (rails_found > 0 && rails_found < switch_rail_count) {
+            // make there is only one non-full switch (exclude switches with no rails selected)
+            if (!seenNonFullSwitch) {
+                seenNonFullSwitch = true;
+                nonFullSwitchIndex = i;
+            } else {
+                NIXL_ERROR << "More than one switch with non-full rail selection (switches "
+                           << nonFullSwitchIndex << " and " << i << "), at node " << node_id;
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool
+validateRailSelection(const std::vector<size_t> &selected_rails,
+                      const nixlLibfabricTopology *topology,
+                      bool override_bandwidth,
+                      unsigned bandwidth_limit) {
+    // 1. check rail count is correct
+    size_t rail_count = selected_rails.size();
+    size_t bandwidth = override_bandwidth ?
+        bandwidth_limit :
+        curr_topology->numa_rail_count * curr_topology->nic_line_speed;
+    // on C series the nic line speed is reported as zero, so be careful here
+    size_t expected_rail_count =
+        curr_topology->nic_line_speed ? bandwidth / curr_topology->nic_line_speed : 1;
+    expected_rail_count = std::max(1ul, expected_rail_count);
+    expected_rail_count = std::min(curr_topology->nic_count, expected_rail_count);
+    if (curr_topology->numa_capacity == 0) {
+        expected_rail_count = curr_topology->nic_count;
+    }
+    if (rail_count != expected_rail_count) {
+        NIXL_ERROR << "Wrong number of rails selected, expecting " << expected_rail_count
+                   << ", instead got " << rail_count;
+        return false;
+    }
+
+    // for g series and other instance types with single NIC we are done
+    if (rail_count == 1) {
+        return true;
+    }
+
+    // for validation performance we are MUCH better off with a bit set
+    std::bitset<64> selected_rails_bs;
+    for (size_t i = 0; i < selected_rails.size(); ++i) {
+        selected_rails_bs.set(selected_rails[i], true);
+    }
+
+    // 2. if rail count exceeds NUMA node capacity, then we expect to see all rails of "full" nodes
+    int numa_node = last_buffer_numa_node;
+    size_t full_node_rail_count = curr_topology->nic_count / curr_topology->numa_node_count;
+    int node_index = 0;
+    std::vector<int> node_ids = prepareNumaNodeArray(numa_node);
+    while (selected_rails_bs.count() >= full_node_rail_count) {
+        // traverse nodes by distance, and check each node's rails are all selected
+        int node_id = node_ids[node_index++];
+        if (!removeNodeRails(selected_rails_bs, node_id)) {
+            NIXL_ERROR << "Rail selection " << LibfabricUtils::railIdsToString(selected_rails)
+                       << " missing rails from node " << node_id;
+            return false;
+        }
+    }
+
+    // check if we are done
+    if (selected_rails_bs.count() == 0) {
+        return true;
+    }
+
+    // 3. within last NUMA node, if rail count exceeds node capacity, then we need to see at least
+    // the expected number of rails from each switch
+    int node_id = node_ids[node_index];
+    if (selected_rails_bs.count() >= curr_topology->numa_rail_count) {
+        if (!removeSwitchRails(selected_rails_bs, node_id)) {
+            NIXL_ERROR << "Rail selection " << LibfabricUtils::railIdsToString(selected_rails)
+                       << " missing rails from a switch in node " << node_id;
+            return false;
+        }
+        // now we expect to see the rest of rails spread evenly
+        if (selected_rails_bs.count() > 0) {
+            if (!verifyRailsSpreadEvenly(selected_rails_bs, node_id)) {
+                NIXL_ERROR
+                    << "Rail selection " << LibfabricUtils::railIdsToString(selected_rails)
+                    << " is not evenly spread among rails, when exceeding switch capacity, at node "
+                    << node_id;
+                return false;
+            }
+        }
+    } else {
+        // otherwise we expect in this case to see rails selected switch by switch
+        if (selected_rails_bs.count() > 0) {
+            if (!verifySwitchRailsNotBreached(selected_rails_bs, node_id)) {
+                NIXL_ERROR << "Rail selection " << LibfabricUtils::railIdsToString(selected_rails)
+                           << " is not spread evenly among switches in node " << node_id;
+                return false;
+            }
+        }
+    }
+    if (selected_rails_bs.count() > 0) {
+        NIXL_ERROR << "Rail selection " << LibfabricUtils::railIdsToString(selected_rails)
+                   << " is invalid, seeing unexpected excess rails";
+        return false;
+    }
+    return true;
+}
+
+static bool
+testRailSelection(nixlLibfabricRailManager &rail_manager,
+                  bool override_bandwidth,
+                  unsigned bandwidth_limit) {
+    std::vector<size_t> selected_rails;
+    if (!rail_manager.getDramRailSelectionPolicy()->selectRails(nullptr, selected_rails)) {
+        NIXL_ERROR << "Failed to select rails for DRAM_SEG memory type";
+        return false;
+    }
+    if (!validateRailSelection(
+            selected_rails, rail_manager.getTopology(), override_bandwidth, bandwidth_limit)) {
+        NIXL_ERROR << "Invalid rail selection for DRAM_SEG memory type";
+        return false;
+    }
+    return true;
+}
+
+int
+testNumaDramRailSelectionPolicy(const TopologyInfo &topology_info,
+                                bool override_bandwidth,
+                                unsigned bandwidth_limit) {
+    curr_topology = &topology_info; // required for NIC speed injection
+    NIXL_TRACE << "Testing topology: " << topology_info.instance_type;
+
+    // enable topology injection in runtime code
+    setTesting();
+
+    // tell hwloc to load topology from XML file
+    setenv("HWLOC_XMLFILE", topology_info.topo_file, 1);
+
+    // set user bandwidth override_bandwidth
+    if (override_bandwidth) {
+        setenv("NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG", std::to_string(bandwidth_limit).c_str(), 1);
+    }
+
+    // load topology and test
+    nixlLibfabricRailManager rail_manager(0);
+    nixl_status_t res = rail_manager.init(nixl_b_params_t());
+    if (res != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to initialize rail manager: " << (unsigned)res;
+        return 1;
+    }
+
+    // single-threaded test:
+    // select rails for buffers as many times as there are nodes
+    NIXL_INFO << "Running single-threaded test";
+    for (size_t i = 0; i < topology_info.numa_node_count; ++i) {
+        if (!testRailSelection(rail_manager, override_bandwidth, bandwidth_limit)) {
+            NIXL_ERROR << "Rail selection failed";
+            return 2;
+        }
+    }
+    NIXL_INFO << "Single-threaded DRAM_SEG rail selection test SUCCESS";
+
+    // multi-threaded test
+    NIXL_INFO << "Running multi-threaded test";
+    const size_t THREAD_COUNT = 8;
+    const size_t SLEEP_USEC = 100;
+    const size_t ITER_COUNT = 1000;
+    std::vector<std::thread> threads;
+    std::atomic<bool> thread_res[THREAD_COUNT] = {false};
+    for (size_t i = 0; i < THREAD_COUNT; ++i) {
+        threads.emplace_back(std::thread([i,
+                                          SLEEP_USEC,
+                                          ITER_COUNT,
+                                          &rail_manager,
+                                          override_bandwidth,
+                                          bandwidth_limit,
+                                          &thread_res]() -> void {
+            NIXL_TRACE << "Test thread " << i << " starting";
+            for (size_t j = 0; j < ITER_COUNT; ++j) {
+                if (!testRailSelection(rail_manager, override_bandwidth, bandwidth_limit)) {
+                    NIXL_ERROR << "Rail selection failed";
+                    thread_res[i] = false;
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::microseconds(SLEEP_USEC));
+            }
+            thread_res[i] = true;
+        }));
+    }
+
+    // wait for all threads to finish
+    for (auto &t : threads) {
+        t.join();
+    }
+
+    // check result of each thread
+    for (auto &tres : thread_res) {
+        if (!tres) {
+            NIXL_ERROR << "Multi-threaded DRAM_SEG rail selection test FAILED";
+            return 3;
+        }
+    }
+    NIXL_INFO << "Multi-threaded DRAM_SEG rail selection test SUCCESS";
+
+    // clean up
+    clearTesting();
+    unsetenv("HWLOC_XMLFILE");
+
+    // unset user bandwidth override_bandwidth
+    if (override_bandwidth) {
+        unsetenv("NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG");
+    }
+
+    return 0;
+}
+
+static int
+testNumaDramRailSelectionPolicy(const char *instance_type) {
+
+    NIXL_INFO << "Testing DRAM_SEG NUMA-aware rail selection policy on instance type "
+              << instance_type;
+    for (size_t i = 0; i < topology_count; ++i) {
+        if (topologies[i].enable) {
+            if (strncmp(instance_type, topologies[i].topo_file, strlen(instance_type)) == 0) {
+                for (size_t j = 0; j < topologies[i].test_scenarios.size(); ++j) {
+                    size_t bandwidth = topologies[i].test_scenarios[j].bandwidth_limit;
+                    NIXL_INFO << "Running test scenario [bandwidth=" << bandwidth
+                              << "] on instance type " << topologies[i].instance_type;
+                    int res = testNumaDramRailSelectionPolicy(
+                        topologies[i],
+                        topologies[i].test_scenarios[j].override_bandwidth,
+                        bandwidth);
+                    if (res != 0) {
+                        NIXL_ERROR << "Test scenario [bandwidth=" << bandwidth
+                                   << "] on instance type " << topologies[i].instance_type
+                                   << " failed with return code: " << res;
+                        return res;
+                    } else {
+                        NIXL_INFO << "Test scenario [bandwidth=" << bandwidth
+                                  << "] on instance type " << topologies[i].instance_type
+                                  << " SUCCESS";
+                    }
+                }
+                NIXL_INFO << "=== Test completed successfully! ===";
+                return 0;
+            }
+        }
+    }
+    NIXL_ERROR << "Could not find topology spec for instance type " << instance_type;
+    return 2;
+}
+
+int
+testDmabufMappingShapes() {
+    NIXL_INFO << "=== Testing PCIe-switch classification behind the dmabuf mapping ===";
+
+    // isPcieSwitch() reads an object's type and attr, so hand-built objects cover the kinds
+    // of ancestor a NIC and its accelerator meet at. testDmabufMappingTopologies() covers
+    // the end-to-end decision per topology.
+    union hwloc_obj_attr_u pcie_attr = {};
+    pcie_attr.bridge.upstream_type = HWLOC_OBJ_BRIDGE_PCI;
+    hwloc_obj pcie_switch = {};
+    pcie_switch.type = HWLOC_OBJ_BRIDGE;
+    pcie_switch.attr = &pcie_attr;
+
+    union hwloc_obj_attr_u host_attr = {};
+    host_attr.bridge.upstream_type = HWLOC_OBJ_BRIDGE_HOST;
+    hwloc_obj host_bridge = {};
+    host_bridge.type = HWLOC_OBJ_BRIDGE;
+    host_bridge.attr = &host_attr;
+
+    // Grouping reports the NIC's own node as the ancestor for an unpaired NIC.
+    hwloc_obj pci_device = {};
+    pci_device.type = HWLOC_OBJ_PCI_DEVICE;
+
+    hwloc_obj machine = {};
+    machine.type = HWLOC_OBJ_MACHINE;
+
+    // A bridge carrying no attr classifies as false.
+    hwloc_obj attr_less_bridge = {};
+    attr_less_bridge.type = HWLOC_OBJ_BRIDGE;
+
+    struct MappingShapeCase {
+        const char *name;
+        hwloc_obj_t ancestor;
+        bool expected;
+    };
+
+    const MappingShapeCase cases[] = {
+        {"bridge entered from PCI (a PCIe switch)", &pcie_switch, true},
+        {"host bridge", &host_bridge, false},
+        {"PCI device (NIC grouped with no accelerator)", &pci_device, false},
+        {"machine root", &machine, false},
+        {"bridge without attributes", &attr_less_bridge, false},
+        {"no ancestor at all", nullptr, false},
+    };
+
+    int rc = 0;
+    for (const auto &test_case : cases) {
+        const bool actual = nixlLibfabricTopology::isPcieSwitch(test_case.ancestor);
+        if (actual != test_case.expected) {
+            NIXL_ERROR << "PCIe-switch classification wrong for case '" << test_case.name
+                       << "': expected " << (test_case.expected ? "true" : "false") << ", got "
+                       << (actual ? "true" : "false");
+            rc = 1;
+        }
+    }
+
+    if (rc == 0) {
+        NIXL_INFO << "   SUCCESS: PCIe-switch classification correct for every ancestor kind";
+    }
+    return rc;
+}
+
+int
+testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
+    // The fi_getinfo mock reads curr_topology for the NIC count and line speed; the rest of
+    // TopologyInfo is unused by this test.
+    TopologyInfo dummy = {.enable = true,
+                          .instance_type = mapping_info.instance_type,
+                          .topo_file = mapping_info.topo_file,
+                          .numa_node_count = 0,
+                          .nic_count = mapping_info.nic_count,
+                          .nic_line_speed = mapping_info.nic_line_speed,
+                          .nic_upstream_link_speed = 0,
+                          .switch_count = 0,
+                          .numa_capacity = 0,
+                          .numa_rail_count = 0,
+                          .test_scenarios = {},
+                          .rail_partition = {}};
+    curr_topology = &dummy;
+    NIXL_TRACE << "Testing dmabuf mapping decision on " << mapping_info.instance_type;
+
+    setTesting();
+    setenv("HWLOC_XMLFILE", mapping_info.topo_file, 1);
+
+    // Same RAII guard as testNeuronTopology(): it undoes the env changes on every exit
+    // path, so the injected topology stays local to this call.
+    struct TestEnvGuard {
+        ~TestEnvGuard() {
+            clearTesting();
+            unsetenv("HWLOC_XMLFILE");
+            curr_topology = nullptr;
+        }
+    } env_guard;
+
+    std::optional<nixlLibfabricTopology> topology_holder;
+    try {
+        topology_holder.emplace();
+    }
+    catch (const std::runtime_error &e) {
+        NIXL_ERROR << "Unexpected topology-discovery failure for " << mapping_info.instance_type
+                   << ": " << e.what();
+        return 1;
+    }
+    const nixlLibfabricTopology &topology = *topology_holder;
+
+    const std::vector<std::string> &devices = topology.getAllDevices();
+    if (devices.size() != mapping_info.nic_count) {
+        NIXL_ERROR << "Invalid EFA NIC count for " << mapping_info.instance_type << ", expected "
+                   << mapping_info.nic_count << ", got " << devices.size();
+        return 2;
+    }
+
+    int rc = 0;
+    size_t exceptions_seen = 0;
+    for (const auto &device : devices) {
+        const auto &exceptions = mapping_info.default_mapping_exceptions;
+        const bool is_exception =
+            std::find(exceptions.begin(), exceptions.end(), device) != exceptions.end();
+        const bool expected = is_exception ? false : mapping_info.expect_pcie_mapping;
+        exceptions_seen += is_exception ? 1 : 0;
+
+        const bool pcie_mapping = topology.nicSharesPcieSwitchWithAccel(device);
+        if (pcie_mapping != expected) {
+            NIXL_ERROR << "Wrong dmabuf mapping decision for EFA device " << device << " on "
+                       << mapping_info.instance_type << ": expected "
+                       << (expected ? "PCIe (BAR1)" : "default") << " mapping, got "
+                       << (pcie_mapping ? "PCIe (BAR1)" : "default");
+            rc = 3;
+        }
+    }
+
+    // Assert the precondition behind an all-false expectation: grouping runs on a host
+    // carrying an NVIDIA or AMD accelerator.
+    if (mapping_info.expect_grouping_skipped &&
+        (topology.getNumNvidiaAccel() != 0 || topology.getNumAmdAccel() != 0)) {
+        NIXL_ERROR << mapping_info.instance_type << " was expected to skip NIC/accelerator "
+                   << "grouping, but discovery reports " << topology.getNumNvidiaAccel()
+                   << " NVIDIA and " << topology.getNumAmdAccel()
+                   << " AMD accelerator(s), so grouping runs and the all-default expectation "
+                   << "does not describe this host";
+        rc = 6;
+    }
+
+    // Every named exception device appears among the discovered devices, so a row carrying
+    // both mapping types exercises the case it describes.
+    if (exceptions_seen != mapping_info.default_mapping_exceptions.size()) {
+        NIXL_ERROR << "Expected " << mapping_info.default_mapping_exceptions.size()
+                   << " default-mapping exception device(s) on " << mapping_info.instance_type
+                   << " but only " << exceptions_seen << " were discovered";
+        rc = 5;
+    }
+
+    // An unknown device answers false, so an export for it names the platform default.
+    if (topology.nicSharesPcieSwitchWithAccel("no-such-efa-device")) {
+        NIXL_ERROR << "Unknown EFA device reported a PCIe path to an accelerator on "
+                   << mapping_info.instance_type;
+        rc = 4;
+    }
+
+    // Rail selection: the EFA devices a VRAM registration can reach per accelerator, and
+    // that between them the accelerators reach every device on the node. A device left out
+    // of every accelerator's list carries a correct mapping verdict that nothing ever asks
+    // for, so the expectations above pass while the device sits idle.
+    if (!mapping_info.accel_efa_devices.empty()) {
+        std::set<std::string> selectable;
+        for (const auto &[accel_pci, expected_efa_devices] : mapping_info.accel_efa_devices) {
+            std::vector<std::string> actual = topology.getEfaDevicesForPci(accel_pci);
+            std::vector<std::string> expected = expected_efa_devices;
+            std::sort(actual.begin(), actual.end());
+            std::sort(expected.begin(), expected.end());
+            selectable.insert(actual.begin(), actual.end());
+
+            if (actual != expected) {
+                NIXL_ERROR << "Wrong EFA devices for accelerator " << accel_pci << " on "
+                           << mapping_info.instance_type << ": expected [" << joinDevices(expected)
+                           << "], got [" << joinDevices(actual) << "]";
+                rc = 7;
+            }
+        }
+
+        for (const auto &device : devices) {
+            if (selectable.find(device) == selectable.end()) {
+                NIXL_ERROR << "EFA device " << device << " on " << mapping_info.instance_type
+                           << " is reachable by no accelerator, so a VRAM registration never "
+                           << "selects it";
+                rc = 8;
+            }
+        }
+    }
+
+    if (rc == 0) {
+        const size_t exception_count = mapping_info.default_mapping_exceptions.size();
+        NIXL_INFO << "   SUCCESS: " << mapping_info.instance_type << " -- "
+                  << (devices.size() - exception_count) << " of " << devices.size()
+                  << " EFA device(s) need the "
+                  << (mapping_info.expect_pcie_mapping ? "PCIe (BAR1)" : "default")
+                  << " dmabuf mapping, " << exception_count << " the other one";
+    }
+    return rc;
+}
+
+int
+testDmabufMappingTopologies() {
+    NIXL_INFO << "=== Testing dmabuf mapping decision on captured topologies ===";
+
+    for (size_t i = 0; i < dmabuf_mapping_topology_count; i++) {
+        if (!dmabuf_mapping_topologies[i].enable) {
+            continue;
+        }
+        int res = testDmabufMappingTopology(dmabuf_mapping_topologies[i]);
+        if (res != 0) {
+            NIXL_ERROR << "dmabuf mapping test failed on instance type "
+                       << dmabuf_mapping_topologies[i].instance_type
+                       << " with return code: " << res;
+            return res;
+        }
+    }
+
     NIXL_INFO << "=== Test completed successfully! ===";
     return 0;
 }

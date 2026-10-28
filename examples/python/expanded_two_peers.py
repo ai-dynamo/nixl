@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
 import pickle
 import random
+import sys
 
 import numpy as np
 import torch
@@ -51,7 +52,7 @@ if __name__ == "__main__":
         agent = nixl_agent(args.mode, config)
     except Exception as e:
         logger.exception("Failed to create NIXL agent: %s", e)
-        exit(1)
+        sys.exit(1)
 
     # Use a single 2D tensor with 16 tensors of size 32
     if args.mode == "target":
@@ -69,10 +70,10 @@ if __name__ == "__main__":
         reg_descs = agent.register_memory(tensor)
         if not reg_descs:
             logger.error("Memory registration failed.")
-            exit(1)
+            sys.exit(1)
     except Exception as e:
         logger.exception("Memory registration failed: %s", e)
-        exit(1)
+        sys.exit(1)
 
     # Target code: its memory is read first, then written at randomly selected locations, and then read again.
     if args.mode == "target":
@@ -93,7 +94,7 @@ if __name__ == "__main__":
             target_descs = agent.get_xfer_descs(target_tensors)
             if not target_descs:
                 logger.error("Failed to build target transfer descriptors.")
-                exit(1)
+                sys.exit(1)
             target_desc_str = agent.get_serialized_descs(target_descs)
 
             # Wait for initiator's metadata to be received.
@@ -116,7 +117,7 @@ if __name__ == "__main__":
                 "Preparing and sending transfer relevant information to the initiator failed: %s",
                 e,
             )
-            exit(1)
+            sys.exit(1)
 
         # Wait for transfer notifications by polling; exact match for READs, starts with 'Write' for WRITEs
         expected_reads = {
@@ -142,13 +143,13 @@ if __name__ == "__main__":
                             remaining_writes -= 1
         except Exception as e:
             logger.exception("Polling notifications failed: %s", e)
-            exit(1)
+            sys.exit(1)
 
         # Verify target tensor contents: last 4 tensors should have at least some zeros
         tail = tensor[12:, :]
         if not torch.any(tail == 0.0):
             logger.error("Target data verification failed: no zeros detected.")
-            exit(1)
+            sys.exit(1)
         logger.info("Target data verification passed (zeros found in last 4 tensors)")
 
     # Initiator code: reads target memory, writes to randomly selected locations, and then reads again.
@@ -177,7 +178,7 @@ if __name__ == "__main__":
                 "Metadata exchange or receiving transfer relevant information from the target failed: %s",
                 e,
             )
-            exit(1)
+            sys.exit(1)
         logger.info("Ready for transfers")
 
         # 1) Create transfer handles using prep_xfer + make_prepped_xfer when blocks are known in advance.
@@ -193,7 +194,7 @@ if __name__ == "__main__":
             initiator_descs = agent.get_xfer_descs(initiator_tensors)
             if not initiator_descs:
                 logger.exception("Initiator's local descriptors creation failed.")
-                exit(1)
+                sys.exit(1)
             local_side = agent.prep_xfer_dlist("", initiator_descs)
             remote_side = agent.prep_xfer_dlist("target", target_descs)
 
@@ -209,7 +210,7 @@ if __name__ == "__main__":
             handles.extend(read_handles)
         except Exception as e:
             logger.exception("Creating READ handles failed: %s", e)
-            exit(1)
+            sys.exit(1)
 
         # 2) Create transfer handles using initialize_xfer when locations are chosen at transfer time, e.g., when there is no notion of fixed blocks.
         #    NIXL prepares and maps in one step. As an example, randomly select which half of each tensor to write, using 2 descriptors per transfer.
@@ -276,7 +277,7 @@ if __name__ == "__main__":
             handles.extend(write_handles)
         except Exception as e:
             logger.exception("Preparing WRITE handles failed: %s", e)
-            exit(1)
+            sys.exit(1)
 
         # Do the transfers, first parallel READs, then parallel WRITEs, then repost the READs with new notifications.
         try:
@@ -285,14 +286,14 @@ if __name__ == "__main__":
                 st = agent.transfer(h)
                 if st == "ERR":
                     logger.error("Posting READ failed.")
-                    exit(1)
+                    sys.exit(1)
             while read_handles:
                 # iterate over a snapshot to safely remove completed handles
                 for h in list(read_handles):
                     st = agent.check_xfer_state(h)
                     if st == "ERR":
                         logger.error("A READ transfer got to Error state.")
-                        exit(1)
+                        sys.exit(1)
                     if st == "DONE":
                         read_handles.remove(h)
 
@@ -302,13 +303,13 @@ if __name__ == "__main__":
                 st = agent.transfer(h)
                 if st == "ERR":
                     logger.error("Posting WRITE failed.")
-                    exit(1)
+                    sys.exit(1)
             while write_handles:
                 for h in list(write_handles):
                     st = agent.check_xfer_state(h)
                     if st == "ERR":
                         logger.error("A WRITE transfer errored.")
-                        exit(1)
+                        sys.exit(1)
                     if st == "DONE":
                         write_handles.remove(h)
 
@@ -320,25 +321,25 @@ if __name__ == "__main__":
                 st = agent.transfer(read_handles_2[start], notif2)
                 if st == "ERR":
                     logger.error("Reposting READ failed.")
-                    exit(1)
+                    sys.exit(1)
             while read_handles_2:
                 for h in list(read_handles_2):
                     st = agent.check_xfer_state(h)
                     if st == "ERR":
                         logger.error("A reposted READ transfer errored.")
-                        exit(1)
+                        sys.exit(1)
                     if st == "DONE":
                         read_handles_2.remove(h)
         except Exception as e:
             logger.exception("Some READs or WRITEs failed: %s", e)
-            exit(1)
+            sys.exit(1)
 
         # Final verification on initiator: first 12 tensors should be ones
         check = torch.zeros_like(tensor)
         check[:12, :] = 1.0
         if not torch.allclose(tensor, check):
             logger.error("Initiator final data verification failed.")
-            exit(1)
+            sys.exit(1)
         logger.info("Initiator final data verification passed")
 
     # Tear down. The Python garbage collector will release transfer handles, but it's better to be explicit.
@@ -355,5 +356,6 @@ if __name__ == "__main__":
         agent.deregister_memory(reg_descs)
     except Exception as e:
         logger.exception("Tear down (metadata/transfer handles) failed: %s", e)
+        sys.exit(1)
 
     logger.info("Test Complete.")

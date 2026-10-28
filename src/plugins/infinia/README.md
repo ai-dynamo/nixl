@@ -1,0 +1,186 @@
+# NIXL Infinia Plugin
+
+This backend provides high-performance object storage using DDN's Infinia storage system with C++20 coroutine-based async API.
+
+## Dependencies
+
+This backend requires the Infinia Async SDK libraries. The Infinia installation should include:
+
+- **libred_async.so** - C++20 coroutine-based async API (links against libred_sdk.so)
+- **Headers**: `<red/red_async.hpp>`, `<red/red_status.h>`
+
+A C++20 compiler (GCC 10+ or Clang 14+) is required for coroutine support.
+
+### Build Configuration
+
+```bash
+# Configure with Infinia support
+meson setup build -Dinfinia_path=/path/to/infinia/installation
+
+# Build
+cd build
+ninja
+```
+
+The `infinia_path` should point to the Infinia installation directory containing `lib/` and `include/` subdirectories.
+
+## Configuration
+
+The Infinia backend supports configuration through:
+
+- Backend parameter maps (`nixl_b_params_t`) a key–value map of strings, i.e., `params["cluster"] = "mycluster";`
+- NIXL's common TOML configuration (via `NIXL_CONFIG_FILE` and `nixl::config`)
+- Environment variables (`RED_*`)
+
+### Backend Parameters
+
+Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creating the backend instance:
+
+| Parameter | Description | Default | Required |
+|-----------|-------------|---------|----------|
+| `cluster` | Infinia cluster name | `cluster1` | No |
+| `tenant` | Tenant name | `red` | No |
+| `subtenant` | Subtenant name | `red` | No |
+| `dataset` | Dataset/bucket name | `nixl` | No |
+| `sthreads` | Number of service threads | `8` | No |
+| `num_buffers` | Number of buffers for operations | `512` | No |
+| `num_ring_entries` | Number of ring buffer entries | `512` | No |
+| `coremasks` | CPU core affinity mask (hexadecimal) | `0x2` | No |
+| `use_dmabuf` | Use DMA-BUF RDMA data transfer | `true` | No |
+| `max_retries` | Maximum retries for failed operations | (library default) | No |
+| `batch_size` | Async operations per batch | (library default) | No |
+
+### Environment Variables
+
+The following environment variables are supported:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `RED_CLUSTER` | Infinia cluster name | `mycluster` |
+| `RED_TENANT` | Tenant name (can include subtenant as `tenant/subtenant`) | `mytenant/mysubtenant` |
+| `RED_DATASET` | Dataset name | `mydataset` |
+
+### Configuration Priority
+
+Configuration precedence is slightly different for connection settings vs. tuning knobs.
+
+**Cluster / tenant / dataset (`cluster`, `tenant`, `subtenant`, `dataset`)**
+
+1. **Environment / NIXL TOML**: `RED_CLUSTER`, `RED_TENANT`, `RED_DATASET`
+   - If the environment variable is set, it wins.
+   - Otherwise, NIXL looks for the same key in the active TOML config
+     (e.g., `RED_CLUSTER` in `infinia_example.conf`).
+2. **Backend Parameters**: Values passed directly in the backend parameter map.
+3. **Built-in Defaults**: `cluster1` / `red` / `red` / `red`.
+
+**Tuning knobs (`sthreads`, `num_buffers`, `num_ring_entries`, `coremasks`, `use_dmabuf`)**
+
+1. **Backend Parameters**: Highest priority for these knobs. An explicit backend
+   parameter wins even when its value equals the compiled default
+   (e.g. `params["sthreads"] = "8"` is not overwritten by TOML).
+2. **NIXL TOML**: Applied only if that knob was **not** set via backend parameters.
+   - Start with a compiled default (e.g. `sthreads = 8`).
+   - If you set a backend parameter, TOML is skipped for that knob.
+   - Otherwise, if TOML has `infinia.sthreads = 16`, then `sthreads = 16`.
+3. **Built-in Defaults**: As listed in the table above.
+
+**Retry/batching (`max_retries`, `batch_size`)**
+
+1. **Backend Parameters**: Highest priority (e.g. `params["max_retries"] = "5"`).
+   An explicit backend parameter wins even when its value equals the library default.
+2. **NIXL TOML**: Applied only if that knob was **not** set via backend parameters:
+   - `infinia.max_retries` overrides `red_async::RED_ASYNC_DEFAULT_MAX_RETRIES`.
+   - `infinia.batch_size` overrides `red_async::RED_ASYNC_DEFAULT_BATCH_SIZE`.
+3. **Library Defaults**: `red_async::RED_ASYNC_DEFAULT_MAX_RETRIES` and
+   `red_async::RED_ASYNC_DEFAULT_BATCH_SIZE`.
+
+### Configuration Examples
+
+#### Minimal Configuration
+
+```cpp
+nixl_b_params_t params = {{"cluster", "mycluster"}, {"dataset", "mydataset"}};
+agent.createBackend("INFINIA", params);
+```
+
+#### Environment Variable Configuration
+
+```bash
+export RED_CLUSTER=mycluster
+export RED_TENANT=mytenant/mysubtenant
+export RED_DATASET=mydataset
+```
+
+```cpp
+agent.createBackend("INFINIA", {});
+```
+
+#### NIXL TOML configuration (common config)
+
+NIXL also provides a common TOML-based configuration system. The INFINIA
+backend uses this to read `RED_*` connection settings and the `[infinia]`
+tuning table.
+
+To use it, point `NIXL_CONFIG_FILE` at the example (or a copy of it):
+
+```bash
+export NIXL_CONFIG_FILE=/path/to/src/plugins/infinia/infinia_example.conf
+```
+
+The plugin does not accept a configuration file path as a backend parameter.
+Tools such as `nixlbench` pick up the file through `NIXL_CONFIG_FILE`.
+`infinia_nixl_test` also accepts the path directly:
+
+- `infinia_nixl_test -F /path/to/src/plugins/infinia/infinia_example.conf [...options...]`
+
+The example `infinia_example.conf` shows how to set:
+
+- `RED_CLUSTER`, `RED_TENANT`, `RED_DATASET` (fixed after shared configuration resolution)
+- `[infinia].sthreads`, `num_buffers`, `num_ring_entries`, `coremasks`, `use_dmabuf`, `max_retries`, `batch_size` (tuning settings)
+
+Backend parameters may override the `[infinia]` tuning settings (`sthreads`, `num_buffers`,
+`num_ring_entries`, `coremasks`, `use_dmabuf`, `max_retries`, `batch_size`), while
+`RED_CLUSTER`, `RED_TENANT`, and `RED_DATASET` remain fixed after shared configuration
+resolution and cannot be overridden by backend parameters.
+
+When debug logging is enabled, the INFINIA backend emits a single line during
+initialization starting with `INFINIA effective config:`. This log line
+prints the final resolved values for cluster, tenant, dataset, tuning knobs,
+and batching after applying environment variables, NIXL TOML config, and
+backend parameters. It is the easiest way to verify that your configuration is
+being interpreted as expected.
+
+## Transfer Operations
+
+The Infinia backend supports read and write operations between local memory and Infinia storage. Key aspects:
+
+### Supported Memory Types
+
+- **DRAM_SEG**: Host memory (CPU RAM) - pre-registered for zero-copy transfers
+- **VRAM_SEG**: Device memory (GPU VRAM) - requires CUDA, pre-registered for zero-copy transfers
+- **OBJ_SEG**: Object storage (no physical memory backing)
+
+### Device ID to Object Key Mapping
+
+- Each object in Infinia storage is identified by a unique key
+- The backend maintains a mapping between device IDs (`devId`) and object keys
+- When registering OBJ_SEG memory:
+  - If `metaInfo` is provided in the blob descriptor, it is used as the object key
+  - Otherwise, the device ID is converted to a string and used as the object key
+- This mapping is used during transfer operations to locate the correct Infinia storage object
+
+### Memory Registration
+
+- **VRAM_SEG**: GPU memory is pre-registered via DMA-BUF (`red_config_t::register_user_dmabuf()`) when `use_dmabuf` is enabled and the buffer is page-aligned; otherwise it falls back to `red_config_t::register_user_memory()`
+- **DRAM_SEG**: Memory is registered with Infinia using `red_config_t::register_user_memory()` to obtain a handle for zero-copy transfers
+- **OBJ_SEG**: No physical memory registration; only creates devId-to-key mapping
+- Transfer buffers must be fully contained within registered memory regions
+
+### Asynchronous Operations
+
+- All transfer operations are asynchronous using C++20 coroutines
+- The backend uses `red_async::BatchTask` for parallel batch execution
+- Operations are executed in the background with automatic polling
+- Transfer handles can be prepared once and posted multiple times for efficient repeated operations
+- The `checkXfer` function polls for operation completion (non-blocking)
+- Request handles must be released using `releaseReqH` after operations complete

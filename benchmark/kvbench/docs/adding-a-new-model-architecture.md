@@ -96,7 +96,7 @@ def get_kv_size_per_token(self, token_count: int=1) -> int:
     # Example implementation based on Llama 3.1:
     return int(
         self.num_layers * (self.num_heads / self.group_size) * \
-        self.head_dim * 2 * get_precision_size(self.model_config.model.model_quant_mode) * token_count
+        self.head_dim * 2 * get_precision_size(self.model_config.model.kvcache_quant_mode) * token_count
     )
 ```
 

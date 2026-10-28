@@ -1,0 +1,547 @@
+/*!
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Diagram container and top-level layers */
+.nixl-stack-diagram {
+    max-width: 100%;
+    padding: 12px;
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 8px;
+    background: var(--nv-color-bg-default);
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.dark .nixl-stack-diagram {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-1);
+    color: var(--nv-light-grey-2);
+}
+
+.nixl-stack-layer {
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 6px;
+    padding: 16px;
+    text-align: center;
+}
+.dark .nixl-stack-layer {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-2);
+}
+
+/* Backend categories, cards, and tooltips */
+.nixl-stack-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+}
+
+.nixl-stack-category {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.nixl-stack-category-header {
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: center;
+    min-height: 2.5em;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+
+.nixl-stack-category:nth-child(1) .nixl-stack-category-header { color: #0077B6 !important; }
+.nixl-stack-category:nth-child(2) .nixl-stack-category-header { color: #CC5500 !important; }
+.nixl-stack-category:nth-child(3) .nixl-stack-category-header { color: #6A4C93 !important; }
+.nixl-stack-category:nth-child(4) .nixl-stack-category-header { color: #1B7A6D !important; }
+.nixl-stack-category:nth-child(5) .nixl-stack-category-header { color: #A4243B !important; }
+
+.dark .nixl-stack-category:nth-child(1) .nixl-stack-category-header { color: #48CAE4 !important; }
+.dark .nixl-stack-category:nth-child(2) .nixl-stack-category-header { color: #E07A1C !important; }
+.dark .nixl-stack-category:nth-child(3) .nixl-stack-category-header { color: #B185DB !important; }
+.dark .nixl-stack-category:nth-child(4) .nixl-stack-category-header { color: #52B69A !important; }
+.dark .nixl-stack-category:nth-child(5) .nixl-stack-category-header { color: #E5383B !important; }
+
+.nixl-stack-plugin {
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 4px;
+    padding: 6px 2px;
+    min-height: 34px;
+    font-size: 12px;
+    line-height: 1.25;
+    width: 90%;
+    text-align: center;
+    cursor: pointer;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 150ms ease, border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+.dark .nixl-stack-plugin {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-2);
+}
+
+.nixl-stack-memrow {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.nixl-stack-memtype {
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 4px;
+    padding: 8px 16px;
+    min-height: 36px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: center;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 150ms ease, border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+.dark .nixl-stack-memtype {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-2);
+}
+
+.nixl-stack-tooltip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-color-green);
+    color: var(--pst-color-text-base);
+    font-size: 12px;
+    max-width: 500px;
+    width: max-content;
+    white-space: nowrap;
+    word-wrap: break-word;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0;
+    transition: opacity 150ms ease;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.dark .nixl-stack-tooltip {
+    background: var(--nv-dark-grey-2);
+    color: var(--nv-light-grey-2);
+}
+.nixl-stack-tooltip-title {
+    font-weight: 700;
+}
+.nixl-stack-tooltip-desc {
+    color: var(--pst-color-text-muted);
+}
+.dark .nixl-stack-tooltip-desc {
+    color: var(--nv-light-grey-5);
+}
+.nixl-stack-tooltip-mem {
+    color: var(--nv-color-green);
+    margin-top: 2px;
+}
+
+.nixl-stack-plugin:hover > .nixl-stack-tooltip,
+.nixl-stack-plugin:focus > .nixl-stack-tooltip {
+    opacity: 1;
+}
+
+.nixl-stack-plugin,
+.nixl-stack-memtype,
+.nixl-stack-compute-type {
+    box-sizing: border-box;
+    box-shadow: 0 0 0 0 transparent;
+}
+
+.nixl-stack-plugin:focus {
+    cursor: default;
+}
+
+.nixl-stack-plugin:hover,
+.nixl-stack-plugin:focus,
+.nixl-stack-memtype:hover,
+.nixl-stack-memtype:focus {
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+    opacity: 1;
+}
+
+/* Backend and memory cross-highlighting */
+.nixl-stack-diagram:has(.nixl-stack-plugin:hover) .nixl-stack-memtype,
+.nixl-stack-diagram:has(.nixl-stack-plugin:focus) .nixl-stack-memtype {
+    opacity: 0.3;
+}
+
+.nixl-stack-diagram:has(.nixl-stack-memtype:hover) .nixl-stack-plugin,
+.nixl-stack-diagram:has(.nixl-stack-memtype:focus) .nixl-stack-plugin {
+    opacity: 0.3;
+}
+
+.nixl-stack-diagram:has([data-mem-dram]:hover) [data-type="DRAM"],
+.nixl-stack-diagram:has([data-mem-dram]:focus) [data-type="DRAM"],
+.nixl-stack-diagram:has([data-mem-vram]:hover) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-mem-vram]:focus) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-mem-file]:hover) [data-type="FILE"],
+.nixl-stack-diagram:has([data-mem-file]:focus) [data-type="FILE"],
+.nixl-stack-diagram:has([data-mem-obj]:hover) [data-type="OBJ"],
+.nixl-stack-diagram:has([data-mem-obj]:focus) [data-type="OBJ"],
+.nixl-stack-diagram:has([data-mem-blk]:hover) [data-type="BLK"],
+.nixl-stack-diagram:has([data-mem-blk]:focus) [data-type="BLK"] {
+    opacity: 1;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+.nixl-stack-diagram:has([data-type="DRAM"]:hover) [data-mem-dram],
+.nixl-stack-diagram:has([data-type="DRAM"]:focus) [data-mem-dram],
+.nixl-stack-diagram:has([data-type="VRAM"]:hover) [data-mem-vram],
+.nixl-stack-diagram:has([data-type="VRAM"]:focus) [data-mem-vram],
+.nixl-stack-diagram:has([data-type="FILE"]:hover) [data-mem-file],
+.nixl-stack-diagram:has([data-type="FILE"]:focus) [data-mem-file],
+.nixl-stack-diagram:has([data-type="OBJ"]:hover) [data-mem-obj],
+.nixl-stack-diagram:has([data-type="OBJ"]:focus) [data-mem-obj],
+.nixl-stack-diagram:has([data-type="BLK"]:hover) [data-mem-blk],
+.nixl-stack-diagram:has([data-type="BLK"]:focus) [data-mem-blk] {
+    opacity: 1;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+.nixl-stack-section-label {
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.25;
+    margin-bottom: 8px;
+}
+
+.nixl-stack-subtitle {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--pst-color-text-muted);
+    display: block;
+}
+.dark .nixl-stack-subtitle {
+    color: var(--nv-light-grey-5);
+}
+
+.nixl-stack-layer-title {
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+.nixl-stack-layer {
+    display: block;
+}
+
+.nixl-stack-diagram a {
+    color: inherit;
+    text-decoration: none;
+}
+.nixl-stack-diagram a:hover {
+    color: inherit;
+    text-decoration: none;
+}
+
+@media (max-width: 811px) {
+    .nixl-stack-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 480px) {
+    .nixl-stack-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .nixl-stack-memrow {
+        flex-direction: column;
+        align-items: center;
+    }
+}
+
+/* Agent layers and core capability chips */
+.nixl-stack-agent-box {
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--pst-color-surface);
+}
+.dark .nixl-stack-agent-box {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-2);
+}
+
+.nixl-stack-agent-layer {
+    padding: 12px 16px;
+    text-align: center;
+    border-bottom: 1px solid var(--nv-light-grey-3);
+}
+.nixl-stack-agent-layer:last-child {
+    border-bottom: none;
+}
+.dark .nixl-stack-agent-layer {
+    border-bottom-color: var(--nv-dark-grey-4);
+}
+.dark .nixl-stack-agent-layer:last-child {
+    border-bottom: none;
+}
+
+.nixl-stack-agent-layer-title {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+.nixl-stack-agent-layer-sub {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--pst-color-text-muted);
+    display: block;
+    margin-top: 2px;
+}
+.dark .nixl-stack-agent-layer-sub {
+    color: var(--nv-light-grey-5);
+}
+.nixl-stack-agent-layer-sub a {
+    color: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.nixl-stack-agent-core {
+    background: rgba(116, 185, 0, 0.04);
+}
+.dark .nixl-stack-agent-core {
+    background: rgba(116, 185, 0, 0.06);
+}
+
+.nixl-stack-agent-chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.nixl-stack-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.3;
+    border-radius: 999px;
+    background: rgba(116, 185, 0, 0.1);
+    color: var(--pst-color-text-base);
+    border: 1px solid rgba(116, 185, 0, 0.3);
+    white-space: nowrap;
+}
+.dark .nixl-stack-chip {
+    background: rgba(116, 185, 0, 0.12);
+    border-color: rgba(116, 185, 0, 0.25);
+    color: var(--nv-light-grey-2);
+}
+
+/* Backend-to-compute cross-highlighting */
+.nixl-stack-diagram:has([data-backend-compute-nvidia]:hover) [data-compute-nvidia],
+.nixl-stack-diagram:has([data-backend-compute-nvidia]:focus) [data-compute-nvidia] {
+    opacity: 1 !important;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+.nixl-stack-diagram:has([data-backend-compute-aws]:hover) [data-compute-aws],
+.nixl-stack-diagram:has([data-backend-compute-aws]:focus) [data-compute-aws] {
+    opacity: 1 !important;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+/* Memory and compute type controls */
+.nixl-stack-bottom-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+}
+
+.nixl-stack-bottom-section {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+}
+
+.nixl-stack-compute-row {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.nixl-stack-compute-type {
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 4px;
+    padding: 8px 16px;
+    min-height: 36px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: center;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 150ms ease, border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+.dark .nixl-stack-compute-type {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-2);
+}
+
+.nixl-stack-mem-tooltip {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-color-green);
+    color: var(--pst-color-text-base);
+    font-size: 12px;
+    font-weight: 400;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0;
+    transition: opacity 150ms ease;
+}
+
+.dark .nixl-stack-mem-tooltip {
+    background: var(--nv-dark-grey-2);
+    color: var(--nv-light-grey-2);
+}
+
+.nixl-stack-memtype {
+    position: relative;
+}
+
+.nixl-stack-memtype:hover > .nixl-stack-mem-tooltip,
+.nixl-stack-memtype:focus > .nixl-stack-mem-tooltip {
+    opacity: 1;
+}
+
+.nixl-stack-compute-type:hover,
+.nixl-stack-compute-type:focus {
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+    opacity: 1;
+}
+
+/* Compute-to-backend and memory cross-highlighting */
+.nixl-stack-diagram:has(.nixl-stack-compute-type:hover) .nixl-stack-plugin,
+.nixl-stack-diagram:has(.nixl-stack-compute-type:focus) .nixl-stack-plugin,
+.nixl-stack-diagram:has(.nixl-stack-compute-type:hover) .nixl-stack-memtype,
+.nixl-stack-diagram:has(.nixl-stack-compute-type:focus) .nixl-stack-memtype,
+.nixl-stack-diagram:has(.nixl-stack-compute-type:hover) .nixl-stack-compute-type,
+.nixl-stack-diagram:has(.nixl-stack-compute-type:focus) .nixl-stack-compute-type {
+    opacity: 0.3;
+}
+
+.nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-mem-vram],
+.nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-mem-vram] {
+    opacity: 1;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+.nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-type="DRAM"],
+.nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-type="DRAM"],
+.nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-type="FILE"],
+.nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-type="FILE"] {
+    opacity: 1;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+.nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-compute-nvidia],
+.nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-compute-nvidia] {
+    opacity: 1;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+.nixl-stack-diagram:has([data-compute-aws]:hover) .nixl-stack-plugin[data-backend-compute-aws],
+.nixl-stack-diagram:has([data-compute-aws]:focus) .nixl-stack-plugin[data-backend-compute-aws] {
+    opacity: 1;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+.nixl-stack-diagram:has([data-compute-aws]:hover) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-compute-aws]:focus) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-compute-aws]:hover) [data-type="DRAM"],
+.nixl-stack-diagram:has([data-compute-aws]:focus) [data-type="DRAM"] {
+    opacity: 1;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+.nixl-stack-diagram:has([data-compute-aws]:hover) [data-compute-aws],
+.nixl-stack-diagram:has([data-compute-aws]:focus) [data-compute-aws] {
+    opacity: 1;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+.nixl-stack-diagram:has(.nixl-stack-plugin:hover) .nixl-stack-compute-type,
+.nixl-stack-diagram:has(.nixl-stack-plugin:focus) .nixl-stack-compute-type {
+    opacity: 0.3;
+}
+
+.nixl-stack-diagram:has(.nixl-stack-memtype:hover) .nixl-stack-compute-type,
+.nixl-stack-diagram:has(.nixl-stack-memtype:focus) .nixl-stack-compute-type {
+    opacity: 0.3;
+}
+
+@media (max-width: 811px) {
+    .nixl-stack-bottom-row {
+        flex-direction: column;
+    }
+}

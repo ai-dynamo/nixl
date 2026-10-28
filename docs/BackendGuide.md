@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,7 @@ Note that plugin implementation is in C++ to achieve SOL, and the header files f
 
 NIXL implements a modular plugin architecture where each backend is encapsulated within a library that exposes its features through the SB API, such as [UCX](https://github.com/ai-dynamo/nixl/tree/main/src/plugins/ucx), [GPUDirect Storage (GDS)](https://github.com/ai-dynamo/nixl/tree/main/src/plugins/cuda_gds), or any other custom implementation. The Plugin Manager component within NIXL handles discovery, loading, and instantiation of backend plugins, whether they are dynamically loaded or statically built into the NIXL library. Each plugin needs to implement the SB API, as well as a few methods for the plugin manager, which are discussed in the following sections.
 
-Note that some of the methods in the SB API are not necessary to be implemented, for instance if a backend does not support notifications, it can indicate it through supportsNotif() method, and if it returns false, the agent will not send requests with notifications to this backend. There are 4 such capability indicators, which are detailed further and which APIs are required to be implemented for each of them.
+Note that some of the methods in the SB API are not necessary to be implemented, for instance if a backend does not support notifications, it can indicate it through supportsNotif() method, and if it returns false, the agent will not send requests with notifications to this backend. There are 5 such capability indicators, which are detailed further and which APIs are required to be implemented for each of them.
 
 ![NIXL SB API](figures/nixl_sb_api.png)
 
@@ -44,7 +44,7 @@ For a backend to be compatible with NIXL, it must implement several key SB API m
 * Constructor: A key/value set of parameters alongside Agent name is passed to the backend.
 * Destructor: Release the remaining resources.
 
-The key/value parameters are a map of strings to byte arrays that are passed from the Agent. These can be whatever the backend needs as its initialization parameters. See the `get_backend_options` plugin API for more detail on how to specify these.
+The key/value parameters are a map of strings to byte arrays that are passed from the Agent. These can be whatever the backend needs as its initialization parameters. See the `get_backend_options` plugin API for more detail on how to specify these. The functions in `src/utils/common/backend.h` can be used to access the parameters and convert them to some commonly used types.
 
 ### Capability Indicators:
 
@@ -52,6 +52,7 @@ The key/value parameters are a map of strings to byte arrays that are passed fro
 * supportsRemote(): Indicates if the backend supports transfers across nodes
 * supportsNotif(): Indicates if the backend supports notifications
 * getSupportedMems(): Indicates memory types supported by the backend
+* supportsTraceContext(): Indicates if the backend carries a request's trace context to its peer. Optional and `false` by default; only in-tree plugins can implement it, since the trace context type is internal
 
 Based on the first 3 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend must have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional.
 
@@ -72,6 +73,11 @@ Note that loadRemoteConnInfo does not initiate the connection, if the user wants
 * deregisterMem(): Deregisters memory regions
 
 Each backend inherits from nixlBackendMD base class to store any metadata required per registration. A pointer to an object of this class will be the output of registerMem, and the only input to deregisterMem.
+
+For backends that support `FILE_SEG`, NIXL ships a shared **path-mode**
+helper (`nixl::parsePathMeta()` + `nixlFilePathMD`) that lets callers
+register files by path in `nixlBlobDesc::metaInfo` instead of by
+pre-opened fd; see [`src/utils/file/README.md`](../src/utils/file/README.md#path-mode-file-registration).
 
 ### Metadata Management:
 
@@ -130,7 +136,7 @@ From a user perspective talking to the NIXL agent, the type of backend transport
 * get_backend_mems: Returns the supported memory types by this backend
 * get_backend_options: Returns configuration options and parameters that the plugin can use during initialization. The user can use this information to know such parameters during runtime, and across different versions of the plugin.
 
-The plugin manager maintains API versioning of these above APIs. This can allow NIXL to ensure backward/forward compatibility for many more plugins. Furthermore, there can be both static and dynamic plugins, meaning being auto-loaded and/or built-in into the NIXL library directly or being loaded from disk on-demand respectively. Static plugins can provide slightly better performance at the expense of a larger application size. The API for both options are the same.
+The plugin manager maintains API versioning of these above APIs. The check is strict equality against `NIXL_PLUGIN_API_VERSION`: a plugin reporting any other version is refused at load rather than being run against an incompatible core. There is no backward- or forward-compatibility range, so a bump requires rebuilding out-of-tree plugins. Furthermore, there can be both static and dynamic plugins, meaning being auto-loaded and/or built-in into the NIXL library directly or being loaded from disk on-demand respectively. Static plugins can provide slightly better performance at the expense of a larger application size. The API for both options are the same.
 
 ## Comparing two plugins as an example
 
@@ -160,6 +166,47 @@ During this step, some of the configurations are shared among the backend plugin
 When user asks for a specific backend for its name, alongside a list of parameters in the form of key-value pairs, NIXL agent will instantiate an instance of that backend plugin through the plugin manager and calls its **initializer** (constructor) method in SB API with the initialization parameters. This includes both the parameters set by the agent during its creation, as well as the parameters passed by the user to this method. Note that there could be errors in such instantiation, and the failure is reported to the user.
 
 In this step, if the plugin supports talking to remote agents, the required connection data for other agents to talk to it is acquired through **getConnInfo** in SB API. And/or if it supports within node transfers, a **connection** call to itself is called, as some backends might require that.
+
+#### UCX backend initialization options
+
+The UCX plugin exposes its initialization options through `getPluginParams("UCX", ...)` in C++
+or `get_plugin_params("UCX")` in Python. The returned map contains the defaults, which can be
+overridden before passing it to `createBackend` in C++ or `create_backend` in Python.
+
+| Option key | Default | Description |
+| ---------- | ------- | ----------- |
+| `ucx_error_handling_mode` | `peer` | UCX endpoint error handling policy. `peer` requests peer failure reporting; `none` disables it. |
+| `ucx_vram_memtype_hint` | `auto` | Controls how NIXL hints the UCX memory type during VRAM registration. Supported values are exactly: `auto`, `none`, `cuda`, `cuda-managed`, `rocm`, `ze-device`. |
+
+The two options are independent; you do not need to set one to use the other.
+
+`ucx_error_handling_mode` affects UCP transport lane selection, not only error reporting.
+NIXL creates endpoints with `err_mode` set from this option, and UCP only selects lanes whose
+transport advertises peer failure support. A transport that does not advertise it is therefore
+excluded from `peer` endpoints even when it is otherwise available and faster.
+
+Setting `none` makes such lanes eligible, but removes the failure guarantees NIXL depends on.
+Under `none`, UCX does not invoke the endpoint error handler and does not guarantee error
+notification or clean completion of pending operations after a peer failure. NIXL installs an
+error handler on every endpoint and uses it to move the endpoint to its failed state, which is
+what produces `NIXL_ERR_REMOTE_DISCONNECT`. Without that callback the endpoint stays in its
+connected state and pending transfers may remain incomplete and unreported, so a remote failure
+can go undetected instead of surfacing as an error.
+
+`none` therefore trades remote failure visibility for transport availability. Prefer fixing lane
+eligibility in the transport over changing this option in deployments that need remote failure
+reporting.
+
+`ucx_vram_memtype_hint` controls the memory type NIXL passes to `ucp_mem_map` when registering
+VRAM. `auto` is the recommended default: it hints `ze-device` when the UCX context supports
+`ze-device` and none of `cuda`, `cuda-managed` or `rocm`, and otherwise leaves detection to UCX.
+`none` never hints, so the two differ only on those contexts, where `none` turns the `ze-device`
+hint off. The explicit values
+(`cuda`, `cuda-managed`, `rocm`, `ze-device`) force the corresponding memory type.
+
+Value matching is case-sensitive, so `CUDA` is rejected and backend creation fails with an
+invalid-argument error. The same happens when an explicit hint is not supported by the UCX context
+the backend was created with.
 
 ### Make connections (optional):
 

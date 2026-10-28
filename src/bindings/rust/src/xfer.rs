@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -102,6 +102,10 @@ impl XferRequest {
             NIXL_CAPI_ERROR_NO_TELEMETRY => {
                 tracing::error!(error = "telemetry_not_enabled", "Telemetry not enabled");
                 Err(NixlError::NoTelemetry)
+            },
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to get transfer telemetry from request");
+                Err(NixlError::NotFound)
             },
             _ => {
                 tracing::error!(error = "backend_error", "Failed to get transfer telemetry from request");

@@ -21,7 +21,7 @@
 import os
 from contextlib import contextmanager
 from datetime import timedelta
-from typing import TYPE_CHECKING, Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -33,8 +33,7 @@ from . import nixl_ep_cpp
 from .nixl_ep_cpp import EventHandle
 from .utils import EventOverlap
 
-if TYPE_CHECKING:
-    import mpi4py  # noqa: F401
+DEFAULT_TIMEOUT_MS = 30_000
 
 
 class Buffer:
@@ -48,16 +47,13 @@ class Buffer:
         runtime: the C++ runtime.
     """
 
-    num_sms: int = 20
-
     def __init__(
         self,
         disable_ll_nvlink: bool = False,
         explicitly_destroy: bool = False,
         rank: int = 0,
-        group: Optional[dist.ProcessGroup] = None,
-        comm: Optional["mpi4py.MPI.Comm"] = None,
         tcp_store_group: Optional[dist.TCPStore] = None,
+        timeout_ms: int = DEFAULT_TIMEOUT_MS,
     ) -> None:
         """
         Initialize the nixl communication buffer.
@@ -68,22 +64,22 @@ class Buffer:
                 otherwise, the resources will be released by the destructor.
                 Note: Releasing resources in the destructor may cause Python's exception handling process to hang.
             rank: the rank number.
-            group: the communication group (optional).
-            comm: the mpi4py.MPI.Comm communicator to use in case the group parameter is absent (optional).
             tcp_store_group: TCPStore for metadata exchange (optional).
+            timeout_ms: GPU kernel timeout in milliseconds.
+                A timeout marks the rank invalid and masks it out.
+                Default: 30000 ms.
         """
         self.rank = rank
         self.group_size = 0  # Will be updated by `update_memory_buffers`
+        self.timeout_ms = timeout_ms
+
         self.explicitly_destroy = explicitly_destroy
-        self.group = group
-        self.comm = comm
         self.tcp_store_group = tcp_store_group
-        assert not (group and comm)
 
         if disable_ll_nvlink:
             os.environ["UCX_TLS"] = "^cuda_ipc"
 
-        self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy)
+        self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy, timeout_ms)
 
     def destroy(self):
         """
@@ -99,18 +95,6 @@ class Buffer:
         return nixl_ep_cpp.is_sm90_compiled()
 
     @staticmethod
-    def set_num_sms(new_num_sms: int) -> None:
-        """
-        Set the number of SMs to use in high-throughput kernels.
-
-        Arguments:
-            new_num_sms: the new number to be set.
-        """
-
-        assert new_num_sms % 2 == 0, "The SM count must be even"
-        Buffer.num_sms = new_num_sms
-
-    @staticmethod
     def capture() -> EventOverlap:
         """
         Capture a CUDA event on the current stream, i.e. `torch.cuda.current_stream()`.
@@ -121,27 +105,64 @@ class Buffer:
         return EventOverlap(EventHandle())
 
     @staticmethod
-    def get_rdma_size_hint(
+    def get_low_latency_buffer_size_hint(
         num_max_dispatch_tokens_per_rank: int,
         hidden: int,
         num_ranks: int,
         num_experts: int,
     ) -> int:
         """
-        Get a minimum size requirement for the RDMA buffer. The size calculation will be done with BF16.
+        Get a minimum buffer size requirement for low-latency mode. The size calculation will be done with BF16.
 
         Arguments:
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
+                `num_ranks * num_max_dispatch_tokens_per_rank` must be a multiple of 4 to match `dispatch()`.
             hidden: the hidden dimension of each token.
-            num_ranks: the number of EP group ranks.
-            num_experts: the number of all experts.
+            num_ranks: rank capacity used to size the low-latency buffers.
+            num_experts: expert capacity, normally num_ranks * num_experts_per_rank.
 
         Returns:
             size: the RDMA buffer size recommended.
         """
-        return nixl_ep_cpp.get_rdma_size_hint(
+        return nixl_ep_cpp.get_low_latency_buffer_size_hint(
             num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts
         )
+
+    @staticmethod
+    def get_rdma_size_hint(
+        num_max_dispatch_tokens_per_rank: int,
+        hidden: int,
+        num_ranks: int,
+        num_experts: int,
+    ) -> int:
+        """Backward-compatible alias for get_low_latency_buffer_size_hint."""
+        return Buffer.get_low_latency_buffer_size_hint(
+            num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts
+        )
+
+    def get_local_buffer_tensor(
+        self,
+        dtype: torch.dtype,
+        size: Optional[torch.Size] = None,
+        offset: int = 0,
+        use_rdma_buffer: bool = True,
+    ) -> torch.Tensor:
+        """
+        Get the raw RDMA buffer (slice supported) as a PyTorch tensor.
+
+        Argument:
+            dtype: the data type (PyTorch `dtype`) for the tensor.
+            size: the slice size (by elements) to get from the buffer.
+            offset: the offset of the beginning element.
+            use_rdma_buffer: kept for API compatibility; the RDMA buffer is the only buffer and this must be True.
+        """
+        assert use_rdma_buffer, "Only the RDMA buffer is supported"
+        tensor = self.runtime.get_local_buffer_tensor(dtype, offset)
+        if size is None:
+            return tensor
+
+        assert tensor.numel() >= size.numel()
+        return tensor[: size.numel()].view(size)
 
     def get_comm_stream(self) -> torch.Stream:
         """
@@ -150,54 +171,10 @@ class Buffer:
         Returns:
             stream: the communication stream.
         """
-        ts: torch.Stream = self.runtime.get_comm_stream()
-        return torch.cuda.Stream(
-            stream_id=ts.stream_id,
-            device_index=ts.device_index,
-            device_type=ts.device_type,
+        stream_ptr: int = self.runtime.get_comm_stream()
+        return torch.cuda.ExternalStream(
+            stream_ptr, device=self.runtime.get_local_device_id()
         )
-
-    def get_local_buffer_tensor(
-        self, dtype: torch.dtype, size: Optional[torch.Size] = None, offset: int = 0
-    ) -> torch.Tensor:
-        """
-        Get the raw buffer (slice supported) as a PyTorch tensor.
-
-        Argument:
-            dtype: the data type (PyTorch `dtype`) for the tensor.
-            size: the slice size (by elements) to get from the buffer.
-            offset: the offset of the beginning element.
-        """
-        tensor = self.runtime.get_local_buffer_tensor(dtype, offset)
-        if size is None:
-            return tensor
-
-        assert tensor.numel() >= size.numel()
-        return tensor[: size.numel()].view(size)
-
-    @staticmethod
-    def _unpack_bias(bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]):
-        bias_0, bias_1 = None, None
-        if isinstance(bias, torch.Tensor):
-            bias_0 = bias
-        elif isinstance(bias, tuple):
-            assert len(bias) == 2
-            bias_0, bias_1 = bias
-        return bias_0, bias_1
-
-    def clean_buffer(
-        self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int
-    ) -> None:
-        """
-        As the kernels require part of the buffer to be zero-initialized, so it is vital to clean the buffer
-            if the buffer is dirty at some time.
-
-        Arguments:
-            num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
-            hidden: the hidden dimension of each token.
-            num_experts: the number of all experts.
-        """
-        self.runtime.clean_buffer(num_max_dispatch_tokens_per_rank, hidden, num_experts)
 
     # noinspection PyTypeChecker
     def dispatch(
@@ -205,7 +182,7 @@ class Buffer:
         x: torch.Tensor,
         topk_idx: torch.Tensor,
         num_max_dispatch_tokens_per_rank: int,
-        num_experts: int,
+        num_experts: Optional[int] = None,
         cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
         dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
         use_fp8: bool = True,
@@ -228,7 +205,10 @@ class Buffer:
             topk_idx: `torch.Tensor` with `nixl_ep.topk_idx_t`, shaped as `[num_tokens, num_topk]`, only several top-k shapes
                 are supported. `-1` indices (not selecting any expert) are supported.
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
-            num_experts: the number of all experts.
+                The number of ranks represented in the dispatch layout multiplied by
+                `num_max_dispatch_tokens_per_rank` must be a multiple of 4 for TMA alignment.
+            num_experts: total physical expert capacity used for the dispatch layout.
+                It must cover all active experts and defaults to the active expert count.
             cumulative_local_expert_recv_stats: a cumulative expert count tensor for statistics, which should have shape
                 `[num_local_experts]` and be typed as `torch.int`. This is useful for online service EP load balance
                 monitoring.
@@ -288,7 +268,6 @@ class Buffer:
             packed_recv_layout_range,
             num_max_dispatch_tokens_per_rank,
             x.size(1),
-            num_experts,
         )
         tensors_to_record = (
             x,
@@ -359,7 +338,6 @@ class Buffer:
             layout_range,
             num_max_dispatch_tokens_per_rank,
             hidden,
-            num_experts,
         ) = handle
         combined_x, event, hook = self.runtime.combine(
             x,
@@ -369,7 +347,6 @@ class Buffer:
             layout_range,
             combine_wait_recv_cost_stats,
             num_max_dispatch_tokens_per_rank,
-            num_experts,
             use_logfmt,
             zero_copy,
             async_finish,
@@ -392,17 +369,19 @@ class Buffer:
 
     def update_mask_buffer(self, rank_to_mask: int, mask: bool = False):
         """
-        Mask (unmask) a rank during communication (dispatch, combine, and clean)
+        Mask or unmask a rank during low-latency communication.
 
         Arguments:
-            rank: the rank to mask (unmask).
-            mask: if True, will mask the rank (do not recvfrom/sendto the rank), otherwise will unmask the rank.
+            rank_to_mask: the rank to mask or unmask.
+            mask: if True, will mask the rank (do not recvfrom/sendto the
+                rank), otherwise will unmask the rank. The local rank cannot
+                be masked, and unmasking requires an already-connected rank.
         """
         self.runtime.update_mask_buffer(rank_to_mask, mask)
 
     def query_mask_buffer(self, mask_status: torch.Tensor):
         """
-        Query the mask status of all ranks
+        Query the runtime device mask status of all ranks.
 
         Arguments:
             mask_status: `[num_ranks]` with `torch.int`, the mask status of each rank. `1` means mask and `0` means unmasked.
@@ -411,13 +390,12 @@ class Buffer:
 
     def clean_mask_buffer(self):
         """
-        Clean the mask buffer
-
+        Unmask connected ranks plus the local rank, and mask unconnected ranks.
         """
         self.runtime.clean_mask_buffer()
 
     def get_next_combine_buffer(
-        self, handle: Tuple[torch.Tensor, torch.Tensor, int, int, int]
+        self, handle: Tuple[torch.Tensor, torch.Tensor, int, int]
     ):
         """
         Get the raw registered RDMA buffer tensor for next combine, so that the next combine kernel can skip the copying.
@@ -426,29 +404,30 @@ class Buffer:
             handle: the communication handle given by the `dispatch` function.
 
         Returns:
-            buffer: the raw RDMA buffer as a BF16 PyTorch tensor with shape
-                `[num_local_experts, num_ranks * num_max_dispatch_tokens_per_rank, hidden]`, you should fill this buffer
-                by yourself.
+            buffer: the raw RDMA buffer as a BF16 PyTorch tensor with the same shape as the `recv_x` token tensor
+                returned by `dispatch()`. You should fill this buffer yourself.
         """
         (
             src_info,
             layout_range,
             num_max_dispatch_tokens_per_rank,
             hidden,
-            num_experts,
         ) = handle
         return self.runtime.get_next_combine_buffer(
-            num_max_dispatch_tokens_per_rank, hidden, num_experts
+            num_max_dispatch_tokens_per_rank, hidden, layout_range.size(1)
         )
 
     def update_memory_buffers(
-        self, num_ranks: int, num_experts_per_rank: int, num_rdma_bytes: int
+        self,
+        num_ranks: int,
+        num_experts_per_rank: int,
+        num_rdma_bytes: int,
     ):
         """
         Allocate remote memory for the communication buffer.
 
         Arguments:
-            num_ranks: the number of ranks.
+            num_ranks: rank capacity used to size the communication buffers.
             num_experts_per_rank: the number of experts per rank.
             num_rdma_bytes: the buffer size for RDMA communication.
         """
@@ -486,19 +465,22 @@ class Buffer:
         finally:
             self.tcp_store_group.delete_key(md_key)
 
-    def connect_ranks(self, remote_ranks: List[int]) -> None:
+    def connect_ranks(self, remote_ranks: List[int], activate: bool = True) -> None:
         """
         Add connections to remote ranks.
 
         Arguments:
             remote_ranks: List of remote rank IDs to establish connections with.
                          The current rank will be automatically filtered out.
+            activate: if False, keep newly connected ranks
+                masked until update_mask_buffer(..., False). Concurrent execution
+                is supported only with dispatch and combine.
         """
         if self.tcp_store_group is not None:
             with self._fetch_remote_metadata_from_tcp_store(remote_ranks) as remote_mds:
-                self.runtime.connect_ranks(remote_ranks, remote_mds)
+                self.runtime.connect_ranks(remote_ranks, remote_mds, activate=activate)
         else:
-            self.runtime.connect_ranks(remote_ranks)
+            self.runtime.connect_ranks(remote_ranks, activate=activate)
 
     def disconnect_ranks(self, remote_ranks: List[int]) -> None:
         """
@@ -512,7 +494,9 @@ class Buffer:
 
     def barrier(self) -> None:
         """
-        barrier for all active ranks.
-        notice that this barrier does not flush the network QPs as it is currently doesn't have any use-case that requires it
+        Barrier for all active ranks.
+
+        Updates the rank mask on timeout.
+        Does not flush network QPs, since there is currently no use case that requires it.
         """
         self.runtime.barrier()

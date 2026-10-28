@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,58 +20,43 @@ usage() {
     echo ""
     echo "Description: Run NIXL tests on AWS infrastructure"
     echo ""
-    echo "Usage: $0 <test script> <test script args>"
+    echo "Usage: $0"
     echo ""
-    echo "Example: $0 .gitlab/test_cpp.sh \$NIXL_INSTALL_DIR && .test_script123.sh param123"
+    echo "Runs contrib/aws-efa/aws_test_remote.sh inside the AWS job."
     echo ""
     echo "Required environment variables:"
-    echo "  GITHUB_REF        - Git reference to checkout (e.g., main, branch-xyz, commit SHA)"
+    echo "  GITHUB_REF        - Git reference to test if GITHUB_SHA is unset (e.g., main, branch-xyz, full commit SHA)"
     echo "  GITHUB_SERVER_URL - GitHub server URL (e.g., \"https://github.com\")"
     echo "  GITHUB_REPOSITORY - GitHub repository (e.g., \"ai-dynamo/nixl\")"
     echo ""
     echo "Optional environment variables:"
-    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04)"
+    echo "  GITHUB_SHA        - Commit SHA to test, takes precedence over GITHUB_REF (set by GitHub Actions)"
+    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda:13.4.2-devel-ubuntu24.04)"
     echo "  TEST_TIMEOUT      - Timeout for test execution in minutes"
     exit 1
 }
 
-# Validate required parameters and environment variables
-if [ -z "$1" ]; then
-    echo "Error: Test command string argument is required"
-    usage
-fi
-
+# Validate required environment variables
 if [ -z "$GITHUB_REF" ] || [ -z "$GITHUB_SERVER_URL" ] || [ -z "$GITHUB_REPOSITORY" ]; then
     echo "Error: Missing required environment variables"
     usage
 fi
 
-test_cmd="$1"
-export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04"}
+export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda:13.4.2-devel-ubuntu24.04"}
 
-# Set Git checkout command based on GITHUB_REF
-case "$GITHUB_REF" in
-    refs/heads/*)
-        export GIT_CHECKOUT_CMD="git checkout ${GITHUB_REF#refs/heads/}"
-        ;;
-    *)
-        export GIT_CHECKOUT_CMD="git checkout $GITHUB_REF"
-        ;;
-esac
+# Pin the commit: pull-request/<N> branches can be deleted or moved before the pod clones.
+checkout_ref="${GITHUB_SHA:-$GITHUB_REF}"
 
-# Construct command sequence to run within the AWS container
-setup_cmd="set -x && \
-    git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && \
-    cd nixl && \
-    ${GIT_CHECKOUT_CMD}"
-build_cmd=".gitlab/build.sh \${NIXL_INSTALL_DIR} \${UCX_INSTALL_DIR}"
-
-# Add timeout only if TEST_TIMEOUT is set (expects minutes)
 if [ -n "$TEST_TIMEOUT" ]; then
-    test_cmd="timeout ${TEST_TIMEOUT}m ${test_cmd}"
+    TIMEOUT_CMD="timeout ${TEST_TIMEOUT}m"
+else
+    TIMEOUT_CMD=""
 fi
-
-export AWS_CMD="${setup_cmd} && ${build_cmd} && ${test_cmd}"
+# Use the in-region EC2 Ubuntu mirror; archive/security.ubuntu.com are reached over the internet.
+ubuntu_mirror="http://${AWS_DEFAULT_REGION:-eu-central-1}.ec2.archive.ubuntu.com/"
+apt_mirror_cmd="grep -rlE 'http://(archive|security).ubuntu.com/' /etc/apt | xargs -r sed -i -E 's#http://(archive|security).ubuntu.com/#${ubuntu_mirror}#'"
+# The nvidia/cuda base image ships no git; .gitlab/build.sh installs it, but only after the clone.
+export AWS_CMD="set -x && ${apt_mirror_cmd} && apt-get -qq update && apt-get -qq install -y git && git init -q nixl && cd nixl && git fetch --depth 1 ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} ${checkout_ref} && git checkout --detach FETCH_HEAD && $TIMEOUT_CMD bash contrib/aws-efa/aws_test_remote.sh \${NIXL_INSTALL_DIR}"
 
 # Generate AWS job properties json from template
 envsubst < aws_vars.template > aws_vars.json
@@ -114,6 +99,12 @@ wait_for_status() {
             set -x
             return 0
         fi
+        # Fail fast on terminal FAILED, don't wait out the timeout.
+        if [ "$status" = "FAILED" ]; then
+            echo -e "\nJob reached terminal status FAILED after ${SECONDS}s"
+            set -x
+            return 1
+        fi
         printf "."
         sleep $interval
     done
@@ -123,23 +114,78 @@ wait_for_status() {
     return 1
 }
 
+# Print the Batch status reason and, per attempt, the pod, node and container exit codes
+report_job_failure() {
+    set +x
+    local details
+    if details=$(aws batch describe-jobs --jobs "$JOB_ID" --output json --query 'jobs[0].{
+            status: status,
+            statusReason: statusReason,
+            attempts: eksAttempts[].{pod: podName, node: nodeName, statusReason: statusReason,
+                containers: containers[].{name: name, exitCode: exitCode, reason: reason}}}'); then
+        echo "$details"
+        if [ -n "$TEST_TIMEOUT" ] && echo "$details" | jq -e 'any(.attempts[]?.containers[]?; .exitCode == 124)' >/dev/null; then
+            echo "Exit code 124: the in-pod test timeout (${TEST_TIMEOUT}m) expired"
+        fi
+    fi
+    set -x
+}
+
+# Print "<timestamp> <line>" log lines without the timestamp and update $last_ts.
+# --since-time has 1s granularity, so skip lines at or before the previous $last_ts.
+print_new_log_lines() {
+    local resume_ts=$last_ts line ts
+    while IFS= read -r line || [ -n "$line" ]; do
+        ts=${line%% *}
+        if [ -n "$resume_ts" ]; then
+            [[ "$ts" > "$resume_ts" ]] || continue
+            resume_ts=""
+        fi
+        last_ts=$ts
+        printf '%s\n' "${line#* }"
+    done
+}
+
+# Follow the pod log. If the stream ends early (e.g. apiserver GOAWAY), reconnect after
+# the last line received while the container runs, or fetch the rest once it has stopped.
+follow_pod_logs() {
+    set +x
+    local ns=ucx-ci-batch-nodes last_ts="" stream_ok running
+    for _ in {1..10}; do
+        print_new_log_lines < <(kubectl -n "$ns" logs -f --timestamps ${last_ts:+--since-time="$last_ts"} "$POD")
+        wait $! && stream_ok=1 || stream_ok=0
+        # On an API error, treat the container as running and retry
+        running=$(kubectl -n "$ns" get pod "$POD" --ignore-not-found -o jsonpath='{.status.containerStatuses[0].state.running}') || running=unknown
+        if [ -z "$running" ]; then
+            [ "$stream_ok" = 1 ] || print_new_log_lines < <(kubectl -n "$ns" logs --timestamps ${last_ts:+--since-time="$last_ts"} "$POD")
+            break
+        fi
+        echo "Log stream from $POD ended early; reconnecting after $last_ts"
+        sleep 5
+    done
+    set -x
+}
+
 # Wait for the job to start running
 echo "Waiting for job to start running (timeout: 30m)..."
 if ! wait_for_status "RUNNING" 1800 10; then
     echo "Job failed to start"
-    aws batch describe-jobs --jobs "$JOB_ID" --query 'jobs[0].[status,statusReason]' --output table
+    report_job_failure
     exit 1
 fi
 
 # Stream logs from the pod
 POD=$(aws batch describe-jobs --jobs "$JOB_ID" --query 'jobs[0].eksProperties.podProperties.podName' --output text)
 echo "Streaming logs from pod: $POD"
-kubectl -n ucx-ci-batch-nodes logs -f "$POD" || kubectl -n ucx-ci-batch-nodes logs "$POD" --previous || true
+follow_pod_logs
 
-# Check final job status
-echo "Waiting for job completion (timeout: 10m)..."
-if ! wait_for_status "SUCCEEDED" 600 10; then
+# logs -f can return early (apiserver GOAWAY), so cover the full build+test.
+# Wait 5m past the in-pod TEST_TIMEOUT (60m) so this layer strictly wraps it
+# and can observe the resulting FAILED instead of timing out alongside it.
+echo "Waiting for job completion (timeout: 65m)..."
+if ! wait_for_status "SUCCEEDED" 3900 10; then
     echo "Failure running NIXL tests"
+    report_job_failure
     exit 1
 fi
 

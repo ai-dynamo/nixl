@@ -1,0 +1,13 @@
+[wrap-file]
+directory = asio-1.30.2
+source_url = https://sourceforge.net/projects/asio/files/asio/1.30.2%20%28Stable%29/asio-1.30.2.tar.gz/download
+source_filename = asio-1.30.2.tar.gz
+source_hash = 12e7bb4dada8bc1191de9d550a59ee658ce4e645ffc97c911c099ab4e8699d55
+patch_filename = asio_1.30.2-2_patch.zip
+patch_url = https://wrapdb.mesonbuild.com/v2/asio_1.30.2-2/get_patch
+patch_hash = 8bed3693016874b097e4d902c4ca8daf1b6abf1b5a56b0c5c02827d4e0747ddb
+source_fallback_url = https://github.com/mesonbuild/wrapdb/releases/download/asio_1.30.2-2/asio-1.30.2.tar.gz
+wrapdb_version = 1.30.2-2
+
+[provide]
+asio = asio_dep

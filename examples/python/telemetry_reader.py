@@ -17,13 +17,13 @@
 
 import argparse
 import ctypes
+import fcntl
 import logging
 import mmap
 import os
 import signal
 import sys
 import time
-from datetime import datetime
 
 # Set up logging
 logging.basicConfig(
@@ -34,19 +34,32 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants from telemetry_event.h
-TELEMETRY_VERSION = 1
-MAX_EVENT_NAME_LEN = 32
+TELEMETRY_VERSION = 6
+DESTRUCTIVE_INTERFERENCE_SIZE = 256
 
-# NIXL telemetry categories
-NIXL_TELEMETRY_MEMORY = 0
-NIXL_TELEMETRY_TRANSFER = 1
-NIXL_TELEMETRY_CONNECTION = 2
-NIXL_TELEMETRY_BACKEND = 3
-NIXL_TELEMETRY_ERROR = 4
-NIXL_TELEMETRY_PERFORMANCE = 5
-NIXL_TELEMETRY_SYSTEM = 6
-NIXL_TELEMETRY_CUSTOM = 7
-NIXL_TELEMETRY_MAX = 8
+# NIXL telemetry event types (nixl_telemetry_event_type_t)
+AGENT_TX_BYTES = 0
+AGENT_RX_BYTES = 1
+AGENT_TX_REQUESTS_NUM = 2
+AGENT_RX_REQUESTS_NUM = 3
+AGENT_MEMORY_REGISTERED = 4
+AGENT_MEMORY_DEREGISTERED = 5
+AGENT_XFER_TIME = 6
+AGENT_XFER_POST_TIME = 7
+AGENT_ERR_NOT_POSTED = 8
+AGENT_ERR_INVALID_PARAM = 9
+AGENT_ERR_BACKEND = 10
+AGENT_ERR_NOT_FOUND = 11
+AGENT_ERR_MISMATCH = 12
+AGENT_ERR_NOT_ALLOWED = 13
+AGENT_ERR_REPOST_ACTIVE = 14
+AGENT_ERR_UNKNOWN = 15
+AGENT_ERR_NOT_SUPPORTED = 16
+AGENT_ERR_REMOTE_DISCONNECT = 17
+AGENT_ERR_CANCELED = 18
+AGENT_ERR_NO_TELEMETRY = 19
+AGENT_TRACE_PHASES_DROPPED = 20
+AGENT_TELEMETRY_EVENTS_DROPPED = 21
 
 # Global flag for graceful shutdown
 running = True
@@ -65,10 +78,8 @@ class NixlTelemetryEvent(ctypes.Structure):
 
     _pack_ = 1
     _fields_ = [
-        ("timestamp_us", ctypes.c_uint64),
-        ("category", ctypes.c_int),
-        ("event_name", ctypes.c_char * MAX_EVENT_NAME_LEN),
-        ("_padding", ctypes.c_uint32),
+        ("event_type", ctypes.c_uint32),
+        ("_padding", ctypes.c_char * 4),
         ("value", ctypes.c_uint64),
     ]
 
@@ -78,19 +89,48 @@ class BufferHeader(ctypes.Structure):
 
     _pack_ = 1
     _fields_ = [
-        ("write_pos", ctypes.c_size_t),
-        ("read_pos", ctypes.c_size_t),
-        ("version", ctypes.c_uint32),
-        ("expected_version", ctypes.c_uint32),
-        ("capacity", ctypes.c_size_t),
-        ("mask", ctypes.c_size_t),
+        ("write_pos", ctypes.c_size_t),  # [0, 8)
+        ("capacity", ctypes.c_size_t),  # [8, 16)
+        # version stays at offset 16 across layout versions (see cyclic_buffer.h)
+        ("version", ctypes.c_uint32),  # [16, 20)
+        ("expected_version", ctypes.c_uint32),  # [20, 24)
+        ("mask", ctypes.c_size_t),  # [24, 32)
+        (
+            "_pad_write",
+            ctypes.c_char * (DESTRUCTIVE_INTERFERENCE_SIZE - 32),
+        ),  # pad write_pos's interference-size block: [32, 256)
+        ("read_pos", ctypes.c_size_t),  # [256, 264)
+        (
+            "_pad_tail",
+            ctypes.c_char
+            * (DESTRUCTIVE_INTERFERENCE_SIZE - ctypes.sizeof(ctypes.c_size_t)),
+        ),  # match C++ compiler's tail padding: [264, 512)
     ]
+
+
+# Mirror the static_asserts in cyclic_buffer.tpp so a layout drift fails.
+# The pads are checked too since they are maintained by hand here, while
+# the C++ compiler derives them from alignas.
+if ctypes.sizeof(BufferHeader) != 2 * DESTRUCTIVE_INTERFERENCE_SIZE:
+    raise RuntimeError("BufferHeader layout drift: unexpected size")
+for _field, _offset in [
+    ("write_pos", 0),
+    ("capacity", 8),
+    ("version", 16),
+    ("expected_version", 20),
+    ("mask", 24),
+    ("_pad_write", 32),
+    ("read_pos", 256),
+    ("_pad_tail", 264),
+]:
+    if getattr(BufferHeader, _field).offset != _offset:
+        raise RuntimeError(f"BufferHeader layout drift: {_field} moved")
 
 
 class SharedRingBuffer:
     """Python wrapper for the C++ SharedRingBuffer class"""
 
-    def __init__(self, file_path, version=1):
+    def __init__(self, file_path, version=TELEMETRY_VERSION):
         self.file_path = file_path
         self.version = version
         self.file_fd = -1
@@ -98,13 +138,34 @@ class SharedRingBuffer:
         self.header = None
         self.data = None
         self.buffer_size = None
+        self.cached_write_pos = 0
+        self.cached_mask = 0
 
-        self._open_file()
-        self._map_memory()
+        try:
+            self._open_file()
+            self._map_memory()
+        except Exception:
+            self.close()
+            raise
+
+        # Seed the cached positions on attaching to an existing buffer
+        self.cached_write_pos = self.header.write_pos
+        self.cached_mask = self.header.mask
 
     def _open_file(self):
         """Open existing file"""
         self.file_fd = os.open(self.file_path, os.O_RDWR)
+        # shared lock for the object's lifetime, tells a restarting producer a consumer is attached
+        try:
+            fcntl.flock(self.file_fd, fcntl.LOCK_SH)
+        except OSError as e:
+            # not fatal: the ring is still read, only this consumer's presence stops being provable
+            logger.warning(
+                "Cannot lock telemetry buffer %s (%s); a restarting producer cannot tell "
+                "this consumer is attached and will not keep the buffer for it",
+                self.file_path,
+                e,
+            )
 
     def _map_memory(self):
         """Map the file into memory"""
@@ -122,11 +183,12 @@ class SharedRingBuffer:
 
         temp_header = BufferHeader.from_buffer(header_mmap)
 
-        if temp_header.version != self.version:
+        actual_version = temp_header.version
+        if actual_version != self.version:
             del temp_header
             header_mmap.close()
             raise RuntimeError(
-                f"Version mismatch: expected {self.version}, got {temp_header.version}"
+                f"Version mismatch: expected {self.version}, got {actual_version}"
             )
 
         self.buffer_size = temp_header.capacity
@@ -179,29 +241,51 @@ class SharedRingBuffer:
         """Pop an event from the buffer"""
         read_pos = self.header.read_pos
 
-        if read_pos == self.header.write_pos:
-            return None
+        if read_pos == self.cached_write_pos:
+            self.cached_write_pos = self.header.write_pos
+            if read_pos == self.cached_write_pos:
+                return None
 
-        event = self.data[read_pos]
+        # copy before releasing the slot, the producer may reuse it
+        event = NixlTelemetryEvent.from_buffer_copy(
+            self.data, read_pos * ctypes.sizeof(NixlTelemetryEvent)
+        )
 
-        next_read = (read_pos + 1) & self.header.mask
+        next_read = (read_pos + 1) & self.cached_mask
         self.header.read_pos = next_read
 
         return event
 
+    def close(self):
+        """Release the mapping, the lock and the file"""
+        # the views pin the mapping, drop them before closing it
+        self.header = None
+        self.data = None
+        if self.mmap_obj is not None:
+            try:
+                self.mmap_obj.close()
+                self.mmap_obj = None
+            except BufferError as e:
+                logger.warning(
+                    "Cannot unmap telemetry buffer %s (%s), view of it may still be held",
+                    self.file_path,
+                    e,
+                )
+        if self.file_fd != -1:
+            try:
+                fcntl.flock(self.file_fd, fcntl.LOCK_UN)
+            except OSError as e:
+                logger.warning(
+                    "Cannot unlock telemetry buffer %s (%s)",
+                    self.file_path,
+                    e,
+                )
+            os.close(self.file_fd)
+            self.file_fd = -1
+
     def __del__(self):
         """Cleanup resources"""
-        # if self.mmap_obj:
-        #     self.mmap_obj.close()
-        if self.file_fd != -1:
-            os.close(self.file_fd)
-
-
-def format_timestamp(timestamp_us):
-    """Format timestamp in microseconds to readable format"""
-    dt = datetime.fromtimestamp(timestamp_us / 1_000_000)
-    microseconds = timestamp_us % 1_000_000
-    return f"{dt.strftime('%Y-%m-%d %H:%M:%S')}.{microseconds:06d}"
+        self.close()
 
 
 def format_bytes(bytes_val):
@@ -217,31 +301,43 @@ def format_bytes(bytes_val):
     return f"{value:.2f} {units[unit_index]}"
 
 
-def get_telemetry_category_string(category):
-    """Get string representation of telemetry category"""
-    category_strings = {
-        NIXL_TELEMETRY_MEMORY: "MEMORY",
-        NIXL_TELEMETRY_TRANSFER: "TRANSFER",
-        NIXL_TELEMETRY_CONNECTION: "CONNECTION",
-        NIXL_TELEMETRY_BACKEND: "BACKEND",
-        NIXL_TELEMETRY_ERROR: "ERROR",
-        NIXL_TELEMETRY_PERFORMANCE: "PERFORMANCE",
-        NIXL_TELEMETRY_SYSTEM: "SYSTEM",
-        NIXL_TELEMETRY_CUSTOM: "CUSTOM",
-    }
-    return category_strings.get(category, f"UNKNOWN_CATEGORY_{category}")
+_EVENT_TYPE_STRINGS = {
+    AGENT_TX_BYTES: "agent_tx_bytes",
+    AGENT_RX_BYTES: "agent_rx_bytes",
+    AGENT_TX_REQUESTS_NUM: "agent_tx_requests_num",
+    AGENT_RX_REQUESTS_NUM: "agent_rx_requests_num",
+    AGENT_MEMORY_REGISTERED: "agent_memory_registered",
+    AGENT_MEMORY_DEREGISTERED: "agent_memory_deregistered",
+    AGENT_XFER_TIME: "agent_xfer_time",
+    AGENT_XFER_POST_TIME: "agent_xfer_post_time",
+    AGENT_ERR_NOT_POSTED: "agent_err_not_posted",
+    AGENT_ERR_INVALID_PARAM: "agent_err_invalid_param",
+    AGENT_ERR_BACKEND: "agent_err_backend",
+    AGENT_ERR_NOT_FOUND: "agent_err_not_found",
+    AGENT_ERR_MISMATCH: "agent_err_mismatch",
+    AGENT_ERR_NOT_ALLOWED: "agent_err_not_allowed",
+    AGENT_ERR_REPOST_ACTIVE: "agent_err_repost_active",
+    AGENT_ERR_UNKNOWN: "agent_err_unknown",
+    AGENT_ERR_NOT_SUPPORTED: "agent_err_not_supported",
+    AGENT_ERR_REMOTE_DISCONNECT: "agent_err_remote_disconnect",
+    AGENT_ERR_CANCELED: "agent_err_canceled",
+    AGENT_ERR_NO_TELEMETRY: "agent_err_no_telemetry",
+    AGENT_TRACE_PHASES_DROPPED: "agent_trace_phases_dropped",
+    AGENT_TELEMETRY_EVENTS_DROPPED: "agent_telemetry_events_dropped",
+}
+
+
+def get_telemetry_event_type_string(event_type):
+    """Get string representation of telemetry event type enum"""
+    return _EVENT_TYPE_STRINGS.get(event_type, f"unknown_event_{event_type}")
 
 
 def print_telemetry_event(event):
     """Print telemetry event in a formatted way"""
     logger.info("\n=== NIXL Telemetry Event ===")
-    logger.info("Timestamp: %s", format_timestamp(event.timestamp_us))
 
-    # Decode event name
-    event_name = event.event_name.decode("utf-8").rstrip("\x00")
-    category_str = get_telemetry_category_string(event.category)
+    event_name = get_telemetry_event_type_string(event.event_type)
 
-    logger.info("Category: %s", category_str)
     logger.info("Event: %s", event_name)
     logger.info("Value: %s", event.value)
     logger.info("===========================")

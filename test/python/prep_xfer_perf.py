@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,7 +45,7 @@ def prep_handles(agent: nixl_agent, xfer_dlist, reg_dlist, indices):
     logger.info("register_memory:\t%.4f sec", elapsed)
 
     start = time.perf_counter()
-    local_prep_handle = agent.prep_xfer_dlist("NIXL_INIT_AGENT", xfer_dlist, "DRAM")
+    local_prep_handle = agent.prep_xfer_dlist("", xfer_dlist, "DRAM")
     elapsed = time.perf_counter() - start
     assert local_prep_handle
     logger.info("prep_xfer_dlist INIT:\t%.4f sec", elapsed)
@@ -103,8 +103,8 @@ def perf_test_array(num_descs: int, addr_base: int, length: int):
     logger.info("-" * 40)
     agent = init_agent()
     descs_np = np.zeros((num_descs, 3), dtype=np.uint64)
-    indices = np.arange(num_descs)
-    descs_np[:, 0] = addr_base + indices * length
+    indices = np.arange(num_descs, dtype=np.int32)
+    descs_np[:, 0] = addr_base + indices.astype(np.uint64) * length
     descs_np[:, 1] = length
     descs_np[:, 2] = 0
 

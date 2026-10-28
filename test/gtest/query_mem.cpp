@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,7 +28,7 @@ protected:
     void
     SetUp() override {
         // Create temporary test files
-        dir_path = "./files_for_query";
+        dir_path = "/tmp/nixl_query_test";
         if (!(std::filesystem::exists(dir_path) && std::filesystem::is_directory(dir_path)))
             std::filesystem::create_directory(dir_path);
 
@@ -66,7 +66,8 @@ protected:
 
 TEST_F(QueryMemTest, QueryMemWithExistingFiles) {
     // Create agent
-    nixlAgentConfig cfg(false, false, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_RW);
+    nixlAgentConfig cfg;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     nixlAgent agent("test_agent", cfg);
 
     // Create backend
@@ -99,7 +100,8 @@ TEST_F(QueryMemTest, QueryMemWithExistingFiles) {
 
 TEST_F(QueryMemTest, QueryMemWithMixedFiles) {
     // Create agent
-    nixlAgentConfig cfg(false, false, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_RW);
+    nixlAgentConfig cfg;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     nixlAgent agent("test_agent", cfg);
 
     // Create backend
@@ -130,7 +132,8 @@ TEST_F(QueryMemTest, QueryMemWithMixedFiles) {
 
 TEST_F(QueryMemTest, QueryMemWithEmptyDescriptors) {
     // Create agent
-    nixlAgentConfig cfg(false, false, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_RW);
+    nixlAgentConfig cfg;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     nixlAgent agent("test_agent", cfg);
 
     // Create backend
@@ -155,7 +158,8 @@ TEST_F(QueryMemTest, QueryMemWithEmptyDescriptors) {
 
 TEST_F(QueryMemTest, QueryMemWithEmptyFilenames) {
     // Create agent
-    nixlAgentConfig cfg(false, false, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_RW);
+    nixlAgentConfig cfg;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     nixlAgent agent("test_agent", cfg);
 
     // Create backend
@@ -191,16 +195,8 @@ TEST_F(QueryMemTest, QueryMemDirectTest) {
     descs.addDesc(nixlBlobDesc(0, 0, 0, test_file1));
     descs.addDesc(nixlBlobDesc(0, 0, 0, test_file2));
 
-    // Extract metadata from descriptors which are file names
-    std::vector<nixl_blob_t> metadata(descs.descCount());
-    for (int i = 0; i < descs.descCount(); ++i) {
-        metadata[i] = descs[i].metaInfo;
-    }
-
     // Use the file utilities directly
-    std::vector<nixl_query_resp_t> resp;
-    nixl_status_t status = nixl::queryFileInfoList(metadata, resp);
-    EXPECT_EQ(status, NIXL_SUCCESS);
+    const auto resp = nixl::queryFileInfoFromDescList(descs);
     EXPECT_EQ(resp.size(), 2);
     EXPECT_TRUE(resp[0].has_value());
     EXPECT_TRUE(resp[1].has_value());

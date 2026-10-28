@@ -210,7 +210,11 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 }
 
 static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_mode) {
-    nixlAgentConfig cfg(true, true, port, sync_mode, 1, 0, 100000, false);
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    cfg.useListenThread = true;
+    cfg.listenPort = port;
+    cfg.syncMode = sync_mode;
 
     std::cout << "Starting Agent for target\n";
     nixlAgent agent(target, cfg);
@@ -233,7 +237,13 @@ static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_m
 }
 
 static void runInitiator(const std::string &target_ip, int target_port, nixl_thread_sync_t sync_mode) {
-    nixlAgentConfig cfg(true, true, 0, sync_mode, 1, 0, 100000, false);
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    cfg.useListenThread = true;
+    // The initiator only sends/fetches metadata to the target; let the OS pick a free port
+    // instead of falling back to the fixed default (8888), which may be taken on shared nodes.
+    cfg.listenPort = 0;
+    cfg.syncMode = sync_mode;
 
     std::cout << "Starting Agent for initiator\n";
     nixlAgent agent(initiator, cfg);
