@@ -91,7 +91,7 @@ ARG UCX_SONAME_SUFFIX=""
 # ... builds NIXL and generates wheels
 ```
 
-**Base Image**: `artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09`
+**Base Image**: `il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09`
 
 ### Stage Usage Patterns
 
@@ -100,7 +100,7 @@ In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` 
 
 ```bash
 ./contrib/build-container.sh \
-  --base-image 'artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda' \
+  --base-image 'il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda' \
   --base-image-tag '13.0-devel-manylinux--25.09' \
   --wheel-base "manylinux_2_28" \
   --python-versions "${python_version}" \
