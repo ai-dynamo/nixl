@@ -262,10 +262,6 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["gid_index"] = xferBenchConfig::gpunetio_gid_index;
         backend_params["data_qp_count"] = std::to_string(xferBenchConfig::gpunetio_data_qp_count);
         backend_params["oob_port"] = xferBenchConfig::gpunetio_oob_port;
-        std::cout << "GPUNETIO note: two local processes sharing one physical GPU can be "
-                     "time-sliced and report low bandwidth. Use separate GPUs or opt-in MPS; "
-                     "see the NIXLBench README."
-                  << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE)) {
         std::cout << "Mooncake backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_HF3FS)) {
