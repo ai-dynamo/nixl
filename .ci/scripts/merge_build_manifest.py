@@ -344,7 +344,7 @@ def assemble(
         art = files.get(wheel_name or "") or {}
         if not s:
             build_info = "missing"
-        elif any(v for v in (side(c, "toolchain") or {}).values()):
+        elif side(c, "toolchain_dumps"):
             build_info = "available"
         else:
             build_info = (
@@ -492,7 +492,12 @@ def run(fragments: Path, out: Path, dry_run: bool) -> str:
         if c["valid"] and c["cell"].get("PUBLISH_FOLDER")
     ]
     first = folders[0] if folders else None
-    files = artifactory_files(first) if first and FOLDER.match(first) else {}
+    files: dict[str, dict[str, Any]] = {}
+    if first and FOLDER.match(first):
+        try:
+            files = artifactory_files(first)
+        except ManifestError as exc:
+            errors.append(f"Artifactory listing of {first} failed: {exc}")
     folder, doc = assemble(cells, files, errors)
     text = json.dumps(doc, indent=2) + "\n"
     out.write_text(text, encoding="utf-8")
