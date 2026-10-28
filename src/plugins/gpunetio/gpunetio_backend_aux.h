@@ -222,7 +222,6 @@ struct docaNotif {
     uintptr_t msg_buf;
     size_t msg_size;
     uint32_t msg_num;
-    uint32_t msg_last;
 };
 
 class nixlDocaConnection : public nixlBackendConnMD {
