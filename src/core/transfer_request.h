@@ -77,6 +77,13 @@ public:
         return traceContext_;
     }
 
+    /** @brief Trace context of the latest post handed to the backend, which that
+     *         post's nixl::xfer.complete carries; traceContext() before any post. */
+    [[nodiscard]] const nixl::trace::TraceContext &
+    tracePostContext() const noexcept {
+        return tracePostContext_;
+    }
+
     [[nodiscard]] std::uint64_t
     traceRequestId() const noexcept {
         return traceRequestId_;
@@ -99,6 +106,8 @@ private:
     const std::string remoteAgent;
     const nixl_remote_section_weak_t remoteSection;
     const nixl::trace::TraceContext traceContext_;
+    nixl::trace::TraceContext tracePostContext_;
+    bool traceRequestSpanIdUsed_ = false;
     const std::uint64_t traceRequestId_;
     std::atomic<std::uint64_t> traceExecution_ = 0;
     nixl_blob_t notifMsg;
