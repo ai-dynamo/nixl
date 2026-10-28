@@ -200,6 +200,8 @@ private:
         bool attachedStream = false;
         uint32_t devId;
         std::vector<uint32_t> positions;
+        // Data QP of every slot, so postXfer() does not read it back from the GPU-mapped ring.
+        doca_gpu_dev_verbs_qp *qpData = nullptr;
         uintptr_t backendHandleGpu;
         size_t postedCount = 0;
         nixl_status_t postStatus = NIXL_SUCCESS;

@@ -20,11 +20,16 @@
 
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cstring>
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <sys/types.h>
+#include <system_error>
 #include <thread>
 #include <vector>
 #include <ifaddrs.h>
@@ -112,6 +117,26 @@ constexpr uint32_t DOCA_MAX_NOTIF_INFLIGHT = RDMA_RECV_QUEUE_SIZE;
 constexpr uint32_t DOCA_MAX_NOTIF_MESSAGE_SIZE = 8192;
 constexpr time_t DOCA_OOB_SOCKET_TIMEOUT_SEC = 10;
 constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
+
+namespace nixl::gpunetio {
+
+/** Parse cuda_streams: empty selects the full pool, otherwise [1, DOCA_POST_STREAM_NUM]. */
+inline uint32_t
+parseCudaStreams(std::string_view value) {
+    if (value.empty()) {
+        return DOCA_POST_STREAM_NUM;
+    }
+    uint32_t count = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), count);
+    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || count < 1 ||
+        count > DOCA_POST_STREAM_NUM) {
+        throw std::invalid_argument("cuda_streams must be an integer in [1, " +
+                                    std::to_string(DOCA_POST_STREAM_NUM) + "]");
+    }
+    return count;
+}
+
+} // namespace nixl::gpunetio
 
 #ifndef ACCESS_ONCE
 #define ACCESS_ONCE(x) (*(volatile uint8_t *)&(x))
@@ -213,7 +238,7 @@ public:
 class nixlDocaPrivateMetadata : public nixlBackendMD {
 private:
     std::unique_ptr<nixl::doca::verbs::mr> mr;
-    uint32_t devId;
+    bool peerGpu = false; // VRAM owned by a GPU other than the engine's
     nixl_blob_t remoteMrStr;
 
 public:

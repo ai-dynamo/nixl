@@ -304,13 +304,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
     NIXL_INFO << std::endl;
 
-    nstreams = 0;
-    if (custom_params->count("cuda_streams") != 0 && (*custom_params)["cuda_streams"] != "") {
-        nstreams = std::stoi((*custom_params)["cuda_streams"]);
-    }
-    if (nstreams == 0) {
-        nstreams = DOCA_POST_STREAM_NUM;
-    }
+    nstreams = static_cast<int>(nixl::gpunetio::parseCudaStreams((*custom_params)["cuda_streams"]));
 
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
@@ -1529,9 +1523,10 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
         return x.first == mem.devId;
     });
 
-    if (it == gdevs.end()) {
+    // A DRAM devId does not name a GPU; only VRAM must belong to a visible device.
+    if (nixl_mem == VRAM_SEG && it == gdevs.end()) {
         int device_count = 0;
-        if (nixl_mem != VRAM_SEG || cudaGetDeviceCount(&device_count) != cudaSuccess ||
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess ||
             mem.devId >= static_cast<uint64_t>(device_count)) {
             NIXL_ERROR << "Can't register memory for unknown device " << mem.devId;
             return NIXL_ERR_INVALID_PARAM;
@@ -1559,7 +1554,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_BACKEND;
     }
 
-    priv->devId = mem.devId;
+    priv->peerGpu = nixl_mem == VRAM_SEG && it == gdevs.end();
     ss << (uint32_t)priv->mr->get_rkey() << info_delimiter << ((uintptr_t)priv->mr->get_addr())
        << info_delimiter << ((size_t)priv->mr->get_tot_size());
     priv->remoteMrStr = ss.str();
@@ -1676,7 +1671,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         lmd = (nixlDocaPrivateMetadata *)local[idx].metadataP;
-        if (lmd->devId != gdevs[0].first && opt_args && !opt_args->customParam.empty()) {
+        if (lmd->peerGpu && opt_args && !opt_args->customParam.empty()) {
             NIXL_ERROR << "Attached CUDA streams are not supported for peer-GPU payloads";
             return NIXL_ERR_NOT_SUPPORTED;
         }
@@ -1701,7 +1696,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     };
 
     if (opt_args == nullptr || opt_args->customParam.empty()) {
-        stream_id = (xferStream.fetch_add(1) & (nstreams - 1));
+        stream_id = xferStream.fetch_add(1) % static_cast<uint32_t>(nstreams);
         treq->stream = post_stream[stream_id];
     } else {
         if (opt_args->customParam.size() != sizeof(cudaStream_t)) {
@@ -1727,6 +1722,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         return false;
     };
 
+    treq->qpData = rdma_qp->qp_data->get_qp_gpu_dev();
     treq->positions.reserve((lcnt + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
     if (!reserve_position()) {
         abandon_request();
@@ -1809,7 +1805,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             }
         }
 
-        staged_req.qp_data = rdma_qp->qp_data->get_qp_gpu_dev();
+        staged_req.qp_data = treq->qpData;
         staged_req.qp_notif = rdma_qp->qp_notif->get_qp_gpu_dev();
         staged_req.qp_progress = rdma_qp->progress_gpu;
         const size_t publish_size =
@@ -1918,18 +1914,14 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     for (uint32_t idx : treq->positions) {
         const doca_error_t result = operation == NIXL_READ ?
             doca_kernel_read(treq->stream,
-                             xferReqRingCpu[idx].qp_data,
+                             treq->qpData,
                              xferReqRingGpu,
                              gpu_state_gpu,
                              host_state_gpu_,
                              idx,
                              treq->attachedStream) :
-            doca_kernel_write(treq->stream,
-                              xferReqRingCpu[idx].qp_data,
-                              xferReqRingGpu,
-                              gpu_state_gpu,
-                              host_state_gpu_,
-                              idx);
+            doca_kernel_write(
+                treq->stream, treq->qpData, xferReqRingGpu, gpu_state_gpu, host_state_gpu_, idx);
         if (result != DOCA_SUCCESS) {
             treq->postStatus = NIXL_ERR_BACKEND;
             break;
@@ -1981,9 +1973,12 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
     last.posting_ctas_done = 0;
     last.peer_write_completed = peer->writeCompletedGpu.get();
     last.write_ticket = ++peer->postedWriteTicket;
+    // Build the mask locally: |= on the slot would read it back through the GPU mapping.
+    uint32_t wait_completion_mask = 0;
     for (size_t ordinal = 0; ordinal + 1 < request->positions.size(); ++ordinal) {
-        last.wait_completion_mask |= 1U << request->positions[ordinal];
+        wait_completion_mask |= 1U << request->positions[ordinal];
     }
+    last.wait_completion_mask = wait_completion_mask;
     std::atomic_thread_fence(std::memory_order_release);
 
     // One stream orders all grids, including the previous same-peer final post.
