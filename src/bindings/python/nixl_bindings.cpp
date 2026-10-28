@@ -22,6 +22,7 @@
 
 #include <tuple>
 #include <iostream>
+#include <optional>
 #include <span>
 
 #include "nixl.h"

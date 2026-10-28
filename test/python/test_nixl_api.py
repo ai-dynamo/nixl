@@ -623,12 +623,24 @@ _TRACEPARENT = re.compile(
     r"00-(?P<trace_id>[0-9a-f]{32})-(?P<span_id>[0-9a-f]{16})-(?P<flags>[0-9a-f]{2})"
 )
 
-_NIXL_PLUGIN_DIR = os.environ.get("NIXL_PLUGIN_DIR", "")
+
+def _nixl_plugin_dir():
+    if "NIXL_PLUGIN_DIR" in os.environ:
+        return os.environ["NIXL_PLUGIN_DIR"]
+    with open("/proc/self/maps") as maps:
+        for line in maps:
+            path = line.split(maxsplit=5)[-1].strip()
+            if os.path.basename(path) == "libnixl.so":
+                return os.path.join(os.path.dirname(path), "plugins")
+    return ""
+
+
+_NIXL_PLUGIN_DIR = _nixl_plugin_dir()
 
 requires_nvtx_plugin = pytest.mark.skipif(
     not _NIXL_PLUGIN_DIR
     or not os.path.isfile(os.path.join(_NIXL_PLUGIN_DIR, "libtrace_backend_nvtx.so")),
-    reason="libtrace_backend_nvtx.so is not in NIXL_PLUGIN_DIR",
+    reason="libtrace_backend_nvtx.so is not in NIXL's plugin directory",
 )
 
 
@@ -728,6 +740,22 @@ def test_xfer_trace_info_after_release(monkeypatch, backend_name):
         assert agent.get_xfer_trace_info(handle) is not None
         agent.release_xfer_handle(handle)
         assert agent.get_xfer_trace_info(handle) is None
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_is_a_read_only_snapshot(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    with _xfer_handle(backend_name) as (agent, handle):
+        _post_to_done(agent, handle)
+        info = agent.get_xfer_trace_info(handle)
+        values = _trace_info(agent, handle)
+        _post_to_done(agent, handle)
+        agent.release_xfer_handle(handle)
+    assert values[1] == 1
+    assert (info.requestId, info.execution, info.traceparent) == values
+    for field in ("requestId", "execution", "traceparent"):
+        with pytest.raises(AttributeError):
+            setattr(info, field, getattr(info, field))
 
 
 def test_xfer_trace_info_binding_rejects_a_null_handle(one_empty_agent):
