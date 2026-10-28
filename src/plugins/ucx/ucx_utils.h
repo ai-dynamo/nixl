@@ -18,6 +18,9 @@
 #define NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 
 #include <atomic>
+#include <bit>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string_view>
 #include <type_traits>
@@ -48,6 +51,28 @@ inline constexpr std::string_view nixl_ucx_vram_memtype_hint_param_name = "ucx_v
 inline constexpr unsigned ucp_version_mem_type_rdma = UCP_VERSION(1, 22);
 
 using nixlUcxReq = void *;
+
+namespace nixl::ucx {
+
+// Wrap period of the dma-buf registration pattern described in
+// https://github.com/ai-dynamo/nixl/issues/2512, or 0 if [base, base + len) does not match it:
+// the base is aligned to exactly 2^k bytes with k >= 32 and the region is longer than 2^k.
+// On GH200, RDMA through a dma-buf memory registration of such a region was observed to
+// complete without error while offsets >= 2^k access offset mod 2^k.
+[[nodiscard]] constexpr size_t
+dmabufWrapPeriod(uintptr_t base, size_t len) noexcept {
+    if (base == 0 || std::countr_zero(base) < 32) {
+        return 0;
+    }
+    const size_t period = size_t{1} << std::countr_zero(base);
+    return len > period ? period : 0;
+}
+
+// True if a UCX boolean/ternary config value turns the option off.
+[[nodiscard]] bool
+isUcxConfigOff(std::string_view value);
+
+} // namespace nixl::ucx
 
 class nixlUcxMem;
 
@@ -167,6 +192,7 @@ private:
     const nixl_ucx_vram_memtype_hint_t vramMemTypeHintPolicy_;
     uint64_t supportedMemoryTypesMask_{0};
     ucs_memory_type_t vramMemTypeHint_{UCS_MEMORY_TYPE_UNKNOWN};
+    bool cudaDmabufDisabled_{false};
 
     void
     resolveMemoryTypeConfig();

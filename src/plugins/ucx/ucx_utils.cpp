@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstring>
 #include <exception>
 #include <optional>
@@ -28,6 +29,7 @@
 
 #include <nixl_types.h>
 
+#include "common/configuration.h"
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
@@ -598,6 +600,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
 
     std::string elem;
     std::stringstream stream(engine_config);
+    std::string dmabuf_value;
 
     while (std::getline(stream, elem, ',')) {
         std::string_view elem_view = elem;
@@ -605,8 +608,15 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
 
         if (pos != std::string::npos) {
             config.modify(elem_view.substr(0, pos), elem_view.substr(pos + 1));
+            if (elem_view.substr(0, pos) == "CUDA_COPY_DMABUF") {
+                dmabuf_value = elem_view.substr(pos + 1);
+            }
         }
     }
+
+    // As in config::modify(), the environment takes precedence over engine_config.
+    const auto dmabuf_env = nixl::config::internal::getenvOptional("UCX_CUDA_COPY_DMABUF");
+    cudaDmabufDisabled_ = nixl::ucx::isUcxConfigOff(dmabuf_env ? *dmabuf_env : dmabuf_value);
 
     config.validateTlsCudaSupport();
 
@@ -818,6 +828,21 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
             ucp_mem_unmap(ctx.get(), mem.memh);
             return -1;
         }
+
+        const size_t wrap_period =
+            nixl::ucx::dmabufWrapPeriod(reinterpret_cast<uintptr_t>(mem.base), mem.size);
+        if (attr.mem_type == UCS_MEMORY_TYPE_CUDA && !cudaDmabufDisabled_ && wrap_period != 0) {
+            NIXL_WARN << *this << ": VRAM region at " << mem.base << " (" << mem.size
+                      << " bytes) starts at an address aligned to exactly " << wrap_period
+                      << " bytes and is longer than that. On GH200, RDMA through a dma-buf "
+                         "registration of such a region was observed to complete without error "
+                         "while offsets >= "
+                      << wrap_period
+                      << " accessed offset mod that size "
+                         "(https://github.com/ai-dynamo/nixl/issues/2512). If nvidia_peermem is "
+                         "loaded, UCX_CUDA_COPY_DMABUF=no avoids the dma-buf path; otherwise "
+                         "register the buffer in smaller pieces or at a different offset.";
+        }
     }
 
     NIXL_DEBUG << *this << ": registered " << mem.size << " bytes at " << mem.base << ", memh "
@@ -839,6 +864,13 @@ nixlUcxContext::packRkey(nixlUcxMem &mem) {
     ucp_rkey_buffer_release(rkey_buf);
     NIXL_DEBUG << *this << ": packed rkey of " << size << " bytes for memh " << mem.memh;
     return result;
+}
+
+bool
+nixl::ucx::isUcxConfigOff(std::string_view value) {
+    std::string lower(value);
+    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return std::tolower(ch); });
+    return lower == "n" || lower == "no" || lower == "off" || lower == "0" || lower == "false";
 }
 
 void
