@@ -140,17 +140,13 @@ nixlAisMtEngine::finalizePrep(std::vector<aisXferReq> &&reqs, nixlBackendReqH *&
     auto ais_handle = std::make_unique<nixlAisMtReqH>();
     ais_handle->request_list = std::move(reqs);
 
-    // One task per request, matching GDS_MT. The early-exit below has no GDS_MT
-    // counterpart; it is kept from the original AIS engine so a bad transfer
-    // does not keep the pool busy. It is best-effort rather than a barrier:
-    // tasks already running still finish.
+    // One task per request, matching GDS_MT.
+    // Any failure leaves overall_status set to an error. If multiple requests
+    // fail, the last task to write to overall_status is kept.
     for (aisXferReq &req : ais_handle->request_list) {
         aisXferReq *captured_req = &req;
         ais_handle->taskflow.emplace(
             [captured_req, overall_status = &ais_handle->overall_status]() {
-                if (overall_status->load() != NIXL_SUCCESS) {
-                    return;
-                }
                 runHipFileOp(captured_req, overall_status);
             });
     }
