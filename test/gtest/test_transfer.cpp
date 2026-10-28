@@ -28,6 +28,7 @@
 #include <absl/time/clock.h>
 #include <gtest/gtest.h>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -313,6 +314,51 @@ protected:
         }
 
         registerMem(agent, out, mem_type);
+    }
+
+    // A buffer starts with its full index and the seed, then a byte pattern, so
+    // swapped buffers and stale posts both show up. Needs at least 8 bytes.
+    static std::vector<uint8_t>
+    payload(size_t size, uint32_t index, uint32_t seed) {
+        std::vector<uint8_t> bytes(size);
+        for (size_t i = 0; i < size; ++i) {
+            bytes[i] = static_cast<uint8_t>(seed + index + i);
+        }
+        std::memcpy(bytes.data(), &index, sizeof(index));
+        std::memcpy(bytes.data() + sizeof(index), &seed, sizeof(seed));
+        return bytes;
+    }
+
+    static void
+    fillPayload(const std::vector<MemBuffer> &buffers, uint32_t seed) {
+        for (size_t i = 0; i < buffers.size(); ++i) {
+            const auto bytes = payload(buffers[i].getSize(), i, seed);
+            std::memcpy(reinterpret_cast<void *>(static_cast<uintptr_t>(buffers[i])),
+                        bytes.data(),
+                        bytes.size());
+        }
+    }
+
+    // Returns the first buffer that doesn't hold the payload, or buffers.size().
+    static size_t
+    findPayloadMismatch(const std::vector<MemBuffer> &buffers, uint32_t seed) {
+        for (size_t i = 0; i < buffers.size(); ++i) {
+            const auto bytes = payload(buffers[i].getSize(), i, seed);
+            if (std::memcmp(reinterpret_cast<void *>(static_cast<uintptr_t>(buffers[i])),
+                            bytes.data(),
+                            bytes.size()) != 0) {
+                return i;
+            }
+        }
+        return buffers.size();
+    }
+
+    static void
+    checkPayload(const std::vector<MemBuffer> &buffers, uint32_t seed) {
+        const size_t i = findPayloadMismatch(buffers, seed);
+        if (i < buffers.size()) {
+            ADD_FAILURE() << "buffer " << i << " does not hold payload " << seed;
+        }
     }
 
     void
@@ -604,6 +650,63 @@ TEST_P(TestTransfer, RandomSizes)
         deregisterMem(getAgent(0), src_buffers, mem_type);
         deregisterMem(getAgent(1), dst_buffers, mem_type);
     }
+}
+
+// Checks the bytes of every post of a transfer with more descriptors than a
+// Mooncake batch used to hold (1024). Reposts the same request, without a
+// notification, with a fresh payload each time.
+TEST_P(TestTransfer, ManyDescriptorsPayload) {
+    constexpr size_t size = 64;
+    constexpr size_t count = 1025;
+    constexpr size_t posts = 2;
+    constexpr nixl_mem_t mem_type = DRAM_SEG;
+
+    std::vector<MemBuffer> local_buffers, remote_buffers;
+    createRegisteredMem(getAgent(0), size, count, mem_type, local_buffers);
+    createRegisteredMem(getAgent(1), size, count, mem_type, remote_buffers);
+    exchangeMD(0, 1);
+
+    uint32_t seed = 0;
+    for (const auto op : {NIXL_WRITE, NIXL_READ}) {
+        const auto &src = (op == NIXL_WRITE) ? local_buffers : remote_buffers;
+        const auto &dst = (op == NIXL_WRITE) ? remote_buffers : local_buffers;
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(NIXL_SUCCESS,
+                  getAgent(0).createXferReq(op,
+                                            makeDescList<nixlBasicDesc>(local_buffers, mem_type),
+                                            makeDescList<nixlBasicDesc>(remote_buffers, mem_type),
+                                            getAgentName(1),
+                                            req));
+        for (size_t post = 0; post < posts; ++post) {
+            fillPayload(src, ++seed);
+            fillPayload(dst, 0);
+
+            nixl_status_t status = getAgent(0).postXferReq(req);
+            ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+            ASSERT_TRUE(wait_until_true([&]() {
+                status = getAgent(0).getXferStatus(req);
+                if (!isProgressThreadEnabled()) {
+                    nixl_notifs_t notifs;
+                    getAgent(1).getNotifs(notifs);
+                }
+                return status != NIXL_IN_PROG;
+            }));
+            ASSERT_EQ(NIXL_SUCCESS, status);
+            if ((op == NIXL_WRITE) && (getBackendName() == "MOONCAKE")) {
+                // Mooncake v0.3.10.post1, the CI pin, reports a TCP WRITE complete
+                // before the target has applied it (fixed in kvcache-ai/Mooncake#2850,
+                // v0.3.12). Wait for the bytes, or they can land on the next post.
+                wait_until_true([&]() { return findPayloadMismatch(dst, seed) == dst.size(); });
+            }
+            checkPayload(dst, seed);
+        }
+        EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
+    }
+
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), local_buffers, mem_type);
+    deregisterMem(getAgent(1), remote_buffers, mem_type);
 }
 
 TEST_P(TestTransfer, remoteMDFromSocket)

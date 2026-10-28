@@ -82,12 +82,13 @@ chooseIpAddress() {
 // batch that is still busy and frees it once its requests drain.
 constexpr int kBatchCleanupDeferred = 5;
 
-void
+int
 freeBatch(transfer_engine_t engine, uint64_t batch_id) {
     const int rc = freeBatchID(engine, batch_id);
     if (rc != 0 && rc != kBatchCleanupDeferred) {
         NIXL_WARN << "Mooncake freeBatchID failed with " << rc << ", leaking batch " << batch_id;
     }
+    return rc;
 }
 
 } // namespace
@@ -240,6 +241,8 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
 
     uint64_t batch_id = INVALID_BATCH;
     size_t request_count = 0;
+    // Set when a failed submit left requests that may still be in flight.
+    bool failed = false;
 };
 
 nixl_status_t
@@ -263,6 +266,10 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
+    if (priv->failed) {
+        NIXL_ERROR << "Mooncake request failed to submit earlier; release it and create a new one";
+        return NIXL_ERR_BACKEND;
+    }
     int segment_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -302,11 +309,15 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         rc = submitTransfer(engine_, priv->batch_id, request.data(), request_count);
     }
     if (rc) {
-        // A failed submit can leave queued requests behind. Hand the batch back
-        // so a repost starts fresh; engines without deferred cleanup leak it.
-        freeBatch(engine_, priv->batch_id);
-        priv->batch_id = INVALID_BATCH;
-        priv->request_count = 0;
+        // Requests queued before the failure may still be in flight. The handle
+        // can be reposted only if the batch was freed right away. A deferred
+        // batch now belongs to the engine; a busy one is retried in releaseReqH.
+        const int free_rc = freeBatch(engine_, priv->batch_id);
+        if (free_rc == 0 || free_rc == kBatchCleanupDeferred) {
+            priv->batch_id = INVALID_BATCH;
+            priv->request_count = 0;
+        }
+        priv->failed = (free_rc != 0);
         return NIXL_ERR_BACKEND;
     }
     priv->request_count += request_count;
@@ -316,6 +327,9 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
 nixl_status_t
 nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
+    if (priv->failed) {
+        return NIXL_ERR_BACKEND;
+    }
     // Once every request completed, the batch is freed below and batch_id is
     // reset to INVALID_BATCH. A later checkXfer() on the same handle must not
     // reach the engine: getTransferStatus() and freeBatchID() cast the batch

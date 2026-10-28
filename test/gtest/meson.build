@@ -92,8 +92,11 @@ if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     cpp_flags += '-DHAVE_LIBFABRIC'
 endif
 
-# Set only when src/plugins/mooncake was built.
-if is_variable('mooncake_backend_interface')
+# Set only when src/plugins/mooncake was built, and not under TSAN: the
+# Transfer Engine's TCP transport (v0.3.10.post1) locks a session mutex on the
+# submitting thread and unlocks it on its own thread, so a post with more than 64
+# descriptors overflows TSAN's per-thread lock tracking.
+if is_variable('mooncake_backend_interface') and not sanitizer_opts.contains('thread')
     cpp_flags += '-DHAVE_MOONCAKE'
 endif
 
