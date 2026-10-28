@@ -31,7 +31,9 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string.h>
+#include "absl/strings/ascii.h"
 
 #include "device/device_memview.h"
 #include "device/device_ops.h"
@@ -102,11 +104,12 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
 
     if (const auto opt = nixl::getBackendParamOptional<std::string>(
             custom_params, std::string(nixl_ucx_device_list_param_name))) {
-        devs = ucx_split_device_list(*opt);
+        devs = ucxSplitDeviceList(*opt);
+        if (devs.empty() && !absl::StripAsciiWhitespace(*opt).empty()) {
+            throw std::invalid_argument(std::string(nixl_ucx_device_list_param_name) + "=\"" +
+                                        *opt + "\" names no devices");
+        }
     }
-
-    const auto net_devices = nixl::getBackendParamDefaulted(
-        custom_params, std::string(nixl_ucx_net_devices_param_name), std::string());
 
     size_t num_workers = nixl::getBackendParamDefaulted(custom_params, "num_workers", 1u);
     if (num_workers <= num_dedicated_workers) {
@@ -133,8 +136,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
                                           num_device_channels,
                                           engine_config,
                                           localAgent,
-                                          vram_memtype_hint_policy,
-                                          net_devices);
+                                          vram_memtype_hint_policy);
 
     uc->warnAboutHardwareSupportMismatch();
 

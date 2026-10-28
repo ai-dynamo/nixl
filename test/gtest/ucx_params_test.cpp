@@ -19,7 +19,6 @@
 
 #include <algorithm>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -32,75 +31,18 @@ namespace {
 using device_list_t = std::vector<std::string>;
 
 TEST(UcxParams, SplitDeviceList) {
-    EXPECT_EQ(ucx_split_device_list(""), device_list_t{});
-    EXPECT_EQ(ucx_split_device_list("mlx5_0"), device_list_t{"mlx5_0"});
-    EXPECT_EQ(ucx_split_device_list("mlx5_0,mlx5_1"), (device_list_t{"mlx5_0", "mlx5_1"}));
-    EXPECT_EQ(ucx_split_device_list("mlx5_0, mlx5_1"), (device_list_t{"mlx5_0", "mlx5_1"}));
-    EXPECT_EQ(ucx_split_device_list(" mlx5_0 ,, mlx5_1:2 ,"),
-              (device_list_t{"mlx5_0", "mlx5_1:2"}));
+    EXPECT_EQ(ucxSplitDeviceList(""), device_list_t{});
+    EXPECT_EQ(ucxSplitDeviceList(" , ,"), device_list_t{});
+    EXPECT_EQ(ucxSplitDeviceList("mlx5_0"), device_list_t{"mlx5_0"});
+    EXPECT_EQ(ucxSplitDeviceList("mlx5_0,mlx5_1"), (device_list_t{"mlx5_0", "mlx5_1"}));
+    EXPECT_EQ(ucxSplitDeviceList("mlx5_0, mlx5_1"), (device_list_t{"mlx5_0", "mlx5_1"}));
+    EXPECT_EQ(ucxSplitDeviceList(" mlx5_0 ,, mlx5_1:2 ,"), (device_list_t{"mlx5_0", "mlx5_1:2"}));
 }
 
 TEST(UcxParams, DeviceListToNetDevices) {
-    EXPECT_EQ(ucx_device_list_to_net_devices({}), "");
-    EXPECT_EQ(ucx_device_list_to_net_devices({"mlx5_0"}), "mlx5_0:1");
-    EXPECT_EQ(ucx_device_list_to_net_devices({"mlx5_0", "mlx5_1:2"}), "mlx5_0:1,mlx5_1:2");
-}
-
-TEST(UcxParams, NetDevicesDecision) {
-    const std::optional<std::string> no_env;
-    const std::optional<std::string> env = "mlx5_2:1";
-    const device_list_t ib{"mlx5_0", "mlx5_1:2"};
-
-    struct Case {
-        const char *name;
-        device_list_t devs;
-        std::string net_devices;
-        std::string engine_config;
-        std::optional<std::string> env;
-        std::optional<std::string> value;
-        bool override_env;
-        bool env_wins;
-    };
-
-    const std::vector<Case> cases = {
-        {"nothing set", {}, "", "", no_env, std::nullopt, false, false},
-        {"nothing set, env set", {}, "", "", env, std::nullopt, false, false},
-        {"ucx_net_devices", {}, "^tun0,docker0", "", no_env, "^tun0,docker0", false, false},
-        {"ucx_net_devices, env set", {}, "^tun0,docker0", "", env, "^tun0,docker0", false, true},
-        {"device_list", ib, "", "", no_env, "mlx5_0:1,mlx5_1:2", true, false},
-        {"device_list, env set", ib, "", "", env, "mlx5_0:1,mlx5_1:2", true, false},
-        {"ucx_net_devices, unrelated engine_config",
-         {},
-         "eth0",
-         "RNDV_THRESH=8k",
-         no_env,
-         "eth0",
-         false,
-         false},
-        {"engine_config NET_DEVICES alone",
-         {},
-         "",
-         "NET_DEVICES=^tun0",
-         no_env,
-         std::nullopt,
-         false,
-         false},
-    };
-
-    for (const auto &c : cases) {
-        const auto d = ucx_net_devices_decide(c.devs, c.net_devices, c.engine_config, c.env);
-        EXPECT_EQ(d.value, c.value) << c.name;
-        EXPECT_EQ(d.overrideEnv, c.override_env) << c.name;
-        EXPECT_EQ(d.envWins, c.env_wins) << c.name;
-    }
-
-    // Conflicts.
-    EXPECT_THROW((void)ucx_net_devices_decide(ib, "^tun0", "", no_env), std::invalid_argument);
-    EXPECT_THROW(
-        (void)ucx_net_devices_decide({}, "^tun0", "RNDV_THRESH=8k,NET_DEVICES=eth0", no_env),
-        std::invalid_argument);
-    EXPECT_THROW((void)ucx_net_devices_decide(ib, "", "NET_DEVICES=eth0", no_env),
-                 std::invalid_argument);
+    EXPECT_EQ(ucxDeviceListToNetDevices({}), "");
+    EXPECT_EQ(ucxDeviceListToNetDevices({"mlx5_0"}), "mlx5_0:1");
+    EXPECT_EQ(ucxDeviceListToNetDevices({"mlx5_0", "mlx5_1:2"}), "mlx5_0:1,mlx5_1:2");
 }
 
 // Creates a UCX backend in a fresh agent with the plugin defaults plus `overrides`. Returns
@@ -122,9 +64,9 @@ createUcxBackend(const std::string &agent_name, const nixl_b_params_t &overrides
     nixl_mem_list_t mems;
     nixl_b_params_t params;
     EXPECT_EQ(agent.getPluginParams("UCX", mems, params), NIXL_SUCCESS);
-    // The device parameters are advertised under the names the backend reads.
+    // The device list is advertised under the name the backend reads.
     EXPECT_EQ(params.count(std::string(nixl_ucx_device_list_param_name)), 1u);
-    EXPECT_EQ(params.count(std::string(nixl_ucx_net_devices_param_name)), 1u);
+    EXPECT_EQ(params.count("ucx_devices"), 0u);
     for (const auto &[key, value] : overrides) {
         params[key] = value;
     }
@@ -135,27 +77,23 @@ createUcxBackend(const std::string &agent_name, const nixl_b_params_t &overrides
     return status;
 }
 
-TEST(UcxParams, NetDevicesListCreatesBackend) {
-    // Smoke test: a backend accepts a multi-entry exclusion list. What reaches UCX is covered by
-    // NetDevicesDecision.
-    const auto status = createUcxBackend(
-        "ucx_net_devices_list",
-        {{std::string(nixl_ucx_net_devices_param_name), "^nixl_test_dev0,nixl_test_dev1"}});
+TEST(UcxParams, AdvertisedDefaultsCreateBackend) {
+    // getPluginParams advertises device_list with an empty default; passing it back unchanged
+    // means no device restriction.
+    const auto status = createUcxBackend("ucx_params_defaults", {});
     if (!status) {
         GTEST_SKIP() << "UCX plugin not available";
     }
     EXPECT_EQ(*status, NIXL_SUCCESS);
 }
 
-TEST(UcxParams, DeviceListAndNetDevicesAreExclusive) {
+TEST(UcxParams, DeviceListWithoutDevicesFails) {
     const gtest::LogIgnoreGuard lig_invalid(
-        "Failed to create engine: device_list and ucx_net_devices are mutually exclusive");
+        "Failed to create engine: device_list=\",,,\" names no devices");
     const gtest::LogIgnoreGuard lig_backend(
         "backend (creation failed|initialization error) for 'UCX'");
-    const auto status =
-        createUcxBackend("ucx_net_devices_exclusive",
-                         {{std::string(nixl_ucx_device_list_param_name), "mlx5_0"},
-                          {std::string(nixl_ucx_net_devices_param_name), "^nixl_test_dev0"}});
+    const auto status = createUcxBackend("ucx_params_empty_device_list",
+                                         {{std::string(nixl_ucx_device_list_param_name), ",,,"}});
     if (!status) {
         GTEST_SKIP() << "UCX plugin not available";
     }

@@ -31,7 +31,6 @@
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
-#include "common/configuration.h"
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
@@ -40,7 +39,6 @@
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
     nixl_b_params_t params = {{std::string(nixl_ucx_device_list_param_name), ""},
-                              {std::string(nixl_ucx_net_devices_param_name), ""},
                               {"num_workers", "1"}};
 
     params.emplace(nixl_ucx_err_handling_param_name,
@@ -138,7 +136,7 @@ ucx_vram_memtype_hint_from_string(std::string_view s) {
 }
 
 [[nodiscard]] std::vector<std::string>
-ucx_split_device_list(std::string_view device_list) {
+ucxSplitDeviceList(std::string_view device_list) {
     std::vector<std::string> devs;
     for (const std::string_view dev : absl::StrSplit(device_list, ',', absl::SkipWhitespace())) {
         devs.emplace_back(absl::StripAsciiWhitespace(dev));
@@ -146,46 +144,8 @@ ucx_split_device_list(std::string_view device_list) {
     return devs;
 }
 
-namespace {
-// Whether a "KEY=VALUE,..." engine_config sets `key`, as nixlUcxContext parses it.
-[[nodiscard]] bool
-engineConfigSets(std::string_view engine_config, std::string_view key) {
-    for (const std::string_view elem : absl::StrSplit(engine_config, ',')) {
-        const size_t pos = elem.find('=');
-        if (pos != std::string_view::npos && elem.substr(0, pos) == key) {
-            return true;
-        }
-    }
-    return false;
-}
-} // namespace
-
-[[nodiscard]] nixl_ucx_net_devices_t
-ucx_net_devices_decide(const std::vector<std::string> &devs,
-                       std::string_view net_devices,
-                       std::string_view engine_config,
-                       const std::optional<std::string> &env_net_devices) {
-    if (!devs.empty() && !net_devices.empty()) {
-        throw std::invalid_argument(std::string(nixl_ucx_device_list_param_name) + " and " +
-                                    std::string(nixl_ucx_net_devices_param_name) +
-                                    " are mutually exclusive");
-    }
-    if ((!devs.empty() || !net_devices.empty()) && engineConfigSets(engine_config, "NET_DEVICES")) {
-        throw std::invalid_argument("NET_DEVICES in engine_config conflicts with " +
-                                    std::string(devs.empty() ? nixl_ucx_net_devices_param_name :
-                                                               nixl_ucx_device_list_param_name));
-    }
-    if (!devs.empty()) {
-        return {ucx_device_list_to_net_devices(devs), true, false};
-    }
-    if (!net_devices.empty()) {
-        return {std::string(net_devices), false, env_net_devices.has_value()};
-    }
-    return {};
-}
-
 [[nodiscard]] std::string
-ucx_device_list_to_net_devices(const std::vector<std::string> &devs) {
+ucxDeviceListToNetDevices(const std::vector<std::string> &devs) {
     return absl::StrJoin(devs, ",", [](std::string *out, const std::string &dev) {
         out->append(dev);
         if (dev.find(':') == std::string::npos) {
@@ -589,8 +549,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                size_t num_device_channels,
                                const std::string &engine_config,
                                const std::string &name,
-                               nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy,
-                               const std::string &net_devices)
+                               nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy)
     : mtType_(makeMtType(prog_thread, sync_mode)),
       ucpVersion_(makeUcpVersion()),
       name_(name),
@@ -614,19 +573,8 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     nixl::ucx::config config;
 
     /* If requested, restrict the set of network devices */
-    const auto net =
-        ucx_net_devices_decide(devs,
-                               net_devices,
-                               engine_config,
-                               nixl::config::internal::getenvOptional("UCX_NET_DEVICES"));
-    if (net.value && net.overrideEnv) {
-        config.modifyAlways("NET_DEVICES", *net.value);
-    } else if (net.value) {
-        if (net.envWins) {
-            NIXL_WARN << nixl_ucx_net_devices_param_name << "=" << *net.value
-                      << " is ignored: UCX_NET_DEVICES is set in the environment";
-        }
-        config.modify("NET_DEVICES", *net.value);
+    if (devs.size()) {
+        config.modifyAlways("NET_DEVICES", ucxDeviceListToNetDevices(devs));
     }
 
     config.modify("RNDV_THRESH", "inf");
