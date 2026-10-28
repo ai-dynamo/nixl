@@ -21,6 +21,7 @@
 #include <unordered_map>
 #include <optional>
 #include <chrono>
+#include <cstdint>
 
 
 /*** Forward declarations ***/
@@ -299,6 +300,35 @@ struct nixlXferTelemetry {
  *        for telemetry output.
  */
 using nixl_xfer_telem_t = nixlXferTelemetry;
+
+/**
+ * @struct nixlXferTraceInfo
+ * @brief A structure for the trace identity of a transfer request from agent API
+ */
+struct nixlXferTraceInfo {
+    /**
+     * @var requestId Request id, recorded as nixl.xfer_request_id and as the NVTX payload
+     */
+    std::uint64_t requestId;
+
+    /**
+     * @var execution Execution number of the latest accepted post, recorded as
+     *      nixl.xfer_execution; 0 before any post
+     */
+    std::uint64_t execution;
+
+    /**
+     * @var traceparent W3C traceparent of the latest accepted post's trace context,
+     *      or of the request's before any post
+     */
+    std::string traceparent;
+};
+
+/**
+ * @brief A typedef for a nixlXferTraceInfo
+ *        for trace identity output.
+ */
+using nixl_xfer_trace_info_t = nixlXferTraceInfo;
 
 /**
  * @brief A define for an empty string, that indicates the descriptor list is being
