@@ -66,6 +66,12 @@ NIXL bench also has the option to specify the DOCA GPUNetIO backend. An example 
 
 ## Caveats
 
+### Notifications
+
+Each peer has 4096 notification send buffers. A prepared request with a notification owns one
+until the request is released, and `genNotif` holds one while it sends. When all of them are owned,
+`prepXfer` and `genNotif` return `NIXL_ERR_BACKEND`.
+
 ### Comparing striped WRITE submission designs
 
 For a matched comparison, build both versions with the same release toolchain

@@ -722,7 +722,10 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
         return NIXL_ERR_BACKEND;
     }
 
-    notif->send_pi = 0;
+    notif->send_free.reserve(notif->elems_num);
+    for (uint32_t slot = notif->elems_num; slot > 0; --slot) {
+        notif->send_free.push_back(slot - 1);
+    }
     notif->recv_pi = 0;
 
     // Ensure notif list is not added twice for the same peer
@@ -1842,21 +1845,27 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
         }
 
+        uint32_t slot = 0;
+        if (!notif->acquireSendSlot(slot)) {
+            NIXL_ERROR << "All notification buffers for " << remote_agent << " are in use";
+            abandon_request();
+            return NIXL_ERR_BACKEND;
+        }
+        // The request owns the buffer until it is released, so every repost sends this message.
+        treq->notif = notif;
+        treq->notifSlot = slot;
+        notif_addr = (uintptr_t)(notif->send_addr + size_t{slot} * notif->elems_size);
+
         auto &final_request = xferReqRingCpu[final_pos];
-        notif_addr =
-            (uintptr_t)nixl::gpunetio::reserveNotificationSlot(notif->send_pi,
-                                                               notif->elems_num,
-                                                               notif->send_addr,
-                                                               notif->elems_size,
-                                                               final_request.has_notif_msg_idx);
+        final_request.has_notif_msg_idx = slot;
         final_request.msg_sz = newMsg.size() + 1;
         final_request.lbuf_notif = notif_addr;
         final_request.lkey_notif = notif->send_mr->get_lkey();
 
-        memcpy((void *)notif_addr, newMsg.c_str(), final_request.msg_sz);
+        memcpy((void *)notif_addr, newMsg.c_str(), newMsg.size() + 1);
 
-        NIXL_INFO << "DOCA prepXfer with notif to " << remote_agent << " at "
-                  << final_request.has_notif_msg_idx << " msg " << newMsg << " to " << remote_agent;
+        NIXL_INFO << "DOCA prepXfer with notif to " << remote_agent << " at " << slot << " msg "
+                  << newMsg << " to " << remote_agent;
 
     } else {
         xferReqRingCpu[final_pos].has_notif_msg_idx = DOCA_NOTIF_NULL;
@@ -2179,7 +2188,7 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
         return completion_status;
     }
     struct nixlDocaNotif *notif;
-    uint32_t buf_idx;
+    uint32_t slot = 0;
     uintptr_t msg_buf;
 
     {
@@ -2213,12 +2222,15 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     }
 
     std::string newMsg = msg_tag_start + std::to_string((int)msg.size()) + msg_tag_end + msg;
-    buf_idx = (notif->send_pi.fetch_add(1) & (notif->elems_num - 1));
-    msg_buf = (uintptr_t)notif->send_addr + (buf_idx * notif->elems_size);
+    if (!notif->acquireSendSlot(slot)) {
+        NIXL_ERROR << "genNotif: all notification buffers for " << remote_agent << " are in use";
+        return NIXL_ERR_BACKEND;
+    }
+    msg_buf = (uintptr_t)notif->send_addr + (size_t{slot} * notif->elems_size);
     memcpy((void *)msg_buf, newMsg.c_str(), newMsg.size());
 
     NIXL_DEBUG << "genNotif to " << remote_agent << " msg size " << std::to_string((int)msg.size())
-               << " msg " << newMsg << " at " << buf_idx << " msg_buf " << msg_buf << "\n";
+               << " msg " << newMsg << " at " << slot << " msg_buf " << msg_buf << "\n";
 
     std::lock_guard<std::mutex> lock(notifSendLock);
     ((volatile struct docaNotif *)notif_send_cpu)->msg_buf = msg_buf;
@@ -2230,9 +2242,11 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
         const nixl_status_t wait_status =
             nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
         if (wait_status != NIXL_SUCCESS) {
+            // The SEND may still read the buffer, so it stays owned.
             return wait_status;
         }
     }
+    notif->releaseSendSlot(slot);
 
     return nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
 }

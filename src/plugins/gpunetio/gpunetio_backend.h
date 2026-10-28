@@ -206,10 +206,17 @@ private:
         size_t postedCount = 0;
         nixl_status_t postStatus = NIXL_SUCCESS;
         std::atomic<completion_state> completionState{completion_state::IN_PROGRESS};
+        // Notification send buffer owned from prepXfer() until the request is released.
+        nixlDocaNotif *notif = nullptr;
+        uint32_t notifSlot = 0;
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
 
-        ~nixlDocaBckndReq() {}
+        ~nixlDocaBckndReq() {
+            if (notif != nullptr) {
+                notif->releaseSendSlot(notifSlot);
+            }
+        }
     };
 
     void

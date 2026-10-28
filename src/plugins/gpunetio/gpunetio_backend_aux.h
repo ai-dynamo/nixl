@@ -209,11 +209,31 @@ struct nixlDocaNotif {
     uint32_t elems_num;
     uint32_t elems_size;
     uint8_t *send_addr = nullptr;
-    std::atomic<uint32_t> send_pi;
     std::unique_ptr<nixl::doca::verbs::mr> send_mr;
     uint8_t *recv_addr = nullptr;
     std::atomic<uint32_t> recv_pi;
     std::unique_ptr<nixl::doca::verbs::mr> recv_mr;
+    // Send buffers not owned by a prepared request or by a genNotif() in progress.
+    std::mutex send_lock;
+    std::vector<uint32_t> send_free;
+
+    /** Own a send buffer until releaseSendSlot(); false when every buffer is owned. */
+    bool
+    acquireSendSlot(uint32_t &slot) {
+        std::lock_guard<std::mutex> lock(send_lock);
+        if (send_free.empty()) {
+            return false;
+        }
+        slot = send_free.back();
+        send_free.pop_back();
+        return true;
+    }
+
+    void
+    releaseSendSlot(uint32_t slot) {
+        std::lock_guard<std::mutex> lock(send_lock);
+        send_free.push_back(slot);
+    }
 };
 
 struct docaNotif {
