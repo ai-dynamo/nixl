@@ -85,6 +85,18 @@ NvtxTraceBackend::beginSpan(const std::string_view name, const Kind kind) {
     return span;
 }
 
+std::unique_ptr<SpanBackend>
+NvtxTraceBackend::beginContextSpan(const std::string_view name,
+                                   const Kind kind,
+                                   const TraceContext &,
+                                   const std::uint64_t request_id) {
+    nvtxEventAttributes_t ev = eventForName(name, kind, domain_, registeredHandles_);
+    setCorrelation(ev, request_id);
+    auto span = std::make_unique<NvtxSpan>(domain_, schemaIds_);
+    nvtxDomainRangePushEx(domain_, &ev);
+    return span;
+}
+
 void
 NvtxTraceBackend::mark(const std::string_view name, const Kind kind) {
     nvtxEventAttributes_t ev = eventForName(name, kind, domain_, registeredHandles_);
