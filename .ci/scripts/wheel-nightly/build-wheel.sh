@@ -58,11 +58,6 @@ fi
 
 # Cell facts for the fragment Publish deposits, written before the
 # build so a failed cell leaves nothing behind.
-if [ -x nixl-src/.ci/scripts/wheel_build_info.py ]; then
-  BUILD_INFO_SUPPORTED=true
-else
-  BUILD_INFO_SUPPORTED=false
-fi
 {
   echo "CELL_KEY=${CELL_KEY}"
   echo "CUDA=${cuda}"
@@ -73,7 +68,6 @@ fi
   echo "WHEEL_BASE_IMAGE=${WHEEL_BASE_IMAGE}"
   echo "UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
   echo "UCX_SPCX_PLUGIN_COMMIT=${UCX_SPCX_PLUGIN_COMMIT}"
-  echo "BUILD_INFO_SUPPORTED=${BUILD_INFO_SUPPORTED}"
 } > cell.env
 
 cd nixl-src

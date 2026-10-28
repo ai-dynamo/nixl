@@ -4,7 +4,7 @@
 Run by .ci/scripts/wheel-nightly/publish-manifest.sh in a plain Python image
 at the end of nixl-ci-build-wheel-nightly. Reads the fragment directories the
 cells deposited (cell.env, wheel_build_ids.env, build_options.env and the
-wheel's build-info sidecar), cross-checks them against each other and against
+wheel's build-info sidecar from extract_build_info.py), cross-checks them against each other and against
 the Artifactory folder listing, writes the manifest and uploads it next to
 the wheels. The manifest file is always written, complete or not; it is
 uploaded, and the exit status is 0, only when it is complete (--dry-run
@@ -237,7 +237,7 @@ def assemble(
     for c in cells:
         if not c["cell"].get("WHEELS") or not c["cell"].get("PUBLISH_FOLDER"):
             errors.append(f"cell {c['key']}: cell.env incomplete")
-        if c["cell"].get("BUILD_INFO_SUPPORTED") == "true" and c["sidecars"] != 1:
+        if c["sidecars"] != 1:
             errors.append(
                 f"cell {c['key']}: expected 1 build-info sidecar, found {c['sidecars']}"
             )
@@ -342,12 +342,14 @@ def assemble(
             side(c, "wheel", "name") if s else (binaries[0] if binaries else None)
         )
         art = files.get(wheel_name or "") or {}
-        if s:
-            build_info = "available"
-        elif c["cell"].get("BUILD_INFO_SUPPORTED") == "true":
+        if not s:
             build_info = "missing"
+        elif any(v for v in (side(c, "toolchain") or {}).values()):
+            build_info = "available"
         else:
-            build_info = "unavailable: built ref predates wheel_build_info.py"
+            build_info = (
+                "available; toolchain not recorded (built ref predates the pip dump)"
+            )
         entry: dict[str, Any] = {
             "name": wheel_name,
             "kind": "binary",

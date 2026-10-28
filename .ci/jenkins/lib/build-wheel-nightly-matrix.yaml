@@ -117,7 +117,7 @@ env:
   # refuses to publish a manifest assembled from fewer fragments.
   EXPECTED_WHEEL_CELLS: "20"
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
-  # Runs .ci/scripts/wheel_manifest.py in pipeline_stop; the runner image has no Python.
+  # Runs .ci/scripts/merge_build_manifest.py in pipeline_stop; the runner image has no Python.
   CI_PYTHON_IMAGE: "docker.io/library/python:3.12-slim"
   # SWX team's NIXL pypi repo (publish target).
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
@@ -180,13 +180,13 @@ steps:
   - name: Build Wheel
     containerSelector: "{name: 'manylinux'}"
     parallel: false
-    run: .ci/scripts/wheel-nightly/build-cell.sh
+    run: .ci/scripts/wheel-nightly/build-wheel.sh
 
   - name: Publish
     containerSelector: "{name: 'manylinux'}"
     credentialsId: 'svc-nixl-new-artifactory-token'
     parallel: false
-    run: .ci/scripts/wheel-nightly/publish-cell.sh
+    run: .ci/scripts/wheel-nightly/publish-wheel.sh
 
 taskName: '${name}_${manylinux}/${arch}/python_${python_version}/cu${cuda}'
 

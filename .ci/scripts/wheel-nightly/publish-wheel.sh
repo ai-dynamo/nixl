@@ -2,7 +2,7 @@
 # Publish step of build-wheel-nightly-matrix.yaml: extracts the cell's
 # wheels from the built image, uploads them with their properties and
 # deposits this cell's build-manifest fragment on the PVC. Env: as
-# build-cell.sh, plus PUBLISH_DIR, WHEEL_REPO_URL/WHEEL_REPO_API,
+# build-wheel.sh, plus PUBLISH_DIR, WHEEL_REPO_URL/WHEEL_REPO_API,
 # MANIFEST_STAGING_ROOT and ARTIFACTORY_USER/ARTIFACTORY_TOKEN.
 
 set -x
@@ -10,10 +10,6 @@ set -x
 rm -rf dist && mkdir -p dist
 cid=$(docker create "${WHEEL_IMAGE_TAG}")
 docker cp "${cid}:/workspace/nixl/dist/." ./dist/
-# Sidecars from contrib/build-wheel.sh; refs that predate it have none.
-rm -rf build-info && mkdir -p build-info
-docker cp "${cid}:/workspace/nixl/build-info/." ./build-info/ 2>/dev/null \
-  || echo "build-info/: not in the image (built ref predates it)"
 docker rm -f "${cid}" || true
 ls -l dist/
 
@@ -57,6 +53,26 @@ fi
 # From the plugin job's provenance file (cell.env), not build_options.env.
 if [ -n "${UCX_SPCX_PLUGIN_COMMIT:-}" ]; then
   PROPERTIES+=";UCX_SPCX_PLUGIN_COMMIT=${UCX_SPCX_PLUGIN_COMMIT}"
+fi
+
+# Build-info sidecar for the manifest, measured inside the wheel image
+# (ucx_info, git, the auditwheel env) plus the per-venv pip dumps the
+# built ref's build-wheel.sh left in build-info/. Never fatal.
+rm -rf build-info && mkdir -p build-info
+BINARY_WHL="$(cd dist && ls nixl_cu*.whl 2>/dev/null | head -1)"
+CU_TAG="cu${CUDA_VERSION:-${cuda}}"; CU_TAG="${CU_TAG//./}"
+if [ -n "${BINARY_WHL}" ]; then
+  docker run --rm -v "${PWD}:/work" "${WHEEL_IMAGE_TAG}" \
+    python3 /work/.ci/scripts/extract_build_info.py \
+      --wheel "/work/dist/${BINARY_WHL}" \
+      --out "/work/build-info/${BINARY_WHL}.build-info.json" \
+      --python-version "${python_version}" \
+      --platform "manylinux_${manylinux}_${arch}" \
+      --cu-tag "${CU_TAG}" \
+      --torch-requested "${TORCH_VERSIONS_REQUESTED:-}" \
+      --pip-dumps /workspace/nixl/build-info \
+      --source-dir /workspace/nixl \
+    || echo "WARNING: build-info sidecar not written for ${BINARY_WHL}"
 fi
 
 # verification/ keeps its g<nixl-sha>.ucx<ucx-sha> schema (consumed by the

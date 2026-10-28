@@ -1,7 +1,7 @@
 #!/bin/bash -eE
 # pipeline_stop of build-wheel-nightly-matrix.yaml: merges this build's
 # manifest fragments from the PVC into build-manifest.json and uploads it
-# next to the wheels (the merge itself is .ci/scripts/wheel_manifest.py, run
+# next to the wheels (the merge itself is .ci/scripts/merge_build_manifest.py, run
 # in a plain Python image). Exit 0 means published; otherwise the reason is
 # in manifest-status.txt and build-manifest.json, when present, shows what
 # was assembled. The build's staging dir is removed on exit either way and
@@ -44,5 +44,5 @@ podman run --rm -v "${PWD}:/work" -w /work \
   -e JOB_NAME -e BUILD_NUMBER -e BUILD_URL -e NIXL_VERSION -e ci_refspec -e PUBLISH_DIR \
   -e ARTIFACTORY_USER -e ARTIFACTORY_TOKEN \
   "${CI_PYTHON_IMAGE:?}" \
-  python3 .ci/scripts/wheel_manifest.py \
+  python3 .ci/scripts/merge_build_manifest.py \
     --fragments manifest-fragments --out build-manifest.json --status-file manifest-status.txt
