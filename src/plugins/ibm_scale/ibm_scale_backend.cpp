@@ -187,7 +187,7 @@ nixlScaleEngine::registerMem(const nixlBlobDesc &mem,
             arg.accessRange.structType = GPFS_FCNTL_ACCESS_RANGE;
             arg.accessRange.start = offset;
             arg.accessRange.length = length;
-            arg.accessRange.accuracy = GPFS_ACCESS_SEQUENTIAL;
+            arg.accessRange.isWrite = 0;
 
             int ret = gpfs_fcntl(fmd->file_fd.fd(), &arg);
             if (ret != 0) {
@@ -434,7 +434,7 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
                 arg.accessRange.structType = GPFS_FCNTL_ACCESS_RANGE;
                 arg.accessRange.start = d.offset;
                 arg.accessRange.length = d.len;
-                arg.accessRange.accuracy = isWrite ? GPFS_ACCESS_WRITE : GPFS_ACCESS_SEQUENTIAL;
+                arg.accessRange.isWrite = isWrite ? 1 : 0;
 
                 int ret = gpfs_fcntl(d.fd, &arg);
                 if (ret != 0) {

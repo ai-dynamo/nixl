@@ -18,8 +18,8 @@ memory types.
   the plugin falls back to `pread()`/`pwrite()` transparently.
 - **Optional GPFS hints**: when built with `-Dibm_scale_path=` pointing to an IBM
   Storage Scale installation that provides `gpfs_fcntl.h`, the plugin can fire
-  `GPFS_PREFETCH` and `GPFS_ACCESS_RANGE` hints at `registerMem` time to warm the
-  GPFS client cache ahead of I/O.
+  `GPFS_ACCESS_RANGE` and `GPFS_FREE_RANGE` hints at `registerMem`/`deregisterMem` time
+  to inform the GPFS client cache.
 
 ## Dependencies
 
