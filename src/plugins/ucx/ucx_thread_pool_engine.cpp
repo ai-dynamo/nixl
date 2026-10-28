@@ -155,6 +155,11 @@ struct nixlUcxPostTrace {
     nixl::trace::TraceContext context;
     std::uint64_t requestId = 0;
     std::uint64_t execution = 0;
+
+    void
+    record(nixl_trace_phase_t phase, nixlTime::us_t at) const noexcept {
+        sink->recordPhase(phase, {}, at, {}, &context, requestId, execution);
+    }
 };
 
 /*
@@ -170,6 +175,9 @@ struct nixlUcxBackendSharedState {
 
     nixlUcxBackendSharedState() : status(NIXL_SUCCESS), pendingReqs(0) {}
 
+    void
+    completeTracedChunk() noexcept;
+
     friend std::ostream &
     operator<<(std::ostream &os, const nixlUcxBackendSharedState &state) {
         return os << "state " << &state << "{status: " << state.status.load()
@@ -178,30 +186,34 @@ struct nixlUcxBackendSharedState {
 };
 
 void
+nixlUcxBackendSharedState::completeTracedChunk() noexcept {
+    const nixlUcxPostTrace post = trace;
+    const nixlTime::us_t completed_at = nixlTime::getUs();
+    // Read the status before pendingReqs reaches zero, after which a repost may rewrite it.
+    size_t pending = pendingReqs.load();
+    while ((pending > 1) && !pendingReqs.compare_exchange_weak(pending, pending - 1))
+        ;
+    if (pending != 1) {
+        return;
+    }
+    const bool succeeded = (status.load() == NIXL_SUCCESS);
+    pendingReqs.store(0);
+    if (succeeded) {
+        post.record(nixl_trace_phase_t::WIRE_COMPLETED, completed_at);
+    }
+}
+
+void
 nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
     NIXL_ASSERT(sharedState_.get() != nullptr);
     if (status != NIXL_SUCCESS) {
         nixlUcxBackendReqH::release();
         sharedState_->status.store(status);
     }
-    const nixlUcxPostTrace trace = sharedState_->trace;
-    const nixlTime::us_t completed_at = (trace.sink != nullptr) ? nixlTime::getUs() : 0;
-    // Read the status before pendingReqs reaches zero, after which a repost may rewrite it.
-    size_t pending = sharedState_->pendingReqs.load();
-    while ((pending > 1) && !sharedState_->pendingReqs.compare_exchange_weak(pending, pending - 1))
-        ;
-    if (pending == 1) {
-        const bool succeeded = (sharedState_->status.load() == NIXL_SUCCESS);
-        sharedState_->pendingReqs.store(0);
-        if (succeeded && (trace.sink != nullptr)) {
-            trace.sink->recordPhase(nixl_trace_phase_t::WIRE_COMPLETED,
-                                    {},
-                                    completed_at,
-                                    {},
-                                    &trace.context,
-                                    trace.requestId,
-                                    trace.execution);
-        }
+    if (sharedState_->trace.sink == nullptr) [[likely]] {
+        sharedState_->pendingReqs.fetch_sub(1);
+    } else {
+        sharedState_->completeTracedChunk();
     }
     NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
     setWorker(nullptr);
