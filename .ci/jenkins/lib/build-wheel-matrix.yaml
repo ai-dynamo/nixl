@@ -434,7 +434,17 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      # Seed the port block per build and framework so the two sanity jobs of a build never
+      # share one, and rerun on a server port collision (a probed port is not held until the
+      # server binds it, minutes later). Kept on one line: the head node's shell is tcsh.
+      testScript: >-
+        set -o pipefail;
+        export CI_CONCURRENT_ID=$((2 * ${BUILD_NUMBER}));
+        for _ in 1 2 3; do
+        HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw} 2>&1 | tee /tmp/sanity.log && exit 0;
+        grep -qi "address already in use" /tmp/sanity.log || exit 1;
+        echo "[sanity] port collision, retrying on new ports";
+        done; exit 1
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
@@ -450,7 +460,14 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      testScript: >-
+        set -o pipefail;
+        export CI_CONCURRENT_ID=$((2 * ${BUILD_NUMBER} + 1));
+        for _ in 1 2 3; do
+        HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw} 2>&1 | tee /tmp/sanity.log && exit 0;
+        grep -qi "address already in use" /tmp/sanity.log || exit 1;
+        echo "[sanity] port collision, retrying on new ports";
+        done; exit 1
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
