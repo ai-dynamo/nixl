@@ -99,9 +99,9 @@ runHipFileOp(const aisXferReq *req, std::atomic<nixl_status_t> *overall_status) 
         }
 
         if (nbytes < 0) {
+            const std::string err = describeHipFileIoError(nbytes);
             NIXL_ERROR << "AIS: hipFile" << ((req->op == hipFileBatchRead) ? "Read" : "Write")
-                       << " failed after " << done << " out of " << req->size
-                       << " bytes: " << describeHipFileIoError(nbytes);
+                       << " failed after " << done << " out of " << req->size << " bytes: " << err;
             overall_status->store(NIXL_ERR_BACKEND);
             return;
         }
