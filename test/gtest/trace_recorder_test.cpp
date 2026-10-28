@@ -160,3 +160,40 @@ TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
                                       "context=" + nixl::trace::formatTraceparent(context),
                                       "at_us=5"}}));
 }
+
+TEST_F(traceRecorder, ContextSpanRecordsItsOwnContextAndId) {
+    constexpr std::uint64_t other_request_id = 0x0102030405060708ULL;
+    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto other_context = nixl::trace::generateTraceContext(1.0);
+    {
+        const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
+        ASSERT_NE(tracer, nullptr);
+        {
+            const nixl::trace::CorrelationScope scope(tracer.get(), context, recorded_request_id);
+            auto span = tracer->beginContextSpan(
+                "nixl::test.post", nixl::trace::Kind::CommSend, context, recorded_request_id);
+            span.addAttribute("nixl.bytes", std::int64_t{4096});
+            const auto child = tracer->beginSpan("nixl::test.child");
+            const auto other = tracer->beginContextSpan(
+                "nixl::test.other", nixl::trace::Kind::Generic, other_context, other_request_id);
+        }
+        const auto unscoped = tracer->beginContextSpan(
+            "nixl::test.unscoped", nixl::trace::Kind::Generic, context, recorded_request_id);
+    }
+
+    const std::string correlation = "correlation=" + std::to_string(recorded_request_id);
+    const std::string traceparent = nixl::trace::formatTraceparent(context);
+    EXPECT_EQ(records(),
+              (std::vector<record_t>{
+                  {recorder_agent,
+                   "nixl::test.other",
+                   "correlation=" + std::to_string(other_request_id),
+                   "span=" + nixl::trace::formatTraceparent(other_context)},
+                  {recorder_agent, "nixl::test.child", correlation, "context=" + traceparent},
+                  {recorder_agent,
+                   "nixl::test.post",
+                   correlation,
+                   "span=" + traceparent,
+                   "nixl.bytes=4096"},
+                  {recorder_agent, "nixl::test.unscoped", correlation, "span=" + traceparent}}));
+}

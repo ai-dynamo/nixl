@@ -145,7 +145,8 @@ void
 nixl::trace::Tracer::reportContextFailure(std::string_view reason) const noexcept {
     logOnce(contextFailureLogged_, [reason] {
         NIXL_ERROR << "nixl::trace: could not generate a trace context (" << reason
-                   << "); the request continues untraced and further failures are not logged";
+                   << "); the request or post continues without it and further failures "
+                      "are not logged";
     });
 }
 
@@ -315,4 +316,25 @@ nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
         return 0;
     }
     return id;
+}
+
+nixl::trace::TraceContext
+nixl::trace::generatePostContext(const nixl::trace::TraceContext &request,
+                                 const nixl::trace::Tracer *tracer) {
+    if (tracer == nullptr) {
+        return request;
+    }
+    const auto fill =
+        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : nixl::generateRandomBytes;
+    nixl::trace::TraceContext context = request;
+    try {
+        do {
+            fill(context.spanId.data(), context.spanId.size());
+        } while (isAllZero(context.spanId));
+    }
+    catch (const std::exception &e) {
+        tracer->reportContextFailure(e.what());
+        return request;
+    }
+    return context;
 }
