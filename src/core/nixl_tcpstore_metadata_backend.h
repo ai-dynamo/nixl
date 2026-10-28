@@ -106,10 +106,7 @@ private:
 
     // Initiate one async fetch on the key.
     void
-    initiateFetch(const std::string &remote_name,
-                  const std::string &key,
-                  std::chrono::steady_clock::time_point deadline,
-                  std::chrono::milliseconds retry_delay);
+    initiateFetch(const std::string &remote_name, const std::string &key);
 
     // Retry pending fetches that have not yet succeeded.
     void
@@ -137,8 +134,13 @@ private:
     std::unordered_set<std::string> publishedKeys_;
 
     // Keys pending fetch retries. Each key is mapped to its fetch deadline and remote name.
-    using deadline_and_remote_t = std::pair<std::chrono::steady_clock::time_point, std::string>;
-    std::unordered_map<std::string, deadline_and_remote_t> fetchRetryKeys_;
+    struct pendingInfo {
+        std::chrono::steady_clock::time_point deadline;
+        std::string remoteName;
+        bool fetchInProgress = false;
+    };
+
+    std::unordered_map<std::string, pendingInfo> pendingKeys_;
     // Timer for fetch retries.
     asio::steady_timer fetchRetryTimer_;
 

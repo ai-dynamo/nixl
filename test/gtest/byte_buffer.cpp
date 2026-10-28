@@ -59,15 +59,24 @@ TEST(ByteBuffer, Put) {
     EXPECT_EQ(b.getRef()[37], 2);
     EXPECT_EQ(b.getRef()[38], 3);
 
-    // Enums can be put into the buffer using views::transform.
-    b.put(std::array<std::byte, 3>{std::byte(1), std::byte(2), std::byte(3)} |
-          std::views::transform([](std::byte v) { return static_cast<std::int8_t>(v); }));
+    std::int8_t arr[] = {1, 2, 3};
+    b.put(arr);
     EXPECT_EQ(b.getRef().size(), 50);
     memcpy(&s, &b.getRef()[39], sizeof(std::uint64_t));
     EXPECT_EQ(s, 3);
     EXPECT_EQ(b.getRef()[47], 1);
     EXPECT_EQ(b.getRef()[48], 2);
     EXPECT_EQ(b.getRef()[49], 3);
+
+    // Enums can be put into the buffer using views::transform.
+    b.put(std::array<std::byte, 3>{std::byte(1), std::byte(2), std::byte(3)} |
+          std::views::transform([](std::byte v) { return static_cast<std::int8_t>(v); }));
+    EXPECT_EQ(b.getRef().size(), 61);
+    memcpy(&s, &b.getRef()[50], sizeof(std::uint64_t));
+    EXPECT_EQ(s, 3);
+    EXPECT_EQ(b.getRef()[58], 1);
+    EXPECT_EQ(b.getRef()[59], 2);
+    EXPECT_EQ(b.getRef()[60], 3);
 }
 
 TEST(ByteBuffer, VarArg) {

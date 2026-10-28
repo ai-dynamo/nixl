@@ -127,10 +127,12 @@ void
 nixlTcpStoreMetadataBackend::stop() {
     asio::post(ioContext_, [this]() {
         stopCalled_ = true;
-        fetchRetryKeys_.clear();
-        writeQueue_.clear();
+        pendingKeys_.clear();
         fetchRetryTimer_.cancel();
-        client_->close();
+        if (!inflightTask_) {
+            assert(writeQueue_.empty());
+            client_->close();
+        }
     });
 }
 
@@ -212,98 +214,101 @@ nixlTcpStoreMetadataBackend::fetchRemote(const std::string &remote_name,
         if (stopCalled_) {
             return;
         }
-        auto retry_it = fetchRetryKeys_.find(key);
-        if (retry_it != fetchRetryKeys_.end()) {
+        auto it = pendingKeys_.find(key);
+        if (it != pendingKeys_.end()) {
             // Update the deadline and let the retry timer handle the next attempt.
-            retry_it->second.first = std::max(deadline, retry_it->second.first);
+            it->second.deadline = std::max(deadline, it->second.deadline);
             return;
         }
 
-        initiateFetch(remote, key, deadline, default_retry_delay);
+        pendingKeys_.try_emplace(key, pendingInfo{deadline, remote, true});
+        initiateFetch(remote, key);
     });
 
     return NIXL_SUCCESS;
 }
 
 void
-nixlTcpStoreMetadataBackend::initiateFetch(const std::string &remote_name,
-                                           const std::string &key,
-                                           std::chrono::steady_clock::time_point deadline,
-                                           std::chrono::milliseconds retry_delay) {
-    client_->get(
-        key,
-        [this, remote = remote_name, key = key, deadline, retry_delay](
-            asio::error_code error, std::optional<std::string> blob) {
-            if (!error && blob) {
-                // Fetch succeeded.
-                fetchRetryKeys_.erase(key);
+nixlTcpStoreMetadataBackend::initiateFetch(const std::string &remote_name, const std::string &key) {
+    client_->get(key,
+                 [this, key = key, remote = remote_name](asio::error_code error,
+                                                         std::optional<std::string> blob) {
+                     if (!error && blob) {
+                         // Fetch succeeded.
+                         pendingKeys_.erase(key);
 
-                std::string loaded_name;
-                const nixl_status_t ret = ctx_.loadRemoteMD(*blob, loaded_name);
-                if (ret < 0) {
-                    NIXL_ERROR << "[" << ctx_.agentName()
-                               << "] failed to load metadata fetched for " << remote
-                               << " with status " << ret;
-                    return;
-                }
-                if (loaded_name != remote) {
-                    // A corrupted or mis-keyed store value could carry another agent's
-                    // metadata; reject it rather than accept it under the wrong name.
-                    NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore metadata for " << remote
-                               << " embeds mismatched agent name " << loaded_name;
-                    ctx_.invalidateRemoteMD(loaded_name);
-                    return;
-                }
-                NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore fetched metadata for "
-                           << remote << ", size: " << blob->size();
-            } else {
-                if (!error) {
-                    NIXL_DEBUG << "[" << ctx_.agentName()
-                               << "] TCPStore key not yet present: " << key;
-                }
+                         std::string loaded_name;
+                         const nixl_status_t ret = ctx_.loadRemoteMD(*blob, loaded_name);
+                         if (ret < 0) {
+                             NIXL_ERROR << "[" << ctx_.agentName()
+                                        << "] failed to load metadata fetched for " << remote
+                                        << " with status " << ret;
+                             return;
+                         }
+                         if (loaded_name != remote) {
+                             // A corrupted or mis-keyed store value could carry another agent's
+                             // metadata; reject it rather than accept it under the wrong name.
+                             NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore metadata for "
+                                        << remote << " embeds mismatched agent name "
+                                        << loaded_name;
+                             ctx_.invalidateRemoteMD(loaded_name);
+                             return;
+                         }
+                         NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore fetched metadata for "
+                                    << remote << ", size: " << blob->size();
+                     } else {
+                         if (!error) {
+                             NIXL_DEBUG << "[" << ctx_.agentName()
+                                        << "] TCPStore key not yet present: " << key;
+                         }
 
-                auto fetch_deadline = deadline;
-                auto retry_it = fetchRetryKeys_.find(key);
-                if (retry_it != fetchRetryKeys_.end()) {
-                    fetch_deadline = std::max(deadline, retry_it->second.first);
-                }
-                if (std::chrono::steady_clock::now() >= fetch_deadline) {
-                    NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore fetch for " << remote
-                               << " gave up waiting for key " << key;
-                    fetchRetryKeys_.erase(key);
-                    return;
-                }
+                         auto fetch_deadline = std::chrono::steady_clock::now();
+                         auto it = pendingKeys_.find(key);
+                         if (it != pendingKeys_.end()) {
+                             fetch_deadline = it->second.deadline;
+                         }
+                         if (std::chrono::steady_clock::now() >= fetch_deadline) {
+                             NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore fetch for "
+                                        << remote << " gave up waiting for key " << key;
+                             pendingKeys_.erase(key);
+                             return;
+                         }
 
-                // A key that is not published yet is kept retrying rather than dropped, so
-                // a caller polling checkRemoteMD still converges once the peer publishes.
-                if (!stopCalled_) {
-                    fetchRetryKeys_.try_emplace(key, deadline_and_remote_t(deadline, remote));
-                    if (fetchRetryTimer_.expiry() < std::chrono::steady_clock::now()) {
-                        // Arm the retry timer.
-                        fetchRetryTimer_.expires_after(retry_delay);
-                        fetchRetryTimer_.async_wait([this](asio::error_code error) {
-                            if (!error && !stopCalled_) {
-                                retryPendingFetches();
-                            }
-                        });
-                    }
-                }
-            }
-        });
+                         // A key that is not published yet is kept retrying rather than dropped, so
+                         // a caller polling checkRemoteMD still converges once the peer publishes.
+                         if (!stopCalled_) {
+                             it->second.fetchInProgress = false;
+                             if (fetchRetryTimer_.expiry() < std::chrono::steady_clock::now()) {
+                                 // Arm the retry timer.
+                                 fetchRetryTimer_.expires_after(default_retry_delay);
+                                 fetchRetryTimer_.async_wait([this](asio::error_code error) {
+                                     if (!error && !stopCalled_) {
+                                         retryPendingFetches();
+                                     }
+                                 });
+                             }
+                         }
+                     }
+                 });
 }
 
 void
 nixlTcpStoreMetadataBackend::retryPendingFetches() {
-    for (auto it = fetchRetryKeys_.begin(); it != fetchRetryKeys_.end();) {
-        const auto &[key, deadline_and_remote] = *it;
-        const auto &[deadline, remote] = deadline_and_remote;
-        if (std::chrono::steady_clock::now() < deadline) {
-            initiateFetch(remote, key, deadline, default_retry_delay);
+    for (auto it = pendingKeys_.begin(); it != pendingKeys_.end();) {
+        auto &[key, info] = *it;
+        if (info.fetchInProgress) {
+            ++it;
+            continue;
+        }
+
+        if (std::chrono::steady_clock::now() < info.deadline) {
+            info.fetchInProgress = true;
+            initiateFetch(info.remoteName, key);
             ++it;
         } else {
-            NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore fetch for " << remote
+            NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore fetch for " << info.remoteName
                        << " gave up waiting for key " << key;
-            it = fetchRetryKeys_.erase(it);
+            it = pendingKeys_.erase(it);
         }
     }
 }
@@ -380,7 +385,10 @@ nixlTcpStoreMetadataBackend::writeTaskCompleted(const WriteTask *completed_task)
     assert(inflightTask_.get() == completed_task);
     inflightTask_.reset();
 
-    if (stopCalled_ || writeQueue_.empty()) {
+    if (writeQueue_.empty()) {
+        if (stopCalled_) {
+            client_->close();
+        }
         return;
     }
 
