@@ -310,7 +310,6 @@ else
             args: ['-I' + nixl_inc] + ucx_device_cuda_args,
             name: 'NIXL Device API')
         if have_nixl_device_api
-            message('NIXL Device API is ready for nixlbench.')
             nixl_device_api_available = true
             add_project_arguments('-DNIXLBENCH_DEVICE_API', language: ['cpp', 'cuda'])
         endif
