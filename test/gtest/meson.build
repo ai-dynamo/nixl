@@ -21,6 +21,15 @@ if not gtest_dep.found()
     subdir_done()
 endif
 
+if get_option('gpunetio_device_api').enabled() and is_variable('gpunetio_backend_interface')
+    native_device_test = executable('native-device-api-test',
+        'device_api/gpunetio_device_api_test.cu',
+        include_directories: [nixl_inc_dirs, nixl_device_inc_dirs, utils_inc_dirs],
+        dependencies: [nixl_dep, nixl_infra, cuda_dep, doca_gpunetio_dep, dependency('gtest', main: true)],
+        cuda_args: ['-DNIXL_ENABLE_GPUNETIO_DEVICE_API=1',
+                    '-DNIXL_GPUNETIO_DEVICE_API_PUBLIC=1', '-DNIXL_DISABLE_UCX_DEVICE_API=1'])
+endif
+
 gmock_dep = dependency('gmock', required : false)
 
 if not gmock_dep.found()

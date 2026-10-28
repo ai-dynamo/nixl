@@ -475,6 +475,13 @@ else
   libfabric_dep = dependency('libfabric', required: false)
 endif
 
+# Native GPUNETIO device API is an explicit build capability.
+if get_option('gpunetio_device_api').enabled()
+    if not cuda_dep.found() or not doca_gpunetio_dep.found() or not enabled_plugins.get('GPUNETIO')
+        error('GPUNETIO native Device API requires CUDA and the GPUNETIO plugin')
+    endif
+endif
+
 # UCX GPU device API detection
 nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false

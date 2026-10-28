@@ -60,6 +60,7 @@ get_backend_options() {
     params["cuda_streams"] = "";
     params["gid_index"] = "";
     params["data_qp_count"] = "";
+    params["native_device_api"] = "false";
     return params;
 }
 

@@ -22,7 +22,7 @@
 #include <gpu/device_types.cuh>
 #include <gpu/impl/level_utils.cuh>
 
-#if __has_include(<ucp/api/device/ucp_device_impl.h>)
+#if !defined(NIXL_DISABLE_UCX_DEVICE_API) && __has_include(<ucp/api/device/ucp_device_impl.h>)
 #include <gpu/impl/ucx/device_ucx.cuh>
 
 namespace nixl::gpu::impl::ucx {
@@ -59,6 +59,30 @@ getPtr(nixlMemViewH, size_t) {
 } // namespace nixl::gpu::impl::ucx
 #endif
 
+#if defined(NIXL_ENABLE_GPUNETIO_DEVICE_API) && NIXL_ENABLE_GPUNETIO_DEVICE_API
+#include <gpu/impl/gpunetio/device_gpunetio.cuh>
+
+namespace nixl::gpu::impl::gpunetio {
+inline constexpr bool available = true;
+} // namespace nixl::gpu::impl::gpunetio
+#else
+namespace nixl::gpu::impl::gpunetio {
+inline constexpr bool available = false;
+
+template<level_t level>
+__device__ nixl_status_t
+getXferStatus(xferStatusH &) {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+template<level_t level>
+__device__ nixl_status_t
+put(const memViewElem &, const memViewElem &, size_t, unsigned, uint64_t, xferStatusH *) {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+} // namespace nixl::gpu::impl::gpunetio
+#endif
+
 // The proxy implementation needs only CUDA, so unlike the UCX arm it is always
 // present and needs no capability gate.
 #include "proxy/device_proxy.cuh"
@@ -73,12 +97,13 @@ namespace detail {
     }
 
     template<exec_mode_t mode>
-    inline constexpr bool buildable = mode != exec_mode_t::UCX_DIRECT || ucx::available;
+    inline constexpr bool buildable = (mode != exec_mode_t::UCX_DIRECT || ucx::available) &&
+        (mode != exec_mode_t::GPUNETIO_DIRECT || gpunetio::available);
 
     template<exec_mode_t mode>
     __device__ __forceinline__ exec_mode_t
     executionMode(const memViewWrapper &view) {
-        static_assert(buildable<mode>, "UCX_DIRECT needs UCX's GPU device API");
+        static_assert(buildable<mode>, "The fixed execution mode needs its device API enabled");
         if constexpr (mode == exec_mode_t::DYNAMIC) {
             return view.execution_mode;
         } else {
@@ -90,7 +115,7 @@ namespace detail {
     template<exec_mode_t mode>
     __device__ __forceinline__ exec_mode_t
     executionMode(const xferStatusH &status) {
-        static_assert(buildable<mode>, "UCX_DIRECT needs UCX's GPU device API");
+        static_assert(buildable<mode>, "The fixed execution mode needs its device API enabled");
         if constexpr (mode == exec_mode_t::DYNAMIC) {
             return status.mode;
         } else {
@@ -123,6 +148,8 @@ getXferStatus(xferStatusH &xfer_status) {
         return ucx::getXferStatus<level>(xfer_status);
     case exec_mode_t::PROXY:
         return proxy::getXferStatus<level>(xfer_status);
+    case exec_mode_t::GPUNETIO_DIRECT:
+        return gpunetio::getXferStatus<level>(xfer_status);
     default:
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -136,6 +163,9 @@ put(const memViewElem &src,
     unsigned channel_id,
     uint64_t flags,
     xferStatusH *xfer_status) {
+    if (src.mvh == nullptr || dst.mvh == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     const auto *src_view = detail::asDeviceMemView(src.mvh);
     const auto *dst_view = detail::asDeviceMemView(dst.mvh);
     const memViewElem backend_src{src_view->backend_memview, src.index, src.offset};
@@ -148,6 +178,24 @@ put(const memViewElem &src,
         status = ucx::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
     } else if (execution_mode == exec_mode_t::PROXY) {
         status = proxy::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
+    } else if (execution_mode == exec_mode_t::GPUNETIO_DIRECT) {
+        if constexpr (level != level_t::THREAD) {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+        if (src_view->execution_mode != exec_mode_t::GPUNETIO_DIRECT ||
+            dst_view->execution_mode != exec_mode_t::GPUNETIO_DIRECT ||
+            backend_src.mvh == nullptr || backend_dst.mvh == nullptr || xfer_status == nullptr ||
+            (xfer_status->mode != exec_mode_t{} && xfer_status->mode != execution_mode)) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+#if defined(NIXL_ENABLE_GPUNETIO_DEVICE_API) && NIXL_ENABLE_GPUNETIO_DEVICE_API
+        if ((mode == exec_mode_t::GPUNETIO_DIRECT || xfer_status->mode == execution_mode) &&
+            gpunetio::isStatusInProgress(*xfer_status)) {
+            return NIXL_ERR_REPOST_ACTIVE;
+        }
+#endif
+        status =
+            gpunetio::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
     } else {
         status = NIXL_ERR_INVALID_PARAM;
     }
@@ -162,6 +210,9 @@ atomicAdd(uint64_t value,
           unsigned channel_id,
           uint64_t flags,
           xferStatusH *xfer_status) {
+    if (counter.mvh == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     const auto *view = detail::asDeviceMemView(counter.mvh);
     const memViewElem backend_counter{view->backend_memview, counter.index, counter.offset};
 
@@ -171,6 +222,8 @@ atomicAdd(uint64_t value,
         status = ucx::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
     } else if (execution_mode == exec_mode_t::PROXY) {
         status = proxy::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
+    } else if (execution_mode == exec_mode_t::GPUNETIO_DIRECT) {
+        return NIXL_ERR_NOT_SUPPORTED;
     } else {
         status = NIXL_ERR_INVALID_PARAM;
     }
@@ -181,6 +234,9 @@ atomicAdd(uint64_t value,
 template<exec_mode_t mode>
 __device__ inline void *
 getPtr(nixlMemViewH mvh, size_t index) {
+    if (mvh == nullptr) {
+        return nullptr;
+    }
     const auto *view = detail::asDeviceMemView(mvh);
     switch (detail::executionMode<mode>(*view)) {
     case exec_mode_t::UCX_DIRECT:

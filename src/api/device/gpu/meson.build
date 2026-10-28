@@ -30,4 +30,10 @@ if get_option('install_headers')
         'impl/proxy/device_proxy_ring.cuh',
         install_dir: prefix_inc + '/gpu/impl/proxy',
     )
+    install_headers(
+        'impl/gpunetio/device_gpunetio_types.h',
+        'impl/gpunetio/device_gpunetio_compat.cuh',
+        'impl/gpunetio/device_gpunetio.cuh',
+        install_dir: prefix_inc + '/gpu/impl/gpunetio',
+    )
 endif

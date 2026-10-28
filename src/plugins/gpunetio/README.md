@@ -32,6 +32,17 @@ Stream attached mode is optimal when the application has a sequence of CUDA task
 
 Stream pool mode instead is when applications mostly wants to process data on the CPU but still wants to take the advange of GPU taking care of network communications in a parallel way (every CUDA communication kernel will be executed in parallel to others on a different stream).
 
+## Native GPU PUT (opt-in)
+
+Build with `-Dgpunetio_device_api=enabled` and select the backend parameter
+`native_device_api=true` to submit and query a PUT from application CUDA code
+through NIXL's public device API. This mode uses one data QP, one remote peer,
+and one accepted, unretired PUT at a time. It supports THREAD scope and ordinary
+VRAM on the execution GPU; host READ/WRITE and notifications are unavailable
+in native mode. The default host path is unchanged. See
+[the native API guide](../../../README_GPUNETIO.md) for lifetime requirements,
+the supported SDK contract and paired correctness commands.
+
 ## Input parameters
 
 `data_qp_count` optionally selects 1–4 WRITE QPs per peer (default 1). Both peers
