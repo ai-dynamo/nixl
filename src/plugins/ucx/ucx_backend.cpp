@@ -676,6 +676,11 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    // UCX cannot cancel RMA. Retain active requests so callers can poll them
+    // and retry release before reclaiming their buffers.
+    if (int_handle->status() == NIXL_IN_PROG) {
+        return NIXL_ERR_NOT_ALLOWED;
+    }
     int_handle->release();
 
     /* TODO: return to a pool instead. */
