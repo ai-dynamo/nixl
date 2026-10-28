@@ -21,9 +21,6 @@ WHL_PLATFORM="manylinux_2_39_$ARCH"
 UCX_PLUGINS_DIR="/usr/lib64/ucx"
 NIXL_PLUGINS_DIR="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins"
 OUTPUT_DIR="dist"
-BUILD_INFO_DIR="build-info"
-# CI tooling; a tree without it still builds, just without sidecars.
-BUILD_INFO_TOOL="./.ci/scripts/wheel_build_info.py"
 BUILD_NIXL_EP="false"
 TORCH_VERSIONS=""
 TORCH_CUDA_INDEX=""
@@ -45,11 +42,6 @@ while [[ $# -gt 0 ]]; do
             shift
             shift
             ;;
-        --build-info-dir)
-            BUILD_INFO_DIR=$2
-            shift
-            shift
-            ;;
         --ucx-plugins-dir)
             UCX_PLUGINS_DIR=$2
             shift
@@ -65,7 +57,6 @@ while [[ $# -gt 0 ]]; do
             echo "  --python-version: Python version to build the wheel for (default: $PYTHON_VERSION)"
             echo "  --platform: Platform to build the wheel for (default: $WHL_PLATFORM)"
             echo "  --output-dir: Directory to output the wheel to (default: $OUTPUT_DIR)"
-            echo "  --build-info-dir: Directory for the per-wheel build-info JSON (default: $BUILD_INFO_DIR)"
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
             echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires a CUDA sm_90 or newer target environment)"
@@ -273,10 +264,9 @@ build_wheel() {
 
     echo "=== Provisioning ${VENV_PATH} (python ${PYTHON_VERSION}${VER:+, torch ${VER} [${CHANNEL}]}) ==="
     uv pip install --python "$VENV_PATH/bin/python" "${BUILD_DEPS[@]}"
-    # Captured here because the venv is destroyed at the end of this function.
-    [ ! -x "$BUILD_INFO_TOOL" ] || "$VENV_PATH/bin/python" "$BUILD_INFO_TOOL" venv-toolchain \
-        --out "$TMP_DIR/toolchain-${VER:-base}.json" ${VER:+--channel "$CHANNEL"} \
-        || echo "WARNING: build-info: toolchain capture failed for $VENV_PATH" >&2
+    # Toolchain evidence for the CI build manifest; never fatal.
+    mkdir -p build-info && uv pip list --python "$VENV_PATH/bin/python" --format json \
+        > "build-info/pip-py${PYTHON_VERSION}-torch${VER:-base}.json" || true
 
     # Activate so meson's `find_installation('python3')` resolves to this
     # venv's interpreter (which has the right torch).
@@ -323,23 +313,6 @@ get_wheel_path() {
         exit 1
     fi
     echo "${wheels[0]}"
-}
-
-# Write <wheel>.build-info.json for the final wheel in $1; the remaining
-# arguments are passed to the sidecar sub-command. Never fatal.
-write_build_info() {
-    local WHL=$1
-    shift
-    [ -x "$BUILD_INFO_TOOL" ] || { echo "WARNING: build-info: $BUILD_INFO_TOOL not in this tree, no sidecar" >&2; return 0; }
-    mkdir -p "$BUILD_INFO_DIR" || { echo "WARNING: build-info: cannot create $BUILD_INFO_DIR" >&2; return 0; }
-    "$BUILD_INFO_TOOL" sidecar \
-        --wheel "$WHL" \
-        --out "$BUILD_INFO_DIR/$(basename "$WHL").build-info.json" \
-        --python-version "$PYTHON_VERSION" \
-        --platform "$WHL_PLATFORM" \
-        --cu-tag "$CU_TAG" \
-        "$@" \
-        || echo "WARNING: build-info: sidecar not written for $(basename "$WHL")" >&2
 }
 
 if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
@@ -397,22 +370,10 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
     done
 
     cp "$BASE_WHL" "$OUTPUT_DIR"
-
-    BUILD_INFO_ARGS=(--toolchain-json "$TMP_DIR/toolchain-${FIRST_TORCH}.json" --torch-requested "$TORCH_VERSIONS")
-    for TORCH in "${TORCH_ARRAY[@]}"; do
-        BUILD_INFO_ARGS+=(--torch-built "${TORCH}=$TMP_DIR/toolchain-${TORCH}.json")
-    done
-    if [ ${#SKIPPED[@]} -gt 0 ]; then
-        BUILD_INFO_ARGS+=(--torch-skipped "$(IFS=,; echo "${SKIPPED[*]}")"
-                          --skip-reason "no wheel on index for Python ${PYTHON_VERSION} + ${CU_TAG} on $(uname -m)")
-    fi
-    write_build_info "$OUTPUT_DIR/$(basename "$BASE_WHL")" "${BUILD_INFO_ARGS[@]}"
 else
     build_wheel "$TMP_DIR"
     repair_wheel "$TMP_DIR" "$TMP_DIR/dist"
-    FINAL_WHL=$(get_wheel_path "$TMP_DIR/dist")
-    cp "$FINAL_WHL" "$OUTPUT_DIR"
-    write_build_info "$OUTPUT_DIR/$(basename "$FINAL_WHL")" --toolchain-json "$TMP_DIR/toolchain-base.json"
+    cp "$(get_wheel_path "$TMP_DIR/dist")" "$OUTPUT_DIR"
 fi
 
 # Clean up

@@ -59,16 +59,11 @@ CUDA_VERSION=${CUDA_VERSION:-}
 TORCH_CUDA_INDEX=${TORCH_CUDA_INDEX:-}
 BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/static/infinia-libs:v2.5.0-rcx.1"
-INFINIA_LIBS_DIGEST=""
 APT_MIRROR=""
-# The default applies to the clone path only; a pre-built module (--ucx-spcx-plugin-install)
-# records a ref only when the caller names one.
 BUILD_UCX_SPCX_PLUGIN="false"
-UCX_SPCX_PLUGIN_REF_DEFAULT="v0.3.x"
-UCX_SPCX_PLUGIN_REF=""
+UCX_SPCX_PLUGIN_REF="v0.3.x"
 UCX_SPCX_PLUGIN_INSTALL=""
 BUILD_OPTIONS_FILE=""
-WHEEL_BASE_IMAGE=""
 
 get_options() {
     while :; do
@@ -317,7 +312,7 @@ show_build_options() {
     echo "Build Context: ${BUILD_CONTEXT}"
     # Each component is overridden independently; whichever is unset comes
     # from the Dockerfile's own ARG default.
-    echo "Base Image: ${BASE_IMAGE_RESOLVED}:${BASE_IMAGE_TAG_RESOLVED}"
+    echo "Base Image: ${BASE_IMAGE:-<Dockerfile default>}:${BASE_IMAGE_TAG:-<Dockerfile default>}"
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
@@ -342,7 +337,7 @@ show_build_options() {
         echo "Infinia DDN plugin: Disabled"
     fi
     if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
-        echo "UCX spcx plugin: Enabled (ref: ${UCX_SPCX_PLUGIN_REF:-<pre-built module>})"
+        echo "UCX spcx plugin: Enabled (ref: ${UCX_SPCX_PLUGIN_REF})"
     else
         echo "UCX spcx plugin: Disabled"
     fi
@@ -373,8 +368,8 @@ write_build_options_file() {
     local ucx_sha
     ucx_sha="$(resolve_ucx_sha)" || exit 1
     cat > "$BUILD_OPTIONS_FILE" <<EOF
-BASE_IMAGE="${BASE_IMAGE_RESOLVED}"
-BASE_IMAGE_TAG="${BASE_IMAGE_TAG_RESOLVED}"
+BASE_IMAGE="${BASE_IMAGE}"
+BASE_IMAGE_TAG="${BASE_IMAGE_TAG}"
 ARCH="${ARCH}"
 CUDA_VERSION="${CUDA_VERSION}"
 TORCH_CUDA_INDEX="${TORCH_CUDA_INDEX}"
@@ -385,8 +380,6 @@ UCX_SONAME_SUFFIX="${UCX_SONAME_SUFFIX}"
 BUILD_NIXL_EP="${BUILD_NIXL_EP}"
 BUILD_INFINIA="${BUILD_INFINIA}"
 INFINIA_LIBS_IMAGE="${INFINIA_LIBS_IMAGE}"
-INFINIA_LIBS_DIGEST="${INFINIA_LIBS_DIGEST}"
-WHEEL_BASE_IMAGE="${WHEEL_BASE_IMAGE}"
 BUILD_UCX_SPCX_PLUGIN="${BUILD_UCX_SPCX_PLUGIN}"
 UCX_SPCX_PLUGIN_REF="${UCX_SPCX_PLUGIN_REF}"
 BUILD_TYPE="${BUILD_TYPE}"
@@ -412,7 +405,7 @@ show_help() {
     echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
     echo "  [--build-ucx-spcx-plugin build the UCX spcx external plugin (requires NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL in the environment) (requires --dockerfile contrib/Dockerfile or contrib/Dockerfile.manylinux; bundled into the wheel only on the manylinux path)]"
-    echo "  [--ucx-spcx-plugin-ref git ref of ucx-spcx-plugin to build (default: ${UCX_SPCX_PLUGIN_REF_DEFAULT})]"
+    echo "  [--ucx-spcx-plugin-ref git ref of ucx-spcx-plugin to build (default: ${UCX_SPCX_PLUGIN_REF})]"
     echo "  [--ucx-spcx-plugin-install directory holding a pre-built plugin module to install instead of building one (implies --build-ucx-spcx-plugin; no gitlab credentials needed)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
@@ -439,19 +432,7 @@ error() {
     exit 1
 }
 
-# First `ARG NAME=value` default in the Dockerfile, quotes stripped. What the
-# build applies when the matching flag is not given, so it is what gets recorded.
-dockerfile_arg_default() {
-    sed -n "s/^ARG $1=\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*\$/\1/p" "$DOCKER_FILE" | head -n1
-}
-
 get_options "$@"
-
-if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ] && [ -z "$UCX_SPCX_PLUGIN_INSTALL" ]; then
-    UCX_SPCX_PLUGIN_REF="${UCX_SPCX_PLUGIN_REF:-$UCX_SPCX_PLUGIN_REF_DEFAULT}"
-fi
-BASE_IMAGE_RESOLVED="${BASE_IMAGE:-$(dockerfile_arg_default BASE_IMAGE)}"
-BASE_IMAGE_TAG_RESOLVED="${BASE_IMAGE_TAG:-$(dockerfile_arg_default BASE_IMAGE_TAG)}"
 
 if [ -d "$NIXL_DIR/build" ]; then
     echo "Please delete the build directory before creating container"
@@ -595,7 +576,6 @@ if [ "$BUILD_INFINIA" = "true" ]; then
         "$INFINIA_LIBS_IMAGE" 2>/dev/null | sed -n 's/.*@//p')
     [ -n "$infinia_digest" ] && \
         INFINIA_PLUGIN_VERSION="${INFINIA_PLUGIN_VERSION}@${infinia_digest}"
-    INFINIA_LIBS_DIGEST="$infinia_digest"
     BUILD_ARGS+=" --build-arg INFINIA_PLUGIN_VERSION=$INFINIA_PLUGIN_VERSION"
 fi
 

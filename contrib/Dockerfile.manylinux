@@ -581,7 +581,7 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     else \
         EP_BUILD_FLAGS=""; \
     fi && \
-    rm -rf dist build-info && mkdir -p dist build-info && \
+    rm -rf dist && mkdir -p dist && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         export PATH=$VIRTUAL_ENV/bin:$PATH && \
         ./contrib/build-wheel.sh \
