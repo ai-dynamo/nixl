@@ -12,9 +12,13 @@ from pathlib import Path
 import cutlass
 import cutlass.cute as cute
 
+from nixl._bindings import nixl_status_t
+
 THREAD, WARP, BLOCK = 0, 1, 2
-SUCCESS, IN_PROGRESS, DEFER = 0, 1, 1
-REQUEST_BYTES, REQUEST_ALIGNMENT = 64, 16
+SUCCESS = int(nixl_status_t.NIXL_SUCCESS)
+IN_PROGRESS = int(nixl_status_t.NIXL_IN_PROG)
+DEFER = 1
+REQUEST_BYTES = 64
 _bitcode = cute.BitCode(str(Path(__file__).with_name("device.bc")))
 
 
@@ -85,8 +89,8 @@ def put(
     Other arguments directly select native descriptors, byte offsets, channel,
     flags and cooperation level. Keep the buffers/views/request alive until the
     operation completes. DEFER permits, but does not guarantee, deferral.
-    The validated CUDA-IPC example uses private request storage per thread;
-    GDA request ownership and cooperative progress remain unqualified.
+    Cooperating threads share one request, aligned to 16 bytes. Independent
+    operations need separate requests until completion.
     """
     return _status(
         _put(

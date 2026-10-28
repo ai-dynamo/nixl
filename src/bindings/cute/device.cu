@@ -25,6 +25,9 @@ static_assert(sizeof(nixlGpuXferStatusH) == 64);
 static_assert(alignof(nixlGpuXferStatusH) == 16);
 static_assert(NIXL_SUCCESS == 0 && NIXL_IN_PROG == 1);
 static_assert(nixl_gpu_flags::defer == 1);
+static_assert(static_cast<int>(nixl_gpu_level_t::THREAD) == 0);
+static_assert(static_cast<int>(nixl_gpu_level_t::WARP) == 1);
+static_assert(static_cast<int>(nixl_gpu_level_t::BLOCK) == 2);
 
 extern "C" __device__ __attribute__((always_inline)) int
 cute_nixl_put(uint64_t local,

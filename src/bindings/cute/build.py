@@ -36,15 +36,20 @@ def main():
     parser.add_argument("--arch", required=True, help="e.g. sm_90 or sm_100")
     parser.add_argument("--cuda", type=Path, default=Path("/usr/local/cuda"))
     parser.add_argument("--llvm", type=Path, default=Path("/usr/lib/llvm-20/bin"))
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--depfile", type=Path)
     args = parser.parse_args()
     here = Path(__file__).resolve().parent
     root = here.parents[2]
+    output = args.output or here / "device.bc"
+    dependencies = ["-MD", "-MF", args.depfile, "-MQ", output] if args.depfile else []
     if not (args.ucx / "include/ucp/api/device/ucp_device_impl.h").is_file():
         parser.error("UCX device development headers are required")
     includes = [
         here / "compat",
         root / "src/api/device",
         root / "src/api/cpp",
+        root / "src/utils",
         args.ucx / "include",
         args.cuda / "include/cccl",
     ]
@@ -62,7 +67,8 @@ def main():
         )
         run(
             "clang++",
-            "-std=c++20",
+            "-std=gnu++20",  # UCX GDA headers use GNU typeof.
+            "-fdelayed-template-parsing",  # GDA completes request types after templates.
             "-x",
             "cuda",
             "--cuda-device-only",
@@ -76,6 +82,7 @@ def main():
             "-c",
             *(f"-I{path}" for path in includes),
             *extra,
+            *dependencies,
             here / "device.cu",
             "-o",
             raw,
@@ -91,8 +98,8 @@ def main():
             optimized,
         )
         cleaned.write_text(clean_ir(optimized.read_text()))
-        run("llvm-as", cleaned, "-o", here / "device.bc")
-    logging.info("Built %s; rebuild after changing NIXL/UCX/GPU.", here / "device.bc")
+        run("llvm-as", cleaned, "-o", output)
+    logging.info("Built %s; rebuild after changing NIXL/UCX/GPU.", output)
 
 
 if __name__ == "__main__":

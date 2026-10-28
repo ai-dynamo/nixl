@@ -50,7 +50,8 @@ def compute_and_put(
         src[i + 1] = cutlass.Int32(i + sequence * 10007)
     cute.arch.fence_acq_rel_sys()
     cute.arch.sync_threads()  # All producers finish before the cooperative PUT.
-    request = requests.iterator.toint() + tid * device.REQUEST_BYTES
+    # One cooperative operation: every participant uses the leader's request.
+    request = requests.iterator.toint()
     result = device.put(
         local,
         remote,
@@ -140,9 +141,7 @@ def main():
     recv = torch.full_like(src, -1)
     ready = torch.zeros(2, device="cuda", dtype=torch.int64)
     observed = torch.empty(args.elements, device="cuda", dtype=torch.int32)
-    requests = torch.zeros(
-        (threads, device.REQUEST_BYTES), device="cuda", dtype=torch.uint8
-    )
+    requests = torch.zeros(device.REQUEST_BYTES, device="cuda", dtype=torch.uint8)
     status = torch.zeros(threads * 2, device="cuda", dtype=torch.int32)
     stream.synchronize()
     agent = nixl_agent(
