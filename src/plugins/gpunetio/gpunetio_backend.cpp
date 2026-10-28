@@ -1657,12 +1657,16 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     if (lcnt != rcnt || lcnt == 0) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    if ((lcnt + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE > DOCA_XFER_REQ_MAX) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
+    // Descriptors above the SDK transfer limit are split over several WQEs. The ring must hold
+    // the WQEs of the request even if no descriptor is merged or paired.
+    constexpr uint64_t max_wqes = uint64_t{DOCA_XFER_REQ_SIZE} * DOCA_XFER_REQ_MAX;
+    uint64_t wqe_count = 0;
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         if (local[idx].len != remote[idx].len) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        wqe_count += nixl::gpunetio::descriptorWqeCount(local[idx].len);
+        if (wqe_count > max_wqes) {
             return NIXL_ERR_INVALID_PARAM;
         }
     }
@@ -1726,13 +1730,15 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     };
 
     treq->qpData = rdma_qp->qp_data->get_qp_gpu_dev();
-    treq->positions.reserve((lcnt + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
+    treq->positions.reserve((wqe_count + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
     if (!reserve_position()) {
         abandon_request();
         return NIXL_ERR_BACKEND;
     }
 
     uint32_t desc_offset = 0;
+    // Bytes of local[desc_offset] already staged in earlier WQEs, possibly in an earlier slot.
+    size_t split_offset = 0;
     do {
         docaSlotDesc staged_req{};
         staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
@@ -1770,20 +1776,31 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             if (chunk_desc_count >= DOCA_XFER_REQ_SIZE && !mergeable) {
                 break;
             }
-            ++desc_offset;
             ++chunk_desc_count;
             if (mergeable) {
+                ++desc_offset;
                 continue;
             }
 
+            // A WQE carries at most the SDK transfer limit; the rest of the descriptor goes to the
+            // next WQEs. A descriptor that long is never merged or paired: both cap the total.
+            const size_t remaining = local[desc_idx].len - split_offset;
+            const size_t wqe_size =
+                std::min<size_t>(remaining, DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
             const uint32_t idx = staged_req.num;
-            staged_req.lbuf[idx] = local[desc_idx].addr;
+            staged_req.lbuf[idx] = local[desc_idx].addr + split_offset;
             staged_req.lkey[idx] = lmd->mr->get_lkey();
-            staged_req.rbuf[idx] = remote[desc_idx].addr;
+            staged_req.rbuf[idx] = remote[desc_idx].addr + split_offset;
             staged_req.rkey[idx] = rmd->mr->get_rkey();
-            staged_req.size[idx] = local[desc_idx].len;
+            staged_req.size[idx] = wqe_size;
             staged_req.num_sge[idx] = 1;
             staged_req.num++;
+            if (wqe_size < remaining) {
+                split_offset += wqe_size;
+                continue;
+            }
+            split_offset = 0;
+            ++desc_offset;
 
             if (operation == NIXL_WRITE && lcnt - desc_idx > 2) {
                 auto *next_lmd =

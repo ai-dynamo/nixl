@@ -66,6 +66,12 @@ NIXL bench also has the option to specify the DOCA GPUNetIO backend. An example 
 
 ## Caveats
 
+### Descriptor size
+
+One RDMA operation carries at most `DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE` (1 GiB), so a larger
+descriptor is posted as several consecutive operations of at most 1 GiB each. A request holds at
+most 32 x 512 operations; `prepXfer` rejects larger requests with `NIXL_ERR_INVALID_PARAM`.
+
 ### Notifications
 
 Each peer has 4096 notification send buffers. A prepared request with a notification owns one
