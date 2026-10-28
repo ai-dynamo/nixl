@@ -126,7 +126,7 @@ steps:
         BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
         TORCH_VERSIONS="2.11,2.12,2.13"
       else
-        TORCH_VERSIONS="2.12,2.13,2.14,2.15"
+        TORCH_VERSIONS="2.12,2.13,2.14,2.15,2.16"
       fi
       cd nixl-src
       ./contrib/build-container.sh \
