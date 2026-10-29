@@ -28,6 +28,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <random>
+#include "absl/log/globals.h"
 #include "absl/log/log_sink_registry.h"
 
 namespace gtest {
@@ -48,20 +49,36 @@ void ScopedEnv::addVar(const std::string &name, const std::string &value)
 }
 
 void
+ScopedEnv::unsetVar(const std::string &name) {
+    m_vars.emplace(name, std::nullopt);
+}
+
+void
 ScopedEnv::popVar() {
     m_vars.pop();
 }
 
-ScopedEnv::Variable::Variable(const std::string &name, const std::string &value)
-    : m_name(name)
-{
+// Pop in reverse order: destroying m_vars directly runs front first, which
+// restores a variable set more than once to an intermediate value.
+ScopedEnv::~ScopedEnv() {
+    while (!m_vars.empty()) {
+        m_vars.pop();
+    }
+}
+
+ScopedEnv::Variable::Variable(const std::string &name, const std::optional<std::string> &value)
+    : m_name(name) {
     const char* backup = getenv(name.c_str());
 
     if (backup != nullptr) {
         m_prev_value = backup;
     }
 
-    setenv(name.c_str(), value.c_str(), 1);
+    if (value) {
+        setenv(name.c_str(), value->c_str(), 1);
+    } else {
+        unsetenv(name.c_str());
+    }
 }
 
 ScopedEnv::Variable::Variable(Variable &&other)
@@ -202,6 +219,30 @@ LogProblemCounter::Send(const absl::LogEntry &entry) {
 
     std::cerr << "ATTENTION: Unexpected NIXL warning or error detected!" << std::endl;
     std::cerr << "ATTENTION: Message is '" << msg << '\'' << std::endl;
+}
+
+LogMessageCounter::LogMessageCounter(std::string_view needle)
+    : needle_(needle),
+      minLogLevel_(absl::MinLogLevel()) {
+    absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
+    absl::AddLogSink(static_cast<absl::LogSink *>(this));
+}
+
+LogMessageCounter::~LogMessageCounter() {
+    absl::RemoveLogSink(static_cast<absl::LogSink *>(this));
+    absl::SetMinLogLevel(minLogLevel_);
+}
+
+size_t
+LogMessageCounter::count() const noexcept {
+    return count_.load(std::memory_order_relaxed);
+}
+
+void
+LogMessageCounter::Send(const absl::LogEntry &entry) {
+    if (entry.text_message().find(needle_) != std::string_view::npos) {
+        count_.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 } // namespace gtest

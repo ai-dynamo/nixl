@@ -36,8 +36,15 @@
 #define DEFAULT_NUM_TRANSFERS 250
 #define DEFAULT_TRANSFER_SIZE (10 * 1024 * 1024)  // 10MB
 #define DEFAULT_ITERATIONS 1  // Default number of iterations
+#define DEFAULT_NUM_GPUS 1
 #define TEST_PHRASE "NIXL Storage Test Pattern 2025"
 #define TEST_PHRASE_LEN (sizeof(TEST_PHRASE) - 1)  // -1 to exclude null terminator
+
+#ifdef DEFAULT_GDS_MT
+#define DEFAULT_GDS_BACKEND "GDS_MT"
+#else
+#define DEFAULT_GDS_BACKEND "GDS"
+#endif
 
 // Get system page size
 static size_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
@@ -77,14 +84,20 @@ void print_usage(const char* program_name) {
         << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
         << "  -r, --no-read           Skip read test\n"
         << "  -w, --no-write          Skip write test\n"
+        << "  -B, --backend NAME      Backend name: GDS or GDS_MT (default: " << DEFAULT_GDS_BACKEND
+        << ")\n"
+        << "  -M, --gds-mode MODE     GDS engine: batch or mt (default: batch)\n"
         << "  -p, --pool-size SIZE    Size of batch pool (default: 8, range: 1-32)\n"
         << "  -b, --batch-limit SIZE  Maximum requests per batch  (default: 128, Max allowed: "
            "1-128)\n"
         << "  -m, --max-req-size SIZE Maximum size per request (default: 16M, Max allowed: 16M)\n"
+        << "  -G, --num-gpus N        Number of GPUs to use (default: " << DEFAULT_NUM_GPUS << ")\n"
+        << "  -N, --num-threads N     Number of threads in mt mode (default: auto)\n"
         << "  -t, --iterations N      Number of iterations for each transfer (default: "
         << DEFAULT_ITERATIONS << ")\n"
         << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
         << "  -P, --no-path-mode-smoke Skip the path-mode smoke (enabled by default)\n"
+        << "  -S, --path-mode-only    Run only the path-mode smoke\n"
         << "  -h, --help              Show this help message\n"
         << "\nExample:\n"
         << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -t 5 -D /path/to/dir\n";
@@ -203,9 +216,14 @@ std::string format_duration(nixlTime::us_t us) {
 }
 
 static int
-runPathModeSmoke() {
+runPathModeSmoke(const std::string &backend_name,
+                 const std::string &gds_mode,
+                 const nixl_b_params_t &params) {
+    const std::string variant = backend_name == "GDS_MT" ? "gds_mt_compat" : "gds_" + gds_mode;
+    const std::string agent_name = variant + "_path_mode_smoke";
+    const std::string file_path = "/tmp/nixl_" + variant + "_path_mode_smoke.bin";
     return nixl_test::runPathModeSmoke(
-        "GDSPathModeSmoke", "GDS", "/tmp/nixl_gds_path_mode_smoke.bin", 4096);
+        agent_name.c_str(), backend_name.c_str(), file_path.c_str(), 4096, params);
 }
 
 int main(int argc, char *argv[])
@@ -225,14 +243,20 @@ int main(int argc, char *argv[])
     int                         num_transfers = DEFAULT_NUM_TRANSFERS;
     bool                        skip_read = false;
     bool                        skip_write = false;
+    std::string backend_name = DEFAULT_GDS_BACKEND;
+    std::string gds_mode = "batch";
+    bool mode_explicit = false;
     unsigned int                pool_size = 8;
     unsigned int                batch_limit = 128;
     size_t max_request_size = 16 * 1024 * 1024;
+    size_t num_threads = 0;
+    unsigned int num_gpus = DEFAULT_NUM_GPUS;
     nixlTime::us_t              total_time(0);
     double                      total_data_gb = 0;
     bool                        use_direct = false;
     unsigned int iterations = DEFAULT_ITERATIONS;
     bool run_path_mode_smoke = true;
+    bool path_mode_only = false;
 
     // Parse command line options
     static struct option long_options[] = {{"dram", no_argument, 0, 'd'},
@@ -241,16 +265,22 @@ int main(int argc, char *argv[])
                                            {"size", required_argument, 0, 's'},
                                            {"no-read", no_argument, 0, 'r'},
                                            {"no-write", no_argument, 0, 'w'},
+                                           {"backend", required_argument, 0, 'B'},
+                                           {"gds-mode", required_argument, 0, 'M'},
                                            {"pool-size", required_argument, 0, 'p'},
                                            {"batch-limit", required_argument, 0, 'b'},
                                            {"max-req-size", required_argument, 0, 'm'},
+                                           {"num-gpus", required_argument, 0, 'G'},
+                                           {"num-threads", required_argument, 0, 'N'},
                                            {"iterations", required_argument, 0, 't'},
                                            {"direct", no_argument, 0, 'D'},
                                            {"no-path-mode-smoke", no_argument, 0, 'P'},
+                                           {"path-mode-only", no_argument, 0, 'S'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long(argc, argv, "dvn:s:rwp:b:m:t:DPh", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dvn:s:rwB:M:p:b:m:G:N:t:DPSh", long_options, NULL)) !=
+           -1) {
         switch (opt) {
             case 'd':
                 use_dram = true;
@@ -278,6 +308,21 @@ int main(int argc, char *argv[])
             case 'w':
                 skip_write = true;
                 break;
+            case 'B':
+                backend_name = optarg;
+                if (backend_name != "GDS" && backend_name != "GDS_MT") {
+                    std::cerr << "Error: Backend must be GDS or GDS_MT\n";
+                    return 1;
+                }
+                break;
+            case 'M':
+                gds_mode = optarg;
+                mode_explicit = true;
+                if (gds_mode != "batch" && gds_mode != "mt") {
+                    std::cerr << "Error: GDS mode must be batch or mt\n";
+                    return 1;
+                }
+                break;
             case 'p':
                 pool_size = atoi(optarg);
                 break;
@@ -295,6 +340,20 @@ int main(int argc, char *argv[])
                     return 1;
                 }
                 break;
+            case 'G':
+                num_gpus = atoi(optarg);
+                if (num_gpus == 0) {
+                    std::cerr << "Error: Number of GPUs must be positive\n";
+                    return 1;
+                }
+                break;
+            case 'N':
+                num_threads = atoi(optarg);
+                if (num_threads == 0) {
+                    std::cerr << "Error: Number of threads must be positive\n";
+                    return 1;
+                }
+                break;
             case 't':
                 iterations = atoi(optarg);
                 if (iterations <= 0) {
@@ -307,6 +366,9 @@ int main(int argc, char *argv[])
                 break;
             case 'P':
                 run_path_mode_smoke = false;
+                break;
+            case 'S':
+                path_mode_only = true;
                 break;
             case 'h':
                 print_usage(argv[0]);
@@ -322,9 +384,31 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    if (backend_name == "GDS_MT" && mode_explicit) {
+        std::cerr << "Error: --gds-mode applies only to the GDS backend\n";
+        return 1;
+    }
+
+    nixl_b_params_t params;
+    const bool use_mt_engine = backend_name == "GDS_MT" || gds_mode == "mt";
+    if (backend_name == "GDS") {
+        params["mode"] = gds_mode;
+    }
+    if (use_mt_engine) {
+        params["thread_count"] = std::to_string(num_threads);
+    } else {
+        params["batch_pool_size"] = std::to_string(pool_size);
+        params["batch_limit"] = std::to_string(batch_limit);
+        params["max_request_size"] = std::to_string(max_request_size);
+    }
+
     if (run_path_mode_smoke) {
-        if (int rc = runPathModeSmoke(); rc != 0) {
+        if (int rc = runPathModeSmoke(backend_name, gds_mode, params); rc != 0) {
             return rc;
+        }
+        // Meson registers the no-argument invocation as the path-mode smoke test.
+        if (argc == 1 || path_mode_only) {
+            return 0;
         }
     }
 
@@ -360,7 +444,6 @@ int main(int argc, char *argv[])
     // Initialize NIXL components
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    nixl_b_params_t             params;
     nixlBlobDesc                *vram_buf = use_vram ? new nixlBlobDesc[num_transfers] : NULL;
     nixlBlobDesc                *dram_buf = use_dram ? new nixlBlobDesc[num_transfers] : NULL;
     nixlBlobDesc                *ftrans = new nixlBlobDesc[num_transfers];
@@ -369,9 +452,11 @@ int main(int argc, char *argv[])
     nixl_reg_dlist_t            dram_for_gds(DRAM_SEG);
     nixl_reg_dlist_t            file_for_gds(FILE_SEG);
     std::string                 name;
+    const std::string agent_name = "GDSTester";
 
     std::cout << "\n============================================================" << std::endl;
-    std::cout << "                 NIXL STORAGE TEST STARTING (GDS PLUGIN)                     " << std::endl;
+    std::cout << "                 NIXL STORAGE TEST STARTING (" << backend_name
+              << " PLUGIN)                     " << std::endl;
     std::cout << "============================================================" << std::endl;
     std::cout << "Configuration:" << std::endl;
     std::cout << "- Mode: " << (use_dram ? "DRAM" : "VRAM") << std::endl;
@@ -380,9 +465,19 @@ int main(int argc, char *argv[])
     std::cout << "- Total data: " << std::fixed << std::setprecision(2)
               << ((transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0)) << " GB" << std::endl;
     std::cout << "- Directory: " << dir_path << std::endl;
-    std::cout << "- Batch pool size: " << pool_size << std::endl;
-    std::cout << "- Batch limit: " << batch_limit << std::endl;
-    std::cout << "- Max request size: " << max_request_size << " bytes" << std::endl;
+    std::cout << "- Backend: " << backend_name << std::endl;
+    if (backend_name == "GDS") {
+        std::cout << "- GDS mode: " << gds_mode << std::endl;
+    }
+    if (use_mt_engine) {
+        std::cout << "- Number of threads: "
+                  << (num_threads == 0 ? "auto" : std::to_string(num_threads)) << std::endl;
+        std::cout << "- Number of GPUs: " << num_gpus << std::endl;
+    } else {
+        std::cout << "- Batch pool size: " << pool_size << std::endl;
+        std::cout << "- Batch limit: " << batch_limit << std::endl;
+        std::cout << "- Max request size: " << max_request_size << " bytes" << std::endl;
+    }
     std::cout << "- Number of iterations: " << iterations << std::endl;
     std::cout << "- Use O_DIRECT: " << (use_direct ? "Yes" : "No") << std::endl;
     std::cout << "- Operation: ";
@@ -396,17 +491,12 @@ int main(int argc, char *argv[])
     std::cout << std::endl;
     std::cout << "============================================================\n" << std::endl;
 
-    nixlAgent agent("GDSTester", cfg);
-
-    // Set GDS backend parameters
-    params["batch_pool_size"] = std::to_string(pool_size);
-    params["batch_limit"] = std::to_string(batch_limit);
-    params["max_request_size"] = std::to_string(max_request_size);
+    nixlAgent agent(agent_name, cfg);
 
     // Create backends
-    ret = agent.createBackend("GDS", params, gds);
+    ret = agent.createBackend(backend_name, params, gds);
     if (ret != NIXL_SUCCESS || gds == NULL) {
-        std::cerr << "Error creating GDS backend: "
+        std::cerr << "Error creating " << backend_name << " backend: "
                   << (ret != NIXL_SUCCESS ? "Failed to create backend" : "Backend handle is NULL")
                   << std::endl;
         goto cleanup;
@@ -416,8 +506,10 @@ int main(int argc, char *argv[])
     std::cout << "PHASE 1: Allocating and initializing buffers" << std::endl;
     std::cout << "============================================================" << std::endl;
     for (i = 0; i < num_transfers; i++) {
+        const int dev_id = i % num_gpus;
         if (use_vram) {
             // Allocate and initialize VRAM buffer
+            cudaSetDevice(dev_id);
             if (cudaMalloc(&vram_addr[i], transfer_size) != cudaSuccess) {
                 std::cerr << "CUDA malloc failed\n";
                 goto cleanup;
@@ -455,7 +547,7 @@ int main(int argc, char *argv[])
         if (use_vram) {
             vram_buf[i].addr   = (uintptr_t)(vram_addr[i]);
             vram_buf[i].len    = transfer_size;
-            vram_buf[i].devId  = 0;
+            vram_buf[i].devId = dev_id;
             vram_for_gds.addDesc(vram_buf[i]);
         }
 
@@ -533,8 +625,7 @@ int main(int argc, char *argv[])
         nixl_xfer_dlist_t file_list = file_reg.trim();
 
         // Create single transfer request for all transfers
-        ret = agent.createXferReq(NIXL_WRITE, src_list, file_list,
-                                "GDSTester", write_req);
+        ret = agent.createXferReq(NIXL_WRITE, src_list, file_list, agent_name, write_req);
         if (ret != NIXL_SUCCESS) {
             std::cerr << "Failed to create write transfer request" << std::endl;
             goto cleanup;
@@ -589,6 +680,7 @@ int main(int argc, char *argv[])
         std::cout << "============================================================" << std::endl;
         for (i = 0; i < num_transfers; i++) {
             if (use_vram && vram_addr[i]) {
+                cudaSetDevice(i % num_gpus);
                 if (clear_gpu_buffer(vram_addr[i], transfer_size) != cudaSuccess) {
                     std::cerr << "Failed to clear VRAM buffer " << i << std::endl;
                     goto cleanup;
@@ -631,8 +723,7 @@ int main(int argc, char *argv[])
         nixl_xfer_dlist_t file_list = file_reg.trim();
 
         // Create single transfer request for all transfers
-        ret = agent.createXferReq(NIXL_READ, src_list, file_list,
-                                "GDSTester", read_req);
+        ret = agent.createXferReq(NIXL_READ, src_list, file_list, agent_name, read_req);
         if (ret != NIXL_SUCCESS) {
             std::cerr << "Failed to create read transfer request" << std::endl;
             goto cleanup;
@@ -684,6 +775,7 @@ int main(int argc, char *argv[])
         std::cout << "============================================================" << std::endl;
         for (i = 0; i < num_transfers; i++) {
             if (use_vram) {
+                cudaSetDevice(i % num_gpus);
                 if (!validate_gpu_buffer(vram_addr[i], transfer_size)) {
                     std::cerr << "VRAM buffer " << i << " validation failed\n";
                     goto cleanup;
@@ -738,7 +830,10 @@ cleanup:
     if (use_vram) {
         agent.deregisterMem(vram_for_gds);
         for (i = 0; i < num_transfers; i++) {
-            if (vram_addr[i]) cudaFree(vram_addr[i]);
+            if (vram_addr[i]) {
+                cudaSetDevice(i % num_gpus);
+                cudaFree(vram_addr[i]);
+            }
         }
         delete[] vram_addr;
         delete[] vram_buf;

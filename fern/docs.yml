@@ -106,6 +106,8 @@ navigation:
         path: ./docs/pages/user-guide/etcd-metadata-exchange.md
       - page: Telemetry Guide
         path: ./docs/pages/user-guide/telemetry.md
+      - page: Logging Guide
+        path: ./docs/pages/user-guide/logging.md
       - section: Benchmarking NIXL
         contents:
           - section: NIXLBench
