@@ -366,6 +366,17 @@ class nixlAgent {
         getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &telemetry) const;
 
         /**
+         * @brief  Get the trace identity of `req_hndl`, as its trace records carry it.
+         *
+         * @param  req_hndl      Transfer request handle obtained from makeXferReq/createXferReq
+         * @param  info [out]    Output trace identity, set only on success
+         * @return nixl_status_t NIXL_ERR_NOT_FOUND if the request has no trace identity,
+         *                       or another error code if call was not successful
+         */
+        nixl_status_t
+        getXferTraceInfo(const nixlXferReqH *req_hndl, nixl_xfer_trace_info_t &info) const;
+
+        /**
          * @brief  Query the backend associated with `req_hndl`. E.g., if for genNotif
          *         the same backend as a transfer is desired.
          *
