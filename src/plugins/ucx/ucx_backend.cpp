@@ -87,7 +87,7 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params, nixl::ucx::Memor
         if (policy) {
             nixl::throwRuntimeError("A memory policy is not supported with device_proxy=true");
         }
-        engine = new nixl::ucx::proxyEngine(init_params, proxy_config, std::move(policy));
+        engine = new nixl::ucx::proxyEngine(init_params, proxy_config);
     } else if (num_threads > 0) {
         engine = new nixlUcxThreadPoolEngine(init_params, num_threads, std::move(policy));
     } else if (init_params.enableProgTh) {

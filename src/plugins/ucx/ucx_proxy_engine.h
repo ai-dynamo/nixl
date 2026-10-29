@@ -38,9 +38,7 @@ namespace nixl::ucx {
  */
 class proxyEngine final : public nixlUcxEngine {
 public:
-    proxyEngine(const nixlBackendInitParams &init_params,
-                const nixl::proxyConfig &config,
-                nixl::ucx::MemoryPolicyPtr policy = {});
+    proxyEngine(const nixlBackendInitParams &init_params, const nixl::proxyConfig &config);
 
     ~proxyEngine() override;
 
