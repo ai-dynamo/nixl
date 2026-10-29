@@ -40,7 +40,8 @@ class xferBenchRT {
         virtual int reduceSumDouble(double *local_value, double *global_value, int dest_rank) = 0;
 
         // Add a barrier function to synchronize all processes
-        virtual int barrier(const std::string& barrier_id) = 0;
+        virtual int
+        barrier(const std::string &barrier_id, const bool finishing = false) = 0;
 
         // Check if all peer processes are still alive; returns true by default
         [[nodiscard]] virtual bool

@@ -80,19 +80,23 @@ castPosixHandle(nixlBackendReqH *handle) {
 
 static std::string_view
 getIoQueueType(const nixl_b_params_t *custom_params) {
-    if (nixl::getBackendParamDefaulted(custom_params, "use_aio", false)) {
-        return "AIO";
-    }
+    std::string_view selected;
+    const auto select = [&](const char *parameter, std::string_view queue_type) {
+        if (!nixl::getBackendParamDefaulted(custom_params, parameter, false)) {
+            return;
+        }
+        if (!selected.empty()) {
+            throw std::invalid_argument(
+                "POSIX I/O queue parameters use_aio, use_uring, and use_posix_aio are "
+                "mutually exclusive");
+        }
+        selected = queue_type;
+    };
 
-    if (nixl::getBackendParamDefaulted(custom_params, "use_uring", false)) {
-        return "URING";
-    }
-
-    if (nixl::getBackendParamDefaulted(custom_params, "use_posix_aio", false)) {
-        return "POSIXAIO";
-    }
-
-    return nixlPosixIOQueue::getDefaultIoQueueType();
+    select("use_aio", "AIO");
+    select("use_uring", "URING");
+    select("use_posix_aio", "POSIXAIO");
+    return selected.empty() ? nixlPosixIOQueue::getDefaultIoQueueType() : selected;
 }
 
 // Log completion percentage at regular intervals (every log_percent_step percent)
@@ -119,8 +123,6 @@ logOnPercentStep(unsigned int completed, unsigned int total) {
 // POSIX Backend Request Handle Implementation
 // -----------------------------------------------------------------------------
 
-// NOTE: we initialize num_confirmed_ios_ to the number of descriptors, so if checkXfer is called
-// before postXfer, it will return NIXL_SUCCESS immediately.
 nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
                                            const nixl_meta_dlist_t &loc,
                                            const nixl_meta_dlist_t &rem,
@@ -128,8 +130,6 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
     : operation(op),
       local(loc),
       remote(rem),
-      queue_depth_(loc.descCount()),
-      num_confirmed_ios_(queue_depth_),
       io_queue_(io_queue) {
     NIXL_ASSERT(local.descCount());
     NIXL_ASSERT(remote.descCount());
@@ -138,7 +138,11 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
 void
 nixlPosixBackendReqH::ioDone(uint32_t data_size, int error) {
     num_confirmed_ios_++;
-    logOnPercentStep(num_confirmed_ios_, queue_depth_);
+    if (error && !transfer_failed_) {
+        NIXL_ERROR << "POSIX transfer failed: an io completed short or with an error";
+        transfer_failed_ = true;
+    }
+    logOnPercentStep(num_confirmed_ios_, enqueued_ios_);
 }
 
 void
@@ -147,23 +151,65 @@ nixlPosixBackendReqH::ioDoneClb(void *ctx, uint32_t data_size, int error) {
     self->ioDone(data_size, error);
 }
 
+void
+nixlPosixBackendReqH::cancelDone() {
+    cancels_seen_++;
+}
+
+void
+nixlPosixBackendReqH::cancelDoneClb(void *ctx) {
+    nixlPosixBackendReqH *self = static_cast<nixlPosixBackendReqH *>(ctx);
+    self->cancelDone();
+}
+
 nixl_status_t
 nixlPosixBackendReqH::prepXfer() {
     return NIXL_SUCCESS;
 }
 
+unsigned
+nixlPosixBackendReqH::requestCancellation() {
+    if (!transfer_failed_ || cancellation_requested_ || isComplete()) {
+        return 0;
+    }
+
+    cancellation_requested_ = true;
+    cancels_expected_ = io_queue_->cancel(this, cancelDoneClb);
+    return cancels_expected_;
+}
+
+nixl_status_t
+nixlPosixBackendReqH::queueResult(nixl_status_t queue_result) {
+    if (queue_result < 0) {
+        transfer_failed_ = true;
+    }
+
+    requestCancellation();
+    if (!isComplete()) {
+        return NIXL_IN_PROG;
+    }
+    if (queue_result < 0) {
+        return queue_result;
+    }
+    return transfer_failed_ ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
+}
+
 nixl_status_t
 nixlPosixBackendReqH::checkXfer() {
-    if (num_confirmed_ios_ == queue_depth_) {
-        return NIXL_SUCCESS;
+    if (isComplete()) {
+        return queueResult(NIXL_SUCCESS);
     }
 
     nixl_status_t status = io_queue_->poll();
+    if (isComplete()) {
+        return queueResult(NIXL_SUCCESS);
+    }
     if (status < 0) {
+        // poll() errors are terminal and queue-wide. Outstanding work may remain.
         return status;
     }
 
-    return NIXL_IN_PROG;
+    return queueResult(status);
 }
 
 nixl_status_t
@@ -172,8 +218,12 @@ nixlPosixBackendReqH::postXfer() {
         NIXL_ERROR << "POSIX I/O queue is not initialized";
         return NIXL_ERR_BACKEND;
     }
-
+    enqueued_ios_ = 0;
     num_confirmed_ios_ = 0;
+    transfer_failed_ = false;
+    cancellation_requested_ = false;
+    cancels_expected_ = 0;
+    cancels_seen_ = 0;
 
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
          local_it != local.end() && remote_it != remote.end();
@@ -190,16 +240,34 @@ nixlPosixBackendReqH::postXfer() {
         if (status != NIXL_SUCCESS) {
             // Currently we do not support partial submissions, so it's all or nothing
             NIXL_ERROR << absl::StrFormat("Error preparing I/O operation: %d", status);
-            return status;
+            return queueResult(status);
         }
+        enqueued_ios_++;
     }
 
-    return io_queue_->post();
+    return queueResult(io_queue_->post());
 }
 
 // -----------------------------------------------------------------------------
 // POSIX Engine Implementation
 // -----------------------------------------------------------------------------
+
+nixl_b_params_t
+nixlPosixEngine::getPluginParams() {
+    nixl_b_params_t params = {
+        {"ios_pool_size", std::to_string(nixlPosixIOQueue::DEF_IOS_POOL_SIZE)},
+        {"kernel_queue_size", std::to_string(nixlPosixIOQueue::DEF_KERNEL_QUEUE_SIZE)}};
+#ifdef HAVE_LINUXAIO
+    params["use_aio"] = "false";
+#endif
+#ifdef HAVE_LIBURING
+    params["use_uring"] = "false";
+#endif
+#ifdef HAVE_POSIXAIO
+    params["use_posix_aio"] = "false";
+#endif
+    return params;
+}
 
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
@@ -347,11 +415,6 @@ nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
 nixl_status_t
 nixlPosixEngine::queryMem(const nixl_reg_dlist_t &descs,
                           std::vector<nixl_query_resp_t> &resp) const {
-    // Extract metadata from descriptors which are file names
-    // Different plugins might customize parsing of metaInfo to get the file names
-    std::vector<nixl_blob_t> metadata(descs.descCount());
-    for (int i = 0; i < descs.descCount(); ++i)
-        metadata[i] = descs[i].metaInfo;
-
-    return nixl::queryFileInfoList(metadata, resp);
+    resp = nixl::queryFileInfoFromDescList(descs);
+    return NIXL_SUCCESS;
 }

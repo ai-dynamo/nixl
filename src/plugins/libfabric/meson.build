@@ -16,6 +16,16 @@
 
 # LibFabric plugin configuration
 
+# AMD ROCm/HIP support (rocm_dep, hipify_src) is defined once in the root
+# meson.build and consumed here. On ROCm builds (-Drocm_path=<prefix>) the CUDA
+# sources are translated to HIP with hipify-perl; on CUDA-only builds they are
+# used verbatim.
+if rocm_dep.found()
+    libfabric_backend_src = hipify_src.process('libfabric_backend.cpp', extra_args: ['-o'])
+else
+    libfabric_backend_src = files('libfabric_backend.cpp')
+endif
+
 # Enable libfabric utils layer
 libfabric_plugin_deps = [
     nixl_infra,
@@ -27,19 +37,30 @@ libfabric_plugin_deps = [
 ]
 
 compile_flags = ['-DHAVE_LIBFABRIC']
+libfabric_gpu_abi_deps = []
 
-# Add CUDA support if available
-if cuda_dep.found()
+# Add GPU support: HIP/ROCm when rocm_path is set, CUDA otherwise. The GPU code
+# paths are guarded by HAVE_CUDA; on ROCm the hipified sources compile those
+# paths against HIP via rocm_dep.
+if rocm_dep.found()
+    libfabric_plugin_deps += [rocm_dep]
+    compile_flags += ['-DHAVE_CUDA']
+    libfabric_gpu_abi_deps += [rocm_dep]
+elif cuda_dep.found()
     libfabric_plugin_deps += [cuda_dep]
     compile_flags += ['-DHAVE_CUDA']
+    libfabric_gpu_abi_deps += [cuda_dep]
 endif
 
 # Build as static or shared library based on configuration
 if 'LIBFABRIC' in static_plugins
     libfabric_backend_lib = static_library(
         'LIBFABRIC',
-        'libfabric_backend.cpp',
+        libfabric_backend_src,
         'libfabric_backend.h',
+        'libfabric_connection.cpp',
+        'libfabric_connection.h',
+        'libfabric_handshake.cpp',
         'libfabric_plugin.cpp',
         dependencies: libfabric_plugin_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
@@ -50,8 +71,11 @@ if 'LIBFABRIC' in static_plugins
 else
     libfabric_backend_lib = shared_library(
         'LIBFABRIC',
-        'libfabric_backend.cpp',
+        libfabric_backend_src,
         'libfabric_backend.h',
+        'libfabric_connection.cpp',
+        'libfabric_connection.h',
+        'libfabric_handshake.cpp',
         'libfabric_plugin.cpp',
         dependencies: libfabric_plugin_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
@@ -72,5 +96,11 @@ else
     endif
 endif
 
-# Declare dependency interface
-libfabric_backend_interface = declare_dependency(link_with: libfabric_backend_lib)
+# Declare dependency interface. The engine class layout depends on these ABI
+# defines and GPU headers (libfabric_backend.h gates its CUDA members on
+# HAVE_CUDA): a consumer that allocates nixlLibfabricEngine without them gets
+# a smaller object and the plugin's constructor writes past the allocation.
+libfabric_backend_interface = declare_dependency(link_with: libfabric_backend_lib,
+    include_directories: include_directories('.'),
+    compile_args: compile_flags,
+    dependencies: libfabric_gpu_abi_deps)

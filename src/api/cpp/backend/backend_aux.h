@@ -17,12 +17,19 @@
 #ifndef __BACKEND_AUX_H_
 #define __BACKEND_AUX_H_
 
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
+
+class nixlBackendTraceSink;
+
+namespace nixl::trace {
+struct TraceContext;
+}
 
 // Might be removed to be decided by backend, or changed to high
 // level direction or so.
@@ -34,6 +41,13 @@ struct nixlBackendOptionalArgs {
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
     nixl_blob_t customParam;
+    // The request's trace context in prepXfer and the post's in postXfer: the trace
+    // id and flags are the request's, and each post of a sampled request has a span
+    // id of its own. Valid for the call only, so copy it at each post to keep it.
+    // Null when no request is involved (prepMemView).
+    const nixl::trace::TraceContext *traceContext = nullptr;
+    std::uint64_t traceRequestId = 0;
+    std::uint64_t traceExecution = 0;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
@@ -54,6 +68,7 @@ class nixlBackendInitParams {
         nixlTime::us_t pthrDelay = 0;
         nixl_thread_sync_t syncMode;
         bool enableTelemetry_ = false;
+        nixlBackendTraceSink *traceSink = nullptr;
 };
 
 // Pure virtual class to have a common pointer type
@@ -135,28 +150,25 @@ operator==(const nixlRemoteMetaDesc &lhs, const nixlRemoteMetaDesc &rhs) {
 typedef nixlDescList<nixlMetaDesc> nixl_meta_dlist_t;
 using nixl_remote_meta_dlist_t = nixlDescList<nixlRemoteMetaDesc>;
 
-// Compressed descriptor: a run of `count` equal-length blocks starting at
-// flat index `start_idx`, with consecutive blocks spaced `stride` bytes apart.
-class nixlStrideDesc : public nixlMetaDesc {
+// Internal compressed descriptor: extends the public nixlStrideDesc geometry with
+// the backend metadata pointer.
+class nixlMetaStrideDesc : public nixlStrideDesc {
 public:
-    size_t stride = 0;
-    size_t count = 0;
+    nixlBackendMD *metadataP = nullptr;
     size_t start_idx = 0;
 
-    nixlStrideDesc() = default;
+    nixlMetaStrideDesc() = default;
 
-    using nixlMetaDesc::nixlMetaDesc;
+    using nixlStrideDesc::nixlStrideDesc;
 
-    nixlStrideDesc(uintptr_t addr,
-                   size_t len,
-                   uint64_t dev_id,
-                   nixlBackendMD *metadata,
-                   size_t stride_,
-                   size_t count_)
-        : nixlMetaDesc(addr, len, dev_id, metadata),
-          stride(stride_),
-          count(count_),
-          start_idx(0) {}
+    nixlMetaStrideDesc(uintptr_t addr,
+                       size_t len,
+                       uint64_t dev_id,
+                       nixlBackendMD *metadata,
+                       size_t stride,
+                       size_t count)
+        : nixlStrideDesc(addr, len, dev_id, stride, count),
+          metadataP(metadata) {}
 
     [[nodiscard]] nixlMetaDesc
     getMetaDesc(size_t idx, size_t size) const noexcept {
@@ -165,9 +177,9 @@ public:
     }
 };
 
-class nixlStrideDescList : public nixlDescList<nixlStrideDesc> {
+class nixlMetaStrideDescList : public nixlDescList<nixlMetaStrideDesc> {
 public:
-    using nixlDescList<nixlStrideDesc>::nixlDescList;
+    using nixlDescList<nixlMetaStrideDesc>::nixlDescList;
 
     // Returns the total number of logical blocks across all runs (the decompressed size).
     [[nodiscard]] size_t
@@ -175,13 +187,13 @@ public:
         if (descs.empty()) {
             return 0;
         }
-        const nixlStrideDesc &last = descs.back();
+        const nixlMetaStrideDesc &last = descs.back();
         return last.start_idx + last.count;
     }
 
     // Returns the run covering the given flat block index, using an educated probe
     // with a binary-search fallback.
-    const nixlStrideDesc &
+    [[nodiscard]] const nixlMetaStrideDesc &
     find(size_t flat_idx, size_t run_size) const noexcept {
         NIXL_ASSERT(run_size > 0);
         // Educated first probe: assume uniform runs
@@ -205,6 +217,6 @@ public:
     }
 };
 
-using nixl_stride_dlist_t = nixlStrideDescList;
+using nixl_meta_stride_dlist_t = nixlMetaStrideDescList;
 
 #endif

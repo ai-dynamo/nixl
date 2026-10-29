@@ -44,6 +44,7 @@ private:
     // System information
     int num_aws_accel; // AWS Trainium accelerators
     int num_nvidia_accel; // NVIDIA GPU accelerators
+    int num_amd_accel; // AMD GPU accelerators
     int num_numa_nodes;
     int num_devices;
 
@@ -80,13 +81,22 @@ private:
     nixl_status_t
     discoverAccelWithHwloc();
     nixl_status_t
-    discoverEfaDevicesWithHwloc();
+    discoverRDMADevicesWithHwloc();
     nixl_status_t
     buildAccelToEfaMapping();
     void
     buildNicInfoMap();
     void
     cleanupHwlocTopology();
+
+    // Neuron/EFA preflight helpers -- log an actionable NIXL_INFO/NIXL_WARN at plugin
+    // init time when the discovered Neuron accelerator count doesn't match the EFA NIC
+    // count. Called from discoverTopology() after accelerator + NIC discovery are done.
+    // See ai-dynamo/nixl#1994 for background.
+    void
+    neuronEfaPreflightForEfaProvider();
+    void
+    neuronEfaPreflightForNonEfaProvider();
 
     // Data structures for NIXL topology-aware grouping algorithm
     struct NicInfo {
@@ -102,6 +112,9 @@ private:
         uint16_t parent_switch_domain;
         uint8_t parent_switch_bus_id;
         size_t parent_switch_link_speed; // Gbps (decimal, as multiple of 10^9, not 2^30)
+        // True when this NIC and the accelerator paired with it sit under a common PCIe
+        // switch. buildTopologyAwareGrouping() sets it from NicGroup::common_ancestor.
+        bool accel_via_pcie_switch;
     };
 
     struct AccelInfo {
@@ -136,6 +149,16 @@ private:
                        const std::vector<AccelInfo> &discovered_accel,
                        std::vector<NicGroup> &nic_groups);
 
+    // The node where a NIC sharing no PCIe switch with any accelerator meets the
+    // accelerators it reaches through the CPU, or nullptr when its own socket holds none.
+    //
+    // The search stops at the NIC's Package: every accelerator on the host appears under
+    // the Machine object, so a climb that accepted it would pair a NIC with accelerators
+    // on another socket, which it reaches only across the inter-socket link.
+    static hwloc_obj_t
+    findHostRouteNode(hwloc_obj_t nic_node,
+                      const std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> &subtree_accel);
+
     // hwloc helper methods
     std::string
     getPcieAddressFromHwlocPcidev(const hwloc_obj_attr_u::hwloc_pcidev_attr_s &pcidev) const;
@@ -146,7 +169,7 @@ private:
     bool
     isNeuronAccel(hwloc_obj_t obj) const;
     bool
-    isEfaDevice(hwloc_obj_t obj) const;
+    isAmdAccel(hwloc_obj_t obj) const;
 
     // retrieves line speed of NIC from map
     size_t
@@ -200,6 +223,29 @@ public:
     std::vector<std::string>
     getEfaDevicesForPci(const std::string &pci_bus_id) const;
 
+    // True when obj is a PCIe switch, that is a bridge whose upstream side is PCI.
+    // Applied to the common ancestor of two devices, it reports whether a PCIe path runs
+    // between them.
+    static bool
+    isPcieSwitch(hwloc_obj_t obj);
+
+    // True when this EFA device and the accelerator paired with it sit under a common
+    // PCIe switch, so the device reaches GPU memory over PCIe.
+    //
+    // A caller exporting a CUDA dmabuf combines this with the registration's
+    // iface == FI_HMEM_CUDA: it requests the GPU's PCIe aperture (BAR1) mapping when both
+    // hold, and the platform default mapping otherwise. The two mappings differ on a
+    // platform where GPU memory carries several address windows, such as GB200, where HBM
+    // is also mapped into the Grace CPU's coherent space and a device reaching HBM through
+    // the CPU addresses it through that window.
+    //
+    // Grouping pairs NICs with NVIDIA and AMD accelerators, so an AMD/ROCr host answers
+    // true here as well, and every device on a Trainium host answers false. An unknown
+    // device, a device grouping leaves unpaired, and a host where grouping stays idle all
+    // answer false.
+    bool
+    nicSharesPcieSwitchWithAccel(const std::string &efa_device) const;
+
     // System information
     int
     getNumAwsAccel() const {
@@ -211,14 +257,19 @@ public:
         return num_nvidia_accel;
     }
 
+    int
+    getNumAmdAccel() const {
+        return num_amd_accel;
+    }
+
     const std::vector<std::string> &
     getAllDevices() const {
         return all_devices;
     }
 
-    const std::string &
+    std::string
     getProviderName() const {
-        return provider_name;
+        return provider_name.empty() ? "libfabric" : provider_name;
     }
 
     // Validation
@@ -232,7 +283,13 @@ public:
 
     enum fi_hmem_iface
     getMrAttrIface(int device_id) const {
-        return (device_id < num_nvidia_accel) ? FI_HMEM_CUDA : FI_HMEM_NEURON;
+        if (device_id < num_nvidia_accel) {
+            return FI_HMEM_CUDA;
+        } else if (device_id < num_nvidia_accel + num_amd_accel) {
+            return FI_HMEM_ROCR;
+        } else {
+            return FI_HMEM_NEURON;
+        }
     }
 
     /** @brief Invalid NUMA node id constant. */

@@ -39,13 +39,13 @@ the export `srun` only when set.
 ${ENROOT_MOUNT_PATH}/<containerName>.sqsh
 ```
 
-`containerName` is `nixl-ci-${ucx_version}-${BUILD_NUMBER}`, so:
+`containerName` is `nixl-ci-${BUILD_NUMBER}`, so:
 
-```
-/enroot_images/nixl-ci-<ucx_version>-<BUILD_NUMBER>.sqsh
+```text
+/enroot_images/nixl-ci-<BUILD_NUMBER>.sqsh
 ```
 
-Example: `/enroot_images/nixl-ci-v1.21.x-2209.sqsh`
+Example: `/enroot_images/nixl-ci-2209.sqsh`
 
 One file per build per matrix axis. If multiple run steps fail (cpp, python, rust,
 nixlbench), they all target the same sqsh path — the last export wins, which is the
@@ -62,8 +62,8 @@ The export command that runs on the mizu node:
 ```bash
 srun --jobid=<JOB_ID> --ntasks=1 --oversubscribe \
   env ENROOT_DATA_PATH=/enroot-data/enroot-data-148069/user-148069 \
-  enroot export --output /enroot_images/nixl-ci-<ucx_version>-<BUILD_NUMBER>.sqsh \
-  pyxis_nixl-ci-<ucx_version>-<BUILD_NUMBER>
+  enroot export --output /enroot_images/nixl-ci-<BUILD_NUMBER>.sqsh \
+  pyxis_nixl-ci-<BUILD_NUMBER>
 ```
 
 ## gdb in the container

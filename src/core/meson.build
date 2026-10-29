@@ -26,20 +26,23 @@ if 'LIBFABRIC' in static_plugins
 endif
 
 if 'UCX' in static_plugins
-    nixl_lib_deps += [ ucx_backend_interface, asio_dep, cuda_dep ]
+    nixl_lib_deps += [ ucx_backend_interface, cuda_dep ]
 endif
 
 if 'POSIX' in static_plugins
     nixl_lib_deps += [ posix_backend_interface ]
 endif
 
-disable_infinia_backend = get_option('disable_infinia_backend')
-if infinia_lib_found.found() and not disable_infinia_backend and 'INFINIA' in static_plugins
+if is_variable('infinia_backend_interface') and 'INFINIA' in static_plugins
     nixl_lib_deps += [ infinia_backend_interface ]
 endif
 
 if 'OBJ' in static_plugins
     nixl_lib_deps += [ obj_backend_interface ]
+endif
+
+if 'REDIS' in static_plugins
+    nixl_lib_deps += [ redis_backend_interface ]
 endif
 
 disable_gds_backend = get_option('disable_gds_backend')
@@ -64,12 +67,19 @@ endif
 nixl_lib_sources = [
     'nixl_agent.cpp',
     'nixl_enum_strings.cpp',
+    'nixl_md_manager.cpp',
+    'nixl_metadata_worker.cpp',
+    'nixl_p2p_metadata_backend.cpp',
+    'nixl_etcd_metadata_backend.cpp',
+    'nixl_tcpstore_metadata_backend.cpp',
+    'nixl_tcpstore_client.cpp',
     'nixl_plugin_manager.cpp',
-    'nixl_listener.cpp',
     'telemetry/telemetry.cpp',
+    'telemetry/telemetry_staging_queue.cpp',
     'telemetry/buffer_exporter.cpp',
     'telemetry/buffer_plugin.cpp',
     'telemetry/nop_plugin.cpp',
+    'tracing/trace_sink.cpp',
     'tracing/tracer.cpp',
 ]
 

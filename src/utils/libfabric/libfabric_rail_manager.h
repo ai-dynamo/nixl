@@ -28,8 +28,12 @@
 #include "libfabric_rail.h"
 
 #ifdef HAVE_CUDA
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+#else
 #include <cuda.h>
 #include <cuda_runtime.h>
+#endif
 #endif
 
 // Forward declarations
@@ -132,6 +136,17 @@ public:
         return rails_.size();
     }
 
+    /** Round-robin index of a descriptor into a selection array of `count` entries.
+     * batch_write groups NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE consecutive descriptors per entry.
+     * The FI_MORE flush precompute and the rail selection must agree, so both call this. */
+    static size_t
+    railSelectionIndex(size_t base_offset, int desc_idx, bool batch_write, size_t count) {
+        const size_t rr_idx = batch_write ?
+            (base_offset + static_cast<size_t>(desc_idx) / NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE) :
+            (base_offset + static_cast<size_t>(desc_idx));
+        return rr_idx % count;
+    }
+
     // Memory registration management
     /** Register memory with topology-aware rail selection based on memory type and location
      * @param buffer Memory buffer to register
@@ -166,6 +181,7 @@ public:
     // Connection Management APIs
     /** Insert addresses into address vectors for all rails
      * @param endpoints Remote endpoint addresses to insert
+     * @param agent_idx Local index of the agent owning these endpoints, for sender lookup
      * @param fi_addrs_out Libfabric address handles for inserted endpoints,
      *                     indexed by local rail id.
      * @param ep_names_out Local endpoint names for reference
@@ -173,6 +189,7 @@ public:
      */
     nixl_status_t
     insertAllAddresses(const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints,
+                       uint32_t agent_idx,
                        std::unordered_map<size_t, std::vector<fi_addr_t>> &fi_addrs_out,
                        std::vector<char *> &ep_names_out);
     /** Clean up connection resources for rails
@@ -193,13 +210,17 @@ public:
      * @param remote_keys Remote access keys
      * @param remote_selected_endpoints Selected remote endpoints, where remote keys are registered
      * @param dest_addrs Destination addresses for each rail
-     * @param agent_idx Remote agent index for immediate data
      * @param xfer_id Transfer ID for tracking
      * @param completion_callback Callback for completion notification
      * @param submitted_count_out Number of requests successfully submitted
      * @param desc_idx Index of current descriptor within the transfer
-     * @param desc_count Total number of descriptors in the transfer
      * @param base_offset Pre-reserved round-robin offset from reserveBaseOffset()
+     * @param apply_fi_more Precomputed by the caller: true keeps a non-striped WRITE batched
+     *        (posted with FI_MORE); false flushes the rail's batch. The caller passes false for
+     *        a rail's last post and when a batch reaches NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE.
+     *        Defaults to false so an unmarked descriptor flushes safely.
+     * @param device_id Device id when multi-GPU is enabled.
+     * @param is_cuda_device Specifies whether this is CUDA-VRAM transfer.
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
@@ -213,35 +234,51 @@ public:
                              const std::vector<uint64_t> &remote_keys,
                              const std::vector<size_t> &remote_selected_endpoints,
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
-                             uint16_t agent_idx,
                              uint16_t xfer_id,
-                             std::function<void()> completion_callback,
+                             std::function<void(nixl_status_t)> completion_callback,
                              size_t &submitted_count_out,
                              int desc_idx,
-                             int desc_count,
-                             size_t base_offset);
+                             size_t base_offset,
+                             bool apply_fi_more = false,
+                             int device_id = -1,
+                             bool is_cuda_vram = false);
+
+    void
+    deferTransferRequest(nixlLibfabricReq::OpType op_type,
+                         uint16_t xfer_id,
+                         uint64_t fi_flags,
+                         fi_addr_t dest_addr,
+                         int device_id,
+                         bool is_cuda_vram,
+                         size_t rail_id,
+                         nixlLibfabricReq *req);
 
     /** Reserve a base offset for a transfer to ensure stable rail assignment
      *  across all descriptors in the transfer. Call once per postXfer. */
     size_t
     reserveBaseOffset();
-    /** Determine if striping should be used for given transfer size
+
+    /** True when a transfer of this size across this many rails is striped (split across the
+     *  rails) rather than posted on a single rail.
      * @param transfer_size Size of the transfer in bytes
-     * @return true if striping should be used, false for round-robin
+     * @param rail_count Number of rails selected for the transfer
      */
     bool
-    shouldUseStriping(size_t transfer_size) const;
+    usesStriping(size_t transfer_size, size_t rail_count) const {
+        return transfer_size >= striping_threshold_ && rail_count > 1;
+    }
 
     // Control Message APIs
     /** Control message types for rail communication */
     enum class ControlMessageType : int {
         NOTIFICATION, ///< User notification message
+        HANDSHAKE, ///< Peer-idx assignment (NIXL_LIBFABRIC_MSG_HANDSHAKE)
+        XFER_ERROR, ///< Batch had unpostable writes (NIXL_LIBFABRIC_MSG_XFER_ERROR)
     };
     /** Send control message via control rail
      * @param msg_type Type of control message
      * @param req Control request with data buffer
      * @param dest_addr Destination address
-     * @param agent_idx Agent index for message routing
      * @param completion_callback Optional completion callback
      * @return NIXL_SUCCESS on success, error code on failure
      */
@@ -249,14 +286,14 @@ public:
     postControlMessage(ControlMessageType msg_type,
                        nixlLibfabricReq *req,
                        fi_addr_t dest_addr,
-                       uint16_t agent_idx = 0,
-                       std::function<void()> completion_callback = nullptr);
+                       std::function<void(nixl_status_t)> completion_callback = nullptr);
     // Progress APIs
     /** Process completions on active rails only (optimized for CPU overhead)
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
      */
     nixl_status_t
     progressActiveRails();
+
     /** Validate that all rails are properly initialized
      * @return NIXL_SUCCESS if all rails initialized, error code otherwise
      */
@@ -348,6 +385,13 @@ public:
 
 private:
     size_t striping_threshold_;
+
+    /** Mapping type that a VRAM registration requests when it exports a CUDA dmabuf. Auto
+     * takes a per-NIC verdict from the PCIe-path topology; ForcePcie and ForceDefault request
+     * the PCIe (BAR1) mapping and the platform default mapping on every device; Off registers
+     * by virtual address. init() sets the mode from the dmabuf_mapping parameter. */
+    enum class DmabufMappingMode { Auto, ForcePcie, ForceDefault, Off };
+    DmabufMappingMode dmabuf_mapping_mode_ = DmabufMappingMode::Auto;
 
     // System runtime type (determined once at initialization)
     fi_hmem_iface runtime_;

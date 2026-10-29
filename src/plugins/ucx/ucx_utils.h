@@ -17,7 +17,9 @@
 #ifndef NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 #define NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 
+#include <atomic>
 #include <memory>
+#include <string_view>
 #include <type_traits>
 
 extern "C" {
@@ -29,9 +31,17 @@ extern "C" {
 #include "rkey.h"
 #include "ucx_enums.h"
 
-#include "absl/strings/numbers.h"
+enum class nixl_ucx_vram_memtype_hint_t {
+    AUTO,
+    NONE,
+    CUDA,
+    CUDA_MANAGED,
+    ROCM,
+    ZE_DEVICE,
+};
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
+inline constexpr std::string_view nixl_ucx_vram_memtype_hint_param_name = "ucx_vram_memtype_hint";
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22
@@ -43,17 +53,12 @@ class nixlUcxMem;
 
 class nixlUcxEp {
 private:
-    ucp_ep_h eph{nullptr};
-    nixl::ucx::ep_state_t state = nixl::ucx::ep_state_t::UNINITIALIZED;
+    ucp_ep_h eph_{nullptr};
+    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::CONNECTED};
+    const uint32_t closeFlags_;
 
-    void
-    setState(nixl::ucx::ep_state_t new_state);
     nixl_status_t
-    closeImpl(ucp_ep_close_flags_t flags);
-
-    /* Connection */
-    nixl_status_t
-    disconnect_nb();
+    disconnect();
 
     static void
     sendAmCallback(void *request, ucs_status_t status, void *user_data);
@@ -64,7 +69,7 @@ public:
 
     [[nodiscard]] nixl_status_t
     checkTxState() const noexcept {
-        return nixl::ucx::toNixlStatus(state);
+        return nixl::ucx::toNixlStatus(state_);
     }
 
     nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
@@ -73,18 +78,17 @@ public:
     nixlUcxEp &
     operator=(const nixlUcxEp &) = delete;
 
-    using am_deleter_t = std::function<void(void *request, void *buffer)>;
-
-    /* Active message handling */
+    /**
+     * @brief Send an active message that owns its payload
+     * @param payload Data released once the send completes
+     * @param req Receives the UCX request of an in-progress send; if null, the request is
+     *            released on completion
+     */
     nixl_status_t
     sendAm(nixl::ucx::am_cb_op_t msg_id,
-           void *hdr,
-           size_t hdr_len,
-           void *buffer,
-           size_t len,
+           std::string &&payload,
            uint32_t flags,
-           nixlUcxReq *req = nullptr,
-           const am_deleter_t &deleter = nullptr);
+           nixlUcxReq *req = nullptr) const;
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -96,22 +100,33 @@ public:
          nixlUcxReq &req);
     [[nodiscard]] nixl_status_t
     write(void *laddr,
-          nixlUcxMem &mem,
+          const nixlUcxMem &mem,
           uint64_t raddr,
           const nixl::ucx::rkey &rkey,
           size_t size,
           nixlUcxReq &req);
+    [[nodiscard]] nixl_status_t
+    atomicAdd(uint64_t value, uint64_t raddr, const nixl::ucx::rkey &rkey, nixlUcxReq &req) const;
     nixl_status_t
     estimateCost(size_t size,
                  std::chrono::microseconds &duration,
                  std::chrono::microseconds &err_margin,
                  nixl_cost_t &method);
     nixl_status_t
-    flushEp(nixlUcxReq &req);
+    flushEp(nixlUcxReq &req) const noexcept;
+
+#ifdef HAVE_UCX_SGL_API
+    /* Scatter-gather list (SGL) operations */
+    [[nodiscard]] nixl_status_t
+    postSgl(const ucp_dt_local_sgl_t &local,
+            const ucp_dt_remote_sgl_t &remote,
+            size_t count,
+            nixlUcxReq &req);
+#endif
 
     [[nodiscard]] ucp_ep_h
     getEp() const noexcept {
-        return eph;
+        return eph_;
     }
 };
 
@@ -145,9 +160,19 @@ public:
 class nixlUcxContext {
 private:
     /* Local UCX stuff */
-    ucp_context_h ctx;
+    std::unique_ptr<ucp_context, void (*)(ucp_context_h)> ctx{nullptr, &ucp_cleanup};
     const nixl::ucx::mt_mode_t mtType_;
     const unsigned ucpVersion_;
+    const std::string name_;
+    const nixl_ucx_vram_memtype_hint_t vramMemTypeHintPolicy_;
+    uint64_t supportedMemoryTypesMask_{0};
+    ucs_memory_type_t vramMemTypeHint_{UCS_MEMORY_TYPE_UNKNOWN};
+
+    void
+    resolveMemoryTypeConfig();
+
+    [[nodiscard]] bool
+    supportsMemoryType(ucs_memory_type_t mem_type) const;
 
 public:
     nixlUcxContext(const std::vector<std::string> &devs,
@@ -155,9 +180,10 @@ public:
                    unsigned long num_workers,
                    nixl_thread_sync_t sync_mode,
                    size_t num_device_channels,
-                   const std::string &engine_conf = "");
-    ~nixlUcxContext();
-
+                   const std::string &engine_conf = "",
+                   const std::string &name = "",
+                   nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy =
+                       nixl_ucx_vram_memtype_hint_t::AUTO);
     nixlUcxContext(nixlUcxContext &&) = delete;
     nixlUcxContext(const nixlUcxContext &) = delete;
 
@@ -165,6 +191,11 @@ public:
     operator=(nixlUcxContext &&) = delete;
     void
     operator=(const nixlUcxContext &) = delete;
+
+    [[nodiscard]] const std::string &
+    getName() const noexcept {
+        return name_;
+    }
 
     /* Memory management */
     int
@@ -180,6 +211,9 @@ public:
     friend class nixlUcxWorker;
 };
 
+std::ostream &
+operator<<(std::ostream &os, const nixlUcxContext &ctx);
+
 [[nodiscard]] bool
 nixlUcxMtLevelIsSupported(const nixl::ucx::mt_mode_t) noexcept;
 
@@ -187,7 +221,10 @@ class nixlUcxWorker {
 public:
     explicit nixlUcxWorker(
         const nixlUcxContext &,
-        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE);
+        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
+        size_t id = 0);
+
+    virtual ~nixlUcxWorker() = default;
 
     nixlUcxWorker(nixlUcxWorker &&) = delete;
     nixlUcxWorker(const nixlUcxWorker &) = delete;
@@ -200,7 +237,7 @@ public:
     [[nodiscard]] std::string
     epAddr();
     [[nodiscard]] std::unique_ptr<nixlUcxEp>
-    connect(void *addr, size_t size);
+    connect(void *addr);
 
     /* Active message handling */
     int
@@ -236,13 +273,28 @@ public:
         return worker.get();
     }
 
-private:
-    [[nodiscard]] static ucp_worker *
-    createUcpWorker(const nixlUcxContext &);
+    [[nodiscard]] size_t
+    getId() const noexcept {
+        return id_;
+    }
 
+    [[nodiscard]] const std::string &
+    getName() const noexcept {
+        return name_;
+    }
+
+private:
+    [[nodiscard]] ucp_worker *
+    createUcpWorker(const nixlUcxContext &) const;
+
+    const std::string name_;
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
-    ucp_err_handling_mode_t err_handling_mode_;
+    const ucp_err_handling_mode_t err_handling_mode_;
+    const size_t id_;
 };
+
+std::ostream &
+operator<<(std::ostream &os, const nixlUcxWorker &worker);
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options();
@@ -252,5 +304,11 @@ ucx_err_mode_to_string(ucp_err_handling_mode_t t);
 
 [[nodiscard]] ucp_err_handling_mode_t
 ucx_err_mode_from_string(std::string_view s);
+
+[[nodiscard]] std::string_view
+ucx_vram_memtype_hint_to_string(nixl_ucx_vram_memtype_hint_t t);
+
+[[nodiscard]] nixl_ucx_vram_memtype_hint_t
+ucx_vram_memtype_hint_from_string(std::string_view s);
 
 #endif
