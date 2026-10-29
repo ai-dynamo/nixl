@@ -18,12 +18,15 @@
 #include <cmath>
 #include <stdexcept>
 
+#include <pthread.h>
+
 #include <absl/strings/numbers.h>
 
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/uuid_v4.h"
 #include "log_once.h"
+#include "random_buffer.h"
 #include "trace.h"
 #include "trace_context.h"
 
@@ -100,11 +103,29 @@ traceIdRandomness(const nixl::trace::TraceContext &context) noexcept {
     return result;
 }
 
+constinit thread_local nixl::trace::RandomBuffer random_buffer{nixl::generateRandomBytes};
+
+void
+clearRandomBuffer() noexcept {
+    random_buffer.clear();
+}
+
+void
+bufferedRandomBytes(std::uint8_t *output, std::size_t size) {
+    // A forked child must not hand out the bytes its parent still holds.
+    static const bool fork_safe = (pthread_atfork(nullptr, nullptr, clearRandomBuffer) == 0);
+    if (!fork_safe) {
+        nixl::generateRandomBytes(output, size);
+        return;
+    }
+    random_buffer.fill(output, size);
+}
+
 void
 generateInto(nixl::trace::TraceContext &context,
              double sample_ratio,
              nixl::trace::random_bytes_fn_t random_bytes) {
-    const auto fill = (random_bytes != nullptr) ? random_bytes : nixl::generateRandomBytes;
+    const auto fill = (random_bytes != nullptr) ? random_bytes : bufferedRandomBytes;
     do {
         fill(context.traceId.data(), context.traceId.size());
     } while (isAllZero(context.traceId));
@@ -304,7 +325,7 @@ nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
         return 0;
     }
     const auto fill =
-        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : nixl::generateRandomBytes;
+        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : bufferedRandomBytes;
     std::uint64_t id = 0;
     try {
         do {
@@ -325,7 +346,7 @@ nixl::trace::generatePostContext(const nixl::trace::TraceContext &request,
         return request;
     }
     const auto fill =
-        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : nixl::generateRandomBytes;
+        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : bufferedRandomBytes;
     nixl::trace::TraceContext context = request;
     try {
         do {
