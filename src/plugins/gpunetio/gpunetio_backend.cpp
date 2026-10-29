@@ -124,6 +124,21 @@ parseGidIndex(const std::string &value) {
     return parsed_value;
 }
 
+uint32_t
+parseCudaStreams(std::string_view value) {
+    if (value.empty()) {
+        return DOCA_POST_STREAM_NUM;
+    }
+    uint32_t count = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), count);
+    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || count < 1 ||
+        count > DOCA_POST_STREAM_NUM) {
+        throw std::invalid_argument("cuda_streams must be an integer in [1, " +
+                                    std::to_string(DOCA_POST_STREAM_NUM) + "]");
+    }
+    return count;
+}
+
 bool
 sendAll(int fd, const void *buffer, size_t size) {
     const auto *cursor = static_cast<const uint8_t *>(buffer);
@@ -304,7 +319,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
     NIXL_INFO << std::endl;
 
-    nstreams = static_cast<int>(nixl::gpunetio::parseCudaStreams((*custom_params)["cuda_streams"]));
+    nstreams = static_cast<int>(parseCudaStreams((*custom_params)["cuda_streams"]));
 
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
