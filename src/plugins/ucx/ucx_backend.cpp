@@ -716,10 +716,6 @@ nixlUcxEngine::setDefaultCallback(nixlNotifCallbacks callbacks) {
     return callbacks;
 }
 
-std::unique_ptr<std::string>
-nixlUcxEngine::buildNotif(const std::string &msg) const {
-    nixlSerDes ser_des;
-
 namespace {
 
 static_assert(std::endian::native == std::endian::little);
