@@ -17,7 +17,6 @@
 #ifndef NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_CONFIG_H
 #define NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_CONFIG_H
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -44,6 +43,19 @@ inline constexpr uint32_t kDefaultProxyRingDepth = 256;
 /** A drain that takes longer aborts the process; 0 waits forever. */
 inline constexpr uint32_t kDefaultProxyDrainTimeoutMs = 60000;
 
+/** Peers first, first + stride, ... of a channel. */
+struct proxyPeerSlice {
+    uint32_t first = 0;
+    uint32_t stride = 1;
+};
+
+/** One proxy thread's rings: `peers` of each of the channel_count channels from first_channel. */
+struct proxyThreadShare {
+    uint32_t first_channel;
+    uint32_t channel_count;
+    proxyPeerSlice peers;
+};
+
 struct proxyConfig {
     bool enabled = false;
     uint32_t channel_count = kDefaultProxyChannelCount;
@@ -60,10 +72,28 @@ struct proxyConfig {
         return static_cast<size_t>(channel_count) * max_peers;
     }
 
-    /** Threads beyond channel_count would own no channels. */
-    [[nodiscard]] uint32_t
-    effectiveThreadCount() const noexcept {
-        return std::min(thread_count, channel_count);
+    /** Threads split the rings evenly: whole channels, or each channel's peers. */
+    [[nodiscard]] bool
+    evenThreadSplit() const noexcept {
+        if (thread_count == 0 || channel_count == 0) {
+            return false;
+        }
+        if (thread_count <= channel_count) {
+            return channel_count % thread_count == 0;
+        }
+        return thread_count % channel_count == 0 && max_peers % (thread_count / channel_count) == 0;
+    }
+
+    /** Thread `thread`'s rings: a block of whole channels, or a stride of one channel's peers;
+     *  requires evenThreadSplit(). */
+    [[nodiscard]] proxyThreadShare
+    threadShare(uint32_t thread) const noexcept {
+        if (thread_count <= channel_count) {
+            const uint32_t channels = channel_count / thread_count;
+            return {thread * channels, channels, {}};
+        }
+        const uint32_t per_channel = thread_count / channel_count;
+        return {thread / per_channel, 1, {thread % per_channel, per_channel}};
     }
 };
 
