@@ -28,7 +28,6 @@
 #include <absl/time/clock.h>
 #include <gtest/gtest.h>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -316,26 +315,13 @@ protected:
         registerMem(agent, out, mem_type);
     }
 
-    // A buffer starts with its full index and the seed, then a byte pattern, so
-    // swapped buffers and stale posts both show up. Needs at least 8 bytes.
-    static std::vector<uint8_t>
-    payload(size_t size, uint32_t index, uint32_t seed) {
-        std::vector<uint8_t> bytes(size);
-        for (size_t i = 0; i < size; ++i) {
-            bytes[i] = static_cast<uint8_t>(seed + index + i);
-        }
-        std::memcpy(bytes.data(), &index, sizeof(index));
-        std::memcpy(bytes.data() + sizeof(index), &seed, sizeof(seed));
-        return bytes;
-    }
-
     static void
-    fillPayload(const std::vector<MemBuffer> &buffers, uint32_t seed) {
+    fillPayloads(const std::vector<MemBuffer> &buffers, uint32_t seed) {
         for (size_t i = 0; i < buffers.size(); ++i) {
-            const auto bytes = payload(buffers[i].getSize(), i, seed);
-            std::memcpy(reinterpret_cast<void *>(static_cast<uintptr_t>(buffers[i])),
-                        bytes.data(),
-                        bytes.size());
+            fillPayload(reinterpret_cast<void *>(static_cast<uintptr_t>(buffers[i])),
+                        buffers[i].getSize(),
+                        i,
+                        seed);
         }
     }
 
@@ -343,10 +329,10 @@ protected:
     static size_t
     findPayloadMismatch(const std::vector<MemBuffer> &buffers, uint32_t seed) {
         for (size_t i = 0; i < buffers.size(); ++i) {
-            const auto bytes = payload(buffers[i].getSize(), i, seed);
-            if (std::memcmp(reinterpret_cast<void *>(static_cast<uintptr_t>(buffers[i])),
-                            bytes.data(),
-                            bytes.size()) != 0) {
+            if (!checkPayload(reinterpret_cast<const void *>(static_cast<uintptr_t>(buffers[i])),
+                              buffers[i].getSize(),
+                              i,
+                              seed)) {
                 return i;
             }
         }
@@ -354,7 +340,7 @@ protected:
     }
 
     static void
-    checkPayload(const std::vector<MemBuffer> &buffers, uint32_t seed) {
+    checkPayloads(const std::vector<MemBuffer> &buffers, uint32_t seed) {
         const size_t i = findPayloadMismatch(buffers, seed);
         if (i < buffers.size()) {
             ADD_FAILURE() << "buffer " << i << " does not hold payload " << seed;
@@ -679,8 +665,8 @@ TEST_P(TestTransfer, ManyDescriptorsPayload) {
                                             getAgentName(1),
                                             req));
         for (size_t post = 0; post < posts; ++post) {
-            fillPayload(src, ++seed);
-            fillPayload(dst, 0);
+            fillPayloads(src, ++seed);
+            fillPayloads(dst, 0);
 
             nixl_status_t status = getAgent(0).postXferReq(req);
             ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
@@ -697,9 +683,10 @@ TEST_P(TestTransfer, ManyDescriptorsPayload) {
                 // Mooncake v0.3.10.post1, the CI pin, reports a TCP WRITE complete
                 // before the target has applied it (fixed in kvcache-ai/Mooncake#2850,
                 // v0.3.12). Wait for the bytes, or they can land on the next post.
+                // TODO: drop this wait once CI uses Mooncake >= v0.3.12.
                 wait_until_true([&]() { return findPayloadMismatch(dst, seed) == dst.size(); });
             }
-            checkPayload(dst, seed);
+            checkPayloads(dst, seed);
         }
         EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
     }

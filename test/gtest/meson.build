@@ -96,7 +96,9 @@ endif
 # Transfer Engine's TCP transport (v0.3.10.post1) locks a session mutex on the
 # submitting thread and unlocks it on its own thread, so a post with more than 64
 # descriptors overflows TSAN's per-thread lock tracking.
-if is_variable('mooncake_backend_interface') and not sanitizer_opts.contains('thread')
+# TODO: drop this exclusion once CI uses Mooncake >= v0.3.12 (kvcache-ai/Mooncake#2850).
+if (is_variable('mooncake_backend_interface') and not sanitizer_opts.contains('thread')
+        and not get_option('b_sanitize').split(',').contains('thread'))
     cpp_flags += '-DHAVE_MOONCAKE'
 endif
 
