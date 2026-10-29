@@ -343,6 +343,7 @@ nixlTcpStoreMetadataBackend::invalidateLocal(const nixl_opt_args_t * /*extra_par
                             NIXL_INFO << "[" << backend_.ctx_.agentName()
                                       << "] TCPStore invalidate skipped for key " << key
                                       << ": key does not exist";
+                            backend_.publishedKeys_.erase(key);
                         }
 
                         if (--pendingCount_ == 0) {
@@ -394,5 +395,5 @@ nixlTcpStoreMetadataBackend::writeTaskCompleted(const WriteTask *completed_task)
 
     inflightTask_ = std::move(writeQueue_.front());
     writeQueue_.pop_front();
-    inflightTask_->initiate();
+    asio::post(ioContext_, [this]() { inflightTask_->initiate(); });
 }

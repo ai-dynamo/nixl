@@ -20,9 +20,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <ranges>
 #include <type_traits>
 #include <vector>
+
+#include "nixl_log.h"
 
 namespace nixl {
 
@@ -33,50 +36,40 @@ concept byte_range_t =
     sizeof(std::ranges::range_value_t<R>) == sizeof(std::uint8_t);
 
 /**
- * @class byteBuffer
- * @brief A simple byte buffer that can be used to store and manipulate binary data.
- *        Arithmetic values are stored in native byte order, and byte sequences are
+ * @class inputByteBuffer
+ * @brief A simple input buffer that can be used to store and manipulate binary data.
+ *        Arithmetic values are stored in native byte order, and byte ranges are
  *        stored as their length followed by the bytes.
  *
  *        The buffer is not thread-safe.
  */
-class byteBuffer {
+class inputByteBuffer {
 public:
     /**
      * @brief Construct a new empty byte buffer.
      */
-    byteBuffer() = default;
+    inputByteBuffer() = default;
 
     /**
      * @brief Move constructor.
      * @param other The other byte buffer to move from.
      */
-    byteBuffer(byteBuffer &&other) noexcept = default;
+    inputByteBuffer(inputByteBuffer &&other) noexcept = default;
 
     /**
      * @brief Move assignment operator.
      * @param other The other byte buffer to move from.
      * @return this.
      */
-    byteBuffer &
-    operator=(byteBuffer &&other) noexcept = default;
+    inputByteBuffer &
+    operator=(inputByteBuffer &&other) noexcept = default;
 
     // Delete copy constructor and assignment operator.
-    byteBuffer(const byteBuffer &) = delete;
-    byteBuffer &
-    operator=(const byteBuffer &) = delete;
+    inputByteBuffer(const inputByteBuffer &) = delete;
+    inputByteBuffer &
+    operator=(const inputByteBuffer &) = delete;
 
-    ~byteBuffer() = default;
-
-    /**
-     * @brief Reserve space for the given number of bytes. This is used to
-     *        set the size of the receive buffer.
-     * @param size The number of bytes to reserve.
-     */
-    void
-    resize(std::size_t size) {
-        data_.resize(size);
-    }
+    ~inputByteBuffer() = default;
 
     /**
      * @brief Put an arithmetic value into the buffer.
@@ -85,11 +78,10 @@ public:
      */
     template<typename T>
         requires std::is_arithmetic_v<T>
-    byteBuffer &
+    void
     put(T value) {
         const auto *begin = reinterpret_cast<const std::uint8_t *>(&value);
         data_.insert(data_.end(), begin, begin + sizeof(T));
-        return *this;
     }
 
     /**
@@ -98,11 +90,10 @@ public:
      *        must NOT come from this buffer.
      * @return this.
      */
-    byteBuffer &
+    void
     put(byte_range_t auto &&value) {
         put(static_cast<std::uint64_t>(std::ranges::size(value)));
         data_.insert(data_.end(), std::ranges::cbegin(value), std::ranges::cend(value));
-        return *this;
     }
 
     /**
@@ -112,29 +103,28 @@ public:
      * @return this.
      */
     template<typename... Args>
-    byteBuffer &
+    void
     putValues(Args &&...args) {
         data_.reserve(data_.size() + (... + getSize(args)));
         (put(args), ...);
-        return *this;
     }
 
     /**
-     * @brief Get a const reference to the internal data.
-     * @return A const reference to the internal data.
+     * @brief Get a const pointer to the internal data.
+     * @return A const pointer to the internal data.
      */
-    std::vector<std::uint8_t> const &
-    getRef() const noexcept {
-        return data_;
+    [[nodiscard]] const std::uint8_t *
+    data() const noexcept {
+        return data_.data();
     }
 
     /**
-     * @brief Get a mutable reference to the internal data.
-     * @return A reference to the internal data.
+     * @brief Get the size of the buffer.
+     * @return The size of the buffer.
      */
-    std::vector<std::uint8_t> &
-    getRef() noexcept {
-        return data_;
+    [[nodiscard]] std::size_t
+    size() const noexcept {
+        return data_.size();
     }
 
 private:
@@ -153,17 +143,81 @@ private:
     std::vector<std::uint8_t> data_;
 };
 
-/**
- * @brief Make a receive buffer of the given size.
- * @param size The size of the receive buffer.
- * @return A receive buffer of the given size.
- */
-[[nodiscard]] inline static nixl::byteBuffer
-makeReceiveBuffer(std::size_t size) {
-    nixl::byteBuffer buf;
-    buf.resize(size);
-    return buf;
-}
+class outputByteBuffer {
+public:
+    /**
+     * @brief Construct a new output byte buffer with the given capacity.
+     * @param capacity The capacity of the buffer.
+     */
+    explicit outputByteBuffer(std::size_t capacity = 0) : capacity_(capacity) {
+        if (capacity_ > 0) {
+            data_ = std::make_unique<std::uint8_t[]>(capacity_);
+        }
+    }
+
+    /**
+     * @brief Move constructor.
+     * @param other The other byte buffer to move from.
+     */
+    outputByteBuffer(outputByteBuffer &&other) noexcept = default;
+
+    /**
+     * @brief Move assignment operator.
+     * @param other The other byte buffer to move from.
+     * @return this.
+     */
+    outputByteBuffer &
+    operator=(outputByteBuffer &&other) noexcept = default;
+
+    // Delete copy constructor and assignment operator.
+    outputByteBuffer(const outputByteBuffer &) = delete;
+    outputByteBuffer &
+    operator=(const outputByteBuffer &) = delete;
+
+    ~outputByteBuffer() = default;
+
+    /**
+     * @brief Get a mutable pointer to the internal data.
+     * @return A mutable pointer to the internal data.
+     */
+    [[nodiscard]] std::uint8_t *
+    data() noexcept {
+        return data_.get();
+    }
+
+    /**
+     * @brief Get the capacity of the buffer.
+     * @return The capacity of the buffer.
+     */
+    [[nodiscard]] std::size_t
+    capacity() const noexcept {
+        return capacity_;
+    }
+
+    /**
+     * @brief Set the size of the buffer.
+     * @param size The size of the buffer.
+     */
+    void
+    setSize(std::size_t size) noexcept {
+        NIXL_ASSERT(size <= capacity_);
+        size_ = size;
+    }
+
+    /**
+     * @brief Get the size of the buffer.
+     * @return The size of the buffer.
+     */
+    [[nodiscard]] std::size_t
+    size() const noexcept {
+        return size_;
+    }
+
+private:
+    std::unique_ptr<std::uint8_t[]> data_;
+    std::size_t capacity_;
+    std::size_t size_ = 0;
+};
 
 } // namespace nixl
 

@@ -27,22 +27,26 @@
 #ifndef NIXL_SRC_CORE_NIXL_TCPSTORE_CLIENT_ASYNC_H
 #define NIXL_SRC_CORE_NIXL_TCPSTORE_CLIENT_ASYNC_H
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include <asio.hpp>
 
 #include "common/byte_buffer.h"
 
 // All requests are asynchronous. Request completion handlers are invoked on
-// the given execution context. Request completion handlers must NOT block
-// indefinitely, and should return fast. Otherwise, it may block the execution
-// of other requests.
+// the given execution context. If a request is started after stop() is called,
+// its completion handler is invoked immediately with an error before the request
+// call is finished. Request completion handlers must NOT block indefinitely,
+// and should return fast. Otherwise, it may block the execution of other requests.
 class nixlTcpStoreClientAsync {
 public:
     // Construct a client with the given configuration.
@@ -165,16 +169,31 @@ private:
     void
     onError(std::string what, asio::error_code error, bool is_timeout, std::int32_t op_generation);
 
-    enum class io_op_t { READ, WRITE };
-    // Helper function to initiate an asynchronous read/write operation with
+
+    // Helper function to initiate an asynchronous read operation with
+    // cancellation and error handling. If the buffer owns the memory,
+    // the ownership is transferred to the completion handler.
+    //
+    // The completion handler's signature must be:
+    // void (Buffer, asio::error_code, std::size_t)
+    template<typename Buffer, typename Fn>
+        requires std::is_same_v<Buffer, nixl::outputByteBuffer> ||
+        std::is_same_v<Buffer, asio::mutable_buffer>
+    void
+    initiateAsyncRead(Buffer buf, std::string what, deadline_t deadline, Fn &&on_complete);
+
+    // Helper function to initiate an asynchronous write operation with
     // cancellation and error handling. The ownership of the buffer is transferred
     // to the completion handler.
     //
     // The completion handler's signature must be:
-    // void (nixl::byteBuffer, asio::error_code, std::size_t)
-    template<io_op_t Op, typename Fn>
+    // void (nixl::inputByteBuffer,asio::error_code, std::size_t)
+    template<typename Fn>
     void
-    initiateAsync(nixl::byteBuffer buf, std::string what, deadline_t deadline, Fn &&on_complete);
+    initiateAsyncWrite(nixl::inputByteBuffer buf,
+                       std::string what,
+                       deadline_t deadline,
+                       Fn &&on_complete);
 
     // Helper function that adds timeout cancellation and error handling to
     // the given completion handler.
