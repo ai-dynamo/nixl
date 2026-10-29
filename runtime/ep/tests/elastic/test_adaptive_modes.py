@@ -332,14 +332,14 @@ def check_handle_sizing(buffer: ep.ElasticBuffer, args: argparse.Namespace):
         handle.num_recv_tokens == args.num_tokens * max_so * max_su
     ), "worst case of the maximum world"
     assert num_channels == channels_per_sm * num_active_sms
-    assert (
-        handle.token_metadata_at_forward.shape[1]
-        == live_so * ceil_div(args.num_tokens, num_channels) + 1
-    )
+    # Forward metadata per channel: the live world's token rows, then a footer of 1 + live_so words; the storage holds the
+    # maximum world's token rows on the whole launch grid plus every channel's footer
+    rows, dims = handle.token_metadata_at_forward.shape[1:]
+    assert rows * dims >= live_so * ceil_div(args.num_tokens, num_channels) * dims + 1 + live_so
     assert handle.channel_linked_list.shape[2] == live_su
-    assert capacity(handle.token_metadata_at_forward) >= max_linked_list_len * (
-        2 + 2 * args.num_topk
-    )
+    assert capacity(handle.token_metadata_at_forward) >= dims * max_so * (
+        args.num_tokens + num_max_channels
+    ) + num_max_channels * (1 + max_so)
     assert capacity(handle.channel_linked_list) >= max_linked_list_len * max_su
     # The expert-indexed handles have the fixed slot count of this rank in every world
     assert (

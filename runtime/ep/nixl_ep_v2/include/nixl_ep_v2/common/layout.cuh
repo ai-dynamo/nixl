@@ -86,6 +86,36 @@
 
 namespace nixl_ep_v2::elastic::layout {
 
+// The forwarding metadata of a hybrid dispatch (`token_metadata_at_forward`), replayed by the combine's forward warps. Per
+// channel: one row per forwarded token, `num_scaleout_ranks * num_max_tokens_per_channel` at most, then a footer. A row holds
+// the source token's global index, the top-k scale-up peers, their destination slots, and the scale-up tail each selection
+// needs in the combine (the list capacity minus the token's position in that peer's channel list; zero without a peer). The
+// footer holds -(number of token rows + 1), then one forwarded-token count per source domain; it takes further rows when
+// `1 + num_scaleout_ranks` exceeds the row width. The host allocates with it, both kernels index with it: the kernels give
+// their top-k count as the template argument, so that the row stride is a compile-time constant; the host leaves it at 0 and
+// passes the runtime count as the third member
+template <int kNumTopk = 0>
+struct ForwardMetadataLayout {
+    int num_scaleout_ranks, num_max_tokens_per_channel, num_topk = kNumTopk;
+
+    __forceinline__ __device__ __host__ constexpr int topk() const { return kNumTopk > 0 ? kNumTopk : num_topk; }
+    __forceinline__ __device__ __host__ constexpr int num_dims() const { return 1 + topk() * 3; }
+    __forceinline__ __device__ __host__ int num_token_rows() const { return num_scaleout_ranks * num_max_tokens_per_channel; }
+    __forceinline__ __device__ __host__ int num_footer_rows() const { return math::ceil_div(1 + num_scaleout_ranks, num_dims()); }
+    __forceinline__ __device__ __host__ int num_rows() const { return num_token_rows() + num_footer_rows(); }
+    __forceinline__ __device__ __host__ int num_words_per_channel() const { return num_rows() * num_dims(); }   // fits an int, as the kernels' indices do
+
+    // Words of token row `row`
+    __forceinline__ __device__ __host__ int src_token_word(const int& row) const { return row * num_dims(); }
+    __forceinline__ __device__ __host__ int peer_word(const int& row, const int& k) const { return row * num_dims() + 1 + k; }
+    __forceinline__ __device__ __host__ int slot_word(const int& row, const int& k) const { return row * num_dims() + 1 + topk() + k; }
+    __forceinline__ __device__ __host__ int required_tail_word(const int& row, const int& k) const { return row * num_dims() + 1 + topk() * 2 + k; }
+
+    // Footer words
+    __forceinline__ __device__ __host__ int length_word() const { return num_token_rows() * num_dims(); }
+    __forceinline__ __device__ __host__ int domain_count_word(const int& scaleout_rank_idx) const { return length_word() + 1 + scaleout_rank_idx; }
+};
+
 // The control region of the symmetric buffer: every word a peer may write sits at an offset fixed by compile-time
 // capacities, and is zero at rest (each kernel zeroes what it used), except the combine readiness counters,
 // monotonic per-peer barrier words and the zero-copy words (call-tagged, never cleaned in-kernel,

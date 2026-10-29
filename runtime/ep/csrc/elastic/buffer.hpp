@@ -865,19 +865,18 @@ public:
         const int64_t max_channel_tokens = static_cast<int64_t>(num_max_tokens_per_rank) + num_max_channels;
         const int64_t max_linked_list_len = max_num_scaleout_ranks * max_channel_tokens + num_max_channels;
 
-        // The token metadata during forward
-        // `[i, j]` means: in channel i, the j-th forwarded token's metadata
-        // Info contains:
-        //   - Scaleout rank index and source token index in the original rank (0)
-        //   - Whether the token is the last one in the chunk (1)
-        //   - the top-k scale-up peer indices (top-k)
-        //   - each selections' destination slot indices (top-k)
+        // The token metadata during forward (`layout::ForwardMetadataLayout`: token rows, then the footer, per channel). Capacity:
+        // the maximum world's token rows on the whole launch grid (`max_linked_list_len` counts them plus one row per channel)
+        // and every channel's footer
         const auto num_max_forwarded_tokens = topo.num_scaleout_ranks * num_max_tokens_per_channel + 1;
-        const auto num_forward_metadata_dims = 2 + num_topk * 2;
+        const auto forward_metadata = layout::ForwardMetadataLayout<>{
+            static_cast<int>(topo.num_scaleout_ranks), static_cast<int>(num_max_tokens_per_channel), static_cast<int>(num_topk)};
+        const auto max_forward_metadata_rows = max_linked_list_len - num_max_channels + static_cast<int64_t>(num_max_channels) *
+            layout::ForwardMetadataLayout<>{static_cast<int>(max_num_scaleout_ranks), 0, static_cast<int>(num_topk)}.num_footer_rows();
         auto token_metadata_at_forward = alloc_flat(
-            max_linked_list_len * num_forward_metadata_dims,
-            static_cast<int64_t>(num_channels) * num_max_forwarded_tokens * num_forward_metadata_dims,
-            {num_channels, num_max_forwarded_tokens, num_forward_metadata_dims});
+            max_forward_metadata_rows * forward_metadata.num_dims(),
+            static_cast<int64_t>(num_channels) * forward_metadata.num_words_per_channel(),
+            {num_channels, forward_metadata.num_rows(), forward_metadata.num_dims()});
         int* token_metadata_at_forward_ptr = token_metadata_at_forward.data_ptr<int>();
 
         // Per-scaleup-peer-per-channel linked list
@@ -1248,8 +1247,10 @@ public:
         const auto num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels_);
         const int num_channels = num_channels_;
         int* token_metadata_at_forward_ptr = token_metadata_at_forward.data_ptr<int>();
-        EP_HOST_ASSERT(d1 == topo.num_scaleout_ranks * num_max_tokens_per_channel + 1);
-        EP_HOST_ASSERT(d2 == 2 + num_topk * 2);
+        const auto forward_metadata = layout::ForwardMetadataLayout<>{
+            static_cast<int>(topo.num_scaleout_ranks), static_cast<int>(num_max_tokens_per_channel), static_cast<int>(num_topk)};
+        EP_HOST_ASSERT(d1 == forward_metadata.num_rows());
+        EP_HOST_ASSERT(d2 == forward_metadata.num_dims());
         EP_HOST_ASSERT(token_metadata_at_forward.is_cuda() and token_metadata_at_forward.is_contiguous());
         EP_HOST_ASSERT(token_metadata_at_forward.scalar_type() == torch::kInt);
 

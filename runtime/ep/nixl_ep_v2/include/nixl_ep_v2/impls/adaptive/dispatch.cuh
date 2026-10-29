@@ -1302,10 +1302,10 @@ adaptive_dispatch_impl(
         scaleout_recv_buffer = scaleout_recv_buffer.get_channel_buffer(channel_idx, num_max_tokens_per_channel);
         scaleup_buffer = scaleup_buffer.get_rank_buffer(scaleup_rank_idx);
 
-        // Shape of `token_metadata_at_forward`: `[num_channels, num_scaleout_ranks * num_max_tokens_per_channel + 1, kNumForwardMetadataDims]`
-        constexpr int kNumForwardMetadataDims = 2 + kNumTopk * 2;
+        // This channel's forwarding metadata (`layout::ForwardMetadataLayout`: one row per forwarded token, then the footer)
+        const auto forward_metadata = layout::ForwardMetadataLayout<kNumTopk>{num_scaleout_ranks, num_max_tokens_per_channel};
         const int num_tokens_in_linked_list = num_max_tokens_per_channel * num_scaleout_ranks + 1;
-        token_metadata_at_forward += channel_idx * (num_tokens_in_linked_list * kNumForwardMetadataDims);
+        token_metadata_at_forward += channel_idx * forward_metadata.num_words_per_channel();
 
         // Transform linked list index
         const auto transform_linked_list_idx = [=](const int& idx) {
@@ -1456,19 +1456,20 @@ adaptive_dispatch_impl(
 
                 // Record metadata at forward
                 EP_STATIC_ASSERT(kNumTopk <= 32, "Invalid number of selections");
-                const auto metadata_ptr = token_metadata_at_forward +
-                    num_tokens_processed * kNumForwardMetadataDims;
+                const int row = num_tokens_processed;
 
-                // Source token index and last token index flag
-                if (ptx::elect_one_sync()) {
-                    metadata_ptr[0] = tma_buffer.get_src_token_global_idx_ptr()[0];
-                    metadata_ptr[1] = slot_idx == (end_slot_idx - 1);
-                }
+                // Source token index
+                if (ptx::elect_one_sync())
+                    token_metadata_at_forward[forward_metadata.src_token_word(row)] = tma_buffer.get_src_token_global_idx_ptr()[0];
 
-                // Second, original top-k indices and destination slots
+                // Second, original top-k indices, destination slots, and the scale-up tail the combine's forward warp needs for
+                // each selection: the capacity minus the token's position in the peer's channel list, which is what the combine's
+                // scale-up senders publish as they walk their lists downward
                 if (lane_idx < kNumTopk) {
-                    metadata_ptr[2 + lane_idx] = stored_dst_scaleup_rank_idx;
-                    metadata_ptr[2 + kNumTopk + lane_idx] = stored_dst_slot_idx;
+                    token_metadata_at_forward[forward_metadata.peer_word(row, lane_idx)] = stored_dst_scaleup_rank_idx;
+                    token_metadata_at_forward[forward_metadata.slot_word(row, lane_idx)] = stored_dst_slot_idx;
+                    token_metadata_at_forward[forward_metadata.required_tail_word(row, lane_idx)] =
+                        linked_list_idx >= 0 ? num_tokens_in_linked_list - 1 - linked_list_idx : 0;
                 }
                 num_tokens_processed += 1;
                 __syncwarp();
@@ -1482,11 +1483,11 @@ adaptive_dispatch_impl(
 
         EP_PROFILE_STAMP_LAST(workspace_layout, 11);   // hybrid: the last forward warp has consumed its records
 
-        // Store the length as -(length + 1) in the reserved final row; it also marks the end when the list is full.
-        if (ptx::elect_one_sync()) {
-            token_metadata_at_forward[num_tokens_processed * kNumForwardMetadataDims] = -1;
-            token_metadata_at_forward[(num_tokens_in_linked_list - 1) * kNumForwardMetadataDims] = -num_tokens_processed - 1;
-        }
+        // The footer: -(number of token rows + 1), then each source domain's forwarded-token count
+        if (ptx::elect_one_sync())
+            token_metadata_at_forward[forward_metadata.length_word()] = -num_tokens_processed - 1;
+        if (lane_idx < num_scaleout_ranks)
+            token_metadata_at_forward[forward_metadata.domain_count_word(lane_idx)] = stored_num_records;
         __syncwarp();
 
         // Update linked list's ending position
