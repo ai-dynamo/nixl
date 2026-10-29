@@ -86,36 +86,49 @@ chooseIpAddress() {
     return nixl::config::getValueDefaulted("NIXL_MOONCAKE_IP_ADDR", fallback);
 }
 
-// Returns NIXL_IN_PROG while the batch is in flight, then NIXL_SUCCESS if every
-// request completed or NIXL_ERR_BACKEND otherwise. Observing completion also
-// lets the Transfer Engine send the notification attached to the batch.
+// Walks every request: NIXL_IN_PROG while any is in flight, then NIXL_SUCCESS if
+// all completed or NIXL_ERR_BACKEND if any failed or timed out.
 [[nodiscard]] nixl_status_t
-queryBatchStatus(transfer_engine_t engine,
-                 uint64_t batch_id,
-                 [[maybe_unused]] size_t request_count) {
-#ifdef HAVE_MOONCAKE_BATCH_STATUS
-    // One call per poll instead of one per request. Unlike the per-request
-    // walk, a failure may be reported before the other requests drain.
-    transfer_status_t status;
-    if (getBatchTransferStatus(engine, batch_id, &status) != 0) {
-        return NIXL_ERR_BACKEND;
-    }
-    if (status.status == STATUS_PENDING || status.status == STATUS_WAITING) {
-        return NIXL_IN_PROG;
-    }
-    return status.status == STATUS_COMPLETED ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
-#else
+queryRequestStatus(transfer_engine_t engine, uint64_t batch_id, size_t request_count) {
     bool has_failed = false;
     for (size_t index = 0; index < request_count; ++index) {
         transfer_status_t status;
-        int rc = getTransferStatus(engine, batch_id, index, &status);
-        if (rc || status.status == STATUS_FAILED) {
+        if (getTransferStatus(engine, batch_id, index, &status) != 0) {
             has_failed = true;
         } else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING) {
             return NIXL_IN_PROG;
+        } else if (status.status != STATUS_COMPLETED) {
+            has_failed = true;
         }
     }
     return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
+}
+
+// Returns NIXL_IN_PROG while any request of the batch is in flight, then
+// NIXL_SUCCESS if every request completed or NIXL_ERR_BACKEND otherwise.
+// Observing completion also lets the Transfer Engine send the notification
+// attached to the batch.
+[[nodiscard]] nixl_status_t
+queryBatchStatus(transfer_engine_t engine, uint64_t batch_id, size_t request_count) {
+#ifdef HAVE_MOONCAKE_BATCH_STATUS
+    // One call per poll instead of one per request.
+    transfer_status_t status;
+    if (getBatchTransferStatus(engine, batch_id, &status) == 0) {
+        if (status.status == STATUS_PENDING || status.status == STATUS_WAITING) {
+            return NIXL_IN_PROG;
+        }
+        if (status.status == STATUS_COMPLETED) {
+            return NIXL_SUCCESS;
+        }
+    }
+    // A failure can be reported while other requests still use the buffers.
+    // Report it only once every request is done.
+    if (queryRequestStatus(engine, batch_id, request_count) == NIXL_IN_PROG) {
+        return NIXL_IN_PROG;
+    }
+    return NIXL_ERR_BACKEND;
+#else
+    return queryRequestStatus(engine, batch_id, request_count);
 #endif
 }
 
@@ -133,6 +146,16 @@ freeBatch(transfer_engine_t engine, uint64_t batch_id) {
 }
 
 constexpr size_t kDefaultSplitBatchSize = 1024;
+
+#ifdef HAVE_MOONCAKE_BATCH_STATUS
+// Engines with getBatchTransferStatus() (kvcache-ai/Mooncake#4910) also report a
+// TCP WRITE complete only once the target applied it (kvcache-ai/Mooncake#2850).
+constexpr bool kSplitWrites = true;
+#else
+// Older engines can report a TCP WRITE complete before the target applied it, so
+// a split WRITE could notify before every chunk landed. Split only READs.
+constexpr bool kSplitWrites = false;
+#endif
 
 // A backend parameter takes precedence over its environment variable.
 [[nodiscard]] size_t
@@ -414,6 +437,19 @@ recycleBatches(transfer_engine_t engine, nixlMooncakeBackendReqH *priv) {
     releaseBatches(engine, priv);
     return NIXL_SUCCESS;
 }
+
+// A failed submit can leave requests that a transport already started, so the
+// handle can be reposted only if the batch is freed at once. A deferred batch
+// belongs to the engine from here on; a busy one stays for releaseReqH to retry.
+// Returns whether the batch id is gone.
+bool
+dropFailedBatch(transfer_engine_t engine, nixlMooncakeBackendReqH *priv, uint64_t batch_id) {
+    const int rc = freeBatch(engine, batch_id);
+    if (rc != 0) {
+        priv->failed = true;
+    }
+    return rc == 0 || rc == kBatchCleanupDeferred;
+}
 } // namespace
 
 nixl_status_t
@@ -466,7 +502,8 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
     const bool has_notif = opt_args && opt_args->hasNotif;
     size_t chunk_size = request_count;
     size_t num_chunks = 1;
-    if (submit_pool_ && request_count >= split_batch_size_) {
+    if (submit_pool_ && request_count >= split_batch_size_ &&
+        (operation == NIXL_READ || kSplitWrites)) {
         const size_t threads = submit_pool_->size();
         chunk_size = std::max((request_count + threads - 1) / threads, split_batch_size_);
         num_chunks = (request_count + chunk_size - 1) / chunk_size;
@@ -494,10 +531,23 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                 return rc;
             }));
         }
-        bool failed = false;
+        std::vector<int> rcs;
+        rcs.reserve(num_chunks);
         for (auto &result : results) {
-            failed |= result.get() != 0;
+            rcs.push_back(result.get());
         }
+        bool failed = false;
+        for (size_t chunk = 0; chunk < num_chunks; ++chunk) {
+            auto &batch = priv->batches[chunk];
+            if (rcs[chunk] == 0) {
+                continue;
+            }
+            failed = true;
+            if (batch.id != INVALID_BATCH && dropFailedBatch(engine_, priv, batch.id)) {
+                batch.id = INVALID_BATCH;
+            }
+        }
+        // Batches that completed their submit stay, so a repost waits for them.
         std::erase_if(priv->batches, [](const auto &batch) { return batch.id == INVALID_BATCH; });
         if (failed) {
             return NIXL_ERR_BACKEND;
@@ -525,14 +575,9 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         rc = submitTransfer(engine_, batch_id, request.data(), request_count);
     }
     if (rc) {
-        // Requests queued before the failure may still be in flight. The handle
-        // can be reposted only if the batch was freed right away. A deferred
-        // batch now belongs to the engine; a busy one is retried in releaseReqH.
-        const int free_rc = freeBatch(engine_, batch_id);
-        if (free_rc == 0 || free_rc == kBatchCleanupDeferred) {
+        if (dropFailedBatch(engine_, priv, batch_id)) {
             priv->batches.pop_back();
         }
-        priv->failed = (free_rc != 0);
         return NIXL_ERR_BACKEND;
     }
     priv->batches.back().request_count = request_count;
