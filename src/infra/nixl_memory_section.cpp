@@ -212,6 +212,13 @@ nixlMemSection::populate(const nixl_stride_dlist_t &query,
             return NIXL_ERR_INVALID_PARAM;
         }
 
+        // Reject runs whose span or flat block count would overflow size_t.
+        if ((run.count - 1 > (SIZE_MAX - run.len) / run.stride) ||
+            (run.count > SIZE_MAX - start_idx)) [[unlikely]] {
+            resp.clear();
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
         // Full byte extent of the run: from the first block start to the last block end.
         // Covering this single span guarantees every block in the run is registered.
         const size_t span_len = (run.count - 1) * run.stride + run.len;

@@ -188,6 +188,7 @@ public:
             return 0;
         }
         const nixlMetaStrideDesc &last = descs.back();
+        NIXL_ASSERT(last.count <= SIZE_MAX - last.start_idx);
         return last.start_idx + last.count;
     }
 
