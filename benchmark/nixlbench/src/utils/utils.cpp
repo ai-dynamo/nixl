@@ -536,6 +536,13 @@ setupDeviceAPIConfig() {
                   << group_num << std::endl;
         xferBenchConfig::device_channel_num = group_num;
     }
+    if ((group_num % xferBenchConfig::device_channel_num) != 0) {
+        std::cerr << "Invalid value for --device_channel_num: "
+                  << xferBenchConfig::device_channel_num
+                  << ". nixlbench requires Device API group number " << group_num
+                  << " to be a multiple of the channel number" << std::endl;
+        return false;
+    }
     if (xferBenchConfig::num_iter < group_num) {
         std::cerr << "Invalid value for --num_iter: " << xferBenchConfig::num_iter
                   << " , must not be smaller than Device API group number: " << group_num
