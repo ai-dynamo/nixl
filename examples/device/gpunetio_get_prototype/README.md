@@ -2,6 +2,16 @@
 
 **Prototype recipe, not currently runnable against public main.** This isolates the NIXL transfer direction and lifecycle from model layouts, FP8, Engram kernels, and serving. Use two independent endpoint processes and only caller-supplied device/network values.
 
+## Inspection artifacts
+
+- [Legacy GET reference](legacy_doca31_get_reference.md).
+- [Kernel call-site reference](owner_consumer_reproducer.md).
+
+These Markdown documents preserve the original C++ snippets and copyright
+attribution. They are not build targets. The original `.cuh` include name inside
+the call-site snippet describes the legacy relationship, not a header supplied
+by current main. No supported SDK port is added by this packaging change.
+
 ## Roles and data contract
 
 - **Owner:** allocate a bounded registered VRAM source buffer, fill deterministic bytes plus leading/trailing guards, create the GPUNETIO agent, register the source, export metadata, and keep the buffer/MR/agent alive until the consumer reports validation.

@@ -1,3 +1,11 @@
+# Legacy DOCA 3.1 GET reference
+
+Inspection-only C++ reference, not a compilation target or supported current-main
+API. The fenced text below preserves `legacy_doca31_get_reference.cuh` byte-for-byte, including its
+original copyright and author attribution. SDK/private-view dependencies remain
+unresolved; publishing it as documentation does not make it runnable.
+
+```cpp
 // SPDX-FileCopyrightText: Copyright (c) 2026 Yunxiao Ning. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 // Author: Yunxiao Ning
@@ -163,3 +171,4 @@ get(const memViewElem &local_dst,
 } // namespace nixl::gpu::experimental
 
 #endif // NIXL_DEVICE_API_EXPERIMENTAL_GET_CUH
+```

@@ -1,6 +1,6 @@
 # GPUNETIO Device GET: prototype contract and current port blockers
 
-**Status: local Draft for design review.** This branch is based on current upstream `main`, not on #2234's fork head. The five-file reference package is kept additive; no current-main API or implementation is added. #2234 remains a separate PUT/completion proposal. This document makes the GET contract reviewable without claiming a working public API or current-SDK build.
+**Status: local Draft for design review.** This branch is based on current upstream `main`, not on #2234's fork head. The reference package remains documentation-only; no current-main API or implementation is added. #2234 remains a separate PUT/completion proposal. This document makes the GET contract reviewable without claiming a working public API or current-SDK build.
 
 ## Prototype scope
 
@@ -17,7 +17,7 @@ The initial portable two-endpoint correctness case may target registered VRAM on
 
 Current upstream main inspected for this draft is `06dd03bac41d7560809695f0a2e81fc31b855e32`. Its public GPU header/dispatcher expose PUT and completion helpers but no transfer GET. Upstream main does not contain the GPUNETIO native compat/view files added by the separate #2234 proposal. That proposed branch adds native GPU PUT/completion; its new memview builder rejects every segment type except `VRAM_SEG`, and its compat layer has no GET operation. #2234 is linked for context only and is not this branch's base.
 
-The validated legacy GET reference is retained in `examples/device/gpunetio_get_prototype/legacy_doca31_get_reference.cuh` for inspection only. It is not included by Meson. It is explicitly gated on `NIXL_GPUNETIO_DEVICE_API_LEGACY_DOCA31` and `DOCA_GPUNETIO_VERBS_DUMP_AUTO`; it reaches `impl::unwrapViews`, `impl::prepareStatus`, `impl::gpunetio::GpunetioDeviceView`, the private lane/QP, and status-payload internals. Those helpers/layouts are not a public GET contract. Current `#2234` intentionally requires the public DOCA 3.5+ profile and rejects the legacy profile; it also has no `compat::get` implementation. No DOCA 3.5 GET symbol/signature or scratch/visibility behavior is inferred here.
+The validated legacy GET reference is retained as a fenced C++ block in `examples/device/gpunetio_get_prototype/legacy_doca31_get_reference.md` for inspection only. It is not included by Meson. It is explicitly gated on `NIXL_GPUNETIO_DEVICE_API_LEGACY_DOCA31` and `DOCA_GPUNETIO_VERBS_DUMP_AUTO`; it reaches `impl::unwrapViews`, `impl::prepareStatus`, `impl::gpunetio::GpunetioDeviceView`, the private lane/QP, and status-payload internals. Those helpers/layouts are not a public GET contract. Current `#2234` intentionally requires the public DOCA 3.5+ profile and rejects the legacy profile; it also has no `compat::get` implementation. No DOCA 3.5 GET symbol/signature or scratch/visibility behavior is inferred here.
 
 ## Minimum public patch after the SDK contract is confirmed
 
@@ -41,7 +41,7 @@ git grep -n -E '(^|::)get[[:space:]]*\(' upstream/main -- src/api/device/gpu/nix
 git ls-tree -r --name-only upstream/main | rg 'src/api/device/gpu/impl/gpunetio|gpunetio_device_memview.cpp'
 git diff --unified=3 upstream/main upstream/pr-2234 -- src/api/device/gpu/nixl_device.cuh src/api/device/gpu/impl/device_dispatch.cuh src/plugins/gpunetio/gpunetio_device_memview.cpp
 git show upstream/pr-2234:src/plugins/gpunetio/gpunetio_device_memview.cpp | rg -n 'VRAM_SEG|type !='
-rg -n 'unwrapViews|prepareStatus|GpunetioDeviceView|DUMP_AUTO|LEGACY_DOCA31' examples/device/gpunetio_get_prototype/legacy_doca31_get_reference.cuh
+rg -n 'unwrapViews|prepareStatus|GpunetioDeviceView|DUMP_AUTO|LEGACY_DOCA31' examples/device/gpunetio_get_prototype/legacy_doca31_get_reference.md
 ```
 
 The main-only checks should have no transfer-GET match and no native GPUNETIO-view path. The cross-revision diff identifies files added only by #2234; the explicit VRAM-only check is evaluated against that PR ref, never `HEAD` on this branch.

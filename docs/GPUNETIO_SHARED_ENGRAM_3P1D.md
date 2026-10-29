@@ -47,7 +47,7 @@ This is closed-loop batch replay, not a production open-loop arrival process.
 
 Values are medians of the three per-round quantiles/rates, not pooled quantiles.
 The six author-reported run summaries are in
-[gpunetio_shared_engram_3p1d_rounds.csv](gpunetio_shared_engram_3p1d_rounds.csv).
+[gpunetio_shared_engram_3p1d_rounds.json](gpunetio_shared_engram_3p1d_rounds.json).
 
 | Metric | Native local tables | Shared remote table | Shared change |
 |---|---:|---:|---:|
@@ -119,13 +119,12 @@ application performance.
 
 ```bash
 python3 - <<'PY'
-import csv
+import json
 import statistics
 from pathlib import Path
 
-path = Path("docs/gpunetio_shared_engram_3p1d_rounds.csv")
-with path.open(newline="") as stream:
-    rows = list(csv.DictReader(stream))
+path = Path("docs/gpunetio_shared_engram_3p1d_rounds.json")
+rows = json.loads(path.read_text())
 assert len(rows) == 6
 arms = {}
 for arm in ("native", "shared"):

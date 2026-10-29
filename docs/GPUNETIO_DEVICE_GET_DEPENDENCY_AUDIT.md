@@ -52,7 +52,7 @@ The legacy internal dependencies are visible in the committed reference file:
 
 ```bash
 rg -n 'unwrapViews|prepareStatus|GpunetioDeviceView|DUMP_AUTO|LEGACY_DOCA31' \
-  examples/device/gpunetio_get_prototype/legacy_doca31_get_reference.cuh
+  examples/device/gpunetio_get_prototype/legacy_doca31_get_reference.md
 ```
 
 ## Minimum public implementation after SDK support is settled
