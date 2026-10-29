@@ -86,7 +86,7 @@ The docstrings in `nixl_ep_v2/buffers/elastic.py` describe the arguments and the
 
 ## Requirements
 
-- To build: CUDA 12.9 or newer, a C++20 compiler and standard library with `<format>` (for example GCC 13 or newer), PyTorch for the `python3` that meson finds, pybind11, and UCX with its GPU device API and CUDA IPC support. If one is missing, `meson setup` warns `... skipping NIXL-EP V2 build` and builds NIXL without V2.
+- To build: CUDA 13.0 or newer, a C++20 compiler and standard library with `<format>` (for example GCC 13 or newer), PyTorch for the `python3` that meson finds, pybind11, and UCX with its GPU device API and CUDA IPC support. If one is missing, `meson setup` warns `... skipping NIXL-EP V2 build` and builds NIXL without V2.
 - To run: the CUDA toolkit (`nvcc` and `cuobjdump`), rdma-core development headers, and nvidia-ml-py (a NIXL wheel installs it, a `meson install` does not). MIG is not supported. The automatic SM count runs `nvidia-smi nvlink -s` and, with several NVLink domains, `ibstat` (from infiniband-diags).
 
 NIXL EP V2 compiles its kernels on first use with the CUDA toolkit of `CUDA_HOME` (else `CUDA_PATH`, the `nvcc` on `PATH`, or `/usr/local/cuda`) and caches them under `~/.nixl_ep_v2`. RDMA between NVLink domains needs the rdma-core header `infiniband/mlx5dv.h` in `/usr/include`, `/usr/local/include`, or a directory on `CPATH` or `CPLUS_INCLUDE_PATH`.

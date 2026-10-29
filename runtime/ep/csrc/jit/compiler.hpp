@@ -259,12 +259,12 @@ class NVCCCompiler final: public Compiler {
         const auto [return_code, output] = call_external_command(command);
         EP_HOST_ASSERT(return_code == 0);
 
-        // The version should be at least 12.3
+        // The version should be at least 13.0
         int major, minor;
         std::smatch match;
         EP_HOST_ASSERT(std::regex_search(output, match, std::regex(R"(release (\d+\.\d+))")));
         std::sscanf(match[1].str().c_str(), "%d.%d", &major, &minor);
-        EP_HOST_ASSERT((major > 12 or (major == 12 and minor >= 3)) and "NVCC version should be >= 12.3");
+        EP_HOST_ASSERT(major >= 13 and "NVCC version should be >= 13.0");
         return {major, minor};
     }
 
@@ -285,8 +285,6 @@ public:
                             "--compiler-options=-fPIC,-O3,-fconcepts,-Wno-deprecated-declarations,-Wno-abi "
                             "-O3 --expt-relaxed-constexpr --expt-extended-lambda",
                             flags, library_include_path.c_str(), arch);
-        if (nvcc_major == 12 and nvcc_minor == 9)
-            flags += " -D_LIBCUDACXX_ATOMIC_UNSAFE_AUTOMATIC_STORAGE";
     }
 
     void compile(const std::string &code, const std::filesystem::path& dir_path,
