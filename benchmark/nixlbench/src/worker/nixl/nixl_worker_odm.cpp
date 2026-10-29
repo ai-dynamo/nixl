@@ -147,8 +147,8 @@ configureBackend(const std::vector<std::string> &devices,
               << " qid=" << xferBenchConfig::odm_qid_start
               << " qid_range=" << xferBenchConfig::odm_qid_start << ".."
               << xferBenchConfig::odm_qid_end << " threads=" << xferBenchConfig::num_threads
-              << " io_uring=" << (use_io_uring ? "on" :
-                                   (host_va_path ? "off (host-VA path is ioctl-only)" : "off"))
+              << " io_uring="
+              << (use_io_uring ? "on" : (host_va_path ? "off (host-VA path is ioctl-only)" : "off"))
               << " engine=ODM/dma-buf (both directions)"
               << " device_iova=auto (plugin GET_IOVA)" << std::endl;
 }
