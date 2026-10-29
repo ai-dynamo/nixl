@@ -17,6 +17,10 @@ set -x
 # Never default the CUDA line: an unset axis falling through to cu13 made
 # both cells build cu13 under identical filenames, so each overwrote the
 # other and the folder silently held half a set.
+dockerfile_arg_default() {
+  sed -n "s/^ARG $1=\"\{0,1\}\([^\"]*\)\"\{0,1\}.*/\1/p" contrib/Dockerfile.manylinux | head -1
+}
+
 case "${cuda}" in
   12)
     BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
@@ -68,6 +72,10 @@ fi
   echo "WHEEL_BASE_IMAGE=${WHEEL_BASE_IMAGE}"
   echo "UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
   echo "UCX_SPCX_PLUGIN_COMMIT=${UCX_SPCX_PLUGIN_COMMIT}"
+  # What wheel_base was built from when no --base-image flags are passed
+  # (cu13): the ARG defaults of the Dockerfile ci-demo used, this checkout's.
+  echo "BASE_IMAGE_DEFAULT=$(dockerfile_arg_default BASE_IMAGE)"
+  echo "BASE_IMAGE_TAG_DEFAULT=$(dockerfile_arg_default BASE_IMAGE_TAG)"
 } > cell.env
 
 cd nixl-src

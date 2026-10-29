@@ -67,7 +67,7 @@ runs_on_dockers:
       file: 'contrib/Dockerfile.manylinux',
       name: "${WHEEL_BASE_IMAGE_NAME}-cu13",
       tag: "${WHEEL_BASE_TAG}",
-      build_args: '--build-arg BASE_IMAGE=${CU13_BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${CU13_BASE_TAG} --build-arg CUDA_VERSION=${CU13_CUDA_VERSION} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
+      build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
     }
 
 matrix:
@@ -96,14 +96,12 @@ matrix:
 env:
   NPROC: 16
   GRPC_NPROC: 10
-  # Both base images are pinned here so build_options.env (and the build
-  # manifest) record them; keep CU13 in step with the Dockerfile defaults.
+  # CUDA 12 base image is pinned here (unlikely to change); CUDA 13 passes
+  # nothing and relies on the Dockerfile's own ARG default, which
+  # build-container.sh records in build_options.env.
   CU12_BASE_IMAGE: "nvcr.io/nvidia/cuda"
   CU12_BASE_TAG: "12.9.1-devel-ubi8"
   CU12_CUDA_VERSION: "12.9"
-  CU13_BASE_IMAGE: "nvcr.io/nvidia/cuda"
-  CU13_BASE_TAG: "13.2.1-devel-ubi8"
-  CU13_CUDA_VERSION: "13.2"
   # Unique per run, patched by cidemo-init.sh before the matrix is read.
   # The NIGHTLY_MANAGED placeholder must not be hand-edited.
   WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-nightly-manylinux_2_28"
