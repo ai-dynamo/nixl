@@ -119,11 +119,9 @@ if rocm_path != ''
     rocm_lib_path = rocm_path + '/lib'
     rocm_inc = include_directories(rocm_path + '/include')
     amdhip64_lib = cpp.find_library('amdhip64', dirs: [rocm_lib_path], required: false)
-    hiprtc_lib = cpp.find_library('hiprtc', dirs: [rocm_lib_path], required: false)
-    if amdhip64_lib.found() and hiprtc_lib.found() and \
-       cpp.has_header('hip/hip_runtime.h', include_directories: rocm_inc)
+    if amdhip64_lib.found() and cpp.has_header('hip/hip_runtime.h', include_directories: rocm_inc)
         rocm_dep = declare_dependency(
-            dependencies : [amdhip64_lib, hiprtc_lib],
+            dependencies : [amdhip64_lib],
             link_args : ['-Wl,-rpath,' + rocm_lib_path],
             include_directories : rocm_inc)
         rocm_available = true
