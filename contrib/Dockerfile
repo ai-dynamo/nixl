@@ -82,7 +82,9 @@ ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG HIREDIS_VERSION="1.4.0"
 ARG APT_MIRROR=""
+ARG WGET_RETRY_OPTS="--tries=10 --waitretry=15 --retry-connrefused --retry-on-http-error=429,500,502,503,504 --no-http-keep-alive --timeout=30 --read-timeout=60"
 
 # Optional apt mirror override, e.g. for CI environments with an internal
 # Ubuntu mirror. Empty (default) keeps the public archive/ports.ubuntu.com.
@@ -111,6 +113,8 @@ RUN apt-get update -y && \
     libcpprest-dev \
     etcd-server \
     etcd-client \
+    redis-server \
+    libevent-dev \
     autotools-dev \
     automake \
     libtool \
@@ -118,14 +122,16 @@ RUN apt-get update -y && \
     flex \
     libgtest-dev \
     build-essential \
-    libhiredis-dev \
-    libevent-dev \
     redis-tools \
-    python3.12-dev \
+    python3-dev \
+    libpython3-dev \
+    pybind11-dev \
     clang \
     hwloc \
     libhwloc-dev \
     pkg-config \
+    wget \
+    git \
     # aws-sdk-cpp dependencies
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
     # azure-sdk-for-cpp dependencies
@@ -135,7 +141,7 @@ RUN apt-get update -y && \
 # Skip only the DOCA SDK install when the base image already ships it.
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    wget ${WGET_RETRY_OPTS} --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -212,6 +218,24 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 -DCMAKE_PREFIX_PATH=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install
 
+# Build hiredis from source via cmake (make is avoided: LIBRARY_PATH set by the CUDA base image
+# contaminates the Makefile's pkgconfig install path).
+RUN wget -q ${WGET_RETRY_OPTS} "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+        -O "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" && \
+    tar -xzf "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" -C /tmp && \
+    mkdir -p "/tmp/hiredis-${HIREDIS_VERSION}/build" && \
+    cd "/tmp/hiredis-${HIREDIS_VERSION}/build" && \
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON && \
+    make -j"${NPROC:-$(nproc)}" && \
+    make install && \
+    ldconfig && \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --atleast-version=1.0.1 hiredis && \
+    rm -rf "/tmp/hiredis-${HIREDIS_VERSION}" "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz"
+
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_CXX_STANDARD=20 && \
@@ -241,7 +265,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     RUSTARCH=${ARCH}-unknown-linux-gnu
 
 # Download rustup-init and its checksum for the target architecture
-RUN wget --tries=3 --waitretry=5 \
+RUN wget ${WGET_RETRY_OPTS} \
     "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init" \
     "https://static.rust-lang.org/rustup/archive/1.28.1/${RUSTARCH}/rustup-init.sha256" && \
     sha256sum -c rustup-init.sha256 && \
@@ -250,8 +274,7 @@ RUN wget --tries=3 --waitretry=5 \
     rm rustup-init* && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
-RUN rm -rf /usr/lib/ucx
-RUN rm -rf /opt/hpcx/ucx
+RUN rm -rf /usr/lib/ucx /opt/hpcx/ucx
 
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src && \
      git clone "$UCX_REPO" ucx && \
@@ -305,11 +328,16 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /tmp && \
 ENV PATH=/usr/local/bin:$PATH
 
 # Build libfabric from source
-RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+RUN wget ${WGET_RETRY_OPTS} \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
     cd libfabric-* && \
     ./autogen.sh && \
+    if [ "${OS}" = "ubuntu22" ] || grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then \
+        GDRCOPY_FLAGS=""; \
+    else \
+        GDRCOPY_FLAGS="--with-gdrcopy --enable-gdrcopy-dlopen"; \
+    fi && \
     ./configure --prefix="${LIBFABRIC_INSTALL_PATH}" \
                 --disable-verbs \
                 --disable-psm3 \
@@ -319,15 +347,13 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
                 --enable-efa \
                 --with-cuda=/usr/local/cuda \
                 --enable-cuda-dlopen \
-                --with-gdrcopy \
-                --enable-gdrcopy-dlopen && \
+                ${GDRCOPY_FLAGS} && \
     make -j${NPROC:-$(nproc)} && \
     make install && \
     ldconfig
 
 # Keep uv's cache in /workspace, not /root (some hosts mount $HOME over /root).
 ENV UV_CACHE_DIR=/workspace/.cache/uv
-RUN mkdir -p $UV_CACHE_DIR
 # Disable build isolation, i.e. uv should not create a new virtual environment for
 # building wheels. This is faster as it skips installing dependencies twice.
 ENV UV_NO_BUILD_ISOLATION=1
@@ -338,7 +364,7 @@ ENV UV_BREAK_SYSTEM_PACKAGES=1
 # All uv pip commands target the system interpreter.
 ENV UV_PYTHON=python${DEFAULT_PYTHON_VERSION}
 # Build tools into system Python (no venv).
-RUN uv pip install --system --upgrade \
+RUN mkdir -p $UV_CACHE_DIR && uv pip install --system --upgrade \
     meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Use system torch if present (>=2.7), else install it.
 RUN if TORCH_CHECK_ERR=$(/usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then \
@@ -408,15 +434,13 @@ RUN if [ "$BUILD_INFINIA" = "true" ]; then \
         cp -a /workspace/nixl/infinia-libs/. /opt/ddn/red/; \
     fi
 
-# Install pybind11 via apt
-RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
-
 # Set PKG_CONFIG_PATH for NIXL EP dependencies (rdma-core, UCX, DOCA)
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib/$ARCH-linux-gnu/pkgconfig
 ENV PKG_CONFIG_PATH=$RDMA_CORE_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$UCX_PREFIX/lib/pkgconfig:$DOCA_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
 
 ENV NIXL_PREFIX=$NIXL_PREFIX
-RUN rm -rf build && \
+# meson setup clones the taskflow and prometheus-cpp [wrap-git] subprojects from github.com.
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     mkdir build && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \
         echo "=== BUILD_NIXL_EP=true: Building NIXL with NIXL EP support ===" && \

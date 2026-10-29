@@ -24,14 +24,8 @@ MODEL="${NIXL_SANITY_MODEL_ID:?NIXL_SANITY_MODEL_ID not set (set by the base ima
 # Reuse the CI helper (from the workspace copied into the image) to hand out free TCP
 # ports that roll over. common.sh references unset env vars (CI_CONCURRENT_ID/
 # EXECUTOR_NUMBER) at source time, so disable nounset while sourcing, then restore it.
-#
-# Neither CI_CONCURRENT_ID nor EXECUTOR_NUMBER is set inside the enroot container, so
-# common.sh would fall back to a random concurrency id over its FULL port space (base
-# ports up to ~65500). SGLang derives internal ports from the server port (e.g.
-# SGLANG_GRPC_PORT = port + 10000), which overflows 65535 for base ports > 55535 and
-# kills the server on startup. Pin the id so every handed-out port stays <= 55500.
-CI_CONCURRENT_ID="${CI_CONCURRENT_ID:-$((RANDOM % 45))}"
-export CI_CONCURRENT_ID
+# CI passes a per-build CI_CONCURRENT_ID (see build-wheel-matrix.yaml); without it
+# common.sh picks a random port block.
 set +u
 # shellcheck disable=SC1091
 . /workspace/nixl/.ci/scripts/common.sh
@@ -57,6 +51,10 @@ REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-120}"
 GSM8K_DATA_PATH="${GSM8K_DATA_PATH:-/opt/gsm8k/test.jsonl}"
 GSM8K_NUM_QUESTIONS="${GSM8K_NUM_QUESTIONS:-200}"
 GSM8K_MIN_ACCURACY="${GSM8K_MIN_ACCURACY:-0.8}"
+
+# Slurm sets CUDA_VISIBLE_DEVICES to the allocated GPUs (e.g. 2,3), but the container
+# still sees every GPU on the node, so pin each server to one of ours, not to 0/1.
+IFS=, read -r PREFILL_GPU DECODE_GPU _ <<< "${CUDA_VISIBLE_DEVICES:-0,1}"
 
 log() { echo "[sanity:${FRAMEWORK}] $*"; }
 
@@ -128,14 +126,14 @@ if [ "$FRAMEWORK" = "vllm" ]; then
   # side-channel handshake port (default 5600 for both -> "Address already in use").
   PREFILL_SIDE_PORT="$(get_next_tcp_port)"
   DECODE_SIDE_PORT="$(get_next_tcp_port)"
-  setsid env CUDA_VISIBLE_DEVICES=0 VLLM_NIXL_SIDE_CHANNEL_PORT="$PREFILL_SIDE_PORT" \
+  setsid env CUDA_VISIBLE_DEVICES="$PREFILL_GPU" VLLM_NIXL_SIDE_CHANNEL_PORT="$PREFILL_SIDE_PORT" \
     vllm serve "$MODEL" --port "$PREFILL_PORT" \
     --enforce-eager --gpu-memory-utilization "$GPU_MEM_FRACTION" \
     --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' &
   pids+=($!)
   names+=(prefill)
 
-  setsid env CUDA_VISIBLE_DEVICES=1 VLLM_NIXL_SIDE_CHANNEL_PORT="$DECODE_SIDE_PORT" \
+  setsid env CUDA_VISIBLE_DEVICES="$DECODE_GPU" VLLM_NIXL_SIDE_CHANNEL_PORT="$DECODE_SIDE_PORT" \
     vllm serve "$MODEL" --port "$DECODE_PORT" \
     --enforce-eager --gpu-memory-utilization "$GPU_MEM_FRACTION" \
     --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}' &
@@ -165,7 +163,7 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
   # rendezvous and binds it later, racing other listeners on the host network.
   PREFILL_NCCL_PORT="$(get_next_tcp_port)"
   DECODE_NCCL_PORT="$(get_next_tcp_port)"
-  setsid env CUDA_VISIBLE_DEVICES=0 python3 -m sglang.launch_server --model-path "$MODEL" \
+  setsid env CUDA_VISIBLE_DEVICES="$PREFILL_GPU" python3 -m sglang.launch_server --model-path "$MODEL" \
     --mem-fraction-static "$GPU_MEM_FRACTION" \
     --disaggregation-mode prefill --disaggregation-transfer-backend nixl \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
@@ -174,7 +172,7 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
   pids+=($!)
   names+=(prefill)
 
-  setsid env CUDA_VISIBLE_DEVICES=1 python3 -m sglang.launch_server --model-path "$MODEL" \
+  setsid env CUDA_VISIBLE_DEVICES="$DECODE_GPU" python3 -m sglang.launch_server --model-path "$MODEL" \
     --mem-fraction-static "$GPU_MEM_FRACTION" \
     --disaggregation-mode decode --disaggregation-transfer-backend nixl \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \

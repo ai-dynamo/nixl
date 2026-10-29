@@ -30,6 +30,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace nixl::telemetry::mp {
@@ -59,8 +60,7 @@ inline constexpr std::size_t MP_STORE_SLOT_COUNT =
 
 // Most histogram bucket boundaries the fixed layout can hold (the built-in set
 // uses 18). A NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US override with more bounds than
-// this is rejected rather than silently truncated -- the single-process exporter,
-// which keeps its buckets on the heap, has no such limit.
+// this is rejected rather than silently truncated.
 inline constexpr std::size_t MP_STORE_MAX_BUCKETS = 32;
 
 /**
@@ -166,6 +166,11 @@ struct storeSnapshot {
     std::array<uint64_t, MP_STORE_SLOT_COUNT> histSums{};
 };
 
+class storeSetupError : public std::system_error {
+public:
+    using std::system_error::system_error;
+};
+
 /**
  * @class storeWriter
  * @brief Owns one process's metric-state mmap file and updates it in place.
@@ -197,8 +202,8 @@ public:
      *        same-named agents in one process so their series stay distinct.
      * @param histogram_buckets Histogram bucket upper bounds, at most
      *        MP_STORE_MAX_BUCKETS of them.
-     * @throws std::runtime_error on create/ftruncate/mmap/publish failure, or
-     *         when @p histogram_buckets does not fit the store.
+     * @throws storeSetupError on create/allocate/mmap/publish failure, and
+     *         std::runtime_error when @p histogram_buckets does not fit the store.
      */
     storeWriter(std::filesystem::path path,
                 const std::string &agent_name,

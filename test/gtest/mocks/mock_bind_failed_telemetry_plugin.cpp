@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,23 +14,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-#include "prometheus_exporter.h"
-#include "telemetry/telemetry_plugin.h"
 #include "telemetry/telemetry_exporter.h"
+#include "telemetry/telemetry_plugin.h"
 
-// Plugin type alias for convenience
-using prometheus_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryPrometheusExporter>;
+namespace {
 
-// Plugin initialization function - must be extern "C" for dynamic loading
+class mockBindFailedExporter final : public nixlTelemetryExporter {
+public:
+    explicit mockBindFailedExporter(const nixlTelemetryExporterInitParams &init_params)
+        : nixlTelemetryExporter(init_params) {
+        throw nixlTelemetryBindFailed("mock_bind_failed telemetry endpoint could not be bound");
+    }
+
+    nixl_status_t
+    exportEvent(const nixlTelemetryEvent &) override {
+        return NIXL_SUCCESS;
+    }
+};
+
+} // namespace
+
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
 nixl_telemetry_plugin_init() {
-    return prometheus_exporter_plugin_t::create(
-        NIXL_TELEMETRY_PLUGIN_API_VERSION, "prometheus", "1.0.0");
+    return nixlTelemetryPluginCreator<mockBindFailedExporter>::create(
+        NIXL_TELEMETRY_PLUGIN_API_VERSION, "mock_bind_failed", "0.0.1");
 }
 
-// Plugin cleanup function
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT void
-nixl_telemetry_plugin_fini() {
-    // Nothing to clean up for prometheus exporter
-}
+nixl_telemetry_plugin_fini() {}

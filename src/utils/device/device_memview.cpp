@@ -1,0 +1,74 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#include "device/device_memview.h"
+
+#include <gpu/device_types.cuh>
+
+#include "device/device_ops.h"
+
+static_assert(sizeof(nixl_device_exec_mode_t) == 1);
+
+namespace nixl {
+
+nixl_status_t
+deviceMemViewAllocate(deviceOps &ops,
+                      nixl_device_exec_mode_t execution_mode,
+                      nixlMemViewH backend_memview,
+                      deviceViewHandle &wrapper_out) noexcept {
+    wrapper_out = nullptr;
+    if (backend_memview == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    deviceMem wrapper_mem;
+    auto status = ops.allocDeviceMem(sizeof(nixlDeviceMemViewWrapper), wrapper_mem);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
+    const nixlDeviceMemViewWrapper host_wrapper{
+        execution_mode,
+        backend_memview,
+    };
+    status = ops.copy(wrapper_mem.get(),
+                      &host_wrapper,
+                      sizeof(host_wrapper),
+                      deviceOps::copyDirection::HostToDevice);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
+    /* Ownership crosses the public handle boundary; reclaimed in
+     * deviceMemViewFree. */
+    wrapper_out = wrapper_mem.release();
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+deviceMemViewGetBackend(deviceOps &ops,
+                        deviceViewHandle wrapper,
+                        nixlMemViewH &backend_out) noexcept {
+    backend_out = nullptr;
+    if (wrapper == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    nixlDeviceMemViewWrapper host_wrapper{};
+    const auto status = ops.copy(
+        &host_wrapper, wrapper, sizeof(host_wrapper), deviceOps::copyDirection::DeviceToHost);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
+    backend_out = host_wrapper.backend_memview;
+    return NIXL_SUCCESS;
+}
+
+void
+deviceMemViewFree(deviceOps &ops, deviceViewHandle wrapper) noexcept {
+    deviceMem owner(wrapper, deviceMemDeleter{&ops});
+}
+
+} // namespace nixl

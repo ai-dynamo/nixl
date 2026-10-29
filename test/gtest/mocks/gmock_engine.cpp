@@ -80,6 +80,7 @@ GMockBackendEngine::setOptionalDefaults() {
     ON_CALL(*this, queryMem(_, _)).WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
     ON_CALL(*this, estimateXferCost(_, _, _, _, _, _, _, _, _))
         .WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
+    ON_CALL(*this, supportsTraceContext()).WillByDefault(Return(false));
 }
 
 void
@@ -101,6 +102,9 @@ GMockBackendEngine::observeTraceContext(const nixl_opt_b_args_t *opt_args) {
     } else {
         observedTraceContext_.reset();
     }
+    if (opt_args != nullptr) {
+        observedTraceRequests_.emplace_back(opt_args->traceRequestId, opt_args->traceExecution);
+    }
 }
 
 std::optional<const nixlBackendTraceSink *>
@@ -113,6 +117,12 @@ std::optional<nixl::trace::TraceContext>
 GMockBackendEngine::observedTraceContext() const {
     const std::lock_guard lock(observedMutex_);
     return observedTraceContext_;
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>>
+GMockBackendEngine::observedTraceRequests() const {
+    const std::lock_guard lock(observedMutex_);
+    return observedTraceRequests_;
 }
 
 GMockBackendEngine *

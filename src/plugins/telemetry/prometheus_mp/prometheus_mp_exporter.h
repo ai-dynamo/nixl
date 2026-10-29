@@ -33,8 +33,10 @@
  * NIXL_TELEMETRY_MULTIPROC_DIR, and one of them additionally serves the scrape
  * endpoint that publishes all of those stores (see scrapeEndpoint for how that
  * one is picked, and re-picked when it dies). Not being the one that serves is
- * benign -- it never throws nixlTelemetryBindFailed -- so every process gets a
- * valid telemetry sink and all ranks are exported behind the single owner port.
+ * benign, so every process gets a valid telemetry sink and all ranks are exported
+ * behind the single owner port. The exception is a default directory (the variable
+ * unset or empty) that cannot be created or written: the constructor then throws
+ * nixlTelemetryBindFailed, and the process runs without a sink.
  *
  * This class is therefore the mapping from telemetry events to store slots, plus
  * the reporting of what the election meant for this particular rank; a rank that
@@ -52,15 +54,13 @@ public:
     // True if this process won the election and serves the scrape endpoint.
     [[nodiscard]] bool
     isExporter() const noexcept {
-        return endpoint_.serving();
+        return endpoint_->serving();
     }
 
 private:
     std::filesystem::path dir_;
     std::unique_ptr<nixl::telemetry::mp::storeWriter> store_;
-    // Declared last so it is destroyed first: serving stops before the store it
-    // publishes is unmapped.
-    nixl::telemetry::mp::scrapeEndpoint endpoint_;
+    std::shared_ptr<nixl::telemetry::mp::scrapeEndpoint> endpoint_;
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_PROMETHEUS_MP_EXPORTER_H
