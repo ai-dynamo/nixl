@@ -277,27 +277,26 @@ public:
         // done inside the Watcher callback).
         const auto process_response = [this, agent_name](etcd::Response response) -> void {
             if (!response.is_ok()) {
+                // E.g. the start revision was compacted and etcd cancelled the
+                // watch. The watcher is dead, so treat the peer as invalidated:
+                // that drops the cache entry and watcher and lets a later fetch
+                // re-arm cleanly.
                 NIXL_ERROR << "Watcher failed to watch agent " << agent_name
                            << " from etcd: " << response.error_message();
-                return;
-            }
-            NIXL_DEBUG << "Watcher received " << response.events().size() << " events from etcd";
-            if (response.events().size() != 1) {
-                NIXL_ERROR << "Watcher agent " << agent_name
-                           << " received unexpected number of events from etcd: "
-                           << response.events().size();
-                return;
-            }
-            const auto &event = response.events()[0];
-            if (event.event_type() == etcd::Event::EventType::DELETE_) {
-                NIXL_DEBUG << "Watcher DELETE: " << event.kv().key() << " (rev "
-                           << event.kv().modified_index() << ")";
                 const std::lock_guard lock(invalidatedAgentsMutex_);
                 invalidatedAgents_.push_back(agent_name);
-            } else {
-                NIXL_ERROR << "Watcher for " << event.kv().key()
-                           << " received unexpected event from etcd: "
-                           << static_cast<int>(event.event_type());
+                return;
+            }
+            // A replay from the fetch revision can batch several events.
+            NIXL_DEBUG << "Watcher received " << response.events().size() << " events from etcd";
+            for (const auto &event : response.events()) {
+                if (event.event_type() == etcd::Event::EventType::DELETE_) {
+                    NIXL_DEBUG << "Watcher DELETE: " << event.kv().key() << " (rev "
+                               << event.kv().modified_index() << ")";
+                    const std::lock_guard lock(invalidatedAgentsMutex_);
+                    invalidatedAgents_.push_back(agent_name);
+                    return;
+                }
             }
         };
         const std::string agent_prefix = makeKey(agent_name, "");
@@ -310,7 +309,11 @@ public:
 
     void
     dropAgentWatcher(const std::string &agent_name) {
+        // Destroy the watcher first so it cannot queue more events, then purge
+        // any DELETE it already queued so it cannot evict a later successful load.
         agentWatchers_.erase(agent_name);
+        const std::lock_guard lock(invalidatedAgentsMutex_);
+        std::erase(invalidatedAgents_, agent_name);
     }
 
     void
