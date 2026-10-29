@@ -277,6 +277,10 @@ nixlLibfabricCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &wa
     if (dev != expected_dev) {
         return -1;
     }
+    // Context-independent allocations need the per-device primary-context path.
+    if (ctx == nullptr) {
+        return -1;
+    }
 
     if (pthrCudaCtx_) {
         if (pthrCudaCtx_ != ctx) {
@@ -651,6 +655,17 @@ nixlLibfabricEngine::~nixlLibfabricEngine() {
     NIXL_DEBUG
         << "Destructor starting, stopping all threads FIRST to prevent timing report interruption";
 
+    // Stop the CM thread first: an in-flight reply send may be waiting on the progress
+    // thread to drain its completions, so the progress thread must stop after it.
+    {
+        const std::lock_guard<std::mutex> lock(cm_mutex_);
+        cm_thread_stop_ = true;
+    }
+    cm_cv_.notify_all();
+    if (cm_thread_.joinable()) {
+        cm_thread_.join();
+    }
+
     post_thread_pool_.reset();
     if (progress_thread_enabled_) {
         progress_thread_stop_.store(true);
@@ -719,7 +734,7 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
     nixl_status_t status =
         rail_manager_.deserializeConnectionInfo("dest", remote_conn_info, data_endpoints);
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Rail Manager deserializeConnectionInfo failed";
+        NIXL_ERROR << "Rail Manager deserializeConnectionInfo failed with status: " << status;
         return status;
     }
 
@@ -798,6 +813,14 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
 
     nixl_status_t status = it->second->disconnect();
     connections_.erase(it);
+    // Drop queued replies for this peer so teardown never posts toward it from the CM thread.
+    {
+        const std::lock_guard<std::mutex> cm_lock(cm_mutex_);
+        std::erase_if(pending_replies_,
+                      [&remote_agent](const std::shared_ptr<nixlLibfabricConnection> &pending) {
+                          return pending->remoteAgent_ == remote_agent;
+                      });
+    }
     return status;
 }
 
@@ -1023,8 +1046,8 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
             if (use_cuda_addr_wa) {
                 bool need_restart;
                 if (vramUpdateCtx((void *)mem.addr, mem.devId, need_restart)) {
-                    NIXL_INFO << "Multi-GPU detected (device " << mem.devId
-                              << "), using cudaSetDevice fallback";
+                    NIXL_INFO << "CUDA pointer context unavailable or incompatible (device "
+                              << mem.devId << "), using cudaSetDevice fallback";
                     {
                         const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
                         cuda_addr_wa_ = false;
@@ -1194,7 +1217,7 @@ nixlLibfabricEngine::loadRemoteMD(const nixlBlobDesc &input,
     nixl_status_t status = rail_manager_.deserializeMemoryKeys(
         input.metaInfo, conn->rail_remote_addr_list_.at(0).size(), remote_keys, remote_addr);
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Rail Manager deserializeMemoryKeys failed";
+        NIXL_ERROR << "Rail Manager deserializeMemoryKeys failed with status: " << status;
         return status;
     }
 
@@ -2119,10 +2142,10 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
                << " payload_chunk_size=" << payload_chunk.size()
                << " expected_completions=" << expected_completions;
 
+    const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
 
-        const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
         auto [it, inserted] = pending_notifications_.try_emplace(key, notif_xfer_id);
 
         if (inserted) {
@@ -2176,18 +2199,18 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
                    << " received_completions=" << it->second.received_completions;
     }
 
-    // Check if any notifications can now be completed (after releasing the lock)
-    checkPendingNotifications();
+    // Check whether this notification can now be completed (after releasing the lock)
+    checkPendingNotification(key);
 }
 
 void
 nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
                                      uint32_t sender_peer_idx,
                                      uint32_t final_completions) {
+    const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
 
-        const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
         auto [it, inserted] = pending_notifications_.try_emplace(key, notif_xfer_id);
 
         if (inserted) {
@@ -2208,8 +2231,8 @@ nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
                    << "; data for this transfer is incomplete";
     }
 
-    // Check if any notifications can now be completed
-    checkPendingNotifications();
+    // Check whether this notification can now be completed
+    checkPendingNotification(key);
 }
 
 /****************************************
@@ -2218,10 +2241,10 @@ nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
 
 void
 nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id, uint32_t sender_peer_idx) {
+    const uint64_t key = makePendingKey(sender_peer_idx, xfer_id);
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
 
-        const uint64_t key = makePendingKey(sender_peer_idx, xfer_id);
         auto [it, inserted] = pending_notifications_.try_emplace(key, xfer_id);
 
         if (inserted) {
@@ -2241,8 +2264,8 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id, uint32_t sender_peer_id
                    << it->second.expected_completions;
     }
 
-    // Check if any notifications can now be completed (after releasing the lock)
-    checkPendingNotifications();
+    // Check whether this notification can now be completed (after releasing the lock)
+    checkPendingNotification(key);
 }
 
 /****************************************
@@ -2250,10 +2273,10 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id, uint32_t sender_peer_id
  *****************************************/
 
 void
-nixlLibfabricEngine::checkPendingNotifications() {
+nixlLibfabricEngine::checkPendingNotification(uint64_t key) {
     std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
-    auto it = pending_notifications_.begin();
-    while (it != pending_notifications_.end()) {
+    auto it = pending_notifications_.find(key);
+    if (it != pending_notifications_.end()) {
         // Check BOTH conditions: fragments complete AND writes complete
         bool fragments_complete =
             (it->second.received_msg_fragments >= it->second.expected_msg_fragments);
@@ -2305,9 +2328,7 @@ nixlLibfabricEngine::checkPendingNotifications() {
                        << " message_len=" << message.length();
 
             // Remove from pending list
-            it = pending_notifications_.erase(it);
-        } else {
-            ++it;
+            pending_notifications_.erase(it);
         }
     }
 }

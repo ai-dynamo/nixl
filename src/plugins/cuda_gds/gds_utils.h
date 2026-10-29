@@ -20,10 +20,18 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <string>
+
 #include <nixl.h>
 #include <cufile.h>
 
 #include "file/file_path_mode.h"
+
+// cuFile error as text with its code, for log and exception messages
+inline std::string
+gdsCuFileError(CUfileOpError err) {
+    return std::string(CUFILE_ERRSTR(err)) + " (err=" + std::to_string(err) + ")";
+}
 
 // RAII cuFile file handle. Registers a CUfileHandle_t for the owned fd on
 // construction and deregisters it on destruction. Shared (via shared_ptr) so a

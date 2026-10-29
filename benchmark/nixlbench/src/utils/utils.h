@@ -84,6 +84,10 @@
 // CUDA warp size, to derive Device API group number from block_threads
 #define XFERBENCH_DEVICE_WARP_SIZE 32
 
+// Device API execution modes
+#define XFERBENCH_DEVICE_MODE_DIRECT "direct"
+#define XFERBENCH_DEVICE_MODE_PROXY "proxy"
+
 // Runtime types
 #define XFERBENCH_RT_ETCD "ETCD"
 #define XFERBENCH_RT_ASIO "ASIO"
@@ -212,6 +216,9 @@ public:
     static int gds_mt_num_threads;
     static std::string gpunetio_device_list;
     static std::string gpunetio_oob_list;
+    static std::string gpunetio_gid_index;
+    static std::string gpunetio_oob_port;
+    static int gpunetio_data_qp_count;
     static long page_size;
     static std::string obj_access_key;
     static std::string obj_secret_key;
@@ -241,6 +248,8 @@ public:
     static bool use_device_api;
     static int block_threads;
     static int device_channel_num;
+    static std::string device_mode;
+    static uint32_t device_proxy_threads;
 
     /* Number of independent groups Device API kernel runs with. */
     static int
@@ -249,6 +258,12 @@ public:
     /* Parallel workers split iterations across both CPU and Device API. */
     static int
     workerNum();
+
+    // Cached set of memory segment types reported by the selected backend.
+    // Populated pre-instantiation in loadParams via getPluginParams, then refreshed
+    // post-instantiation by the worker via getBackendParams (so LIBFABRIC's runtime-added
+    // VRAM_SEG is picked up). The storage/object/block predicates derive from this list.
+    static nixl_mem_list_t backend_mems;
 
     static int
     parseConfig(int argc, char *argv[]);
@@ -260,10 +275,16 @@ public:
     printSeparator(const char sep = '-');
     static std::vector<std::string>
     parseDeviceList();
+    // Storage taxonomy predicates. All three derive from backend_mems and are safe to
+    // call before the backend is instantiated (using plugin-reported mems) and after
+    // (using engine-reported mems). They return false when backend_mems is empty,
+    // which covers the nvshmem worker case.
     static bool
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    static bool
+    isBlkStorageBackend();
 
 protected:
     static int
@@ -395,6 +416,8 @@ private:
     buildCommonAzCliBlobParams(const std::string &blob_name);
 
 public:
+    static bool
+    debugEnabled(); // Whether NIXLBENCH_LOG_LEVEL is DEBUG or TRACE
     static void
     setRT(xferBenchRT *rt);
     static void

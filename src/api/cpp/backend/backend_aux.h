@@ -17,6 +17,7 @@
 #ifndef __BACKEND_AUX_H_
 #define __BACKEND_AUX_H_
 
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include "common/nixl_log.h"
@@ -40,10 +41,13 @@ struct nixlBackendOptionalArgs {
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
     nixl_blob_t customParam;
-    // The request's trace context, the same in prepXfer and in every postXfer of
-    // that request: valid for the call only, so copy it once at prep to keep it.
+    // The request's trace context in prepXfer and the post's in postXfer: the trace
+    // id and flags are the request's, and each post of a sampled request has a span
+    // id of its own. Valid for the call only, so copy it at each post to keep it.
     // Null when no request is involved (prepMemView).
     const nixl::trace::TraceContext *traceContext = nullptr;
+    std::uint64_t traceRequestId = 0;
+    std::uint64_t traceExecution = 0;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
