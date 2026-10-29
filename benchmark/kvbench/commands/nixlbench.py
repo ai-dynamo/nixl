@@ -264,7 +264,7 @@ class NIXLBench:
             self._configure_gds(source, destination)
         elif backend_lower in ["posix", "hf3fs"]:
             self._configure_posix(source, destination)
-        elif backend_lower in ["ucx", "gpunetio", "mooncake"]:
+        elif backend_lower in ["ucx", "gpunetio", "mooncake", "libfabric"]:
             self._configure_ucx(backend_lower, source, destination)
         elif backend_lower == "obj":
             self._configure_obj(source, destination)
