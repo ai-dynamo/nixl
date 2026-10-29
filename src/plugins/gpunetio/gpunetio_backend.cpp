@@ -1773,8 +1773,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     };
 
     treq->qpData = rdma_qp->qp_data->get_qp_gpu_dev();
-    treq->positions.reserve(byte_striping ? DOCA_XFER_REQ_MAX :
-                                            (wqe_count + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
+    treq->positions.reserve(byte_striping ?
+                                DOCA_XFER_REQ_MAX :
+                                (wqe_count + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
     if (!reserve_position()) {
         abandon_request();
         return NIXL_ERR_BACKEND;
@@ -1836,10 +1837,11 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             const size_t remaining = local[desc_idx].len - split_offset;
             // Split large descriptors at the SDK limit, and eligible WRITEs at their QP byte
             // budget. For a single range, preserve its final eight bytes as the ordering tail.
-            const size_t bulk_remaining = ordering_tail && remaining > ordering_tail ?
-                remaining - ordering_tail : remaining;
+            const size_t bulk_remaining =
+                ordering_tail && remaining > ordering_tail ? remaining - ordering_tail : remaining;
             const size_t wqe_size = byte_striping && !(lcnt > 1 && desc_idx == lcnt - 1) ?
-                std::min({bulk_remaining, chunk_bytes_limit - chunk_bytes,
+                std::min({bulk_remaining,
+                          chunk_bytes_limit - chunk_bytes,
                           size_t(DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE)}) :
                 std::min<size_t>(remaining, DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
             const size_t piece_offset = split_offset;
