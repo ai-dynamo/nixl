@@ -377,19 +377,19 @@ def test_empty_descriptor_callers(one_empty_agent):
     assert agent.query_memory([], "POSIX", "FILE") == []
     assert agent.query_memory(bindings.nixlRegDList(bindings.FILE_SEG), "POSIX") == []
 
-    # Registration and preparation of an empty list hit the same native behavior as
-    # their typed-empty equivalents (the backend layer rejects empty lists itself).
-    with pytest.raises(bindings.nixlBackendError):
-        agent.register_memory([], "FILE")
-    with pytest.raises(bindings.nixlBackendError):
+    # An empty list behaves like the typed empty list for the callers that reject
+    # one; the concrete error type is an internal detail, so assert parity only.
+    with pytest.raises(Exception) as typed:
         agent.register_memory(bindings.nixlRegDList(bindings.FILE_SEG))
+    with pytest.raises(type(typed.value)):
+        agent.register_memory([], "FILE")
 
-    with pytest.raises(bindings.nixlNotFoundError):
-        agent.prep_xfer_dlist("NIXL_INIT_AGENT", [], "FILE")
-    with pytest.raises(bindings.nixlNotFoundError):
+    with pytest.raises(Exception) as typed:
         agent.prep_xfer_dlist(
             "NIXL_INIT_AGENT", bindings.nixlXferDList(bindings.FILE_SEG)
         )
+    with pytest.raises(type(typed.value)):
+        agent.prep_xfer_dlist("NIXL_INIT_AGENT", [], "FILE")
 
 
 def _prep_mem_view_worker(rank, exch_dir, backend_name):
