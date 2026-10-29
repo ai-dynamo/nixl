@@ -14,19 +14,19 @@
 # limitations under the License.
 
 # Mandatory dependencies
-cpp_sources = ['gusli_plugin.cpp', 'gusli_backend.cpp', 'gusli_backend.h']
+gusli_sources = ['gusli_plugin.cpp', 'gusli_backend.cpp', 'gusli_backend.h']
 gusli_deps = [ nixl_infra,
                declare_dependency(link_args : ['-l' + gusli_lib_file]),
                absl_log_dep]
 
 if 'GUSLI' in static_plugins
-  gusli_backend_lib = static_library('GUSLI', cpp_sources,
+  gusli_backend_lib = static_library('GUSLI', gusli_sources,
         dependencies: gusli_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
         name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
-  gusli_backend_lib = shared_library('GUSLI', cpp_sources,
+  gusli_backend_lib = shared_library('GUSLI', gusli_sources,
         dependencies: gusli_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
