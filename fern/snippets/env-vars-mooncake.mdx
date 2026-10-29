@@ -6,5 +6,5 @@
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `NIXL_MOONCAKE_IP_ADDR` | String (IP) | First non-loopback interface IP | Override IP address for the Mooncake transport engine. Set this when auto-detection selects the wrong network interface. |
-| `NIXL_MOONCAKE_NUM_THREADS` | Integer | `0` | Threads that submit a large transfer as independent Transfer Engine batches in parallel; `0` or `1` submits one batch. The `num_threads` backend parameter, which Python's `nixl_agent_config(num_threads=...)` sets, takes precedence. |
+| `NIXL_MOONCAKE_NUM_THREADS` | Integer | `0` | Threads that submit a large transfer as independent Transfer Engine batches in parallel; `0` or `1` submits one batch. The `num_threads` backend parameter, which Python's `nixl_agent_config(num_threads=...)` sets, takes precedence. With a Transfer Engine that lacks `getBatchTransferStatus()`, only READs are split: such engines can report a TCP WRITE complete before the target has applied it. |
 | `NIXL_MOONCAKE_SPLIT_BATCH_SIZE` | Integer | `1024` | Minimum number of descriptors per batch when `NIXL_MOONCAKE_NUM_THREADS` splits a transfer; smaller transfers are not split. The `split_batch_size` backend parameter takes precedence. |
