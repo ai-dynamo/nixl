@@ -167,9 +167,12 @@ def build_sidecar(
     toolchain["patchelf_repair"] = (repair_env or {}).get("patchelf")
 
     built = []
+    resolved_all: list[str] = []
     for version in built_versions:
         venv = dumps.get(version) or {}
         resolved = venv.get("torch")
+        if resolved:
+            resolved_all.append(resolved)
         built.append(
             {
                 "version": version,
@@ -186,10 +189,13 @@ def build_sidecar(
                 ),
             }
         )
+    # The torch index actually used is in the resolved local version
+    # (2.13.0+cu132); the toolkit tag is only the fallback.
+    index = next((r.split("+", 1)[1] for r in resolved_all if "+" in r), cu_tag)
     skipped = [
         {
             "version": v,
-            "reason": f"no torch {v} wheel on the stable or nightly {cu_tag} index for Python {python_version}",
+            "reason": f"no torch {v} wheel on the stable or nightly {index} index for Python {python_version}",
         }
         for v in torch_requested
         if v not in built_versions
