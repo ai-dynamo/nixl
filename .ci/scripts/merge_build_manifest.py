@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import http.client
 import json
 import os
 import re
@@ -144,7 +145,7 @@ def _http(method: str, url: str, data: Optional[bytes] = None) -> tuple[int, byt
             if exc.code < 500:
                 return exc.code, b""
             last = f"{exc.code}"
-        except (urllib.error.URLError, OSError) as exc:
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
             last = str(exc)
         if attempt < HTTP_ATTEMPTS:
             time.sleep(2 * attempt)
@@ -280,8 +281,17 @@ def assemble(
         "UCX revision (ucx_info)", lambda c: side(c, "ucx", "revision")
     )
     image_commit = agree("NIXL commit (image)", lambda c: side(c, "nixl", "commit"))
-    base_image = per_cuda("BASE_IMAGE", lambda c: c["opts"].get("BASE_IMAGE"))
-    base_tag = per_cuda("BASE_IMAGE_TAG", lambda c: c["opts"].get("BASE_IMAGE_TAG"))
+    # Empty in build_options.env when the cell relied on the Dockerfile
+    # defaults; Build Wheel records those in cell.env.
+    base_image = per_cuda(
+        "BASE_IMAGE",
+        lambda c: c["opts"].get("BASE_IMAGE") or c["cell"].get("BASE_IMAGE_DEFAULT"),
+    )
+    base_tag = per_cuda(
+        "BASE_IMAGE_TAG",
+        lambda c: c["opts"].get("BASE_IMAGE_TAG")
+        or c["cell"].get("BASE_IMAGE_TAG_DEFAULT"),
+    )
     cuda_version = per_cuda("CUDA_VERSION", lambda c: c["opts"].get("CUDA_VERSION"))
     torch_requested = per_cuda(
         "TORCH_VERSIONS_REQUESTED", lambda c: c["cell"].get("TORCH_VERSIONS_REQUESTED")
