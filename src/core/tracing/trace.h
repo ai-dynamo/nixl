@@ -88,9 +88,11 @@ attributeValue(T value) noexcept {
     return static_cast<std::int64_t>(value);
 }
 
+template<typename T>
+    requires std::is_floating_point_v<T>
 [[nodiscard]] constexpr double
-attributeValue(double value) noexcept {
-    return value;
+attributeValue(T value) noexcept {
+    return static_cast<double>(value);
 }
 
 [[nodiscard]] constexpr std::string_view

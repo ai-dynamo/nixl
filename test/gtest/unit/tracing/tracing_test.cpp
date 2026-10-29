@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -333,6 +334,12 @@ liesInside(std::string_view text, const T &object) {
     const auto begin = reinterpret_cast<std::uintptr_t>(text.data());
     return (begin >= first) && (begin + text.size() <= first + sizeof(T));
 }
+
+template<typename T>
+concept hasAttributeValue = requires(const T &value) { nixl::trace::attributeValue(value); };
+
+static_assert(hasAttributeValue<float>);
+static_assert(!hasAttributeValue<std::atomic<std::uint64_t>>);
 
 } // namespace
 
