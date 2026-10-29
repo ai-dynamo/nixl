@@ -2,7 +2,7 @@
 
 This note records the application context for reviewing a generic NIXL GPU GET contract. It does not claim a GET-kernel speedup or make Engram behavior part of the NIXL API.
 
-## Observed application
+## Initial cross-node 1P1D application
 
 SGLang can use a shared, immutable, approximately 202 GB registered Host table for Engram lookups. The consumer computes a GPU hash/index and issues data-dependent reads into that remote table. The measured cross-node case had one table owner and one TP8 consumer group. The P and D processes ran on different nodes; D remained the same instance across the Native and Shared P arms. P-to-D KV transfer used the serving stack's normal transport; it is distinct from Engram's table GET.
 
@@ -17,6 +17,27 @@ Across 192 measured responses, all outputs completed at 64 tokens and all 96 pai
 | Output throughput | 279.958 tokens/s | 278.693 tokens/s | −0.452% |
 
 There were zero cache hits, request errors, or retractions. This is application-level evidence that the GPU GET path participates in a real cross-node workload. It is not a GET-vs-host-READ microbenchmark: the Native reference uses a local table, so these numbers do not establish that the GET kernel is faster than a host-issued remote read. The result instead reports the complete serving tradeoff for this one owner/one TP8 consumer setup.
+
+## Follow-up: three P groups share the same bank
+
+The same legacy implementation was subsequently exercised with three TP8 P
+consumer groups and one TP8/DP8 D on four physical nodes (32 H20s). At client
+C24, 3 x 96 measured requests per arm, all576 outputs completed correctly and all 288
+paired input/output hashes matched. TTFT p50 was 1632.793 -> 1647.930 ms (+0.93%) and
+throughput 834.304 -> 828.517 tokens/s (-0.69%). TTFT p99 +2.68% and TPOT p90 +5.69% are
+retained; Native preceded Shared without a post bracket, so the small differences
+are observations rather than isolated causal GET costs.
+
+All 24 readers used one original pinned Host bank; D kept its local table and
+P/D KV stayed Mooncake. Three P logical table requirements become one bank
+(66.7% less P-table payload), not a measured whole-process RSS reduction.
+No GET algorithm, SDK, or runtime binary changed for this scale-out experiment.
+
+See the [3P1D report](GPUNETIO_SHARED_ENGRAM_3P1D.md) for all quantiles, workload,
+nonzero P abort-submission counters, method limits, six run summaries and an
+executable offline arithmetic check. The report also states what is still
+required for a full GPU rerun; this Draft remains a docs/legacy-reference
+proposal, not a runnable current-main GET backend.
 
 ## Why review a generic GET contract
 
