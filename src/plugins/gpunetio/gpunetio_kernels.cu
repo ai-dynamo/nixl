@@ -478,18 +478,22 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
         while ((nixl_gpunetio_dev_load_host_state(gpu_state->control) & DOCA_GPU_EXIT) == 0U) {
             // Check received notifications
             if (DOCA_GPUNETIO_VOLATILE(notif_progress->qp_gpu) != nullptr) {
-                uint32_t msg_last = DOCA_GPUNETIO_VOLATILE(notif_progress->msg_last);
+                // Each peer's notification QP has its own RQ CQ: poll that CQ's next CQE.
+                doca_gpu_dev_verbs_cq *const cq_rq =
+                    doca_gpu_dev_verbs_qp_get_cq_rq(notif_progress->qp_gpu);
+                const uint64_t msg_last =
+                    doca_gpu_dev_verbs_atomic_read<uint64_t,
+                                                   DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+                        &cq_rq->cqe_ci);
                 int ret =
                     nixl_gpunetio_dev_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-                                                     DOCA_GPUNETIO_VERBS_QP_RQ>(
-                        doca_gpu_dev_verbs_qp_get_cq_rq(notif_progress->qp_gpu), msg_last);
+                                                     DOCA_GPUNETIO_VERBS_QP_RQ>(cq_rq, msg_last);
                 if (ret == 0) {
 #if ENABLE_DEBUG == 1
-                    printf("kernel received notification at %d ret %d\n", msg_last, ret);
+                    printf("kernel received notification at %ld ret %d\n", msg_last, ret);
 #endif
 
                     DOCA_GPUNETIO_VOLATILE(notif_progress->msg_num) = 1;
-                    DOCA_GPUNETIO_VOLATILE(notif_progress->msg_last) = (msg_last + 1);
 
                     doca_gpu_dev_verbs_submit<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                               DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU,
@@ -499,9 +503,9 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
                         notif_progress->qp_gpu->rq_wqe_pi + 1);
 
 #if ENABLE_DEBUG == 1
-                    printf("kernel flush recv notification pi %ld last %d\n",
+                    printf("kernel flush recv notification pi %ld last %ld\n",
                            notif_progress->qp_gpu->rq_wqe_pi + 1,
-                           notif_progress->msg_last);
+                           msg_last + 1);
 #endif
 
                     doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
@@ -509,9 +513,9 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
                 } else {
 #if ENABLE_DEBUG == 1
                     if (ret == EBUSY) {
-                        printf("kernel received notification EBUSY at %d ret %d\n", msg_last, ret);
+                        printf("kernel received notification EBUSY at %ld ret %d\n", msg_last, ret);
                     } else {
-                        printf("kernel notification CQ poll failed at %d ret %d\n", msg_last, ret);
+                        printf("kernel notification CQ poll failed at %ld ret %d\n", msg_last, ret);
                     }
 #endif
                     DOCA_GPUNETIO_VOLATILE(notif_progress->msg_num) = 0;

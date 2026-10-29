@@ -342,6 +342,10 @@ Every cloning `RUN` mounts an optional build secret,
 every request to github.com is authenticated rather than anonymous. This includes the
 NIXL `meson setup` `RUN`s, which clone the `taskflow` and `prometheus-cpp` `[wrap-git]`
 subprojects implicitly; later meson-python builds reuse the downloaded subprojects.
+It also includes the nixlbench custom-UCX build (`ucx_custom_image`), whose `autogen.sh`
+fetches UCX's `external/gpunetio` submodule. `autogen.sh` only warns when that fetch
+fails and `make` then dies in the `gdaki` module, so the stage checks for an empty
+`external/gpunetio` and fails right after `autogen.sh` instead.
 `GIT_TERMINAL_PROMPT=0` is an `ARG`, so it applies to these builds without persisting
 into the shipped images.
 
