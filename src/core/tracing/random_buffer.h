@@ -21,6 +21,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 #include "tracing/trace.h"
 
@@ -35,17 +36,16 @@ public:
     explicit constexpr RandomBuffer(random_bytes_fn_t refill) noexcept : refill_(refill) {}
 
     void
-    fill(std::uint8_t *output, std::size_t size) {
-        while (size > 0) {
+    fill(std::span<std::uint8_t> output) {
+        while (!output.empty()) {
             if (used_ == blockSize) {
-                refill_(block_.data(), block_.size());
+                refill_(block_);
                 used_ = 0;
             }
-            const std::size_t chunk = std::min(size, blockSize - used_);
-            std::copy_n(block_.data() + used_, chunk, output);
+            const std::size_t chunk = std::min(output.size(), blockSize - used_);
+            std::copy_n(block_.data() + used_, chunk, output.data());
             used_ += chunk;
-            output += chunk;
-            size -= chunk;
+            output = output.subspan(chunk);
         }
     }
 

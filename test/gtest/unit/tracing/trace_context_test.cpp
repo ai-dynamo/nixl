@@ -84,13 +84,13 @@ std::size_t refill_count = 0;
 bool fail_next_refill = false;
 
 void
-countingRefill(std::uint8_t *bytes, std::size_t size) {
+countingRefill(std::span<std::uint8_t> bytes) {
     ++refill_count;
     if (std::exchange(fail_next_refill, false)) {
-        std::fill_n(bytes, size, std::uint8_t{0xff});
+        std::ranges::fill(bytes, std::uint8_t{0xff});
         throw std::runtime_error("refill failed");
     }
-    std::iota(bytes, bytes + size, std::uint8_t{0});
+    std::iota(bytes.begin(), bytes.end(), std::uint8_t{0});
 }
 
 [[nodiscard]] nixl::trace::RandomBuffer
@@ -604,11 +604,11 @@ TEST(TraceContext, RandomBufferRefillsOncePerBlock) {
     std::array<std::uint8_t, 32> bytes{};
 
     for (int draw = 0; draw < 8; ++draw) {
-        buffer.fill(bytes.data(), bytes.size());
+        buffer.fill(bytes);
     }
     EXPECT_EQ(refill_count, 1u);
 
-    buffer.fill(bytes.data(), bytes.size());
+    buffer.fill(bytes);
     EXPECT_EQ(refill_count, 2u);
 }
 
@@ -618,7 +618,7 @@ TEST(TraceContext, RandomBufferServesBytesInOrderAcrossBlocks) {
 
     for (int draw = 0; draw < 22; ++draw) {
         std::array<std::uint8_t, 24> bytes{};
-        buffer.fill(bytes.data(), bytes.size());
+        buffer.fill(bytes);
         served.insert(served.end(), bytes.begin(), bytes.end());
     }
 
@@ -633,9 +633,9 @@ TEST(TraceContext, RandomBufferClearDiscardsTheRest) {
     std::array<std::uint8_t, 8> first{};
     std::array<std::uint8_t, 8> second{};
 
-    buffer.fill(first.data(), first.size());
+    buffer.fill(first);
     buffer.clear();
-    buffer.fill(second.data(), second.size());
+    buffer.fill(second);
 
     EXPECT_EQ(refill_count, 2u);
     EXPECT_EQ(second, kBlockStart);
@@ -646,9 +646,9 @@ TEST(TraceContext, RandomBufferRetriesAfterAFailedRefill) {
     std::array<std::uint8_t, 8> bytes{};
 
     fail_next_refill = true;
-    EXPECT_THROW(buffer.fill(bytes.data(), bytes.size()), std::runtime_error);
+    EXPECT_THROW(buffer.fill(bytes), std::runtime_error);
 
-    buffer.fill(bytes.data(), bytes.size());
+    buffer.fill(bytes);
     EXPECT_EQ(refill_count, 2u);
     EXPECT_EQ(bytes, kBlockStart);
 }

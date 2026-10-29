@@ -103,7 +103,12 @@ traceIdRandomness(const nixl::trace::TraceContext &context) noexcept {
     return result;
 }
 
-constinit thread_local nixl::trace::RandomBuffer random_buffer{nixl::generateRandomBytes};
+void
+systemRandomBytes(std::span<std::uint8_t> output) {
+    nixl::generateRandomBytes(output.data(), output.size());
+}
+
+constinit thread_local nixl::trace::RandomBuffer random_buffer{systemRandomBytes};
 
 void
 clearRandomBuffer() noexcept {
@@ -111,14 +116,14 @@ clearRandomBuffer() noexcept {
 }
 
 void
-bufferedRandomBytes(std::uint8_t *output, std::size_t size) {
+bufferedRandomBytes(std::span<std::uint8_t> output) {
     // A forked child must not hand out the bytes its parent still holds.
     static const bool fork_safe = (pthread_atfork(nullptr, nullptr, clearRandomBuffer) == 0);
     if (!fork_safe) {
-        nixl::generateRandomBytes(output, size);
+        systemRandomBytes(output);
         return;
     }
-    random_buffer.fill(output, size);
+    random_buffer.fill(output);
 }
 
 void
@@ -127,11 +132,11 @@ generateInto(nixl::trace::TraceContext &context,
              nixl::trace::random_bytes_fn_t random_bytes) {
     const auto fill = (random_bytes != nullptr) ? random_bytes : bufferedRandomBytes;
     do {
-        fill(context.traceId.data(), context.traceId.size());
+        fill(context.traceId);
     } while (isAllZero(context.traceId));
 
     do {
-        fill(context.spanId.data(), context.spanId.size());
+        fill(context.spanId);
     } while (isAllZero(context.spanId));
 
     context.flags = 0x02;
@@ -329,7 +334,7 @@ nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
     std::uint64_t id = 0;
     try {
         do {
-            fill(reinterpret_cast<std::uint8_t *>(&id), sizeof(id));
+            fill({reinterpret_cast<std::uint8_t *>(&id), sizeof(id)});
         } while (id == 0);
     }
     catch (const std::exception &e) {
@@ -350,7 +355,7 @@ nixl::trace::generatePostContext(const nixl::trace::TraceContext &request,
     nixl::trace::TraceContext context = request;
     try {
         do {
-            fill(context.spanId.data(), context.spanId.size());
+            fill(context.spanId);
         } while (isAllZero(context.spanId));
     }
     catch (const std::exception &e) {
