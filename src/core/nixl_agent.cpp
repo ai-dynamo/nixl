@@ -73,10 +73,10 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
       targetDescs(remote_type),
       remoteAgent(remote_agent),
       remoteSection(remote_section_ref),
-      traceContext_(trace_context),
-      tracePostContext_(trace_context),
-      traceRequestId_(trace_request_id),
-      traceRequestIdText_(trace_request_id),
+      trace_{.context = trace_context,
+             .postContext = trace_context,
+             .requestIdText = nixl::trace::RequestIdText{trace_request_id},
+             .requestId = trace_request_id},
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
@@ -1189,7 +1189,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     nixl::trace::TraceContext call_context = req_hndl->traceContext();
-    if (call_context.sampled() && req_hndl->traceRequestSpanIdUsed_) {
+    if (call_context.sampled() && req_hndl->trace_.requestSpanIdUsed) {
         call_context = nixl::trace::generatePostContext(call_context, data->tracer_.get());
     }
 
@@ -1214,7 +1214,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     std::shared_lock<nixlLock> read_lock(data->lock);
-    req_hndl->traceRequestSpanIdUsed_ = true;
+    req_hndl->trace_.requestSpanIdUsed = true;
     // The request was created against a specific remote registration generation: refuse to
     // post if that generation was invalidated or replaced by a re-registration meanwhile.
     if (req_hndl->remoteSection.expired()) {
@@ -1289,10 +1289,10 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_BACKEND;
     }
 
-    req_hndl->tracePostContext_ = call_context;
+    req_hndl->trace_.postContext = call_context;
     opt_args.traceContext = &req_hndl->tracePostContext();
-    if (req_hndl->traceRequestId_ != 0) {
-        req_hndl->traceExecution_.fetch_add(1, std::memory_order_relaxed);
+    if (req_hndl->trace_.requestId != 0) {
+        req_hndl->trace_.execution.fetch_add(1, std::memory_order_relaxed);
     }
     opt_args.traceRequestId = req_hndl->traceRequestId();
     opt_args.traceExecution = req_hndl->traceExecution();

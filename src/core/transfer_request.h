@@ -75,35 +75,44 @@ public:
 
     [[nodiscard]] const nixl::trace::TraceContext &
     traceContext() const noexcept {
-        return traceContext_;
+        return trace_.context;
     }
 
     /** @brief Trace context of the latest post handed to the backend, which that
      *         post's nixl::xfer.complete carries; traceContext() before any post. */
     [[nodiscard]] const nixl::trace::TraceContext &
     tracePostContext() const noexcept {
-        return tracePostContext_;
+        return trace_.postContext;
     }
 
     [[nodiscard]] std::uint64_t
     traceRequestId() const noexcept {
-        return traceRequestId_;
+        return trace_.requestId;
     }
 
     /** @brief traceRequestId() as nixl.xfer_request_id records it. */
     [[nodiscard]] std::string_view
     traceRequestIdText() const noexcept {
-        return traceRequestIdText_.view();
+        return trace_.requestIdText.view();
     }
 
     [[nodiscard]] std::uint64_t
     traceExecution() const noexcept {
-        return traceExecution_.load(std::memory_order_relaxed);
+        return trace_.execution.load(std::memory_order_relaxed);
     }
 
     friend class nixlAgent;
 
 private:
+    struct traceState {
+        const nixl::trace::TraceContext context;
+        nixl::trace::TraceContext postContext;
+        bool requestSpanIdUsed = false;
+        const nixl::trace::RequestIdText requestIdText;
+        const std::uint64_t requestId;
+        std::atomic<std::uint64_t> execution = 0;
+    };
+
     nixlBackendEngine *engine = nullptr;
     nixlBackendReqH *backendHandle = nullptr;
 
@@ -112,12 +121,7 @@ private:
 
     const std::string remoteAgent;
     const nixl_remote_section_weak_t remoteSection;
-    const nixl::trace::TraceContext traceContext_;
-    nixl::trace::TraceContext tracePostContext_;
-    bool traceRequestSpanIdUsed_ = false;
-    const std::uint64_t traceRequestId_;
-    const nixl::trace::RequestIdText traceRequestIdText_;
-    std::atomic<std::uint64_t> traceExecution_ = 0;
+    traceState trace_;
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 
