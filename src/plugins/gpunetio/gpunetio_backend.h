@@ -200,14 +200,21 @@ private:
         bool attachedStream = false;
         uint32_t devId;
         std::vector<uint32_t> positions;
+        doca_gpu_dev_verbs_qp *qpData = nullptr;
         uintptr_t backendHandleGpu;
         size_t postedCount = 0;
         nixl_status_t postStatus = NIXL_SUCCESS;
         std::atomic<completion_state> completionState{completion_state::IN_PROGRESS};
+        nixlDocaNotif *notif = nullptr;
+        uint32_t notifSlot = 0;
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
 
-        ~nixlDocaBckndReq() {}
+        ~nixlDocaBckndReq() {
+            if (notif != nullptr) {
+                notif->releaseSendSlot(notifSlot);
+            }
+        }
     };
 
     void
