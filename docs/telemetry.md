@@ -312,9 +312,20 @@ Following sections applied specifically for configuration and usage of cyclic bu
 
 Telemetry data is stored in shared memory files with the agent name passed when creating the agent.
 
-`TELEMETRY_VERSION` is the binary layout version of `nixlTelemetryEvent` as serialized in the shared-memory cyclic buffer. Bump it whenever the struct's size, field offsets, or enum widths change, or when a new event type is added to the stream (readers must know the full event-type set). Readers exact-match this value; the C++ shared-ring-buffer path unlinks the file on mismatch, while the Python example raises a `RuntimeError`. There is no backward-compatibility path. The current version is `5`: it was bumped from `4` when the `agent_trace_phases_dropped` event type (`AGENT_TRACE_PHASES_DROPPED`) was added, which also moved `AGENT_TELEMETRY_EVENTS_DROPPED` from `20` to `21`. Version `4` added `agent_telemetry_events_dropped`.
+`TELEMETRY_VERSION` is the binary layout version of the shared-memory cyclic buffer, covering its header, data placement, and the `nixlTelemetryEvent` entries serialized in it. Bump it whenever the buffer header layout or the struct's size, field offsets, or enum widths change, or when a new event type is added to the stream (readers must know the full event-type set). Readers exact-match this value; the C++ shared-ring-buffer path unlinks the file on mismatch, while the Python example raises a `RuntimeError`. There is no backward-compatibility path. The current version is `6`: it was bumped from `5` when the buffer header was padded to two 256-byte-aligned blocks (512 bytes) to eliminate false sharing between `write_pos` and `read_pos`, which moved `capacity`, `mask`, `read_pos`, and the data-array offset; `version` deliberately stays at byte offset 16 across layout versions so a reader on a mismatched file always reads a real version field. Version `5` added the `agent_trace_phases_dropped` event type (`AGENT_TRACE_PHASES_DROPPED`), which also moved `AGENT_TELEMETRY_EVENTS_DROPPED` from `20` to `21`. Version `4` added `agent_telemetry_events_dropped`.
 
 ### Using Telemetry Readers
+Readers (consumers) attach to the file by agent name and can outlive the producer. A reader holds a shared `flock` on the file for its lifetime (the C++ and Python readers do; a custom reader should too). When a producer starts and finds a file under its agent name, it decides in this order:
+
+- If version or capacity differ from the producer's: the file is replaced.
+
+- Otherwise, with a reader attached (the `flock` is held): the producer reuses the file and its positions, so the reader keeps its unread events across the restart.
+
+- Otherwise, with no reader attached: the file is reset in place and the new run starts with an empty ring; events left unread by the previous run are discarded.
+
+- Otherwise, if the reader cannot be probed (e.g. the filesystem does not support `flock`): the file is replaced.
+
+When the file is reset in place, the same file and inode are kept, only the positions start over. When the file is replaced, a new file is created on a new inode and the new run starts with an empty ring; an old reader, if one exists, keeps its mapping of the previous file and drains exactly the events it already had, without ever seeing the new producer's writes, so a new reader must be started to see them.
 
 ### C++ Telemetry Reader
 
