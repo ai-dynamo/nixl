@@ -822,6 +822,11 @@ For pairwise UCX runs, `--device_list` must match the configured initiator and t
   --backend GPUNETIO --gpunetio_device_list 0,1
 ```
 
+**Note**: If two local GPUNETIO workers share one physical GPU, their persistent
+kernels may be time-sliced, causing high latency and low bandwidth. Use one GPU
+per worker, or [CUDA MPS](https://docs.nvidia.com/deploy/mps/index.html) if only
+one GPU is available.
+
 ### Storage Backends
 
 The examples below write their files into `/mnt/storage/testdir`. Create it on
