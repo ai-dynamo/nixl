@@ -174,10 +174,14 @@ fn with_write_request(prepped: bool, test: impl FnOnce(&Agent, &XferRequest, &Op
 fn post_to_completion(agent: &Agent, xfer_req: &XferRequest, opt_args: &OptArgs) {
     let result = agent.post_xfer_req(xfer_req, Some(opt_args));
     assert!(result.is_ok(), "post_xfer_req failed with error: {:?}", result.err());
+    let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match agent.get_xfer_status(xfer_req) {
             Ok(XferStatus::Success) => break,
-            Ok(XferStatus::InProgress) => thread::sleep(Duration::from_millis(10)),
+            Ok(XferStatus::InProgress) => {
+                assert!(Instant::now() < deadline, "Timed out waiting for the transfer to complete");
+                thread::sleep(Duration::from_millis(10));
+            }
             Err(e) => panic!("Failed to get transfer status: {:?}", e),
         }
     }
