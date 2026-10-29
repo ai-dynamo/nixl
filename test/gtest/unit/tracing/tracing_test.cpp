@@ -284,15 +284,15 @@ public:
 };
 
 void
-failRandomBytes(std::uint8_t *, std::size_t) {
+failRandomBytes(std::span<std::uint8_t>) {
     throw std::system_error(ENOSYS, std::generic_category(), "getentropy failed");
 }
 
 int zero_draws_left = 0;
 
 void
-zeroFirstRandomBytes(std::uint8_t *bytes, std::size_t size) {
-    std::fill_n(bytes, size, (zero_draws_left-- > 0) ? 0 : 0x5a);
+zeroFirstRandomBytes(std::span<std::uint8_t> bytes) {
+    std::ranges::fill(bytes, (zero_draws_left-- > 0) ? 0 : 0x5a);
 }
 
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
