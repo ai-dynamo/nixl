@@ -34,6 +34,13 @@
 //   "conn"     : string = serialized connection info (only if has_conn == 1).
 //                 Included when the peer hasn't sent us a handshake yet,
 //                 meaning they likely don't have our endpoint addresses.
+//   "wtag"     : uint8  = write tag the receiver puts in the imm_data of its writes to us, or 0
+//                 for none. Non-zero only when our provider cannot attribute a remote write by
+//                 source address. Its presence also means we stamp the tag and generation the
+//                 receiver handed us. Absent from peers that predate write tags: they are
+//                 rejected when the receiver's provider needs tags, and work as before otherwise.
+//   "wgen"     : uint8  = sent with "wtag". The tag's generation, which the receiver puts in the
+//                 SEQ_ID bits, or 0 when "wtag" is 0.
 //
 // Protocol version 1 sent "idx" (the agent index for imm_data) instead of "ver". It is not
 // interoperable with version 2, so the version check rejects it at connection setup.
@@ -65,6 +72,9 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     if (has_conn) {
         sd.addStr(NIXL_HANDSHAKE_TAG_CONN, piggybacked_conn_info);
     }
+    // Sent even without a tag, so the receiver knows we stamp the tags it hands us.
+    sd.addBuf(NIXL_HANDSHAKE_TAG_WRITE_TAG, &conn.local_write_tag_, sizeof(conn.local_write_tag_));
+    sd.addBuf(NIXL_HANDSHAKE_TAG_WRITE_GEN, &conn.local_write_gen_, sizeof(conn.local_write_gen_));
     std::string payload = sd.exportStr();
 
     if (payload.size() > NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE) {
@@ -175,9 +185,34 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
             return;
         }
     }
+    // Write tag fields, absent from peers that predate them; see the wire format above.
+    nixlLibfabricWriteTag peer_write_tag;
+    const bool peer_stamps_write_tags =
+        sd.peekBufLen(NIXL_HANDSHAKE_TAG_WRITE_TAG) == sizeof(peer_write_tag.tag);
+    if (peer_stamps_write_tags &&
+        (sd.getBuf(NIXL_HANDSHAKE_TAG_WRITE_TAG, &peer_write_tag.tag, sizeof(peer_write_tag.tag)) !=
+             NIXL_SUCCESS ||
+         sd.getBuf(NIXL_HANDSHAKE_TAG_WRITE_GEN, &peer_write_tag.gen, sizeof(peer_write_tag.gen)) !=
+             NIXL_SUCCESS)) {
+        NIXL_ERROR << "Handshake from '" << peer_agent_name << "' has an unreadable '"
+                   << NIXL_HANDSHAKE_TAG_WRITE_TAG << "' or '" << NIXL_HANDSHAKE_TAG_WRITE_GEN
+                   << "' field";
+        return;
+    }
+    if (assign_write_tags_ && !peer_stamps_write_tags) {
+        NIXL_ERROR << "Handshake from '" << peer_agent_name << "' has no '"
+                   << NIXL_HANDSHAKE_TAG_WRITE_TAG
+                   << "' field: the peer cannot stamp write tags, which our provider needs to "
+                      "attribute its remote writes. Upgrade both ends of the cluster to the same "
+                      "NIXL version.";
+        rejectHandshake(peer_agent_name, peer_proto_ver);
+        return;
+    }
 
     NIXL_DEBUG << "Received handshake from peer '" << peer_agent_name
                << "' proto_ver=" << peer_proto_ver
+               << " write_tag=" << static_cast<unsigned>(peer_write_tag.tag)
+               << " write_gen=" << static_cast<unsigned>(peer_write_tag.gen)
                << " piggybacked_conn_info_len=" << piggybacked_conn_info.size();
 
     // Process the decoded handshake.
@@ -193,7 +228,7 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
     if (!conn) {
         {
             std::lock_guard<std::mutex> plk(pending_handshake_mutex_);
-            pending_inbound_handshakes_.insert(peer_agent_name);
+            pending_inbound_handshakes_[peer_agent_name] = peer_write_tag;
             NIXL_DEBUG << "Buffered handshake from not-yet-known peer '" << peer_agent_name
                        << "'; will apply on createAgentConnection";
         }
@@ -219,6 +254,8 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
     } else {
         {
             std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
+            // Set before handshake_received_, which allows writes to the peer.
+            conn->peer_write_tag_.store(peer_write_tag, std::memory_order_release);
             conn->handshake_received_.store(true, std::memory_order_release);
         }
         conn->handshake_cv_.notify_all();

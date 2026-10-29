@@ -18,6 +18,7 @@
 #ifndef NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_RAIL_H
 #define NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_RAIL_H
 
+#include <array>
 #include <vector>
 #include <deque>
 #include <limits>
@@ -397,16 +398,20 @@ struct nixlLibfabricPostRequest {
 class nixlLibfabricRail {
 public:
     uint16_t rail_id; ///< Unique rail identifier
-    std::string device_name; ///< EFA device name for this rail
-    std::string provider_name; ///< Provider name (e.g., "efa", "efa-direct")
+    std::string device_name; ///< Libfabric domain name for this rail
+    std::string provider_name; ///< Core provider name (e.g., "efa", "efa-direct", "verbs")
     char ep_name[LF_EP_NAME_MAX_LEN]; ///< Endpoint name for connection setup
     struct fid_ep *endpoint; ///< Libfabric endpoint handle
 
-    /** Initialize libfabric rail with all resources */
+    /** Initialize libfabric rail with all resources
+     * @param auto_progress Request FI_PROGRESS_AUTO (with FI_THREAD_SAFE) so the provider accepts
+     *        connections on its own thread. Used for lazily connecting providers when the backend
+     *        runs no progress thread. Throws if the provider does not grant it. */
     nixlLibfabricRail(const std::string &device,
                       const std::string &provider,
                       uint16_t id,
-                      enum fi_hmem_iface runtime);
+                      enum fi_hmem_iface runtime,
+                      bool auto_progress = false);
 
     /** Destroy rail and cleanup all libfabric resources */
     ~nixlLibfabricRail();
@@ -469,6 +474,25 @@ public:
      *  kUnknownAgentIdx if it is FI_ADDR_NOTAVAIL or unmapped; callers must then drop it. */
     [[nodiscard]] uint32_t
     resolveSourceAddress(fi_addr_t src_addr) const;
+
+    /** Map a write tag this agent handed a peer to that peer's agent index, accepting writes
+     *  under it only with generation @p write_gen (1..NIXL_LIBFABRIC_MAX_WRITE_GEN). Both take
+     *  effect together, so a previous holder's writes are never credited to the new one. */
+    void
+    mapWriteTag(uint8_t write_tag, uint32_t agent_idx, uint8_t write_gen) const;
+
+    /** Drop a write tag's mapping if it still names agent_idx. */
+    void
+    unmapWriteTag(uint8_t write_tag, uint32_t agent_idx) const;
+
+    /** Resolve a write tag to a local agent index, or kUnknownAgentIdx if unmapped. */
+    [[nodiscard]] uint32_t
+    resolveWriteTag(uint8_t write_tag) const;
+
+    /** resolveWriteTag(), returning kUnknownAgentIdx when @p write_gen is not the tag's required
+     *  generation. */
+    [[nodiscard]] uint32_t
+    resolveWriteTag(uint8_t write_tag, uint8_t write_gen) const;
 
     // Memory descriptor helper methods
     /** Get libfabric memory descriptor for MR */
@@ -638,6 +662,13 @@ private:
     // FI_AV_TABLE). Written at connection setup, read on the completion path.
     mutable std::vector<uint32_t> src_addr_to_agent_;
     mutable std::shared_mutex src_addr_mutex_;
+
+    // Write tag -> local agent index. Slot 0 means no tag. Guarded by src_addr_mutex_.
+    mutable std::array<uint32_t, NIXL_LIBFABRIC_MAX_WRITE_TAG + 1> write_tag_to_agent_;
+    // Generation each write tag must carry, 0 for an unmapped tag. Guarded by src_addr_mutex_.
+    mutable std::array<uint8_t, NIXL_LIBFABRIC_MAX_WRITE_TAG + 1> write_tag_gen_{};
+    // Remote writes dropped as unattributable, for log rate limiting.
+    mutable std::atomic<uint64_t> dropped_remote_writes_{0};
 
     // Separate request pools for optimal performance
     ControlRequestPool control_request_pool_;

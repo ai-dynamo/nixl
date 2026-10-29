@@ -41,6 +41,9 @@ private:
     // Network fabric name (efa-direct, efa, tcp, sockets, etc.)
     std::string provider_name;
 
+    // Every selected domain as reported by device discovery, in rail order
+    std::vector<LibfabricUtils::nixlLibfabricDeviceInfo> discovered_devices;
+
     // System information
     int num_aws_accel; // AWS Trainium accelerators
     int num_nvidia_accel; // NVIDIA GPU accelerators
@@ -164,6 +167,14 @@ private:
     getPcieAddressFromHwlocPcidev(const hwloc_obj_attr_u::hwloc_pcidev_attr_s &pcidev) const;
     std::string
     getPcieAddressFromHwlocObj(hwloc_obj_t obj) const;
+    /**
+     * @brief PCIe address of the PCI device behind hwloc OS device @p osdev_name, or "".
+     *
+     * Used for NICs libfabric reports no bus info for; a verbs domain name is the InfiniBand
+     * device name, e.g. "rocep153s0f0".
+     */
+    std::string
+    getPcieAddressForOsDev(const std::string &osdev_name) const;
     bool
     isNvidiaAccel(hwloc_obj_t obj) const;
     bool
@@ -299,6 +310,13 @@ public:
     inline bool
     hasPcieDevices() const {
         return has_pcie_devices_;
+    }
+
+    /** @brief PCIe address of @p nic_device in hwloc's format, or "" if none was resolved. */
+    inline std::string
+    getPcieAddress(const std::string &nic_device) const {
+        const auto it = libfabric_to_pcie_map.find(nic_device);
+        return (it != libfabric_to_pcie_map.end()) ? it->second : std::string();
     }
 
     /**

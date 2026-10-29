@@ -423,7 +423,8 @@ DataRequestPool::allocate(nixlLibfabricReq::OpType op_type, uint32_t req_id) {
 nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                                      const std::string &provider,
                                      uint16_t id,
-                                     enum fi_hmem_iface runtime)
+                                     enum fi_hmem_iface runtime,
+                                     bool auto_progress)
     : rail_id(id),
       device_name(device),
       provider_name(provider),
@@ -431,6 +432,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
       data_request_pool_(NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL, id),
       provider_supports_hmem_(false),
       runtime_(runtime) {
+    write_tag_to_agent_.fill(kUnknownAgentIdx);
     // Initialize all pointers to nullptr
     info = nullptr;
     fabric = nullptr;
@@ -456,23 +458,30 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     hints->caps |= FI_SOURCE;
     hints->mode = FI_CONTEXT;
     hints->ep_attr->type = FI_EP_RDM;
-    // Configure memory registration mode based on provider capabilities
-    if (provider == "tcp" || provider == "sockets") {
-        // TCP provider doesn't support FI_MR_PROV_KEY or FI_MR_VIRT_ADDR, use basic mode
-        hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_ALLOCATED;
-        hints->domain_attr->mr_key_size = 0; // Let provider decide
-    } else if (provider == "cxi") {
-        hints->caps |= FI_RMA_EVENT;
-        hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR | FI_MR_ALLOCATED |
-            FI_MR_PROV_KEY | FI_MR_ENDPOINT;
-    } else {
-        // EFA and other providers support advanced memory registration
-        hints->domain_attr->mr_mode =
-            FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
-        hints->domain_attr->mr_key_size = 2;
+    // Capabilities and memory registration mode from the provider table; unlisted providers get
+    // the defaults.
+    const LibfabricUtils::nixlLibfabricProviderInfo *prov_info =
+        LibfabricUtils::findProviderInfo(provider);
+    if (prov_info == nullptr) {
+        prov_info = &LibfabricUtils::defaultProviderInfo();
+        NIXL_DEBUG << "Provider " << provider << " has no table entry, using defaults from "
+                   << prov_info->name;
+    }
+    hints->caps |= prov_info->extra_caps;
+    hints->domain_attr->mr_mode = prov_info->mr_mode;
+    hints->domain_attr->mr_key_size = prov_info->mr_key_size;
+    if (prov_info->needs_prov_name_hint) {
+        hints->fabric_attr->prov_name = strdup(prov_info->name);
     }
     hints->domain_attr->name = strdup(device_name.c_str());
     hints->domain_attr->threading = FI_THREAD_COMPLETION;
+    if (auto_progress) {
+        // The provider accepts connections on its own thread. rxm requires FI_THREAD_SAFE for
+        // FI_PROGRESS_AUTO, since that thread shares the endpoint with ours.
+        hints->domain_attr->threading = FI_THREAD_SAFE;
+        hints->domain_attr->control_progress = FI_PROGRESS_AUTO;
+        hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
+    }
 
     // The EFA provider accepts FI_MR_DMABUF from libfabric API 1.20 on, so request 1.20
     // where the library provides it and 1.18 elsewhere. The fabric carries the requested
@@ -531,6 +540,20 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             // Provider found with FI_HMEM
             provider_supports_hmem_ = true;
             NIXL_INFO << "Using provider with FI_HMEM support for rail " << rail_id;
+        }
+
+        if (auto_progress && info->domain_attr->data_progress != FI_PROGRESS_AUTO) {
+            NIXL_ERROR << "Provider " << provider << " did not grant FI_PROGRESS_AUTO on rail "
+                       << rail_id << "; without it or a progress thread, connection setup would "
+                       << "stall. Enable the progress thread (nixlAgentConfig::useProgThread, or "
+                       << "--enable_pt=1 under nixlbench), or select another provider with "
+                       << "FI_PROVIDER";
+            throw std::runtime_error("FI_PROGRESS_AUTO not granted for rail " +
+                                     std::to_string(rail_id));
+        }
+        if (auto_progress) {
+            NIXL_INFO << "Rail " << rail_id << ": no progress thread, so " << provider
+                      << " progresses connection setup on its own thread (FI_PROGRESS_AUTO)";
         }
 
         // Create fabric for this rail
@@ -1164,11 +1187,24 @@ nixlLibfabricRail::processRemoteWriteCompletion(struct fi_cq_data_entry *comp,
     // For remote write completions, we don't need to post a new receive
     // The write operation doesn't consume a receive buffer
     if (msg_type == NIXL_LIBFABRIC_MSG_TRANSFER) {
-        const uint32_t agent_idx = resolveSourceAddress(src_addr);
+        // A tagged write is attributed by its tag, otherwise by source address.
+        const uint8_t write_tag = static_cast<uint8_t>(NIXL_GET_WRITE_TAG_FROM_IMM(comp->data));
+        const uint8_t write_gen = static_cast<uint8_t>(NIXL_GET_WRITE_GEN_FROM_IMM(comp->data));
+        const uint32_t agent_idx =
+            write_tag != 0 ? resolveWriteTag(write_tag, write_gen) : resolveSourceAddress(src_addr);
         if (agent_idx == kUnknownAgentIdx) {
-            NIXL_ERROR << "Remote write completion on rail " << rail_id
-                       << " from unknown src_addr=" << src_addr << " XFER_ID=" << xfer_id
-                       << "; cannot credit it to a pending notification";
+            // A disconnected peer may keep writing; log only power-of-two occurrences.
+            const uint64_t n = dropped_remote_writes_.fetch_add(1, std::memory_order_relaxed) + 1;
+            if ((n & (n - 1)) == 0) {
+                NIXL_ERROR << "Remote write completion on rail " << rail_id
+                           << " from unknown src_addr=" << src_addr
+                           << " write_tag=" << static_cast<unsigned>(write_tag)
+                           << " write_gen=" << static_cast<unsigned>(write_gen)
+                           << " XFER_ID=" << xfer_id
+                           << "; cannot credit it to a pending notification (from a disconnected "
+                              "peer, or one whose tag has since been reassigned). "
+                           << n << " such write(s) dropped on this rail so far";
+            }
             // Handled by dropping it; not an error for whichever caller progressed the CQ.
             return NIXL_SUCCESS;
         }
@@ -1974,6 +2010,43 @@ nixlLibfabricRail::mapSourceAddress(fi_addr_t fi_addr, uint32_t agent_idx) const
 
     NIXL_TRACE << "Mapped fi_addr " << fi_addr << " -> agent index " << agent_idx << " on rail "
                << rail_id;
+}
+
+void
+nixlLibfabricRail::mapWriteTag(uint8_t write_tag, uint32_t agent_idx, uint8_t write_gen) const {
+    if (write_tag == 0) {
+        return;
+    }
+    std::unique_lock<std::shared_mutex> lk(src_addr_mutex_);
+    write_tag_to_agent_[write_tag] = agent_idx;
+    write_tag_gen_[write_tag] = write_gen;
+    NIXL_TRACE << "Mapped write tag " << static_cast<unsigned>(write_tag) << " generation "
+               << static_cast<unsigned>(write_gen) << " -> agent index " << agent_idx
+               << " on rail " << rail_id;
+}
+
+void
+nixlLibfabricRail::unmapWriteTag(uint8_t write_tag, uint32_t agent_idx) const {
+    std::unique_lock<std::shared_mutex> lk(src_addr_mutex_);
+    if (write_tag != 0 && write_tag_to_agent_[write_tag] == agent_idx) {
+        write_tag_to_agent_[write_tag] = kUnknownAgentIdx;
+        write_tag_gen_[write_tag] = 0;
+    }
+}
+
+uint32_t
+nixlLibfabricRail::resolveWriteTag(uint8_t write_tag) const {
+    std::shared_lock<std::shared_mutex> lk(src_addr_mutex_);
+    return write_tag_to_agent_[write_tag];
+}
+
+uint32_t
+nixlLibfabricRail::resolveWriteTag(uint8_t write_tag, uint8_t write_gen) const {
+    std::shared_lock<std::shared_mutex> lk(src_addr_mutex_);
+    if (write_tag_gen_[write_tag] != write_gen) {
+        return kUnknownAgentIdx;
+    }
+    return write_tag_to_agent_[write_tag];
 }
 
 uint32_t

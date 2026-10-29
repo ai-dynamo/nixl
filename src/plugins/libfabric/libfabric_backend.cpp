@@ -484,7 +484,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     : nixlBackendEngine(init_params),
       progress_thread_enabled_(init_params->enableProgTh),
       progress_thread_delay_(std::chrono::microseconds(init_params->pthrDelay)),
-      rail_manager_(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
+      rail_manager_(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD, init_params->enableProgTh),
       post_thread_count_(NIXL_LIBFABRIC_DEFAULT_POST_THREADS),
       post_split_batch_size_(NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE),
       runtime_(FI_HMEM_SYSTEM) {
@@ -569,6 +569,14 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
                     addReceivedXferId(xfer_id, sender_peer_idx);
                 });
             NIXL_DEBUG << "Set XFER_ID callback for rail " << rail_id;
+        }
+
+        assign_write_tags_ = rail_manager_.needsWriteTag();
+        if (assign_write_tags_) {
+            NIXL_INFO << "Provider reports no source address for remote writes; peers will tag "
+                         "their writes to this agent (at most "
+                      << NIXL_LIBFABRIC_MAX_WRITE_TAG - 1
+                      << " remote agents, as the self-connection holds one tag)";
         }
 
         // Create self-connection
@@ -812,6 +820,7 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
     }
 
     nixl_status_t status = it->second->disconnect();
+    releaseWriteTag(*it->second);
     connections_.erase(it);
     // Drop queued replies for this peer so teardown never posts toward it from the CM thread.
     {
@@ -858,6 +867,33 @@ nixlLibfabricEngine::createAgentConnection(
     // next peer. The dead name a failure leaves is harmless: agent_names_ is used for its size.
     agent_names_.push_back(agent_name);
 
+    if (assign_write_tags_) {
+        conn->local_write_tag_ = allocateWriteTag();
+        if (conn->local_write_tag_ == 0) {
+            NIXL_ERROR << "Cannot connect to agent " << agent_name << ": all "
+                       << NIXL_LIBFABRIC_MAX_WRITE_TAG
+                       << " write tags are in use. This provider reports no source address for "
+                          "remote writes, so it supports at most "
+                       << NIXL_LIBFABRIC_MAX_WRITE_TAG - 1
+                       << " remote agents (the self-connection holds one tag)";
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+        // New generation on reuse, so writes from the tag's previous holder are dropped.
+        uint8_t &gen = write_tag_gen_[conn->local_write_tag_];
+        gen = (gen >= NIXL_LIBFABRIC_MAX_WRITE_GEN) ? 1 : gen + 1;
+        conn->local_write_gen_ = gen;
+        // Mapped before our handshake goes out, since the peer writes only after receiving it.
+        // The generation is required from the start: a previous holder may still be writing.
+        rail_manager_.mapWriteTag(conn->local_write_tag_,
+                                  static_cast<uint32_t>(conn->agent_index_),
+                                  conn->local_write_gen_);
+        if (agent_name == localAgent) {
+            // The self-connection uses its own tag.
+            conn->peer_write_tag_.store({conn->local_write_tag_, conn->local_write_gen_},
+                                        std::memory_order_release);
+        }
+    }
+
     conn->rail_remote_addr_list_.reserve(rail_manager_.getNumRails());
 
     // Process all rails in one operation
@@ -870,6 +906,7 @@ nixlLibfabricEngine::createAgentConnection(
                                          conn->src_ep_names_);
     if (data_status != NIXL_SUCCESS) {
         NIXL_ERROR << "insertAllAddresses failed for rails with status: " << data_status;
+        releaseWriteTag(*conn);
         return data_status;
     }
 
@@ -883,10 +920,16 @@ nixlLibfabricEngine::createAgentConnection(
     // them locally.
     if (agent_name != localAgent) {
         bool buffered = false;
+        nixlLibfabricWriteTag buffered_write_tag;
         std::optional<uint16_t> rejected_ver;
         {
             std::lock_guard<std::mutex> plk(pending_handshake_mutex_);
-            buffered = (pending_inbound_handshakes_.erase(agent_name) > 0);
+            auto inbound = pending_inbound_handshakes_.find(agent_name);
+            if (inbound != pending_inbound_handshakes_.end()) {
+                buffered = true;
+                buffered_write_tag = inbound->second;
+                pending_inbound_handshakes_.erase(inbound);
+            }
             auto rejected = pending_rejected_handshakes_.find(agent_name);
             if (rejected != pending_rejected_handshakes_.end()) {
                 rejected_ver = rejected->second;
@@ -901,6 +944,7 @@ nixlLibfabricEngine::createAgentConnection(
         if (buffered) {
             {
                 std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
+                conn->peer_write_tag_.store(buffered_write_tag, std::memory_order_release);
                 conn->handshake_received_.store(true, std::memory_order_release);
             }
             conn->handshake_cv_.notify_all();
@@ -912,6 +956,28 @@ nixlLibfabricEngine::createAgentConnection(
               << rail_manager_.getNumRails() << " rails";
 
     return NIXL_SUCCESS;
+}
+
+uint8_t
+nixlLibfabricEngine::allocateWriteTag() {
+    for (size_t tried = 0; tried < NIXL_LIBFABRIC_MAX_WRITE_TAG; ++tried) {
+        const uint8_t tag = next_write_tag_;
+        next_write_tag_ = (tag == NIXL_LIBFABRIC_MAX_WRITE_TAG) ? 1 : tag + 1;
+        if (!write_tags_in_use_.test(tag)) {
+            write_tags_in_use_.set(tag);
+            return tag;
+        }
+    }
+    return 0;
+}
+
+void
+nixlLibfabricEngine::releaseWriteTag(const nixlLibfabricConnection &conn) {
+    if (conn.local_write_tag_ == 0) {
+        return;
+    }
+    rail_manager_.unmapWriteTag(conn.local_write_tag_, static_cast<uint32_t>(conn.agent_index_));
+    write_tags_in_use_.reset(conn.local_write_tag_);
 }
 
 nixl_status_t
@@ -970,10 +1036,19 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
                 std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
                 peer_ver = conn->rejected_peer_proto_ver_;
             }
-            NIXL_ERROR << "Peer '" << remote_agent << "' speaks libfabric-plugin protocol version "
-                       << peer_ver << ", we speak " << NIXL_LIBFABRIC_PROTO_VERSION
-                       << "; connection cannot be established. Upgrade both ends of the cluster "
-                          "to the same NIXL version.";
+            if (peer_ver == NIXL_LIBFABRIC_PROTO_VERSION) {
+                // Same version, so it was rejected for not stamping write tags.
+                NIXL_ERROR << "Peer '" << remote_agent
+                           << "' cannot stamp write tags, which our provider needs to attribute "
+                              "its remote writes; connection cannot be established. Upgrade both "
+                              "ends of the cluster to the same NIXL version.";
+            } else {
+                NIXL_ERROR << "Peer '" << remote_agent
+                           << "' speaks libfabric-plugin protocol version " << peer_ver
+                           << ", we speak " << NIXL_LIBFABRIC_PROTO_VERSION
+                           << "; connection cannot be established. Upgrade both ends of the "
+                              "cluster to the same NIXL version.";
+            }
             return NIXL_ERR_MISMATCH;
         }
         if (!conn->handshake_received_.load(std::memory_order_acquire)) {
@@ -1392,6 +1467,10 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         }
     }
 
+    // One snapshot for the chunk: a re-establishment handshake may replace the peer's tag.
+    const nixlLibfabricWriteTag peer_write_tag =
+        conn->peer_write_tag_.load(std::memory_order_acquire);
+
     for (int desc_idx = start_idx; desc_idx < end_idx; ++desc_idx) {
         const int rail_id = batch_writes ? batchingRail(local, desc_idx, xfer_base_offset) : -1;
         const bool apply_fi_more =
@@ -1436,6 +1515,8 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             remote_md->remote_selected_endpoints_,
             conn->rail_remote_addr_list_,
             backend_handle->post_xfer_id,
+            peer_write_tag.tag,
+            peer_write_tag.gen,
             [backend_handle](nixl_status_t status) {
                 backend_handle->complete_request(status);
             }, // Completion callback

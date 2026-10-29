@@ -27,6 +27,12 @@
 
 #include "libfabric/libfabric_rail.h"
 
+/** A write tag and its generation (see nixlLibfabricConnection::peer_write_tag_). 0 = none. */
+struct nixlLibfabricWriteTag {
+    uint8_t tag = 0;
+    uint8_t gen = 0;
+};
+
 /** Multi-rail connection metadata for remote agents */
 struct nixlLibfabricConnection : public nixlBackendConnMD {
     nixlLibfabricConnection(const std::string &remote_agent, size_t agent_index);
@@ -49,12 +55,31 @@ struct nixlLibfabricConnection : public nixlBackendConnMD {
     // Set once the peer holds our endpoints in its AV, so it can attribute our traffic.
     // establishConnection() blocks on handshake_cv_ until this or handshake_rejected_ is set.
     std::atomic<bool> handshake_received_{false};
-    // Set when the peer's protocol version is incompatible, so establishConnection() fails with
-    // NIXL_ERR_MISMATCH. rejected_peer_proto_ver_ is written under handshake_mutex_ first.
+    // Set when the peer's protocol version is incompatible, or the peer cannot stamp the write
+    // tags our provider needs, so establishConnection() fails with NIXL_ERR_MISMATCH.
+    // rejected_peer_proto_ver_ is written under handshake_mutex_ first.
     std::atomic<bool> handshake_rejected_{false};
     uint16_t rejected_peer_proto_ver_ = 0;
     std::mutex handshake_mutex_;
     std::condition_variable handshake_cv_;
+
+    /**
+     * @brief Write tags, for providers that report no source address for remote writes
+     * (see providerNeedsWriteTag()).
+     *
+     * local_write_tag_ is the tag we handed this peer in our handshake, mapped on our rails to its
+     * agent index together with local_write_gen_. peer_write_tag_ is the tag and generation it
+     * handed us, stamped in the imm_data and SEQ_ID bits of our writes to it; tag 0 means none,
+     * and then no generation is stamped. The generation is bumped each time a tag is reused, so
+     * writes from the tag's previous holder are dropped. It has 4 bits, so a tag reissued 15 times
+     * while an old holder still writes can repeat a generation.
+     *
+     * peer_write_tag_ is one atomic so that a write never pairs one handshake's tag with
+     * another's generation.
+     */
+    uint8_t local_write_tag_ = 0;
+    uint8_t local_write_gen_ = 0;
+    std::atomic<nixlLibfabricWriteTag> peer_write_tag_{};
 };
 
 #endif // NIXL_SRC_PLUGINS_LIBFABRIC_LIBFABRIC_CONNECTION_H

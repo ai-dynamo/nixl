@@ -76,9 +76,12 @@ public:
     /** Initialize rail manager with topology discovery and create rails based on available
      * network devices
      * @param striping_threshold Size threshold for enabling multi-rail striping
+     * @param progress_thread_enabled Whether the backend runs a progress thread. Without one,
+     *        lazily connecting providers get FI_PROGRESS_AUTO rails
      * @throws std::runtime_error if initialization fails
      */
-    nixlLibfabricRailManager(size_t striping_threshold);
+    explicit nixlLibfabricRailManager(size_t striping_threshold,
+                                      bool progress_thread_enabled = true);
     /** Destroy rail manager and cleanup all resources */
     ~nixlLibfabricRailManager();
 
@@ -192,6 +195,23 @@ public:
                        uint32_t agent_idx,
                        std::unordered_map<size_t, std::vector<fi_addr_t>> &fi_addrs_out,
                        std::vector<char *> &ep_names_out);
+
+    /** Whether peers must stamp their writes with a write tag. See providerNeedsWriteTag(). */
+    bool
+    needsWriteTag() const;
+
+    /** Whether every rail must be progressed. See providerNeedsAllRailProgress(). */
+    bool
+    needsAllRailProgress() const;
+
+    /** Map @p write_tag to @p agent_idx, at generation @p write_gen, on every rail. */
+    void
+    mapWriteTag(uint8_t write_tag, uint32_t agent_idx, uint8_t write_gen);
+
+    /** Drop @p write_tag's mapping on every rail if it still names @p agent_idx. */
+    void
+    unmapWriteTag(uint8_t write_tag, uint32_t agent_idx);
+
     /** Clean up connection resources for rails
      * @param fi_addrs_to_remove Libfabric addresses to remove
      * @return NIXL_SUCCESS on success, error code on failure
@@ -211,6 +231,8 @@ public:
      * @param remote_selected_endpoints Selected remote endpoints, where remote keys are registered
      * @param dest_addrs Destination addresses for each rail
      * @param xfer_id Transfer ID for tracking
+     * @param write_tag Target-assigned write tag for imm_data, or 0. Ignored for READ.
+     * @param write_gen Generation of @p write_tag for the SEQ_ID bits, or 0 for none.
      * @param completion_callback Callback for completion notification
      * @param submitted_count_out Number of requests successfully submitted
      * @param desc_idx Index of current descriptor within the transfer
@@ -235,6 +257,8 @@ public:
                              const std::vector<size_t> &remote_selected_endpoints,
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
                              uint16_t xfer_id,
+                             uint8_t write_tag,
+                             uint8_t write_gen,
                              std::function<void(nixl_status_t)> completion_callback,
                              size_t &submitted_count_out,
                              int desc_idx,
@@ -246,6 +270,8 @@ public:
     void
     deferTransferRequest(nixlLibfabricReq::OpType op_type,
                          uint16_t xfer_id,
+                         uint8_t write_tag,
+                         uint8_t write_gen,
                          uint64_t fi_flags,
                          fi_addr_t dest_addr,
                          int device_id,
@@ -395,6 +421,9 @@ private:
 
     // System runtime type (determined once at initialization)
     fi_hmem_iface runtime_;
+
+    // Whether the backend runs a progress thread
+    bool progress_thread_enabled_;
 
     // Rail allocation
     std::vector<std::unique_ptr<nixlLibfabricRail>> rails_;

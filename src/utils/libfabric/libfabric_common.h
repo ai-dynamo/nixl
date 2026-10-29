@@ -19,6 +19,7 @@
 #define NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_COMMON_H
 
 #include <vector>
+#include <span>
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
@@ -65,6 +66,10 @@ constexpr const char *NIXL_HANDSHAKE_TAG_V1_IDX = "idx";
 constexpr const char *NIXL_HANDSHAKE_TAG_NAME = "name";
 constexpr const char *NIXL_HANDSHAKE_TAG_HAS_CONN = "has_conn";
 constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
+// Optional: the write tag the receiver puts in imm_data of its writes to us.
+constexpr const char *NIXL_HANDSHAKE_TAG_WRITE_TAG = "wtag";
+// Optional, after "wtag": that tag's generation, carried in the SEQ_ID bits.
+constexpr const char *NIXL_HANDSHAKE_TAG_WRITE_GEN = "wgen";
 
 // Wire-protocol version of the libfabric plugin, exchanged in the handshake. Bump it on any
 // incompatible imm_data or control-message change. 1: 8-bit agent index in imm_data (sends
@@ -72,8 +77,11 @@ constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 #define NIXL_LIBFABRIC_PROTO_VERSION 2u
 
 // The immediate data associated with an RDMA operation is 32 bits and is divided as follows:
-// | 4-bit MSG TYPE flag | 8-bit RESERVED | 16-bit XFER_ID | 4-bit SEQ_ID |
-// RESERVED held the 8-bit peer agent index in protocol version 1; it must now be zero.
+// | 4-bit MSG TYPE flag | 8-bit WRITE TAG | 16-bit XFER_ID | 4-bit SEQ_ID |
+// WRITE TAG is the tag the target assigned us in its handshake ("wtag"), or 0 to have the target
+// resolve the sender from the source address. Targets assign tags only when their provider reports
+// no source address for remote writes (verbs;ofi_rxm). With a tag, SEQ_ID carries the tag's
+// generation ("wgen"), so the target can drop writes from a previous holder of the tag.
 
 // Optimized bit field constants (compile-time computed)
 #define NIXL_MSG_TYPE_BITS 4
@@ -105,14 +113,26 @@ constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 // Single-operation immediate data extraction (no intermediate shifts)
 #define NIXL_GET_MSG_TYPE_FROM_IMM(data) ((data) & NIXL_MSG_TYPE_MASK)
 #define NIXL_GET_IMM_RESERVED(data) (((data) >> NIXL_IMM_RESERVED_SHIFT) & NIXL_IMM_RESERVED_MASK)
+#define NIXL_GET_WRITE_TAG_FROM_IMM(data) NIXL_GET_IMM_RESERVED(data)
 #define NIXL_GET_XFER_ID_FROM_IMM(data) (((data) >> NIXL_XFER_ID_SHIFT) & NIXL_XFER_ID_MASK)
 #define NIXL_GET_SEQ_ID_FROM_IMM(data) (((data) >> NIXL_SEQ_ID_SHIFT) & NIXL_SEQ_ID_MASK)
+#define NIXL_GET_WRITE_GEN_FROM_IMM(data) NIXL_GET_SEQ_ID_FROM_IMM(data)
 
 // Single-operation immediate data creation (minimal bit operations)
 #define NIXL_MAKE_IMM_DATA(msg_type, xfer_id, seq_id)                    \
     (((uint64_t)(msg_type) & NIXL_MSG_TYPE_MASK) |                       \
      (((uint64_t)(xfer_id) & NIXL_XFER_ID_MASK) << NIXL_XFER_ID_SHIFT) | \
      (((uint64_t)(seq_id) & NIXL_SEQ_ID_MASK) << NIXL_SEQ_ID_SHIFT))
+
+// Same, with the target-assigned write tag (0 = none) in the WRITE TAG field.
+#define NIXL_MAKE_TAGGED_IMM_DATA(msg_type, write_tag, xfer_id, seq_id) \
+    (NIXL_MAKE_IMM_DATA(msg_type, xfer_id, seq_id) |                    \
+     (((uint64_t)(write_tag) & NIXL_IMM_RESERVED_MASK) << NIXL_IMM_RESERVED_SHIFT))
+
+// Largest write tag; tags are 1-based, 0 means "no tag".
+#define NIXL_LIBFABRIC_MAX_WRITE_TAG NIXL_IMM_RESERVED_MASK
+// Largest write-tag generation; generations are 1-based, 0 means "not stamped".
+#define NIXL_LIBFABRIC_MAX_WRITE_GEN NIXL_SEQ_ID_MASK
 
 #define NIXL_LIBFABRIC_CQ_BATCH_SIZE 16
 
@@ -313,9 +333,134 @@ resetSeqId();
 
 // Utility functions
 namespace LibfabricUtils {
-// Device discovery with fallback to sockets
-std::pair<std::string, std::vector<std::string>>
+/** @brief One libfabric domain as reported by the fi_getinfo() that selects the provider. */
+struct nixlLibfabricDeviceInfo {
+    /** @brief libfabric domain name, the name a rail is created on. */
+    std::string domain_name;
+    /**
+     * @brief PCIe address in hwloc's "%x:%02x:%02x.%x" format, or empty if libfabric reported none
+     * (verbs leaves bus_attr at FI_BUS_UNKNOWN; the topology layer resolves it through hwloc).
+     */
+    std::string pcie_address;
+    /** @brief Link speed in bits/s, or 0 if libfabric reported none. */
+    size_t link_speed = 0;
+};
+
+/**
+ * @brief Selects a provider and returns its usable domains, with fallback to tcp/sockets.
+ * @return Core provider name and one entry per rail, in rail order; {"none", {}} if none found.
+ */
+std::pair<std::string, std::vector<nixlLibfabricDeviceInfo>>
 getAvailableNetworkDevices();
+
+/** @brief Core provider of a possibly layered prov_name: "verbs;ofi_rxm" -> "verbs". */
+std::string
+baseProviderName(const std::string &prov_name);
+
+/** @brief prov_name -> domain names, as gathered from fi_getinfo. */
+using nixlProviderDeviceMap = std::unordered_map<std::string, std::vector<std::string>>;
+
+/**
+ * @brief Provider-specific settings for one core libfabric provider.
+ *
+ * Table order (see @ref knownProviders) is the preference order.
+ */
+struct nixlLibfabricProviderInfo {
+    /** @brief Core provider name, as it appears before any ';' in a prov_name. */
+    const char *name;
+    /** @brief Human-readable name for the discovery log line. */
+    const char *description;
+    /** @brief Extra capability bits added to a rail's hints->caps. */
+    uint64_t extra_caps;
+    /** @brief hints->domain_attr->mr_mode for a rail. */
+    uint64_t mr_mode;
+    /** @brief hints->domain_attr->mr_key_size for a rail; 0 lets the provider choose. */
+    size_t mr_key_size;
+    /**
+     * @brief Whether a rail names this provider in hints->fabric_attr->prov_name. Needed for verbs,
+     * whose domains psm3 also offers under the same names.
+     */
+    bool needs_prov_name_hint;
+    /** @brief Whether to do hwloc topology discovery and accelerator-to-NIC grouping. */
+    bool needs_full_topology;
+    /** @brief See @ref providerNeedsAllRailProgress. */
+    bool needs_all_rail_progress;
+    /** @brief See @ref providerNeedsWriteTag. */
+    bool needs_write_tag;
+    /** @brief Use only the first domain: every domain reaches every peer (tcp, sockets). */
+    bool single_domain;
+    /** @brief Provider-specific domain selection, or nullptr for @ref selectDomainsGeneric. */
+    std::vector<std::string> (*select_domains)(const nixlProviderDeviceMap &);
+};
+
+/** @brief The provider table, in preference order (highest first). */
+std::span<const nixlLibfabricProviderInfo *const>
+knownProviders();
+
+/** @brief Table entry for a core or layered @p prov_name, or nullptr if unknown. */
+const nixlLibfabricProviderInfo *
+findProviderInfo(const std::string &prov_name);
+
+/** @brief Settings used for a provider with no table entry (the plain-RDMA defaults of efa). */
+const nixlLibfabricProviderInfo &
+defaultProviderInfo();
+
+/**
+ * @brief True when every rail must be progressed, not just the rails this agent posted on.
+ *
+ * A provider layered over a connection-oriented core (verbs via ofi_rxm) connects lazily, and the
+ * passive side must poll a rail's CQ for the peer's connection on that rail to be accepted.
+ */
+bool
+providerNeedsAllRailProgress(const std::string &prov_name);
+
+/**
+ * @brief True when a remote-write completion does not identify its sender by source address.
+ *
+ * ofi_rxm leaves src_addr stale or FI_ADDR_NOTAVAIL for remote writes, so peers carry a
+ * target-assigned tag in imm_data instead.
+ */
+bool
+providerNeedsWriteTag(const std::string &prov_name);
+
+/** @brief See @ref nixlLibfabricProviderInfo::needs_full_topology. */
+bool
+providerNeedsFullTopology(const std::string &prov_name);
+
+/**
+ * @brief The verbs domains usable as rails.
+ *
+ * Keeps only "verbs;ofi_rxm" entries (verbs has no native RDM endpoint), drops the "-xrc" and
+ * "-dgram" domain variants, and de-duplicates the per-capability repeats of each domain.
+ *
+ * @return Unique domain names, sorted.
+ */
+std::vector<std::string>
+selectVerbsDomains(const nixlProviderDeviceMap &provider_device_map);
+
+/**
+ * @brief Domains listed under exactly the prov_name @p name, de-duplicated, in fi_getinfo order.
+ *
+ * Layered variants such as "efa;ofi_rxd" are not merged in: they reach the same NICs.
+ */
+std::vector<std::string>
+selectDomainsGeneric(const nixlProviderDeviceMap &provider_device_map, const char *name);
+
+/**
+ * @brief The first knownProviders() entry with usable domains, and those domains (one for a
+ *        single_domain provider).
+ * @return Core provider name and its domains in rail order; {"none", {}} if none.
+ */
+std::pair<std::string, std::vector<std::string>>
+selectProvider(const nixlProviderDeviceMap &provider_device_map);
+
+/**
+ * @brief Selects a provider from an fi_getinfo() list (see @ref selectProvider) and returns its
+ *        domains with the PCIe address and link speed that the selected provider reported.
+ * @return Core provider name and one entry per rail, in rail order; {"none", {}} if none found.
+ */
+std::pair<std::string, std::vector<nixlLibfabricDeviceInfo>>
+selectNetworkDevices(const struct fi_info *info);
 // String utilities
 std::string
 hexdump(const void *data, size_t size);

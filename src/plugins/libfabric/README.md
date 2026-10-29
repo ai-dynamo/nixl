@@ -32,6 +32,7 @@ The Libfabric plugin provides a high-performance RDMA communication backend with
 Validated compatibility with:
 
 - **AWS EFA** (Elastic Fabric Adapter)
+- **InfiniBand / RoCE through `verbs`** (NVIDIA ConnectX)
 
 Any other Libfabric providers should also work but have not been validated in production environments. Community validation and feedback are highly appreciated!
 
@@ -80,6 +81,45 @@ lspci | grep -c 'Elastic Fabric'           # same
 ```
 
 The plugin emits an `NIXL_WARN` at initialization time if it detects a Neuron accelerator count vs EFA NIC count mismatch, distinguishing the "wrong instance type" case (`trn2.3xlarge`-style, no per-device EFA in hardware) from the "instance launched without EFA NICs" case (missing `InterfaceType: efa` at `run-instances` time).
+
+## Provider Selection
+
+The plugin picks one provider at startup and creates one rail per device of that provider. The
+preference order is:
+
+1. `cxi`
+2. `efa`
+3. `verbs` (InfiniBand / RoCE, reached through the `verbs;ofi_rxm` layered endpoint)
+4. `tcp`
+5. `sockets`
+
+Only the RDM-capable verbs domains are used: the `-xrc` and `-dgram` endpoint variants of the same
+NICs are skipped, as is the `ofi_rxd`-layered stack, which would place a second, slower rail on
+hardware the `ofi_rxm` rail already covers.
+
+To force a different choice, restrict what libfabric reports rather than looking for a NIXL-specific
+knob -- for example `FI_PROVIDER=tcp` or `FI_PROVIDER=^verbs`.
+
+Notes specific to verbs:
+
+- verbs works with or without the progress thread. Without it, the rails are opened with
+  `FI_PROGRESS_AUTO`, so `ofi_rxm` accepts peers' connections on its own thread; see *Connection
+  setup with a layered provider and `useProgThread = false`* under troubleshooting.
+- verbs does not report a PCIe bus address through libfabric (`bus_type` is `FI_BUS_UNKNOWN`), so the
+  plugin resolves each NIC's address through hwloc instead, by looking up the verbs domain name as an
+  OS device. Topology-aware rail selection therefore works the same way it does for EFA.
+- `ofi_rxm` does not report a usable source address for a remote write, which the target needs to
+  credit the write to its sender's pending notification. So on verbs each agent hands every peer a
+  *write tag* in its connection handshake, and the peer carries it in the immediate data of its
+  writes. Tags are 8 bits, which limits an agent to **255 connected peers** on verbs (its
+  self-connection included); connecting beyond that fails with `NIXL_ERR_NOT_SUPPORTED`. Each tag
+  also carries a generation, so writes still in flight from a peer whose tag was released and
+  reassigned are dropped rather than credited to the new holder. The handshake fields are optional,
+  so this needs no protocol version change.
+- Device memory over verbs needs a libfabric build whose verbs provider advertises `FI_HMEM`. That
+  requires either NVIDIA peer-memory support or per-device dmabuf probing, which needs a libfabric
+  newer than v2.6.0. On a build without it the rail comes up without `FI_HMEM` (logged at
+  startup) and device buffers are registered as host memory.
 
 ## Build Instructions
 
@@ -165,6 +205,30 @@ The following table summarizes briefly the plugin's runtime configuration:
 - **`nixlLibfabricTopology`** - Hardware topology discovery for optimal GPU-to-EFA and NUMA-to-EFA mapping
 - **`nixlLibfabricBackendH`** - Request handle for tracking multi-request transfer completion with atomic counters
 - **`nixlLibfabricConnection`** - Multi-rail connection metadata for remote agents with state management
+- **`nixlLibfabricProviderInfo`** - Table entry describing one core libfabric provider (in `src/utils/libfabric/libfabric_common.cpp`); the single place provider-specific settings live
+
+### Adding a provider
+
+Provider-specific settings are confined to the table returned by `knownProviders()` in
+`src/utils/libfabric/libfabric_common.cpp`. Adding a provider is one entry:
+
+- `name` / `description` -- the core provider name (what appears before any `;` in a libfabric
+  `prov_name`) and its label in the discovery log line.
+- `extra_caps`, `mr_mode`, `mr_key_size` -- what a rail asks `fi_getinfo` for.
+- `needs_prov_name_hint` -- set when the domain name alone does not identify the provider, as for
+  verbs, whose domains are also offered by psm3.
+- `needs_full_topology` -- set for an RDMA provider that should get hwloc discovery and
+  accelerator-to-NIC proximity grouping; clear for a host-stack provider.
+- `needs_all_rail_progress` -- set for a provider layered over a connection-oriented core, where the
+  passive side must poll a rail for the peer's connection to be accepted.
+- `needs_write_tag` -- set when a remote-write completion carries no usable source address, so
+  peers must name themselves in the write's immediate data.
+- `single_domain` -- set when one rail reaches every peer, so extra rails would only add host copies.
+- `select_domains` -- a hook, needed only if the generic rule (every domain under this core provider,
+  de-duplicated, in `fi_getinfo` order) is not enough. `selectVerbsDomains()` is the one example.
+
+Table order is the preference order. A provider with no entry still works: it gets
+`defaultProviderInfo()`, the plain-RDMA settings, rather than a special code path.
 
 ## Troubleshooting
 
@@ -192,5 +256,34 @@ fi_info -l
 # For checking specific devices (e.g. EFA as an example)
 fi_info -p efa
 ```
+
+**`fi_enable` or `fi_mr_reg` fails with "Cannot allocate memory" on verbs:**
+
+The locked-memory limit is too low. Rails pin their request pools, and `ofi_rxm` sizes its internal
+completion queue by `FI_UNIVERSE_SIZE`, so a default `ulimit -l` of a few megabytes is not enough.
+Check it with `ulimit -l` and raise it to `unlimited` (`memlock` in `/etc/security/limits.conf`, or
+`--ulimit memlock=-1` for a container), as any verbs-based stack requires.
+
+**Connection setup with a layered provider and `useProgThread = false`:**
+
+A layered provider such as `verbs;ofi_rxm` establishes its per-peer MSG connection lazily, and the
+*passive* side must progress it for that connection to be accepted. Two things are needed for that:
+
+- *Which* rails get progressed. A target that has posted nothing has no active rails, so polling
+  only rail 0 plus rails with outstanding requests would never poll any rail above rail 0 on that
+  side. The provider table marks such providers `needs_all_rail_progress`, and every rail is
+  polled for them.
+- *When* progress happens. Without a progress thread the plugin polls only from
+  `checkXfer()`/`getNotifs()`, and neither is called during connection and metadata setup. So for
+  these providers the rails are opened with `FI_PROGRESS_AUTO` (and `FI_THREAD_SAFE`, which it
+  requires): `ofi_rxm` then runs its own thread per endpoint, asleep in `poll()` on the connection
+  event queue, that accepts connections as they arrive. Data completions are still read by the
+  plugin. The log says so per rail: `progresses connection setup on its own thread`.
+
+If the provider does not grant `FI_PROGRESS_AUTO`, rail creation fails with an error saying so;
+enable the progress thread (`nixlAgentConfig::useProgThread`, or `--enable_pt=1` under nixlbench)
+or pick another provider with `FI_PROVIDER`.
+
+Connectionless RDM providers (`efa`, `cxi`, `tcp`) need no accept and are unaffected.
 
 For additional support, check the NIXL documentation and Libfabric provider-specific guides.
