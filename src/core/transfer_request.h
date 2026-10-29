@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -89,6 +90,12 @@ public:
         return traceRequestId_;
     }
 
+    /** @brief traceRequestId() as nixl.xfer_request_id records it. */
+    [[nodiscard]] std::string_view
+    traceRequestIdText() const noexcept {
+        return traceRequestIdText_.view();
+    }
+
     [[nodiscard]] std::uint64_t
     traceExecution() const noexcept {
         return traceExecution_.load(std::memory_order_relaxed);
@@ -109,6 +116,7 @@ private:
     nixl::trace::TraceContext tracePostContext_;
     bool traceRequestSpanIdUsed_ = false;
     const std::uint64_t traceRequestId_;
+    const nixl::trace::RequestIdText traceRequestIdText_;
     std::atomic<std::uint64_t> traceExecution_ = 0;
     nixl_blob_t notifMsg;
     bool hasNotif = false;

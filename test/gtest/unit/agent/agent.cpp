@@ -876,6 +876,38 @@ namespace agent {
         EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
     }
 
+    TEST_F(recorderTracingAgentFixture, RequestIdTextIsOnTheHandle) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        nixlXferReqH *created = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, created), NIXL_SUCCESS);
+        nixlDlistH *local_side = nullptr;
+        nixlDlistH *remote_side = nullptr;
+        ASSERT_EQ(agent->prepXferDlist(setup_.xferDlist, local_side), NIXL_SUCCESS);
+        ASSERT_EQ(agent->prepXferDlist(local_agent_name, setup_.xferDlist, remote_side),
+                  NIXL_SUCCESS);
+        const std::vector<int> indices{0};
+        nixlXferReqH *made = nullptr;
+        ASSERT_EQ(
+            agent->makeXferReq(
+                NIXL_WRITE, *local_side, indices, *remote_side, indices, made, &setup_.extraParams),
+            NIXL_SUCCESS);
+
+        for (const nixlXferReqH *req : {created, made}) {
+            const std::string_view text = req->traceRequestIdText();
+            const auto handle = reinterpret_cast<std::uintptr_t>(req);
+            const auto first = reinterpret_cast<std::uintptr_t>(text.data());
+            EXPECT_NE(req->traceRequestId(), 0u);
+            EXPECT_EQ(text, std::to_string(req->traceRequestId()));
+            EXPECT_GE(first, handle);
+            EXPECT_LE(first + text.size(), handle + sizeof(nixlXferReqH));
+        }
+
+        EXPECT_EQ(agent->releaseXferReq(made), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releaseXferReq(created), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
+    }
+
     TEST_F(recorderTracingAgentFixture, UnsampledPostsKeepTheRequestsContext) {
         nixlAgent *agent = agent_helper_->getAgent();
         nixlXferReqH *req = nullptr;

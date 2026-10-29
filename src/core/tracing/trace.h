@@ -36,6 +36,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -75,6 +76,27 @@ struct Attribute {
     std::string_view key;
     std::variant<std::string_view, std::int64_t, double> value;
 };
+
+/**
+ * @brief An attribute value as a record holds it: integers and enums as
+ *        std::int64_t, floating-point values as double, strings as views.
+ */
+template<typename T>
+    requires std::is_integral_v<T> || std::is_enum_v<T>
+[[nodiscard]] constexpr std::int64_t
+attributeValue(T value) noexcept {
+    return static_cast<std::int64_t>(value);
+}
+
+[[nodiscard]] constexpr double
+attributeValue(double value) noexcept {
+    return value;
+}
+
+[[nodiscard]] constexpr std::string_view
+attributeValue(std::string_view value) noexcept {
+    return value;
+}
 
 /**
  * @brief A single active span within one backend. Its destructor ends the

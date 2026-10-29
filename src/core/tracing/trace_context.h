@@ -18,6 +18,7 @@
 #define NIXL_SRC_CORE_TRACING_TRACE_CONTEXT_H
 
 #include <array>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -154,6 +155,28 @@ generateTraceContext(double sample_ratio = 0.0);
  */
 [[nodiscard]] std::uint64_t
 generateRequestId(const Tracer *tracer);
+
+/**
+ * @brief A request id's unsigned decimal digits, formatted once, as
+ *        nixl.xfer_request_id records them.
+ */
+class RequestIdText {
+public:
+    explicit RequestIdText(std::uint64_t request_id) noexcept {
+        char *const first = digits_.data();
+        const char *const last = std::to_chars(first, first + digits_.size(), request_id).ptr;
+        size_ = static_cast<std::uint8_t>(last - first);
+    }
+
+    [[nodiscard]] std::string_view
+    view() const noexcept {
+        return {digits_.data(), size_};
+    }
+
+private:
+    std::array<char, 20> digits_;
+    std::uint8_t size_;
+};
 
 /**
  * @brief Draw a context for one post of @p request: its trace id and flags with
