@@ -157,9 +157,11 @@ def build_sidecar(
     with zipfile.ZipFile(wheel_path) as zf:
         built_versions = torch_built_in(zf)
 
-    base = dumps.get("base") or {}
+    # The main wheel is built in the first torch venv (build-wheel.sh);
+    # the plain venv only exists for a torch-less build.
+    main_venv = dumps.get(built_versions[0]) if built_versions else dumps.get("base")
     toolchain: dict[str, Optional[str]] = {
-        name: base.get(name) for name in TOOLCHAIN_PACKAGES
+        name: (main_venv or {}).get(name) for name in TOOLCHAIN_PACKAGES
     }
     toolchain["auditwheel"] = (repair_env or {}).get("auditwheel")
     toolchain["patchelf_repair"] = (repair_env or {}).get("patchelf")
