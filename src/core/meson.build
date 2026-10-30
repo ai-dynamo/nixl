@@ -57,8 +57,8 @@ endif
 cc = meson.get_compiler('cpp')
 libtransfer_engine = cc.find_library('transfer_engine', required: false)
 disable_mooncake_backend = get_option('disable_mooncake_backend')
-if libtransfer_engine.found() and not disable_mooncake_backend and 'Mooncake' in static_plugins
-    nixl_lib_deps += [ mooncake_backend_interface, cuda_dep ]
+if libtransfer_engine.found() and not disable_mooncake_backend and 'MOONCAKE' in static_plugins
+    nixl_lib_deps += [ mooncake_backend_interface ]
 endif
 
 # Tracing (nixl::trace). Only the facade (tracer.cpp) and the plugin loader are

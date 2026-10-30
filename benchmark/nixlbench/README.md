@@ -555,7 +555,7 @@ wait
 --config_file PATH         # Configuration file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD, ASIO] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 ```
 
@@ -821,6 +821,11 @@ For pairwise UCX runs, `--device_list` must match the configured initiator and t
 ./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
   --backend GPUNETIO --gpunetio_device_list 0,1
 ```
+
+**Note**: If two local GPUNETIO workers share one physical GPU, their persistent
+kernels may be time-sliced, causing high latency and low bandwidth. Use one GPU
+per worker, or [CUDA MPS](https://docs.nvidia.com/deploy/mps/index.html) if only
+one GPU is available.
 
 ### Storage Backends
 
