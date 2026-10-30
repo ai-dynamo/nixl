@@ -782,6 +782,9 @@ void Buffer::_nixl_agent_init() {
     }
     const bool device_proxy = mode == "proxy";
 
+    const char *backend_env = std::getenv("NIXL_EP_BACKEND");
+    const std::string backend = backend_env ? backend_env : "UCX";
+
     nixlAgentConfig cfg;
     // The proxy threads drive progress.
     cfg.useProgThread = !device_proxy;
@@ -789,13 +792,12 @@ void Buffer::_nixl_agent_init() {
     cfg.etcdWatchTimeout = NIXL_ETCD_WATCH_TIMEOUT;
     auto agent = std::make_shared<nixlAgent>(agent_name, cfg);
 
-    // Create UCX backend
     nixl_mem_list_t mems;
     nixl_b_params_t init_params;
 
-    nixl_status_t status = agent->getPluginParams("UCX", mems, init_params);
+    nixl_status_t status = agent->getPluginParams(backend, mems, init_params);
     if (status != NIXL_SUCCESS) {
-        throw std::runtime_error("Failed to get UCX plugin parameters for agent " + agent_name +
+        throw std::runtime_error("Failed to get " + backend + " plugin parameters for agent " + agent_name +
                                 ", status: " + std::to_string(status));
     }
 
@@ -816,15 +818,15 @@ void Buffer::_nixl_agent_init() {
         init_params["ucx_num_device_channels"] = num_channels;
     }
 
-    nixlBackendH* ucx_backend = nullptr;
-    status = agent->createBackend("UCX", init_params, ucx_backend);
-    if (status != NIXL_SUCCESS || !ucx_backend) {
-        throw std::runtime_error("Failed to create UCX backend for agent " + agent_name +
+    nixlBackendH *backend_handle = nullptr;
+    status = agent->createBackend(backend, init_params, backend_handle);
+    if (status != NIXL_SUCCESS || !backend_handle) {
+        throw std::runtime_error("Failed to create " + backend + " backend for agent " + agent_name +
                                 ", status: " + std::to_string(status));
     }
 
-    nixl_agent_info = std::make_unique<NixlAgentInfo>(agent, ucx_backend, max_num_ranks);
-    nixl_agent_info->extra_params.backends.push_back(ucx_backend);
+    nixl_agent_info = std::make_unique<NixlAgentInfo>(agent, backend_handle, max_num_ranks);
+    nixl_agent_info->extra_params.backends.push_back(backend_handle);
     nixl_agent_info->agent_name = agent_name;
 
     nixl_agent_info->rdma_reg_descs.clear();
