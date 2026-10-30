@@ -70,6 +70,12 @@ struct nixl_capi_xfer_telemetry_s {
     uint64_t desc_count; // Number of descriptors
 };
 
+struct nixl_capi_xfer_trace_info_s {
+    uint64_t request_id;
+    uint64_t execution;
+    char traceparent[56];
+};
+
 // Opaque handle types for C++ objects
 typedef struct nixl_capi_agent_s* nixl_capi_agent_t;
 typedef struct nixl_capi_params_s* nixl_capi_params_t;
@@ -476,11 +482,18 @@ nixl_capi_release_mem_view(nixl_capi_agent_t agent, nixl_capi_mem_view_t mvh);
 // Telemetry structure for transfer requests
 typedef struct nixl_capi_xfer_telemetry_s *nixl_capi_xfer_telemetry_t;
 
+typedef struct nixl_capi_xfer_trace_info_s *nixl_capi_xfer_trace_info_t;
+
 // Get transfer telemetry data
 nixl_capi_status_t
 nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
                              nixl_capi_xfer_telemetry_t telemetry);
+
+nixl_capi_status_t
+nixl_capi_get_xfer_trace_info(nixl_capi_agent_t agent,
+                              nixl_capi_xfer_req_t req_hndl,
+                              nixl_capi_xfer_trace_info_t info);
 
 bool
 nixl_capi_is_stub();

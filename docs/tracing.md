@@ -239,6 +239,9 @@ the request's own, whose span id a sampled request's first `postXferReq` call ta
 refused or not. A post refused by `postXferReq`'s checks changes none of the three.
 A request without an id, such as one created while no tracing backend is active,
 returns `NIXL_ERR_NOT_FOUND`; the getter never enables tracing.
+From Rust, `XferRequest::get_trace_info()` returns `Ok(Some(XferTraceInfo))` with
+`request_id`, `execution` and `traceparent`, or `Ok(None)` when the request has no
+identity.
 
 ### Backend phases
 
