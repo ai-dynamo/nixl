@@ -56,6 +56,10 @@ typedef hipDevice_t CUdevice;
 class nixlLibfabricEngine;
 class nixlLibfabricPostThreadPool;
 
+namespace nixl::libfabric {
+class proxyEngine;
+}
+
 #ifdef HAVE_CUDA
 /** CUDA context management for libfabric backend */
 class nixlLibfabricCudaCtx {
@@ -97,6 +101,7 @@ private:
 public:
     nixlLibfabricPrivateMetadata() : nixlBackendMD(true), device_id_(-1) {}
     friend class nixlLibfabricEngine;
+    friend class nixl::libfabric::proxyEngine;
 };
 
 /** Public metadata for remote memory access */
@@ -109,6 +114,7 @@ private:
     std::vector<size_t>
         remote_selected_endpoints_; // Remote rails selected, derived from rail_remote_key_list_.
     LibfabricUtils::CudaIpcExport cuda_ipc_{}; // Peer CUDA IPC handle; empty host_id if not sent
+    std::shared_ptr<void> cuda_ipc_mapping_; // Mapped peer allocation, opened on first use
 
 public:
     nixlLibfabricPublicMetadata() : nixlBackendMD(false) {}
@@ -117,6 +123,7 @@ public:
     derive_remote_selected_endpoints();
 
     friend class nixlLibfabricEngine;
+    friend class nixl::libfabric::proxyEngine;
 };
 
 /** Request handle for multi-rail transfer operations */
@@ -415,7 +422,17 @@ private:
     friend class nixlLibfaricCudaCtxEngineMediator;
 #endif
 
+protected:
+    [[nodiscard]] nixlLibfabricRailManager &
+    railManager() const {
+        return rail_manager_;
+    }
+
 public:
+    /** Pick the engine for the parameters: the device proxy engine with device_proxy=true. */
+    [[nodiscard]] static std::unique_ptr<nixlLibfabricEngine>
+    create(const nixlBackendInitParams &init_params);
+
     /** Initialize multi-rail libfabric backend engine */
     nixlLibfabricEngine(const nixlBackendInitParams *init_params);
     /** Destroy engine and cleanup all resources */
