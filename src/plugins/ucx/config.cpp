@@ -21,6 +21,10 @@
 #include <stdexcept>
 #include <string>
 
+extern "C" {
+#include <ucs/config/global_opts.h>
+}
+
 #include "common/configuration.h"
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
@@ -87,6 +91,16 @@ config::validateTlsCudaSupport() const {
 
 ucp_config_t *
 config::readUcpConfig() {
+    if (nixl::hwInfo::instance().numEfaDevices == 0 &&
+        !nixl::config::internal::getenvOptional("UCX_MODULES")) {
+        const auto mod_status = ucs_global_opts_set_value("MODULES", "^efa");
+        if (mod_status != UCS_OK) {
+            NIXL_DEBUG << "Failed to set UCX MODULES=^efa: " << ucs_status_string(mod_status);
+        } else {
+            NIXL_DEBUG << "No EFA devices detected; set UCX MODULES=^efa";
+        }
+    }
+
     ucp_config_t *config = nullptr;
     const auto status = ucp_config_read(nullptr, nullptr, &config);
     if (status != UCS_OK) {
