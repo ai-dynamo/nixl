@@ -739,17 +739,17 @@ Buffer::combine(const torch::stable::Tensor& x, const torch::stable::Tensor& top
         stream_wait(launch_stream, compute_stream);
 
     // Allocate output tensor
-    torch::stable::Tensor combined_x;
-    if (out.has_value()) {
-        EP_HOST_ASSERT(out->dim() == 2 and out->is_contiguous());
-        EP_HOST_ASSERT(out->size(0) == num_combined_tokens and out->size(1) == hidden);
-        EP_HOST_ASSERT(out->scalar_type() == x.scalar_type());
-        combined_x = out.value();
-    } else {
+    torch::stable::Tensor combined_x = [&] {
+        if (out) {
+            EP_HOST_ASSERT(out->dim() == 2 and out->is_contiguous());
+            EP_HOST_ASSERT(out->size(0) == num_combined_tokens and out->size(1) == hidden);
+            EP_HOST_ASSERT(out->scalar_type() == x.scalar_type());
+            return *out;
+        }
         const int64_t sizes[] = {num_combined_tokens, hidden};
         const int64_t strides[] = {hidden, 1};
-        combined_x = empty_cuda(sizes, strides, aoti_torch_dtype_bfloat16(), device_id);
-    }
+        return empty_cuda(sizes, strides, aoti_torch_dtype_bfloat16(), device_id);
+    }();
 
     // Kernel launch
     auto next_clean_meta = next_buffer.clean_meta();
