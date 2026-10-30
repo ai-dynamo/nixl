@@ -28,9 +28,13 @@
 #include <thread>
 #include <bitset>
 #include <algorithm>
+#include <cstdlib>
+#include <fstream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 // Renders a device list for an error message.
 static std::string
@@ -473,6 +477,16 @@ testNumaDramRailSelectionPolicy(const TopologyInfo &topology_info,
 static int
 testNumaDramRailSelectionPolicy(const char *instance_type);
 
+// test DRAM_SEG rail selection on p6e-gb200, whose GPU-sharing PCIe switches cannot carry host
+// memory traffic
+static int
+testStarvedSwitchDramRailSelection();
+
+// test DRAM_SEG rail selection on a p6e-gb200 variant where a whole NUMA node has no host memory
+// capacity
+static int
+testStarvedNumaNodeDramRailSelection();
+
 // test Neuron topology loading (verifies the Neuron/EFA preflight in
 // nixlLibfabricTopology::discoverTopology()). Loads the given lstopo XML and
 // verifies the discovered Neuron accelerator count and EFA NIC count match
@@ -542,6 +556,18 @@ main(int argc, char *argv[]) {
 
     // test for actual rail selection policy
     res = testNumaDramRailSelectionPolicy();
+    if (res != 0) {
+        return res;
+    }
+
+    // test DRAM_SEG rail selection when some PCIe switches cannot carry host memory traffic
+    res = testStarvedSwitchDramRailSelection();
+    if (res != 0) {
+        return res;
+    }
+
+    // ... and when a whole NUMA node has no host memory capacity
+    res = testStarvedNumaNodeDramRailSelection();
     if (res != 0) {
         return res;
     }
@@ -1618,6 +1644,251 @@ testNumaDramRailSelectionPolicy(const char *instance_type) {
     }
     NIXL_ERROR << "Could not find topology spec for instance type " << instance_type;
     return 2;
+}
+
+// p6e-gb200.36xl: each PCIe switch that a GPU shares with two EFA devices has a PCIe Gen4 x1
+// uplink, so host memory traffic through those devices is capped near 2 GB/s. DRAM_SEG selection
+// has to draw only on the EFA devices under the CPU-attached switches, closest NUMA node first.
+// The uniform-switch checks above cannot describe this, so selections are checked by device name.
+static const TopologyInfo gb200_topologies[] = {
+    {.enable = true,
+     .instance_type = "p6e-gb200.36xl",
+     .topo_file = "p6e-gb200.36xl-topo.xml",
+     .numa_node_count = 2,
+     .nic_count = 16,
+     .nic_line_speed = 400},
+};
+
+// EFA devices with host memory capacity, per NUMA node
+static const std::vector<std::set<std::string>> gb200_dram_devices = {
+    {"rdmap54s0", "rdmap55s0", "rdmap76s0", "rdmap77s0"},
+    {"rdmap169s0", "rdmap170s0", "rdmap191s0", "rdmap192s0"}};
+
+static bool
+validateStarvedSwitchSelection(const std::vector<size_t> &selected_rails,
+                               const nixlLibfabricTopology *topology,
+                               size_t expected_rail_count) {
+    if (selected_rails.size() != expected_rail_count) {
+        NIXL_ERROR << "Expected " << expected_rail_count << " rails, instead got "
+                   << LibfabricUtils::railIdsToString(selected_rails);
+        return false;
+    }
+    const std::vector<std::string> &devices = topology->getAllDevices();
+    std::set<std::string> selected;
+    for (size_t rail_id : selected_rails) {
+        if (rail_id >= devices.size() || !selected.insert(devices[rail_id]).second) {
+            NIXL_ERROR << "Invalid or duplicate rail " << rail_id << " in selection "
+                       << LibfabricUtils::railIdsToString(selected_rails);
+            return false;
+        }
+    }
+    // the buffer's own node first: as many of its devices as the selection holds, then the rest
+    // from the other node
+    const std::set<std::string> &local = gb200_dram_devices[last_buffer_numa_node];
+    const std::set<std::string> &remote = gb200_dram_devices[1 - last_buffer_numa_node];
+    size_t local_count = 0;
+    for (const std::string &device : selected) {
+        if (local.count(device)) {
+            ++local_count;
+        } else if (!remote.count(device)) {
+            NIXL_ERROR << "Selected EFA device " << device
+                       << " sits behind a PCIe uplink without host memory capacity";
+            return false;
+        }
+    }
+    if (local_count != std::min(expected_rail_count, local.size())) {
+        NIXL_ERROR << "Selected " << local_count << " EFA devices of NUMA node "
+                   << last_buffer_numa_node << ", expecting "
+                   << std::min(expected_rail_count, local.size());
+        return false;
+    }
+    return true;
+}
+
+static int
+testStarvedSwitchDramRailSelection(const TopologyInfo &gb200_topology) {
+    NIXL_INFO << "=== Testing DRAM_SEG rail selection with host-starved PCIe switches ("
+              << gb200_topology.instance_type << ") ===";
+    // {bandwidth override (0 = topology-derived limit), expected rail count}
+    // 4 is every capacity-carrying device of one node; 12 is clamped to all 8 such devices, and so
+    // is 16, one rail per NIC on the node, which must not bring the starved devices back
+    const std::vector<std::pair<size_t, size_t>> scenarios = {
+        {0, 4}, {400, 1}, {800, 2}, {3200, 8}, {4800, 8}, {6400, 8}};
+    for (const auto &scenario : scenarios) {
+        curr_topology = &gb200_topology;
+        setTesting();
+        setenv("HWLOC_XMLFILE", gb200_topology.topo_file, 1);
+        if (scenario.first != 0) {
+            setenv("NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG", std::to_string(scenario.first).c_str(), 1);
+        }
+        int res = 0;
+        {
+            nixlLibfabricRailManager rail_manager(0);
+            if (rail_manager.init(nixl_b_params_t()) != NIXL_SUCCESS) {
+                NIXL_ERROR << "Failed to initialize rail manager";
+                res = 1;
+            }
+            for (size_t i = 0; res == 0 && i < 2 * gb200_topology.numa_node_count; ++i) {
+                std::vector<size_t> selected_rails;
+                if (!rail_manager.getDramRailSelectionPolicy()->selectRails(nullptr,
+                                                                            selected_rails) ||
+                    !validateStarvedSwitchSelection(
+                        selected_rails, rail_manager.getTopology(), scenario.second)) {
+                    NIXL_ERROR << "Invalid DRAM_SEG rail selection with bandwidth override "
+                               << scenario.first;
+                    res = 2;
+                }
+            }
+        }
+        clearTesting();
+        unsetenv("HWLOC_XMLFILE");
+        unsetenv("NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG");
+        if (res != 0) {
+            return res;
+        }
+        NIXL_INFO << "Scenario [bandwidth=" << scenario.first << "] SUCCESS";
+    }
+    NIXL_INFO << "=== Test completed successfully! ===";
+    return 0;
+}
+
+static int
+testStarvedSwitchDramRailSelection() {
+    for (const TopologyInfo &topology : gb200_topologies) {
+        int res = testStarvedSwitchDramRailSelection(topology);
+        if (res != 0) {
+            return res;
+        }
+    }
+    return 0;
+}
+
+// Root ports and switch upstream ports above the two CPU-attached PCIe switches of NUMA node 1 in
+// the p6e-gb200.36xl capture. Giving them the GPU-sharing switches' Gen4 x1 link speed leaves
+// NUMA node 1 without any host memory capacity.
+static const std::vector<std::string> gb200_node1_cpu_uplinks = {"0000:a2:00.0",
+                                                                 "0000:a3:00.0",
+                                                                 "0000:b8:00.0",
+                                                                 "0000:b9:00.0"};
+
+// writes that variant of the p6e-gb200.36xl capture to a temporary file and returns its path, or
+// an empty string on failure
+static std::string
+writeStarvedNodeTopology(const char *topo_file) {
+    std::ifstream in(topo_file);
+    if (!in) {
+        NIXL_ERROR << "Failed to read topology file " << topo_file;
+        return "";
+    }
+    static const std::string full_speed = "pci_link_speed=\"63.015385\"";
+    static const std::string x1_speed = "pci_link_speed=\"1.969231\"";
+    std::stringstream variant;
+    std::string line;
+    size_t replaced = 0;
+    while (std::getline(in, line)) {
+        for (const std::string &busid : gb200_node1_cpu_uplinks) {
+            size_t pos = line.find(full_speed);
+            if (pos != std::string::npos &&
+                line.find("pci_busid=\"" + busid + "\"") != std::string::npos) {
+                line.replace(pos, full_speed.size(), x1_speed);
+                ++replaced;
+            }
+        }
+        variant << line << '\n';
+    }
+    if (replaced != gb200_node1_cpu_uplinks.size()) {
+        NIXL_ERROR << "Expected to slow down " << gb200_node1_cpu_uplinks.size()
+                   << " PCIe links in " << topo_file << ", found " << replaced;
+        return "";
+    }
+    char path[] = "/tmp/nixl-p6e-gb200-starved-node-XXXXXX.xml";
+    int fd = mkstemps(path, 4);
+    if (fd < 0) {
+        NIXL_ERROR << "Failed to create temporary topology file";
+        return "";
+    }
+    close(fd);
+    std::ofstream out(path);
+    out << variant.str();
+    if (!out.flush()) {
+        NIXL_ERROR << "Failed to write temporary topology file " << path;
+        unlink(path);
+        return "";
+    }
+    return path;
+}
+
+// With every PCIe switch of NUMA node 1 host-starved, the derived DRAM_SEG limit is still the 4
+// devices of node 0 (node 1 takes no part in the average NUMA capacity), and buffers on either node
+// draw only on those devices, for the derived limit and for overrides up to one rail per NIC.
+static int
+testStarvedNumaNodeDramRailSelection() {
+    NIXL_INFO << "=== Testing DRAM_SEG rail selection with a NUMA node without host memory "
+                 "capacity (p6e-gb200.36xl variant) ===";
+    const std::string topo_file = writeStarvedNodeTopology(gb200_topologies[0].topo_file);
+    if (topo_file.empty()) {
+        return 1;
+    }
+    TopologyInfo topology = gb200_topologies[0];
+    topology.topo_file = topo_file.c_str();
+    const std::set<std::string> &usable_devices = gb200_dram_devices[0];
+    // {bandwidth override (0 = topology-derived limit), expected rail count}
+    const std::vector<std::pair<size_t, size_t>> scenarios = {
+        {0, 4}, {800, 2}, {3200, 4}, {6400, 4}};
+    int res = 0;
+    for (const auto &scenario : scenarios) {
+        curr_topology = &topology;
+        setTesting();
+        setenv("HWLOC_XMLFILE", topology.topo_file, 1);
+        if (scenario.first != 0) {
+            setenv("NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG", std::to_string(scenario.first).c_str(), 1);
+        }
+        {
+            nixlLibfabricRailManager rail_manager(0);
+            if (rail_manager.init(nixl_b_params_t()) != NIXL_SUCCESS) {
+                NIXL_ERROR << "Failed to initialize rail manager";
+                res = 1;
+            }
+            const std::vector<std::string> &devices = rail_manager.getTopology()->getAllDevices();
+            for (size_t i = 0; res == 0 && i < 2 * topology.numa_node_count; ++i) {
+                std::vector<size_t> selected_rails;
+                if (!rail_manager.getDramRailSelectionPolicy()->selectRails(nullptr,
+                                                                            selected_rails)) {
+                    NIXL_ERROR << "DRAM_SEG rail selection failed";
+                    res = 2;
+                    break;
+                }
+                std::set<std::string> selected;
+                for (size_t rail_id : selected_rails) {
+                    if (rail_id >= devices.size() || !selected.insert(devices[rail_id]).second ||
+                        !usable_devices.count(devices[rail_id])) {
+                        selected.clear();
+                        break;
+                    }
+                }
+                if (selected.size() != scenario.second ||
+                    selected_rails.size() != scenario.second) {
+                    NIXL_ERROR << "Expected " << scenario.second << " rails of NUMA node 0 for a "
+                               << "buffer on NUMA node " << last_buffer_numa_node
+                               << " with bandwidth override " << scenario.first << ", instead got "
+                               << LibfabricUtils::railIdsToString(selected_rails);
+                    res = 3;
+                }
+            }
+        }
+        clearTesting();
+        unsetenv("HWLOC_XMLFILE");
+        unsetenv("NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG");
+        if (res != 0) {
+            break;
+        }
+        NIXL_INFO << "Scenario [bandwidth=" << scenario.first << "] SUCCESS";
+    }
+    unlink(topo_file.c_str());
+    if (res == 0) {
+        NIXL_INFO << "=== Test completed successfully! ===";
+    }
+    return res;
 }
 
 int

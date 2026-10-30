@@ -124,6 +124,9 @@ private:
     // maximum number of rails per-NUMA node for a single MR
     size_t max_rails_;
 
+    // number of rails on all switches with capacity for host memory traffic
+    size_t usable_rail_count_ = 0;
+
     // single switch rail selection data
     struct SwitchRailData {
         SwitchRailData() : max_rails_(0) {}
@@ -311,9 +314,13 @@ nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
         // switch, as in G-series), so we test rail count against topology->getTotalNicCount()
         // (which represents the total number of "usable" rails, i.e. that are attached to a PCIe
         // switch) and not against topology->getAllDevices().size()
-        else if (max_rails < topology->getTotalNicCount()) {
-            // bandwidth does not exceed total machine capacity, so use NUMA-aware rail selection
-            // policy
+        // When some of these NICs sit behind a host-starved PCIe uplink, even a limit covering
+        // every NIC stays with the NUMA-aware policy, which clamps it to the rails that can carry
+        // host memory traffic: the all-rails policy would bring the starved rails back.
+        else if (max_rails < topology->getTotalNicCount() ||
+                 topology->getUsableNicCount() < topology->getTotalNicCount()) {
+            // bandwidth does not exceed total machine capacity (or some NICs cannot carry host
+            // memory traffic), so use NUMA-aware rail selection policy
             NIXL_INFO << "Using NUMA-aware rail selection policy for DRAM memory type";
             size_t numa_rail_count = topology->getNumaRailCount(); // NOTE: averaged if non-uniform
             if (max_rails > numa_rail_count) {
@@ -1495,6 +1502,12 @@ nixlLibfabricNumaRailSelectionPolicy::load(nixlLibfabricRailManager &rail_manage
     if (!buildNumaDataRails(rail_manager.getTopology())) {
         return false;
     }
+    if (max_rails_ > usable_rail_count_) {
+        NIXL_WARN << "DRAM_SEG rail limit of " << max_rails_ << " exceeds the "
+                  << usable_rail_count_
+                  << " rails with capacity for host memory traffic, limiting it accordingly";
+        max_rails_ = usable_rail_count_;
+    }
     buildNumaDistanceMap();
     return true;
 }
@@ -1667,6 +1680,9 @@ nixlLibfabricNumaRailSelectionPolicy::selectExtraNodeRails(size_t numa_node_id,
     // or reaching required number of rails to select
     size_t missing_rail_count = max_rails_ - selected_rails.size();
     std::vector<SwitchRailData> &switch_array = numa_data_rails_[numa_node_id].switch_data_;
+    if (switch_array.empty()) {
+        return false;
+    }
     size_t switch_index = 0;
     for (size_t i = 0; i < missing_rail_count; ++i) {
         if (selectExtraSwitchRail(switch_array[switch_index], selected_rails)) {
@@ -1795,19 +1811,27 @@ nixlLibfabricNumaRailSelectionPolicy::buildNumaDataRails(const nixlLibfabricTopo
     }
 
     // now build NUMA/switch rail map
+    // a switch whose uplink is slower than the links of the NICs under it (e.g. the GPU-sharing
+    // switches on p6e-gb200, whose uplink is PCIe Gen4 x1) has no capacity for host memory
+    // traffic, so its rails are left out of DRAM_SEG selection rather than failing the policy
+    usable_rail_count_ = 0;
     numa_data_rails_.resize(numa_switch_map.size());
     for (size_t numa_node_id = 0; numa_node_id < numa_switch_map.size(); ++numa_node_id) {
         const SwitchMap &switch_map = numa_switch_map[numa_node_id];
-        numa_data_rails_[numa_node_id].rail_count_ = 0;
-        numa_data_rails_[numa_node_id].switch_data_.resize(switch_map.size());
+        NumaRailData &node_rails = numa_data_rails_[numa_node_id];
+        node_rails.rail_count_ = 0;
+        node_rails.switch_data_.clear();
+
+        // keep switch discovery order, so selection stays deterministic
+        std::vector<const SwitchData *> ordered_switches(switch_map.size(), nullptr);
         for (const auto &entry : switch_map) {
-            const SwitchData &switch_data = entry.second;
-            size_t index = switch_data.index_;
-            SwitchRailData &switch_rail_data = numa_data_rails_[numa_node_id].switch_data_[index];
+            ordered_switches[entry.second.index_] = &entry.second;
+        }
+        for (const SwitchData *switch_data : ordered_switches) {
             // NOTE: switch data cannot be empty, but we test anyway in case there is an internal
             // logic error
-            if (switch_data.rail_ids_.size() == 0) {
-                NIXL_ERROR << "Switch " << index << " on NUMA node " << numa_node_id
+            if (switch_data->rail_ids_.size() == 0) {
+                NIXL_ERROR << "Switch " << switch_data->index_ << " on NUMA node " << numa_node_id
                            << " has no rails (internal error)";
                 return false;
             }
@@ -1816,43 +1840,43 @@ nixlLibfabricNumaRailSelectionPolicy::buildNumaDataRails(const nixlLibfabricTopo
             // NOTE: average link speed cannot be zero, but we test anyway in case there is an
             // internal logic error
             size_t avg_nic_link_speed =
-                switch_data.total_nic_link_speed_ / switch_data.rail_ids_.size();
+                switch_data->total_nic_link_speed_ / switch_data->rail_ids_.size();
             if (avg_nic_link_speed == 0) {
-                NIXL_ERROR << "Average NIC upstream link speed on switch " << switch_data.index_
+                NIXL_ERROR << "Average NIC upstream link speed on switch " << switch_data->index_
                            << " at NUMA node " << numa_node_id << " is zero (internal error)";
                 return false;
             }
-            switch_rail_data.max_rails_ = switch_data.switch_link_speed_ / avg_nic_link_speed;
-            switch_rail_data.rail_ids_.insert(switch_rail_data.rail_ids_.end(),
-                                              switch_data.rail_ids_.begin(),
-                                              switch_data.rail_ids_.end());
-            switch_rail_data.next_rail_index_.value_ = 0;
+            size_t switch_max_rails = switch_data->switch_link_speed_ / avg_nic_link_speed;
+            if (switch_max_rails == 0) {
+                NIXL_WARN << "PCIe switch " << switch_data->index_ << " on NUMA node "
+                          << numa_node_id << " has an uplink of " << switch_data->switch_link_speed_
+                          << " Gbps, below the link speed of its NICs (" << avg_nic_link_speed
+                          << " Gbps), so its rails "
+                          << LibfabricUtils::railIdsToString(switch_data->rail_ids_)
+                          << " are excluded from DRAM_SEG rail selection";
+                continue;
+            }
 
-            numa_data_rails_[numa_node_id].rail_count_ += switch_data.rail_ids_.size();
+            SwitchRailData switch_rail_data;
+            switch_rail_data.max_rails_ = switch_max_rails;
+            switch_rail_data.rail_ids_ = switch_data->rail_ids_;
+            switch_rail_data.next_rail_index_.value_ = 0;
+            node_rails.switch_data_.push_back(switch_rail_data);
+            node_rails.rail_count_ += switch_data->rail_ids_.size();
         }
+        if (node_rails.switch_data_.empty()) {
+            NIXL_WARN << "NUMA node " << numa_node_id
+                      << " has no PCIe switch with capacity for host memory traffic, DRAM_SEG "
+                         "buffers on it will use rails of the closest NUMA node";
+        }
+        usable_rail_count_ += node_rails.rail_count_;
     }
 
-    // verify that all NUMA nodes/switches have at least one assigned rail
-    // NOTE: it is possible to have nodes/switches without NICs attached, but in that case we
-    // shouldn't reach here, so this essentially checks for internal error
-    for (size_t i = 0; i < numa_data_rails_.size(); ++i) {
-        if (numa_data_rails_[i].switch_data_.size() == 0) {
-            NIXL_ERROR << "Failed to build data rail array for NUMA node " << i
-                       << ", no PCIe switches assigned";
-            return false;
-        }
-        for (size_t j = 0; j < numa_data_rails_[i].switch_data_.size(); ++j) {
-            if (numa_data_rails_[i].switch_data_[j].rail_ids_.size() == 0) {
-                NIXL_ERROR << "Failed to build data rail array for NUMA node " << i
-                           << ", PCIe switch " << j << " has no data rails assigned";
-                return false;
-            }
-            if (numa_data_rails_[i].switch_data_[j].max_rails_ == 0) {
-                NIXL_ERROR << "Failed to build data rail array for NUMA node " << i
-                           << ", PCIe switch " << j << " has no capacity for a single rail";
-                return false;
-            }
-        }
+    // the policy is usable as long as some NUMA node has rails left
+    if (usable_rail_count_ == 0) {
+        NIXL_ERROR << "Failed to build data rail array, no PCIe switch has capacity for a single "
+                      "rail";
+        return false;
     }
     return true;
 }
