@@ -18,6 +18,7 @@
 #define NIXL_SRC_CORE_TRACING_TRACE_SINK_H
 
 #include <atomic>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -47,7 +48,29 @@ public:
                 std::uint64_t request_id,
                 std::uint64_t execution) noexcept override;
 
+    void
+    recordSpan(nixl_trace_span_t span,
+               nixl_xfer_op_t operation,
+               std::string_view label,
+               nixlTime::us_t start,
+               nixlTime::us_t end,
+               std::span<const nixlBackendTraceAttr> attrs,
+               const TraceContext *context,
+               std::uint64_t request_id,
+               std::uint64_t execution) noexcept override;
+
 private:
+    template<typename Emit>
+    void
+    record(std::string_view label_key,
+           std::string_view label,
+           std::optional<nixlTime::us_t> timestamp,
+           std::span<const nixlBackendTraceAttr> attrs,
+           const TraceContext *context,
+           std::uint64_t request_id,
+           std::uint64_t execution,
+           const Emit &emit) noexcept;
+
     Tracer &tracer_;
     const std::string backend_;
     nixlTelemetry *const telemetry_;
