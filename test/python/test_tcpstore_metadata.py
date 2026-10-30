@@ -65,10 +65,23 @@ def test_tcpstore_metadata_exchange(monkeypatch):
         else:
             pytest.fail("TCPStore metadata was not fetched within 10 seconds")
 
+        src_meta = source.get_agent_metadata()
+        store_meta = tcp_store.get(f"nixl/agents/metadata/{source.name}/NULL_AGENT")
+        if not src_meta == store_meta:
+            pytest.fail("TCPStore metadata does not match source metadata")
+
         # TCPStore does not notify peers when a key is deleted, so clean up both
         # the published key and the target's cached metadata explicitly.
         source.invalidate_local_metadata()
         target.remove_remote_agent(source.name)
+
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            if not tcp_store.check([f"nixl/agents/metadata/{source.name}/NULL_AGENT"]):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("TCPStore metadata was not removed within 1 second")
     finally:
         source.deregister_memory(source_reg)
         target.deregister_memory(target_reg)

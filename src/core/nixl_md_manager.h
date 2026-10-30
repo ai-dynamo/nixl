@@ -31,6 +31,8 @@
 #include <string>
 #include <string_view>
 
+#include <asio.hpp>
+
 class nixlMetadataContext;
 
 /**
@@ -42,8 +44,10 @@ class nixlMetadataContext;
  * it and its backends need as a constructor parameter.
  * Holds the address-routed backend (P2P) plus an optional name-addressed backend
  * chosen from the environment; a peer address selects P2P, otherwise the name
- * backend (address wins per call). Routing is all it does: threading belongs to
- * each backend, so the manager neither owns a thread nor schedules work.
+ * backend (address wins per call). The manager owns a dedicated I/O thread for
+ * async I/O operations from all backends.
+ * TODO: The work is still in-progress. The P2P and etcd backends still owns
+ * their own threads for sync I/O operations.
  */
 class nixlMDManager {
 public:
@@ -119,6 +123,14 @@ private:
     // name-addressed backend, which is null when none is configured.
     [[nodiscard]] nixlMetadataBackend *
     select(const nixl_opt_args_t *extra_params) const noexcept;
+
+    // The shared I/O context for all metadata backends. Async I/O completion
+    // handlers from all backends are invoked on this context.
+    asio::io_context ioContext_;
+    // Use a work guard to keep the context alive when there is no work to do.
+    asio::executor_work_guard<asio::io_context::executor_type> workGuard_;
+    // The dedicated thread that runs I/O completion handlers.
+    std::thread ioThread_;
 
     // P2P (address-routed), always present.
     const std::unique_ptr<nixlMetadataBackend> p2pBackend_;

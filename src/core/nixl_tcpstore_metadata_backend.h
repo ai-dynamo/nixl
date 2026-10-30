@@ -23,43 +23,45 @@
 
 #include "nixl_md_config.h"
 #include "nixl_metadata_backend.h"
-#include "nixl_metadata_worker.h"
 
 #include <chrono>
-#include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
+#include <asio.hpp>
+
 class nixlMetadataContext;
-class nixlTcpStoreClient;
+class nixlTcpStoreClientAsync;
 
 /**
  * @class nixlTcpStoreMetadataBackend
  * @brief Centralized-store metadata backend over the c10d TCPStore protocol.
  *
- * Owns a nixlTcpStoreClient (nixl_tcpstore_client.h) and runs its store I/O as
- * tasks on its own worker thread: it reuses nixlMetadataContext for
+ * Owns a nixlTcpStoreClientAsync (nixl_tcpstore_client_async.h) and runs its store
+ * I/O asynchronously on the shared I/O thread: it reuses nixlMetadataContext for
  * serialization (getLocalMD / getLocalPartialMD) and cache load (loadRemoteMD),
  * and builds its own keys. It links no libtorch; it speaks the wire protocol
  * directly, so it interoperates with a torch.distributed.TCPStore server.
  *
  * There is no native watch. A fetch whose key is not published yet is kept
- * pending and re-probed from serviceEvents() until its deadline, so the caller
+ * pending and re-probed periodically until its deadline, so the caller
  * can fetch then poll checkRemoteMD as it would with etcd.
  * Selected by nixlMDManager when NIXL_TCPSTORE_ENDPOINT is set.
  *
- * Every member here is touched only from that worker thread: the tasks the
- * operations submit and serviceEvents() both run there, and the thread always
- * runs. Nothing is synchronized.
+ * The I/O context and the client can be accessed from any thread. Other members
+ * must be accessed from the I/O thread only to avoid explicit synchronization.
  */
 class nixlTcpStoreMetadataBackend : public nixlMetadataBackend {
 public:
     // Parses NIXL_TCPSTORE_ENDPOINT (host:port) and throws when it is malformed.
-    // Does no I/O: start() connects on the worker thread.
-    nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx, const nixlMDConfig &config);
+    // Does no I/O: start() connects on the shared I/O thread.
+    nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx,
+                                const nixlMDConfig &config,
+                                asio::io_context &io_context);
 
     ~nixlTcpStoreMetadataBackend() override;
 
@@ -74,8 +76,6 @@ public:
         return true;
     }
 
-    // Starts the worker and connects on it, so an unreachable store is reported
-    // at bring-up without agent construction waiting for it.
     void
     start() override;
 
@@ -95,38 +95,62 @@ public:
     invalidateLocal(const nixl_opt_args_t *extra_params) override;
 
 private:
-    // Re-probe the fetches whose key was not published yet. Worker poll.
-    void
-    serviceEvents();
-
-    // A fetch waiting for its key to appear in the store.
-    struct pendingFetch {
-        std::string remoteName;
-        std::chrono::steady_clock::time_point deadline;
-    };
+    // Forward declaration. The base class for metadata operations
+    // that change the published metadata. This includes sendLocal,
+    // sendLocalPartial, and invalidateLocal.
+    class WriteTask;
 
     // Publish blob under key, tracking it so invalidateLocal can remove it.
-    [[nodiscard]] nixl_status_t
+    void
     publishKey(const std::string &key, const nixl_blob_t &blob);
 
-    // One fetch attempt. False means "not published yet, or the store was
-    // unreachable" - i.e. worth retrying; true means the fetch is settled
-    // (loaded, or rejected for a reason a retry cannot fix).
-    [[nodiscard]] bool
-    tryFetch(const std::string &remote_name, const std::string &key);
+    // Initiate one async fetch on the key.
+    void
+    initiateFetch(const std::string &remote_name, const std::string &key);
 
-    nixlMetadataContext &ctx_;
+    // Retry pending fetches that have not yet succeeded.
+    void
+    retryPendingFetches();
+
+    void
+    postWriteTask(std::unique_ptr<WriteTask> task);
+
+    void
+    writeTaskCompleted(const WriteTask *completed_task);
+
+    // Timeout for fetch operations.
     const std::chrono::milliseconds fetchTimeout_;
-    const std::chrono::microseconds workerDelay_;
-    const std::unique_ptr<nixlTcpStoreClient> client_;
+
+    // The metadata context.
+    nixlMetadataContext &ctx_;
+
+    // The I/O context.
+    asio::io_context &ioContext_;
+    // The TCPStore client.
+    const std::unique_ptr<nixlTcpStoreClientAsync> client_;
+
     // Keys this agent has published; TCPStore has no recursive delete, so
     // invalidateLocal removes exactly these.
     std::unordered_set<std::string> publishedKeys_;
-    // Store key -> in-flight fetch. Keyed by the store key, not the agent name:
-    // one peer can have a fetch pending per metadata label.
-    std::unordered_map<std::string, pendingFetch> pendingFetches_;
-    // Declared last so it joins before the state its tasks touch is destroyed.
-    nixlMetadataWorker worker_;
+
+    // Keys pending fetch retries. Each key is mapped to its fetch deadline and remote name.
+    struct pendingInfo {
+        std::chrono::steady_clock::time_point deadline;
+        std::string remoteName;
+        bool fetchInProgress = false;
+    };
+
+    std::unordered_map<std::string, pendingInfo> pendingKeys_;
+    // Timer for fetch retries.
+    asio::steady_timer fetchRetryTimer_;
+
+    // Queued metadata operations that change the published metadata.
+    std::deque<std::unique_ptr<WriteTask>> writeQueue_;
+    // The metadata operation that is currently being processed.
+    std::unique_ptr<WriteTask> inflightTask_;
+
+    // Whether stop() has been called.
+    bool stopCalled_ = false;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_TCPSTORE_METADATA_BACKEND_H

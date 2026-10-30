@@ -44,7 +44,8 @@ namespace {
 // ETCD and TCPStore are mutually exclusive (a run uses exactly one).
 [[nodiscard]] std::unique_ptr<nixlMetadataBackend>
 makeBackend([[maybe_unused]] nixlMetadataContext &ctx,
-            [[maybe_unused]] const nixlMDConfig &config) {
+            [[maybe_unused]] const nixlMDConfig &config,
+            asio::io_context &io_context) {
     const bool use_tcpstore = nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINT");
 #if HAVE_ETCD
     if (nixlMDManager::etcdConfigured()) {
@@ -56,7 +57,7 @@ makeBackend([[maybe_unused]] nixlMetadataContext &ctx,
     }
 #endif
     if (use_tcpstore) {
-        return std::make_unique<nixlTcpStoreMetadataBackend>(ctx, config);
+        return std::make_unique<nixlTcpStoreMetadataBackend>(ctx, config, io_context);
     }
     return nullptr;
 }
@@ -99,11 +100,14 @@ nixlMDManager::etcdConfigured() {
 // otherwise the configured backend. This preserves the agent's original per-call
 // precedence (address wins over a configured backend).
 nixlMDManager::nixlMDManager(nixlMetadataContext &ctx, const nixlMDConfig &config)
-    : p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx, config)),
-      backend_(makeBackend(ctx, config)) {}
+    : ioContext_(),
+      workGuard_(asio::make_work_guard(ioContext_)),
+      p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx, config)),
+      backend_(makeBackend(ctx, config, ioContext_)) {}
 
-// Each backend joins its own thread as it is destroyed, so nothing to do here.
-nixlMDManager::~nixlMDManager() = default;
+nixlMDManager::~nixlMDManager() {
+    stop();
+}
 
 nixlMetadataBackend *
 nixlMDManager::select(const nixl_opt_args_t *extra_params) const noexcept {
@@ -152,6 +156,22 @@ nixlMDManager::start() {
     if (backend_) {
         backend_->start();
     }
+
+    ioThread_ = std::thread([this] {
+        // All I/O errors are handled by the backend implementation.
+        // An unexpected exception may leave the backend in an inconsistent state.
+        // Terminate the program to avoid undefined behavior.
+        try {
+            ioContext_.run();
+            NIXL_DEBUG << "I/O thread exited normally.";
+        }
+        catch (const std::exception &e) {
+            NIXL_FATAL << "I/O thread died: " << e.what();
+        }
+        catch (...) {
+            NIXL_FATAL << "I/O thread died with an unknown exception";
+        }
+    });
 }
 
 void
@@ -159,5 +179,9 @@ nixlMDManager::stop() {
     p2pBackend_->stop();
     if (backend_) {
         backend_->stop();
+    }
+    workGuard_.reset();
+    if (ioThread_.joinable()) {
+        ioThread_.join();
     }
 }
