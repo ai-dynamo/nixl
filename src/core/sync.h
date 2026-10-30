@@ -39,24 +39,24 @@ class nixlLock {
                 break;
             case nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT:
                 lock_cb = lock_shared_cb = [this]() {
-                    m.Lock();
+                    m.lock();
                 };
                 unlock_cb = unlock_shared_cb = [this]() {
-                    m.Unlock();
+                    m.unlock();
                 };
                 break;
             case nixl_thread_sync_t::NIXL_THREAD_SYNC_RW:
                 lock_cb = [this]() {
-                    m.Lock();
+                    m.lock();
                 };
                 unlock_cb = [this]() {
-                    m.Unlock();
+                    m.unlock();
                 };
                 lock_shared_cb = [this]() {
-                    m.ReaderLock();
+                    m.lock_shared();
                 };
                 unlock_shared_cb = [this]() {
-                    m.ReaderUnlock();
+                    m.unlock_shared();
                 };
                 break;
             }
