@@ -522,6 +522,7 @@ def worker(torch_rank: int, args: argparse.Namespace):
         num_ranks=max_num_ranks,
         num_experts_per_rank=args.num_experts_per_rank,
         num_rdma_bytes=num_rdma_bytes,
+        init_transport=not args.defer_transport,
     )
     signal.signal(
         signal.SIGTERM,
@@ -667,6 +668,11 @@ def main():
         type=non_negative_int,
         default=DEFAULT_TIMEOUT_MS,
         help="GPU timeout in milliseconds (non-negative integer)",
+    )
+    parser.add_argument(
+        "--defer-transport",
+        action="store_true",
+        help="Allocate buffers without a NIXL agent; the first connect_ranks creates it",
     )
     parser.add_argument(
         "--validate-phase-failures",

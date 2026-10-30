@@ -163,13 +163,18 @@ private:
 public:
     Buffer(int rank, bool explicitly_destroy, int timeout_ms);
 
-    void update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes);
+    void update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes,
+                               bool init_transport = true);
+
+    // Creates the NIXL agent and registers the buffers if update_memory_buffers
+    // deferred it. Idempotent. connect_ranks calls it.
+    void init_transport();
 
     void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, bool activate = true);
 
     void disconnect_ranks(const std::vector<int>& remote_ranks_list);
 
-    void init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes);
+    void init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, bool init_transport);
 
     ~Buffer() noexcept;
 
