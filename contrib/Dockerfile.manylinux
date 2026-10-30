@@ -388,11 +388,15 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click setuptools tabulate auditwheel tomlkit
 # Install the default PyTorch used by the outer NIXL build. Per-version NIXL EP
 # extensions are built later in isolated environments by build-wheel.sh.
-# torch 2.11 is not available on the cu132 index; 2.13 is the current default.
-ARG DEFAULT_TORCH_VERSION="2.13"
+# NIXL EP needs torch >= 2.14, which is only on the cu13 (cu132) index. Empty selects 2.14 for
+# CUDA 13 and 2.13 for CUDA 12 (CUDA 12 builds must set BUILD_NIXL_EP=false).
+ARG DEFAULT_TORCH_VERSION=""
 RUN if [ -z "$TORCH_CUDA_INDEX" ]; then \
         if [ "${CUDA_VERSION%%.*}" = "13" ]; then TORCH_CUDA_INDEX="cu132"; \
         else TORCH_CUDA_INDEX="cu$(echo "$CUDA_VERSION" | tr -d .)"; fi; \
+    fi && \
+    if [ -z "$DEFAULT_TORCH_VERSION" ]; then \
+        if [ "${CUDA_VERSION%%.*}" = "13" ]; then DEFAULT_TORCH_VERSION="2.14"; else DEFAULT_TORCH_VERSION="2.13"; fi; \
     fi && \
     export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
     uv pip install "torch==${DEFAULT_TORCH_VERSION}.*"
@@ -570,10 +574,9 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
-# Default is the union of what both CUDA majors can build: 2.11 is only on the
-# cu12 index, 2.14, 2.15 and 2.16 only on the cu13 (nightly) one. build-wheel.sh skips the
-# versions it cannot resolve, so the same list works for either.
-ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13,2.14,2.15,2.16"
+# NIXL EP needs torch >= 2.14, which is only on the cu13 index. CUDA 12 builds must set
+# BUILD_NIXL_EP=false. build-wheel.sh skips the versions it cannot resolve.
+ARG WHL_TORCH_VERSIONS="2.14,2.15"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \

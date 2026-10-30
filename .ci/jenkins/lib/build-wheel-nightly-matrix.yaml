@@ -179,33 +179,35 @@ steps:
       # Infinia is always bundled in the nightly; the built source ref's
       # build-container.sh pins the image. The spcx plugin is not built here -
       # it was compiled against the same wheel_base and comes off the PVC.
-      # The two CUDA majors have different torch coverage: 2.11 is not available
-      # on the cu13 index, and 2.14 is not available on the cu12 one.
+      # The two CUDA majors have different torch coverage: 2.14 is not available on
+      # the cu12 index. NIXL EP needs torch >= 2.14, so the cu12 wheels are built
+      # without it (BUILD_NIXL_EP=false).
       # Never default the CUDA line: an unset axis falling through to cu13 made
       # both cells build cu13 under identical filenames, so each overwrote the
       # other and the folder silently held half a set.
       case "${cuda}" in
         12)
           BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
-          TORCH_VERSIONS="2.11,2.12,2.13"
+          TORCH_VERSIONS_FLAG=""
+          EP_BUILD_ARG="--build-arg BUILD_NIXL_EP=false"
           ;;
         13)
-          BASE_IMAGE_FLAGS=""
-          TORCH_VERSIONS="2.12,2.13,2.14,2.15,2.16"
+          TORCH_VERSIONS_FLAG="--torch-versions 2.14,2.15,2.16"
+          EP_BUILD_ARG=""
           ;;
         *)
           echo "ERROR: cuda is '${cuda:-<unset>}', expected 12 or 13"
           exit 1
           ;;
       esac
-      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
+      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig ${EP_BUILD_ARG}"
       cd nixl-src
       ./contrib/build-container.sh \
         ${BASE_IMAGE_FLAGS} \
         --wheel-base "manylinux_${manylinux}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
-        --torch-versions "${TORCH_VERSIONS}" \
+        ${TORCH_VERSIONS_FLAG} \
         --tag "${WHEEL_IMAGE_TAG}" \
         --dockerfile contrib/Dockerfile.manylinux \
         --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}-cu${cuda}:${WHEEL_BASE_TAG}" \
