@@ -332,6 +332,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         throw std::invalid_argument("write_byte_striping must be 0 or 1");
     }
     writeByteStriping_ = byte_striping != 0;
+    if (writeByteStriping_ && dataQpCount_ == 1) {
+        NIXL_WARN << "write_byte_striping has no effect with data_qp_count=1";
+    }
     if (dataQpCount_ > 1 &&
         (nstreams < static_cast<int>(dataQpCount_) ||
          nstreams > static_cast<int>(DOCA_POST_STREAM_NUM))) {
