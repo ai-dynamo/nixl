@@ -127,10 +127,8 @@ int main(int argc, char** argv) {
         std::cout << " - " << name << std::endl;
     }
 
-    // Plugins loaded should only be the static plugins + Mooncake which doesn't unload
+    // Plugins loaded should only be the static plugins
     auto loaded_plugins = plugin_manager.getLoadedBackendPluginNames();
-    loaded_plugins.erase(std::remove(loaded_plugins.begin(), loaded_plugins.end(), "Mooncake"),
-                         loaded_plugins.end());
     if (loaded_plugins.size() != staticPlugs.size()) {
         std::cerr << "TEST FAILED: Dynamic Plugins are still loaded." << std::endl;
         return -1;
