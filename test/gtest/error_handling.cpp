@@ -313,10 +313,12 @@ TestErrorHandling::TestErrorHandling()
     m_env.addVar("UCX_RC_TIMEOUT", "100us");
     m_env.addVar("UCX_RC_RETRY_COUNT", "4");
     m_env.addVar("UCX_UD_TIMEOUT", "3s");
-    // Exclude EFA SRD in peer-disconnect tests: uct_srd in UCX leaves send_op->ep
-    // NULL on control (UCT_SRD_CTL_ID_REQ) and AM packets, so uct_srd_iface_handle_failure
-    // drops TX CQE errors without invoking the endpoint error callback.
-    m_env.addVar("UCX_TLS", "^srd");
+    // Exclude EFA SRD and UD in peer-disconnect tests: uct_srd in UCX leaves
+    // send_op->ep NULL on control (UCT_SRD_CTL_ID_REQ) and AM packets so TX CQE
+    // errors do not invoke the endpoint error callback, and ud_verbs on EFA
+    // delays peer-failure detection until UCX_UD_TIMEOUT (3s) instead of
+    // reporting immediate disconnect on postXferReq.
+    m_env.addVar("UCX_TLS", "^srd,ud_v");
     m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
 }
 
