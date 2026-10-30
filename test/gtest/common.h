@@ -214,6 +214,14 @@ struct nixlTestParam {
 
 using nixl_test_t = testing::TestWithParam<nixlTestParam>;
 
+// A payload starts with its full index and the seed, then a byte pattern, so
+// swapped buffers and stale writes both show up. size must be at least 8.
+void
+fillPayload(void *addr, size_t size, uint32_t index, uint32_t seed);
+
+[[nodiscard]] bool
+checkPayload(const void *addr, size_t size, uint32_t index, uint32_t seed);
+
 } // namespace gtest
 
 #define NIXL_INSTANTIATE_TEST(_test_name,               \
