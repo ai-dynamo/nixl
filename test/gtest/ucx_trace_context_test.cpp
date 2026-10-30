@@ -218,9 +218,13 @@ splitWriteToIdleTarget(nixl::trace::TraceContext &context,
     }
     nixlXferReqH *req = nullptr;
     ASSERT_EQ(sender.createXferReq(NIXL_WRITE, src, dst, target_name, req), NIXL_SUCCESS);
-    request_id = req->traceRequestId();
     ASSERT_EQ(sender.postXferReq(req), NIXL_IN_PROG);
-    context = req->tracePostContext();
+    nixl_xfer_trace_info_t info{};
+    ASSERT_EQ(sender.getXferTraceInfo(req, info), NIXL_SUCCESS);
+    request_id = info.requestId;
+    const auto post_context = nixl::trace::parseTraceparent(info.traceparent);
+    ASSERT_TRUE(post_context.has_value());
+    context = *post_context;
     ASSERT_NO_FATAL_FAILURE(after_post(sender, target, req));
     ASSERT_EQ(sender.invalidateRemoteMD(target_name), NIXL_SUCCESS);
     ASSERT_EQ(sender.deregisterMem(sender_regs), NIXL_SUCCESS);
