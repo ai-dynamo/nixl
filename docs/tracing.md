@@ -169,9 +169,11 @@ backends/PRs):
 | `nixl::deregisterMem` | `Generic` | `mem_type` |
 | `nixl::makeXferReq` | `Generic` | `desc_count`, `nixl.xfer_request_id` |
 | `nixl::createXferReq` | `Generic` | `remote_agent`, `desc_count`, `nixl.xfer_request_id` |
-| `nixl::postXferReq.write` | `CommSend` | `remote_agent`, `bytes`, `nixl.xfer_request_id`, `nixl.xfer_execution` |
-| `nixl::postXferReq.read` | `CommRecv` | `remote_agent`, `bytes`, `nixl.xfer_request_id`, `nixl.xfer_execution` |
+| `nixl::postXferReq.write` | `CommSend` | `remote_agent`, `bytes`, `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
+| `nixl::postXferReq.read` | `CommRecv` | `remote_agent`, `bytes`, `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
 | `nixl::xfer.complete` | `Metadata` (event) | `nixl.xfer_request_id`, `nixl.xfer_execution` |
+| `nixl::xfer.error` | `Metadata` (event) | `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
+| `nixl::releaseXferReq` | `Generic` | `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
 | `nixl::makeConnection` | `Generic` | `remote_agent` |
 | `nixl::genNotif` | `Metadata` | `remote_agent` |
 | `nixl::getNotifs` | `Metadata` | - |
@@ -188,6 +190,22 @@ dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with
 backend (e.g. NVTX attaches attributes as typed payloads on the range via
 `nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
 record them).
+
+A post that fails records one `nixl::xfer.error` event instead, by the first call
+that sees the failure: `postXferReq` when the backend fails it at once, and
+otherwise `getXferStatus`, a repost of the same request, or `releaseXferReq`. A
+release that cancels a post it still sees in flight records one with
+`NIXL_ERR_CANCELED`. Once its end is seen, each post that took an execution
+number has exactly one of the two. `nixl.status` is the native `nixl_status_t`:
+on a `postXferReq` span the call's return, refused calls included; on
+`nixl::xfer.error` the failure; on `nixl::releaseXferReq` the call's return. Each
+release attempt is a span of its own, inside its latest post's context, so a
+release refused with `NIXL_ERR_REPOST_ACTIVE` and its retry are two records.
+
+For a sampled request, each `postXferReq` span is the span that its call's trace
+context identifies (see "Backend phases"), so the post's `nixl::xfer.complete` and
+backend phases and the receiver's `nixl::notif.received` name it as their parent,
+even after it has ended.
 
 ### Request id and execution number
 
@@ -211,6 +229,16 @@ Backend phases carry the pair too: a plugin receives it with the request's trace
 context and passes it back when it records a phase (see "Backend phases"). UCX's
 sender phases carry it, and so does the receiver's `nixl::notif.received`, which
 reads it from the notification, so the records of both sides join on the pair.
+
+An application reads a request's identity with `nixlAgent::getXferTraceInfo()`, at
+any time from creation until `releaseXferReq`, for a request from `createXferReq` or
+`makeXferReq`. It returns the request id, the execution number of the latest post
+that took one (0 before any) and that post's trace context as a W3C `traceparent`:
+the values that post's records carry. Before any accepted post the `traceparent` is
+the request's own, whose span id a sampled request's first `postXferReq` call takes,
+refused or not. A post refused by `postXferReq`'s checks changes none of the three.
+A request without an id, such as one created while no tracing backend is active,
+returns `NIXL_ERR_NOT_FOUND`; the getter never enables tracing.
 
 ### Backend phases
 
@@ -255,14 +283,16 @@ to the same per-metric filter as every other metric (see
 
 A backend also sees the trace context of the request it is executing, as
 `traceContext` in the `nixl_opt_b_args_t` that `prepXfer` and `postXfer` receive.
-It is the same context at prep and at every post of that request, reposts
-included, and the zeroed, invalid context when tracing is off. It is null in
+Its trace id and flags are the same at prep and at every post of that request,
+reposts included, and it is the zeroed, invalid context when tracing is off. For
+a sampled request each post also has a span id of its own: the first `postXferReq`
+call keeps the one prep saw, and each later call draws another. It is null in
 `prepMemView`, which has no request, and `opt_args` itself may be null when an
 engine is called directly. The pointer is valid only for the call: a plugin that
 needs the context later, at completion or when building a notification, copies
-the value onto its own request handle. A carrier that puts it on the wire calls
-`encodeTraceContext` itself. `TraceContext` is internal like the sink, so only
-in-tree plugins can read it. Next to `traceContext`, `traceRequestId` and
+the value onto its own request handle at each post. A carrier that puts it on the
+wire calls `encodeTraceContext` itself. `TraceContext` is internal like the sink,
+so only in-tree plugins can read it. Next to `traceContext`, `traceRequestId` and
 `traceExecution` hold the request's id and the number of the post being executed,
 0 meaning none: the id is the same at prep and at every post, the execution number
 is 0 at prep, and both are 0 when tracing is off. They are plain integers that any
@@ -278,15 +308,15 @@ notification arrives at an agent with tracing on, UCX records `nixl::notif.recei
 under the sender's context, with `nixl.remote_agent` naming the sender and, from
 `treq`, the sender's `nixl.xfer_request_id` and `nixl.xfer_execution`; a missing or
 malformed `treq` costs the event only the pair. An agent with tracing off skips
-both tags without reading them. The event thus carries the request's trace id in
-`nixl.traceparent`, and the same request id and execution number as the sender's
-records of that post, so its correlation id is that of the sender's
-`nixl::postXferReq.write` or `.read` span. Writes and reads without a
-notification give the receiver nothing to observe, so they are traced on the
-sender only.
+both tags without reading them. The event thus carries, in `nixl.traceparent`, the
+request's trace id and the span id of the sender's `nixl::postXferReq.write` or
+`.read` span, the event's remote parent, and the same request id and execution
+number as the sender's records of that post, so its correlation id is that span's.
+Writes and reads without a notification give the receiver nothing to observe, so
+they are traced on the sender only.
 
 On the sender, UCX records up to three phases for every post of a sampled request,
-each under the request's context: `nixl::submit` when `postXfer` accepts the
+each under that post's context: `nixl::submit` when `postXfer` accepts the
 post, `nixl::wire.submitted` once all of its puts or gets and the flushes behind
 them are posted to UCX, and `nixl::notif.sent` when the notification is posted.
 If handing a validated post to UCX fails, at a put, a get or the flush, for
@@ -307,8 +337,9 @@ request on a backend that supports remote transfers but not trace contexts runs
 as usual, its trace just does not reach the remote agent, and core logs a
 warning once per backend in each agent; backends without remote transfers are
 not reported. Likewise, if generating a request's context fails, the request
-runs with the zeroed context, and each agent logs its first such failure as an
-error.
+runs with the zeroed context, and if a later `postXferReq` call cannot draw its
+span id, it keeps the request's span id; each agent logs its first such failure
+as an error.
 
 ## Profiling with NVTX / Nsight Systems
 
@@ -412,12 +443,15 @@ In NIXL tracing, "correlation" can mean two different things:
   (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
   same request. Implemented via the backend-agnostic `pushContext()` / `popContext()`
   API: NIXL wraps `postXferReq` in a correlation scope that hands every backend the
-  request's whole trace context, sampled or not, with its request id, and passes both
-  to the `xfer.complete` event explicitly. The NVTX backend records the request id as
-  the event's `uint64` payload -- so a post and its completion carry the same id on the
-  timeline regardless of which thread emitted each. A record without a request id
-  carries no payload, and a request with neither a valid context nor a request id
-  pushes nothing.
+  call's whole trace context, sampled or not, with the request id, and passes the
+  post's context and the request id to its `xfer.complete` event explicitly. A
+  sampled call begins its span as the span that context identifies
+  (`beginContextSpan()`), so a backend that records parents shows the completion as
+  that span's child. The NVTX backend records the request id as the event's `uint64`
+  payload -- so a post and its completion carry the same id on the timeline
+  regardless of which thread emitted each. A record without a request id carries no
+  payload, and a request with neither a valid context nor a request id pushes
+  nothing.
 
 ## Planned work
 

@@ -284,15 +284,15 @@ public:
 };
 
 void
-failRandomBytes(std::uint8_t *, std::size_t) {
+failRandomBytes(std::span<std::uint8_t>) {
     throw std::system_error(ENOSYS, std::generic_category(), "getentropy failed");
 }
 
 int zero_draws_left = 0;
 
 void
-zeroFirstRandomBytes(std::uint8_t *bytes, std::size_t size) {
-    std::fill_n(bytes, size, (zero_draws_left-- > 0) ? 0 : 0x5a);
+zeroFirstRandomBytes(std::span<std::uint8_t> bytes) {
+    std::ranges::fill(bytes, (zero_draws_left-- > 0) ? 0 : 0x5a);
 }
 
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
@@ -842,6 +842,30 @@ TEST(Tracing, RequestIdIsNoneWithoutTracerOrSource) {
 
     EXPECT_EQ(nixl::trace::generateRequestId(nullptr), 0u);
     EXPECT_EQ(nixl::trace::generateRequestId(tracer.get()), 0u);
+    EXPECT_EQ(failures.count(), 1u);
+}
+
+TEST(Tracing, PostContextDrawsOnlyItsSpanIdAgainWhileZero) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);
+    zero_draws_left = 1;
+    const auto request = testContext(0x21, 0x03);
+    auto expected = request;
+    expected.spanId.fill(0x5a);
+
+    EXPECT_EQ(nixl::trace::generatePostContext(request, tracer.get()), expected);
+}
+
+TEST(Tracing, PostContextIsTheRequestsWithoutTracerOrSource) {
+    gtest::LogMessageCounter failures("could not generate a trace context");
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, failRandomBytes);
+    const auto request = testContext(0x22, 0x03);
+
+    EXPECT_EQ(nixl::trace::generatePostContext(request, nullptr), request);
+    for (int i = 0; i < 2; ++i) {
+        EXPECT_EQ(nixl::trace::generatePostContext(request, tracer.get()), request);
+    }
     EXPECT_EQ(failures.count(), 1u);
 }
 
