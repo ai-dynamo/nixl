@@ -128,6 +128,8 @@ protected:
             params["num_workers"] = std::to_string(getNumWorkers());
             params["num_threads"] = std::to_string(getNumThreads());
             params["split_batch_size"] = "32";
+        } else if (getBackendName() == "LIBFABRIC") {
+            params["num_threads"] = std::to_string(getNumThreads());
         }
 
         params["engine_config"] = GetParam().engineConfig;
@@ -708,6 +710,50 @@ NIXL_INSTANTIATE_TEST(ucx, TestTransfer, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransfer, "UCX", false, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransfer, "UCX", true, 6, 4, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
+
+#ifdef HAVE_LIBFABRIC
+class TestLibfabricPostPool : public TestTransfer {
+protected:
+    void
+    SetUp() override {
+        // Run over loopback TCP so the test does not need EFA.
+        env.addVar("FI_PROVIDER", "tcp");
+        TestTransfer::SetUp();
+    }
+};
+
+// 1024 descriptors reach the default split_batch_size, so every post is split
+// across the descriptor post thread pool.
+TEST_P(TestLibfabricPostPool, ReadWithPostPool) {
+    constexpr size_t size = 64;
+    constexpr size_t count = 1024;
+    constexpr size_t repeat = 100;
+    constexpr nixl_mem_t mem_type = DRAM_SEG;
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+
+    createRegisteredMem(getAgent(0), size, count, mem_type, src_buffers);
+    createRegisteredMem(getAgent(1), size, count, mem_type, dst_buffers);
+    exchangeMD(0, 1);
+    doTransfer(getAgent(0),
+               getAgentName(0),
+               getAgent(1),
+               getAgentName(1),
+               NIXL_READ,
+               size,
+               count,
+               repeat,
+               1,
+               mem_type,
+               src_buffers,
+               mem_type,
+               dst_buffers);
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), src_buffers, mem_type);
+    deregisterMem(getAgent(1), dst_buffers, mem_type);
+}
+
+NIXL_INSTANTIATE_TEST(libfabric_post_pool, TestLibfabricPostPool, "LIBFABRIC", true, 0, 4, "");
+#endif
 
 NIXL_INSTANTIATE_TEST(ucx_telemetry, TestTransferTelemetry, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_telemetry_no_pt, TestTransferTelemetry, "UCX", false, 2, 0, "");
