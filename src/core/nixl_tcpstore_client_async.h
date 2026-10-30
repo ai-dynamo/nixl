@@ -177,7 +177,7 @@ private:
     // The completion handler's signature must be:
     // void (Buffer, asio::error_code, std::size_t)
     template<typename Buffer, typename Fn>
-        requires std::is_same_v<Buffer, nixl::outputByteBuffer> ||
+        requires std::is_same_v<Buffer, nixl::fixedCapacityBuffer> ||
         std::is_same_v<Buffer, asio::mutable_buffer>
     void
     initiateAsyncRead(Buffer buf, std::string what, deadline_t deadline, Fn &&on_complete);
@@ -190,7 +190,7 @@ private:
     // void (nixl::inputByteBuffer,asio::error_code, std::size_t)
     template<typename Fn>
     void
-    initiateAsyncWrite(nixl::inputByteBuffer buf,
+    initiateAsyncWrite(nixl::dynamicSizedBuffer buf,
                        std::string what,
                        deadline_t deadline,
                        Fn &&on_complete);
@@ -211,13 +211,6 @@ private:
                           deadline_t deadline,
                           Fn &&on_complete,
                           void (Fn::*)(asio::error_code, Args...));
-    template<typename Fn, typename... Args>
-    auto
-    cancelAndErrorAdapter(std::string what,
-                          deadline_t deadline,
-                          Fn &&on_complete,
-                          void (Fn::*)(asio::error_code, Args...) const);
-
 
     // Client configuration.
     const std::string host_;
@@ -250,6 +243,8 @@ private:
     asio::ip::tcp::socket socket_;
     // The state of the connection.
     std::atomic<connection_state_t> connectionState_ = connection_state_t::CLOSED;
+    // The nonce from the PING response.
+    std::uint32_t nonce_;
     // The generation of the current connection.
     std::int32_t generation_ = 0;
     // The number of times the connection has been retried.

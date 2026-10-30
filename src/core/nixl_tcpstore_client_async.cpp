@@ -109,7 +109,7 @@ public:
     virtual std::string
     name() const = 0;
 
-    virtual nixl::inputByteBuffer
+    virtual nixl::dynamicSizedBuffer
     requestMessage() = 0;
 
     // Return std::dynamic_extent if the response is variable-length.
@@ -117,7 +117,7 @@ public:
     responseMessageSize() const = 0;
 
     virtual void
-    onComplete(asio::error_code error, nixl::outputByteBuffer response) = 0;
+    onComplete(asio::error_code error, nixl::fixedCapacityBuffer response) = 0;
 
 
     nixlTcpStoreClientAsync &client_;
@@ -125,31 +125,6 @@ public:
     std::int32_t connectionGeneration_ = -1;
 };
 
-// Variant for const handler functions.
-template<typename Fn, typename... Args>
-auto
-nixlTcpStoreClientAsync::cancelAndErrorAdapter(std::string what,
-                                               deadline_t deadline,
-                                               Fn &&on_complete,
-                                               void (Fn::*)(asio::error_code, Args...) const) {
-    return asio::cancel_at(deadline,
-                           asio::cancellation_type::terminal,
-                           [this,
-                            what = std::move(what),
-                            deadline,
-                            on_complete = std::move(on_complete),
-                            generation = generation_](asio::error_code error, Args... args) {
-                               if (error) {
-                                   onError(std::move(what),
-                                           error,
-                                           std::chrono::steady_clock::now() >= deadline,
-                                           generation);
-                               }
-                               on_complete(error, std::forward<Args>(args)...);
-                           });
-}
-
-// Variant for non-const handler functions.
 template<typename Fn, typename... Args>
 auto
 nixlTcpStoreClientAsync::cancelAndErrorAdapter(std::string what,
@@ -175,7 +150,7 @@ nixlTcpStoreClientAsync::cancelAndErrorAdapter(std::string what,
 }
 
 template<typename Buffer, typename Fn>
-    requires std::is_same_v<Buffer, nixl::outputByteBuffer> ||
+    requires std::is_same_v<Buffer, nixl::fixedCapacityBuffer> ||
     std::is_same_v<Buffer, asio::mutable_buffer>
 void
 nixlTcpStoreClientAsync::initiateAsyncRead(Buffer buf,
@@ -183,7 +158,7 @@ nixlTcpStoreClientAsync::initiateAsyncRead(Buffer buf,
                                            deadline_t deadline,
                                            Fn &&on_complete) {
     asio::mutable_buffer b;
-    if constexpr (std::is_same_v<Buffer, nixl::outputByteBuffer>) {
+    if constexpr (std::is_same_v<Buffer, nixl::fixedCapacityBuffer>) {
         b = asio::buffer(buf.data(), buf.capacity());
     } else if constexpr (std::is_same_v<Buffer, asio::mutable_buffer>) {
         b = buf;
@@ -200,7 +175,7 @@ nixlTcpStoreClientAsync::initiateAsyncRead(Buffer buf,
 
 template<typename Fn>
 void
-nixlTcpStoreClientAsync::initiateAsyncWrite(nixl::inputByteBuffer buf,
+nixlTcpStoreClientAsync::initiateAsyncWrite(nixl::dynamicSizedBuffer buf,
                                             std::string what,
                                             deadline_t deadline,
                                             Fn &&on_complete) {
@@ -271,7 +246,7 @@ nixlTcpStoreClientAsync::doResolve(std::chrono::milliseconds timeout) {
                 "resolve",
                 deadline,
                 [this, deadline, resolver = std::move(resolver)](
-                    asio::error_code error, asio::ip::tcp::resolver::results_type results) {
+                    asio::error_code error, asio::ip::tcp::resolver::results_type results) mutable {
                     if (!error && connectionState_ == connection_state_t::CONNECTING) {
                         resolvedEndpoints_ = results;
                         doConnect(deadline);
@@ -304,7 +279,7 @@ nixlTcpStoreClientAsync::doConnect(deadline_t deadline) {
 // This function must be called from the I/O context.
 void
 nixlTcpStoreClientAsync::doValidate(deadline_t deadline) {
-    nixl::inputByteBuffer validate_msg;
+    nixl::dynamicSizedBuffer validate_msg;
     validate_msg.putValues(static_cast<std::uint8_t>(tcpstore::query_type_t::VALIDATE),
                            tcpstore::validation_magic);
 
@@ -312,7 +287,7 @@ nixlTcpStoreClientAsync::doValidate(deadline_t deadline) {
         std::move(validate_msg),
         "validate",
         deadline,
-        [this, deadline](nixl::inputByteBuffer, asio::error_code error, std::size_t) {
+        [this, deadline](nixl::dynamicSizedBuffer, asio::error_code error, std::size_t) {
             if (!error && connectionState_ == connection_state_t::CONNECTING) {
                 doPing(deadline);
             }
@@ -323,14 +298,14 @@ nixlTcpStoreClientAsync::doValidate(deadline_t deadline) {
 void
 nixlTcpStoreClientAsync::doPing(deadline_t deadline) {
     const auto nonce = static_cast<std::uint32_t>(::getpid());
-    nixl::inputByteBuffer ping_msg;
+    nixl::dynamicSizedBuffer ping_msg;
     ping_msg.putValues(static_cast<std::uint8_t>(tcpstore::query_type_t::PING), nonce);
 
     initiateAsyncWrite(
         std::move(ping_msg),
         "ping",
         deadline,
-        [this, deadline, nonce](nixl::inputByteBuffer, asio::error_code error, std::size_t) {
+        [this, deadline, nonce](nixl::dynamicSizedBuffer, asio::error_code error, std::size_t) {
             if (!error && connectionState_ == connection_state_t::CONNECTING) {
                 doVerifyNonce(nonce, deadline);
             }
@@ -340,20 +315,17 @@ nixlTcpStoreClientAsync::doPing(deadline_t deadline) {
 // This function must be called from the I/O context.
 void
 nixlTcpStoreClientAsync::doVerifyNonce(std::uint32_t nonce, deadline_t deadline) {
-    // Use a static buffer to avoid heap allocation.
-    // It is safe because there is at most one read into the response_nonce buffer.
-    static std::uint32_t response_nonce;
-    asio::mutable_buffer buf = asio::buffer(&response_nonce, sizeof(response_nonce));
+    // Using a fixed buffer here is safe because there is at most one read
+    // into the nonce buffer.
+    asio::mutable_buffer buf = asio::buffer(&nonce_, sizeof(nonce_));
 
     initiateAsyncRead(
         buf,
         "verify nonce",
         deadline,
-        [this, nonce](asio::mutable_buffer response, asio::error_code error, std::size_t) {
+        [this, nonce](asio::mutable_buffer, asio::error_code error, std::size_t) {
             if (!error && connectionState_ == connection_state_t::CONNECTING) {
-                std::uint32_t echoed;
-                memcpy(&echoed, response.data(), sizeof(std::uint32_t));
-                if (echoed == nonce) {
+                if (nonce_ == nonce) {
                     connectionState_ = connection_state_t::CONNECTED;
                     connectionRetryCount_ = 0;
                     NIXL_INFO << "[TCPStore client][Server: " << host_ << ":" << port_ << "]: "
@@ -445,9 +417,9 @@ nixlTcpStoreClientAsync::set(const std::string &key,
             return "set";
         }
 
-        nixl::inputByteBuffer
+        nixl::dynamicSizedBuffer
         requestMessage() override {
-            nixl::inputByteBuffer buf;
+            nixl::dynamicSizedBuffer buf;
             buf.putValues(static_cast<std::uint8_t>(tcpstore::query_type_t::SET),
                           tcpstore::key_prefix + key_,
                           value_);
@@ -461,7 +433,7 @@ nixlTcpStoreClientAsync::set(const std::string &key,
         }
 
         void
-        onComplete(asio::error_code error, nixl::outputByteBuffer) override {
+        onComplete(asio::error_code error, nixl::fixedCapacityBuffer) override {
             onComplete_(error);
         }
 
@@ -495,9 +467,9 @@ nixlTcpStoreClientAsync::get(
             return "get";
         }
 
-        nixl::inputByteBuffer
+        nixl::dynamicSizedBuffer
         requestMessage() override {
-            nixl::inputByteBuffer buf;
+            nixl::dynamicSizedBuffer buf;
             buf.putValues(static_cast<std::uint8_t>(tcpstore::query_type_t::GET),
                           tcpstore::key_prefix + key_);
             return buf;
@@ -509,7 +481,7 @@ nixlTcpStoreClientAsync::get(
         }
 
         void
-        onComplete(asio::error_code error, nixl::outputByteBuffer response) override {
+        onComplete(asio::error_code error, nixl::fixedCapacityBuffer response) override {
             std::optional<std::string> value;
             if (error || response.size() == 0) {
                 value = std::nullopt;
@@ -540,9 +512,9 @@ nixlTcpStoreClientAsync::get(
             return "check";
         }
 
-        nixl::inputByteBuffer
+        nixl::dynamicSizedBuffer
         requestMessage() override {
-            nixl::inputByteBuffer buf;
+            nixl::dynamicSizedBuffer buf;
             buf.putValues(static_cast<std::uint8_t>(tcpstore::query_type_t::CHECK),
                           static_cast<std::uint64_t>(1),
                           tcpstore::key_prefix + key_);
@@ -555,7 +527,7 @@ nixlTcpStoreClientAsync::get(
         }
 
         void
-        onComplete(asio::error_code error, nixl::outputByteBuffer buf) override {
+        onComplete(asio::error_code error, nixl::fixedCapacityBuffer buf) override {
             if (error) {
                 onComplete_(error, std::nullopt);
                 return;
@@ -599,9 +571,9 @@ nixlTcpStoreClientAsync::deleteKey(const std::string &key,
             return "delete_key";
         }
 
-        nixl::inputByteBuffer
+        nixl::dynamicSizedBuffer
         requestMessage() override {
-            nixl::inputByteBuffer buf;
+            nixl::dynamicSizedBuffer buf;
             buf.putValues(static_cast<std::uint8_t>(tcpstore::query_type_t::DELETE_KEY),
                           tcpstore::key_prefix + key_);
             return buf;
@@ -613,7 +585,7 @@ nixlTcpStoreClientAsync::deleteKey(const std::string &key,
         }
 
         void
-        onComplete(asio::error_code error, nixl::outputByteBuffer buf) override {
+        onComplete(asio::error_code error, nixl::fixedCapacityBuffer buf) override {
             if (error) {
                 onComplete_(error, false);
             } else {
@@ -656,7 +628,7 @@ nixlTcpStoreClientAsync::scheduleRequest(std::unique_ptr<Request> request) {
     } else {
         // After shutdown, the worker thread may have terminated.
         // So, we have no choice but to fail the request in-place.
-        request->onComplete(asio::error::shut_down, nixl::outputByteBuffer());
+        request->onComplete(asio::error::shut_down, nixl::fixedCapacityBuffer(0));
     }
 }
 
@@ -700,7 +672,7 @@ nixlTcpStoreClientAsync::processSendQueue() {
                 // Fail expired requests without initiating any I/O operations.
                 // Otherwise, the I/O operation will timeout immediately and
                 // trigger error handling which close the connection unnecessarily.
-                request->onComplete(asio::error::timed_out, nixl::outputByteBuffer());
+                request->onComplete(asio::error::timed_out, nixl::fixedCapacityBuffer(0));
                 asio::post(ioContext_, [this]() { processSendQueue(); });
                 return;
             }
@@ -711,7 +683,7 @@ nixlTcpStoreClientAsync::processSendQueue() {
             Request *request_ptr = request.get();
 
             // Transfer ownership of the request to the completion handler.
-            auto send_complete = [this, request = std::move(request)](nixl::inputByteBuffer,
+            auto send_complete = [this, request = std::move(request)](nixl::dynamicSizedBuffer,
                                                                       asio::error_code error,
                                                                       std::size_t) mutable {
                 hasInflightSend_ = false;
@@ -720,7 +692,7 @@ nixlTcpStoreClientAsync::processSendQueue() {
                     recvQueue_.push_back(std::move(request));
                     processRecvQueue();
                 } else {
-                    request->onComplete(error, nixl::outputByteBuffer());
+                    request->onComplete(error, nixl::fixedCapacityBuffer(0));
                 }
 
                 // Even on error, we want to call processSendQueue() because
@@ -759,25 +731,25 @@ nixlTcpStoreClientAsync::processRecvQueue() {
         case connection_state_t::CLOSED:
         case connection_state_t::CONNECTING:
         case connection_state_t::SHUTDOWN:
-            request->onComplete(asio::error::connection_reset, nixl::outputByteBuffer());
+            request->onComplete(asio::error::connection_reset, nixl::fixedCapacityBuffer(0));
             break;
         case connection_state_t::CONNECTED:
         case connection_state_t::SHUTTING_DOWN:
             if (generation_ != request->connectionGeneration_) {
-                request->onComplete(asio::error::connection_reset, nixl::outputByteBuffer());
+                request->onComplete(asio::error::connection_reset, nixl::fixedCapacityBuffer(0));
                 break;
             }
 
             std::size_t response_size = request_ptr->responseMessageSize();
             if (response_size == 0) {
-                request->onComplete(asio::error_code(), nixl::outputByteBuffer());
+                request->onComplete(asio::error_code(), nixl::fixedCapacityBuffer(0));
                 break;
             }
 
             hasInflightRecv_ = true;
 
             auto recv_complete =
-                [this, request = std::move(request)](nixl::outputByteBuffer response,
+                [this, request = std::move(request)](nixl::fixedCapacityBuffer response,
                                                      asio::error_code error,
                                                      std::size_t bytes_transferred) mutable {
                     hasInflightRecv_ = false;
@@ -787,19 +759,19 @@ nixlTcpStoreClientAsync::processRecvQueue() {
                 };
 
             if (response_size != std::dynamic_extent) {
-                nixl::outputByteBuffer response(response_size);
+                nixl::fixedCapacityBuffer response(response_size);
                 initiateAsyncRead(std::move(response),
                                   request_ptr->name(),
                                   request_ptr->deadline_,
                                   recv_complete);
             } else {
-                nixl::outputByteBuffer msg_size_buf(sizeof(std::uint64_t));
+                nixl::fixedCapacityBuffer msg_size_buf(sizeof(std::uint64_t));
                 initiateAsyncRead(
                     std::move(msg_size_buf),
                     request_ptr->name(),
                     request_ptr->deadline_,
                     [this, request_ptr, recv_complete = std::move(recv_complete)](
-                        nixl::outputByteBuffer msg_size_buf,
+                        nixl::fixedCapacityBuffer msg_size_buf,
                         asio::error_code error,
                         std::size_t) mutable {
                         if (!error && generation_ == request_ptr->connectionGeneration_ &&
@@ -809,23 +781,23 @@ nixlTcpStoreClientAsync::processRecvQueue() {
                             memcpy(&msg_size, msg_size_buf.data(), sizeof(std::uint64_t));
 
                             if (msg_size == 0) {
-                                recv_complete(nixl::outputByteBuffer(), asio::error_code(), 0);
+                                recv_complete(nixl::fixedCapacityBuffer(0), asio::error_code(), 0);
                             } else if (msg_size > tcpstore::max_blob_bytes) {
                                 onError(request_ptr->name(),
                                         asio::error::message_size,
                                         false,
                                         generation_);
                                 recv_complete(
-                                    nixl::outputByteBuffer(), asio::error::message_size, 0);
+                                    nixl::fixedCapacityBuffer(0), asio::error::message_size, 0);
                             } else {
-                                nixl::outputByteBuffer response(msg_size);
+                                nixl::fixedCapacityBuffer response(msg_size);
                                 initiateAsyncRead(std::move(response),
                                                   request_ptr->name(),
                                                   request_ptr->deadline_,
                                                   recv_complete);
                             }
                         } else {
-                            recv_complete(nixl::outputByteBuffer(),
+                            recv_complete(nixl::fixedCapacityBuffer(0),
                                           error ? error : asio::error::connection_reset,
                                           0);
                         }
@@ -860,7 +832,7 @@ nixlTcpStoreClientAsync::drainSendQueue() {
     }
 
     for (auto &r : requests) {
-        r->onComplete(asio::error::connection_reset, nixl::outputByteBuffer());
+        r->onComplete(asio::error::connection_reset, nixl::fixedCapacityBuffer(0));
     }
     requests.clear();
 }
@@ -869,7 +841,7 @@ nixlTcpStoreClientAsync::drainSendQueue() {
 void
 nixlTcpStoreClientAsync::drainRecvQueue() {
     for (auto &request : recvQueue_) {
-        request->onComplete(asio::error::connection_reset, nixl::outputByteBuffer());
+        request->onComplete(asio::error::connection_reset, nixl::fixedCapacityBuffer(0));
     }
     recvQueue_.clear();
 }

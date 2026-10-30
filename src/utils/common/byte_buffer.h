@@ -43,33 +43,33 @@ concept byte_range_t =
  *
  *        The buffer is not thread-safe.
  */
-class inputByteBuffer {
+class dynamicSizedBuffer {
 public:
     /**
      * @brief Construct a new empty byte buffer.
      */
-    inputByteBuffer() = default;
+    dynamicSizedBuffer() = default;
 
     /**
      * @brief Move constructor.
      * @param other The other byte buffer to move from.
      */
-    inputByteBuffer(inputByteBuffer &&other) noexcept = default;
+    dynamicSizedBuffer(dynamicSizedBuffer &&other) noexcept = default;
 
     /**
      * @brief Move assignment operator.
      * @param other The other byte buffer to move from.
      * @return this.
      */
-    inputByteBuffer &
-    operator=(inputByteBuffer &&other) noexcept = default;
+    dynamicSizedBuffer &
+    operator=(dynamicSizedBuffer &&other) noexcept = default;
 
     // Delete copy constructor and assignment operator.
-    inputByteBuffer(const inputByteBuffer &) = delete;
-    inputByteBuffer &
-    operator=(const inputByteBuffer &) = delete;
+    dynamicSizedBuffer(const dynamicSizedBuffer &) = delete;
+    dynamicSizedBuffer &
+    operator=(const dynamicSizedBuffer &) = delete;
 
-    ~inputByteBuffer() = default;
+    ~dynamicSizedBuffer() = default;
 
     /**
      * @brief Put an arithmetic value into the buffer.
@@ -143,15 +143,15 @@ private:
     std::vector<std::uint8_t> data_;
 };
 
-class outputByteBuffer {
+class fixedCapacityBuffer {
 public:
     /**
      * @brief Construct a new output byte buffer with the given capacity.
      * @param capacity The capacity of the buffer.
      */
-    explicit outputByteBuffer(std::size_t capacity = 0) : capacity_(capacity) {
+    explicit fixedCapacityBuffer(std::size_t capacity) : capacity_(capacity) {
         if (capacity_ > 0) {
-            data_ = std::make_unique<std::uint8_t[]>(capacity_);
+            data_ = std::make_unique_for_overwrite<std::uint8_t[]>(capacity_);
         }
     }
 
@@ -159,22 +159,22 @@ public:
      * @brief Move constructor.
      * @param other The other byte buffer to move from.
      */
-    outputByteBuffer(outputByteBuffer &&other) noexcept = default;
+    fixedCapacityBuffer(fixedCapacityBuffer &&other) noexcept = default;
 
     /**
      * @brief Move assignment operator.
      * @param other The other byte buffer to move from.
      * @return this.
      */
-    outputByteBuffer &
-    operator=(outputByteBuffer &&other) noexcept = default;
+    fixedCapacityBuffer &
+    operator=(fixedCapacityBuffer &&other) noexcept = default;
 
     // Delete copy constructor and assignment operator.
-    outputByteBuffer(const outputByteBuffer &) = delete;
-    outputByteBuffer &
-    operator=(const outputByteBuffer &) = delete;
+    fixedCapacityBuffer(const fixedCapacityBuffer &) = delete;
+    fixedCapacityBuffer &
+    operator=(const fixedCapacityBuffer &) = delete;
 
-    ~outputByteBuffer() = default;
+    ~fixedCapacityBuffer() = default;
 
     /**
      * @brief Get a mutable pointer to the internal data.

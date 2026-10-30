@@ -22,7 +22,7 @@
 namespace nixl {
 
 TEST(ByteBuffer, Put) {
-    inputByteBuffer b;
+    dynamicSizedBuffer b;
     b.put(static_cast<std::uint8_t>(1));
     EXPECT_EQ(b.size(), 1);
     EXPECT_EQ(b.data()[0], 1);
@@ -80,7 +80,7 @@ TEST(ByteBuffer, Put) {
 }
 
 TEST(ByteBuffer, VarArg) {
-    inputByteBuffer b;
+    dynamicSizedBuffer b;
     b.putValues(static_cast<std::uint8_t>(1),
                 static_cast<std::int32_t>(2),
                 "/" + std::string("Bar"),
@@ -124,7 +124,7 @@ TEST(ByteBuffer, VarArg) {
 }
 
 TEST(ByteBuffer, EmptyString) {
-    inputByteBuffer b;
+    dynamicSizedBuffer b;
     b.put(std::string(""));
     EXPECT_EQ(b.size(), 8);
     std::uint64_t s;
@@ -133,7 +133,7 @@ TEST(ByteBuffer, EmptyString) {
 }
 
 TEST(ByteBuffer, OutputByteBuffer) {
-    nixl::outputByteBuffer b(10);
+    nixl::fixedCapacityBuffer b(10);
     EXPECT_EQ(b.capacity(), 10);
     EXPECT_EQ(b.size(), 0);
     EXPECT_NE(b.data(), nullptr);
