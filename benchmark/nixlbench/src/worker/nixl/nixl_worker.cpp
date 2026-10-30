@@ -53,7 +53,9 @@ resolveVramSegment() {
 #elif HAVE_ROCM
     return VRAM_SEG;
 #else
-    if (neuronCoreCount() > 0) return VRAM_SEG;
+    if (neuronCoreCount() > 0) {
+        return VRAM_SEG;
+    }
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
@@ -379,6 +381,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         std::cout << "INFINIA backend (plugin will use RED_* environment variables, "
                      "NIXL_CONFIG_FILE, or defaults)"
                   << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MARVELL_ODM)) {
+        xferBenchOdm::configureBackend(devices, odm_, backend_params);
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -404,9 +408,19 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
             xferBenchConfig::backend_mems = engine_mems;
         }
     }
+
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MARVELL_ODM)) {
+        const std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : name;
+        odm_.bindNixl(agent, backend_engine, target);
+        xferBenchOdm::setConsistencyState(&odm_);
+    }
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MARVELL_ODM)) {
+        xferBenchOdm::setConsistencyState(nullptr);
+    }
+
     remote_regs_.clear();
     remote_fds.clear();
     local_regs_.clear();
@@ -744,8 +758,7 @@ cleanupVramRocm(xferBenchIOV &iov) {
 
 static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
-    uint8_t memset_value =
-        isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
+    uint8_t memset_value = isInit ? xferBenchInitiatorFillByte() : XFERBENCH_TARGET_BUFFER_ELEMENT;
 
     if (neuronCoreCount() > 0) {
         return getVramDescNeuron(devid, buffer_size, memset_value);
@@ -976,10 +989,12 @@ cleanupBasicDescObj(xferBenchIOV &iov) {
 // FILE fds are owned by xferFileState and BLK descriptors own nothing, so both
 // fall through to the no-op default.
 void
-cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov) {
+cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov, bool owns_buffer) {
     switch (seg_type) {
     case DRAM_SEG:
-        cleanupBasicDescDram(iov);
+        if (owns_buffer) {
+            cleanupBasicDescDram(iov);
+        }
         break;
     case VRAM_SEG:
         cleanupBasicDescVram(iov);
@@ -1197,6 +1212,34 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
         }
+    } else if (XFERBENCH_BACKEND_MARVELL_ODM == xferBenchConfig::backend) {
+        const std::string &odm_dev =
+            odm_.device_path_.empty() ? xferBenchConfig::odm_device_path : odm_.device_path_;
+        xferBenchConfig::odm_device_path = odm_dev;
+        // Register one auto-allocated region per device, sized for all threads
+        // combined (buffer_size * num_threads), instead of one registration per
+        // thread. Per-thread registrations all used the same degenerate
+        // {addr=0, len=buffer_size, devId} key, which NIXL cannot tell apart:
+        // it can resolve every thread's descriptors to a single underlying
+        // registration, so concurrent transfers would alias onto the same
+        // device IOVA range. With one registration per device, each thread's
+        // traffic is addressed via its own offset into that single region
+        // (see the MARVELL_ODM branch in exchangeIOV below), which is
+        // unambiguous.
+        std::vector<xferBenchIOV> iov_list;
+        for (i = 0; i < num_devices; i++) {
+            iov_list.emplace_back(0, buffer_size * num_threads, static_cast<int>(i));
+        }
+        nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, DRAM_SEG);
+        CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem ODM failed");
+        remote_regs_.emplace_back(*agent, backend_engine, DRAM_SEG, std::move(iov_list));
+        if (xferBenchConfig::check_consistency && xferBenchConfig::op_type == XFERBENCH_OP_READ &&
+            xferBenchConfig::check_value < 0) {
+            if (!odm_.seedDramForRead(remote_regs_, xferBenchConfig::total_buffer_size)) {
+                std::cerr << "ODM: failed to seed device DRAM for READ benchmark" << std::endl;
+                exit(EXIT_FAILURE);
+            }
+        }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
         int num_files = xferBenchConfig::num_files;
@@ -1274,7 +1317,12 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
 
             if (basic_desc) {
-                if (!remote_regs_.empty()) {
+                // MARVELL_ODM registers a single combined remote region (see
+                // above), not one per list_idx, and never reads metaInfo back;
+                // skip this per-thread copy for it to avoid indexing
+                // remote_regs_ out of bounds.
+                if (!remote_regs_.empty() &&
+                    XFERBENCH_BACKEND_MARVELL_ODM != xferBenchConfig::backend) {
                     basic_desc.value().metaInfo = remote_regs_[list_idx].iovs()[i].metaInfo;
                 }
                 iov_list.push_back(basic_desc.value());
@@ -1291,11 +1339,12 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
          * is only needed when validating data. It was moved from the initBasicDescDram function to
          * here to avoid memsetting the memory again.
          */
-        if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
+        const bool fill_initiator = isInitiator() && xferBenchConfig::fill_value >= 0;
+        if (seg_type == DRAM_SEG && (xferBenchConfig::check_consistency || fill_initiator)) {
             for (auto &iov : local_regs_.back().iovs()) {
                 if (isInitiator()) {
-                    memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, iov.len);
-                } else if (isTarget()) {
+                    memset((void *)iov.addr, xferBenchInitiatorFillByte(), iov.len);
+                } else if (isTarget() && xferBenchConfig::check_consistency) {
                     memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, iov.len);
                 }
             }
@@ -1455,6 +1504,32 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
+                } else if (XFERBENCH_BACKEND_MARVELL_ODM == xferBenchConfig::backend) {
+                    const size_t cfg_num_devices = xferBenchConfig::num_initiator_dev;
+                    const size_t entries_per_device = (cfg_num_devices > 0 && !iov_list.empty()) ?
+                        std::max<size_t>(1, iov_list.size() / cfg_num_devices) :
+                        1;
+                    const size_t odm_dev = static_cast<size_t>(iov.devId);
+                    if (odm_dev >= remote_regs_[0].iovs().size()) {
+                        std::cerr << "ODM: invalid device id " << iov.devId << " (max "
+                                  << remote_regs_[0].iovs().size() - 1 << ")" << std::endl;
+                        exit(EXIT_FAILURE);
+                    }
+                    const size_t block_in_dev = devidx % entries_per_device;
+                    const size_t buffer_size = xferBenchConfig::total_buffer_size /
+                        (cfg_num_devices * xferBenchConfig::num_threads);
+                    const size_t block_offset = (block_in_dev * block_size) % buffer_size;
+                    // remote_regs_[0] is the single combined per-device
+                    // registration (buffer_size * num_threads long); this
+                    // thread's slice starts at list_idx * buffer_size within
+                    // it.
+                    const size_t worker_offset =
+                        static_cast<size_t>(list_idx) * buffer_size + block_offset;
+                    xferBenchIOV iov_remote(iov);
+                    iov_remote.addr = remote_regs_[0].iovs()[odm_dev].addr + worker_offset;
+                    iov_remote.len = block_size;
+                    iov_remote.devId = remote_regs_[0].iovs()[odm_dev].devId;
+                    remote_iov_list.push_back(iov_remote);
                 } else {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
@@ -1608,6 +1683,8 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (xferBenchConfig::isBlkStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
+    } else if (XFERBENCH_BACKEND_MARVELL_ODM == xferBenchConfig::backend) {
+        remote_desc = nixl_xfer_dlist_t(DRAM_SEG);
     } else if (xferBenchConfig::isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
     }
@@ -1622,6 +1699,8 @@ getRemoteSegType() {
         return OBJ_SEG;
     } else if (xferBenchConfig::isBlkStorageBackend()) {
         return BLK_SEG;
+    } else if (XFERBENCH_BACKEND_MARVELL_ODM == xferBenchConfig::backend) {
+        return DRAM_SEG;
     } else if (xferBenchConfig::isStorageBackend()) {
         return FILE_SEG;
     }
@@ -1643,7 +1722,14 @@ registerIterationMem(nixlAgent *agent,
         return rc;
     }
 
-    if (xferBenchConfig::isStorageBackend()) {
+    // MARVELL_ODM's remote descriptors carry a resolved offset into the
+    // single per-device region registered once in allocateMemory(), not a
+    // real device IOVA or addr=0 auto-allocate sentinel. Re-registering them
+    // per iteration here would make ODM's registerMem() treat that offset as
+    // a caller-supplied IOVA (since it is usually nonzero), which is wrong -
+    // the remote region should stay registered for the whole run.
+    if (xferBenchConfig::isStorageBackend() &&
+        XFERBENCH_BACKEND_MARVELL_ODM != xferBenchConfig::backend) {
         nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
         rc = agent->registerMem(remote_reg, &reg_args);
         if (rc != NIXL_SUCCESS) {
@@ -1669,7 +1755,11 @@ deregisterIterationMem(nixlAgent *agent,
         return rc;
     }
 
-    if (xferBenchConfig::isStorageBackend()) {
+    // See the matching comment in registerIterationMem: MARVELL_ODM's remote
+    // region is not re-registered per iteration, so it must not be
+    // deregistered per iteration either.
+    if (xferBenchConfig::isStorageBackend() &&
+        XFERBENCH_BACKEND_MARVELL_ODM != xferBenchConfig::backend) {
         nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
         rc = agent->deregisterMem(remote_reg, &reg_args);
         if (rc != NIXL_SUCCESS) {
