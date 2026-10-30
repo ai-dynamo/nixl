@@ -152,6 +152,7 @@ private:
     std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
     int nstreams;
     uint32_t dataQpCount_ = 1;
+    bool writeByteStriping_ = false;
 
     uint16_t local_port;
     int noSyncIters;

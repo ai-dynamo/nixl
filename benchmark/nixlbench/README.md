@@ -648,6 +648,8 @@ devices can differ between the initiator and target processes.
 --gpunetio_oob_list IFACE   # OOB interface name for the control path
 --gpunetio_gid_index N      # RoCE GID table index (default: 0)
 --gpunetio_oob_port PORT    # OOB TCP port (default: 6544)
+--gpunetio_data_qp_count N  # GPUNetIO WRITE QPs per peer [1-4] (default: 1)
+--gpunetio_write_byte_striping # Opt in to byte-balanced large WRITEs; needs data_qp_count > 1 (default: false)
 ```
 
 **OBJ (S3) Backend:**
