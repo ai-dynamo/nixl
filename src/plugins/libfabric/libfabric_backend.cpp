@@ -1214,14 +1214,23 @@ nixlLibfabricEngine::loadRemoteMD(const nixlBlobDesc &input,
     // Delegate to Rail Manager for SerDes operations (returns raw data)
     std::vector<uint64_t> remote_keys;
     uint64_t remote_addr;
-    nixl_status_t status = rail_manager_.deserializeMemoryKeys(
-        input.metaInfo, conn->rail_remote_addr_list_.at(0).size(), remote_keys, remote_addr);
+    LibfabricUtils::CudaIpcExport cuda_ipc;
+    nixl_status_t status =
+        rail_manager_.deserializeMemoryKeys(input.metaInfo,
+                                            conn->rail_remote_addr_list_.at(0).size(),
+                                            remote_keys,
+                                            remote_addr,
+                                            cuda_ipc);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager deserializeMemoryKeys failed with status: " << status;
         return status;
     }
 
-    return loadMetadataHelper(remote_keys, reinterpret_cast<void *>(remote_addr), conn, output);
+    status = loadMetadataHelper(remote_keys, reinterpret_cast<void *>(remote_addr), conn, output);
+    if (status == NIXL_SUCCESS) {
+        static_cast<nixlLibfabricPublicMetadata *>(output)->cuda_ipc_ = cuda_ipc;
+    }
+    return status;
 }
 
 nixl_status_t

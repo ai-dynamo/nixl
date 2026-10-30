@@ -108,6 +108,7 @@ private:
     std::vector<char *> src_ep_names_; // Source endpoint names, one per rail
     std::vector<size_t>
         remote_selected_endpoints_; // Remote rails selected, derived from rail_remote_key_list_.
+    LibfabricUtils::CudaIpcExport cuda_ipc_{}; // Peer CUDA IPC handle; empty host_id if not sent
 
 public:
     nixlLibfabricPublicMetadata() : nixlBackendMD(false) {}

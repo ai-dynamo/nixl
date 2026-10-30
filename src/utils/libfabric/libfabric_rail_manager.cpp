@@ -1217,6 +1217,10 @@ nixlLibfabricRailManager::serializeMemoryKeys(const std::vector<uint64_t> &keys,
     }
 
     ser_des.addBuf("addr", &buffer, sizeof(buffer));
+    LibfabricUtils::CudaIpcExport cuda_ipc;
+    if (LibfabricUtils::cudaIpcExportRange(buffer, cuda_ipc)) {
+        ser_des.addBuf("cuda_ipc", &cuda_ipc, sizeof(cuda_ipc));
+    }
     str = ser_des.exportStr();
 
     NIXL_DEBUG << "Serialized memory keys for " << keys.size() << " rails" << " (buffer=" << buffer
@@ -1228,7 +1232,8 @@ nixl_status_t
 nixlLibfabricRailManager::deserializeMemoryKeys(const std::string &serialized_data,
                                                 const size_t num_keys,
                                                 std::vector<uint64_t> &keys_out,
-                                                uint64_t &remote_addr_out) const {
+                                                uint64_t &remote_addr_out,
+                                                LibfabricUtils::CudaIpcExport &cuda_ipc_out) const {
     nixlSerDes ser_des;
     const nixl_status_t import_status = ser_des.importStr(serialized_data);
     if (import_status != NIXL_SUCCESS) {
@@ -1252,6 +1257,10 @@ nixlLibfabricRailManager::deserializeMemoryKeys(const std::string &serialized_da
     if (addr_status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to get remote address";
         return NIXL_ERR_BACKEND;
+    }
+    cuda_ipc_out = {};
+    if (ser_des.peekBufLen("cuda_ipc") == sizeof(cuda_ipc_out)) {
+        ser_des.getBuf("cuda_ipc", &cuda_ipc_out, sizeof(cuda_ipc_out));
     }
     NIXL_DEBUG << "Deserialized memory keys for " << keys_out.size() << " rails"
                << " (remote addr: " << (void *)remote_addr_out << ")";
