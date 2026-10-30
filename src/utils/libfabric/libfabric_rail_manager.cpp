@@ -499,7 +499,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                 req->remote_addr,
                                                 req->remote_key,
                                                 req,
-                                                fi_flags);
+                                                fi_flags | FI_REMOTE_CQ_DATA);
         } else {
             status = rails_[rail_id]->postRead(req->local_addr,
                                                req->chunk_size,
@@ -594,7 +594,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                     req->remote_addr,
                                                     req->remote_key,
                                                     req,
-                                                    fi_flags);
+                                                    fi_flags | FI_REMOTE_CQ_DATA);
             } else {
                 status = rails_[rail_id]->postRead(req->local_addr,
                                                    req->chunk_size,
