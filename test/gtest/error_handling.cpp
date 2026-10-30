@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 #include <nixl_types.h>
 #include "common.h"
+#include "common/hw_info.h"
 #include "nixl.h"
 #ifdef HAVE_UCX_BACKEND
 #include "ucx_utils.h"
@@ -313,6 +314,15 @@ TestErrorHandling::TestErrorHandling()
     m_env.addVar("UCX_RC_TIMEOUT", "100us");
     m_env.addVar("UCX_RC_RETRY_COUNT", "4");
     m_env.addVar("UCX_UD_TIMEOUT", "3s");
+    if (::nixl::hwInfo::instance().numEfaDevices > 0) {
+        // Exclude EFA SRD and UD (including ud_v:aux wireup) in peer-disconnect
+        // tests: uct_srd in UCX leaves send_op->ep NULL on control
+        // (UCT_SRD_CTL_ID_REQ) and AM packets so TX CQE errors do not invoke the
+        // endpoint error callback, and ud_verbs on EFA delays peer-failure
+        // detection until UCX_UD_TIMEOUT (3s) and lacks CQ notifications
+        // (req_notify_cq_support = 0) when used as an auxiliary wireup transport.
+        m_env.addVar("UCX_TLS", "^srd,ud_v,ud_v:aux");
+    }
     m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
 }
 

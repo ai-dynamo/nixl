@@ -10,8 +10,8 @@
                 "image": "${CONTAINER_IMAGE}",
                 "env": [
                     {
-                        "name": "UCX_VERSION",
-                        "value": "${UCX_VERSION}"
+                        "name": "NPROC",
+                        "value": "64"
                     },
                     {
                         "name": "TEST_LIBFABRIC",

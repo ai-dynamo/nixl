@@ -18,8 +18,14 @@
 
 #include <algorithm>
 #include <array>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+
+extern "C" {
+#include <ucs/config/global_opts.h>
+}
 
 #include "common/configuration.h"
 #include "common/hw_info.h"
@@ -87,6 +93,23 @@ config::validateTlsCudaSupport() const {
 
 ucp_config_t *
 config::readUcpConfig() {
+    static std::mutex mutex;
+    const std::lock_guard lock(mutex);
+
+    if (nixl::hwInfo::instance().numEfaDevices == 0 &&
+        !nixl::config::internal::getenvOptional("UCX_MODULES")) {
+        char modules_buf[64] = {};
+        if (ucs_global_opts_get_value("MODULES", modules_buf, sizeof(modules_buf)) == UCS_OK &&
+            std::string_view(modules_buf) == "all") {
+            const auto mod_status = ucs_global_opts_set_value("MODULES", "^efa");
+            if (mod_status != UCS_OK) {
+                NIXL_DEBUG << "Failed to set UCX MODULES=^efa: " << ucs_status_string(mod_status);
+            } else {
+                NIXL_DEBUG << "No EFA devices detected; set UCX MODULES=^efa";
+            }
+        }
+    }
+
     ucp_config_t *config = nullptr;
     const auto status = ucp_config_read(nullptr, nullptr, &config);
     if (status != UCS_OK) {
