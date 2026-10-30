@@ -10,6 +10,10 @@
                 "image": "${CONTAINER_IMAGE}",
                 "env": [
                     {
+                        "name": "NPROC",
+                        "value": "64"
+                    },
+                    {
                         "name": "TEST_LIBFABRIC",
                         "value": "true"
                     },
