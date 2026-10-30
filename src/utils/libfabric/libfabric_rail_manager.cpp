@@ -267,6 +267,21 @@ nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
     }
     NIXL_INFO << "CUDA dmabuf mapping mode: " << dmabuf_mapping;
 
+    // get the bound on the memory registrations each rail tracks for de-duplication from
+    // configuration or environment variable (see NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT)
+    // NOTE: corresponding env var is NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES
+    size_t mr_cache_max_entries = NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT;
+    LibfabricUtils::getCustomIntParam(custom_params, "mr_cache_max_entries", mr_cache_max_entries);
+    if (mr_cache_max_entries == 0) {
+        NIXL_WARN << "Invalid mr_cache_max_entries configuration value 0, using default: "
+                  << NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT;
+        mr_cache_max_entries = NIXL_LIBFABRIC_MR_CACHE_MAX_ENTRIES_DEFAULT;
+    }
+    // the rails already exist (createRails() runs in the constructor)
+    for (auto &rail : rails_) {
+        rail->setMRCacheMaxEntries(mr_cache_max_entries);
+    }
+
     // load from config or compute bandwidth limit per NUMA node
     // then from that deduce rail count limit
     // finally choose appropriate rail selection policy:
