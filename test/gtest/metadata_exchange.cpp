@@ -387,9 +387,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
 
     ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-
-    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+    ASSERT_TRUE(
+        waitUntil([&] { return dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) == NIXL_SUCCESS; }));
 
     ASSERT_EQ(src.agent->invalidateLocalMD(&send_args), NIXL_SUCCESS);
 
@@ -427,7 +426,6 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
-    auto sleep_time = std::chrono::seconds(1);
     nixl_blob_t md;
 
     nixl_opt_args_t fetch_args;
@@ -435,16 +433,16 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
     fetch_args.port = src.port;
 
     ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &fetch_args), NIXL_SUCCESS);
-    std::this_thread::sleep_for(sleep_time);
-    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+    ASSERT_TRUE(
+        waitUntil([&] { return dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) == NIXL_SUCCESS; }));
 
     nixl_opt_args_t invalidate_args;
     invalidate_args.ipAddr = dst.ip;
     invalidate_args.port = dst.port;
 
     ASSERT_EQ(src.agent->invalidateLocalMD(&invalidate_args), NIXL_SUCCESS);
-    std::this_thread::sleep_for(sleep_time);
-    ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+    ASSERT_TRUE(
+        waitUntil([&] { return dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) != NIXL_SUCCESS; }));
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
