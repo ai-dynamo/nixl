@@ -27,13 +27,13 @@
 #include <vector>
 
 #include "backend/backend_engine.h"
-#include "rados_capi.h"
+#include "rados_api.h"
 #include "rados_config.h"
 
 namespace nixl::rados {
 
 // Timeout-only status-wait seam: no wake channel or early wakeup, and the
-// cApi surface never learns a timer exists.
+// radosApi surface never learns a timer exists.
 class statusWaitTimer {
 public:
     statusWaitTimer(const statusWaitTimer &) = delete;
@@ -73,7 +73,7 @@ public:
     explicit nixlRadosEngine(const nixlBackendInitParams *init_params);
 
     nixlRadosEngine(const nixlBackendInitParams *init_params,
-                    std::unique_ptr<nixl::rados::cApi> capi,
+                    std::unique_ptr<nixl::rados::radosApi> api,
                     std::unique_ptr<nixl::rados::statusWaitTimer> status_wait_timer = nullptr);
 
     ~nixlRadosEngine() override;
@@ -160,21 +160,21 @@ private:
     void
     drainRequestState(const std::shared_ptr<directRequestState> &state) const;
 
-    std::unique_ptr<nixl::rados::cApi> capi_;
+    std::unique_ptr<nixl::rados::radosApi> api_;
     uint64_t statusWaitBudgetUs_ = 0;
     std::unique_ptr<nixl::rados::statusWaitTimer> statusWaitTimer_;
     rados_t cluster_ = nullptr;
     rados_ioctx_t ioctx_ = nullptr;
-    mutable librados::IoCtx cppCtx_;
+    mutable librados::IoCtx dataView_;
     bool clusterCreated_ = false;
     bool ioctxOpen_ = false;
-    bool cppCtxOpen_ = false;
+    bool dataViewOpen_ = false;
 
     // Independent stat-only client for queryMem, bootstrapped from the same
     // parsed config; committed and retired as one unit, never by transfer paths.
     rados_t metaCluster_ = nullptr;
     rados_ioctx_t metaIoctx_ = nullptr;
-    mutable librados::IoCtx metaCppCtx_;
+    mutable librados::IoCtx metaView_;
     bool metaClientOpen_ = false;
 
     mutable std::mutex objectsMutex_;

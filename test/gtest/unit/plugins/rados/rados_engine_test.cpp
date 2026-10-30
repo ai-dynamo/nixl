@@ -38,24 +38,21 @@
 #include <vector>
 
 #include "rados_backend.h"
-#include "rados_capi.h"
+#include "rados_api.h"
 
 namespace gtest::rados {
 
 namespace {
 
-    enum class stage { pending, complete_only, retired };
+    enum class stage { pending, retired };
 
-    struct fakeCCompletion {
-        stage completion_stage = stage::pending;
-        int rc = 0;
-        bool waited = false;
-        int releases = 0;
-        bool released_unretired = false;
-        bool submitted = false;
-    };
+    // Byte the fake writes into a read destination when modeling delivered payload.
+    constexpr unsigned char kDeliveredByte = 0x5a;
 
-    struct fakeCppCompletion {
+    // Pre-set caller-destination byte proving that no read path wrote the buffer.
+    constexpr unsigned char kSentinelByte = 0xc7;
+
+    struct fakeCompletion {
         stage completion_stage = stage::pending;
         int rc = 0;
         bool waited = false;
@@ -77,8 +74,7 @@ namespace {
         uint64_t offset;
         uintptr_t buf;
         uint64_t len;
-        fakeCCompletion *c_comp;
-        fakeCppCompletion *cpp_comp;
+        fakeCompletion *comp;
         const librados::bufferlist *payload;
         std::string payload_at_release;
         uintptr_t payload_alias;
@@ -92,20 +88,17 @@ namespace {
         bool released = false;
     };
 
-    class fakeCApi final : public nixl::rados::cApi {
+    class fakeRadosApi final : public nixl::rados::radosApi {
     public:
-        fakeCApi()
+        fakeRadosApi()
             : log(std::make_shared<std::vector<std::string>>()),
               view_bind_order(std::make_shared<std::vector<librados::IoCtx *>>()),
               view_close_order(std::make_shared<std::vector<librados::IoCtx *>>()) {}
 
-        ~fakeCApi() override {
+        ~fakeRadosApi() override {
             EXPECT_TRUE(violations.empty()) << violations;
-            for (const auto &comp : c_completions) {
-                EXPECT_EQ(comp->releases, 1) << "C completion leaked or double-released";
-            }
-            for (const auto &comp : cpp_completions) {
-                EXPECT_EQ(comp->releases, 1) << "C++ completion leaked or double-released";
+            for (const auto &comp : completions) {
+                EXPECT_EQ(comp->releases, 1) << "completion leaked or double-released";
             }
             for (const auto &rec : clusters) {
                 EXPECT_FALSE(rec.live) << "cluster handle left open at fake teardown";
@@ -135,24 +128,19 @@ namespace {
         int connect_fail_ordinal = -1;
         int ioctx_create_fail_ordinal = -1;
 
-        int c_create_completion_fail_after = -1;
-        int c_submit_fail_after = -1;
-        int cpp_create_completion_fail_after = -1;
-        int cpp_submit_fail_after = -1;
-        int cpp_write_throw_after = -1;
-        int cpp_aio_stat_create_fail_at = -1;
-        int cpp_aio_stat_submit_fail_at = -1;
+        int create_completion_fail_after = -1;
+        int submit_fail_after = -1;
+        int write_throw_after = -1;
+        int aio_stat_create_fail_at = -1;
+        int aio_stat_submit_fail_at = -1;
 
         std::vector<submission> submissions;
-        int c_waits = 0;
-        int cpp_waits = 0;
-        int c_releases = 0;
-        int cpp_releases = 0;
-        int c_rc_reads = 0;
-        int cpp_rc_reads = 0;
-        int cpp_create_attempts = 0;
+        int waits = 0;
+        int releases = 0;
+        int rc_reads = 0;
+        int create_attempts = 0;
         int stat_submits = 0;
-        std::vector<fakeCppCompletion *> stat_comps;
+        std::vector<fakeCompletion *> stat_comps;
         std::map<std::string, uint64_t> stat_sizes;
         std::map<std::string, int> stat_errors;
         std::vector<std::string> stat_oids;
@@ -163,7 +151,7 @@ namespace {
         std::vector<std::string> namespaces;
         std::vector<librados::IoCtx *> stat_ctxs;
         std::vector<librados::IoCtx *> write_ctxs;
-        std::vector<size_t> read_ioctx_ordinals;
+        std::vector<librados::IoCtx *> read_ctxs;
         wait_gate gate;
 
         void
@@ -190,22 +178,20 @@ namespace {
         completeSubmission(size_t i, int rc) {
             ASSERT_LT(i, submissions.size());
             submissions[i].payload_at_release.clear();
+            ASSERT_NE(submissions[i].comp, nullptr);
+            submissions[i].comp->rc = rc;
             if (submissions[i].is_write) {
-                ASSERT_NE(submissions[i].cpp_comp, nullptr);
-                submissions[i].cpp_comp->rc = rc;
-                if (submissions[i].cpp_comp->is_stat) {
-                    fillStatCells(submissions[i].cpp_comp);
-                    submissions[i].cpp_comp->completion_stage = stage::retired;
+                if (submissions[i].comp->is_stat) {
+                    fillStatCells(submissions[i].comp);
+                    submissions[i].comp->completion_stage = stage::retired;
                     return;
                 }
                 ASSERT_NE(submissions[i].payload, nullptr);
                 submissions[i].payload_at_release = submissions[i].payload->to_str();
-                submissions[i].cpp_comp->completion_stage = stage::retired;
             } else {
-                ASSERT_NE(submissions[i].c_comp, nullptr);
-                submissions[i].c_comp->rc = rc;
-                submissions[i].c_comp->completion_stage = stage::retired;
+                modelReadDelivery(submissions[i], rc);
             }
+            submissions[i].comp->completion_stage = stage::retired;
         }
 
         void
@@ -215,24 +201,31 @@ namespace {
                                submissions[i].is_write ? 0 : static_cast<int>(submissions[i].len));
         }
 
+        // Model librados replacing read output with a single owned buffer or split fragments.
         void
-        completeButUnretired(size_t i) {
+        replaceReadOutput(size_t i, const std::string &data, size_t chunk) {
             ASSERT_LT(i, submissions.size());
-            if (submissions[i].is_write) {
-                submissions[i].cpp_comp->completion_stage = stage::complete_only;
+            ASSERT_FALSE(submissions[i].is_write);
+            ASSERT_NE(submissions[i].payload, nullptr);
+            ASSERT_FALSE(submissions[i].comp->completion_stage == stage::retired)
+                << "replacement output must be configured before retirement";
+            auto *bl = const_cast<librados::bufferlist *>(submissions[i].payload);
+            ASSERT_NE(bl->get_num_buffers(), 0U);
+            const uintptr_t caller_dram = PayloadAddr(*bl);
+            bl->clear();
+            if (chunk == 0 || chunk >= data.size()) {
+                bl->append(data.data(), static_cast<unsigned>(data.size()));
+                ASSERT_EQ(bl->get_num_buffers(), 1U);
             } else {
-                submissions[i].c_comp->completion_stage = stage::complete_only;
+                for (size_t off = 0; off < data.size(); off += chunk) {
+                    librados::bufferlist part;
+                    part.append(data.data() + off,
+                                static_cast<unsigned>(std::min(chunk, data.size() - off)));
+                    bl->claim_append(part);
+                }
+                ASSERT_GT(bl->get_num_buffers(), 1U);
             }
-        }
-
-        void
-        retire(size_t i) {
-            ASSERT_LT(i, submissions.size());
-            if (submissions[i].is_write) {
-                submissions[i].cpp_comp->completion_stage = stage::retired;
-            } else {
-                submissions[i].c_comp->completion_stage = stage::retired;
-            }
+            ASSERT_NE(PayloadAddr(*bl), caller_dram) << "replacement must not alias caller DRAM";
         }
 
         int
@@ -325,6 +318,36 @@ namespace {
         }
 
         void
+        ioctxFromRaw(rados_ioctx_t raw, librados::IoCtx *ctx) override {
+            log->push_back("ioctx_from_raw");
+            if (!requireLiveIoctx(raw)) {
+                return;
+            }
+            EXPECT_NE(ctx, nullptr);
+            view_bind_order->push_back(ctx);
+        }
+
+        void
+        ioctxClose(librados::IoCtx *ctx) override {
+            log->push_back("ioctx_close");
+            EXPECT_NE(ctx, nullptr);
+            if (std::find(view_bind_order->begin(), view_bind_order->end(), ctx) ==
+                view_bind_order->end()) {
+                violations += "IoCtx view closed without having been bound\n";
+            } else if (std::find(view_close_order->begin(), view_close_order->end(), ctx) !=
+                       view_close_order->end()) {
+                violations += "IoCtx view closed more than once\n";
+            } else {
+                view_close_order->push_back(ctx);
+            }
+            for (const auto &sub : submissions) {
+                if (sub.comp != nullptr && sub.comp->releases == 0) {
+                    violations += "IoCtx closed with an unreleased completion\n";
+                }
+            }
+        }
+
+        void
         ioctx_destroy(rados_ioctx_t ioctx) override {
             log->push_back("ioctx_destroy");
             for (auto &rec : ioctxs) {
@@ -354,186 +377,38 @@ namespace {
             violations += "cluster shut down without a created handle\n";
         }
 
-        void
-        ioctxFromRaw(rados_ioctx_t raw, librados::IoCtx *ctx) override {
-            log->push_back("ioctx_from_raw");
-            if (!requireLiveIoctx(raw)) {
-                return;
+        librados::AioCompletion *
+        createCompletion() noexcept override {
+            log->push_back("create_completion");
+            const int attempt = create_attempts++;
+            if (aio_stat_create_fail_at >= 0 && attempt == aio_stat_create_fail_at) {
+                return nullptr;
             }
-            EXPECT_NE(ctx, nullptr);
-            view_bind_order->push_back(ctx);
-        }
-
-        void
-        ioCtxClose(librados::IoCtx *ctx) override {
-            log->push_back("ioctx_close");
-            EXPECT_NE(ctx, nullptr);
-            if (std::find(view_bind_order->begin(), view_bind_order->end(), ctx) ==
-                view_bind_order->end()) {
-                violations += "IoCtx view closed without having been bound\n";
-            } else if (std::find(view_close_order->begin(), view_close_order->end(), ctx) !=
-                       view_close_order->end()) {
-                violations += "IoCtx view closed more than once\n";
-            } else {
-                view_close_order->push_back(ctx);
+            if (create_completion_fail_after >= 0 &&
+                static_cast<int>(completions.size()) >= create_completion_fail_after) {
+                return nullptr;
             }
-            for (const auto &sub : submissions) {
-                if (sub.cpp_comp != nullptr && sub.cpp_comp->releases == 0) {
-                    violations += "IoCtx closed with an unreleased C++ completion\n";
-                }
-                if (sub.c_comp != nullptr && sub.c_comp->releases == 0) {
-                    violations += "IoCtx closed with an unreleased C completion\n";
-                }
-            }
+            completions.push_back(std::make_unique<fakeCompletion>());
+            return reinterpret_cast<librados::AioCompletion *>(completions.back().get());
         }
 
         int
-        cCreateCompletion(rados_completion_t *pc) override {
-            log->push_back("c_create_completion");
-            *pc = nullptr;
-            if (c_create_completion_fail_after >= 0 &&
-                static_cast<int>(c_completions.size()) >= c_create_completion_fail_after) {
-                return -ENOMEM;
-            }
-            c_completions.push_back(std::make_unique<fakeCCompletion>());
-            *pc = reinterpret_cast<rados_completion_t>(c_completions.back().get());
-            return 0;
-        }
-
-        int
-        cRead(rados_ioctx_t ioctx,
-              const char *oid,
-              rados_completion_t completion,
-              char *buf,
-              size_t len,
-              uint64_t off) override {
-            log->push_back("c_read");
-            if (!requireLiveIoctx(ioctx)) {
-                violations += "C read submitted on an unavailable ioctx\n";
-                return -EINVAL;
-            }
-            for (size_t i = 0; i < ioctxs.size(); ++i) {
-                if (ioctxs[i].token == ioctx) {
-                    read_ioctx_ordinals.push_back(i);
-                }
-            }
-            fakeCCompletion *comp = asC(completion);
-            if (comp == nullptr) {
-                violations += "C read submitted with a foreign completion token\n";
-                return -EINVAL;
-            }
-            if (c_submit_fail_after >= 0 &&
-                static_cast<int>(submissions.size()) >= c_submit_fail_after) {
-                return -EIO;
-            }
-            submissions.push_back({false,
-                                   oid,
-                                   off,
-                                   reinterpret_cast<uintptr_t>(buf),
-                                   len,
-                                   comp,
-                                   nullptr,
-                                   nullptr,
-                                   {},
-                                   0});
-            comp->submitted = true;
-            return 0;
-        }
-
-        int
-        cIsCompleteAndCb(rados_completion_t completion) override {
-            log->push_back("c_is_complete_and_cb");
-            fakeCCompletion *comp = asC(completion);
-            if (comp == nullptr) {
-                violations += "C poll on a foreign completion token\n";
-                return 0;
-            }
-            return comp->completion_stage == stage::retired ? 1 : 0;
-        }
-
-        int
-        cGetReturnValue(rados_completion_t completion) override {
-            log->push_back("c_get_return_value");
-            fakeCCompletion *comp = asC(completion);
-            if (comp == nullptr) {
-                violations += "C return value read on a foreign completion token\n";
-                return -EINVAL;
-            }
-            ++c_rc_reads;
-            if (comp->completion_stage != stage::retired) {
-                violations += "C return value read before complete-and-cb\n";
-            }
-            return comp->rc;
-        }
-
-        int
-        cWaitForCompleteAndCb(rados_completion_t completion) override {
-            log->push_back("c_wait_for_complete_and_cb");
-            fakeCCompletion *comp = asC(completion);
-            if (comp == nullptr) {
-                violations += "C wait on a foreign completion token\n";
-                return -EINVAL;
-            }
-            ++c_waits;
-            comp->waited = true;
-            blockOnGateIfNeeded();
-            comp->completion_stage = stage::retired;
-            return 0;
-        }
-
-        void
-        cRelease(rados_completion_t completion) override {
-            log->push_back("c_release");
-            fakeCCompletion *comp = asC(completion);
-            if (comp == nullptr) {
-                violations += "C release on a foreign completion token\n";
-                return;
-            }
-            ++c_releases;
-            ++comp->releases;
-            if (comp->releases > 1) {
-                violations += "C completion released more than once\n";
-            }
-            if (comp->submitted && comp->completion_stage != stage::retired) {
-                violations += "submitted C completion released without wait/proof\n";
-                comp->released_unretired = true;
-            }
-        }
-
-        int
-        cppCreateCompletion(librados::AioCompletion **pc) override {
-            log->push_back("cpp_create_completion");
-            const int attempt = cpp_create_attempts++;
-            *pc = nullptr;
-            if (cpp_aio_stat_create_fail_at >= 0 && attempt == cpp_aio_stat_create_fail_at) {
-                return -ENOMEM;
-            }
-            if (cpp_create_completion_fail_after >= 0 &&
-                static_cast<int>(cpp_completions.size()) >= cpp_create_completion_fail_after) {
-                return -ENOMEM;
-            }
-            cpp_completions.push_back(std::make_unique<fakeCppCompletion>());
-            *pc = reinterpret_cast<librados::AioCompletion *>(cpp_completions.back().get());
-            return 0;
-        }
-
-        int
-        cppAioStat(librados::IoCtx *ctx,
-                   const char *oid,
-                   librados::AioCompletion *completion,
-                   std::optional<uint64_t> *psize,
-                   std::optional<int> *prval,
-                   std::optional<librados::bufferlist> *pbl) override {
-            log->push_back("cpp_aio_stat");
+        aioStat(librados::IoCtx *ctx,
+                const char *oid,
+                librados::AioCompletion *completion,
+                std::optional<uint64_t> *psize,
+                std::optional<int> *prval,
+                std::optional<librados::bufferlist> *pbl) override {
+            log->push_back("aio_stat");
             EXPECT_NE(ctx, nullptr);
             stat_ctxs.push_back(ctx);
-            fakeCppCompletion *comp = asCpp(completion);
+            fakeCompletion *comp = asFakeCompletion(completion);
             if (comp == nullptr) {
-                violations += "C++ async stat submitted with a foreign completion token\n";
+                violations += "async stat submitted with a foreign completion token\n";
                 return -EINVAL;
             }
             if (psize == nullptr || prval == nullptr || pbl == nullptr) {
-                violations += "C++ async stat submitted with null output cells\n";
+                violations += "async stat submitted with null output cells\n";
                 return -EINVAL;
             }
             psize->emplace(0);
@@ -559,81 +434,108 @@ namespace {
             }
             stat_comps.push_back(comp);
             const int ordinal = stat_submits++;
-            if (cpp_aio_stat_submit_fail_at >= 0 && ordinal == cpp_aio_stat_submit_fail_at) {
+            if (aio_stat_submit_fail_at >= 0 && ordinal == aio_stat_submit_fail_at) {
                 return -EIO;
             }
-            submissions.push_back({true, oid, 0, 0, 0, nullptr, comp, nullptr, {}, 0});
+            submissions.push_back({true, oid, 0, 0, 0, comp, nullptr, {}, 0});
             comp->submitted = true;
             return 0;
         }
 
         int
-        cppWrite(librados::IoCtx *ctx,
+        aioRead(librados::IoCtx *ctx,
+                const char *oid,
+                librados::AioCompletion *completion,
+                librados::bufferlist *bl,
+                size_t len,
+                uint64_t off) override {
+            log->push_back("aio_read");
+            EXPECT_NE(ctx, nullptr);
+            read_ctxs.push_back(ctx);
+            fakeCompletion *comp = asFakeCompletion(completion);
+            if (comp == nullptr || bl == nullptr) {
+                violations += "read submitted with invalid arguments\n";
+                return -EINVAL;
+            }
+            if (bl->length() != len || PayloadAddr(*bl) == 0) {
+                violations += "read payload does not describe caller DRAM\n";
+            }
+            if (submit_fail_after >= 0 &&
+                static_cast<int>(submissions.size()) >= submit_fail_after) {
+                return -EIO;
+            }
+            submissions.push_back(
+                {false, oid, off, PayloadAddr(*bl), len, comp, bl, {}, PayloadAddr(*bl)});
+            comp->submitted = true;
+            return 0;
+        }
+
+        int
+        aioWrite(librados::IoCtx *ctx,
                  const char *oid,
                  librados::AioCompletion *completion,
                  const librados::bufferlist &bl,
                  size_t len,
                  uint64_t off) override {
-            log->push_back("cpp_write");
+            log->push_back("aio_write");
             EXPECT_NE(ctx, nullptr);
             write_ctxs.push_back(ctx);
-            fakeCppCompletion *comp = asCpp(completion);
+            fakeCompletion *comp = asFakeCompletion(completion);
             if (comp == nullptr) {
-                violations += "C++ write submitted with a foreign completion token\n";
+                violations += "write submitted with a foreign completion token\n";
                 return -EINVAL;
             }
             if (bl.length() != len) {
-                violations += "C++ write payload length does not match the request\n";
+                violations += "write payload length does not match the request\n";
             }
-            if (cpp_write_throw_after >= 0 &&
-                static_cast<int>(submissions.size()) >= cpp_write_throw_after) {
+            if (write_throw_after >= 0 &&
+                static_cast<int>(submissions.size()) >= write_throw_after) {
                 throw std::bad_alloc();
             }
-            if (cpp_submit_fail_after >= 0 &&
-                static_cast<int>(submissions.size()) >= cpp_submit_fail_after) {
+            if (submit_fail_after >= 0 &&
+                static_cast<int>(submissions.size()) >= submit_fail_after) {
                 return -EIO;
             }
-            submissions.push_back(
-                {true, oid, off, 0, len, nullptr, comp, &bl, {}, PayloadAddr(bl)});
+            submissions.push_back({true, oid, off, 0, len, comp, &bl, {}, PayloadAddr(bl)});
             comp->submitted = true;
             return 0;
         }
 
         int
-        cppIsCompleteAndCb(librados::AioCompletion *completion) override {
-            log->push_back("cpp_is_complete_and_cb");
-            fakeCppCompletion *comp = asCpp(completion);
+        isCompleteAndCb(librados::AioCompletion *completion) override {
+            log->push_back("is_complete_and_cb");
+            fakeCompletion *comp = asFakeCompletion(completion);
             if (comp == nullptr) {
-                violations += "C++ poll on a foreign completion token\n";
+                violations += "poll on a foreign completion token\n";
                 return 0;
             }
             return comp->completion_stage == stage::retired ? 1 : 0;
         }
 
         int
-        cppGetReturnValue(librados::AioCompletion *completion) override {
-            log->push_back("cpp_get_return_value");
-            fakeCppCompletion *comp = asCpp(completion);
+        getReturnValue(librados::AioCompletion *completion) override {
+            log->push_back("get_return_value");
+            fakeCompletion *comp = asFakeCompletion(completion);
             if (comp == nullptr) {
-                violations += "C++ return value read on a foreign completion token\n";
+                violations += "return value read on a foreign completion token\n";
                 return -EINVAL;
             }
-            ++cpp_rc_reads;
+            ++rc_reads;
             if (comp->completion_stage != stage::retired) {
-                violations += "C++ return value read before complete-and-cb\n";
+                violations += "return value read before complete-and-cb\n";
             }
             return comp->rc;
         }
 
         int
-        cppWaitForCompleteAndCb(librados::AioCompletion *completion) override {
-            log->push_back("cpp_wait_for_complete_and_cb");
-            fakeCppCompletion *comp = asCpp(completion);
+        waitForCompleteAndCb(librados::AioCompletion *completion) override {
+            log->push_back("wait_for_complete_and_cb");
+            fakeCompletion *comp = asFakeCompletion(completion);
             if (comp == nullptr) {
-                violations += "C++ wait on a foreign completion token\n";
+                violations += "wait on a foreign completion token\n";
                 return -EINVAL;
             }
-            ++cpp_waits;
+            ++waits;
             comp->waited = true;
             blockOnGateIfNeeded();
             if (comp->completion_stage != stage::retired) {
@@ -644,24 +546,24 @@ namespace {
         }
 
         void
-        cppRelease(librados::AioCompletion *completion) override {
-            log->push_back("cpp_release");
-            fakeCppCompletion *comp = asCpp(completion);
+        release(librados::AioCompletion *completion) override {
+            log->push_back("release");
+            fakeCompletion *comp = asFakeCompletion(completion);
             if (comp == nullptr) {
-                violations += "C++ release on a foreign completion token\n";
+                violations += "release on a foreign completion token\n";
                 return;
             }
-            ++cpp_releases;
+            ++releases;
             ++comp->releases;
             if (comp->releases > 1) {
-                violations += "C++ completion released more than once\n";
+                violations += "completion released more than once\n";
             }
             if (comp->submitted && comp->completion_stage != stage::retired) {
-                violations += "submitted C++ completion released without wait/proof\n";
+                violations += "submitted completion released without wait/proof\n";
                 comp->released_unretired = true;
             }
             for (auto &sub : submissions) {
-                if (sub.cpp_comp == comp) {
+                if (sub.comp == comp) {
                     sub.payload_at_release =
                         sub.payload == nullptr ? std::string{} : sub.payload->to_str();
                 }
@@ -680,8 +582,29 @@ namespace {
             gate.cv.wait(lock, [this] { return gate.released; });
         }
 
+        // Direct fill only for unreplaced full reads; short reads deliver owned output.
         static void
-        fillStatCells(fakeCppCompletion *comp) {
+        modelReadDelivery(const submission &sub, int rc) {
+            if (rc < 0 || static_cast<uint64_t>(rc) > sub.len) {
+                return;
+            }
+            auto *bl = const_cast<librados::bufferlist *>(sub.payload);
+            if (!bl->is_provided_buffer(reinterpret_cast<const char *>(sub.buf))) {
+                return;
+            }
+            if (static_cast<uint64_t>(rc) == sub.len) {
+                std::fill_n(reinterpret_cast<unsigned char *>(sub.buf),
+                            static_cast<size_t>(rc),
+                            kDeliveredByte);
+                return;
+            }
+            const std::string delivered(static_cast<size_t>(rc), kDeliveredByte);
+            bl->clear();
+            bl->append(delivered.data(), static_cast<unsigned>(rc));
+        }
+
+        static void
+        fillStatCells(fakeCompletion *comp) {
             if (!comp->is_stat || comp->prval_cell == nullptr) {
                 return;
             }
@@ -699,10 +622,10 @@ namespace {
             return 0;
         }
 
-        fakeCCompletion *
-        asC(rados_completion_t completion) {
-            auto *raw = reinterpret_cast<fakeCCompletion *>(completion);
-            for (const auto &comp : c_completions) {
+        fakeCompletion *
+        asFakeCompletion(librados::AioCompletion *completion) {
+            auto *raw = reinterpret_cast<fakeCompletion *>(completion);
+            for (const auto &comp : completions) {
                 if (comp.get() == raw) {
                     return raw;
                 }
@@ -710,19 +633,7 @@ namespace {
             return nullptr;
         }
 
-        fakeCppCompletion *
-        asCpp(librados::AioCompletion *completion) {
-            auto *raw = reinterpret_cast<fakeCppCompletion *>(completion);
-            for (const auto &comp : cpp_completions) {
-                if (comp.get() == raw) {
-                    return raw;
-                }
-            }
-            return nullptr;
-        }
-
-        std::vector<std::unique_ptr<fakeCCompletion>> c_completions;
-        std::vector<std::unique_ptr<fakeCppCompletion>> cpp_completions;
+        std::vector<std::unique_ptr<fakeCompletion>> completions;
 
         struct cluster_rec {
             rados_t token;
@@ -865,8 +776,8 @@ protected:
     std::shared_ptr<std::vector<std::string>> log;
 
     std::unique_ptr<nixlRadosEngine>
-    makeEngine(fakeCApi **retained_fake = nullptr) {
-        auto fake = std::make_unique<fakeCApi>();
+    makeEngine(fakeRadosApi **retained_fake = nullptr) {
+        auto fake = std::make_unique<fakeRadosApi>();
         log = fake->log;
         if (retained_fake != nullptr) {
             *retained_fake = fake.get();
@@ -876,8 +787,8 @@ protected:
 
     // Same as makeEngine, but injects the fake status-wait timer.
     std::unique_ptr<nixlRadosEngine>
-    makeEngineWithTimer(fakeCApi **retained_fake, const std::shared_ptr<timer_state> &state) {
-        auto fake = std::make_unique<fakeCApi>();
+    makeEngineWithTimer(fakeRadosApi **retained_fake, const std::shared_ptr<timer_state> &state) {
+        auto fake = std::make_unique<fakeRadosApi>();
         log = fake->log;
         if (retained_fake != nullptr) {
             *retained_fake = fake.get();
@@ -888,7 +799,7 @@ protected:
 
     // Representative successful construction: validBase parameters plus the two client bootstraps.
     std::unique_ptr<nixlRadosEngine>
-    makeReady(fakeCApi **retained_fake = nullptr) {
+    makeReady(fakeRadosApi **retained_fake = nullptr) {
         custom_params_ = validBase();
         auto engine = makeEngine(retained_fake);
         EXPECT_FALSE(engine->getInitErr());
@@ -901,6 +812,99 @@ protected:
         const nixlBlobDesc desc(0, 0, dev_id, key);
         EXPECT_EQ(engine.registerMem(desc, OBJ_SEG, md), NIXL_SUCCESS);
         return md;
+    }
+
+    // Three ordered pairs, one object; three rejection rounds; shared by write and read tests.
+    void
+    expectSubmissionStopsAtFirstRejectedPair(nixl_xfer_op_t op) {
+        const bool expect_write = (op == NIXL_WRITE);
+        const std::string verb = expect_write ? "aio_write" : "aio_read";
+        const char *direction = expect_write ? "write" : "read";
+        SCOPED_TRACE(direction);
+        fakeRadosApi *fake = nullptr;
+        auto engine = makeReady(&fake);
+        nixlBackendMD *md = registerObject(*engine, 1, "obj");
+        const one_pair pair(0, 192, 1, expect_write ? 0x33 : 0x00);
+        const uintptr_t base = reinterpret_cast<uintptr_t>(pair.buffer.data());
+        nixl_meta_dlist_t local(DRAM_SEG);
+        nixl_meta_dlist_t remote(OBJ_SEG);
+        for (int i = 0; i < 3; ++i) {
+            add_pair(local,
+                     remote,
+                     base + static_cast<uintptr_t>(i) * 64,
+                     64,
+                     static_cast<uint64_t>(i) * 64,
+                     1);
+        }
+        nixlBackendReqH *handle = nullptr;
+
+        fake->submit_fail_after = 0;
+        ASSERT_EQ(engine->prepXfer(op, local, remote, "test-agent", handle), NIXL_SUCCESS);
+        EXPECT_EQ(engine->postXfer(op, local, remote, "test-agent", handle), NIXL_ERR_BACKEND);
+        EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
+        EXPECT_TRUE(fake->submissions.empty());
+        EXPECT_EQ(fake->releases, 1);
+        EXPECT_EQ(fake->waits, 0);
+        EXPECT_EQ(fake->rc_reads, 0);
+        EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
+
+        fake->submit_fail_after = 1;
+        const int submits_before_second_round = std::count(log->begin(), log->end(), verb);
+        ASSERT_EQ(engine->prepXfer(op, local, remote, "test-agent", handle), NIXL_SUCCESS);
+        EXPECT_EQ(engine->postXfer(op, local, remote, "test-agent", handle), NIXL_IN_PROG);
+        ASSERT_EQ(fake->submissions.size(), 1U);
+        EXPECT_EQ(fake->submissions[0].offset, 0U) << "pairs submit in descriptor order";
+        EXPECT_EQ(fake->submissions[0].is_write, expect_write)
+            << "the accepted pair is a " << direction;
+        EXPECT_EQ(fake->releases, 2) << "the rejected pair's completion is released without wait";
+        EXPECT_EQ(fake->waits, 0);
+        EXPECT_EQ(std::count(log->begin(), log->end(), verb), submits_before_second_round + 2)
+            << "the third pair is never attempted";
+        EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
+        fake->completeSubmission(0);
+        EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
+        EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
+
+        fake->submit_fail_after = -1;
+        const int creates_before =
+            std::count(log->begin(), log->end(), std::string("create_completion"));
+        const int releases_before = fake->releases;
+        fake->create_completion_fail_after = creates_before + 1;
+        ASSERT_EQ(engine->prepXfer(op, local, remote, "test-agent", handle), NIXL_SUCCESS);
+        EXPECT_EQ(engine->postXfer(op, local, remote, "test-agent", handle), NIXL_IN_PROG);
+        ASSERT_EQ(fake->submissions.size(), 2U);
+        EXPECT_EQ(std::count(log->begin(), log->end(), std::string("create_completion")),
+                  creates_before + 2)
+            << "the factory-failed pair reserves no completion";
+        EXPECT_EQ(fake->releases, releases_before)
+            << "a factory-failed pair leaves nothing to release";
+        EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
+        fake->completeSubmission(1);
+        EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
+        EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
+
+        fake->create_completion_fail_after = 0;
+        const int creates_at_factory_round =
+            std::count(log->begin(), log->end(), std::string("create_completion"));
+        const int releases_at_factory_round = fake->releases;
+        const size_t submissions_at_factory_round = fake->submissions.size();
+        const int verbs_at_factory_round = std::count(log->begin(), log->end(), verb);
+        ASSERT_EQ(engine->prepXfer(op, local, remote, "test-agent", handle), NIXL_SUCCESS);
+        EXPECT_EQ(engine->postXfer(op, local, remote, "test-agent", handle), NIXL_ERR_BACKEND)
+            << "a factory failure with nothing accepted terminates directly";
+        EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
+        EXPECT_EQ(fake->submissions.size(), submissions_at_factory_round)
+            << "the factory-failed request submits nothing";
+        EXPECT_EQ(fake->releases, releases_at_factory_round)
+            << "a failed factory allocation leaves nothing to release";
+        EXPECT_EQ(fake->waits, 0);
+        EXPECT_EQ(std::count(log->begin(), log->end(), std::string("create_completion")),
+                  creates_at_factory_round + 1)
+            << "later pairs are never attempted after the factory fails";
+        EXPECT_EQ(std::count(log->begin(), log->end(), verb), verbs_at_factory_round)
+            << "the factory-failed pair never reaches submission";
+        EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
+        EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
     }
 
     nixlBackendInitParams init_params_;
@@ -948,7 +952,7 @@ TEST_F(radosEngineFixture, BootstrapsTwoClientsAndRetiresMetadataFirst) {
                                                     "ioctx_from_raw"};
     const std::vector<std::string> client_teardown{"ioctx_close", "ioctx_destroy", "shutdown"};
 
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     std::shared_ptr<std::vector<librados::IoCtx *>> binds;
     std::shared_ptr<std::vector<librados::IoCtx *>> closes;
     {
@@ -982,7 +986,7 @@ TEST_F(radosEngineFixture, BootstrapsTwoClientsAndRetiresMetadataFirst) {
 TEST_F(radosEngineFixture, NamespaceConfiguredOncePerClientBetweenIoctxCreateAndView) {
     custom_params_ = validBase();
     custom_params_["namespace"] = "qa-ns";
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     {
         auto engine = makeEngine(&fake);
         ASSERT_FALSE(engine->getInitErr());
@@ -1004,7 +1008,7 @@ TEST_F(radosEngineFixture, NamespaceConfiguredOncePerClientBetweenIoctxCreateAnd
 
 TEST_F(radosEngineFixture, BootstrapFailureUnwindsAndGatesRegistration) {
     custom_params_ = validBase();
-    auto failing = std::make_unique<fakeCApi>();
+    auto failing = std::make_unique<fakeRadosApi>();
     log = failing->log;
     failing->connect_rc = -EINVAL;
     {
@@ -1038,7 +1042,7 @@ TEST_F(radosEngineFixture, AdvertisesLocalOnlyDramAndObjSegments) {
 }
 
 TEST_F(radosEngineFixture, RegistrationBoundarySemantics) {
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     const auto engine = makeReady(&fake);
     const size_t seam_calls_after_bootstrap = log->size();
 
@@ -1089,7 +1093,7 @@ TEST_F(radosEngineFixture, RegistrationBoundarySemantics) {
 }
 
 TEST_F(radosEngineFixture, RegisterRejectsEmbeddedNulMetaInfoWithoutReservation) {
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     const auto engine = makeReady(&fake);
     const size_t seam_calls_after_bootstrap = log->size();
 
@@ -1122,7 +1126,7 @@ TEST_F(radosEngineFixture, RegisterRejectsEmbeddedNulMetaInfoWithoutReservation)
 }
 
 TEST_F(radosEngineFixture, PrepValidationGateTable) {
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeReady(&fake);
     [[maybe_unused]] nixlBackendMD *md_1 = registerObject(*engine, 1, "obj");
     [[maybe_unused]] nixlBackendMD *md_2 = registerObject(*engine, 2, "obj");
@@ -1281,8 +1285,8 @@ TEST_F(radosEngineFixture, PrepValidationGateTable) {
         EXPECT_EQ(handle, nullptr);
     }
     EXPECT_TRUE(fake->submissions.empty());
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("c_read")), 0);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_write")), 0);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("aio_read")), 0);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("aio_write")), 0);
 
     const nixl_meta_dlist_t empty_local(DRAM_SEG);
     const nixl_meta_dlist_t empty_remote(OBJ_SEG);
@@ -1298,7 +1302,7 @@ TEST_F(radosEngineFixture, PrepValidationGateTable) {
 // prepXfer snapshots key/pointer/offset/length/direction; postXfer is driven solely
 // by that state, ignoring its operation, descriptor, and agent arguments.
 TEST_F(radosEngineFixture, PreparedRequestKeepsSnapshottedKeyAfterDeregistration) {
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeReady(&fake);
     nixlBackendMD *md = registerObject(*engine, 1, "obj-a");
     ASSERT_NE(md, nullptr);
@@ -1328,9 +1332,9 @@ TEST_F(radosEngineFixture, PreparedRequestKeepsSnapshottedKeyAfterDeregistration
     EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
 }
 
-// C reads describe caller destination memory directly; results map per rc.
+// reads describe caller destination memory directly; results map per rc.
 TEST_F(radosEngineFixture, ReadResultMappingAndDirectCallerDestination) {
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeReady(&fake);
     nixlBackendMD *md = registerObject(*engine, 1, "obj");
 
@@ -1359,21 +1363,65 @@ TEST_F(radosEngineFixture, ReadResultMappingAndDirectCallerDestination) {
             EXPECT_EQ(sub.len, kLen);
             EXPECT_EQ(sub.buf, reinterpret_cast<uintptr_t>(pair.buffer.data()))
                 << "reads must land directly in caller destination memory";
-            EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_write")), 0);
+            EXPECT_EQ(std::count(log->begin(), log->end(), std::string("aio_write")), 0);
         }
         fake->completeSubmission(i, rc);
         EXPECT_EQ(engine->checkXfer(handle), expected) << "rc=" << rc;
         EXPECT_EQ(engine->checkXfer(handle), expected);
         EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
     }
-    EXPECT_EQ(fake->c_waits, 0) << "poll-driven harvest must never wait";
+    EXPECT_EQ(fake->waits, 0) << "poll-driven harvest must never wait";
     EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
 }
 
-// Writes borrow caller memory through a non-owning static view (never copied by
-// the plugin); results map per rc, with only exact zero being success.
+// A single-buffer replaced read output is copied into the caller destination before release.
+TEST_F(radosEngineFixture, SingleBufferReplacementReadOutputCopiesIntoCallerDestination) {
+    fakeRadosApi *fake = nullptr;
+    auto engine = makeReady(&fake);
+    nixlBackendMD *md = registerObject(*engine, 1, "obj");
+    const one_pair pair(0, 64, 1, kSentinelByte);
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(engine->prepXfer(NIXL_READ, pair.local, pair.remote, "test-agent", handle),
+              NIXL_SUCCESS);
+    ASSERT_EQ(engine->postXfer(NIXL_READ, pair.local, pair.remote, "test-agent", handle),
+              NIXL_IN_PROG);
+    fake->replaceReadOutput(0, std::string(64, 0x5c), 0);
+    fake->completeSubmission(0, 64);
+    EXPECT_EQ(engine->checkXfer(handle), NIXL_SUCCESS);
+    EXPECT_EQ(pair.buffer, (std::vector<unsigned char>(64, 0x5c)))
+        << "the single-buffer replacement must be copied into the caller destination";
+    EXPECT_EQ(fake->releases, 1) << "the settled read releases its completion";
+    EXPECT_EQ(fake->waits, 0);
+    EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
+    EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
+}
+
+// A fragmented replacement is copied fragment-by-fragment, never rejected for shape.
+TEST_F(radosEngineFixture, FragmentedReplacementReadOutputCopiesIntoCallerDestination) {
+    fakeRadosApi *fake = nullptr;
+    auto engine = makeReady(&fake);
+    nixlBackendMD *md = registerObject(*engine, 1, "obj");
+    const one_pair pair(0, 64, 1, kSentinelByte);
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(engine->prepXfer(NIXL_READ, pair.local, pair.remote, "test-agent", handle),
+              NIXL_SUCCESS);
+    ASSERT_EQ(engine->postXfer(NIXL_READ, pair.local, pair.remote, "test-agent", handle),
+              NIXL_IN_PROG);
+    fake->replaceReadOutput(0, std::string(64, 0x5c), 16);
+    fake->completeSubmission(0, 64);
+    EXPECT_EQ(engine->checkXfer(handle), NIXL_SUCCESS);
+    EXPECT_EQ(pair.buffer, (std::vector<unsigned char>(64, 0x5c)))
+        << "the fragmented replacement must be copied into the caller destination";
+    EXPECT_EQ(fake->releases, 1) << "the settled read releases its completion";
+    EXPECT_EQ(fake->waits, 0);
+    EXPECT_EQ(engine->checkXfer(handle), NIXL_SUCCESS) << "terminal status stays sticky";
+    EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
+    EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
+}
+
+// Writes borrow caller memory through a non-owning static view; only zero succeeds.
 TEST_F(radosEngineFixture, WriteResultMappingAndNonOwningPayload) {
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeReady(&fake);
     nixlBackendMD *md = registerObject(*engine, 1, "obj");
 
@@ -1399,8 +1447,7 @@ TEST_F(radosEngineFixture, WriteResultMappingAndNonOwningPayload) {
             EXPECT_EQ(sub.len, 64U);
             EXPECT_EQ(sub.payload_alias, reinterpret_cast<uintptr_t>(pair.buffer.data()))
                 << "the payload must alias caller DRAM, not a plugin copy";
-            EXPECT_EQ(std::count(log->begin(), log->end(), std::string("c_read")), 0);
-            EXPECT_EQ(std::count(log->begin(), log->end(), std::string("c_create_completion")), 0);
+            EXPECT_EQ(std::count(log->begin(), log->end(), std::string("aio_read")), 0);
         }
         fake->completeSubmission(i, rc);
         EXPECT_EQ(engine->checkXfer(handle), expected) << "rc=" << rc;
@@ -1409,144 +1456,21 @@ TEST_F(radosEngineFixture, WriteResultMappingAndNonOwningPayload) {
         }
         EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
     }
-    EXPECT_EQ(fake->cpp_waits, 0) << "poll-driven harvest must never wait";
+    EXPECT_EQ(fake->waits, 0) << "poll-driven harvest must never wait";
     EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
 }
 
-// Three ordered pairs against one object; rounds: zero-accepted terminal,
-// partial rejection stops later submissions, completion-factory rejection stops.
+// The two directions share the rounds; see expectSubmissionStopsAtFirstRejectedPair.
 TEST_F(radosEngineFixture, WriteSubmissionStopsAtFirstRejectedPairAndOwnsCompletions) {
-    fakeCApi *fake = nullptr;
-    auto engine = makeReady(&fake);
-    nixlBackendMD *md = registerObject(*engine, 1, "obj");
-    const one_pair pair(0, 192, 1, 0x33);
-    const uintptr_t base = reinterpret_cast<uintptr_t>(pair.buffer.data());
-    nixl_meta_dlist_t local(DRAM_SEG);
-    nixl_meta_dlist_t remote(OBJ_SEG);
-    for (int i = 0; i < 3; ++i) {
-        add_pair(local,
-                 remote,
-                 base + static_cast<uintptr_t>(i) * 64,
-                 64,
-                 static_cast<uint64_t>(i) * 64,
-                 1);
-    }
-    nixlBackendReqH *handle = nullptr;
-
-    fake->cpp_submit_fail_after = 0;
-    ASSERT_EQ(engine->prepXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_SUCCESS);
-    EXPECT_EQ(engine->postXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_ERR_BACKEND);
-    EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
-    EXPECT_TRUE(fake->submissions.empty());
-    EXPECT_EQ(fake->cpp_releases, 1);
-    EXPECT_EQ(fake->cpp_waits, 0);
-    EXPECT_EQ(fake->cpp_rc_reads, 0);
-    EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
-
-    fake->cpp_submit_fail_after = 1;
-    const int writes_before_second_round =
-        std::count(log->begin(), log->end(), std::string("cpp_write"));
-    ASSERT_EQ(engine->prepXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_SUCCESS);
-    EXPECT_EQ(engine->postXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_IN_PROG);
-    ASSERT_EQ(fake->submissions.size(), 1U);
-    EXPECT_EQ(fake->submissions[0].offset, 0U) << "pairs submit in descriptor order";
-    EXPECT_EQ(fake->cpp_releases, 2) << "the rejected pair's completion is released without wait";
-    EXPECT_EQ(fake->cpp_waits, 0);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_write")),
-              writes_before_second_round + 2)
-        << "the third pair is never attempted";
-    EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
-    fake->completeSubmission(0);
-    EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
-    EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
-
-    fake->cpp_submit_fail_after = -1;
-    const int creates_before =
-        std::count(log->begin(), log->end(), std::string("cpp_create_completion"));
-    const int releases_before = fake->cpp_releases;
-    fake->cpp_create_completion_fail_after = creates_before + 1;
-    ASSERT_EQ(engine->prepXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_SUCCESS);
-    EXPECT_EQ(engine->postXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_IN_PROG);
-    ASSERT_EQ(fake->submissions.size(), 2U);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_create_completion")),
-              creates_before + 2)
-        << "the factory-failed pair reserves no completion";
-    EXPECT_EQ(fake->cpp_releases, releases_before)
-        << "a factory-failed pair leaves nothing to release";
-    EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
-    fake->completeSubmission(1);
-    EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
-    EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
-    EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
+    expectSubmissionStopsAtFirstRejectedPair(NIXL_WRITE);
 }
 
 TEST_F(radosEngineFixture, ReadSubmissionStopsAtFirstRejectedPairAndOwnsCompletions) {
-    fakeCApi *fake = nullptr;
-    auto engine = makeReady(&fake);
-    nixlBackendMD *md = registerObject(*engine, 1, "obj");
-    const one_pair pair(0, 192, 1, 0x00);
-    const uintptr_t base = reinterpret_cast<uintptr_t>(pair.buffer.data());
-    nixl_meta_dlist_t local(DRAM_SEG);
-    nixl_meta_dlist_t remote(OBJ_SEG);
-    for (int i = 0; i < 3; ++i) {
-        add_pair(local,
-                 remote,
-                 base + static_cast<uintptr_t>(i) * 64,
-                 64,
-                 static_cast<uint64_t>(i) * 64,
-                 1);
-    }
-    nixlBackendReqH *handle = nullptr;
-
-    fake->c_submit_fail_after = 0;
-    ASSERT_EQ(engine->prepXfer(NIXL_READ, local, remote, "test-agent", handle), NIXL_SUCCESS);
-    EXPECT_EQ(engine->postXfer(NIXL_READ, local, remote, "test-agent", handle), NIXL_ERR_BACKEND);
-    EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
-    EXPECT_TRUE(fake->submissions.empty());
-    EXPECT_EQ(fake->c_releases, 1);
-    EXPECT_EQ(fake->c_waits, 0);
-    EXPECT_EQ(fake->c_rc_reads, 0);
-    EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
-
-    fake->c_submit_fail_after = 1;
-    const int reads_before_second_round =
-        std::count(log->begin(), log->end(), std::string("c_read"));
-    ASSERT_EQ(engine->prepXfer(NIXL_READ, local, remote, "test-agent", handle), NIXL_SUCCESS);
-    EXPECT_EQ(engine->postXfer(NIXL_READ, local, remote, "test-agent", handle), NIXL_IN_PROG);
-    ASSERT_EQ(fake->submissions.size(), 1U);
-    EXPECT_EQ(fake->submissions[0].offset, 0U) << "pairs submit in descriptor order";
-    EXPECT_EQ(fake->c_releases, 2) << "the rejected pair's completion is released without wait";
-    EXPECT_EQ(fake->c_waits, 0);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("c_read")),
-              reads_before_second_round + 2)
-        << "the third pair is never attempted";
-    EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
-    fake->completeSubmission(0);
-    EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
-    EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
-
-    fake->c_submit_fail_after = -1;
-    const int creates_before =
-        std::count(log->begin(), log->end(), std::string("c_create_completion"));
-    const int releases_before = fake->c_releases;
-    fake->c_create_completion_fail_after = creates_before + 1;
-    ASSERT_EQ(engine->prepXfer(NIXL_READ, local, remote, "test-agent", handle), NIXL_SUCCESS);
-    EXPECT_EQ(engine->postXfer(NIXL_READ, local, remote, "test-agent", handle), NIXL_IN_PROG);
-    ASSERT_EQ(fake->submissions.size(), 2U);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("c_create_completion")),
-              creates_before + 2)
-        << "the factory-failed pair reserves no completion";
-    EXPECT_EQ(fake->c_releases, releases_before)
-        << "a factory-failed pair leaves nothing to release";
-    EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
-    fake->completeSubmission(1);
-    EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
-    EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
-    EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
+    expectSubmissionStopsAtFirstRejectedPair(NIXL_READ);
 }
 
-TEST_F(radosEngineFixture, CppWriteThrowAfterAcceptedPrefixReleasesWithoutWait) {
-    fakeCApi *fake = nullptr;
+TEST_F(radosEngineFixture, AioWriteThrowAfterAcceptedPrefixReleasesWithoutWait) {
+    fakeRadosApi *fake = nullptr;
     auto engine = makeReady(&fake);
     nixlBackendMD *md = registerObject(*engine, 1, "obj");
     const one_pair pair(0, 192, 1, 0x3a);
@@ -1562,28 +1486,28 @@ TEST_F(radosEngineFixture, CppWriteThrowAfterAcceptedPrefixReleasesWithoutWait) 
                  1);
     }
 
-    fake->cpp_write_throw_after = 1;
+    fake->write_throw_after = 1;
     nixlBackendReqH *handle = nullptr;
     ASSERT_EQ(engine->prepXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_SUCCESS);
     EXPECT_NO_THROW(
         EXPECT_EQ(engine->postXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_IN_PROG));
     EXPECT_EQ(fake->submissions.size(), 1U);
-    EXPECT_EQ(fake->cpp_releases, 1);
-    EXPECT_EQ(fake->cpp_waits, 0);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_write")), 2);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_create_completion")), 2);
+    EXPECT_EQ(fake->releases, 1);
+    EXPECT_EQ(fake->waits, 0);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("aio_write")), 2);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("create_completion")), 2);
 
     EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
     fake->completeSubmission(0);
     EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_BACKEND);
-    EXPECT_EQ(fake->cpp_waits, 0);
+    EXPECT_EQ(fake->waits, 0);
     EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
     EXPECT_TRUE(fake->violations.empty());
     EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
 }
 
 TEST_F(radosEngineFixture, OutOfOrderRetirementKeepsRequestInProgressUntilEarliestPairResolves) {
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeReady(&fake);
     nixlBackendMD *md_a = registerObject(*engine, 1, "obj-a");
     nixlBackendMD *md_b = registerObject(*engine, 2, "obj-b");
@@ -1606,18 +1530,17 @@ TEST_F(radosEngineFixture, OutOfOrderRetirementKeepsRequestInProgressUntilEarlie
     fake->completeSubmission(0, -ENOENT);
     EXPECT_EQ(engine->checkXfer(handle), NIXL_ERR_NOT_FOUND)
         << "terminal status is the first non-success in descriptor order";
-    EXPECT_EQ(fake->c_rc_reads, 2);
-    EXPECT_EQ(fake->c_waits, 0);
+    EXPECT_EQ(fake->rc_reads, 2);
+    EXPECT_EQ(fake->waits, 0);
     EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
     EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_destroy")), 0);
     EXPECT_EQ(engine->deregisterMem(md_a), NIXL_SUCCESS);
     EXPECT_EQ(engine->deregisterMem(md_b), NIXL_SUCCESS);
 }
 
-// A complete-but-callback-unretired completion is unproven: reads never harvest it,
-// a release drain waits for retirement before reading and releasing.
-TEST_F(radosEngineFixture, CompleteButUnretiredGatesHarvestAndReleaseInBothFamilies) {
-    fakeCApi *fake = nullptr;
+// Pending pairs stay IN_PROG for the wait-driven release drain; retired pairs harvest poll-only.
+TEST_F(radosEngineFixture, PollAndDrainHarvestCoverBothDirections) {
+    fakeRadosApi *fake = nullptr;
     auto engine = makeReady(&fake);
     nixlBackendMD *md_r = registerObject(*engine, 1, "obj-r");
     nixlBackendMD *md_w = registerObject(*engine, 2, "obj-w");
@@ -1628,15 +1551,16 @@ TEST_F(radosEngineFixture, CompleteButUnretiredGatesHarvestAndReleaseInBothFamil
               NIXL_SUCCESS);
     ASSERT_EQ(engine->postXfer(NIXL_READ, read.local, read.remote, "test-agent", read_handle),
               NIXL_IN_PROG);
-    fake->completeButUnretired(0);
     EXPECT_EQ(engine->checkXfer(read_handle), NIXL_IN_PROG);
-    EXPECT_EQ(fake->c_rc_reads, 0);
-    EXPECT_EQ(fake->c_releases, 0);
+    EXPECT_EQ(fake->rc_reads, 0);
+    EXPECT_EQ(fake->releases, 0);
+    EXPECT_FALSE(fake->submissions[0].is_write) << "pair 0 is the read";
     EXPECT_EQ(engine->releaseReqH(read_handle), NIXL_SUCCESS);
-    EXPECT_EQ(fake->c_waits, 1);
-    EXPECT_EQ(fake->c_rc_reads, 1);
-    EXPECT_TRUE(fake->submissions[0].c_comp->waited);
-    EXPECT_FALSE(fake->submissions[0].c_comp->released_unretired);
+    EXPECT_EQ(fake->waits, 1);
+    EXPECT_EQ(fake->rc_reads, 1);
+    EXPECT_EQ(fake->releases, 1);
+    EXPECT_TRUE(fake->submissions[0].comp->waited);
+    EXPECT_FALSE(fake->submissions[0].comp->released_unretired);
 
     const one_pair write(0, 64, 2, 0x11);
     nixlBackendReqH *write_handle = nullptr;
@@ -1644,22 +1568,22 @@ TEST_F(radosEngineFixture, CompleteButUnretiredGatesHarvestAndReleaseInBothFamil
               NIXL_SUCCESS);
     ASSERT_EQ(engine->postXfer(NIXL_WRITE, write.local, write.remote, "test-agent", write_handle),
               NIXL_IN_PROG);
-    fake->completeButUnretired(1);
-    EXPECT_EQ(engine->checkXfer(write_handle), NIXL_IN_PROG);
-    EXPECT_EQ(fake->cpp_rc_reads, 0);
-    fake->retire(1);
+    EXPECT_TRUE(fake->submissions[1].is_write) << "pair 1 is the write";
+    fake->completeSubmission(1);
     EXPECT_EQ(engine->checkXfer(write_handle), NIXL_SUCCESS);
-    EXPECT_EQ(fake->cpp_waits, 0);
+    EXPECT_EQ(fake->rc_reads, 2) << "the write harvest adds exactly one read";
+    EXPECT_EQ(fake->waits, 1) << "poll-driven write harvest never waits";
+    EXPECT_FALSE(fake->submissions[1].comp->waited) << "the write completion was never waited";
     EXPECT_EQ(engine->releaseReqH(write_handle), NIXL_SUCCESS);
     EXPECT_EQ(engine->deregisterMem(md_r), NIXL_SUCCESS);
     EXPECT_EQ(engine->deregisterMem(md_w), NIXL_SUCCESS);
 }
 
-TEST_F(radosEngineFixture, EarlyReleaseBlocksOnWithheldWaitThenDrainsBothFamilies) {
+TEST_F(radosEngineFixture, EarlyReleaseBlocksOnWithheldWaitThenDrainsBothDirections) {
     custom_params_ = validBase();
     std::vector<unsigned char> src(64, 0x44);
     std::vector<unsigned char> dest(64, 0x00);
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeEngine(&fake);
     ASSERT_FALSE(engine->getInitErr());
     nixlBackendMD *md_w = registerObject(*engine, 1, "obj-w");
@@ -1696,14 +1620,15 @@ TEST_F(radosEngineFixture, EarlyReleaseBlocksOnWithheldWaitThenDrainsBothFamilie
 
     const bool gate_entered = fake->waitGateEntered();
     bool withheld = false;
-    int cpp_waits_at_gate = -1;
-    int cpp_releases_at_gate = -1;
-    int c_releases_at_gate = -1;
+    int waits_at_gate = -1;
+    int releases_at_gate = -1;
+    bool read_drain_touched_at_gate = false;
     if (gate_entered) {
         withheld = write_status.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
-        cpp_waits_at_gate = fake->cpp_waits;
-        cpp_releases_at_gate = fake->cpp_releases;
-        c_releases_at_gate = fake->c_releases;
+        waits_at_gate = fake->waits;
+        releases_at_gate = fake->releases;
+        auto *read_comp = fake->submissions[1].comp;
+        read_drain_touched_at_gate = read_comp->waited || read_comp->releases != 0;
     }
 
     fake->releaseWaitGate();
@@ -1711,40 +1636,43 @@ TEST_F(radosEngineFixture, EarlyReleaseBlocksOnWithheldWaitThenDrainsBothFamilie
 
     ASSERT_TRUE(gate_entered) << "the drain never reached the completion wait";
     EXPECT_TRUE(withheld) << "releaseReqH returned while its completion wait was withheld";
-    EXPECT_EQ(cpp_waits_at_gate, 1);
-    EXPECT_EQ(cpp_releases_at_gate, 0);
-    EXPECT_EQ(c_releases_at_gate, 0);
+    EXPECT_EQ(waits_at_gate, 1);
+    EXPECT_EQ(releases_at_gate, 0);
+    EXPECT_FALSE(read_drain_touched_at_gate) << "the read request must stay untouched";
     EXPECT_EQ(write_status.get(), NIXL_SUCCESS);
 
     const std::vector<std::string> write_tail(
         log->begin() + static_cast<std::ptrdiff_t>(log_before), log->end());
-    const auto w_wait = std::find(
-        write_tail.begin(), write_tail.end(), std::string("cpp_wait_for_complete_and_cb"));
-    const auto w_release =
-        std::find(write_tail.begin(), write_tail.end(), std::string("cpp_release"));
+    const auto w_wait =
+        std::find(write_tail.begin(), write_tail.end(), std::string("wait_for_complete_and_cb"));
+    const auto w_release = std::find(write_tail.begin(), write_tail.end(), std::string("release"));
     ASSERT_NE(w_wait, write_tail.end());
     ASSERT_NE(w_release, write_tail.end());
     EXPECT_LT(w_wait, w_release);
-    EXPECT_TRUE(fake->submissions[0].cpp_comp->waited);
-    EXPECT_FALSE(fake->submissions[0].cpp_comp->released_unretired);
-    EXPECT_EQ(fake->c_releases, 0) << "the read request must stay untouched";
+    EXPECT_TRUE(fake->submissions[0].is_write) << "the released handle is the write request";
+    EXPECT_FALSE(fake->submissions[1].is_write) << "the untouched handle is the read request";
+    EXPECT_TRUE(fake->submissions[0].comp->waited);
+    EXPECT_FALSE(fake->submissions[0].comp->released_unretired);
+    EXPECT_EQ(fake->releases, 1) << "only the write request drained";
 
     EXPECT_EQ(engine->releaseReqH(read_handle), NIXL_SUCCESS);
-    EXPECT_TRUE(fake->submissions[1].c_comp->waited);
-    EXPECT_FALSE(fake->submissions[1].c_comp->released_unretired);
-    EXPECT_EQ(fake->c_releases, 1);
+    EXPECT_TRUE(fake->submissions[1].comp->waited);
+    EXPECT_FALSE(fake->submissions[1].comp->released_unretired);
+    EXPECT_EQ(fake->releases, 2) << "the read drain adds exactly one release";
+    EXPECT_EQ(fake->submissions[0].comp->releases, 1)
+        << "the read drain must not touch the write completion";
 
     EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_destroy")), 0);
     EXPECT_EQ(engine->deregisterMem(md_w), NIXL_SUCCESS);
     EXPECT_EQ(engine->deregisterMem(md_r), NIXL_SUCCESS);
 }
 
-TEST_F(radosEngineFixture, TeardownDrainsBothFamiliesBeforeResourceDeath) {
+TEST_F(radosEngineFixture, TeardownDrainsBothDirectionsBeforeResourceDeath) {
     custom_params_ = validBase();
     std::vector<unsigned char> src(64, 0x77);
     std::vector<unsigned char> dest(64, 0x00);
     {
-        fakeCApi *fake = nullptr;
+        fakeRadosApi *fake = nullptr;
         auto engine = makeEngine(&fake);
         ASSERT_FALSE(engine->getInitErr());
         [[maybe_unused]] nixlBackendMD *md_w = registerObject(*engine, 1, "obj-w");
@@ -1778,7 +1706,7 @@ TEST_F(radosEngineFixture, TeardownDrainsBothFamiliesBeforeResourceDeath) {
     const auto &final_log = *log;
     const auto last_release =
         std::find_if(final_log.rbegin(), final_log.rend(), [](const std::string &entry) {
-            return entry == "c_release" || entry == "cpp_release";
+            return entry == "release";
         });
     const auto ioctx_close =
         std::find(final_log.begin(), final_log.end(), std::string("ioctx_close"));
@@ -1793,19 +1721,14 @@ TEST_F(radosEngineFixture, TeardownDrainsBothFamiliesBeforeResourceDeath) {
     EXPECT_LT(ioctx_close, ioctx_destroy);
     EXPECT_LT(ioctx_destroy, shutdown);
     EXPECT_EQ(
-        std::count(final_log.begin(), final_log.end(), std::string("cpp_wait_for_complete_and_cb")),
-        0);
-    EXPECT_EQ(
-        std::count(final_log.begin(), final_log.end(), std::string("c_wait_for_complete_and_cb")),
-        1);
-    EXPECT_EQ(std::count(final_log.begin(), final_log.end(), std::string("cpp_release")), 1);
-    EXPECT_EQ(std::count(final_log.begin(), final_log.end(), std::string("c_release")), 1);
+        std::count(final_log.begin(), final_log.end(), std::string("wait_for_complete_and_cb")), 1);
+    EXPECT_EQ(std::count(final_log.begin(), final_log.end(), std::string("release")), 2);
 }
 
 // Repost is legal only from terminal: a fresh completion and buffer state is
 // rebuilt from the snapshotted pointer, re-staging the caller's current bytes.
 TEST_F(radosEngineFixture, RepostAfterTerminalResubmitsResetStateWithCurrentSourceBytes) {
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeReady(&fake);
     nixlBackendMD *md_w = registerObject(*engine, 1, "obj-w");
     nixlBackendMD *md_r = registerObject(*engine, 2, "obj-r");
@@ -1826,7 +1749,7 @@ TEST_F(radosEngineFixture, RepostAfterTerminalResubmitsResetStateWithCurrentSour
     ASSERT_EQ(engine->postXfer(NIXL_WRITE, write.local, write.remote, "test-agent", write_handle),
               NIXL_IN_PROG);
     ASSERT_EQ(fake->submissions.size(), 2U);
-    EXPECT_NE(fake->submissions[1].cpp_comp, fake->submissions[0].cpp_comp);
+    EXPECT_NE(fake->submissions[1].comp, fake->submissions[0].comp);
     fake->completeSubmission(1);
     EXPECT_EQ(engine->checkXfer(write_handle), NIXL_SUCCESS);
     EXPECT_EQ(fake->submissions[0].payload_at_release, std::string(64, 0x99));
@@ -1845,7 +1768,7 @@ TEST_F(radosEngineFixture, RepostAfterTerminalResubmitsResetStateWithCurrentSour
     ASSERT_EQ(engine->postXfer(NIXL_READ, read.local, read.remote, "test-agent", read_handle),
               NIXL_IN_PROG);
     ASSERT_EQ(fake->submissions.size(), 4U);
-    EXPECT_NE(fake->submissions[3].c_comp, fake->submissions[2].c_comp);
+    EXPECT_NE(fake->submissions[3].comp, fake->submissions[2].comp);
     fake->completeSubmission(3, 64);
     EXPECT_EQ(engine->checkXfer(read_handle), NIXL_SUCCESS)
         << "the repost must reset the stale failed result cell";
@@ -1856,7 +1779,7 @@ TEST_F(radosEngineFixture, RepostAfterTerminalResubmitsResetStateWithCurrentSour
 
 TEST_F(radosEngineFixture, QueryResolvesOidFromMetaInfoThenDecimalDevId) {
     custom_params_ = validBase();
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeEngine(&fake);
     ASSERT_FALSE(engine->getInitErr());
 
@@ -1876,7 +1799,7 @@ TEST_F(radosEngineFixture, QueryResolvesOidFromMetaInfoThenDecimalDevId) {
 
 TEST_F(radosEngineFixture, QueryContinuesAfterErrorAndPopulatesLaterSuccess) {
     custom_params_ = validBase();
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeEngine(&fake);
     ASSERT_FALSE(engine->getInitErr());
 
@@ -1917,7 +1840,7 @@ TEST_F(radosEngineFixture, QueryGatesClearAndResizeResponseWithoutSeamCall) {
         if (item.init_err) {
             custom_params_.erase("pool");
         }
-        fakeCApi *fake = nullptr;
+        fakeRadosApi *fake = nullptr;
         auto engine = makeEngine(&fake);
         EXPECT_EQ(engine->getInitErr(), item.init_err) << item.name;
 
@@ -1932,14 +1855,13 @@ TEST_F(radosEngineFixture, QueryGatesClearAndResizeResponseWithoutSeamCall) {
             EXPECT_FALSE(entry.has_value()) << item.name;
         }
         EXPECT_TRUE(fake->stat_oids.empty()) << item.name;
-        EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_aio_stat")), 0)
-            << item.name;
+        EXPECT_EQ(std::count(log->begin(), log->end(), std::string("aio_stat")), 0) << item.name;
     }
 }
 
 TEST_F(radosEngineFixture, QueryRejectsEmbeddedNulMetaInfoBeforeAnyStat) {
     custom_params_ = validBase();
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeEngine(&fake);
     ASSERT_FALSE(engine->getInitErr());
 
@@ -1957,7 +1879,7 @@ TEST_F(radosEngineFixture, QueryRejectsEmbeddedNulMetaInfoBeforeAnyStat) {
         EXPECT_FALSE(entry.has_value());
     }
     EXPECT_TRUE(fake->stat_oids.empty()) << "an embedded-NUL list must not alias-stat its prefix";
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_aio_stat")), 0);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("aio_stat")), 0);
 
     // Rejection is per-call: a clean list resolves normally afterwards.
     nixl_reg_dlist_t clean(OBJ_SEG);
@@ -1971,7 +1893,7 @@ TEST_F(radosEngineFixture, QueryRejectsEmbeddedNulMetaInfoBeforeAnyStat) {
 
 TEST_F(radosEngineFixture, QueryWindowsPreserveFoundMissingAndErrorOrder) {
     custom_params_ = validBase();
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeEngine(&fake);
     ASSERT_FALSE(engine->getInitErr());
 
@@ -2005,16 +1927,16 @@ TEST_F(radosEngineFixture, QueryWindowsPreserveFoundMissingAndErrorOrder) {
     }
     EXPECT_EQ(fake->stat_oids, expected_oids);
     EXPECT_EQ(fake->submissions.size(), static_cast<size_t>(kCount));
-    EXPECT_EQ(fake->cpp_releases, kCount);
-    EXPECT_EQ(fake->cpp_waits, kCount);
-    EXPECT_EQ(fake->cpp_rc_reads, kCount);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_aio_stat")), kCount);
+    EXPECT_EQ(fake->releases, kCount);
+    EXPECT_EQ(fake->waits, kCount);
+    EXPECT_EQ(fake->rc_reads, kCount);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("aio_stat")), kCount);
 
     size_t stats_before_first_wait = 0;
     for (const auto &entry : *log) {
-        if (entry == "cpp_aio_stat") {
+        if (entry == "aio_stat") {
             ++stats_before_first_wait;
-        } else if (entry == "cpp_wait_for_complete_and_cb") {
+        } else if (entry == "wait_for_complete_and_cb") {
             break;
         }
     }
@@ -2023,7 +1945,7 @@ TEST_F(radosEngineFixture, QueryWindowsPreserveFoundMissingAndErrorOrder) {
 
 TEST_F(radosEngineFixture, QueryCreateFailureMidWindowLeaksNothingAndLaterStatsSucceed) {
     custom_params_ = validBase();
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeEngine(&fake);
     ASSERT_FALSE(engine->getInitErr());
 
@@ -2034,7 +1956,7 @@ TEST_F(radosEngineFixture, QueryCreateFailureMidWindowLeaksNothingAndLaterStatsS
         fake->stat_sizes[key] = static_cast<uint64_t>(i) + 1;
         descs.addDesc(nixlBlobDesc(0, 0, static_cast<uint64_t>(i), key));
     }
-    fake->cpp_aio_stat_create_fail_at = 3;
+    fake->aio_stat_create_fail_at = 3;
 
     std::vector<nixl_query_resp_t> resp;
     EXPECT_EQ(engine->queryMem(descs, resp), NIXL_ERR_BACKEND);
@@ -2048,15 +1970,15 @@ TEST_F(radosEngineFixture, QueryCreateFailureMidWindowLeaksNothingAndLaterStatsS
         ASSERT_TRUE(entry.has_value()) << i;
         EXPECT_EQ(entry->at("size"), std::to_string(i + 1)) << i;
     }
-    EXPECT_EQ(fake->cpp_create_attempts, kCount);
+    EXPECT_EQ(fake->create_attempts, kCount);
     EXPECT_EQ(fake->submissions.size(), static_cast<size_t>(kCount - 1));
-    EXPECT_EQ(fake->cpp_releases, kCount - 1);
-    EXPECT_EQ(fake->cpp_waits, kCount - 1);
+    EXPECT_EQ(fake->releases, kCount - 1);
+    EXPECT_EQ(fake->waits, kCount - 1);
 }
 
 TEST_F(radosEngineFixture, QuerySubmitFailureMidWindowReleasesOnceAndLaterStatsSucceed) {
     custom_params_ = validBase();
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeEngine(&fake);
     ASSERT_FALSE(engine->getInitErr());
 
@@ -2067,7 +1989,7 @@ TEST_F(radosEngineFixture, QuerySubmitFailureMidWindowReleasesOnceAndLaterStatsS
         fake->stat_sizes[key] = static_cast<uint64_t>(i) + 1;
         descs.addDesc(nixlBlobDesc(0, 0, static_cast<uint64_t>(i), key));
     }
-    fake->cpp_aio_stat_submit_fail_at = 35;
+    fake->aio_stat_submit_fail_at = 35;
 
     std::vector<nixl_query_resp_t> resp;
     EXPECT_EQ(engine->queryMem(descs, resp), NIXL_ERR_BACKEND);
@@ -2082,10 +2004,10 @@ TEST_F(radosEngineFixture, QuerySubmitFailureMidWindowReleasesOnceAndLaterStatsS
         EXPECT_EQ(entry->at("size"), std::to_string(i + 1)) << i;
     }
     EXPECT_EQ(fake->submissions.size(), static_cast<size_t>(kCount - 1));
-    EXPECT_EQ(fake->cpp_releases, kCount);
-    EXPECT_EQ(fake->cpp_waits, kCount - 1);
+    EXPECT_EQ(fake->releases, kCount);
+    EXPECT_EQ(fake->waits, kCount - 1);
     ASSERT_EQ(fake->stat_comps.size(), static_cast<size_t>(kCount));
-    fakeCppCompletion *rejected = fake->stat_comps[35];
+    fakeCompletion *rejected = fake->stat_comps[35];
     EXPECT_FALSE(rejected->submitted);
     EXPECT_FALSE(rejected->waited);
     EXPECT_FALSE(rejected->released_unretired);
@@ -2096,7 +2018,7 @@ TEST_F(radosEngineFixture, QueryResolvesBeforeReturnWithoutStatusWaitTimer) {
     custom_params_ = validBase();
     custom_params_["status_wait_us"] = "4000";
     auto tstate = std::make_shared<timer_state>();
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeEngineWithTimer(&fake, tstate);
     ASSERT_FALSE(engine->getInitErr());
 
@@ -2112,14 +2034,13 @@ TEST_F(radosEngineFixture, QueryResolvesBeforeReturnWithoutStatusWaitTimer) {
     ASSERT_TRUE(resp[7].has_value());
     EXPECT_EQ(resp[7]->at("size"), "77");
     EXPECT_TRUE(tstate->budgets.empty()) << "query must never touch the status wait timer";
-    EXPECT_EQ(fake->cpp_releases, 36);
-    EXPECT_EQ(fake->cpp_waits, 36);
+    EXPECT_EQ(fake->releases, 36);
+    EXPECT_EQ(fake->waits, 36);
 }
 
-// C reads submit on the raw ioctx and C++ writes on the bound IoCtx view, so
-// the static payload and the direct destination ride their required handles.
-TEST_F(radosEngineFixture, ReadsUseRawIoctxWritesUseBoundView) {
-    fakeCApi *fake = nullptr;
+// Direct reads and writes submit on the bound IoCtx view.
+TEST_F(radosEngineFixture, ReadsAndWritesSubmitOnBoundIoCtxView) {
+    fakeRadosApi *fake = nullptr;
     auto engine = makeReady(&fake);
     ASSERT_EQ(fake->view_bind_order->size(), 2U);
     const librados::IoCtx *view = (*fake->view_bind_order)[0];
@@ -2134,7 +2055,7 @@ TEST_F(radosEngineFixture, ReadsUseRawIoctxWritesUseBoundView) {
               NIXL_IN_PROG);
     ASSERT_EQ(fake->write_ctxs.size(), 1U);
     EXPECT_EQ(fake->write_ctxs[0], view) << "writes must submit on the bound view";
-    EXPECT_TRUE(fake->read_ioctx_ordinals.empty());
+    EXPECT_TRUE(fake->read_ctxs.empty());
     fake->completeSubmission(0);
     EXPECT_EQ(engine->checkXfer(write_handle), NIXL_SUCCESS);
     EXPECT_EQ(engine->releaseReqH(write_handle), NIXL_SUCCESS);
@@ -2145,8 +2066,8 @@ TEST_F(radosEngineFixture, ReadsUseRawIoctxWritesUseBoundView) {
               NIXL_SUCCESS);
     ASSERT_EQ(engine->postXfer(NIXL_READ, read.local, read.remote, "test-agent", read_handle),
               NIXL_IN_PROG);
-    ASSERT_EQ(fake->read_ioctx_ordinals.size(), 1U);
-    EXPECT_EQ(fake->read_ioctx_ordinals[0], 0U) << "reads must use the raw ioctx";
+    ASSERT_EQ(fake->read_ctxs.size(), 1U);
+    EXPECT_EQ(fake->read_ctxs[0], view) << "reads must submit on the bound view";
     EXPECT_EQ(fake->write_ctxs[0], view) << "the write view must stay the bound view";
     fake->completeSubmission(1, 64);
     EXPECT_EQ(engine->checkXfer(read_handle), NIXL_SUCCESS);
@@ -2179,7 +2100,7 @@ TEST_F(radosEngineFixture, ZeroStatusWaitUsRetainsNoTimerAndNeverSleeps) {
     for (const auto &variant : variants) {
         custom_params_ = variant;
         auto tstate = std::make_shared<timer_state>();
-        fakeCApi *fake = nullptr;
+        fakeRadosApi *fake = nullptr;
         auto engine = makeEngineWithTimer(&fake, tstate);
         ASSERT_FALSE(engine->getInitErr());
         EXPECT_TRUE(tstate->destroyed) << "zero mode must not retain the injected timer";
@@ -2197,7 +2118,7 @@ TEST_F(radosEngineFixture, ZeroStatusWaitUsRetainsNoTimerAndNeverSleeps) {
         fake->completeSubmission(0, static_cast<int>(pair.buffer.size()));
         EXPECT_EQ(engine->checkXfer(handle), NIXL_SUCCESS);
         EXPECT_TRUE(tstate->budgets.empty());
-        EXPECT_EQ(fake->c_waits, 0);
+        EXPECT_EQ(fake->waits, 0);
         EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
         EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
     }
@@ -2207,7 +2128,7 @@ TEST_F(radosEngineFixture, FirstUnprovenPairSleepsOncePerCallAndDefersHarvest) {
     custom_params_ = validBase();
     custom_params_["status_wait_us"] = "777";
     auto tstate = std::make_shared<timer_state>();
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeEngineWithTimer(&fake, tstate);
     ASSERT_FALSE(engine->getInitErr());
     EXPECT_FALSE(tstate->destroyed) << "a positive budget must adopt the injected timer";
@@ -2231,31 +2152,27 @@ TEST_F(radosEngineFixture, FirstUnprovenPairSleepsOncePerCallAndDefersHarvest) {
     ASSERT_EQ(engine->postXfer(NIXL_READ, local, remote, "test-agent", handle), NIXL_IN_PROG);
 
     const auto poll_count = [this]() {
-        return std::count(log->begin(), log->end(), std::string("c_is_complete_and_cb"));
+        return std::count(log->begin(), log->end(), std::string("is_complete_and_cb"));
     };
 
-    // Pair 0 is operationally done but callback-unretired (unproven through the
-    // combined seam) and pair 1 is retired: one sleep per call, no rescan, so
-    // the sleeping poll never reaches pair 1 nor harvests anything.
-    fake->submissions[0].c_comp->rc = 64;
-    fake->completeButUnretired(0);
+    // Pair 0 pending, pair 1 retired: one sleep per call, no rescan, no harvest.
     fake->completeSubmission(1, 64);
     EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
     EXPECT_EQ(tstate->budgets, (std::vector<uint64_t>{777}));
     EXPECT_EQ(poll_count(), 1);
-    EXPECT_EQ(fake->c_rc_reads, 0);
-    EXPECT_EQ(fake->c_releases, 0);
+    EXPECT_EQ(fake->rc_reads, 0);
+    EXPECT_EQ(fake->releases, 0);
 
     EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
     EXPECT_EQ(tstate->budgets, (std::vector<uint64_t>{777, 777}));
 
-    // The next poll after retirement harvests both in order, sleep-free.
-    fake->retire(0);
+    // The next poll after pair 0 completes harvests both in order, sleep-free.
+    fake->completeSubmission(0, 64);
     EXPECT_EQ(engine->checkXfer(handle), NIXL_SUCCESS);
     EXPECT_EQ(tstate->budgets.size(), 2U);
-    EXPECT_EQ(fake->c_rc_reads, 2);
-    EXPECT_EQ(fake->c_releases, 2);
-    EXPECT_EQ(fake->c_waits, 0);
+    EXPECT_EQ(fake->rc_reads, 2);
+    EXPECT_EQ(fake->releases, 2);
+    EXPECT_EQ(fake->waits, 0);
     EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
     EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
 }
@@ -2264,7 +2181,7 @@ TEST_F(radosEngineFixture, WriteCompletionSleepsOnceAndHarvestsOnNextPoll) {
     custom_params_ = validBase();
     custom_params_["status_wait_us"] = "2400";
     auto tstate = std::make_shared<timer_state>();
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeEngineWithTimer(&fake, tstate);
     ASSERT_FALSE(engine->getInitErr());
     nixlBackendMD *md = registerObject(*engine, 1, "obj");
@@ -2277,22 +2194,22 @@ TEST_F(radosEngineFixture, WriteCompletionSleepsOnceAndHarvestsOnNextPoll) {
               NIXL_IN_PROG);
 
     const auto poll_count = [this]() {
-        return std::count(log->begin(), log->end(), std::string("cpp_is_complete_and_cb"));
+        return std::count(log->begin(), log->end(), std::string("is_complete_and_cb"));
     };
 
     EXPECT_EQ(engine->checkXfer(handle), NIXL_IN_PROG);
     EXPECT_EQ(tstate->budgets, (std::vector<uint64_t>{2400}));
     EXPECT_EQ(poll_count(), 1);
-    EXPECT_EQ(fake->cpp_rc_reads, 0);
-    EXPECT_EQ(fake->cpp_releases, 0);
+    EXPECT_EQ(fake->rc_reads, 0);
+    EXPECT_EQ(fake->releases, 0);
 
     fake->completeSubmission(0);
     EXPECT_EQ(engine->checkXfer(handle), NIXL_SUCCESS);
     EXPECT_EQ(tstate->budgets.size(), 1U);
     EXPECT_EQ(poll_count(), 2);
-    EXPECT_EQ(fake->cpp_rc_reads, 1);
-    EXPECT_EQ(fake->cpp_releases, 1);
-    EXPECT_EQ(fake->cpp_waits, 0);
+    EXPECT_EQ(fake->rc_reads, 1);
+    EXPECT_EQ(fake->releases, 1);
+    EXPECT_EQ(fake->waits, 0);
     EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
     EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
 }
@@ -2301,7 +2218,7 @@ TEST_F(radosEngineFixture, WaitNeverSleepsOutsideActivePairScans) {
     custom_params_ = validBase();
     custom_params_["status_wait_us"] = "3000";
     auto tstate = std::make_shared<timer_state>();
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     auto engine = makeEngineWithTimer(&fake, tstate);
     ASSERT_FALSE(engine->getInitErr());
     [[maybe_unused]] nixlBackendMD *md = registerObject(*engine, 1, "obj");
@@ -2332,15 +2249,15 @@ TEST_F(radosEngineFixture, WaitNeverSleepsOutsideActivePairScans) {
     engine.reset();
     EXPECT_TRUE(tstate->budgets.empty());
     EXPECT_TRUE(tstate->destroyed);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("c_wait_for_complete_and_cb")), 2);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("c_release")), 2);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("wait_for_complete_and_cb")), 2);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("release")), 2);
     EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_close")), 2);
 }
 
 TEST_F(radosEngineFixture, MetadataBootstrapFailureUnwindsWithoutLeak) {
     struct entry {
         const char *name;
-        int fakeCApi::*fail_field;
+        int fakeRadosApi::*fail_field;
         std::vector<std::string> metadata_attempt;
     };
 
@@ -2348,21 +2265,21 @@ TEST_F(radosEngineFixture, MetadataBootstrapFailureUnwindsWithoutLeak) {
     // bootstrapped, the engine init-errored, and every acquired metadata
     // resource unwound by the bootstrap RAII before the data teardown.
     const entry stages[] = {
-        {"meta create2", &fakeCApi::create2_fail_ordinal, {"create2"}},
+        {"meta create2", &fakeRadosApi::create2_fail_ordinal, {"create2"}},
         {"meta conf_read_file",
-         &fakeCApi::conf_read_file_fail_ordinal,
+         &fakeRadosApi::conf_read_file_fail_ordinal,
          {"create2", "conf_read_file", "shutdown"}},
         {"meta connect",
-         &fakeCApi::connect_fail_ordinal,
+         &fakeRadosApi::connect_fail_ordinal,
          {"create2", "conf_read_file", "connect", "shutdown"}},
         {"meta ioctx_create",
-         &fakeCApi::ioctx_create_fail_ordinal,
+         &fakeRadosApi::ioctx_create_fail_ordinal,
          {"create2", "conf_read_file", "connect", "ioctx_create", "shutdown"}},
     };
 
     for (const auto &stage : stages) {
         custom_params_ = validBase();
-        auto failing = std::make_unique<fakeCApi>();
+        auto failing = std::make_unique<fakeRadosApi>();
         log = failing->log;
         auto binds = failing->view_bind_order;
         (failing.get()->*stage.fail_field) = 1;
@@ -2380,7 +2297,7 @@ TEST_F(radosEngineFixture, MetadataBootstrapFailureUnwindsWithoutLeak) {
             std::vector<nixl_query_resp_t> resp(1, nixl_query_resp_t{nixl_b_params_t{}});
             EXPECT_EQ(engine.queryMem(descs, resp), NIXL_ERR_BACKEND) << stage.name;
             EXPECT_FALSE(resp[0].has_value()) << stage.name;
-            EXPECT_EQ(std::count(log->begin(), log->end(), std::string("cpp_aio_stat")), 0)
+            EXPECT_EQ(std::count(log->begin(), log->end(), std::string("aio_stat")), 0)
                 << stage.name;
             EXPECT_EQ(binds->size(), 1U) << stage.name;
         }
@@ -2395,7 +2312,7 @@ TEST_F(radosEngineFixture, MetadataBootstrapFailureUnwindsWithoutLeak) {
 
 TEST_F(radosEngineFixture, QueryMemUsesMetadataClientAndTransfersUseDataClient) {
     custom_params_ = validBase();
-    fakeCApi *fake = nullptr;
+    fakeRadosApi *fake = nullptr;
     std::shared_ptr<std::vector<librados::IoCtx *>> binds;
     std::shared_ptr<std::vector<librados::IoCtx *>> closes;
     {
@@ -2409,7 +2326,7 @@ TEST_F(radosEngineFixture, QueryMemUsesMetadataClientAndTransfersUseDataClient) 
         ASSERT_NE(data_view, meta_view);
         EXPECT_TRUE(fake->write_ctxs.empty());
         EXPECT_TRUE(fake->stat_ctxs.empty());
-        EXPECT_TRUE(fake->read_ioctx_ordinals.empty());
+        EXPECT_TRUE(fake->read_ctxs.empty());
 
         nixlBackendMD *md = registerObject(*engine, 1, "iso-obj");
         std::vector<unsigned char> src(64, 0x77);

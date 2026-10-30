@@ -23,13 +23,13 @@
 #include <chrono>
 #include <climits>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <string>
 #include <thread>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "common/nixl_log.h"
@@ -46,13 +46,13 @@ checkRadosResult(const char *operation, int result) {
 }
 
 bool
-applyCephOverrides(nixl::rados::cApi &capi,
+applyCephOverrides(nixl::rados::radosApi &api,
                    rados_t cluster,
                    const nixl::rados::ceph_options_t &overrides) {
     for (const auto &[option, value] : overrides) {
         const std::string operation = std::string("rados_conf_set(") + option + ')';
         if (!checkRadosResult(operation.c_str(),
-                              capi.conf_set(cluster, option.c_str(), value.c_str()))) {
+                              api.conf_set(cluster, option.c_str(), value.c_str()))) {
             return false;
         }
     }
@@ -93,7 +93,7 @@ radosResultToNixl(nixl_xfer_op_t operation, int result, uint64_t requested_len) 
 // failed path unwinds here as view -> ioctx -> cluster.
 class bootstrapResources {
 public:
-    explicit bootstrapResources(nixl::rados::cApi &capi) : capi_(capi) {}
+    explicit bootstrapResources(nixl::rados::radosApi &api) : api_(api) {}
 
     bootstrapResources(const bootstrapResources &) = delete;
     bootstrapResources &
@@ -101,46 +101,46 @@ public:
 
     ~bootstrapResources() {
         if (view_held_) {
-            capi_.ioCtxClose(view_);
+            api_.ioctxClose(view_);
         }
         if (ioctx_ != nullptr) {
-            capi_.ioctx_destroy(ioctx_);
+            api_.ioctx_destroy(ioctx_);
         }
         if (cluster_ != nullptr) {
-            capi_.shutdown(cluster_);
+            api_.shutdown(cluster_);
         }
     }
 
     int
     create_cluster(const char *name) {
-        return capi_.create2(&cluster_, nullptr, name, 0);
+        return api_.create2(&cluster_, nullptr, name, 0);
     }
 
     int
     conf_read_file(const char *path) {
-        return capi_.conf_read_file(cluster_, path);
+        return api_.conf_read_file(cluster_, path);
     }
 
     int
     connect() {
-        return capi_.connect(cluster_);
+        return api_.connect(cluster_);
     }
 
     int
     create_ioctx(const char *pool) {
-        return capi_.ioctx_create(cluster_, pool, &ioctx_);
+        return api_.ioctx_create(cluster_, pool, &ioctx_);
     }
 
     void
     set_namespace(const std::string &ns) {
-        capi_.ioctx_set_namespace(ioctx_, ns.c_str());
+        api_.ioctx_set_namespace(ioctx_, ns.c_str());
     }
 
     void
     create_view(librados::IoCtx *ctx) {
         view_ = ctx;
         view_held_ = true;
-        capi_.ioctxFromRaw(ioctx_, view_);
+        api_.ioctxFromRaw(ioctx_, view_);
     }
 
     void
@@ -165,7 +165,7 @@ public:
     }
 
 private:
-    nixl::rados::cApi &capi_;
+    nixl::rados::radosApi &api_;
     rados_t cluster_ = nullptr;
     rados_ioctx_t ioctx_ = nullptr;
     librados::IoCtx *view_ = nullptr;
@@ -177,17 +177,17 @@ private:
 // success the raw handles move into the out-params for engine ownership; on
 // any failure everything acquired so far unwinds here and nothing is taken.
 bool
-bootstrapClient(nixl::rados::cApi &capi,
+bootstrapClient(nixl::rados::radosApi &api,
                 const nixl::rados::backendConfig &config,
                 librados::IoCtx *view,
                 rados_t &out_cluster,
                 rados_ioctx_t &out_ioctx) {
-    bootstrapResources resources(capi);
+    bootstrapResources resources(api);
     if (!checkRadosResult("rados_create2", resources.create_cluster(config.name.c_str()))) {
         return false;
     }
     if (!checkRadosResult("rados_conf_read_file", resources.conf_read_file(config.conf.c_str())) ||
-        !applyCephOverrides(capi, resources.cluster(), config.ceph_options) ||
+        !applyCephOverrides(api, resources.cluster(), config.ceph_options) ||
         !checkRadosResult("rados_connect", resources.connect())) {
         return false;
     }
@@ -222,33 +222,22 @@ public:
     // round may repost to ACTIVE); release/teardown demotes to drain-only ABANDONED.
     enum class phase_t { PREPARED, ACTIVE, TERMINAL, ABANDONED };
 
-    struct cRead {
-        rados_completion_t handle = nullptr;
-    };
-
-    struct cppWrite {
-        librados::AioCompletion *handle = nullptr;
-    };
-
-    using owned_completion_t = std::variant<std::monostate, cRead, cppWrite>;
-
     struct requestPair {
         std::string oid;
         uintptr_t dram = 0;
         uint64_t offset = 0;
         uint64_t len = 0;
         int result = 0;
-        // Write-only, non-owning view of snapshotted caller DRAM; librados keeps
-        // borrowing it until retirement, and repost rebuilds it from the pointer.
+        // Non-owning view of snapshotted caller DRAM; borrowed until retirement, rebuilt on repost.
         librados::bufferlist payload;
-        owned_completion_t owned;
+        librados::AioCompletion *owned = nullptr;
     };
 
     explicit directRequestState(nixl_xfer_op_t operation) : operation_(operation) {}
 
     ~directRequestState() {
         for (const requestPair &pair : pairs_) {
-            if (!std::holds_alternative<std::monostate>(pair.owned)) {
+            if (pair.owned != nullptr) {
                 NIXL_ERROR << "RADOS request state destroyed with an unreleased "
                               "completion on object '"
                            << pair.oid << "'";
@@ -289,7 +278,7 @@ public:
     void
     resetForRepostLocked() {
         for (requestPair &pair : pairs_) {
-            pair.owned = owned_completion_t{};
+            pair.owned = nullptr;
             pair.payload.clear();
             pair.result = 0;
         }
@@ -308,45 +297,63 @@ private:
 namespace {
 
 bool
-pairUnproven(nixl::rados::cApi &capi, const directRequestState::requestPair &pair) {
-    if (const auto *read = std::get_if<directRequestState::cRead>(&pair.owned)) {
-        return capi.cIsCompleteAndCb(read->handle) == 0;
-    }
-    if (const auto *write = std::get_if<directRequestState::cppWrite>(&pair.owned)) {
-        return capi.cppIsCompleteAndCb(write->handle) == 0;
-    }
-    return false;
+pairUnproven(nixl::rados::radosApi &api, const directRequestState::requestPair &pair) {
+    return pair.owned != nullptr && api.isCompleteAndCb(pair.owned) == 0;
 }
 
-bool
-pairOwned(const directRequestState::requestPair &pair) {
-    return !std::holds_alternative<std::monostate>(pair.owned);
+// Reconcile a completed read's direct or replacement output before release.
+int
+settleReadOutput(directRequestState::requestPair &pair, int result) {
+    if (result < 0) {
+        return result;
+    }
+    const auto &payload = pair.payload;
+    if (payload.is_provided_buffer(reinterpret_cast<const char *>(pair.dram))) {
+        return result;
+    }
+    if (static_cast<uint64_t>(result) <= pair.len &&
+        static_cast<uint64_t>(result) <= payload.length()) {
+        auto *dest = reinterpret_cast<unsigned char *>(pair.dram);
+        size_t remaining = static_cast<size_t>(result);
+        for (const auto &chunk : payload.buffers()) {
+            if (remaining == 0) {
+                break;
+            }
+            const size_t take = std::min(remaining, static_cast<size_t>(chunk.length()));
+            std::memcpy(dest, chunk.c_str(), take);
+            dest += take;
+            remaining -= take;
+        }
+        return result;
+    }
+    NIXL_ERROR << "RADOS read delivered " << result
+               << " bytes through a replacement bufferlist beyond the caller destination bounds "
+                  "for object '"
+               << pair.oid << "'";
+    return -ERANGE;
 }
 
 // wait=false runs only after the caller proved callback retirement, so it stays
 // nonblocking; an empty slot (never posted or already harvested) yields its cached result.
 int
-retirePair(nixl::rados::cApi &capi, directRequestState::requestPair &pair, bool wait) {
-    if (auto *read = std::get_if<directRequestState::cRead>(&pair.owned)) {
-        if (wait) {
-            capi.cWaitForCompleteAndCb(read->handle);
-        }
-        const int result = capi.cGetReturnValue(read->handle);
-        capi.cRelease(read->handle);
-        pair.owned = std::monostate{};
-        return result;
+retirePair(nixl::rados::radosApi &api,
+           nixl_xfer_op_t operation,
+           directRequestState::requestPair &pair,
+           bool wait) {
+    if (pair.owned == nullptr) {
+        return pair.result;
     }
-    if (auto *write = std::get_if<directRequestState::cppWrite>(&pair.owned)) {
-        if (wait) {
-            capi.cppWaitForCompleteAndCb(write->handle);
-        }
-        const int result = capi.cppGetReturnValue(write->handle);
-        capi.cppRelease(write->handle);
-        pair.payload.clear();
-        pair.owned = std::monostate{};
-        return result;
+    if (wait) {
+        api.waitForCompleteAndCb(pair.owned);
     }
-    return pair.result;
+    int result = api.getReturnValue(pair.owned);
+    if (operation == NIXL_READ) {
+        result = settleReadOutput(pair, result);
+    }
+    api.release(pair.owned);
+    pair.payload.clear();
+    pair.owned = nullptr;
+    return result;
 }
 
 void
@@ -378,7 +385,7 @@ struct statSlot {
 // Drained slots are nulled before this runs, so the happy path is a no-op.
 class statWindow {
 public:
-    statWindow(nixl::rados::cApi &capi, size_t width) : capi_(capi), width_(width) {}
+    statWindow(nixl::rados::radosApi &api, size_t width) : api_(api), width_(width) {}
 
     statWindow(const statWindow &) = delete;
     statWindow &
@@ -391,9 +398,9 @@ public:
                 continue;
             }
             if (slot.submitted) {
-                capi_.cppWaitForCompleteAndCb(slot.comp);
+                api_.waitForCompleteAndCb(slot.comp);
             }
-            capi_.cppRelease(slot.comp);
+            api_.release(slot.comp);
             slot.comp = nullptr;
         }
     }
@@ -404,7 +411,7 @@ public:
     }
 
 private:
-    nixl::rados::cApi &capi_;
+    nixl::rados::radosApi &api_;
     const size_t width_;
     std::array<statSlot, kAioStatWindow> slots_;
 };
@@ -416,14 +423,14 @@ private:
 class nixlRadosBackendReqH final : public nixlBackendReqH {};
 
 nixlRadosEngine::nixlRadosEngine(const nixlBackendInitParams *init_params)
-    : nixlRadosEngine(init_params, std::make_unique<nixl::rados::libRados>()) {}
+    : nixlRadosEngine(init_params, std::make_unique<nixl::rados::realRadosApi>()) {}
 
 nixlRadosEngine::nixlRadosEngine(const nixlBackendInitParams *init_params,
-                                 std::unique_ptr<nixl::rados::cApi> capi,
+                                 std::unique_ptr<nixl::rados::radosApi> api,
                                  std::unique_ptr<nixl::rados::statusWaitTimer> status_wait_timer)
     : nixlBackendEngine(init_params),
-      capi_(std::move(capi)) {
-    if (capi_ == nullptr) {
+      api_(std::move(api)) {
+    if (api_ == nullptr) {
         NIXL_ERROR << "RADOS engine requires a non-null librados seam";
         initErr = true;
         return;
@@ -450,14 +457,14 @@ nixlRadosEngine::nixlRadosEngine(const nixlBackendInitParams *init_params,
 
 void
 nixlRadosEngine::initialize(const nixl::rados::backendConfig &config) {
-    if (!bootstrapClient(*capi_, config, &cppCtx_, cluster_, ioctx_)) {
+    if (!bootstrapClient(*api_, config, &dataView_, cluster_, ioctx_)) {
         initErr = true;
         return;
     }
     clusterCreated_ = true;
     ioctxOpen_ = true;
-    cppCtxOpen_ = true;
-    if (!bootstrapClient(*capi_, config, &metaCppCtx_, metaCluster_, metaIoctx_)) {
+    dataViewOpen_ = true;
+    if (!bootstrapClient(*api_, config, &metaView_, metaCluster_, metaIoctx_)) {
         NIXL_ERROR << "RADOS metadata stat client initialization failed";
         initErr = true;
         return;
@@ -482,21 +489,21 @@ nixlRadosEngine::~nixlRadosEngine() {
     }
     alock.unlock();
     if (metaClientOpen_) {
-        capi_->ioCtxClose(&metaCppCtx_);
-        capi_->ioctx_destroy(metaIoctx_);
-        capi_->shutdown(metaCluster_);
+        api_->ioctxClose(&metaView_);
+        api_->ioctx_destroy(metaIoctx_);
+        api_->shutdown(metaCluster_);
         metaClientOpen_ = false;
     }
-    if (cppCtxOpen_) {
-        capi_->ioCtxClose(&cppCtx_);
-        cppCtxOpen_ = false;
+    if (dataViewOpen_) {
+        api_->ioctxClose(&dataView_);
+        dataViewOpen_ = false;
     }
     if (ioctxOpen_) {
-        capi_->ioctx_destroy(ioctx_);
+        api_->ioctx_destroy(ioctx_);
         ioctxOpen_ = false;
     }
     if (clusterCreated_) {
-        capi_->shutdown(cluster_);
+        api_->shutdown(cluster_);
         clusterCreated_ = false;
     }
 }
@@ -577,21 +584,20 @@ nixlRadosEngine::queryMem(const nixl_reg_dlist_t &descs,
     bool stat_failed = false;
     for (size_t base = 0; base < count; base += kAioStatWindow) {
         const size_t width = std::min(kAioStatWindow, count - base);
-        statWindow window(*capi_, width);
+        statWindow window(*api_, width);
         for (size_t i = 0; i < width; ++i) {
             const nixlBlobDesc &desc = descs[static_cast<int>(base + i)];
             statSlot &slot = window[i];
             slot.oid = desc.metaInfo.empty() ? std::to_string(desc.devId) : desc.metaInfo;
-            const int create_ret = capi_->cppCreateCompletion(&slot.comp);
-            if (create_ret != 0 || slot.comp == nullptr) {
-                slot.comp = nullptr;
-                slot.submit_error = create_ret < 0 ? create_ret : -ENOMEM;
+            slot.comp = api_->createCompletion();
+            if (slot.comp == nullptr) {
+                slot.submit_error = -ENOMEM;
                 continue;
             }
-            const int submit_ret = capi_->cppAioStat(
-                &metaCppCtx_, slot.oid.c_str(), slot.comp, &slot.size, &slot.prval, &slot.merged);
+            const int submit_ret = api_->aioStat(
+                &metaView_, slot.oid.c_str(), slot.comp, &slot.size, &slot.prval, &slot.merged);
             if (submit_ret != 0) {
-                capi_->cppRelease(slot.comp);
+                api_->release(slot.comp);
                 slot.comp = nullptr;
                 slot.submit_error = submit_ret < 0 ? submit_ret : -EIO;
                 continue;
@@ -606,10 +612,10 @@ nixlRadosEngine::queryMem(const nixl_reg_dlist_t &descs,
                 stat_failed = true;
                 continue;
             }
-            capi_->cppWaitForCompleteAndCb(slot.comp);
+            api_->waitForCompleteAndCb(slot.comp);
             const int prval = *slot.prval;
-            const int aggregate = capi_->cppGetReturnValue(slot.comp);
-            capi_->cppRelease(slot.comp);
+            const int aggregate = api_->getReturnValue(slot.comp);
+            api_->release(slot.comp);
             slot.comp = nullptr;
             if (prval == 0 && aggregate == 0) {
                 resp[base + i] = nixl_b_params_t{{"size", std::to_string(*slot.size)}};
@@ -642,10 +648,10 @@ void
 nixlRadosEngine::drainRequestState(const std::shared_ptr<directRequestState> &state) const {
     std::lock_guard slock(state->mtx);
     for (auto &pair : state->pairs()) {
-        if (!pairOwned(pair)) {
+        if (pair.owned == nullptr) {
             continue;
         }
-        const int result = retirePair(*capi_, pair, true);
+        const int result = retirePair(*api_, state->operation(), pair, true);
         logRetiredResult(*state, pair, result);
     }
     state->phase = directRequestState::phase_t::ABANDONED;
@@ -792,95 +798,59 @@ nixlRadosEngine::postXfer(const nixl_xfer_op_t &,
     }
 
     const bool is_read = state->operation() == NIXL_READ;
+    bool accepted = false;
     for (auto &pair : state->pairs()) {
-        if (is_read) {
-            rados_completion_t completion = nullptr;
-            bool completion_held = false;
-            try {
-                const int create_ret = capi_->cCreateCompletion(&completion);
-                if (create_ret != 0 || completion == nullptr) {
-                    pair.result = create_ret < 0 ? create_ret : -ENOMEM;
-                    NIXL_ERROR << "RADOS failed to create a C completion for object '" << pair.oid
-                               << "'; submitting no further pairs";
-                    break;
-                }
-                completion_held = true;
-                const int ret = capi_->cRead(ioctx_,
-                                             pair.oid.c_str(),
-                                             completion,
-                                             reinterpret_cast<char *>(pair.dram),
-                                             pair.len,
-                                             pair.offset);
-                if (ret != 0) {
-                    capi_->cRelease(completion);
-                    completion_held = false;
-                    pair.result = ret < 0 ? ret : -EIO;
-                    NIXL_ERROR << "RADOS failed to submit a C read from object '" << pair.oid
-                               << "' with error " << ret << "; submitting no further pairs";
-                    break;
-                }
-                pair.owned = directRequestState::cRead{completion};
-                completion_held = false;
-            }
-            catch (const std::bad_alloc &) {
-                if (completion_held) {
-                    capi_->cRelease(completion);
-                }
-                pair.result = -ENOMEM;
-                NIXL_ERROR << "RADOS C read allocation failed for object '" << pair.oid
-                           << "'; submitting no further pairs";
-                break;
-            }
-        } else {
-            librados::AioCompletion *completion = nullptr;
-            bool completion_held = false;
-            try {
-                pair.payload = librados::bufferlist::static_from_mem(
-                    reinterpret_cast<char *>(pair.dram), pair.len);
-                const int create_ret = capi_->cppCreateCompletion(&completion);
-                if (create_ret != 0 || completion == nullptr) {
-                    pair.payload.clear();
-                    pair.result = create_ret < 0 ? create_ret : -ENOMEM;
-                    NIXL_ERROR << "RADOS failed to create a C++ completion for object '" << pair.oid
-                               << "'; submitting no further pairs";
-                    break;
-                }
-                completion_held = true;
-                const int ret = capi_->cppWrite(
-                    &cppCtx_, pair.oid.c_str(), completion, pair.payload, pair.len, pair.offset);
-                if (ret != 0) {
-                    capi_->cppRelease(completion);
-                    completion_held = false;
-                    pair.payload.clear();
-                    pair.result = ret < 0 ? ret : -EIO;
-                    NIXL_ERROR << "RADOS failed to submit a C++ write to object '" << pair.oid
-                               << "' with error " << ret << "; submitting no further pairs";
-                    break;
-                }
-                pair.owned = directRequestState::cppWrite{completion};
-                completion_held = false;
-            }
-            catch (const std::bad_alloc &) {
-                if (completion_held) {
-                    capi_->cppRelease(completion);
-                }
+        librados::AioCompletion *completion = nullptr;
+        bool completion_held = false;
+        try {
+            pair.payload = librados::bufferlist::static_from_mem(
+                reinterpret_cast<char *>(pair.dram), pair.len);
+            completion = api_->createCompletion();
+            if (completion == nullptr) {
                 pair.payload.clear();
                 pair.result = -ENOMEM;
-                NIXL_ERROR << "RADOS C++ write allocation failed for object '" << pair.oid
+                NIXL_ERROR << "RADOS failed to create a completion for object '" << pair.oid
                            << "'; submitting no further pairs";
                 break;
             }
+            completion_held = true;
+            const int ret = is_read ?
+                api_->aioRead(&dataView_,
+                              pair.oid.c_str(),
+                              completion,
+                              &pair.payload,
+                              pair.len,
+                              pair.offset) :
+                api_->aioWrite(
+                    &dataView_, pair.oid.c_str(), completion, pair.payload, pair.len, pair.offset);
+            if (ret != 0) {
+                api_->release(completion);
+                completion_held = false;
+                pair.payload.clear();
+                pair.result = ret < 0 ? ret : -EIO;
+                NIXL_ERROR << "RADOS failed to submit " << (is_read ? "a read from" : "a write to")
+                           << " object '" << pair.oid << "' with error " << ret
+                           << "; submitting no further pairs";
+                break;
+            }
+            pair.owned = completion;
+            completion_held = false;
+            accepted = true;
+        }
+        catch (const std::bad_alloc &) {
+            if (completion_held) {
+                api_->release(completion);
+            }
+            pair.payload.clear();
+            pair.result = -ENOMEM;
+            NIXL_ERROR << "RADOS " << (is_read ? "read" : "write")
+                       << " allocation failed for object '" << pair.oid
+                       << "'; submitting no further pairs";
+            break;
         }
     }
 
-    size_t accepted = 0;
-    for (const auto &pair : state->pairs()) {
-        if (pairOwned(pair)) {
-            ++accepted;
-        }
-    }
-
-    if (accepted > 0) {
+    if (accepted) {
         state->phase = directRequestState::phase_t::ACTIVE;
         return NIXL_IN_PROG;
     }
@@ -919,7 +889,7 @@ nixlRadosEngine::checkXfer(nixlBackendReqH *handle) const {
     }
 
     for (auto &pair : state->pairs()) {
-        if (pairUnproven(*capi_, pair)) {
+        if (pairUnproven(*api_, pair)) {
             // Status wait: one sleep per call with the state lock released,
             // no rescan; unproven pairs are harvested on the next poll.
             if (statusWaitTimer_ != nullptr) {
@@ -928,8 +898,8 @@ nixlRadosEngine::checkXfer(nixlBackendReqH *handle) const {
             }
             return NIXL_IN_PROG;
         }
-        if (pairOwned(pair)) {
-            pair.result = retirePair(*capi_, pair, false);
+        if (pair.owned != nullptr) {
+            pair.result = retirePair(*api_, state->operation(), pair, false);
         }
     }
 

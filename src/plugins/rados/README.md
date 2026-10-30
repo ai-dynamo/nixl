@@ -27,10 +27,10 @@ asynchronous I/O interface.
 - **Local-only:** it serves `NIXL_WRITE` from local `DRAM_SEG` to
   `OBJ_SEG` descriptors of the same agent, and `NIXL_READ` in the
   reverse direction. Remote agents and notifications are not supported.
-- **Direct data path:** reads land straight in caller-provided
-  destination memory and writes reference caller memory through a
-  non-owning view; the plugin never stages payload in its own buffers
-  (the Ceph client and network stack may still copy).
+- **Direct data path:** reads target caller-provided destination memory,
+  reconciling replacement output before completion; writes reference
+  caller memory through a non-owning view (the Ceph client and network
+  stack may still copy).
 - **Object ranges:** an `OBJ_SEG` address is a byte offset inside the
   object. A write creates a missing object, overwrites the selected
   range, may extend the object, and preserves bytes outside the written
@@ -139,10 +139,8 @@ Registration:
   Duplicate `devId` registrations are rejected, while different `devId`s
   may map to the same object key. A `metaInfo` containing an embedded NUL
   byte is rejected.
-- In transfer descriptors, an `OBJ_SEG` `addr` is the byte offset
-  inside the object, and registrations bound the object range usable
-  for transfers (a zero-length `OBJ_SEG` registration denotes an
-  unbounded range from its `addr` onward).
+- In transfer descriptors, an `OBJ_SEG` `addr` is the byte offset inside
+  the object; registration ranges do not constrain transfer ranges.
 
 Transfers:
 
