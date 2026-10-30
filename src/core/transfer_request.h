@@ -17,11 +17,9 @@
 #ifndef NIXL_SRC_CORE_TRANSFER_REQUEST_H
 #define NIXL_SRC_CORE_TRANSFER_REQUEST_H
 
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -30,6 +28,7 @@
 #include "telemetry.h"
 #include "common/nixl_duration.h"
 #include "tracing/trace_context.h"
+#include "tracing/traceable.h"
 
 enum nixl_telemetry_stat_status_t {
     NIXL_TELEMETRY_POST = 0,
@@ -73,46 +72,14 @@ public:
     void
     updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
 
-    [[nodiscard]] const nixl::trace::TraceContext &
-    traceContext() const noexcept {
-        return trace_.context;
-    }
-
-    /** @brief Trace context of the latest post handed to the backend, which that
-     *         post's nixl::xfer.complete carries; traceContext() before any post. */
-    [[nodiscard]] const nixl::trace::TraceContext &
-    tracePostContext() const noexcept {
-        return trace_.postContext;
-    }
-
-    [[nodiscard]] std::uint64_t
-    traceRequestId() const noexcept {
-        return trace_.requestId;
-    }
-
-    /** @brief traceRequestId() as nixl.xfer_request_id records it. */
-    [[nodiscard]] std::string_view
-    traceRequestIdText() const noexcept {
-        return trace_.requestIdText.view();
-    }
-
-    [[nodiscard]] std::uint64_t
-    traceExecution() const noexcept {
-        return trace_.execution.load(std::memory_order_relaxed);
+    [[nodiscard]] const nixl::trace::Traceable &
+    trace() const noexcept {
+        return trace_;
     }
 
     friend class nixlAgent;
 
 private:
-    struct traceState {
-        const nixl::trace::TraceContext context;
-        nixl::trace::TraceContext postContext;
-        bool requestSpanIdUsed = false;
-        const nixl::trace::RequestIdText requestIdText;
-        const std::uint64_t requestId;
-        std::atomic<std::uint64_t> execution = 0;
-    };
-
     nixlBackendEngine *engine = nullptr;
     nixlBackendReqH *backendHandle = nullptr;
 
@@ -121,7 +88,7 @@ private:
 
     const std::string remoteAgent;
     const nixl_remote_section_weak_t remoteSection;
-    traceState trace_;
+    nixl::trace::Traceable trace_;
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 

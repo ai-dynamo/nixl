@@ -43,6 +43,7 @@
 #include "tracing/trace_context.h"
 #include "tracing/trace_macros.h"
 #include "tracing/trace_sink.h"
+#include "tracing/traceable.h"
 
 namespace nixl::trace {
 // Agent-wiring backend-selection policy, defined in nixl_agent.cpp (not exposed
@@ -806,9 +807,9 @@ TEST(Tracing, RequestStoresFixedCorrelationContext) {
                                context,
                                0x0123456789abcdefULL);
 
-    EXPECT_EQ(request.traceContext(), context);
-    EXPECT_EQ(request.traceRequestId(), 0x0123456789abcdefULL);
-    EXPECT_EQ(request.traceExecution(), 0u);
+    EXPECT_EQ(request.trace().context(), context);
+    EXPECT_EQ(request.trace().requestId(), 0x0123456789abcdefULL);
+    EXPECT_EQ(request.trace().execution(), 0u);
 }
 
 TEST(Tracing, RequestContextsAreDistinctAndStable) {
@@ -828,10 +829,10 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
                               nixl_remote_section_weak_t{},
                               nixl::trace::generateTraceContext(),
                               0);
-    const auto first_context = first.traceContext();
+    const auto first_context = first.trace().context();
 
-    EXPECT_NE(first_context, second.traceContext());
-    EXPECT_EQ(first.traceContext(), first_context);
+    EXPECT_NE(first_context, second.trace().context());
+    EXPECT_EQ(first.trace().context(), first_context);
 }
 
 TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
@@ -844,7 +845,7 @@ TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
                                nixl::trace::TraceContext{},
                                0);
 
-    EXPECT_FALSE(request.traceContext().valid());
+    EXPECT_FALSE(request.trace().context().valid());
 }
 
 TEST(Tracing, ActiveTracerConstructsGeneratedContext) {
@@ -950,6 +951,42 @@ TEST(Tracing, RequestIdTextViewsItsOwnDigits) {
     EXPECT_TRUE(liesInside(text.view(), text));
     EXPECT_TRUE(liesInside(copy.view(), copy));
     EXPECT_EQ(copy.view(), text.view());
+}
+
+TEST(Tracing, TraceableDrawsAPostSpanIdOnceItsOwnIsUsed) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);
+    zero_draws_left = 0;
+    const auto sampled = testContext(0x31, 0x03);
+    const auto unsampled = testContext(0x32, 0x02);
+    nixl::trace::Traceable sampled_trace{sampled, 0x31};
+    nixl::trace::Traceable unsampled_trace{unsampled, 0x32};
+    auto drawn = sampled;
+    drawn.spanId.fill(0x5a);
+
+    EXPECT_EQ(sampled_trace.nextPostContext(tracer.get()), sampled);
+    sampled_trace.markSpanIdUsed();
+    unsampled_trace.markSpanIdUsed();
+    EXPECT_EQ(sampled_trace.nextPostContext(tracer.get()), drawn);
+    EXPECT_EQ(unsampled_trace.nextPostContext(tracer.get()), unsampled);
+}
+
+TEST(Tracing, TraceableAcceptedPostTakesTheNextExecution) {
+    const auto context = testContext(0x33);
+    const auto post = testContext(0x34);
+    nixl::trace::Traceable traced{context, 0x33};
+    nixl::trace::Traceable untraced{nixl::trace::TraceContext{}, 0};
+
+    EXPECT_EQ(traced.postContext(), context);
+    EXPECT_EQ(traced.execution(), 0u);
+    traced.acceptPost(post);
+    traced.acceptPost(post);
+    untraced.acceptPost(post);
+
+    EXPECT_EQ(traced.postContext(), post);
+    EXPECT_EQ(traced.execution(), 2u);
+    EXPECT_EQ(untraced.postContext(), post);
+    EXPECT_EQ(untraced.execution(), 0u);
 }
 
 // A phase recorded through the plugin-facing sink reaches every enabled trace

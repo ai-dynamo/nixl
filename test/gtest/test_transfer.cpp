@@ -419,7 +419,7 @@ protected:
                                        &extra_params);
                 ASSERT_EQ(status, NIXL_SUCCESS);
                 EXPECT_NE(xfer_req, nullptr);
-                const auto trace_request_id = xfer_req->traceRequestId();
+                const auto trace_request_id = xfer_req->trace().requestId();
                 if (expect_trace_context) {
                     EXPECT_NE(trace_request_id, 0u);
                 }
@@ -429,12 +429,12 @@ protected:
                 for (size_t i = 0; i < repeat; i++) {
                     status = from.postXferReq(xfer_req);
                     ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
-                    EXPECT_EQ(xfer_req->traceRequestId(), trace_request_id);
+                    EXPECT_EQ(xfer_req->trace().requestId(), trace_request_id);
 
                     for (int i = 0; i < retry_count; i++) {
                         status = from.getXferStatus(xfer_req);
                         EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
-                        EXPECT_EQ(xfer_req->traceRequestId(), trace_request_id);
+                        EXPECT_EQ(xfer_req->trace().requestId(), trace_request_id);
                         if (status == NIXL_SUCCESS) {
                             break;
                         }
@@ -950,9 +950,9 @@ TEST_P(TestTransferTracingSampled, NotifyingWritePostedTwice) {
                                         xfer_req,
                                         &extra_params),
               NIXL_SUCCESS);
-    ASSERT_TRUE(xfer_req->traceContext().sampled());
-    ASSERT_NE(xfer_req->traceRequestId(), 0u);
-    RecordProperty("xfer_request_id", std::to_string(xfer_req->traceRequestId()));
+    ASSERT_TRUE(xfer_req->trace().context().sampled());
+    ASSERT_NE(xfer_req->trace().requestId(), 0u);
+    RecordProperty("xfer_request_id", std::to_string(xfer_req->trace().requestId()));
 
     for (size_t post = 0; post < posts; ++post) {
         nixl_status_t status = getAgent(0).postXferReq(xfer_req);
