@@ -129,6 +129,8 @@ RUN apt-get update -y && \
     clang \
     hwloc \
     libhwloc-dev \
+    librados-dev \
+    libradospp-dev \
     pkg-config \
     wget \
     git \

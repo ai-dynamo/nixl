@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'RADOS', 'TELEMETRY_DOCA']
 
 enabled_plugins = {}
 
@@ -473,6 +473,11 @@ if libfabric_path != ''
   endif
 else
   libfabric_dep = dependency('libfabric', required: false)
+endif
+
+rados_dep = dependency('rados', required: false, method: 'pkg-config')
+if not rados_dep.found()
+  rados_dep = cpp.find_library('rados', required: false)
 endif
 
 # UCX GPU device API detection
