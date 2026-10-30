@@ -80,6 +80,17 @@ namespace agent {
         nixl_xfer_dlist_t xferDlist{DRAM_SEG};
     };
 
+    struct localXferSetup {
+        nixlBackendH *backend = nullptr;
+        blob srcBlob;
+        blob dstBlob;
+        nixl_reg_dlist_t srcRegDlist{DRAM_SEG};
+        nixl_reg_dlist_t dstRegDlist{DRAM_SEG};
+        nixl_opt_args_t extraParams;
+        nixl_xfer_dlist_t srcXferDlist{DRAM_SEG};
+        nixl_xfer_dlist_t dstXferDlist{DRAM_SEG};
+    };
+
     class agentHelper {
     protected:
         ScopedEnv trace_env_;
@@ -108,6 +119,11 @@ namespace agent {
         nixlAgent *
         getAgent() const {
             return agent_.get();
+        }
+
+        const std::string &
+        getName() const {
+            return name_;
         }
 
         const mocks::GMockBackendEngine &
@@ -154,6 +170,38 @@ namespace agent {
                           nixl_xfer_op_t op = NIXL_WRITE) {
             return agent_->createXferReq(
                 op, setup.xferDlist, setup.xferDlist, name_, req, &setup.extraParams);
+        }
+
+        nixl_status_t
+        createLocalXferReq(selfXferSetup &setup, nixlXferReqH *&req) {
+            return agent_->createXferReq(
+                NIXL_WRITE, setup.xferDlist, setup.xferDlist, "", req, &setup.extraParams);
+        }
+
+        void
+        setupLocalXfer(localXferSetup &setup) {
+            nixl_b_params_t params;
+            EXPECT_EQ(createBackendWithGMock(params, setup.backend), NIXL_SUCCESS);
+
+            nixl_opt_args_t src_opts;
+            src_opts.backends.push_back(setup.backend);
+            setup.srcRegDlist.addDesc(setup.srcBlob.getDesc());
+            EXPECT_EQ(agent_->registerMem(setup.srcRegDlist, &src_opts), NIXL_SUCCESS);
+            setup.srcXferDlist.addDesc(setup.srcBlob.getDesc());
+
+            nixl_opt_args_t dst_opts;
+            dst_opts.backends.push_back(setup.backend);
+            setup.dstRegDlist.addDesc(setup.dstBlob.getDesc());
+            EXPECT_EQ(agent_->registerMem(setup.dstRegDlist, &dst_opts), NIXL_SUCCESS);
+            setup.dstXferDlist.addDesc(setup.dstBlob.getDesc());
+
+            setup.extraParams.backends.push_back(setup.backend);
+        }
+
+        nixl_status_t
+        createDistinctLocalXferReq(localXferSetup &setup, nixlXferReqH *&req) {
+            return agent_->createXferReq(
+                NIXL_WRITE, setup.srcXferDlist, setup.dstXferDlist, "", req, &setup.extraParams);
         }
     };
 
@@ -1823,6 +1871,101 @@ namespace agent {
 
         EXPECT_EQ(local_agent_->makeConnection(remote_agent_name_out), NIXL_SUCCESS);
         EXPECT_EQ(remote_agent_->makeConnection(local_agent_name_out), NIXL_SUCCESS);
+    }
+
+    // ---- Local transfer tests (empty remote_agent) ----
+
+    TEST_F(singleAgentSessionFixture, LocalXferReqCreateSucceeds) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createLocalXferReq(setup, req), NIXL_SUCCESS);
+        ASSERT_NE(req, nullptr);
+        EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(singleAgentSessionFixture, LocalXferReqFullLifecycle) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createLocalXferReq(setup, req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(singleAgentSessionFixture, LocalXferReqRepost) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createLocalXferReq(setup, req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
+
+        // Repost the same request
+        EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(singleAgentSessionFixture, LocalXferReqQueryBackend) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createLocalXferReq(setup, req), NIXL_SUCCESS);
+
+        nixlBackendH *backend_out;
+        EXPECT_EQ(agent_->queryXferBackend(req, backend_out), NIXL_SUCCESS);
+        EXPECT_EQ(backend_out, setup.backend);
+
+        EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(singleAgentSessionFixture, LocalXferMakeXferReqFullLifecycle) {
+        localXferSetup setup;
+        agent_helper_->setupLocalXfer(setup);
+
+        // Prep local side (initiator)
+        nixlDlistH *local_side = nullptr;
+        ASSERT_EQ(agent_->prepXferDlist(setup.srcXferDlist, local_side, &setup.extraParams),
+                  NIXL_SUCCESS);
+
+        // Prep target side using own name (self-target: uses public metadata
+        // from remoteSections_ but keeps remoteAgent empty for local semantics)
+        nixlDlistH *remote_side = nullptr;
+        ASSERT_EQ(
+            agent_->prepXferDlist(
+                agent_helper_->getName(), setup.dstXferDlist, remote_side, &setup.extraParams),
+            NIXL_SUCCESS);
+
+        const std::vector<int> indices{0};
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(
+            agent_->makeXferReq(
+                NIXL_WRITE, *local_side, indices, *remote_side, indices, req, &setup.extraParams),
+            NIXL_SUCCESS);
+
+        EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(local_side), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(remote_side), NIXL_SUCCESS);
+    }
+
+    TEST_F(singleAgentSessionFixture, LocalXferDistinctRegionsFullLifecycle) {
+        localXferSetup setup;
+        agent_helper_->setupLocalXfer(setup);
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createDistinctLocalXferReq(setup, req), NIXL_SUCCESS);
+        ASSERT_NE(req, nullptr);
+        EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
     }
 
 } // namespace agent
