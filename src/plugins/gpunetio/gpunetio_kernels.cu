@@ -38,6 +38,19 @@ nixl_gpunetio_dev_store_host_state(uint32_t &state, uint32_t value) {
 }
 
 __device__ bool
+nixl_gpunetio_dev_try_lock_notif(int &lock) {
+    int expected = 0;
+    return cuda::atomic_ref<int, cuda::thread_scope_device>(lock).compare_exchange_strong(
+        expected, 1, cuda::std::memory_order_acquire, cuda::std::memory_order_relaxed);
+}
+
+__device__ void
+nixl_gpunetio_dev_unlock_notif(int &lock) {
+    cuda::atomic_ref<int, cuda::thread_scope_device>(lock).store(0,
+                                                                 cuda::std::memory_order_release);
+}
+
+__device__ bool
 nixl_gpunetio_dev_has_sq_credit(doca_gpu_dev_verbs_qp *qp, uint32_t count) {
     auto *cq = doca_gpu_dev_verbs_qp_get_cq_sq(qp);
     const uint64_t reserved =
@@ -416,7 +429,27 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
                     .load(cuda::std::memory_order_acquire);
             docaSlotDesc *request = &xfer_req_ring[pos];
             bool send_notification = false;
-            if ((active & (1U << pos)) != 0U) {
+            if ((active & (1U << pos)) != 0U &&
+                DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx) != DOCA_NOTIF_NULL &&
+                gpu_state->notif_pending[pos] != 0U) {
+                const int notif_status =
+                    nixl_gpunetio_dev_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+                                                     DOCA_GPUNETIO_VERBS_QP_SQ>(
+                        doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_notif),
+                        gpu_state->notif_ticket[pos]);
+                if (notif_status != EBUSY) {
+                    gpu_state->notif_pending[pos] = 0U;
+                    if (notif_status == 0) {
+                        nixl_gpunetio_dev_unlock_notif(request->notif_progress->notif_lock);
+                        nixl_gpunetio_dev_complete_request(request, gpu_state, host_state, pos);
+                    } else {
+                        nixl_gpunetio_dev_mark_failed(gpu_state, host_state);
+                        nixl_gpunetio_dev_unlock_notif(request->notif_progress->notif_lock);
+                        nixl_gpunetio_dev_finish_request(
+                            gpu_state, host_state, pos, DOCA_XFER_STATE_ERROR);
+                    }
+                }
+            } else if ((active & (1U << pos)) != 0U) {
                 const int poll_status =
                     nixl_gpunetio_dev_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                                      DOCA_GPUNETIO_VERBS_QP_SQ>(
@@ -432,41 +465,37 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
                 }
             }
 
-            // Keep the baseline's synchronous notification and shared-QP ordering.
+            // Only one outstanding SEND per peer; retry busy peers in the next scan.
             uint32_t senders = __ballot_sync(0xffffffffU, send_notification);
             while (senders != 0U) {
                 if (pos == static_cast<uint32_t>(__ffs(senders) - 1)) {
-#if ENABLE_DEBUG == 1
-                    printf("Notif after completion at %d id %d sz %d\n",
-                           pos,
-                           DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx),
-                           (int)request->msg_sz);
-#endif
-                    doca_gpu_dev_verbs_send(
-                        request->qp_notif,
-                        doca_gpu_dev_verbs_addr{.addr = (uint64_t)(request->lbuf_notif),
-                                                .key = request->lkey_notif},
-                        request->msg_sz,
-                        &out_ticket);
-                    int notif_status;
-                    do {
-                        notif_status = nixl_gpunetio_dev_poll_one_cq_at<
-                            DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-                            DOCA_GPUNETIO_VERBS_QP_SQ>(
-                            doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_notif), out_ticket);
-                    } while (notif_status == EBUSY &&
-                             nixl_gpunetio_dev_load_host_state(gpu_state->control) == 0U);
-                    if (notif_status != 0) {
+                    if (nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U) {
                         nixl_gpunetio_dev_fail_request(gpu_state, host_state, pos);
-                        printf("kernel_progress: notification CQ error %d wqe %ld\n",
-                               notif_status,
-                               out_ticket);
-                    } else {
-                        nixl_gpunetio_dev_complete_request(request, gpu_state, host_state, pos);
-                    }
+                    } else if (nixl_gpunetio_dev_try_lock_notif(
+                                   request->notif_progress->notif_lock)) {
+                        if (nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U) {
+                            nixl_gpunetio_dev_unlock_notif(request->notif_progress->notif_lock);
+                            nixl_gpunetio_dev_fail_request(gpu_state, host_state, pos);
+                        } else {
 #if ENABLE_DEBUG == 1
-                    printf("Notif correctly sent %ld\n", out_ticket);
+                            printf("Notif after completion at %d id %d sz %d\n",
+                                   pos,
+                                   DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx),
+                                   (int)request->msg_sz);
 #endif
+                            doca_gpu_dev_verbs_send(
+                                request->qp_notif,
+                                doca_gpu_dev_verbs_addr{.addr = (uint64_t)(request->lbuf_notif),
+                                                        .key = request->lkey_notif},
+                                request->msg_sz,
+                                &out_ticket);
+                            gpu_state->notif_ticket[pos] = out_ticket;
+                            gpu_state->notif_pending[pos] = 1U;
+#if ENABLE_DEBUG == 1
+                            printf("Notif posted %ld\n", out_ticket);
+#endif
+                        }
+                    }
                 }
                 senders &= senders - 1;
             }
@@ -554,6 +583,25 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
     if (blockIdx.x == 2) {
         while ((nixl_gpunetio_dev_load_host_state(gpu_state->control) & DOCA_GPU_EXIT) == 0U) {
             if (DOCA_GPUNETIO_VOLATILE(notif_send_gpu->qp_gpu) != nullptr) {
+                auto *progress = notif_send_gpu->notif_progress;
+                bool locked = false;
+                while (nixl_gpunetio_dev_load_host_state(gpu_state->control) == 0U) {
+                    if (nixl_gpunetio_dev_try_lock_notif(progress->notif_lock)) {
+                        locked = true;
+                        break;
+                    }
+                }
+                if (locked && nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U) {
+                    nixl_gpunetio_dev_unlock_notif(progress->notif_lock);
+                    locked = false;
+                }
+                if (!locked) {
+                    // Publish failure before releasing the host's mailbox wait.
+                    nixl_gpunetio_dev_mark_failed(gpu_state, host_state);
+                    doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+                    DOCA_GPUNETIO_VOLATILE(notif_send_gpu->qp_gpu) = nullptr;
+                    continue;
+                }
                 doca_gpu_dev_verbs_send(
                     notif_send_gpu->qp_gpu,
                     doca_gpu_dev_verbs_addr{.addr = (uint64_t)notif_send_gpu->msg_buf,
@@ -573,6 +621,10 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
                     printf("kernel_progress: standalone notification CQ error %d wqe %ld\n",
                            notif_status,
                            out_ticket);
+                }
+                // An aborted SEND without a CQE still owns its QP and buffer until teardown.
+                if (notif_status != EBUSY) {
+                    nixl_gpunetio_dev_unlock_notif(progress->notif_lock);
                 }
 #if ENABLE_DEBUG == 1
                 if (notif_status == 0) {

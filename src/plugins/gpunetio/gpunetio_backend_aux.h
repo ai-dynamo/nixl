@@ -146,6 +146,7 @@ struct docaSlotDesc {
     doca_gpu_dev_verbs_qp *qp_data;
     doca_gpu_dev_verbs_qp *qp_notif;
     struct docaQpProgress *qp_progress;
+    struct docaQpProgress *notif_progress;
     uint32_t wait_completion_mask;
     uint64_t *peer_write_completed;
     uint64_t write_ticket;
@@ -172,6 +173,7 @@ enum docaSlotState : uint32_t {
 struct docaQpProgress {
     // Keep SQ credit checking and posting ordered while waits remain cancellable.
     int data_producer_lock;
+    int notif_lock;
 };
 
 struct docaHostState {
@@ -187,6 +189,8 @@ struct docaGpuState {
     // Host requests EXIT at teardown; either side can latch ABORT on failure.
     uint32_t control;
     uint32_t inflight;
+    uint32_t notif_pending[DOCA_XFER_REQ_MAX];
+    uint64_t notif_ticket[DOCA_XFER_REQ_MAX];
 };
 
 constexpr uint32_t DOCA_GPU_EXIT = 1U;
@@ -225,6 +229,7 @@ struct nixlDocaNotif {
 
 struct docaNotif {
     doca_gpu_dev_verbs_qp *qp_gpu;
+    struct docaQpProgress *notif_progress;
     uint32_t msg_lkey;
     uintptr_t msg_buf;
     size_t msg_size;
