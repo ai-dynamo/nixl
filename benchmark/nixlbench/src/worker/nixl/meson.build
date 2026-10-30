@@ -23,7 +23,8 @@ nixl_worker_sources = [
 nixl_worker_deps = [openmp_dep, nixl_lib, nixl_build, nixl_serdes, tomlplusplus_dep]
 if cuda_available
   nixl_worker_deps += [cuda_dep]
-elif rocm_available
+endif
+if nixlbench_rocm_enabled
   nixl_worker_deps += [rocm_dep]
 endif
 

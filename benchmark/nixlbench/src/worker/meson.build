@@ -26,7 +26,8 @@ worker_deps = [
 
 if cuda_available
   worker_deps += [cuda_dep]
-elif rocm_available
+endif
+if nixlbench_rocm_enabled
   worker_deps += [rocm_dep]
 endif
 
