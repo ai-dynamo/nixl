@@ -126,6 +126,8 @@ echo "==== Running vLLM Elastic EP test ===="
 
     (
         cd "${VLLM_ELASTIC_TEST_DIR}"
+        # vLLM v0.33 + FlashInfer fails when v2 runner model is used.
+        VLLM_USE_V2_MODEL_RUNNER=0 \
         timeout 4500 "${VLLM_PYTHON}" -m pytest \
             "tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling[cuda_graphs_heavy_nixl_ep]" \
             -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
