@@ -24,6 +24,7 @@
 #include <memory>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <poll.h>
 #include <optional>
 #include <utility>
@@ -76,6 +77,8 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
         nixl_blob_t rkeyStr;
 
     public:
+        uintptr_t regionAddr = 0;
+        size_t regionLen = 0;
         nixlUcxPrivateMetadata() : nixlBackendMD(true) {
         }
 
@@ -95,7 +98,10 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
 class nixlUcxPublicMetadata : public nixlBackendMD {
 public:
     nixlUcxPublicMetadata() = delete;
-    nixlUcxPublicMetadata(const ucx_connection_ptr_t &conn, std::vector<nixl::ucx::rkey> &&rkeys);
+    nixlUcxPublicMetadata(const ucx_connection_ptr_t &conn,
+                          std::vector<nixl::ucx::rkey> &&rkeys,
+                          uintptr_t regionAddr,
+                          size_t regionLen);
 
     [[nodiscard]] const nixl::ucx::rkey &
     getRkey(const size_t id) const {
@@ -103,6 +109,8 @@ public:
     }
 
     const ucx_connection_ptr_t conn;
+    const uintptr_t regionAddr;
+    const size_t regionLen;
 
 private:
     const std::vector<nixl::ucx::rkey> rkeys_;
@@ -292,7 +300,11 @@ private:
 
     // Memory management helpers
     nixl_status_t
-    internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);
+    internalMDHelper(const nixl_blob_t &blob,
+                     const std::string &agent,
+                     uintptr_t regionAddr,
+                     size_t regionLen,
+                     nixlBackendMD *&output);
 
     // Notifications
     static ucs_status_t
@@ -322,7 +334,8 @@ private:
     nixl_status_t
     prepXferSgl(const nixl_meta_dlist_t &local,
                 const nixl_meta_dlist_t &remote,
-                nixlBackendReqH *handle) const;
+                nixlBackendReqH *handle,
+                const nixl_opt_b_args_t *opt_args) const;
 
     nixl_status_t
     sendXferSgl(nixlBackendReqH *handle) const;
