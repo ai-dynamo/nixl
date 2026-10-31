@@ -1843,6 +1843,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         staged_req.qp_data = treq->qpData;
         staged_req.qp_notif = rdma_qp->qp_notif->get_qp_gpu_dev();
         staged_req.qp_progress = rdma_qp->progress_gpu;
+        staged_req.notif_progress = rdma_qp->progress_gpu;
         const size_t publish_size =
             staged_req.has_two_sge ? sizeof(staged_req) : offsetof(docaSlotDesc, lbuf2);
         memcpy(&xferReqRingCpu[pos], &staged_req, publish_size);
@@ -2243,6 +2244,7 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     }
 
     doca_gpu_dev_verbs_qp *notif_qp_gpu;
+    docaQpProgress *notif_qp_progress;
     {
         std::lock_guard<std::mutex> lock(qpLock);
         auto searchQp = qpMap.find(remote_agent);
@@ -2251,6 +2253,7 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
             return NIXL_ERR_INVALID_PARAM;
         }
         notif_qp_gpu = searchQp->second->qp_notif->get_qp_gpu_dev();
+        notif_qp_progress = searchQp->second->progress_gpu;
     }
 
     std::string newMsg = msg_tag_start + std::to_string((int)msg.size()) + msg_tag_end + msg;
@@ -2268,6 +2271,7 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     ((volatile struct docaNotif *)notif_send_cpu)->msg_buf = msg_buf;
     ((volatile struct docaNotif *)notif_send_cpu)->msg_lkey = notif->send_mr->get_lkey();
     ((volatile struct docaNotif *)notif_send_cpu)->msg_size = newMsg.size();
+    ((volatile struct docaNotif *)notif_send_cpu)->notif_progress = notif_qp_progress;
     std::atomic_thread_fence(std::memory_order_seq_cst);
     ((volatile struct docaNotif *)notif_send_cpu)->qp_gpu = notif_qp_gpu;
     while (((volatile struct docaNotif *)notif_send_cpu)->qp_gpu != nullptr) {
