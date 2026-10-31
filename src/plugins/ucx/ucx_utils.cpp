@@ -28,6 +28,9 @@
 
 #include <nixl_types.h>
 
+#include "absl/strings/ascii.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/str_split.h"
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
@@ -35,7 +38,8 @@
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
-    nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
+    nixl_b_params_t params = {{std::string(nixl_ucx_device_list_param_name), ""},
+                              {"num_workers", "1"}};
 
     params.emplace(nixl_ucx_err_handling_param_name,
                    ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));
@@ -129,6 +133,25 @@ ucx_vram_memtype_hint_from_string(std::string_view s) {
         "Invalid VRAM memtype hint mode: " + std::string(s) +
         ". Matching is case-sensitive; use exact values. Valid values are: " +
         enumNames(ucx_vram_memtype_hint_names));
+}
+
+[[nodiscard]] std::vector<std::string>
+ucxSplitDeviceList(std::string_view device_list) {
+    std::vector<std::string> devs;
+    for (const std::string_view dev : absl::StrSplit(device_list, ',', absl::SkipWhitespace())) {
+        devs.emplace_back(absl::StripAsciiWhitespace(dev));
+    }
+    return devs;
+}
+
+[[nodiscard]] std::string
+ucxDeviceListToNetDevices(const std::vector<std::string> &devs) {
+    return absl::StrJoin(devs, ",", [](std::string *out, const std::string &dev) {
+        out->append(dev);
+        if (dev.find(':') == std::string::npos) {
+            out->append(":1");
+        }
+    });
 }
 
 static void
@@ -551,13 +574,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
 
     /* If requested, restrict the set of network devices */
     if (devs.size()) {
-        /* TODO: check if this is the best way */
-        std::string devs_str;
-        for (const auto &dev : devs) {
-            devs_str += dev + ":1,";
-        }
-        devs_str.pop_back(); // to remove odd comma after the last device
-        config.modifyAlways("NET_DEVICES", devs_str.c_str());
+        config.modifyAlways("NET_DEVICES", ucxDeviceListToNetDevices(devs));
     }
 
     config.modify("RNDV_THRESH", "inf");

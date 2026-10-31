@@ -32,8 +32,9 @@
 #include <bit>
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string.h>
-#include "absl/strings/str_split.h"
+#include "absl/strings/ascii.h"
 
 #include "device/device_memview.h"
 #include "device/device_ops.h"
@@ -102,8 +103,13 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
-    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "device_list")) {
-        devs = absl::StrSplit(*opt, ", ");
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(
+            custom_params, std::string(nixl_ucx_device_list_param_name))) {
+        devs = ucxSplitDeviceList(*opt);
+        if (devs.empty() && !absl::StripAsciiWhitespace(*opt).empty()) {
+            throw std::invalid_argument(std::string(nixl_ucx_device_list_param_name) + "=\"" +
+                                        *opt + "\" names no devices");
+        }
     }
 
     size_t num_workers = nixl::getBackendParamDefaulted(custom_params, "num_workers", 1u);
