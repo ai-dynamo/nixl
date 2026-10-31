@@ -49,50 +49,50 @@ struct proxyPeerSlice {
     uint32_t stride = 1;
 };
 
-/** One proxy thread's rings: `peers` of each of the channel_count channels from first_channel. */
+/** One proxy thread's rings: `peers` of each of the channelCount channels from firstChannel. */
 struct proxyThreadShare {
-    uint32_t first_channel;
-    uint32_t channel_count;
+    uint32_t firstChannel;
+    uint32_t channelCount;
     proxyPeerSlice peers;
 };
 
 struct proxyConfig {
     bool enabled = false;
-    uint32_t channel_count = kDefaultProxyChannelCount;
-    /** Number of proxy CPU progress threads; defaults to channel_count. */
-    uint32_t thread_count = kDefaultProxyChannelCount;
-    uint32_t max_peers = kDefaultProxyMaxPeers;
+    uint32_t channelCount = kDefaultProxyChannelCount;
+    /** Number of proxy CPU progress threads; defaults to channelCount. */
+    uint32_t threadCount = kDefaultProxyChannelCount;
+    uint32_t maxPeers = kDefaultProxyMaxPeers;
     /** Work-ring depth per (channel, peer) slot; power of two. */
-    uint32_t ring_depth = kDefaultProxyRingDepth;
+    uint32_t ringDepth = kDefaultProxyRingDepth;
     /** Drain deadline in milliseconds; 0 disables it. */
-    uint32_t drain_timeout_ms = kDefaultProxyDrainTimeoutMs;
+    uint32_t drainTimeoutMs = kDefaultProxyDrainTimeoutMs;
 
     [[nodiscard]] size_t
     ringCount() const noexcept {
-        return static_cast<size_t>(channel_count) * max_peers;
+        return static_cast<size_t>(channelCount) * maxPeers;
     }
 
     /** Threads split the rings evenly: whole channels, or each channel's peers. */
     [[nodiscard]] bool
     evenThreadSplit() const noexcept {
-        if (thread_count == 0 || channel_count == 0) {
+        if (threadCount == 0 || channelCount == 0) {
             return false;
         }
-        if (thread_count <= channel_count) {
-            return channel_count % thread_count == 0;
+        if (threadCount <= channelCount) {
+            return channelCount % threadCount == 0;
         }
-        return thread_count % channel_count == 0 && max_peers % (thread_count / channel_count) == 0;
+        return threadCount % channelCount == 0 && maxPeers % (threadCount / channelCount) == 0;
     }
 
     /** Thread `thread`'s rings: a block of whole channels, or a stride of one channel's peers;
      *  requires evenThreadSplit(). */
     [[nodiscard]] proxyThreadShare
     threadShare(uint32_t thread) const noexcept {
-        if (thread_count <= channel_count) {
-            const uint32_t channels = channel_count / thread_count;
+        if (threadCount <= channelCount) {
+            const uint32_t channels = channelCount / threadCount;
             return {thread * channels, channels, {}};
         }
-        const uint32_t per_channel = thread_count / channel_count;
+        const uint32_t per_channel = threadCount / channelCount;
         return {thread / per_channel, 1, {thread % per_channel, per_channel}};
     }
 };
