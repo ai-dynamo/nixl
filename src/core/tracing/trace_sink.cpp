@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -47,48 +48,57 @@ namespace {
         return Kind::Metadata;
     }
 
+    [[nodiscard]] constexpr Kind
+    operationKind(nixl_xfer_op_t operation) noexcept {
+        switch (operation) {
+        case NIXL_WRITE:
+            return Kind::CommSend;
+        case NIXL_READ:
+            return Kind::CommRecv;
+        }
+        return Kind::Generic;
+    }
+
 } // namespace
 
+template<typename Emit>
 void
-TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
-                             nixlTime::us_t timestamp,
-                             const TraceIdentity &identity,
-                             std::span<const nixlBackendTraceAttr> attrs,
-                             std::string_view label) noexcept {
+TracerPhaseSink::record(std::string_view label_key,
+                        std::string_view label,
+                        std::optional<nixlTime::us_t> timestamp,
+                        const TraceIdentity &identity,
+                        std::span<const nixlBackendTraceAttr> attrs,
+                        const Emit &emit) noexcept {
     try {
-        const TraceContext &event_context = identity.context;
         std::string traceparent;
         std::string request_id_text;
-        std::vector<Attribute> event_attrs;
-        event_attrs.reserve(max_core_attrs + attrs.size());
-        event_attrs.push_back({"nixl.backend", backend_});
-        event_attrs.push_back({"nixl.phase.timestamp_us", static_cast<std::int64_t>(timestamp)});
-        if (event_context.valid()) {
-            traceparent = formatTraceparent(event_context);
-            event_attrs.push_back({"nixl.traceparent", traceparent});
+        std::vector<Attribute> record_attrs;
+        record_attrs.reserve(max_core_attrs + attrs.size());
+        record_attrs.push_back({"nixl.backend", backend_});
+        if (timestamp.has_value()) {
+            record_attrs.push_back(
+                {"nixl.phase.timestamp_us", static_cast<std::int64_t>(*timestamp)});
+        }
+        if (identity.context.valid()) {
+            traceparent = formatTraceparent(identity.context);
+            record_attrs.push_back({"nixl.traceparent", traceparent});
         }
         if (identity.requestId != 0) {
             request_id_text = std::to_string(identity.requestId);
-            event_attrs.push_back({"nixl.xfer_request_id", request_id_text});
+            record_attrs.push_back({"nixl.xfer_request_id", request_id_text});
         }
         if (identity.execution != 0) {
-            event_attrs.push_back(
+            record_attrs.push_back(
                 {"nixl.xfer_execution", static_cast<std::int64_t>(identity.execution)});
         }
         if (!label.empty()) {
-            event_attrs.push_back({"nixl.phase.label", label});
+            record_attrs.push_back({label_key, label});
         }
         for (const auto &attr : attrs) {
-            event_attrs.push_back({attr.key, attr.value});
+            record_attrs.push_back({attr.key, attr.value});
         }
 
-        const bool named = (phase == nixl_trace_phase_t::OTHER) && !label.empty();
-        tracer_.emitEvent(named ? label : toStringView(phase),
-                          phaseKind(phase),
-                          event_context,
-                          identity.requestId,
-                          timestamp,
-                          event_attrs);
+        emit(record_attrs);
     }
     catch (...) {
         if (telemetry_ != nullptr) {
@@ -96,13 +106,60 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
         }
         if (!dropWarned_.test_and_set(std::memory_order_relaxed)) {
             try {
-                NIXL_ERROR << "Dropping a trace phase for backend " << backend_
+                NIXL_ERROR << "Dropping a trace phase or span for backend " << backend_
                            << ": recording threw. Further drops from this sink are not logged.";
             }
             catch (...) {
             }
         }
     }
+}
+
+void
+TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
+                             nixlTime::us_t timestamp,
+                             const TraceIdentity &identity,
+                             std::span<const nixlBackendTraceAttr> attrs,
+                             std::string_view label) noexcept {
+    const bool named = (phase == nixl_trace_phase_t::OTHER) && !label.empty();
+    record("nixl.phase.label",
+           label,
+           timestamp,
+           identity,
+           attrs,
+           [&](std::span<const Attribute> event_attrs) {
+               tracer_.emitEvent(named ? label : toStringView(phase),
+                                 phaseKind(phase),
+                                 identity.context,
+                                 identity.requestId,
+                                 timestamp,
+                                 event_attrs);
+           });
+}
+
+void
+TracerPhaseSink::recordSpan(nixl_trace_span_t span,
+                            nixl_xfer_op_t operation,
+                            nixlTime::us_t start,
+                            nixlTime::us_t end,
+                            const TraceIdentity &identity,
+                            std::span<const nixlBackendTraceAttr> attrs,
+                            std::string_view label) noexcept {
+    const bool named = (span == nixl_trace_span_t::OTHER) && !label.empty();
+    record("nixl.span.label",
+           label,
+           std::nullopt,
+           identity,
+           attrs,
+           [&](std::span<const Attribute> span_attrs) {
+               tracer_.emitSpan(named ? label : toStringView(span),
+                                operationKind(operation),
+                                identity.context,
+                                identity.requestId,
+                                start,
+                                end,
+                                span_attrs);
+           });
 }
 
 } // namespace nixl::trace

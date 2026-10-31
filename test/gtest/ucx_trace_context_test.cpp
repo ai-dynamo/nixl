@@ -116,6 +116,15 @@ public:
                 const nixl::trace::TraceIdentity &,
                 std::span<const nixlBackendTraceAttr>,
                 std::string_view) noexcept override {}
+
+    void
+    recordSpan(nixl_trace_span_t,
+               nixl_xfer_op_t,
+               nixlTime::us_t,
+               nixlTime::us_t,
+               const nixl::trace::TraceIdentity &,
+               std::span<const nixlBackendTraceAttr>,
+               std::string_view) noexcept override {}
 };
 
 [[nodiscard]] bool
