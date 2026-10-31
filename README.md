@@ -149,10 +149,10 @@ $ meson setup <name_of_build_dir> --buildtype=debug
 ```bash
 # Example with custom options
 $ meson setup <name_of_build_dir> \
-    -Dbuild_docs=true \           # Build Doxygen documentation
-    -Ducx_path=/path/to/ucx \     # Custom UCX installation path
-    -Dinstall_headers=true \      # Install development headers
-    -Ddisable_gds_backend=false   # Enable GDS backend
+    -Dbuild_docs=true \
+    -Ducx_path=/path/to/ucx \
+    -Dinstall_headers=true \
+    -Ddisable_gds_backend=false
 ```
 
 Common build options:
@@ -334,7 +334,7 @@ $ cargo test
 Use in your project by adding to `Cargo.toml`:
 ```toml
 [dependencies]
-nixl-sys = { path = "path/to/nixl/bindings/rust" }
+nixl-sys = { path = "path/to/nixl/src/bindings/rust" }
 ```
 
 ### Other build options
