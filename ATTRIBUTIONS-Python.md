@@ -128,7 +128,7 @@ THE SOFTWARE.
   - `Homepage`: https://github.com/asottile/cfgv
 
 
-## click (8.4.1)
+## click (8.1.7)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -173,7 +173,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Homepage`: https://palletsprojects.com/p/click/
   - `Issue Tracker`: https://github.com/pallets/click/issues/
   - `Source Code`: https://github.com/pallets/click/
-
 
 ## cuda-bindings (13.3.1)
 
@@ -9288,7 +9287,7 @@ NetworkX is distributed with the 3-clause BSD license.
   - `Source Code`: https://github.com/networkx/networkx
 
 
-## nixl (1.3.1)
+## nixl (1.5.0)
 
 ### Licenses
 License: `Apache-2.0`
@@ -9509,7 +9508,7 @@ License: `Apache-2.0`
 
 
 
-## nixl-cu13 (1.3.1)
+## nixl-cu13 (1.5.0)
 
 ### Licenses
 License: `Apache-2.0`
@@ -31339,7 +31338,7 @@ SOFTWARE.
   - `Source`: https://github.com/sympy/sympy
 
 
-## tabulate (0.10.0)
+## tabulate (0.9.0)
 
 ### Licenses
 License: `MIT`
@@ -31370,7 +31369,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### URLs
   - `Homepage`: https://github.com/astanin/python-tabulate
-
 
 ## tenacity (9.1.4)
 
@@ -40638,7 +40636,7 @@ If the Library as you received it specifies that a proxy can decide whether futu
   - `Repository`: https://github.com/pytorch/pytorch
 
 
-## tqdm (4.67.3)
+## tqdm (4.66.5)
 
 ### Licenses
 License: `MPL-2.0 AND MIT`
@@ -40701,7 +40699,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   - `homepage`: https://tqdm.github.io
   - `repository`: https://github.com/tqdm/tqdm
   - `wiki`: https://github.com/tqdm/tqdm/wiki
-
 
 ## triton (3.7.0)
 
