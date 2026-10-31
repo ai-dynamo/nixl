@@ -1356,13 +1356,6 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
     // If the status is done, no need to recheck and no state changes.
     // Same for users incorrectly recalling this method in error/done.
     if (req_hndl->status == NIXL_IN_PROG) {
-        // Check if the remote was invalidated before completion
-        if (req_hndl->remoteSection.expired()) {
-            NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
-                            << "' was invalidated or re-registered during transfer";
-            return NIXL_ERR_NOT_FOUND;
-        }
-
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
         if (req_hndl->status < 0) {
             traceXferError(data->tracer_.get(), *req_hndl, req_hndl->status);
