@@ -321,7 +321,9 @@ PYBIND11_MODULE(_bindings, m) {
                  nixl_xfer_dlist_t new_list(mem, n);
                  // We assume that the Nx3 array matches the nixlBasicDesc layout so we can simply
                  // memcpy
-                 std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
+                 if (n > 0) {
+                     std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
+                 }
 
                  return new_list;
              }),
