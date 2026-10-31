@@ -588,6 +588,8 @@ wait
 --enable_vmm               # Enable VMM memory allocation for VRAM buffers
 --vmm_gdr_capable BOOL     # Set gpuDirectRDMACapable for non-localized VMM(default: true)
 --use_localized DOMAIN     # VMM locality: -1 disabled, 0 domain 0, 1 domain 1; requires --enable_vmm
+--numa_node NODE           # Bind host memory to a NUMA node (default: -1, unbound)
+--numa_cpu_node NODE       # Bind CPUs to a NUMA node (default: -1, same as --numa_node)
 ```
 
 `--vmm_gdr_capable` only controls non-localized VMM allocations. Explicit
@@ -1202,12 +1204,28 @@ ETCDCTL_API=3 etcdctl del "xferbench" --prefix=true
 
 #### CPU Affinity
 ```bash
-# Bind to specific cores
-taskset -c 0-7 nixlbench ...
+# Bind host memory and CPUs to NUMA node 0 (needs nixlbench built with libnuma)
+nixlbench --numa_node 0 ...
 
-# Use numactl for NUMA systems
+# Two processes on one host with their buffers on different nodes
+nixlbench --numa_node 0 --backend UCX ... &
+nixlbench --numa_node 1 --backend UCX ...
+
+# Memory on a node without CPUs (for example CXL memory exposed as node 2),
+# CPUs on the socket it is attached to
+nixlbench --numa_node 2 --numa_cpu_node 0 ...
+
+# Without libnuma
 numactl --cpunodebind=0 --membind=0 nixlbench ...
 ```
+
+`--numa_node` binds every host allocation made after startup, including the
+backend's own, with a strict policy (`numactl --membind`). It does not move VRAM
+buffers. The node must be in the process's allowed memory nodes; in a
+container check `Mems_allowed_list` in `/proc/self/status`. `numactl --hardware`
+shows which nodes have CPUs and the distance table; a memory-only node is
+attached to the CPU node it has the smallest distance to. To verify a run, look
+at `/proc/<pid>/numa_maps`: data buffers show `bind:N` with their pages on node N.
 
 #### Network Tuning
 ```bash

@@ -203,6 +203,8 @@ public:
     static bool vmm_gdr_capable;
     static int use_localized;
     static bool use_hugepages;
+    static int numa_node;
+    static int numa_cpu_node;
     static int num_files;
     static std::string posix_api_type;
     static int posix_ios_pool_size;
@@ -267,6 +269,9 @@ public:
 
     static int
     parseConfig(int argc, char *argv[]);
+    // Bind host memory to numa_node and CPUs to numa_cpu_node. No-op when both are -1
+    static int
+    applyNumaBinding();
     static void
     printConfig();
     static void
