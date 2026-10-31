@@ -26,8 +26,8 @@
 #include "sync.h"
 
 #include <atomic>
-#include <functional>
 #include <memory>
+#include <span>
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
 
@@ -114,6 +114,17 @@ class nixlAgentData final : public nixlMetadataContext {
                       const dlist_t &descs,
                       nixlDlistH *&dlist_hndl,
                       const nixl_opt_args_t *extra_params);
+
+        // Builds the transfer descriptors, merging consecutive pairs inside dense stride runs.
+        static nixl_status_t
+        mergeIndices(const nixl_meta_stride_dlist_t &local_descs,
+                     const nixl_meta_stride_dlist_t &remote_descs,
+                     std::span<const int> local_indices,
+                     std::span<const int> remote_indices,
+                     bool skip_desc_merge,
+                     nixl_meta_dlist_t &initiator_descs,
+                     nixl_meta_dlist_t &target_descs,
+                     size_t &total_bytes);
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &config);
