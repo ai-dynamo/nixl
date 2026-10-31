@@ -859,6 +859,14 @@ the device you want to measure first: `mkdir -p /mnt/storage/testdir`.
 ./nixlbench --backend POSIX --filepath /mnt/storage/testdir --posix_api_type URING --storage_enable_direct
 ```
 
+**Note**: To use a raw block device with the POSIX backend, create a symlink to the device using the expected filename pattern:
+
+```bash
+mkdir -p /mnt/block_device_name
+ln -sf /dev/block_device_name /mnt/block_device_name/nixlbench_posix_test_file_initiator_0
+./nixlbench --backend POSIX --filepath /mnt/block_device_name --posix_api_type AIO
+```
+
 **GUSLI Backend (G3+ User Space Access Library):**
 
 GUSLI provides direct user-space access to block storage devices, supporting local files, kernel block devices, and networked GUSLI servers.
