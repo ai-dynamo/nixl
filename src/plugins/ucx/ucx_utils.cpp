@@ -16,7 +16,9 @@
  */
 
 #include "ucx_utils.h"
+#include <ucs/memory/memory_type.h>
 
+#include <absl/cleanup/cleanup.h>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -24,6 +26,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nixl_types.h>
@@ -526,6 +529,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                size_t num_device_channels,
                                const std::string &engine_config,
                                const std::string &name,
+                               std::string_view device_memory_type,
                                nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy)
     : mtType_(makeMtType(prog_thread, sync_mode)),
       ucpVersion_(makeUcpVersion()),
@@ -541,7 +545,9 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         ucp_params.name = name_.c_str();
     }
 #ifdef HAVE_UCX_GPU_DEVICE_API
-    ucp_params.features |= UCP_FEATURE_DEVICE;
+    if (device_memory_type.empty()) {
+        ucp_params.features |= UCP_FEATURE_DEVICE;
+    }
 #endif
 
     if (prog_thread) ucp_params.features |= UCP_FEATURE_WAKEUP;
@@ -563,19 +569,25 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     config.modify("RNDV_THRESH", "inf");
     config.modify("MAX_RMA_RAILS", "2");
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
-    config.modify("CUDA_IPC_ENABLE_GET_ZCOPY", "on");
+    if (device_memory_type.empty()) {
+        config.modify("CUDA_IPC_ENABLE_GET_ZCOPY", "on");
+    }
 
-    // rocm_ipc reports a 128-byte minimum zero-copy size by default, and UCP's
-    // put/get zero-copy protocols only accept lanes whose minimum is 0. Without
-    // this, GPU-to-GPU RMA on AMD never uses rocm_ipc (XGMI) and is staged
-    // through host memory instead.
-    config.modify("ROCM_IPC_MIN_ZCOPY", "0");
+    if (device_memory_type.empty()) {
+        // rocm_ipc reports a 128-byte minimum zero-copy size by default, and
+        // UCP's put/get zero-copy protocols only accept lanes whose minimum is
+        // 0. Without this, GPU-to-GPU RMA on AMD never uses rocm_ipc (XGMI)
+        // and is staged through host memory instead.
+        config.modify("ROCM_IPC_MIN_ZCOPY", "0");
+    }
 
     // NIXL only needs AMs to be visible after previous PUTs which RC already
     // provides without the need of strict order key.
-    config.modify("RC_FENCE", "none");
+    if (device_memory_type.empty()) {
+        config.modify("RC_FENCE", "none");
+    }
 
-    if (ucpVersion_ >= UCP_VERSION(1, 21)) {
+    if (device_memory_type.empty() && ucpVersion_ >= UCP_VERSION(1, 21)) {
         config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
         config.modify("MAX_HCA_PER_GPU", "auto");
     }
@@ -608,7 +620,9 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         }
     }
 
-    config.validateTlsCudaSupport();
+    if (device_memory_type.empty()) {
+        config.validateTlsCudaSupport();
+    }
 
     ucp_context_h new_ctx = nullptr;
     const auto status = ucp_init(&ucp_params, config.getUcpConfig(), &new_ctx);
@@ -618,7 +632,27 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     }
 
     ctx.reset(new_ctx);
-    resolveMemoryTypeConfig();
+    if (!device_memory_type.empty()) {
+        ucp_context_attr_t attr{};
+        attr.field_mask = UCP_ATTR_FIELD_MEMORY_TYPES;
+        const auto query_status = ucp_context_query(ctx.get(), &attr);
+        if (query_status != UCS_OK) {
+            throw std::runtime_error("Failed to query UCX memory capabilities: " +
+                                     std::string(ucs_status_string(query_status)));
+        }
+        requiredDeviceMemoryType_ =
+            nixl::ucx::findDeviceMemoryType({ucs_memory_type_names, UCS_MEMORY_TYPE_LAST},
+                                            device_memory_type,
+                                            attr.memory_types,
+                                            UCS_MEMORY_TYPE_HOST);
+        if (!requiredDeviceMemoryType_) {
+            throw std::runtime_error("UCX does not advertise required device memory type '" +
+                                     std::string(device_memory_type) +
+                                     "'. Install and enable a matching UCX provider.");
+        }
+    } else {
+        resolveMemoryTypeConfig();
+    }
 }
 
 std::ostream &
@@ -787,38 +821,50 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
         .length = mem.size,
     };
 
-    if (nixl_mem_type == nixl_mem_t::VRAM_SEG && vramMemTypeHint_ != UCS_MEMORY_TYPE_UNKNOWN) {
+    if (!requiredDeviceMemoryType_ && nixl_mem_type == nixl_mem_t::VRAM_SEG &&
+        vramMemTypeHint_ != UCS_MEMORY_TYPE_UNKNOWN) {
         mem_params.field_mask |= UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE;
         mem_params.memory_type = vramMemTypeHint_;
         NIXL_DEBUG << "memReg: hinting " << ucx_memory_type_to_string(mem_params.memory_type)
                    << " for VRAM_SEG";
     }
 
-    ucs_status_t status = ucp_mem_map(ctx.get(), &mem_params, &mem.memh);
-    if (status != UCS_OK) {
-        NIXL_ERROR << *this << ": failed to ucp_mem_map: " << ucs_status_string(status);
+    const auto map_status = ucp_mem_map(ctx.get(), &mem_params, &mem.memh);
+    if (map_status != UCS_OK) {
+        NIXL_ERROR << *this << ": failed to ucp_mem_map: " << ucs_status_string(map_status);
         return -1;
     }
+    auto rollback = absl::MakeCleanup([&]() noexcept {
+        ucp_mem_unmap(ctx.get(), mem.memh);
+        mem.memh = nullptr;
+    });
 
-    if (nixl_mem_type == nixl_mem_t::VRAM_SEG) {
-        ucp_mem_attr_t attr;
+    if (requiredDeviceMemoryType_ || nixl_mem_type == VRAM_SEG) {
+        ucp_mem_attr_t attr{};
         attr.field_mask = UCP_MEM_ATTR_FIELD_MEM_TYPE;
-        status = ucp_mem_query(mem.memh, &attr);
-        if (status != UCS_OK) {
-            NIXL_ERROR << *this << ": failed to ucp_mem_query: " << ucs_status_string(status);
-            ucp_mem_unmap(ctx.get(), mem.memh);
+        const auto query_status = ucp_mem_query(mem.memh, &attr);
+        if (query_status != UCS_OK) {
+            NIXL_ERROR << *this << ": failed to ucp_mem_query: " << ucs_status_string(query_status);
             return -1;
         }
-
-        if (attr.mem_type == UCS_MEMORY_TYPE_HOST) {
-            NIXL_ERROR << *this
-                       << ": VRAM memory is detected as host by UCX. "
-                          "UCX memory type detection/configuration is likely mismatched. "
-                          "VRAM registration cannot proceed.";
-            ucp_mem_unmap(ctx.get(), mem.memh);
+        const bool matches = requiredDeviceMemoryType_ ?
+            nixl::ucx::registeredMemoryTypeMatches(
+                nixl_mem_type, attr.mem_type, UCS_MEMORY_TYPE_HOST, *requiredDeviceMemoryType_) :
+            attr.mem_type != UCS_MEMORY_TYPE_HOST;
+        if (!matches) {
+            if (requiredDeviceMemoryType_) {
+                NIXL_ERROR << *this << ": detected UCX memory type " << attr.mem_type
+                           << " does not match the registered memory contract";
+            } else {
+                NIXL_ERROR << *this
+                           << ": VRAM memory is detected as host by UCX. "
+                              "UCX memory type detection/configuration is likely mismatched. "
+                              "VRAM registration cannot proceed.";
+            }
             return -1;
         }
     }
+    std::move(rollback).Cancel();
 
     NIXL_DEBUG << *this << ": registered " << mem.size << " bytes at " << mem.base << ", memh "
                << mem.memh;
@@ -835,8 +881,9 @@ nixlUcxContext::packRkey(nixlUcxMem &mem) {
         NIXL_ERROR << *this << ": failed to ucp_rkey_pack: " << ucs_status_string(status);
         return {};
     }
-    const std::string result = nixlSerDes::_bytesToString(rkey_buf, size);
-    ucp_rkey_buffer_release(rkey_buf);
+    const std::unique_ptr<void, decltype(&ucp_rkey_buffer_release)> packed(
+        rkey_buf, &ucp_rkey_buffer_release);
+    const std::string result = nixlSerDes::_bytesToString(packed.get(), size);
     NIXL_DEBUG << *this << ": packed rkey of " << size << " bytes for memh " << mem.memh;
     return result;
 }
@@ -846,6 +893,7 @@ nixlUcxContext::memDereg(nixlUcxMem &mem) {
     NIXL_DEBUG << *this << ": deregistering " << mem.size << " bytes at " << mem.base << ", memh "
                << mem.memh;
     ucp_mem_unmap(ctx.get(), mem.memh);
+    mem.memh = nullptr;
 }
 
 void
