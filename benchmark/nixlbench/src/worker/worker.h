@@ -21,6 +21,7 @@
 #include "runtime/runtime.h"
 #include "utils/utils.h"
 #include <atomic>
+#include <iostream>
 #include <string>
 #include <vector>
 #include <variant>
@@ -64,6 +65,18 @@ class xferBenchWorker {
         transfer(size_t block_size,
                  const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) = 0;
+
+        // Read a remote buffer back into dst for the consistency check. Workers
+        // that can't read remote memory through their own transport leave this
+        // unimplemented.
+        virtual bool
+        readRemoteForVerify(const xferBenchIOV &iov, void *dst, size_t len) {
+            (void)iov;
+            (void)dst;
+            (void)len;
+            std::cerr << "readRemoteForVerify: not implemented for this worker" << std::endl;
+            return false;
+        }
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_WORKER_H
