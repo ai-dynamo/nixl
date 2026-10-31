@@ -1887,31 +1887,31 @@ nixlAgentData::invalidateRemoteMD(const std::string &remote_agent) {
     }
 
     NIXL_LOCK_GUARD(lock);
+    return invalidateRemoteMDLocked(remote_agent);
+}
 
-    nixl_status_t ret = NIXL_ERR_NOT_FOUND;
-    if (remoteSections_.erase(remote_agent) > 0) {
-        ret = NIXL_SUCCESS;
+nixl_status_t
+nixlAgentData::invalidateRemoteMDLocked(const std::string &remote_agent) {
+    nixl_status_t ret = NIXL_SUCCESS;
+    if (remoteSections_.erase(remote_agent) == 0) {
+        NIXL_INFO << __FUNCTION__ << ": remote metadata for agent '" << remote_agent
+                  << "' not found.";
+        ret = NIXL_ERR_NOT_FOUND;
     }
 
     const auto rb_it = remoteBackends_.find(remote_agent);
     if (rb_it != remoteBackends_.end()) {
-        ret = NIXL_SUCCESS;
-        for (const auto &entry : rb_it->second) {
-            const nixl_status_t status = backendEngines_[entry.first]->disconnect(remote_agent);
-            if (ret == NIXL_SUCCESS) {
+        for (const auto &[backend, conn_info] : rb_it->second) {
+            const nixl_status_t status = backendEngines_[backend]->disconnect(remote_agent);
+            if (status != NIXL_SUCCESS) {
+                NIXL_ERROR_FUNC << "backend '" << backend << "' failed to disconnect from agent '"
+                                << remote_agent << "' with status " << status;
                 ret = status;
             }
         }
 
         remoteBackends_.erase(rb_it);
     }
-
-    if (ret == NIXL_ERR_NOT_FOUND)
-        NIXL_INFO << __FUNCTION__ << ": remote metadata for agent '" << remote_agent
-                  << "' not found.";
-    else if (ret != NIXL_SUCCESS)
-        NIXL_ERROR_FUNC << "error invalidating remote metadata for agent '" << remote_agent
-                        << "' with status " << ret;
     return ret;
 }
 
@@ -1969,8 +1969,7 @@ nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd
     const nixl_status_t ret = it->second->loadRemoteData(&sd, backendEngines_);
     // TODO: can be more graceful, if just the new MD blob was improper
     if (ret != NIXL_SUCCESS) {
-        remoteSections_.erase(it);
-        remoteBackends_.erase(remote_name);
+        invalidateRemoteMDLocked(remote_name);
         return ret;
     }
 

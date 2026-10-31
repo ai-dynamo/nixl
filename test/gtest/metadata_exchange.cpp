@@ -373,6 +373,57 @@ TEST_F(MetadataExchangeTestFixture, GetLocalPartialWithErrors) {
     }
 }
 
+TEST_F(MetadataExchangeTestFixture, LoadRemoteAfterSectionError) {
+    initAgentsDefault();
+
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    std::string remote_name;
+    nixl_blob_t md;
+
+    ASSERT_EQ(src.agent->getLocalMD(md), NIXL_SUCCESS);
+
+    // Corrupt the memory section tag, so that the connection info loads and the section fails
+    nixl_blob_t invalid_md = md;
+    const size_t pos = invalid_md.find("nixlSecElms");
+    ASSERT_NE(pos, nixl_blob_t::npos);
+    invalid_md[pos] = 'X';
+
+    const auto loadInvalidMD = [&]() {
+        const LogIgnoreGuard lig1("Deserialization of tag nixlSecElms failed for tag mismatch");
+        const LogIgnoreGuard lig2("loadRemoteMD: error loading remote metadata for agent 'agent_0' "
+                                  "with status NIXL_ERR_MISMATCH");
+
+        ASSERT_EQ(dst.agent->loadRemoteMD(invalid_md, remote_name), NIXL_ERR_MISMATCH);
+
+        EXPECT_EQ(lig1.getIgnoredCount(), 1);
+        EXPECT_EQ(lig2.getIgnoredCount(), 1);
+
+        // The failed load drops the remote agent, so there is nothing left to invalidate
+        ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
+        ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_ERR_NOT_FOUND);
+    };
+
+    // Case 1: Remote agent not loaded before. The failed load must not leave a
+    // backend connection behind, otherwise loading the valid metadata fails.
+    ASSERT_NO_FATAL_FAILURE(loadInvalidMD());
+
+    ASSERT_EQ(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    ASSERT_EQ(remote_name, src.name);
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+
+    // Case 2: Remote agent already loaded and connected, e.g. a peer sends updated
+    // metadata that fails to load. The peer is dropped and can be loaded again.
+    ASSERT_NO_FATAL_FAILURE(loadInvalidMD());
+
+    ASSERT_EQ(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    ASSERT_EQ(remote_name, src.name);
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+
+    ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
+}
+
 TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     initAgentsDefault();
 
