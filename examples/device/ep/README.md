@@ -14,6 +14,8 @@ NIXL EP is a complete example implementation of expert-parallel communication fo
 - `NIXL_EP_DEVICE_MODE`: `direct` (default) or `proxy`. There is no fallback: if the selected path is unavailable, EP fails.
 - `NIXL_EP_NUM_CHANNELS`: the number of channels (default 4).
 - `NIXL_EP_PROXY_THREADS`: the number of proxy threads (default: the number of channels).
+- `NIXL_EP_BACKEND`: `UCX` (default) or `LIBFABRIC`. `LIBFABRIC` runs on EFA and needs
+  `NIXL_EP_DEVICE_MODE=proxy`; keep `NIXL_EP_PROXY_THREADS` at or below the EFA rails near each GPU.
 
 ## Buffer Initialization
 

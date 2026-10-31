@@ -35,6 +35,7 @@ libfabric_utils_sources = [
     # Kept out of the hipify step below: it calls the CUDA driver API directly and
     # compiles to stubs unless NIXL_HAVE_CUDA_DRIVER_API is set.
     'libfabric_cuda_dmabuf.cpp',
+    'libfabric_cuda_ipc.cpp',
     libfabric_topology_src,
     libfabric_rail_manager_src,
 ]
@@ -45,6 +46,7 @@ libfabric_utils_headers = files(
     'libfabric_rail_manager.h',
     'libfabric_common.h',
     'libfabric_cuda_dmabuf.h',
+    'libfabric_cuda_ipc.h',
     'libfabric_topology.h',
 )
 

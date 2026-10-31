@@ -465,8 +465,9 @@ validateDeviceAPIConfig() {
     if (xferBenchConfig::worker_type != XFERBENCH_WORKER_NIXL) {
         return reject("worker_type must be nixl");
     }
-    if (xferBenchConfig::backend != XFERBENCH_BACKEND_UCX) {
-        return reject("backend must be UCX");
+    if (xferBenchConfig::backend != XFERBENCH_BACKEND_UCX &&
+        !(proxy && xferBenchConfig::backend == XFERBENCH_BACKEND_LIBFABRIC)) {
+        return reject("backend must be UCX, or LIBFABRIC with device_mode=proxy");
     }
     if (xferBenchConfig::op_type != XFERBENCH_OP_WRITE) {
         return reject("op_type must be WRITE");

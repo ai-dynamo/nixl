@@ -488,7 +488,7 @@ public:
     nixl_status_t
     postSend(uint64_t immediate_data, fi_addr_t dest_addr, nixlLibfabricReq *req);
 
-    /** Post RDMA write operation with immediate data */
+    /** Post RDMA write operation; immediate_data is sent only with FI_REMOTE_CQ_DATA */
     nixl_status_t
     postWrite(const void *local_buffer,
               size_t length,
@@ -499,6 +499,16 @@ public:
               uint64_t remote_key,
               nixlLibfabricReq *req,
               uint64_t fi_flags = 0);
+
+    /** Post one 64-bit atomic add of *operand, which must stay valid until completion.
+     *  Needs FI_ATOMIC in getRailInfo()->caps. */
+    nixl_status_t
+    postAtomicAdd(const uint64_t *operand,
+                  fi_addr_t dest_addr,
+                  uint64_t remote_addr,
+                  uint64_t remote_key,
+                  nixlLibfabricReq *req,
+                  uint64_t fi_flags);
 
     /** Post RDMA read operation */
     nixl_status_t
