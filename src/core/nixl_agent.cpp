@@ -1456,27 +1456,30 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
             traceXferError(data->tracer_.get(), *req_hndl, req_hndl->status);
             data->addErrorTelemetry(req_hndl->status);
         }
-
-        if(req_hndl->status == NIXL_IN_PROG) {
-
-            const nixl_status_t release_status =
-                req_hndl->engine->releaseReqH(req_hndl->backendHandle);
-
-            if (release_status < 0) {
+    }
+    // Honor backend release refusal in every cached transfer state. Only a
+    // successful release transfers ownership away from the caller.
+    if (req_hndl->backendHandle != nullptr || req_hndl->status == NIXL_IN_PROG) {
+        const nixl_status_t release_status = req_hndl->engine->releaseReqH(req_hndl->backendHandle);
+        if (release_status != NIXL_SUCCESS) {
+            if (release_status == NIXL_IN_PROG || release_status == NIXL_ERR_NOT_ALLOWED) {
+                NIXL_DEBUG << "backend '" << req_hndl->engine->getType()
+                           << "' deferred transfer request release with status " << release_status;
+            } else {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
-                                << "' could not release transfer request and returned error status "
+                                << "' could not release transfer request and returned status "
                                 << release_status;
                 data->addErrorTelemetry(NIXL_ERR_REPOST_ACTIVE);
-                NIXL_TRACE_ATTR(
-                    trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_REPOST_ACTIVE));
-                return NIXL_ERR_REPOST_ACTIVE; // Might need renaming
             }
-            traceXferError(data->tracer_.get(), *req_hndl, NIXL_ERR_CANCELED);
-            req_hndl->status = release_status;
-            // just in case the backend doesn't set to NULL on success
-            // this will prevent calling releaseReqH again in destructor
-            req_hndl->backendHandle = nullptr;
+            NIXL_TRACE_ATTR(
+                trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_REPOST_ACTIVE));
+            return NIXL_ERR_REPOST_ACTIVE;
         }
+        if (req_hndl->status == NIXL_IN_PROG) {
+            traceXferError(data->tracer_.get(), *req_hndl, NIXL_ERR_CANCELED);
+        }
+        // Prevent a second release in the destructor.
+        req_hndl->backendHandle = nullptr;
     }
     NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_SUCCESS));
     delete req_hndl;

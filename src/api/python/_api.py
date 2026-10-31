@@ -88,10 +88,11 @@ class nixl_prepped_dlist_handle:
 
 class nixl_xfer_handle:
     """Opaque handle wrapper for a transfer request.
-    Use release() to explicitly free resources. If transfer was not complete, this will initiate
-    the abort process (if available) and will raise an exception.
-    __del__ calls release() and if it fails, it logs the failure and defers release by queuing
-    the handle in leaked xfer handles list, which will be re-released during agent destruction
+
+    Use release() explicitly. If a backend cannot release the transfer, it raises
+    nixlRepostActiveError and the handle remains valid. Keep the agents, buffers,
+    and registrations alive; poll a pending transfer and retry after completion.
+    Finalization makes a best-effort release attempt, not a completion guarantee.
 
     Args:
         agent: Owning nixl_agent used to perform release operations.
@@ -109,6 +110,13 @@ class nixl_xfer_handle:
         return f"nixl_xfer_handle(0x{self._handle:x}, released={self._released})"
 
     def release(self):
+        """Release the request; on refusal retain it for explicit polling and retry.
+
+        Raises:
+            nixlRepostActiveError: The backend refused release. This may mean the
+                transfer is pending or the backend failed; retry is not guaranteed
+                to succeed. See nixl_agent.release_xfer_handle for lifetime rules.
+        """
         if not self._released:
             self._agent.releaseXferReq(self._handle)
             self._released = True
@@ -724,12 +732,21 @@ class nixl_agent:
         )
 
     def release_xfer_handle(self, handle: nixl_xfer_handle):
-        """Releases a transfer handle, which internally frees the memory used for the handle.
-        If the transfer is active, NIXL will attempt to cancel it.
-        If it cannot be canceled, an error will be returned and the handle will not be freed.
+        """Release a transfer handle, attempting cancellation when supported.
+
+        On refusal, the handle remains valid. Keep the agents, buffers, and memory
+        registrations alive. Poll a pending transfer with check_xfer_state() and
+        retry after completion. UCX cannot cancel RMA and refuses release while
+        it reports pending work, including an in-flight notification. Backend
+        failures may prevent release indefinitely; agent destruction is not a
+        completion barrier for outstanding handles.
 
         Args:
             handle: Handle to the transfer operation from initialize_xfer or make_xfer.
+
+        Raises:
+            nixlRepostActiveError: The backend refused release. Only successful
+                release invalidates the handle.
         """
         handle.release()
 

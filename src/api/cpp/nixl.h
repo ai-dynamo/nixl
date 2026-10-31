@@ -392,8 +392,18 @@ class nixlAgent {
          * @brief  Release the transfer request `req_hndl`. If the transfer is active,
          *         it will be canceled, or return an error if the transfer cannot be aborted.
          *
+         * On NIXL_ERR_REPOST_ACTIVE, the caller retains ownership of the handle.
+         * Keep the agents, transfer buffers, and memory registrations alive. For a
+         * pending transfer, poll getXferStatus() and retry release after completion.
+         * UCX cannot cancel RMA and refuses release while it reports pending work,
+         * including an in-flight notification. Release refusal can also indicate a
+         * backend failure; it does not guarantee that retry will eventually succeed.
+         * Failed-transfer recovery and teardown with outstanding handles are
+         * backend-specific; do not treat agent destruction as a completion barrier.
+         *
          * @param  req_hndl      Transfer request handle to be released
-         * @return nixl_status_t Error code if call was not successful
+         * @return NIXL_SUCCESS if released, NIXL_ERR_REPOST_ACTIVE if the backend
+         *         refused release. Only success invalidates the handle.
          */
         nixl_status_t
         releaseXferReq (nixlXferReqH* req_hndl) const;
