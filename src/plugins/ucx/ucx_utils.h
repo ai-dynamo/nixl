@@ -30,6 +30,7 @@ extern "C" {
 
 #include "rkey.h"
 #include "ucx_enums.h"
+#include "memory_policy.h"
 
 enum class nixl_ucx_vram_memtype_hint_t {
     AUTO,
@@ -132,9 +133,9 @@ public:
 
 class nixlUcxMem {
 private:
-    void *base;
-    size_t size;
-    ucp_mem_h memh;
+    void *base = nullptr;
+    size_t size = 0;
+    ucp_mem_h memh = nullptr;
 
 public:
     [[nodiscard]] ucp_mem_h
@@ -161,6 +162,7 @@ class nixlUcxContext {
 private:
     /* Local UCX stuff */
     std::unique_ptr<ucp_context, void (*)(ucp_context_h)> ctx{nullptr, &ucp_cleanup};
+    std::optional<unsigned> requiredDeviceMemoryType_;
     const nixl::ucx::mt_mode_t mtType_;
     const unsigned ucpVersion_;
     const std::string name_;
@@ -182,6 +184,7 @@ public:
                    size_t num_device_channels,
                    const std::string &engine_conf = "",
                    const std::string &name = "",
+                   std::string_view device_memory_type = {},
                    nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy =
                        nixl_ucx_vram_memtype_hint_t::AUTO);
     nixlUcxContext(nixlUcxContext &&) = delete;

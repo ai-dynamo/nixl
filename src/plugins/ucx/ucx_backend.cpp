@@ -29,10 +29,12 @@
 #include "tracing/backend_trace.h"
 
 #include <array>
+#include <absl/cleanup/cleanup.h>
 #include <bit>
 #include <cstdint>
 #include <optional>
 #include <string.h>
+#include <utility>
 #include "absl/strings/str_split.h"
 
 #include "device/device_memview.h"
@@ -67,7 +69,7 @@ errHandlingModeFromParams(const nixl_b_params_t *custom_params) {
  *****************************************/
 
 std::unique_ptr<nixlUcxEngine>
-nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
+nixlUcxEngine::create(const nixlBackendInitParams &init_params, nixl::ucx::MemoryPolicyPtr policy) {
     nixlUcxEngine *engine;
     const size_t num_threads =
         nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
@@ -82,27 +84,40 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
             nixl::throwRuntimeError(
                 "num_threads is not supported with device_proxy=true; use proxy_thread_count");
         }
+        if (policy) {
+            nixl::throwRuntimeError("A memory policy is not supported with device_proxy=true");
+        }
         engine = new nixl::ucx::proxyEngine(init_params, proxy_config);
     } else if (num_threads > 0) {
-        engine = new nixlUcxThreadPoolEngine(init_params, num_threads);
+        engine = new nixlUcxThreadPoolEngine(init_params, num_threads, std::move(policy));
     } else if (init_params.enableProgTh) {
-        engine = new nixlUcxThreadEngine(init_params);
+        engine = new nixlUcxThreadEngine(init_params, 0, std::move(policy));
     } else {
-        engine = new nixlUcxEngine(init_params);
+        engine = new nixlUcxEngine(init_params, 0, std::move(policy));
     }
     return std::unique_ptr<nixlUcxEngine>(engine);
 }
 
-nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
+nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
+                             size_t num_dedicated_workers,
+                             nixl::ucx::MemoryPolicyPtr policy)
     : nixlBackendEngine(&init_params),
+      memoryPolicy_(std::move(policy)),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
       traceSink_(init_params.traceSink) {
+    if (memoryPolicy_ && memoryPolicy_->deviceMemoryType().empty()) {
+        throw std::invalid_argument("A memory policy must name its required device memory type");
+    }
+    if (memoryPolicy_ && sglEnabled_) {
+        throw std::invalid_argument("Strict device memory policies do not support UCX SGL");
+    }
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
-    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "device_list")) {
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "device_list");
+        opt && !opt->empty()) {
         devs = absl::StrSplit(*opt, ", ");
     }
 
@@ -131,9 +146,13 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
                                           num_device_channels,
                                           engine_config,
                                           localAgent,
+                                          memoryPolicy_ ? memoryPolicy_->deviceMemoryType() :
+                                                          std::string_view{},
                                           vram_memtype_hint_policy);
 
-    uc->warnAboutHardwareSupportMismatch();
+    if (!memoryPolicy_) {
+        uc->warnAboutHardwareSupportMismatch();
+    }
 
     workers_.reserve(num_workers);
     for (size_t i = 0; i < numSharedWorkers_; i++) {
@@ -221,24 +240,38 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
 /****************************************
  * Memory management
 *****************************************/
-nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
-                                          const nixl_mem_t &nixl_mem,
-                                          nixlBackendMD* &out)
-{
-    auto priv = std::make_unique<nixlUcxPrivateMetadata>();
-
-    // TODO: Add nixl_mem check?
-    const int ret = uc->memReg((void*) mem.addr, mem.len, priv->mem, nixl_mem);
-    if (ret) {
+nixl_status_t
+nixlUcxEngine::registerMem(const nixlBlobDesc &mem,
+                           const nixl_mem_t &nixl_mem,
+                           nixlBackendMD *&out) {
+    out = nullptr;
+    try {
+        if (memoryPolicy_) {
+            const auto status = memoryPolicy_->validateBeforeMap(mem, nixl_mem);
+            if (status != NIXL_SUCCESS) {
+                return status;
+            }
+        }
+        auto priv = std::make_unique<nixlUcxPrivateMetadata>();
+        if (uc->memReg(reinterpret_cast<void *>(mem.addr), mem.len, priv->mem, nixl_mem) != 0) {
+            return NIXL_ERR_BACKEND;
+        }
+        auto rollback = absl::MakeCleanup([&]() noexcept { uc->memDereg(priv->mem); });
+        priv->rkeyStr = uc->packRkey(priv->mem);
+        if (priv->rkeyStr.empty()) {
+            return NIXL_ERR_BACKEND;
+        }
+        std::move(rollback).Cancel();
+        out = priv.release();
+        return NIXL_SUCCESS;
+    }
+    // UCX returns status codes, but policy validation, metadata allocation, and rkey
+    // serialization are C++ operations that may throw. Convert those failures to
+    // the backend status while the scope cleanup releases any mapped memory.
+    catch (const std::exception &error) {
+        NIXL_ERROR << "Memory registration failed: " << error.what();
         return NIXL_ERR_BACKEND;
     }
-    priv->rkeyStr = uc->packRkey(priv->mem);
-
-    if (priv->rkeyStr.empty()) {
-        return NIXL_ERR_BACKEND;
-    }
-    out = priv.release();
-    return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlUcxEngine::deregisterMem (nixlBackendMD* meta)
@@ -281,6 +314,10 @@ nixl_status_t
 nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
                                  const std::string &agent,
                                  nixlBackendMD* &output) {
+    output = nullptr;
+    if (blob.empty()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     try {
         const auto it = remoteConnMap.find(agent);
 
@@ -299,7 +336,7 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
             it->second, makePublicMetadataRkeys(it->second, workers_.size(), blob.data()));
         return NIXL_SUCCESS;
     }
-    catch (const std::runtime_error &e) {
+    catch (const std::exception &e) {
         NIXL_ERROR << e.what();
         return NIXL_ERR_BACKEND;
     }
@@ -319,6 +356,13 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
                                            const std::string &remote_agent,
                                            nixlBackendMD* &output)
 {
+    output = nullptr;
+    if (!nixl::ucx::validMemoryRange(input.addr, input.len)) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    if (memoryPolicy_ && nixl_mem != DRAM_SEG && nixl_mem != VRAM_SEG) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     return internalMDHelper(input.metaInfo, remote_agent, output);
 }
 
@@ -866,6 +910,9 @@ nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
+    if (memoryPolicy_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     return prepMemViewImpl(dlist, mvh, opt_args, "remote");
 }
 
@@ -873,6 +920,9 @@ nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
+    if (memoryPolicy_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     return prepMemViewImpl(dlist, mvh, opt_args, "local");
 }
 
