@@ -196,6 +196,70 @@ namespace {
                   std::string::npos);
     }
 
+    TEST(PosixIntegrationTest, ShortPipelinesPassReadWriteConsistency) {
+        struct Case {
+            int depth;
+            int iterations;
+            int warmup;
+        };
+
+        for (const auto &test_case : {Case{3, 2, 0}, Case{4, 2, 3}, Case{4, 4, 2}, Case{3, 7, 2}}) {
+            for (const std::string operation : {"READ", "WRITE"}) {
+                for (const std::string lifecycle :
+                     {"",
+                      " --prepared_xfer=true --recreate_xfer=true",
+                      " --reregister_mem=true --recreate_xfer=true"}) {
+                    TemporaryDirectory directory;
+                    const auto log = directory.path() / "pipeline.log";
+                    const std::string command =
+                        "--backend=POSIX --filepath=" + shellQuote(directory.path().string()) +
+                        " --op_type=" + operation +
+                        " --total_buffer_size=16384"
+                        " --start_block_size=4096 --max_block_size=4096"
+                        " --start_batch_size=1 --max_batch_size=1 --large_blk_iter_ftr=1"
+                        " --check_consistency=true --pipeline_depth=" +
+                        std::to_string(test_case.depth) +
+                        " --num_iter=" + std::to_string(test_case.iterations) +
+                        " --warmup_iter=" + std::to_string(test_case.warmup) + lifecycle;
+                    ASSERT_EQ(runCommand(command, log), 0) << readFile(log);
+                }
+            }
+        }
+    }
+
+    TEST(PosixIntegrationTest, CappedPipelinePreservesBatchSize) {
+        TemporaryDirectory directory;
+        const auto file = directory.path() / "pipeline.bin";
+        const auto log = directory.path() / "pipeline.log";
+        const std::string command = "--backend=POSIX --filenames=" + shellQuote(file.string()) +
+            " --op_type=WRITE --total_buffer_size=16384"
+            " --start_block_size=4096 --max_block_size=4096"
+            " --start_batch_size=1 --max_batch_size=1 --large_blk_iter_ftr=1"
+            " --pipeline_depth=4 --num_iter=2 --warmup_iter=0 --check_consistency=true";
+        ASSERT_EQ(runCommand(command, log), 0) << readFile(log);
+        const auto contents = readFile(file);
+        ASSERT_EQ(contents.size(), 16384U);
+        // Two batch-one requests write 8 KiB; capping must not double their batch size.
+        EXPECT_EQ(contents.substr(0, 8192), std::string(8192, '\xbb'));
+        EXPECT_EQ(contents.substr(8192), std::string(8192, '\xaa'));
+    }
+
+    TEST(PosixIntegrationTest, LargeBlocksWithShortWarmupPassConsistency) {
+        for (const std::string operation : {"READ", "WRITE"}) {
+            TemporaryDirectory directory;
+            const auto log = directory.path() / "pipeline.log";
+            const std::string command =
+                "--backend=POSIX --filepath=" + shellQuote(directory.path().string()) +
+                " --op_type=" + operation +
+                " --total_buffer_size=12582912"
+                " --start_block_size=2097152 --max_block_size=2097152"
+                " --start_batch_size=1 --max_batch_size=1 --num_threads=2"
+                " --pipeline_depth=3 --num_iter=96 --warmup_iter=64"
+                " --prepared_xfer=true --check_consistency=true";
+            ASSERT_EQ(runCommand(command, log), 0) << readFile(log);
+        }
+    }
+
     TEST(PosixIntegrationTest, RejectsConflictingAdvertisedQueueSelectors) {
         std::string error;
         const auto metadata = discoverPluginMetadata("POSIX", error);
