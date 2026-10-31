@@ -104,3 +104,7 @@ if enabled_plugins.get('OBJ')
         subdir('object')
     endif
 endif
+
+if is_variable('tcpxo_backend_interface')
+    subdir('gpudirect_tcpxo')
+endif

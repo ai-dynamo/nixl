@@ -31,6 +31,10 @@ ARG BASE_IMAGE_TAG="13.4.2-devel-ubi8"
 # image instead of building wheel_base locally (CI caching). Default builds wheel_base here.
 ARG wheel_base=wheel_base
 
+ARG WEBRTC_IMAGE="webrtc:${BASE_IMAGE_TAG}"
+# Define webrtc stage to allow copying pre-built WebRTC binaries
+FROM ${WEBRTC_IMAGE} AS webrtc
+
 # CUDA donor stage — copies the toolkit and cuObject client pkg-config files
 # onto the manylinux base. The cuobjclient*.pc files are staged in a separate
 # directory so they survive the copy even if /usr/lib64/pkgconfig has noise.
@@ -94,7 +98,8 @@ ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
 ARG BUILD_NIXL_EP="true"
 ARG ABSL_TAG="lts_2025_08_14"
-ARG GRPC_TAG="v1.73.0"
+ARG GRPC_TAG="v1.76.0"
+ARG PROTOBUF_TAG="v33.4"
 ARG HIREDIS_VERSION="1.4.0"
 ARG WGET_RETRY_OPTS="--tries=10 --waitretry=15 --retry-connrefused --retry-on-http-error=429,500,502,503,504 --no-http-keep-alive --timeout=30 --read-timeout=60"
 ARG NPROC
@@ -121,9 +126,6 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     ninja-build \
     openssl \
     openssl-devel \
-    protobuf-compiler \
-    protobuf-c-devel \
-    protobuf-devel \
     libibverbs \
     libibverbs-devel \
     rdma-core \
@@ -134,7 +136,8 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     librdmacm-devel \
     pciutils-devel \
     wget \
-    zlib
+    zlib \
+    npm
 
 # Build latest hwloc from source to avoid older RHEL8 API limitations.
 RUN cd /tmp && \
@@ -208,6 +211,25 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://gi
     make install && \
     ldconfig
 
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules -b ${PROTOBUF_TAG} --depth 1 --shallow-submodules https://github.com/protocolbuffers/protobuf.git && \
+    cd protobuf && \
+    mkdir build && \
+    cmake -S . -B build \
+          -DCMAKE_CXX_STANDARD=20 \
+          -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -Dprotobuf_BUILD_TESTS=OFF \
+          -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          -Dprotobuf_ABSL_PROVIDER=package && \
+    cmake --build build --parallel ${NPROC:-$(nproc)} && \
+    cmake --install build && \
+    ldconfig
+
+# Copy pre-built WebRTC from webrtc stage.
+COPY --from=webrtc /usr/local/webrtc /usr/local/webrtc
+
+ENV PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+
 ARG GRPC_NPROC
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
@@ -225,7 +247,7 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-
     -Dabsl_DIR=/usr/local/lib/cmake/absl \
     -DgRPC_SSL_PROVIDER=package \
     -DgRPC_ABSL_PROVIDER=package \
-    -DgRPC_PROTOBUF_PROVIDER=module \
+    -DgRPC_PROTOBUF_PROVIDER=package \
     -DgRPC_ZLIB_PROVIDER=package ../.. && \
     make -j${GRPC_NPROC:-$(nproc)} && \
     make install && \
@@ -237,6 +259,7 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /workspace && \
     git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
+    sed -i 's/find_dependency(Protobuf)/find_dependency(Protobuf CONFIG)/' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 && \
     make -j${NPROC:-$(nproc)} && make install
@@ -465,6 +488,28 @@ ARG NPROC=1
 ARG UCX_SPCX_PLUGIN_VERSION=""
 ARG INFINIA_PLUGIN_VERSION=""
 
+ARG DISABLE_RXDM_DXS="false"
+ARG DISABLE_GPUDIRECT_TCPXO_CUDA="false"
+ARG RXDM_DXS_INSTALL_PATH="/usr/local/lib"
+ARG FASTRAK_RXDM_URI=""
+ARG DXS_CLIENT_URI=""
+
+# Install Bazel for DXS/RxDM
+RUN npm install -g @bazel/bazelisk@1.28.1
+
+COPY contrib/prepare_source.sh contrib/build-rxdm.sh /workspace/contrib/
+COPY src/plugins/gpudirect_tcpxo/fastrak-rxdm/nccl_tcpxo_rxdm_module.bazel \
+     src/plugins/gpudirect_tcpxo/fastrak-rxdm/rxdm.patch \
+     /tmp/fastrak-rxdm/
+RUN if [ "$DISABLE_RXDM_DXS" != "true" ]; then \
+        PREPARE_OPTS=(-o /workspace/fastrak-rxdm -f /tmp/fastrak-rxdm -s /workspace/contrib) && \
+        if [ -n "$FASTRAK_RXDM_URI" ]; then PREPARE_OPTS+=(-r "$FASTRAK_RXDM_URI"); fi && \
+        if [ -n "$DXS_CLIENT_URI" ]; then PREPARE_OPTS+=(-d "$DXS_CLIENT_URI"); fi && \
+        /workspace/contrib/prepare_source.sh "${PREPARE_OPTS[@]}" && \
+        /workspace/fastrak-rxdm/build-rxdm.sh -d "$RXDM_DXS_INSTALL_PATH"; \
+    fi && \
+    rm -rf /tmp/fastrak-rxdm
+
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
 
@@ -546,7 +591,10 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     else \
         NIXL_EP_FLAG=""; \
     fi && \
+    protoc --cpp_out=./ src/plugins/gpudirect_tcpxo/control_channel.proto && \
     meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE $NIXL_EP_FLAG -Ducx_path=/usr/local \
+    -Ddisable_rxdm_dxs=$DISABLE_RXDM_DXS \
+    -Ddisable_gpudirect_tcpxo_cuda=$DISABLE_GPUDIRECT_TCPXO_CUDA \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" \
     -Drelease_wheel=true && \
