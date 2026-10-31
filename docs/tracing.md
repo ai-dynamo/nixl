@@ -297,8 +297,7 @@ so only in-tree plugins can read it. Next to `traceContext`, `traceRequestId` an
 `traceExecution` hold the request's id and the number of the post being executed,
 0 meaning none: the id is the same at prep and at every post, the execution number
 is 0 at prep, and both are 0 when tracing is off. They are plain integers that any
-plugin can read; a plugin that records phases later copies them with the context
-and passes them back to `recordPhase`.
+plugin can read.
 
 Next to them, `traceIdentity` points to the same three values as one internal
 `nixl::trace::TraceIdentity` (`context`, `requestId` and `execution`), valid only

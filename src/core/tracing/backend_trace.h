@@ -147,24 +147,6 @@ public:
                 std::string_view label = {}) noexcept {
         recordPhase(phase, nixlTime::getUs(), identity, attrs, label);
     }
-
-    /** @brief Record @p phase at @p timestamp under the identity of @p context (none when
-     *         null), @p request_id and @p execution. */
-    void
-    recordPhase(nixl_trace_phase_t phase,
-                std::string_view label,
-                nixlTime::us_t timestamp,
-                std::span<const nixlBackendTraceAttr> attrs = {},
-                const nixl::trace::TraceContext *context = nullptr,
-                std::uint64_t request_id = 0,
-                std::uint64_t execution = 0) noexcept {
-        recordPhase(
-            phase,
-            timestamp,
-            {(context != nullptr) ? *context : nixl::trace::TraceContext{}, request_id, execution},
-            attrs,
-            label);
-    }
 };
 
 /**

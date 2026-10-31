@@ -23,7 +23,6 @@
 #include "common/nixl_log.h"
 #include "common/nixl_time.h"
 #include "tracing/backend_trace.h"
-#include "tracing/trace_context.h"
 
 #include <algorithm>
 #include <atomic>
@@ -150,18 +149,6 @@ private:
     std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
 };
 
-struct nixlUcxPostTrace {
-    nixlBackendTraceSink *sink = nullptr;
-    nixl::trace::TraceContext context;
-    std::uint64_t requestId = 0;
-    std::uint64_t execution = 0;
-
-    void
-    record(nixl_trace_phase_t phase, nixlTime::us_t at) const noexcept {
-        sink->recordPhase(phase, {}, at, {}, &context, requestId, execution);
-    }
-};
-
 /*
  * This class represents a shared state between a main request and all of its
  * chunks. It is used to track the completion status of the request and the
@@ -171,7 +158,7 @@ struct nixlUcxBackendSharedState {
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
     std::vector<nixlUcxChunkBackendReqH> chunks;
-    nixlUcxPostTrace trace;
+    nixlBackendPostTrace trace;
 
     nixlUcxBackendSharedState() : status(NIXL_SUCCESS), pendingReqs(0) {}
 
@@ -187,7 +174,7 @@ struct nixlUcxBackendSharedState {
 
 void
 nixlUcxBackendSharedState::completeTracedChunk() noexcept {
-    const nixlUcxPostTrace post = trace;
+    const nixlBackendPostTrace post = trace;
     const nixlTime::us_t completed_at = nixlTime::getUs();
     // Read the status before pendingReqs reaches zero, after which a repost may rewrite it.
     size_t pending = pendingReqs.load();
@@ -199,7 +186,7 @@ nixlUcxBackendSharedState::completeTracedChunk() noexcept {
     const bool succeeded = (status.load() == NIXL_SUCCESS);
     pendingReqs.store(0);
     if (succeeded) {
-        post.record(nixl_trace_phase_t::WIRE_COMPLETED, completed_at);
+        post.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, completed_at);
     }
 }
 
@@ -210,7 +197,7 @@ nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
         nixlUcxBackendReqH::release();
         sharedState_->status.store(status);
     }
-    if (sharedState_->trace.sink == nullptr) [[likely]] {
+    if (!sharedState_->trace.active()) [[likely]] {
         sharedState_->pendingReqs.fetch_sub(1);
     } else {
         sharedState_->completeTracedChunk();
@@ -250,12 +237,10 @@ public:
     }
 
     void
-    startXfer(nixlBackendTraceSink *trace_sink) {
+    startXfer() {
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
-        sharedState_->trace = traceContext ?
-            nixlUcxPostTrace{trace_sink, *traceContext, traceRequestId, traceExecution} :
-            nixlUcxPostTrace{};
+        sharedState_->trace = trace;
         sharedState_->pendingReqs.store(getNumChunks());
     }
 
@@ -496,7 +481,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     }
 
     const auto comp_handle = static_cast<nixlUcxCompositeBackendReqH *>(int_handle);
-    comp_handle->startXfer(getTraceSink());
+    comp_handle->startXfer();
 
     // Notifications of the composite request are sent over its shared worker
     const ucx_connection_ptr_t &conn =
