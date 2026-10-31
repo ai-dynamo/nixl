@@ -125,4 +125,4 @@ For high-speed storage and network hardware, you may need to tweak performance w
 
 First, for optimal GDS performance, ensure you are using the GDS_MT backend with default concurrency. Additionally, you can use the cufile options described in the [GDS README](https://github.com/ai-dynamo/nixl/blob/main/src/plugins/cuda_gds/README.md). Also a reminder to check that your GDS setup is running true GPU-direct IO and not in compatibility mode.
 
-On the network side, remote reads from VRAM to DRAM can be limited by UCX rail selection. This can be tweaked by setting UCX_MAX_RMA_RAILS=1. However, with larger batch or message sizes, this might limit bandwidth and a higher number of rails might be needed.
+On the network side, remote reads from VRAM to DRAM can be limited by UCX rail selection. This can be tweaked by setting NIXL_UCX_MAX_RMA_RAILS=1 (or UCX_MAX_RMA_RAILS=1, which also affects other UCX users in the process). However, with larger batch or message sizes, this might limit bandwidth and a higher number of rails might be needed.
