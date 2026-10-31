@@ -206,6 +206,12 @@ NB_ARG_INT32(gds_batch_pool_size,
              "Batch pool size for GDS operations (only used with GDS backend)");
 NB_ARG_INT32(gds_batch_limit, 128, "Batch limit for GDS operations (only used with GDS backend)");
 NB_ARG_INT32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin");
+NB_ARG_STRING(gds_mt_vector_io,
+              "auto",
+              "GDS MT vector I/O mode [auto, off, on] (only used with GDS_MT backend)");
+NB_ARG_INT32(gds_mt_vector_max_entries,
+             32,
+             "Maximum entries per GDS MT vector I/O call (only used with GDS_MT backend)");
 
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
@@ -398,6 +404,8 @@ std::string xferBenchConfig::benchmark_group = "default";
 int xferBenchConfig::gds_batch_pool_size = 0;
 int xferBenchConfig::gds_batch_limit = 0;
 int xferBenchConfig::gds_mt_num_threads = 0;
+std::string xferBenchConfig::gds_mt_vector_io = "auto";
+int xferBenchConfig::gds_mt_vector_max_entries = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
 std::string xferBenchConfig::gpunetio_oob_list = "";
 std::string xferBenchConfig::gpunetio_gid_index = "0";
@@ -690,6 +698,8 @@ xferBenchConfig::loadParams(void) {
 
         if (backend == XFERBENCH_BACKEND_GDS_MT) {
             gds_mt_num_threads = NB_ARG(gds_mt_num_threads);
+            gds_mt_vector_io = NB_ARG(gds_mt_vector_io);
+            gds_mt_vector_max_entries = NB_ARG(gds_mt_vector_max_entries);
         }
 
         // Load POSIX-specific configurations if backend is POSIX
@@ -1068,6 +1078,10 @@ xferBenchConfig::printConfig() {
         if (backend == XFERBENCH_BACKEND_GDS_MT) {
             printOption("GDS MT Number of threads (--gds_mt_num_threads=N)",
                         std::to_string(gds_mt_num_threads));
+            printOption("GDS MT vector I/O mode (--gds_mt_vector_io=[auto,off,on])",
+                        gds_mt_vector_io);
+            printOption("GDS MT vector max entries (--gds_mt_vector_max_entries=N)",
+                        std::to_string(gds_mt_vector_max_entries));
         }
 
         // Print POSIX options if backend is POSIX
@@ -1235,7 +1249,6 @@ xferBenchConfig::isBlkStorageBackend() {
     return std::any_of(
         backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) { return m == BLK_SEG; });
 }
-
 
 /**********
  * xferBench Utils

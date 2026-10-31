@@ -25,7 +25,7 @@ and transfer validation):
 - `GDS`: selects cuFile batch transfers (`nixlGdsBatchEngine`) by default or
   multi-threaded transfers (`nixlGdsMtEngine`) with the `mode` parameter.
 - `GDS_MT`: multi-threaded transfers via TaskFlow (`nixlGdsMtEngine`). TaskFlow
-  issues one `cuFileRead` or `cuFileWrite` per prepared request. This name
+  issues scalar or grouped vector cuFile calls for prepared requests. This name
   remains temporarily available for compatibility and will be removed in a
   future update. New integrations should use `GDS` with `mode=mt`.
 
@@ -50,12 +50,16 @@ single agent; creating one after the other returns `NIXL_ERR_NOT_ALLOWED`.
 | `batch_limit` | `128` | Maximum entries in one cuFile batch in `batch` mode. |
 | `max_request_size` | `16777216` | Maximum bytes in one prepared I/O chunk in `batch` mode. |
 | `thread_count` | `max(1, hardware concurrency / 2)` | Number of persistent TaskFlow workers in `mt` mode. |
+| `vector_io` | `auto` | Vector I/O mode in `mt` mode: `auto`, `off`, or `on`. |
+| `vector_max_entries` | `32` | Maximum entries grouped into one vector I/O call in `mt` mode. |
 
 ## GDS_MT configuration
 
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `thread_count` | `max(1, hardware concurrency / 2)` | Number of persistent TaskFlow workers. The plugin advertises the computed value as a decimal string. |
+| `vector_io` | `auto` | Vector I/O mode: `auto`, `off`, or `on`. |
+| `vector_max_entries` | `32` | Maximum entries grouped into one vector I/O call. |
 
 [NVIDIA GDS](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html)<br />
 [CUDA GDS Install and Setup](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html)

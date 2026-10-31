@@ -311,6 +311,8 @@ These arguments are used by both `plan` and `profile` commands:
 | `--storage_enable_direct` | Enable direct I/O for storage operations |
 | `--filepath` | File path for storage operations |
 | `--enable_vmm` | Enable VMM memory allocation when DRAM is requested |
+| `--gds_mt_vector_io` | GDS_MT vector I/O mode [auto, off, on] (default: auto) |
+| `--gds_mt_vector_max_entries` | Maximum entries per GDS_MT vector I/O call (default: 32) |
 
 ### CTP Command Arguments
 
