@@ -106,8 +106,6 @@ using nixl_gpu_level_t = nixl::gpu::level_t;
  * @see nixl::gpu::memViewElem
  */
 using nixlMemViewElem = nixl::gpu::memViewElem;
-using nixl_device_exec_mode_t = nixl::gpu::exec_mode_t;
-using nixlDeviceMemViewWrapper = nixl::gpu::memViewWrapper;
 constexpr size_t nixl_gpu_xfer_status_payload_size = nixl::gpu::xfer_status_payload_size;
 
 namespace nixl_gpu_flags {

@@ -38,7 +38,7 @@ namespace nixl::ucx {
  */
 class proxyEngine final : public nixlUcxEngine {
 public:
-    proxyEngine(const nixlBackendInitParams &init_params, const nixl::proxyConfig &config);
+    proxyEngine(const nixlBackendInitParams &init_params, const proxyConfig &config);
 
     ~proxyEngine() override;
 
@@ -69,9 +69,9 @@ private:
     nixl_status_t
     prepProxyMemView(const DlistT &dlist, nixlMemViewH &mvh) const;
 
-    nixl::deviceOps &ops_;
+    deviceOps &ops_;
     std::mutex notifMutex_;
-    std::unique_ptr<nixl::proxyRuntime> runtime_;
+    std::unique_ptr<proxyRuntime> runtime_;
 };
 } // namespace nixl::ucx
 
