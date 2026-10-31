@@ -719,8 +719,9 @@ TEST_F(objDellTestFixture, DellPrepXferLargeMemoryOffset) {
 }
 
 /**
- * Answers every request with 400 and records its Authorization header, so a
- * test can see which credentials the S3 RDMA control plane signed with.
+ * Answers every request with 400 and records its Authorization header, or an
+ * empty string for an unsigned request, so a test can see every request the S3
+ * RDMA control plane sent and which credentials it signed with.
  */
 class authRecordingServer {
 public:
@@ -784,12 +785,13 @@ private:
         std::string lower = request;
         std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
         const size_t start = lower.find("\r\nauthorization:");
-        if (start == std::string::npos) {
-            return;
+        std::string authorization;
+        if (start != std::string::npos) {
+            const size_t end = request.find("\r\n", start + 2);
+            authorization = request.substr(start + 2, end - start - 2);
         }
-        const size_t end = request.find("\r\n", start + 2);
         const std::lock_guard<std::mutex> lock(mutex_);
-        authorizations_.push_back(request.substr(start + 2, end - start - 2));
+        authorizations_.push_back(std::move(authorization));
     }
 
     int fd_ = -1;
@@ -839,7 +841,11 @@ private:
                                              "AWS_PROFILE",
                                              "AWS_SHARED_CREDENTIALS_FILE",
                                              "AWS_CONFIG_FILE",
-                                             "AWS_EC2_METADATA_DISABLED"};
+                                             "AWS_EC2_METADATA_DISABLED",
+                                             "AWS_WEB_IDENTITY_TOKEN_FILE",
+                                             "AWS_ROLE_ARN",
+                                             "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+                                             "AWS_CONTAINER_CREDENTIALS_FULL_URI"};
     std::vector<std::pair<const char *, std::optional<std::string>>> saved_;
 };
 
