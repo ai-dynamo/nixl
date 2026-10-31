@@ -5,12 +5,12 @@
 
 #include "obj_test_base.h"
 #include "mock_client_registry.h"
-#include "s3_accel/dell/rdma_interface.h"
+#include "s3_accel/rdma_interface.h"
 
 namespace gtest::obj {
 namespace {
 
-    class mockDellS3Client : public mockS3Client, public iDellS3RdmaClient {
+    class mockDellS3Client : public mockS3Client, public iS3RdmaClient {
     public:
         mockDellS3Client() = default;
 
