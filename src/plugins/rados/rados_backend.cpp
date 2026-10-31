@@ -47,10 +47,10 @@ checkRadosResult(const char *operation, int result) {
 
 bool
 applyCephOverrides(nixl::rados::radosApi &api,
-                   rados_t cluster,
+                   librados::Rados &cluster,
                    const nixl::rados::ceph_options_t &overrides) {
     for (const auto &[option, value] : overrides) {
-        const std::string operation = std::string("rados_conf_set(") + option + ')';
+        const std::string operation = std::string("conf_set(") + option + ')';
         if (!checkRadosResult(operation.c_str(),
                               api.conf_set(cluster, option.c_str(), value.c_str()))) {
             return false;
@@ -88,119 +88,25 @@ radosResultToNixl(nixl_xfer_op_t operation, int result, uint64_t requested_len) 
     return NIXL_ERR_BACKEND;
 }
 
-// Initialization-only, exception-safe owner of the cluster/ioctx handles:
-// take_*()/commit_view() hand ownership to the engine on success, while any
-// failed path unwinds here as view -> ioctx -> cluster.
-class bootstrapResources {
-public:
-    explicit bootstrapResources(nixl::rados::radosApi &api) : api_(api) {}
-
-    bootstrapResources(const bootstrapResources &) = delete;
-    bootstrapResources &
-    operator=(const bootstrapResources &) = delete;
-
-    ~bootstrapResources() {
-        if (view_held_) {
-            api_.ioctxClose(view_);
-        }
-        if (ioctx_ != nullptr) {
-            api_.ioctx_destroy(ioctx_);
-        }
-        if (cluster_ != nullptr) {
-            api_.shutdown(cluster_);
-        }
-    }
-
-    int
-    create_cluster(const char *name) {
-        return api_.create2(&cluster_, nullptr, name, 0);
-    }
-
-    int
-    conf_read_file(const char *path) {
-        return api_.conf_read_file(cluster_, path);
-    }
-
-    int
-    connect() {
-        return api_.connect(cluster_);
-    }
-
-    int
-    create_ioctx(const char *pool) {
-        return api_.ioctx_create(cluster_, pool, &ioctx_);
-    }
-
-    void
-    set_namespace(const std::string &ns) {
-        api_.ioctx_set_namespace(ioctx_, ns.c_str());
-    }
-
-    void
-    create_view(librados::IoCtx *ctx) {
-        view_ = ctx;
-        view_held_ = true;
-        api_.ioctxFromRaw(ioctx_, view_);
-    }
-
-    void
-    commit_view() {
-        view_ = nullptr;
-        view_held_ = false;
-    }
-
-    rados_t
-    cluster() const {
-        return cluster_;
-    }
-
-    rados_ioctx_t
-    take_ioctx() {
-        return std::exchange(ioctx_, nullptr);
-    }
-
-    rados_t
-    take_cluster() {
-        return std::exchange(cluster_, nullptr);
-    }
-
-private:
-    nixl::rados::radosApi &api_;
-    rados_t cluster_ = nullptr;
-    rados_ioctx_t ioctx_ = nullptr;
-    librados::IoCtx *view_ = nullptr;
-    bool view_held_ = false;
-};
-
-// Bring up one rados client (create2 -> conf -> overrides -> connect -> pool
-// ioctx -> optional namespace -> non-owning view) from the parsed config. On
-// success the raw handles move into the out-params for engine ownership; on
-// any failure everything acquired so far unwinds here and nothing is taken.
 bool
 bootstrapClient(nixl::rados::radosApi &api,
                 const nixl::rados::backendConfig &config,
-                librados::IoCtx *view,
-                rados_t &out_cluster,
-                rados_ioctx_t &out_ioctx) {
-    bootstrapResources resources(api);
-    if (!checkRadosResult("rados_create2", resources.create_cluster(config.name.c_str()))) {
+                librados::Rados &rados,
+                librados::IoCtx &ioctx) {
+    if (!checkRadosResult("init2", api.init2(rados, config.name.c_str(), nullptr, 0))) {
         return false;
     }
-    if (!checkRadosResult("rados_conf_read_file", resources.conf_read_file(config.conf.c_str())) ||
-        !applyCephOverrides(api, resources.cluster(), config.ceph_options) ||
-        !checkRadosResult("rados_connect", resources.connect())) {
+    if (!checkRadosResult("conf_read_file", api.conf_read_file(rados, config.conf.c_str())) ||
+        !applyCephOverrides(api, rados, config.ceph_options) ||
+        !checkRadosResult("connect", api.connect(rados))) {
         return false;
     }
-    if (!checkRadosResult("rados_ioctx_create", resources.create_ioctx(config.pool.c_str()))) {
+    if (!checkRadosResult("ioctx_create", api.ioctx_create(rados, config.pool.c_str(), ioctx))) {
         return false;
     }
     if (config.ns) {
-        resources.set_namespace(*config.ns);
+        api.set_namespace(ioctx, config.ns->c_str());
     }
-    resources.create_view(view);
-    out_ioctx = resources.take_ioctx();
-    out_cluster = resources.take_cluster();
-    resources.commit_view();
     return true;
 }
 
@@ -230,14 +136,14 @@ public:
         int result = 0;
         // Non-owning view of snapshotted caller DRAM; borrowed until retirement, rebuilt on repost.
         librados::bufferlist payload;
-        librados::AioCompletion *owned = nullptr;
+        librados::AioCompletion *completion = nullptr;
     };
 
     explicit directRequestState(nixl_xfer_op_t operation) : operation_(operation) {}
 
     ~directRequestState() {
         for (const requestPair &pair : pairs_) {
-            if (pair.owned != nullptr) {
+            if (pair.completion != nullptr) {
                 NIXL_ERROR << "RADOS request state destroyed with an unreleased "
                               "completion on object '"
                            << pair.oid << "'";
@@ -278,7 +184,7 @@ public:
     void
     resetForRepostLocked() {
         for (requestPair &pair : pairs_) {
-            pair.owned = nullptr;
+            pair.completion = nullptr;
             pair.payload.clear();
             pair.result = 0;
         }
@@ -298,7 +204,7 @@ namespace {
 
 bool
 pairUnproven(nixl::rados::radosApi &api, const directRequestState::requestPair &pair) {
-    return pair.owned != nullptr && api.isCompleteAndCb(pair.owned) == 0;
+    return pair.completion != nullptr && api.isCompleteAndCb(pair.completion) == 0;
 }
 
 // Reconcile a completed read's direct or replacement output before release.
@@ -340,19 +246,19 @@ retirePair(nixl::rados::radosApi &api,
            nixl_xfer_op_t operation,
            directRequestState::requestPair &pair,
            bool wait) {
-    if (pair.owned == nullptr) {
+    if (pair.completion == nullptr) {
         return pair.result;
     }
     if (wait) {
-        api.waitForCompleteAndCb(pair.owned);
+        api.waitForCompleteAndCb(pair.completion);
     }
-    int result = api.getReturnValue(pair.owned);
+    int result = api.getReturnValue(pair.completion);
     if (operation == NIXL_READ) {
         result = settleReadOutput(pair, result);
     }
-    api.release(pair.owned);
+    api.release(pair.completion);
     pair.payload.clear();
-    pair.owned = nullptr;
+    pair.completion = nullptr;
     return result;
 }
 
@@ -457,19 +363,14 @@ nixlRadosEngine::nixlRadosEngine(const nixlBackendInitParams *init_params,
 
 void
 nixlRadosEngine::initialize(const nixl::rados::backendConfig &config) {
-    if (!bootstrapClient(*api_, config, &dataView_, cluster_, ioctx_)) {
+    if (!bootstrapClient(*api_, config, data_.rados, data_.ioctx)) {
         initErr = true;
         return;
     }
-    clusterCreated_ = true;
-    ioctxOpen_ = true;
-    dataViewOpen_ = true;
-    if (!bootstrapClient(*api_, config, &metaView_, metaCluster_, metaIoctx_)) {
+    if (!bootstrapClient(*api_, config, meta_.rados, meta_.ioctx)) {
         NIXL_ERROR << "RADOS metadata stat client initialization failed";
         initErr = true;
-        return;
     }
-    metaClientOpen_ = true;
 }
 
 nixlRadosEngine::~nixlRadosEngine() {
@@ -488,24 +389,7 @@ nixlRadosEngine::~nixlRadosEngine() {
         alock.lock();
     }
     alock.unlock();
-    if (metaClientOpen_) {
-        api_->ioctxClose(&metaView_);
-        api_->ioctx_destroy(metaIoctx_);
-        api_->shutdown(metaCluster_);
-        metaClientOpen_ = false;
-    }
-    if (dataViewOpen_) {
-        api_->ioctxClose(&dataView_);
-        dataViewOpen_ = false;
-    }
-    if (ioctxOpen_) {
-        api_->ioctx_destroy(ioctx_);
-        ioctxOpen_ = false;
-    }
-    if (clusterCreated_) {
-        api_->shutdown(cluster_);
-        clusterCreated_ = false;
-    }
+    // Teardown is RAII only, in the member order fixed by rados_backend.h.
 }
 
 nixl_status_t
@@ -595,7 +479,7 @@ nixlRadosEngine::queryMem(const nixl_reg_dlist_t &descs,
                 continue;
             }
             const int submit_ret = api_->aioStat(
-                &metaView_, slot.oid.c_str(), slot.comp, &slot.size, &slot.prval, &slot.merged);
+                &meta_.ioctx, slot.oid.c_str(), slot.comp, &slot.size, &slot.prval, &slot.merged);
             if (submit_ret != 0) {
                 api_->release(slot.comp);
                 slot.comp = nullptr;
@@ -648,7 +532,7 @@ void
 nixlRadosEngine::drainRequestState(const std::shared_ptr<directRequestState> &state) const {
     std::lock_guard slock(state->mtx);
     for (auto &pair : state->pairs()) {
-        if (pair.owned == nullptr) {
+        if (pair.completion == nullptr) {
             continue;
         }
         const int result = retirePair(*api_, state->operation(), pair, true);
@@ -814,15 +698,18 @@ nixlRadosEngine::postXfer(const nixl_xfer_op_t &,
                 break;
             }
             completion_held = true;
-            const int ret = is_read ?
-                api_->aioRead(&dataView_,
-                              pair.oid.c_str(),
-                              completion,
-                              &pair.payload,
-                              pair.len,
-                              pair.offset) :
-                api_->aioWrite(
-                    &dataView_, pair.oid.c_str(), completion, pair.payload, pair.len, pair.offset);
+            const int ret = is_read ? api_->aioRead(&data_.ioctx,
+                                                    pair.oid.c_str(),
+                                                    completion,
+                                                    &pair.payload,
+                                                    pair.len,
+                                                    pair.offset) :
+                                      api_->aioWrite(&data_.ioctx,
+                                                     pair.oid.c_str(),
+                                                     completion,
+                                                     pair.payload,
+                                                     pair.len,
+                                                     pair.offset);
             if (ret != 0) {
                 api_->release(completion);
                 completion_held = false;
@@ -833,7 +720,7 @@ nixlRadosEngine::postXfer(const nixl_xfer_op_t &,
                            << "; submitting no further pairs";
                 break;
             }
-            pair.owned = completion;
+            pair.completion = completion;
             completion_held = false;
             accepted = true;
         }
@@ -898,7 +785,7 @@ nixlRadosEngine::checkXfer(nixlBackendReqH *handle) const {
             }
             return NIXL_IN_PROG;
         }
-        if (pair.owned != nullptr) {
+        if (pair.completion != nullptr) {
             pair.result = retirePair(*api_, state->operation(), pair, false);
         }
     }

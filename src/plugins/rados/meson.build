@@ -17,24 +17,22 @@
 if not cpp.links('''
         #include <cstddef>
         #include <cstdint>
-        #include <rados/librados.h>
+        #include <string>
         #include <rados/librados.hpp>
         int main() {
-            rados_t cluster = nullptr;
-            rados_ioctx_t ioctx = nullptr;
             char buf[8] = {};
-            int rc = rados_create2(&cluster, nullptr, "client.fixture", uint64_t{0});
-            rc += rados_conf_read_file(cluster, "fixture.conf");
-            rc += rados_conf_set(cluster, "log_file", "");
-            rc += rados_connect(cluster);
-            rc += rados_ioctx_create(cluster, "pool", &ioctx);
-            rados_ioctx_set_namespace(ioctx, "fixture-ns");
-            librados::IoCtx view;
-            librados::IoCtx::from_rados_ioctx_t(ioctx, view);
+            librados::Rados cluster;
+            int rc = cluster.init2("client.fixture", nullptr, uint64_t{0});
+            rc += cluster.conf_read_file("fixture.conf");
+            rc += cluster.conf_set("log_file", "");
+            rc += cluster.connect();
+            librados::IoCtx ioctx;
+            rc += cluster.ioctx_create("pool", ioctx);
+            ioctx.set_namespace(std::string("fixture-ns"));
             librados::AioCompletion *cpp_comp = librados::Rados::aio_create_completion();
             librados::bufferlist bl = librados::bufferlist::static_from_mem(buf, sizeof(buf));
-            rc += view.aio_write("oid", cpp_comp, bl, sizeof(buf), 0);
-            rc += view.aio_read("oid", cpp_comp, &bl, sizeof(buf), 0);
+            rc += ioctx.aio_write("oid", cpp_comp, bl, sizeof(buf), 0);
+            rc += ioctx.aio_read("oid", cpp_comp, &bl, sizeof(buf), 0);
             bl.is_provided_buffer(buf);
             for (const auto &chunk : bl.buffers()) {
                 rc += static_cast<int>(chunk.length());
@@ -44,25 +42,22 @@ if not cpp.links('''
             uint64_t stat_size = 0;
             int stat_prval = 0;
             read_op.stat(&stat_size, nullptr, &stat_prval);
-            rc += view.aio_operate("oid", cpp_comp, &read_op, &bl);
+            rc += ioctx.aio_operate("oid", cpp_comp, &read_op, &bl);
             cpp_comp->is_complete_and_cb();
             cpp_comp->get_return_value();
             cpp_comp->wait_for_complete_and_cb();
             bl.clear();
             cpp_comp->release();
-            view.close();
-            rados_ioctx_destroy(ioctx);
-            rados_shutdown(cluster);
             return rc;
         }
      ''', dependencies: [rados_dep],
-         name: 'librados C lifecycle and C++ IoCtx/bufferlist/AIO/async-query surface')
+         name: 'librados C++ lifecycle and C++ IoCtx/bufferlist/AIO/async-query surface')
     if is_explicit_enable or 'RADOS' in static_plugins
-        error('The RADOS plugin requires the librados C lifecycle surface plus the C++ ' +
-              'IoCtx/bufferlist/AIO and async object-query surface: rados_create2, rados_conf_read_file, ' +
-              'rados_conf_set, rados_connect, rados_ioctx_create, rados_ioctx_set_namespace, ' +
-              'rados_ioctx_destroy, rados_shutdown, ' +
-              'librados::IoCtx::from_rados_ioctx_t, librados::IoCtx::close, librados::IoCtx::aio_write, ' +
+        error('The RADOS plugin requires the librados C++ lifecycle surface plus the C++ ' +
+              'IoCtx/bufferlist/AIO and async object-query surface: librados::Rados::init2, ' +
+              'librados::Rados::conf_read_file, librados::Rados::conf_set, librados::Rados::connect, ' +
+              'librados::Rados::ioctx_create, librados::IoCtx::set_namespace, ' +
+              'librados::IoCtx::aio_write, ' +
               'librados::IoCtx::aio_read, librados::IoCtx::aio_operate, librados::ObjectReadOperation::stat, ' +
               'librados::Rados::aio_create_completion, librados::bufferlist::static_from_mem, ' +
               'librados::bufferlist::is_provided_buffer, ' +

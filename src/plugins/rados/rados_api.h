@@ -22,13 +22,12 @@
 #include <cstdint>
 #include <new>
 #include <optional>
+#include <string>
 
-#include <rados/librados.h>
 #include <rados/librados.hpp>
 
 namespace nixl::rados {
 
-/** librados seam: reconciles read output; writes use static non-owning bufferlists. */
 class radosApi {
 public:
     radosApi(const radosApi &) = delete;
@@ -37,46 +36,18 @@ public:
     virtual ~radosApi() = default;
 
     virtual int
-    create2(rados_t *cluster, const char *clustername, const char *name, uint64_t flags) = 0;
+    init2(librados::Rados &cluster, const char *name, const char *clustername, uint64_t flags) = 0;
     virtual int
-    conf_read_file(rados_t cluster, const char *path) = 0;
+    conf_read_file(librados::Rados &cluster, const char *path) = 0;
     virtual int
-    conf_set(rados_t cluster, const char *option, const char *value) = 0;
+    conf_set(librados::Rados &cluster, const char *option, const char *value) = 0;
     virtual int
-    connect(rados_t cluster) = 0;
-    /**
-     * Open a pool into a new raw I/O context handle owned by the caller;
-     * 0 or negative errno.
-     */
+    connect(librados::Rados &cluster) = 0;
     virtual int
-    ioctx_create(rados_t cluster, const char *pool_name, rados_ioctx_t *ioctx) = 0;
-    /**
-     * Point the raw handle at an object namespace for all later operations on
-     * it; configuration-only, and the engine calls it exactly once, after
-     * ioctx_create and before ioctxFromRaw binds the shared view.
-     */
+    ioctx_create(librados::Rados &cluster, const char *pool_name, librados::IoCtx &ioctx) = 0;
+    /** Select the namespace for later operations; the engine calls it once per client. */
     virtual void
-    ioctx_set_namespace(rados_ioctx_t ioctx, const char *nspace) = 0;
-    /**
-     * Bind ctx as a non-owning view of raw, closed via ioctxClose() before ioctx_destroy().
-     */
-    virtual void
-    ioctxFromRaw(rados_ioctx_t raw, librados::IoCtx *ctx) = 0;
-    /**
-     * Detach the view only; drain every submission made through it first.
-     */
-    virtual void
-    ioctxClose(librados::IoCtx *ctx) = 0;
-    /**
-     * Destroy the raw handle exactly once, after its views close.
-     */
-    virtual void
-    ioctx_destroy(rados_ioctx_t ioctx) = 0;
-    /**
-     * Shut down the cluster handle exactly once, after all I/O drains.
-     */
-    virtual void
-    shutdown(rados_t cluster) = 0;
+    set_namespace(librados::IoCtx &ioctx, const char *nspace) = 0;
 
     /** No-throw mirror of librados::Rados::aio_create_completion(); null on allocation failure. */
     virtual librados::AioCompletion *
@@ -89,12 +60,7 @@ public:
             librados::bufferlist *bl,
             size_t len,
             uint64_t off) = 0;
-    /**
-     * Submit an async range write over bl, a static, non-owning bufferlist: the
-     * source must stay allocated, readable, and immutable until its completion
-     * is released (see release); librados reads the payload at flush.
-     * @return 0 on acceptance; negative errno on rejection, caller releases completion
-     */
+    /** Submit an async range write over bl; keep the non-owning source intact until release. */
     virtual int
     aioWrite(librados::IoCtx *ctx,
              const char *oid,
@@ -102,16 +68,7 @@ public:
              const librados::bufferlist &bl,
              size_t len,
              uint64_t off) = 0;
-    /**
-     * Submit an async single-stat read op through ctx; the seam engages all three cells,
-     * then librados writes the object size into *psize and the per-op result into *prval
-     * at retirement. psize, prval, and pbl are caller-owned and must stay allocated and
-     * stable until the completion is released (see release); pbl receives the merged
-     * read output, empty for a stat-only op but still dereferenced at completion.
-     * On an absent object the completion return value is -ENOENT while the untouched
-     * per-op slot surfaces -EIO.
-     * @return 0 on acceptance; negative errno on rejection, caller releases completion
-     */
+    /** Submit an async stat filling psize, prval, and pbl at retirement; -ENOENT when absent. */
     virtual int
     aioStat(librados::IoCtx *ctx,
             const char *oid,
@@ -119,10 +76,7 @@ public:
             std::optional<uint64_t> *psize,
             std::optional<int> *prval,
             std::optional<librados::bufferlist> *pbl) = 0;
-    /**
-     * Non-blocking poll gating harvest and release; 1 once complete and
-     * callback-retired, else 0.
-     */
+    // Non-blocking poll gating harvest and release; 1 once complete and callback-retired, else 0.
     virtual int
     isCompleteAndCb(librados::AioCompletion *completion) = 0;
     /** Result of a retired operation, valid before release: read bytes, write 0, or -errno. */
@@ -130,9 +84,7 @@ public:
     getReturnValue(librados::AioCompletion *completion) = 0;
     virtual int
     waitForCompleteAndCb(librados::AioCompletion *completion) = 0;
-    /**
-     * Release exactly once, only after polled or waited retirement; never reuse.
-     */
+    /** Release exactly once, only after polled or waited retirement; never reuse. */
     virtual void
     release(librados::AioCompletion *completion) = 0;
 
@@ -143,53 +95,36 @@ protected:
 class realRadosApi final : public radosApi {
 public:
     int
-    create2(rados_t *cluster, const char *clustername, const char *name, uint64_t flags) override {
-        return rados_create2(cluster, clustername, name, flags);
+    init2(librados::Rados &cluster,
+          const char *name,
+          const char *clustername,
+          uint64_t flags) override {
+        return cluster.init2(name, clustername, flags);
     }
 
     int
-    conf_read_file(rados_t cluster, const char *path) override {
-        return rados_conf_read_file(cluster, path);
+    conf_read_file(librados::Rados &cluster, const char *path) override {
+        return cluster.conf_read_file(path);
     }
 
     int
-    conf_set(rados_t cluster, const char *option, const char *value) override {
-        return rados_conf_set(cluster, option, value);
+    conf_set(librados::Rados &cluster, const char *option, const char *value) override {
+        return cluster.conf_set(option, value);
     }
 
     int
-    connect(rados_t cluster) override {
-        return rados_connect(cluster);
+    connect(librados::Rados &cluster) override {
+        return cluster.connect();
     }
 
     int
-    ioctx_create(rados_t cluster, const char *pool_name, rados_ioctx_t *ioctx) override {
-        return rados_ioctx_create(cluster, pool_name, ioctx);
+    ioctx_create(librados::Rados &cluster, const char *pool_name, librados::IoCtx &ioctx) override {
+        return cluster.ioctx_create(pool_name, ioctx);
     }
 
     void
-    ioctx_set_namespace(rados_ioctx_t ioctx, const char *nspace) override {
-        rados_ioctx_set_namespace(ioctx, nspace);
-    }
-
-    void
-    ioctxFromRaw(rados_ioctx_t raw, librados::IoCtx *ctx) override {
-        librados::IoCtx::from_rados_ioctx_t(raw, *ctx);
-    }
-
-    void
-    ioctxClose(librados::IoCtx *ctx) override {
-        ctx->close();
-    }
-
-    void
-    ioctx_destroy(rados_ioctx_t ioctx) override {
-        rados_ioctx_destroy(ioctx);
-    }
-
-    void
-    shutdown(rados_t cluster) override {
-        rados_shutdown(cluster);
+    set_namespace(librados::IoCtx &ioctx, const char *nspace) override {
+        ioctx.set_namespace(nspace == nullptr ? std::string{} : std::string{nspace});
     }
 
     librados::AioCompletion *

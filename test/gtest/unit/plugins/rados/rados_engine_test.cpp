@@ -92,29 +92,17 @@ namespace {
     public:
         fakeRadosApi()
             : log(std::make_shared<std::vector<std::string>>()),
-              view_bind_order(std::make_shared<std::vector<librados::IoCtx *>>()),
-              view_close_order(std::make_shared<std::vector<librados::IoCtx *>>()) {}
+              created_ioctxs(std::make_shared<std::vector<librados::IoCtx *>>()) {}
 
         ~fakeRadosApi() override {
             EXPECT_TRUE(violations.empty()) << violations;
             for (const auto &comp : completions) {
                 EXPECT_EQ(comp->releases, 1) << "completion leaked or double-released";
             }
-            for (const auto &rec : clusters) {
-                EXPECT_FALSE(rec.live) << "cluster handle left open at fake teardown";
-            }
-            for (const auto &rec : ioctxs) {
-                EXPECT_FALSE(rec.live) << "raw ioctx left open at fake teardown";
-            }
-            for (auto *view : *view_bind_order) {
-                EXPECT_EQ(std::count(view_close_order->begin(), view_close_order->end(), view), 1)
-                    << "IoCtx view not closed exactly once";
-            }
         }
 
         std::shared_ptr<std::vector<std::string>> log;
-        std::shared_ptr<std::vector<librados::IoCtx *>> view_bind_order;
-        std::shared_ptr<std::vector<librados::IoCtx *>> view_close_order;
+        std::shared_ptr<std::vector<librados::IoCtx *>> created_ioctxs;
         std::vector<std::pair<std::string, std::string>> options;
         std::string violations;
 
@@ -122,7 +110,7 @@ namespace {
 
         // Per-method call ordinals (0-based) that fail with -EINVAL, used to make
         // the second (metadata) client's bootstrap fail while the data client succeeds.
-        int create2_fail_ordinal = -1;
+        int init2_fail_ordinal = -1;
         int conf_read_file_fail_ordinal = -1;
         int conf_set_fail_ordinal = -1;
         int connect_fail_ordinal = -1;
@@ -144,11 +132,12 @@ namespace {
         std::map<std::string, uint64_t> stat_sizes;
         std::map<std::string, int> stat_errors;
         std::vector<std::string> stat_oids;
-        std::vector<std::string> create2_names;
+        std::vector<std::string> init2_names;
         std::vector<std::string> conf_paths;
         std::vector<std::string> pools;
         std::string object_namespace;
         std::vector<std::string> namespaces;
+        std::vector<librados::IoCtx *> ns_ctxs;
         std::vector<librados::IoCtx *> stat_ctxs;
         std::vector<librados::IoCtx *> write_ctxs;
         std::vector<librados::IoCtx *> read_ctxs;
@@ -229,23 +218,22 @@ namespace {
         }
 
         int
-        create2(rados_t *cluster, const char *, const char *name, uint64_t) override {
-            log->push_back("create2");
-            create2_names.push_back(name);
-            if (create2_fail_ordinal >= 0 &&
-                static_cast<size_t>(create2_fail_ordinal) == clusters.size()) {
+        init2(librados::Rados &cluster, const char *name, const char *, uint64_t) override {
+            log->push_back("init2");
+            init2_names.push_back(name);
+            const size_t ordinal = init2_calls++;
+            if (init2_fail_ordinal >= 0 && static_cast<size_t>(init2_fail_ordinal) == ordinal) {
                 return -EINVAL;
             }
-            *cluster = makeClusterToken(clusters.size());
-            clusters.push_back({*cluster, true});
+            clusters.push_back(&cluster);
             return 0;
         }
 
         int
-        conf_read_file(rados_t cluster, const char *path) override {
+        conf_read_file(librados::Rados &cluster, const char *path) override {
             log->push_back("conf_read_file");
             conf_paths.push_back(path);
-            if (!requireLiveCluster(cluster)) {
+            if (!requireKnownCluster(cluster)) {
                 return -EINVAL;
             }
             const size_t ordinal = conf_read_file_calls++;
@@ -257,10 +245,10 @@ namespace {
         }
 
         int
-        conf_set(rados_t cluster, const char *option, const char *value) override {
+        conf_set(librados::Rados &cluster, const char *option, const char *value) override {
             log->push_back(std::string("conf_set:") + option);
             options.emplace_back(option, value);
-            if (!requireLiveCluster(cluster)) {
+            if (!requireKnownCluster(cluster)) {
                 return -EINVAL;
             }
             const size_t ordinal = conf_set_calls++;
@@ -272,9 +260,9 @@ namespace {
         }
 
         int
-        connect(rados_t cluster) override {
+        connect(librados::Rados &cluster) override {
             log->push_back("connect");
-            if (!requireLiveCluster(cluster)) {
+            if (!requireKnownCluster(cluster)) {
                 return -EINVAL;
             }
             if (connect_rc != 0) {
@@ -288,10 +276,10 @@ namespace {
         }
 
         int
-        ioctx_create(rados_t cluster, const char *pool, rados_ioctx_t *ioctx) override {
+        ioctx_create(librados::Rados &cluster, const char *pool, librados::IoCtx &ioctx) override {
             log->push_back("ioctx_create");
             pools.push_back(pool);
-            if (!requireLiveCluster(cluster)) {
+            if (!requireKnownCluster(cluster)) {
                 return -EINVAL;
             }
             const size_t ordinal = ioctx_create_calls++;
@@ -299,82 +287,22 @@ namespace {
                 static_cast<size_t>(ioctx_create_fail_ordinal) == ordinal) {
                 return -EINVAL;
             }
-            *ioctx = makeIoctxToken(ioctxs.size());
-            ioctxs.push_back({*ioctx, true});
+            created_ioctxs->push_back(&ioctx);
             return 0;
         }
 
         void
-        ioctx_set_namespace(rados_ioctx_t ioctx, const char *nspace) override {
-            log->push_back("ioctx_set_namespace");
-            if (!requireLiveIoctx(ioctx)) {
+        set_namespace(librados::IoCtx &ioctx, const char *nspace) override {
+            log->push_back("set_namespace");
+            if (!requireKnownIoctx(&ioctx)) {
                 return;
             }
             EXPECT_NE(nspace, nullptr);
             object_namespace = nspace;
             if (nspace != nullptr) {
                 namespaces.emplace_back(nspace);
+                ns_ctxs.push_back(&ioctx);
             }
-        }
-
-        void
-        ioctxFromRaw(rados_ioctx_t raw, librados::IoCtx *ctx) override {
-            log->push_back("ioctx_from_raw");
-            if (!requireLiveIoctx(raw)) {
-                return;
-            }
-            EXPECT_NE(ctx, nullptr);
-            view_bind_order->push_back(ctx);
-        }
-
-        void
-        ioctxClose(librados::IoCtx *ctx) override {
-            log->push_back("ioctx_close");
-            EXPECT_NE(ctx, nullptr);
-            if (std::find(view_bind_order->begin(), view_bind_order->end(), ctx) ==
-                view_bind_order->end()) {
-                violations += "IoCtx view closed without having been bound\n";
-            } else if (std::find(view_close_order->begin(), view_close_order->end(), ctx) !=
-                       view_close_order->end()) {
-                violations += "IoCtx view closed more than once\n";
-            } else {
-                view_close_order->push_back(ctx);
-            }
-            for (const auto &sub : submissions) {
-                if (sub.comp != nullptr && sub.comp->releases == 0) {
-                    violations += "IoCtx closed with an unreleased completion\n";
-                }
-            }
-        }
-
-        void
-        ioctx_destroy(rados_ioctx_t ioctx) override {
-            log->push_back("ioctx_destroy");
-            for (auto &rec : ioctxs) {
-                if (rec.token == ioctx) {
-                    if (!rec.live) {
-                        violations += "ioctx destroyed more than once\n";
-                    }
-                    rec.live = false;
-                    return;
-                }
-            }
-            violations += "ioctx destroyed without a created handle\n";
-        }
-
-        void
-        shutdown(rados_t cluster) override {
-            log->push_back("shutdown");
-            for (auto &rec : clusters) {
-                if (rec.token == cluster) {
-                    if (!rec.live) {
-                        violations += "cluster shut down more than once\n";
-                    }
-                    rec.live = false;
-                    return;
-                }
-            }
-            violations += "cluster shut down without a created handle\n";
         }
 
         librados::AioCompletion *
@@ -400,7 +328,9 @@ namespace {
                 std::optional<int> *prval,
                 std::optional<librados::bufferlist> *pbl) override {
             log->push_back("aio_stat");
-            EXPECT_NE(ctx, nullptr);
+            if (!requireKnownIoctx(ctx)) {
+                return -EINVAL;
+            }
             stat_ctxs.push_back(ctx);
             fakeCompletion *comp = asFakeCompletion(completion);
             if (comp == nullptr) {
@@ -450,7 +380,9 @@ namespace {
                 size_t len,
                 uint64_t off) override {
             log->push_back("aio_read");
-            EXPECT_NE(ctx, nullptr);
+            if (!requireKnownIoctx(ctx)) {
+                return -EINVAL;
+            }
             read_ctxs.push_back(ctx);
             fakeCompletion *comp = asFakeCompletion(completion);
             if (comp == nullptr || bl == nullptr) {
@@ -478,7 +410,9 @@ namespace {
                  size_t len,
                  uint64_t off) override {
             log->push_back("aio_write");
-            EXPECT_NE(ctx, nullptr);
+            if (!requireKnownIoctx(ctx)) {
+                return -EINVAL;
+            }
             write_ctxs.push_back(ctx);
             fakeCompletion *comp = asFakeCompletion(completion);
             if (comp == nullptr) {
@@ -635,61 +569,30 @@ namespace {
 
         std::vector<std::unique_ptr<fakeCompletion>> completions;
 
-        struct cluster_rec {
-            rados_t token;
-            bool live;
-        };
-
-        struct ioctx_rec {
-            rados_ioctx_t token;
-            bool live;
-        };
-
-        std::vector<cluster_rec> clusters;
-        std::vector<ioctx_rec> ioctxs;
+        std::vector<librados::Rados *> clusters;
+        size_t init2_calls = 0;
         size_t conf_read_file_calls = 0;
         size_t conf_set_calls = 0;
         size_t connect_calls = 0;
         size_t ioctx_create_calls = 0;
 
-        static rados_t
-        makeClusterToken(size_t ordinal) {
-            return reinterpret_cast<rados_t>(
-                static_cast<uintptr_t>(0xc10e0000u + 0x100u * (ordinal + 1)));
-        }
-
-        static rados_ioctx_t
-        makeIoctxToken(size_t ordinal) {
-            return reinterpret_cast<rados_ioctx_t>(
-                static_cast<uintptr_t>(0x10c70002u + 0x100u * (ordinal + 1)));
+        bool
+        requireKnownCluster(librados::Rados &cluster) {
+            if (std::find(clusters.begin(), clusters.end(), &cluster) == clusters.end()) {
+                violations += "cluster operation on an uninitialized handle\n";
+                return false;
+            }
+            return true;
         }
 
         bool
-        requireLiveCluster(rados_t cluster) {
-            for (auto &rec : clusters) {
-                if (rec.token == cluster) {
-                    if (!rec.live) {
-                        violations += "cluster operation on a shut-down handle\n";
-                    }
-                    return rec.live;
-                }
+        requireKnownIoctx(librados::IoCtx *ioctx) {
+            const auto &made = *created_ioctxs;
+            if (ioctx == nullptr || std::find(made.begin(), made.end(), ioctx) == made.end()) {
+                violations += "IoCtx operation on an uncreated context\n";
+                return false;
             }
-            violations += "cluster operation on an unknown handle\n";
-            return false;
-        }
-
-        bool
-        requireLiveIoctx(rados_ioctx_t ioctx) {
-            for (auto &rec : ioctxs) {
-                if (rec.token == ioctx) {
-                    if (!rec.live) {
-                        violations += "ioctx operation on a destroyed handle\n";
-                    }
-                    return rec.live;
-                }
-            }
-            violations += "ioctx operation on an unknown handle\n";
-            return false;
+            return true;
         }
     };
 
@@ -937,72 +840,61 @@ TEST_F(radosEngineFixture, RejectsInvalidParamsBeforeAnyAPICall) {
     EXPECT_TRUE(null_seam.getInitErr());
 }
 
-TEST_F(radosEngineFixture, BootstrapsTwoClientsAndRetiresMetadataFirst) {
+TEST_F(radosEngineFixture, BootstrapsTwoClientsWithDistinctIoCtxes) {
     auto params = validBase();
     params["ceph.zeta"] = "3";
     params["ceph.alpha"] = "";
     custom_params_ = params;
 
-    const std::vector<std::string> client_bootstrap{"create2",
-                                                    "conf_read_file",
-                                                    "conf_set:alpha",
-                                                    "conf_set:zeta",
-                                                    "connect",
-                                                    "ioctx_create",
-                                                    "ioctx_from_raw"};
-    const std::vector<std::string> client_teardown{"ioctx_close", "ioctx_destroy", "shutdown"};
+    const std::vector<std::string> client_bootstrap{
+        "init2", "conf_read_file", "conf_set:alpha", "conf_set:zeta", "connect", "ioctx_create"};
+    std::vector<std::string> running = client_bootstrap;
+    running.insert(running.end(), client_bootstrap.begin(), client_bootstrap.end());
 
     fakeRadosApi *fake = nullptr;
-    std::shared_ptr<std::vector<librados::IoCtx *>> binds;
-    std::shared_ptr<std::vector<librados::IoCtx *>> closes;
+    std::shared_ptr<std::vector<librados::IoCtx *>> made;
     {
         auto engine = makeEngine(&fake);
         ASSERT_FALSE(engine->getInitErr());
-        std::vector<std::string> running = client_bootstrap;
-        running.insert(running.end(), client_bootstrap.begin(), client_bootstrap.end());
         EXPECT_EQ(*log, running);
-        EXPECT_EQ(fake->create2_names, (std::vector<std::string>{"client.qa", "client.qa"}));
+        EXPECT_EQ(fake->init2_names, (std::vector<std::string>{"client.qa", "client.qa"}));
         EXPECT_EQ(fake->conf_paths, (std::vector<std::string>{"fixture.conf", "fixture.conf"}));
         EXPECT_EQ(fake->pools, (std::vector<std::string>{"qa-pool", "qa-pool"}));
         EXPECT_EQ(fake->options,
                   (std::vector<std::pair<std::string, std::string>>{
                       {"alpha", ""}, {"zeta", "3"}, {"alpha", ""}, {"zeta", "3"}}));
-        ASSERT_EQ(fake->view_bind_order->size(), 2U);
-        EXPECT_NE((*fake->view_bind_order)[0], (*fake->view_bind_order)[1])
-            << "data and metadata views must be distinct IoCtx objects";
-        binds = fake->view_bind_order;
-        closes = fake->view_close_order;
+        ASSERT_EQ(fake->created_ioctxs->size(), 2U);
+        EXPECT_NE((*fake->created_ioctxs)[0], (*fake->created_ioctxs)[1])
+            << "data and metadata clients must own distinct IoCtx objects";
+        made = fake->created_ioctxs;
     }
-    std::vector<std::string> final_log = client_bootstrap;
-    final_log.insert(final_log.end(), client_bootstrap.begin(), client_bootstrap.end());
-    final_log.insert(final_log.end(), client_teardown.begin(), client_teardown.end());
-    final_log.insert(final_log.end(), client_teardown.begin(), client_teardown.end());
-    EXPECT_EQ(*log, final_log);
-    ASSERT_EQ(closes->size(), 2U);
-    EXPECT_EQ((*closes)[0], (*binds)[1]) << "the metadata view must close first";
-    EXPECT_EQ((*closes)[1], (*binds)[0]) << "the data view must close last";
+    // RAII teardown adds no seam calls; metadata died first, each IoCtx before its Rados.
+    EXPECT_EQ(*log, running);
+    ASSERT_EQ(made->size(), 2U);
 }
 
-TEST_F(radosEngineFixture, NamespaceConfiguredOncePerClientBetweenIoctxCreateAndView) {
+TEST_F(radosEngineFixture, NamespaceConfiguredOncePerClient) {
     custom_params_ = validBase();
     custom_params_["namespace"] = "qa-ns";
     fakeRadosApi *fake = nullptr;
     {
         auto engine = makeEngine(&fake);
         ASSERT_FALSE(engine->getInitErr());
-        const std::vector<std::string> client_bootstrap{"create2",
-                                                        "conf_read_file",
-                                                        "connect",
-                                                        "ioctx_create",
-                                                        "ioctx_set_namespace",
-                                                        "ioctx_from_raw"};
+        const std::vector<std::string> client_bootstrap{
+            "init2", "conf_read_file", "connect", "ioctx_create", "set_namespace"};
         std::vector<std::string> running = client_bootstrap;
         running.insert(running.end(), client_bootstrap.begin(), client_bootstrap.end());
         EXPECT_EQ(*log, running);
         EXPECT_EQ(fake->object_namespace, "qa-ns");
         EXPECT_EQ(fake->namespaces, (std::vector<std::string>{"qa-ns", "qa-ns"}));
-        EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_set_namespace")), 2)
-            << "each client's raw ioctx must be configured exactly once";
+        ASSERT_EQ(fake->created_ioctxs->size(), 2U);
+        ASSERT_EQ(fake->ns_ctxs.size(), 2U);
+        EXPECT_EQ(std::count(log->begin(), log->end(), std::string("set_namespace")), 2)
+            << "each client's IoCtx must be configured exactly once";
+        EXPECT_EQ(fake->ns_ctxs[0], (*fake->created_ioctxs)[0])
+            << "the data context must be the first configured";
+        EXPECT_EQ(fake->ns_ctxs[1], (*fake->created_ioctxs)[1])
+            << "the metadata context must be the second configured";
     }
 }
 
@@ -1020,10 +912,10 @@ TEST_F(radosEngineFixture, BootstrapFailureUnwindsAndGatesRegistration) {
         EXPECT_EQ(md, nullptr);
         EXPECT_EQ(engine.registerMem(nixlBlobDesc(0, 1024, 1, "obj"), OBJ_SEG, md),
                   NIXL_ERR_BACKEND);
-        EXPECT_EQ(*log,
-                  (std::vector<std::string>{"create2", "conf_read_file", "connect", "shutdown"}));
+        EXPECT_EQ(*log, (std::vector<std::string>{"init2", "conf_read_file", "connect"}));
     }
-    EXPECT_EQ(*log, (std::vector<std::string>{"create2", "conf_read_file", "connect", "shutdown"}));
+    // The partial client unwinds by RAII; teardown adds no seam calls.
+    EXPECT_EQ(*log, (std::vector<std::string>{"init2", "conf_read_file", "connect"}));
 }
 
 TEST_F(radosEngineFixture, AdvertisesLocalOnlyDramAndObjSegments) {
@@ -1533,7 +1425,6 @@ TEST_F(radosEngineFixture, OutOfOrderRetirementKeepsRequestInProgressUntilEarlie
     EXPECT_EQ(fake->rc_reads, 2);
     EXPECT_EQ(fake->waits, 0);
     EXPECT_EQ(engine->releaseReqH(handle), NIXL_SUCCESS);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_destroy")), 0);
     EXPECT_EQ(engine->deregisterMem(md_a), NIXL_SUCCESS);
     EXPECT_EQ(engine->deregisterMem(md_b), NIXL_SUCCESS);
 }
@@ -1662,7 +1553,6 @@ TEST_F(radosEngineFixture, EarlyReleaseBlocksOnWithheldWaitThenDrainsBothDirecti
     EXPECT_EQ(fake->submissions[0].comp->releases, 1)
         << "the read drain must not touch the write completion";
 
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_destroy")), 0);
     EXPECT_EQ(engine->deregisterMem(md_w), NIXL_SUCCESS);
     EXPECT_EQ(engine->deregisterMem(md_r), NIXL_SUCCESS);
 }
@@ -1704,22 +1594,17 @@ TEST_F(radosEngineFixture, TeardownDrainsBothDirectionsBeforeResourceDeath) {
         ASSERT_EQ(engine->checkXfer(write_handle), NIXL_ERR_BACKEND);
     }
     const auto &final_log = *log;
+    ASSERT_GE(final_log.size(), 3U);
     const auto last_release =
         std::find_if(final_log.rbegin(), final_log.rend(), [](const std::string &entry) {
             return entry == "release";
         });
-    const auto ioctx_close =
-        std::find(final_log.begin(), final_log.end(), std::string("ioctx_close"));
-    const auto ioctx_destroy =
-        std::find(final_log.begin(), final_log.end(), std::string("ioctx_destroy"));
-    const auto shutdown = std::find(final_log.begin(), final_log.end(), std::string("shutdown"));
     ASSERT_NE(last_release, final_log.rend());
-    ASSERT_NE(ioctx_close, final_log.end());
-    ASSERT_NE(ioctx_destroy, final_log.end());
-    ASSERT_NE(shutdown, final_log.end());
-    EXPECT_TRUE(last_release.base() <= ioctx_close);
-    EXPECT_LT(ioctx_close, ioctx_destroy);
-    EXPECT_LT(ioctx_destroy, shutdown);
+    // The destructor's drain of the abandoned read is the engine's final seam activity.
+    EXPECT_EQ(last_release.base(), final_log.end());
+    EXPECT_EQ(final_log.back(), "release");
+    EXPECT_EQ(final_log[final_log.size() - 2], "get_return_value");
+    EXPECT_EQ(final_log[final_log.size() - 3], "wait_for_complete_and_cb");
     EXPECT_EQ(
         std::count(final_log.begin(), final_log.end(), std::string("wait_for_complete_and_cb")), 1);
     EXPECT_EQ(std::count(final_log.begin(), final_log.end(), std::string("release")), 2);
@@ -2038,12 +1923,12 @@ TEST_F(radosEngineFixture, QueryResolvesBeforeReturnWithoutStatusWaitTimer) {
     EXPECT_EQ(fake->waits, 36);
 }
 
-// Direct reads and writes submit on the bound IoCtx view.
-TEST_F(radosEngineFixture, ReadsAndWritesSubmitOnBoundIoCtxView) {
+// Direct reads and writes submit on the data client's IoCtx.
+TEST_F(radosEngineFixture, ReadsAndWritesSubmitOnDataIoCtx) {
     fakeRadosApi *fake = nullptr;
     auto engine = makeReady(&fake);
-    ASSERT_EQ(fake->view_bind_order->size(), 2U);
-    const librados::IoCtx *view = (*fake->view_bind_order)[0];
+    ASSERT_EQ(fake->created_ioctxs->size(), 2U);
+    const librados::IoCtx *data_ctx = (*fake->created_ioctxs)[0];
 
     nixlBackendMD *md_w = registerObject(*engine, 1, "iso-w");
     nixlBackendMD *md_r = registerObject(*engine, 2, "iso-r");
@@ -2054,7 +1939,7 @@ TEST_F(radosEngineFixture, ReadsAndWritesSubmitOnBoundIoCtxView) {
     ASSERT_EQ(engine->postXfer(NIXL_WRITE, write.local, write.remote, "test-agent", write_handle),
               NIXL_IN_PROG);
     ASSERT_EQ(fake->write_ctxs.size(), 1U);
-    EXPECT_EQ(fake->write_ctxs[0], view) << "writes must submit on the bound view";
+    EXPECT_EQ(fake->write_ctxs[0], data_ctx) << "writes must submit on the data context";
     EXPECT_TRUE(fake->read_ctxs.empty());
     fake->completeSubmission(0);
     EXPECT_EQ(engine->checkXfer(write_handle), NIXL_SUCCESS);
@@ -2067,8 +1952,8 @@ TEST_F(radosEngineFixture, ReadsAndWritesSubmitOnBoundIoCtxView) {
     ASSERT_EQ(engine->postXfer(NIXL_READ, read.local, read.remote, "test-agent", read_handle),
               NIXL_IN_PROG);
     ASSERT_EQ(fake->read_ctxs.size(), 1U);
-    EXPECT_EQ(fake->read_ctxs[0], view) << "reads must submit on the bound view";
-    EXPECT_EQ(fake->write_ctxs[0], view) << "the write view must stay the bound view";
+    EXPECT_EQ(fake->read_ctxs[0], data_ctx) << "reads must submit on the data context";
+    EXPECT_EQ(fake->write_ctxs[0], data_ctx) << "the write context must stay the data context";
     fake->completeSubmission(1, 64);
     EXPECT_EQ(engine->checkXfer(read_handle), NIXL_SUCCESS);
     EXPECT_EQ(engine->releaseReqH(read_handle), NIXL_SUCCESS);
@@ -2251,37 +2136,35 @@ TEST_F(radosEngineFixture, WaitNeverSleepsOutsideActivePairScans) {
     EXPECT_TRUE(tstate->destroyed);
     EXPECT_EQ(std::count(log->begin(), log->end(), std::string("wait_for_complete_and_cb")), 2);
     EXPECT_EQ(std::count(log->begin(), log->end(), std::string("release")), 2);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_close")), 2);
+    EXPECT_EQ(log->back(), "release") << "the teardown drain is the engine's final seam activity";
 }
 
-TEST_F(radosEngineFixture, MetadataBootstrapFailureUnwindsWithoutLeak) {
+TEST_F(radosEngineFixture, MetadataBootstrapStageFailuresGateUsage) {
     struct entry {
         const char *name;
         int fakeRadosApi::*fail_field;
         std::vector<std::string> metadata_attempt;
     };
 
-    // A metadata-client stage failure must leave the data client fully
-    // bootstrapped, the engine init-errored, and every acquired metadata
-    // resource unwound by the bootstrap RAII before the data teardown.
+    // A metadata-stage failure leaves data bootstrapped, the engine init-errored, and usage gated.
     const entry stages[] = {
-        {"meta create2", &fakeRadosApi::create2_fail_ordinal, {"create2"}},
+        {"meta init2", &fakeRadosApi::init2_fail_ordinal, {"init2"}},
         {"meta conf_read_file",
          &fakeRadosApi::conf_read_file_fail_ordinal,
-         {"create2", "conf_read_file", "shutdown"}},
+         {"init2", "conf_read_file"}},
         {"meta connect",
          &fakeRadosApi::connect_fail_ordinal,
-         {"create2", "conf_read_file", "connect", "shutdown"}},
+         {"init2", "conf_read_file", "connect"}},
         {"meta ioctx_create",
          &fakeRadosApi::ioctx_create_fail_ordinal,
-         {"create2", "conf_read_file", "connect", "ioctx_create", "shutdown"}},
+         {"init2", "conf_read_file", "connect", "ioctx_create"}},
     };
 
     for (const auto &stage : stages) {
         custom_params_ = validBase();
         auto failing = std::make_unique<fakeRadosApi>();
         log = failing->log;
-        auto binds = failing->view_bind_order;
+        auto made = failing->created_ioctxs;
         (failing.get()->*stage.fail_field) = 1;
         {
             nixlRadosEngine engine(&init_params_, std::move(failing));
@@ -2299,13 +2182,11 @@ TEST_F(radosEngineFixture, MetadataBootstrapFailureUnwindsWithoutLeak) {
             EXPECT_FALSE(resp[0].has_value()) << stage.name;
             EXPECT_EQ(std::count(log->begin(), log->end(), std::string("aio_stat")), 0)
                 << stage.name;
-            EXPECT_EQ(binds->size(), 1U) << stage.name;
+            EXPECT_EQ(made->size(), 1U) << stage.name;
         }
-        std::vector<std::string> expected{
-            "create2", "conf_read_file", "connect", "ioctx_create", "ioctx_from_raw"};
+        std::vector<std::string> expected{"init2", "conf_read_file", "connect", "ioctx_create"};
         expected.insert(
             expected.end(), stage.metadata_attempt.begin(), stage.metadata_attempt.end());
-        expected.insert(expected.end(), {"ioctx_close", "ioctx_destroy", "shutdown"});
         EXPECT_EQ(*log, expected) << stage.name;
     }
 }
@@ -2313,17 +2194,15 @@ TEST_F(radosEngineFixture, MetadataBootstrapFailureUnwindsWithoutLeak) {
 TEST_F(radosEngineFixture, QueryMemUsesMetadataClientAndTransfersUseDataClient) {
     custom_params_ = validBase();
     fakeRadosApi *fake = nullptr;
-    std::shared_ptr<std::vector<librados::IoCtx *>> binds;
-    std::shared_ptr<std::vector<librados::IoCtx *>> closes;
+    std::shared_ptr<std::vector<librados::IoCtx *>> made;
     {
         auto engine = makeEngine(&fake);
         ASSERT_FALSE(engine->getInitErr());
-        ASSERT_EQ(fake->view_bind_order->size(), 2U);
-        binds = fake->view_bind_order;
-        closes = fake->view_close_order;
-        const librados::IoCtx *data_view = (*binds)[0];
-        const librados::IoCtx *meta_view = (*binds)[1];
-        ASSERT_NE(data_view, meta_view);
+        ASSERT_EQ(fake->created_ioctxs->size(), 2U);
+        made = fake->created_ioctxs;
+        const librados::IoCtx *data_ctx = (*made)[0];
+        const librados::IoCtx *meta_ctx = (*made)[1];
+        ASSERT_NE(data_ctx, meta_ctx);
         EXPECT_TRUE(fake->write_ctxs.empty());
         EXPECT_TRUE(fake->stat_ctxs.empty());
         EXPECT_TRUE(fake->read_ctxs.empty());
@@ -2339,7 +2218,7 @@ TEST_F(radosEngineFixture, QueryMemUsesMetadataClientAndTransfersUseDataClient) 
         ASSERT_EQ(engine->prepXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_SUCCESS);
         ASSERT_EQ(engine->postXfer(NIXL_WRITE, local, remote, "test-agent", handle), NIXL_IN_PROG);
         ASSERT_EQ(fake->write_ctxs.size(), 1U);
-        EXPECT_EQ(fake->write_ctxs[0], data_view) << "writes must submit on the data view";
+        EXPECT_EQ(fake->write_ctxs[0], data_ctx) << "writes must submit on the data context";
         EXPECT_TRUE(fake->stat_ctxs.empty()) << "transfers must not touch the metadata client";
         fake->completeSubmission(0, 0);
         EXPECT_EQ(engine->checkXfer(handle), NIXL_SUCCESS);
@@ -2353,16 +2232,14 @@ TEST_F(radosEngineFixture, QueryMemUsesMetadataClientAndTransfersUseDataClient) 
         ASSERT_TRUE(resp[0].has_value());
         EXPECT_EQ(resp[0]->at("size"), "64");
         ASSERT_EQ(fake->stat_ctxs.size(), 1U);
-        EXPECT_EQ(fake->stat_ctxs[0], meta_view) << "queryMem must submit on the metadata view";
-        EXPECT_EQ(fake->write_ctxs[0], data_view) << "the write view must stay the data view";
+        EXPECT_EQ(fake->stat_ctxs[0], meta_ctx) << "queryMem must submit on the metadata context";
+        EXPECT_EQ(fake->write_ctxs[0], data_ctx) << "the write context must stay the data context";
         EXPECT_EQ(engine->deregisterMem(md), NIXL_SUCCESS);
     }
-    ASSERT_EQ(closes->size(), 2U);
-    EXPECT_EQ((*closes)[0], (*binds)[1]) << "the metadata view must retire first";
-    EXPECT_EQ((*closes)[1], (*binds)[0]) << "the data view must retire last";
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("create2")), 2);
+    ASSERT_EQ(made->size(), 2U);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("init2")), 2);
+    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("ioctx_create")), 2);
     EXPECT_EQ(std::count(log->begin(), log->end(), std::string("connect")), 2);
-    EXPECT_EQ(std::count(log->begin(), log->end(), std::string("shutdown")), 2);
 }
 
 } // namespace gtest::rados

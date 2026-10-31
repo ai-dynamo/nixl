@@ -32,8 +32,6 @@
 
 namespace nixl::rados {
 
-// Timeout-only status-wait seam: no wake channel or early wakeup, and the
-// radosApi surface never learns a timer exists.
 class statusWaitTimer {
 public:
     statusWaitTimer(const statusWaitTimer &) = delete;
@@ -163,19 +161,16 @@ private:
     std::unique_ptr<nixl::rados::radosApi> api_;
     uint64_t statusWaitBudgetUs_ = 0;
     std::unique_ptr<nixl::rados::statusWaitTimer> statusWaitTimer_;
-    rados_t cluster_ = nullptr;
-    rados_ioctx_t ioctx_ = nullptr;
-    mutable librados::IoCtx dataView_;
-    bool clusterCreated_ = false;
-    bool ioctxOpen_ = false;
-    bool dataViewOpen_ = false;
 
-    // Independent stat-only client for queryMem, bootstrapped from the same
-    // parsed config; committed and retired as one unit, never by transfer paths.
-    rados_t metaCluster_ = nullptr;
-    rados_ioctx_t metaIoctx_ = nullptr;
-    mutable librados::IoCtx metaView_;
-    bool metaClientOpen_ = false;
+    struct radosClient {
+        librados::Rados rados;
+        librados::IoCtx ioctx;
+    };
+
+    // Fixed in place: Rados precedes IoCtx so each context closes before its cluster shuts down.
+    mutable radosClient data_;
+    // Stat-only query client; declared after data so it dies first, after transfers drain.
+    mutable radosClient meta_;
 
     mutable std::mutex objectsMutex_;
     std::unordered_map<uint64_t, std::string> objects_;
