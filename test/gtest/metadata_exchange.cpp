@@ -447,6 +447,39 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
     ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 }
 
+TEST_F(MetadataExchangeTestFixture, SocketClosesOnPeerEOF) {
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(agents_[0].port);
+
+    for (int generation = 0; generation < 3; ++generation) {
+        SCOPED_TRACE(generation);
+        nixl::scopedFd fd(socket(AF_INET, SOCK_STREAM, 0));
+        ASSERT_TRUE(fd.valid());
+        ASSERT_EQ(connect(fd.get(), reinterpret_cast<sockaddr *>(&address), sizeof(address)), 0);
+
+        // An idle peer stays connected until it sends EOF.
+        char byte;
+        ASSERT_EQ(recv(fd.get(), &byte, sizeof(byte), MSG_DONTWAIT), -1);
+        ASSERT_TRUE(errno == EAGAIN || errno == EWOULDBLOCK);
+        ASSERT_EQ(shutdown(fd.get(), SHUT_WR), 0);
+
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        ssize_t received;
+        do {
+            received = recv(fd.get(), &byte, sizeof(byte), MSG_DONTWAIT);
+            if (received >= 0) {
+                break;
+            }
+            ASSERT_TRUE(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } while (std::chrono::steady_clock::now() < deadline);
+
+        ASSERT_EQ(received, 0) << "The listener did not close the disconnected peer's socket";
+    }
+}
+
 TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
     nixl::scopedFd fd(socket(AF_INET6, SOCK_STREAM, 0));
     if (!fd.valid() &&
