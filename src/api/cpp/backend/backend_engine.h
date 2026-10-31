@@ -254,5 +254,12 @@ class nixlBackendEngine {
         supportsTraceContext() const noexcept {
             return false;
         }
+
+        // Determine whether a backend supports notification callbacks;
+        // meaningful only when supportsNotif() == true.
+        [[nodiscard]] virtual bool
+        supportsNotifCallback() const noexcept {
+            return false;
+        }
 };
 #endif

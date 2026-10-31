@@ -98,7 +98,9 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
-      traceSink_(init_params.traceSink) {
+      traceSink_(init_params.traceSink),
+      notifCallbacks_(setDefaultCallback(init_params.notifCallbacks)) {
+
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -704,6 +706,16 @@ nixlUcxEngine::progressLoop() {
  * Notifications
 *****************************************/
 
+nixlNotifCallbacks
+nixlUcxEngine::setDefaultCallback(nixlNotifCallbacks callbacks) {
+    if (!callbacks.hasDefaultCallback()) {
+        callbacks.setDefaultCallback([engine = this](nixlNotifCallbackArgs &&args) {
+            engine->appendNotif(std::move(args.remoteAgent), std::move(args.notifMessage));
+        });
+    }
+    return callbacks;
+}
+
 namespace {
 
 static_assert(std::endian::native == std::endian::little);
@@ -830,7 +842,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
                                         notif.traceExecution);
     }
 
-    engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
+    engine->notifCallbacks_.call({std::move(notif.agent), std::move(notif.msg)});
     return UCS_OK;
 }
 
