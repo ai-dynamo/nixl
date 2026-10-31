@@ -17,8 +17,12 @@
 
 #include "nvtx_events.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <optional>
+#include <string>
 
 namespace nixl::trace::nvtx_internal {
 namespace {
@@ -68,23 +72,53 @@ namespace {
         return ev;
     }
 
-    [[nodiscard]] nvtxEventAttributes_t
-    makeEvent(const nvtxStringHandle_t registered_name, const Kind kind) {
-        nvtxEventAttributes_t ev = makeEventBase(kind);
+    void
+    setRegistered(nvtxEventAttributes_t &ev, const nvtxStringHandle_t registered_name) noexcept {
         ev.messageType = NVTX_MESSAGE_TYPE_REGISTERED;
         ev.message.registered = registered_name;
-        return ev;
     }
 
-    [[nodiscard]] nvtxStringHandle_t
-    lookupRegistered(std::string_view name,
-                     const std::vector<nvtxStringHandle_t> &handles) noexcept {
+    void
+    setAscii(nvtxEventAttributes_t &ev, const char *text) noexcept {
+        ev.messageType = NVTX_MESSAGE_TYPE_ASCII;
+        ev.message.ascii = text;
+    }
+
+    [[nodiscard]] constexpr std::uint64_t
+    nameHash(const std::string_view name) noexcept {
+        std::uint64_t hash = 0xcbf29ce484222325ULL;
+        for (const char c : name) {
+            hash = (hash ^ static_cast<unsigned char>(c)) * 0x100000001b3ULL;
+        }
+        return hash;
+    }
+
+    constexpr std::size_t kNameSlots = 64;
+    static_assert(std::size(kRegisteredSpanNames) * 2 <= kNameSlots);
+
+    constexpr auto kNameTable = [] {
+        std::array<std::int8_t, kNameSlots> table{};
+        table.fill(-1);
         for (std::size_t i = 0; i < std::size(kRegisteredSpanNames); ++i) {
-            if (name == kRegisteredSpanNames[i]) {
-                return handles[i];
+            std::size_t slot = nameHash(kRegisteredSpanNames[i]) % kNameSlots;
+            while (table[slot] >= 0) {
+                slot = (slot + 1) % kNameSlots;
+            }
+            table[slot] = static_cast<std::int8_t>(i);
+        }
+        return table;
+    }();
+
+    [[nodiscard]] std::optional<std::size_t>
+    registeredIndex(const std::string_view name) noexcept {
+        for (std::size_t slot = nameHash(name) % kNameSlots; kNameTable[slot] >= 0;
+             slot = (slot + 1) % kNameSlots) {
+            const auto index = static_cast<std::size_t>(kNameTable[slot]);
+            if (name == kRegisteredSpanNames[index]) {
+                return index;
             }
         }
-        return nullptr;
+        return std::nullopt;
     }
 
 } // namespace
@@ -99,20 +133,28 @@ registerSpanNames(const nvtxDomainHandle_t domain) {
     return handles;
 }
 
-nvtxEventAttributes_t
-eventForName(const std::string_view name,
+void
+eventForName(NvtxEvent &event,
+             const std::string_view name,
              const Kind kind,
              const nvtxDomainHandle_t domain,
              const std::vector<nvtxStringHandle_t> &registered_handles) {
-    nvtxStringHandle_t handle = lookupRegistered(name, registered_handles);
-    if (handle == nullptr) {
-        // Not one of the fixed nixl::* names: register it now so the event still
-        // carries the real label. Registered strings need no caller-owned storage
-        // (unlike an ASCII message), keeping the call sites simple.
-        const std::string owned(name);
-        handle = nvtxDomainRegisterStringA(domain, owned.c_str());
+    event.attributes = makeEventBase(kind);
+    if (const auto index = registeredIndex(name)) {
+        if (registered_handles[*index] != nullptr) {
+            setRegistered(event.attributes, registered_handles[*index]);
+        } else {
+            setAscii(event.attributes, kRegisteredSpanNames[*index]);
+        }
+        return;
     }
-    return makeEvent(handle, kind);
+    if (name.size() < event.message.size()) {
+        *std::copy(name.begin(), name.end(), event.message.begin()) = '\0';
+        setAscii(event.attributes, event.message.data());
+        return;
+    }
+    const std::string owned(name);
+    setRegistered(event.attributes, nvtxDomainRegisterStringA(domain, owned.c_str()));
 }
 
 } // namespace nixl::trace::nvtx_internal

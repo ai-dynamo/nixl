@@ -31,11 +31,13 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "../allocation_counter.h"
 #include "common.h"
 #include "nixl.h"
 #include "transfer_request.h"
@@ -1507,4 +1509,20 @@ TEST(TracePhaseSink, SpanWithoutContextOrIdRecordsNeither) {
             EXPECT_EQ(span.attrs, (attr_list_t{{"nixl.backend", std::string("UCX")}}));
         }
     }
+}
+
+TEST(Tracing, AllocationCounterCountsOnlyItsOwnThread) {
+    const gtest::AllocationCounter allocations;
+    const auto value = std::make_unique<std::uint64_t>(1);
+    EXPECT_EQ(allocations.count(), 1u);
+
+    std::atomic<bool> allocated = false;
+    std::thread worker([&allocated] {
+        const auto other = std::make_unique<std::uint64_t>(2);
+        allocated = (other != nullptr);
+    });
+    const std::size_t with_thread = allocations.count();
+    worker.join();
+    EXPECT_TRUE(allocated);
+    EXPECT_EQ(allocations.count(), with_thread);
 }
