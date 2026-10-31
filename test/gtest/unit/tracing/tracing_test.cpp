@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -29,11 +30,13 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "../allocation_counter.h"
 #include "common.h"
 #include "nixl.h"
 #include "transfer_request.h"
@@ -1093,4 +1096,20 @@ TEST(TracePhaseSink, ThrowingBackendIsReportedOnce) {
     EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 2, {}, nullptr, 0, 0));
 
     EXPECT_EQ(drops.count(), 1u);
+}
+
+TEST(Tracing, AllocationCounterCountsOnlyItsOwnThread) {
+    const gtest::AllocationCounter allocations;
+    const auto value = std::make_unique<std::uint64_t>(1);
+    EXPECT_EQ(allocations.count(), 1u);
+
+    std::atomic<bool> allocated = false;
+    std::thread worker([&allocated] {
+        const auto other = std::make_unique<std::uint64_t>(2);
+        allocated = (other != nullptr);
+    });
+    const std::size_t with_thread = allocations.count();
+    worker.join();
+    EXPECT_TRUE(allocated);
+    EXPECT_EQ(allocations.count(), with_thread);
 }
