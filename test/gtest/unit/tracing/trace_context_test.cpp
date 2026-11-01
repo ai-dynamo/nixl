@@ -600,18 +600,14 @@ TEST(TraceContext, InvalidOtelVariableIsIgnoredNotFatal) {
     EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 1.0);
 }
 
-TEST(TraceContext, RandomGeneratorSeedsOncePerMiB) {
+TEST(TraceContext, RandomGeneratorSeedsOnce) {
     auto generator = countingGenerator();
     std::array<std::uint8_t, 32> bytes{};
 
-    for (std::size_t drawn = 0; drawn < nixl::trace::RandomGenerator::reseedBytes;
-         drawn += bytes.size()) {
+    for (int draw = 0; draw < 100000; ++draw) {
         generator.fill(bytes);
     }
     EXPECT_EQ(refill_count, 1u);
-
-    generator.fill(bytes);
-    EXPECT_EQ(refill_count, 2u);
 }
 
 TEST(TraceContext, RandomGeneratorDrawsTheSameBytesFromTheSameSeed) {

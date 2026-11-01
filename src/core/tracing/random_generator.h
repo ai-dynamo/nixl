@@ -31,38 +31,35 @@ namespace nixl::trace {
 
 class RandomGenerator {
 public:
-    static constexpr std::size_t reseedBytes = std::size_t{1} << 20;
-
     explicit constexpr RandomGenerator(random_bytes_fn_t seed) noexcept : seed_(seed) {}
 
     void
     fill(std::span<std::uint8_t> output) {
+        if (!seeded_) {
+            seed();
+        }
         while (!output.empty()) {
-            if (remaining_ == 0) {
-                reseed();
-            }
             const std::uint64_t word = next();
             const std::size_t chunk = std::min(output.size(), sizeof(word));
             std::memcpy(output.data(), &word, chunk);
             output = output.subspan(chunk);
-            remaining_ -= std::min(remaining_, sizeof(word));
         }
     }
 
     void
     clear() noexcept {
-        remaining_ = 0;
+        seeded_ = false;
     }
 
 private:
     void
-    reseed() {
+    seed() {
         std::array<std::uint64_t, 4> state;
         do {
             seed_({reinterpret_cast<std::uint8_t *>(state.data()), sizeof(state)});
         } while (std::ranges::all_of(state, [](std::uint64_t word) { return word == 0; }));
         state_ = state;
-        remaining_ = reseedBytes;
+        seeded_ = true;
     }
 
     [[nodiscard]] std::uint64_t
@@ -80,7 +77,7 @@ private:
 
     const random_bytes_fn_t seed_;
     std::array<std::uint64_t, 4> state_{};
-    std::size_t remaining_ = 0;
+    bool seeded_ = false;
 };
 
 } // namespace nixl::trace
