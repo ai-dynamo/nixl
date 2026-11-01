@@ -17,59 +17,174 @@
 
 #include "nvtx_span.h"
 
+#include <algorithm>
+#include <new>
 #include <vector>
 
 #include <nvtx3/nvToolsExt.h>
 #include <nvtx3/nvToolsExtPayload.h>
 
 namespace nixl::trace::nvtx_internal {
+namespace {
+
+    constexpr std::size_t maxPooledSpans = 32;
+
+    class SpanPool {
+    public:
+        constexpr SpanPool() noexcept = default;
+        ~SpanPool();
+
+        SpanPool(const SpanPool &) = delete;
+        SpanPool &
+        operator=(const SpanPool &) = delete;
+
+        [[nodiscard]] void *
+        take() noexcept;
+
+        [[nodiscard]] bool
+        give(void *memory) noexcept;
+
+    private:
+        struct FreeSpan {
+            FreeSpan *next;
+        };
+
+        FreeSpan *head_ = nullptr;
+        std::size_t size_ = 0;
+    };
+
+    constinit thread_local bool pool_gone = false;
+    constinit thread_local SpanPool pool;
+
+    SpanPool::~SpanPool() {
+        pool_gone = true;
+        while (head_ != nullptr) {
+            FreeSpan *const next = head_->next;
+            ::operator delete(head_);
+            head_ = next;
+        }
+    }
+
+    void *
+    SpanPool::take() noexcept {
+        if (head_ == nullptr) {
+            return nullptr;
+        }
+        FreeSpan *const span = head_;
+        head_ = span->next;
+        --size_;
+        return span;
+    }
+
+    bool
+    SpanPool::give(void *const memory) noexcept {
+        if (size_ == maxPooledSpans) {
+            return false;
+        }
+        auto *const span = static_cast<FreeSpan *>(memory);
+        span->next = head_;
+        head_ = span;
+        ++size_;
+        return true;
+    }
+
+} // namespace
 
 NvtxSpan::NvtxSpan(const nvtxDomainHandle_t domain, const PayloadSchemaIds schema_ids) noexcept
     : domain_(domain),
       schemaIds_(schema_ids) {}
 
 NvtxSpan::~NvtxSpan() {
-    if (payloads_.empty()) {
-        nvtxDomainRangePop(domain_);
+    if (overflow_.empty()) {
+        if (inlineCount_ == 0) {
+            nvtxDomainRangePop(domain_);
+        } else {
+            nvtxRangePopPayload(domain_, inlineRefs_.data(), inlineCount_);
+        }
         return;
     }
 
     std::vector<nvtxPayloadData_t> refs;
-    refs.reserve(payloads_.size());
-    for (const StoredPayload &stored : payloads_) {
+    refs.reserve(inlineCount_ + overflow_.size());
+    refs.insert(refs.end(), inlineRefs_.begin(), inlineRefs_.begin() + inlineCount_);
+    for (const StoredPayload &stored : overflow_) {
         refs.push_back(stored.data);
     }
     nvtxRangePopPayload(domain_, refs.data(), refs.size());
 }
 
-NvtxSpan::StoredPayload &
-NvtxSpan::addPayload(const std::string_view key) {
-    StoredPayload &payload = payloads_.emplace_back();
-    payload.key.assign(key);
-    payload.record.key = payload.key.c_str();
+void *
+NvtxSpan::operator new(const std::size_t size) {
+    if (!pool_gone) {
+        if (void *const memory = pool.take()) {
+            return memory;
+        }
+    }
+    return ::operator new(size);
+}
+
+void
+NvtxSpan::operator delete(void *const memory) noexcept {
+    if (memory == nullptr) {
+        return;
+    }
+    if (pool_gone || !pool.give(memory)) {
+        ::operator delete(memory);
+    }
+}
+
+bool
+NvtxSpan::fitsInline(const std::string_view key, const std::size_t value_size) const noexcept {
+    return overflow_.empty() && (inlineCount_ < inlineAttributes) && (key.size() < inlineKeySize) &&
+        (value_size < inlineValueSize);
+}
+
+NvtxSpan::InlinePayload &
+NvtxSpan::nextInline(const std::string_view key, const std::uint64_t schema_id) noexcept {
+    InlinePayload &payload = inline_[inlineCount_];
+    *std::copy(key.begin(), key.end(), payload.key.begin()) = '\0';
+    payload.record.key = payload.key.data();
+    inlineRefs_[inlineCount_] = {schema_id, sizeof(AttrPayload), &payload.record};
+    ++inlineCount_;
     return payload;
+}
+
+NvtxSpan::StoredPayload &
+NvtxSpan::nextStored(const std::string_view key, const std::uint64_t schema_id) {
+    StoredPayload &stored = overflow_.emplace_back();
+    stored.key.assign(key);
+    stored.record.key = stored.key.c_str();
+    stored.data = {schema_id, sizeof(AttrPayload), &stored.record};
+    return stored;
+}
+
+AttrPayload &
+NvtxSpan::addPayload(const std::string_view key, const std::uint64_t schema_id) {
+    return fitsInline(key, 0) ? nextInline(key, schema_id).record :
+                                nextStored(key, schema_id).record;
 }
 
 void
 NvtxSpan::addAttribute(const std::string_view key, const std::string_view value) {
-    StoredPayload &payload = addPayload(key);
-    payload.string_value.assign(value);
-    payload.record.value.string_value = payload.string_value.c_str();
-    payload.data = {schemaIds_.string_attr, sizeof(AttrPayload), &payload.record};
+    if (fitsInline(key, value.size())) {
+        InlinePayload &payload = nextInline(key, schemaIds_.string_attr);
+        *std::copy(value.begin(), value.end(), payload.value.begin()) = '\0';
+        payload.record.value.string_value = payload.value.data();
+        return;
+    }
+    StoredPayload &stored = nextStored(key, schemaIds_.string_attr);
+    stored.string_value.assign(value);
+    stored.record.value.string_value = stored.string_value.c_str();
 }
 
 void
 NvtxSpan::addAttribute(const std::string_view key, const std::int64_t value) {
-    StoredPayload &payload = addPayload(key);
-    payload.record.value.int64_value = value;
-    payload.data = {schemaIds_.int64_attr, sizeof(AttrPayload), &payload.record};
+    addPayload(key, schemaIds_.int64_attr).value.int64_value = value;
 }
 
 void
 NvtxSpan::addAttribute(const std::string_view key, const double value) {
-    StoredPayload &payload = addPayload(key);
-    payload.record.value.double_value = value;
-    payload.data = {schemaIds_.double_attr, sizeof(AttrPayload), &payload.record};
+    addPayload(key, schemaIds_.double_attr).value.double_value = value;
 }
 
 } // namespace nixl::trace::nvtx_internal

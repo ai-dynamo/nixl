@@ -17,6 +17,8 @@
 #ifndef NIXL_SRC_PLUGINS_TRACING_NVTX_NVTX_SPAN_H
 #define NIXL_SRC_PLUGINS_TRACING_NVTX_NVTX_SPAN_H
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <list>
 #include <string>
@@ -40,6 +42,12 @@ public:
 
     ~NvtxSpan() override;
 
+    [[nodiscard]] static void *
+    operator new(std::size_t size);
+
+    static void
+    operator delete(void *memory) noexcept;
+
     void
     addAttribute(std::string_view key, std::string_view value) override;
     void
@@ -58,24 +66,45 @@ public:
         return {};
     }
 
+    static constexpr std::size_t inlineAttributes = 12;
+    static constexpr std::size_t inlineKeySize = 32;
+    static constexpr std::size_t inlineValueSize = 64;
+
 private:
-    // Backing storage for one attribute payload. Held in a std::list so nodes
-    // never move: record.key / value.string_value point into these strings and
-    // must stay valid until the range is popped.
+    struct InlinePayload {
+        std::array<char, inlineKeySize> key;
+        std::array<char, inlineValueSize> value;
+        AttrPayload record;
+    };
+
+    // Backing storage for an attribute that does not fit inline. Held in a
+    // std::list so nodes never move: record.key / value.string_value point into
+    // these strings and must stay valid until the range is popped.
     struct StoredPayload {
         std::string key;
-        std::string string_value; // only used for string attributes
+        std::string string_value;
         AttrPayload record{};
         nvtxPayloadData_t data{};
     };
 
-    // Append a payload with its key set; caller fills the value + schema id.
+    [[nodiscard]] bool
+    fitsInline(std::string_view key, std::size_t value_size) const noexcept;
+
+    [[nodiscard]] InlinePayload &
+    nextInline(std::string_view key, std::uint64_t schema_id) noexcept;
+
     [[nodiscard]] StoredPayload &
-    addPayload(std::string_view key);
+    nextStored(std::string_view key, std::uint64_t schema_id);
+
+    [[nodiscard]] AttrPayload &
+    addPayload(std::string_view key, std::uint64_t schema_id);
 
     nvtxDomainHandle_t domain_;
     PayloadSchemaIds schemaIds_;
-    std::list<StoredPayload> payloads_;
+    std::size_t inlineCount_ = 0;
+    std::array<InlinePayload, inlineAttributes> inline_;
+    std::array<nvtxPayloadData_t, inlineAttributes> inlineRefs_;
+    std::list<StoredPayload> overflow_;
 };
 
 } // namespace nixl::trace::nvtx_internal

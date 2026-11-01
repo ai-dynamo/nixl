@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <cstdint>
+#include <memory>
 #include <set>
 #include <string>
 #include <string_view>
@@ -24,6 +25,8 @@
 
 #include "../allocation_counter.h"
 #include "nvtx_events.h"
+#include "nvtx_span.h"
+#include "nvtx_span.h"
 
 namespace {
 
@@ -111,4 +114,57 @@ TEST(NvtxEvents, FixedAndShortNamesAllocateNothing) {
         event, "nixl::wire.completed", nixl::trace::Kind::Metadata, nullptr, registered);
     nvtx::eventForName(event, "rail0.write", nixl::trace::Kind::Metadata, nullptr, registered);
     EXPECT_EQ(allocations.count(), 0u);
+}
+
+TEST(NvtxSpan, AttributesThatFitAllocateNothing) {
+    const nvtx::PayloadSchemaIds schema_ids{};
+    std::make_unique<nvtx::NvtxSpan>(nullptr, schema_ids).reset();
+
+    const gtest::AllocationCounter allocations;
+    {
+        const auto span = std::make_unique<nvtx::NvtxSpan>(nullptr, schema_ids);
+        span->addAttribute(
+            "nixl.traceparent",
+            std::string_view("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"));
+        span->addAttribute("nixl.xfer_request_id", std::string_view("18364758544493064720"));
+        span->addAttribute("nixl.xfer_execution", std::int64_t{3});
+        span->addAttribute("ratio", 0.5);
+    }
+    {
+        nvtx::NvtxSpan range(nullptr, schema_ids);
+        for (std::size_t i = 0; i < nvtx::NvtxSpan::inlineAttributes; ++i) {
+            range.addAttribute("nixl.start_us", static_cast<std::int64_t>(i));
+        }
+    }
+    EXPECT_EQ(allocations.count(), 0u);
+}
+
+TEST(NvtxSpan, AttributesThatDoNotFitGoToTheHeap) {
+    const std::string long_key(nvtx::NvtxSpan::inlineKeySize, 'k');
+    const std::string long_value(nvtx::NvtxSpan::inlineValueSize, 'v');
+    for (const auto add :
+         {+[](nvtx::NvtxSpan &span, const std::string &key, const std::string &) {
+              span.addAttribute(key, std::int64_t{1});
+          },
+          +[](nvtx::NvtxSpan &span, const std::string &, const std::string &value) {
+              span.addAttribute("value", std::string_view(value));
+          }}) {
+        const gtest::AllocationCounter allocations;
+        {
+            nvtx::NvtxSpan span(nullptr, {});
+            span.addAttribute("first", std::int64_t{0});
+            add(span, long_key, long_value);
+            span.addAttribute("after", std::int64_t{2});
+        }
+        EXPECT_GT(allocations.count(), 0u);
+    }
+
+    const gtest::AllocationCounter allocations;
+    {
+        nvtx::NvtxSpan span(nullptr, {});
+        for (std::size_t i = 0; i <= nvtx::NvtxSpan::inlineAttributes; ++i) {
+            span.addAttribute("nixl.start_us", static_cast<std::int64_t>(i));
+        }
+    }
+    EXPECT_GT(allocations.count(), 0u);
 }
