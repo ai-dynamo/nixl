@@ -236,6 +236,13 @@ allocationsPerRequests(const std::string &name, size_t warmup, size_t measured, 
             ASSERT_EQ(agent.releaseXferReq(req), NIXL_SUCCESS);
             notifs.clear();
             ASSERT_EQ(agent.getNotifs(notifs), NIXL_SUCCESS);
+            const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
+            while (notify && !notifs.contains(name) &&
+                   (std::chrono::steady_clock::now() < deadline)) {
+                std::this_thread::sleep_for(poll_interval);
+                ASSERT_EQ(agent.getNotifs(notifs), NIXL_SUCCESS);
+            }
+            ASSERT_EQ(notifs.contains(name), notify);
         }
     };
     run(warmup);
