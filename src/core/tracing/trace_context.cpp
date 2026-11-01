@@ -145,14 +145,36 @@ generateInto(nixl::trace::TraceContext &context,
     }
 }
 
-void
-appendByte(std::string &result, std::uint8_t value) {
+char *
+appendByte(char *out, std::uint8_t value) noexcept {
     constexpr std::array<char, 16> hex{
         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
-    result.push_back(hex[value >> 4]);
-    result.push_back(hex[value & 0x0f]);
+    *out++ = hex[value >> 4];
+    *out++ = hex[value & 0x0f];
+    return out;
 }
 } // namespace
+
+nixl::trace::TraceparentText::TraceparentText(const nixl::trace::TraceContext &context) noexcept
+    : size_(0) {
+    if (!context.valid()) {
+        return;
+    }
+    char *out = text_.data();
+    *out++ = '0';
+    *out++ = '0';
+    *out++ = '-';
+    for (const auto byte : context.traceId) {
+        out = appendByte(out, byte);
+    }
+    *out++ = '-';
+    for (const auto byte : context.spanId) {
+        out = appendByte(out, byte);
+    }
+    *out++ = '-';
+    out = appendByte(out, context.flags & supported_trace_flags);
+    size_ = static_cast<std::uint8_t>(out - text_.data());
+}
 
 nixl::trace::TraceContext::TraceContext(const nixl::trace::Tracer *tracer) {
     if (tracer == nullptr) {
@@ -203,23 +225,7 @@ nixl::trace::parseTraceparent(std::string_view value) {
 
 std::string
 nixl::trace::formatTraceparent(const nixl::trace::TraceContext &context) {
-    if (!context.valid()) {
-        return {};
-    }
-
-    std::string result;
-    result.reserve(55);
-    result.append("00-");
-    for (const auto byte : context.traceId) {
-        appendByte(result, byte);
-    }
-    result.push_back('-');
-    for (const auto byte : context.spanId) {
-        appendByte(result, byte);
-    }
-    result.push_back('-');
-    appendByte(result, context.flags & supported_trace_flags);
-    return result;
+    return std::string(nixl::trace::TraceparentText(context).view());
 }
 
 std::optional<std::size_t>

@@ -28,6 +28,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -696,4 +697,15 @@ TEST(TraceContext, DefaultSourceIdsAreDistinct) {
 
     EXPECT_EQ(ids.size(), count);
     EXPECT_FALSE(ids.contains(0));
+}
+
+TEST(TraceContext, TraceparentTextMatchesTheFormattedTraceparent) {
+    constexpr std::string_view traceparent =
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    const auto context = nixl::trace::parseTraceparent(traceparent);
+    ASSERT_TRUE(context.has_value());
+    EXPECT_EQ(nixl::trace::TraceparentText(*context).view(), traceparent);
+    EXPECT_EQ(nixl::trace::formatTraceparent(*context), traceparent);
+    EXPECT_TRUE(nixl::trace::TraceparentText(nixl::trace::TraceContext{}).view().empty());
+    EXPECT_TRUE(nixl::trace::formatTraceparent(nixl::trace::TraceContext{}).empty());
 }

@@ -19,9 +19,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <string>
-#include <vector>
 
+#include "absl/container/inlined_vector.h"
 #include "common/nixl_log.h"
 #include "telemetry.h"
 #include "tracing/trace_context.h"
@@ -29,7 +28,7 @@
 namespace nixl::trace {
 namespace {
 
-    constexpr std::size_t max_core_attrs = 6;
+    constexpr std::size_t inline_record_attrs = 12;
 
     [[nodiscard]] constexpr Kind
     phaseKind(nixl_trace_phase_t phase) noexcept {
@@ -70,22 +69,19 @@ TracerPhaseSink::record(std::string_view label_key,
                         std::span<const nixlBackendTraceAttr> attrs,
                         const Emit &emit) noexcept {
     try {
-        std::string traceparent;
-        std::string request_id_text;
-        std::vector<Attribute> record_attrs;
-        record_attrs.reserve(max_core_attrs + attrs.size());
+        const TraceparentText traceparent(identity.context);
+        const RequestIdText request_id_text(identity.requestId);
+        absl::InlinedVector<Attribute, inline_record_attrs> record_attrs;
         record_attrs.push_back({"nixl.backend", backend_});
         if (timestamp.has_value()) {
             record_attrs.push_back(
                 {"nixl.phase.timestamp_us", static_cast<std::int64_t>(*timestamp)});
         }
         if (identity.context.valid()) {
-            traceparent = formatTraceparent(identity.context);
-            record_attrs.push_back({"nixl.traceparent", traceparent});
+            record_attrs.push_back({"nixl.traceparent", traceparent.view()});
         }
         if (identity.requestId != 0) {
-            request_id_text = std::to_string(identity.requestId);
-            record_attrs.push_back({"nixl.xfer_request_id", request_id_text});
+            record_attrs.push_back({"nixl.xfer_request_id", request_id_text.view()});
         }
         if (identity.execution != 0) {
             record_attrs.push_back(
@@ -98,7 +94,7 @@ TracerPhaseSink::record(std::string_view label_key,
             record_attrs.push_back({attr.key, attr.value});
         }
 
-        emit(record_attrs);
+        emit(std::span<const Attribute>(record_attrs.data(), record_attrs.size()));
     }
     catch (...) {
         if (telemetry_ != nullptr) {

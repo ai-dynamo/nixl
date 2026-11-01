@@ -184,6 +184,20 @@ private:
     std::uint8_t size_;
 };
 
+class TraceparentText {
+public:
+    explicit TraceparentText(const TraceContext &context) noexcept;
+
+    [[nodiscard]] std::string_view
+    view() const noexcept {
+        return {text_.data(), size_};
+    }
+
+private:
+    std::array<char, 55> text_;
+    std::uint8_t size_;
+};
+
 /**
  * @brief Draw a context for one post of @p request: its trace id and flags with
  *        a span id from @p tracer's random source, again while it is zero;

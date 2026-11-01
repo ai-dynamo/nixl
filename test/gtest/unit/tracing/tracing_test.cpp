@@ -289,6 +289,69 @@ public:
     }
 };
 
+class DiscardingBackend final : public nixl::trace::TraceBackend {
+public:
+    explicit DiscardingBackend(std::size_t &attrs_seen) noexcept : attrsSeen_(attrs_seen) {}
+
+    [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
+    beginSpan(std::string_view, nixl::trace::Kind) override {
+        return nullptr;
+    }
+
+    [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
+    beginContextSpan(std::string_view,
+                     nixl::trace::Kind,
+                     const nixl::trace::TraceContext &,
+                     std::uint64_t) override {
+        return nullptr;
+    }
+
+    void
+    mark(std::string_view, nixl::trace::Kind) override {}
+
+    void
+    emitSpan(std::string_view,
+             nixl::trace::Kind,
+             const nixl::trace::TraceContext &,
+             std::uint64_t,
+             nixlTime::us_t,
+             nixlTime::us_t,
+             std::span<const nixl::trace::Attribute> attrs) override {
+        attrsSeen_ += attrs.size();
+    }
+
+    void
+    emitEvent(std::string_view,
+              nixl::trace::Kind,
+              const nixl::trace::TraceContext &,
+              std::uint64_t,
+              nixlTime::us_t,
+              std::span<const nixl::trace::Attribute> attrs) override {
+        attrsSeen_ += attrs.size();
+    }
+
+    void
+    pushContext(const nixl::trace::TraceContext &, std::uint64_t) override {}
+
+    void
+    popContext() override {}
+
+    [[nodiscard]] std::string_view
+    name() const noexcept override {
+        return "discarding";
+    }
+
+private:
+    std::size_t &attrsSeen_;
+};
+
+[[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
+makeDiscardingTracer(std::size_t &attrs_seen) {
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+    backends.push_back(std::make_unique<DiscardingBackend>(attrs_seen));
+    return std::make_unique<nixl::trace::Tracer>(std::move(backends), 1.0);
+}
+
 void
 failRandomBytes(std::span<std::uint8_t>) {
     throw std::system_error(ENOSYS, std::generic_category(), "getentropy failed");
@@ -1525,4 +1588,19 @@ TEST(Tracing, AllocationCounterCountsOnlyItsOwnThread) {
     worker.join();
     EXPECT_TRUE(allocated);
     EXPECT_EQ(allocations.count(), with_thread);
+}
+
+TEST(TracePhaseSink, RecordingAllocatesNothing) {
+    std::size_t attrs_seen = 0;
+    const auto tracer = makeDiscardingTracer(attrs_seen);
+    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+    const nixl::trace::TraceIdentity identity{testContext(0x11), 0xfedcba9876543210ULL, 3};
+    const nixlBackendTraceAttr attrs[] = {{"rail", "0"}};
+
+    const gtest::AllocationCounter allocations;
+    sink.recordPhase(nixl_trace_phase_t::SUBMIT, 1, identity, attrs, {});
+    sink.recordPhase(nixl_trace_phase_t::WIRE_COMPLETED, identity);
+    sink.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, NIXL_WRITE, 1, 2, identity, attrs, {});
+    EXPECT_EQ(allocations.count(), 0u);
+    EXPECT_EQ(attrs_seen, 6u + 5u + 5u);
 }
