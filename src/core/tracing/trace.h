@@ -29,6 +29,7 @@
  * consumer appears.
  */
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -184,6 +185,8 @@ public:
 
 class Tracer;
 
+inline constexpr std::size_t maxTraceBackends = 4;
+
 /**
  * @brief Public span handle. Fans out attribute/dependency calls to every
  *        backend span it owns and ends them all on destruction. Move-only.
@@ -202,7 +205,7 @@ public:
     /** @brief True when at least one backend produced a span (cheap gate). */
     [[nodiscard]] bool
     active() const noexcept {
-        return !backends_.empty();
+        return backends_[0] != nullptr;
     }
 
     void
@@ -225,10 +228,11 @@ public:
 private:
     friend class Tracer;
 
-    explicit Span(std::vector<std::unique_ptr<SpanBackend>> backends) noexcept
-        : backends_(std::move(backends)) {}
+    template<typename Call>
+    void
+    forEachBackend(const Call &call) const;
 
-    std::vector<std::unique_ptr<SpanBackend>> backends_;
+    std::array<std::unique_ptr<SpanBackend>, maxTraceBackends> backends_;
 };
 
 /**

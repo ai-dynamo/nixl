@@ -1604,3 +1604,36 @@ TEST(TracePhaseSink, RecordingAllocatesNothing) {
     EXPECT_EQ(allocations.count(), 0u);
     EXPECT_EQ(attrs_seen, 6u + 5u + 5u);
 }
+
+TEST(Tracing, SpanWithoutBackendSpansAllocatesNothing) {
+    std::size_t attrs_seen = 0;
+    const auto tracer = makeDiscardingTracer(attrs_seen);
+    const gtest::AllocationCounter allocations;
+    {
+        const nixl::trace::Span span = tracer->beginSpan("nixl::createXferReq");
+        EXPECT_FALSE(span.active());
+        const nixl::trace::Span context_span = tracer->beginContextSpan(
+            "nixl::postXferReq.write", nixl::trace::Kind::CommSend, testContext(0x22), 7);
+        EXPECT_FALSE(context_span.active());
+    }
+    EXPECT_EQ(allocations.count(), 0u);
+}
+
+TEST(Tracing, MovedSpanKeepsItsBackendSpans) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    {
+        nixl::trace::Span first = tracer->beginSpan("nixl::createXferReq");
+        nixl::trace::Span second = std::move(first);
+        EXPECT_FALSE(first.active());
+        ASSERT_TRUE(second.active());
+        second.addAttribute("desc_count", std::int64_t{8});
+        EXPECT_EQ(a.spansEnded, 0);
+    }
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->spansBegun, 1);
+        EXPECT_EQ(log->spansEnded, 1);
+        EXPECT_EQ(log->intAttrs,
+                  (std::vector<std::pair<std::string, std::int64_t>>{{"desc_count", 8}}));
+    }
+}

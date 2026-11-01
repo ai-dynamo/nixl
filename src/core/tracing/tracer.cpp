@@ -26,39 +26,40 @@ namespace nixl::trace {
 
 /*** Span ***/
 
+template<typename Call>
+void
+Span::forEachBackend(const Call &call) const {
+    for (const auto &backend : backends_) {
+        if (backend == nullptr) {
+            return;
+        }
+        call(*backend);
+    }
+}
+
 void
 Span::addAttribute(std::string_view key, std::string_view value) {
-    for (auto &backend : backends_) {
-        backend->addAttribute(key, value);
-    }
+    forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
 }
 
 void
 Span::addAttribute(std::string_view key, std::int64_t value) {
-    for (auto &backend : backends_) {
-        backend->addAttribute(key, value);
-    }
+    forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
 }
 
 void
 Span::addAttribute(std::string_view key, double value) {
-    for (auto &backend : backends_) {
-        backend->addAttribute(key, value);
-    }
+    forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
 }
 
 void
 Span::addCtrlDep(SpanId parent) {
-    for (auto &backend : backends_) {
-        backend->addCtrlDep(parent);
-    }
+    forEachBackend([&](SpanBackend &backend) { backend.addCtrlDep(parent); });
 }
 
 void
 Span::addDataDep(SpanId parent) {
-    for (auto &backend : backends_) {
-        backend->addDataDep(parent);
-    }
+    forEachBackend([&](SpanBackend &backend) { backend.addDataDep(parent); });
 }
 
 SpanId
@@ -66,6 +67,9 @@ Span::id() const noexcept {
     // Return the first non-zero backend id so the SpanId stays meaningful
     // regardless of backend ordering (NVTX has no id and returns {0}).
     for (const auto &backend : backends_) {
+        if (backend == nullptr) {
+            break;
+        }
         const SpanId backend_id = backend->id();
         if (backend_id.value != 0) {
             return backend_id;
@@ -87,16 +91,19 @@ Tracer::~Tracer() = default;
 
 Span
 Tracer::beginSpan(std::string_view name, Kind kind) {
-    std::vector<std::unique_ptr<SpanBackend>> spans;
-    spans.reserve(backends_.size());
+    Span span;
+    std::size_t count = 0;
     for (auto &backend : backends_) {
         // Drop null backend spans so an all-null Span is not reported active()
         // (which would null-deref in addAttribute()/id()).
-        if (auto span = backend->beginSpan(name, kind)) {
-            spans.push_back(std::move(span));
+        if (count == span.backends_.size()) {
+            break;
+        }
+        if (auto backend_span = backend->beginSpan(name, kind)) {
+            span.backends_[count++] = std::move(backend_span);
         }
     }
-    return Span{std::move(spans)};
+    return span;
 }
 
 Span
@@ -104,14 +111,17 @@ Tracer::beginContextSpan(std::string_view name,
                          Kind kind,
                          const TraceContext &context,
                          std::uint64_t request_id) {
-    std::vector<std::unique_ptr<SpanBackend>> spans;
-    spans.reserve(backends_.size());
+    Span span;
+    std::size_t count = 0;
     for (auto &backend : backends_) {
-        if (auto span = backend->beginContextSpan(name, kind, context, request_id)) {
-            spans.push_back(std::move(span));
+        if (count == span.backends_.size()) {
+            break;
+        }
+        if (auto backend_span = backend->beginContextSpan(name, kind, context, request_id)) {
+            span.backends_[count++] = std::move(backend_span);
         }
     }
-    return Span{std::move(spans)};
+    return span;
 }
 
 void
@@ -173,6 +183,12 @@ makeTracer(const TracerConfig &config) {
     for (const auto &requested : config.backends) {
         // Skip blanks and duplicates so e.g. "nvtx,nvtx" activates one backend.
         if (requested.empty() || !seen.insert(requested).second) {
+            continue;
+        }
+
+        if (backends.size() == maxTraceBackends) {
+            NIXL_WARN << "nixl::trace: backend '" << requested << "' not activated: at most "
+                      << maxTraceBackends << " backends can be active";
             continue;
         }
 

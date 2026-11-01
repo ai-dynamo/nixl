@@ -26,6 +26,9 @@
 #include "../allocation_counter.h"
 #include "nvtx_events.h"
 #include "nvtx_span.h"
+#include "nvtx_trace_backend.h"
+#include "tracing/trace.h"
+#include "tracing/trace_context.h"
 #include "nvtx_span.h"
 
 namespace {
@@ -167,4 +170,37 @@ TEST(NvtxSpan, AttributesThatDoNotFitGoToTheHeap) {
         }
     }
     EXPECT_GT(allocations.count(), 0u);
+}
+
+TEST(NvtxSpan, TracerSpansAndEventsAllocateNothing) {
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+    backends.push_back(std::make_unique<nvtx::NvtxTraceBackend>("nixl-unit"));
+    nixl::trace::Tracer tracer(std::move(backends), 1.0);
+    const auto context =
+        nixl::trace::parseTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+    ASSERT_TRUE(context.has_value());
+    const nixl::trace::Attribute attrs[] = {
+        {"nixl.backend", std::string_view("UCX")},
+        {"nixl.traceparent",
+         std::string_view("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")},
+        {"nixl.xfer_request_id", std::string_view("18364758544493064720")},
+        {"nixl.xfer_execution", std::int64_t{1}},
+    };
+    const auto record = [&] {
+        const nixl::trace::CorrelationScope correlation(&tracer, *context, 42);
+        nixl::trace::Span span = tracer.beginContextSpan(
+            "nixl::postXferReq.write", nixl::trace::Kind::CommSend, *context, 42);
+        span.addAttribute("remote_agent", std::string_view("target"));
+        span.addAttribute("bytes", std::int64_t{32768});
+        span.addAttribute("nixl.xfer_request_id", std::string_view("18364758544493064720"));
+        tracer.emitEvent("nixl::submit", nixl::trace::Kind::Metadata, *context, 42, 1, attrs);
+        tracer.emitSpan(
+            "nixl::wire.inflight", nixl::trace::Kind::CommSend, *context, 42, 1, 2, attrs);
+        tracer.mark("nixl::xfer.complete", nixl::trace::Kind::Metadata);
+    };
+    record();
+
+    const gtest::AllocationCounter allocations;
+    record();
+    EXPECT_EQ(allocations.count(), 0u);
 }
