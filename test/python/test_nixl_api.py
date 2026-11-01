@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -23,7 +25,12 @@ import torch
 
 import nixl._bindings as bindings
 import nixl._utils as utils
-from nixl._api import nixl_agent, nixl_agent_config, nixl_thread_sync_t
+from nixl._api import (
+    nixl_agent,
+    nixl_agent_config,
+    nixl_thread_sync_t,
+    nixl_xfer_handle,
+)
 
 # NIXL pytest fixtures
 
@@ -610,3 +617,153 @@ def test_get_xfer_telemetry_cfg(backend_name):
     finally:
         os.environ.pop("NIXL_TELEMETRY_ENABLE")
         os.environ.pop("NIXL_TELEMETRY_DIR")
+
+
+_TRACEPARENT = re.compile(
+    r"00-(?P<trace_id>[0-9a-f]{32})-(?P<span_id>[0-9a-f]{16})-(?P<flags>[0-9a-f]{2})"
+)
+
+
+def _nixl_plugin_dir():
+    if "NIXL_PLUGIN_DIR" in os.environ:
+        return os.environ["NIXL_PLUGIN_DIR"]
+    with open("/proc/self/maps") as maps:
+        for line in maps:
+            path = line.split(maxsplit=5)[-1].strip()
+            if os.path.basename(path) == "libnixl.so":
+                return os.path.join(os.path.dirname(path), "plugins")
+    return ""
+
+
+_NIXL_PLUGIN_DIR = _nixl_plugin_dir()
+
+requires_nvtx_plugin = pytest.mark.skipif(
+    not _NIXL_PLUGIN_DIR
+    or not os.path.isfile(os.path.join(_NIXL_PLUGIN_DIR, "libtrace_backend_nvtx.so")),
+    reason="libtrace_backend_nvtx.so is not in NIXL's plugin directory",
+)
+
+
+@contextlib.contextmanager
+def _xfer_handle(backend_name, prepped=False):
+    agent, target = (
+        nixl_agent(
+            str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+        )
+        for _ in range(2)
+    )
+    src = torch.ones(64, dtype=torch.uint8)
+    dst = torch.zeros(64, dtype=torch.uint8)
+    agent.register_memory(src)
+    target.register_memory(dst)
+    agent.add_remote_agent(target.get_agent_metadata())
+    if prepped:
+        local = agent.prep_xfer_dlist("NIXL_INIT_AGENT", src)
+        remote = agent.prep_xfer_dlist(target.name, dst)
+        handle = agent.make_prepped_xfer("WRITE", local, [0], remote, [0])
+    else:
+        handle = agent.initialize_xfer(
+            "WRITE", agent.get_xfer_descs(src), agent.get_xfer_descs(dst), target.name
+        )
+    try:
+        yield agent, handle
+    finally:
+        agent.release_xfer_handle(handle)
+        agent.remove_remote_agent(target.name)
+
+
+def _post_to_done(agent, handle):
+    state = agent.transfer(handle)
+    deadline = time.monotonic() + 5
+    while state == "PROC" and time.monotonic() < deadline:
+        state = agent.check_xfer_state(handle)
+    assert state == "DONE"
+
+
+def _trace_info(agent, handle):
+    info = agent.get_xfer_trace_info(handle)
+    assert info is not None
+    return info.requestId, info.execution, info.traceparent
+
+
+def test_xfer_trace_info_without_tracing(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "")
+    with _xfer_handle(backend_name) as (agent, handle):
+        assert agent.get_xfer_trace_info(handle) is None
+        _post_to_done(agent, handle)
+        assert agent.get_xfer_trace_info(handle) is None
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_counts_posts(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "0")
+    with _xfer_handle(backend_name) as (agent, handle):
+        request_id, execution, traceparent = _trace_info(agent, handle)
+        assert request_id != 0 and execution == 0
+        match = _TRACEPARENT.fullmatch(traceparent)
+        assert match and match["flags"] == "02"
+        for expected in (1, 2):
+            _post_to_done(agent, handle)
+            assert _trace_info(agent, handle) == (request_id, expected, traceparent)
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_prepped_handle(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    with _xfer_handle(backend_name, prepped=True) as (agent, handle):
+        request_id, execution, _ = _trace_info(agent, handle)
+        assert request_id != 0 and execution == 0
+        _post_to_done(agent, handle)
+        assert _trace_info(agent, handle)[:2] == (request_id, 1)
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_sampled_posts_differ(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "1")
+    with _xfer_handle(backend_name) as (agent, handle):
+        posts = []
+        for _ in range(2):
+            _post_to_done(agent, handle)
+            posts.append(_TRACEPARENT.fullmatch(_trace_info(agent, handle)[2]))
+        first, second = posts
+        assert first and second and first["flags"] == second["flags"] == "03"
+        assert first["trace_id"] == second["trace_id"]
+        assert first["span_id"] != second["span_id"]
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_after_release(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    with _xfer_handle(backend_name) as (agent, handle):
+        assert agent.get_xfer_trace_info(handle) is not None
+        agent.release_xfer_handle(handle)
+        assert agent.get_xfer_trace_info(handle) is None
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_is_a_read_only_snapshot(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    with _xfer_handle(backend_name) as (agent, handle):
+        _post_to_done(agent, handle)
+        info = agent.get_xfer_trace_info(handle)
+        values = _trace_info(agent, handle)
+        _post_to_done(agent, handle)
+        agent.release_xfer_handle(handle)
+    assert values[1] == 1
+    assert (info.requestId, info.execution, info.traceparent) == values
+    for field in ("requestId", "execution", "traceparent"):
+        with pytest.raises(AttributeError):
+            setattr(info, field, getattr(info, field))
+
+
+def test_xfer_trace_info_binding_rejects_a_null_handle(one_empty_agent):
+    with pytest.raises(bindings.nixlInvalidParamError):
+        one_empty_agent.agent.getXferTraceInfo(0)
+
+
+def test_xfer_trace_info_released_handle_skips_the_binding(one_empty_agent):
+    handle = nixl_xfer_handle(one_empty_agent.agent, 0)
+    handle._released = True
+    assert one_empty_agent.get_xfer_trace_info(handle) is None
