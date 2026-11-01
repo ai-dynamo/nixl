@@ -144,7 +144,7 @@ ARG NPROC
 RUN mkdir -p /workspace/ucx
 COPY --from=ucx . /workspace/ucx
 
-RUN echo "INFO: Starting custom UCX build..." && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig echo "INFO: Starting custom UCX build..." && \
     apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         --reinstall autoconf automake libtool pkg-config make g++ \
@@ -154,6 +154,11 @@ RUN echo "INFO: Starting custom UCX build..." && \
     rm -rf /usr/lib/ucx /opt/hpcx/ucx && \
     cd /workspace/ucx && \
     ./autogen.sh && \
+    # autogen.sh only warns if the gpunetio submodule fetch fails; gda then fails in make
+    if [ -d external/gpunetio ] && [ -z "$(ls -A external/gpunetio)" ]; then \
+        echo "ERROR: UCX submodule external/gpunetio could not be fetched (needed by the gda module)" >&2; \
+        exit 1; \
+    fi && \
     echo "INFO: Building UCX..." && \
     ./contrib/configure-release --with-cuda=/usr/local/cuda \
                                 $(if [ "$BUILD_TYPE" = "debug" ]; then echo "--enable-debug"; fi) \

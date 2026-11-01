@@ -24,14 +24,8 @@ MODEL="${NIXL_SANITY_MODEL_ID:?NIXL_SANITY_MODEL_ID not set (set by the base ima
 # Reuse the CI helper (from the workspace copied into the image) to hand out free TCP
 # ports that roll over. common.sh references unset env vars (CI_CONCURRENT_ID/
 # EXECUTOR_NUMBER) at source time, so disable nounset while sourcing, then restore it.
-#
-# Neither CI_CONCURRENT_ID nor EXECUTOR_NUMBER is set inside the enroot container, so
-# common.sh would fall back to a random concurrency id over its FULL port space (base
-# ports up to ~65500). SGLang derives internal ports from the server port (e.g.
-# SGLANG_GRPC_PORT = port + 10000), which overflows 65535 for base ports > 55535 and
-# kills the server on startup. Pin the id so every handed-out port stays <= 55500.
-CI_CONCURRENT_ID="${CI_CONCURRENT_ID:-$((RANDOM % 45))}"
-export CI_CONCURRENT_ID
+# CI passes a per-build CI_CONCURRENT_ID (see build-wheel-matrix.yaml); without it
+# common.sh picks a random port block.
 set +u
 # shellcheck disable=SC1091
 . /workspace/nixl/.ci/scripts/common.sh
