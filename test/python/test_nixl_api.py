@@ -16,6 +16,8 @@
 import contextlib
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -185,6 +187,28 @@ def test_default_agent_keeps_ucx_after_another_config_is_cleared():
         assert "UCX" in agent.backends
     finally:
         config.backends[:] = original_backends
+
+
+def test_ucx_backend_with_deepbind(backend_name):
+    """Create a UCX backend with the plugin loaded under NIXL_UCX_DEEPBIND=1.
+
+    The plugin is loaded once per process, so this runs in a child interpreter. Python
+    copy-relocates ``environ``, which is what used to make UCS read a stale environment and crash.
+    """
+    if backend_name != "UCX":
+        pytest.skip("NIXL_UCX_DEEPBIND only applies to the UCX plugin")
+    code = (
+        "from nixl._api import nixl_agent, nixl_agent_config; "
+        "nixl_agent('deepbind', nixl_agent_config(backends=['UCX']))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env={**os.environ, "NIXL_UCX_DEEPBIND": "1"},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
 
 
 @pytest.mark.parametrize("backends", [[], ["UCX"], ["POSIX", "UCX"]])

@@ -16,6 +16,8 @@
  */
 #include "config.h"
 
+#include <dlfcn.h>
+
 #include <algorithm>
 #include <array>
 #include <stdexcept>
@@ -43,7 +45,31 @@ tlsEnablesCudaSupport(std::string_view tls) {
 
 } // namespace
 
+extern char **environ;
+
 namespace nixl::ucx {
+
+void
+syncDeepBoundEnviron() {
+    // Under RTLD_DEEPBIND this plugin and libucs resolve ``environ`` in their own link scope first,
+    // which yields libc's definition. An executable that references ``environ`` (python does) has a
+    // copy relocation for it, so the live environment is the executable's copy while libc's stays
+    // stale or NULL, and UCS dereferences it when it reads, checks or prints UCX_* variables.
+    // RTLD_DEFAULT would search this deep-bound object's scope and return libc's copy again, so
+    // look the symbol up through the main program's handle, which searches the executable first.
+    // Without deep binding, or without a copy in the executable, both refer to the same object and
+    // this does nothing.
+    void *main_program = dlopen(nullptr, RTLD_NOW | RTLD_NOLOAD);
+    if (main_program == nullptr) {
+        return;
+    }
+    auto **process_environ = static_cast<char ***>(dlsym(main_program, "__environ"));
+    dlclose(main_program);
+    if (process_environ != nullptr && process_environ != &environ) {
+        environ = *process_environ;
+    }
+}
+
 
 void
 config::modify(std::string_view key, std::string_view value) const {
@@ -88,6 +114,7 @@ config::validateTlsCudaSupport() const {
 ucp_config_t *
 config::readUcpConfig() {
     ucp_config_t *config = nullptr;
+    syncDeepBoundEnviron();
     const auto status = ucp_config_read(nullptr, nullptr, &config);
     if (status != UCS_OK) {
         throw std::runtime_error("Failed to create UCX config: " +
