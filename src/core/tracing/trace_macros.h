@@ -84,7 +84,7 @@
                 (event_kind),                                                                      \
                 nixl_trace_context_,                                                               \
                 (event_request_id),                                                                \
-                ::nixlTime::getUs(),                                                               \
+                nixl_trace_tracer_->needsTimestamps() ? ::nixlTime::getUs() : ::nixlTime::us_t{0}, \
                 std::initializer_list<::nixl::trace::Attribute>{__VA_ARGS__});                     \
         }                                                                                          \
     } while (0)

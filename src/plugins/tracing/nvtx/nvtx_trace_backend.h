@@ -76,6 +76,11 @@ public:
         return "nvtx";
     }
 
+    [[nodiscard]] bool
+    ownsTimestamps() const noexcept override {
+        return true;
+    }
+
 private:
     const std::string domainName_;
     nvtxDomainHandle_t domain_;

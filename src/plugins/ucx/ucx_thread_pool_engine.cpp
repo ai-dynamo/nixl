@@ -175,7 +175,6 @@ struct nixlUcxBackendSharedState {
 void
 nixlUcxBackendSharedState::completeTracedChunk() noexcept {
     const nixlBackendPostTrace post = trace;
-    const nixlTime::us_t completed_at = nixlTime::getUs();
     // Read the status before pendingReqs reaches zero, after which a repost may rewrite it.
     size_t pending = pendingReqs.load();
     while ((pending > 1) && !pendingReqs.compare_exchange_weak(pending, pending - 1))
@@ -183,6 +182,7 @@ nixlUcxBackendSharedState::completeTracedChunk() noexcept {
     if (pending != 1) {
         return;
     }
+    const nixlTime::us_t completed_at = post.now();
     const bool succeeded = (status.load() == NIXL_SUCCESS);
     pendingReqs.store(0);
     if (succeeded) {

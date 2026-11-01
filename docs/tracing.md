@@ -269,7 +269,10 @@ reports it. The event carries `nixl.backend` (the recording backend's type),
 attributes. A phase recorded for a request also carries the request's
 `nixl.xfer_request_id`, which correlates it like the agent's own spans, and, when
 it belongs to a post, that post's `nixl.xfer_execution`; either is left out when
-the plugin passes 0. The phase vocabulary is closed so that timelines stay
+the plugin passes 0. When every active tracing backend times its records itself,
+as NVTX does, no clock is read for a phase or an agent event: the plugin's
+timestamp is 0 and the event carries no `nixl.phase.timestamp_us`. Spans keep the
+times the plugin passes. The phase vocabulary is closed so that timelines stay
 comparable across backends,
 and each phase has a fixed kind. A notification's two ends are `CommSend` and
 `CommRecv`, so a backend that builds a graph can pair them; the other phases are
@@ -336,8 +339,9 @@ Next to them, `traceIdentity` points to the same three values as one internal
 for the call and null in `prepMemView`, like `traceContext`. A plugin that records
 phases keeps a `nixlBackendPostTrace`, built at each post from its sink and these
 arguments: it records only with a sink and a sampled post, `record(phase)` stamps
-the phase with `nixlTime::getUs()` itself, and `recordAt(phase, timestamp)`
-records a time the plugin took earlier.
+the phase with `nixlTime::getUs()` itself when a backend needs the time,
+`recordAt(phase, timestamp)` records a time the plugin took earlier, and `now()`
+reads the clock under the same condition.
 
 UCX is the first such carrier. For a sampled request it appends the 26-byte
 record as a `tctx` tag after the notification's `name` and `msg`, then, when the

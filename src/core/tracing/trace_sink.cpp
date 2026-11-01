@@ -115,7 +115,7 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
     const bool named = (phase == nixl_trace_phase_t::OTHER) && !label.empty();
     record("nixl.phase.label",
            label,
-           timestamp,
+           (timestamp != 0) ? std::optional<nixlTime::us_t>{timestamp} : std::nullopt,
            identity,
            attrs,
            [&](std::span<const Attribute> event_attrs) {

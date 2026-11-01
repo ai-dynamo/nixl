@@ -22,6 +22,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -155,7 +156,7 @@ private:
     std::uint64_t id_;
 };
 
-class MockBackend final : public nixl::trace::TraceBackend {
+class MockBackend : public nixl::trace::TraceBackend {
 public:
     MockBackend(std::string name, CallLog *log, std::uint64_t span_id, bool null_spans = false)
         : name_(std::move(name)),
@@ -236,6 +237,16 @@ private:
     CallLog *log_;
     std::uint64_t spanId_;
     bool nullSpans_;
+};
+
+class SelfTimedBackend final : public MockBackend {
+public:
+    using MockBackend::MockBackend;
+
+    [[nodiscard]] bool
+    ownsTimestamps() const noexcept override {
+        return true;
+    }
 };
 
 class ThrowingBackend final : public nixl::trace::TraceBackend {
@@ -1304,6 +1315,76 @@ TEST(TracePhaseSink, PhaseWithoutATimeIsStampedWhenRecorded) {
     }
 }
 
+TEST(Tracing, TracerNeedsTimestampsUnlessEveryBackendOwnsThem) {
+    CallLog log;
+    const auto needs = [&](std::initializer_list<bool> owns) {
+        std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+        for (const bool owned : owns) {
+            if (owned) {
+                backends.push_back(std::make_unique<SelfTimedBackend>("self", &log, 0));
+            } else {
+                backends.push_back(std::make_unique<MockBackend>("mock", &log, 0));
+            }
+        }
+        return nixl::trace::Tracer{std::move(backends)}.needsTimestamps();
+    };
+
+    EXPECT_TRUE(needs({false}));
+    EXPECT_TRUE(needs({true, false}));
+    EXPECT_TRUE(needs({false, true}));
+    EXPECT_FALSE(needs({true}));
+    EXPECT_FALSE(needs({true, true}));
+    EXPECT_FALSE(needs({}));
+}
+
+TEST(TracePhaseSink, BackendsThatOwnTimestampsGetNoClockReading) {
+    CallLog a, b;
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+    backends.push_back(std::make_unique<SelfTimedBackend>("a", &a, 0));
+    backends.push_back(std::make_unique<SelfTimedBackend>("b", &b, 0));
+    nixl::trace::Tracer tracer{std::move(backends)};
+    nixl::trace::TracerPhaseSink sink{tracer, "UCX"};
+    const nixl::trace::TraceIdentity identity{testContext(0x3c), 0x3c, 1};
+    const nixlBackendPostTrace post{&sink, identity};
+
+    EXPECT_FALSE(sink.needsTimestamps());
+    EXPECT_EQ(post.now(), 0u);
+    post.record(nixl_trace_phase_t::SUBMIT);
+
+    for (const CallLog *log : {&a, &b}) {
+        ASSERT_EQ(log->emittedEvents.size(), 1u);
+        EXPECT_EQ(log->emittedEvents[0].times, std::vector<nixlTime::us_t>{0});
+        EXPECT_EQ(log->emittedEvents[0].attrs,
+                  (attr_list_t{{"nixl.backend", std::string("UCX")},
+                               {"nixl.xfer_request_id", std::int64_t{0x3c}},
+                               {"nixl.xfer_execution", std::int64_t{1}}}));
+    }
+}
+
+TEST(Tracing, EventMacroReadsNoClockForBackendsThatOwnTimestamps) {
+#if !defined(NIXL_TRACE_ENABLED)
+    GTEST_SKIP() << "the trace macros are compiled out";
+#endif
+    CallLog a, b;
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+    backends.push_back(std::make_unique<SelfTimedBackend>("a", &a, 0));
+    backends.push_back(std::make_unique<SelfTimedBackend>("b", &b, 0));
+    nixl::trace::Tracer tracer{std::move(backends)};
+
+    NIXL_TRACE_EVENT(&tracer,
+                     "nixl::xfer.complete",
+                     nixl::trace::Kind::Metadata,
+                     testContext(0x3d),
+                     0x3d,
+                     {"nixl.xfer_execution", std::int64_t{1}});
+
+    for (const CallLog *log : {&a, &b}) {
+        ASSERT_EQ(log->emittedEvents.size(), 1u);
+        EXPECT_EQ(log->emittedEvents[0].name, "nixl::xfer.complete");
+        EXPECT_EQ(log->emittedEvents[0].times, std::vector<nixlTime::us_t>{0});
+    }
+}
+
 TEST(TracePhaseSink, PostTraceRecordsOnlyWithASinkAndASampledPost) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
@@ -1351,6 +1432,9 @@ TEST(TracePhaseSink, PostTraceRecordsItsPostsIdentity) {
     posted.record(nixl_trace_phase_t::SUBMIT, rail);
     const nixlTime::us_t after = nixlTime::getUs();
     received.recordAt(nixl_trace_phase_t::NOTIF_RECEIVED, 42, peer);
+
+    EXPECT_TRUE(sink.needsTimestamps());
+    EXPECT_GE(posted.now(), after);
 
     EXPECT_EQ(posted.identity().context, identity.context);
     EXPECT_EQ(posted.identity().requestId, identity.requestId);

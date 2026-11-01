@@ -148,6 +148,11 @@ public:
     [[nodiscard]] virtual std::string_view
     name() const noexcept = 0;
 
+    [[nodiscard]] virtual bool
+    ownsTimestamps() const noexcept {
+        return false;
+    }
+
     /**
      * @brief Record a span from @p start to @p end, or an event at @p at, that
      *        already happened. Times are `nixlTime` microseconds on
@@ -279,6 +284,11 @@ public:
         return randomBytes_;
     }
 
+    [[nodiscard]] bool
+    needsTimestamps() const noexcept {
+        return needsTimestamps_;
+    }
+
     /** @brief Logs this tracer's first trace-context generation failure at ERROR;
      *         later ones are not logged. */
     void
@@ -321,6 +331,7 @@ private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;
     const double sampleRatio_;
     const random_bytes_fn_t randomBytes_;
+    const bool needsTimestamps_;
     mutable std::atomic<bool> contextFailureLogged_ = false;
 };
 

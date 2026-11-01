@@ -57,6 +57,11 @@ public:
                std::span<const nixlBackendTraceAttr> attrs,
                std::string_view label) noexcept override;
 
+    [[nodiscard]] bool
+    needsTimestamps() const noexcept override {
+        return tracer_.needsTimestamps();
+    }
+
 private:
     template<typename Emit>
     void

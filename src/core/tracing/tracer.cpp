@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <unordered_set>
 
 #include "tracing/trace.h"
@@ -85,7 +86,10 @@ Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
                random_bytes_fn_t random_bytes) noexcept
     : backends_(std::move(backends)),
       sampleRatio_(sample_ratio),
-      randomBytes_(random_bytes) {}
+      randomBytes_(random_bytes),
+      needsTimestamps_(std::ranges::any_of(backends_, [](const auto &backend) {
+          return !backend->ownsTimestamps();
+      })) {}
 
 Tracer::~Tracer() = default;
 

@@ -119,6 +119,14 @@ TEST(NvtxEvents, FixedAndShortNamesAllocateNothing) {
     EXPECT_EQ(allocations.count(), 0u);
 }
 
+TEST(NvtxEvents, BackendOwnsItsTimestamps) {
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+    backends.push_back(std::make_unique<nvtx::NvtxTraceBackend>("nixl-unit"));
+    const nixl::trace::Tracer tracer(std::move(backends), 1.0);
+
+    EXPECT_FALSE(tracer.needsTimestamps());
+}
+
 TEST(NvtxSpan, AttributesThatFitAllocateNothing) {
     const nvtx::PayloadSchemaIds schema_ids{};
     std::make_unique<nvtx::NvtxSpan>(nullptr, schema_ids).reset();

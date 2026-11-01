@@ -141,8 +141,8 @@ public:
      * @param phase     Which phase; see @ref nixl_trace_phase_t.
      * @param timestamp Microsecond reading of the monotonic `nixlTime` clock
      *                  (`nixlTime::getUs()`, backed by `std::chrono::steady_clock`),
-     *                  not a wall clock. Recorded verbatim as the event's time and
-     *                  as `nixl.phase.timestamp_us`.
+     *                  not a wall clock. Recorded verbatim as the event's time and,
+     *                  when non-zero, as `nixl.phase.timestamp_us`.
      * @param identity  Trace identity the phase belongs to: the post's own for a
      *                  local phase, the sender's for a phase observed on receipt.
      *                  Valid for the call only. Its context is the record's
@@ -169,13 +169,18 @@ public:
                 std::span<const nixlBackendTraceAttr> attrs = {},
                 std::string_view label = {}) noexcept = 0;
 
-    /** @brief Record that @p phase happened now, at nixlTime::getUs(). */
+    /** @brief Record that @p phase happened now, at nixlTime::getUs() when
+     *         needsTimestamps(), otherwise at 0. */
     void
     recordPhase(nixl_trace_phase_t phase,
                 const nixl::trace::TraceIdentity &identity,
                 std::span<const nixlBackendTraceAttr> attrs = {},
                 std::string_view label = {}) noexcept {
-        recordPhase(phase, nixlTime::getUs(), identity, attrs, label);
+        recordPhase(phase,
+                    needsTimestamps() ? nixlTime::getUs() : nixlTime::us_t{0},
+                    identity,
+                    attrs,
+                    label);
     }
 
     /**
@@ -209,12 +214,17 @@ public:
                const nixl::trace::TraceIdentity &identity,
                std::span<const nixlBackendTraceAttr> attrs = {},
                std::string_view label = {}) noexcept = 0;
+
+    [[nodiscard]] virtual bool
+    needsTimestamps() const noexcept {
+        return true;
+    }
 };
 
 /**
  * @brief A post's trace for a backend's phases: the sink and the post's identity.
  *        It records only with a sink and a sampled identity; record() reads the
- *        clock, recordAt() takes a time stamped earlier.
+ *        clock when the sink needs it, recordAt() takes a time stamped earlier.
  */
 class nixlBackendPostTrace {
 public:
@@ -239,6 +249,12 @@ public:
     [[nodiscard]] const nixl::trace::TraceIdentity &
     identity() const noexcept {
         return identity_;
+    }
+
+    [[nodiscard]] nixlTime::us_t
+    now() const noexcept {
+        return ((sink_ != nullptr) && sink_->needsTimestamps()) ? nixlTime::getUs() :
+                                                                  nixlTime::us_t{0};
     }
 
     void
