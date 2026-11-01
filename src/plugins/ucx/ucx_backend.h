@@ -34,6 +34,7 @@
 #include "mem_list.h"
 #include "rkey.h"
 #include "ucx_utils.h"
+#include "memory_policy.h"
 
 namespace nixl::ucx {
 struct notifMessage {
@@ -111,7 +112,7 @@ private:
 class nixlUcxEngine : public nixlBackendEngine {
 public:
     static std::unique_ptr<nixlUcxEngine>
-    create(const nixlBackendInitParams &init_params);
+    create(const nixlBackendInitParams &init_params, nixl::ucx::MemoryPolicyPtr policy = {});
 
     ~nixlUcxEngine();
 
@@ -277,7 +278,9 @@ protected:
                   size_t start_idx,
                   size_t end_idx) const;
 
-    nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers = 0);
+    nixlUcxEngine(const nixlBackendInitParams &init_params,
+                  size_t num_dedicated_workers = 0,
+                  nixl::ucx::MemoryPolicyPtr policy = {});
 
     notif_list_t notifList_;
 
@@ -336,6 +339,7 @@ private:
     getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const noexcept;
 
     /* UCX data */
+    const nixl::ucx::MemoryPolicyPtr memoryPolicy_;
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> workers_;
     size_t numSharedWorkers_;
