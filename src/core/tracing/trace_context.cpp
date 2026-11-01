@@ -26,7 +26,7 @@
 #include "common/nixl_log.h"
 #include "common/uuid_v4.h"
 #include "log_once.h"
-#include "random_buffer.h"
+#include "random_generator.h"
 #include "trace.h"
 #include "trace_context.h"
 
@@ -108,29 +108,29 @@ systemRandomBytes(std::span<std::uint8_t> output) {
     nixl::generateRandomBytes(output.data(), output.size());
 }
 
-constinit thread_local nixl::trace::RandomBuffer random_buffer{systemRandomBytes};
+constinit thread_local nixl::trace::RandomGenerator random_generator{systemRandomBytes};
 
 void
-clearRandomBuffer() noexcept {
-    random_buffer.clear();
+clearRandomGenerator() noexcept {
+    random_generator.clear();
 }
 
 void
-bufferedRandomBytes(std::span<std::uint8_t> output) {
+generatedRandomBytes(std::span<std::uint8_t> output) {
     // A forked child must not hand out the bytes its parent still holds.
-    static const bool fork_safe = (pthread_atfork(nullptr, nullptr, clearRandomBuffer) == 0);
+    static const bool fork_safe = (pthread_atfork(nullptr, nullptr, clearRandomGenerator) == 0);
     if (!fork_safe) {
         systemRandomBytes(output);
         return;
     }
-    random_buffer.fill(output);
+    random_generator.fill(output);
 }
 
 void
 generateInto(nixl::trace::TraceContext &context,
              double sample_ratio,
              nixl::trace::random_bytes_fn_t random_bytes) {
-    const auto fill = (random_bytes != nullptr) ? random_bytes : bufferedRandomBytes;
+    const auto fill = (random_bytes != nullptr) ? random_bytes : generatedRandomBytes;
     do {
         fill(context.traceId);
     } while (isAllZero(context.traceId));
@@ -336,7 +336,7 @@ nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
         return 0;
     }
     const auto fill =
-        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : bufferedRandomBytes;
+        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : generatedRandomBytes;
     std::uint64_t id = 0;
     try {
         do {
@@ -357,7 +357,7 @@ nixl::trace::generatePostContext(const nixl::trace::TraceContext &request,
         return request;
     }
     const auto fill =
-        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : bufferedRandomBytes;
+        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : generatedRandomBytes;
     nixl::trace::TraceContext context = request;
     try {
         do {

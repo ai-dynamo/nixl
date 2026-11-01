@@ -37,7 +37,7 @@
 #include <unistd.h>
 
 #include "common.h"
-#include "tracing/random_buffer.h"
+#include "tracing/random_generator.h"
 #include "tracing/trace.h"
 #include "tracing/trace_context.h"
 
@@ -79,8 +79,6 @@ contextWithRandomnessValue(std::uint64_t randomness) {
     return context;
 }
 
-constexpr std::array<std::uint8_t, 8> kBlockStart{0, 1, 2, 3, 4, 5, 6, 7};
-
 std::size_t refill_count = 0;
 bool fail_next_refill = false;
 
@@ -94,11 +92,11 @@ countingRefill(std::span<std::uint8_t> bytes) {
     std::iota(bytes.begin(), bytes.end(), std::uint8_t{0});
 }
 
-[[nodiscard]] nixl::trace::RandomBuffer
-countingBuffer() {
+[[nodiscard]] nixl::trace::RandomGenerator
+countingGenerator() {
     refill_count = 0;
     fail_next_refill = false;
-    return nixl::trace::RandomBuffer{countingRefill};
+    return nixl::trace::RandomGenerator{countingRefill};
 }
 
 } // namespace
@@ -600,58 +598,62 @@ TEST(TraceContext, InvalidOtelVariableIsIgnoredNotFatal) {
     EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 0.0);
 }
 
-TEST(TraceContext, RandomBufferRefillsOncePerBlock) {
-    auto buffer = countingBuffer();
+TEST(TraceContext, RandomGeneratorSeedsOncePerMiB) {
+    auto generator = countingGenerator();
     std::array<std::uint8_t, 32> bytes{};
 
-    for (int draw = 0; draw < 8; ++draw) {
-        buffer.fill(bytes);
+    for (std::size_t drawn = 0; drawn < nixl::trace::RandomGenerator::reseedBytes;
+         drawn += bytes.size()) {
+        generator.fill(bytes);
     }
     EXPECT_EQ(refill_count, 1u);
 
-    buffer.fill(bytes);
+    generator.fill(bytes);
     EXPECT_EQ(refill_count, 2u);
 }
 
-TEST(TraceContext, RandomBufferServesBytesInOrderAcrossBlocks) {
-    auto buffer = countingBuffer();
-    std::vector<std::uint8_t> served;
+TEST(TraceContext, RandomGeneratorDrawsTheSameBytesFromTheSameSeed) {
+    std::array<std::uint8_t, 24> first{};
+    std::array<std::uint8_t, 24> second{};
+    auto generator = countingGenerator();
+    generator.fill(first);
+    countingGenerator().fill(second);
+    EXPECT_EQ(first, second);
 
-    for (int draw = 0; draw < 22; ++draw) {
-        std::array<std::uint8_t, 24> bytes{};
-        buffer.fill(bytes);
-        served.insert(served.end(), bytes.begin(), bytes.end());
-    }
+    std::array<std::uint8_t, 24> seed_bytes{};
+    std::iota(seed_bytes.begin(), seed_bytes.end(), std::uint8_t{0});
+    EXPECT_NE(first, seed_bytes);
 
-    std::vector<std::uint8_t> expected(served.size());
-    std::iota(expected.begin(), expected.end(), std::uint8_t{0});
-    EXPECT_EQ(served, expected);
-    EXPECT_EQ(refill_count, 3u);
+    std::array<std::uint8_t, 24> next{};
+    generator.fill(next);
+    EXPECT_NE(next, first);
 }
 
-TEST(TraceContext, RandomBufferClearDiscardsTheRest) {
-    auto buffer = countingBuffer();
+TEST(TraceContext, RandomGeneratorClearSeedsAgain) {
+    auto generator = countingGenerator();
     std::array<std::uint8_t, 8> first{};
     std::array<std::uint8_t, 8> second{};
 
-    buffer.fill(first);
-    buffer.clear();
-    buffer.fill(second);
+    generator.fill(first);
+    generator.clear();
+    generator.fill(second);
 
     EXPECT_EQ(refill_count, 2u);
-    EXPECT_EQ(second, kBlockStart);
+    EXPECT_EQ(second, first);
 }
 
-TEST(TraceContext, RandomBufferRetriesAfterAFailedRefill) {
-    auto buffer = countingBuffer();
+TEST(TraceContext, RandomGeneratorRetriesAfterAFailedSeed) {
+    std::array<std::uint8_t, 8> expected{};
+    countingGenerator().fill(expected);
+
+    auto generator = countingGenerator();
     std::array<std::uint8_t, 8> bytes{};
-
     fail_next_refill = true;
-    EXPECT_THROW(buffer.fill(bytes), std::runtime_error);
+    EXPECT_THROW(generator.fill(bytes), std::runtime_error);
 
-    buffer.fill(bytes);
+    generator.fill(bytes);
     EXPECT_EQ(refill_count, 2u);
-    EXPECT_EQ(bytes, kBlockStart);
+    EXPECT_EQ(bytes, expected);
 }
 
 TEST(TraceContext, ForkedChildDrawsItsOwnIds) {
