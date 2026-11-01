@@ -18,11 +18,13 @@
 #include "common/nixl_time.h"
 #include "common/scoped_fd.h"
 #include "nixl.h"
+#include "plugin_manager.h"
 #include "serdes/serdes.h"
 #include "tracing/trace_context.h"
 #include "transfer_request.h"
 #include "ucx_backend.h"
 #include "ucx_trace_peer.h"
+#include "unit/allocation_counter.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -202,6 +204,46 @@ writeToSelf(const std::string &name,
     ASSERT_EQ(notifs[name].size(), notifying_posts);
     ASSERT_EQ(agent.releaseXferReq(req), NIXL_SUCCESS);
     ASSERT_EQ(agent.deregisterMem(regs), NIXL_SUCCESS);
+}
+
+[[nodiscard]] std::size_t
+allocationsPerRequests(const std::string &name, size_t warmup, size_t measured, bool notify) {
+    const gtest::LogIgnoreGuard efa(efa_warning);
+    nixlAgent agent(name, idleConfig());
+    nixlBackendH *backend = nullptr;
+    EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
+    const std::vector<char> src_buffer(buffer_size, 'x');
+    const std::vector<char> dst_buffer(buffer_size);
+    nixl_reg_dlist_t regs(DRAM_SEG);
+    regs.addDesc(nixlBlobDesc(address(src_buffer), src_buffer.size(), 0));
+    regs.addDesc(nixlBlobDesc(address(dst_buffer), dst_buffer.size(), 0));
+    EXPECT_EQ(agent.registerMem(regs), NIXL_SUCCESS);
+    nixl_xfer_dlist_t src(DRAM_SEG);
+    nixl_xfer_dlist_t dst(DRAM_SEG);
+    src.addDesc(nixlBasicDesc(address(src_buffer), buffer_size, 0));
+    dst.addDesc(nixlBasicDesc(address(dst_buffer), buffer_size, 0));
+
+    nixl_opt_args_t params;
+    if (notify) {
+        params.notif = tagged_msg;
+    }
+    nixl_notifs_t notifs;
+    const auto run = [&](size_t requests) {
+        for (size_t i = 0; i < requests; ++i) {
+            nixlXferReqH *req = nullptr;
+            ASSERT_EQ(agent.createXferReq(NIXL_WRITE, src, dst, name, req), NIXL_SUCCESS);
+            ASSERT_EQ(awaitCompletion(agent, req, agent.postXferReq(req, &params)), NIXL_SUCCESS);
+            ASSERT_EQ(agent.releaseXferReq(req), NIXL_SUCCESS);
+            notifs.clear();
+            ASSERT_EQ(agent.getNotifs(notifs), NIXL_SUCCESS);
+        }
+    };
+    run(warmup);
+    const gtest::AllocationCounter allocations;
+    run(measured);
+    const std::size_t count = allocations.count();
+    EXPECT_EQ(agent.deregisterMem(regs), NIXL_SUCCESS);
+    return count;
 }
 
 template<typename afterPostType>
@@ -932,4 +974,27 @@ TEST_F(ucxTraceContextPropagation, UnsampledAndUntracedPostsRecordNoPhases) {
         EXPECT_TRUE(recordedSpans(traceFile, untraced_name, phase).empty()) << phase;
     }
     EXPECT_TRUE(recordedSpans(traceFile, unsampled_name, "nixl::postXferReq.write").empty());
+}
+
+TEST_F(ucxTraceContextPropagation, SampledRequestAllocatesNoMoreThanAnUntracedOne) {
+    const std::string nvtx_dir = std::string(BUILD_DIR) + "/src/plugins/tracing/nvtx";
+    if (!std::filesystem::exists(nvtx_dir)) {
+        GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+    }
+    nixlPluginManager::getInstance().addPluginDirectory(nvtx_dir);
+    constexpr size_t warmup = 50;
+    constexpr size_t measured = 200;
+
+    for (const bool notify : {false, true}) {
+        env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
+        const std::size_t traced = allocationsPerRequests(sender_name, warmup, measured, notify);
+        env.popVar();
+        env.addVar("NIXL_TRACE_BACKENDS", "");
+        const std::size_t untraced =
+            allocationsPerRequests(untraced_name, warmup, measured, notify);
+        env.popVar();
+
+        EXPECT_GT(untraced, 0u) << "notify " << notify;
+        EXPECT_EQ(traced, untraced) << "notify " << notify;
+    }
 }

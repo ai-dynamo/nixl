@@ -702,8 +702,10 @@ std::string
 nixl::ucx::serializeNotif(const std::string &agent,
                           const std::string &msg,
                           const nixl::trace::TraceIdentity &identity) {
+    constexpr size_t notif_overhead = 128;
     nixlSerDes ser_des;
 
+    ser_des.reserve(agent.size() + msg.size() + notif_overhead);
     ser_des.addStr("name", agent);
     ser_des.addStr("msg", msg);
     if (identity.context.sampled()) {
