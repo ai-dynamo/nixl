@@ -378,6 +378,14 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const n
     }
 }
 
+void
+nixlUcxBackendReqH::flushCallback(void *, ucs_status_t status, void *user_data) noexcept {
+    if (status == UCS_OK) {
+        static_cast<const nixlUcxBackendReqH *>(user_data)->trace.record(
+            nixl_trace_phase_t::WIRE_COMPLETED);
+    }
+}
+
 nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
@@ -589,6 +597,8 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     int_handle->trace = nixlBackendPostTrace{traceSink_, opt_args};
+    int_handle->wireCompletedOnFlush =
+        int_handle->trace.active() && hasProgressThread() && !int_handle->isComposite();
     int_handle->trace.record(nixl_trace_phase_t::SUBMIT);
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion

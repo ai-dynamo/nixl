@@ -261,6 +261,11 @@ protected:
         return sglEnabled_;
     }
 
+    [[nodiscard]] virtual bool
+    hasProgressThread() const noexcept {
+        return false;
+    }
+
     virtual void
     appendNotif(std::string &&remote_name, std::string &&msg);
 

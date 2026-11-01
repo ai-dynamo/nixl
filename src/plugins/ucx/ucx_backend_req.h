@@ -39,6 +39,7 @@ public:
     std::string notif;
 
     nixlBackendPostTrace trace;
+    bool wireCompletedOnFlush = false;
 
 #ifdef HAVE_UCX_SGL_API
     std::optional<nixl::ucx::sglXfer> sgl;
@@ -80,7 +81,11 @@ public:
     [[nodiscard]] nixl_status_t
     flush() {
         nixlUcxReq req = nullptr;
-        const nixl_status_t status = ep_->flushEp(req);
+        const auto callback = wireCompletedOnFlush ? &flushCallback : nullptr;
+        const nixl_status_t status = ep_->flushEp(req, callback, this);
+        if ((status == NIXL_SUCCESS) && (callback != nullptr)) {
+            callback(nullptr, UCS_OK, this);
+        }
         return append(status, req);
     }
 
@@ -181,6 +186,9 @@ private:
     // A post to a single endpoint issues at most three requests:
     // one data request, one flush request, and one notification request.
     static constexpr size_t max_requests = 3;
+
+    static void
+    flushCallback(void *request, ucs_status_t status, void *user_data) noexcept;
 
     void
     reset() noexcept {

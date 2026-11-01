@@ -113,7 +113,9 @@ public:
                  std::chrono::microseconds &err_margin,
                  nixl_cost_t &method);
     nixl_status_t
-    flushEp(nixlUcxReq &req) const noexcept;
+    flushEp(nixlUcxReq &req,
+            ucp_send_nbx_callback_t callback = nullptr,
+            void *user_data = nullptr) const noexcept;
 
 #ifdef HAVE_UCX_SGL_API
     /* Scatter-gather list (SGL) operations */
