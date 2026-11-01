@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <random>
 #include <sstream>
 
@@ -876,7 +877,7 @@ namespace agent {
         EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
     }
 
-    TEST_F(recorderTracingAgentFixture, RequestIdTextIsOnTheHandle) {
+    TEST_F(recorderTracingAgentFixture, CreatedAndPreppedRequestsRecordTheirId) {
         nixlAgent *agent = agent_helper_->getAgent();
         nixlXferReqH *created = nullptr;
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, created), NIXL_SUCCESS);
@@ -892,14 +893,12 @@ namespace agent {
                 NIXL_WRITE, *local_side, indices, *remote_side, indices, made, &setup_.extraParams),
             NIXL_SUCCESS);
 
+        EXPECT_THAT(records("nixl::createXferReq"), testing::ElementsAre(identifies(created)));
+        EXPECT_THAT(records("nixl::makeXferReq"), testing::ElementsAre(identifies(made)));
         for (const nixlXferReqH *req : {created, made}) {
-            const std::string_view text = req->trace().requestIdText();
-            const auto handle = reinterpret_cast<std::uintptr_t>(req);
-            const auto first = reinterpret_cast<std::uintptr_t>(text.data());
             EXPECT_NE(req->trace().requestId(), 0u);
-            EXPECT_EQ(text, std::to_string(req->trace().requestId()));
-            EXPECT_GE(first, handle);
-            EXPECT_LE(first + text.size(), handle + sizeof(nixlXferReqH));
+            EXPECT_LE(req->trace().requestId(),
+                      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
         }
 
         EXPECT_EQ(agent->releaseXferReq(made), NIXL_SUCCESS);

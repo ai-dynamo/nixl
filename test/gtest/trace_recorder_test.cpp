@@ -39,7 +39,7 @@ namespace {
 using record_t = std::vector<std::string>;
 
 constexpr const char *recorder_agent = "recorder_agent";
-constexpr std::uint64_t recorded_request_id = 0x8090a0b0c0d0e0f0ULL;
+constexpr std::uint64_t recorded_request_id = 0x7090a0b0c0d0e0f0ULL;
 
 class traceRecorder : public testing::Test {
 protected:

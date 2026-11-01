@@ -329,14 +329,6 @@ testContext(std::uint8_t id_byte, std::uint8_t flags = 0x01) {
 }
 
 template<typename T>
-[[nodiscard]] bool
-liesInside(std::string_view text, const T &object) {
-    const auto first = reinterpret_cast<std::uintptr_t>(&object);
-    const auto begin = reinterpret_cast<std::uintptr_t>(text.data());
-    return (begin >= first) && (begin + text.size() <= first + sizeof(T));
-}
-
-template<typename T>
 concept hasAttributeValue = requires(const T &value) { nixl::trace::attributeValue(value); };
 
 static_assert(hasAttributeValue<float>);
@@ -935,22 +927,14 @@ TEST(Tracing, PostContextIsTheRequestsWithoutTracerOrSource) {
     EXPECT_EQ(failures.count(), 1u);
 }
 
-TEST(Tracing, RequestIdTextIsTheUnsignedDecimal) {
-    constexpr std::uint64_t kIds[] = {
-        0, 1, 42, std::uint64_t{1} << 63, std::numeric_limits<std::uint64_t>::max()};
+TEST(Tracing, RequestIdFitsAnInt64) {
+    const nixl::trace::Tracer tracer{
+        std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{},
+        0.0,
+        [](std::span<std::uint8_t> bytes) { std::ranges::fill(bytes, std::uint8_t{0xff}); }};
 
-    for (const auto id : kIds) {
-        EXPECT_EQ(nixl::trace::RequestIdText{id}.view(), std::to_string(id));
-    }
-}
-
-TEST(Tracing, RequestIdTextViewsItsOwnDigits) {
-    const nixl::trace::RequestIdText text{std::numeric_limits<std::uint64_t>::max()};
-    const nixl::trace::RequestIdText copy = text;
-
-    EXPECT_TRUE(liesInside(text.view(), text));
-    EXPECT_TRUE(liesInside(copy.view(), copy));
-    EXPECT_EQ(copy.view(), text.view());
+    EXPECT_EQ(nixl::trace::generateRequestId(&tracer),
+              static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
 }
 
 TEST(Tracing, TraceableDrawsAPostSpanIdOnceItsOwnIsUsed) {
@@ -1149,7 +1133,7 @@ TEST(TracePhaseSink, RequestIdAndExecutionAreRecordedWhenNonZero) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
     nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
-    constexpr std::uint64_t request_id = 0xfedcba9876543210ULL;
+    constexpr std::uint64_t request_id = 0x7edcba9876543210ULL;
 
     sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 1, {}, nullptr, request_id, 2);
     sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 2, {}, nullptr, request_id, 0);
@@ -1163,12 +1147,12 @@ TEST(TracePhaseSink, RequestIdAndExecutionAreRecordedWhenNonZero) {
         EXPECT_EQ(log->emittedEvents[0].attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
                                {"nixl.phase.timestamp_us", std::int64_t{1}},
-                               {"nixl.xfer_request_id", std::string("18364758544493064720")},
+                               {"nixl.xfer_request_id", static_cast<std::int64_t>(request_id)},
                                {"nixl.xfer_execution", std::int64_t{2}}}));
         EXPECT_EQ(log->emittedEvents[1].attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
                                {"nixl.phase.timestamp_us", std::int64_t{2}},
-                               {"nixl.xfer_request_id", std::string("18364758544493064720")}}));
+                               {"nixl.xfer_request_id", static_cast<std::int64_t>(request_id)}}));
         EXPECT_EQ(log->emittedEvents[2].attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
                                {"nixl.phase.timestamp_us", std::int64_t{3}}}));

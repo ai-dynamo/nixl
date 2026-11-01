@@ -19,7 +19,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <string_view>
 
 #include "tracing/trace_context.h"
 
@@ -34,7 +33,6 @@ public:
     Traceable(const TraceContext &context, std::uint64_t request_id) noexcept
         : context_(context),
           postContext_(context),
-          requestIdText_(request_id),
           requestId_(request_id) {}
 
     [[nodiscard]] const TraceContext &
@@ -52,12 +50,6 @@ public:
     [[nodiscard]] std::uint64_t
     requestId() const noexcept {
         return requestId_;
-    }
-
-    /** @brief requestId() as nixl.xfer_request_id records it. */
-    [[nodiscard]] std::string_view
-    requestIdText() const noexcept {
-        return requestIdText_.view();
     }
 
     [[nodiscard]] std::uint64_t
@@ -88,7 +80,6 @@ private:
     const TraceContext context_;
     TraceContext postContext_;
     bool spanIdUsed_ = false;
-    const RequestIdText requestIdText_;
     const std::uint64_t requestId_;
     std::atomic<std::uint64_t> execution_ = 0;
 };
