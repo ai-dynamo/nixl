@@ -151,19 +151,26 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 
     agent->getPluginParams(backend_name, mems, backend_params);
 
+    const bool device_proxy = xferBenchConfig::use_device_api &&
+        xferBenchConfig::device_mode == XFERBENCH_DEVICE_MODE_PROXY;
+    if (device_proxy) {
+        // Pairwise: each process talks to exactly one remote agent.
+        backend_params["device_proxy"] = "true";
+        backend_params["proxy_channel_count"] = std::to_string(xferBenchConfig::device_channel_num);
+        backend_params["proxy_max_peers"] = "1";
+        if (xferBenchConfig::device_proxy_threads > 0) {
+            backend_params["proxy_thread_count"] =
+                std::to_string(xferBenchConfig::device_proxy_threads);
+        }
+    }
+    if (xferBenchConfig::use_device_api) {
+        std::cout << "Device API mode: configuring " << xferBenchConfig::device_channel_num
+                  << (device_proxy ? " CPU proxy" : " UCX device") << " channels for "
+                  << xferBenchConfig::deviceGroupNum() << " execution groups" << std::endl;
+    }
+
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
-        const bool device_proxy = xferBenchConfig::use_device_api &&
-            xferBenchConfig::device_mode == XFERBENCH_DEVICE_MODE_PROXY;
         if (device_proxy) {
-            // Pairwise: each process talks to exactly one remote agent.
-            backend_params["device_proxy"] = "true";
-            backend_params["proxy_channel_count"] =
-                std::to_string(xferBenchConfig::device_channel_num);
-            backend_params["proxy_max_peers"] = "1";
-            if (xferBenchConfig::device_proxy_threads > 0) {
-                backend_params["proxy_thread_count"] =
-                    std::to_string(xferBenchConfig::device_proxy_threads);
-            }
             // UCX host atomics need err-mode none.
             backend_params["ucx_error_handling_mode"] = "none";
             backend_params["engine_config"] = "FENCE_MODE=ep_based";
@@ -173,11 +180,6 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
                 backend_params["ucx_num_device_channels"] =
                     std::to_string(xferBenchConfig::device_channel_num);
             }
-        }
-        if (xferBenchConfig::use_device_api) {
-            std::cout << "Device API mode: configuring " << xferBenchConfig::device_channel_num
-                      << (device_proxy ? " CPU proxy" : " UCX device") << " channels for "
-                      << xferBenchConfig::deviceGroupNum() << " execution groups" << std::endl;
         }
 
         // No need to set device_list if all is specified
@@ -312,8 +314,13 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
             std::cout << "OBJ backend with standard S3 enabled" << std::endl;
         }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_REDIS)) {
-        // REDIS backend: host/port/password via REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
-        std::cout << "REDIS backend configured (using defaults or environment variables)"
+        // getPluginParams() pre-fills the plugin's advertised defaults, which take
+        // precedence over REDIS_* env vars in fromBackendParams. Clear them so
+        // REDIS_HOST, REDIS_PORT, etc. are honoured.
+        for (const char *k : {"host", "port", "username", "password", "db", "pool_size"}) {
+            backend_params.erase(k);
+        }
+        std::cout << "REDIS backend configured (using REDIS_* environment variables or defaults)"
                   << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically
@@ -764,7 +771,7 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
 /** Allocate @a nbytes of VRAM on @a devid with all bytes set to zero. */
 static std::optional<xferBenchIOV>
 allocVramValueZero(int devid, size_t nbytes) {
-#ifdef HAVE_UCX_GPU_DEVICE_API
+#ifdef NIXLBENCH_DEVICE_API
     if (neuronCoreCount() > 0) {
         return getVramDescNeuron(devid, nbytes, 0);
     }
@@ -2034,7 +2041,7 @@ execDeviceTransfer(nixlMemViewH local_mvh,
                    const bool collect_iteration_stats,
                    xferBenchStats &stats,
                    const std::atomic<int> *terminate_ptr = nullptr) {
-#ifdef HAVE_UCX_GPU_DEVICE_API
+#ifdef NIXLBENCH_DEVICE_API
     stats.clear();
     if (per_group_iter < 1) {
         std::cerr << "NIXL Device API requires at least one transfer iteration per group"
@@ -2153,7 +2160,7 @@ xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_
                                                     uint64_t expected_value,
                                                     const char *phase,
                                                     const std::function<void()> &checkLiveness) {
-#ifdef HAVE_UCX_GPU_DEVICE_API
+#ifdef NIXLBENCH_DEVICE_API
     struct xferBenchDeviceCounters {
         uint64_t done;
         uint64_t error;
@@ -2200,7 +2207,7 @@ xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_
 
 static void
 resetDeviceCounters(const xferBenchIOV &counter_iov) {
-#ifdef HAVE_UCX_GPU_DEVICE_API
+#ifdef NIXLBENCH_DEVICE_API
     CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId), "Failed to set completion counter device");
     CHECK_CUDA_ERROR(cudaMemset(reinterpret_cast<void *>(counter_iov.addr), 0, kDeviceCounterBytes),
                      "Failed to reset completion counters in VRAM");

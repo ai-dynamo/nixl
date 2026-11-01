@@ -16,6 +16,7 @@
  */
 
 #include "redis_client.h"
+#include <hiredis/adapters/libevent.h>
 #include "common/backend.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"

@@ -52,7 +52,7 @@ public:
         // This will ensure that the resulting delay is at least 1ms and fits into int in order for
         // it to be compatible with poll()
         const int delay_us =
-            static_cast<int>(std::min<nixlTime::us_t>(delay, std::numeric_limits<int>::max()));
+            static_cast<int>(std::clamp<nixlTime::us_t>(delay, 1, std::numeric_limits<int>::max()));
         delay_ = std::chrono::ceil<std::chrono::milliseconds>(std::chrono::microseconds(delay_us));
 
         pollFds_.reserve(getWorkers().size() + 1);
