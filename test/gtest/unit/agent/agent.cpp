@@ -1033,6 +1033,23 @@ namespace agent {
         EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
     }
 
+    TEST_F(recorderTracingAgentFixture, GetNotifsIsRecordedOnlyWithNotifications) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+        EXPECT_CALL(engine, getNotifs)
+            .WillOnce(testing::Return(NIXL_SUCCESS))
+            .WillOnce(testing::DoAll(testing::SetArgReferee<0>(notif_list_t{{"peer", "msg"}}),
+                                     testing::Return(NIXL_SUCCESS)));
+        nixl_notifs_t notifs;
+
+        EXPECT_EQ(agent->getNotifs(notifs), NIXL_SUCCESS);
+        EXPECT_TRUE(records("nixl::getNotifs").empty());
+
+        EXPECT_EQ(agent->getNotifs(notifs), NIXL_SUCCESS);
+        EXPECT_EQ(notifs["peer"].size(), 1u);
+        EXPECT_EQ(records("nixl::getNotifs").size(), 1u);
+    }
+
     class sampledRecorderTracingAgentFixture : public recorderTracingAgentFixture {
     protected:
         [[nodiscard]] std::string

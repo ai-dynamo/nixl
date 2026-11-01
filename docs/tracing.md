@@ -189,6 +189,10 @@ backends/PRs):
 | `nixl::prepMemView` | `MemoryR` | `mem_type`, `desc_count` |
 | `nixl::releaseMemView` | `Generic` | - |
 
+`nixl::getNotifs` is recorded only by a call that returns notifications, so polling an
+empty queue records nothing; it is emitted when the call returns, with its start and end
+times.
+
 Spans cover the synchronous call only; the `nixl::xfer.complete` event is emitted
 once per completed post, by the first call that sees the transfer complete:
 `postXferReq` when the backend completes it at once, and otherwise `getXferStatus`,

@@ -1497,12 +1497,12 @@ nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
 nixl_status_t
 nixlAgent::getNotifs(nixl_notifs_t &notif_map,
                      const nixl_opt_args_t* extra_params) {
-    NIXL_TRACE_SCOPE(
-        trace_span, data->tracer_.get(), "nixl::getNotifs", nixl::trace::Kind::Metadata);
+    [[maybe_unused]] const nixlTime::us_t trace_start = NIXL_TRACE_NOW(data->tracer_.get());
 
     notif_list_t bknd_notif_list;
     nixl_status_t   ret, bad_ret=NIXL_SUCCESS;
     backend_list_t* backend_list;
+    bool notified = false;
 
     NIXL_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.size() == 0) {
@@ -1539,6 +1539,7 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
         if (bknd_notif_list.size() == 0)
             continue;
 
+        notified = true;
         for (auto & elm: bknd_notif_list) {
             if (notif_map.count(elm.first) == 0)
                 notif_map[elm.first] = std::vector<nixl_blob_t>();
@@ -1549,6 +1550,11 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
 
     if (extra_params && extra_params->backends.size() > 0)
         delete backend_list;
+
+    if (notified) {
+        NIXL_TRACE_EMIT_SPAN(
+            data->tracer_.get(), "nixl::getNotifs", nixl::trace::Kind::Metadata, trace_start);
+    }
 
     // If any backend had an error, it was already logged
     return bad_ret;

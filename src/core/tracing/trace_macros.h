@@ -89,6 +89,21 @@
         }                                                                                          \
     } while (0)
 
+#define NIXL_TRACE_NOW(tracer_ptr) ((tracer_ptr) ? ::nixlTime::getUs() : ::nixlTime::us_t{0})
+
+#define NIXL_TRACE_EMIT_SPAN(tracer_ptr, span_name, span_kind, start_us)               \
+    do {                                                                               \
+        if (auto *nixl_trace_tracer_ = (tracer_ptr)) {                                 \
+            nixl_trace_tracer_->emitSpan((span_name),                                  \
+                                         (span_kind),                                  \
+                                         ::nixl::trace::TraceContext{},                \
+                                         0,                                            \
+                                         (start_us),                                   \
+                                         ::nixlTime::getUs(),                          \
+                                         std::span<const ::nixl::trace::Attribute>{}); \
+        }                                                                              \
+    } while (0)
+
 // Declare before NIXL_TRACE_SCOPE or NIXL_TRACE_CONTEXT_SPAN so the span is created while
 // the context is active. One per scope.
 #define NIXL_TRACE_CORRELATION_SCOPE(tracer_ptr, context, request_id) \
@@ -124,6 +139,10 @@
     } while (0)
 #define NIXL_TRACE_CORRELATION_SCOPE(tracer_ptr, context, request_id) \
     do {                                                              \
+    } while (0)
+#define NIXL_TRACE_NOW(tracer_ptr) (::nixlTime::us_t{0})
+#define NIXL_TRACE_EMIT_SPAN(tracer_ptr, span_name, span_kind, start_us) \
+    do {                                                                 \
     } while (0)
 
 #endif // NIXL_TRACE_ENABLED
