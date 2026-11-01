@@ -40,6 +40,9 @@ template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
           int kNumExpertsPerRank, int kNumTopk,
           int64_t kNumTimeoutCycles,
           bool kAcquireFlags = false,
+          // Arrival protocol of the hybrid rows: flags inside the records (`TokenLayout::with_flags`) instead of the channels'
+          // progress words; the host's `payload_flags`
+          bool kPayloadFlags = false,
           int kNumThreads = kNumWarps * 32,
           int kNumHiddenBytes = kHidden * sizeof(nv_bfloat16)>
 __global__ void __launch_bounds__(kNumThreads, 1)
@@ -79,7 +82,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     // Load buffers from scale-out or scale-up ranks
     // The scale-out receive buffer sits right after the scale-up buffer
     extern __shared__ __align__(ptx::kNumTMAAlignBytes) int8_t smem[];
-    const auto comm_token_layout = layout::TokenLayout(kNumHiddenBytes, 0, kNumTopk, false);
+    const auto comm_token_layout = layout::TokenLayout(kNumHiddenBytes, 0, kNumTopk, false, nullptr, kPayloadFlags);
     const auto scaleup_buffer = layout::BufferLayout<false>(
         comm_token_layout, num_tokens_in_scaleup_layout, num_scaleout_ranks * num_max_tokens_per_rank, buffer);
     // Direct: the rows are the scale-up buffer the combine kernel wrote (its layout, its row stride); hybrid: the
@@ -204,8 +207,39 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
         const int stored_dst_rank_idx = token_indices.stored_dst_rank_idx;
         const auto reduce_valid_mask = token_indices.reduce_valid_mask;
 
-        // One lane per remote producing domain waits for this token's cumulative channel watermark.
-        if (not is_direct) {
+        // Hybrid, payload flags: the rows came over the scale-out path with their arrival flags inside (see `TokenLayout`); lane `l`
+        // waits for the row it reduces (our own domain's rows included: their spills must be restored too), restores the spills, and
+        // zeroes the flags once the row is consumed (below). Unused in the counter protocol
+        const bool lane_has_row = kPayloadFlags and not is_direct and ((reduce_valid_mask >> lane_idx) & 1);
+        if constexpr (kPayloadFlags) {
+            const auto lane_row = comm_buffer.get_rank_buffer(lane_has_row ? (use_rank_layout ? stored_dst_rank_idx : lane_idx) : 0)
+                                             .get_token_buffer(token_idx);
+            if (lane_has_row) {
+                int pending_flag_idx = lane_row.num_spill_slots;
+                comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
+                    if (lane_row.template are_flags_set<kAcquireFlags>(pending_flag_idx))
+                        return true;
+                    if (is_last_check) {
+                        printf("NIXL EP V2 adaptive combine (reduce epilogue) timeout, scale-out: %d/%d, scale-up: %d/%d, "
+                               "token: %d, row: %d\n",
+                               topo.scaleout_rank_idx, num_scaleout_ranks, topo.scaleup_rank_idx, num_scaleup_ranks,
+                               token_idx, use_rank_layout ? stored_dst_rank_idx : lane_idx);
+                    }
+                    return false;
+                });
+                if constexpr (not kAcquireFlags) {
+                    // The flags were polled with relaxed loads: the acquire fence before the row is read. The reads that follow use
+                    // `ld.global.nc`, safe because no L1 line of the row can predate its arrival: the polls bypass L1, the data loads
+                    // carry `L1::no_allocate`, the one plain load below (the spill slot) lies inside the landed record
+                    ptx::fence_acq_sys();
+                }
+                // With acquire polls (`acquire_flags`) no fence is needed: this lane's plain accesses (the spill slots here, the top-k weight
+                // below) follow the acquire, the other lanes' reads follow the `__syncwarp`
+                lane_row.restore_spills();
+            }
+            __syncwarp();
+        } else if (not is_direct) {
+            // One lane per remote producing domain waits for this token's cumulative channel watermark.
             const bool lane_polls = ptx::deduplicate(stored_dst_rank_idx, lane_idx) and
                                     stored_dst_rank_idx >= 0 and stored_dst_rank_idx != topo.scaleout_rank_idx;
             if (lane_polls) {
@@ -308,6 +342,13 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
                 }
                 combined_topk_weights[token_idx * kNumTopk + lane_idx] = value;
             }
+            __syncwarp();
+        }
+
+        // Payload flags: the rows are consumed, their flag words back to zero for the next use
+        if constexpr (kPayloadFlags) {
+            if (lane_has_row)
+                comm_buffer.get_rank_buffer(use_rank_layout ? stored_dst_rank_idx : lane_idx).get_token_buffer(token_idx).clear_flags();
             __syncwarp();
         }
     }

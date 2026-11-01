@@ -37,6 +37,7 @@ template <bool kDoExpand, bool kDoZeroPadding, bool kZeroCopy,
           int kNumSMs, int kNumChannelsPerSM, int kNumWarps,
           int kNumHiddenBytes, int kNumSFPacks,
           int kNumExpertsPerRank, int kNumTopk, int kExpertAlignment,
+          bool kPayloadFlags = false,   // the dispatch's record carries flag and spill slots (`payload_flags`); sizes the rows only
           int kNumThreads = kNumWarps * 32>
 __global__ void __launch_bounds__(kNumThreads, 1)
 dispatch_copy_epilogue_impl(void* buffer, void* workspace,
@@ -73,7 +74,7 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
 
     // Buffer layouts
     extern __shared__ __align__(ptx::kNumTMAAlignBytes) int8_t smem[];
-    const auto token_layout = layout::TokenLayout(kNumHiddenBytes, kNumSFPacks * sizeof(sf_pack_t), kNumTopk, true);
+    const auto token_layout = layout::TokenLayout(kNumHiddenBytes, kNumSFPacks * sizeof(sf_pack_t), kNumTopk, true, nullptr, kPayloadFlags);
     const auto tma_buffer = layout::BufferLayout<true>(token_layout, kNumWarps, 1, smem)
         .get_rank_buffer(warp_idx).get_token_buffer(0);
     const auto scaleup_buffer = layout::BufferLayout<false>(token_layout, num_scaleup_ranks, num_scaleout_ranks * num_max_tokens_per_rank, buffer);

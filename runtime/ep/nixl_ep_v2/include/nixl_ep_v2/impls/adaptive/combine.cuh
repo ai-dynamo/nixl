@@ -41,11 +41,15 @@ template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
           int kHidden,
           int kNumExpertsPerRank, int kNumTopk,
           int64_t kNumTimeoutCycles,
+          // Arrival protocol of the scale-out rows: the flags inside the records (`TokenLayout::with_flags`) instead of the
+          // completion counters; the host's `payload_flags`
+          bool kPayloadFlags = false,
           int kNumScaleupRanksPerLane = math::constexpr_ceil_div(kNumMaxScaleupRanks, 32),
           int kNumScaleupUpdateInterval = 3,
           // RDMA completion batch to a scale-out peer: publish progress after this many newly completed tokens, and ring the
-          // doorbell after this many sends without progress (the forward warps)
-          int kNumScaleoutUpdateInterval = 3,
+          // doorbell after this many sends without progress (the forward warps); with payload flags the doorbell interval of
+          // the rows to a domain
+          int kNumScaleoutUpdateInterval = kPayloadFlags ? 6 : 3,
           int kNumScaleupWarps = kNumChannelsPerSM,
           int kNumForwardWarps = kNumChannelsPerSM,
           int kNumWarps = kNumScaleupWarps + kNumForwardWarps,
@@ -116,8 +120,8 @@ adaptive_combine_impl(nv_bfloat16* x,
     if (num_reduced_tokens < 0)
         num_reduced_tokens = __ldg(psum_num_recv_tokens_per_scaleup_rank + kNumMaxScaleupRanks);
 
-    // Token layouts
-    const auto token_layout = layout::TokenLayout(kNumHiddenBytes, 0, kNumTopk, false);
+    // Token layouts (the communication record: flags inside under `kPayloadFlags`)
+    const auto token_layout = layout::TokenLayout(kNumHiddenBytes, 0, kNumTopk, false, nullptr, kPayloadFlags);
 
     // TMA buffers
     extern __shared__ __align__(ptx::kNumTMAAlignBytes) int8_t smem[];
@@ -157,10 +161,13 @@ adaptive_combine_impl(nv_bfloat16* x,
     if (is_direct) {
         comm::peer_ready_publish_rt<kNumThreads, kNumMaxScaleupRanks>(transport, workspace_layout, topo, sm_idx, thread_idx);
     } else {
-        // The previous epilogue has finished. Initialize descending progress to num_max_tokens_per_rank before the entry barrier.
-        if (warp_idx >= kNumScaleupWarps and lane_idx < num_scaleout_ranks) {
-            const int completion_channel_idx = sm_idx * kNumChannelsPerSM + warp_idx - kNumScaleupWarps;
-            ptx::st_relaxed_sys(ready_atomic_buff + completion_channel_idx * num_scaleout_ranks + lane_idx, int64_t{num_max_tokens_per_rank});
+        // The previous epilogue has finished. Initialize descending progress to num_max_tokens_per_rank before the entry barrier
+        // (no counters under payload flags: the records carry their arrival)
+        if constexpr (not kPayloadFlags) {
+            if (warp_idx >= kNumScaleupWarps and lane_idx < num_scaleout_ranks) {
+                const int completion_channel_idx = sm_idx * kNumChannelsPerSM + warp_idx - kNumScaleupWarps;
+                ptx::st_relaxed_sys(ready_atomic_buff + completion_channel_idx * num_scaleout_ranks + lane_idx, int64_t{num_max_tokens_per_rank});
+            }
         }
         comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kHybridCombineTag0, kNumMaxScaleupRanks, false, true, true>(
             transport, workspace_layout, topo, sm_idx, thread_idx);
@@ -704,6 +711,8 @@ adaptive_combine_impl(nv_bfloat16* x,
         int stored_num_unpublished_tokens = 0, stored_num_unrung_sends = 0;
         int stored_num_remaining_tokens = lane_idx < num_scaleout_ranks ?
             __ldg(token_metadata_at_forward + forward_metadata.domain_count_word(lane_idx)) : 0;
+        // Payload flags: the rows sent to d so far (the doorbell rings every `kNumScaleoutUpdateInterval`-th and the last one)
+        int stored_rows_sent_to_domain = 0;
 
         // A reduced token goes back to its source domain: our own domain straight into our receive buffer, another domain
         // through the send buffer with an RDMA put. Progress to a domain is its lowest completed token index (descending): the
@@ -712,21 +721,28 @@ adaptive_combine_impl(nv_bfloat16* x,
         struct ScaleoutSend { int signal_delta; bool ring_doorbell; };
         // Called once per token to another domain, when the token is selected: publish (a signalled put) once
         // `kNumScaleoutUpdateInterval` tokens completed or on the domain's final row, else ring the doorbell on every
-        // `kNumScaleoutUpdateInterval`-th send without progress, so that queued puts leave between publications
+        // `kNumScaleoutUpdateInterval`-th send without progress, so that queued puts leave between publications.
+        // Payload flags: no publication; the doorbell rings every `kNumScaleoutUpdateInterval` rows to a domain and on the channel's
+        // LAST row to it: every peer's reduce epilogue waits for its last row, so what stays queued behind the last ring is a plain tail
         const auto account_scaleout_send = [&](const int& dst_scaleout_rank_idx, const int& completed_token_idx, const int& num_new_completed_tokens) {
             int signal_delta = 0, ring_doorbell = 0;
             if (lane_idx == dst_scaleout_rank_idx) {
-                stored_num_unpublished_tokens += num_new_completed_tokens;
-                if (completed_token_idx >= 0)
-                    stored_completed_token_idx = min(stored_completed_token_idx, completed_token_idx);
-                if (stored_num_unpublished_tokens >= kNumScaleoutUpdateInterval or stored_num_remaining_tokens == 1) {
-                    signal_delta = stored_completed_token_idx - stored_last_published_token_idx;
-                    stored_last_published_token_idx = stored_completed_token_idx;
-                    ring_doorbell = signal_delta == 0 and num_new_completed_tokens == 0;
-                    stored_num_unpublished_tokens = stored_num_unrung_sends = 0;
-                } else if (num_new_completed_tokens == 0 and ++ stored_num_unrung_sends == kNumScaleoutUpdateInterval) {
-                    ring_doorbell = 1;
-                    stored_num_unrung_sends = 0;
+                if constexpr (kPayloadFlags) {
+                    const int row_ordinal = ++ stored_rows_sent_to_domain;
+                    ring_doorbell = row_ordinal % kNumScaleoutUpdateInterval == 0 or stored_num_remaining_tokens == 1;
+                } else {
+                    stored_num_unpublished_tokens += num_new_completed_tokens;
+                    if (completed_token_idx >= 0)
+                        stored_completed_token_idx = min(stored_completed_token_idx, completed_token_idx);
+                    if (stored_num_unpublished_tokens >= kNumScaleoutUpdateInterval or stored_num_remaining_tokens == 1) {
+                        signal_delta = stored_completed_token_idx - stored_last_published_token_idx;
+                        stored_last_published_token_idx = stored_completed_token_idx;
+                        ring_doorbell = signal_delta == 0 and num_new_completed_tokens == 0;
+                        stored_num_unpublished_tokens = stored_num_unrung_sends = 0;
+                    } else if (num_new_completed_tokens == 0 and ++ stored_num_unrung_sends == kNumScaleoutUpdateInterval) {
+                        ring_doorbell = 1;
+                        stored_num_unrung_sends = 0;
+                    }
                 }
                 -- stored_num_remaining_tokens;
             }
@@ -751,7 +767,14 @@ adaptive_combine_impl(nv_bfloat16* x,
                 // Issue only if not local rank
                 if (last_src_scaleout_rank_idx != scaleout_rank_idx) {
                     EP_PROFILE_ACCUM_BEGIN(profile_t_put);
-                    if (last_send.signal_delta != 0) {
+                    if constexpr (kPayloadFlags) {
+                        // Payload flags: a plain put, the doorbell per the ring rule (no signal, no counter)
+                        transport.rdma_put(
+                            last_recv_token_buffer_ptr,
+                            last_send_token_buffer_ptr,
+                            token_layout.get_num_bytes<false>(),
+                            scaleout_peer_id(last_src_scaleout_rank_idx), last_send.ring_doorbell);
+                    } else if (last_send.signal_delta != 0) {
                         transport.rdma_put_and_signal(
                             last_recv_token_buffer_ptr,
                             last_send_token_buffer_ptr,
@@ -873,10 +896,11 @@ adaptive_combine_impl(nv_bfloat16* x,
             // (the dispatch's scale-out senders walk their channel's tokens upward and the forwarder consumes a domain's
             // records in order), and every position above `first_pending_token_idx` is forwarded: so the lowest index of the
             // run of forwarded rows of this domain, from the top of the window down to its first unforwarded row, is the
-            // lowest index with every higher one sent. The tokens of the run below the domain's previous completed index are new
+            // lowest index with every higher one sent. The tokens of the run below the domain's previous completed index are new.
+            // Payload flags: no progress to compute, every record validates itself
             const uint32_t next_forwarded_mask = forwarded_mask | window_bit(i);
             int completed_token_idx = -1, num_new_completed_tokens = 0;
-            if (src_scaleout_rank_idx != scaleout_rank_idx) {
+            if (not kPayloadFlags and src_scaleout_rank_idx != scaleout_rank_idx) {
                 const int previous_completed_token_idx = ptx::exchange(stored_completed_token_idx, src_scaleout_rank_idx);
                 for (int candidate_idx = first_pending_token_idx; candidate_idx >= window_end_idx; -- candidate_idx) {
                     const auto candidate_global_idx = __ldg(token_metadata_at_forward + forward_metadata.src_token_word(candidate_idx));
@@ -911,10 +935,13 @@ adaptive_combine_impl(nv_bfloat16* x,
                         ptx::mbarrier_arrive_and_set_tx(mbarrier_ptr, token_layout.get_num_bytes<false>());
                         ptx::mbarrier_wait_and_flip_phase(mbarrier_ptr, phase);
 
-                        // Stage the payload in the send buffer for RDMA, else directly in our receive buffer.
+                        // Stage the payload in the send buffer for RDMA, else directly in our receive buffer (payload flags: the flags
+                        // go into the staged record first, see `TokenLayout`)
                         const auto recv_buffer_ptr = scaleout_recv_buffer.get_rank_buffer(k).get_token_buffer(src_token_idx).get_base_ptr();
                         const auto send_buffer_ptr = src_scaleout_rank_idx == scaleout_rank_idx ?
                             recv_buffer_ptr : scaleout_send_buffer.get_rank_buffer(k).get_token_buffer(i).get_base_ptr();
+                        if constexpr (kPayloadFlags)
+                            tma_buffer.spill_and_set_flags();
                         ptx::tma_store_fence();
                         ptx::tma_store_1d(send_buffer_ptr, tma_buffer.get_base_ptr(), token_layout.get_num_bytes<false>());
                         ptx::tma_store_commit();
@@ -923,7 +950,14 @@ adaptive_combine_impl(nv_bfloat16* x,
                         topk_valid_mask ^= 1u << k;
                         if (src_scaleout_rank_idx != scaleout_rank_idx) {
                             EP_PROFILE_ACCUM_BEGIN(profile_t_put);
-                            if (topk_valid_mask == 0 and send.signal_delta != 0) {
+                            if constexpr (kPayloadFlags) {
+                                // Payload flags: a plain put, the doorbell per the ring rule on the token's last put
+                                transport.rdma_put(
+                                    recv_buffer_ptr,
+                                    send_buffer_ptr,
+                                    token_layout.get_num_bytes<false>(),
+                                    scaleout_peer_id(src_scaleout_rank_idx), topk_valid_mask == 0 and send.ring_doorbell);
+                            } else if (topk_valid_mask == 0 and send.signal_delta != 0) {
                                 transport.rdma_put_and_signal(
                                     recv_buffer_ptr,
                                     send_buffer_ptr,
@@ -1009,9 +1043,12 @@ adaptive_combine_impl(nv_bfloat16* x,
                     recv_token_buffer :
                     scaleout_send_buffer.get_token_buffer(i);
 
-                // Stage the payload in the send buffer for RDMA, else directly in our receive buffer.
+                // Stage the payload in the send buffer for RDMA, else directly in our receive buffer (payload flags: the flags go
+                // into the staged record first, see `TokenLayout`)
                 if (ptx::elect_one_sync()) {
-                    EP_PROFILE_ACCUM_BEGIN(profile_t_stage);   // slot 46: store issue
+                    EP_PROFILE_ACCUM_BEGIN(profile_t_stage);   // slot 46: (flag staging +) store issue
+                    if constexpr (kPayloadFlags)
+                        tma_buffer.spill_and_set_flags();
                     ptx::tma_store_fence();
                     ptx::tma_store_1d(send_token_buffer.get_base_ptr(), tma_buffer.get_base_ptr(),
                                     token_layout.get_num_bytes<false>());
@@ -1020,7 +1057,8 @@ adaptive_combine_impl(nv_bfloat16* x,
                 }
                 __syncwarp();
 
-                // Defer the put until its TMA store completes; its signal may cover other completed rows too.
+                // Defer the put until its TMA store completes; its signal may cover other completed rows too (payload flags: the
+                // doorbell decision only)
                 last_src_scaleout_rank_idx = src_scaleout_rank_idx;
                 last_send = send;
                 last_recv_token_buffer_ptr = recv_token_buffer.get_base_ptr();

@@ -440,7 +440,7 @@ void NIXLEPContext::commit(cudaStream_t stream) {
                   "unset; for an NVLink domain spanning several hosts, UCX_CUDA_IPC_ENABLE_MNNVL=yes with the IMEX "
                   "service running). The previous views stay active";
             else ss << "nixlGetPtr returned an NVLink pointer from rank " << rank_id << " to rail peer " << rid << ": the declared "
-                  "NVLink domains split one CUDA IPC clique, which the scale-out path (RDMA writes and completion atomics) does not "
+                  "NVLink domains split one CUDA IPC clique, which the scale-out path (RDMA writes with completion atomics or arrival flags) does not "
                   "support; declare the whole clique as one domain, or set UCX_CUDA_IPC_ENABLE_MNNVL=n when no domain spans hosts. The previous views stay active";
             throw EPException("NIXL", __FILE__, __LINE__, ss.str());
         }

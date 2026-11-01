@@ -349,6 +349,7 @@ class ElasticBuffer:
         zc_use_nvfp4_dispatch: bool = False,
         dynamic_take: Optional[bool] = False,
         acquire_flags: bool = False,
+        payload_flags: bool = False,
     ):
         """
         Initialize the elastic communication buffer.
@@ -362,7 +363,8 @@ class ElasticBuffer:
             group: the process group whose ranks form the constructing cohort (its rank, its size and its own scoped
                 Store are used, no collective), or `None` with `rank_idx`, `num_ranks`, `store` and `bootstrap_id`.
             num_bytes: the total buffer size in bytes (excludes workspace), if set, overrides MoE-based calculation.
-                Must be aligned to 2 MB (``get_elastic_buffer_alignment()``).
+                Must be aligned to 2 MB (``get_elastic_buffer_alignment()``) and hold the record of this buffer's
+                `payload_flags` (``get_buffer_size_hint`` takes the same argument).
             num_max_tokens_per_rank: used for buffer sizing when `num_bytes` is omitted and as the dispatch default.
                 If left at 0 with explicit `num_bytes`, supply it when calling dispatch.
             hidden: the hidden dimension of each token.
@@ -412,12 +414,22 @@ class ElasticBuffer:
                 at every batch size and active SM count on 1x16, where the static shares meet the per-SM egress arbitration
                 tiers); `None` = automatic, on in direct mode. The hybrid paths' division is pinned by the notify count protocol
                 and ignores the setting. `NIXL_EP_DYNAMIC_TAKE` (`auto`, `1`, `0`) overrides the argument for A/B runs.
-            acquire_flags: the arrival-flag protocol of the scale-out receivers (the forwarder and the combine's reduce epilogue),
-                OFF by default: relaxed polls of a record's per-packet flags followed by one acquire-release fence before the record
-                is read, the review tip's protocol. `True` polls with acquire loads and drops the fence (the forwarder keeps only
-                the proxy fence its bulk load needs): the dispatch at 4x8 measured -10 to -13 % at 16-128 tokens, -5 % at 1024,
-                -2 % at 4096, the combine unchanged. Compile-time in the kernels (one instantiation per setting). `NIXL_EP_ACQUIRE_FLAGS`
-                (`1`, `0`) overrides the argument for A/B runs.
+            acquire_flags: the arrival protocol of the scale-out receivers (the forwarder and the combine's reduce epilogue), OFF by
+                default: relaxed polls of a record's arrival signal (the completion counter; every per-packet flag under
+                `payload_flags`) followed by one acquire fence before the record is read. `True` polls with acquire loads and drops
+                the fence (the forwarder keeps only the proxy fence its bulk load needs): the dispatch at 4x8 measured -10 to -13 %
+                at 16-128 tokens, -5 % at 1024, -2 % at 4096, the combine unchanged (measured with the per-packet flags).
+                Compile-time in the kernels (one instantiation per setting). `NIXL_EP_ACQUIRE_FLAGS` (`1`, `0`) overrides the
+                argument for A/B runs.
+            payload_flags: the arrival mechanism of the scale-out records, OFF by default: batched completion atomics (a cumulative
+                counter per channel and source domain, an RDMA atomic add behind every 3 records; the records carry no flags).
+                `True` restores the flag-in-payload protocol: the last 16 bytes of every 4096-byte packet of a record hold a flag
+                word (`TokenLayout` `with_flags`; the displaced payload is spilled behind the metadata), each receiver tests every
+                flag of its record and no counter is touched; doorbells ring every 6 records to a domain. It needs strict PCIe
+                ordering on the receiving region and a 4096-byte path MTU (`UCX_IB_PCI_RELAXED_ORDERING=n`, `UCX_IB_PATH_MTU=4096`,
+                asserted here) and enlarges every record by one 16-byte slot per packet (direct mode too). Compile-time in the
+                kernels (one instantiation per setting), the same on every rank (export `NIXL_EP_PAYLOAD_FLAGS` identically on all
+                of them). `NIXL_EP_PAYLOAD_FLAGS` (`1`, `0`) overrides the argument for A/B runs.
         """
         assert num_zero_copy_slots >= 0, "num_zero_copy_slots must not be negative"
         if num_zero_copy_slots > 0:
@@ -493,6 +505,22 @@ class ElasticBuffer:
             value_or(scaleup_rank_idx, self.rank_idx % num_group_scaleup_ranks),
         )
 
+        # Arrival mechanism of the scale-out records: False (default) completion atomics, True flags in the payload; the environment
+        # overrides for A/B runs. Resolved before the buffer size: the flag slots are part of the record
+        env_payload = os.getenv("NIXL_EP_PAYLOAD_FLAGS")
+        if env_payload is not None:
+            payload_flags = bool(int(env_payload))
+        self.payload_flags = bool(payload_flags)
+        if self.payload_flags:
+            # The arrival flags of the RDMA records (`TokenLayout`) need strict PCIe ordering on the receiving region and one
+            # flag per packet, so the path MTU must be the 4096 bytes of `kNumChunkBytes` (UCX would otherwise take the port's)
+            assert (
+                os.environ.setdefault("UCX_IB_PCI_RELAXED_ORDERING", "n") == "n"
+            ), "UCX_IB_PCI_RELAXED_ORDERING must be n for the arrival flags of the RDMA records"
+            assert (
+                os.environ.setdefault("UCX_IB_PATH_MTU", "4096") == "4096"
+            ), "UCX_IB_PATH_MTU must be 4096: an RDMA record carries one arrival flag per 4096-byte packet"
+
         # Calculate buffer size (already 2 MB-aligned from hint functions / calculate_elastic_buffer_size)
         if num_bytes is None:
             # NOTES: we allow `num_topk == 0`, as the buffer size can also be calculated by number of ranks (maybe bigger though)
@@ -504,6 +532,7 @@ class ElasticBuffer:
                 num_topk,
                 use_fp8_dispatch,
                 allow_multiple_reduction,
+                self.payload_flags,
             )
 
         # The arena's wire: bytes per row and scale-factor packs per row (what the kernels move), from the constructor's `zc_` flags
@@ -583,7 +612,7 @@ class ElasticBuffer:
         self.dynamic_take = dynamic_take
         dynamic_take_mode = 2 if dynamic_take is None else int(bool(dynamic_take))
 
-        # Arrival-flag protocol: False (default) relaxed polls + acq_rel fence, True acquire polls; the environment overrides for A/B runs
+        # Arrival-flag protocol: False (default) relaxed polls + acquire fence, True acquire polls; the environment overrides for A/B runs
         env_acquire = os.getenv("NIXL_EP_ACQUIRE_FLAGS")
         if env_acquire is not None:
             acquire_flags = bool(int(env_acquire))
@@ -608,6 +637,7 @@ class ElasticBuffer:
             num_zero_copy_bytes,
             dynamic_take_mode,
             self.acquire_flags,
+            self.payload_flags,
         )
 
         if num_zero_copy_slots > 0:
@@ -715,6 +745,7 @@ class ElasticBuffer:
         store: Optional[dist.Store] = None,
         bootstrap_id: Optional[str] = None,
         store_timeout_secs: int = 300,
+        payload_flags: bool = False,
     ) -> int:
         """
         Get a recommended buffer size (in bytes) for the given MoE settings, without constructing the buffer.
@@ -733,6 +764,8 @@ class ElasticBuffer:
             store: with `bootstrap_id`, the Store the group's layout is discovered through (else the group's own Store).
             bootstrap_id: the namespace in `store`.
             store_timeout_secs: the Store timeout of the discovery.
+            payload_flags: size for the flag-in-payload records (one 16-byte slot more per 4096-byte packet), as the
+                constructor's argument or `NIXL_EP_PAYLOAD_FLAGS` of the buffer the size is for.
 
         Returns:
             size: the recommended buffer size in bytes (2 MB-aligned).
@@ -756,6 +789,7 @@ class ElasticBuffer:
             num_topk,
             use_fp8_dispatch,
             allow_multiple_reduction,
+            payload_flags,
         )
 
     def barrier(

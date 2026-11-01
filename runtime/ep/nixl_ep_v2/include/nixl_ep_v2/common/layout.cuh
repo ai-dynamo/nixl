@@ -167,9 +167,9 @@ struct WorkspaceLayout {
     // Copy epilogue 12 work start / 13 last block done; combine 14 entry / 15 last block done, 27 last scale-up warp /
     // 31 last forward warp done (hybrid, max over warps); reduce epilogue 16 work start / 17 last block done.
     // Dispatch accumulators (SM 0's first scale-out sender warp, per token): 32 loop body, 33 load wait
-    // + send-buffer store, 34 own-domain store + wait, 35 completion release, 36 RDMA puts, 37 ringing puts; counts 38 RDMA
-    // tokens, 39 of them ringing. Combine accumulators (SM 0's first forward warp, per row): 40 RDMA puts, 41 ringing
-    // puts, 42 count of rings, 43 store wait, 44 scale-up tail waits, 45 reduce, 46 payload store, 47/49
+    // + send-buffer store, 34 own-domain store + wait, 35 completion release (payload flags: flag release), 36 RDMA puts, 37 ringing
+    // puts; counts 38 RDMA tokens, 39 of them ringing. Combine accumulators (SM 0's first forward warp, per row): 40 RDMA puts, 41 ringing
+    // puts, 42 count of rings, 43 store wait, 44 scale-up tail waits, 45 reduce, 46 payload store (payload flags: flag staging + store), 47/49
     // own-domain/RDMA row, 48/50 their counts. Zero copy: 3/4 count row put / rows swept (SM 0), 23 bases held,
     // 24 count pass done, 25 first token stored. Unused: 26, 28 to 30, 51 to 63.
     static constexpr int kNumProfileSlots = 64;
@@ -394,28 +394,52 @@ static_assert(not WorkspaceLayout::is_zc_base_ready(0, 0) and not WorkspaceLayou
               WorkspaceLayout::decode_zc_base(WorkspaceLayout::encode_zc_base(3, 123456)) == 123456 and
               WorkspaceLayout::decode_zc_base(WorkspaceLayout::encode_zc_base(0xffffffffu, 0x7fffffff)) == 0x7fffffff, "Bad base slot");
 
-// A token record: `[hidden][SF][metadata]`, each part aligned to 32 bytes.
-// Completion counters live in dedicated arrays and are never copied with the payload.
+// A token record: `[hidden][SF][metadata]`, each part aligned to `ptx::kNumTMAAlignBytes` (32 bytes). By default the completion
+// counters live in dedicated arrays and nothing is copied with the payload. `with_flags` (the opt-in `payload_flags` of the
+// adaptive kernels' communication records) adds the arrival flags of the scale-out path: the packets of one RDMA write land in any order,
+// so the last 16 bytes of every `kNumChunkBytes` packet hold a flag; the payload an interior flag displaces goes to a
+// spill slot behind the metadata, the last packet's flag is a dedicated slot at the end of the record (strict PCIe
+// ordering on the receiving region: `UCX_IB_PCI_RELAXED_ORDERING=n`). The receiver tests every flag word for EQUALITY
+// with `kFlagValue`: at rest a flag slot holds the other kernel's payload bytes, so a nonzero test is not enough.
 struct TokenLayout {
+    static constexpr int kNumChunkBytes = 4096;   // the RDMA packet size: the path MTU, pinned by `ElasticBuffer` (`UCX_IB_PATH_MTU=4096`)
+    static constexpr int kNumFlagBytes = 16;      // one flag slot: a 64-bit word and 8 unused bytes
+    static constexpr int64_t kFlagValue = 0x5A3C96E17B4DA5C3ll;   // at rest a flag slot holds payload, equal to this with probability 2^-64 per word; zeroed by `clear_flags` once consumed
+
     int num_hidden_bytes, num_sf_bytes;
     // NOTES: the top-k index is always 32-bit
-    bool with_metadata;
+    bool with_metadata, with_flags;
     int num_topk, num_metadata_bytes;
+    int num_metadata_field_bytes;   // the metadata fields, aligned; the spill and flag slots follow
+    int num_spill_slots;            // interior packet boundaries of the record (0 without flags)
     void* base;
 
     __forceinline__ __device__ __host__
     TokenLayout(const int& num_hidden_bytes, const int& num_sf_bytes,
-                const int& num_topk, const bool& with_metadata, void* base = nullptr) :
+                const int& num_topk, const bool& with_metadata, void* base = nullptr, const bool& with_flags = false) :
         num_hidden_bytes(num_hidden_bytes),
         num_sf_bytes(num_sf_bytes),
         // Metadata includes: top-k indices, weight and source rank/token index
-        with_metadata(with_metadata),
+        with_metadata(with_metadata), with_flags(with_flags),
         num_topk(num_topk),
-        num_metadata_bytes(math::align<int>(num_topk * (sizeof(int) + sizeof(float)) +
-                                           (with_metadata ? (1 + num_topk) * sizeof(int) : 0), ptx::kNumTMAAlignBytes)),
+        num_metadata_field_bytes(math::align<int>(num_topk * (sizeof(int) + sizeof(float)) +
+                                                  (with_metadata ? (1 + num_topk) * sizeof(int) : 0), ptx::kNumTMAAlignBytes)),
+        num_spill_slots(0),
         base(base) {
         EP_STATIC_ASSERT(sizeof(int) == sizeof(float), "Invalid size assumption");
         EP_UNIFIED_ASSERT(num_hidden_bytes % ptx::kNumTMAAlignBytes == 0);
+        // The slot count depends on the record size, which depends on the slot count: iterate to the fixed point
+        while (with_flags) {
+            const int num_bytes = math::align(num_hidden_bytes, ptx::kNumTMAAlignBytes) +
+                                  math::align(num_sf_bytes, ptx::kNumTMAAlignBytes) +
+                                  num_metadata_field_bytes + kNumFlagBytes * (num_spill_slots + 1);
+            const int num_interior = (num_bytes - 1) / kNumChunkBytes;
+            if (num_interior == num_spill_slots)
+                break;
+            num_spill_slots = num_interior;
+        }
+        EP_UNIFIED_ASSERT(kNumChunkBytes * num_spill_slots <= num_hidden_bytes + math::align(num_sf_bytes, ptx::kNumTMAAlignBytes) + num_metadata_field_bytes and "An interior flag of this record size would land on a spill slot");
+        num_metadata_bytes = num_metadata_field_bytes + (with_flags ? kNumFlagBytes * (num_spill_slots + 1) : 0);
     }
 
     template <bool kWithMBarrier, typename dtype_t = int>
@@ -466,6 +490,92 @@ struct TokenLayout {
     __forceinline__ __device__ ptx::mbarrier* get_mbarrier_ptr() const {
         return math::advance_ptr<ptx::mbarrier>(get_metadata_ptr(), math::align(num_metadata_bytes, ptx::kNumTMAAlignBytes));
     }
+
+    // Arrival flags (`with_flags`): flag `k < num_spill_slots` sits at the end of interior packet `k` (over displaced
+    // payload bytes), flag `num_spill_slots` is the dedicated slot at the end of the record
+    __forceinline__ __device__ __host__ int get_flag_offset(const int& k) const {
+        return k < num_spill_slots ? kNumChunkBytes * (k + 1) - kNumFlagBytes : get_num_bytes<false>() - kNumFlagBytes;
+    }
+
+    __forceinline__ __device__ __host__ int64_t* get_flag_ptr(const int& k) const {
+        return math::advance_ptr<int64_t>(base, get_flag_offset(k));
+    }
+
+    // Spill slot `k`: the 16 payload bytes displaced by interior flag `k`
+    __forceinline__ __device__ __host__ int4* get_spill_ptr(const int& k) const {
+        return math::advance_ptr<int4>(get_metadata_ptr(), num_metadata_field_bytes + kNumFlagBytes * k);
+    }
+
+#ifdef __CUDACC__
+    // Device-side helpers (the header is also compiled by the host units, which have no PTX wrappers)
+
+    // Sender, on the staged record (one thread): payload under the interior flags to the spill slots, then every flag
+    __forceinline__ __device__ void spill_and_set_flags() const {
+        for (int k = 0; k < num_spill_slots; ++ k)
+            *get_spill_ptr(k) = *reinterpret_cast<const int4*>(get_flag_ptr(k));
+        for (int k = 0; k <= num_spill_slots; ++ k)
+            *reinterpret_cast<int4*>(get_flag_ptr(k)) = make_int4(static_cast<int>(kFlagValue), static_cast<int>(kFlagValue >> 32), 0, 0);
+    }
+
+    // Receiver: every flag word holds the pattern; `pending_flag_idx` is the highest word not yet seen set (-1: all seen) and keeps
+    // the progress across retries (a word seen set stays set until the consumer clears it). The words 0..pending are read with
+    // INDEPENDENT loads, in flight together (a chained walk pays one round trip per packet once the record has landed); the cursor
+    // then moves to the highest word still unset. `kAcquire` (the buffer's `acquire_flags` setting): acquire loads, so the caller's
+    // reads of the record need no fence after a positive answer; otherwise relaxed loads, and the caller issues ONE `fence_acq_*`
+    // after a positive answer and before it reads the record
+    template <bool kAcquire = false>
+    __forceinline__ __device__ bool are_flags_set(int& pending_flag_idx) const {
+        int highest_unset = -1;
+        #pragma unroll 4
+        for (int k = 0; k <= pending_flag_idx; ++ k) {
+            int64_t word;
+            if constexpr (kAcquire) {
+                word = ptx::ld_acquire_sys<int64_t>(get_flag_ptr(k));
+            } else {
+                word = ptx::ld_relaxed_sys<int64_t>(get_flag_ptr(k));
+            }
+            highest_unset = word == kFlagValue ? highest_unset : k;
+        }
+        pending_flag_idx = highest_unset;
+        return pending_flag_idx < 0;
+    }
+
+    // Receiver, after the flags are set (one thread): the displaced payload bytes back over the interior flags
+    __forceinline__ __device__ void restore_spills() const {
+        for (int k = 0; k < num_spill_slots; ++ k)
+            *reinterpret_cast<int4*>(get_flag_ptr(k)) = *get_spill_ptr(k);
+    }
+
+    // Receiver, after the record was consumed (one thread): every flag word back to zero
+    __forceinline__ __device__ void clear_flags() const {
+        for (int k = 0; k <= num_spill_slots; ++ k)
+            *get_flag_ptr(k) = 0;
+    }
+
+    // Forwarder, on the consumed record in shared memory (one thread): zero the dedicated last flag (the interior ones
+    // hold payload again after `restore_spills`), so that no copy outside a live receive slot carries the pattern
+    __forceinline__ __device__ void clear_final_flag() const {
+        *reinterpret_cast<int4*>(get_flag_ptr(num_spill_slots)) = make_int4(0, 0, 0, 0);
+    }
+
+    // Sender, into our own receive slot (one thread): the staged record without its flag slots, as `num_spill_slots + 1`
+    // TMA stores (a flag must not travel with unordered bulk data); the caller then fences once and calls `store_flags`
+    __forceinline__ __device__ void tma_store_skipping_flags(void* dst_ptr) const {
+        int begin = 0;
+        for (int k = 0; k <= num_spill_slots; ++ k) {
+            const int end = get_flag_offset(k);
+            if (end > begin)
+                ptx::tma_store_1d(math::advance_ptr(dst_ptr, begin), math::advance_ptr(base, begin), end - begin);
+            begin = end + kNumFlagBytes;
+        }
+    }
+
+    // The flag stores of a record whose bulk stores completed, into our own receive slot (GPU scope; one fence per batch)
+    __forceinline__ __device__ void store_flags(void* dst_ptr) const {
+        for (int k = 0; k <= num_spill_slots; ++ k)
+            ptx::st_relaxed_gpu(math::advance_ptr(dst_ptr, get_flag_offset(k)), kFlagValue);
+    }
+#endif  // __CUDACC__
 };
 
 template <bool kWithMBarrier>
@@ -535,7 +645,7 @@ struct BufferLayout {
     TokenLayout get_token_buffer(const int& token_idx, const bool& global = false) const {
         EP_UNIFIED_ASSERT(num_ranks == 1 or global);
         return TokenLayout(token_layout.num_hidden_bytes, token_layout.num_sf_bytes, token_layout.num_topk, token_layout.with_metadata,
-                           static_cast<int8_t*>(base) + token_layout.get_num_bytes<kWithMBarrier, int64_t>() * token_idx);
+                           static_cast<int8_t*>(base) + token_layout.get_num_bytes<kWithMBarrier, int64_t>() * token_idx, token_layout.with_flags);
     }
 };
 

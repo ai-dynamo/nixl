@@ -145,7 +145,7 @@ def sweep_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     dist_print(
         f"SWEEP-CONFIG tag={args.tag} world={num_scaleout_ranks}x{num_scaleup_ranks} mode={mode} "
         f"launch_sms={buffer.num_launch_sms} po={args.prefer_overlap_with_compute} fp8={int(use_fp8)} "
-        f"zero_copy={int(args.zero_copy)} dynamic_take={buffer.dynamic_take} acquire_flags={int(buffer.acquire_flags)} "
+        f"zero_copy={int(args.zero_copy)} dynamic_take={buffer.dynamic_take} acquire_flags={int(buffer.acquire_flags)} payload_flags={int(buffer.payload_flags)} "
         f"hidden={hidden} topk={num_topk} experts={num_experts} tokens={args.num_tokens_list} sms={sms_list} "
         f"skipped_above_grid={skipped} reps={args.reps} num_tests={args.num_tests}",
         once_in_node=True,

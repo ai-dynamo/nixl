@@ -72,11 +72,19 @@ class ElasticBuffer {
     // by the notify count protocol and ignores the flag
     int dynamic_take_mode;
 
-    // Arrival-flag protocol of the scale-out receivers (the forwarder and the combine's reduce epilogue): false (the default) = the
-    // review tip's relaxed polls of a record's per-packet flags followed by one fence.acq_rel before the landed record is read;
-    // true = acquire polls and, in the forwarder, only the proxy fence its bulk load needs (4x8 dispatch measured -10 to -13 % at
-    // 16-128 tokens, -5 % at 1024, -2 % at 4096; combine unchanged). Compile-time in the kernels (one instantiation per setting)
+    // Arrival protocol of the scale-out receivers (the forwarder and the combine's reduce epilogue): false (the default) = relaxed
+    // polls of the record's arrival signal (the completion counter; every per-packet flag under `payload_flags`) followed by one
+    // acquire fence before the landed record is read; true = acquire polls and, in the forwarder, only the proxy fence its bulk load
+    // needs (4x8 dispatch measured -10 to -13 % at 16-128 tokens, -5 % at 1024, -2 % at 4096 with the per-packet flags; combine
+    // unchanged). Compile-time in the kernels (one instantiation per setting)
     bool acquire_flags;
+
+    // Arrival mechanism of the scale-out records: false (the default) = the batched completion counters (RDMA puts + atomic adds,
+    // own-domain release stores); true = the per-packet flags inside every record (`TokenLayout::with_flags`: the last 16 bytes of
+    // each 4096-byte packet, spill slots behind the metadata; needs UCX_IB_PCI_RELAXED_ORDERING=n and UCX_IB_PATH_MTU=4096, asserted
+    // by the Python side). Compile-time in the four kernels (one instantiation per setting) and part of the record size on this
+    // rank's buffer, so the same on every rank
+    bool payload_flags;
 
     // Timeout settings
     int num_cpu_timeout_secs;
@@ -130,13 +138,14 @@ public:
                   const int& num_experts_per_rank,
                   const int64_t& num_zero_copy_bytes,
                   const int& dynamic_take_mode,
-                  const bool& acquire_flags):
+                  const bool& acquire_flags,
+                  const bool& payload_flags):
         num_buffer_bytes(num_buffer_bytes),
         explicitly_destroy(explicitly_destroy),
         comm_stream(get_global_comm_stream()),
         allow_multiple_reduction(allow_multiple_reduction),
         prefer_overlap_with_compute(prefer_overlap_with_compute),
-        dynamic_take_mode(dynamic_take_mode), acquire_flags(acquire_flags),
+        dynamic_take_mode(dynamic_take_mode), acquire_flags(acquire_flags), payload_flags(payload_flags),
         max_num_scaleout_ranks(max_num_scaleout_ranks), max_num_scaleup_ranks(max_num_scaleup_ranks), scaleout_rank_idx(scaleout_rank_idx), scaleup_rank_idx(scaleup_rank_idx),
         num_experts_per_rank(num_experts_per_rank), num_zero_copy_bytes(num_zero_copy_bytes) {
         // Check buffer bytes alignment (2 MB)
@@ -518,8 +527,9 @@ public:
 
     static std::tuple<int64_t, int64_t> get_dispatch_buffer_size(const int& num_max_tokens_per_rank,
                                             const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk,
-                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
-        const auto token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk);
+                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks,
+                                            const bool& with_flags) {
+        const auto token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk, with_flags);
 
         const auto scaleup_recv_buffer = layout::BufferLayout<false>(
             token_layout, num_scaleup_ranks, num_scaleout_ranks * num_max_tokens_per_rank);
@@ -534,8 +544,8 @@ public:
 
     static std::tuple<int64_t, int64_t> get_combine_buffer_size(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks,
-                                           const bool& allow_multiple_reduction) {
-        const auto token_layout = get_combine_token_layout(hidden, sizeof(nv_bfloat16), num_topk);
+                                           const bool& allow_multiple_reduction, const bool& with_flags) {
+        const auto token_layout = get_combine_token_layout(hidden, sizeof(nv_bfloat16), num_topk, with_flags);
 
         const int num_tokens_in_scaleup_layout = allow_multiple_reduction ? std::min(num_scaleup_ranks, num_topk) : num_topk;
         const int num_tokens_in_scaleout_layout = allow_multiple_reduction ? std::min(num_scaleout_ranks, num_topk) : num_topk;
@@ -553,14 +563,16 @@ public:
 
     // Dispatch and combine overlay their RECEIVE regions on `[0, num_shared_bytes)`, sized for the larger one.
     // Their separate SEND regions sit at the end of the token arena.
+    // `with_flags`: the record carries the arrival flags of the payload-flag protocol (`payload_flags`)
     static std::tuple<int64_t, int64_t, int64_t> get_buffer_arena(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
                                                                   const bool& allow_multiple_reduction,
-                                                                  const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
+                                                                  const int& num_scaleout_ranks, const int& num_scaleup_ranks,
+                                                                  const bool& with_flags) {
         // The BF16-wire dispatch record is the larger one (the FP8 and NVFP4 wires add their SF bytes to a half- or quarter-size row)
         const auto [num_dispatch_recv_bytes, num_dispatch_send_bytes] = get_dispatch_buffer_size(
-            num_max_tokens_per_rank, hidden * sizeof(nv_bfloat16), 0, num_topk, num_scaleout_ranks, num_scaleup_ranks);
+            num_max_tokens_per_rank, hidden * sizeof(nv_bfloat16), 0, num_topk, num_scaleout_ranks, num_scaleup_ranks, with_flags);
         const auto [num_combine_recv_bytes, num_combine_send_bytes] = get_combine_buffer_size(
-            num_max_tokens_per_rank, hidden, num_topk, num_scaleout_ranks, num_scaleup_ranks, allow_multiple_reduction);
+            num_max_tokens_per_rank, hidden, num_topk, num_scaleout_ranks, num_scaleup_ranks, allow_multiple_reduction, with_flags);
         return {std::max(num_dispatch_recv_bytes, num_combine_recv_bytes), num_dispatch_send_bytes, num_combine_send_bytes};
     }
 
@@ -568,7 +580,7 @@ public:
     static int64_t calculate_buffer_size(const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
                                          const int& num_max_tokens_per_rank, const int& hidden,
                                          int num_topk, const bool& use_fp8_dispatch,
-                                         const bool& allow_multiple_reduction) {
+                                         const bool& allow_multiple_reduction, const bool& payload_flags) {
         EP_HOST_ASSERT(num_max_tokens_per_rank > 0 and hidden > 0);
 
         // The worst case SF bytes must be less than the main part
@@ -577,9 +589,10 @@ public:
         // NOTES: there are lots of `kNumTopk <= 32` restrictions, so we use 32 to calculate token size
         num_topk = num_topk == 0 ? 32 : num_topk;
 
-        // Shared receive regions and two send buffers, aligned to 2 MB
+        // Shared receive regions and two send buffers, aligned to 2 MB; the record of the buffer's `payload_flags` (the instance
+        // checks its carving against the size at the first dispatch/combine)
         const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena(
-            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
+            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks, payload_flags);
         return math::align(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes, kNumAlignmentBytes);
     }
 
@@ -663,7 +676,7 @@ public:
         const int max_num_ranks = max_num_scaleout_ranks * max_num_scaleup_ranks;
         const int num_channels_per_sm = get_num_channels_per_sm(
             hidden, num_hidden_bytes, num_sf_packs, num_topk, max_num_ranks * num_experts_per_rank,
-            max_num_ranks, max_num_scaleout_ranks, jit::device_runtime->get_num_smem_bytes(), prefer_overlap_with_compute);
+            max_num_ranks, max_num_scaleout_ranks, jit::device_runtime->get_num_smem_bytes(), prefer_overlap_with_compute, payload_flags);
         const int num_threads = (kNumNotifyWarps + 2 * num_channels_per_sm) * 32;
         EP_HOST_ASSERT(static_cast<int64_t>(max_num_scaleup_ranks) * math::ceil_div(max_num_ranks * (1 + num_experts_per_rank), 4) <= 64 * static_cast<int64_t>(num_threads) and "The declared world's count rows exceed the sweep's chunk budget (one row per position, the world's rank and expert words each)");
 
@@ -839,7 +852,7 @@ public:
         // The block shape is part of the captured launch, so the channel count per SM is fixed once
         const int num_channels_per_sm = get_num_channels_per_sm(
             hidden, num_hidden_bytes, num_sf_packs, num_topk, max_num_ranks * num_experts_per_rank,
-            max_num_ranks, max_num_scaleout_ranks, num_smem_bytes, prefer_overlap_with_compute);
+            max_num_ranks, max_num_scaleout_ranks, num_smem_bytes, prefer_overlap_with_compute, payload_flags);
         if (not adaptive_num_channels_per_sm.has_value()) {
             adaptive_num_channels_per_sm = num_channels_per_sm;
             if (get_env<int>("NIXL_EP_BUFFER_DEBUG"))
@@ -898,11 +911,12 @@ public:
 
         // Check buffer size
         const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena(
-            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
-        EP_HOST_ASSERT(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes <= num_buffer_bytes);
+            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks, payload_flags);
+        EP_HOST_ASSERT(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes <= num_buffer_bytes and
+                       "The buffer is smaller than its carving: size it with `calculate_buffer_size` for this buffer's `payload_flags`");
         const auto [num_wire_recv_bytes, num_wire_send_bytes] = get_dispatch_buffer_size(
                        num_max_tokens_per_rank, num_hidden_bytes, num_sf_packs, num_topk,
-                       max_num_scaleout_ranks, max_num_scaleup_ranks);
+                       max_num_scaleout_ranks, max_num_scaleup_ranks, payload_flags);
         EP_HOST_ASSERT(num_wire_recv_bytes <= num_buffer_bytes - num_dispatch_send_bytes - num_combine_send_bytes and
                        num_wire_send_bytes <= num_dispatch_send_bytes);
 
@@ -965,6 +979,7 @@ public:
                         zero_copy ? zero_copy_slot : 0,
                         resolve_dynamic_take(),
                         acquire_flags,
+                        payload_flags,
                         comm_stream);
 
         // Received token counters
@@ -1126,6 +1141,7 @@ public:
                                       jit::device_runtime->get_num_smem_bytes(),
                                       num_channels_per_sm,
                                       do_expand, do_zero_padding, zero_copy,
+                                      payload_flags,
                                       comm_stream);
 
         // Stream control
@@ -1238,8 +1254,9 @@ public:
 
         // Check buffer size
         const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena(
-            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
-        EP_HOST_ASSERT(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes <= num_buffer_bytes);
+            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks, payload_flags);
+        EP_HOST_ASSERT(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes <= num_buffer_bytes and
+                       "The buffer is smaller than its carving: size it with `calculate_buffer_size` for this buffer's `payload_flags`");
 
         // The forwarding metadata of the dispatch handle
         // The token metadata during forward
@@ -1285,6 +1302,7 @@ public:
             jit::device_runtime->get_num_smem_bytes(),
             use_expanded_layout, allow_multiple_reduction,
             resolve_dynamic_take(),
+            payload_flags,
             comm_stream);
         // Allocate output tensors
         auto combined_x = torch::empty({num_combined_tokens, hidden}, x.options());
@@ -1313,6 +1331,7 @@ public:
                                        *adaptive_num_channels_per_sm,
                                        use_expanded_layout, allow_multiple_reduction,
                                        acquire_flags,
+                                       payload_flags,
                                        comm_stream);
 
         // Stream control
@@ -1336,7 +1355,7 @@ static void register_apis(pybind11::module_& m) {
         .def("current_stream_wait", &EventHandle::current_stream_wait);
 
     pybind11::class_<ElasticBuffer>(m, "ElasticBuffer")
-        .def(pybind11::init<int64_t, bool, bool, int, int, bool, int, int, int, int, int, std::string, int, int64_t, int, bool>())
+        .def(pybind11::init<int64_t, bool, bool, int, int, bool, int, int, int, int, int, std::string, int, int64_t, int, bool, bool>())
         .def("destroy", &ElasticBuffer::destroy)
         .def("get_comm_stream", &ElasticBuffer::get_comm_stream)
         .def("get_physical_domain_size", &ElasticBuffer::get_physical_domain_size)

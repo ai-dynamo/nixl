@@ -46,7 +46,7 @@ public:
         int num_hidden_bytes, num_sf_packs;
         int num_experts_per_rank, num_topk, expert_alignment;
         int64_t num_timeout_cycles;
-        bool acquire_flags;
+        bool acquire_flags, payload_flags;
 
         // Parameters
         void* x; sf_pack_t* sf; topk_idx_t* topk_idx; float* topk_weights;
@@ -79,7 +79,7 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
             args.do_cpu_sync, args.zero_copy,
@@ -88,7 +88,7 @@ static void __instantiate_kernel() {{
             args.num_max_scaleout_ranks, args.num_max_scaleup_ranks,
             args.num_hidden_bytes, args.num_sf_packs,
             args.num_experts_per_rank, args.num_topk, args.expert_alignment,
-            args.num_timeout_cycles, args.acquire_flags);
+            args.num_timeout_cycles, args.acquire_flags, args.payload_flags);
     }
 
     static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
@@ -124,25 +124,26 @@ static int get_num_notify_smem_bytes(const int& num_max_ranks, const int& num_ma
     return math::align(num_max_ranks + num_max_expert_slots + topology::get_num_launch_sms() * kNumMaxChannelsPerSM * num_max_scaleout_ranks, kNumNotifyWarps * 32) * sizeof(int);
 }
 
-// Token payload layout
+// DeepSeek's hybrid token layout plus the arrival flag and spill slots of the scale-out path (`with_flags`: the buffer's `payload_flags`;
+// direct mode ignores them)
 // In bytes: the NVFP4 wire holds two codes per byte, so the hidden row has no element size
 static layout::TokenLayout get_dispatch_token_layout(
-    const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk) {
-    return layout::TokenLayout(num_hidden_bytes, num_sf_packs * sizeof(sf_pack_t), num_topk, true);
+    const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk, const bool& with_flags) {
+    return layout::TokenLayout(num_hidden_bytes, num_sf_packs * sizeof(sf_pack_t), num_topk, true, nullptr, with_flags);
 }
 
 static layout::TokenLayout get_combine_token_layout(
-    const int& hidden, const int& elem_size, const int& num_topk) {
-    return layout::TokenLayout(hidden * elem_size, 0, num_topk, false);
+    const int& hidden, const int& elem_size, const int& num_topk, const bool& with_flags) {
+    return layout::TokenLayout(hidden * elem_size, 0, num_topk, false, nullptr, with_flags);
 }
 
 // Decide the number of channels per SM by shared memory consumption (both dispatch and combine must fit); fixed at the first dispatch
 static int get_num_channels_per_sm(const int& hidden, const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk,
                                    const int& num_max_expert_slots, const int& num_max_ranks, const int& num_max_scaleout_ranks,
                                    const int& num_smem_bytes,
-                                   const bool& prefer_overlap_with_compute) {
-    const auto dispatch_token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk);
-    const auto combine_token_layout = get_combine_token_layout(hidden, sizeof(nv_bfloat16), num_topk);
+                                   const bool& prefer_overlap_with_compute, const bool& with_flags) {
+    const auto dispatch_token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk, with_flags);
+    const auto combine_token_layout = get_combine_token_layout(hidden, sizeof(nv_bfloat16), num_topk, with_flags);
     int num_channels_per_sm = std::min<int>(
         (num_smem_bytes - get_num_notify_smem_bytes(num_max_ranks, num_max_expert_slots, num_max_scaleout_ranks)) / dispatch_token_layout.get_num_bytes<true>(),
         32 - kNumNotifyWarps);
@@ -186,6 +187,7 @@ static void launch_dispatch(void* x, void* sf,
                             const int& zc_slot_idx,
                             const bool& dynamic_take,
                             const bool& acquire_flags,
+                            const bool& payload_flags,
                             const at::cuda::CUDAStream& stream) {
     EP_HOST_ASSERT(num_max_scaleout_ranks <= kNumMaxScaleoutRanksCap and num_max_scaleup_ranks <= kNumMaxScaleupRanksCap);
     EP_HOST_ASSERT(1 <= num_channels_per_sm and num_channels_per_sm <= kNumMaxChannelsPerSM);
@@ -214,7 +216,7 @@ static void launch_dispatch(void* x, void* sf,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk, .expert_alignment = expert_alignment,
         .num_timeout_cycles = num_timeout_cycles,
-        .acquire_flags = acquire_flags,
+        .acquire_flags = acquire_flags, .payload_flags = payload_flags,
         .x = x, .sf = static_cast<sf_pack_t*>(sf), .topk_idx = topk_idx, .topk_weights = topk_weights,
         .copied_topk_idx = copied_topk_idx,
         .cumulative_local_expert_recv_stats = cumulative_local_expert_recv_stats,
@@ -251,6 +253,7 @@ public:
         int num_warps;
         int num_hidden_bytes, num_sf_packs;
         int num_experts_per_rank, num_topk, expert_alignment;
+        bool payload_flags;
 
         // Parameters
         void *buffer, *workspace;
@@ -276,13 +279,13 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
                            args.do_expand, args.do_zero_padding, args.zero_copy,
                            args.launch_args.grid_dim.first, args.num_channels_per_sm, args.num_warps,
                            args.num_hidden_bytes, args.num_sf_packs,
-                           args.num_experts_per_rank, args.num_topk, args.expert_alignment);
+                           args.num_experts_per_rank, args.num_topk, args.expert_alignment, args.payload_flags);
     }
 
     static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
@@ -317,11 +320,13 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
                                           const int& num_sms, const int& num_smem_bytes,
                                           const int& num_channels_per_sm,
                                           const bool& do_expand, const bool& do_zero_padding, const bool& zero_copy,
+                                          const bool& payload_flags,
                                           const at::cuda::CUDAStream& stream) {
     // Maximize shared memory utilization
     // A margin below the opt-in maximum: a layout that filled it to the byte faulted on the last warp's mbarrier
     constexpr int kNumSmemReserveBytes = 1024;
-    const auto token_layout = layout::TokenLayout(num_hidden_bytes, num_sf_packs * sizeof(sf_pack_t), num_topk, true);
+    // The per-warp staging record is a receive record, with its flag and spill slots under `payload_flags`
+    const auto token_layout = layout::TokenLayout(num_hidden_bytes, num_sf_packs * sizeof(sf_pack_t), num_topk, true, nullptr, payload_flags);
     const auto num_warps = std::min((num_smem_bytes - kNumSmemReserveBytes) / token_layout.get_num_bytes<true>(), 32);
     const auto num_threads = num_warps * 32;
 
@@ -331,6 +336,7 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
         .num_channels_per_sm = num_channels_per_sm, .num_warps = num_warps,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk, .expert_alignment = expert_alignment,
+        .payload_flags = payload_flags,
         .buffer = buffer, .workspace = workspace,
         .psum_num_recv_tokens_per_scaleup_rank = psum_num_recv_tokens_per_scaleup_rank,
         .psum_num_recv_tokens_per_expert = psum_num_recv_tokens_per_expert,

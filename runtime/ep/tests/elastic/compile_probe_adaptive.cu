@@ -47,6 +47,22 @@ static void __instantiate_kernels() {
     auto pa1 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 7, 4, 8, 7168, 56, 8, 8, 1, 2000000000ll, true>);
     auto pa2 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 4, 4, 8, 3584, 112, 8, 8, 1, 2000000000ll, true>);
     auto pa3 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<false, true, 148, 16, 7, 7168, 8, 8, 2000000000ll, true>);
+    // The flag-in-payload arrival protocol (`payload_flags=True`, kPayloadFlags: one flag word per 4096-byte packet, spill slots, no
+    // completion counters): the hybrid dispatch at the 4 x 8 maximum on the three wires, both combine layouts, the reduce epilogue in
+    // both layouts and the copy epilogue (compact, expanded), each with the default kAcquireFlags; plus the dispatch and the reduce
+    // epilogue with acquire polls of the flags. The forms above are the completion atomics (default)
+    auto pp0 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 7, 4, 8, 14336, 0, 8, 8, 1, 2000000000ll, false, true>);
+    auto pp1 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 7, 4, 8, 7168, 56, 8, 8, 1, 2000000000ll, false, true>);
+    auto pp2 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 4, 4, 8, 3584, 112, 8, 8, 1, 2000000000ll, false, true>);
+    auto pp3 = reinterpret_cast<void*>(&adaptive_combine_impl<false, true, 26, 7, 4, 8, 7168, 8, 8, 2000000000ll, true>);
+    auto pp4 = reinterpret_cast<void*>(&adaptive_combine_impl<true, false, 26, 7, 4, 8, 7168, 8, 8, 2000000000ll, true>);
+    auto pp5 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<false, true, 148, 16, 7, 7168, 8, 8, 2000000000ll, false, true>);
+    auto pp6 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<true, false, 148, 16, 7, 7168, 8, 8, 2000000000ll, false, true>);
+    auto pp7 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<false, true, 148, 16, 7, 7168, 8, 8, 2000000000ll, true, true>);
+    auto pp8 = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<false, false, false, 148, 7, 16, 14336, 0, 8, 8, 1, true>);
+    auto pp9 = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<true, true, false, 148, 7, 16, 14336, 0, 8, 8, 32, true>);
+    auto pp10 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 7, 4, 8, 14336, 0, 8, 8, 1, 2000000000ll, true, true>);
+    (void) pp0; (void) pp1; (void) pp2; (void) pp3; (void) pp4; (void) pp5; (void) pp6; (void) pp7; (void) pp8; (void) pp9; (void) pp10;
     auto p2 = reinterpret_cast<void*>(&adaptive_combine_impl<false, true, 26, 7, 4, 8, 7168, 8, 8, 2000000000ll>);
     auto p3 = reinterpret_cast<void*>(&adaptive_combine_impl<true, false, 26, 7, 4, 8, 7168, 8, 8, 2000000000ll>);
     auto p4 = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<false, false, false, 148, 7, 16, 14336, 0, 8, 8, 1>);
@@ -58,7 +74,8 @@ static void __instantiate_kernels() {
     // FP8 wire at hidden 7168 (56 SF packs): top-6 (top-8 is `pf` above)
     auto pg = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 7, 4, 8, 7168, 56, 8, 6, 1, 2000000000ll>);
     auto ph = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<false, false, false, 148, 7, 16, 7168, 56, 8, 8, 1>);
-    // NVFP4 wire at hidden 7168 (3584 code bytes, 112 SF packs, the 4192-byte record at top-8 (4224 with the sector pad), 4160 at top-6): the
+    // NVFP4 wire at hidden 7168 (3584 code bytes, 112 SF packs, the 4160-byte record at top-8 (4192 with the sector pad), 4128 at top-6;
+    // 4192 / 4160 with payload flags: one interior flag, one final slot): the
     // dispatch at 4 channels per SM (top-8, top-6) and at 8 (this wire's count under `prefer_overlap_with_compute`); the copy
     // epilogue at its 32 warps (a 64-register budget), compact and expanded with zero padding at alignment 128
     auto pn0 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, false, 26, 4, 4, 4, 8, 3584, 112, 8, 8, 1, 2000000000ll>);
