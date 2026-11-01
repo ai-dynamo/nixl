@@ -127,9 +127,9 @@ TEST(NvtxSpan, AttributesThatFitAllocateNothing) {
     {
         const auto span = std::make_unique<nvtx::NvtxSpan>(nullptr, schema_ids);
         span->addAttribute(
-            "nixl.traceparent",
-            std::string_view("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"));
-        span->addAttribute("nixl.xfer_request_id", std::string_view("18364758544493064720"));
+            "nixl.remote_agent",
+            std::string_view("agent-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7"));
+        span->addAttribute("nixl.xfer_request_id", std::int64_t{0x7edcba9876543210});
         span->addAttribute("nixl.xfer_execution", std::int64_t{3});
         span->addAttribute("ratio", 0.5);
     }
@@ -181,9 +181,8 @@ TEST(NvtxSpan, TracerSpansAndEventsAllocateNothing) {
     ASSERT_TRUE(context.has_value());
     const nixl::trace::Attribute attrs[] = {
         {"nixl.backend", std::string_view("UCX")},
-        {"nixl.traceparent",
-         std::string_view("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")},
-        {"nixl.xfer_request_id", std::string_view("18364758544493064720")},
+        {"nixl.phase.timestamp_us", std::int64_t{7}},
+        {"nixl.xfer_request_id", std::int64_t{0x7edcba9876543210}},
         {"nixl.xfer_execution", std::int64_t{1}},
     };
     const auto record = [&] {
@@ -192,7 +191,7 @@ TEST(NvtxSpan, TracerSpansAndEventsAllocateNothing) {
             "nixl::postXferReq.write", nixl::trace::Kind::CommSend, *context, 42);
         span.addAttribute("remote_agent", std::string_view("target"));
         span.addAttribute("bytes", std::int64_t{32768});
-        span.addAttribute("nixl.xfer_request_id", std::string_view("18364758544493064720"));
+        span.addAttribute("nixl.xfer_request_id", std::int64_t{0x7edcba9876543210});
         tracer.emitEvent("nixl::submit", nixl::trace::Kind::Metadata, *context, 42, 1, attrs);
         tracer.emitSpan(
             "nixl::wire.inflight", nixl::trace::Kind::CommSend, *context, 42, 1, 2, attrs);

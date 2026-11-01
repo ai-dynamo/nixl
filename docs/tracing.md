@@ -221,15 +221,14 @@ even after it has ended.
 ### Request id and execution number
 
 While tracing is active, each request gets a request id when `createXferReq` or
-`makeXferReq` creates it: 64 random bits, fixed for the request's life and recorded
+`makeXferReq` creates it: 63 random bits, fixed for the request's life and recorded
 as `nixl.xfer_request_id`. Each post that passes `postXferReq`'s checks and reaches
 the backend takes the request's next execution number, `nixl.xfer_execution`,
 starting at 1, whether or not the backend then fails it. A post rejected before
 that, such as a repost refused with `NIXL_ERR_REPOST_ACTIVE`, takes none, so its
 span carries the request id but no execution number. A post's `nixl::xfer.complete`
-carries the same pair as its span. The id is recorded as an unsigned decimal string,
-since an `int64_t` attribute would show half of all ids as negative; the execution
-number is an `int64_t`. With no tracing backend active, a request has neither. A
+carries the same pair as its span. Both are recorded as `int64_t` attributes; 63
+bits keep every id positive. With no tracing backend active, a request has neither. A
 drawn id is never 0: if the agent's random source fails while drawing it, the
 request's records carry `nixl.xfer_request_id=0` and `nixl.xfer_execution=0`, meaning
 none. Both are attributes, which UCX also carries to the receiver (see "Backend
@@ -267,8 +266,7 @@ under the context the plugin passed, so the event keeps its time whichever threa
 reports it. The event carries `nixl.backend` (the recording backend's type),
 `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
 `nixl.phase.label` when the plugin supplied one, and any plugin-supplied
-attributes. A phase recorded under a trace context also carries the context as
-`nixl.traceparent`. A phase recorded for a request also carries the request's
+attributes. A phase recorded for a request also carries the request's
 `nixl.xfer_request_id`, which correlates it like the agent's own spans, and, when
 it belongs to a post, that post's `nixl.xfer_execution`; either is left out when
 the plugin passes 0. The phase vocabulary is closed so that timelines stay
@@ -350,9 +348,9 @@ notification arrives at an agent with tracing on, UCX records `nixl::notif.recei
 under the sender's context, with `nixl.remote_agent` naming the sender and, from
 `treq`, the sender's `nixl.xfer_request_id` and `nixl.xfer_execution`; a missing or
 malformed `treq` costs the event only the pair. An agent with tracing off skips
-both tags without reading them. The event thus carries, in `nixl.traceparent`, the
-request's trace id and the span id of the sender's `nixl::postXferReq.write` or
-`.read` span, the event's remote parent, and the same request id and execution
+both tags without reading them. The event's context thus holds the request's trace
+id and the span id of the sender's `nixl::postXferReq.write` or `.read` span, the
+event's remote parent, and the event carries the same request id and execution
 number as the sender's records of that post, so its correlation id is that span's.
 Writes and reads without a notification give the receiver nothing to observe, so
 they are traced on the sender only.
@@ -489,7 +487,7 @@ In NIXL tracing, "correlation" can mean two different things:
   processes. NVTX has **no** native cross-process linkage: each process is its own
   timeline that Nsight aligns best-effort by clock. What NIXL adds is the id: over UCX
   notifications the receiver's `nixl::notif.received` carries the sender's request id
-  and `nixl.traceparent` (see "Backend phases"), and NVTX draws the request id as the
+  and trace context (see "Backend phases"), and NVTX draws the request id as the
   `uint64` payload on both agents, so the two ranges can be matched across timelines.
   Structured linking is a **Chakra** capability (one trace per rank,
   joined offline by `chakra_trace_link` from matching send/recv); it is planned, and not

@@ -203,7 +203,7 @@ traceXferComplete(nixl::trace::Tracer *tracer, const nixlXferReqH &req) {
                      nixl::trace::Kind::Metadata,
                      req.trace().postContext(),
                      req.trace().requestId(),
-                     {"nixl.xfer_request_id", req.trace().requestIdText()},
+                     {"nixl.xfer_request_id", nixl::trace::attributeValue(req.trace().requestId())},
                      {"nixl.xfer_execution", nixl::trace::attributeValue(req.trace().execution())});
 }
 
@@ -214,7 +214,7 @@ traceXferError(nixl::trace::Tracer *tracer, const nixlXferReqH &req, nixl_status
                      nixl::trace::Kind::Metadata,
                      req.trace().postContext(),
                      req.trace().requestId(),
-                     {"nixl.xfer_request_id", req.trace().requestIdText()},
+                     {"nixl.xfer_request_id", nixl::trace::attributeValue(req.trace().requestId())},
                      {"nixl.xfer_execution", nixl::trace::attributeValue(req.trace().execution())},
                      {"nixl.status", nixl::trace::attributeValue(status)});
 }
@@ -888,7 +888,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                                                  remote_side.remoteSectionRef,
                                                  trace_context,
                                                  trace_request_id);
-    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", handle->trace().requestIdText());
+    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", handle->trace().requestId());
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -1069,7 +1069,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  rem_sec_it->second,
                                                  trace_context,
                                                  trace_request_id);
-    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", handle->trace().requestIdText());
+    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", handle->trace().requestId());
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -1211,7 +1211,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                             req_hndl->trace().requestId());
     NIXL_TRACE_ATTR(trace_span, "remote_agent", req_hndl->remoteAgent);
     NIXL_TRACE_ATTR(trace_span, "bytes", req_hndl->telemetry.totalBytes);
-    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", req_hndl->trace().requestIdText());
+    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", req_hndl->trace().requestId());
 
     chrono_point_t start_time;
     std::optional<nixlTime::nixlDuration> timer;
@@ -1444,7 +1444,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
                              "nixl::releaseXferReq",
                              nixl::trace::Kind::Generic,
                              req_hndl->trace().postContext());
-    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", req_hndl->trace().requestIdText());
+    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", req_hndl->trace().requestId());
     NIXL_TRACE_ATTR(trace_span, "nixl.xfer_execution", req_hndl->trace().execution());
 
     NIXL_SHARED_LOCK_GUARD(data->lock);

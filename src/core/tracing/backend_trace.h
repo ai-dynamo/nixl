@@ -145,8 +145,8 @@ public:
      *                  as `nixl.phase.timestamp_us`.
      * @param identity  Trace identity the phase belongs to: the post's own for a
      *                  local phase, the sender's for a phase observed on receipt.
-     *                  Valid for the call only. Its context is recorded as
-     *                  `nixl.traceparent` when valid, its request id as
+     *                  Valid for the call only. Its context is the record's
+     *                  own, its request id is recorded as the integer
      *                  `nixl.xfer_request_id` when non-zero (the event is
      *                  correlated on it), and its execution number as
      *                  `nixl.xfer_execution` when non-zero.

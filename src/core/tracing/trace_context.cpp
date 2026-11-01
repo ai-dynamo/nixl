@@ -15,7 +15,10 @@
  * limitations under the License.
  */
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstring>
+#include <limits>
 #include <stdexcept>
 
 #include <pthread.h>
@@ -39,6 +42,7 @@ constexpr std::size_t trace_id_randomness_bytes = 7;
 constexpr double two_pow_56 = 0x1p56;
 constexpr double min_sample_ratio = 0x1p-56;
 constexpr double default_sample_ratio = 1.0;
+constexpr std::uint64_t max_request_id = std::numeric_limits<std::int64_t>::max();
 
 template<std::size_t Size>
 [[nodiscard]] bool
@@ -95,13 +99,13 @@ parseSampleRatio(const std::string &value) {
 
 [[nodiscard]] std::uint64_t
 traceIdRandomness(const nixl::trace::TraceContext &context) noexcept {
-    std::uint64_t result = 0;
-    for (auto index = context.traceId.size() - trace_id_randomness_bytes;
-         index < context.traceId.size();
-         ++index) {
-        result = (result << 8) | context.traceId[index];
+    std::uint64_t word;
+    std::memcpy(
+        &word, context.traceId.data() + context.traceId.size() - sizeof(word), sizeof(word));
+    if constexpr (std::endian::native == std::endian::little) {
+        word = __builtin_bswap64(word);
     }
-    return result;
+    return word & ((std::uint64_t{1} << (trace_id_randomness_bytes * 8)) - 1);
 }
 
 void
@@ -342,6 +346,7 @@ nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
     try {
         do {
             fill({reinterpret_cast<std::uint8_t *>(&id), sizeof(id)});
+            id &= max_request_id;
         } while (id == 0);
     }
     catch (const std::exception &e) {

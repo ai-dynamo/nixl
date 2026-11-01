@@ -69,19 +69,14 @@ TracerPhaseSink::record(std::string_view label_key,
                         std::span<const nixlBackendTraceAttr> attrs,
                         const Emit &emit) noexcept {
     try {
-        const TraceparentText traceparent(identity.context);
-        const RequestIdText request_id_text(identity.requestId);
         absl::InlinedVector<Attribute, inline_record_attrs> record_attrs;
         record_attrs.push_back({"nixl.backend", backend_});
         if (timestamp.has_value()) {
             record_attrs.push_back(
                 {"nixl.phase.timestamp_us", static_cast<std::int64_t>(*timestamp)});
         }
-        if (identity.context.valid()) {
-            record_attrs.push_back({"nixl.traceparent", traceparent.view()});
-        }
         if (identity.requestId != 0) {
-            record_attrs.push_back({"nixl.xfer_request_id", request_id_text.view()});
+            record_attrs.push_back({"nixl.xfer_request_id", attributeValue(identity.requestId)});
         }
         if (identity.execution != 0) {
             record_attrs.push_back(

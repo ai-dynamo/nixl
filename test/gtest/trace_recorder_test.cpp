@@ -39,7 +39,7 @@ namespace {
 using record_t = std::vector<std::string>;
 
 constexpr const char *recorder_agent = "recorder_agent";
-constexpr std::uint64_t recorded_request_id = 0x8090a0b0c0d0e0f0ULL;
+constexpr std::uint64_t recorded_request_id = 0x7090a0b0c0d0e0f0ULL;
 
 class traceRecorder : public testing::Test {
 protected:
@@ -132,7 +132,6 @@ TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
                                       "at_us=1234",
                                       "nixl.backend=UCX",
                                       "nixl.phase.timestamp_us=1234",
-                                      "nixl.traceparent=" + traceparent,
                                       "nixl.xfer_request_id=" + request_id,
                                       "nixl.xfer_execution=1",
                                       "nixl.remote_agent=sender"}}));

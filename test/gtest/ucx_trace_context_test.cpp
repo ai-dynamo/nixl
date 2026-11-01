@@ -446,9 +446,10 @@ protected:
                 ASSERT_TRUE(context.sampled()) << phase;
                 const std::string traceparent = nixl::trace::formatTraceparent(context);
                 EXPECT_THAT(spans[i], testing::IsSupersetOf(expected)) << phase;
-                EXPECT_THAT(spans[i],
-                            testing::IsSupersetOf(
-                                {"context=" + traceparent, "nixl.traceparent=" + traceparent}))
+                EXPECT_THAT(spans[i], testing::Contains("context=" + traceparent)) << phase;
+                EXPECT_THAT(
+                    spans[i],
+                    testing::Not(testing::Contains(testing::StartsWith("nixl.traceparent="))))
                     << phase;
                 EXPECT_THAT(
                     spans[i],
@@ -472,7 +473,6 @@ protected:
             EXPECT_THAT(completed[i],
                         testing::IsSupersetOf({"correlation=" + std::to_string(request_id),
                                                "context=" + traceparent,
-                                               "nixl.traceparent=" + traceparent,
                                                "nixl.xfer_request_id=" + std::to_string(request_id),
                                                "nixl.xfer_execution=" + std::to_string(i + 1),
                                                std::string("nixl.backend=UCX")}));
@@ -833,7 +833,6 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_THAT(received[0],
                 testing::IsSupersetOf({correlation,
                                        "context=" + traceparent,
-                                       "nixl.traceparent=" + traceparent,
                                        "nixl.xfer_request_id=" + std::to_string(request_id),
                                        std::string("nixl.xfer_execution=1"),
                                        std::string("nixl.remote_agent=") + sender_name}));
@@ -874,7 +873,6 @@ TEST_F(ucxTraceContextPropagation, ReceiverRecordsEachNotifyingPostsExecution) {
         EXPECT_THAT(received[i],
                     testing::IsSupersetOf({"correlation=" + std::to_string(request_id),
                                            "context=" + traceparent,
-                                           "nixl.traceparent=" + traceparent,
                                            "nixl.xfer_request_id=" + std::to_string(request_id),
                                            "nixl.xfer_execution=" + std::to_string(i + 1),
                                            std::string("nixl.remote_agent=") + sender_name}));
