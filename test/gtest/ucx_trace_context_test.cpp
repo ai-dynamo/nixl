@@ -931,7 +931,5 @@ TEST_F(ucxTraceContextPropagation, UnsampledAndUntracedPostsRecordNoPhases) {
         EXPECT_TRUE(recordedSpans(traceFile, unsampled_name, phase).empty()) << phase;
         EXPECT_TRUE(recordedSpans(traceFile, untraced_name, phase).empty()) << phase;
     }
-#if defined(NIXL_TRACE_ENABLED)
-    EXPECT_EQ(recordedSpans(traceFile, unsampled_name, "nixl::postXferReq.write").size(), 1u);
-#endif
+    EXPECT_TRUE(recordedSpans(traceFile, unsampled_name, "nixl::postXferReq.write").empty());
 }

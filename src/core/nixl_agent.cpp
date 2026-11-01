@@ -790,8 +790,13 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                        std::span<const int> remote_indices,
                        nixlXferReqH *&req_hndl,
                        const nixl_opt_args_t *extra_params) const {
-    NIXL_TRACE_SCOPE(
-        trace_span, data->tracer_.get(), "nixl::makeXferReq", nixl::trace::Kind::Generic);
+    const nixl::trace::TraceContext trace_context{data->tracer_.get()};
+    const std::uint64_t trace_request_id = nixl::trace::generateRequestId(data->tracer_.get());
+    NIXL_TRACE_SAMPLED_SCOPE(trace_span,
+                             data->tracer_.get(),
+                             "nixl::makeXferReq",
+                             nixl::trace::Kind::Generic,
+                             trace_context);
     NIXL_TRACE_ATTR(trace_span, "desc_count", local_indices.size());
 
     nixl_opt_b_args_t  opt_args;
@@ -875,15 +880,14 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    auto handle =
-        std::make_unique<nixlXferReqH>(remote_side.remoteAgent,
-                                       operation,
-                                       local_descs.getType(),
-                                       remote_descs.getType(),
-                                       desc_count,
-                                       remote_side.remoteSectionRef,
-                                       nixl::trace::TraceContext{data->tracer_.get()},
-                                       nixl::trace::generateRequestId(data->tracer_.get()));
+    auto handle = std::make_unique<nixlXferReqH>(remote_side.remoteAgent,
+                                                 operation,
+                                                 local_descs.getType(),
+                                                 remote_descs.getType(),
+                                                 desc_count,
+                                                 remote_side.remoteSectionRef,
+                                                 trace_context,
+                                                 trace_request_id);
     NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", handle->trace().requestIdText());
 
     size_t total_bytes = 0;
@@ -988,8 +992,13 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlXferReqH* &req_hndl,
                          const nixl_opt_args_t* extra_params) const {
-    NIXL_TRACE_SCOPE(
-        trace_span, data->tracer_.get(), "nixl::createXferReq", nixl::trace::Kind::Generic);
+    const nixl::trace::TraceContext trace_context{data->tracer_.get()};
+    const std::uint64_t trace_request_id = nixl::trace::generateRequestId(data->tracer_.get());
+    NIXL_TRACE_SAMPLED_SCOPE(trace_span,
+                             data->tracer_.get(),
+                             "nixl::createXferReq",
+                             nixl::trace::Kind::Generic,
+                             trace_context);
     NIXL_TRACE_ATTR(trace_span, "remote_agent", remote_agent);
     NIXL_TRACE_ATTR(trace_span, "desc_count", local_descs.descCount());
 
@@ -1052,15 +1061,14 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO: merge descriptors back to back in memory (like makeXferReq).
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    auto handle =
-        std::make_unique<nixlXferReqH>(remote_agent,
-                                       operation,
-                                       local_descs.getType(),
-                                       remote_descs.getType(),
-                                       local_descs.descCount(),
-                                       rem_sec_it->second,
-                                       nixl::trace::TraceContext{data->tracer_.get()},
-                                       nixl::trace::generateRequestId(data->tracer_.get()));
+    auto handle = std::make_unique<nixlXferReqH>(remote_agent,
+                                                 operation,
+                                                 local_descs.getType(),
+                                                 remote_descs.getType(),
+                                                 local_descs.descCount(),
+                                                 rem_sec_it->second,
+                                                 trace_context,
+                                                 trace_request_id);
     NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", handle->trace().requestIdText());
 
     // Currently we loop through and find first local match. Can use a
@@ -1431,8 +1439,11 @@ nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
     NIXL_TRACE_CORRELATION_SCOPE(
         data->tracer_.get(), req_hndl->trace().postContext(), req_hndl->trace().requestId());
-    NIXL_TRACE_SCOPE(
-        trace_span, data->tracer_.get(), "nixl::releaseXferReq", nixl::trace::Kind::Generic);
+    NIXL_TRACE_SAMPLED_SCOPE(trace_span,
+                             data->tracer_.get(),
+                             "nixl::releaseXferReq",
+                             nixl::trace::Kind::Generic,
+                             req_hndl->trace().postContext());
     NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", req_hndl->trace().requestIdText());
     NIXL_TRACE_ATTR(trace_span, "nixl.xfer_execution", req_hndl->trace().execution());
 

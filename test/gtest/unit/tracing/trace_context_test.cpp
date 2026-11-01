@@ -525,12 +525,14 @@ TEST(TraceContext, GeneratedContextCarriesSampledFlag) {
     EXPECT_FALSE(unsampled.sampled());
 }
 
-TEST(TraceContext, SampleRatioIsOffWhenUnset) {
+TEST(TraceContext, SampleRatioIsOnWhenUnset) {
     gtest::ScopedEnv env;
     env.unsetVar(std::string(nixl::trace::traceSampleRatioVar));
     env.unsetVar(std::string(nixl::trace::otelTracesSampleRatioVar));
+    EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 1.0);
 
-    EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 0.0);
+    env.addVar(std::string(nixl::trace::otelTracesSampleRatioVar), "");
+    EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 1.0);
 }
 
 TEST(TraceContext, SampleRatioParsesOwnVariable) {
@@ -595,7 +597,7 @@ TEST(TraceContext, InvalidOtelVariableIsIgnoredNotFatal) {
     env.unsetVar(std::string(nixl::trace::traceSampleRatioVar));
 
     env.addVar(std::string(nixl::trace::otelTracesSampleRatioVar), "not-a-ratio");
-    EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 0.0);
+    EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 1.0);
 }
 
 TEST(TraceContext, RandomGeneratorSeedsOncePerMiB) {

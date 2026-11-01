@@ -38,6 +38,7 @@ constexpr std::size_t wire_span_id_offset = 18;
 constexpr std::size_t trace_id_randomness_bytes = 7;
 constexpr double two_pow_56 = 0x1p56;
 constexpr double min_sample_ratio = 0x1p-56;
+constexpr double default_sample_ratio = 1.0;
 
 template<std::size_t Size>
 [[nodiscard]] bool
@@ -311,14 +312,14 @@ nixl::trace::resolveTraceSampleRatio() {
     const auto otel_spec = nixl::config::getValueOptional<std::string>(
         std::string(nixl::trace::otelTracesSampleRatioVar));
     if (!otel_spec || otel_spec->empty()) {
-        return 0.0;
+        return default_sample_ratio;
     }
 
     const auto ratio = parseSampleRatio(*otel_spec);
     if (!ratio) {
         NIXL_WARN << "nixl::trace: ignoring " << nixl::trace::otelTracesSampleRatioVar << "='"
                   << *otel_spec << "': not 0 or a number in [2^-56, 1]";
-        return 0.0;
+        return default_sample_ratio;
     }
     return *ratio;
 }

@@ -47,19 +47,24 @@
                                     ::nixl::trace::Span{};                                    \
     }()
 
+#define NIXL_TRACE_SAMPLED_SCOPE(span, tracer_ptr, span_name, span_kind, context) \
+    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                     \
+        auto *nixl_trace_tracer_ = (tracer_ptr);                                  \
+        return (nixl_trace_tracer_ && (context).sampled()) ?                      \
+            nixl_trace_tracer_->beginSpan((span_name), (span_kind)) :             \
+            ::nixl::trace::Span{};                                                \
+    }()
+
 // For a sampled `context`, begins the span that `context` identifies, with `request_id` as
-// its own; otherwise a span inside the active context, as NIXL_TRACE_SCOPE does.
+// its own; otherwise no span.
 #define NIXL_TRACE_CONTEXT_SPAN(span, tracer_ptr, span_name, span_kind, context, request_id) \
     ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                \
         auto *nixl_trace_tracer_ = (tracer_ptr);                                             \
-        if (!nixl_trace_tracer_) {                                                           \
-            return ::nixl::trace::Span{};                                                    \
-        }                                                                                    \
         const ::nixl::trace::TraceContext &nixl_trace_context_ = (context);                  \
-        return nixl_trace_context_.sampled() ?                                               \
+        return (nixl_trace_tracer_ && nixl_trace_context_.sampled()) ?                       \
             nixl_trace_tracer_->beginContextSpan(                                            \
                 (span_name), (span_kind), nixl_trace_context_, (request_id)) :               \
-            nixl_trace_tracer_->beginSpan((span_name), (span_kind));                         \
+            ::nixl::trace::Span{};                                                           \
     }()
 
 #define NIXL_TRACE_MARK(tracer_ptr, mark_name, mark_kind)       \
@@ -71,11 +76,13 @@
 
 #define NIXL_TRACE_EVENT(tracer_ptr, event_name, event_kind, event_context, event_request_id, ...) \
     do {                                                                                           \
-        if (auto *nixl_trace_tracer_ = (tracer_ptr)) {                                             \
+        auto *nixl_trace_tracer_ = (tracer_ptr);                                                   \
+        const ::nixl::trace::TraceContext &nixl_trace_context_ = (event_context);                  \
+        if (nixl_trace_tracer_ && nixl_trace_context_.sampled()) {                                 \
             nixl_trace_tracer_->emitEvent(                                                         \
                 (event_name),                                                                      \
                 (event_kind),                                                                      \
-                (event_context),                                                                   \
+                nixl_trace_context_,                                                               \
                 (event_request_id),                                                                \
                 ::nixlTime::getUs(),                                                               \
                 std::initializer_list<::nixl::trace::Attribute>{__VA_ARGS__});                     \
@@ -99,6 +106,9 @@
 
 #define NIXL_TRACE_SCOPE(span, tracer_ptr, span_name, span_kind) \
     do {                                                         \
+    } while (0)
+#define NIXL_TRACE_SAMPLED_SCOPE(span, tracer_ptr, span_name, span_kind, context) \
+    do {                                                                          \
     } while (0)
 #define NIXL_TRACE_CONTEXT_SPAN(span, tracer_ptr, span_name, span_kind, context, request_id) \
     do {                                                                                     \

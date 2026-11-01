@@ -132,7 +132,7 @@ force-disables tracing even under a profiler.
 | Source | Description |
 | ------ | ----------- |
 | `NIXL_TRACE_SAMPLE_RATIO` env var | Fraction of requests marked as sampled: `0` (off) or a number in `[2^-56, 1]`. Empty is an explicit off; when unset, the variable below decides |
-| `OTEL_TRACES_SAMPLE_RATIO` env var | Fallback used only when the NIXL variable is unset; Dynamo's variable, read so a NIXL inside Dynamo inherits its ratio. Unset means the opposite in each: Dynamo samples everything, NIXL samples nothing |
+| `OTEL_TRACES_SAMPLE_RATIO` env var | Fallback used only when the NIXL variable is unset; Dynamo's variable, read so a NIXL inside Dynamo inherits its ratio. When both are unset, every request is sampled, as in Dynamo |
 
 The ratio applies to the trace contexts the agent generates, so it does nothing
 on its own: with no backend active — no `NIXL_TRACE_BACKENDS`, no nsys — the
@@ -146,6 +146,13 @@ A request is sampled when the random part of its trace id falls in the top
 later phase sampling at a lower ratio thins what NIXL kept instead of discarding
 all of it. The sampled flag is also what decides whether a context crosses the
 wire: UCX carries only sampled contexts to the remote agent.
+
+Only a sampled request is recorded: its creation, post and release spans, its
+`nixl::xfer.complete` and `nixl::xfer.error` events and its backend phases. An
+unsampled request records nothing, so the requests a ratio below `1` skips cost
+only their ids. Calls that belong to no request, such as registration,
+connections, metadata and notifications, are recorded whenever a backend is
+active.
 
 A value that is neither `0` nor a number in `[2^-56, 1]` makes agent
 construction fail, whether or not tracing is otherwise enabled, rather than

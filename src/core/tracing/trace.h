@@ -327,8 +327,8 @@ private:
 /**
  * @brief RAII guard that keeps a trace context active on the tracer for its
  *        lifetime, so every span/mark created while it is in scope carries
- *        that context. Null-tracer-safe; an invalid context with no request id
- *        pushes nothing. Used to link spans emitted on different threads (e.g.
+ *        that context. Null-tracer-safe; an unsampled context pushes nothing.
+ *        Used to link spans emitted on different threads (e.g.
  *        postXferReq on the caller thread vs. the completion on the polling
  *        thread) to the same logical request.
  */
@@ -337,8 +337,8 @@ public:
     [[nodiscard]] CorrelationScope(Tracer *tracer,
                                    const TraceContext &context,
                                    std::uint64_t request_id)
-        : tracer_(((tracer != nullptr) && (context.valid() || (request_id != 0))) ? tracer :
-                                                                                    nullptr) {
+        : tracer_(((tracer != nullptr) && context.valid() && context.sampled()) ? tracer :
+                                                                                  nullptr) {
         if (tracer_ != nullptr) {
             tracer_->pushContext(context, request_id);
         }

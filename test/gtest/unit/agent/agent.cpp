@@ -377,7 +377,7 @@ namespace agent {
 
         [[nodiscard]] virtual std::string
         sampleRatio() const {
-            return "0";
+            return "1";
         }
 
         void
@@ -908,21 +908,31 @@ namespace agent {
         EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
     }
 
-    TEST_F(recorderTracingAgentFixture, UnsampledPostsKeepTheRequestsContext) {
+    class unsampledRecorderTracingAgentFixture : public recorderTracingAgentFixture {
+    protected:
+        [[nodiscard]] std::string
+        sampleRatio() const override {
+            return "0";
+        }
+    };
+
+    TEST_F(unsampledRecorderTracingAgentFixture, UnsampledRequestRecordsNothing) {
         nixlAgent *agent = agent_helper_->getAgent();
         nixlXferReqH *req = nullptr;
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
         ASSERT_FALSE(req->trace().context().sampled());
-        const auto request_context = carries(req->trace().context());
 
         for (int i = 0; i < 2; ++i) {
             EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
             EXPECT_EQ(req->trace().postContext(), req->trace().context());
         }
-        EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(request_context, request_context));
-        EXPECT_THAT(completionMarks(), testing::ElementsAre(request_context, request_context));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        for (const std::string_view name : {"nixl::createXferReq",
+                                            "nixl::postXferReq.write",
+                                            "nixl::xfer.complete",
+                                            "nixl::releaseXferReq"}) {
+            EXPECT_TRUE(records(name).empty()) << name;
+        }
     }
 
     TEST_F(recorderTracingAgentFixture, TraceInfoBeforeAnyPostNamesTheRequest) {
@@ -936,7 +946,7 @@ namespace agent {
                                                            std::to_string(info.requestId))));
         EXPECT_EQ(info.execution, 0u);
         EXPECT_EQ(info.traceparent, nixl::trace::formatTraceparent(req->trace().context()));
-        EXPECT_THAT(info.traceparent, testing::EndsWith("-02"));
+        EXPECT_THAT(info.traceparent, testing::EndsWith("-03"));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -952,8 +962,8 @@ namespace agent {
         EXPECT_EQ(first.execution, 1u);
         EXPECT_EQ(second.execution, 2u);
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(carriesTraceInfo(first, "context="),
-                                         carriesTraceInfo(second, "context=")));
+                    testing::ElementsAre(carriesTraceInfo(first, "span="),
+                                         carriesTraceInfo(second, "span=")));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -973,7 +983,7 @@ namespace agent {
         EXPECT_THAT(traceInfo(req),
                     testing::FieldsAre(posted.requestId, posted.execution, posted.traceparent));
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(carriesTraceInfo(posted, "context="), testing::_));
+                    testing::ElementsAre(carriesTraceInfo(posted, "span="), testing::_));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -988,7 +998,7 @@ namespace agent {
         const auto info = traceInfo(req);
         EXPECT_EQ(info.execution, 1u);
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(carriesTraceInfo(info, "context=")));
+                    testing::ElementsAre(carriesTraceInfo(info, "span=")));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -1016,7 +1026,7 @@ namespace agent {
         EXPECT_EQ(posted.requestId, prepped.requestId);
         EXPECT_EQ(posted.execution, 1u);
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(carriesTraceInfo(posted, "context=")));
+                    testing::ElementsAre(carriesTraceInfo(posted, "span=")));
 
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
         EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);

@@ -144,8 +144,7 @@ TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
         const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
         ASSERT_NE(tracer, nullptr);
         {
-            const nixl::trace::CorrelationScope scope(
-                tracer.get(), nixl::trace::TraceContext{}, recorded_request_id);
+            const nixl::trace::CorrelationScope scope(tracer.get(), context, recorded_request_id);
             const auto span = tracer->beginSpan("nixl::test.scoped");
         }
         tracer->emitEvent("nixl::test.event", nixl::trace::Kind::Metadata, context, 0, 5, {});
@@ -154,7 +153,8 @@ TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
     EXPECT_EQ(records(),
               (std::vector<record_t>{{recorder_agent,
                                       "nixl::test.scoped",
-                                      "correlation=" + std::to_string(recorded_request_id)},
+                                      "correlation=" + std::to_string(recorded_request_id),
+                                      "context=" + nixl::trace::formatTraceparent(context)},
                                      {recorder_agent,
                                       "nixl::test.event",
                                       "context=" + nixl::trace::formatTraceparent(context),

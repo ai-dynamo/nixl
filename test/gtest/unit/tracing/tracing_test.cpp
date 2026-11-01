@@ -775,7 +775,7 @@ TEST(Tracing, CorrelationScopeBalancesPushPop) {
     }
 }
 
-TEST(Tracing, CorrelationScopePushesUnsampledContext) {
+TEST(Tracing, CorrelationScopeSkipsAnUnsampledContext) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     const auto unsampled = testContext(0x13, 0x02);
@@ -785,13 +785,12 @@ TEST(Tracing, CorrelationScopePushesUnsampledContext) {
     { const nixl::trace::CorrelationScope scope(tracer.get(), unsampled, 0x1313); }
 
     for (const CallLog *log : {&a, &b}) {
-        EXPECT_EQ(log->pushedContexts, std::vector{unsampled});
-        EXPECT_EQ(log->pushedRequestIds, std::vector<std::uint64_t>{0x1313});
-        EXPECT_EQ(log->poppedContexts, std::vector{unsampled});
+        EXPECT_TRUE(log->pushedContexts.empty());
+        EXPECT_TRUE(log->poppedContexts.empty());
     }
 }
 
-TEST(Tracing, CorrelationScopePushesEitherTheContextOrTheRequestId) {
+TEST(Tracing, CorrelationScopePushesOnlyASampledContext) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     const auto context = testContext(0x18);
@@ -801,9 +800,9 @@ TEST(Tracing, CorrelationScopePushesEitherTheContextOrTheRequestId) {
     { const nixl::trace::CorrelationScope scope(tracer.get(), no_context, 0x1818); }
 
     for (const CallLog *log : {&a, &b}) {
-        EXPECT_EQ(log->pushedContexts, (std::vector{context, no_context}));
-        EXPECT_EQ(log->pushedRequestIds, (std::vector<std::uint64_t>{0, 0x1818}));
-        EXPECT_EQ(log->poppedContexts, (std::vector{context, no_context}));
+        EXPECT_EQ(log->pushedContexts, std::vector{context});
+        EXPECT_EQ(log->pushedRequestIds, std::vector<std::uint64_t>{0});
+        EXPECT_EQ(log->poppedContexts, std::vector{context});
     }
 }
 
