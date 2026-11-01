@@ -68,7 +68,7 @@ use bindings::{
     nixl_capi_query_resp_list_get_params, nixl_capi_prep_xfer_dlist, nixl_capi_release_xfer_dlist_handle,
     nixl_capi_make_xfer_req, nixl_capi_get_local_partial_md,
     nixl_capi_send_local_partial_md, nixl_capi_query_xfer_backend, nixl_capi_opt_args_set_ip_addr,
-    nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry,
+    nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry, nixl_capi_get_xfer_trace_info,
     nixl_capi_create_params, nixl_capi_params_add, nixl_capi_is_stub,
     nixl_capi_prep_mem_view_local, nixl_capi_prep_mem_view_remote, nixl_capi_release_mem_view,
     nixl_capi_create_remote_dlist, nixl_capi_destroy_remote_dlist, nixl_capi_remote_dlist_add_desc
@@ -287,6 +287,19 @@ impl XferTelemetry {
             (self.total_bytes as f64) / (self.xfer_duration_us as f64 / 1_000_000.0)
         }
     }
+}
+
+/// Trace identity of a transfer request, as its trace records carry it
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XferTraceInfo {
+    /// Request id, recorded as `nixl.xfer_request_id` and as the NVTX payload
+    pub request_id: u64,
+    /// Execution number of the latest accepted post, recorded as `nixl.xfer_execution`;
+    /// 0 before any post
+    pub execution: u64,
+    /// W3C traceparent of the latest accepted post's trace context, or of the request's
+    /// before any post
+    pub traceparent: String,
 }
 
 /// A safe wrapper around NIXL optional arguments

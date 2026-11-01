@@ -254,6 +254,10 @@ From Python, `nixl_agent.get_xfer_trace_info(handle)` returns the same three as 
 `nixlXferTraceInfo` (`requestId`, `execution`, `traceparent`), or `None` when the
 request has no identity or the handle has been released.
 
+From Rust, `XferRequest::get_trace_info()` returns `Ok(Some(XferTraceInfo))` with
+`request_id`, `execution` and `traceparent`, or `Ok(None)` when the request has no
+identity.
+
 ### Backend phases
 
 A backend plugin can record a phase of its own work through
