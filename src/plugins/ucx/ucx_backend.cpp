@@ -608,22 +608,26 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return ret;
     }
 
-    int_handle->trace.record(nixl_trace_phase_t::WIRE_SUBMITTED);
-
+    const nixlTime::us_t submitted_at = int_handle->trace.now();
+    nixlTime::us_t sent_at = 0;
+    bool sent = false;
     ret = int_handle->status();
     if (opt_args && opt_args->hasNotif && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
         int_handle->notif = buildNotif(opt_args->notifMsg, int_handle->trace);
         if (ret == NIXL_SUCCESS) {
             ret = int_handle->sendNotif();
-            if (ret != NIXL_SUCCESS) {
-                return ret;
+            if (ret == NIXL_SUCCESS) {
+                sent_at = int_handle->trace.now();
+                sent = true;
+                ret = int_handle->status();
             }
-
-            int_handle->trace.record(nixl_trace_phase_t::NOTIF_SENT);
-            ret = int_handle->status();
         }
     }
 
+    int_handle->trace.recordAt(nixl_trace_phase_t::WIRE_SUBMITTED, submitted_at);
+    if (sent) {
+        int_handle->trace.recordAt(nixl_trace_phase_t::NOTIF_SENT, sent_at);
+    }
     return ret;
 }
 
@@ -646,8 +650,10 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
         return status;
     }
 
-    int_handle->trace.record(nixl_trace_phase_t::NOTIF_SENT);
-    return int_handle->status();
+    const nixlTime::us_t sent_at = int_handle->trace.now();
+    const nixl_status_t ret = int_handle->status();
+    int_handle->trace.recordAt(nixl_trace_phase_t::NOTIF_SENT, sent_at);
+    return ret;
 }
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
