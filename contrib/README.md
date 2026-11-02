@@ -34,3 +34,9 @@ docker build -f contrib/Dockerfile.manylinux \
 Run from the repository root. Wheels are written to `/workspace/nixl/dist` in
 the image. They require OpenSSL 4 runtime libraries (`libssl.so.4` and
 `libcrypto.so.4`), which are not bundled in the wheel.
+
+The PR wheel CI job also builds this variant for Python 3.13 on x86_64, using
+a separate cached OpenSSL 4 base image. It installs the wheel in a fresh
+environment, checks its native OpenSSL dependencies, and imports the Python
+API. The verification wheel is not published. The check covers the core
+wheel with NIXL EP disabled, as in the command above.

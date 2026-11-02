@@ -12,6 +12,8 @@
 # the CUDA manylinux base image from Artifactory as the build environment. The heavy
 # dependency layer is pre-built once into the cached wheel_base image (below) and reused
 # via --wheel-base-image, so per-PR wheel builds only compile the wheel stage.
+# The x86_64 runner also builds and smoke-tests a Python 3.13/OpenSSL 4 wheel
+# against a separate cached base. That verification wheel is not published.
 #
 # CI Usage: build-container.sh --wheel-base ... (builds and packages wheels)
 # User Usage: Full image build via build-container.sh (same script, different invocation)
@@ -133,6 +135,17 @@ runs_on_dockers:
       build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base --secret id=ghconfig,src=/tmp/ghconfig',
       credentialsId: 'svc-nixl-github-read-only-token'
     }
+  # OpenSSL is compiled in wheel_base, so overriding it only in the wheel stage
+  # would silently reuse OpenSSL 3. Keep this cache separate and x86_64-only.
+  - {
+      file: 'contrib/Dockerfile.manylinux',
+      name: "${OPENSSL4_WHEEL_BASE_IMAGE_NAME}",
+      tag: "${CI_IMAGE_TAG}",
+      arch: 'x86_64',
+      category: 'tool',
+      build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --build-arg OPENSSL_VERSION=${OPENSSL4_VERSION} --build-arg OPENSSL_SHA256=${OPENSSL4_SHA256} --build-arg BUILD_NIXL_EP=false --target wheel_base --secret id=ghconfig,src=/tmp/ghconfig',
+      credentialsId: 'svc-nixl-github-read-only-token'
+    }
   # The custom 'fw' key is injected as an env var into every step of the branch
   # (ci-demo merges the docker entry into the branch axis), so the shared sanity
   # steps below parameterize on ${fw} instead of being duplicated per framework.
@@ -205,6 +218,11 @@ env:
   WHL_BASE: "manylinux_2_28"
   TORCH_VERSIONS: "2.13"
   WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-cu13-manylinux_2_28"
+  OPENSSL4_VERSION: "4.0.3"
+  OPENSSL4_SHA256: "325b5c806167c13b40b1ffeadfe0248197c00eccc4cf123ec1e28d2d2fd216d9"
+  OPENSSL4_PYTHON_VERSION: "3.13"
+  OPENSSL4_WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-cu13-manylinux_2_28-openssl4"
+  OPENSSL4_WHEEL_IMAGE: "nixl-wheel-openssl4:build"
   # Per-PR sanity images: <registry_host><registry_path>/pr/<arch>/<fw>-nixl:<BUILD_NUMBER>
   PR_REGISTRY: "${registry_host}${registry_path}"
   # Test model: pulled at runtime by the sanity script (not baked) and the gsm8k accuracy floor model.
@@ -338,6 +356,36 @@ steps:
         --dockerfile contrib/Dockerfile.manylinux \
         --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}" \
         --ucx-spcx-plugin-install "${SPCX_STAGING_DIR}/${arch}"
+
+  - name: Build OpenSSL 4 Wheel
+    containerSelector: "{name: 'manylinux'}"
+    credentialsId: 'svc-nixl-github-read-only-token'
+    parallel: false
+    run: |
+      set -ex
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
+      # Use the dedicated OpenSSL 4 base and build just the core wheel, matching
+      # the documented OpenSSL 4 build (no EP or closed-source spcx plugin).
+      docker build --platform linux/${arch} -f contrib/Dockerfile.manylinux \
+        --target wheel \
+        --build-arg wheel_base="${registry_host}${registry_path}/${arch}/${OPENSSL4_WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}" \
+        --build-arg ARCH="${arch}" \
+        --build-arg NPROC="${NPROC}" \
+        --build-arg WHL_PYTHON_VERSIONS="${OPENSSL4_PYTHON_VERSION}" \
+        --build-arg WHL_PLATFORM="${WHL_BASE}_${arch}" \
+        --build-arg BUILD_NIXL_EP=false \
+        --secret id=ghconfig,src=/tmp/ghconfig \
+        --tag "${OPENSSL4_WHEEL_IMAGE}" .
+
+  - name: Test OpenSSL 4 Wheel
+    containerSelector: "{name: 'manylinux'}"
+    parallel: false
+    run: |
+      set -eux
+      # The image provides the OpenSSL 4 runtime libraries, which auditwheel
+      # intentionally excludes. Install the wheel into a fresh Python venv.
+      docker run --rm --entrypoint bash "${OPENSSL4_WHEEL_IMAGE}" \
+        .ci/scripts/test-openssl4-wheel.sh "${OPENSSL4_PYTHON_VERSION}" "${OPENSSL4_VERSION}"
 
   # =============================================================================
   # Shared sanity steps (both framework helpers, parameterized by ${fw})
