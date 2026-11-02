@@ -24,9 +24,9 @@
  * runtime (NVTX today; Chakra and others later). This is an internal core API
  * (compiled into libnixl, not installed as a public header). It is kept
  * deliberately self-contained -- depending only on standard headers and on
- * trace_context.h and nixl_time.h -- so it stays easy to reason about and
- * could be promoted to a public header later without churn if an external
- * consumer appears.
+ * attribute_key.h, trace_context.h and nixl_time.h -- so it stays easy to
+ * reason about and could be promoted to a public header later without churn if
+ * an external consumer appears.
  */
 
 #include <array>
@@ -42,6 +42,7 @@
 #include <vector>
 
 #include "common/nixl_time.h"
+#include "tracing/attribute_key.h"
 #include "tracing/trace_context.h"
 
 namespace nixl::trace {
@@ -70,11 +71,11 @@ struct SpanId {
 };
 
 /**
- * @brief Typed attribute of an emitted span or event. The key and a string
- *        value are views, valid only for the call.
+ * @brief Typed attribute of an emitted span or event. The key is a string
+ *        literal; a string value is a view, valid only for the call.
  */
 struct Attribute {
-    std::string_view key;
+    AttributeKey key;
     std::variant<std::string_view, std::int64_t, double> value;
 };
 
@@ -110,11 +111,11 @@ public:
     virtual ~SpanBackend() = default;
 
     virtual void
-    addAttribute(std::string_view key, std::string_view value) = 0;
+    addAttribute(AttributeKey key, std::string_view value) = 0;
     virtual void
-    addAttribute(std::string_view key, std::int64_t value) = 0;
+    addAttribute(AttributeKey key, std::int64_t value) = 0;
     virtual void
-    addAttribute(std::string_view key, double value) = 0;
+    addAttribute(AttributeKey key, double value) = 0;
 
     virtual void
     addCtrlDep(SpanId parent) = 0;
@@ -219,11 +220,11 @@ public:
     }
 
     void
-    addAttribute(std::string_view key, std::string_view value);
+    addAttribute(AttributeKey key, std::string_view value);
     void
-    addAttribute(std::string_view key, std::int64_t value);
+    addAttribute(AttributeKey key, std::int64_t value);
     void
-    addAttribute(std::string_view key, double value);
+    addAttribute(AttributeKey key, double value);
 
     void
     addCtrlDep(SpanId parent);

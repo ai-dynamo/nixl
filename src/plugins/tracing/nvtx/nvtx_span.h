@@ -49,11 +49,11 @@ public:
     operator delete(void *memory) noexcept;
 
     void
-    addAttribute(std::string_view key, std::string_view value) override;
+    addAttribute(AttributeKey key, std::string_view value) override;
     void
-    addAttribute(std::string_view key, std::int64_t value) override;
+    addAttribute(AttributeKey key, std::int64_t value) override;
     void
-    addAttribute(std::string_view key, double value) override;
+    addAttribute(AttributeKey key, double value) override;
 
     void
     addCtrlDep(SpanId) override {}
@@ -67,37 +67,34 @@ public:
     }
 
     static constexpr std::size_t inlineAttributes = 12;
-    static constexpr std::size_t inlineKeySize = 32;
     static constexpr std::size_t inlineValueSize = 64;
 
 private:
     struct InlinePayload {
-        std::array<char, inlineKeySize> key;
         std::array<char, inlineValueSize> value;
         AttrPayload record;
     };
 
     // Backing storage for an attribute that does not fit inline. Held in a
-    // std::list so nodes never move: record.key / value.string_value point into
-    // these strings and must stay valid until the range is popped.
+    // std::list so nodes never move: record.value.string_value points into
+    // string_value and must stay valid until the range is popped.
     struct StoredPayload {
-        std::string key;
         std::string string_value;
         AttrPayload record{};
         nvtxPayloadData_t data{};
     };
 
     [[nodiscard]] bool
-    fitsInline(std::string_view key, std::size_t value_size) const noexcept;
+    fitsInline(std::size_t value_size) const noexcept;
 
     [[nodiscard]] InlinePayload &
-    nextInline(std::string_view key, std::uint64_t schema_id) noexcept;
+    nextInline(AttributeKey key, std::uint64_t schema_id) noexcept;
 
     [[nodiscard]] StoredPayload &
-    nextStored(std::string_view key, std::uint64_t schema_id);
+    nextStored(AttributeKey key, std::uint64_t schema_id);
 
     [[nodiscard]] AttrPayload &
-    addPayload(std::string_view key, std::uint64_t schema_id);
+    addPayload(AttributeKey key, std::uint64_t schema_id);
 
     nvtxDomainHandle_t domain_;
     PayloadSchemaIds schemaIds_;

@@ -65,7 +65,7 @@ public:
 private:
     template<typename Emit>
     void
-    record(std::string_view label_key,
+    record(AttributeKey label_key,
            std::string_view label,
            std::optional<nixlTime::us_t> timestamp,
            const TraceIdentity &identity,

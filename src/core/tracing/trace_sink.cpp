@@ -62,7 +62,7 @@ namespace {
 
 template<typename Emit>
 void
-TracerPhaseSink::record(std::string_view label_key,
+TracerPhaseSink::record(AttributeKey label_key,
                         std::string_view label,
                         std::optional<nixlTime::us_t> timestamp,
                         const TraceIdentity &identity,

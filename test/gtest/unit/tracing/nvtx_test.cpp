@@ -166,20 +166,13 @@ TEST(NvtxSpan, AttributesThatFitAllocateNothing) {
 }
 
 TEST(NvtxSpan, AttributesThatDoNotFitGoToTheHeap) {
-    const std::string long_key(nvtx::NvtxSpan::inlineKeySize, 'k');
     const std::string long_value(nvtx::NvtxSpan::inlineValueSize, 'v');
-    for (const auto add :
-         {+[](nvtx::NvtxSpan &span, const std::string &key, const std::string &) {
-              span.addAttribute(key, std::int64_t{1});
-          },
-          +[](nvtx::NvtxSpan &span, const std::string &, const std::string &value) {
-              span.addAttribute("value", std::string_view(value));
-          }}) {
+    {
         const gtest::AllocationCounter allocations;
         {
             nvtx::NvtxSpan span(nullptr, {});
             span.addAttribute("first", std::int64_t{0});
-            add(span, long_key, long_value);
+            span.addAttribute("value", std::string_view(long_value));
             span.addAttribute("after", std::int64_t{2});
         }
         EXPECT_GT(allocations.count(), 0u);

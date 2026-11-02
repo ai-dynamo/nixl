@@ -39,17 +39,17 @@ Span::forEachBackend(const Call &call) const {
 }
 
 void
-Span::addAttribute(std::string_view key, std::string_view value) {
+Span::addAttribute(AttributeKey key, std::string_view value) {
     forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
 }
 
 void
-Span::addAttribute(std::string_view key, std::int64_t value) {
+Span::addAttribute(AttributeKey key, std::int64_t value) {
     forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
 }
 
 void
-Span::addAttribute(std::string_view key, double value) {
+Span::addAttribute(AttributeKey key, double value) {
     forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
 }
 

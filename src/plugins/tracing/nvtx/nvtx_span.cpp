@@ -134,39 +134,35 @@ NvtxSpan::operator delete(void *const memory) noexcept {
 }
 
 bool
-NvtxSpan::fitsInline(const std::string_view key, const std::size_t value_size) const noexcept {
-    return overflow_.empty() && (inlineCount_ < inlineAttributes) && (key.size() < inlineKeySize) &&
-        (value_size < inlineValueSize);
+NvtxSpan::fitsInline(const std::size_t value_size) const noexcept {
+    return overflow_.empty() && (inlineCount_ < inlineAttributes) && (value_size < inlineValueSize);
 }
 
 NvtxSpan::InlinePayload &
-NvtxSpan::nextInline(const std::string_view key, const std::uint64_t schema_id) noexcept {
+NvtxSpan::nextInline(const AttributeKey key, const std::uint64_t schema_id) noexcept {
     InlinePayload &payload = inline_[inlineCount_];
-    *std::copy(key.begin(), key.end(), payload.key.begin()) = '\0';
-    payload.record.key = payload.key.data();
+    payload.record.key = key.c_str();
     inlineRefs_[inlineCount_] = {schema_id, sizeof(AttrPayload), &payload.record};
     ++inlineCount_;
     return payload;
 }
 
 NvtxSpan::StoredPayload &
-NvtxSpan::nextStored(const std::string_view key, const std::uint64_t schema_id) {
+NvtxSpan::nextStored(const AttributeKey key, const std::uint64_t schema_id) {
     StoredPayload &stored = overflow_.emplace_back();
-    stored.key.assign(key);
-    stored.record.key = stored.key.c_str();
+    stored.record.key = key.c_str();
     stored.data = {schema_id, sizeof(AttrPayload), &stored.record};
     return stored;
 }
 
 AttrPayload &
-NvtxSpan::addPayload(const std::string_view key, const std::uint64_t schema_id) {
-    return fitsInline(key, 0) ? nextInline(key, schema_id).record :
-                                nextStored(key, schema_id).record;
+NvtxSpan::addPayload(const AttributeKey key, const std::uint64_t schema_id) {
+    return fitsInline(0) ? nextInline(key, schema_id).record : nextStored(key, schema_id).record;
 }
 
 void
-NvtxSpan::addAttribute(const std::string_view key, const std::string_view value) {
-    if (fitsInline(key, value.size())) {
+NvtxSpan::addAttribute(const AttributeKey key, const std::string_view value) {
+    if (fitsInline(value.size())) {
         InlinePayload &payload = nextInline(key, schemaIds_.string_attr);
         *std::copy(value.begin(), value.end(), payload.value.begin()) = '\0';
         payload.record.value.string_value = payload.value.data();
@@ -178,12 +174,12 @@ NvtxSpan::addAttribute(const std::string_view key, const std::string_view value)
 }
 
 void
-NvtxSpan::addAttribute(const std::string_view key, const std::int64_t value) {
+NvtxSpan::addAttribute(const AttributeKey key, const std::int64_t value) {
     addPayload(key, schemaIds_.int64_attr).value.int64_value = value;
 }
 
 void
-NvtxSpan::addAttribute(const std::string_view key, const double value) {
+NvtxSpan::addAttribute(const AttributeKey key, const double value) {
     addPayload(key, schemaIds_.double_attr).value.double_value = value;
 }
 

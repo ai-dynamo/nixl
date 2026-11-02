@@ -60,17 +60,17 @@ public:
     }
 
     void
-    addAttribute(std::string_view key, std::string_view value) override {
-        line_.append(" ").append(key).append("=").append(value);
+    addAttribute(nixl::trace::AttributeKey key, std::string_view value) override {
+        line_.append(" ").append(key.view()).append("=").append(value);
     }
 
     void
-    addAttribute(std::string_view key, std::int64_t value) override {
+    addAttribute(nixl::trace::AttributeKey key, std::int64_t value) override {
         addAttribute(key, std::to_string(value));
     }
 
     void
-    addAttribute(std::string_view, double) override {}
+    addAttribute(nixl::trace::AttributeKey, double) override {}
 
     void
     addCtrlDep(nixl::trace::SpanId) override {}

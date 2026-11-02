@@ -103,7 +103,7 @@ makeRecord(std::string_view name,
     EmittedRecord record{std::string(name), kind, context, request_id, std::move(times), {}};
     for (const auto &attr : attrs) {
         record.attrs.emplace_back(
-            std::string(attr.key),
+            std::string(attr.key.view()),
             std::visit(
                 [](const auto value) -> attr_value_t {
                     if constexpr (std::is_same_v<decltype(value), const std::string_view>) {
@@ -126,18 +126,18 @@ public:
     }
 
     void
-    addAttribute(std::string_view key, std::string_view value) override {
-        log_->strAttrs.emplace_back(std::string(key), std::string(value));
+    addAttribute(nixl::trace::AttributeKey key, std::string_view value) override {
+        log_->strAttrs.emplace_back(std::string(key.view()), std::string(value));
     }
 
     void
-    addAttribute(std::string_view key, std::int64_t value) override {
-        log_->intAttrs.emplace_back(std::string(key), value);
+    addAttribute(nixl::trace::AttributeKey key, std::int64_t value) override {
+        log_->intAttrs.emplace_back(std::string(key.view()), value);
     }
 
     void
-    addAttribute(std::string_view key, double value) override {
-        log_->dblAttrs.emplace_back(std::string(key), value);
+    addAttribute(nixl::trace::AttributeKey key, double value) override {
+        log_->dblAttrs.emplace_back(std::string(key.view()), value);
     }
 
     void
@@ -410,7 +410,21 @@ concept hasAttributeValue = requires(const T &value) { nixl::trace::attributeVal
 static_assert(hasAttributeValue<float>);
 static_assert(!hasAttributeValue<std::atomic<std::uint64_t>>);
 
+static_assert(std::is_constructible_v<nixl::trace::AttributeKey, const char (&)[13]>);
+static_assert(!std::is_constructible_v<nixl::trace::AttributeKey, const char *>);
+static_assert(!std::is_constructible_v<nixl::trace::AttributeKey, std::string_view>);
+static_assert(!std::is_constructible_v<nixl::trace::AttributeKey, const std::string &>);
+
+constexpr char attribute_key_literal[] = "nixl.backend";
+
 } // namespace
+
+TEST(Tracing, AttributeKeyKeepsItsLiteral) {
+    constexpr nixl::trace::AttributeKey key = attribute_key_literal;
+
+    EXPECT_EQ(key.c_str(), attribute_key_literal);
+    EXPECT_EQ(key.view(), "nixl.backend");
+}
 
 // A single beginSpan() must fan out to every enabled backend, and the Span's
 // destructor must end all of them. This is the core requirement.
