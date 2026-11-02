@@ -226,7 +226,10 @@ env:
   PRECLUSTER: lyris
   PRECLUSTER_PARTITION: gb200
   PRECLUSTER_PIPELINE_REF: main
-  PRECLUSTER_ALLOC_FLAGS: '--nodes 1 --time 02:00:00 --immediate=3600'
+  SLURM_NODES: 1
+  # Lyris defines no GPU gres, so a job gets a whole node (4 GPUs)
+  SLURM_JOB_TIMEOUT: '02:00:00'
+  SLURM_IMMEDIATE_TIMEOUT: "3600"
   STORAGE_DRIVER: overlay
   # UCX spcx plugin: compiled by nixl-ci-compile-ucx-plugin (which owns the build
   # recipe, in the closed-source plugin repo) and staged per-arch on the shared
@@ -382,7 +385,6 @@ steps:
   # server binds it, minutes later).
   - name: Run sanity on pre-cluster
     containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    timeout: 120
     parallel: false
     credentialsId: ['lyris-trigger-token', 'lyris-api-token']
     run: |
@@ -394,7 +396,8 @@ steps:
         --ref ${PRECLUSTER_PIPELINE_REF} \
         --cluster ${PRECLUSTER} \
         --partition ${PRECLUSTER_PARTITION} \
-        --alloc-flags "${PRECLUSTER_ALLOC_FLAGS}" \
+        --alloc-flags "--nodes ${SLURM_NODES} --time ${SLURM_JOB_TIMEOUT} --immediate=${SLURM_IMMEDIATE_TIMEOUT}" \
+        --test-timeout 40 \
         --image "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}" \
         --test-cmds-file tc.txt \
         --retries 2

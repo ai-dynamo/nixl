@@ -47,7 +47,11 @@ env:
   ARTIFACTORY_PATH: /sw-nbu-swx-nixl-docker-local/ci
   NIXL_INSTALL_DIR: /opt/nixl
   NIXL_BUILD_DIR: nixl_build
-  TEST_TIMEOUT: 120
+  SLURM_NODES: 1
+  # Lyris defines no GPU gres, so a job gets a whole node (4 GPUs)
+  SLURM_JOB_TIMEOUT: '01:30:00'
+  SLURM_IMMEDIATE_TIMEOUT: 3600
+  TEST_TIMEOUT: 50
   # Target pre-cluster (GitLab runner tag) + its Slurm partition
   PRECLUSTER: lyris
   PRECLUSTER_PARTITION: gb200
@@ -138,7 +142,6 @@ steps:
   # allocation/runner failure); per-test pass/fail is gated by the stages below.
   - name: Run tests on pre-cluster
     containerSelector: "{name: 'build_helper_dl'}"
-    timeout: "${TEST_TIMEOUT}"
     parallel: false
     credentialsId: ['lyris-trigger-token', 'lyris-api-token']
     run: |
@@ -153,6 +156,8 @@ steps:
         --ref ${PRECLUSTER_PIPELINE_REF} \
         --cluster ${PRECLUSTER} \
         --partition ${PRECLUSTER_PARTITION} \
+        --alloc-flags "--nodes ${SLURM_NODES} --time ${SLURM_JOB_TIMEOUT} --immediate=${SLURM_IMMEDIATE_TIMEOUT}" \
+        --test-timeout ${TEST_TIMEOUT} \
         --image "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test:${BUILD_NUMBER}" \
         --test-cmds-file tc.txt \
         --retries 2
