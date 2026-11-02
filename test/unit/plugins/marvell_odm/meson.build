@@ -28,3 +28,5 @@ marvell_odm_nixl_test = executable('marvell_odm_nixl_test',
 
 odm_test_args = get_option('enable_odm_hw_tests') ? ['--require-device'] : []
 test('marvell_odm_plugin_test', marvell_odm_nixl_test, args: odm_test_args, suite: 'odm')
+test('marvell_odm_host_dram_test', marvell_odm_nixl_test,
+     args: odm_test_args + ['--host-dram'], suite: 'odm')
