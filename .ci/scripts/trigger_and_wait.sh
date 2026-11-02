@@ -7,6 +7,7 @@
 #   trigger_and_wait.sh --ref <branch> --partition <partition> \
 #                       --image <pyxis-image> --test-cmds-file <file> \
 #                       [--cluster <runner-tag>] [--allow-fail "<names>"] [--retries N]
+#                       [--alloc-flags "<salloc flags>"]
 #
 # --cluster selects the target pre-cluster by GitLab runner tag (default: lyris).
 #
@@ -21,7 +22,7 @@ PROJECT_WEB="https://gitlab-master.nvidia.com/nbu-swx/ai/precluster-poc"
 POLL_INTERVAL=30
 
 # --- arguments ---
-ref=""; partition=""; image=""; test_cmds_file=""; allow_fail=""; retries=2
+ref=""; partition=""; image=""; test_cmds_file=""; allow_fail=""; alloc_flags=""; retries=2
 cluster="lyris"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -31,6 +32,7 @@ while [ $# -gt 0 ]; do
     --image)          image=$2;          shift 2 ;;
     --test-cmds-file) test_cmds_file=$2; shift 2 ;;
     --allow-fail)     allow_fail=$2;     shift 2 ;;   # passed through to the pipeline (optional)
+    --alloc-flags)    alloc_flags=$2;    shift 2 ;;   # salloc flags; empty keeps the pipeline default
     --retries)        retries=$2;        shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -57,6 +59,7 @@ while :; do
     -F "variables[IMAGE]=$image" \
     -F "variables[TEST_CMDS]=$test_cmds_b64" \
     -F "variables[ALLOW_FAIL]=$allow_fail" \
+    -F "variables[ALLOC_FLAGS]=$alloc_flags" \
     "$PROJECT_API/trigger/pipeline")
   pipeline_id=$(printf '%s' "$trigger_resp" | json_field "['id']" 2>/dev/null)
   case "$pipeline_id" in

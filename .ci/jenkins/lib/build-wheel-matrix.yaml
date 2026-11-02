@@ -23,7 +23,7 @@
 # build_helper_sglang, aarch64): build the wheels (reusing the cached wheel_base), layer
 # them onto the pinned framework base image (built by the ci-demo runs_on_dockers mechanic
 # from .ci/dockerfiles/Dockerfile.{vllm,sglang}-base), then run a 1-prefill/1-decode NIXL
-# KV-transfer sanity on the gb200nvl72_ci partition of the dlcluster SLURM cluster
+# KV-transfer sanity on the gb200 partition of the Lyris pre-cluster
 # (Grace-Blackwell GB200 = aarch64). The x86_64 wheels build in the upstream `manylinux`
 # runner (wheel-only, no sanity). The aarch64 wheels are deliberately built twice (once
 # per framework branch) — independent branches keep the Jenkins UI readable, whereas nested
@@ -79,6 +79,8 @@ credentials:
   - credentialsId: 'svc-nixl-il-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
+  - {credentialsId: 'lyris-trigger-token', type: string, variable: 'PRECLUSTER_TRIGGER_TOKEN'}
+  - {credentialsId: 'lyris-api-token', type: string, variable: 'PRECLUSTER_API_TOKEN'}
 
 # =============================================================================
 # Kubernetes Resource Configuration
@@ -96,7 +98,7 @@ empty_volumes:
   - {mountPath: /root, memory: false}
   - {mountPath: /var/lib/containers/storage, memory: false}
 
-# Job-id files for the SLURM sanity allocations live on the shared PVC.
+# The spcx plugin staging dir (SPCX_STAGING_ROOT) lives on the shared PVC.
 pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
@@ -113,8 +115,8 @@ pipeline_on_image_build:
 # Docker Build Configuration
 # =============================================================================
 # x86_64 wheels build in the upstream `manylinux` runner (podman-in-container). The two
-# aarch64 framework helpers (Dockerfile.build_helper: podman + openssh-client for the SSH
-# SLURM allocation) build the aarch64 wheels AND run the sanity — each as its own branch
+# aarch64 framework helpers (Dockerfile.build_helper: podman + curl for the pre-cluster
+# trigger) build the aarch64 wheels AND run the sanity — each as its own branch
 # so the two flows show up as separate, readable top-level branches in the Jenkins UI
 # (nested step-level parallelism renders as an unlabeled blob in Blue Ocean, JENKINS-54010).
 # wheel_base is a cached deps image (no step selects it — built per-arch by ci-demo when
@@ -219,22 +221,12 @@ env:
   # .ci/dockerfiles/Dockerfile.{vllm,sglang}-base and not restated here: an
   # override at this level silently won over the Dockerfile, so the upgrade in
   # #2073 never reached CI.
-  # SLURM (dlcluster gb200nvl72_ci) — sanity test only, aarch64. Accessed over SSH to the
-  # dlcluster head node (svc-nixl-ssh_key), same partition/account/mechanism as the
-  # nixl-ci-dl-gpu job. (gb300nvl72_ci works too but its queue is much busier.)
-  SLURM_NODES: 1
-  SLURM_PARTITION: gb200nvl72_ci
-  SLURM_HEAD_NODE: dlcluster.nvidia.com
-  SLURM_HEAD_USER: svc-nixl
-  SLURM_ACCOUNT: oberon-gb-ci
-  # Without a GPU count the site plugin forces exclusive mode (whole idle node)
-  SLURM_GRES: gpu:2
-  SLURM_MEM: 128G
-  SLURM_MINCPUS: 24
-  SLURM_JOB_TIMEOUT: '02:00:00'
-  SLURM_IMMEDIATE_TIMEOUT: "3600"
-  SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
-  JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
+  # Sanity runs on the Lyris pre-cluster (GitLab runner tag) gb200 partition, aarch64,
+  # through the generic pre-cluster pipeline - same mechanism as nixl-ci-dl-gpu.
+  PRECLUSTER: lyris
+  PRECLUSTER_PARTITION: gb200
+  PRECLUSTER_PIPELINE_REF: main
+  PRECLUSTER_ALLOC_FLAGS: '--nodes 1 --time 02:00:00 --immediate=3600'
   STORAGE_DRIVER: overlay
   # UCX spcx plugin: compiled by nixl-ci-compile-ucx-plugin (which owns the build
   # recipe, in the closed-source plugin repo) and staged per-arch on the shared
@@ -382,112 +374,46 @@ steps:
           sleep $((2 ** (i - 1)))
       done
 
-  - name: Allocate Environment
+  # Runs the framework sanity in its own pre-cluster allocation and downloads the
+  # result into ./results/. Gates on infra only (trigger_and_wait exits 90 on
+  # allocation/runner failure); pass/fail is gated by the framework stage below.
+  # Seed the port block per build and framework so the two sanity jobs of a build never
+  # share one, and rerun on a server port collision (a probed port is not held until the
+  # server binds it, minutes later).
+  - name: Run sanity on pre-cluster
     containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
+    timeout: 120
     parallel: false
-    shell: action
-    module: slurmCI
-    run: allocation
-    args:
-      partition: "${SLURM_PARTITION}"
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      nodes: "${SLURM_NODES}"
-      jobTimeout: "${SLURM_JOB_TIMEOUT}"
-      immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
-      jobName: "${JOB_BASE_NAME}-${fw}-${BUILD_NUMBER}"
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      extraArgs: [
-        "--account=${SLURM_ACCOUNT}",
-        "--gres=${SLURM_GRES}",
-        "--mem=${SLURM_MEM}",
-        "--mincpus=${SLURM_MINCPUS}"
-      ]
+    credentialsId: ['lyris-trigger-token', 'lyris-api-token']
+    run: |
+      set -x
+      if [ "${fw}" = "vllm" ]; then cid=$((2 * BUILD_NUMBER)); else cid=$((2 * BUILD_NUMBER + 1)); fi
+      printf '%s\t%s\n' "${fw}" "set -o pipefail; export CI_CONCURRENT_ID=${cid}; for _ in 1 2 3; do HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw} 2>&1 | tee /tmp/sanity.log && exit 0; grep -qi 'address already in use' /tmp/sanity.log || exit 1; echo '[sanity] port collision, retrying on new ports'; done; exit 1" > tc.txt
+      TRIGGER_TOKEN=${PRECLUSTER_TRIGGER_TOKEN} GITLAB_TOKEN=${PRECLUSTER_API_TOKEN} \
+      .ci/scripts/trigger_and_wait.sh \
+        --ref ${PRECLUSTER_PIPELINE_REF} \
+        --cluster ${PRECLUSTER} \
+        --partition ${PRECLUSTER_PARTITION} \
+        --alloc-flags "${PRECLUSTER_ALLOC_FLAGS}" \
+        --image "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}" \
+        --test-cmds-file tc.txt \
+        --retries 2
 
-  - name: Sync Container Image
-    # Import the image onto the node before the timed test stages, so a slow
-    # registry pull is not counted against (and does not time out) a test stage.
-    containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    timeout: 30
-    parallel: false
-    shell: action
-    module: slurmCI
-    run: run
-    args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-vs-${fw}-${BUILD_NUMBER}"
-
-  # The two run steps are identical modulo ${fw} as well, but are kept as separate,
+  # The two result steps are identical modulo ${fw} as well, but are kept as separate,
   # explicitly-named steps so the test that failed is obvious at a glance in the UI.
   - name: Run vLLM sanity
     containerSelector: "{name: 'build_helper_vllm'}"
-    timeout: 40
     parallel: false
-    shell: action
-    module: slurmCI
-    run: run
-    args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      # Seed the port block per build and framework so the two sanity jobs of a build never
-      # share one, and rerun on a server port collision (a probed port is not held until the
-      # server binds it, minutes later). Kept on one line: the head node's shell is tcsh.
-      testScript: >-
-        set -o pipefail;
-        export CI_CONCURRENT_ID=$((2 * ${BUILD_NUMBER}));
-        for _ in 1 2 3; do
-        HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw} 2>&1 | tee /tmp/sanity.log && exit 0;
-        grep -qi "address already in use" /tmp/sanity.log || exit 1;
-        echo "[sanity] port collision, retrying on new ports";
-        done; exit 1
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-vs-${fw}-${BUILD_NUMBER}"
+    run: |
+      cat results/vllm.log 2>/dev/null || true
+      exit "$(cat results/vllm.rc 2>/dev/null || echo 1)"
 
   - name: Run SGLang sanity
     containerSelector: "{name: 'build_helper_sglang'}"
-    timeout: 40
     parallel: false
-    shell: action
-    module: slurmCI
-    run: run
-    args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: >-
-        set -o pipefail;
-        export CI_CONCURRENT_ID=$((2 * ${BUILD_NUMBER} + 1));
-        for _ in 1 2 3; do
-        HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw} 2>&1 | tee /tmp/sanity.log && exit 0;
-        grep -qi "address already in use" /tmp/sanity.log || exit 1;
-        echo "[sanity] port collision, retrying on new ports";
-        done; exit 1
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-vs-${fw}-${BUILD_NUMBER}"
-
-# Release the SLURM allocations. Runs once, from the build_helper_vllm branch (it has the
-# SSH client + key; the manylinux runner does not); stopAllForBuild scans the shared PVC
-# job-id dir, so it cleans up both framework allocations.
-pipeline_stop:
-  containerSelector: "{name: 'build_helper_vllm'}"
-  parallel: false
-  shell: action
-  module: slurmCI
-  run: stopAllForBuild
-  args:
-    credentialsId: "${SSH_CREDENTIALS_ID}"
-    headNode: "${SLURM_HEAD_NODE}"
-    headUser: "${SLURM_HEAD_USER}"
-    jobIdDir: "${JOB_ID_FILE_ROOT}"
+    run: |
+      cat results/sglang.log 2>/dev/null || true
+      exit "$(cat results/sglang.rc 2>/dev/null || echo 1)"
 
 # =============================================================================
 # Task Naming Convention
