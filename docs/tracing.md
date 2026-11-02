@@ -241,12 +241,13 @@ carries the same pair as its span. Both are recorded as `int64_t` attributes; 63
 bits keep every id positive. With no tracing backend active, a request has neither. A
 drawn id is never 0: if the agent's random source fails while drawing it, the
 request's records carry `nixl.xfer_request_id=0` and `nixl.xfer_execution=0`, meaning
-none. Both are attributes, which UCX also carries to the receiver (see "Backend
-phases"), and the request id is also the NVTX payload on both sides (see
-"Correlation").
+none. Both are attributes of the agent's records, which UCX also carries to the
+receiver (see "Backend phases"), and the request id is also the NVTX payload on both
+sides (see "Correlation").
 
-Backend phases carry the pair too: a plugin receives it with the request's trace
-context and passes it back when it records a phase (see "Backend phases"). UCX's
+Backend phases carry the pair too, the request id as their correlation: a plugin
+receives it with the request's trace context and passes it back when it records a
+phase (see "Backend phases"). UCX's
 sender phases carry it, and so does the receiver's `nixl::notif.received`, which
 reads it from the notification, so the records of both sides join on the pair.
 
@@ -276,10 +277,10 @@ under the context the plugin passed, so the event keeps its time whichever threa
 reports it. The event carries `nixl.backend` (the recording backend's type),
 `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
 `nixl.phase.label` when the plugin supplied one, and any plugin-supplied
-attributes. A phase recorded for a request also carries the request's
-`nixl.xfer_request_id`, which correlates it like the agent's own spans, and, when
-it belongs to a post, that post's `nixl.xfer_execution`; either is left out when
-the plugin passes 0. When every active tracing backend times its records itself,
+attributes. A phase recorded for a request is correlated on the request id like
+the agent's own spans (NVTX records it as the event's payload), and, when it
+belongs to a post, carries that post's `nixl.xfer_execution`; either is left out
+when the plugin passes 0. When every active tracing backend times its records itself,
 as NVTX does, no clock is read for a phase or an agent event: the plugin's
 timestamp is 0 and the event carries no `nixl.phase.timestamp_us`. Spans keep the
 times the plugin passes. The phase vocabulary is closed so that timelines stay
@@ -360,8 +361,8 @@ number, each 8 bytes little-endian. An older receiver stops reading after the ta
 knows, so it is unaffected; unsampled requests and `genNotif` add nothing. When the
 notification arrives at an agent with tracing on, UCX records `nixl::notif.received`
 under the sender's context, with `nixl.remote_agent` naming the sender and, from
-`treq`, the sender's `nixl.xfer_request_id` and `nixl.xfer_execution`; a missing or
-malformed `treq` costs the event only the pair. An agent with tracing off skips
+`treq`, the sender's request id as its correlation and the sender's
+`nixl.xfer_execution`; a missing or malformed `treq` costs the event only the pair. An agent with tracing off skips
 both tags without reading them. The event's context thus holds the request's trace
 id and the span id of the sender's `nixl::postXferReq.write` or `.read` span, the
 event's remote parent, and the event carries the same request id and execution

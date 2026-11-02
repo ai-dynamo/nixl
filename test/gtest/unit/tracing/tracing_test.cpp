@@ -1378,12 +1378,10 @@ TEST(TracePhaseSink, RequestIdAndExecutionAreRecordedWhenNonZero) {
         EXPECT_EQ(log->emittedEvents[0].attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
                                {"nixl.phase.timestamp_us", std::int64_t{1}},
-                               {"nixl.xfer_request_id", static_cast<std::int64_t>(request_id)},
                                {"nixl.xfer_execution", std::int64_t{2}}}));
         EXPECT_EQ(log->emittedEvents[1].attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
-                               {"nixl.phase.timestamp_us", std::int64_t{2}},
-                               {"nixl.xfer_request_id", static_cast<std::int64_t>(request_id)}}));
+                               {"nixl.phase.timestamp_us", std::int64_t{2}}}));
         EXPECT_EQ(log->emittedEvents[2].attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
                                {"nixl.phase.timestamp_us", std::int64_t{3}}}));
@@ -1413,7 +1411,6 @@ TEST(TracePhaseSink, PhaseUnderAnIdentityRecordsItsFields) {
         EXPECT_EQ(log->emittedEvents[0].attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
                                {"nixl.phase.timestamp_us", std::int64_t{7}},
-                               {"nixl.xfer_request_id", static_cast<std::int64_t>(request_id)},
                                {"nixl.xfer_execution", std::int64_t{2}},
                                {"nixl.phase.label", std::string("rail0")},
                                {"nixl.remote_agent", std::string("peer")}}));
@@ -1448,7 +1445,6 @@ TEST(TracePhaseSink, PhaseWithoutATimeIsStampedWhenRecorded) {
         EXPECT_EQ(event.attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
                                {"nixl.phase.timestamp_us", static_cast<std::int64_t>(at)},
-                               {"nixl.xfer_request_id", std::int64_t{0x38}},
                                {"nixl.xfer_execution", std::int64_t{1}},
                                {"nixl.phase.label", std::string("rail0")},
                                {"rail", std::string("0")}}));
@@ -1494,9 +1490,9 @@ TEST(TracePhaseSink, BackendsThatOwnTimestampsGetNoClockReading) {
     for (const CallLog *log : {&a, &b}) {
         ASSERT_EQ(log->emittedEvents.size(), 1u);
         EXPECT_EQ(log->emittedEvents[0].times, std::vector<nixlTime::us_t>{0});
+        EXPECT_EQ(log->emittedEvents[0].requestId, identity.requestId);
         EXPECT_EQ(log->emittedEvents[0].attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
-                               {"nixl.xfer_request_id", std::int64_t{0x3c}},
                                {"nixl.xfer_execution", std::int64_t{1}}}));
     }
 }
@@ -1592,17 +1588,16 @@ TEST(TracePhaseSink, PostTraceRecordsItsPostsIdentity) {
         EXPECT_EQ(submit.attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
                                {"nixl.phase.timestamp_us", static_cast<std::int64_t>(at)},
-                               {"nixl.xfer_request_id", std::int64_t{0x3b}},
                                {"nixl.xfer_execution", std::int64_t{2}},
                                {"rail", std::string("0")}}));
         const EmittedRecord &receipt = log->emittedEvents[1];
         EXPECT_EQ(receipt.name, "nixl::notif.received");
         EXPECT_EQ(receipt.times, std::vector<nixlTime::us_t>{42});
         EXPECT_EQ(receipt.context, identity.context);
+        EXPECT_EQ(receipt.requestId, identity.requestId);
         EXPECT_EQ(receipt.attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
                                {"nixl.phase.timestamp_us", std::int64_t{42}},
-                               {"nixl.xfer_request_id", std::int64_t{0x3b}},
                                {"nixl.xfer_execution", std::int64_t{2}},
                                {"nixl.remote_agent", std::string("peer")}}));
     }
@@ -1682,7 +1677,6 @@ TEST(TracePhaseSink, RecordedSpanReachesEveryBackend) {
         EXPECT_EQ(span.requestId, request_id);
         EXPECT_EQ(span.attrs,
                   (attr_list_t{{"nixl.backend", std::string("UCX")},
-                               {"nixl.xfer_request_id", static_cast<std::int64_t>(request_id)},
                                {"nixl.xfer_execution", std::int64_t{3}},
                                {"rail", std::string("0")}}));
     }
@@ -1816,7 +1810,7 @@ TEST(TracePhaseSink, RecordingAllocatesNothing) {
     sink.recordPhase(nixl_trace_phase_t::WIRE_COMPLETED, identity);
     sink.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, NIXL_WRITE, 1, 2, identity, attrs, {});
     EXPECT_EQ(allocations.count(), 0u);
-    EXPECT_EQ(attrs_seen, 5u + 4u + 4u);
+    EXPECT_EQ(attrs_seen, 4u + 3u + 3u);
 }
 
 TEST(Tracing, SpanWithoutBackendSpansAllocatesNothing) {
