@@ -44,21 +44,10 @@
 
 namespace nixl::trace::detail {
 
-struct SpanAttribute {
-    template<typename Value>
-    SpanAttribute(AttributeKey attr_key, const Value &attr_value) noexcept
-        : key(attr_key),
-          value(attributeValue(attr_value)) {}
-
-    AttributeKey key;
-    std::variant<std::string_view, std::int64_t, double> value;
-};
-
 inline void
-addAttributes(Span &span, std::initializer_list<SpanAttribute> attributes) {
-    for (const SpanAttribute &attribute : attributes) {
-        std::visit([&](const auto value) { span.addAttribute(attribute.key, value); },
-                   attribute.value);
+addAttributes(Span &span, std::initializer_list<Attribute> attributes) {
+    if (attributes.size() != 0) {
+        span.addAttributes({attributes.begin(), attributes.size()});
     }
 }
 

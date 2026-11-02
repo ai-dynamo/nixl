@@ -54,6 +54,11 @@ Span::addAttribute(AttributeKey key, double value) {
 }
 
 void
+Span::addAttributes(std::span<const Attribute> attrs) {
+    forEachBackend([&](SpanBackend &backend) { backend.addAttributes(attrs); });
+}
+
+void
 Span::addCtrlDep(SpanId parent) {
     forEachBackend([&](SpanBackend &backend) { backend.addCtrlDep(parent); });
 }

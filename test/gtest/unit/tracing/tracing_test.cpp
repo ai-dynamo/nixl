@@ -554,6 +554,42 @@ TEST(Tracing, TypedAttributesPropagate) {
     }
 }
 
+TEST(Tracing, AttributeListReachesEveryBackendInOrder) {
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+    const nixl::trace::Attribute attrs[] = {
+        {"bytes", 4096},
+        {"ratio", 0.5},
+        {"peer", std::string_view{"agent_1"}},
+        {"desc_count", 8},
+    };
+
+    {
+        auto span = tracer->beginSpan("op");
+        span.addAttributes(attrs);
+    }
+
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->intAttrs,
+                  (std::vector<std::pair<std::string, std::int64_t>>{{"bytes", 4096},
+                                                                     {"desc_count", 8}}));
+        ASSERT_EQ(log->dblAttrs.size(), 1u);
+        EXPECT_EQ(log->dblAttrs[0].first, "ratio");
+        EXPECT_EQ(log->strAttrs,
+                  (std::vector<std::pair<std::string, std::string>>{{"peer", "agent_1"}}));
+    }
+}
+
+TEST(Tracing, AttributeHoldsItsValueAsARecordDoes) {
+    const nixl::trace::Attribute count{"desc_count", 8};
+    const nixl::trace::Attribute ratio{"ratio", 0.5f};
+    const nixl::trace::Attribute peer{"peer", std::string("agent_1")};
+
+    EXPECT_EQ(std::get<std::int64_t>(count.value), 8);
+    EXPECT_DOUBLE_EQ(std::get<double>(ratio.value), 0.5);
+    EXPECT_EQ(std::get<std::string_view>(peer.value).size(), 7u);
+}
+
 TEST(Tracing, AttrMacroPassesPlainValues) {
 #if !defined(NIXL_TRACE_ENABLED)
     GTEST_SKIP() << "the trace macros are compiled out";

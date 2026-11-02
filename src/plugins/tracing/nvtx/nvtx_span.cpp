@@ -19,6 +19,8 @@
 
 #include <algorithm>
 #include <new>
+#include <span>
+#include <variant>
 #include <vector>
 
 #include <nvtx3/nvToolsExt.h>
@@ -181,6 +183,13 @@ NvtxSpan::addAttribute(const AttributeKey key, const std::int64_t value) {
 void
 NvtxSpan::addAttribute(const AttributeKey key, const double value) {
     addPayload(key, schemaIds_.double_attr).value.double_value = value;
+}
+
+void
+NvtxSpan::addAttributes(const std::span<const Attribute> attrs) {
+    for (const Attribute &attr : attrs) {
+        std::visit([&](const auto value) { addAttribute(attr.key, value); }, attr.value);
+    }
 }
 
 } // namespace nixl::trace::nvtx_internal

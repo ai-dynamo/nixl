@@ -56,6 +56,9 @@ public:
     addAttribute(AttributeKey key, double value) override;
 
     void
+    addAttributes(std::span<const Attribute> attrs) override;
+
+    void
     addCtrlDep(SpanId) override {}
 
     void

@@ -71,15 +71,6 @@ struct SpanId {
 };
 
 /**
- * @brief Typed attribute of an emitted span or event. The key is a string
- *        literal; a string value is a view, valid only for the call.
- */
-struct Attribute {
-    AttributeKey key;
-    std::variant<std::string_view, std::int64_t, double> value;
-};
-
-/**
  * @brief An attribute value as a record holds it: integers and enums as
  *        std::int64_t, floating-point values as double, strings as views.
  */
@@ -103,6 +94,20 @@ attributeValue(std::string_view value) noexcept {
 }
 
 /**
+ * @brief Typed attribute of an emitted span or event. The key is a string
+ *        literal; a string value is a view, valid only for the call.
+ */
+struct Attribute {
+    template<typename Value>
+    constexpr Attribute(AttributeKey attr_key, const Value &attr_value) noexcept
+        : key(attr_key),
+          value(attributeValue(attr_value)) {}
+
+    AttributeKey key;
+    std::variant<std::string_view, std::int64_t, double> value;
+};
+
+/**
  * @brief A single active span within one backend. Its destructor ends the
  *        range / fixes the duration for that backend.
  */
@@ -116,6 +121,13 @@ public:
     addAttribute(AttributeKey key, std::int64_t value) = 0;
     virtual void
     addAttribute(AttributeKey key, double value) = 0;
+
+    virtual void
+    addAttributes(std::span<const Attribute> attrs) {
+        for (const Attribute &attr : attrs) {
+            std::visit([&](const auto value) { addAttribute(attr.key, value); }, attr.value);
+        }
+    }
 
     virtual void
     addCtrlDep(SpanId parent) = 0;
@@ -225,6 +237,9 @@ public:
     addAttribute(AttributeKey key, std::int64_t value);
     void
     addAttribute(AttributeKey key, double value);
+
+    void
+    addAttributes(std::span<const Attribute> attrs);
 
     void
     addCtrlDep(SpanId parent);

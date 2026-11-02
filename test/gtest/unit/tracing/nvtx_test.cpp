@@ -162,6 +162,15 @@ TEST(NvtxSpan, AttributesThatFitAllocateNothing) {
             range.addAttribute("nixl.start_us", static_cast<std::int64_t>(i));
         }
     }
+    {
+        const nixl::trace::Attribute attrs[] = {
+            {"remote_agent", std::string_view("target")},
+            {"bytes", 32768},
+            {"ratio", 0.5},
+        };
+        nvtx::NvtxSpan range(nullptr, schema_ids);
+        range.addAttributes(attrs);
+    }
     EXPECT_EQ(allocations.count(), 0u);
 }
 
