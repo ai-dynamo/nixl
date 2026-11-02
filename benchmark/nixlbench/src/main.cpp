@@ -240,7 +240,8 @@ runBenchmark() {
     return worker_ptr->signaled() ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
-static int
+namespace {
+int
 run(int argc, char *argv[]) {
 #if HAVE_RAW_CLI
     if (nixlbench::isRawCommand(argc, argv)) {
@@ -258,6 +259,7 @@ run(int argc, char *argv[]) {
     }
     return runBenchmark();
 }
+} // namespace
 
 int
 main(int argc, char *argv[]) {
