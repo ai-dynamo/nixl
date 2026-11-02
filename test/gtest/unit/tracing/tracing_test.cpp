@@ -22,9 +22,11 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <span>
@@ -373,6 +375,25 @@ int zero_draws_left = 0;
 void
 zeroFirstRandomBytes(std::span<std::uint8_t> bytes) {
     std::ranges::fill(bytes, (zero_draws_left-- > 0) ? 0 : 0x5a);
+}
+
+std::size_t random_draws = 0;
+
+void
+countedSequenceRandomBytes(std::span<std::uint8_t> bytes) {
+    ++random_draws;
+    std::iota(bytes.begin(), bytes.end(), std::uint8_t{1});
+}
+
+void
+zeroSpanIdOnceRandomBytes(std::span<std::uint8_t> bytes) {
+    const bool first = (random_draws++ == 0);
+    std::ranges::fill(bytes, 0x5a);
+    if (first && (bytes.size() == 32)) {
+        std::ranges::fill(bytes.first(16), 0x11);
+        std::ranges::fill(bytes.subspan(16, 8), 0x00);
+        std::ranges::fill(bytes.last(8), 0x22);
+    }
 }
 
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
@@ -1115,6 +1136,59 @@ TEST(Tracing, RequestIdIsNoneWithoutTracerOrSource) {
 
     EXPECT_EQ(nixl::trace::generateRequestId(nullptr), 0u);
     EXPECT_EQ(nixl::trace::generateRequestId(tracer.get()), 0u);
+    EXPECT_EQ(failures.count(), 1u);
+}
+
+TEST(Tracing, RequestIdentityTakesItsIdsFromOneDraw) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, countedSequenceRandomBytes);
+    random_draws = 0;
+
+    const nixl::trace::TraceIdentity identity = nixl::trace::generateRequestIdentity(tracer.get());
+
+    EXPECT_EQ(random_draws, 1u);
+    std::array<std::uint8_t, 32> drawn{};
+    std::iota(drawn.begin(), drawn.end(), std::uint8_t{1});
+    std::uint64_t request_id = 0;
+    std::memcpy(&request_id, drawn.data() + 24, sizeof(request_id));
+    EXPECT_TRUE(std::ranges::equal(identity.context.traceId, std::span(drawn).first(16)));
+    EXPECT_TRUE(std::ranges::equal(identity.context.spanId, std::span(drawn).subspan(16, 8)));
+    EXPECT_EQ(identity.requestId,
+              request_id & static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
+    EXPECT_EQ(identity.execution, 0u);
+    EXPECT_TRUE(identity.context.sampled());
+}
+
+TEST(Tracing, RequestIdentityDrawsOnlyAZeroIdAgain) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroSpanIdOnceRandomBytes);
+    random_draws = 0;
+
+    const nixl::trace::TraceIdentity identity = nixl::trace::generateRequestIdentity(tracer.get());
+
+    std::array<std::uint8_t, 16> trace_id{};
+    trace_id.fill(0x11);
+    std::array<std::uint8_t, 8> span_id{};
+    span_id.fill(0x5a);
+    EXPECT_EQ(random_draws, 2u);
+    EXPECT_EQ(identity.context.traceId, trace_id);
+    EXPECT_EQ(identity.context.spanId, span_id);
+    EXPECT_EQ(identity.requestId, 0x2222222222222222ULL);
+    EXPECT_FALSE(identity.context.sampled());
+}
+
+TEST(Tracing, RequestIdentityIsNoneWithoutTracerOrSource) {
+    gtest::LogMessageCounter failures("could not generate a trace context");
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, failRandomBytes);
+
+    for (const nixl::trace::Tracer *source :
+         std::initializer_list<const nixl::trace::Tracer *>{nullptr, tracer.get(), tracer.get()}) {
+        const nixl::trace::TraceIdentity identity = nixl::trace::generateRequestIdentity(source);
+        EXPECT_EQ(identity.context, nixl::trace::TraceContext{});
+        EXPECT_EQ(identity.requestId, 0u);
+        EXPECT_EQ(identity.execution, 0u);
+    }
     EXPECT_EQ(failures.count(), 1u);
 }
 

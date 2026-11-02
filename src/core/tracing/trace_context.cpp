@@ -131,11 +131,24 @@ generatedRandomBytes(std::span<std::uint8_t> output) {
     random_generator.fill(output);
 }
 
+[[nodiscard]] nixl::trace::random_bytes_fn_t
+randomSource(nixl::trace::random_bytes_fn_t random_bytes) noexcept {
+    return (random_bytes != nullptr) ? random_bytes : generatedRandomBytes;
+}
+
+void
+setFlags(nixl::trace::TraceContext &context, double sample_ratio) noexcept {
+    context.flags = 0x02;
+    if (nixl::trace::sampledByRatio(context, sample_ratio)) {
+        context.flags |= 0x01;
+    }
+}
+
 void
 generateInto(nixl::trace::TraceContext &context,
              double sample_ratio,
              nixl::trace::random_bytes_fn_t random_bytes) {
-    const auto fill = (random_bytes != nullptr) ? random_bytes : generatedRandomBytes;
+    const auto fill = randomSource(random_bytes);
     do {
         fill(context.traceId);
     } while (isAllZero(context.traceId));
@@ -144,10 +157,39 @@ generateInto(nixl::trace::TraceContext &context,
         fill(context.spanId);
     } while (isAllZero(context.spanId));
 
-    context.flags = 0x02;
-    if (nixl::trace::sampledByRatio(context, sample_ratio)) {
-        context.flags |= 0x01;
+    setFlags(context, sample_ratio);
+}
+
+void
+drawRequestIdentity(nixl::trace::TraceIdentity &identity,
+                    double sample_ratio,
+                    nixl::trace::random_bytes_fn_t random_bytes) {
+    const auto fill = randomSource(random_bytes);
+    nixl::trace::TraceContext &context = identity.context;
+    std::array<std::uint8_t,
+               sizeof(context.traceId) + sizeof(context.spanId) + sizeof(identity.requestId)>
+        bytes;
+    fill(bytes);
+    std::memcpy(context.traceId.data(), bytes.data(), sizeof(context.traceId));
+    std::memcpy(
+        context.spanId.data(), bytes.data() + sizeof(context.traceId), sizeof(context.spanId));
+    std::memcpy(&identity.requestId,
+                bytes.data() + sizeof(context.traceId) + sizeof(context.spanId),
+                sizeof(identity.requestId));
+
+    while (isAllZero(context.traceId)) {
+        fill(context.traceId);
     }
+    while (isAllZero(context.spanId)) {
+        fill(context.spanId);
+    }
+    identity.requestId &= max_request_id;
+    while (identity.requestId == 0) {
+        fill({reinterpret_cast<std::uint8_t *>(&identity.requestId), sizeof(identity.requestId)});
+        identity.requestId &= max_request_id;
+    }
+
+    setFlags(context, sample_ratio);
 }
 
 char *
@@ -340,8 +382,7 @@ nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
     if (tracer == nullptr) {
         return 0;
     }
-    const auto fill =
-        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : generatedRandomBytes;
+    const auto fill = randomSource(tracer->randomBytes());
     std::uint64_t id = 0;
     try {
         do {
@@ -358,8 +399,18 @@ nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
 
 nixl::trace::TraceIdentity
 nixl::trace::generateRequestIdentity(const nixl::trace::Tracer *tracer) {
-    const nixl::trace::TraceContext context{tracer};
-    return {context, generateRequestId(tracer), 0};
+    if (tracer == nullptr) {
+        return {};
+    }
+    nixl::trace::TraceIdentity identity;
+    try {
+        drawRequestIdentity(identity, tracer->sampleRatio(), tracer->randomBytes());
+    }
+    catch (const std::exception &e) {
+        tracer->reportContextFailure(e.what());
+        return {};
+    }
+    return identity;
 }
 
 nixl::trace::TraceContext
@@ -368,8 +419,7 @@ nixl::trace::generatePostContext(const nixl::trace::TraceContext &request,
     if (tracer == nullptr) {
         return request;
     }
-    const auto fill =
-        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : generatedRandomBytes;
+    const auto fill = randomSource(tracer->randomBytes());
     nixl::trace::TraceContext context = request;
     try {
         do {
