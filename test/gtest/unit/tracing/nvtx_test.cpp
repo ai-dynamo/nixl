@@ -41,14 +41,15 @@ static_assert(!std::is_copy_constructible_v<nvtx::NvtxEvent>);
 static_assert(!std::is_copy_assignable_v<nvtx::NvtxEvent>);
 
 constexpr std::string_view fixed_names[] = {
-    "nixl::createXferReq",
-    "nixl::postXferReq.write",
-    "nixl::postXferReq.read",
-    "nixl::xfer.complete",
+    "nixl::registerMem",      "nixl::deregisterMem",   "nixl::makeConnection",
+    "nixl::makeXferReq",      "nixl::createXferReq",   "nixl::postXferReq.write",
+    "nixl::postXferReq.read", "nixl::genNotif",        "nixl::getNotifs",
+    "nixl::xfer.complete",    "nixl::loadRemoteMD",    "nixl::fetchRemoteMD",
+    "nixl::prepMemView",      "nixl::releaseMemView",  "nixl::submit",
+    "nixl::wire.submitted",   "nixl::wire.completed",  "nixl::notif.sent",
+    "nixl::notif.received",   "nixl::remote.observed", "nixl::span",
+    "nixl::wire.inflight",    "nixl::phase",           "nixl::xfer.error",
     "nixl::releaseXferReq",
-    "nixl::submit",
-    "nixl::wire.submitted",
-    "nixl::wire.completed",
 };
 
 [[nodiscard]] std::vector<nvtxStringHandle_t>
@@ -95,7 +96,9 @@ TEST(NvtxEvents, OtherNameIsCopiedIntoTheEvent) {
     const auto handles = registeredHandles();
     for (const std::string_view name : {std::string_view("rail0.write"),
                                         std::string_view("nixl::postXferReq"),
-                                        std::string_view("nixl::submit.")}) {
+                                        std::string_view("nixl::submit."),
+                                        std::string_view("rail::wire.submitted"),
+                                        std::string_view("span")}) {
         nvtx::NvtxEvent event;
         nvtx::eventForName(event, name, nixl::trace::Kind::Metadata, nullptr, handles);
         EXPECT_EQ(event.attributes.messageType, NVTX_MESSAGE_TYPE_ASCII) << name;

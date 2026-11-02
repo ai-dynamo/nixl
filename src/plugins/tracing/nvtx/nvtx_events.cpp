@@ -18,16 +18,19 @@
 #include "nvtx_events.h"
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <optional>
 #include <string>
+#include <type_traits>
 
 namespace nixl::trace::nvtx_internal {
 namespace {
 
-    constexpr const char *kRegisteredSpanNames[] = {
+    constexpr std::string_view kRegisteredSpanNames[] = {
         "nixl::registerMem",      "nixl::deregisterMem",   "nixl::makeConnection",
         "nixl::makeXferReq",      "nixl::createXferReq",   "nixl::postXferReq.write",
         "nixl::postXferReq.read", "nixl::genNotif",        "nixl::getNotifs",
@@ -62,14 +65,16 @@ namespace {
         return 0xFF455A64u; // blue-gray fallback for out-of-range Kind values
     }
 
-    [[nodiscard]] nvtxEventAttributes_t
-    makeEventBase(const Kind kind) {
-        nvtxEventAttributes_t ev{};
+    void
+    setEventBase(nvtxEventAttributes_t &ev, const Kind kind) noexcept {
         ev.version = NVTX_VERSION;
         ev.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
+        ev.category = 0;
         ev.colorType = NVTX_COLOR_ARGB;
         ev.color = colorFor(kind);
-        return ev;
+        ev.payloadType = NVTX_PAYLOAD_UNKNOWN;
+        ev.reserved0 = 0;
+        ev.payload.ullValue = 0;
     }
 
     void
@@ -84,23 +89,70 @@ namespace {
         ev.message.ascii = text;
     }
 
+    constexpr std::size_t kWordSize = sizeof(std::uint64_t);
+    constexpr std::size_t kMaxRegisteredName = 3 * kWordSize;
+
     [[nodiscard]] constexpr std::uint64_t
-    nameHash(const std::string_view name) noexcept {
-        std::uint64_t hash = 0xcbf29ce484222325ULL;
-        for (const char c : name) {
-            hash = (hash ^ static_cast<unsigned char>(c)) * 0x100000001b3ULL;
+    wordAt(const std::string_view name, const std::size_t offset) noexcept {
+        const char *const bytes = name.data() + offset;
+        if (std::is_constant_evaluated()) {
+            std::uint64_t word = 0;
+            for (std::size_t i = 0; i < kWordSize; ++i) {
+                const std::size_t shift =
+                    (std::endian::native == std::endian::little) ? i : (kWordSize - 1 - i);
+                word |= std::uint64_t{static_cast<unsigned char>(bytes[i])} << (8 * shift);
+            }
+            return word;
         }
-        return hash;
+        std::uint64_t word;
+        std::memcpy(&word, bytes, kWordSize);
+        return word;
     }
 
-    constexpr std::size_t kNameSlots = 64;
+    struct NameWords {
+        std::uint64_t head;
+        std::uint64_t middle;
+        std::uint64_t tail;
+        std::size_t size;
+
+        [[nodiscard]] constexpr bool
+        operator==(const NameWords &) const noexcept = default;
+    };
+
+    [[nodiscard]] constexpr NameWords
+    nameWords(const std::string_view name) noexcept {
+        const std::size_t tail = name.size() - kWordSize;
+        return {wordAt(name, 0),
+                wordAt(name, std::min(kWordSize, tail)),
+                wordAt(name, tail),
+                name.size()};
+    }
+
+    constexpr unsigned kNameSlotBits = 6;
+    constexpr std::size_t kNameSlots = std::size_t{1} << kNameSlotBits;
     static_assert(std::size(kRegisteredSpanNames) * 2 <= kNameSlots);
+    static_assert(std::ranges::all_of(kRegisteredSpanNames, [](const std::string_view name) {
+        return (name.size() >= kWordSize) && (name.size() <= kMaxRegisteredName);
+    }));
+
+    [[nodiscard]] constexpr std::size_t
+    firstSlot(const NameWords &words) noexcept {
+        return ((words.tail ^ words.size) * 0x9e3779b97f4a7c15ULL) >> (64 - kNameSlotBits);
+    }
+
+    constexpr auto kRegisteredWords = [] {
+        std::array<NameWords, std::size(kRegisteredSpanNames)> words{};
+        for (std::size_t i = 0; i < words.size(); ++i) {
+            words[i] = nameWords(kRegisteredSpanNames[i]);
+        }
+        return words;
+    }();
 
     constexpr auto kNameTable = [] {
         std::array<std::int8_t, kNameSlots> table{};
         table.fill(-1);
-        for (std::size_t i = 0; i < std::size(kRegisteredSpanNames); ++i) {
-            std::size_t slot = nameHash(kRegisteredSpanNames[i]) % kNameSlots;
+        for (std::size_t i = 0; i < kRegisteredWords.size(); ++i) {
+            std::size_t slot = firstSlot(kRegisteredWords[i]);
             while (table[slot] >= 0) {
                 slot = (slot + 1) % kNameSlots;
             }
@@ -111,14 +163,24 @@ namespace {
 
     [[nodiscard]] std::optional<std::size_t>
     registeredIndex(const std::string_view name) noexcept {
-        for (std::size_t slot = nameHash(name) % kNameSlots; kNameTable[slot] >= 0;
+        if ((name.size() < kWordSize) || (name.size() > kMaxRegisteredName)) {
+            return std::nullopt;
+        }
+        const NameWords words = nameWords(name);
+        for (std::size_t slot = firstSlot(words); kNameTable[slot] >= 0;
              slot = (slot + 1) % kNameSlots) {
             const auto index = static_cast<std::size_t>(kNameTable[slot]);
-            if (name == kRegisteredSpanNames[index]) {
+            if (kRegisteredWords[index] == words) {
                 return index;
             }
         }
         return std::nullopt;
+    }
+
+    [[gnu::noinline]] nvtxStringHandle_t
+    registerName(const nvtxDomainHandle_t domain, const std::string_view name) {
+        const std::string owned(name);
+        return nvtxDomainRegisterStringA(domain, owned.c_str());
     }
 
 } // namespace
@@ -127,8 +189,8 @@ std::vector<nvtxStringHandle_t>
 registerSpanNames(const nvtxDomainHandle_t domain) {
     std::vector<nvtxStringHandle_t> handles;
     handles.reserve(std::size(kRegisteredSpanNames));
-    for (const char *name : kRegisteredSpanNames) {
-        handles.push_back(nvtxDomainRegisterStringA(domain, name));
+    for (const std::string_view name : kRegisteredSpanNames) {
+        handles.push_back(nvtxDomainRegisterStringA(domain, name.data()));
     }
     return handles;
 }
@@ -139,12 +201,12 @@ eventForName(NvtxEvent &event,
              const Kind kind,
              const nvtxDomainHandle_t domain,
              const std::vector<nvtxStringHandle_t> &registered_handles) {
-    event.attributes = makeEventBase(kind);
+    setEventBase(event.attributes, kind);
     if (const auto index = registeredIndex(name)) {
         if (registered_handles[*index] != nullptr) {
             setRegistered(event.attributes, registered_handles[*index]);
         } else {
-            setAscii(event.attributes, kRegisteredSpanNames[*index]);
+            setAscii(event.attributes, kRegisteredSpanNames[*index].data());
         }
         return;
     }
@@ -153,8 +215,7 @@ eventForName(NvtxEvent &event,
         setAscii(event.attributes, event.message.data());
         return;
     }
-    const std::string owned(name);
-    setRegistered(event.attributes, nvtxDomainRegisterStringA(domain, owned.c_str()));
+    setRegistered(event.attributes, registerName(domain, name));
 }
 
 } // namespace nixl::trace::nvtx_internal
