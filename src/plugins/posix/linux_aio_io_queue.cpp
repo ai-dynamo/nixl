@@ -27,10 +27,37 @@
 
 struct nixlPosixLinuxAioIO {
 public:
+    void *
+    currentBuf() const {
+        return static_cast<char *>(buf_) + completed_;
+    }
+
+    off_t
+    currentOffset() const {
+        return offset_ + static_cast<off_t>(completed_);
+    }
+
+    size_t
+    remaining() const {
+        return len_ - completed_;
+    }
+
+    void
+    advance(size_t completed) {
+        NIXL_ASSERT(completed <= remaining());
+        completed_ += completed;
+    }
+
+    int fd_ = -1;
+    void *buf_ = nullptr;
+    off_t offset_ = 0;
+    bool read_ = false;
     nixlPosixIOQueueDoneCb clb_;
     void *ctx_ = nullptr;
     size_t len_ = 0;
+    size_t completed_ = 0;
     bool in_flight_ = false;
+    bool cancel_requested_ = false;
     struct iocb io_;
 };
 
@@ -59,8 +86,12 @@ protected:
     doCheckCompleted(void);
 
 private:
+    void
+    queueForSubmission(nixlPosixLinuxAioIO *io);
     bool
-    completeIO(nixlPosixLinuxAioIO *io, int64_t result);
+    finishIO(nixlPosixLinuxAioIO *io, int64_t result, bool error);
+    bool
+    handleIOCompletion(nixlPosixLinuxAioIO *io, int64_t result);
     void
     failIO(nixlPosixLinuxAioIO *io);
     void
@@ -96,6 +127,8 @@ nixlPosixIOQueueLinuxAIO::enqueue(int fd,
                                   bool read,
                                   nixlPosixIOQueueDoneCb clb,
                                   void *ctx) {
+    NIXL_ASSERT(buf != nullptr);
+
     if (terminal_error_) {
         return NIXL_ERR_BACKEND;
     }
@@ -106,19 +139,31 @@ nixlPosixIOQueueLinuxAIO::enqueue(int fd,
     nixlPosixLinuxAioIO *io = free_ios_.front();
     free_ios_.pop_front();
 
-    if (read) {
-        io_prep_pread(&io->io_, fd, buf, len, offset);
-    } else {
-        io_prep_pwrite(&io->io_, fd, buf, len, offset);
-    }
+    io->fd_ = fd;
+    io->buf_ = buf;
+    io->offset_ = offset;
+    io->read_ = read;
     io->clb_ = clb;
     io->ctx_ = ctx;
     io->len_ = len;
+    io->completed_ = 0;
     io->in_flight_ = false;
-    io->io_.data = io;
-    ios_to_submit_.push_back(io);
+    io->cancel_requested_ = false;
+    queueForSubmission(io);
 
     return NIXL_SUCCESS;
+}
+
+void
+nixlPosixIOQueueLinuxAIO::queueForSubmission(nixlPosixLinuxAioIO *io) {
+    if (io->read_) {
+        io_prep_pread(&io->io_, io->fd_, io->currentBuf(), io->remaining(), io->currentOffset());
+    } else {
+        io_prep_pwrite(&io->io_, io->fd_, io->currentBuf(), io->remaining(), io->currentOffset());
+    }
+    io->io_.data = io;
+    io->in_flight_ = false;
+    ios_to_submit_.push_back(io);
 }
 
 nixlPosixIOQueueLinuxAIO::~nixlPosixIOQueueLinuxAIO() {
@@ -183,21 +228,51 @@ nixlPosixIOQueueLinuxAIO::requeueFrom(nixlPosixLinuxAioIO *const *ios, int first
 }
 
 bool
-nixlPosixIOQueueLinuxAIO::completeIO(nixlPosixLinuxAioIO *io, int64_t result) {
-    NIXL_ASSERT(io->in_flight_);
-    bool error = result < 0 || static_cast<size_t>(result) != io->len_;
+nixlPosixIOQueueLinuxAIO::finishIO(nixlPosixLinuxAioIO *io, int64_t result, bool error) {
     if (error) {
         NIXL_DEBUG << absl::StrFormat(
-            "AIO operation incomplete: result %ld, expected %zu", result, io->len_);
+            "AIO operation incomplete: result %ld, %zu bytes remaining", result, io->remaining());
         failIO(io);
         return true;
     }
 
     io->in_flight_ = false;
     if (io->clb_) {
-        io->clb_(io->ctx_, static_cast<uint32_t>(result), 0);
+        io->clb_(io->ctx_, static_cast<uint32_t>(io->len_), 0);
     }
     free_ios_.push_back(io);
+    return false;
+}
+
+bool
+nixlPosixIOQueueLinuxAIO::handleIOCompletion(nixlPosixLinuxAioIO *io, int64_t result) {
+    NIXL_ASSERT(io->in_flight_);
+    if (result < 0) {
+        return finishIO(io, result, true);
+    }
+
+    const size_t completed = static_cast<size_t>(result);
+
+    if (completed == 0 && io->remaining() != 0) {
+        return finishIO(io, result, true);
+    }
+
+    io->advance(completed);
+
+    if (io->remaining() == 0) {
+        return finishIO(io, result, false);
+    }
+
+    if (io->cancel_requested_) {
+        return finishIO(io, result, true);
+    }
+
+    NIXL_DEBUG << absl::StrFormat(
+        "AIO operation completed partially: %zu bytes completed, %zu remaining; resubmitting "
+        "remainder",
+        completed,
+        io->remaining());
+    queueForSubmission(io);
     return false;
 }
 
@@ -231,7 +306,7 @@ nixlPosixIOQueueLinuxAIO::doCheckCompleted(void) {
     for (int i = 0; i < rc; i++) {
         auto *io = static_cast<nixlPosixLinuxAioIO *>(events[i].obj->data);
         void *ctx = io->ctx_;
-        if (completeIO(io, events[i].res)) {
+        if (handleIOCompletion(io, events[i].res)) {
             failQueuedIOs(ctx);
         }
     }
@@ -306,10 +381,11 @@ nixlPosixIOQueueLinuxAIO::cancel(void *ctx, nixlPosixIOQueueCancelDoneCb) {
             continue;
         }
 
+        io.cancel_requested_ = true;
         struct io_event event{};
         if (io_cancel(io_ctx_, &io.io_, &event) == 0) {
             // io_cancel returns the canceled operation's completion synchronously.
-            completeIO(&io, event.res);
+            handleIOCompletion(&io, event.res);
         }
     }
 

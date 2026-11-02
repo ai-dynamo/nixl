@@ -207,7 +207,7 @@ TEST_F(secDescListTest, AddRandomBatches) {
         list.addDescs(std::move(batch));
 
         num_added += batch_size;
-        ASSERT_EQ(list.descCount(), num_added);
+        ASSERT_EQ(static_cast<size_t>(list.descCount()), num_added);
         assertSorted(list);
     }
 }

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '1.5.0',
+project('nixlbench', 'CPP', version: '1.6.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -127,9 +127,14 @@ else
 endif
 
 cuda_fabric_available = false
+cuda_locality_domain_available = false
 if cuda_available
     if cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC', dependencies: cuda_dep)
         cuda_fabric_available = true
+    endif
+    if cpp.has_header_symbol('cuda.h', 'CU_MEM_LOCATION_TYPE_DEVICE_LOCALITY_DOMAIN',
+                             dependencies: cuda_dep)
+        cuda_locality_domain_available = true
     endif
 endif
 
@@ -199,6 +204,10 @@ if cuda_fabric_available
     add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
 endif
 
+if cuda_locality_domain_available
+    add_project_arguments('-DHAVE_CUDA_LOCALITY_DOMAIN', language: 'cpp')
+endif
+
 if not cuda_available and not rocm_available
     warning('Neither CUDA nor ROCm found. VRAM support will be disabled.')
 endif
@@ -206,6 +215,7 @@ endif
 ucx_device_cuda_args = []
 ucx_device_override_options = []
 ucx_gpu_device_api_available = false
+nixl_device_api_available = false
 nvcc_prog = find_program('nvcc', required: false)
 doca_gpunetio_dep = disabler()
 
@@ -228,21 +238,19 @@ else
         required: false)
 endif
 
-if not ucx_dep.found()
-    message('UCX GPU Device API is unavailable because UCX was not found.')
-elif not cuda_available
-    message('UCX GPU Device API is unavailable because CUDA is unavailable.')
+if not cuda_available
+    message('NIXL Device API is unavailable because CUDA is unavailable.')
 elif not nvcc_prog.found()
-    message('UCX GPU Device API is unavailable because nvcc was not found.')
+    message('NIXL Device API is unavailable because nvcc was not found.')
 elif nvshmem_available
-    message('UCX GPU Device API is unavailable because the NVSHMEM build path is enabled.')
+    message('NIXL Device API is unavailable because the NVSHMEM build path is enabled.')
 else
     add_languages('cuda', native: false)
     add_project_arguments('-std=c++20', language: 'cuda')
     cuda = meson.get_compiler('cuda')
     if not cuda.version().version_compare('>=12.8')
         message(
-            'UCX GPU Device API is unavailable because CUDA ' +
+            'NIXL Device API is unavailable because CUDA ' +
             cuda.version() + ' is older than 12.8.')
     else
         if cuda.version().version_compare('>=12.9') and cuda.version().version_compare('<12.10')
@@ -274,7 +282,7 @@ else
             selected_cuda_archs += ['sm_' + cuda_arch]
         endforeach
         if selected_cuda_archs.length() == 0
-            error('No CUDA targets selected for UCX device kernels')
+            error('No CUDA targets selected for device kernels')
         endif
         nvcc_ptx_arch = 'compute_' + nvcc_ptx_arch_num.to_string()
         ucx_device_cuda_args += [
@@ -293,16 +301,17 @@ else
             args: ucx_device_cuda_args,
             name: 'UCX GPU-side Device API')
 
-        have_nixl_device_api = false
-        if have_gpu_side
-            have_nixl_device_api = cuda.compiles(
-                '''
-                #include <gpu/ucx/nixl_device.cuh>
-                int main() { return 0; }
-                ''',
-                dependencies: [ucx_dep, doca_gpunetio_dep],
-                args: ['-I' + nixl_inc] + ucx_device_cuda_args,
-                name: 'NIXL Device API')
+        have_nixl_device_api = cuda.compiles(
+            '''
+            #include <gpu/nixl_device.cuh>
+            int main() { return 0; }
+            ''',
+            dependencies: [ucx_dep, doca_gpunetio_dep],
+            args: ['-I' + nixl_inc] + ucx_device_cuda_args,
+            name: 'NIXL Device API')
+        if have_nixl_device_api
+            nixl_device_api_available = true
+            add_project_arguments('-DNIXLBENCH_DEVICE_API', language: ['cpp', 'cuda'])
         endif
 
         if have_gpu_side and have_nixl_device_api
@@ -317,6 +326,7 @@ endif
 
 summary(
     {
+        'NIXL Device API': nixl_device_api_available,
         'UCX GPU Device API': ucx_gpu_device_api_available,
         'nvcc available': nvcc_prog.found(),
         'DOCA GPUNETIO found': doca_gpunetio_dep.found(),
@@ -339,6 +349,7 @@ configure_file(
         'HAVE_CUDA': cuda_available ? '1' : '0',
         'HAVE_ROCM': rocm_available ? '1' : '0',
         'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
+        'HAVE_CUDA_LOCALITY_DOMAIN': cuda_locality_domain_available ? '1' :'0',
         'HAVE_RAW_CLI': raw_cli_available ? '1' : '0',
     },
     install: true,
@@ -358,7 +369,7 @@ if cuda_available
 elif rocm_available
     deps += [rocm_dep]
 endif
-if ucx_gpu_device_api_available
+if nixl_device_api_available
     deps += [nixlbench_kernels_dep]
 endif
 if nvshmem_available
@@ -437,9 +448,5 @@ else
 endif
 
 if get_option('build_tests') and get_option('buildtype') != 'release'
-    if raw_cli_available
-        subdir('tests')
-    else
-        message('Skipping raw CLI tests because the raw command path is not built.')
-    endif
+    subdir('tests')
 endif

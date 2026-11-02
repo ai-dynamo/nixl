@@ -22,10 +22,12 @@
 #include <prometheus/client_metric.h>
 #include <prometheus/metric_type.h>
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <limits>
 #include <system_error>
+#include <tuple>
 
 namespace nixl::telemetry::mp {
 
@@ -36,15 +38,16 @@ namespace {
     using prometheus::MetricType;
 
     [[nodiscard]] std::vector<ClientMetric::Label>
-    baseLabels(const storeSnapshot &s) {
+    baseLabels(const publishedStore &store) {
+        const auto &s = store.snapshot;
         std::vector<ClientMetric::Label> labels;
         labels.push_back({"hostname", s.hostname});
         labels.push_back({"agent_name", s.agentName});
-        // pid guarantees per-process series uniqueness even if agent names are
-        // not unique across processes; avoids duplicate-series scrape errors. Not
-        // named "instance" (a reserved Prometheus target label).
-        labels.push_back({"pid", std::to_string(s.pid)});
-        labels.push_back({"agent_instance", std::to_string(s.instance)});
+        // Not named "instance" (a reserved Prometheus target label).
+        if (store.withProcessLabels) {
+            labels.push_back({"pid", std::to_string(s.pid)});
+            labels.push_back({"agent_instance", std::to_string(s.instance)});
+        }
         if (!s.localRank.empty()) {
             labels.push_back({"local_rank", s.localRank});
         }
@@ -97,6 +100,25 @@ namespace {
             name.starts_with(MP_STORE_FILE_PREFIX) && name.ends_with(MP_STORE_FILE_SUFFIX);
     }
 
+    [[nodiscard]] auto
+    identityOf(const storeSnapshot &s) {
+        return std::tie(s.hostname, s.agentName, s.localRank);
+    }
+
+    [[nodiscard]] auto
+    precedenceOf(const scannedStore &s) {
+        return std::tuple(
+            s.writerAlive, s.snapshot.lastUpdateNs, s.snapshot.pid, s.snapshot.instance);
+    }
+
+    [[nodiscard]] bool
+    publishesBefore(const scannedStore &a, const scannedStore &b) {
+        if (const auto order = identityOf(a.snapshot) <=> identityOf(b.snapshot); order != 0) {
+            return order < 0;
+        }
+        return precedenceOf(a) > precedenceOf(b);
+    }
+
 } // namespace
 
 bool
@@ -110,9 +132,9 @@ isSnapshotLive(const storeSnapshot &snap, std::chrono::nanoseconds ttl, bool wri
 }
 
 std::vector<MetricFamily>
-buildMetricFamilies(const std::vector<storeSnapshot> &snapshots) {
+buildMetricFamilies(const std::vector<publishedStore> &stores) {
     std::vector<MetricFamily> families;
-    if (snapshots.empty()) {
+    if (stores.empty()) {
         return families;
     }
 
@@ -126,8 +148,9 @@ buildMetricFamilies(const std::vector<storeSnapshot> &snapshots) {
         family.help = descriptor.counterHelp;
         family.type = MetricType::Counter;
         const auto slot = static_cast<std::size_t>(type);
-        for (const auto &snap : snapshots) {
-            family.metric.push_back(counterMetric(baseLabels(snap), snap.counters[slot]));
+        for (const auto &store : stores) {
+            family.metric.push_back(
+                counterMetric(baseLabels(store), store.snapshot.counters[slot]));
         }
         families.push_back(std::move(family));
     }
@@ -142,8 +165,8 @@ buildMetricFamilies(const std::vector<storeSnapshot> &snapshots) {
         family.help = descriptor.gaugeHelp;
         family.type = MetricType::Gauge;
         const auto slot = static_cast<std::size_t>(type);
-        for (const auto &snap : snapshots) {
-            family.metric.push_back(gaugeMetric(baseLabels(snap), snap.gauges[slot]));
+        for (const auto &store : stores) {
+            family.metric.push_back(gaugeMetric(baseLabels(store), store.snapshot.gauges[slot]));
         }
         families.push_back(std::move(family));
     }
@@ -158,8 +181,8 @@ buildMetricFamilies(const std::vector<storeSnapshot> &snapshots) {
         family.help = descriptor.histogramHelp;
         family.type = MetricType::Histogram;
         const auto slot = static_cast<std::size_t>(type);
-        for (const auto &snap : snapshots) {
-            family.metric.push_back(histogramMetric(baseLabels(snap), snap, slot));
+        for (const auto &store : stores) {
+            family.metric.push_back(histogramMetric(baseLabels(store), store.snapshot, slot));
         }
         families.push_back(std::move(family));
     }
@@ -168,12 +191,12 @@ buildMetricFamilies(const std::vector<storeSnapshot> &snapshots) {
     errors.name = telemetry_error_family_name;
     errors.help = telemetry_error_family_help;
     errors.type = MetricType::Counter;
-    for (const auto &snap : snapshots) {
+    for (const auto &store : stores) {
         for (const auto type : telemetry_error_event_types) {
-            auto labels = baseLabels(snap);
+            auto labels = baseLabels(store);
             labels.push_back({"status", nixlEnumStrings::telemetryErrorStatusLabel(type)});
-            errors.metric.push_back(
-                counterMetric(std::move(labels), snap.counters[static_cast<std::size_t>(type)]));
+            errors.metric.push_back(counterMetric(
+                std::move(labels), store.snapshot.counters[static_cast<std::size_t>(type)]));
         }
     }
     families.push_back(std::move(errors));
@@ -195,7 +218,7 @@ nixlMultiprocessCollector::Collect() const {
     // fail the scrape at best and terminate the process at worst. Telemetry must
     // never take down the data plane, so degrade to an empty scrape instead.
     try {
-        return buildMetricFamilies(scanLiveStores());
+        return buildMetricFamilies(selectStores(scanLiveStores()));
     }
     catch (const std::exception &e) {
         NIXL_WARN << "prometheus_mp: telemetry collection failed: " << e.what();
@@ -206,9 +229,49 @@ nixlMultiprocessCollector::Collect() const {
     return {};
 }
 
-std::vector<storeSnapshot>
+std::vector<publishedStore>
+nixlMultiprocessCollector::selectStores(std::vector<scannedStore> stores) const {
+    std::ranges::sort(stores, publishesBefore);
+    std::vector<publishedStore> published;
+    published.reserve(stores.size());
+    for (auto first = stores.begin(); first != stores.end();) {
+        const auto last = std::find_if(first, stores.end(), [&first](const scannedStore &s) {
+            return identityOf(s.snapshot) != identityOf(first->snapshot);
+        });
+        const auto live_writers = static_cast<std::size_t>(
+            std::count_if(first, last, [](const scannedStore &s) { return s.writerAlive; }));
+        if (live_writers < 2) {
+            published.push_back({std::move(first->snapshot), false});
+        } else {
+            reportSharedIdentity(first->snapshot, live_writers);
+            for (auto it = first; it != last; ++it) {
+                if (it->writerAlive) {
+                    published.push_back({std::move(it->snapshot), true});
+                }
+            }
+        }
+        first = last;
+    }
+    return published;
+}
+
+void
+nixlMultiprocessCollector::reportSharedIdentity(const storeSnapshot &store,
+                                                std::size_t live_writers) const {
+    if (duplicateReported_.test_and_set()) {
+        return;
+    }
+    const std::string rank =
+        store.localRank.empty() ? std::string() : " with local_rank '" + store.localRank + "'";
+    NIXL_WARN << "prometheus_mp: " << live_writers << " live agents on host '" << store.hostname
+              << "' are named '" << store.agentName << "'" << rank
+              << "; their series carry pid and agent_instance labels to stay apart. Peers look "
+              << "agents up by name, so give each agent a unique one";
+}
+
+std::vector<scannedStore>
 nixlMultiprocessCollector::scanLiveStores() const {
-    std::vector<storeSnapshot> live;
+    std::vector<scannedStore> live;
 
     std::error_code ec;
     std::filesystem::directory_iterator it(dir_, ec);
@@ -244,7 +307,7 @@ nixlMultiprocessCollector::scanLiveStores() const {
             continue;
         }
         if (isSnapshotLive(*snap, staleTtl_, writer_alive)) {
-            live.push_back(std::move(*snap));
+            live.push_back({std::move(*snap), writer_alive});
         } else if (reapStale_) {
             std::error_code rm_ec;
             std::filesystem::remove(entry.path(), rm_ec);

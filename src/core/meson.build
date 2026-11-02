@@ -26,20 +26,23 @@ if 'LIBFABRIC' in static_plugins
 endif
 
 if 'UCX' in static_plugins
-    nixl_lib_deps += [ ucx_backend_interface, asio_dep, cuda_dep ]
+    nixl_lib_deps += [ ucx_backend_interface, cuda_dep ]
 endif
 
 if 'POSIX' in static_plugins
     nixl_lib_deps += [ posix_backend_interface ]
 endif
 
-disable_infinia_backend = get_option('disable_infinia_backend')
-if infinia_lib_found.found() and not disable_infinia_backend and 'INFINIA' in static_plugins
+if is_variable('infinia_backend_interface') and 'INFINIA' in static_plugins
     nixl_lib_deps += [ infinia_backend_interface ]
 endif
 
 if 'OBJ' in static_plugins
     nixl_lib_deps += [ obj_backend_interface ]
+endif
+
+if 'REDIS' in static_plugins
+    nixl_lib_deps += [ redis_backend_interface ]
 endif
 
 disable_gds_backend = get_option('disable_gds_backend')
@@ -54,8 +57,8 @@ endif
 cc = meson.get_compiler('cpp')
 libtransfer_engine = cc.find_library('transfer_engine', required: false)
 disable_mooncake_backend = get_option('disable_mooncake_backend')
-if libtransfer_engine.found() and not disable_mooncake_backend and 'Mooncake' in static_plugins
-    nixl_lib_deps += [ mooncake_backend_interface, cuda_dep ]
+if libtransfer_engine.found() and not disable_mooncake_backend and 'MOONCAKE' in static_plugins
+    nixl_lib_deps += [ mooncake_backend_interface ]
 endif
 
 # Tracing (nixl::trace). Only the facade (tracer.cpp) and the plugin loader are
@@ -76,7 +79,7 @@ nixl_lib_sources = [
     'telemetry/buffer_exporter.cpp',
     'telemetry/buffer_plugin.cpp',
     'telemetry/nop_plugin.cpp',
-    'tracing/trace_context.cpp',
+    'tracing/trace_sink.cpp',
     'tracing/tracer.cpp',
 ]
 

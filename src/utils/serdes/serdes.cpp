@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <cstring>
+#include <utility>
 
 #include "serdes.h"
 #include "common/nixl_log.h"
@@ -77,6 +78,22 @@ std::string nixlSerDes::getStr(const std::string &tag){
         NIXL_ERROR << "Deserialization of tag " << tag << " failed for empty data";
     }
     return ret;
+}
+
+std::optional<size_t>
+nixlSerDes::peekBufLen(std::string_view tag) const noexcept {
+    const size_t header_end = des_offset + tag.size() + sizeof(size_t);
+    if ((workingStr.size() < header_end) ||
+        (std::memcmp(workingStr.data() + des_offset, tag.data(), tag.size()) != 0)) {
+        return std::nullopt;
+    }
+
+    size_t len;
+    std::memcpy(&len, workingStr.data() + des_offset + tag.size(), sizeof(len));
+    if (workingStr.size() - header_end <= len) {
+        return std::nullopt;
+    }
+    return len;
 }
 
 // Byte buffers serialization
@@ -152,6 +169,11 @@ nixl_status_t nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len)
 // Buffer management serialization
 std::string nixlSerDes::exportStr() const {
     return workingStr;
+}
+
+std::string
+nixlSerDes::exportMoveStr() && {
+    return std::move(workingStr);
 }
 
 nixl_status_t nixlSerDes::importStr(const std::string &sdbuf) {

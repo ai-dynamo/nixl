@@ -25,9 +25,10 @@
 namespace nixl {
 
 /**
- * @brief Generates pseudo-random bytes.
+ * @brief Generates cryptographically random bytes from the operating system CSPRNG.
  * @param output Pointer to the output buffer
  * @param size Number of bytes to generate
+ * @throws std::system_error if the entropy source fails
  */
 void
 generateRandomBytes(std::uint8_t *output, std::size_t size);

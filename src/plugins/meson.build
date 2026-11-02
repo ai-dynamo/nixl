@@ -29,6 +29,10 @@ if enabled_plugins.get('OBJ')
     subdir('obj')
 endif
 
+if enabled_plugins.get('REDIS')
+    subdir('redis')
+endif
+
 if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')
 endif
@@ -41,30 +45,21 @@ if enabled_plugins.get('LIBFABRIC')
     endif
 endif
 
+# The "GDS" and "GDS_MT" backends are produced by a single plugin directory.
+# GDS exposes both batch and MT modes, while GDS_MT remains as a compatibility
+# entry point for MT mode.
 disable_gds_backend = get_option('disable_gds_backend')
-if enabled_plugins.get('GDS')
-    if (disable_gds_backend or not cuda_dep.found()) and is_explicit_enable
-        if disable_gds_backend
-            error('GDS plugin requested but GDS backend is disabled')
-        else
-            error('GDS plugin requested but CUDA dependency not found')
-        endif
-    elif not disable_gds_backend and cuda_dep.found()
-        subdir('cuda_gds')
-    endif
-endif
-
-if enabled_plugins.get('GDS_MT')
+if enabled_plugins.get('GDS') or enabled_plugins.get('GDS_MT')
     if (disable_gds_backend or not cuda_dep.found() or not taskflow_proj.found()) and is_explicit_enable
         if disable_gds_backend
-            error('GDS_MT plugin requested but GDS backend is disabled')
-        elif not cuda_dep.found()
-            error('GDS_MT plugin requested but CUDA dependency not found')
+            error('GDS/GDS_MT plugin requested but GDS backend is disabled')
+        elif not taskflow_proj.found()
+            error('GDS/GDS_MT plugin requested but Taskflow dependency not found')
         else
-            error('GDS_MT plugin requested but Taskflow dependency not found')
+            error('GDS/GDS_MT plugin requested but CUDA dependency not found')
         endif
     elif not disable_gds_backend and cuda_dep.found() and taskflow_proj.found()
-        subdir('gds_mt')
+        subdir('cuda_gds')
     endif
 endif
 
@@ -102,20 +97,9 @@ if enabled_plugins.get('HF3FS')
     endif
 endif
 
-infinia_lib_path = get_option('infinia_path') + '/lib'
-infinia_lib_file = 'red_client'
-infinia_lib_found = cc.find_library(infinia_lib_file, dirs: [infinia_lib_path], required: false)
-disable_infinia_backend = get_option('disable_infinia_backend')
 if enabled_plugins.get('INFINIA')
-    if (disable_infinia_backend or not infinia_lib_found.found()) and is_explicit_enable
-        if disable_infinia_backend
-            error('INFINIA plugin requested but Infinia backend is disabled')
-        else
-            error('INFINIA plugin requested but red_client library not found')
-        endif
-    elif not disable_infinia_backend and infinia_lib_found.found()
-        subdir('infinia')
-    endif
+    # Leave the Library and Header files check inside the subdir
+    subdir('infinia')
 endif
 
 gusli_lib_file = 'gusli_clnt'
@@ -133,7 +117,7 @@ if enabled_plugins.get('GPUNETIO')
         if not cuda_dep.found()
             error('GPUNETIO plugin requested but CUDA dependency not found')
         else
-            error('GPUNETIO plugin requested but doca-gpunetio dependency not found')
+            error('GPUNETIO plugin requested but doca-gpunetio >= 3.5 not found')
         endif
     elif cuda_dep.found() and doca_gpunetio_dep.found()
         subdir('gpunetio')

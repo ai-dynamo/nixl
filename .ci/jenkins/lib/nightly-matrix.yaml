@@ -1,7 +1,8 @@
 # NIXL nightly UCX-master validation orchestrator.
 #
-# Fans out to the three GPU test jobs (nixl-ci-gpu, nixl-ci-dl-gpu,
-# nixl-ci-dl-gpu-ep) with UCX_VER=master, waits for all of them, and emails one
+# Fans out to the four GPU test jobs (nixl-ci-gpu, nixl-ci-dl-gpu,
+# nixl-ci-dl-gpu-ep, nixl-ci-gpu-vr) with UCX_VER=master, waits for all of
+# them, and emails one
 # consolidated report when any leg fails. This is the single place nightly
 # UCX-master results are collected and sent from; per-PR runs of the GPU jobs
 # cover only the release UCX version.
@@ -11,9 +12,9 @@
 job: nixl-ci-nightly
 
 failFast: false
-# Bounds the whole run; the fan-out step below carries its own 360-min timeout
+# Bounds the whole run; the fan-out step below carries its own 540-min timeout
 # so the report is still sent when a leg hangs.
-timeout_minutes: 400
+timeout_minutes: 580
 
 kubernetes:
   cloud: il-ipp-blossom-prod
@@ -46,6 +47,7 @@ steps:
           'gpu':       'nixl-ci-gpu',
           'dl-gpu':    'nixl-ci-dl-gpu',
           'dl-gpu-ep': 'nixl-ci-dl-gpu-ep',
+          'gpu-vr':    'nixl-ci-gpu-vr',
       ]
       def ucxRef = params.UCX_REF ?: 'master'
       def results = [:]
@@ -55,7 +57,7 @@ steps:
       // Run all legs in parallel; propagate:false so one red leg does not abort
       // the others. The timeout bounds the whole fan-out (leaf jobs have their
       // own) so the report is still sent if a leg hangs.
-      def fanOutTimeoutMin = 360
+      def fanOutTimeoutMin = 540
       def fanOutStart = System.currentTimeMillis()
       try {
           timeout(time: fanOutTimeoutMin, unit: 'MINUTES') {

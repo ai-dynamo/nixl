@@ -29,6 +29,13 @@
 
 namespace nixl_ep::cuda_stream {
 cudaStream_t
+get_from_pool() {
+    void *stream;
+    TORCH_ERROR_CODE_CHECK(torch_get_cuda_stream_from_pool(true, -1, &stream));
+    return static_cast<cudaStream_t>(stream);
+}
+
+cudaStream_t
 get_current() {
     void *stream;
     TORCH_ERROR_CODE_CHECK(aoti_torch_get_current_cuda_stream(-1, &stream));
