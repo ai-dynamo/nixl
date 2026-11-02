@@ -60,7 +60,7 @@ ARG INFINIA_DEST=/opt/ddn/red
 COPY --from=infinia /infinia/${ARCH}/ ${INFINIA_DEST}/
 
 # ucx_drop_tool: internal fault-injection tool for fault-tolerance tests.
-RUN curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 300 \
+RUN curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 60 --retry-max-time 300 \
         -o /usr/local/bin/ucx_drop_tool \
         https://il.artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-generic-local/ucx_drop_tool/${ARCH}/ucx_drop_tool && \
     chmod 755 /usr/local/bin/ucx_drop_tool

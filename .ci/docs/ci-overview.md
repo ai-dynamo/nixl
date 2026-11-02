@@ -443,7 +443,9 @@ fault-tolerance tests.
   uploaded to `sw-nbu-swx-nixl-generic-local/ucx_drop_tool/{x86_64,aarch64}/` on
   il.artifactory, which allows anonymous reads. The path is not versioned.
 - The download uses `curl --retry 5 --retry-all-errors`, so a network blip retries
-  instead of failing the image build.
+  instead of failing the image build. `--max-time 60` caps each attempt and
+  `--retry-max-time 300` stops retrying after five minutes, so a stalled download
+  fails the build in minutes instead of hanging.
 - A re-uploaded binary reaches CI only when the base images rebuild, i.e. when
   `CI_IMAGE_TAG` changes (see [CI_IMAGE_TAG management](#ci_image_tag-management)).
 
