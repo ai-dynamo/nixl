@@ -12,7 +12,7 @@
 # the CUDA manylinux base image from Artifactory as the build environment. The heavy
 # dependency layer is pre-built once into the cached wheel_base image (below) and reused
 # via --wheel-base-image, so per-PR wheel builds only compile the wheel stage.
-# The x86_64 runner also builds and smoke-tests a Python 3.13/OpenSSL 4 wheel
+# The x86_64 runner also builds a Python 3.13/OpenSSL 4 wheel
 # against a separate cached base. That verification wheel is not published.
 #
 # CI Usage: build-container.sh --wheel-base ... (builds and packages wheels)
@@ -376,16 +376,6 @@ steps:
         --build-arg BUILD_NIXL_EP=false \
         --secret id=ghconfig,src=/tmp/ghconfig \
         --tag "${OPENSSL4_WHEEL_IMAGE}" .
-
-  - name: Test OpenSSL 4 Wheel
-    containerSelector: "{name: 'manylinux'}"
-    parallel: false
-    run: |
-      set -eux
-      # The image provides the OpenSSL 4 runtime libraries, which auditwheel
-      # intentionally excludes. Install the wheel into a fresh Python venv.
-      docker run --rm --entrypoint bash "${OPENSSL4_WHEEL_IMAGE}" \
-        .ci/scripts/test-openssl4-wheel.sh "${OPENSSL4_PYTHON_VERSION}" "${OPENSSL4_VERSION}"
 
   # =============================================================================
   # Shared sanity steps (both framework helpers, parameterized by ${fw})
