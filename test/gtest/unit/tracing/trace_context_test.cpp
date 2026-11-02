@@ -627,6 +627,15 @@ TEST(TraceContext, RandomGeneratorDrawsTheSameBytesFromTheSameSeed) {
     EXPECT_NE(next, first);
 }
 
+TEST(TraceContext, RandomGeneratorFillsAPartialWordFromTheNextWord) {
+    std::array<std::uint8_t, 16> whole{};
+    countingGenerator().fill(whole);
+    std::array<std::uint8_t, 13> partial{};
+    countingGenerator().fill(partial);
+
+    EXPECT_TRUE(std::equal(partial.begin(), partial.end(), whole.begin()));
+}
+
 TEST(TraceContext, RandomGeneratorClearSeedsAgain) {
     auto generator = countingGenerator();
     std::array<std::uint8_t, 8> first{};

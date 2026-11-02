@@ -38,11 +38,14 @@ public:
         if (!seeded_) {
             seed();
         }
-        while (!output.empty()) {
+        while (output.size() >= sizeof(std::uint64_t)) {
             const std::uint64_t word = next();
-            const std::size_t chunk = std::min(output.size(), sizeof(word));
-            std::memcpy(output.data(), &word, chunk);
-            output = output.subspan(chunk);
+            std::memcpy(output.data(), &word, sizeof(word));
+            output = output.subspan(sizeof(word));
+        }
+        if (!output.empty()) {
+            const std::uint64_t word = next();
+            std::memcpy(output.data(), &word, output.size());
         }
     }
 
