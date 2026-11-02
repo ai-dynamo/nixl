@@ -394,8 +394,9 @@ public:
     nixlUcxDedicatedWorker(const nixlUcxContext &context,
                            ucp_err_handling_mode_t err_handling_mode,
                            size_t id,
+                           bool records_deferred_traces,
                            nixlUcxEngine *engine)
-        : nixlUcxWorker(context, err_handling_mode, id),
+        : nixlUcxWorker(context, err_handling_mode, id, records_deferred_traces),
           thread_(std::in_place, engine, *this) {}
 
     void

@@ -741,11 +741,13 @@ operator<<(std::ostream &os, const nixlUcxWorker &worker) {
 
 nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
                              ucp_err_handling_mode_t err_handling_mode,
-                             size_t id)
+                             size_t id,
+                             bool records_deferred_traces)
     : name_(ctx.getName() + ":" + std::to_string(id)),
       worker(createUcpWorker(ctx), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode),
-      id_(id) {
+      id_(id),
+      recordsDeferredTraces_(records_deferred_traces) {
     NIXL_DEBUG << *this << ": created ucp worker " << worker.get();
 }
 
@@ -918,7 +920,9 @@ nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_
 unsigned
 nixlUcxWorker::progress() {
     const unsigned progressed = ucp_worker_progress(worker.get());
-    nixl::ucx::recordDeferredTraces();
+    if (recordsDeferredTraces_) {
+        nixl::ucx::recordDeferredTraces();
+    }
     return progressed;
 }
 
