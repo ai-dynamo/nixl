@@ -38,26 +38,14 @@ class nixlLock {
                 assert_held_cb = [](bool) {};
                 break;
             case nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT:
-                lock_cb = lock_shared_cb = [this]() {
-                    m.lock();
-                };
-                unlock_cb = unlock_shared_cb = [this]() {
-                    m.unlock();
-                };
+                lock_cb = lock_shared_cb = [this]() { m.lock(); };
+                unlock_cb = unlock_shared_cb = [this]() { m.unlock(); };
                 break;
             case nixl_thread_sync_t::NIXL_THREAD_SYNC_RW:
-                lock_cb = [this]() {
-                    m.lock();
-                };
-                unlock_cb = [this]() {
-                    m.unlock();
-                };
-                lock_shared_cb = [this]() {
-                    m.lock_shared();
-                };
-                unlock_shared_cb = [this]() {
-                    m.unlock_shared();
-                };
+                lock_cb = [this]() { m.lock(); };
+                unlock_cb = [this]() { m.unlock(); };
+                lock_shared_cb = [this]() { m.lock_shared(); };
+                unlock_shared_cb = [this]() { m.unlock_shared(); };
                 break;
             }
         }
