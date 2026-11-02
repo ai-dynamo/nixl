@@ -204,6 +204,17 @@ phaseEventTime(const span_record_t &span) {
     return testing::StartsWith(std::string(key));
 }
 
+[[nodiscard]] std::uint64_t
+eventTime(const span_record_t &span) {
+    constexpr std::string_view key = "at_us=";
+    for (const auto &field : span) {
+        if (field.starts_with(key)) {
+            return std::stoull(field.substr(key.size()));
+        }
+    }
+    return 0;
+}
+
 class ucxTraceContextPropagation : public testing::Test {
 protected:
     void
@@ -299,6 +310,7 @@ protected:
             {{"nixl::submit", posts},
              {"nixl::wire.submitted", posts},
              {"nixl::notif.sent", notifying_posts}}};
+        std::vector<std::uint64_t> previous_times(posts.size());
         for (const auto &[phase, executions] : expected_executions) {
             const auto spans = recordedSpans(traceFile, agent, phase);
             ASSERT_EQ(spans.size(), executions.size()) << phase;
@@ -316,6 +328,10 @@ protected:
                     testing::Contains("nixl.xfer_execution=" + std::to_string(executions[i])))
                     << phase;
                 EXPECT_THAT(spans[i], testing::Contains(phaseEventTime(spans[i]))) << phase;
+                auto &previous = previous_times.at(static_cast<size_t>(executions[i] - 1));
+                const std::uint64_t time = eventTime(spans[i]);
+                EXPECT_GE(time, previous) << phase;
+                previous = time;
             }
         }
     }
