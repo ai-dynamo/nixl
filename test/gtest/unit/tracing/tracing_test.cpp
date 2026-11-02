@@ -1765,20 +1765,28 @@ TEST(Tracing, AllocationCounterCountsOnlyItsOwnThread) {
 
     std::atomic<bool> start = false;
     std::size_t worker_count = 0;
-    std::thread worker([&start, &worker_count] {
+    std::size_t worker_total = 0;
+    std::thread worker([&start, &worker_count, &worker_total] {
         while (!start) {
             std::this_thread::yield();
         }
         const gtest::AllocationCounter worker_allocations;
-        void *const other = ::operator new(sizeof(std::uint64_t));
-        worker_count = worker_allocations.count();
-        ::operator delete(other);
+        {
+            const gtest::AllocationCounter nested_allocations;
+            void *const other = ::operator new(sizeof(std::uint64_t));
+            worker_count = nested_allocations.count();
+            ::operator delete(other);
+        }
+        void *const after = ::operator new(sizeof(std::uint64_t));
+        worker_total = worker_allocations.count();
+        ::operator delete(after);
     });
     const std::size_t with_thread = allocations.count();
     start = true;
     worker.join();
-    EXPECT_EQ(worker_count, 1u);
     EXPECT_EQ(allocations.count(), with_thread);
+    EXPECT_EQ(worker_count, 1u);
+    EXPECT_EQ(worker_total, 2u);
     ::operator delete(value);
 }
 
