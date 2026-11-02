@@ -51,6 +51,12 @@ if not cpp.has_header('format', args: ['-std=c++20'])
     subdir_done()
 endif
 
+nvcc = meson.get_compiler('cuda')
+if nvcc.version().version_compare('<13.0')
+    warning('NIXL-EP V2 requires CUDA 13.0 or newer, skipping NIXL-EP V2 build')
+    subdir_done()
+endif
+
 if cuda_inc_path != ''
     v2_cuda_include_root = cuda_inc_path
 else
@@ -61,13 +67,13 @@ else
         check: true,
     ).stdout().strip()
 endif
+# CUDA 13 installs the CCCL headers in include/cccl
 v2_cccl_include_root = join_paths(v2_cuda_include_root, 'cccl')
 if not fs.is_dir(v2_cccl_include_root)
     warning('CUDA CCCL headers not found at ' + v2_cccl_include_root + ', skipping NIXL-EP V2 build')
     subdir_done()
 endif
 
-nvcc = meson.get_compiler('cuda')
 have_v2_ucx_device_api = nvcc.compiles('''
         #include <ucp/api/device/ucp_device_impl.h>
         #if !defined(UCT_CUDA_IPC_SUPPORTED) || !UCT_CUDA_IPC_SUPPORTED
@@ -151,11 +157,6 @@ v2_cuda_args = [
     '-Xcompiler', '-Wno-unknown-pragmas',
     '-Xcompiler', '-Wno-unused-function',
 ]
-
-if nvcc.version().version_compare('>=12.9') and nvcc.version().version_compare('<12.10')
-    v2_cpp_args += ['-D_LIBCUDACXX_ATOMIC_UNSAFE_AUTOMATIC_STORAGE']
-    v2_cuda_args += ['-D_LIBCUDACXX_ATOMIC_UNSAFE_AUTOMATIC_STORAGE']
-endif
 
 v2_override_options = []
 if get_option('buildtype') == 'debug'

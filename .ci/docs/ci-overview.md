@@ -53,7 +53,7 @@ All files below live in `.github/workflows/`.
 
 ### Clang Format Check (`clang-format.yml`)
 - **Trigger:** `pull_request`.
-- **What it does:** Runs `clang-format-19` over the C/C++ lines changed in the PR (excluding `examples/device/ep`) and fails on formatting violations.
+- **What it does:** Runs `clang-format-19` over the C/C++ lines changed in the PR (excluding `examples/device/ep` and `runtime/ep`) and fails on formatting violations.
 - **Automatic on every PR:** Yes.
 
 ### Copyright Checks (`copyright-checks.yml`)
