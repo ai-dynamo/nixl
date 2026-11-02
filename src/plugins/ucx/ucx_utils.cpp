@@ -16,6 +16,7 @@
  */
 
 #include "ucx_utils.h"
+#include "ucx_deferred_trace.h"
 
 #include <algorithm>
 #include <array>
@@ -916,7 +917,9 @@ nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_
 
 unsigned
 nixlUcxWorker::progress() {
-    return ucp_worker_progress(worker.get());
+    const unsigned progressed = ucp_worker_progress(worker.get());
+    nixl::ucx::recordDeferredTraces();
+    return progressed;
 }
 
 void

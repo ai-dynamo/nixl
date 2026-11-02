@@ -20,6 +20,7 @@
 #include "ucx_thread_engine.h"
 #include "ucx_thread_pool_engine.h"
 #include "ucx_backend_req.h"
+#include "ucx_deferred_trace.h"
 #include "ucx_sgl.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
@@ -30,6 +31,7 @@
 
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string.h>
@@ -378,11 +380,55 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const n
     }
 }
 
+namespace {
+
+struct DeferredWireCompletedQueue {
+    std::array<nixl::ucx::DeferredWireCompleted, 64> entries;
+    std::size_t count = 0;
+};
+
+thread_local DeferredWireCompletedQueue deferred_wire_completed;
+
+void
+recordWireCompleted(const nixl::ucx::DeferredWireCompleted &completion) noexcept {
+    completion.trace.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, completion.phaseAt);
+    completion.trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT,
+                                completion.operation,
+                                completion.inflightSince,
+                                completion.completedAt);
+}
+
+} // namespace
+
+void
+nixl::ucx::deferWireCompleted(const DeferredWireCompleted &completion) noexcept {
+    DeferredWireCompletedQueue &queue = deferred_wire_completed;
+    if (queue.count == queue.entries.size()) {
+        recordWireCompleted(completion);
+        return;
+    }
+    queue.entries[queue.count++] = completion;
+}
+
+void
+nixl::ucx::recordDeferredTraces() noexcept {
+    DeferredWireCompletedQueue &queue = deferred_wire_completed;
+    for (std::size_t i = 0; i < queue.count; ++i) {
+        recordWireCompleted(queue.entries[i]);
+    }
+    queue.count = 0;
+}
+
 void
 nixlUcxBackendReqH::flushCallback(void *, ucs_status_t status, void *user_data) noexcept {
     if (status == UCS_OK) {
         const auto *const handle = static_cast<const nixlUcxBackendReqH *>(user_data);
-        handle->recordWireCompleted(handle->trace.now());
+        const nixlTime::us_t phase_at = handle->trace.now();
+        nixl::ucx::deferWireCompleted({handle->trace,
+                                       handle->operation,
+                                       handle->inflightSince,
+                                       phase_at,
+                                       (phase_at != 0) ? phase_at : nixlTime::getUs()});
     }
 }
 

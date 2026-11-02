@@ -16,6 +16,7 @@
  */
 
 #include "ucx_thread_pool_engine.h"
+#include "ucx_deferred_trace.h"
 #include "ucx_backend_req.h"
 
 #include "common/backend.h"
@@ -191,8 +192,7 @@ nixlUcxBackendSharedState::completeTracedChunk() noexcept {
     const bool succeeded = (status.load() == NIXL_SUCCESS);
     pendingReqs.store(0);
     if (succeeded) {
-        post.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, phase_at);
-        post.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, post_operation, post_since, completed_at);
+        nixl::ucx::deferWireCompleted({post, post_operation, post_since, phase_at, completed_at});
     }
 }
 
