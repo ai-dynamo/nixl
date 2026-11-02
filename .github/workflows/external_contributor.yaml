@@ -24,7 +24,7 @@ jobs:
       actions: read
       issues: write
       pull-requests: write
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Reminder to run full CI on PR
