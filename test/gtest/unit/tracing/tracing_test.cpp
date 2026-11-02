@@ -522,6 +522,132 @@ TEST(Tracing, AttrMacroPassesPlainValues) {
     }
 }
 
+TEST(Tracing, SpanMacroRecordsItsInlineAttributes) {
+#if defined(NIXL_TRACE_ENABLED)
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+    const std::string peer = "agent_1";
+
+    {
+        NIXL_TRACE_SCOPE(span,
+                         tracer.get(),
+                         "op",
+                         nixl::trace::Kind::Generic,
+                         {"status", NIXL_ERR_BACKEND},
+                         {"bytes", std::size_t{4096}},
+                         {"sampled", true},
+                         {"peer", peer},
+                         {"op", "write"},
+                         {"ratio", 0.5});
+        EXPECT_TRUE(span.active());
+    }
+
+    const std::vector<std::pair<std::string, std::int64_t>> ints{
+        {"status", NIXL_ERR_BACKEND}, {"bytes", 4096}, {"sampled", 1}};
+    const std::vector<std::pair<std::string, std::string>> strings{{"peer", "agent_1"},
+                                                                   {"op", "write"}};
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->spanNames, std::vector<std::string>{"op"});
+        EXPECT_EQ(log->intAttrs, ints);
+        EXPECT_EQ(log->strAttrs, strings);
+        ASSERT_EQ(log->dblAttrs.size(), 1u);
+        EXPECT_EQ(log->dblAttrs[0].first, "ratio");
+        EXPECT_DOUBLE_EQ(log->dblAttrs[0].second, 0.5);
+    }
+#else
+    GTEST_SKIP() << "the trace macros are compiled out";
+#endif
+}
+
+TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
+#if defined(NIXL_TRACE_ENABLED)
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+    int evaluations = 0;
+
+    {
+        NIXL_TRACE_SCOPE(none,
+                         static_cast<nixl::trace::Tracer *>(nullptr),
+                         "op",
+                         nixl::trace::Kind::Generic,
+                         {"bytes", ++evaluations});
+        NIXL_TRACE_SAMPLED_SCOPE(skipped,
+                                 tracer.get(),
+                                 "op",
+                                 nixl::trace::Kind::Generic,
+                                 testContext(0x41, 0x00),
+                                 {"bytes", ++evaluations});
+        EXPECT_FALSE(none.active());
+        EXPECT_FALSE(skipped.active());
+    }
+
+    EXPECT_EQ(evaluations, 0);
+    EXPECT_EQ(a.spansBegun, 0);
+    EXPECT_EQ(b.spansBegun, 0);
+#else
+    GTEST_SKIP() << "the trace macros are compiled out";
+#endif
+}
+
+TEST(Tracing, FinishMacroRecordsTheStatusAndReturnsIt) {
+#if defined(NIXL_TRACE_ENABLED)
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+
+    {
+        NIXL_TRACE_SCOPE(span, tracer.get(), "op", nixl::trace::Kind::Generic);
+        EXPECT_EQ(NIXL_TRACE_FINISH(span, NIXL_ERR_BACKEND), NIXL_ERR_BACKEND);
+        nixl::trace::Span inactive;
+        EXPECT_EQ(NIXL_TRACE_FINISH(inactive, NIXL_ERR_NOT_FOUND), NIXL_ERR_NOT_FOUND);
+    }
+
+    const std::vector<std::pair<std::string, std::int64_t>> status{
+        {"nixl.status", NIXL_ERR_BACKEND}};
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->intAttrs, status);
+    }
+#else
+    GTEST_SKIP() << "the trace macros are compiled out";
+#endif
+}
+
+TEST(Tracing, CorrelatedMacrosPushTheContextAroundTheirSpan) {
+#if defined(NIXL_TRACE_ENABLED)
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+    const nixl::trace::TraceContext context = testContext(0x42);
+
+    {
+        NIXL_TRACE_CORRELATED_SPAN(
+            post, tracer.get(), "post", nixl::trace::Kind::CommSend, context, 0x42, {"bytes", 8});
+        EXPECT_TRUE(post.active());
+        for (const CallLog *log : {&a, &b}) {
+            EXPECT_EQ(log->activeContexts, std::vector<nixl::trace::TraceContext>{context});
+        }
+    }
+    {
+        NIXL_TRACE_CORRELATED_SCOPE(
+            release, tracer.get(), "release", nixl::trace::Kind::Generic, context, 0x42);
+        EXPECT_TRUE(release.active());
+        for (const CallLog *log : {&a, &b}) {
+            EXPECT_EQ(log->activeContexts, std::vector<nixl::trace::TraceContext>{context});
+        }
+    }
+
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->pushedContexts, (std::vector<nixl::trace::TraceContext>{context, context}));
+        EXPECT_EQ(log->pushedRequestIds, (std::vector<std::uint64_t>{0x42, 0x42}));
+        EXPECT_TRUE(log->activeContexts.empty());
+        ASSERT_EQ(log->contextSpans.size(), 1u);
+        EXPECT_EQ(log->contextSpans[0].name, "post");
+        EXPECT_EQ(log->spanNames, std::vector<std::string>{"release"});
+        EXPECT_EQ(log->intAttrs, (std::vector<std::pair<std::string, std::int64_t>>{{"bytes", 8}}));
+    }
+#else
+    GTEST_SKIP() << "the trace macros are compiled out";
+#endif
+}
+
 TEST(Tracing, AttrMacroSkipsItsValueOnAnInactiveSpan) {
 #if !defined(NIXL_TRACE_ENABLED)
     GTEST_SKIP() << "the trace macros are compiled out";

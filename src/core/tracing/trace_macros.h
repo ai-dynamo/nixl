@@ -21,51 +21,112 @@
  * One-line call-site macros for nixl::trace.
  *
  * When tracing is compiled out (NIXL_TRACE_ENABLED undefined) every macro
- * expands to `do {} while (0)` so call sites cost nothing. When compiled in,
- * NIXL_TRACE_SCOPE and NIXL_TRACE_CONTEXT_SPAN declare a caller-named RAII Span
+ * expands to nothing, and NIXL_TRACE_FINISH to its status, so call sites cost
+ * nothing. When compiled in, the span macros declare a caller-named RAII Span
  * and take a predictable null-check branch on the tracer.
  *
- * Usage: NIXL_TRACE_SCOPE(span, tracer, name, kind) or
- * NIXL_TRACE_CONTEXT_SPAN(span, tracer, name, kind, context, request_id)
- * declares the local `span`; pass that same `span` to
- * NIXL_TRACE_ATTR(span, key, value) to annotate it.
+ * Usage: NIXL_TRACE_SCOPE(span, tracer, name, kind, {key, value}...) declares
+ * the local `span` with its attributes; NIXL_TRACE_ATTR(span, key, value) adds
+ * one known later, and `return NIXL_TRACE_FINISH(span, status);` records the
+ * call's status as it returns it.
  * The explicit name avoids any hidden coupling/shadowing and allows more than
  * one span per scope. Attribute arguments are only evaluated when a backend is
  * actually active.
  */
 
 #include <initializer_list>
+#include <string_view>
+#include <variant>
 
 #include "tracing/trace.h"
 
 #if defined(NIXL_TRACE_ENABLED)
 
-#define NIXL_TRACE_SCOPE(span, tracer_ptr, span_name, span_kind)                              \
-    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                 \
-        auto *nixl_trace_tracer_ = (tracer_ptr);                                              \
-        return nixl_trace_tracer_ ? nixl_trace_tracer_->beginSpan((span_name), (span_kind)) : \
-                                    ::nixl::trace::Span{};                                    \
+namespace nixl::trace::detail {
+
+struct SpanAttribute {
+    template<typename Value>
+    SpanAttribute(std::string_view attr_key, const Value &attr_value) noexcept
+        : key(attr_key),
+          value(attributeValue(attr_value)) {}
+
+    std::string_view key;
+    std::variant<std::string_view, std::int64_t, double> value;
+};
+
+inline void
+addAttributes(Span &span, std::initializer_list<SpanAttribute> attributes) {
+    for (const SpanAttribute &attribute : attributes) {
+        std::visit([&](const auto value) { span.addAttribute(attribute.key, value); },
+                   attribute.value);
+    }
+}
+
+template<typename Status>
+[[nodiscard]] Status
+finish(Span &span, Status status) {
+    if (span.active()) {
+        span.addAttribute("nixl.status", attributeValue(status));
+    }
+    return status;
+}
+
+} // namespace nixl::trace::detail
+
+#define NIXL_TRACE_DETAIL_ANNOTATED_(begin, ...)                               \
+    ::nixl::trace::Span nixl_trace_span_ = (begin);                            \
+    if (nixl_trace_span_.active()) {                                           \
+        ::nixl::trace::detail::addAttributes(nixl_trace_span_, {__VA_ARGS__}); \
+    }                                                                          \
+    return nixl_trace_span_
+
+#define NIXL_TRACE_SCOPE(span, tracer_ptr, span_name, span_kind, ...)                        \
+    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                \
+        auto *nixl_trace_tracer_ = (tracer_ptr);                                             \
+        if (nixl_trace_tracer_ == nullptr) {                                                 \
+            return ::nixl::trace::Span{};                                                    \
+        }                                                                                    \
+        NIXL_TRACE_DETAIL_ANNOTATED_(nixl_trace_tracer_->beginSpan((span_name), (span_kind)) \
+                                         __VA_OPT__(, ) __VA_ARGS__);                        \
     }()
 
-#define NIXL_TRACE_SAMPLED_SCOPE(span, tracer_ptr, span_name, span_kind, context) \
-    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                     \
-        auto *nixl_trace_tracer_ = (tracer_ptr);                                  \
-        return (nixl_trace_tracer_ && (context).sampled()) ?                      \
-            nixl_trace_tracer_->beginSpan((span_name), (span_kind)) :             \
-            ::nixl::trace::Span{};                                                \
+#define NIXL_TRACE_SAMPLED_SCOPE(span, tracer_ptr, span_name, span_kind, context, ...)       \
+    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                \
+        auto *nixl_trace_tracer_ = (tracer_ptr);                                             \
+        if ((nixl_trace_tracer_ == nullptr) || !(context).sampled()) {                       \
+            return ::nixl::trace::Span{};                                                    \
+        }                                                                                    \
+        NIXL_TRACE_DETAIL_ANNOTATED_(nixl_trace_tracer_->beginSpan((span_name), (span_kind)) \
+                                         __VA_OPT__(, ) __VA_ARGS__);                        \
     }()
 
 // For a sampled `context`, begins the span that `context` identifies, with `request_id` as
 // its own; otherwise no span.
-#define NIXL_TRACE_CONTEXT_SPAN(span, tracer_ptr, span_name, span_kind, context, request_id) \
-    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                \
-        auto *nixl_trace_tracer_ = (tracer_ptr);                                             \
-        const ::nixl::trace::TraceContext &nixl_trace_context_ = (context);                  \
-        return (nixl_trace_tracer_ && nixl_trace_context_.sampled()) ?                       \
-            nixl_trace_tracer_->beginContextSpan(                                            \
-                (span_name), (span_kind), nixl_trace_context_, (request_id)) :               \
-            ::nixl::trace::Span{};                                                           \
+#define NIXL_TRACE_CONTEXT_SPAN(span, tracer_ptr, span_name, span_kind, context, request_id, ...) \
+    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                     \
+        auto *nixl_trace_tracer_ = (tracer_ptr);                                                  \
+        const ::nixl::trace::TraceContext &nixl_trace_context_ = (context);                       \
+        if ((nixl_trace_tracer_ == nullptr) || !nixl_trace_context_.sampled()) {                  \
+            return ::nixl::trace::Span{};                                                         \
+        }                                                                                         \
+        NIXL_TRACE_DETAIL_ANNOTATED_(nixl_trace_tracer_->beginContextSpan(                        \
+            (span_name), (span_kind), nixl_trace_context_, (request_id)) __VA_OPT__(, )           \
+                                         __VA_ARGS__);                                            \
     }()
+
+#define NIXL_TRACE_CORRELATED_SPAN(                                                             \
+    span, tracer_ptr, span_name, span_kind, context, request_id, ...)                           \
+    ::nixl::trace::CorrelationScope span##_correlation_((tracer_ptr), (context), (request_id)); \
+    NIXL_TRACE_CONTEXT_SPAN(                                                                    \
+        span, tracer_ptr, span_name, span_kind, context, request_id __VA_OPT__(, ) __VA_ARGS__)
+
+#define NIXL_TRACE_CORRELATED_SCOPE(                                                            \
+    span, tracer_ptr, span_name, span_kind, context, request_id, ...)                           \
+    ::nixl::trace::CorrelationScope span##_correlation_((tracer_ptr), (context), (request_id)); \
+    NIXL_TRACE_SAMPLED_SCOPE(                                                                   \
+        span, tracer_ptr, span_name, span_kind, context __VA_OPT__(, ) __VA_ARGS__)
+
+#define NIXL_TRACE_FINISH(span, status) (::nixl::trace::detail::finish((span), (status)))
 
 #define NIXL_TRACE_MARK(tracer_ptr, mark_name, mark_kind)       \
     do {                                                        \
@@ -104,12 +165,6 @@
         }                                                                              \
     } while (0)
 
-// Declare before NIXL_TRACE_SCOPE or NIXL_TRACE_CONTEXT_SPAN so the span is created while
-// the context is active. One per scope.
-#define NIXL_TRACE_CORRELATION_SCOPE(tracer_ptr, context, request_id) \
-    ::nixl::trace::CorrelationScope nixl_trace_correlation_scope_(    \
-        (tracer_ptr), (context), (request_id))
-
 #define NIXL_TRACE_ATTR(span, attr_key, attr_value)                                     \
     do {                                                                                \
         if ((span).active()) {                                                          \
@@ -119,15 +174,24 @@
 
 #else // !NIXL_TRACE_ENABLED
 
-#define NIXL_TRACE_SCOPE(span, tracer_ptr, span_name, span_kind) \
-    do {                                                         \
+#define NIXL_TRACE_SCOPE(span, tracer_ptr, span_name, span_kind, ...) \
+    do {                                                              \
     } while (0)
-#define NIXL_TRACE_SAMPLED_SCOPE(span, tracer_ptr, span_name, span_kind, context) \
-    do {                                                                          \
+#define NIXL_TRACE_SAMPLED_SCOPE(span, tracer_ptr, span_name, span_kind, context, ...) \
+    do {                                                                               \
     } while (0)
-#define NIXL_TRACE_CONTEXT_SPAN(span, tracer_ptr, span_name, span_kind, context, request_id) \
-    do {                                                                                     \
+#define NIXL_TRACE_CONTEXT_SPAN(span, tracer_ptr, span_name, span_kind, context, request_id, ...) \
+    do {                                                                                          \
     } while (0)
+#define NIXL_TRACE_CORRELATED_SPAN(                                   \
+    span, tracer_ptr, span_name, span_kind, context, request_id, ...) \
+    do {                                                              \
+    } while (0)
+#define NIXL_TRACE_CORRELATED_SCOPE(                                  \
+    span, tracer_ptr, span_name, span_kind, context, request_id, ...) \
+    do {                                                              \
+    } while (0)
+#define NIXL_TRACE_FINISH(span, status) (status)
 #define NIXL_TRACE_MARK(tracer_ptr, mark_name, mark_kind) \
     do {                                                  \
     } while (0)
@@ -136,9 +200,6 @@
     } while (0)
 #define NIXL_TRACE_ATTR(span, attr_key, attr_value) \
     do {                                            \
-    } while (0)
-#define NIXL_TRACE_CORRELATION_SCOPE(tracer_ptr, context, request_id) \
-    do {                                                              \
     } while (0)
 #define NIXL_TRACE_NOW(tracer_ptr) (::nixlTime::us_t{0})
 #define NIXL_TRACE_EMIT_SPAN(tracer_ptr, span_name, span_kind, start_us) \

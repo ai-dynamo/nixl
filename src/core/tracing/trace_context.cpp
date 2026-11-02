@@ -356,6 +356,12 @@ nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
     return id;
 }
 
+nixl::trace::TraceIdentity
+nixl::trace::generateRequestIdentity(const nixl::trace::Tracer *tracer) {
+    const nixl::trace::TraceContext context{tracer};
+    return {context, generateRequestId(tracer), 0};
+}
+
 nixl::trace::TraceContext
 nixl::trace::generatePostContext(const nixl::trace::TraceContext &request,
                                  const nixl::trace::Tracer *tracer) {

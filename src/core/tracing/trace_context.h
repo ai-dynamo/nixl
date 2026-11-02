@@ -161,6 +161,9 @@ generateTraceContext(double sample_ratio = 0.0);
 [[nodiscard]] std::uint64_t
 generateRequestId(const Tracer *tracer);
 
+[[nodiscard]] TraceIdentity
+generateRequestIdentity(const Tracer *tracer);
+
 class TraceparentText {
 public:
     explicit TraceparentText(const TraceContext &context) noexcept;
