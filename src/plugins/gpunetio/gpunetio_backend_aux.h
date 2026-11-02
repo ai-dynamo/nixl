@@ -20,11 +20,16 @@
 
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cstring>
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <sys/types.h>
+#include <system_error>
 #include <thread>
 #include <vector>
 #include <ifaddrs.h>
@@ -91,6 +96,13 @@ canPairWrite(uintptr_t address,
         next_address >= address && next_address - address == length &&
         next_length <= std::numeric_limits<uintptr_t>::max() - next_address &&
         next_length <= max_length && length <= max_length - next_length;
+}
+
+/** WQEs for one descriptor: a WQE carries at most the SDK transfer limit, and at least one. */
+inline uint64_t
+descriptorWqeCount(size_t length) {
+    constexpr size_t max_length = DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE;
+    return length <= max_length ? 1 : length / max_length + (length % max_length != 0 ? 1 : 0);
 }
 
 } // namespace nixl::gpunetio
@@ -184,11 +196,31 @@ struct nixlDocaNotif {
     uint32_t elems_num;
     uint32_t elems_size;
     uint8_t *send_addr = nullptr;
-    std::atomic<uint32_t> send_pi;
     std::unique_ptr<nixl::doca::verbs::mr> send_mr;
     uint8_t *recv_addr = nullptr;
     std::atomic<uint32_t> recv_pi;
     std::unique_ptr<nixl::doca::verbs::mr> recv_mr;
+    // Send buffers not owned by a prepared request or by a genNotif() in progress.
+    std::mutex send_lock;
+    std::vector<uint32_t> send_free;
+
+    /** Own a send buffer until releaseSendSlot(); false when every buffer is owned. */
+    bool
+    acquireSendSlot(uint32_t &slot) {
+        std::lock_guard<std::mutex> lock(send_lock);
+        if (send_free.empty()) {
+            return false;
+        }
+        slot = send_free.back();
+        send_free.pop_back();
+        return true;
+    }
+
+    void
+    releaseSendSlot(uint32_t slot) {
+        std::lock_guard<std::mutex> lock(send_lock);
+        send_free.push_back(slot);
+    }
 };
 
 struct docaNotif {
@@ -197,7 +229,6 @@ struct docaNotif {
     uintptr_t msg_buf;
     size_t msg_size;
     uint32_t msg_num;
-    uint32_t msg_last;
 };
 
 class nixlDocaConnection : public nixlBackendConnMD {
@@ -213,7 +244,7 @@ public:
 class nixlDocaPrivateMetadata : public nixlBackendMD {
 private:
     std::unique_ptr<nixl::doca::verbs::mr> mr;
-    uint32_t devId;
+    bool peerGpu = false; // VRAM owned by a GPU other than the engine's
     nixl_blob_t remoteMrStr;
 
 public:

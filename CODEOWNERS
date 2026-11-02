@@ -25,6 +25,12 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 # UCX Plugin
 /src/plugins/ucx @brminich @yosefe @gleon99 @ai-dynamo/nixl-maintainers
 
+# Mooncake Plugin
+/src/plugins/mooncake @tvegas1 @ai-dynamo/nixl-maintainers
+/test/unit/plugins/mooncake @tvegas1 @ai-dynamo/nixl-maintainers
+/fern/docs/pages/user-guide/backends/mooncake.md @tvegas1 @ai-dynamo/nixl-maintainers
+/fern/snippets/env-vars-mooncake.mdx @tvegas1 @ai-dynamo/nixl-maintainers
+
 # Storage Plugins
 /src/plugins/posix @w1ldptr @vvenkates27 @ofer @brminich
 /src/plugins/hf3fs @w1ldptr @vvenkates27 @ofer @brminich

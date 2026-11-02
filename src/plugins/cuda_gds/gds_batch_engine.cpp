@@ -45,7 +45,7 @@ nixlGdsIOBatch::nixlGdsIOBatch(unsigned int size)
 
     const CUfileError_t err = cuFileBatchIOSetUp(&batch_handle, size);
     if (err.err != 0) {
-        NIXL_ERROR << "Error in setting up Batch";
+        NIXL_ERROR << "GDS: cuFileBatchIOSetUp failed: " << gdsCuFileError(err.err);
         init_err = err;
     }
 }
@@ -93,7 +93,7 @@ nixlGdsIOBatch::cancelBatch() {
     }
     const CUfileError_t err = cuFileBatchIOCancel(batch_handle);
     if (err.err != 0) {
-        NIXL_ERROR << "Error in canceling batch";
+        NIXL_ERROR << "GDS: cuFileBatchIOCancel failed: " << gdsCuFileError(err.err);
         return NIXL_ERR_BACKEND;
     }
     active = false;
@@ -109,7 +109,7 @@ nixlGdsIOBatch::submitBatch(int flags) {
     const CUfileError_t err =
         cuFileBatchIOSubmit(batch_handle, batch_size, io_batch_params.get(), flags);
     if (err.err != 0) {
-        NIXL_ERROR << "Error submitting GDS batch";
+        NIXL_ERROR << "GDS: cuFileBatchIOSubmit failed: " << gdsCuFileError(err.err);
         current_status = NIXL_ERR_BACKEND;
         return NIXL_ERR_BACKEND;
     }
@@ -138,7 +138,7 @@ nixlGdsIOBatch::checkStatus() {
     const CUfileError_t errBatch =
         cuFileBatchIOGetStatus(batch_handle, nr, &nr, io_batch_events.get(), nullptr);
     if (errBatch.err != 0) {
-        NIXL_ERROR << "Error in IO Batch Get Status";
+        NIXL_ERROR << "GDS: cuFileBatchIOGetStatus failed: " << gdsCuFileError(errBatch.err);
         current_status = NIXL_ERR_BACKEND;
         return current_status;
     }
