@@ -866,7 +866,8 @@ nixlTcpStoreClientAsync::onError(std::string what,
     if (op_generation == generation_) {
         // If there is an error, we lose the track of message boundaries.
         // Therefore, we must close the socket to reset the stream.
-        socket_.close();
+        asio::error_code ec;
+        socket_.close(ec);
 
         // Fail all pending receive requests. These are requests that have sent
         // their requests to the server but have not initiated the receive
