@@ -1052,15 +1052,6 @@ class nixl_agent:
             else:
                 logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
-        elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 3:
-                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
-            elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
-                new_descs = None
-            else:
-                logger.error("3-tuple list needed for transfer")
-                new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
                 new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
@@ -1071,6 +1062,21 @@ class nixl_agent:
                 logger.error(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
+                new_descs = None
+        elif isinstance(descs, (list, tuple)) and len(descs) == 0:
+            if mem_type is not None:
+                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type])
+            else:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 3:
+                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
+            elif mem_type is None:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                logger.error("3-tuple list needed for transfer")
                 new_descs = None
         elif _is_torch_tensor(descs[0]):  # List[torch.Tensor]:
             tensor_type = descs[0].device
@@ -1113,6 +1119,12 @@ class nixl_agent:
     ) -> nixlBind.nixlRemoteDList:
         if isinstance(descs, nixlBind.nixlRemoteDList):
             return descs
+        elif isinstance(descs, (list, tuple)) and len(descs) == 0:
+            if mem_type is not None:
+                new_descs = nixlBind.nixlRemoteDList(self.nixl_mems[mem_type])
+            else:
+                logger.error("Please specify a mem type")
+                new_descs = None
         elif isinstance(descs[0], tuple):
             if (mem_type is not None) and (len(descs[0]) == 4):
                 new_descs = nixlBind.nixlRemoteDList(self.nixl_mems[mem_type], descs)
@@ -1170,15 +1182,6 @@ class nixl_agent:
             else:
                 logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
-        elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 4:
-                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
-            elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
-                new_descs = None
-            else:
-                logger.error("4-tuple list needed for registration")
-                new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
                 new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
@@ -1189,6 +1192,21 @@ class nixl_agent:
                 logger.error(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
+                new_descs = None
+        elif isinstance(descs, (list, tuple)) and len(descs) == 0:
+            if mem_type is not None:
+                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type])
+            else:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 4:
+                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
+            elif mem_type is None:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                logger.error("4-tuple list needed for registration")
                 new_descs = None
         elif _is_torch_tensor(descs[0]):  # List[torch.Tensor]:
             tensor_type = descs[0].device
