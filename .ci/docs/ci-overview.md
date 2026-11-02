@@ -433,6 +433,20 @@ same credential:
 
 As above, an empty config leaves the clones anonymous, and an invalid token fails them.
 
+## UCX drop tool in CI images
+
+`Dockerfile.base` installs `ucx_drop_tool` at `/usr/local/bin` in every image it
+builds. It is an internal fault-injection tool (UCX MR nbu-swx/ai/ucx!15) for
+fault-tolerance tests.
+
+- The binaries were built once by hand (static `libucs`, Ubuntu 22.04 glibc) and
+  uploaded to `sw-nbu-swx-nixl-generic-local/ucx_drop_tool/{x86_64,aarch64}/` on
+  il.artifactory, which allows anonymous reads. The path is not versioned.
+- The download uses `curl --retry 5 --retry-all-errors`, so a network blip retries
+  instead of failing the image build.
+- A re-uploaded binary reaches CI only when the base images rebuild, i.e. when
+  `CI_IMAGE_TAG` changes (see [CI_IMAGE_TAG management](#ci_image_tag-management)).
+
 ## Related docs
 
 - [Build Wheel Matrix CI Job Documentation](build-wheel-matrix-ci.md) — deep dive into `nixl-ci-build-wheel`.

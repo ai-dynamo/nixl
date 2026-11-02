@@ -52,12 +52,18 @@ RUN . /etc/os-release && \
 
 # Update package list and install required packages in one layer
 RUN apt-get update && \
-    apt-get install -y sudo python3 python3-pip kmod && \
+    apt-get install -y sudo python3 python3-pip kmod curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Drop the pre-fetched DDN Infinia libs (for the current ARCH) into ${INFINIA_DEST}.
 ARG INFINIA_DEST=/opt/ddn/red
 COPY --from=infinia /infinia/${ARCH}/ ${INFINIA_DEST}/
+
+# ucx_drop_tool: internal fault-injection tool for fault-tolerance tests.
+RUN curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 300 \
+        -o /usr/local/bin/ucx_drop_tool \
+        https://il.artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-generic-local/ucx_drop_tool/${ARCH}/ucx_drop_tool && \
+    chmod 755 /usr/local/bin/ucx_drop_tool
 
 # Create group and user in one RUN command to reduce layers
 RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \
