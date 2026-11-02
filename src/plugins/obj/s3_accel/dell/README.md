@@ -97,41 +97,8 @@ agent.createBackend("OBJ", params);
 
 ### CUObject Client Configuration
 
-The CUObject Client library requires the configuration of the RDMA device address list in the JSON configuration file.  Each client IP address associated with an RDMA device is specified in the "rdma_dev_addr_list" property.
-
-#### Startup latency workaround
-
-To reduce S3 RDMA backend initialization time, set `execution.parallel_io` to
-`false` and `execution.max_io_threads` to `0` in your application's JSON
-configuration. This is a temporary workaround for affected cuObject versions.
-Preserve your existing RDMA addresses and other settings when applying the example
-below.
-
-```json
-{
-    "execution": {
-        "parallel_io" : false,
-        "max_io_threads" : 0
-    },
-
-    "properties": {
-        "allow_compat_mode": true,
-        "use_pci_p2pdma": true,
-        "rdma_peer_type": "dmabuf",
-        "rdma_dev_addr_list": ["10.0.1.2", "10.0.2.2"]
-    }
-}
-```
-
-Export the file's absolute path before launching your NIXL application:
-
-```bash
-export CUFILE_ENV_PATH_JSON=/path/to/cufile.json
-```
-
-Use an application-specific file instead of changing `/etc/cufile.json`. If the
-same process also uses cuFile or the NIXL GDS backend, these settings affect its
-file I/O as well.
+See [CUObject Client Config for S3 Accelerated](../README.md) for RDMA configuration
+and the startup latency workaround.
 
 ## Supported Memory Types
 
