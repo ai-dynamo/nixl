@@ -251,6 +251,38 @@ public:
     }
 };
 
+class TimestampQuestionSink final : public nixlBackendTraceSink {
+public:
+    using nixlBackendTraceSink::recordPhase;
+
+    void
+    recordPhase(nixl_trace_phase_t,
+                nixlTime::us_t timestamp,
+                const nixl::trace::TraceIdentity &,
+                std::span<const nixlBackendTraceAttr>,
+                std::string_view) noexcept override {
+        timestamps.push_back(timestamp);
+    }
+
+    void
+    recordSpan(nixl_trace_span_t,
+               nixl_xfer_op_t,
+               nixlTime::us_t,
+               nixlTime::us_t,
+               const nixl::trace::TraceIdentity &,
+               std::span<const nixlBackendTraceAttr>,
+               std::string_view) noexcept override {}
+
+    [[nodiscard]] bool
+    needsTimestamps() const noexcept override {
+        ++questions;
+        return true;
+    }
+
+    mutable int questions = 0;
+    std::vector<nixlTime::us_t> timestamps;
+};
+
 class ThrowingBackend final : public nixl::trace::TraceBackend {
 public:
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
@@ -1628,6 +1660,21 @@ TEST(TracePhaseSink, PostTraceRecordsOnlyWithASinkAndASampledPost) {
     EXPECT_TRUE(b.emittedEvents.empty());
     EXPECT_TRUE((nixlBackendPostTrace{&sink, &sampled_args}.active()));
     EXPECT_TRUE((nixlBackendPostTrace{&sink, sampled}.active()));
+}
+
+TEST(TracePhaseSink, PostTraceAsksItsSinkForTimestampsOnce) {
+    TimestampQuestionSink sink;
+    const nixlBackendPostTrace post{&sink, {testContext(0x3d), 0x3d, 1}};
+    const nixlTime::us_t before = nixlTime::getUs();
+
+    EXPECT_GE(post.now(), before);
+    post.record(nixl_trace_phase_t::SUBMIT);
+    post.record(nixl_trace_phase_t::WIRE_SUBMITTED);
+
+    EXPECT_EQ(sink.questions, 1);
+    ASSERT_EQ(sink.timestamps.size(), 2u);
+    EXPECT_GE(sink.timestamps[0], before);
+    EXPECT_GE(sink.timestamps[1], sink.timestamps[0]);
 }
 
 TEST(TracePhaseSink, PostTraceRecordsItsPostsIdentity) {

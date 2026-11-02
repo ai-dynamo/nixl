@@ -240,7 +240,8 @@ public:
     nixlBackendPostTrace(nixlBackendTraceSink *sink,
                          const nixl::trace::TraceIdentity &identity) noexcept
         : sink_(identity.context.sampled() ? sink : nullptr),
-          identity_(identity) {}
+          identity_(identity),
+          needsTimestamps_((sink_ != nullptr) && sink_->needsTimestamps()) {}
 
     [[nodiscard]] bool
     active() const noexcept {
@@ -254,15 +255,14 @@ public:
 
     [[nodiscard]] nixlTime::us_t
     now() const noexcept {
-        return ((sink_ != nullptr) && sink_->needsTimestamps()) ? nixlTime::getUs() :
-                                                                  nixlTime::us_t{0};
+        return needsTimestamps_ ? nixlTime::getUs() : nixlTime::us_t{0};
     }
 
     void
     record(nixl_trace_phase_t phase,
            std::span<const nixlBackendTraceAttr> attrs = {}) const noexcept {
         if (sink_ != nullptr) {
-            sink_->recordPhase(phase, identity_, attrs);
+            sink_->recordPhase(phase, now(), identity_, attrs);
         }
     }
 
@@ -288,6 +288,7 @@ public:
 private:
     nixlBackendTraceSink *sink_ = nullptr;
     nixl::trace::TraceIdentity identity_;
+    bool needsTimestamps_ = false;
 };
 
 #endif // NIXL_SRC_CORE_TRACING_BACKEND_TRACE_H
