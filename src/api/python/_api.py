@@ -706,6 +706,25 @@ class nixl_agent:
         """
         return self.agent.getXferTelemetry(handle._handle)
 
+    def get_xfer_trace_info(
+        self, handle: nixl_xfer_handle
+    ) -> Optional[nixlBind.nixlXferTraceInfo]:
+        """Get the trace identity of a transfer request, as its trace records carry it.
+        The output object has the integer requestId (the NVTX payload and
+        nixl.xfer_request_id), the integer execution number of the latest accepted post
+        (0 before any), and that post's W3C traceparent string (the request's before any post).
+
+        Args:
+            handle: Handle to the transfer operation, from make_prepped_xfer or initialize_xfer.
+
+        Returns:
+            nixlXferTraceInfo object, or None if the request has no trace identity, such as
+            when no tracing backend was active at its creation, or if the handle was released.
+        """
+        if handle._released:
+            return None
+        return self.agent.getXferTraceInfo(handle._handle)
+
     def query_xfer_backend(self, handle: nixl_xfer_handle) -> str:
         """Query the backend that was chosen for a transfer operation.
 
