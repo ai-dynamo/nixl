@@ -149,11 +149,17 @@ fi_cq_open_stub(struct fid_domain *domain,
 // --- EP stubs ---
 
 static int
+fi_ep_getopt_stub(fid_t fid, int level, int optname, void *optval, size_t *optlen) {
+    return -FI_ENOPROTOOPT;
+}
+
+static int
 fi_ep_setopt_stub(fid_t fid, int level, int optname, const void *optval, size_t optlen) {
     return 0;
 }
 
 static fi_ops_ep fi_ep_ops_stub = {
+    .getopt = fi_ep_getopt_stub,
     .setopt = fi_ep_setopt_stub,
 };
 

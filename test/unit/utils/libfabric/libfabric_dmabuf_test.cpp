@@ -14,6 +14,7 @@
  */
 
 #include "libfabric/libfabric_cuda_dmabuf.h"
+#include "libfabric/libfabric_common.h"
 #include "common/nixl_log.h"
 
 #include <cstdint>
@@ -76,6 +77,19 @@ checkCase(const AlignCase &test_case) {
     return rc;
 }
 
+struct VaCase {
+    const char *name;
+    bool auto_mode;
+    bool copies_through_host;
+    bool provider_bounds_gdrcopy_reads;
+    bool expected;
+};
+
+struct VersionCase {
+    uint32_t version;
+    bool expected;
+};
+
 } // namespace
 
 int
@@ -108,6 +122,70 @@ main() {
     if (rc == 0) {
         NIXL_INFO << "   SUCCESS: dmabuf export ranges are page aligned, cover the region, and "
                      "reproduce the buffer address from base + offset";
+    }
+
+    NIXL_INFO << "=== Testing when Auto registers CUDA memory by virtual address ===";
+
+    const VaCase va_cases[] = {
+        // No GPU P2P (e.g. g6) and a provider that bounds GDRCopy reads: keep GDRCopy
+        {"auto, host bounce buffers, bounded GDRCopy reads", true, true, true, true},
+        // Without the bound, GDRCopy would serve bulk copies out of GPU memory: keep the dmabuf
+        {"auto, host bounce buffers, unbounded GDRCopy reads", true, true, false, false},
+        // GPUDirect rails (p4d, p5, p6, GB200) keep the dmabuf the topology selects
+        {"auto, GPUDirect, bounded GDRCopy reads", true, false, true, false},
+        {"auto, GPUDirect, unbounded GDRCopy reads", true, false, false, false},
+        // A forced mapping type is honored on every rail
+        {"forced, host bounce buffers, bounded GDRCopy reads", false, true, true, false},
+        {"forced, GPUDirect, bounded GDRCopy reads", false, false, true, false},
+    };
+
+    for (const auto &test_case : va_cases) {
+        const bool by_va = LibfabricUtils::cudaAutoRegistersByVirtualAddress(
+            test_case.auto_mode,
+            test_case.copies_through_host,
+            test_case.provider_bounds_gdrcopy_reads);
+        if (by_va != test_case.expected) {
+            NIXL_ERROR << test_case.name << ": expected registration "
+                       << (test_case.expected ? "by virtual address" : "with the dmabuf")
+                       << ", got " << (by_va ? "virtual address" : "dmabuf");
+            rc = 1;
+        }
+    }
+
+    if (rc == 0) {
+        NIXL_INFO << "   SUCCESS: Auto registers by virtual address only on rails that copy "
+                     "through host bounce buffers with a provider that bounds GDRCopy reads";
+    }
+
+    NIXL_INFO << "=== Testing which libfabric versions bound GDRCopy reads ===";
+
+    const VersionCase version_cases[] = {
+        // The oldest API versions the plugin requests, and the releases before the bound
+        {FI_VERSION(1, 18), false},
+        {FI_VERSION(1, 22), false},
+        {FI_VERSION(2, 7), false},
+        // The bound is merged for 2.8 (ofiwg/libfabric#13074) and stays in later releases
+        {FI_VERSION(2, 8), true},
+        {FI_VERSION(2, 9), true},
+        {FI_VERSION(3, 0), true},
+    };
+
+    bool versions_ok = true;
+    for (const auto &test_case : version_cases) {
+        const bool bounds = LibfabricUtils::efaBoundsGdrcopyFromHmem(test_case.version);
+        if (bounds != test_case.expected) {
+            NIXL_ERROR << "libfabric " << FI_MAJOR(test_case.version) << "."
+                       << FI_MINOR(test_case.version) << ": expected the bound "
+                       << (test_case.expected ? "present" : "absent") << ", got "
+                       << (bounds ? "present" : "absent");
+            versions_ok = false;
+            rc = 1;
+        }
+    }
+
+    if (versions_ok) {
+        NIXL_INFO << "   SUCCESS: libfabric 2.8 and later bound GDRCopy reads, earlier "
+                     "versions do not";
     }
     return rc;
 }
