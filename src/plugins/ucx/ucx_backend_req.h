@@ -39,7 +39,10 @@ public:
     std::string notif;
 
     nixlBackendPostTrace trace;
+    nixlTime::us_t inflightSince = 0;
+    nixl_xfer_op_t operation = NIXL_WRITE;
     bool wireCompletedOnFlush = false;
+    bool wireCompletedAtOnce = false;
 
 #ifdef HAVE_UCX_SGL_API
     std::optional<nixl::ucx::sglXfer> sgl;
@@ -83,10 +86,15 @@ public:
         nixlUcxReq req = nullptr;
         const auto callback = wireCompletedOnFlush ? &flushCallback : nullptr;
         const nixl_status_t status = ep_->flushEp(req, callback, this);
-        if ((status == NIXL_SUCCESS) && (callback != nullptr)) {
-            callback(nullptr, UCS_OK, this);
-        }
+        wireCompletedAtOnce = (status == NIXL_SUCCESS) && (callback != nullptr);
         return append(status, req);
+    }
+
+    void
+    recordWireCompleted(nixlTime::us_t phase_at) const noexcept {
+        const nixlTime::us_t completed_at = (phase_at != 0) ? phase_at : nixlTime::getUs();
+        trace.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, phase_at);
+        trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, operation, inflightSince, completed_at);
     }
 
     [[nodiscard]] nixl_status_t

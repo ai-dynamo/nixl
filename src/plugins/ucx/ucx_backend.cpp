@@ -381,8 +381,8 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const n
 void
 nixlUcxBackendReqH::flushCallback(void *, ucs_status_t status, void *user_data) noexcept {
     if (status == UCS_OK) {
-        static_cast<const nixlUcxBackendReqH *>(user_data)->trace.record(
-            nixl_trace_phase_t::WIRE_COMPLETED);
+        const auto *const handle = static_cast<const nixlUcxBackendReqH *>(user_data);
+        handle->recordWireCompleted(handle->trace.now());
     }
 }
 
@@ -599,7 +599,14 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     int_handle->trace = nixlBackendPostTrace{traceSink_, opt_args};
     int_handle->wireCompletedOnFlush =
         int_handle->trace.active() && hasProgressThread() && !int_handle->isComposite();
-    int_handle->trace.record(nixl_trace_phase_t::SUBMIT);
+    int_handle->wireCompletedAtOnce = false;
+    int_handle->operation = operation;
+    const nixlTime::us_t submit_at = int_handle->trace.now();
+    const bool records_inflight = int_handle->wireCompletedOnFlush ||
+        (int_handle->trace.active() && int_handle->isComposite());
+    int_handle->inflightSince =
+        (records_inflight && (submit_at == 0)) ? nixlTime::getUs() : submit_at;
+    int_handle->trace.recordAt(nixl_trace_phase_t::SUBMIT, submit_at);
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
@@ -625,6 +632,9 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     int_handle->trace.recordAt(nixl_trace_phase_t::WIRE_SUBMITTED, submitted_at);
+    if (int_handle->wireCompletedAtOnce) {
+        int_handle->recordWireCompleted(submitted_at);
+    }
     if (sent) {
         int_handle->trace.recordAt(nixl_trace_phase_t::NOTIF_SENT, sent_at);
     }

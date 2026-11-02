@@ -498,6 +498,20 @@ protected:
             EXPECT_THAT(completed[i], testing::Contains(phaseEventTime(completed[i])));
             EXPECT_GE(eventTime(completed[i]), eventTime(submitted[i]));
         }
+        const auto inflight = recordedSpans(traceFile, agent, "nixl::wire.inflight");
+        ASSERT_EQ(inflight.size(), contexts.size());
+        for (size_t i = 0; i < inflight.size(); ++i) {
+            const std::string traceparent = nixl::trace::formatTraceparent(contexts[i]);
+            EXPECT_THAT(
+                inflight[i],
+                testing::IsSupersetOf({"correlation=" + std::to_string(request_id),
+                                       "context=" + traceparent,
+                                       "start_us=" + std::to_string(eventTime(submitted[i])),
+                                       "end_us=" + std::to_string(eventTime(completed[i])),
+                                       "nixl.xfer_request_id=" + std::to_string(request_id),
+                                       "nixl.xfer_execution=" + std::to_string(i + 1),
+                                       std::string("nixl.backend=UCX")}));
+        }
     }
 
     void
@@ -534,6 +548,7 @@ protected:
                                            "nixl.xfer_request_id=" + std::to_string(request_id),
                                            std::string("nixl.xfer_execution=1")}));
         EXPECT_GE(eventTime(completed[0]), progressed_at);
+        EXPECT_EQ(recordedSpans(traceFile, sender_name, "nixl::wire.inflight").size(), 1u);
 #if defined(NIXL_TRACE_ENABLED)
         const auto observed = recordedSpans(traceFile, sender_name, "nixl::xfer.complete");
         ASSERT_EQ(observed.size(), 1u);
@@ -559,6 +574,7 @@ protected:
                               }));
         expectSenderPhases(sender_name, {context}, request_id, {1}, {});
         EXPECT_TRUE(recordedSpans(traceFile, sender_name, "nixl::wire.completed").empty());
+        EXPECT_TRUE(recordedSpans(traceFile, sender_name, "nixl::wire.inflight").empty());
     }
 
     gtest::ScopedEnv env;
@@ -944,6 +960,8 @@ TEST_F(ucxTraceContextPropagation, PostsWithoutADedicatedOrProgressThreadRecordN
     expectSenderPhases(default_engine_name, default_engine, default_engine_id, {1}, {});
     EXPECT_TRUE(recordedSpans(traceFile, unsplit_name, "nixl::wire.completed").empty());
     EXPECT_TRUE(recordedSpans(traceFile, default_engine_name, "nixl::wire.completed").empty());
+    EXPECT_TRUE(recordedSpans(traceFile, unsplit_name, "nixl::wire.inflight").empty());
+    EXPECT_TRUE(recordedSpans(traceFile, default_engine_name, "nixl::wire.inflight").empty());
 }
 
 TEST_F(ucxTraceContextPropagation, ThreadPoolPostReleasedInFlightRecordsNoWireCompleted) {

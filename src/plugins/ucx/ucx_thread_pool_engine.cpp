@@ -159,6 +159,8 @@ struct nixlUcxBackendSharedState {
     std::atomic<size_t> pendingReqs;
     std::vector<nixlUcxChunkBackendReqH> chunks;
     nixlBackendPostTrace trace;
+    nixlTime::us_t inflightSince = 0;
+    nixl_xfer_op_t operation = NIXL_WRITE;
 
     nixlUcxBackendSharedState() : status(NIXL_SUCCESS), pendingReqs(0) {}
 
@@ -175,6 +177,8 @@ struct nixlUcxBackendSharedState {
 void
 nixlUcxBackendSharedState::completeTracedChunk() noexcept {
     const nixlBackendPostTrace post = trace;
+    const nixlTime::us_t post_since = inflightSince;
+    const nixl_xfer_op_t post_operation = operation;
     // Read the status before pendingReqs reaches zero, after which a repost may rewrite it.
     size_t pending = pendingReqs.load();
     while ((pending > 1) && !pendingReqs.compare_exchange_weak(pending, pending - 1))
@@ -182,11 +186,13 @@ nixlUcxBackendSharedState::completeTracedChunk() noexcept {
     if (pending != 1) {
         return;
     }
-    const nixlTime::us_t completed_at = post.now();
+    const nixlTime::us_t phase_at = post.now();
+    const nixlTime::us_t completed_at = (phase_at != 0) ? phase_at : nixlTime::getUs();
     const bool succeeded = (status.load() == NIXL_SUCCESS);
     pendingReqs.store(0);
     if (succeeded) {
-        post.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, completed_at);
+        post.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, phase_at);
+        post.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, post_operation, post_since, completed_at);
     }
 }
 
@@ -241,6 +247,8 @@ public:
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
         sharedState_->trace = trace;
+        sharedState_->inflightSince = inflightSince;
+        sharedState_->operation = operation;
         sharedState_->pendingReqs.store(getNumChunks());
     }
 

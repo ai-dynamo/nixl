@@ -318,8 +318,8 @@ become the span's start and end times (in NVTX, `nixl.start_us` and
 The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. UCX emits
 `nixl::submit`, `nixl::wire.submitted`, `nixl::wire.completed`, `nixl::notif.sent`
-and `nixl::notif.received`, described below; libfabric's phases come in later
-PRs.
+and `nixl::notif.received`, and the span `nixl::wire.inflight`, described below;
+libfabric's phases come in later PRs.
 
 Recording a phase never fails the transfer: if the trace backend throws, the
 phase is dropped and the first drop per backend is logged. With telemetry
@@ -392,7 +392,11 @@ is seen to complete only when the application checks its status, so a stamp
 would time the poll rather than the transport. A transfer can complete before `postXfer`
 records `nixl::wire.submitted`, so `nixl::wire.completed` can come first; both
 follow `nixl::submit`. `nixl::wire.completed` marks the data's completion only,
-so a post whose notification fails afterwards keeps it.
+so a post whose notification fails afterwards keeps it. With each
+`nixl::wire.completed`, UCX records the span `nixl::wire.inflight` from that post's
+`nixl::submit` to its `nixl::wire.completed`, at their times. A span's times are its
+payload, so when every backend times its own records, as NVTX does, UCX still reads
+the clock at submit and at completion for a post that records the span.
 
 A backend that carries the context to its peer says so by overriding
 `supportsTraceContext()`, which defaults to `false`; core reads it once, when
@@ -477,8 +481,8 @@ go through the sink either way. Nine single-process tests in the same suite chec
 the phases. Transfers to the agent itself, on the default and the
 thread-pool engine, record `nixl::submit` and `nixl::wire.submitted` once per post
 and `nixl::notif.sent` once per notifying post. A transfer split across the
-thread-pool engine's dedicated workers also records one `nixl::wire.completed` per
-post, before a late status check, and none when released in flight; an unsplit one
+thread-pool engine's dedicated workers also records one `nixl::wire.completed` and
+one `nixl::wire.inflight` per post, before a late status check, and none when released in flight; an unsplit one
 and one on the default engine record none. A transfer to a second agent that
 nothing progresses cannot finish inside `postXfer`, so its `notif.sent` must come
 from the status check. An unsampled request, or an agent with tracing off, records
@@ -531,6 +535,7 @@ In NIXL tracing, "correlation" can mean two different things:
 
 - **Backend phase emission** — UCX records `nixl::submit`, `nixl::wire.submitted`,
   `nixl::notif.sent` and `nixl::notif.received` through the sink described under
-  "Backend phases". UCX records `nixl::wire.completed` for every post while the
-  progress thread runs, and otherwise only for the thread-pool engine's split
-  posts (see "Backend phases"); the other backends record no phases yet.
+  "Backend phases". UCX records `nixl::wire.completed`, and with it the span
+  `nixl::wire.inflight`, for every post while the progress thread runs, and
+  otherwise only for the thread-pool engine's split posts (see "Backend phases");
+  the other backends record no phases yet.

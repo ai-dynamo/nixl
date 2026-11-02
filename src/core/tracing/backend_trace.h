@@ -274,6 +274,16 @@ public:
         }
     }
 
+    void
+    recordSpan(nixl_trace_span_t span,
+               nixl_xfer_op_t operation,
+               nixlTime::us_t start,
+               nixlTime::us_t end) const noexcept {
+        if (sink_ != nullptr) {
+            sink_->recordSpan(span, operation, start, end, identity_);
+        }
+    }
+
 private:
     nixlBackendTraceSink *sink_ = nullptr;
     nixl::trace::TraceIdentity identity_;
