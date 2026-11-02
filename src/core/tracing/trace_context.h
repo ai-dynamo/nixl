@@ -161,10 +161,6 @@ generateTraceContext(double sample_ratio = 0.0);
 [[nodiscard]] std::uint64_t
 generateRequestId(const Tracer *tracer);
 
-/**
- * @brief A request id's unsigned decimal digits, formatted once, as
- *        nixl.xfer_request_id records them.
- */
 class TraceparentText {
 public:
     explicit TraceparentText(const TraceContext &context) noexcept;
