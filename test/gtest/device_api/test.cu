@@ -19,8 +19,8 @@
 #include "common.h"
 #include "mem_buffer.h"
 
-#include "nixl.h"
-#include "nixl_device.cuh"
+#include <nixl.h>
+#include <gpu/nixl_device.cuh>
 
 #include <gtest/gtest.h>
 
@@ -31,46 +31,45 @@ constexpr size_t size{sizeof(test_value)};
 constexpr size_t half_size{size / 2};
 const std::string sender_agent_name{"sender"};
 const std::string receiver_agent_name{"receiver"};
+} // namespace
 
+namespace nixl::gpu {
 __device__ void
-waitPosted(nixl_status_t status, nixlGpuXferStatusH &xfer_status) {
+waitPosted(nixl_status_t status, xferStatusH &xfer_status) {
     size_t polls = 0;
     while ((status == NIXL_IN_PROG) && (polls++ < max_polls)) {
-        status = nixlGpuGetXferStatus(xfer_status);
+        status = getXferStatus(xfer_status);
     }
     assert(status == NIXL_SUCCESS);
 }
 
 __device__ void
-waitPostedWithSystemFence(nixl_status_t status, nixlGpuXferStatusH &xfer_status) {
+waitPostedWithSystemFence(nixl_status_t status, xferStatusH &xfer_status) {
     waitPosted(status, xfer_status);
     __threadfence_system();
 }
 
 __global__ void
 atomicAddKernel(void *counter_mvh) {
-    nixlMemViewElem counter{counter_mvh, 0, 0};
-    nixlGpuXferStatusH xfer_status;
-    nixl_status_t status = nixlAtomicAdd(test_value, counter, 0, 0, &xfer_status);
+    memViewElem counter{counter_mvh, 0, 0};
+    xferStatusH xfer_status;
+    nixl_status_t status = atomicAdd(test_value, counter, 0, 0, &xfer_status);
     waitPostedWithSystemFence(status, xfer_status);
 }
 
 __device__ void
-putAndWait(const nixlMemViewElem &src,
-           const nixlMemViewElem &dst,
-           size_t size,
-           unsigned channel_id = 0) {
-    nixlGpuXferStatusH xfer_status;
-    nixl_status_t status = nixlPut(src, dst, size, channel_id, 0, &xfer_status);
+putAndWait(const memViewElem &src, const memViewElem &dst, size_t size, unsigned channel_id = 0) {
+    xferStatusH xfer_status;
+    nixl_status_t status = put(src, dst, size, channel_id, 0, &xfer_status);
     waitPostedWithSystemFence(status, xfer_status);
 }
 
 __global__ void
 putOffsetKernel(void *src_mvh, void *dst_mvh) {
     assert(threadIdx.x == 0);
-    nixlMemViewElem src{src_mvh, 0, 0};
-    nixlMemViewElem dst{dst_mvh, 0, 0};
-    const nixl_status_t status = nixlPut(src, dst, half_size, 0, nixl_gpu_flags::defer);
+    memViewElem src{src_mvh, 0, 0};
+    memViewElem dst{dst_mvh, 0, 0};
+    const nixl_status_t status = put(src, dst, half_size, 0, flags::defer);
     assert(status == NIXL_IN_PROG);
 
     src.offset = half_size;
@@ -81,15 +80,13 @@ putOffsetKernel(void *src_mvh, void *dst_mvh) {
 __global__ void
 putChannelKernel(void *src_mvh, void *dst_mvh) {
     assert(threadIdx.x == 0);
-    const nixlMemViewElem src{src_mvh, 0, 0};
+    const memViewElem src{src_mvh, 0, 0};
     for (unsigned channel_id = 0; channel_id < 2; ++channel_id) {
-        const nixlMemViewElem dst{dst_mvh, channel_id, 0};
+        const memViewElem dst{dst_mvh, channel_id, 0};
         putAndWait(src, dst, size, channel_id);
     }
 }
-} // namespace
 
-namespace nixl::gpu {
 class deviceApiTest : public testing::Test {
 protected:
     void
