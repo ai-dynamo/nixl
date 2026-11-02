@@ -98,9 +98,9 @@ export NIXL_TRACE_BACKENDS=nvtx
 
 The variable is read when the agent is constructed, so set it before creating the
 `nixlAgent`. Each requested name is loaded as `libtrace_backend_<name>.so` through
-`nixlPluginManager`. If the requested set is empty (or no requested plugin is found),
-the agent holds no tracer and call sites take a cheap null-check branch — no `dlopen`,
-no allocation.
+`nixlPluginManager`. If the requested set is empty (or no requested plugin is found, or
+none has anything to record to, see "NVTX without a profiler"), the agent holds no
+tracer and call sites take a cheap null-check branch — no `dlopen`, no allocation.
 
 #### Auto-enable under Nsight Systems
 
@@ -126,6 +126,16 @@ forces tracing off. Selection when the agent is constructed:
 So `nsys profile ... ./app` needs no NIXL-specific flags to get an NVTX timeline
 (and still records any other backend you asked for), while `NIXL_TRACE_BACKENDS=`
 force-disables tracing even under a profiler.
+
+#### NVTX without a profiler
+
+NVTX records reach only a profiler attached to the process; with none, they go nowhere.
+When the agent is constructed the NVTX backend checks whether NVTX created its domain,
+which happens only under a profiler, and without one it is not activated. With no other
+backend active, `NIXL_TRACE_BACKENDS=nvtx` then leaves the agent with no tracer: tracing
+costs nothing at any sampling ratio, requests carry no trace identity (`getXferTraceInfo`
+finds none) and notifications carry no trace tags. `NIXL_TRACE_NVTX_WITHOUT_PROFILER=1`
+activates the backend anyway, so tests can exercise the traced paths without a profiler.
 
 #### Sampling
 

@@ -66,11 +66,13 @@ namespace {
 
 } // namespace
 
-NvtxTraceBackend::NvtxTraceBackend(const std::string_view domain)
+NvtxTraceBackend::NvtxTraceBackend(const std::string_view domain,
+                                   const bool record_without_profiler)
     : domainName_(domain),
       domain_(nvtxDomainCreateA(domainName_.c_str())),
       schemaIds_(registerPayloadSchemas(domain_)),
-      registeredHandles_(registerSpanNames(domain_)) {}
+      registeredHandles_(registerSpanNames(domain_)),
+      recordWithoutProfiler_(record_without_profiler) {}
 
 NvtxTraceBackend::~NvtxTraceBackend() {
     nvtxDomainDestroy(domain_);

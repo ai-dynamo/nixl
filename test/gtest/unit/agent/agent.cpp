@@ -94,6 +94,7 @@ namespace agent {
                     const std::string &sample_ratio = "0")
             : name_(name) {
             trace_env_.addVar("NIXL_TRACE_BACKENDS", trace_backends);
+            trace_env_.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
             trace_env_.addVar("NIXL_TRACE_SAMPLE_RATIO", sample_ratio);
             nixlAgentConfig cfg;
             cfg.useProgThread = true;

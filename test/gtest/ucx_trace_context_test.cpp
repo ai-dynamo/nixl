@@ -40,6 +40,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -204,6 +205,17 @@ writeToSelf(const std::string &name,
     ASSERT_EQ(notifs[name].size(), notifying_posts);
     ASSERT_EQ(agent.releaseXferReq(req), NIXL_SUCCESS);
     ASSERT_EQ(agent.deregisterMem(regs), NIXL_SUCCESS);
+}
+
+[[nodiscard]] bool
+addNvtxPluginDirectory() {
+    const std::string nvtx_dir = std::string(BUILD_DIR) + "/src/plugins/tracing/nvtx";
+    if (!std::filesystem::exists(nvtx_dir)) {
+        return false;
+    }
+    const gtest::LogIgnoreGuard registered("Plugin directory already registered");
+    nixlPluginManager::getInstance().addPluginDirectory(nvtx_dir);
+    return true;
 }
 
 [[nodiscard]] std::size_t
@@ -1040,14 +1052,13 @@ TEST_F(ucxTraceContextPropagation, UnsampledAndUntracedPostsRecordNoPhases) {
 }
 
 TEST_F(ucxTraceContextPropagation, SampledRequestAllocatesNoMoreThanAnUntracedOne) {
-    const std::string nvtx_dir = std::string(BUILD_DIR) + "/src/plugins/tracing/nvtx";
-    if (!std::filesystem::exists(nvtx_dir)) {
+    if (!addNvtxPluginDirectory()) {
         GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
     }
-    nixlPluginManager::getInstance().addPluginDirectory(nvtx_dir);
     constexpr size_t warmup = 50;
     constexpr size_t measured = 200;
 
+    env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
     for (const bool notify : {false, true}) {
         env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
         const std::size_t traced = allocationsPerRequests(sender_name, warmup, measured, notify);
@@ -1060,4 +1071,44 @@ TEST_F(ucxTraceContextPropagation, SampledRequestAllocatesNoMoreThanAnUntracedOn
         EXPECT_GT(untraced, 0u) << "notify " << notify;
         EXPECT_EQ(traced, untraced) << "notify " << notify;
     }
+    env.popVar();
+}
+
+TEST_F(ucxTraceContextPropagation, NvtxWithoutAProfilerLeavesTracingOff) {
+    if (std::getenv("NVTX_INJECTION64_PATH") != nullptr) {
+        GTEST_SKIP() << "a profiler is attached";
+    }
+    if (!addNvtxPluginDirectory()) {
+        GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+    }
+    const std::vector<char> src_buffer(buffer_size, 'x');
+    const std::vector<char> dst_buffer(buffer_size);
+    const auto traceInfoStatus = [&] {
+        const gtest::LogIgnoreGuard efa(efa_warning);
+        nixlAgent agent(sender_name, idleConfig());
+        nixlBackendH *backend = nullptr;
+        EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
+        nixl_reg_dlist_t regs(DRAM_SEG);
+        regs.addDesc(nixlBlobDesc(address(src_buffer), src_buffer.size(), 0));
+        regs.addDesc(nixlBlobDesc(address(dst_buffer), dst_buffer.size(), 0));
+        EXPECT_EQ(agent.registerMem(regs), NIXL_SUCCESS);
+        nixl_xfer_dlist_t src(DRAM_SEG);
+        nixl_xfer_dlist_t dst(DRAM_SEG);
+        src.addDesc(nixlBasicDesc(address(src_buffer), buffer_size, 0));
+        dst.addDesc(nixlBasicDesc(address(dst_buffer), buffer_size, 0));
+        nixlXferReqH *req = nullptr;
+        EXPECT_EQ(agent.createXferReq(NIXL_WRITE, src, dst, sender_name, req), NIXL_SUCCESS);
+        nixl_xfer_trace_info_t info;
+        const nixl_status_t status = agent.getXferTraceInfo(req, info);
+        EXPECT_EQ(agent.releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent.deregisterMem(regs), NIXL_SUCCESS);
+        return status;
+    };
+
+    env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
+    EXPECT_EQ(traceInfoStatus(), NIXL_ERR_NOT_FOUND);
+    env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+    EXPECT_EQ(traceInfoStatus(), NIXL_SUCCESS);
+    env.popVar();
+    env.popVar();
 }

@@ -17,6 +17,7 @@
 
 #include "nvtx_backend.h"
 
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "nvtx_trace_backend.h"
 
@@ -25,7 +26,9 @@ namespace nixl::trace {
 std::unique_ptr<TraceBackend>
 createNvtxBackend(const nixlTraceBackendInitParams &init_params) {
     try {
-        return std::make_unique<nvtx_internal::NvtxTraceBackend>(init_params.agentName);
+        return std::make_unique<nvtx_internal::NvtxTraceBackend>(
+            init_params.agentName,
+            nixl::config::getValueDefaulted<bool>("NIXL_TRACE_NVTX_WITHOUT_PROFILER", false));
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Failed to create NVTX trace backend: " << e.what();

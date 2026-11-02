@@ -864,6 +864,9 @@ protected:
         // reads NIXL_TRACE_BACKENDS). Keep telemetry off.
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
         env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
+        if (std::getenv("NVTX_INJECTION64_PATH") == nullptr) {
+            env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+        }
         for (size_t i = 0; i < 2; i++) {
             addAgent(i);
         }
@@ -1012,6 +1015,7 @@ protected:
         // no-op ranges when injection is absent.
         if (std::getenv("NVTX_INJECTION64_PATH") == nullptr) {
             env.addVar("NVTX_INJECTION64_PATH", "/nonexistent/libInjectionNvtx64.so");
+            env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
         }
         for (size_t i = 0; i < 2; i++) {
             addAgent(i);

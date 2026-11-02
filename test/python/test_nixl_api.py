@@ -697,6 +697,7 @@ def test_xfer_trace_info_without_tracing(monkeypatch, backend_name):
 @requires_nvtx_plugin
 def test_xfer_trace_info_counts_posts(monkeypatch, backend_name):
     monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1")
     monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "0")
     with _xfer_handle(backend_name) as (agent, handle):
         request_id, execution, traceparent = _trace_info(agent, handle)
@@ -711,6 +712,7 @@ def test_xfer_trace_info_counts_posts(monkeypatch, backend_name):
 @requires_nvtx_plugin
 def test_xfer_trace_info_prepped_handle(monkeypatch, backend_name):
     monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1")
     with _xfer_handle(backend_name, prepped=True) as (agent, handle):
         request_id, execution, _ = _trace_info(agent, handle)
         assert request_id != 0 and execution == 0
@@ -721,6 +723,7 @@ def test_xfer_trace_info_prepped_handle(monkeypatch, backend_name):
 @requires_nvtx_plugin
 def test_xfer_trace_info_sampled_posts_differ(monkeypatch, backend_name):
     monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1")
     monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "1")
     with _xfer_handle(backend_name) as (agent, handle):
         posts = []
@@ -736,6 +739,7 @@ def test_xfer_trace_info_sampled_posts_differ(monkeypatch, backend_name):
 @requires_nvtx_plugin
 def test_xfer_trace_info_after_release(monkeypatch, backend_name):
     monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1")
     with _xfer_handle(backend_name) as (agent, handle):
         assert agent.get_xfer_trace_info(handle) is not None
         agent.release_xfer_handle(handle)
@@ -745,6 +749,7 @@ def test_xfer_trace_info_after_release(monkeypatch, backend_name):
 @requires_nvtx_plugin
 def test_xfer_trace_info_is_a_read_only_snapshot(monkeypatch, backend_name):
     monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1")
     with _xfer_handle(backend_name) as (agent, handle):
         _post_to_done(agent, handle)
         info = agent.get_xfer_trace_info(handle)

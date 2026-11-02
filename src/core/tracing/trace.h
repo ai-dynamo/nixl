@@ -153,6 +153,11 @@ public:
         return false;
     }
 
+    [[nodiscard]] virtual bool
+    recording() const noexcept {
+        return true;
+    }
+
     /**
      * @brief Record a span from @p start to @p end, or an event at @p at, that
      *        already happened. Times are `nixlTime` microseconds on

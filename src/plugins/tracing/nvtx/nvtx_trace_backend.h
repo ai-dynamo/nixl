@@ -33,7 +33,7 @@ namespace nixl::trace::nvtx_internal {
 
 class NvtxTraceBackend final : public TraceBackend {
 public:
-    explicit NvtxTraceBackend(std::string_view domain);
+    explicit NvtxTraceBackend(std::string_view domain, bool record_without_profiler = false);
     ~NvtxTraceBackend() override;
 
     [[nodiscard]] std::unique_ptr<SpanBackend>
@@ -81,11 +81,17 @@ public:
         return true;
     }
 
+    [[nodiscard]] bool
+    recording() const noexcept override {
+        return (domain_ != nullptr) || recordWithoutProfiler_;
+    }
+
 private:
     const std::string domainName_;
     nvtxDomainHandle_t domain_;
     PayloadSchemaIds schemaIds_;
     std::vector<nvtxStringHandle_t> registeredHandles_;
+    const bool recordWithoutProfiler_;
 };
 
 } // namespace nixl::trace::nvtx_internal

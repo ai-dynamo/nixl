@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <set>
 #include <string>
@@ -117,6 +118,13 @@ TEST(NvtxEvents, FixedAndShortNamesAllocateNothing) {
         event, "nixl::wire.completed", nixl::trace::Kind::Metadata, nullptr, registered);
     nvtx::eventForName(event, "rail0.write", nixl::trace::Kind::Metadata, nullptr, registered);
     EXPECT_EQ(allocations.count(), 0u);
+}
+
+TEST(NvtxEvents, BackendRecordsOnlyUnderAProfilerUnlessAsked) {
+    const bool profiled = std::getenv("NVTX_INJECTION64_PATH") != nullptr;
+
+    EXPECT_EQ(nvtx::NvtxTraceBackend("nixl-unit").recording(), profiled);
+    EXPECT_TRUE(nvtx::NvtxTraceBackend("nixl-unit", true).recording());
 }
 
 TEST(NvtxEvents, BackendOwnsItsTimestamps) {

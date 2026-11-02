@@ -211,6 +211,11 @@ makeTracer(const TracerConfig &config) {
             NIXL_WARN << "nixl::trace: backend '" << requested << "' failed to initialize";
             continue;
         }
+        if (!backend->recording()) {
+            NIXL_INFO << "nixl::trace: backend '" << requested
+                      << "' has nothing to record to and is not activated";
+            continue;
+        }
 
         NIXL_DEBUG << "nixl::trace: activated '" << requested << "' backend for agent '"
                    << config.agentName << "'";
