@@ -450,6 +450,8 @@ protected:
         ASSERT_EQ(contexts.size(), posts.size());
         ASSERT_NE(request_id, 0u);
         const std::vector<std::string> expected{"correlation=" + std::to_string(request_id),
+                                                "nixl.xfer_request_id=" +
+                                                    std::to_string(request_id),
                                                 "nixl.backend=UCX"};
         const std::array<std::pair<const char *, std::vector<int>>, 3> expected_executions{
             {{"nixl::submit", posts},
@@ -467,10 +469,6 @@ protected:
                 EXPECT_THAT(
                     spans[i],
                     testing::Not(testing::Contains(testing::StartsWith("nixl.traceparent="))))
-                    << phase;
-                EXPECT_THAT(
-                    spans[i],
-                    testing::Not(testing::Contains(testing::StartsWith("nixl.xfer_request_id="))))
                     << phase;
                 EXPECT_THAT(
                     spans[i],
@@ -494,6 +492,7 @@ protected:
             EXPECT_THAT(completed[i],
                         testing::IsSupersetOf({"correlation=" + std::to_string(request_id),
                                                "context=" + traceparent,
+                                               "nixl.xfer_request_id=" + std::to_string(request_id),
                                                "nixl.xfer_execution=" + std::to_string(i + 1),
                                                std::string("nixl.backend=UCX")}));
             EXPECT_THAT(completed[i], testing::Contains(phaseEventTime(completed[i])));
@@ -509,6 +508,7 @@ protected:
                                        "context=" + traceparent,
                                        "start_us=" + std::to_string(eventTime(submitted[i])),
                                        "end_us=" + std::to_string(eventTime(completed[i])),
+                                       "nixl.xfer_request_id=" + std::to_string(request_id),
                                        "nixl.xfer_execution=" + std::to_string(i + 1),
                                        std::string("nixl.backend=UCX")}));
         }
@@ -544,8 +544,8 @@ protected:
         ASSERT_EQ(completed.size(), 1u);
         const std::string traceparent = nixl::trace::formatTraceparent(context);
         EXPECT_THAT(completed[0],
-                    testing::IsSupersetOf({"correlation=" + std::to_string(request_id),
-                                           "context=" + traceparent,
+                    testing::IsSupersetOf({"context=" + traceparent,
+                                           "nixl.xfer_request_id=" + std::to_string(request_id),
                                            std::string("nixl.xfer_execution=1")}));
         EXPECT_GE(eventTime(completed[0]), progressed_at);
         EXPECT_EQ(recordedSpans(traceFile, sender_name, "nixl::wire.inflight").size(), 1u);
@@ -868,6 +868,7 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_THAT(received[0],
                 testing::IsSupersetOf({correlation,
                                        "context=" + traceparent,
+                                       "nixl.xfer_request_id=" + std::to_string(request_id),
                                        std::string("nixl.xfer_execution=1"),
                                        std::string("nixl.remote_agent=") + sender_name}));
     EXPECT_THAT(received[0], testing::Contains(phaseEventTime(received[0])));
@@ -907,6 +908,7 @@ TEST_F(ucxTraceContextPropagation, ReceiverRecordsEachNotifyingPostsExecution) {
         EXPECT_THAT(received[i],
                     testing::IsSupersetOf({"correlation=" + std::to_string(request_id),
                                            "context=" + traceparent,
+                                           "nixl.xfer_request_id=" + std::to_string(request_id),
                                            "nixl.xfer_execution=" + std::to_string(i + 1),
                                            std::string("nixl.remote_agent=") + sender_name}));
     }

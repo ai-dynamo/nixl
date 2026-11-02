@@ -147,8 +147,9 @@ public:
      * @param identity  Trace identity the phase belongs to: the post's own for a
      *                  local phase, the sender's for a phase observed on receipt.
      *                  Valid for the call only. Its context is the record's
-     *                  own, the event is correlated on its request id when
-     *                  non-zero, and its execution number is recorded as
+     *                  own, its request id is recorded as the integer
+     *                  `nixl.xfer_request_id` when non-zero (the event is
+     *                  correlated on it), and its execution number as
      *                  `nixl.xfer_execution` when non-zero.
      * @param attrs     Extra attributes; see @ref nixlBackendTraceAttr for the
      *                  lifetime rule, which applies to @p label as well.

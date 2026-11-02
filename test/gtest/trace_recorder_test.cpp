@@ -132,6 +132,7 @@ TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
                                       "at_us=1234",
                                       "nixl.backend=UCX",
                                       "nixl.phase.timestamp_us=1234",
+                                      "nixl.xfer_request_id=" + request_id,
                                       "nixl.xfer_execution=1",
                                       "nixl.remote_agent=sender"}}));
 }
