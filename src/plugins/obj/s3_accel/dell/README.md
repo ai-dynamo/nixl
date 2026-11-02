@@ -97,12 +97,27 @@ agent.createBackend("OBJ", params);
 
 ### CUObject Client Configuration
 
-The CUObject Client library requires the configuration of the RDMA device address list in the JSON configuration file.  Each client IP address associated with an RDMA device is specified in the "rdma_dev_addr_list" property.  The following is an example JSON file:
+The CUObject Client library requires the configuration of the RDMA device address list in the JSON configuration file.  Each client IP address associated with an RDMA device is specified in the "rdma_dev_addr_list" property.
+
+#### Startup latency workaround
+
+CUObject versions that share cuFile initialization can start cuFile I/O worker
+threads during S3 RDMA backend creation, adding to cold-start latency. As a
+temporary workaround for affected versions, set `execution.parallel_io` to `false`
+and `execution.max_io_threads` to `0` in an application-specific JSON configuration
+file. Setting `parallel_io` alone disables parallel I/O dispatch but does not
+prevent the worker threads from starting; `max_io_threads: 0` also prevents the
+pool's worker and polling threads from being created.
+
+Merge these execution settings into your application's configuration, preserving
+its RDMA addresses and other settings. For example, with RDMA device addresses
+`10.0.1.2` and `10.0.2.2`:
 
 ```json
 {
     "execution": {
-        "parallel_io" : false
+        "parallel_io" : false,
+        "max_io_threads" : 0
     },
 
     "properties": {
@@ -114,11 +129,18 @@ The CUObject Client library requires the configuration of the RDMA device addres
 }
 ```
 
-Export the location of the JSON file with the environment variable
+Save the file and export its absolute path before launching the NIXL application,
+so the settings take effect before cuObject or cuFile initializes:
 
 ```bash
 export CUFILE_ENV_PATH_JSON=/path/to/cufile.json
 ```
+
+Other shared cuFile initialization still runs. These execution settings also affect
+cuFile users in the same process, including the NIXL GDS backend, so evaluate the
+impact on file I/O if the application uses both backends. Keep this workaround in
+the application-specific file selected by `CUFILE_ENV_PATH_JSON` rather than
+changing the system-wide `/etc/cufile.json`.
 
 ## Supported Memory Types
 
