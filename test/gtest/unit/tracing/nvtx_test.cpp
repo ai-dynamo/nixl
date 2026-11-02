@@ -18,6 +18,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -28,6 +29,9 @@
 namespace {
 
 namespace nvtx = nixl::trace::nvtx_internal;
+
+static_assert(!std::is_copy_constructible_v<nvtx::NvtxEvent>);
+static_assert(!std::is_copy_assignable_v<nvtx::NvtxEvent>);
 
 constexpr std::string_view fixed_names[] = {
     "nixl::createXferReq",

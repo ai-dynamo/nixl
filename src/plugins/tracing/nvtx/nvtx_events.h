@@ -28,6 +28,11 @@
 namespace nixl::trace::nvtx_internal {
 
 struct NvtxEvent {
+    NvtxEvent() = default;
+    NvtxEvent(const NvtxEvent &) = delete;
+    NvtxEvent &
+    operator=(const NvtxEvent &) = delete;
+
     nvtxEventAttributes_t attributes;
     std::array<char, 64> message;
 };

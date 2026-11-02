@@ -1100,16 +1100,24 @@ TEST(TracePhaseSink, ThrowingBackendIsReportedOnce) {
 
 TEST(Tracing, AllocationCounterCountsOnlyItsOwnThread) {
     const gtest::AllocationCounter allocations;
-    const auto value = std::make_unique<std::uint64_t>(1);
+    void *const value = ::operator new(sizeof(std::uint64_t));
     EXPECT_EQ(allocations.count(), 1u);
 
-    std::atomic<bool> allocated = false;
-    std::thread worker([&allocated] {
-        const auto other = std::make_unique<std::uint64_t>(2);
-        allocated = (other != nullptr);
+    std::atomic<bool> start = false;
+    std::size_t worker_count = 0;
+    std::thread worker([&start, &worker_count] {
+        while (!start) {
+            std::this_thread::yield();
+        }
+        const gtest::AllocationCounter worker_allocations;
+        void *const other = ::operator new(sizeof(std::uint64_t));
+        worker_count = worker_allocations.count();
+        ::operator delete(other);
     });
     const std::size_t with_thread = allocations.count();
+    start = true;
     worker.join();
-    EXPECT_TRUE(allocated);
+    EXPECT_EQ(worker_count, 1u);
     EXPECT_EQ(allocations.count(), with_thread);
+    ::operator delete(value);
 }
