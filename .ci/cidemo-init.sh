@@ -11,8 +11,6 @@ CI_FILES=(
     ".gitlab/build.sh"
     ".ci/scripts/common.sh"
     "contrib/Dockerfile.manylinux"
-    # Includes the OpenSSL version/checksum passed to the cached wheel_base.
-    ".ci/jenkins/lib/build-wheel-matrix.yaml"
 )
 
 # Matrix YAML files that contain the CI_MANAGED placeholder.

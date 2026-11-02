@@ -93,10 +93,8 @@ ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
 ARG BUILD_NIXL_EP="true"
-ARG ABSL_TAG="5650e9cf76d3be4318d5fa3af38ee483ddfd5e4a"
+ARG ABSL_TAG="20260526.0"
 ARG GRPC_TAG="v1.85.0"
-ARG OPENSSL_VERSION="3.0.16"
-ARG OPENSSL_SHA256="57e03c50feab5d31b152af2b764f10379aecd8ee92f16c985983ce4a99f7ef86"
 ARG HIREDIS_VERSION="1.4.0"
 ARG WGET_RETRY_OPTS="--tries=10 --waitretry=15 --retry-connrefused --retry-on-http-error=429,500,502,503,504 --no-http-keep-alive --timeout=30 --read-timeout=60"
 ARG NPROC
@@ -151,6 +149,8 @@ RUN cd /tmp && \
     rm -rf "/tmp/hwloc-${HWLOC_VERSION}" "/tmp/hwloc-${HWLOC_VERSION}.tar.gz"
 
 # Build OpenSSL
+ARG OPENSSL_VERSION="3.0.16"
+ARG OPENSSL_SHA256="57e03c50feab5d31b152af2b764f10379aecd8ee92f16c985983ce4a99f7ef86"
 RUN yum install -y perl-IPC-Cmd perl-Test-Simple perl-Data-Dumper perl-Time-Piece
 RUN cd /tmp && \
     wget -q ${WGET_RETRY_OPTS} "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz" && \
