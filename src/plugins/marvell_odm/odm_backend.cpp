@@ -437,7 +437,8 @@ nixlOdmEngine::registerMem(const nixlBlobDesc &mem,
                       << mem.addr << ": " << (es ? es : "?");
         }
         {
-            nixl_status_t cst = ensureCudaContext(md->dev_id);
+            OdmCudaCtxScope ctx_scope;
+            nixl_status_t cst = ensureCudaContext(md->dev_id, &ctx_scope);
             if (cst != NIXL_SUCCESS) {
                 delete md;
                 return cst;
@@ -678,7 +679,7 @@ nixlOdmEngine::prepXfer(const nixl_xfer_op_t &operation,
 
 #ifdef HAVE_CUDA
 nixl_status_t
-nixlOdmEngine::ensureCudaContext(uint32_t dev) const {
+nixlOdmEngine::ensureCudaContext(uint32_t dev, OdmCudaCtxScope *scope) const {
     CUdevice cudev;
     CUresult cr = cuDeviceGet(&cudev, static_cast<int>(dev));
     if (cr != CUDA_SUCCESS) {
@@ -719,6 +720,9 @@ nixlOdmEngine::ensureCudaContext(uint32_t dev) const {
         cuGetErrorString(cr, &es);
         NIXL_ERROR << "ODM: cuCtxSetCurrent(" << dev << ") failed: " << (es ? es : "?");
         return NIXL_ERR_BACKEND;
+    }
+    if (scope != nullptr) {
+        scope->saveCurrent(cur);
     }
     return NIXL_SUCCESS;
 }
@@ -1119,7 +1123,8 @@ nixlOdmEngine::postOdmDmabufUring(nixlOdmBackendReqH *req) const {
         uring_lk.unlock();
         return postOdmDmabuf(req);
     }
-    nixl_status_t cst = ensureCudaContext(req->gpu_id);
+    OdmCudaCtxScope ctx_scope;
+    nixl_status_t cst = ensureCudaContext(req->gpu_id, &ctx_scope);
     if (cst != NIXL_SUCCESS) {
         return cst;
     }
@@ -1221,7 +1226,8 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
      * queue via nextQid() (preserves the original behavior / multi-thread spray).
      */
     if (!odm_pool_started_) {
-        nixl_status_t cst = ensureCudaContext(req->gpu_id);
+        OdmCudaCtxScope ctx_scope;
+        nixl_status_t cst = ensureCudaContext(req->gpu_id, &ctx_scope);
         if (cst != NIXL_SUCCESS) {
             return cst;
         }
@@ -1307,7 +1313,8 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
     /* Single piece (small transfer): run inline on the caller thread to avoid
      * the worker dispatch + condvar round-trip. */
     if (items.size() == 1) {
-        nixl_status_t cst = ensureCudaContext(req->gpu_id);
+        OdmCudaCtxScope ctx_scope;
+        nixl_status_t cst = ensureCudaContext(req->gpu_id, &ctx_scope);
         if (cst != NIXL_SUCCESS) {
             return cst;
         }

@@ -152,6 +152,33 @@ public:
     ~nixlOdmBackendReqH() override = default;
 };
 
+#ifdef HAVE_CUDA
+// Restores the caller thread's previous CUDA context on scope exit.
+class OdmCudaCtxScope {
+public:
+    OdmCudaCtxScope() = default;
+    OdmCudaCtxScope(const OdmCudaCtxScope &) = delete;
+    OdmCudaCtxScope &
+    operator=(const OdmCudaCtxScope &) = delete;
+
+    ~OdmCudaCtxScope() {
+        if (armed_) {
+            cuCtxSetCurrent(prev_);
+        }
+    }
+
+    void
+    saveCurrent(CUcontext prev) {
+        prev_ = prev;
+        armed_ = true;
+    }
+
+private:
+    CUcontext prev_ = nullptr;
+    bool armed_ = false;
+};
+#endif
+
 /**
  * @class nixlOdmEngine
  * @brief NIXL backend: ODM controller + GPU VRAM dma-buf (both directions).
@@ -387,7 +414,7 @@ private:
     mutable std::vector<std::mutex> qid_locks_;
 #ifdef HAVE_CUDA
     nixl_status_t
-    ensureCudaContext(uint32_t dev) const;
+    ensureCudaContext(uint32_t dev, OdmCudaCtxScope *scope = nullptr) const;
     nixl_status_t
     exportVramDmabuf(uint64_t gpu_va, uint64_t len, int &out_fd) const;
     void
