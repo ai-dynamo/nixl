@@ -249,7 +249,6 @@ steps:
       if [ -f build_options.env ]; then
         . ./build_options.env
         [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
-        [ -n "${UCX_SHA:-}" ] && PROPERTIES+=";UCX_SHA=${UCX_SHA}"
         [ -n "${CUDA_VERSION:-}" ] && PROPERTIES+=";CUDA_VERSION=${CUDA_VERSION}"
         [ "${BUILD_UCX_SPCX_PLUGIN:-}" = "true" ] && [ -n "${UCX_SPCX_PLUGIN_REF:-}" ] \
           && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
@@ -260,11 +259,16 @@ steps:
         true
       fi
 
+      # The UCX the image compiled. build_options.env's UCX_SHA is only UCX_REF
+      # as ls-remote resolved it, which need not be what wheel_base built.
+      UCX_SHA="$(docker run --rm "${WHEEL_IMAGE_TAG}" git -C /usr/local/src/ucx rev-parse HEAD | cut -c1-8)"
+      [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot read the UCX commit from ${WHEEL_IMAGE_TAG}"; exit 1; }
+      PROPERTIES+=";UCX_SHA=${UCX_SHA}"
+
       # verification/ keeps its g<nixl-sha>.ucx<ucx-sha> schema (consumed by the
       # build-llm-container verification pipeline) and is shared between builds;
       # release/<ver> gets one folder per build.
       if [ "${PUBLISH_DIR}" = "verification" ]; then
-        [ -n "${UCX_SHA:-}" ] || { echo "ERROR: verification publish needs UCX_SHA from build_options.env"; exit 1; }
         FOLDER="g${NIXL_SHA}.ucx${UCX_SHA}"
       else
         FOLDER="${BUILD_NUMBER}"
