@@ -92,6 +92,16 @@ if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     cpp_flags += '-DHAVE_LIBFABRIC'
 endif
 
+# Set only when src/plugins/mooncake was built, and not under TSAN: the
+# Transfer Engine's TCP transport (v0.3.10.post1) locks a session mutex on the
+# submitting thread and unlocks it on its own thread, so a post with more than 64
+# descriptors overflows TSAN's per-thread lock tracking.
+# TODO: drop this exclusion once CI uses Mooncake >= v0.3.12 (kvcache-ai/Mooncake#2850).
+if (is_variable('mooncake_backend_interface') and not sanitizer_opts.contains('thread')
+        and not get_option('b_sanitize').split(',').contains('thread'))
+    cpp_flags += '-DHAVE_MOONCAKE'
+endif
+
 if get_option('test_all_plugins')
   cpp_flags+='-DTEST_ALL_PLUGINS'
 endif
