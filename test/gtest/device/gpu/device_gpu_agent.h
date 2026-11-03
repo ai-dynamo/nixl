@@ -18,8 +18,9 @@
 #ifndef NIXL_TEST_GTEST_DEVICE_API_AGENT_CUH
 #define NIXL_TEST_GTEST_DEVICE_API_AGENT_CUH
 
-#include "mem_buffer.h"
-#include "nixl.h"
+#include "device_gpu_mem_buffer.h"
+
+#include <nixl.h>
 
 #include <functional>
 #include <memory>

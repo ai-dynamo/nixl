@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "agent.h"
+#include "device_gpu_agent.h"
 
 #include <stdexcept>
 

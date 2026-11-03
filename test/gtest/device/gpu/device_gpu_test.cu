@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
-#include "agent.h"
+#include "device_gpu_agent.h"
 #include "common.h"
-#include "mem_buffer.h"
+#include "device_gpu_mem_buffer.h"
 
 #include <nixl.h>
 #include <gpu/nixl_device.cuh>
