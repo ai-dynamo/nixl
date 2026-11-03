@@ -148,6 +148,7 @@ struct docaSlotDesc {
     struct docaQpProgress *qp_progress;
     uint32_t wait_completion_mask;
     uint64_t *peer_write_completed;
+    uint64_t *peer_write_wait;
     uint64_t write_ticket;
     uint32_t posting_ctas_done;
     uint8_t has_two_sge;
@@ -161,6 +162,8 @@ struct docaSlotDesc {
 struct docaStripedWriteLaunch {
     uint32_t count;
     uint32_t positions[DOCA_XFER_REQ_MAX];
+    uint32_t owners[DOCA_XFER_REQ_MAX];
+    uint32_t final_start;
 };
 
 enum docaSlotState : uint32_t {

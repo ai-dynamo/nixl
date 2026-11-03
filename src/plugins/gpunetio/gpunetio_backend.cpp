@@ -1697,8 +1697,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     }
 
     size_t write_bytes = 0;
-    if (operation == NIXL_WRITE && writeByteStriping_ && dataQpCount_ > 1 &&
-        (lcnt + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE < dataQpCount_) {
+    if (operation == NIXL_WRITE && writeByteStriping_ && dataQpCount_ > 1) {
         for (uint32_t idx = 0; idx < lcnt; ++idx) {
             if (local[idx].len > std::numeric_limits<size_t>::max() - write_bytes ||
                 local[idx].addr > std::numeric_limits<uintptr_t>::max() - local[idx].len ||
@@ -1708,14 +1707,21 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             write_bytes += local[idx].len;
         }
     }
-    const size_t final_bytes = lcnt > 1 && write_bytes != 0 ? local[lcnt - 1].len : 0;
-    const size_t striped_bytes = write_bytes - final_bytes;
-    const bool byte_striping = striped_bytes >= 4 * 1024 * 1024;
-    const size_t ordering_tail = byte_striping && lcnt == 1 ? sizeof(uint64_t) : 0;
-    const size_t bulk_bytes = striped_bytes - ordering_tail;
-    const size_t chunk_bytes_limit = byte_striping ?
-        bulk_bytes / dataQpCount_ + (bulk_bytes % dataQpCount_ != 0) :
-        std::numeric_limits<size_t>::max();
+    const bool byte_striping = operation == NIXL_WRITE && writeByteStriping_ && dataQpCount_ > 1;
+    const size_t final_bytes = byte_striping && lcnt > 1 ? local[lcnt - 1].len : 0;
+    const size_t ordering_tail =
+        byte_striping && lcnt == 1 ? std::min(write_bytes, sizeof(uint64_t)) : 0;
+    const size_t bulk_bytes = write_bytes - final_bytes - ordering_tail;
+    constexpr size_t min_chunk = 4 * 1024 * 1024;
+    const uint32_t qps_used = byte_striping ?
+        static_cast<uint32_t>(
+            std::min<size_t>(std::max<size_t>(bulk_bytes / min_chunk, 1), dataQpCount_)) :
+        1;
+    uint32_t owner = 0;
+    size_t owner_remaining = bulk_bytes / qps_used + (bulk_bytes % qps_used != 0);
+    auto owner_budget = [&](uint32_t qp) {
+        return bulk_bytes / qps_used + (qp < bulk_bytes % qps_used);
+    };
 
     if (operation == NIXL_WRITE && dataQpCount_ > 1 && opt_args != nullptr &&
         !opt_args->customParam.empty()) {
@@ -1787,7 +1793,17 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     uint32_t desc_offset = 0;
     // Bytes of local[desc_offset] already staged in earlier WQEs, possibly in an earlier slot.
     size_t split_offset = 0;
+    treq->finalStart = UINT32_MAX;
     do {
+        const bool final_chunk = byte_striping &&
+            ((lcnt > 1 && desc_offset == lcnt - 1) ||
+             (lcnt == 1 && local[0].len - split_offset <= ordering_tail));
+        if (final_chunk && treq->finalStart == UINT32_MAX) {
+            treq->finalStart = treq->positions.size() - 1;
+        }
+        if (byte_striping) {
+            treq->qpOwners.push_back(final_chunk ? 0 : owner);
+        }
         docaSlotDesc staged_req{};
         staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
 
@@ -1797,8 +1813,8 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                (operation == NIXL_READ || chunk_desc_count < DOCA_XFER_REQ_SIZE)) {
             const uint32_t desc_idx = desc_offset;
 
-            if (byte_striping && staged_req.num > 0 &&
-                (chunk_bytes >= chunk_bytes_limit || desc_idx == lcnt - 1 ||
+            if (byte_striping && !final_chunk && staged_req.num > 0 &&
+                (chunk_bytes >= owner_remaining || (lcnt > 1 && desc_idx == lcnt - 1) ||
                  (ordering_tail && local[desc_idx].len - split_offset == ordering_tail))) {
                 break;
             }
@@ -1842,9 +1858,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             // budget. For a single range, preserve its final eight bytes as the ordering tail.
             const size_t bulk_remaining =
                 ordering_tail && remaining > ordering_tail ? remaining - ordering_tail : remaining;
-            const size_t wqe_size = byte_striping && !(lcnt > 1 && desc_idx == lcnt - 1) ?
+            const size_t wqe_size = byte_striping && !final_chunk ?
                 std::min({bulk_remaining,
-                          chunk_bytes_limit - chunk_bytes,
+                          owner_remaining - chunk_bytes,
                           size_t(DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE)}) :
                 std::min<size_t>(remaining, DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
             const size_t piece_offset = split_offset;
@@ -1865,7 +1881,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             ++desc_offset;
 
             if (operation == NIXL_WRITE && lcnt - desc_idx > 2 && desc_offset == desc_idx + 1 &&
-                (!byte_striping || local[desc_offset].len <= chunk_bytes_limit - chunk_bytes)) {
+                (!byte_striping || local[desc_offset].len <= owner_remaining - chunk_bytes)) {
                 auto *next_lmd =
                     static_cast<nixlDocaPrivateMetadata *>(local[desc_offset].metadataP);
                 auto *next_rmd =
@@ -1900,6 +1916,13 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             NIXL_DEBUG << "WRITE byte stripe position " << pos << " bytes " << chunk_bytes;
         }
 
+        if (byte_striping && !final_chunk) {
+            owner_remaining -= chunk_bytes;
+            if (owner_remaining == 0 && owner + 1 < qps_used) {
+                ++owner;
+                owner_remaining = owner_budget(owner);
+            }
+        }
         if (desc_offset < lcnt && !reserve_position()) {
             const bool too_large = treq->positions.size() == DOCA_XFER_REQ_MAX;
             abandon_request();
@@ -1907,6 +1930,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         }
     } while (desc_offset < lcnt);
 
+    if (treq->finalStart == UINT32_MAX) {
+        treq->finalStart = treq->positions.size() - 1;
+    }
     const uint32_t final_pos = treq->positions.back();
 
     if (opt_args && opt_args->hasNotif) {
@@ -2055,25 +2081,33 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
     // Publish all dependencies before any kernel can consume the final chunk.
     docaStripedWriteLaunch launch{};
     launch.count = static_cast<uint32_t>(request->positions.size());
+    launch.final_start = request->finalStart;
     for (size_t ordinal = 0; ordinal < request->positions.size(); ++ordinal) {
         launch.positions[ordinal] = request->positions[ordinal];
+        const uint32_t owner =
+            request->qpOwners.empty() ? ordinal % dataQpCount_ : request->qpOwners[ordinal];
+        launch.owners[ordinal] = owner;
         auto &entry = xferReqRingCpu[request->positions[ordinal]];
-        entry.qp_data = peer->qp_write[ordinal % dataQpCount_]->get_qp_gpu_dev();
-        entry.qp_progress = peer->progress_gpu + 1 + ordinal % dataQpCount_;
+        entry.qp_data = peer->qp_write[owner]->get_qp_gpu_dev();
+        entry.qp_progress = peer->progress_gpu + 1 + owner;
         entry.wait_completion_mask = 0;
         entry.peer_write_completed = nullptr;
+        entry.peer_write_wait = nullptr;
         entry.write_ticket = 0;
     }
     auto &last = xferReqRingCpu[request->positions.back()];
     last.posting_ctas_done = 0;
     last.peer_write_completed = peer->writeCompletedGpu.get();
     last.write_ticket = ++peer->postedWriteTicket;
+    auto &first_final = xferReqRingCpu[request->positions[request->finalStart]];
+    first_final.peer_write_wait = peer->writeCompletedGpu.get();
+    first_final.write_ticket = last.write_ticket;
     // Build the mask locally: |= on the slot would read it back through the GPU mapping.
     uint32_t wait_completion_mask = 0;
-    for (size_t ordinal = 0; ordinal + 1 < request->positions.size(); ++ordinal) {
+    for (size_t ordinal = 0; ordinal < request->finalStart; ++ordinal) {
         wait_completion_mask |= 1U << request->positions[ordinal];
     }
-    last.wait_completion_mask = wait_completion_mask;
+    first_final.wait_completion_mask = wait_completion_mask;
     std::atomic_thread_fence(std::memory_order_release);
 
     // One stream orders all grids, including the previous same-peer final post.

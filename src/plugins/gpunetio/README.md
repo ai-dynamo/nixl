@@ -47,20 +47,21 @@ events while potentially reducing overlap between requests. Attached CUDA
 streams are supported for WRITE only with count 1. Single-QP mode preserves the
 legacy OOB format; multi-QP mode uses a versioned QPN exchange.
 
-With `write_byte_striping=1` (default: `0`), preparation splits ranges with a
-per-chunk byte budget when at least 4 MiB can be spread across QPs and the
-descriptor-count chunks would leave some configured QPs unused. Addresses and
-memory keys stay with each range. For multiple input descriptors, the final
-descriptor remains intact in a separate chunk and is excluded from that byte
-budget. Small requests, requests with enough
-descriptor chunks, READ and the default single-QP mode keep their existing
-mapping. This does not change completion or notification ordering.
-For a single large descriptor, only its final eight payload bytes remain in
-the final chunk, so the bulk can use all configured QPs before that chunk is
-posted. These bytes remain ordinary payload, not a new receiver-ready protocol.
-Splitting uses additional positions in the existing 32-position request ring,
-so fewer prepared handles may fit. The opt-in is local to the sender and does
-not change the QPN exchange or require enabling it on the receiver.
+With `write_byte_striping=1` (default: `0`), preparation distributes WRITE
+bulk bytes across up to `data_qp_count` QPs. It selects the QP count using a
+4 MiB minimum share: `min(max(bulk_bytes / 4 MiB, 1), data_qp_count)`. Shares
+are as equal as possible. A share can span several ring positions, all posted
+in order on the same QP.
+
+For multiple input descriptors, the final descriptor is excluded from the bulk
+and posted after all bulk positions complete. For a single descriptor, its
+last eight bytes (or the entire descriptor if shorter) form the ordering tail.
+These bytes are ordinary payload, not a receiver-ready protocol. The final
+positions use one QP, and the notification follows their completion. Splitting
+uses additional positions in the existing 32-position request ring, so fewer
+prepared handles may fit. The opt-in is local to the sender and does not change
+the QPN exchange or require enabling it on the receiver.
+
 Payload pieces on different QPs may arrive out of order: consume only after
 completion or notification. An application arrival marker should be a separate
 final descriptor with descriptor merging disabled, not embedded inside a range.
