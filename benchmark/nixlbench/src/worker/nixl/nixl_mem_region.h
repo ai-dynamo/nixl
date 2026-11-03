@@ -100,6 +100,8 @@ private:
 };
 
 // Per-IOV cleanup for the given segment type; no-op for types that own nothing.
+// For DRAM_SEG the host buffer is freed only when owns_buffer is true; pass false
+// when the memory is owned elsewhere (e.g. device DRAM allocated by the backend).
 void
 cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov, bool owns_buffer = true);
 

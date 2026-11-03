@@ -53,9 +53,7 @@ resolveVramSegment() {
 #elif HAVE_ROCM
     return VRAM_SEG;
 #else
-    if (neuronCoreCount() > 0) {
-        return VRAM_SEG;
-    }
+    if (neuronCoreCount() > 0) return VRAM_SEG;
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
