@@ -92,10 +92,7 @@ protected:
     void
     SetUp() override {
         int count;
-        if (cudaGetDeviceCount(&count) != cudaSuccess) {
-            FAIL() << "Failed to get CUDA device count";
-        }
-        if (count < 1) {
+        if ((cudaGetDeviceCount(&count) != cudaSuccess) || (count < 1)) {
             GTEST_SKIP() << "No CUDA-capable GPU is available";
         }
         if (cudaSetDevice(0) != cudaSuccess) {
