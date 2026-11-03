@@ -22,6 +22,7 @@
 #include "nixl.h"
 #include "nixl_types.h"
 #include "plugin_manager.h"
+#include "transfer_request.h"
 
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
@@ -155,6 +156,14 @@ protected:
         // Disabling Telemetry until the corresponding test
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
+        if (getBackendName() == "MOONCAKE") {
+            // TCP loopback on host memory: CI hosts may expose RDMA devices the
+            // test cannot use, and CI builds Mooncake without GPU support.
+            env.addVar("MC_FORCE_TCP", "1");
+            env.addVar("NIXL_MOONCAKE_IP_ADDR", "127.0.0.1");
+            m_gpu_device = false;
+        }
+
         // Create two agents
         for (size_t i = 0; i < 2; i++) {
             addAgent(i);
@@ -284,7 +293,7 @@ protected:
     invalidateMD(size_t start, size_t end) {
         // Invalidate each other's metadata for the agents in the specified range
         for (size_t i = start; i <= end; i++) {
-            for (size_t j = start; j < end; j++) {
+            for (size_t j = start; j <= end; j++) {
                 if (i == j)
                     continue;
                 nixl_status_t status = agents[j]->invalidateRemoteMD(
@@ -306,6 +315,38 @@ protected:
         registerMem(agent, out, mem_type);
     }
 
+    static void
+    fillPayloads(const std::vector<MemBuffer> &buffers, uint32_t seed) {
+        for (size_t i = 0; i < buffers.size(); ++i) {
+            fillPayload(reinterpret_cast<void *>(static_cast<uintptr_t>(buffers[i])),
+                        buffers[i].getSize(),
+                        i,
+                        seed);
+        }
+    }
+
+    // Returns the first buffer that doesn't hold the payload, or buffers.size().
+    static size_t
+    findPayloadMismatch(const std::vector<MemBuffer> &buffers, uint32_t seed) {
+        for (size_t i = 0; i < buffers.size(); ++i) {
+            if (!checkPayload(reinterpret_cast<const void *>(static_cast<uintptr_t>(buffers[i])),
+                              buffers[i].getSize(),
+                              i,
+                              seed)) {
+                return i;
+            }
+        }
+        return buffers.size();
+    }
+
+    static void
+    checkPayloads(const std::vector<MemBuffer> &buffers, uint32_t seed) {
+        const size_t i = findPayloadMismatch(buffers, seed);
+        if (i < buffers.size()) {
+            ADD_FAILURE() << "buffer " << i << " does not hold payload " << seed;
+        }
+    }
+
     void
     deregisterMem(nixlAgent &agent,
                   const std::vector<MemBuffer> &buffers,
@@ -319,8 +360,17 @@ protected:
                  const std::string &from_name,
                  size_t expected_count,
                  const std::string &expected_notif,
-                 nixl_notifs_t notif_map = {}) {
+                 nixl_notifs_t notif_map = {},
+                 nixlAgent *sender = nullptr) {
+        // Without a progress thread nothing else advances the sender's worker,
+        // so its queued notifications would never be flushed to the receiver.
+        // When the sender is the receiver, polling it below already does that.
+        nixl_notifs_t sender_notifs;
         for (int i = 0; i < retry_count; i++) {
+            if (sender != nullptr && sender != &agent && !isProgressThreadEnabled()) {
+                ASSERT_EQ(NIXL_SUCCESS, sender->getNotifs(sender_notifs));
+            }
+
             nixl_status_t status = agent.getNotifs(notif_map);
             ASSERT_EQ(status, NIXL_SUCCESS);
 
@@ -370,7 +420,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, total_notifs, notif_msg, std::move(notif_map));
+        verifyNotifs(to, from_name, total_notifs, notif_msg, std::move(notif_map), &from);
         invalidateMD(0, 1);
     }
 
@@ -389,7 +439,8 @@ protected:
                nixl_mem_t dst_mem_type,
                std::vector<MemBuffer> dst_buffers,
                nixl_status_t expected_telem_status = NIXL_ERR_NO_TELEMETRY,
-               const std::string &notif_msg = NOTIF_MSG) {
+               const std::string &notif_msg = NOTIF_MSG,
+               bool expect_trace_context = false) {
         std::mutex logger_mutex;
         std::vector<std::thread> threads;
         nixl_notifs_t notif_map;
@@ -408,16 +459,22 @@ protected:
                                        &extra_params);
                 ASSERT_EQ(status, NIXL_SUCCESS);
                 EXPECT_NE(xfer_req, nullptr);
+                const auto trace_request_id = xfer_req->traceRequestId();
+                if (expect_trace_context) {
+                    EXPECT_NE(trace_request_id, 0u);
+                }
 
                 auto start_time = absl::Now();
 
                 for (size_t i = 0; i < repeat; i++) {
                     status = from.postXferReq(xfer_req);
                     ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+                    EXPECT_EQ(xfer_req->traceRequestId(), trace_request_id);
 
                     for (int i = 0; i < retry_count; i++) {
                         status = from.getXferStatus(xfer_req);
                         EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+                        EXPECT_EQ(xfer_req->traceRequestId(), trace_request_id);
                         if (status == NIXL_SUCCESS) {
                             break;
                         }
@@ -465,7 +522,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, repeat * num_threads, notif_msg, std::move(notif_map));
+        verifyNotifs(to, from_name, repeat * num_threads, notif_msg, std::move(notif_map), &from);
     }
 
     nixlAgent &getAgent(size_t idx)
@@ -545,12 +602,12 @@ const std::string TestTransfer::NOTIF_MSG = "notification";
 TEST_P(TestTransfer, RandomSizes)
 {
     // Tuple fields are: size, count, repeat, num_threads
-    constexpr std::array<std::tuple<size_t, size_t, size_t, size_t>, 4> test_cases = {
+    constexpr std::array<std::tuple<size_t, size_t, size_t, size_t>, 5> test_cases = {
         {{4096, 8, 3, 1},
          {32768, 64, 3, 2},
          {1000000, 100, 3, 4},
-         {40, 1000, 1, 4}}
-    };
+         {40, 1000, 1, 4},
+         {40, 2048, 2, 1}}};
     constexpr nixl_mem_t mem_type = DRAM_SEG;
 
     for (const auto &[size, count, repeat, num_threads] : test_cases) {
@@ -579,6 +636,64 @@ TEST_P(TestTransfer, RandomSizes)
         deregisterMem(getAgent(0), src_buffers, mem_type);
         deregisterMem(getAgent(1), dst_buffers, mem_type);
     }
+}
+
+// Checks the bytes of every post of a transfer with more descriptors than a
+// Mooncake batch used to hold (1024). Reposts the same request, without a
+// notification, with a fresh payload each time.
+TEST_P(TestTransfer, ManyDescriptorsPayload) {
+    constexpr size_t size = 64;
+    constexpr size_t count = 1025;
+    constexpr size_t posts = 2;
+    constexpr nixl_mem_t mem_type = DRAM_SEG;
+
+    std::vector<MemBuffer> local_buffers, remote_buffers;
+    createRegisteredMem(getAgent(0), size, count, mem_type, local_buffers);
+    createRegisteredMem(getAgent(1), size, count, mem_type, remote_buffers);
+    exchangeMD(0, 1);
+
+    uint32_t seed = 0;
+    for (const auto op : {NIXL_WRITE, NIXL_READ}) {
+        const auto &src = (op == NIXL_WRITE) ? local_buffers : remote_buffers;
+        const auto &dst = (op == NIXL_WRITE) ? remote_buffers : local_buffers;
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(NIXL_SUCCESS,
+                  getAgent(0).createXferReq(op,
+                                            makeDescList<nixlBasicDesc>(local_buffers, mem_type),
+                                            makeDescList<nixlBasicDesc>(remote_buffers, mem_type),
+                                            getAgentName(1),
+                                            req));
+        for (size_t post = 0; post < posts; ++post) {
+            fillPayloads(src, ++seed);
+            fillPayloads(dst, 0);
+
+            nixl_status_t status = getAgent(0).postXferReq(req);
+            ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+            ASSERT_TRUE(wait_until_true([&]() {
+                status = getAgent(0).getXferStatus(req);
+                if (!isProgressThreadEnabled()) {
+                    nixl_notifs_t notifs;
+                    getAgent(1).getNotifs(notifs);
+                }
+                return status != NIXL_IN_PROG;
+            }));
+            ASSERT_EQ(NIXL_SUCCESS, status);
+            if ((op == NIXL_WRITE) && (getBackendName() == "MOONCAKE")) {
+                // Mooncake v0.3.10.post1, the CI pin, reports a TCP WRITE complete
+                // before the target has applied it (fixed in kvcache-ai/Mooncake#2850,
+                // v0.3.12). Wait for the bytes, or they can land on the next post.
+                // TODO: drop this wait once CI uses Mooncake >= v0.3.12.
+                wait_until_true([&]() { return findPayloadMismatch(dst, seed) == dst.size(); });
+            }
+            checkPayloads(dst, seed);
+        }
+        EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
+    }
+
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), local_buffers, mem_type);
+    deregisterMem(getAgent(1), remote_buffers, mem_type);
 }
 
 TEST_P(TestTransfer, remoteMDFromSocket)
@@ -621,6 +736,9 @@ TEST_P(TestTransfer, NotificationOnly) {
 }
 
 TEST_P(TestTransfer, SelfNotification) {
+    if (getBackendName() == "MOONCAKE") {
+        GTEST_SKIP() << "The Mooncake plugin cannot notify its own agent";
+    }
     constexpr size_t repeat = 100;
     constexpr size_t num_threads = 4;
     doNotificationTest(
@@ -691,6 +809,9 @@ NIXL_INSTANTIATE_TEST(ucx, TestTransfer, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransfer, "UCX", false, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransfer, "UCX", true, 6, 4, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
+#ifdef HAVE_MOONCAKE
+NIXL_INSTANTIATE_TEST(mooncake, TestTransfer, "MOONCAKE", false, 1, 0, "");
+#endif
 
 NIXL_INSTANTIATE_TEST(ucx_telemetry, TestTransferTelemetry, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_telemetry_no_pt, TestTransferTelemetry, "UCX", false, 2, 0, "");
@@ -761,19 +882,24 @@ protected:
         createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
 
         exchangeMD(0, 1);
-        doTransfer(getAgent(0),
-                   getAgentName(0),
-                   getAgent(1),
-                   getAgentName(1),
-                   NIXL_WRITE,
-                   size,
-                   count,
-                   repeat,
-                   num_threads,
-                   DRAM_SEG,
-                   src_buffers,
-                   DRAM_SEG,
-                   dst_buffers);
+        for (const auto op : {NIXL_WRITE, NIXL_READ}) {
+            doTransfer(getAgent(0),
+                       getAgentName(0),
+                       getAgent(1),
+                       getAgentName(1),
+                       op,
+                       size,
+                       count,
+                       repeat,
+                       num_threads,
+                       DRAM_SEG,
+                       src_buffers,
+                       DRAM_SEG,
+                       dst_buffers,
+                       NIXL_ERR_NO_TELEMETRY,
+                       "notification",
+                       true);
+        }
         invalidateMD(0, 1);
         deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
         deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
@@ -898,5 +1024,58 @@ TEST_P(TestTransferTracingNsysAuto, AutoEnabledTransferLoop) {
 }
 
 NIXL_INSTANTIATE_TEST(ucx_tracing_nsys_auto, TestTransferTracingNsysAuto, "UCX", true, 2, 0, "");
+
+class TestTransferTracingSampled : public TestTransferTracing {
+protected:
+    void
+    SetUp() override {
+        env.addVar("NIXL_TRACE_SAMPLE_RATIO", "1");
+        TestTransferTracing::SetUp();
+    }
+};
+
+TEST_P(TestTransferTracingSampled, NotifyingWritePostedTwice) {
+    constexpr size_t size = 4096;
+    constexpr size_t posts = 2;
+    const std::string notif_msg = "notification";
+
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(getAgent(0), size, 1, DRAM_SEG, src_buffers);
+    createRegisteredMem(getAgent(1), size, 1, DRAM_SEG, dst_buffers);
+    exchangeMD(0, 1);
+
+    nixl_opt_args_t extra_params;
+    extra_params.notif = notif_msg;
+    nixlXferReqH *xfer_req = nullptr;
+    ASSERT_EQ(getAgent(0).createXferReq(NIXL_WRITE,
+                                        makeDescList<nixlBasicDesc>(src_buffers, DRAM_SEG),
+                                        makeDescList<nixlBasicDesc>(dst_buffers, DRAM_SEG),
+                                        getAgentName(1),
+                                        xfer_req,
+                                        &extra_params),
+              NIXL_SUCCESS);
+    ASSERT_TRUE(xfer_req->traceContext().sampled());
+    ASSERT_NE(xfer_req->traceRequestId(), 0u);
+    RecordProperty("xfer_request_id", std::to_string(xfer_req->traceRequestId()));
+
+    for (size_t post = 0; post < posts; ++post) {
+        nixl_status_t status = getAgent(0).postXferReq(xfer_req);
+        ASSERT_TRUE(wait_until_true([&]() {
+            if (status == NIXL_IN_PROG) {
+                status = getAgent(0).getXferStatus(xfer_req);
+            }
+            return status != NIXL_IN_PROG;
+        }));
+        ASSERT_EQ(status, NIXL_SUCCESS);
+    }
+    ASSERT_EQ(getAgent(0).releaseXferReq(xfer_req), NIXL_SUCCESS);
+    verifyNotifs(getAgent(1), getAgentName(0), posts, notif_msg, {}, &getAgent(0));
+
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
+    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+}
+
+NIXL_INSTANTIATE_TEST(ucx_tracing_sampled, TestTransferTracingSampled, "UCX", true, 2, 0, "");
 
 } // namespace gtest

@@ -82,27 +82,8 @@ __device__ __forceinline__ void trap() {
     asm("trap;");
 }
 
-__device__ __forceinline__ void memory_fence() {
-    asm volatile("fence.acq_rel.sys;":: : "memory");
-}
-__device__  __forceinline__ void st_relaxed_sys_global(const int *ptr, int val) {
-    asm volatile("st.relaxed.sys.global.s32 [%0], %1;"::"l"(ptr), "r"(val) : "memory");
-}
-
-__device__  __forceinline__ void st_release_sys_global(const int *ptr, int val) {
-    asm volatile("st.release.sys.global.s32 [%0], %1;"::"l"(ptr), "r"(val) : "memory");
-}
-
 __device__  __forceinline__ void st_release_sys_global(const uint64_t *ptr, uint64_t val) {
     asm volatile("st.release.sys.global.u64 [%0], %1;"::"l"(ptr), "l"(val) : "memory");
-}
-
-__device__  __forceinline__ void st_release_cta(const int *ptr, int val) {
-    asm volatile("st.release.cta.s32 [%0], %1;"::"l"(ptr), "r"(val) : "memory");
-}
-
-__device__  __forceinline__ void st_release_cta(const volatile int *ptr, int val) {
-    asm volatile("st.release.cta.s32 [%0], %1;"::"l"(ptr), "r"(val) : "memory");
 }
 
 __device__ __forceinline__ int ld_acquire_sys_global(const int *ptr) {
@@ -140,41 +121,6 @@ __device__ __forceinline__ int atomic_add_release_global(const uint64_t* ptr, ui
     asm volatile("atom.add.release.gpu.global.u64 %0, [%1], %2;" : "=l"(ret) : "l"(ptr), "l"(value));
     return ret;
 }
-__device__ __forceinline__ int ld_acquire_cta(const int *ptr) {
-    int ret;
-    asm volatile("ld.acquire.cta.s32 %0, [%1];" : "=r"(ret) : "l"(ptr));
-    return ret;
-}
-
-__device__ __forceinline__ int ld_acquire_cta(const volatile int *ptr) {
-    int ret;
-    asm volatile("ld.acquire.cta.s32 %0, [%1];" : "=r"(ret) : "l"(ptr));
-    return ret;
-}
-
-__device__  __forceinline__ int ld_volatile_global(const int *ptr) {
-    int ret;
-    asm volatile("ld.volatile.global.s32 %0, [%1];" : "=r"(ret) : "l"(ptr));
-    return ret;
-}
-
-__device__  __forceinline__ float ld_volatile_global(const float *ptr) {
-    float ret;
-    asm volatile("ld.volatile.global.f32 %0, [%1];" : "=f"(ret) : "l"(ptr));
-    return ret;
-}
-
-__device__  __forceinline__ int64_t ld_volatile_global(const int64_t *ptr) {
-    int64_t ret;
-    asm volatile("ld.volatile.global.s64 %0, [%1];" : "=l"(ret) : "l"(ptr));
-    return ret;
-}
-
-__device__  __forceinline__ int64_t ld_volatile_global(const uint64_t *ptr) {
-    int64_t ret;
-    asm volatile("ld.volatile.global.u64 %0, [%1];" : "=l"(ret) : "l"(ptr));
-    return ret;
-}
 
 #ifndef DISABLE_AGGRESSIVE_PTX_INSTRS
 #define LD_NC_FUNC "ld.global.nc.L1::no_allocate.L2::256B"
@@ -201,13 +147,6 @@ template <>
 __device__  __forceinline__ int ld_nc_global(const int *ptr) {
     int ret;
     asm volatile(LD_NC_FUNC ".s32 %0, [%1];" : "=r"(ret) : "l"(ptr));
-    return ret;
-}
-
-template <>
-__device__  __forceinline__ int64_t ld_nc_global(const int64_t *ptr) {
-    int64_t ret;
-    asm volatile(LD_NC_FUNC ".s64 %0, [%1];" : "=l"(ret) : "l"(ptr));
     return ret;
 }
 
@@ -244,21 +183,6 @@ template <typename dtype_t>
 __device__  __forceinline__ void st_na_global(const dtype_t *ptr, const dtype_t& value) {
     st_na_global(reinterpret_cast<const typename VecInt<sizeof(dtype_t)>::vec_t*>(ptr),
                  *reinterpret_cast<const typename VecInt<sizeof(dtype_t)>::vec_t*>(&value));
-}
-
-template <>
-__device__  __forceinline__ void st_na_global(const int *ptr, const int& value) {
-    asm volatile(ST_NA_FUNC ".s32 [%0], %1;" ::"l"(ptr), "r"(value));
-}
-
-template <>
-__device__  __forceinline__ void st_na_global(const int64_t *ptr, const int64_t& value) {
-    asm volatile(ST_NA_FUNC ".s64 [%0], %1;" ::"l"(ptr), "l"(value));
-}
-
-template <>
-__device__  __forceinline__ void st_na_global(const float *ptr, const float& value) {
-    asm volatile(ST_NA_FUNC ".f32 [%0], %1;" ::"l"(ptr), "f"(value));
 }
 
 template <>
@@ -392,13 +316,6 @@ __host__ __device__ constexpr dtype_t align_up(dtype_t a, dtype_t b) {
     return ceil_div<dtype_t>(a, b) * b;
 }
 
-__forceinline__ __device__ void get_channel_task_range(int num_tokens, int num_sms, int sm_id,
-                                                       int& token_start_idx, int& token_end_idx) {
-    int num_tokens_per_sm = ceil_div(num_tokens, num_sms);
-    token_start_idx = min(num_tokens_per_sm * sm_id, num_tokens);
-    token_end_idx = min(token_start_idx + num_tokens_per_sm, num_tokens);
-}
-
 template <typename dtype_a_t, typename dtype_b_t>
 __device__ __forceinline__ dtype_b_t pack2(const dtype_a_t& x, const dtype_a_t& y) {
     EP_STATIC_ASSERT(sizeof(dtype_a_t) * 2 == sizeof(dtype_b_t), "Invalid dtypes");
@@ -413,17 +330,6 @@ __device__ __forceinline__ void unpack2(const dtype_b_t& packed, dtype_a_t& x, d
     EP_STATIC_ASSERT(sizeof(dtype_a_t) * 2 == sizeof(dtype_b_t), "Invalid dtypes");
     auto unpacked_ptr = reinterpret_cast<const dtype_a_t*>(&packed);
     x = unpacked_ptr[0], y = unpacked_ptr[1];
-}
-
-template <typename dtype_t>
-__device__ __forceinline__ dtype_t broadcast(dtype_t& ptr, int src_lane_idx) {
-    EP_STATIC_ASSERT(sizeof(dtype_t) % sizeof(int) == 0, "");
-    auto send_int_values = reinterpret_cast<int*>(&ptr);
-    int recv_int_values[sizeof(dtype_t) / sizeof(int)];
-    #pragma unroll
-    for (int i = 0; i < sizeof(dtype_t) / sizeof(int); ++ i)
-        recv_int_values[i] = __shfl_sync(0xffffffff, send_int_values[i], src_lane_idx);
-    return *reinterpret_cast<dtype_t*>(recv_int_values);
 }
 
 
@@ -463,62 +369,6 @@ __forceinline__ __device__ out_dtype_t extract_required_scale_format(float value
         return value;
     }
 }
-
-template <int kNumRanks, bool kSyncOnly = false>
-__forceinline__ __device__ void
-barrier_block(int** barrier_signal_ptrs, int rank, uint64_t timeout_cycles) {
-    auto thread_id = static_cast<int>(threadIdx.x);
-
-    // For non-sync-only cases, the memory operations by other threads in the block must be visible to the `sys` scope
-    if constexpr (not kSyncOnly) {
-        memory_fence();
-        __syncthreads();
-    }
-
-    // Add self-ranks, sub other ranks
-    if (thread_id < kNumRanks) {
-        atomicAdd_system(barrier_signal_ptrs[rank] + thread_id, FINISHED_SUM_TAG);
-        atomicSub_system(barrier_signal_ptrs[thread_id] + rank, FINISHED_SUM_TAG);
-    }
-    EP_DEVICE_ASSERT(kNumRanks <= blockDim.x);
-
-    // Check timeout
-    auto start_time = clock64();
-    while (true) {
-        auto value = thread_id < kNumRanks ? ld_volatile_global(barrier_signal_ptrs[rank] + thread_id) : 0;
-        if (__all_sync(0xffffffff, value <= 0))
-            break;
-
-        if (clock64() - start_time > timeout_cycles and thread_id < kNumRanks) {
-            printf("NixlEP timeout check failed: rank = %d, thread = %d, value = %d)\n", rank, thread_id, value);
-            trap();
-        }
-    }
-    __syncthreads();
-}
-
-__forceinline__ __device__ int atomic_cas_cta_acquire(int* addr, int x, int y) {
-    int ret;
-    asm volatile("atom.acquire.cta.shared::cta.cas.b32 %0, [%1], %2, %3;" : "=r"(ret) : "l"(addr), "r"(x), "r"(y) : "memory");
-    return ret;
-}
-
-__forceinline__ __device__ int atomic_exch_cta_release(int* addr, int x) {
-    int ret;
-    asm volatile("atom.release.cta.shared::cta.exch.b32 %0, [%1], %2;" : "=r"(ret) : "l"(addr), "r"(x) : "memory");
-    return ret;
-}
-
-__forceinline__ __device__ void acquire_lock(int* mutex) {
-    // To make later memory operations valid, we must use `acquire` for memory semantics
-    while (atomic_cas_cta_acquire(mutex, 0, 1) != 0);
-}
-
-__forceinline__ __device__ void release_lock(int* mutex) {
-    // To make previous memory operations visible to other threads, we must use `release` for memory semantics
-    atomic_exch_cta_release(mutex, 0);
-}
-
 
 // Operation functors
 template <typename T> struct ReduceSum { __device__ T operator()(T a, T b) const { return a + b; } };

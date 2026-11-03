@@ -31,8 +31,14 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -42,10 +48,12 @@ using nixl::telemetry::mp::makeStoreFileName;
 using nixl::telemetry::mp::MP_DEFAULT_STALE_TTL;
 using nixl::telemetry::mp::processRunMarker;
 using nixl::telemetry::mp::scrapeEndpoint;
+using nixl::telemetry::mp::storeSetupError;
 using nixl::telemetry::mp::storeWriter;
 
 constexpr uint16_t defaultPort = 9090;
 constexpr char defaultRankEnvName[] = "LOCAL_RANK";
+constexpr char defaultMultiprocBase[] = "/dev/shm";
 
 constexpr char prometheusPortVar[] = "NIXL_TELEMETRY_PROMETHEUS_PORT";
 constexpr char prometheusLocalVar[] = "NIXL_TELEMETRY_PROMETHEUS_LOCAL";
@@ -56,11 +64,15 @@ constexpr char staleTtlVar[] = "NIXL_TELEMETRY_MP_STALE_TTL";
 const std::string localAddress = "127.0.0.1";
 const std::string publicAddress = "0.0.0.0";
 
+[[nodiscard]] uint16_t
+resolvePort() {
+    return nixl::config::getValueDefaulted(prometheusPortVar, defaultPort);
+}
+
 [[nodiscard]] std::string
 resolveBindAddress() {
     const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
-    const uint16_t port = nixl::config::getValueDefaulted(prometheusPortVar, defaultPort);
-    return (local ? localAddress : publicAddress) + ":" + std::to_string(port);
+    return (local ? localAddress : publicAddress) + ":" + std::to_string(resolvePort());
 }
 
 // Resolves the optional local_rank label value: NIXL_TELEMETRY_RANK_ENV names
@@ -87,19 +99,54 @@ resolveStaleTtl() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(seconds);
 }
 
-[[nodiscard]] std::filesystem::path
-resolveMultiprocDir() {
+[[nodiscard]] std::optional<std::filesystem::path>
+configuredMultiprocDir() {
     const auto dir = nixl::config::getValueOptional<std::string>(multiprocDirVar);
     if (!dir || dir->empty()) {
-        throw std::runtime_error(
-            "prometheus_mp exporter requires NIXL_TELEMETRY_MULTIPROC_DIR to be set");
+        return std::nullopt;
     }
-    std::filesystem::path path(*dir);
+    return std::filesystem::path(*dir);
+}
+
+[[noreturn]] void
+throwDefaultDirUnusable(const std::string &why) {
+    throw nixlTelemetryBindFailed(why + " (" + multiprocDirVar +
+                                  " is unset or empty; set it to a private directory)");
+}
+
+[[nodiscard]] std::filesystem::path
+defaultMultiprocDir() {
+    const std::filesystem::path shm(defaultMultiprocBase);
+    std::error_code ec;
+    std::filesystem::path base = shm;
+    if (!std::filesystem::is_directory(shm, ec) || ::access(shm.c_str(), W_OK | X_OK) != 0) {
+        base = std::filesystem::temp_directory_path(ec);
+        if (ec) {
+            throwDefaultDirUnusable(
+                "prometheus_mp exporter: " + shm.string() +
+                " is not writable and the temp dir is unusable: " + ec.message());
+        }
+    }
+    const std::filesystem::path path = base /
+        ("nixl-telemetry-" + std::to_string(::geteuid()) + "-" + std::to_string(resolvePort()));
+    NIXL_INFO << "prometheus_mp: " << multiprocDirVar << " is unset or empty; using telemetry dir '"
+              << path.string() << "'";
+    return path;
+}
+
+[[nodiscard]] std::filesystem::path
+resolveMultiprocDir() {
+    const auto configured = configuredMultiprocDir();
+    const std::filesystem::path path = configured ? *configured : defaultMultiprocDir();
     std::error_code ec;
     const bool created = std::filesystem::create_directories(path, ec);
     if (ec) {
-        throw std::runtime_error("prometheus_mp exporter: cannot create telemetry dir '" +
-                                 path.string() + "': " + ec.message());
+        const std::string why = "prometheus_mp exporter: cannot create telemetry dir '" +
+            path.string() + "': " + ec.message();
+        if (!configured) {
+            throwDefaultDirUnusable(why);
+        }
+        throw std::runtime_error(why);
     }
     if (created) {
         // The umask default (typically 0755) would leave the store files readable
@@ -132,31 +179,64 @@ resolveMultiprocDir() {
     return path;
 }
 
+[[nodiscard]] std::filesystem::path
+canonicalDir(const std::filesystem::path &dir) {
+    std::error_code ec;
+    std::filesystem::path canonical = std::filesystem::canonical(dir, ec);
+    return ec ? dir : canonical;
+}
+
 // Per-process instance counter so multiple agents in one process get distinct
 // store files.
 std::atomic<uint64_t> s_instanceSeq{0};
+
+std::mutex s_endpointsMutex;
+std::map<std::tuple<std::filesystem::path, std::string, std::chrono::nanoseconds>,
+         std::weak_ptr<scrapeEndpoint>>
+    s_endpoints;
 
 } // namespace
 
 nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
-      dir_(resolveMultiprocDir()),
-      endpoint_(dir_, resolveBindAddress(), resolveStaleTtl()) {
+      dir_(resolveMultiprocDir()) {
+    const std::string bind_address = resolveBindAddress();
+    const std::chrono::nanoseconds stale_ttl = resolveStaleTtl();
     const int64_t pid = static_cast<int64_t>(::getpid());
     const uint64_t instance = s_instanceSeq.fetch_add(1, std::memory_order_relaxed);
     const std::filesystem::path store_path =
         dir_ / makeStoreFileName(pid, processRunMarker(), instance);
 
-    store_ = std::make_unique<storeWriter>(store_path,
-                                           init_params.agentName,
-                                           nixl::getHostname().value_or("unknown"),
-                                           resolveLocalRank(),
-                                           instance,
-                                           nixl::telemetry::resolveHistogramBucketsUs());
+    try {
+        store_ = std::make_unique<storeWriter>(store_path,
+                                               init_params.agentName,
+                                               nixl::getHostname().value_or("unknown"),
+                                               resolveLocalRank(),
+                                               instance,
+                                               nixl::telemetry::resolveHistogramBucketsUs());
+    }
+    catch (const storeSetupError &e) {
+        if (configuredMultiprocDir()) {
+            throw;
+        }
+        throwDefaultDirUnusable(e.what());
+    }
 
-    const std::string &bind_address = endpoint_.bindAddress();
-    const auto claimed = endpoint_.claim();
+    const std::filesystem::path endpoint_dir = canonicalDir(dir_);
+    const std::lock_guard lock(s_endpointsMutex);
+    std::erase_if(s_endpoints, [](const auto &entry) { return entry.second.expired(); });
+    auto &shared = s_endpoints[{endpoint_dir, bind_address, stale_ttl}];
+    endpoint_ = shared.lock();
+    if (endpoint_) {
+        NIXL_INFO << "prometheus_mp exporter (" << (endpoint_->serving() ? "owner" : "writer")
+                  << "): agent '" << init_params.agentName << "' shares this process's endpoint on "
+                  << bind_address << ", writing to " << store_path.string();
+        return;
+    }
+    endpoint_ = std::make_shared<scrapeEndpoint>(dir_, bind_address, stale_ttl);
+    const auto claimed = endpoint_->claim();
+    shared = endpoint_;
     // Elections are per address, so ranks that disagree about the port each own
     // one instead of contending. Reported from whichever side notices, since the
     // ranks start in no particular order.
@@ -197,7 +277,10 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
               << store_path.string();
 }
 
-nixlTelemetryPrometheusMpExporter::~nixlTelemetryPrometheusMpExporter() = default;
+nixlTelemetryPrometheusMpExporter::~nixlTelemetryPrometheusMpExporter() {
+    const std::lock_guard lock(s_endpointsMutex);
+    endpoint_.reset();
+}
 
 nixl_status_t
 nixlTelemetryPrometheusMpExporter::exportEvent(const nixlTelemetryEvent &event) {
@@ -217,8 +300,8 @@ nixlTelemetryPrometheusMpExporter::exportEvent(const nixlTelemetryEvent &event) 
     // Once per event, not once per slot updated: a duration event touches three
     // slots, and the clock read costs several times the atomics it would follow.
     const uint64_t now = store_->refreshHeartbeat();
-    if (!endpoint_.serving()) {
-        endpoint_.reclaim(std::chrono::nanoseconds(now));
+    if (!endpoint_->serving()) {
+        endpoint_->reclaim(std::chrono::nanoseconds(now));
     }
     return NIXL_SUCCESS;
 }

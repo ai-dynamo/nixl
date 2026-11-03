@@ -53,8 +53,9 @@ use bindings::{
     nixl_capi_mem_type_t, nixl_capi_mem_type_to_string, nixl_capi_notif_map_clear,
     nixl_capi_notif_map_get_agent_at, nixl_capi_notif_map_get_notif,
     nixl_capi_notif_map_get_notifs_size, nixl_capi_notif_map_size, nixl_capi_opt_args_add_backend,
-    nixl_capi_opt_args_get_has_notif, nixl_capi_opt_args_get_notif_msg,
-    nixl_capi_opt_args_get_skip_desc_merge, nixl_capi_opt_args_set_has_notif,
+    nixl_capi_opt_args_get_custom_param, nixl_capi_opt_args_get_has_notif,
+    nixl_capi_opt_args_get_notif_msg, nixl_capi_opt_args_get_skip_desc_merge,
+    nixl_capi_opt_args_set_custom_param, nixl_capi_opt_args_set_has_notif,
     nixl_capi_opt_args_set_notif_msg, nixl_capi_opt_args_set_skip_desc_merge,
     nixl_capi_params_create_iterator, nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty,
     nixl_capi_params_iterator_next, nixl_capi_post_xfer_req, nixl_capi_reg_dlist_add_desc,
@@ -293,6 +294,28 @@ pub struct OptArgs {
     inner: NonNull<bindings::nixl_capi_opt_args_s>,
 }
 
+/// Copies out a blob the C API malloc'd, and frees it.
+fn take_capi_blob(
+    status: bindings::nixl_capi_status_t,
+    data: *mut std::ffi::c_void,
+    len: usize,
+) -> Result<Vec<u8>, NixlError> {
+    match status {
+        NIXL_CAPI_SUCCESS if data.is_null() => Ok(Vec::new()),
+        NIXL_CAPI_SUCCESS => {
+            // SAFETY: on success the C API left len bytes at data for us to own
+            let bytes = unsafe {
+                let vec = std::slice::from_raw_parts(data as *const u8, len).to_vec();
+                libc::free(data);
+                vec
+            };
+            Ok(bytes)
+        }
+        NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+        _ => Err(NixlError::BackendError),
+    }
+}
+
 impl OptArgs {
     /// Creates a new empty optional arguments struct
     pub fn new() -> Result<Self, NixlError> {
@@ -345,24 +368,32 @@ impl OptArgs {
         let status =
             unsafe { nixl_capi_opt_args_get_notif_msg(self.inner.as_ptr(), &mut data, &mut len) };
 
+        take_capi_blob(status, data, len)
+    }
+
+    /// Opaque blob forwarded to the backend; its contents are backend-defined.
+    pub fn set_custom_param(&mut self, param: &[u8]) -> Result<(), NixlError> {
+        let status = unsafe {
+            nixl_capi_opt_args_set_custom_param(
+                self.inner.as_ptr(),
+                param.as_ptr() as *const _,
+                param.len(),
+            )
+        };
         match status {
-            NIXL_CAPI_SUCCESS => {
-                if data.is_null() {
-                    Ok(Vec::new())
-                } else {
-                    // SAFETY: If status is 0 and data is not null, it points to valid memory of size len
-                    let message = unsafe {
-                        let slice = std::slice::from_raw_parts(data as *const u8, len);
-                        let vec = slice.to_vec();
-                        libc::free(data as *mut _);
-                        vec
-                    };
-                    Ok(message)
-                }
-            }
+            NIXL_CAPI_SUCCESS => Ok(()),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }
+    }
+
+    pub fn get_custom_param(&self) -> Result<Vec<u8>, NixlError> {
+        let mut data = ptr::null_mut();
+        let mut len = 0;
+        let status = unsafe {
+            nixl_capi_opt_args_get_custom_param(self.inner.as_ptr(), &mut data, &mut len)
+        };
+        take_capi_blob(status, data, len)
     }
 
     /// Set whether notification is enabled

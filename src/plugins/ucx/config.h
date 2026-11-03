@@ -43,6 +43,9 @@ public:
     void
     modifyAlways(std::string_view key, std::string_view value) const;
 
+    void
+    validateTlsCudaSupport() const;
+
 private:
     [[nodiscard]] static ucp_config_t *
     readUcpConfig();

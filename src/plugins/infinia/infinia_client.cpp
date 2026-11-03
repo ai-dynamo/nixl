@@ -78,7 +78,7 @@ InfiniaClient::initialize() {
     // Initialize RED library, sessions, datasets, and roots
     red_status_t rs = red_async::red_config_t::initialize(config_.get());
     if (rs != RED_SUCCESS) {
-        NIXL_ERROR << "red_config_t::initialize failed: " << red_strerror(rs);
+        NIXL_ERROR << "red_config_t::initialize failed: status=" << static_cast<int>(rs);
         config_.reset();
         return rs;
     }
@@ -117,7 +117,7 @@ InfiniaClient::cleanup() {
     if (config_) {
         red_status_t rs = red_async::red_config_t::shutdown(config_.get());
         if (rs != RED_SUCCESS) {
-            NIXL_ERROR << "red_config_t::shutdown failed: " << red_strerror(rs);
+            NIXL_ERROR << "red_config_t::shutdown failed: status=" << static_cast<int>(rs);
         }
         config_.reset();
     }

@@ -37,6 +37,7 @@ git_commit = git_hash.returncode() == 0 ? git_hash.stdout().strip() : 'unknown'
 nixl_common_lib = shared_library('nixl_common',
     'hw_info.cpp',
     'nixl_log.cpp',
+    'nixl_log_file_sink.cpp',
     'uuid_v4.cpp',
     'configuration.cpp',
     'nixl_duration.cpp',
