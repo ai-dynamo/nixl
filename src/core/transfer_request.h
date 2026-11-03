@@ -27,8 +27,7 @@
 #include "backend_engine.h"
 #include "telemetry.h"
 #include "common/nixl_duration.h"
-#include "tracing/trace_context.h"
-#include "tracing/traceable.h"
+#include "tracing/tracing.h"
 
 enum nixl_telemetry_stat_status_t {
     NIXL_TELEMETRY_POST = 0,

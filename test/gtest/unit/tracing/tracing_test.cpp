@@ -46,7 +46,7 @@
 #include "transfer_request.h"
 #include "tracing/trace.h"
 #include "tracing/trace_context.h"
-#include "tracing/trace_macros.h"
+#include "tracing/tracing.h"
 #include "tracing/trace_sink.h"
 #include "tracing/traceable.h"
 

@@ -33,13 +33,9 @@
 #include "common/nixl_log.h"
 #include "common/operators.h"
 #include "common/hw_info.h"
-#include "common/str_util.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
-#include "tracing/log_once.h"
-#include "tracing/trace.h"
-#include "tracing/trace_macros.h"
-#include "tracing/trace_sink.h"
+#include "tracing/tracing.h"
 
 namespace {
 
@@ -115,41 +111,6 @@ nixlDlistH::nixlDlistH(const std::string &remote_agent,
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 
-namespace nixl::trace {
-
-// True when the process runs under Nsight Systems: nsys injects
-// NVTX_INJECTION64_PATH into the profiled process's environment (its presence
-// means "running under nsys", not merely that nsys is installed).
-[[nodiscard]] bool
-runningUnderNsys() {
-    return nixl::config::checkExistence("NVTX_INJECTION64_PATH");
-}
-
-// Backend-selection policy for the agent-wiring layer (kept out of the
-// backend-agnostic facade so nsys/NVTX specifics never reach makeTracer()).
-// Running under nsys auto-enables NVTX *in addition to* any explicitly requested
-// backends; a set-but-empty NIXL_TRACE_BACKENDS is a hard "off" that beats it.
-[[nodiscard]] std::vector<std::string>
-resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under_nsys) {
-    std::set<std::string> backends;
-    bool explicit_off = false;
-    if (explicit_spec) {
-        // Trim entries so a padded value like "chakra, nvtx" matches backend
-        // names; the set dedups them.
-        backends = nixl::str::splitStrippedSet(*explicit_spec);
-        // Set-but-empty (or all-blank) is an explicit "off" that must beat the
-        // nsys auto-enable below.
-        explicit_off = backends.empty();
-    }
-
-    if (under_nsys && !explicit_off) {
-        backends.emplace("nvtx");
-    }
-    return {backends.begin(), backends.end()};
-}
-
-} // namespace nixl::trace
-
 namespace {
 
 // A metadata backend thread shares agent data structures (remoteSections_,
@@ -164,24 +125,6 @@ effectiveSyncMode(nixl_thread_sync_t requested, bool uses_thread) {
         return nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
     }
     return requested;
-}
-
-// Build the agent's composite tracer. Backend selection follows
-// nixl::trace::resolveTraceBackends (explicit NIXL_TRACE_BACKENDS wins; unset +
-// running under nsys auto-enables NVTX). Returns null when nothing resolves, so
-// the agent can hold the result in a const member and call sites take the no-op
-// branch.
-[[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
-makeAgentTracer(const std::string &name) {
-    const auto trace_env = nixl::config::getValueOptional<std::string>("NIXL_TRACE_BACKENDS");
-    auto requested_backends =
-        nixl::trace::resolveTraceBackends(trace_env, nixl::trace::runningUnderNsys());
-    const auto sample_ratio = nixl::trace::resolveTraceSampleRatio();
-    if (requested_backends.empty()) {
-        return nullptr;
-    }
-    return nixl::trace::makeTracer(
-        nixl::trace::TracerConfig{name, std::move(requested_backends), sample_ratio});
 }
 
 // The settings the manager and its backends need, taken at construction so they
@@ -231,7 +174,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
       // Each backend decides whether it runs a thread, and such a thread shares
       // agent state - so they also decide the effective sync mode.
       lock(effectiveSyncMode(config.syncMode, md_.usesThread())),
-      tracer_(makeAgentTracer(name)) {
+      tracer_(nixl::trace::makeAgentTracer(name)) {
     if (name.empty()) {
         throw std::invalid_argument("Agent needs a non-empty name");
     }
@@ -373,10 +316,10 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
 
-    std::unique_ptr<nixlBackendTraceSink> trace_sink;
+    nixl::trace::BackendTraceSinkPtr trace_sink;
     if (data->tracer_ != nullptr) {
-        trace_sink = std::make_unique<nixl::trace::TracerPhaseSink>(
-            *data->tracer_, type, data->telemetry_.get());
+        trace_sink =
+            nixl::trace::makeBackendTraceSink(*data->tracer_, type, data->telemetry_.get());
         init_params.traceSink = trace_sink.get();
     }
 

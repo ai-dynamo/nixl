@@ -21,7 +21,7 @@
 #include <cstdint>
 #include <string_view>
 
-#include "tracing/trace_context.h"
+#include "tracing/trace_identity.h"
 
 namespace nixl::trace {
 

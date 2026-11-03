@@ -22,10 +22,16 @@
 
 #include "common/nixl_log.h"
 #include "plugin_manager.h"
+#include "tracing/trace_plugin.h"
 
 namespace nixl::trace {
 
 /*** Span ***/
+
+void
+SpanBackendDeleter::operator()(SpanBackend *span) const noexcept {
+    delete span;
+}
 
 template<typename Call>
 void
@@ -109,7 +115,7 @@ Tracer::beginSpan(std::string_view name, Kind kind) {
             break;
         }
         if (auto backend_span = backend->beginSpan(name, kind)) {
-            span.backends_[count++] = std::move(backend_span);
+            span.backends_[count++].reset(backend_span.release());
         }
     }
     return span;
@@ -127,7 +133,7 @@ Tracer::beginContextSpan(std::string_view name,
             break;
         }
         if (auto backend_span = backend->beginContextSpan(name, kind, context, request_id)) {
-            span.backends_[count++] = std::move(backend_span);
+            span.backends_[count++].reset(backend_span.release());
         }
     }
     return span;
@@ -177,6 +183,57 @@ Tracer::emitEvent(std::string_view name,
     for (auto &backend : backends_) {
         backend->emitEvent(name, kind, context, request_id, at, attrs);
     }
+}
+
+/*** Call sites ***/
+
+Span
+detail::beginSpan(Tracer &tracer, std::string_view name, Kind kind) {
+    return tracer.beginSpan(name, kind);
+}
+
+Span
+detail::beginContextSpan(Tracer &tracer,
+                         std::string_view name,
+                         Kind kind,
+                         const TraceContext &context,
+                         std::uint64_t request_id) {
+    return tracer.beginContextSpan(name, kind, context, request_id);
+}
+
+void
+detail::mark(Tracer &tracer, std::string_view name, Kind kind) {
+    tracer.mark(name, kind);
+}
+
+void
+detail::pushContext(Tracer &tracer, const TraceContext &context, std::uint64_t request_id) {
+    tracer.pushContext(context, request_id);
+}
+
+void
+detail::popContext(Tracer &tracer) {
+    tracer.popContext();
+}
+
+void
+detail::emitEvent(Tracer &tracer,
+                  std::string_view name,
+                  Kind kind,
+                  const TraceContext &context,
+                  std::uint64_t request_id,
+                  std::span<const Attribute> attrs) {
+    tracer.emitEvent(name,
+                     kind,
+                     context,
+                     request_id,
+                     tracer.needsTimestamps() ? nixlTime::getUs() : nixlTime::us_t{0},
+                     attrs);
+}
+
+void
+detail::emitSpan(Tracer &tracer, std::string_view name, Kind kind, nixlTime::us_t start) {
+    tracer.emitSpan(name, kind, TraceContext{}, 0, start, nixlTime::getUs(), {});
 }
 
 /*** Factory ***/

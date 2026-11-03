@@ -17,95 +17,21 @@
 #ifndef NIXL_SRC_CORE_TRACING_TRACE_H
 #define NIXL_SRC_CORE_TRACING_TRACE_H
 
-/*
- * nixl::trace -- internal NIXL core tracing API.
- *
- * A single set of call sites fans out to every enabled tracing backend at
- * runtime (NVTX today; Chakra and others later). This is an internal core API
- * (compiled into libnixl, not installed as a public header). It is kept
- * deliberately self-contained -- depending only on standard headers and on
- * attribute_key.h, trace_context.h and nixl_time.h -- so it stays easy to
- * reason about and could be promoted to a public header later without churn if
- * an external consumer appears.
- */
-
-#include <array>
 #include <atomic>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <variant>
 #include <vector>
 
 #include "common/nixl_time.h"
 #include "tracing/attribute_key.h"
 #include "tracing/trace_context.h"
+#include "tracing/tracing.h"
 
 namespace nixl::trace {
-
-/**
- * @brief Operation kind. Aligns 1:1 with the Chakra NodeType vocabulary and is
- *        used as a color/label hint by NVTX.
- */
-enum class Kind : std::uint8_t {
-    Generic = 0,
-    Compute,
-    MemoryR,
-    MemoryW,
-    CommSend,
-    CommRecv,
-    CommColl,
-    Metadata,
-};
-
-/**
- * @brief Opaque span identifier. Meaningful on backends that build a DAG
- *        (Chakra Node.id); returned as {0} by backends that do not (NVTX).
- */
-struct SpanId {
-    std::uint64_t value{0};
-};
-
-/**
- * @brief An attribute value as a record holds it: integers and enums as
- *        std::int64_t, floating-point values as double, strings as views.
- */
-template<typename T>
-    requires std::is_integral_v<T> || std::is_enum_v<T>
-[[nodiscard]] constexpr std::int64_t
-attributeValue(T value) noexcept {
-    return static_cast<std::int64_t>(value);
-}
-
-template<typename T>
-    requires std::is_floating_point_v<T>
-[[nodiscard]] constexpr double
-attributeValue(T value) noexcept {
-    return static_cast<double>(value);
-}
-
-[[nodiscard]] constexpr std::string_view
-attributeValue(std::string_view value) noexcept {
-    return value;
-}
-
-/**
- * @brief Typed attribute of an emitted span or event. The key is a string
- *        literal; a string value is a view, valid only for the call.
- */
-struct Attribute {
-    template<typename Value>
-    constexpr Attribute(AttributeKey attr_key, const Value &attr_value) noexcept
-        : key(attr_key),
-          value(attributeValue(attr_value)) {}
-
-    AttributeKey key;
-    std::variant<std::string_view, std::int64_t, double> value;
-};
 
 /**
  * @brief A single active span within one backend. Its destructor ends the
@@ -206,61 +132,6 @@ public:
                      std::uint64_t request_id) = 0;
 };
 
-class Tracer;
-
-inline constexpr std::size_t maxTraceBackends = 4;
-
-/**
- * @brief Public span handle. Fans out attribute/dependency calls to every
- *        backend span it owns and ends them all on destruction. Move-only.
- */
-class Span {
-public:
-    Span() = default;
-    Span(Span &&) noexcept = default;
-    Span &
-    operator=(Span &&) noexcept = default;
-    Span(const Span &) = delete;
-    Span &
-    operator=(const Span &) = delete;
-    ~Span() = default;
-
-    /** @brief True when at least one backend produced a span (cheap gate). */
-    [[nodiscard]] bool
-    active() const noexcept {
-        return backends_[0] != nullptr;
-    }
-
-    void
-    addAttribute(AttributeKey key, std::string_view value);
-    void
-    addAttribute(AttributeKey key, std::int64_t value);
-    void
-    addAttribute(AttributeKey key, double value);
-
-    void
-    addAttributes(std::span<const Attribute> attrs);
-
-    void
-    addCtrlDep(SpanId parent);
-    void
-    addDataDep(SpanId parent);
-
-    /** @brief Id of the first backend that provides a non-zero id, or {0}
-     *         when none do (e.g. NVTX-only). Order-independent across backends. */
-    [[nodiscard]] SpanId
-    id() const noexcept;
-
-private:
-    friend class Tracer;
-
-    template<typename Call>
-    void
-    forEachBackend(const Call &call) const;
-
-    std::array<std::unique_ptr<SpanBackend>, maxTraceBackends> backends_;
-};
-
 /**
  * @brief Fills its buffer with random bytes for trace-context ids, or throws a
  *        std::exception. An all-zero id is drawn again; null selects the default
@@ -354,43 +225,6 @@ private:
     const random_bytes_fn_t randomBytes_;
     const bool needsTimestamps_;
     mutable std::atomic<bool> contextFailureLogged_ = false;
-};
-
-/**
- * @brief RAII guard that keeps a trace context active on the tracer for its
- *        lifetime, so every span/mark created while it is in scope carries
- *        that context. Null-tracer-safe; an unsampled context pushes nothing.
- *        Used to link spans emitted on different threads (e.g.
- *        postXferReq on the caller thread vs. the completion on the polling
- *        thread) to the same logical request.
- */
-class CorrelationScope {
-public:
-    [[nodiscard]] CorrelationScope(Tracer *tracer,
-                                   const TraceContext &context,
-                                   std::uint64_t request_id)
-        : tracer_(((tracer != nullptr) && context.valid() && context.sampled()) ? tracer :
-                                                                                  nullptr) {
-        if (tracer_ != nullptr) {
-            tracer_->pushContext(context, request_id);
-        }
-    }
-
-    ~CorrelationScope() {
-        if (tracer_ != nullptr) {
-            tracer_->popContext();
-        }
-    }
-
-    CorrelationScope(const CorrelationScope &) = delete;
-    CorrelationScope &
-    operator=(const CorrelationScope &) = delete;
-    CorrelationScope(CorrelationScope &&) = delete;
-    CorrelationScope &
-    operator=(CorrelationScope &&) = delete;
-
-private:
-    Tracer *tracer_;
 };
 
 /** @brief Inputs used to build the composite tracer from enabled backends. */
