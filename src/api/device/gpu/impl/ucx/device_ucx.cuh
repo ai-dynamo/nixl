@@ -158,10 +158,9 @@ getPtr(nixlMemViewH mvh, size_t index) {
 template<level_t level>
 __device__ nixl_status_t
 flush(const nixlMemViewH &remote, unsigned channel_id) {
-    // TODO: Implement flush for UCX
-    (void)remote;
-    (void)channel_id;
-    return NIXL_SUCCESS;
+    const auto status = ucp_device_flush<ucsDeviceLevel<level>::value>(
+        remoteMemList(remote), channel_id, UCP_DEVICE_FLAG_PUSH);
+    return status == UCS_OK ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
 }
 
 } // namespace nixl::gpu::impl::ucx

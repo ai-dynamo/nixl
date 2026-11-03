@@ -198,10 +198,18 @@ getPtr(nixlMemViewH mvh, size_t index) {
     }
 }
 
-template<level_t level>
+template<level_t level, exec_mode_t mode>
 __device__ nixl_status_t
 flush(const nixlMemViewH &remote, unsigned channel_id) {
-    return ucx::flush<level>(remote, channel_id);
+    const auto *view = detail::asDeviceMemView(remote);
+    switch (detail::executionMode<mode>(*view)) {
+    case exec_mode_t::UCX_DIRECT:
+        return ucx::flush<level>(view->backend_memview, channel_id);
+    case exec_mode_t::PROXY:
+        return NIXL_ERR_NOT_SUPPORTED;
+    default:
+        return NIXL_ERR_INVALID_PARAM;
+    }
 }
 
 } // namespace nixl::gpu::impl
