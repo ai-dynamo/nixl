@@ -365,14 +365,11 @@ nixlLibfabricTopology::getUsableNicCount() const {
 
 size_t
 nixlLibfabricTopology::getNumaRailCount() const {
-    // a NUMA node whose NICs all sit behind host-starved uplinks has no capacity and no rails, so
-    // average only over nodes with capacity
-    size_t numa_node_count = 0;
-    for (size_t speed : numa_speed_map) {
-        if (speed > 0) {
-            ++numa_node_count;
-        }
-    }
+    // a NUMA node whose NICs all sit behind host-starved uplinks has no rails of its own, so it is
+    // left out of the average
+    const size_t starved_node_count =
+        static_cast<size_t>(std::count(numa_node_starved.begin(), numa_node_starved.end(), true));
+    const size_t numa_node_count = numa_speed_map.size() - starved_node_count;
     if (numa_node_count == 0) {
         return 0;
     }
@@ -1137,6 +1134,8 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
 
     uint16_t max_node_id = 0;
     std::vector<std::string> starved_nics;
+    std::set<uint16_t> starved_nic_nodes;
+    std::set<uint16_t> usable_nic_nodes;
     for (const auto &entry : nic_info_map) {
         const NicInfo &nic_info = entry.second;
         if (nic_info.numa_node_id == INVALID_NUMA_NODE_ID) {
@@ -1150,8 +1149,10 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
             // the uplink above this NIC cannot carry even one NIC's host memory traffic, so it
             // adds no NUMA capacity
             starved_nics.push_back(nic_info.libfabric_name);
+            starved_nic_nodes.insert(nic_info.numa_node_id);
             continue;
         }
+        usable_nic_nodes.insert(nic_info.numa_node_id);
 
         hwloc_obj_t hwloc_node = hwloc_get_pcidev_by_busid(hwloc_topology,
                                                            nic_info.domain_id,
@@ -1241,6 +1242,12 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
 
     // now we process the link speed map and accumulate per NUMA node
     numa_speed_map.resize(max_node_id + 1, 0);
+    numa_node_starved.assign(numa_speed_map.size(), false);
+    for (uint16_t node_id : starved_nic_nodes) {
+        if (usable_nic_nodes.count(node_id) == 0) {
+            numa_node_starved[node_id] = true;
+        }
+    }
     for (const auto &entry : link_speed_map) {
         float topmost_speed = entry.second.first;
         uint16_t numa_node_id = entry.second.second;
@@ -1261,17 +1268,17 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
 void
 nixlLibfabricTopology::calcAvgNumaNodeBandwidth() {
     // calculate average NUMA node capacity, and print warning if not the same on all nodes
-    // NOTE: a node without capacity (e.g. all its NICs sit behind host-starved uplinks) stays in
-    // numa_speed_map for NUMA distance ordering, but is left out of the average, which would
-    // otherwise shrink the derived DRAM_SEG rail limit, possibly to zero
+    // NOTE: a node whose NICs all sit behind host-starved uplinks has no capacity, and is left out
+    // of the average, which would otherwise shrink the derived DRAM_SEG rail limit, possibly to
+    // zero (DRAM_SEG buffers on such a node take rails of the closest node)
     size_t speed_count = 0;
     bool speed_uniform = true;
     size_t speed = 0;
     bool speed_valid = false;
     size_t total_speed = 0;
     for (size_t i = 0; i < numa_speed_map.size(); ++i) {
-        size_t curr_speed = numa_speed_map[i];
-        if (curr_speed == 0) {
+        const size_t curr_speed = numa_speed_map[i];
+        if (i < numa_node_starved.size() && numa_node_starved[i]) {
             NIXL_TRACE << "NUMA node " << i << " has no PCIe link capacity for host memory traffic";
             continue;
         }

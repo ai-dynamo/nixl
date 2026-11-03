@@ -63,6 +63,9 @@ private:
 
     // bandwidth of each NUMA node (i.e. capacity limited by PCIe switch)
     std::vector<size_t> numa_speed_map;
+    // per NUMA node in numa_speed_map: true when the node has NICs and all of them are
+    // host-DMA-starved, so the node has no capacity of its own
+    std::vector<bool> numa_node_starved;
     size_t avg_numa_speed; // average (per NUMA node) PCIe capacity
 
     // Helper methods
@@ -114,8 +117,8 @@ private:
         size_t parent_switch_link_speed; // Gbps (decimal, as multiple of 10^9, not 2^30)
         // True when the topmost PCIe bridge/switch above this NIC has a slower uplink than the
         // NIC's own link, so host memory DMA through this NIC is throttled by that uplink (e.g.
-        // the NICs sharing a PCIe switch with a GPU on p6e-gb200, behind a PCIe Gen4 x1 uplink).
-        // Such NICs are left out of DRAM_SEG NUMA capacity.
+        // NICs that share a PCIe switch with a GPU behind a narrow uplink). Such NICs are left
+        // out of DRAM_SEG NUMA capacity.
         bool host_dma_starved;
         // True when this NIC and the accelerator paired with it sit under a common PCIe
         // switch. buildTopologyAwareGrouping() sets it from NicGroup::common_ancestor.
@@ -377,7 +380,7 @@ public:
      * @brief Retrieves the number of NICs, as correlated from hwloc, that can carry host memory
      * traffic, i.e. that do not sit behind a host-starved PCIe uplink.
      */
-    size_t
+    [[nodiscard]] size_t
     getUsableNicCount() const;
 
     /**

@@ -29,6 +29,8 @@
 #include <bitset>
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -477,13 +479,13 @@ testNumaDramRailSelectionPolicy(const TopologyInfo &topology_info,
 static int
 testNumaDramRailSelectionPolicy(const char *instance_type);
 
-// test DRAM_SEG rail selection on p6e-gb200, whose GPU-sharing PCIe switches cannot carry host
-// memory traffic
+// test DRAM_SEG rail selection on captured topologies whose GPU-sharing PCIe switches cannot carry
+// host memory traffic
 static int
 testStarvedSwitchDramRailSelection();
 
-// test DRAM_SEG rail selection on a p6e-gb200 variant where a whole NUMA node has no host memory
-// capacity
+// test DRAM_SEG rail selection on a variant of such a topology where a whole NUMA node has no host
+// memory capacity
 static int
 testStarvedNumaNodeDramRailSelection();
 
@@ -1646,9 +1648,10 @@ testNumaDramRailSelectionPolicy(const char *instance_type) {
     return 2;
 }
 
-// p6e-gb200.36xl: each PCIe switch that a GPU shares with two EFA devices has a PCIe Gen4 x1
-// uplink, so host memory traffic through those devices is capped near 2 GB/s. DRAM_SEG selection
-// has to draw only on the EFA devices under the CPU-attached switches, closest NUMA node first.
+// Captured topologies where each PCIe switch that a GPU shares with EFA devices has an uplink
+// narrower than the links of its NICs, so the uplink throttles host memory traffic through those
+// devices. DRAM_SEG selection has to draw only on the EFA devices under the CPU-attached switches,
+// closest NUMA node first.
 // The uniform-switch checks above cannot describe this, so selections are checked by device name.
 static const TopologyInfo gb200_topologies[] = {
     {.enable = true,
@@ -1764,16 +1767,16 @@ testStarvedSwitchDramRailSelection() {
 }
 
 // Root ports and switch upstream ports above the two CPU-attached PCIe switches of NUMA node 1 in
-// the p6e-gb200.36xl capture. Giving them the GPU-sharing switches' Gen4 x1 link speed leaves
-// NUMA node 1 without any host memory capacity.
+// the first capture above. Giving them the GPU-sharing switches' narrow link speed leaves NUMA
+// node 1 without any host memory capacity.
 static const std::vector<std::string> gb200_node1_cpu_uplinks = {"0000:a2:00.0",
                                                                  "0000:a3:00.0",
                                                                  "0000:b8:00.0",
                                                                  "0000:b9:00.0"};
 
-// writes that variant of the p6e-gb200.36xl capture to a temporary file and returns its path, or
-// an empty string on failure
-static std::string
+// writes that variant of the capture to a temporary file and returns its path, or an empty string
+// on failure
+[[nodiscard]] static std::string
 writeStarvedNodeTopology(const char *topo_file) {
     std::ifstream in(topo_file);
     if (!in) {
@@ -1801,21 +1804,29 @@ writeStarvedNodeTopology(const char *topo_file) {
                    << " PCIe links in " << topo_file << ", found " << replaced;
         return "";
     }
-    char path[] = "/tmp/nixl-p6e-gb200-starved-node-XXXXXX.xml";
-    int fd = mkstemps(path, 4);
+    std::error_code ec;
+    const std::filesystem::path temp_dir = std::filesystem::temp_directory_path(ec);
+    if (ec) {
+        NIXL_ERROR << "Failed to find a temporary directory: " << ec.message();
+        return "";
+    }
+    const std::string path_template = (temp_dir / "nixl-starved-numa-node-XXXXXX.xml").string();
+    std::vector<char> path(path_template.begin(), path_template.end());
+    path.push_back('\0');
+    const int fd = mkstemps(path.data(), static_cast<int>(std::strlen(".xml")));
     if (fd < 0) {
-        NIXL_ERROR << "Failed to create temporary topology file";
+        NIXL_ERROR << "Failed to create temporary topology file in " << temp_dir;
         return "";
     }
     close(fd);
-    std::ofstream out(path);
+    std::ofstream out(path.data());
     out << variant.str();
     if (!out.flush()) {
-        NIXL_ERROR << "Failed to write temporary topology file " << path;
-        unlink(path);
+        NIXL_ERROR << "Failed to write temporary topology file " << path.data();
+        unlink(path.data());
         return "";
     }
-    return path;
+    return path.data();
 }
 
 // With every PCIe switch of NUMA node 1 host-starved, the derived DRAM_SEG limit is still the 4
@@ -1824,7 +1835,8 @@ writeStarvedNodeTopology(const char *topo_file) {
 static int
 testStarvedNumaNodeDramRailSelection() {
     NIXL_INFO << "=== Testing DRAM_SEG rail selection with a NUMA node without host memory "
-                 "capacity (p6e-gb200.36xl variant) ===";
+                 "capacity (variant of "
+              << gb200_topologies[0].instance_type << ") ===";
     const std::string topo_file = writeStarvedNodeTopology(gb200_topologies[0].topo_file);
     if (topo_file.empty()) {
         return 1;
