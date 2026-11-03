@@ -126,7 +126,7 @@ open_ib_device(char *name) {
     }
 
     for (int i = 0; i < nb_ibdevs; i++) {
-        if (strncmp(ibv_get_device_name(ibdev_list[i]), name, strlen(name)) == 0) {
+        if (strcmp(ibv_get_device_name(ibdev_list[i]), name) == 0) {
             struct ibv_device *dev_handle = ibdev_list[i];
             ibv_free_device_list(ibdev_list);
 
@@ -505,7 +505,7 @@ netif_get_addr(const char *if_name,
                sa_family_t af,
                struct sockaddr *saddr,
                struct sockaddr *netmask) {
-    int status = 0;
+    int status = -1;
     struct ifaddrs *ifa;
     struct ifaddrs *ifaddrs;
     const struct sockaddr_in6 *saddr6;

@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <atomic>
 #include <random>
@@ -31,7 +32,9 @@
 
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
+#include <cuobjclient.h>
 
+#include "../common.h"
 #include "plugins_common.h"
 #include "transfer_handler.h"
 #include "obj/obj_backend.h"
@@ -506,6 +509,91 @@ TEST_P(setupObjAccelTestFixture, AccelVramSubRangeXferTest) {
         GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
     }
     testSubRangeXfer<VRAM_SEG>(*localBackendEngine_);
+}
+
+// cuObject moves at most CUOBJ_MAX_MEMORY_REG_SIZE bytes per request, so a
+// larger object is written as a multipart upload and read back in ranges.
+TEST_P(setupObjAccelTestFixture, AccelVramLargeObjectXferTest) {
+    constexpr size_t chunk = 64 << 20;
+    constexpr size_t len = size_t(9) << 30;
+    constexpr size_t part = CUOBJ_MAX_MEMORY_REG_SIZE;
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
+    }
+    std::unique_ptr<memoryHandler<VRAM_SEG>> mem;
+    try {
+        const gtest::LogIgnoreGuard lig("cudaMalloc.* failed");
+        mem = std::make_unique<memoryHandler<VRAM_SEG>>(len, 0);
+    }
+    catch (const std::runtime_error &) {
+        GTEST_SKIP() << "Cannot allocate " << len << " bytes of VRAM";
+    }
+    nixlBlobDesc mem_desc;
+    mem->populateBlobDesc(&mem_desc);
+    nixlBackendMD *mem_md = nullptr;
+    nixl_status_t reg_status;
+    {
+        const gtest::LogIgnoreGuard lig_desc("cuMemObjGetDescriptor failed");
+        const gtest::LogIgnoreGuard lig_reg("RDMA buffer registration failed");
+        reg_status = localBackendEngine_->registerMem(mem_desc, VRAM_SEG, mem_md);
+    }
+    if (reg_status != NIXL_SUCCESS) {
+        GTEST_SKIP() << "cuObject cannot register " << len << " bytes (needs CUDA 13.4 or later)";
+    }
+    mem->setMD(mem_md);
+    auto *base = reinterpret_cast<uint8_t *>(mem_desc.addr);
+
+    auto pattern = [](size_t index) {
+        std::vector<uint32_t> words(chunk / sizeof(uint32_t));
+        std::mt19937 rng(static_cast<uint32_t>(index));
+        std::generate(words.begin(), words.end(), [&rng] { return rng(); });
+        return words;
+    };
+    auto matches = [&](size_t begin, size_t end) {
+        std::vector<uint32_t> words(chunk / sizeof(uint32_t));
+        for (size_t i = begin / chunk; i * chunk < end; ++i) {
+            if (cudaMemcpy(words.data(), base + i * chunk, chunk, cudaMemcpyDeviceToHost) !=
+                    cudaSuccess ||
+                words != pattern(i)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    for (size_t i = 0; i < len / chunk; ++i) {
+        ASSERT_EQ(cudaMemcpy(base + i * chunk, pattern(i).data(), chunk, cudaMemcpyHostToDevice),
+                  cudaSuccess);
+    }
+
+    nixlBlobDesc obj_desc(0, len, 0, "test-obj-key-large-object");
+    nixlBackendMD *obj_md = nullptr;
+    ASSERT_EQ(localBackendEngine_->registerMem(obj_desc, OBJ_SEG, obj_md), NIXL_SUCCESS);
+    nixl_meta_dlist_t local(VRAM_SEG);
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    nixlMetaDesc local_desc;
+    mem->populateMetaDesc(&local_desc, 0, len);
+    local.addDesc(local_desc);
+    remote.addDesc(nixlMetaDesc(0, len, 0, obj_md));
+    EXPECT_EQ(runXfer(*localBackendEngine_, NIXL_WRITE, local, remote), NIXL_SUCCESS);
+
+    ASSERT_EQ(cudaMemset(base, 0, len), cudaSuccess);
+    EXPECT_EQ(runXfer(*localBackendEngine_, NIXL_READ, local, remote), NIXL_SUCCESS);
+    EXPECT_TRUE(matches(0, len));
+
+    const size_t across = part - chunk;
+    ASSERT_EQ(cudaMemset(base + across, 0, 2 * chunk), cudaSuccess);
+    nixl_meta_dlist_t local_range(VRAM_SEG);
+    nixl_meta_dlist_t remote_range(OBJ_SEG);
+    local_desc.addr = mem_desc.addr + across;
+    local_desc.len = 2 * chunk;
+    local_range.addDesc(local_desc);
+    remote_range.addDesc(nixlMetaDesc(across, 2 * chunk, 0, obj_md));
+    EXPECT_EQ(runXfer(*localBackendEngine_, NIXL_READ, local_range, remote_range), NIXL_SUCCESS);
+    EXPECT_TRUE(matches(across, across + 2 * chunk));
+
+    EXPECT_EQ(localBackendEngine_->deregisterMem(obj_md), NIXL_SUCCESS);
+    EXPECT_EQ(localBackendEngine_->deregisterMem(mem_md), NIXL_SUCCESS);
 }
 
 TEST_P(setupObjAccelTestFixture, AccelVramNestedRegistrationXferTest) {

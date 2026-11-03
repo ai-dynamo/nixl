@@ -109,8 +109,19 @@ SAN_SUPP_DIR=$(cd "$(dirname "$0")/.." && pwd)/test/gtest/sanitizer
 # per-test timeout multiplier (30s base x 20 = 600s). meson itself runs every
 # test in the suite and reports all failures, so this stage already completes the
 # whole suite before returning.
-run_stage "meson sanitizer suite" \
-    meson test -C "${NIXL_BUILD_DIR}" --suite sanitizer --print-errorlogs --timeout-multiplier 20
+# --print-errorlogs shows only the last 100 lines, stdout then stderr, so gtest's
+# failure report gets cut by NIXL log noise; print it from testlog.txt on failure.
+run_meson_sanitizer_suite() {
+    local rc=0
+    meson test -C "${NIXL_BUILD_DIR}" --suite sanitizer --print-errorlogs --timeout-multiplier 20 || rc=$?
+    if [ "${rc}" -ne 0 ]; then
+        echo "==== gtest failures (from meson-logs/testlog.txt) ===="
+        awk '/: Failure$/ {p = 1} p || /^\[  FAILED  \]/ {print} /^\[  FAILED  \]/ {p = 0}' \
+            "${NIXL_BUILD_ABS}/meson-logs/testlog.txt" | head -n 300
+    fi
+    return "${rc}"
+}
+run_stage "meson sanitizer suite" run_meson_sanitizer_suite
 
 # Real-backend binaries from test_cpp.sh. All *SAN_OPTIONS are exported; only
 # those matching how the binary was built take effect, so the same script works

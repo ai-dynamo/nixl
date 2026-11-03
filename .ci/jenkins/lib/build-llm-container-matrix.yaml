@@ -71,7 +71,7 @@ env:
   # registry pushes in one shot, so an arch failure leaves the registry clean.
   PVC_STAGING_ROOT: "/mnt/pvc/nixl-llm-build"
   # Internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable).
-  APT_MIRROR: "https://urm.nvidia.com/artifactory/ubuntu-public"
+  APT_MIRROR: "https://artifactory.nvidia.com/artifactory/ubuntu-public"
 
 taskName: "${arch}"
 

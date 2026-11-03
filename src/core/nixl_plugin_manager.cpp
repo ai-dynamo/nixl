@@ -34,6 +34,8 @@ const std::string tracePluginPrefix = "libtrace_backend_";
 const std::string kPluginSuffix = ".so";
 const std::string kUcxPluginName = "UCX";
 const std::string kUcxDeepBindVar = "NIXL_UCX_DEEPBIND";
+const std::string prometheus_plugin_name = "prometheus";
+const std::string prometheus_mp_plugin_name = "prometheus_mp";
 
 // pluginHandle implementation
 nixlBackendPluginHandle::nixlBackendPluginHandle(void *handle, nixlBackendPlugin *plugin)
@@ -260,9 +262,9 @@ traceLoader(void *handle, const std::string &plugin_path) {
         return nullptr;
     }
 
-    if (plugin->api_version != nixl_trace_plugin_api_version::V1) {
+    if (plugin->api_version != nixl_trace_plugin_api_version::V2) {
         NIXL_ERROR << "Plugin API version mismatch for " << plugin_path << ": expected "
-                   << static_cast<unsigned int>(nixl_trace_plugin_api_version::V1) << ", got "
+                   << static_cast<unsigned int>(nixl_trace_plugin_api_version::V2) << ", got "
                    << static_cast<unsigned int>(plugin->api_version);
         dlclose(handle);
         return nullptr;
@@ -540,9 +542,18 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
         return it->second;
     }
 
+    const std::string &file_name =
+        plugin_name == prometheus_plugin_name ? prometheus_mp_plugin_name : plugin_name;
+    it = loaded_telemetry_plugins_.find(file_name);
+    if (it != loaded_telemetry_plugins_.end()) {
+        const auto telemetry_plugin = it->second;
+        loaded_telemetry_plugins_[plugin_name] = telemetry_plugin;
+        return telemetry_plugin;
+    }
+
     // Try to load the plugin from all registered directories
     for (const auto &dir : plugin_dirs_) {
-        std::string plugin_path = composePluginPath(dir, telemetryPluginPrefix, plugin_name);
+        std::string plugin_path = composePluginPath(dir, telemetryPluginPrefix, file_name);
         if (plugin_path.empty()) {
             continue;
         }
@@ -556,6 +567,7 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
         if (plugin_handle) {
             auto telemetry_plugin =
                 std::dynamic_pointer_cast<const nixlTelemetryPluginHandle>(plugin_handle);
+            loaded_telemetry_plugins_[file_name] = telemetry_plugin;
             loaded_telemetry_plugins_[plugin_name] = telemetry_plugin;
             return telemetry_plugin;
         }

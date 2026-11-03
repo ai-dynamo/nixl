@@ -64,6 +64,38 @@ rdmaGetWithRetry(SharedCuObjClient &rdma,
                  uint64_t size,
                  uint64_t offset);
 
+// cuObject mints a token for at most this many bytes, even from a larger
+// registration, so a single S3 request moves at most this much.
+inline constexpr uint64_t rdma_max_request_size = CUOBJ_MAX_MEMORY_REG_SIZE;
+
+/**
+ * @brief Write buf to ctx.bucket/ctx.object over RDMA. An object larger than
+ *        rdma_max_request_size is uploaded as a multipart upload, one RDMA part
+ *        per rdma_max_request_size bytes.
+ * @return size on success, or a negative rdma_* code.
+ */
+[[nodiscard]] ssize_t
+rdmaPutObject(SharedCuObjClient &rdma,
+              S3RdmaControlPlane &cp,
+              S3RdmaClientCtx &ctx,
+              void *buf,
+              uint64_t size);
+
+/**
+ * @brief Read size bytes of ctx.bucket/ctx.object from offset into buf over
+ *        RDMA, as ranged GETs of at most rdma_max_request_size bytes each.
+ *        Every range after the first must match the first range's ETag, so a
+ *        read never mixes two versions of the object.
+ * @return Bytes read, or a negative rdma_* code.
+ */
+[[nodiscard]] ssize_t
+rdmaGetObject(SharedCuObjClient &rdma,
+              S3RdmaControlPlane &cp,
+              S3RdmaClientCtx &ctx,
+              void *buf,
+              uint64_t size,
+              uint64_t offset);
+
 } // namespace nixl_obj_rdma
 
 #endif // NIXL_SRC_UTILS_OBJECT_RDMA_RDMARETRY_H
