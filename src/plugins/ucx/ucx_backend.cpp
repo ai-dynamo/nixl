@@ -30,7 +30,6 @@
 #include "tracing/backend_trace.h"
 
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -743,33 +742,6 @@ nixlUcxEngine::progressLoop() {
  * Notifications
 *****************************************/
 
-namespace {
-
-static_assert(std::endian::native == std::endian::little);
-
-struct requestTag {
-    std::uint64_t requestId;
-    std::uint64_t execution;
-};
-
-void
-addRequestTag(nixlSerDes &ser_des, std::uint64_t request_id, std::uint64_t execution) {
-    const requestTag tag{request_id, execution};
-    ser_des.addBuf("treq", &tag, sizeof(tag));
-}
-
-void
-readRequestTag(nixlSerDes &ser_des, nixl::trace::TraceIdentity &identity) {
-    requestTag tag;
-    if ((ser_des.peekBufLen("treq") == sizeof(tag)) &&
-        (ser_des.getBuf("treq", &tag, sizeof(tag)) == NIXL_SUCCESS) && (tag.requestId != 0)) {
-        identity.requestId = tag.requestId;
-        identity.execution = tag.execution;
-    }
-}
-
-} // namespace
-
 std::string
 nixl::ucx::serializeNotif(const std::string &agent,
                           const std::string &msg,
@@ -780,15 +752,7 @@ nixl::ucx::serializeNotif(const std::string &agent,
     ser_des.reserve(agent.size() + msg.size() + notif_overhead);
     ser_des.addStr("name", agent);
     ser_des.addStr("msg", msg);
-    if (identity.context.sampled()) {
-        std::array<std::uint8_t, nixl::trace::traceContextWireSize> record;
-        if (const auto size = nixl::trace::encodeTraceContext(identity.context, record)) {
-            ser_des.addBuf("tctx", record.data(), *size);
-            if (identity.requestId != 0) {
-                addRequestTag(ser_des, identity.requestId, identity.execution);
-            }
-        }
-    }
+    nixl::trace::addTraceTags(ser_des, identity);
     return std::move(ser_des).exportMoveStr();
 }
 
@@ -800,14 +764,9 @@ nixl::ucx::deserializeNotif(const std::string &buffer, nixlBackendTraceSink *sin
     notifMessage notif;
     notif.agent = ser_des.getStr("name");
     notif.msg = ser_des.getStr("msg");
-    if ((sink != nullptr) && (ser_des.peekBufLen("tctx") == nixl::trace::traceContextWireSize)) {
-        std::array<std::uint8_t, nixl::trace::traceContextWireSize> record;
-        nixl::trace::TraceIdentity identity;
-        if ((ser_des.getBuf("tctx", record.data(), record.size()) == NIXL_SUCCESS) &&
-            (nixl::trace::decodeTraceContext(record, identity.context) ==
-             nixl::trace::WireDecodeResult::Ok)) {
-            readRequestTag(ser_des, identity);
-            notif.trace = nixlBackendPostTrace{sink, identity};
+    if (sink != nullptr) {
+        if (const auto identity = nixl::trace::getTraceTags(ser_des)) {
+            notif.trace = nixlBackendPostTrace{sink, *identity};
         }
     }
     return notif;

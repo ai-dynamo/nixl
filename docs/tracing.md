@@ -342,9 +342,11 @@ call keeps the one prep saw, and each later call draws another. It is null in
 `prepMemView`, which has no request, and `opt_args` itself may be null when an
 engine is called directly. The pointer is valid only for the call: a plugin that
 needs the context later, at completion or when building a notification, copies
-the value onto its own request handle at each post. A carrier that puts it on the
-wire calls `encodeTraceContext` itself. `TraceContext` is internal like the sink,
-so only in-tree plugins can read it. Next to `traceContext`, `traceRequestId` and
+the value onto its own request handle at each post. A carrier never encodes it
+itself: `nixl::trace::addTraceTags()` appends a post's `traceIdentity` (below) to a
+`nixlSerDes` message as the tags described below, and `getTraceTags()` reads a
+peer's back. `TraceContext` is internal like the sink, so only in-tree plugins can
+read it. Next to `traceContext`, `traceRequestId` and
 `traceExecution` hold the request's id and the number of the post being executed,
 0 meaning none: the id is the same at prep and at every post, the execution number
 is 0 at prep, and both are 0 when tracing is off. They are plain integers that any
@@ -359,8 +361,8 @@ the phase with `nixlTime::getUs()` itself when a backend needs the time,
 `recordAt(phase, timestamp)` records a time the plugin took earlier, and `now()`
 reads the clock under the same condition.
 
-UCX is the first such carrier. For a sampled request it appends the 26-byte
-record as a `tctx` tag after the notification's `name` and `msg`, then, when the
+UCX is the first such carrier. For a sampled request `addTraceTags()` appends the
+26-byte record as a `tctx` tag after the notification's `name` and `msg`, then, when the
 request has an id, a 16-byte `treq` tag: the request id and the post's execution
 number, each 8 bytes little-endian. An older receiver stops reading after the tags it
 knows, so it is unaffected; unsampled requests and `genNotif` add nothing. When the
