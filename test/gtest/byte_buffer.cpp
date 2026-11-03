@@ -81,13 +81,13 @@ TEST(ByteBuffer, Put) {
 
 TEST(ByteBuffer, VarArg) {
     dynamicSizedBuffer b;
+    auto a = std::array<std::byte, 3>{std::byte(1), std::byte(2), std::byte(3)};
     b.putValues(static_cast<std::uint8_t>(1),
                 static_cast<std::int32_t>(2),
                 "/" + std::string("Bar"),
                 std::string("Foo"),
                 std::vector<std::int8_t>{1, 2, 3},
-                std::array<std::byte, 3>{std::byte(1), std::byte(2), std::byte(3)} |
-                    std::views::transform([](std::byte v) { return static_cast<std::int8_t>(v); }));
+                a | std::views::transform([](std::byte v) { return static_cast<std::int8_t>(v); }));
     EXPECT_EQ(b.size(), 50);
 
     EXPECT_EQ(*&b.data()[0], 1);
