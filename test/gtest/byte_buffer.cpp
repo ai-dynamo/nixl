@@ -69,8 +69,8 @@ TEST(ByteBuffer, Put) {
     EXPECT_EQ(b.data()[49], 3);
 
     // Enums can be put into the buffer using views::transform.
-    b.put(std::array<std::byte, 3>{std::byte(1), std::byte(2), std::byte(3)} |
-          std::views::transform([](std::byte v) { return static_cast<std::int8_t>(v); }));
+    auto arrb = std::array<std::byte, 3>{std::byte(1), std::byte(2), std::byte(3)};
+    b.put(arrb | std::views::transform([](std::byte v) { return static_cast<std::int8_t>(v); }));
     EXPECT_EQ(b.size(), 61);
     memcpy(&s, &b.data()[50], sizeof(std::uint64_t));
     EXPECT_EQ(s, 3);
