@@ -92,7 +92,8 @@ nixl_asio_deps = [nixl_lib_deps, asio_dep]
 # Compile metadata code with hidden visibility to hide ASIO symbols.
 nixl_asio_dep_lib = static_library('nixl_asio_dep',
                                    nixl_asio_dep_sources,
-                                   cpp_args: ['-fvisibility=hidden'],
+                                   cpp_args: ['-DASIO_DISABLE_VISIBILITY=1', '-fvisibility=hidden', '-fvisibility-inlines-hidden'],
+                                   gnu_symbol_visibility: 'hidden',
                                    include_directories: [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ],
                                    link_args: ['-lstdc++fs'],
                                    dependencies: nixl_asio_deps
