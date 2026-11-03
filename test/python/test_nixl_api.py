@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import contextlib
+import gc
 import os
 import re
 import tempfile
@@ -890,6 +891,34 @@ def test_xfer_trace_info_binding_rejects_a_null_handle(one_empty_agent):
 
 
 def test_xfer_trace_info_released_handle_skips_the_binding(one_empty_agent):
-    handle = nixl_xfer_handle(one_empty_agent.agent, 0)
+    handle = nixl_xfer_handle(one_empty_agent, 0)
     handle._released = True
     assert one_empty_agent.get_xfer_trace_info(handle) is None
+
+
+def test_leaked_xfer_handle_is_queued_on_the_agent(one_empty_agent, monkeypatch):
+    """A release that fails in the finalizer defers to the nixl_agent's leak list.
+
+    The handle comes from initialize_xfer, so it holds whatever the agent passes
+    it. That used to be the pybind agent, which has no leak list, and the handle
+    was dropped without a trace.
+    """
+
+    class FailingNative:
+        def createXferReq(self, *args):
+            return 0xDEAD
+
+        def releaseXferReq(self, handle):
+            raise RuntimeError("release refused")
+
+    monkeypatch.setattr(one_empty_agent, "agent", FailingNative())
+    try:
+        handle = one_empty_agent.initialize_xfer("WRITE", None, None, "peer")
+        del handle
+        gc.collect()
+
+        assert one_empty_agent._leaked_xfer_handles == [0xDEAD]
+    finally:
+        # 0xDEAD is not a real request, so the agent's destructor must not
+        # hand it to the native release once the real agent is back.
+        one_empty_agent._leaked_xfer_handles.clear()
