@@ -25,10 +25,8 @@
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
 
-class nixlBackendTraceSink;
-
 namespace nixl::trace {
-struct TraceContext;
+class Traceable;
 }
 
 // Might be removed to be decided by backend, or changed to high
@@ -41,13 +39,7 @@ struct nixlBackendOptionalArgs {
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
     nixl_blob_t customParam;
-    // The request's trace context in prepXfer and the post's in postXfer: the trace
-    // id and flags are the request's, and each post of a sampled request has a span
-    // id of its own. Valid for the call only, so copy it at each post to keep it.
-    // Null when no request is involved (prepMemView).
-    const nixl::trace::TraceContext *traceContext = nullptr;
-    std::uint64_t traceRequestId = 0;
-    std::uint64_t traceExecution = 0;
+    nixl::trace::Traceable *tracing = nullptr;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
@@ -68,7 +60,6 @@ class nixlBackendInitParams {
         nixlTime::us_t pthrDelay = 0;
         nixl_thread_sync_t syncMode;
         bool enableTelemetry_ = false;
-        nixlBackendTraceSink *traceSink = nullptr;
 };
 
 // Pure virtual class to have a common pointer type
