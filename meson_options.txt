@@ -20,6 +20,7 @@ option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD Li
 option('disable_gds_backend', type : 'boolean', value : false, description : 'disable gds backend')
 option('disable_mooncake_backend', type : 'boolean', value : false, description : 'disable mooncake backend')
 option('disable_infinia_backend', type : 'boolean', value : false, description : 'disable infinia backend')
+option('glide_path', type: 'string', value: '', description: 'valkey-glide prefix for the VALKEY plugin: lib/libglide_ffi.a, include/glide_ffi.h, proto/connection_request.proto')
 option('infinia_path', type: 'string', value: '/opt/ddn/red/', description: 'Path to Infinia client install')
 option('install_headers', type : 'boolean', value : true, description : 'install headers')
 option('gds_path', type: 'string', value: '/usr/local/cuda/', description: 'Path to GDS CuFile install')
