@@ -35,26 +35,24 @@ namespace nixl_ep_v2::elastic::adaptive {
 
 // Reduce epilogue of the adaptive combine: given the buffer base, it derives the rows to reduce from the topology descriptor (`EPTopology`)
 template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
-          int kNumSMs, int kNumWarps, int kNumChannelsPerSM,
+          int kNumSMs, int kNumWarps, int kNumChannelsPerSM, int kNumNixlChannels,
           int kHidden,
           int kNumExpertsPerRank, int kNumTopk,
           int64_t kNumTimeoutCycles,
-          bool kAcquireFlags = false,
-          // Arrival protocol of the hybrid rows: flags inside the records (`TokenLayout::with_flags`) instead of the channels'
-          // progress words; the host's `payload_flags`
-          bool kPayloadFlags = false,
           int kNumThreads = kNumWarps * 32,
           int kNumHiddenBytes = kHidden * sizeof(nv_bfloat16)>
 __global__ void __launch_bounds__(kNumThreads, 1)
 combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
                              float* combined_topk_weights,
                              topk_idx_t* combined_topk_idx,
+                             uint8_t* token_result_imm_completions,
                              void* buffer,
                              void* workspace,
                              void* bias_0, void* bias_1,
                              const int num_combined_tokens,
                              const topology::EPTopology* topology_ptr,
-                             const int num_max_tokens_per_rank) {
+                             const int num_max_tokens_per_rank,
+                             const int num_max_scaleup_ranks) {
     // Topology
     const auto topo = topology::load(topology_ptr);
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
@@ -77,12 +75,12 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     // Utils
     const auto sm_idx = static_cast<int>(blockIdx.x), thread_idx = static_cast<int>(threadIdx.x);
     const auto warp_idx = ptx::get_warp_idx(), lane_idx = ptx::get_lane_idx();
-    const auto global_warp_idx = warp_idx * kNumSMs + sm_idx;   // NOTES: Here we prioritize distributing tasks to different SMs to ensure that the last wave is evenly concentrated on each SM.
+    const auto global_warp_idx = comm::cross_sm_warp_idx(sm_idx, warp_idx, kNumSMs);   // NOTES: Here we prioritize distributing tasks to different SMs to ensure that the last wave is evenly concentrated on each SM.
 
     // Load buffers from scale-out or scale-up ranks
     // The scale-out receive buffer sits right after the scale-up buffer
     extern __shared__ __align__(ptx::kNumTMAAlignBytes) int8_t smem[];
-    const auto comm_token_layout = layout::TokenLayout(kNumHiddenBytes, 0, kNumTopk, false, nullptr, kPayloadFlags);
+    const auto comm_token_layout = layout::TokenLayout(kNumHiddenBytes, 0, kNumTopk, false);
     const auto scaleup_buffer = layout::BufferLayout<false>(
         comm_token_layout, num_tokens_in_scaleup_layout, num_scaleout_ranks * num_max_tokens_per_rank, buffer);
     // Direct: the rows are the scale-up buffer the combine kernel wrote (its layout, its row stride); hybrid: the
@@ -143,8 +141,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
 
     // Hidden-dimension chunking (direct only): a work item is one (token, chunk) pair, `kChunkVec` vectors wide, so a token's row
     // is reduced by `kNumChunks` warps on different SMs. Bit-exact with the one-warp row: the slot order and the bypass choice depend
-    // only on the token's indices, and every chunk reduces its own disjoint slice. Hybrid keeps one warp per token (its wait on the
-    // producing channel's progress word is per row)
+    // only on the token's indices, and every chunk reduces its own disjoint slice. Hybrid keeps one warp per token.
     using combine_vec_t = typename CombineVecTraits<kNumHiddenBytes>::vec_t;
     constexpr int kHiddenVec = kNumHiddenBytes / sizeof(combine_vec_t);
     constexpr int kUnrollFactor = get_max_unroll_factor<kHiddenVec, 4>();
@@ -168,102 +165,32 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     const int num_bytes_per_chunk = is_small_batch ? kNumBytesPerSmallBatchChunk : kNumBytesPerChunk;
     const int num_work_items = num_combined_tokens * num_items_per_token;
 
-    // The token of a work item: direct items run upward (`num_items_per_token` per token); hybrid rows run from the last token
-    // down, the order in which the producing channels' progress words complete (they descend from the highest token index)
+    // The token of a work item: direct uses multiple items per token; hybrid uses one.
     const auto item_token_idx = [&](const int& item_idx) {
-        return is_direct ? item_idx / num_items_per_token : num_combined_tokens - 1 - item_idx;
+        return is_direct ? item_idx / num_items_per_token : item_idx;
     };
 
     // The warp's first token, preprocessed before the dependency wait (a warp-uniform condition)
-    int cached_token_idx = -1;
-    TokenIndices token_indices = {-1, 0u};
-    if (global_warp_idx < num_work_items) {
-        cached_token_idx = item_token_idx(global_warp_idx);
-        token_indices = preprocess_token(cached_token_idx);
-    }
+    const int preproc_token_idx = item_token_idx(global_warp_idx);
+    const TokenIndices preproc_token_indices = global_warp_idx < num_work_items ?
+        preprocess_token(preproc_token_idx) : TokenIndices{-1, 0u};
 
-    // Wait for the main combine and its local stores; the remote result batches are polled below (hybrid)
+    // Wait for the main combine and its local stores; the remote token completions are polled below (hybrid)
     // NOTES: PDL is used, please do not use `__ldg`
     cudaGridDependencySynchronize();
 
     const auto workspace_layout = layout::WorkspaceLayout(workspace, num_scaleout_ranks, num_scaleup_ranks, num_ranks * kNumExpertsPerRank);
-    const auto ready_atomic_buff = workspace_layout.get_combine_ready_atomic_buff();
 
     // Profile slots 16/17: epilogue work start (block 0) / last block done
 #ifdef EP_ADAPTIVE_PROFILE
     EP_PROFILE_STAMP(workspace_layout, 16);
 #endif
 
-    // Read from buffers and do reduction
-    for (int item_idx = global_warp_idx; item_idx < num_work_items; item_idx += kNumWarps * kNumSMs) {
-        const int token_idx = item_token_idx(item_idx);
-        const int chunk_begin = item_idx % num_items_per_token;   // the item's chunk (direct); 0 for hybrid's whole row
+    // Reduce and store a whole hybrid token or one direct-mode work item.
+    const auto finish_token = [&](const int token_idx, const int chunk_begin, const TokenIndices& indices) {
         const bool is_weights_item = is_small_batch and chunk_begin == kNumSmallBatchChunks;
-        // Preprocess all indices (the first token was done above)
-        if (token_idx != cached_token_idx) {
-            token_indices = preprocess_token(token_idx);
-            cached_token_idx = token_idx;
-        }
-        const int stored_dst_rank_idx = token_indices.stored_dst_rank_idx;
-        const auto reduce_valid_mask = token_indices.reduce_valid_mask;
-
-        // Hybrid, payload flags: the rows came over the scale-out path with their arrival flags inside (see `TokenLayout`); lane `l`
-        // waits for the row it reduces (our own domain's rows included: their spills must be restored too), restores the spills, and
-        // zeroes the flags once the row is consumed (below). Unused in the counter protocol
-        const bool lane_has_row = kPayloadFlags and not is_direct and ((reduce_valid_mask >> lane_idx) & 1);
-        if constexpr (kPayloadFlags) {
-            const auto lane_row = comm_buffer.get_rank_buffer(lane_has_row ? (use_rank_layout ? stored_dst_rank_idx : lane_idx) : 0)
-                                             .get_token_buffer(token_idx);
-            if (lane_has_row) {
-                int pending_flag_idx = lane_row.num_spill_slots;
-                comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
-                    if (lane_row.template are_flags_set<kAcquireFlags>(pending_flag_idx))
-                        return true;
-                    if (is_last_check) {
-                        printf("NIXL EP V2 adaptive combine (reduce epilogue) timeout, scale-out: %d/%d, scale-up: %d/%d, "
-                               "token: %d, row: %d\n",
-                               topo.scaleout_rank_idx, num_scaleout_ranks, topo.scaleup_rank_idx, num_scaleup_ranks,
-                               token_idx, use_rank_layout ? stored_dst_rank_idx : lane_idx);
-                    }
-                    return false;
-                });
-                if constexpr (not kAcquireFlags) {
-                    // The flags were polled with relaxed loads: the acquire fence before the row is read. The reads that follow use
-                    // `ld.global.nc`, safe because no L1 line of the row can predate its arrival: the polls bypass L1, the data loads
-                    // carry `L1::no_allocate`, the one plain load below (the spill slot) lies inside the landed record
-                    ptx::fence_acq_sys();
-                }
-                // With acquire polls (`acquire_flags`) no fence is needed: this lane's plain accesses (the spill slots here, the top-k weight
-                // below) follow the acquire, the other lanes' reads follow the `__syncwarp`
-                lane_row.restore_spills();
-            }
-            __syncwarp();
-        } else if (not is_direct) {
-            // One lane per remote producing domain waits for this token's cumulative channel watermark.
-            const bool lane_polls = ptx::deduplicate(stored_dst_rank_idx, lane_idx) and
-                                    stored_dst_rank_idx >= 0 and stored_dst_rank_idx != topo.scaleout_rank_idx;
-            if (lane_polls) {
-                const int channel_idx = token_idx % num_channels;
-                const auto completion_ptr = ready_atomic_buff + channel_idx * num_scaleout_ranks + stored_dst_rank_idx;
-                comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
-                    const auto signal = kAcquireFlags ? ptx::ld_acquire_sys<int64_t>(completion_ptr) :
-                                                       ptx::ld_relaxed_sys<int64_t>(completion_ptr);
-                    if (signal <= token_idx) {
-                        if constexpr (not kAcquireFlags)
-                            ptx::fence_acq_sys();
-                        return true;
-                    }
-                    if (is_last_check) {
-                        printf("NIXL EP V2 combine (reduce epilogue) timeout, scale-out: %d/%d, scale-up: %d/%d, "
-                               "channel: %d, source domain: %d, token: %d, signal: %lld\n",
-                               topo.scaleout_rank_idx, num_scaleout_ranks, topo.scaleup_rank_idx, num_scaleup_ranks,
-                               channel_idx, stored_dst_rank_idx, token_idx, static_cast<long long>(signal));
-                    }
-                    return false;
-                });
-            }
-            __syncwarp();
-        }
+        const int stored_dst_rank_idx = indices.stored_dst_rank_idx;
+        const auto reduce_valid_mask = indices.reduce_valid_mask;
 
         // Iterate over per-hidden-chunk stage
         // The number of rows to gather is a runtime value; pick the instantiation DeepSeek's kernels would use
@@ -344,20 +271,131 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
             }
             __syncwarp();
         }
+    };
 
-        // Payload flags: the rows are consumed, their flag words back to zero for the next use
-        if constexpr (kPayloadFlags) {
-            if (lane_has_row)
-                comm_buffer.get_rank_buffer(use_rank_layout ? stored_dst_rank_idx : lane_idx).get_token_buffer(token_idx).clear_flags();
-            __syncwarp();
+#ifdef EP_ADAPTIVE_PROFILE
+    const auto profiling_tma_wait = [&]() {
+        ptx::tma_store_wait();
+        __syncthreads();
+        EP_PROFILE_STAMP_LAST(workspace_layout, 17);
+    };
+#endif
+
+    if (is_direct) {
+        // Read from buffers and do reduction
+        auto indices = preproc_token_indices;
+        int indices_token_idx = preproc_token_idx;
+        for (int item_idx = global_warp_idx; item_idx < num_work_items; item_idx += kNumWarps * kNumSMs) {
+            const int token_idx = item_token_idx(item_idx);
+            if (token_idx != indices_token_idx) {
+                indices = preprocess_token(token_idx);
+                indices_token_idx = token_idx;
+            }
+            const int chunk_begin = item_idx % num_items_per_token;   // Chunk index, or the small-batch weights-only item.
+            finish_token(token_idx, chunk_begin, indices);
+        }
+#ifdef EP_ADAPTIVE_PROFILE
+        profiling_tma_wait();
+#endif
+        return;
+    }
+
+    // Hybrid Mode
+
+    // Split each logical forwarding channel's tokens among its epilogue warps.
+    // The first token remains global_warp_idx; subsequent tokens stay on the same NIXL channel.
+    const int fw_logical_channel = global_warp_idx % num_channels;
+    const int warps_per_fw_channel = 1 + (kNumWarps * kNumSMs - 1 - fw_logical_channel) / num_channels;
+    const int token_stride = warps_per_fw_channel * num_channels;
+    const auto ctx = nixl::load_context(topo.transport);
+    const int rx_nixl_channel = comm::get_nixl_channel_idx(
+        fw_logical_channel % topo.num_active_sms, fw_logical_channel / topo.num_active_sms,
+        topo.num_active_sms, kNumNixlChannels);
+    const nixl::NIXLTransport completion_transport(ctx, rx_nixl_channel);
+    const int peer_id = topology::rank_id(lane_idx, topo.scaleup_rank_idx, num_max_scaleup_ranks);
+
+    // Lane d polls one CQ for domain d, with its own cursor and consumed-completion count.
+    uint64_t local_ci_per_peer = 0;
+    unsigned int completions_per_peer = 0;
+    bool lane_has_remote_tokens = false;
+    int pending_tokens = 0;
+
+    // Every token's state is initialized before this warp starts consuming CQEs.
+    for (int token_idx = global_warp_idx; token_idx < num_combined_tokens; token_idx += token_stride) {
+        const auto indices = token_idx == preproc_token_idx ? preproc_token_indices : preprocess_token(token_idx);
+        const unsigned domains = ptx::reduce_or(indices.stored_dst_rank_idx >= 0 ?
+                                                1u << indices.stored_dst_rank_idx : 0u);
+        const unsigned remote_domains = domains & ~(1u << topo.scaleout_rank_idx);
+        const int remaining = __popc(remote_domains);
+        if (lane_idx == 0)
+            token_result_imm_completions[token_idx] = remaining;
+        if ((remote_domains & (1u << lane_idx)) != 0) {
+            if (not lane_has_remote_tokens) {
+                const auto& usage = topo.completion_usage[lane_idx * ctx.num_channels + rx_nixl_channel];
+                local_ci_per_peer = usage.dispatch_start_ci + usage.dispatch_consumed;
+            }
+            lane_has_remote_tokens = true;
+        }
+        if (remaining == 0)
+            finish_token(token_idx, 0, indices);
+        else
+            ++ pending_tokens;
+    }
+
+    int pending_token = -1;
+    while (pending_tokens > 0) {
+        unsigned ready = 0;
+        comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
+            if (lane_has_remote_tokens and pending_token < 0) {
+                uint32_t immediate;
+                while (completion_transport.poll_receive_token_at(
+                           peer_id, local_ci_per_peer, immediate)) {
+                    EP_DEVICE_ASSERT(immediate < static_cast<uint32_t>(num_combined_tokens));
+                    const int received_token = static_cast<int>(immediate);
+                    if (received_token % token_stride == global_warp_idx) {
+                        pending_token = received_token;
+                        ++ completions_per_peer;
+                        break;
+                    }
+                }
+            }
+            ready = ptx::gather(pending_token >= 0);
+            if (is_last_check and not ready and lane_idx == 0)
+                printf("NIXL EP V2 shared combine CQ timeout, domain: %d, position: %d, warp: %d, pending tokens: %d\n",
+                       topo.scaleout_rank_idx, topo.scaleup_rank_idx, global_warp_idx, pending_tokens);
+            return !!ready;
+        });
+        // The poller's CQ acquire must precede every lane's payload reads.
+        __syncwarp();
+        while (ready != 0) {
+            const int domain = __ffs(ready) - 1;
+            const int token_idx = ptx::exchange(pending_token, domain);
+            int remaining = 0;
+            if (lane_idx == 0)
+                remaining = -- token_result_imm_completions[token_idx];
+            remaining = ptx::exchange(remaining, 0);
+            if (remaining == 0) {
+                const auto indices = token_idx == preproc_token_idx ? preproc_token_indices : preprocess_token(token_idx);
+                finish_token(token_idx, 0, indices);
+                -- pending_tokens;
+            }
+            if (lane_idx == domain)
+                pending_token = -1;
+            ready &= ready - 1;
         }
     }
 
+    // Record this warp's consumed completions with one relaxed GPU atomic per used
+    // peer/NIXL channel. CQEs belonging to other warps are not counted.
+    // After this epilogue completes, the next dispatch returns CQ/RQ credits for
+    // the accumulated dispatch and combine completions.
+    if (completions_per_peer != 0)
+        atomicAdd(&topo.completion_usage[lane_idx * ctx.num_channels + rx_nixl_channel].combined_consumed,
+                  static_cast<unsigned long long>(completions_per_peer));
 #ifdef EP_ADAPTIVE_PROFILE
-    ptx::tma_store_wait();
-    __syncthreads();
-    EP_PROFILE_STAMP_LAST(workspace_layout, 17);
+    profiling_tma_wait();
 #endif
+    return;
 }
 
 }  // namespace nixl_ep_v2::elastic::adaptive

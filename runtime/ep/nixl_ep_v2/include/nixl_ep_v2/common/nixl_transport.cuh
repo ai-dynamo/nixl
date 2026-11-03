@@ -40,7 +40,7 @@ static_assert(sizeof(NIXLDeviceContext) == 48, "Unexpected transport context siz
 
 }  // namespace nixl_ep_v2::elastic::nixl
 
-// NIXL's GPU-initiated API (`nixlPut`, `nixlAtomicAdd` over memory views) and UCX's device API under it, for the
+// NIXL's GPU-initiated API (puts, write-with-immediate and receive CQ polling over memory views) and UCX's device API under it, for the
 // JIT-compiled kernels only (`EP_NIXL_DEVICE_API`, a JIT flag); the extension sees the context struct alone
 #if defined(__CUDACC__) && defined(EP_NIXL_DEVICE_API)
 #include <gpu/nixl_device.cuh>
@@ -76,6 +76,22 @@ __device__ __forceinline__ NIXLDeviceContext load_context(const NIXLDeviceContex
 // One per warp: the context (copied by the kernel at entry) and the UCX device channel this warp issues on.
 // Operations of one warp on one channel to one peer are ordered; the kernels' data-then-announce protocols rely on it
 struct NIXLTransport {
+    static constexpr int kDispatchSlotBits = 22;
+    static constexpr uint32_t kDispatchSlotMask = (1u << kDispatchSlotBits) - 1;
+
+    // Dispatch packs a 10-bit logical channel and 22-bit receive slot; combine identifies the original source token.
+    __device__ static constexpr uint32_t dispatch_payload(const int logical_channel, const int slot) {
+        return (static_cast<uint32_t>(logical_channel) << kDispatchSlotBits) | static_cast<uint32_t>(slot);
+    }
+
+    __device__ static constexpr int dispatch_channel(const uint32_t payload) {
+        return static_cast<int>(payload >> kDispatchSlotBits);
+    }
+
+    __device__ static constexpr int dispatch_slot(const uint32_t payload) {
+        return static_cast<int>(payload & kDispatchSlotMask);
+    }
+
     NIXLDeviceContext ctx;
     unsigned channel;
 
@@ -122,38 +138,50 @@ struct NIXLTransport {
         EP_DEVICE_ASSERT(status == NIXL_IN_PROG and "nixlPut failed");
     }
 
-    // The completion word is outside the payload. Submit both operations on the same peer/channel,
-    // and let the atomic carry the caller's doorbell decision.
-    __device__ __forceinline__ void rdma_put_and_signal(void* dst_sym_ptr, const void* src_sym_ptr, const int& num_bytes,
-                                                       int64_t* signal_sym_ptr, const int& rid,
-                                                       const bool& ring_doorbell = true, const uint64_t& signal_value = 1) const {
-        rdma_put(dst_sym_ptr, src_sym_ptr, num_bytes, rid, false);
-        const nixlMemViewElem signal{ctx.remote_mvh, static_cast<size_t>(rid), get_offset(signal_sym_ptr)};
-        const auto status = nixlAtomicAdd<nixl_gpu_level_t::THREAD>(signal_value, signal, channel,
-                                                                  ring_doorbell ? 0 : nixl_gpu_flags::defer);
-        EP_DEVICE_ASSERT(status == NIXL_IN_PROG and "nixlAtomicAdd failed");
+    // Fuse a token's notification into its last data write. The receiving CQE covers this write and earlier writes
+    // on this same peer/channel QP. No memory word written by the NIC is used as evidence of payload arrival.
+    __device__ __forceinline__ void rdma_put_with_immediate(void* dst_sym_ptr, const void* src_sym_ptr, const int& num_bytes,
+                                                           const int& rid, const uint32_t immediate,
+                                                           const bool& ring_doorbell = true) const {
+        const nixlMemViewElem src{ctx.local_mvh, 0, get_offset(src_sym_ptr)};
+        const nixlMemViewElem dst{ctx.remote_mvh, static_cast<size_t>(rid), get_offset(dst_sym_ptr)};
+        const auto status = nixlPutWithIMM<nixl_gpu_level_t::THREAD>(
+            src, dst, static_cast<size_t>(num_bytes), immediate, channel, ring_doorbell ? 0 : nixl_gpu_flags::defer);
+        EP_DEVICE_ASSERT(status == NIXL_IN_PROG and "nixlPutWithIMM failed");
     }
 
-    // Release-add on a peer's word: a system-scope atomic over the mapping when the peer is reachable with stores,
-    // an RDMA atomic otherwise (64-bit words only; visible only after this channel's earlier writes to the peer have
-    // completed). Never mix this with plain stores into the same word
-    template <typename dtype_t>
-    __device__ __forceinline__ void red_add_rel(dtype_t* sym_ptr, const dtype_t& value, const int& rid,
-                                                const bool& ring_doorbell = true) const {
-        if (const auto dst_ptr = get_p2p_ptr(sym_ptr, rid); dst_ptr != nullptr) {
-            ptx::red_add_rel_sys(dst_ptr, value);
-        } else {
-            EP_STATIC_ASSERT(sizeof(dtype_t) == 8, "RDMA atomics are 64-bit");
-            const nixlMemViewElem dst{ctx.remote_mvh, static_cast<size_t>(rid), get_offset(sym_ptr)};
-            const auto status = nixlAtomicAdd<nixl_gpu_level_t::THREAD>(static_cast<uint64_t>(value), dst, channel,
-                                                                        ring_doorbell ? 0 : nixl_gpu_flags::defer);
-            EP_DEVICE_ASSERT(status == NIXL_IN_PROG and "nixlAtomicAdd failed");
+    // Polling acquires the payload and advances only this reader's cursor, without publishing CQ consumption.
+    __device__ __forceinline__ bool poll_receive_token_at(const int& rid, uint64_t& ci, uint32_t& token) const {
+        uint32_t immediate = 0;
+        const nixlMemViewElem peer{ctx.remote_mvh, static_cast<size_t>(rid), 0};
+        const auto status = nixlPollIMM<nixl_gpu_level_t::THREAD>(peer, channel, &ci, &immediate);
+        EP_DEVICE_ASSERT((status == NIXL_SUCCESS or status == NIXL_IN_PROG) and "nixlPollIMM failed");
+        if (status == NIXL_SUCCESS) {
+            token = immediate;
+            return true;
         }
+        return false;
     }
 
-    // Release-store of a 64-bit word the writer knows in full: a system-scope store over the mapping, else the value is
-    // staged in `staging_sym_ptr` (a word of our region only this writer uses) and put by RDMA. Preferred to a
-    // release-add where the result is known: the NIC serialises RDMA atomics, a write travels like the data it follows
+    // After all readers finish, return the consumed CQ/RQ credits and the updated CI.
+    __device__ __forceinline__ uint64_t advance_rx(const int& rid, const uint64_t consumed) const {
+        uint64_t next_ci = 0;
+        const nixlMemViewElem peer{ctx.remote_mvh, static_cast<size_t>(rid), 0};
+        const auto status = nixlAdvanceRx<nixl_gpu_level_t::THREAD>(peer, channel, consumed, &next_ci);
+        EP_DEVICE_ASSERT(status == NIXL_SUCCESS and "nixlAdvanceRx failed");
+        return next_ci;
+    }
+
+    // Release-add expert token counts and contributor counts to a mapped NVLink peer's counter.
+    template <typename dtype_t>
+    __device__ __forceinline__ void red_add_rel(dtype_t* sym_ptr, const dtype_t& value, const int& rid) const {
+        const auto dst_ptr = get_p2p_ptr(sym_ptr, rid);
+        EP_DEVICE_ASSERT(dst_ptr != nullptr and "Expert-count reduction requires an NVLink peer");
+        ptx::red_add_rel_sys(dst_ptr, value);
+    }
+
+    // Publish a barrier or READY/ARRIVED signal: release-store to a mapped peer, otherwise stage the
+    // 64-bit value in this writer's staging slot and send it with an RDMA write.
     __device__ __forceinline__ void put_word_rel(int64_t* dst_sym_ptr, int64_t* staging_sym_ptr, const int64_t& value,
                                                  const int& rid, const bool& ring_doorbell = true) const {
         if (const auto dst_ptr = get_p2p_ptr(dst_sym_ptr, rid); dst_ptr != nullptr) {
@@ -164,8 +192,8 @@ struct NIXLTransport {
         }
     }
 
-    // Copy `num_bytes` (a multiple of 4) of control words to the same offset on the peer: word stores over the mapping,
-    // an RDMA put otherwise; the receiver polls each word on its own, so the words need no order
+    // Send dispatch's count metadata with mapped word stores or a plain RDMA write; `num_bytes` is a
+    // multiple of 4. The receiver polls each encoded word independently, so inter-word order is irrelevant.
     __device__ __forceinline__ void put_words(void* dst_sym_ptr, const void* src_sym_ptr, const int& num_bytes,
                                               const int& rid, const bool& ring_doorbell = true) const {
         if (const auto dst_ptr = get_p2p_ptr(dst_sym_ptr, rid); dst_ptr != nullptr) {
@@ -178,8 +206,7 @@ struct NIXLTransport {
         }
     }
 
-    // Store one value (a word, or the direct dispatch's 16-byte count pair) on a peer reachable with stores (the scale-up peers of the
-    // hybrid path always are)
+    // Relaxed-store rank/expert counts to a mapped NVLink peer, as a scalar or a 16-byte count pair.
     template <typename dtype_t>
     __device__ __forceinline__ void put_value(dtype_t* sym_ptr, const dtype_t& value, const int& rid) const {
         const auto dst_ptr = get_p2p_ptr(sym_ptr, rid);

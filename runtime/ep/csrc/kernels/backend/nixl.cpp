@@ -78,7 +78,7 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& rank_id, 
     remote_agent_names(num_rank_ids), connect_epoch(num_rank_ids, 0), known_agent_names(num_rank_ids) {
     EP_HOST_ASSERT(0 <= rank_id and rank_id < num_rank_ids and num_rank_ids <= topology::kNumMaxRankIds);
     EP_HOST_ASSERT(num_scaleup_ranks_per_domain >= 1 and num_rank_ids % num_scaleup_ranks_per_domain == 0);
-    EP_HOST_ASSERT(num_channels >= 1);
+    EP_HOST_ASSERT(2 <= num_channels and num_channels <= 64);
     CUDA_RUNTIME_CHECK(cudaGetDevice(&device_id));
     CUdevice device;
     CUDA_DRIVER_CHECK(lazy_cuDeviceGet(&device, device_id));
@@ -139,6 +139,8 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& rank_id, 
     init_params["ucx_num_device_channels"] = std::to_string(num_channels);
     init_params["ucx_error_handling_mode"] = "none";
     init_params["num_workers"] = "1";
+    if (num_rank_ids > num_scaleup_ranks_per_domain)
+        init_params["engine_config"] = "RC_GDA_RX_QUEUE_LEN=32768";
     NIXL_CHECK(state->agent->createBackend("UCX", init_params, state->backend));
     state->extra_params.backends.push_back(state->backend);
 
@@ -440,7 +442,7 @@ void NIXLEPContext::commit(cudaStream_t stream) {
                   "unset; for an NVLink domain spanning several hosts, UCX_CUDA_IPC_ENABLE_MNNVL=yes with the IMEX "
                   "service running). The previous views stay active";
             else ss << "nixlGetPtr returned an NVLink pointer from rank " << rank_id << " to rail peer " << rid << ": the declared "
-                  "NVLink domains split one CUDA IPC clique, which the scale-out path (RDMA writes with completion atomics or arrival flags) does not "
+                  "NVLink domains split one CUDA IPC clique, which the scale-out path (RDMA writes with receive completions) does not "
                   "support; declare the whole clique as one domain, or set UCX_CUDA_IPC_ENABLE_MNNVL=n when no domain spans hosts. The previous views stay active";
             throw EPException("NIXL", __FILE__, __LINE__, ss.str());
         }

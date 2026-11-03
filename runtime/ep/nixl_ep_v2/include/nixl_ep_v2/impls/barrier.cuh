@@ -44,7 +44,7 @@ barrier_impl(void* workspace, const topology::EPTopology* topology_ptr) {
     // the `kNumMax*` constants, so `num_experts` may be 0 here
     const auto workspace_layout = layout::WorkspaceLayout(workspace, topo.num_scaleout_ranks, topo.num_scaleup_ranks, 0);
     const auto ctx = nixl::load_context(topo.transport);
-    const auto transport = nixl::NIXLTransport(ctx, 0);
+    const auto transport = nixl::NIXLTransport(ctx, comm::get_nixl_notify_channel_idx());
     const auto thread_idx = static_cast<int>(threadIdx.x);
 
     // Pending TMA and generic stores of earlier kernels are complete (stream order); the arrivals publish them, and a peer's

@@ -107,6 +107,14 @@ enum Mode : int {
     kModeHybrid = 1,  // RDMA between NVLink domains, NVLink inside them
 };
 
+// Dispatch starting CI and per-cycle CQE counts for each peer/QP.
+// dispatch_start_ci stays fixed during dispatch; dispatch_consumed stays fixed during combine.
+struct CompletionUsageState {
+    unsigned long long dispatch_start_ci;
+    unsigned long long dispatch_consumed;
+    unsigned long long combined_consumed;
+};
+
 // Device-resident topology descriptor (`EPTopology`): written by the host between launches, read by every adaptive kernel block at entry
 // The live world is the product of the live domains (`scaleout_mask`, bit d) and the live positions of a domain
 // (`scaleup_mask`, bit k): rank (d, k) takes part iff both bits are set; `num_scaleout_ranks` / `num_scaleup_ranks`
@@ -125,6 +133,8 @@ struct alignas(128) EPTopology {
     ScaleupMask scaleup_mask;
     // The transport context (memory views, p2p pointers, channels): loaded from here, so a change of peers needs no re-capture
     const nixl::NIXLDeviceContext* transport;
+    // Local CQ usage, indexed by peer domain and NIXL channel.
+    CompletionUsageState* completion_usage;
 
     __device__ __host__ __forceinline__ bool is_scaleout_live(const int& idx) const {
         return idx >= 0 and idx < num_scaleout_ranks and ((scaleout_mask >> idx) & 1u);
@@ -177,6 +187,7 @@ __device__ __forceinline__ EPTopology load(const EPTopology* ptr) {
     for (int i = 0; i < kNumScaleupMaskWords; ++ i)
         topo.scaleup_mask.words[i] = __ldg(reinterpret_cast<const unsigned long long*>(&ptr->scaleup_mask.words[i]));
     topo.transport = reinterpret_cast<const nixl::NIXLDeviceContext*>(__ldg(reinterpret_cast<const unsigned long long*>(&ptr->transport)));
+    topo.completion_usage = reinterpret_cast<CompletionUsageState*>(__ldg(reinterpret_cast<const unsigned long long*>(&ptr->completion_usage)));
     return topo;
 #else
     return *ptr;

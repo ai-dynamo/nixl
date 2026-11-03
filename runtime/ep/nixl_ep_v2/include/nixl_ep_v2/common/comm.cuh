@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <utility>
+
 #include <nixl_ep_v2/common/ptx.cuh>
 #include <nixl_ep_v2/common/layout.cuh>
 #include <nixl_ep_v2/common/nixl_transport.cuh>
@@ -108,21 +110,71 @@ __device__ __forceinline__ void active_grid_sync(unsigned* barrier_ptr, const in
     __syncthreads();
 }
 
-// The channel a warp issues on. Channel 0 serves the notify warps (reserved for them when `kWithNotifyWarps`) and a one-channel context;
-// the other channels are striped over the launch blocks, a block's warps cycling through its stripe, or wrap around when the blocks outnumber them
-template <int kNumLaunchSMs, int kNumChannelsPerSM, bool kWithNotifyWarps = false>
-__device__ __forceinline__ int get_channel_idx(const int& sm_idx, const int& channel_in_sm_idx,
-                                               const int& num_channels, const bool& is_notify_warp = false) {
-    if (num_channels == 1 or is_notify_warp)
-        return 0;
-    constexpr int kChannelStartIdx = static_cast<int>(kWithNotifyWarps);
-    const int num_available_channels = num_channels - kChannelStartIdx;
-    if (kNumLaunchSMs <= num_available_channels) {
-        const int num_channels_in_sm = (num_available_channels / kNumLaunchSMs) +
-                                       (sm_idx < (num_available_channels % kNumLaunchSMs));
-        return kChannelStartIdx + sm_idx + (channel_in_sm_idx % num_channels_in_sm) * kNumLaunchSMs;
+// Number warps across SMs before advancing to the next local warp.
+__device__ __forceinline__ int cross_sm_warp_idx(const int sm_idx, const int warp_in_sm_idx, const int num_sms) {
+    return warp_in_sm_idx * num_sms + sm_idx;
+}
+
+__device__ __forceinline__ int get_nixl_notify_channel_idx() {
+    return 0;
+}
+
+// Data channel group for an SM, when every active SM has at least one channel.
+__device__ __forceinline__ std::pair<int, int> get_sm_nixl_channels(const int sm_idx, const int num_active_sms,
+                                                                const int nixl_data_channels) {
+    const int num_nixl_channels_per_sm = nixl_data_channels / num_active_sms;
+    const int num_extra_nixl_channels = nixl_data_channels % num_active_sms;
+    const int start = 1 + sm_idx * num_nixl_channels_per_sm +
+                      (sm_idx < num_extra_nixl_channels ? sm_idx : num_extra_nixl_channels);
+    const int count = num_nixl_channels_per_sm + (sm_idx < num_extra_nixl_channels);
+    return {start, count};
+}
+
+// Data warps share their SM's group; channel 0 is reserved for notify traffic.
+__device__ __forceinline__ int get_nixl_channel_idx(const int sm_idx, const int warp_in_sm_idx,
+                                                 const int num_active_sms, const int num_nixl_channels) {
+    const int nixl_data_channels = num_nixl_channels - 1;
+    if (num_active_sms <= nixl_data_channels) {
+        const auto [start, count] = get_sm_nixl_channels(sm_idx, num_active_sms, nixl_data_channels);
+        return start + warp_in_sm_idx % count;
     }
-    return kChannelStartIdx + (sm_idx * kNumChannelsPerSM + channel_in_sm_idx) % num_available_channels;
+    return 1 + (warp_in_sm_idx * num_active_sms + sm_idx) % nixl_data_channels;
+}
+
+// The first local warp using each QP retires it; the first SMs own the wrapped fallback QPs.
+__device__ __forceinline__ bool is_cq_replenish_warp(const int sm_idx, const int warp_in_sm_idx,
+                                                   const int num_active_sms, const int nixl_data_channels) {
+    if (num_active_sms <= nixl_data_channels) {
+        return warp_in_sm_idx < get_sm_nixl_channels(sm_idx, num_active_sms, nixl_data_channels).second;
+    }
+    return warp_in_sm_idx == 0 and sm_idx < nixl_data_channels;
+}
+
+// The preceding combine epilogue has completed on this stream. The lowest
+// logical forward warp mapped to each QP returns dispatch + combine credits,
+// one lane per peer. The entry barrier's trailing grid sync publishes the
+// dispatch starting CI and cleared per-cycle counts before polling.
+template <int kNumNotifyWarps, int kNumScaleoutWarps, int kNumMaxScaleupRanks>
+__device__ __forceinline__ void replenish_cq_rq(const nixl::NIXLTransport& transport,
+                                               const topology::EPTopology& topo,
+                                               const int sm_idx, const int warp_idx, const int lane_idx) {
+    const auto& ctx = transport.ctx;
+    if (warp_idx >= kNumNotifyWarps + kNumScaleoutWarps) {
+        const int forward_warp_idx = warp_idx - kNumNotifyWarps - kNumScaleoutWarps;
+        if (is_cq_replenish_warp(
+                sm_idx, forward_warp_idx, topo.num_active_sms, ctx.num_channels - 1)) {
+            if (lane_idx != topo.scaleout_rank_idx and topo.is_scaleout_live(lane_idx)) {
+                auto* state = &topo.completion_usage[lane_idx * ctx.num_channels + transport.channel];
+                const auto consumed = state->dispatch_consumed + state->combined_consumed;
+                if (consumed != 0) {
+                    const int peer_id = topology::rank_id(lane_idx, topo.scaleup_rank_idx, kNumMaxScaleupRanks);
+                    state->dispatch_start_ci = transport.advance_rx(peer_id, consumed);
+                    state->dispatch_consumed = 0;
+                    state->combined_consumed = 0;
+                }
+            }
+        }
+    }
 }
 
 // One leg of the per-peer barrier, run by one block: thread `t` arrives on peer position `t` of the leg (a scale-up
@@ -310,11 +362,12 @@ __device__ __forceinline__ void peer_arrived_exchange_rt(const nixl::NIXLTranspo
     __syncwarp();
 }
 
-// No kernel waits for an RDMA completion (the puts carry no status handle): a put has landed once its receiver has
+// No kernel waits for a send completion (the puts carry no status handle): a put has landed once its receiver has
 // consumed it, and every receiver consumes all puts of a launch before its next barrier with the sender (dispatch
 // records and count words inside the receiving dispatch, combine rows in the reduce epilogue, stream-ordered before
 // the next launch). A rank past a start barrier or a `barrier_impl` on `comm_stream` may therefore rewrite its send
 // buffers; a peer may be disconnected once it has passed that barrier too (its arrival word is not its exit).
+// Dispatch's entry barrier orders CQ/RQ replenishment before new polling.
 // The adaptive kernels' GPU barrier: scale-up inside the NVLink domain, scale-out over the rail peers, in parallel
 // when both are needed (SM 0 does scale-up, SM 1 does scale-out). Every grid-wide sync counts active blocks only.
 template <int kNumThreads, int64_t kNumTimeoutCycles, int kTag, int kNumMaxScaleupRanks,
@@ -345,8 +398,8 @@ __device__ __forceinline__ void gpu_barrier_rt(const nixl::NIXLTransport& transp
     do_scaleout &= topo.num_live_scaleout_ranks() > 1;
     do_scaleup &= topo.scaleup_mask.popc() > 1;
 
-    // Barrier arrivals go on channel 0
-    const nixl::NIXLTransport barrier_transport(transport.ctx, 0);
+    // Barrier arrivals use the NIXL notify channel
+    const nixl::NIXLTransport barrier_transport(transport.ctx, get_nixl_notify_channel_idx());
     if (do_scaleup and do_scaleout) {
         EP_DEVICE_ASSERT(num_active_sms >= 2 and "At least 2 SMs for a hybrid barrier");
         if (sm_idx == 0) {

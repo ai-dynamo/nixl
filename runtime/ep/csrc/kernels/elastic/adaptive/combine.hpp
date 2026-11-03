@@ -43,7 +43,6 @@ public:
         int num_experts_per_rank;
         int num_topk;
         int64_t num_timeout_cycles;
-        bool payload_flags;
 
         // Parameters
         nv_bfloat16* x;
@@ -69,7 +68,7 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
                            args.use_expanded_layout, args.allow_multiple_reduction,
@@ -79,7 +78,7 @@ static void __instantiate_kernel() {{
                            args.hidden,
                            args.num_experts_per_rank,
                            args.num_topk,
-                           args.num_timeout_cycles, args.payload_flags);
+                           args.num_timeout_cycles);
     }
 
     static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
@@ -115,10 +114,9 @@ static void launch_combine(void* x,
                            const int& num_smem_bytes,
                            const bool& use_expanded_layout, const bool& allow_multiple_reduction,
                            const bool& dynamic_take,
-                           const bool& payload_flags,
                            const at::cuda::CUDAStream& stream) {
     // Each channel owns one scale-up warp and one forward warp; the block shape is fixed with the buffer
-    const auto token_layout = get_combine_token_layout(hidden, sizeof(nv_bfloat16), num_topk, payload_flags);
+    const auto token_layout = get_combine_token_layout(hidden, sizeof(nv_bfloat16), num_topk);
     EP_HOST_ASSERT(1 <= num_channels_per_sm and num_channels_per_sm <= kNumMaxChannelsPerSM);
     const int num_warps = 2 * num_channels_per_sm;
     EP_HOST_ASSERT(num_warps * token_layout.get_num_bytes<true>() <= num_smem_bytes and
@@ -137,7 +135,6 @@ static void launch_combine(void* x,
         .num_experts_per_rank = num_experts_per_rank,
         .num_topk = num_topk,
         .num_timeout_cycles = num_timeout_cycles,
-        .payload_flags = payload_flags,
         .x = static_cast<nv_bfloat16*>(x),
         .topk_weights = static_cast<float*>(topk_weights),
         .src_metadata = src_metadata,
@@ -162,16 +159,16 @@ public:
     struct Args {
         // Templated arguments
         bool use_expanded_layout, allow_multiple_reduction;
-        int num_channels_per_sm;
+        int num_channels_per_sm, num_nixl_channels;
         int hidden;
         int num_experts_per_rank, num_topk;
         int64_t num_timeout_cycles;
-        bool acquire_flags, payload_flags;
 
         // Parameters
         nv_bfloat16* combined_x;
         float* combined_topk_weights;
         topk_idx_t* combined_topk_idx;
+        uint8_t* token_result_imm_completions;
         void* buffer;
         void* workspace;
         void* bias_0;
@@ -179,6 +176,7 @@ public:
         int num_combined_tokens;
         const topology::EPTopology* topology;
         int num_max_tokens_per_rank;
+        int num_max_scaleup_ranks;
 
         jit::LaunchArgs launch_args;
     };
@@ -190,15 +188,15 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",                        args.use_expanded_layout, args.allow_multiple_reduction,
                            args.launch_args.grid_dim.first,
                            args.launch_args.num_threads / 32,
-                           args.num_channels_per_sm,
+                           args.num_channels_per_sm, args.num_nixl_channels,
                            args.hidden,
                            args.num_experts_per_rank, args.num_topk,
-                           args.num_timeout_cycles, args.acquire_flags, args.payload_flags);
+                           args.num_timeout_cycles);
     }
 
     static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
@@ -206,17 +204,20 @@ static void __instantiate_kernel() {{
                                                  args.combined_x,
                                                  args.combined_topk_weights,
                                                  args.combined_topk_idx,
+                                                 args.token_result_imm_completions,
                                                  args.buffer, args.workspace,
                                                  args.bias_0, args.bias_1,
                                                  args.num_combined_tokens,
                                                  args.topology,
-                                                 args.num_max_tokens_per_rank));
+                                                 args.num_max_tokens_per_rank,
+                                                 args.num_max_scaleup_ranks));
     }
 };
 
 static void launch_combine_reduce_epilogue(void* combined_x,
                                            float* combined_topk_weights,
                                            topk_idx_t* combined_topk_idx,
+                                           uint8_t* token_result_imm_completions,
                                            const int& num_combined_tokens, const int& num_max_tokens_per_rank,
                                            const int& hidden,
                                            const int& num_experts_per_rank, const int& num_topk,
@@ -225,11 +226,11 @@ static void launch_combine_reduce_epilogue(void* combined_x,
                                            void* workspace,
                                            void* bias_0, void* bias_1,
                                            const topology::EPTopology* topology,
+                                           const int& num_max_scaleup_ranks,
                                            const int& num_sms, const int& num_smem_bytes,
                                            const int& num_channels_per_sm,
+                                           const int num_nixl_channels,
                                            const bool& use_expanded_layout, const bool& allow_multiple_reduction,
-                                           const bool& acquire_flags,
-                                           const bool& payload_flags,
                                            const at::cuda::CUDAStream& stream) {
     // Maximize shared memory utilization
     // Too many warps may cause performance degrade, so we limit into 1024
@@ -242,18 +243,20 @@ static void launch_combine_reduce_epilogue(void* combined_x,
         .use_expanded_layout = use_expanded_layout,
         .allow_multiple_reduction = allow_multiple_reduction,
         .num_channels_per_sm = num_channels_per_sm,
+        .num_nixl_channels = num_nixl_channels,
         .hidden = hidden,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk,
         .num_timeout_cycles = num_timeout_cycles,
-        .acquire_flags = acquire_flags, .payload_flags = payload_flags,
         .combined_x = static_cast<nv_bfloat16*>(combined_x),
         .combined_topk_weights = combined_topk_weights,
         .combined_topk_idx = combined_topk_idx,
+        .token_result_imm_completions = token_result_imm_completions,
         .buffer = buffer, .workspace = workspace,
         .bias_0 = bias_0, .bias_1 = bias_1,
         .num_combined_tokens = num_combined_tokens,
         .topology = topology,
         .num_max_tokens_per_rank = num_max_tokens_per_rank,
+        .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .launch_args = jit::LaunchArgs(num_sms, num_threads, num_smem_bytes, 1, false, true)
     };
     const auto code = CombineReduceEpilogueRuntime::generate(args);

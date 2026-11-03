@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <nixl_ep_v2/common/comm.cuh>
 #include <nixl_ep_v2/common/compiled.cuh>
 #include <nixl_ep_v2/common/layout.cuh>
 #include <nixl_ep_v2/common/math.cuh>
@@ -37,7 +38,6 @@ template <bool kDoExpand, bool kDoZeroPadding, bool kZeroCopy,
           int kNumSMs, int kNumChannelsPerSM, int kNumWarps,
           int kNumHiddenBytes, int kNumSFPacks,
           int kNumExpertsPerRank, int kNumTopk, int kExpertAlignment,
-          bool kPayloadFlags = false,   // the dispatch's record carries flag and spill slots (`payload_flags`); sizes the rows only
           int kNumThreads = kNumWarps * 32>
 __global__ void __launch_bounds__(kNumThreads, 1)
 dispatch_copy_epilogue_impl(void* buffer, void* workspace,
@@ -64,7 +64,7 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
     // Utils
     const auto sm_idx = static_cast<int>(blockIdx.x), thread_idx = static_cast<int>(threadIdx.x);
     const auto warp_idx = ptx::get_warp_idx(), lane_idx = ptx::get_lane_idx();
-    const auto global_warp_idx = warp_idx * kNumSMs + sm_idx;
+    const auto global_warp_idx = comm::cross_sm_warp_idx(sm_idx, warp_idx, kNumSMs);
 
     // For top-k index transformations (fixed expert slots per rank: the live expert count follows the live rank count)
     const int num_experts_per_rank = kNumExpertsPerRank;
@@ -74,7 +74,7 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
 
     // Buffer layouts
     extern __shared__ __align__(ptx::kNumTMAAlignBytes) int8_t smem[];
-    const auto token_layout = layout::TokenLayout(kNumHiddenBytes, kNumSFPacks * sizeof(sf_pack_t), kNumTopk, true, nullptr, kPayloadFlags);
+    const auto token_layout = layout::TokenLayout(kNumHiddenBytes, kNumSFPacks * sizeof(sf_pack_t), kNumTopk, true);
     const auto tma_buffer = layout::BufferLayout<true>(token_layout, kNumWarps, 1, smem)
         .get_rank_buffer(warp_idx).get_token_buffer(0);
     const auto scaleup_buffer = layout::BufferLayout<false>(token_layout, num_scaleup_ranks, num_scaleout_ranks * num_max_tokens_per_rank, buffer);

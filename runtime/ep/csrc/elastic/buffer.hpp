@@ -72,20 +72,6 @@ class ElasticBuffer {
     // by the notify count protocol and ignores the flag
     int dynamic_take_mode;
 
-    // Arrival protocol of the scale-out receivers (the forwarder and the combine's reduce epilogue): false (the default) = relaxed
-    // polls of the record's arrival signal (the completion counter; every per-packet flag under `payload_flags`) followed by one
-    // acquire fence before the landed record is read; true = acquire polls and, in the forwarder, only the proxy fence its bulk load
-    // needs (4x8 dispatch measured -10 to -13 % at 16-128 tokens, -5 % at 1024, -2 % at 4096 with the per-packet flags; combine
-    // unchanged). Compile-time in the kernels (one instantiation per setting)
-    bool acquire_flags;
-
-    // Arrival mechanism of the scale-out records: false (the default) = the batched completion counters (RDMA puts + atomic adds,
-    // own-domain release stores); true = the per-packet flags inside every record (`TokenLayout::with_flags`: the last 16 bytes of
-    // each 4096-byte packet, spill slots behind the metadata; needs UCX_IB_PCI_RELAXED_ORDERING=n and UCX_IB_PATH_MTU=4096, asserted
-    // by the Python side). Compile-time in the four kernels (one instantiation per setting) and part of the record size on this
-    // rank's buffer, so the same on every rank
-    bool payload_flags;
-
     // Timeout settings
     int num_cpu_timeout_secs;
     int64_t num_gpu_timeout_cycles;
@@ -101,6 +87,7 @@ class ElasticBuffer {
     int num_experts_per_rank = 0;
     // Adaptive kernels: device-side topology descriptor (+ host mirror) and the fixed channel count per SM
     torch::Tensor topology_tensor;
+    torch::Tensor completion_usage_tensor;
     topology::EPTopology topology_host{}, staged_topology{};
     bool has_staged_topology = false;
     mutable std::optional<int> adaptive_num_channels_per_sm;
@@ -137,15 +124,13 @@ public:
                   const int& num_nixl_channels, const std::string& agent_name_prefix,
                   const int& num_experts_per_rank,
                   const int64_t& num_zero_copy_bytes,
-                  const int& dynamic_take_mode,
-                  const bool& acquire_flags,
-                  const bool& payload_flags):
+                  const int& dynamic_take_mode):
         num_buffer_bytes(num_buffer_bytes),
         explicitly_destroy(explicitly_destroy),
         comm_stream(get_global_comm_stream()),
         allow_multiple_reduction(allow_multiple_reduction),
         prefer_overlap_with_compute(prefer_overlap_with_compute),
-        dynamic_take_mode(dynamic_take_mode), acquire_flags(acquire_flags), payload_flags(payload_flags),
+        dynamic_take_mode(dynamic_take_mode),
         max_num_scaleout_ranks(max_num_scaleout_ranks), max_num_scaleup_ranks(max_num_scaleup_ranks), scaleout_rank_idx(scaleout_rank_idx), scaleup_rank_idx(scaleup_rank_idx),
         num_experts_per_rank(num_experts_per_rank), num_zero_copy_bytes(num_zero_copy_bytes) {
         // Check buffer bytes alignment (2 MB)
@@ -183,6 +168,10 @@ public:
         // Topology descriptor (`EPTopology`); its `mode` follows the live domains: the Python layer derives it for every world it stages
         topology_tensor = torch::empty({static_cast<int64_t>(sizeof(topology::EPTopology))},
                                        torch::TensorOptions().dtype(torch::kByte).device(torch::kCUDA));
+        const int64_t num_completion_usage_bytes =
+            static_cast<int64_t>(max_num_scaleout_ranks) * num_nixl_channels * sizeof(topology::CompletionUsageState);
+        completion_usage_tensor = torch::zeros({num_completion_usage_bytes},
+                                               torch::TensorOptions().dtype(torch::kByte).device(torch::kCUDA));
 
         // Timeout
         this->num_cpu_timeout_secs = num_cpu_timeout_secs;
@@ -278,6 +267,7 @@ public:
                 EP_HOST_ASSERT((not (((scaleout_mask >> d) & 1u) and scaleup_mask.test(k)) or
                                 nixl_context->is_connected(topology::rank_id(d, k, max_num_scaleup_ranks))) and "A live rank is not connected: call `connect_ranks` first");
         staged_topology.transport = nixl_context->get_device_context_ptr();
+        staged_topology.completion_usage = static_cast<topology::CompletionUsageState*>(completion_usage_tensor.data_ptr());
 
         staged_topology.mode = static_cast<topology::Mode>(mode);
         staged_topology.num_scaleout_ranks = num_scaleout_ranks;
@@ -398,6 +388,11 @@ public:
         const auto stream = at::cuda::getCurrentCUDAStream();
         for (const int rid: rank_ids) {
             EP_HOST_ASSERT(not nixl_context->is_connected(rid) and "Peer already connected");
+            if (rid % max_num_scaleup_ranks == scaleup_rank_idx and rid / max_num_scaleup_ranks != scaleout_rank_idx) {
+                auto* usage = static_cast<topology::CompletionUsageState*>(completion_usage_tensor.data_ptr()) +
+                              (rid / max_num_scaleup_ranks) * nixl_context->num_channels;
+                CUDA_RUNTIME_CHECK(cudaMemsetAsync(usage, 0, nixl_context->num_channels * sizeof(*usage), stream));
+            }
             const auto& wl = *workspace_layout_wo_expert;
             for (int parity = 0; parity < 2; ++ parity) {
                 CUDA_RUNTIME_CHECK(cudaMemsetAsync(wl.get_peer_barrier_signal_ptr(rid, parity), 0, sizeof(int64_t), stream));
@@ -527,9 +522,8 @@ public:
 
     static std::tuple<int64_t, int64_t> get_dispatch_buffer_size(const int& num_max_tokens_per_rank,
                                             const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk,
-                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks,
-                                            const bool& with_flags) {
-        const auto token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk, with_flags);
+                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
+        const auto token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk);
 
         const auto scaleup_recv_buffer = layout::BufferLayout<false>(
             token_layout, num_scaleup_ranks, num_scaleout_ranks * num_max_tokens_per_rank);
@@ -544,8 +538,8 @@ public:
 
     static std::tuple<int64_t, int64_t> get_combine_buffer_size(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks,
-                                           const bool& allow_multiple_reduction, const bool& with_flags) {
-        const auto token_layout = get_combine_token_layout(hidden, sizeof(nv_bfloat16), num_topk, with_flags);
+                                           const bool& allow_multiple_reduction) {
+        const auto token_layout = get_combine_token_layout(hidden, sizeof(nv_bfloat16), num_topk);
 
         const int num_tokens_in_scaleup_layout = allow_multiple_reduction ? std::min(num_scaleup_ranks, num_topk) : num_topk;
         const int num_tokens_in_scaleout_layout = allow_multiple_reduction ? std::min(num_scaleout_ranks, num_topk) : num_topk;
@@ -563,16 +557,14 @@ public:
 
     // Dispatch and combine overlay their RECEIVE regions on `[0, num_shared_bytes)`, sized for the larger one.
     // Their separate SEND regions sit at the end of the token arena.
-    // `with_flags`: the record carries the arrival flags of the payload-flag protocol (`payload_flags`)
     static std::tuple<int64_t, int64_t, int64_t> get_buffer_arena(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
                                                                   const bool& allow_multiple_reduction,
-                                                                  const int& num_scaleout_ranks, const int& num_scaleup_ranks,
-                                                                  const bool& with_flags) {
+                                                                  const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
         // The BF16-wire dispatch record is the larger one (the FP8 and NVFP4 wires add their SF bytes to a half- or quarter-size row)
         const auto [num_dispatch_recv_bytes, num_dispatch_send_bytes] = get_dispatch_buffer_size(
-            num_max_tokens_per_rank, hidden * sizeof(nv_bfloat16), 0, num_topk, num_scaleout_ranks, num_scaleup_ranks, with_flags);
+            num_max_tokens_per_rank, hidden * sizeof(nv_bfloat16), 0, num_topk, num_scaleout_ranks, num_scaleup_ranks);
         const auto [num_combine_recv_bytes, num_combine_send_bytes] = get_combine_buffer_size(
-            num_max_tokens_per_rank, hidden, num_topk, num_scaleout_ranks, num_scaleup_ranks, allow_multiple_reduction, with_flags);
+            num_max_tokens_per_rank, hidden, num_topk, num_scaleout_ranks, num_scaleup_ranks, allow_multiple_reduction);
         return {std::max(num_dispatch_recv_bytes, num_combine_recv_bytes), num_dispatch_send_bytes, num_combine_send_bytes};
     }
 
@@ -580,7 +572,7 @@ public:
     static int64_t calculate_buffer_size(const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
                                          const int& num_max_tokens_per_rank, const int& hidden,
                                          int num_topk, const bool& use_fp8_dispatch,
-                                         const bool& allow_multiple_reduction, const bool& payload_flags) {
+                                         const bool& allow_multiple_reduction) {
         EP_HOST_ASSERT(num_max_tokens_per_rank > 0 and hidden > 0);
 
         // The worst case SF bytes must be less than the main part
@@ -589,10 +581,9 @@ public:
         // NOTES: there are lots of `kNumTopk <= 32` restrictions, so we use 32 to calculate token size
         num_topk = num_topk == 0 ? 32 : num_topk;
 
-        // Shared receive regions and two send buffers, aligned to 2 MB; the record of the buffer's `payload_flags` (the instance
-        // checks its carving against the size at the first dispatch/combine)
+        // Shared receive regions and two send buffers, aligned to 2 MB
         const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena(
-            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks, payload_flags);
+            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
         return math::align(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes, kNumAlignmentBytes);
     }
 
@@ -676,7 +667,7 @@ public:
         const int max_num_ranks = max_num_scaleout_ranks * max_num_scaleup_ranks;
         const int num_channels_per_sm = get_num_channels_per_sm(
             hidden, num_hidden_bytes, num_sf_packs, num_topk, max_num_ranks * num_experts_per_rank,
-            max_num_ranks, max_num_scaleout_ranks, jit::device_runtime->get_num_smem_bytes(), prefer_overlap_with_compute, payload_flags);
+            max_num_ranks, max_num_scaleout_ranks, jit::device_runtime->get_num_smem_bytes(), prefer_overlap_with_compute);
         const int num_threads = (kNumNotifyWarps + 2 * num_channels_per_sm) * 32;
         EP_HOST_ASSERT(static_cast<int64_t>(max_num_scaleup_ranks) * math::ceil_div(max_num_ranks * (1 + num_experts_per_rank), 4) <= 64 * static_cast<int64_t>(num_threads) and "The declared world's count rows exceed the sweep's chunk budget (one row per position, the world's rank and expert words each)");
 
@@ -852,7 +843,7 @@ public:
         // The block shape is part of the captured launch, so the channel count per SM is fixed once
         const int num_channels_per_sm = get_num_channels_per_sm(
             hidden, num_hidden_bytes, num_sf_packs, num_topk, max_num_ranks * num_experts_per_rank,
-            max_num_ranks, max_num_scaleout_ranks, num_smem_bytes, prefer_overlap_with_compute, payload_flags);
+            max_num_ranks, max_num_scaleout_ranks, num_smem_bytes, prefer_overlap_with_compute);
         if (not adaptive_num_channels_per_sm.has_value()) {
             adaptive_num_channels_per_sm = num_channels_per_sm;
             if (get_env<int>("NIXL_EP_BUFFER_DEBUG"))
@@ -911,12 +902,12 @@ public:
 
         // Check buffer size
         const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena(
-            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks, payload_flags);
+            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
         EP_HOST_ASSERT(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes <= num_buffer_bytes and
-                       "The buffer is smaller than its carving: size it with `calculate_buffer_size` for this buffer's `payload_flags`");
+                       "The buffer is smaller than its carving: size it with `calculate_buffer_size`");
         const auto [num_wire_recv_bytes, num_wire_send_bytes] = get_dispatch_buffer_size(
                        num_max_tokens_per_rank, num_hidden_bytes, num_sf_packs, num_topk,
-                       max_num_scaleout_ranks, max_num_scaleup_ranks, payload_flags);
+                       max_num_scaleout_ranks, max_num_scaleup_ranks);
         EP_HOST_ASSERT(num_wire_recv_bytes <= num_buffer_bytes - num_dispatch_send_bytes - num_combine_send_bytes and
                        num_wire_send_bytes <= num_dispatch_send_bytes);
 
@@ -978,8 +969,6 @@ public:
                         zc_count_matrix_ptr, zero_copy ? zc.count_row_stride : 0, zero_copy ? zc.count_matrix_rows : 0,
                         zero_copy ? zero_copy_slot : 0,
                         resolve_dynamic_take(),
-                        acquire_flags,
-                        payload_flags,
                         comm_stream);
 
         // Received token counters
@@ -1141,7 +1130,6 @@ public:
                                       jit::device_runtime->get_num_smem_bytes(),
                                       num_channels_per_sm,
                                       do_expand, do_zero_padding, zero_copy,
-                                      payload_flags,
                                       comm_stream);
 
         // Stream control
@@ -1254,9 +1242,9 @@ public:
 
         // Check buffer size
         const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena(
-            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks, payload_flags);
+            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
         EP_HOST_ASSERT(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes <= num_buffer_bytes and
-                       "The buffer is smaller than its carving: size it with `calculate_buffer_size` for this buffer's `payload_flags`");
+                       "The buffer is smaller than its carving: size it with `calculate_buffer_size`");
 
         // The forwarding metadata of the dispatch handle
         // The token metadata during forward
@@ -1302,7 +1290,6 @@ public:
             jit::device_runtime->get_num_smem_bytes(),
             use_expanded_layout, allow_multiple_reduction,
             resolve_dynamic_take(),
-            payload_flags,
             comm_stream);
         // Allocate output tensors
         auto combined_x = torch::empty({num_combined_tokens, hidden}, x.options());
@@ -1312,6 +1299,7 @@ public:
             combined_topk_weights = torch::empty({num_combined_tokens, num_topk}, topk_weights->options());
             combined_topk_weights_ptr = combined_topk_weights->data_ptr<float>();
         }
+        auto token_result_imm_completions = torch::empty({num_combined_tokens}, x.options().dtype(torch::kByte));
 
         // Combine pushed data: the reduce epilogue derives the rows to reduce from the topology descriptor
         // (`EPTopology`, its `mode` and rank counts) and takes the buffer base
@@ -1319,6 +1307,7 @@ public:
         launch_combine_reduce_epilogue(combined_x.data_ptr(),
                                        combined_topk_weights_ptr,
                                        combined_topk_idx.data_ptr<topk_idx_t>(),
+                                       token_result_imm_completions.data_ptr<uint8_t>(),
                                        num_combined_tokens, num_max_tokens_per_rank,
                                        hidden,
                                        num_experts_per_rank, num_topk,
@@ -1326,12 +1315,12 @@ public:
                                        buffer, workspace,
                                        bias_ptrs[0], bias_ptrs[1],
                                        get_topology_ptr(),
+                                       max_num_scaleup_ranks,
                                        jit::device_runtime->get_num_sms(),
                                        jit::device_runtime->get_num_smem_bytes(),
                                        *adaptive_num_channels_per_sm,
+                                       nixl_context->num_channels,
                                        use_expanded_layout, allow_multiple_reduction,
-                                       acquire_flags,
-                                       payload_flags,
                                        comm_stream);
 
         // Stream control
@@ -1340,6 +1329,7 @@ public:
              src_metadata,
              combined_topk_idx,
              combined_x, combined_topk_weights,
+             token_result_imm_completions,
              psum_num_recv_tokens_per_scaleup_rank,
              token_metadata_at_forward,
              channel_linked_list},
@@ -1355,7 +1345,7 @@ static void register_apis(pybind11::module_& m) {
         .def("current_stream_wait", &EventHandle::current_stream_wait);
 
     pybind11::class_<ElasticBuffer>(m, "ElasticBuffer")
-        .def(pybind11::init<int64_t, bool, bool, int, int, bool, int, int, int, int, int, std::string, int, int64_t, int, bool, bool>())
+        .def(pybind11::init<int64_t, bool, bool, int, int, bool, int, int, int, int, int, std::string, int, int64_t, int>())
         .def("destroy", &ElasticBuffer::destroy)
         .def("get_comm_stream", &ElasticBuffer::get_comm_stream)
         .def("get_physical_domain_size", &ElasticBuffer::get_physical_domain_size)
