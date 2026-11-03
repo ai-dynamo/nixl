@@ -278,7 +278,16 @@ else
     export NVM_DIR=${HOME}/.nvm
     [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
     nvm install --lts  # install nodejs
-    npm install -g azurite@${AZURITE_VER}
+    # npm's fetch-retries don't cover a connection dropped mid-download
+    for i in {1..3}; do
+        npm install -g "azurite@${AZURITE_VER}" && break
+        if [ "$i" = 3 ]; then
+            echo "ERROR: failed to install azurite@${AZURITE_VER}" >&2
+            exit 1
+        fi
+        echo "npm install azurite failed (attempt $i), retrying..." >&2
+        sleep $((10 * i))
+    done
 
     wget --tries=3 --waitretry=5 -O "${BUILD_TMP}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
     tar xjf "${BUILD_TMP}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -C ${BUILD_TMP}
