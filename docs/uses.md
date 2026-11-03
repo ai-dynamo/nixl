@@ -32,7 +32,7 @@ There are multiple designs to achieve these goals with different trade-offs:
     - Limited elasticity and fault tolerance:
       - Need to maintain a collective group including both the training and inference workers.
 
-NIXL's unique combination of performance, flexibility and simple to use APIs make it a great backend for implementing any of these strategies, allowing the user to select a design based on their needs.
+NIXL's unique combination of performance, flexibility, and easy-to-use APIs makes it a great backend for implementing any of these strategies, allowing the user to select a design based on their needs.
 
 #### Framework agnostic libraries/backends
 
