@@ -232,7 +232,11 @@ runPathModeSmoke(const std::string &backend_name,
 // what the recovery path must guarantee: the request reaches a terminal
 // status, releases, and the single pool slot serves the next transfer.
 static int
-runRecoveryCase(const char *name, const char *hook, const std::string &dir, bool use_direct) {
+runRecoveryCase(const char *name,
+                const char *hook,
+                const std::string &dir,
+                bool use_direct,
+                bool use_dram) {
     const size_t size = 512 * 1024;
     const std::string path = dir + "/nixl_gds_" + name + ".bin";
     int rc = 1;
@@ -260,14 +264,19 @@ runRecoveryCase(const char *name, const char *hook, const std::string &dir, bool
     }
 
     void *gpu = nullptr;
-    if (cudaMalloc(&gpu, size) != cudaSuccess) {
-        std::cerr << "cudaMalloc failed" << std::endl;
+    if (use_dram ? posix_memalign(&gpu, PAGE_SIZE, size) != 0 :
+                   cudaMalloc(&gpu, size) != cudaSuccess) {
+        std::cerr << "buffer allocation failed" << std::endl;
         close(fd);
         return 1;
     }
-    cudaMemset(gpu, 0x5a, size);
+    if (use_dram) {
+        memset(gpu, 0x5a, size);
+    } else {
+        cudaMemset(gpu, 0x5a, size);
+    }
 
-    nixl_reg_dlist_t vram_reg(VRAM_SEG), file_reg(FILE_SEG);
+    nixl_reg_dlist_t vram_reg(use_dram ? DRAM_SEG : VRAM_SEG), file_reg(FILE_SEG);
     vram_reg.addDesc(nixlBlobDesc((uintptr_t)gpu, size, 0));
     file_reg.addDesc(nixlBlobDesc(0, size, fd));
     if (agent.registerMem(vram_reg) != NIXL_SUCCESS ||
@@ -334,7 +343,11 @@ out_dereg:
     agent.deregisterMem(file_reg);
     agent.deregisterMem(vram_reg);
 out:
-    cudaFree(gpu);
+    if (use_dram) {
+        free(gpu);
+    } else {
+        cudaFree(gpu);
+    }
     close(fd);
     unlink(path.c_str());
     return rc;
@@ -342,8 +355,9 @@ out:
 
 // cuFileBatchIOGetStatus fails on the first batch
 static int
-runPollFailureRecovery(const std::string &dir, bool use_direct) {
-    return runRecoveryCase("GDSPollFailure", "test_break_first_batch_poll", dir, use_direct);
+runPollFailureRecovery(const std::string &dir, bool use_direct, bool use_dram) {
+    return runRecoveryCase(
+        "GDSPollFailure", "test_break_first_batch_poll", dir, use_direct, use_dram);
 }
 
 int main(int argc, char *argv[])
@@ -546,7 +560,7 @@ int main(int argc, char *argv[])
     dir_path = argv[optind];
 
     if (run_failure_checks && !use_mt_engine) {
-        if (int rc = runPollFailureRecovery(dir_path, use_direct); rc != 0) {
+        if (int rc = runPollFailureRecovery(dir_path, use_direct, use_dram); rc != 0) {
             return rc;
         }
     }
