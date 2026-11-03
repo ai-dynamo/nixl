@@ -36,7 +36,7 @@ else
     warning('Azure SDK dependencies not found, skipping AZURE_BLOB plugin build')
     subdir_done()
 endif
-azure_deps += [dependency('asio', required: true)]
+azure_deps += [dependency('asio', version: '>=1.38.2', required: true, fallback: ['asio'])]
 
 if 'AZURE_BLOB' in static_plugins
     azure_blob_backend_lib = static_library(

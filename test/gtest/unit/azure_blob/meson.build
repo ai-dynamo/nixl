@@ -23,7 +23,7 @@ azure_blob_unit_test_dep = declare_dependency(
         '../../../../src/plugins/azure_blob',
     ],
     dependencies: [
-        dependency('asio', required: true),
+        dependency('asio', version: '>=1.38.2', required: true, fallback: ['asio']),
     ],
     link_with: azure_blob_backend_lib,
 )

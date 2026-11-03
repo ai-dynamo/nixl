@@ -36,7 +36,7 @@ if not is_variable('obj_utils_interface')
     subdir_done()
 endif
 
-plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface, dependency('asio', required: true)]
+plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface, dependency('asio', version: '>=1.38.2', required: true, fallback: ['asio'])]
 compile_defs = []
 compile_flags = []
 

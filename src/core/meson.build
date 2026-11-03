@@ -86,7 +86,7 @@ nixl_asio_dep_sources = [
     'telemetry/telemetry.cpp',
 ]
 
-asio_dep = dependency('asio', version: '>=1.38.2', required: true)
+asio_dep = dependency('asio', version: '>=1.38.2', required: true, fallback: ['asio'])
 nixl_asio_deps = [nixl_lib_deps, asio_dep]
 
 # Compile metadata code with hidden visibility to hide ASIO symbols.
