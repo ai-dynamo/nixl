@@ -328,9 +328,9 @@ nixlDaosEngine::checkXfer(nixlBackendReqH *handle) const {
     }
     auto *request = castHandle(handle);
     if (request->state_.load(std::memory_order_acquire) == nixlDaosBackendReqH::State::InProgress) {
-        if (client_->progress() != 0) {
-            return NIXL_ERR_BACKEND;
-        }
+        // Progress errors are not proof that this request's buffers are idle.
+        // Operation callbacks carry errors once DAOS has reaped their events.
+        client_->progress();
         submitPending(*client_, request);
     }
     return request->poll();
@@ -345,9 +345,7 @@ nixlDaosEngine::releaseReqH(nixlBackendReqH *handle) const {
     // daos_event_abort does not currently cancel internal DAOS operations. Keep
     // the request, object handles, and caller buffers alive through completion.
     if (request->state_.load(std::memory_order_acquire) == nixlDaosBackendReqH::State::InProgress) {
-        if (client_->progress() != 0) {
-            return NIXL_ERR_BACKEND;
-        }
+        client_->progress();
         submitPending(*client_, request);
     }
     if (request->poll() == NIXL_IN_PROG) {

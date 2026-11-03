@@ -44,6 +44,30 @@
 
 namespace {
 
+// libdfs owns process-wide cached pool/container handles. Serialize the first
+// initialization and last finalization across all clients in this plugin.
+std::mutex dfsRuntimeMutex;
+size_t dfsRuntimeUsers = 0;
+
+int
+acquireDfsRuntime() {
+    std::lock_guard<std::mutex> lock(dfsRuntimeMutex);
+    if (dfsRuntimeUsers == 0) {
+        const int rc = dfs_init();
+        if (rc != 0) {
+            return rc;
+        }
+    }
+    ++dfsRuntimeUsers;
+    return 0;
+}
+
+int
+releaseDfsRuntime() {
+    std::lock_guard<std::mutex> lock(dfsRuntimeMutex);
+    return --dfsRuntimeUsers == 0 ? dfs_fini() : 0;
+}
+
 std::string
 normalizePath(std::string_view input) {
     while (!input.empty() && input.front() == '/') {
@@ -214,8 +238,11 @@ private:
         operator=(const eventQueueLane &) = delete;
 
         ~eventQueueLane() {
-            if (progressThreadEnabled_) {
+            {
+                std::lock_guard<std::mutex> lock(queueMutex_);
                 stopping_.store(true, std::memory_order_release);
+            }
+            if (progressThreadEnabled_) {
                 queueCv_.notify_all();
                 if (thread_.joinable()) {
                     thread_.join();
@@ -225,9 +252,7 @@ private:
                 // Drain defensively on the caller thread so no event outlives its EQ.
                 NIXL_LOCK_GUARD(dataPathLock_);
                 while (!pending_.empty()) {
-                    if (poll(progressThreadDelay_ == 0 ? 1000 : progressThreadDelay_) < 0) {
-                        break;
-                    }
+                    poll(progressThreadDelay_ == 0 ? 1000 : progressThreadDelay_);
                 }
             }
             if (eqCreated_) {
@@ -255,12 +280,22 @@ private:
 
             if (!progressThreadEnabled_) {
                 NIXL_LOCK_GUARD(dataPathLock_);
+                if (stopping_.load(std::memory_order_acquire) ||
+                    pollError_.load(std::memory_order_acquire) != 0) {
+                    outstanding_.fetch_sub(1, std::memory_order_release);
+                    return ESHUTDOWN;
+                }
                 submitOne(std::move(io));
                 return 0;
             }
 
             try {
                 std::lock_guard<std::mutex> lock(queueMutex_);
+                if (stopping_.load(std::memory_order_acquire) ||
+                    pollError_.load(std::memory_order_acquire) != 0) {
+                    outstanding_.fetch_sub(1, std::memory_order_release);
+                    return ESHUTDOWN;
+                }
                 submissions_.push_back(std::move(io));
             }
             catch (...) {
@@ -332,6 +367,11 @@ private:
 
         void
         submitOne(std::unique_ptr<pendingIo> io) {
+            const int error = pollError_.load(std::memory_order_acquire);
+            if (error != 0 || stopping_.load(std::memory_order_acquire)) {
+                finish(std::move(io), error != 0 ? error : ESHUTDOWN, 0);
+                return;
+            }
             int rc = daos_event_init(&io->event, eq_, nullptr);
             if (rc != 0) {
                 finish(std::move(io), rc, 0);
@@ -386,7 +426,27 @@ private:
             if (fini_rc != 0) {
                 NIXL_ERROR << "daos_event_fini failed: " << fini_rc;
             }
-            finish(std::move(io), event_rc != 0 ? event_rc : fini_rc, bytes_read);
+            const int error = pollError_.load(std::memory_order_acquire);
+            finish(std::move(io),
+                   error != 0 ? error : (event_rc != 0 ? event_rc : fini_rc),
+                   bytes_read);
+        }
+
+        int
+        reapAfterPollError() {
+            int count = 0;
+            for (auto it = pending_.begin(); it != pending_.end();) {
+                daos_event_t *event = (it++)->first;
+                bool done = false;
+                // A poll error does not cancel I/O. Only finalize and notify the
+                // request after DAOS confirms completion and removes the event.
+                daos_event_test(event, DAOS_EQ_NOWAIT, &done);
+                if (done) {
+                    complete(event);
+                    ++count;
+                }
+            }
+            return count;
         }
 
         int
@@ -394,11 +454,15 @@ private:
             if (pending_.empty()) {
                 return 0;
             }
+            if (pollError_.load(std::memory_order_acquire) != 0) {
+                return reapAfterPollError();
+            }
             const int count = daos_eq_poll(
                 eq_, 1, timeout_us, static_cast<unsigned>(completed_.size()), completed_.data());
             if (count < 0) {
                 NIXL_ERROR << "daos_eq_poll failed for lane " << laneId_ << ": " << count;
-                return count;
+                pollError_.store(count, std::memory_order_release);
+                return reapAfterPollError();
             }
             for (int i = 0; i < count; ++i) {
                 complete(completed_[i]);
@@ -460,6 +524,7 @@ private:
         daos_handle_t eq_ = DAOS_HDL_INVAL;
         bool eqCreated_ = false;
         std::atomic<bool> stopping_{false};
+        std::atomic<int> pollError_{0};
         std::atomic<size_t> outstanding_{0};
         std::thread thread_;
         std::mutex queueMutex_;
@@ -541,7 +606,7 @@ public:
                                  init_params->customParams, "progress_cpu_affinity", std::string()),
                              numEventQueues_);
 
-        int rc = dfs_init();
+        int rc = acquireDfsRuntime();
         if (rc != 0) {
             throw std::runtime_error("dfs_init failed: " + std::to_string(rc));
         }
@@ -756,7 +821,7 @@ private:
             dfs_ = nullptr;
         }
         if (initialized_) {
-            const int rc = dfs_fini();
+            const int rc = releaseDfsRuntime();
             if (rc != 0) {
                 NIXL_ERROR << "dfs_fini failed: " << rc;
             }

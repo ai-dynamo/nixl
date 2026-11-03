@@ -63,6 +63,8 @@ public:
      * Make non-blocking progress when the NIXL progress thread is disabled.
      * Implementations with internal progress threads may leave this as a no-op.
      * Returns a negative DAOS error code on failure.
+     * A progress failure does not release any operation's buffer ownership;
+     * completion must still run exactly once after that operation is reaped.
      */
     virtual int
     progress() = 0;
