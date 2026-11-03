@@ -164,7 +164,6 @@ traceXferError(nixl::trace::Tracer *tracer, const nixlXferReqH &req, nixl_status
 
 void
 setTraceArgs(nixl_opt_b_args_t &opt_args, const nixl::trace::TraceIdentity &identity) {
-    opt_args.traceContext = &identity.context;
     opt_args.traceRequestId = identity.requestId;
     opt_args.traceExecution = identity.execution;
     opt_args.traceIdentity = &identity;

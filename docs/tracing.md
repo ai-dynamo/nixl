@@ -332,33 +332,30 @@ enabled, drops are also exported as `agent_trace_phases_dropped_total`, subject
 to the same per-metric filter as every other metric (see
 [telemetry](telemetry.md)).
 
-A backend also sees the trace context of the request it is executing, as
-`traceContext` in the `nixl_opt_b_args_t` that `prepXfer` and `postXfer` receive.
-Its trace id and flags are the same at prep and at every post of that request,
-reposts included, and it is the zeroed, invalid context when tracing is off. For
-a sampled request each post also has a span id of its own: the first `postXferReq`
-call keeps the one prep saw, and each later call draws another. It is null in
-`prepMemView`, which has no request, and `opt_args` itself may be null when an
-engine is called directly. The pointer is valid only for the call: a plugin that
-needs the context later, at completion or when building a notification, copies
-the value onto its own request handle at each post. A carrier never encodes it
-itself: `nixl::trace::addTraceTags()` appends a post's `traceIdentity` (below) to a
-`nixlSerDes` message as the tags described below, and `getTraceTags()` reads a
-peer's back. `TraceContext` is internal like the sink, so only in-tree plugins can
-read it. Next to `traceContext`, `traceRequestId` and
-`traceExecution` hold the request's id and the number of the post being executed,
-0 meaning none: the id is the same at prep and at every post, the execution number
-is 0 at prep, and both are 0 when tracing is off. They are plain integers that any
-plugin can read.
+A backend also sees the trace identity of the request it is executing, as
+`traceIdentity` in the `nixl_opt_b_args_t` that `prepXfer` and `postXfer` receive:
+one internal `nixl::trace::TraceIdentity` holding the trace `context`, the
+`requestId` and the `execution` number. The context's trace id and flags are the
+same at prep and at every post of that request, reposts included, and it is the
+zeroed, invalid context when tracing is off. For a sampled request each post also
+has a span id of its own: the first `postXferReq` call keeps the one prep saw, and
+each later call draws another. The pointer is null in `prepMemView`, which has no
+request, and `opt_args` itself may be null when an engine is called directly. It is
+valid only for the call: a plugin that needs the identity later, at completion or
+when building a notification, copies the value onto its own request handle at each
+post. A carrier never encodes it itself: `nixl::trace::addTraceTags()` appends a
+post's identity to a `nixlSerDes` message as the tags described below, and
+`getTraceTags()` reads a peer's back. `TraceIdentity` is internal like the sink, so
+only in-tree plugins can read it. Next to it, `traceRequestId` and `traceExecution`
+hold the request's id and the post's execution number as plain integers that any
+plugin can read, 0 meaning none: the id is the same at prep and at every post, the
+execution number is 0 at prep, and both are 0 when tracing is off.
 
-Next to them, `traceIdentity` points to the same three values as one internal
-`nixl::trace::TraceIdentity` (`context`, `requestId` and `execution`), valid only
-for the call and null in `prepMemView`, like `traceContext`. A plugin that records
-phases keeps a `nixlBackendPostTrace`, built at each post from its sink and these
-arguments: it records only with a sink and a sampled post, `record(phase)` stamps
-the phase with `nixlTime::getUs()` itself when a backend needs the time,
-`recordAt(phase, timestamp)` records a time the plugin took earlier, and `now()`
-reads the clock under the same condition.
+A plugin that records phases keeps a `nixlBackendPostTrace`, built at each post
+from its sink and these arguments: it records only with a sink and a sampled post,
+`record(phase)` stamps the phase with `nixlTime::getUs()` itself when a backend
+needs the time, `recordAt(phase, timestamp)` records a time the plugin took
+earlier, and `now()` reads the clock under the same condition.
 
 UCX is the first such carrier. For a sampled request `addTraceTags()` appends the
 26-byte record as a `tctx` tag after the notification's `name` and `msg`, then, when the

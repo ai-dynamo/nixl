@@ -28,7 +28,6 @@
 class nixlBackendTraceSink;
 
 namespace nixl::trace {
-struct TraceContext;
 struct TraceIdentity;
 }
 
@@ -42,14 +41,13 @@ struct nixlBackendOptionalArgs {
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
     nixl_blob_t customParam;
-    // The request's trace context in prepXfer and the post's in postXfer: the trace
+    // The request's trace identity in prepXfer and the post's in postXfer: the trace
     // id and flags are the request's, and each post of a sampled request has a span
     // id of its own. Valid for the call only, so copy it at each post to keep it.
     // Null when no request is involved (prepMemView).
-    const nixl::trace::TraceContext *traceContext = nullptr;
+    const nixl::trace::TraceIdentity *traceIdentity = nullptr;
     std::uint64_t traceRequestId = 0;
     std::uint64_t traceExecution = 0;
-    const nixl::trace::TraceIdentity *traceIdentity = nullptr;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
