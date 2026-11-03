@@ -1,0 +1,53 @@
+From 7ebdd503aa8da2987f42715a37a031d4d88947db Mon Sep 17 00:00:00 2001
+From: Daeho Ro <40587651+daeho-ro@users.noreply.github.com>
+Date: Fri, 23 Oct 2026 22:29:52 +0000
+Subject: [PATCH] Fix curl transport build with OpenSSL 4.0
+
+Upstream: https://github.com/Azure/azure-sdk-for-cpp/pull/7456
+Commit: https://github.com/Azure/azure-sdk-for-cpp/commit/7ebdd503aa8da2987f42715a37a031d4d88947db
+
+Backport only the curl transport changes to azure-storage-blobs_12.15.0.
+OpenSSL 4 returns const issuer names. These names are only compared, so
+const pointers also remain compatible with OpenSSL 1.1 and 3.x.
+
+Co-authored-by: Anton Kolesnyk <41349689+antkmsft@users.noreply.github.com>
+---
+diff --git a/sdk/core/azure-core/src/http/curl/curl.cpp b/sdk/core/azure-core/src/http/curl/curl.cpp
+--- a/sdk/core/azure-core/src/http/curl/curl.cpp
++++ b/sdk/core/azure-core/src/http/curl/curl.cpp
+@@ -1906,7 +1906,7 @@ namespace Azure { namespace Core {
+         std::unique_lock<std::mutex> lockResult(crl_cache_lock);
+
+         // update existing
+-        X509_NAME* cert_issuer = cert ? X509_get_issuer_name(cert) : nullptr;
++        const X509_NAME* cert_issuer = cert ? X509_get_issuer_name(cert) : nullptr;
+         for (auto it = crl_cache.begin(); it != crl_cache.end(); ++it)
+         {
+           X509_CRL* cacheEntry = *it;
+@@ -1915,7 +1915,7 @@ namespace Azure { namespace Core {
+             continue;
+           }
+
+-          X509_NAME* crl_issuer = X509_CRL_get_issuer(cacheEntry);
++          const X509_NAME* crl_issuer = X509_CRL_get_issuer(cacheEntry);
+           if (!crl_issuer || !cert_issuer)
+           {
+             continue;
+@@ -1963,7 +1963,7 @@ namespace Azure { namespace Core {
+
+       Azure::Core::_internal::UniqueHandle<X509_CRL> LoadCertificateCrlFromMemory(X509* cert)
+       {
+-        X509_NAME* cert_issuer = cert ? X509_get_issuer_name(cert) : nullptr;
++        const X509_NAME* cert_issuer = cert ? X509_get_issuer_name(cert) : nullptr;
+
+         std::unique_lock<std::mutex> lockResult(crl_cache_lock);
+
+@@ -1977,7 +1977,7 @@ namespace Azure { namespace Core {
+
+           // names don't match up. probably a hash collision
+           // so lets test if there is another crl on disk.
+-          X509_NAME* crl_issuer = X509_CRL_get_issuer(crl);
++          const X509_NAME* crl_issuer = X509_CRL_get_issuer(crl);
+           if (!crl_issuer || !cert_issuer)
+           {
+             continue;
