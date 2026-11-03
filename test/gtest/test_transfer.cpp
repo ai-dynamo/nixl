@@ -130,6 +130,7 @@ protected:
             params["split_batch_size"] = "32";
         } else if (getBackendName() == "LIBFABRIC") {
             params["num_threads"] = std::to_string(getNumThreads());
+            params["split_batch_size"] = "1024";
         }
 
         params["engine_config"] = GetParam().engineConfig;
