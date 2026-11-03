@@ -162,6 +162,17 @@ traceXferError(nixl::trace::Tracer *tracer, const nixlXferReqH &req, nixl_status
                      {"nixl.status", nixl::trace::attributeValue(status)});
 }
 
+void
+setTraceArgs(nixl_opt_b_args_t &opt_args, const nixl::trace::TraceIdentity &identity) {
+    opt_args.traceContext = &identity.context;
+    opt_args.traceRequestId = identity.requestId;
+    opt_args.traceExecution = identity.execution;
+    opt_args.traceIdentity = &identity;
+}
+
+void
+setTraceArgs(nixl_opt_b_args_t &opt_args, const nixl::trace::TraceIdentity &&identity) = delete;
+
 } // namespace
 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
@@ -912,10 +923,8 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     handle->telemetry.totalBytes = total_bytes;
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
-    opt_args.traceContext = &handle->trace().context();
-    opt_args.traceRequestId = handle->trace().requestId();
     const nixl::trace::TraceIdentity trace_identity = handle->trace().identity();
-    opt_args.traceIdentity = &trace_identity;
+    setTraceArgs(opt_args, trace_identity);
     ret = handle->engine->prepXfer(handle->backendOp,
                                    handle->initiatorDescs,
                                    handle->targetDescs,
@@ -1070,10 +1079,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     handle->telemetry.totalBytes = total_bytes;
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
-    opt_args.traceContext = &handle->trace().context();
-    opt_args.traceRequestId = handle->trace().requestId();
     const nixl::trace::TraceIdentity trace_identity = handle->trace().identity();
-    opt_args.traceIdentity = &trace_identity;
+    setTraceArgs(opt_args, trace_identity);
     ret1 = handle->engine->prepXfer(handle->backendOp,
                                     handle->initiatorDescs,
                                     handle->targetDescs,
@@ -1146,8 +1153,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const nixl::trace::TraceContext call_context =
-        req_hndl->trace().nextPostContext(data->tracer_.get());
+    const nixl::trace::TraceContext call_context = req_hndl->trace_.beginPost(data->tracer_.get());
 
     NIXL_TRACE_CORRELATED_SPAN(trace_span,
                                data->tracer_.get(),
@@ -1169,7 +1175,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     std::shared_lock<nixlLock> read_lock(data->lock);
-    req_hndl->trace_.markSpanIdUsed();
     // The request was created against a specific remote registration generation: refuse to
     // post if that generation was invalidated or replaced by a re-registration meanwhile.
     if (req_hndl->remoteSection.expired()) {
@@ -1240,13 +1245,9 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_TRACE_FINISH(trace_span, NIXL_ERR_BACKEND);
     }
 
-    req_hndl->trace_.acceptPost(call_context);
-    opt_args.traceContext = &req_hndl->trace().postContext();
-    opt_args.traceRequestId = req_hndl->trace().requestId();
-    opt_args.traceExecution = req_hndl->trace().execution();
-    const nixl::trace::TraceIdentity trace_identity = req_hndl->trace().identity();
-    opt_args.traceIdentity = &trace_identity;
-    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_execution", opt_args.traceExecution);
+    const nixl::trace::TraceIdentity trace_identity = req_hndl->trace_.acceptPost(call_context);
+    setTraceArgs(opt_args, trace_identity);
+    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_execution", trace_identity.execution);
 
     if (timer) {
         req_hndl->telemetry.startTime = start_time;

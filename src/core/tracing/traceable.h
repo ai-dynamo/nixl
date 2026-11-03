@@ -64,22 +64,20 @@ public:
     }
 
     [[nodiscard]] TraceContext
-    nextPostContext(const Tracer *tracer) const {
-        return (context_.sampled() && spanIdUsed_) ? generatePostContext(context_, tracer) :
-                                                     context_;
-    }
-
-    void
-    markSpanIdUsed() noexcept {
+    beginPost(const Tracer *tracer) {
+        const TraceContext post_context =
+            (context_.sampled() && spanIdUsed_) ? generatePostContext(context_, tracer) : context_;
         spanIdUsed_ = true;
+        return post_context;
     }
 
-    void
+    TraceIdentity
     acceptPost(const TraceContext &post_context) noexcept {
         postContext_ = post_context;
         if (requestId_ != 0) {
             execution_.fetch_add(1, std::memory_order_relaxed);
         }
+        return identity();
     }
 
 private:

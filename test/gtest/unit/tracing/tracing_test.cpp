@@ -1305,11 +1305,10 @@ TEST(Tracing, TraceableDrawsAPostSpanIdOnceItsOwnIsUsed) {
     auto drawn = sampled;
     drawn.spanId.fill(0x5a);
 
-    EXPECT_EQ(sampled_trace.nextPostContext(tracer.get()), sampled);
-    sampled_trace.markSpanIdUsed();
-    unsampled_trace.markSpanIdUsed();
-    EXPECT_EQ(sampled_trace.nextPostContext(tracer.get()), drawn);
-    EXPECT_EQ(unsampled_trace.nextPostContext(tracer.get()), unsampled);
+    EXPECT_EQ(sampled_trace.beginPost(tracer.get()), sampled);
+    EXPECT_EQ(unsampled_trace.beginPost(tracer.get()), unsampled);
+    EXPECT_EQ(sampled_trace.beginPost(tracer.get()), drawn);
+    EXPECT_EQ(unsampled_trace.beginPost(tracer.get()), unsampled);
 }
 
 TEST(Tracing, TraceableAcceptedPostTakesTheNextExecution) {
@@ -1336,13 +1335,17 @@ TEST(Tracing, TraceableIdentityIsItsLatestPosts) {
     nixl::trace::Traceable traced{context, 0x35};
 
     const auto prepped = traced.identity();
-    traced.acceptPost(post);
-    traced.acceptPost(post);
+    const auto first = traced.acceptPost(post);
+    const auto second = traced.acceptPost(post);
     const auto posted = traced.identity();
 
     EXPECT_EQ(prepped.context, context);
     EXPECT_EQ(prepped.requestId, 0x35u);
     EXPECT_EQ(prepped.execution, 0u);
+    EXPECT_EQ(first.context, post);
+    EXPECT_EQ(first.requestId, 0x35u);
+    EXPECT_EQ(first.execution, 1u);
+    EXPECT_EQ(second.execution, 2u);
     EXPECT_EQ(posted.context, post);
     EXPECT_EQ(posted.requestId, 0x35u);
     EXPECT_EQ(posted.execution, 2u);
