@@ -1934,8 +1934,8 @@ namespace agent {
         ASSERT_EQ(agent_->prepXferDlist(setup.srcXferDlist, local_side, &setup.extraParams),
                   NIXL_SUCCESS);
 
-        // Prep target side using own name (self-target: uses public metadata
-        // from remoteSections_ but keeps remoteAgent empty for local semantics)
+        // Prep target side using own name (loopback: uses self-target section
+        // which only contains supportsLocal() backends)
         nixlDlistH *remote_side = nullptr;
         ASSERT_EQ(
             agent_->prepXferDlist(

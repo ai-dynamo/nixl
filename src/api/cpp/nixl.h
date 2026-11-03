@@ -297,7 +297,8 @@ class nixlAgent {
          * @param  operation      Operation for transfer (e.g., NIXL_WRITE)
          * @param  local_descs    Local descriptor list
          * @param  remote_descs   Remote (or loopback) descriptor list
-         * @param  remote_agent   Remote (or self) agent name for accessing the remote (local) data
+         * @param  remote_agent   Remote (or self) agent name for accessing the remote (local) data.
+         *                         An empty string means loopback (same as the local agent's name).
          * @param  req_hndl [out] Transfer request handle output
          * @param  extra_params   Optional extra parameters used in creating a transfer request
          * @return nixl_status_t  Error code if call was not successful
