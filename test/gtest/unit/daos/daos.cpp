@@ -105,7 +105,12 @@ public:
     int
     progress() override {
         progressCount_.fetch_add(1, std::memory_order_relaxed);
-        return 0;
+        return progressError_;
+    }
+
+    void
+    failProgress(int error) {
+        progressError_ = error;
     }
 
     void
@@ -148,6 +153,8 @@ public:
     }
 
 private:
+    int progressError_ = 0;
+
     bool
     shouldBackpressure() {
         const size_t submission = submissionCount_.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -398,6 +405,12 @@ TEST_F(DaosEngineTest, RefusesToReleaseARequestBeforeEventCompletion) {
     nixlBackendReqH *handle = nullptr;
     ASSERT_EQ(engine_->prepXfer(NIXL_WRITE, local, remote, init_.localAgent, handle), NIXL_SUCCESS);
     ASSERT_EQ(engine_->postXfer(NIXL_WRITE, local, remote, init_.localAgent, handle), NIXL_IN_PROG);
+    EXPECT_EQ(engine_->checkXfer(handle), NIXL_IN_PROG);
+    EXPECT_EQ(engine_->releaseReqH(handle), NIXL_ERR_NOT_ALLOWED);
+
+    // An EQ-wide error must not report terminal status or release a request
+    // whose accepted operations still own the caller's buffers.
+    client_->failProgress(-EIO);
     EXPECT_EQ(engine_->checkXfer(handle), NIXL_IN_PROG);
     EXPECT_EQ(engine_->releaseReqH(handle), NIXL_ERR_NOT_ALLOWED);
 

@@ -50,7 +50,7 @@ waitForTransfer(nixlAgent &agent, nixlXferReqH *request) {
 } // namespace
 
 int
-main(int argc, char **argv) {
+runTest(int argc, char **argv, bool progress_thread) {
     if (argc < 3 || argc > 6) {
         usage(argv[0]);
         return 2;
@@ -67,7 +67,9 @@ main(int argc, char **argv) {
     }
 
     nixlAgentConfig config;
-    config.useProgThread = true;
+    if (progress_thread) {
+        config.useProgThread = true;
+    }
     nixlAgent agent("DaosTester", config);
     nixlBackendH *backend = nullptr;
     nixl_b_params_t params = {{"pool", pool}, {"container", container}};
@@ -76,6 +78,18 @@ main(int argc, char **argv) {
                   << std::endl;
         return 1;
     }
+
+    // Destroy an overlapping client before using the original one. Its teardown
+    // must not finalize the process-wide libdfs runtime still used by agent.
+    {
+        nixlAgent other("DaosLifetimeTester", config);
+        nixlBackendH *other_backend = nullptr;
+        if (other.createBackend("DAOS", params, other_backend) != NIXL_SUCCESS) {
+            return 1;
+        }
+    }
+    std::cout << "Testing DAOS with progress threads "
+              << (progress_thread ? "enabled" : "disabled (agent default)") << std::endl;
 
     std::vector<std::unique_ptr<char[]>> write_buffers;
     std::vector<std::unique_ptr<char[]>> read_buffers;
@@ -188,4 +202,10 @@ cleanup:
         agent.deregisterMem(write_reg);
     }
     return result;
+}
+
+int
+main(int argc, char **argv) {
+    const int result = runTest(argc, argv, false);
+    return result == 0 ? runTest(argc, argv, true) : result;
 }
