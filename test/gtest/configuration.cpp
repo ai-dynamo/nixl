@@ -66,6 +66,29 @@ TEST(Config, Undefined) {
     ASSERT_EQ(getValueWithStatus(s, undefined), NIXL_ERR_NOT_FOUND);
 }
 
+TEST(Config, DeprecatedName) {
+    const std::string deprecated = "NIXL_CONFIG_TEST_DEPRECATED";
+    gtest::ScopedEnv env;
+    env.unsetVar(variable);
+    env.unsetVar(deprecated);
+
+    EXPECT_EQ(getValueOptional<short>(variable, deprecated), std::nullopt);
+    EXPECT_EQ(getValueDefaulted<short>(variable, deprecated, 1), 1);
+
+    env.addVar(deprecated, "2");
+    {
+        const gtest::LogIgnoreGuard lig("'" + deprecated + "' is deprecated, use '" + variable +
+                                        "' instead");
+        EXPECT_EQ(getValueOptional<short>(variable, deprecated), 2);
+        EXPECT_EQ(getValueDefaulted<short>(variable, deprecated, 1), 2);
+        EXPECT_EQ(lig.getIgnoredCount(), 1);
+    }
+
+    env.addVar(variable, "3");
+    EXPECT_EQ(getValueOptional<short>(variable, deprecated), 3);
+    EXPECT_EQ(getValueDefaulted<short>(variable, deprecated, 1), 3);
+}
+
 namespace {
 
     template<typename T>

@@ -115,7 +115,7 @@ def check_bindings(args):
     if args.call_nixl_plugin_init:
         env["CHECK_UCX_CALL_PLUGIN_INIT"] = "1"
     if args.expected_soname:
-        env["NIXL_UCX_EXPECTED_SONAME"] = args.expected_soname
+        env["NIXL_PLUGIN_UCX_EXPECTED_SONAME"] = args.expected_soname
 
     completed = subprocess.run(
         [sys.executable, "-c", CHILD_SCRIPT],
@@ -166,7 +166,7 @@ def main():
     )
     parser.add_argument(
         "--expected-soname",
-        help="Set NIXL_UCX_EXPECTED_SONAME while calling nixl_plugin_init",
+        help="Set NIXL_PLUGIN_UCX_EXPECTED_SONAME while calling nixl_plugin_init",
     )
     parser.add_argument(
         "--expect-needed",

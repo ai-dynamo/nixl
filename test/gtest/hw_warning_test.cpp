@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 #include <cstdlib>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/strings/str_join.h"
@@ -57,12 +58,25 @@ protected:
 
     void
     expectCudaTlsValidationFailure(const std::string &tls) {
+        expectCudaTlsValidationFailure("", tls, "UCX_TLS");
+    }
+
+    void
+    expectCudaTlsValidationSuccess(const std::string &tls) {
+        expectCudaTlsValidationSuccess("", tls);
+    }
+
+    // Empty TLS values leave the variable unset.
+    void
+    expectCudaTlsValidationFailure(const std::string &nixl_ucx_tls,
+                                   const std::string &ucx_tls,
+                                   const std::string &reported_var) {
         gtest::ScopedEnv env_helper;
-        env_helper.addVar("UCX_TLS", tls);
+        setTlsVars(env_helper, nixl_ucx_tls, ucx_tls);
 
         const gtest::LogIgnoreGuard lig_tls(
-            "Invalid UCX_TLS=.*Add cuda_copy for basic GPU support, or cuda to also include "
-            "NVLink support");
+            "Invalid " + reported_var +
+            "=.*Add cuda_copy for basic GPU support, or cuda to also include NVLink support");
         const gtest::LogIgnoreGuard lig_backend("backend creation failed for 'UCX'");
 
         nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
@@ -73,13 +87,28 @@ protected:
     }
 
     void
-    expectCudaTlsValidationSuccess(const std::string &tls) {
+    expectCudaTlsValidationSuccess(const std::string &nixl_ucx_tls, const std::string &ucx_tls) {
         gtest::ScopedEnv env_helper;
-        env_helper.addVar("UCX_TLS", tls);
+        setTlsVars(env_helper, nixl_ucx_tls, ucx_tls);
 
         nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
         nixlBackendH *backend = nullptr;
         EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
+    }
+
+private:
+    static void
+    setTlsVars(gtest::ScopedEnv &env_helper,
+               const std::string &nixl_ucx_tls,
+               const std::string &ucx_tls) {
+        for (const auto &[name, value] :
+             {std::pair{"NIXL_UCX_TLS", nixl_ucx_tls}, std::pair{"UCX_TLS", ucx_tls}}) {
+            if (value.empty()) {
+                env_helper.unsetVar(name);
+            } else {
+                env_helper.addVar(name, value);
+            }
+        }
     }
 };
 
@@ -181,6 +210,16 @@ TEST_F(UcxTlsValidationTest, AllTlsSucceedsWhenCudaIsAvailable) {
 
 TEST_F(UcxTlsValidationTest, EscapedCudaCopyTlsSucceedsWhenCudaIsAvailable) {
     expectCudaTlsValidationSuccess("tcp,\\cuda_copy");
+}
+
+TEST_F(UcxTlsValidationTest, PrefixedTlsOnlyIsValidated) {
+    expectCudaTlsValidationFailure("tcp", "", "NIXL_UCX_TLS");
+    expectCudaTlsValidationSuccess("cuda_copy,tcp", "");
+}
+
+TEST_F(UcxTlsValidationTest, PrefixedTlsOverridesGlobalTls) {
+    expectCudaTlsValidationFailure("tcp", "cuda_copy,tcp", "NIXL_UCX_TLS");
+    expectCudaTlsValidationSuccess("cuda_copy,tcp", "tcp");
 }
 
 /**
