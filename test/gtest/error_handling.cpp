@@ -322,11 +322,14 @@ TestErrorHandling::TestErrorHandling()
 void
 TestErrorHandling::excludeEfaTransports() {
     if (::nixl::hwInfo::instance().numEfaDevices > 0) {
-        // TODO: UCX srd does not report peer failure when a CTL_REQ or AM
-        // completes with error (send_op->ep is NULL), and hits a remote_ep_id
-        // mismatch on a wireup reply after reconnect. ud_verbs on EFA detects
-        // peer failure only after UCX_UD_TIMEOUT and lacks CQ notifications as
-        // aux wireup.
+        // TODO: Remove once upgraded to UCX v1.24 (plus any follow-up fixes):
+        // - EFA SRD peer-failure reporting (https://github.com/openucx/ucx/pull/12224):
+        //   uct_srd does not report peer failure when a CTL_REQ or AM completes
+        //   with error (send_op->ep is NULL).
+        // - Wireup reconnect fix (https://github.com/openucx/ucx/pull/12227):
+        //   remote_ep_id mismatch on a wireup reply after reconnect.
+        // - ud_verbs on EFA detects peer failure only after UCX_UD_TIMEOUT and
+        //   lacks CQ notifications as aux wireup.
         m_env.addVar("UCX_TLS", "^srd,ud_v,ud_v:aux");
     }
 }
