@@ -28,7 +28,7 @@ job: nixl-ci-dl-gpu-ep
 # Fail job if one of the steps fails or continue
 failFast: false
 
-timeout_minutes: 300
+timeout_minutes: 480
 
 registry_host: il.artifactory.nvidia.com
 registry_auth: svc-nixl-il-artifactory-token
@@ -58,7 +58,7 @@ env:
   SLURM_HEAD_USER: svc-nixl
   SLURM_ACCOUNT: 'blackwell'
   SLURM_JOB_TIMEOUT: '02:30:00'
-  SLURM_IMMEDIATE_TIMEOUT: 3600
+  SLURM_IMMEDIATE_TIMEOUT: 14400
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   TEST_TIMEOUT: 90
