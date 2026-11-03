@@ -156,9 +156,28 @@ waitForQueryMemFutures(std::vector<std::future<void>> &futures,
 
 nixlAzureBlobEngine::nixlAzureBlobEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
-      executor_(std::make_shared<asio::thread_pool>(getNumThreads(init_params->customParams))),
-      blobClient_(std::make_shared<azureBlobClient>(init_params->customParams, executor_)) {
-    NIXL_INFO << "Azure Blob backend initialized with Blob client wrapper";
+      executor_(std::make_shared<asio::thread_pool>(getNumThreads(init_params->customParams))) {
+    try {
+        blobClient_ = std::make_shared<azureBlobClient>(init_params->customParams, executor_);
+        NIXL_INFO << "Azure Blob backend initialized with Blob client wrapper";
+    }
+    catch (const std::exception &e) {
+        initErr = true;
+        NIXL_ERROR << "Failed to initialize Azure Blob backend: " << e.what();
+    }
+    catch (...) {
+        initErr = true;
+        NIXL_ERROR << "Failed to initialize Azure Blob backend: unknown error";
+    }
+}
+
+nixl_status_t
+nixlAzureBlobEngine::ensureInitialized() const {
+    if (initErr || !blobClient_) {
+        NIXL_ERROR << "Azure Blob backend is not initialized";
+        return NIXL_ERR_BACKEND;
+    }
+    return NIXL_SUCCESS;
 }
 
 // Used for testing to inject a mock Blob client dependency
@@ -210,6 +229,10 @@ nixlAzureBlobEngine::deregisterMem(nixlBackendMD *meta) {
 nixl_status_t
 nixlAzureBlobEngine::queryMem(const nixl_reg_dlist_t &descs,
                               std::vector<nixl_query_resp_t> &resp) const {
+    if (const nixl_status_t status = ensureInitialized(); status != NIXL_SUCCESS) {
+        return status;
+    }
+
     resp.assign(descs.descCount(), std::nullopt);
 
     std::vector<std::future<void>> futures;
@@ -274,6 +297,10 @@ nixlAzureBlobEngine::prepXfer(const nixl_xfer_op_t &operation,
                               const std::string &remote_agent,
                               nixlBackendReqH *&handle,
                               const nixl_opt_b_args_t *opt_args) const {
+    if (const nixl_status_t status = ensureInitialized(); status != NIXL_SUCCESS) {
+        return status;
+    }
+
     if (!isValidPrepXferParams(operation, local, remote, remote_agent, localAgent))
         return NIXL_ERR_INVALID_PARAM;
 
@@ -289,6 +316,10 @@ nixlAzureBlobEngine::postXfer(const nixl_xfer_op_t &operation,
                               const std::string &remote_agent,
                               nixlBackendReqH *&handle,
                               const nixl_opt_b_args_t *opt_args) const {
+    if (const nixl_status_t status = ensureInitialized(); status != NIXL_SUCCESS) {
+        return status;
+    }
+
     nixlAzureBlobBackendReqH *req_h = static_cast<nixlAzureBlobBackendReqH *>(handle);
 
     for (int i = 0; i < local.descCount(); ++i) {

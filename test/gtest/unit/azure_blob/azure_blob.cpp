@@ -18,6 +18,8 @@
 #include <gtest/gtest.h>
 #include "nixl_descriptors.h"
 #include "nixl_types.h"
+#include "backend/backend_plugin.h"
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,6 +31,9 @@
 
 #include "azure_blob_client.h"
 #include "azure_blob_backend.h"
+
+extern "C" nixlBackendPlugin *
+nixl_plugin_init();
 
 namespace gtest::azure_blob {
 
@@ -460,6 +465,7 @@ protected:
 
 TEST_F(azureBlobTestFixture, EngineInitialization) {
     ASSERT_NE(blobEngine_, nullptr);
+    EXPECT_FALSE(blobEngine_->getInitErr());
     EXPECT_EQ(blobEngine_->getType(), "AZURE_BLOB");
     EXPECT_TRUE(blobEngine_->supportsLocal());
     EXPECT_FALSE(blobEngine_->supportsRemote());
@@ -1037,6 +1043,103 @@ TEST_F(azureBlobExceptionFixture, QueryMemExceptionOnFirstCall) {
 
     EXPECT_EQ(status, NIXL_ERR_BACKEND);
     EXPECT_EQ(resp.size(), 2);
+}
+
+class ScopedUnsetEnv {
+public:
+    explicit ScopedUnsetEnv(const char *key) : key_(key) {
+        if (const char *value = std::getenv(key)) {
+            had_ = true;
+            previous_ = value;
+        }
+        unsetenv(key);
+    }
+
+    ~ScopedUnsetEnv() {
+        if (had_) {
+            setenv(key_.c_str(), previous_.c_str(), 1);
+        }
+    }
+
+    ScopedUnsetEnv(const ScopedUnsetEnv &) = delete;
+    ScopedUnsetEnv &
+    operator=(const ScopedUnsetEnv &) = delete;
+
+private:
+    std::string key_;
+    std::string previous_;
+    bool had_ = false;
+};
+
+struct ClearedAzureEnv {
+    ScopedUnsetEnv account{"AZURE_STORAGE_ACCOUNT_URL"};
+    ScopedUnsetEnv container{"AZURE_STORAGE_CONTAINER_NAME"};
+    ScopedUnsetEnv connection{"AZURE_STORAGE_CONNECTION_STRING"};
+};
+
+nixlBackendInitParams
+makeInitParams(nixl_b_params_t &params) {
+    nixlBackendInitParams init{};
+    init.localAgent = "test-init-error";
+    init.type = "AZURE_BLOB";
+    init.customParams = &params;
+    init.enableProgTh = false;
+    init.pthrDelay = 0;
+    init.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+    return init;
+}
+
+TEST(azureBlobInitError, MissingCredentialsSetsInitErr) {
+    ClearedAzureEnv cleared_env;
+    nixl_b_params_t params = {{"container_name", "container"}};
+    nixlBackendInitParams init = makeInitParams(params);
+
+    std::unique_ptr<nixlAzureBlobEngine> engine;
+    EXPECT_NO_THROW(engine = std::make_unique<nixlAzureBlobEngine>(&init));
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(engine->getInitErr());
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "blob"));
+    std::vector<nixl_query_resp_t> resp;
+    EXPECT_EQ(engine->queryMem(descs, resp), NIXL_ERR_BACKEND);
+
+    nixl_meta_dlist_t local_descs(DRAM_SEG);
+    nixl_meta_dlist_t remote_descs(OBJ_SEG);
+    nixlBackendReqH *handle = nullptr;
+    EXPECT_EQ(
+        engine->prepXfer(NIXL_READ, local_descs, remote_descs, init.localAgent, handle, nullptr),
+        NIXL_ERR_BACKEND);
+    EXPECT_EQ(handle, nullptr);
+    EXPECT_EQ(
+        engine->postXfer(NIXL_READ, local_descs, remote_descs, init.localAgent, handle, nullptr),
+        NIXL_ERR_BACKEND);
+}
+
+TEST(azureBlobInitError, MissingContainerSetsInitErr) {
+    ClearedAzureEnv cleared_env;
+    nixl_b_params_t params = {{"account_url", "https://example.blob.core.windows.net"}};
+    nixlBackendInitParams init = makeInitParams(params);
+
+    std::unique_ptr<nixlAzureBlobEngine> engine;
+    EXPECT_NO_THROW(engine = std::make_unique<nixlAzureBlobEngine>(&init));
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(engine->getInitErr());
+}
+
+TEST(azureBlobInitError, PluginCreateEngineReportsInitErr) {
+    ClearedAzureEnv cleared_env;
+    nixl_b_params_t params = {{"container_name", "container"}};
+    nixlBackendInitParams init = makeInitParams(params);
+
+    nixlBackendPlugin *plugin = nixl_plugin_init();
+    ASSERT_NE(plugin, nullptr);
+    ASSERT_NE(plugin->create_engine, nullptr);
+
+    nixlBackendEngine *engine = plugin->create_engine(&init);
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(engine->getInitErr());
+    plugin->destroy_engine(engine);
 }
 
 } // namespace gtest::azure_blob
