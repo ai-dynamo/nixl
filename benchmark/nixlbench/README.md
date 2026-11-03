@@ -707,6 +707,14 @@ RED_* environment variables or NIXL's common TOML configuration (NIXL_CONFIG_FIL
 See src/plugins/infinia/infinia_example.conf for a complete example.
 ```
 
+**MARVELL_ODM Backend:**
+```
+--device_list LIST                     # ODM character device (e.g., odm0)
+--odm_use_io_uring                     # Enable io_uring submit path (default: false; ODM_USE_IO_URING=1 also accepted)
+--odm_qid_start N                      # First ODM queue ID (0-15; default: 0)
+--odm_qid_end N                        # Last ODM queue ID (0-15; default: 15)
+```
+
 ### Configuration File
 
 The name of a config file can be specified using the `--config_file` command line parameter. The config file is in TOML format.

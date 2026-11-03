@@ -8,14 +8,13 @@ documentation for using the Marvell ODM DMA controller backend with nixlbench.
 | File | Description |
 |------|-------------|
 | `README.md` | This file - overview and configuration guide |
-| `marvell_odm_example.conf` | Example ODM knobs (documentation; maps to CLI/env) |
 | `nixlbench_marvell_odm.toml` | Complete nixlbench `--config_file` example |
 
 ## Configuration Method
 
 MARVELL_ODM uses **nixlbench CLI flags** and a few **environment variables**.
-There is no plugin config-file parser. Use `marvell_odm_example.conf` as a
-reference for which CLI flag or env var each knob maps to.
+There is no plugin config-file parser. See the main nixlbench README for the
+MARVELL_ODM backend command-line options block.
 
 ## Quick Start
 
