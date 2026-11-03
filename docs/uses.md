@@ -34,7 +34,7 @@ There are multiple designs to achieve these goals with different trade-offs:
 
 NIXL's unique combination of performance, flexibility, and easy-to-use APIs makes it a great backend for implementing any of these strategies, allowing the user to select a design based on their needs.
 
-#### Framework agnostic libraries/backends
+#### Framework-agnostic libraries/backends
 
 1. [ModelExpress RL](https://github.com/ai-dynamo/modelexpress/tree/main/docs/rl)
     - Implements an `Async Pull Mode` design.
