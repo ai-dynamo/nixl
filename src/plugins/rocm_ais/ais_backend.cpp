@@ -24,6 +24,7 @@
 #include <hip/hip_runtime.h>
 
 #include "ais_backend.h"
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "file/file_utils.h"
 
@@ -50,8 +51,13 @@ struct memSegData {
         : buf(address, buffer_size, registration_flags) {}
 };
 
+// DRAM_SEG descriptors (allow_dram only) are intentionally not registered with
+// hipFile: its host-buffer support is still in development, and registration
+// is optional for I/O. Until that support lands they carry no state.
+struct hostSegData {};
+
 // Registered-descriptor state. FILE_SEG descriptors share a refcounted hipFile
-// handle; memory descriptors own their pinned-buffer registration.
+// handle; VRAM_SEG descriptors own their pinned-buffer registration.
 class nixlAisMetadata : public nixlBackendMD {
 public:
     nixlAisMetadata(std::shared_ptr<aisFileHandle> file_handle, uint64_t dev_id)
@@ -62,19 +68,22 @@ public:
         : nixlBackendMD(true),
           data_(std::in_place_type<memSegData>, addr, size, flags) {}
 
+    explicit nixlAisMetadata(hostSegData host) : nixlBackendMD(true), data_(host) {}
+
     ~nixlAisMetadata() = default;
 
     nixlAisMetadata(const nixlAisMetadata &) = delete;
     nixlAisMetadata &
     operator=(const nixlAisMetadata &) = delete;
 
-    std::variant<fileSegData, memSegData> data_;
+    std::variant<fileSegData, memSegData, hostSegData> data_;
 };
 
 } // namespace
 
 nixlAisEngine::nixlAisEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {}
+    : nixlBackendEngine(init_params),
+      allow_dram_(nixl::getBackendParamDefaulted(init_params->customParams, "allow_dram", false)) {}
 
 nixl_status_t
 nixlAisEngine::registerMem(const nixlBlobDesc &mem,
@@ -133,10 +142,7 @@ nixlAisEngine::registerMem(const nixlBlobDesc &mem,
                        << " for device ID " << mem.devId;
             return NIXL_ERR_BACKEND;
         }
-        [[fallthrough]];
-    }
 
-    case DRAM_SEG: {
         try {
             out = new nixlAisMetadata(reinterpret_cast<void *>(mem.addr), mem.len, 0);
             return NIXL_SUCCESS;
@@ -145,6 +151,15 @@ nixlAisEngine::registerMem(const nixlBlobDesc &mem,
             NIXL_ERROR << "AIS: failed to create memory buffer: " << e.what();
             return NIXL_ERR_BACKEND;
         }
+    }
+
+    case DRAM_SEG: {
+        if (!allow_dram_) {
+            NIXL_ERROR << "AIS: host memory (DRAM_SEG) is not supported yet";
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+        out = new nixlAisMetadata(hostSegData{});
+        return NIXL_SUCCESS;
     }
 
     case BLK_SEG:
@@ -202,6 +217,8 @@ nixlAisEngine::prepXfer(const nixl_xfer_op_t &operation,
         NIXL_ERROR << "AIS: backend only supports I/O between memory and files";
         return NIXL_ERR_INVALID_PARAM;
     }
+    // Host buffers have no owning GPU; the caller's devId is not a device.
+    const bool is_host_mem = ((is_local_file ? remote.getType() : local.getType()) == DRAM_SEG);
 
     std::vector<aisXferReq> reqs;
     reqs.reserve(buf_cnt);
@@ -230,7 +247,7 @@ nixlAisEngine::prepXfer(const nixl_xfer_op_t &operation,
                                   static_cast<size_t>(file_desc.addr),
                                   file_data->handle->hip_fhandle,
                                   (operation == NIXL_READ) ? hipFileBatchRead : hipFileBatchWrite,
-                                  static_cast<int>(mem_desc.devId)});
+                                  is_host_mem ? -1 : static_cast<int>(mem_desc.devId)});
     }
 
     if (reqs.empty()) {

@@ -76,6 +76,7 @@ print_usage(const char *program_name) {
     std::cerr << "Usage: " << program_name << " [options] <directory_path>\n"
               << "Options:\n"
               << "  -d, --dram              Use DRAM for memory operations\n"
+              << "                          (not supported by AIS yet)\n"
               << "  -v, --vram              Use VRAM for memory operations (default)\n"
               << "  -n, --num-transfers N   Number of transfers to perform (default: "
               << DEFAULT_NUM_TRANSFERS << ")\n"
@@ -95,7 +96,7 @@ print_usage(const char *program_name) {
               << "  -M, --ais-mode MODE     AIS engine: mt (default: mt)\n"
               << "  -h, --help              Show this help message\n"
               << "\nExample:\n"
-              << "  " << program_name << " -d -n 100 -s 2M -t 5 -D /path/to/dir\n";
+              << "  " << program_name << " -v -n 100 -s 2M -t 5 -P /path/to/dir\n";
 }
 
 void
@@ -278,6 +279,10 @@ main(int argc, char *argv[]) {
     int num_gpus = DEFAULT_NUM_GPUS;
     bool run_path_mode_smoke = true;
     std::string ais_mode = "mt";
+    bool allow_dram_seg = false;
+    // Long-only and left out of print_usage: opts in to AIS's unadvertised
+    // DRAM_SEG path while hipFile's host-buffer support is in development.
+    constexpr int OPT_ALLOW_DRAM_SEG = 256;
 
     static struct option long_options[] = {{"dram", no_argument, 0, 'd'},
                                            {"vram", no_argument, 0, 'v'},
@@ -292,6 +297,7 @@ main(int argc, char *argv[]) {
                                            {"direct", no_argument, 0, 'D'},
                                            {"skip-path-smoke", no_argument, 0, 'P'},
                                            {"help", no_argument, 0, 'h'},
+                                           {"allow-dram-seg", no_argument, 0, OPT_ALLOW_DRAM_SEG},
                                            {0, 0, 0, 0}};
 
     while ((opt = getopt_long(argc, argv, "dvn:s:rwt:G:DPhN:M:", long_options, NULL)) != -1) {
@@ -356,6 +362,9 @@ main(int argc, char *argv[]) {
             break;
         case 'P':
             run_path_mode_smoke = false;
+            break;
+        case OPT_ALLOW_DRAM_SEG:
+            allow_dram_seg = true;
             break;
         case 'h':
             print_usage(argv[0]);
@@ -449,6 +458,9 @@ main(int argc, char *argv[]) {
 
     params["mode"] = ais_mode;
     params["thread_count"] = std::to_string(num_threads);
+    if (allow_dram_seg) {
+        params["allow_dram"] = "true";
+    }
 
     ret = agent.createBackend("AIS", params, ais);
     if (ret != NIXL_SUCCESS || ais == NULL) {
@@ -548,7 +560,13 @@ main(int argc, char *argv[]) {
     }
 
     if (use_dram) {
-        ret = agent.registerMem(dram_for_ais);
+        // AIS does not advertise DRAM_SEG, so NIXL will not select it for host
+        // memory. Name AIS explicitly to force the request to the AIS plugin,
+        // which then accepts or rejects the request based on `allow_dram`.
+        // This can be removed once AIS advertises DRAM_SEG support.
+        nixl_opt_args_t dram_args;
+        dram_args.backends.push_back(ais);
+        ret = agent.registerMem(dram_for_ais, &dram_args);
         if (ret != NIXL_SUCCESS) {
             std::cerr << "Failed to register DRAM memory\n";
             goto cleanup;

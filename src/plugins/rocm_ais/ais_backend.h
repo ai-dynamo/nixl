@@ -76,8 +76,8 @@ public:
         return true;
     }
 
-    // DRAM_SEG is not advertised until hipFile supports host buffers; the
-    // DRAM_SEG registration path is kept so it only needs re-advertising.
+    // DRAM_SEG is not advertised until hipFile supports host buffers. Until
+    // then registerMem rejects it unless allow_dram_ is set.
     [[nodiscard]] nixl_mem_list_t
     getSupportedMems() const override {
         return {VRAM_SEG, FILE_SEG};
@@ -138,6 +138,9 @@ private:
     // weak refs so the last registration of an fd drops the hipFile handle.
     std::unordered_map<int, std::weak_ptr<nixl::rocm::ais::aisFileHandle>> ais_file_map_;
     nixl::PathModeDevIdRegistry path_mode_devids_;
+    // Unadvertised "allow_dram" backend parameter, for testing hipFile's
+    // in-development host-buffer support. Off by default.
+    bool allow_dram_ = false;
 };
 
 #endif // NIXL_SRC_PLUGINS_ROCM_AIS_AIS_BACKEND_H
