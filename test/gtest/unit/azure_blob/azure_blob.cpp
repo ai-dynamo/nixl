@@ -777,13 +777,137 @@ TEST_F(azureBlobTestFixture, ValidatesRemoteRegistrationAtTransferTime) {
     ASSERT_NE(handle, nullptr);
 
     // Deregister the remote memory before attempting transfer. This should cause the transfer
-    // to fail when posted.
+    // to fail when posted, and no blob I/O should be started.
     ASSERT_EQ(blobEngine_->deregisterMem(remote_metadata), NIXL_SUCCESS);
     nixl_status_t status = blobEngine_->postXfer(
         NIXL_READ, local_descs, remote_descs, initParams_.localAgent, handle, nullptr);
     EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(mockBlobClient_->getPendingCount(), 0);
 
+    blobEngine_->releaseReqH(handle);
     blobEngine_->deregisterMem(local_metadata);
+}
+
+TEST_F(azureBlobTestFixture, PostXferRejectsNullHandle) {
+    nixl_meta_dlist_t local_descs(DRAM_SEG);
+    nixl_meta_dlist_t remote_descs(OBJ_SEG);
+    nixlBackendReqH *handle = nullptr;
+
+    nixl_status_t status = blobEngine_->postXfer(
+        NIXL_READ, local_descs, remote_descs, initParams_.localAgent, handle, nullptr);
+
+    EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(handle, nullptr);
+    EXPECT_EQ(mockBlobClient_->getPendingCount(), 0);
+}
+
+TEST_F(azureBlobTestFixture, PrepXferRejectsMismatchedDescriptorCounts) {
+    std::vector<char> test_buffer(64);
+    nixl_meta_dlist_t local_descs(DRAM_SEG);
+    nixl_meta_dlist_t remote_descs(OBJ_SEG);
+
+    local_descs.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(test_buffer.data()), 64, 1));
+    local_descs.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(test_buffer.data()), 64, 1));
+    remote_descs.addDesc(nixlMetaDesc(0, 64, 2));
+
+    nixlBackendReqH *handle = nullptr;
+    nixl_status_t status = blobEngine_->prepXfer(
+        NIXL_WRITE, local_descs, remote_descs, initParams_.localAgent, handle, nullptr);
+
+    EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(handle, nullptr);
+
+    nixl_meta_dlist_t short_local(DRAM_SEG);
+    nixl_meta_dlist_t long_remote(OBJ_SEG);
+    short_local.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(test_buffer.data()), 64, 1));
+    long_remote.addDesc(nixlMetaDesc(0, 64, 2));
+    long_remote.addDesc(nixlMetaDesc(0, 64, 3));
+
+    status = blobEngine_->prepXfer(
+        NIXL_READ, short_local, long_remote, initParams_.localAgent, handle, nullptr);
+
+    EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(handle, nullptr);
+    EXPECT_EQ(mockBlobClient_->getPendingCount(), 0);
+}
+
+TEST_F(azureBlobTestFixture, PostXferRejectsMismatchedDescriptorCountsWithoutIo) {
+    nixlBlobDesc local_desc;
+    local_desc.devId = 1;
+    nixlBlobDesc remote_desc;
+    remote_desc.devId = 2;
+    remote_desc.metaInfo = "count-mismatch-blob";
+
+    nixlBackendMD *local_metadata = nullptr;
+    nixlBackendMD *remote_metadata = nullptr;
+    ASSERT_EQ(blobEngine_->registerMem(local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
+    ASSERT_EQ(blobEngine_->registerMem(remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
+
+    std::vector<char> test_buffer(64);
+    nixl_meta_dlist_t prep_local(DRAM_SEG);
+    nixl_meta_dlist_t prep_remote(OBJ_SEG);
+    prep_local.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(test_buffer.data()), 64, 1));
+    prep_remote.addDesc(nixlMetaDesc(0, 64, 2));
+
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(blobEngine_->prepXfer(
+                  NIXL_WRITE, prep_local, prep_remote, initParams_.localAgent, handle, nullptr),
+              NIXL_SUCCESS);
+    ASSERT_NE(handle, nullptr);
+
+    // Lists passed to postXfer can differ from prepXfer. A shorter remote list
+    // must be rejected before operator[] walks off the descriptor vector.
+    nixl_meta_dlist_t post_local(DRAM_SEG);
+    post_local.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(test_buffer.data()), 64, 1));
+    post_local.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(test_buffer.data()), 64, 1));
+
+    nixl_status_t status = blobEngine_->postXfer(
+        NIXL_WRITE, post_local, prep_remote, initParams_.localAgent, handle, nullptr);
+
+    EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(mockBlobClient_->getPendingCount(), 0);
+
+    blobEngine_->releaseReqH(handle);
+    blobEngine_->deregisterMem(local_metadata);
+    blobEngine_->deregisterMem(remote_metadata);
+}
+
+TEST_F(azureBlobTestFixture, PostXferValidatesAllBlobsBeforeStartingIo) {
+    nixlBlobDesc local_desc;
+    local_desc.devId = 1;
+    nixlBlobDesc registered_remote;
+    registered_remote.devId = 2;
+    registered_remote.metaInfo = "registered-blob";
+
+    nixlBackendMD *local_metadata = nullptr;
+    nixlBackendMD *remote_metadata = nullptr;
+    ASSERT_EQ(blobEngine_->registerMem(local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
+    ASSERT_EQ(blobEngine_->registerMem(registered_remote, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
+
+    std::vector<char> first_buffer(32, 'a');
+    std::vector<char> second_buffer(32, 'b');
+    nixl_meta_dlist_t local_descs(DRAM_SEG);
+    nixl_meta_dlist_t remote_descs(OBJ_SEG);
+    local_descs.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(first_buffer.data()), 32, 1));
+    local_descs.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(second_buffer.data()), 32, 1));
+    remote_descs.addDesc(nixlMetaDesc(0, 32, registered_remote.devId));
+    remote_descs.addDesc(nixlMetaDesc(0, 32, /*unregistered*/ 99));
+
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(blobEngine_->prepXfer(
+                  NIXL_WRITE, local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+              NIXL_SUCCESS);
+    ASSERT_NE(handle, nullptr);
+
+    nixl_status_t status = blobEngine_->postXfer(
+        NIXL_WRITE, local_descs, remote_descs, initParams_.localAgent, handle, nullptr);
+
+    EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(mockBlobClient_->getPendingCount(), 0);
+
+    blobEngine_->releaseReqH(handle);
+    blobEngine_->deregisterMem(local_metadata);
+    blobEngine_->deregisterMem(remote_metadata);
 }
 
 TEST_F(azureBlobTestFixture, CheckBlobExists) {
