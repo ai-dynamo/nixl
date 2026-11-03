@@ -422,6 +422,7 @@ class Buffer:
         num_ranks: int,
         num_experts_per_rank: int,
         num_rdma_bytes: int,
+        init_transport: bool = True,
     ):
         """
         Allocate remote memory for the communication buffer.
@@ -430,12 +431,19 @@ class Buffer:
             num_ranks: rank capacity used to size the communication buffers.
             num_experts_per_rank: the number of experts per rank.
             num_rdma_bytes: the buffer size for RDMA communication.
+            init_transport: if False, defer creating the NIXL agent until
+                `init_transport` or the first `connect_ranks`, for example so a
+                process checkpoint taken before joining holds no NIXL or UCX state.
         """
         self.group_size = num_ranks
         self.num_rdma_bytes = num_rdma_bytes
         self.runtime.update_memory_buffers(
-            num_ranks, num_experts_per_rank, num_rdma_bytes
+            num_ranks, num_experts_per_rank, num_rdma_bytes, init_transport
         )
+
+    def init_transport(self) -> None:
+        """Create the NIXL agent deferred by `update_memory_buffers`. Idempotent."""
+        self.runtime.init_transport()
 
     def set_tcp_store_group(self, tcp_store_group: Optional[dist.TCPStore]) -> None:
         """
@@ -450,6 +458,7 @@ class Buffer:
     def _fetch_remote_metadata_from_tcp_store(self, remote_ranks: List[int]):
         assert self.tcp_store_group is not None, "TCPStore group is not set"
         md_key = f"NIXL_EP/{self.rank}"
+        self.runtime.init_transport()
         nixl_metadata_bytes = self.runtime.get_local_metadata()
         self.tcp_store_group.set(md_key, nixl_metadata_bytes)
 
