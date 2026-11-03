@@ -112,6 +112,15 @@ fi
 
 echo "==== nixl_ep elastic tests done ===="
 
+echo "==== Running free-after-disconnect test ===="
+(
+    unset NIXL_ETCD_ENDPOINTS NIXL_ETCD_PEER_URLS NIXL_ETCD_NAMESPACE
+    unset UCX_NET_DEVICES UCX_TLS
+    PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}${PYTHONPATH:+:$PYTHONPATH}" \
+    timeout 300 "${VLLM_PYTHON}" ${EP_SRC_DIR}/tests/free_after_disconnect.py
+)
+echo "==== free-after-disconnect test done ===="
+
 echo "==== Running vLLM Elastic EP test ===="
 (
     # Avoid SPCx loading HPC-X UCX 1.21; NIXL EP requires UCX >=1.22.
