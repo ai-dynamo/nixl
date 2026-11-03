@@ -48,7 +48,7 @@ enum class exec_mode_t : uint8_t {
 /**
  * @brief Opaque handle for a GPU transfer request.
  *
- * Pass an optional pointer to put or atomicAdd, then poll with
+ * Pass an optional pointer to put, putWithIMM or atomicAdd, then poll with
  * @ref nixl::gpu::getXferStatus until the request completes.
  */
 struct xferStatusH {

@@ -82,6 +82,91 @@ put(const memViewElem &src,
 }
 
 /**
+ * @brief Post a single-region memory transfer with a 32-bit immediate value.
+ *
+ * This function creates and posts a transfer request using memory view
+ * elements @a src and @a dst, both using UCX_DIRECT.
+ *
+ * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
+ *                  time, a fixed mode must match the view.
+ *
+ * @param src         [in]  Source memory view element
+ * @param dst         [in]  Destination memory view element
+ * @param size        [in]  Size in bytes to transfer
+ * @param immediate   [in]  Value delivered in the receiver's CQE
+ * @param channel_id  [in]  Channel ID to use for the transfer
+ * @param flags       [in]  Transfer flags
+ * @param xfer_status [in,out] Optional sender-completion status handle (use @ref nixl::gpu::getXferStatus)
+ *
+ * @return NIXL_IN_PROG     Transfer posted successfully.
+ * @return NIXL_ERR_BACKEND An error occurred in the backend.
+ */
+template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+putWithIMM(const memViewElem &src,
+           const memViewElem &dst,
+           size_t size,
+           uint32_t immediate,
+           unsigned channel_id = 0,
+           uint64_t flags = 0,
+           xferStatusH *xfer_status = nullptr) {
+    return impl::putWithIMM<level, mode>(src, dst, size, immediate, channel_id, flags, xfer_status);
+}
+
+/**
+ * @brief Poll a receive CQ for a completion with an immediate value.
+ *
+ * This function polls the local RX completion queue using a caller-owned index.
+ * THREAD only. completion queue indices and receive credits are unchanged.
+ *
+ * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
+ *                  time, a fixed mode must match the view.
+ *
+ * @param peer           [in]     Remote peer's memory view element
+ * @param channel_id     [in]     Channel ID to use for the poll
+ * @param consumer_index [in,out] Caller-owned completion cursor. incremented on success
+ * @param immediate      [out]    Received 32-bit value, valid on success
+ *
+ * @return NIXL_SUCCESS     Completion received; consumer index advanced.
+ * @return NIXL_IN_PROG     No completion available; consumer index unchanged.
+ * @return NIXL_ERR_BACKEND An error occurred in the backend.
+ */
+template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+pollIMM(const memViewElem &peer,
+        unsigned channel_id,
+        uint64_t *consumer_index,
+        uint32_t *immediate) {
+    return impl::pollIMM<level, mode>(peer, channel_id, consumer_index, immediate);
+}
+
+/**
+ * @brief Advance the HW completion queue consumer index and return RX credits.
+ *
+ * THREAD only. One caller advances the queue after all readers finish
+ * using the retired entries and their payloads.
+ *
+ * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
+ *                  time, a fixed mode must match the view.
+ *
+ * @param peer           [in]  Remote peer's memory view element; offset is ignored
+ * @param channel_id     [in]  Channel ID to advance
+ * @param consumed       [in]  Consumed completions since the last advanceRx
+ * @param consumer_index [out] Updated HW completion queue consumer index
+ *
+ * @return NIXL_SUCCESS     HW completion queue consumer index advanced and credits returned.
+ * @return NIXL_ERR_BACKEND An error occurred in the backend.
+ */
+template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+advanceRx(const memViewElem &peer,
+          unsigned channel_id,
+          uint64_t consumed,
+          uint64_t *consumer_index) {
+    return impl::advanceRx<level, mode>(peer, channel_id, consumed, consumer_index);
+}
+
+/**
  * @brief Atomic add to remote GPU memory.
  *
  * This function performs an atomic increment on a remote counter.
@@ -185,6 +270,94 @@ nixlPut(const nixlMemViewElem &src,
         uint64_t flags = 0,
         nixlGpuXferStatusH *xfer_status = nullptr) {
     return nixl::gpu::put<level, mode>(src, dst, size, channel_id, flags, xfer_status);
+}
+
+/**
+ * @brief Post a single-region memory transfer with a 32-bit immediate value.
+ *
+ * This function creates and posts a transfer request using memory view
+ * elements @a src and @a dst, both using UCX_DIRECT.
+ *
+ * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
+ *                  time, a fixed mode must match the view.
+ *
+ * @param src         [in]  Source memory view element
+ * @param dst         [in]  Destination memory view element
+ * @param size        [in]  Size in bytes to transfer
+ * @param immediate   [in]  Value delivered in the receiver's CQE
+ * @param channel_id  [in]  Channel ID to use for the transfer
+ * @param flags       [in]  Transfer flags
+ * @param xfer_status [in,out] Optional sender-completion status handle (use @ref nixlGpuGetXferStatus)
+ *
+ * @return NIXL_IN_PROG     Transfer posted successfully.
+ * @return NIXL_ERR_BACKEND An error occurred in the backend.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD,
+         nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+nixlPutWithIMM(const nixlMemViewElem &src,
+               const nixlMemViewElem &dst,
+               size_t size,
+               uint32_t immediate,
+               unsigned channel_id = 0,
+               uint64_t flags = 0,
+               nixlGpuXferStatusH *xfer_status = nullptr) {
+    return nixl::gpu::putWithIMM<level, mode>(src, dst, size, immediate, channel_id, flags, xfer_status);
+}
+
+/**
+ * @brief Poll a receive CQ for a completion with an immediate value.
+ *
+ * This function polls the local RX completion queue using a caller-owned index.
+ * THREAD only. completion queue indices and receive credits are unchanged.
+ *
+ * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
+ *                  time, a fixed mode must match the view.
+ *
+ * @param peer           [in]     Remote peer's memory view element
+ * @param channel_id     [in]     Channel ID to use for the poll
+ * @param consumer_index [in,out] Caller-owned completion cursor. incremented on success
+ * @param immediate      [out]    Received 32-bit value, valid on success
+ *
+ * @return NIXL_SUCCESS     Completion received; consumer index advanced.
+ * @return NIXL_IN_PROG     No completion available; consumer index unchanged.
+ * @return NIXL_ERR_BACKEND An error occurred in the backend.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD,
+         nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+nixlPollIMM(const nixlMemViewElem &peer,
+            unsigned channel_id,
+            uint64_t *consumer_index,
+            uint32_t *immediate) {
+    return nixl::gpu::pollIMM<level, mode>(peer, channel_id, consumer_index, immediate);
+}
+
+/**
+ * @brief Advance the HW completion queue consumer index and return RX credits.
+ *
+ * THREAD only. One caller advances the queue after all readers finish
+ * using the retired entries and their payloads.
+ *
+ * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
+ *                  time, a fixed mode must match the view.
+ *
+ * @param peer           [in]  Remote peer's memory view element; offset is ignored
+ * @param channel_id     [in]  Channel ID to advance
+ * @param consumed       [in]  Consumed completions since the last nixlAdvanceRx
+ * @param consumer_index [out] Updated HW completion queue consumer index
+ *
+ * @return NIXL_SUCCESS     HW completion queue consumer index advanced and credits returned.
+ * @return NIXL_ERR_BACKEND An error occurred in the backend.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD,
+         nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+nixlAdvanceRx(const nixlMemViewElem &peer,
+              unsigned channel_id,
+              uint64_t consumed,
+              uint64_t *consumer_index) {
+    return nixl::gpu::advanceRx<level, mode>(peer, channel_id, consumed, consumer_index);
 }
 
 /**

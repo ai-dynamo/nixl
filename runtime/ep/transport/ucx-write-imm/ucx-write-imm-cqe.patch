@@ -1,0 +1,922 @@
+From 3255b0c8559678c981a81170c6ba8f66d450902c Mon Sep 17 00:00:00 2001
+From: Alexander Grissik <agrissik@login-preos01.a51.clusters.nvidia.com>
+Date: Thu, 19 Nov 2026 01:15:11 -0800
+Subject: [PATCH] UCT/GDA: Support GPU polling of RDMA writes with immediate
+
+Apply to openucx/ucx at 74b413ab19d63c277ffa3fb553ed83e42bc50f6f
+(UCX 1.24.0).
+
+When UCX_RC_GDA_RX_QUEUE_LEN is nonzero, create a private receive
+queue and CQ per GDA channel and prepost empty receive WQEs. The
+default depth is zero.
+
+Expose device APIs to send a 32-bit immediate and poll its receive CQE.
+Each reader advances its own cursor so GPU warps can share a CQ.
+After all readers finish, one caller advances the shared consumer index
+by the consumed count and publishes CQ progress before returning RQ credits.
+
+diff --git a/src/ucp/api/device/ucp_device_impl.h b/src/ucp/api/device/ucp_device_impl.h
+index 51cc311b3c87c272ff68341f4aa7e48aa8c06ab3..590b572dc76b478a6a180218f7228655297433bc 100644
+--- a/src/ucp/api/device/ucp_device_impl.h
++++ b/src/ucp/api/device/ucp_device_impl.h
+@@ -249,6 +249,106 @@ ucp_device_put(const ucp_device_local_mem_list_h src_mem_list_h,
+ }
+ 
+ 
++/**
++ * @ingroup UCP_DEVICE
++ * @brief Post one RDMA write with an immediate receive CQE.
++ *
++ * Uses the same lane/channel mapping and arguments as ucp_device_put, plus
++ * the host-order 32-bit immediate. Previous writes on that same QP precede
++ * its receive completion. The destination must drain ucp_device_poll_imm_at;
++ * no payload word or atomic notification is substituted by this operation.
++ * This implementation requires exactly one device lane on each peer.
++ */
++template<ucs_device_level_t level = UCS_DEVICE_LEVEL_THREAD>
++UCS_F_DEVICE ucs_status_t ucp_device_put_imm(
++        const ucp_device_local_mem_list_h src_mem_list_h,
++        unsigned src_mem_list_index, size_t src_offset,
++        const ucp_device_remote_mem_list_h dst_mem_list_h,
++        unsigned dst_mem_list_index, size_t dst_offset, size_t length,
++        uint32_t immediate, unsigned channel_id, uint64_t flags,
++        ucp_device_request_t *req)
++{
++    unsigned uct_channel_id, lane;
++    const void *address;
++    const uct_device_mem_elem_t *uct_elem, *src_uct_elem;
++    uint64_t remote_address;
++    uct_device_completion_t *comp;
++    uct_device_ep_t *device_ep;
++    ucs_status_t status;
++
++    if ((src_mem_list_h->num_lanes != 1) ||
++        (dst_mem_list_h->num_lanes != 1)) {
++        return UCS_ERR_UNSUPPORTED;
++    }
++    UCP_DEVICE_GET_LANE(dst_mem_list_h, channel_id, lane, uct_channel_id);
++    status = ucp_device_prepare_send(src_mem_list_h, src_mem_list_index,
++            dst_mem_list_h, dst_mem_list_index, address, remote_address,
++            lane, req, device_ep, src_uct_elem, uct_elem, comp);
++    if (status != UCS_OK) {
++        return status;
++    }
++    return UCP_DEVICE_SEND_BLOCKING(level, uct_device_ep_put_imm, device_ep,
++            req, src_uct_elem, uct_elem,
++            UCS_PTR_BYTE_OFFSET(address, src_offset),
++            remote_address + dst_offset, length, immediate, uct_channel_id,
++            flags, comp);
++}
++
++/**
++ * @ingroup UCP_DEVICE
++ * @brief Poll a receive CQ with a caller-owned full-width consumer index.
++ *
++ * UCS_OK acquires system scope and advances only *consumer_index_p. Multiple
++ * readers may independently scan the same CQ. All readers must finish using
++ * the payloads before one finalizer calls ucp_device_advance_rx.
++ * No credits or shared consumer index are updated by this operation.
++ */
++UCS_F_DEVICE ucs_status_t ucp_device_poll_imm_at(
++        const ucp_device_remote_mem_list_h mem_list_h, unsigned index,
++        unsigned channel_id, uint64_t *consumer_index_p, uint32_t *immediate_p)
++{
++    ucs_status_t status = ucp_device_check_params(mem_list_h, index);
++    unsigned lane, uct_channel_id;
++    if (status != UCS_OK) {
++        return status;
++    }
++    if (mem_list_h->num_lanes != 1) {
++        return UCS_ERR_UNSUPPORTED;
++    }
++    UCP_DEVICE_GET_LANE(mem_list_h, channel_id, lane, uct_channel_id);
++    const auto elem = UCP_DEVICE_GET_ELEM(mem_list_h, index);
++    return uct_device_ep_poll_imm_at(elem->tl[lane].ep, uct_channel_id,
++                                    consumer_index_p, immediate_p);
++}
++
++/**
++ * @ingroup UCP_DEVICE
++ * @brief Advance the receive consumer index and return CQ/RQ credits.
++ *
++ * One finalizer calls this after synchronizing all readers' payload use. The
++ * count must account for exactly the completed receives since the last advance;
++ * the entire interval must fit the receive capacity without replenishment.
++ * No reader may still be scanning the retired entries when credits are returned.
++ * On success, consumer_index_p receives the new index, wrapping at 32 bits.
++ */
++UCS_F_DEVICE ucs_status_t ucp_device_advance_rx(
++        const ucp_device_remote_mem_list_h mem_list_h, unsigned index,
++        unsigned channel_id, uint64_t consumed, uint64_t *consumer_index_p)
++{
++    ucs_status_t status = ucp_device_check_params(mem_list_h, index);
++    unsigned lane, uct_channel_id;
++    if (status != UCS_OK) {
++        return status;
++    }
++    if (mem_list_h->num_lanes != 1) {
++        return UCS_ERR_UNSUPPORTED;
++    }
++    UCP_DEVICE_GET_LANE(mem_list_h, channel_id, lane, uct_channel_id);
++    const auto elem = UCP_DEVICE_GET_ELEM(mem_list_h, index);
++    return uct_device_ep_advance_rx(elem->tl[lane].ep, uct_channel_id, consumed,
++                                    consumer_index_p);
++}
++
+ /**
+  * @ingroup UCP_DEVICE
+  * @brief Posts one memory increment operation.
+diff --git a/src/uct/api/device/uct_device_impl.h b/src/uct/api/device/uct_device_impl.h
+index 48f9c7560c86150aeaa8d8c5b3e9199226ad0055..a6a6dbbd46ce358662bbf579be9a04799d42b2ce 100644
+--- a/src/uct/api/device/uct_device_impl.h
++++ b/src/uct/api/device/uct_device_impl.h
+@@ -130,6 +130,117 @@ UCS_F_DEVICE ucs_status_t uct_device_ep_put(
+ }
+ 
+ 
++/**
++ * @ingroup UCT_DEVICE
++ * @brief Posts one memory put operation with immediate data.
++ *
++ * This device routine writes a single memory block from @a address to
++ * @a remote_address and produces a remote receive completion carrying
++ * @a immediate. The local memory element @a src_uct_elem and remote memory
++ * element @a mem_elem must describe the transferred memory regions.
++ *
++ * User can pass @a comp to track sender-side completion. The remote peer polls
++ * the receive completion using @ref uct_device_ep_poll_imm_at.
++ *
++ * @param [in]  device_ep       Device endpoint to be used for the operation.
++ * @param [in]  src_uct_elem    Local memory element for the source region.
++ * @param [in]  mem_elem        Remote memory element for the destination region.
++ * @param [in]  address         Local virtual address to send data from.
++ * @param [in]  remote_address  Remote virtual address to write data to.
++ * @param [in]  length          Length in bytes of the data to send.
++ * @param [in]  immediate       Host-order 32-bit value in the remote completion.
++ * @param [in]  channel_id      Channel ID to use for the transfer.
++ * @param [in]  flags           Flags to modify the function behavior.
++ * @param [in]  comp            Completion object to track the progress of operation.
++ *
++ * @return UCS_INPROGRESS     - Operation successfully posted, use @ref
++ *                              uct_device_ep_progress and @ref
++ *                              uct_device_ep_check_completion to
++ *                              check for completion.
++ * @return UCS_ERR_NO_RESOURCE - No send queue space; retry the operation.
++ * @return UCS_ERR_UNSUPPORTED - Operation is unsupported by the transport.
++ * @return Error code as defined by @ref ucs_status_t
++ */
++template<ucs_device_level_t level>
++UCS_F_DEVICE ucs_status_t uct_device_ep_put_imm(
++        uct_device_ep_h device_ep, const uct_device_mem_elem_t *src_uct_elem,
++        const uct_device_mem_elem_t *mem_elem, const void *address,
++        uint64_t remote_address, size_t length, uint32_t immediate,
++        unsigned channel_id, uint64_t flags, uct_device_completion_t *comp)
++{
++#if UCT_RC_MLX5_GDA_SUPPORTED
++    if (device_ep->uct_tl_id == UCT_DEVICE_TL_RC_MLX5_GDA) {
++        return uct_rc_mlx5_gda_ep_put_imm<level>(device_ep, src_uct_elem,
++                mem_elem, address, remote_address, length, immediate,
++                channel_id, flags, comp);
++    }
++#endif
++    return UCS_ERR_UNSUPPORTED;
++}
++
++/**
++ * @ingroup UCT_DEVICE
++ * @brief Polls a receive completion with immediate data.
++ *
++ * This device routine polls the channel's receive CQ at @a consumer_index_p.
++ * On success, it performs a system-scope acquire, returns the immediate value,
++ * and advances only the caller's index. Each reader uses its own index; shared
++ * queue indices and receive credits are unchanged.
++ *
++ * @param [in]     device_ep         Device endpoint to be used for the operation.
++ * @param [in]     channel_id        Channel ID whose receive CQ is polled.
++ * @param [in,out] consumer_index_p  Caller-owned index of the next CQ entry.
++ * @param [out]    immediate_p       Host-order 32-bit value from the completion.
++ *
++ * @return UCS_OK              - Completion read and caller's index advanced.
++ * @return UCS_INPROGRESS      - No completion is ready at the supplied index.
++ * @return UCS_ERR_UNSUPPORTED - Operation is unsupported by the transport.
++ * @return Error code as defined by @ref ucs_status_t
++ */
++UCS_F_DEVICE ucs_status_t uct_device_ep_poll_imm_at(
++        uct_device_ep_h device_ep, unsigned channel_id,
++        uint64_t *consumer_index_p, uint32_t *immediate_p)
++{
++#if UCT_RC_MLX5_GDA_SUPPORTED
++    if (device_ep->uct_tl_id == UCT_DEVICE_TL_RC_MLX5_GDA) {
++        return uct_rc_mlx5_gda_ep_poll_imm_at(device_ep, channel_id,
++                                             consumer_index_p, immediate_p);
++    }
++#endif
++    return UCS_ERR_UNSUPPORTED;
++}
++
++/**
++ * @ingroup UCT_DEVICE
++ * @brief Advances the receive consumer index and returns CQ/RQ credits.
++ *
++ * This device routine advances the shared receive index by @a consumed,
++ * releases consumed CQ entries, and replenishes RQ credits. One thread calls
++ * it after all readers have finished using those entries and their payloads.
++ * Each completed receive must be counted once, even when readers share a CQ.
++ *
++ * @param [in]  device_ep         Device endpoint to be used for the operation.
++ * @param [in]  channel_id        Channel ID whose receive queues are advanced.
++ * @param [in]  consumed          Completed receives since the previous advance.
++ * @param [out] consumer_index_p  Updated shared consumer index, wrapping at 32 bits.
++ *
++ * @return UCS_OK              - Receive credits returned and index written.
++ * @return UCS_ERR_UNSUPPORTED - Operation is unsupported by the transport.
++ * @return Error code as defined by @ref ucs_status_t
++ */
++UCS_F_DEVICE ucs_status_t uct_device_ep_advance_rx(
++        uct_device_ep_h device_ep, unsigned channel_id, uint64_t consumed,
++        uint64_t *consumer_index_p)
++{
++#if UCT_RC_MLX5_GDA_SUPPORTED
++    if (device_ep->uct_tl_id == UCT_DEVICE_TL_RC_MLX5_GDA) {
++        return uct_rc_mlx5_gda_ep_advance_rx(device_ep, channel_id, consumed,
++                                            consumer_index_p);
++    }
++#endif
++    return UCS_ERR_UNSUPPORTED;
++}
++
+ /**
+  * @ingroup UCT_DEVICE
+  * @brief Posts one atomic add operation.
+diff --git a/src/uct/ib/mlx5/dv/ib_mlx5_dv.c b/src/uct/ib/mlx5/dv/ib_mlx5_dv.c
+index e932f2557575e507d2b80932678531929d2befac..e0dce45b8afb3e68013e74410166a48cc393e484 100644
+--- a/src/uct/ib/mlx5/dv/ib_mlx5_dv.c
++++ b/src/uct/ib/mlx5/dv/ib_mlx5_dv.c
+@@ -191,14 +191,16 @@ ucs_status_t uct_ib_mlx5_devx_create_qp_common(uct_ib_iface_t *iface,
+     UCT_IB_MLX5DV_SET(qpc, qpc, uar_page,
+                       attr->uar_page_id ? attr->uar_page_id : uar->uar->page_id);
+     ucs_assert((attr->super.srq == NULL) || (attr->super.srq_num != 0));
+-    UCT_IB_MLX5DV_SET(qpc, qpc, rq_type, attr->super.srq_num ? 1 /* SRQ */ :
+-                                                               3 /* no RQ */);
++    UCT_IB_MLX5DV_SET(qpc, qpc, rq_type, attr->super.srq_num ? 1 /* SRQ */ : (attr->max_rx > 0 ? 0 /* RQ */ : 3 /* no RQ */));
+     UCT_IB_MLX5DV_SET(qpc, qpc, srqn_rmpn_xrqn, attr->super.srq_num);
+     UCT_IB_MLX5DV_SET(qpc, qpc, cqn_snd, send_cq->cq_num);
+     UCT_IB_MLX5DV_SET(qpc, qpc, cqn_rcv, recv_cq->cq_num);
+     /* cppcheck-suppress internalAstError */
+     UCT_IB_MLX5DV_SET(qpc, qpc, log_sq_size, ucs_ilog2_or0(attr->max_tx));
+-    UCT_IB_MLX5DV_SET(qpc, qpc, log_rq_size, 0);
++    if (attr->max_rx > 0) {
++        UCT_IB_MLX5DV_SET(qpc, qpc, log_rq_size, ucs_ilog2(attr->max_rx));
++        UCT_IB_MLX5DV_SET(qpc, qpc, log_rq_stride, ucs_ilog2(ucs_roundup_pow2(ucs_max(1u, attr->super.cap.max_recv_sge))));
++    }
+     UCT_IB_MLX5DV_SET(qpc, qpc, cs_req,
+             uct_ib_mlx5_qpc_cs_req(attr->super.max_inl_cqe[UCT_IB_DIR_TX]));
+     UCT_IB_MLX5DV_SET(qpc, qpc, cs_res,
+@@ -249,12 +251,12 @@ ucs_status_t uct_ib_mlx5_devx_create_qp_common(uct_ib_iface_t *iface,
+     }
+ 
+     attr->super.cap.max_send_wr = attr->max_tx;
+-    attr->super.cap.max_recv_wr = 0;
++    attr->super.cap.max_recv_wr = attr->max_rx;
+ 
+     if (tx != NULL) {
+         tx->reg    = &uar->super;
+-        tx->qstart = qp->devx.wq_buf;
+-        tx->qend   = UCS_PTR_BYTE_OFFSET(qp->devx.wq_buf, attr->len);
++        tx->qstart = (qp->devx.wq_buf == NULL) ? NULL : UCS_PTR_BYTE_OFFSET(qp->devx.wq_buf, attr->len - attr->max_tx * MLX5_SEND_WQE_BB);
++        tx->qend   = UCS_PTR_BYTE_OFFSET(tx->qstart, attr->max_tx * MLX5_SEND_WQE_BB);
+         tx->dbrec  = &qp->devx.dbrec->db[MLX5_SND_DBR];
+         tx->bb_max = attr->max_tx - 2 * UCT_IB_MLX5_MAX_BB;
+         uct_ib_mlx5_txwq_reset(tx);
+diff --git a/src/uct/ib/mlx5/gdaki/gdaki.c b/src/uct/ib/mlx5/gdaki/gdaki.c
+index f34ce4fab9186d8224e11bf9f7604202c0a558de..e97dd691c8ce8acf3f125a653641905ad638b8ce 100644
+--- a/src/uct/ib/mlx5/gdaki/gdaki.c
++++ b/src/uct/ib/mlx5/gdaki/gdaki.c
+@@ -31,7 +31,7 @@
+ 
+ #define UCT_GDAKI_CQ_PAGE_OFFSET_SHIFT 6
+ #define UCT_GDAKI_DEV_EP_SIZE          64
+-#define UCT_GDAKI_DEV_QP_SIZE          128
++#define UCT_GDAKI_DEV_QP_SIZE          256
+ 
+ #define UCT_GDAKI_CUDA_REG_FLAGS \
+     (CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP | \
+@@ -63,7 +63,7 @@ typedef struct {
+ } uct_rc_gdaki_iface_config_t;
+ 
+ ucs_config_field_t uct_rc_gdaki_iface_config_table[] = {
+-    {UCT_IB_CONFIG_PREFIX, "", NULL,
++    {UCT_IB_CONFIG_PREFIX, "IB_RX_QUEUE_LEN=0", NULL,
+      ucs_offsetof(uct_rc_gdaki_iface_config_t, super),
+      UCS_CONFIG_TYPE_TABLE(uct_rc_iface_common_config_table)},
+ 
+@@ -142,7 +142,18 @@ err:
+     return status;
+ }
+ 
++static size_t uct_rc_gdaki_rx_cq_size(const uct_rc_gdaki_iface_t *iface)
++{
++    return uct_ib_mlx5_devx_rq_length(iface->super.super.config.rx_qp_len) * sizeof(struct mlx5_cqe64);
++}
++
++static size_t uct_rc_gdaki_align_if_rx(size_t value, size_t rx_cq_len)
++{
++    return (rx_cq_len != 0) ? ucs_align_up_pow2(value, ucs_get_page_size()) : value;
++}
++
+ static void uct_rc_gdaki_calc_dev_ep_layout(size_t num_channels, size_t wq_len,
++                                            size_t rx_cq_len,
+                                             size_t *dev_ep_size_p,
+                                             uint64_t *pgsz_bitmap_p)
+ {
+@@ -151,10 +162,12 @@ static void uct_rc_gdaki_calc_dev_ep_layout(size_t num_channels, size_t wq_len,
+ 
+     UCS_STATIC_ASSERT(sizeof(uct_rc_gdaki_dev_ep_t) == UCT_GDAKI_DEV_EP_SIZE);
+     UCS_STATIC_ASSERT(sizeof(uct_rc_gdaki_dev_qp_t) == UCT_GDAKI_DEV_QP_SIZE);
++    UCS_STATIC_ASSERT((ucs_offsetof(uct_rc_gdaki_dev_qp_t, rx_cq_dbrec) & 7) == 0);
+ 
+     wq_umem_offset = UCT_GDAKI_DEV_EP_SIZE +
+                      (UCT_GDAKI_DEV_QP_SIZE * num_channels);
+-    *dev_ep_size_p = wq_umem_offset + wq_len * num_channels;
++    wq_umem_offset = uct_rc_gdaki_align_if_rx(wq_umem_offset, rx_cq_len);
++    *dev_ep_size_p = uct_rc_gdaki_align_if_rx(wq_umem_offset + (wq_len + rx_cq_len) * num_channels, rx_cq_len);
+     max_page_size  = ucs_min(UCT_GDAKI_DEV_EP_SIZE, UCT_GDAKI_DEV_QP_SIZE)
+                      << UCT_GDAKI_CQ_PAGE_OFFSET_SHIFT;
+     *pgsz_bitmap_p = (max_page_size << 1) - 1;
+@@ -387,7 +400,8 @@ uct_rc_gdaki_umem_reg(const uct_ib_md_t *md, struct ibv_context *ibv_context,
+ 
+ static ucs_status_t
+ uct_rc_gdaki_init_umem(uct_rc_gdaki_iface_t *iface, uint64_t pgsz_bitmap,
+-                       size_t mem_size, uct_rc_gdaki_channel_block_mem_t *mem)
++                       size_t mem_size, size_t dev_ep_size,
++                       uct_rc_gdaki_channel_block_mem_t *mem)
+ {
+     uct_ib_md_t *md = ucs_derived_of(iface->super.super.super.super.md,
+                                      uct_ib_md_t);
+@@ -405,6 +419,15 @@ uct_rc_gdaki_init_umem(uct_rc_gdaki_iface_t *iface, uint64_t pgsz_bitmap,
+         goto out_ctx;
+     }
+ 
++    if (iface->super.super.config.rx_qp_len != 0) {
++        /* Initialize doorbell records before creating CQs and QPs. */
++        status = UCT_CUDADRV_FUNC_LOG_ERR(
++                cuMemsetD2D8((CUdeviceptr)mem->gpu_mem, dev_ep_size, 0, UCT_GDAKI_DEV_EP_SIZE + iface->num_channels * UCT_GDAKI_DEV_QP_SIZE, mem_size / dev_ep_size));
++        if (status != UCS_OK) {
++            goto err_umem;
++        }
++    }
++
+     mem->umem = uct_rc_gdaki_umem_reg(md, md->dev.ibv_context, mem->gpu_mem,
+                                       mem_size, pgsz_bitmap);
+     if (mem->umem == NULL) {
+@@ -535,6 +558,9 @@ uct_rc_gdaki_chunk_channels_destroy(uct_rc_gdaki_iface_t *iface,
+             channel = &channel_block->channels[channel_index];
+             uct_ib_mlx5_devx_destroy_qp_common(&channel->qp.super);
+             uct_ib_mlx5_qp_mmio_cleanup(&channel->qp.super, channel->qp.reg);
++            if (iface->super.super.config.rx_qp_len != 0) {
++                uct_ib_mlx5_devx_destroy_cq_common(&channel->rx_cq);
++            }
+             uct_ib_mlx5_devx_destroy_cq_common(&channel->cq);
+         }
+     }
+@@ -548,9 +574,10 @@ uct_rc_gdaki_init_channel_chunk(uct_rc_gdaki_iface_t *iface,
+ {
+     uct_ib_iface_init_attr_t init_attr = {};
+     uct_ib_mlx5_cq_attr_t cq_attr      = {};
++    uct_ib_mlx5_cq_attr_t rx_cq_attr   = {};
+     uct_ib_mlx5_qp_attr_t qp_attr      = {};
+     uct_ib_mlx5_dbrec_t dbrec;
+-    size_t ep_offset, ep_qp_offset, ep_wq_offset;
++    size_t ep_offset, ep_qp_offset, ep_wq_offset, ep_rx_cq_offset;
+     unsigned ep_index, channel_index;
+     uct_rc_gdaki_channel_block_t *channel_block;
+     uct_rc_gdaki_channel_t *channel;
+@@ -559,8 +586,16 @@ uct_rc_gdaki_init_channel_chunk(uct_rc_gdaki_iface_t *iface,
+     init_attr.cq_len[UCT_IB_DIR_TX] = 1;
+     uct_ib_mlx5_cq_calc_sizes(&iface->super.super.super, UCT_IB_DIR_TX,
+                               &init_attr, 0, &cq_attr);
++    if (iface->super.super.config.rx_qp_len != 0) {
++        init_attr.cq_len[UCT_IB_DIR_RX] = iface->super.super.config.rx_qp_len;
++        uct_ib_mlx5_cq_calc_sizes(&iface->super.super.super, UCT_IB_DIR_RX, &init_attr, 0, &rx_cq_attr);
++        /* The device receiver parses ordinary 64-byte, uncompressed CQEs. */
++        rx_cq_attr.cqe_size = sizeof(struct mlx5_cqe64);
++        rx_cq_attr.umem_len = uct_rc_gdaki_rx_cq_size(iface);
++    }
+     uct_rc_iface_fill_attr(&iface->super.super, &qp_attr.super,
+-                           iface->super.super.config.tx_qp_len, NULL);
++                           iface->super.super.config.tx_qp_len,
++                           iface->super.super.config.rx_qp_len, NULL);
+ 
+     cq_attr.flags                           |= UCT_IB_MLX5_CQ_IGNORE_OVERRUN;
+     qp_attr.mmio_mode                        = UCT_IB_MLX5_MMIO_MODE_DB;
+@@ -571,6 +606,8 @@ uct_rc_gdaki_init_channel_chunk(uct_rc_gdaki_iface_t *iface,
+ 
+     ep_qp_offset = UCT_GDAKI_DEV_EP_SIZE;
+     ep_wq_offset = ep_qp_offset + iface->num_channels * UCT_GDAKI_DEV_QP_SIZE;
++    ep_wq_offset = uct_rc_gdaki_align_if_rx(ep_wq_offset, rx_cq_attr.umem_len);
++    ep_rx_cq_offset = ep_wq_offset + (size_t)iface->num_channels * qp_attr.len;
+     dbrec.mem_id = mem->umem->umem_id;
+ 
+     for (channel_index = 0; channel_index < iface->num_channels;
+@@ -601,14 +638,31 @@ uct_rc_gdaki_init_channel_chunk(uct_rc_gdaki_iface_t *iface,
+                 goto err_cleanup;
+             }
+ 
++            if (qp_attr.max_rx != 0) {
++                channel->rx_cq.devx.mem.mem = mem->umem;
++                rx_cq_attr.umem_offset = ep_offset + ep_rx_cq_offset + channel_index * rx_cq_attr.umem_len;
++                dbrec.offset = ep_offset + ep_qp_offset + ch_cq_offset + ucs_offsetof(uct_rc_gdaki_dev_qp_t, rx_cq_dbrec);
++                channel->rx_cq.devx.dbrec = &dbrec;
++                status = uct_ib_mlx5_devx_create_cq_common(&iface->super.super.super,
++                        UCT_IB_DIR_RX, &rx_cq_attr, &channel->rx_cq, 0, 0);
++                if (status != UCS_OK) {
++                    uct_ib_mlx5_devx_destroy_cq_common(&channel->cq);
++                    goto err_cleanup;
++                }
++            }
++
+             qp_attr.umem_offset = ep_offset + ep_wq_offset + ch_wq_offset;
+             dbrec.offset        = cq_attr.umem_offset +
+                                   ucs_offsetof(uct_rc_gdaki_dev_qp_t, qp_dbrec);
+             channel->qp.super.devx.dbrec = &dbrec;
+             status                       = uct_ib_mlx5_devx_create_qp_common(
+-                    &iface->super.super.super, &channel->cq, &channel->cq,
++                    &iface->super.super.super, &channel->cq,
++                    (qp_attr.max_rx != 0) ? &channel->rx_cq : &channel->cq,
+                     &channel->qp.super, &channel->qp, &qp_attr);
+             if (status != UCS_OK) {
++                if (qp_attr.max_rx != 0) {
++                    uct_ib_mlx5_devx_destroy_cq_common(&channel->rx_cq);
++                }
+                 uct_ib_mlx5_devx_destroy_cq_common(&channel->cq);
+                 goto err_cleanup;
+             }
+@@ -651,7 +705,7 @@ uct_rc_gdaki_pool_chunk_alloc(ucs_mpool_t *mp, size_t *size_p, void **chunk_p)
+ 
+     gpu_alloc_size = num_elems * priv->dev_ep_size;
+     status = uct_rc_gdaki_init_umem(iface, priv->pgsz_bitmap, gpu_alloc_size,
+-                                    hdr);
++                                    priv->dev_ep_size, hdr);
+     if (status != UCS_OK) {
+         goto err_free_hdr;
+     }
+@@ -725,11 +779,13 @@ uct_rc_gdaki_iface_init_channel_pool(uct_rc_gdaki_iface_t *iface,
+     }
+ 
+     uct_rc_iface_fill_attr(&iface->super.super, &qp_attr.super,
+-                           iface->super.super.config.tx_qp_len, NULL);
++                           iface->super.super.config.tx_qp_len,
++                           iface->super.super.config.rx_qp_len, NULL);
+     uct_ib_mlx5_wq_calc_sizes(&qp_attr);
+ 
+     priv = ucs_mpool_priv(&iface->channel_pool);
+     uct_rc_gdaki_calc_dev_ep_layout(iface->num_channels, qp_attr.len,
++                                    uct_rc_gdaki_rx_cq_size(iface),
+                                     &priv->dev_ep_size, &priv->pgsz_bitmap);
+ 
+     return UCS_OK;
+@@ -791,9 +847,11 @@ uct_rc_gdaki_ep_init_channels_direct(uct_rc_gdaki_iface_t *iface,
+     ucs_status_t status;
+ 
+     uct_rc_iface_fill_attr(&iface->super.super, &qp_attr.super,
+-                           iface->super.super.config.tx_qp_len, NULL);
++                           iface->super.super.config.tx_qp_len,
++                           iface->super.super.config.rx_qp_len, NULL);
+     uct_ib_mlx5_wq_calc_sizes(&qp_attr);
+     uct_rc_gdaki_calc_dev_ep_layout(iface->num_channels, qp_attr.len,
++                                    uct_rc_gdaki_rx_cq_size(iface),
+                                     &dev_ep_size, &pgsz_bitmap);
+ 
+     ep->channel_block = ucs_calloc(1, channel_block_size, "gdaki channels");
+@@ -801,7 +859,7 @@ uct_rc_gdaki_ep_init_channels_direct(uct_rc_gdaki_iface_t *iface,
+         return UCS_ERR_NO_MEMORY;
+     }
+ 
+-    status = uct_rc_gdaki_init_umem(iface, pgsz_bitmap, dev_ep_size, &ep->mem);
++    status = uct_rc_gdaki_init_umem(iface, pgsz_bitmap, dev_ep_size, dev_ep_size, &ep->mem);
+     if (status != UCS_OK) {
+         goto err_block;
+     }
+@@ -1100,8 +1158,11 @@ uct_rc_gdaki_ep_get_device_ep(uct_ep_h tl_ep, uct_device_ep_h *device_ep_p)
+     uct_rc_gdaki_channel_t *channel;
+     ucs_status_t status;
+     CUdeviceptr sq_db;
+-    unsigned i;
+-    size_t dev_ep_host_size;
++    struct mlx5_wqe_data_seg *rq_wqes = NULL;
++    unsigned i, j;
++    size_t dev_ep_host_size, rq_bytes, rx_cq_bytes;
++    uintptr_t rx_cq_base, wq_base;
++    unsigned sq_wqe_num, rq_wqe_num;
+ 
+     pthread_mutex_lock(&iface->ep_init_lock);
+ 
+@@ -1111,6 +1172,8 @@ uct_rc_gdaki_ep_get_device_ep(uct_ep_h tl_ep, uct_device_ep_h *device_ep_p)
+             goto out_unlock;
+         }
+ 
++        sq_wqe_num = uct_ib_mlx5_devx_sq_length(iface->super.super.config.tx_qp_len);
++        rq_wqe_num = uct_ib_mlx5_devx_rq_length(iface->super.super.config.rx_qp_len);
+         dev_ep_host_size = UCT_GDAKI_DEV_EP_SIZE +
+                            iface->num_channels * UCT_GDAKI_DEV_QP_SIZE;
+         dev_ep           = ucs_calloc(1, dev_ep_host_size, "dev_ep");
+@@ -1122,20 +1185,58 @@ uct_rc_gdaki_ep_get_device_ep(uct_ep_h tl_ep, uct_device_ep_h *device_ep_p)
+             goto out_ctx;
+         }
+ 
++        rq_bytes = rq_wqe_num * sizeof(*rq_wqes);
++        rx_cq_bytes = uct_rc_gdaki_rx_cq_size(iface);
++        if (rq_wqe_num != 0) {
++            const uint32_t invalid_lkey = htonl(MLX5_INVALID_LKEY);
++
++            rq_wqes = ucs_calloc(rq_wqe_num, sizeof(*rq_wqes), "gdaki rq");
++            if (rq_wqes == NULL) {
++                status = UCS_ERR_NO_MEMORY;
++                goto out_free;
++            }
++            /* A zero-SGE receive is represented by the invalid-lkey terminator.
++             * RDMA WRITE_WITH_IMM uses the RQ only for notification, not payload. */
++            for (j = 0; j < rq_wqe_num; ++j) {
++                rq_wqes[j].lkey = invalid_lkey;
++            }
++        }
++
+         dev_ep->atomic_va    = iface->atomic_buff;
+         dev_ep->atomic_lkey  = htonl(iface->atomic_mr->lkey);
+-        dev_ep->sq_wqe_num   = uct_ib_mlx5_devx_sq_length(
+-                iface->super.super.config.tx_qp_len);
++        dev_ep->sq_wqe_num   = sq_wqe_num;
+         dev_ep->channel_mask = iface->num_channels - 1;
+-        dev_ep->sq_wqe_daddr = (uint8_t*)(ep->channel_block->gpu_ptr +
+-                                          UCT_GDAKI_DEV_EP_SIZE +
+-                                          iface->num_channels *
+-                                                  UCT_GDAKI_DEV_QP_SIZE);
++        dev_ep->rq_wqe_num   = rq_wqe_num;
++        dev_ep->wq_stride    = sq_wqe_num * MLX5_SEND_WQE_BB + rq_bytes;
++        wq_base             = ep->channel_block->gpu_ptr + dev_ep_host_size;
++        wq_base             = uct_rc_gdaki_align_if_rx(wq_base, rx_cq_bytes);
++        rx_cq_base          = wq_base + (size_t)iface->num_channels * dev_ep->wq_stride;
++        dev_ep->sq_wqe_daddr = (uint8_t*)(wq_base + rq_bytes);
++
++        if (rq_wqe_num != 0) {
++            status = UCT_CUDADRV_FUNC_LOG_ERR(
++                    cuMemsetD8((CUdeviceptr)rx_cq_base, 0xff, iface->num_channels * rx_cq_bytes));
++            if (status != UCS_OK) {
++                goto out_free;
++            }
++        }
+ 
+         sq_db = iface->uar_wrap->device_ptr;
+         for (i = 0; i < iface->num_channels; ++i) {
+             channel = &ep->channel_block->channels[i];
+             ucs_assert(channel->qp.reg == &iface->uar_wrap->uar->super);
++            if (rq_wqe_num != 0) {
++                status = UCT_CUDADRV_FUNC_LOG_ERR(
++                        cuMemcpyHtoD((CUdeviceptr)(wq_base + i * dev_ep->wq_stride), rq_wqes, rq_bytes));
++                if (status != UCS_OK) {
++                    goto out_free;
++                }
++                dev_ep->qps[i].rx_cq_daddr = (uint8_t*)(rx_cq_base + i * rx_cq_bytes);
++                /* This synchronous copy publishes the initially prepared RQ
++                 * entries after QP setup, and works with an already-RTS QP. */
++                dev_ep->qps[i].qp_dbrec[MLX5_RCV_DBR] = htonl(rq_wqe_num);
++            }
++
+             dev_ep->qps[i].sq_db  = (uint64_t*)sq_db;
+             dev_ep->qps[i].sq_num = channel->qp.super.qp_num;
+             dev_ep->qps[i].qpn_ds = htonl(channel->qp.super.qp_num <<
+@@ -1150,6 +1251,7 @@ uct_rc_gdaki_ep_get_device_ep(uct_ep_h tl_ep, uct_device_ep_h *device_ep_p)
+             goto out_free;
+         }
+ 
++        ucs_free(rq_wqes);
+         ucs_free(dev_ep);
+         (void)UCT_CUDADRV_FUNC_LOG_WARN(cuCtxPopCurrent(NULL));
+ 
+@@ -1161,6 +1263,7 @@ uct_rc_gdaki_ep_get_device_ep(uct_ep_h tl_ep, uct_device_ep_h *device_ep_p)
+     return UCS_OK;
+ 
+ out_free:
++    ucs_free(rq_wqes);
+     ucs_free(dev_ep);
+ out_ctx:
+     (void)UCT_CUDADRV_FUNC_LOG_WARN(cuCtxPopCurrent(NULL));
+diff --git a/src/uct/ib/mlx5/gdaki/gdaki.cuh b/src/uct/ib/mlx5/gdaki/gdaki.cuh
+index ebe3b438131189f8cf1aaf4d996839c716aa3e95..3d8ebcf639c158b611e8d2cce0b821c8ff1e6d99 100644
+--- a/src/uct/ib/mlx5/gdaki/gdaki.cuh
++++ b/src/uct/ib/mlx5/gdaki/gdaki.cuh
+@@ -51,8 +51,8 @@ UCS_F_DEVICE void *uct_rc_mlx5_gda_get_wqe_ptr(uct_rc_gdaki_dev_ep_t *ep,
+     const uint16_t wqe_num    = uct_rc_mlx5_load_const(&ep->sq_wqe_num);
+     const uintptr_t wqe_addr  = uct_rc_mlx5_load_const((uintptr_t*)&ep->sq_wqe_daddr);
+     const uint32_t idx        = wqe_idx & (wqe_num - 1);
+-    const uint32_t full_idx   = idx + cid * wqe_num;
+-    return (void*)(wqe_addr + (full_idx << DOCA_GPUNETIO_IB_MLX5_WQE_SQ_SHIFT));
++    return (void*)(wqe_addr + cid * uct_rc_mlx5_load_const(&ep->wq_stride) +
++                   (idx << DOCA_GPUNETIO_IB_MLX5_WQE_SQ_SHIFT));
+ }
+ 
+ UCS_F_DEVICE uint16_t uct_rc_mlx5_gda_bswap16(uint16_t x)
+@@ -165,7 +165,7 @@ UCS_F_DEVICE void uct_rc_mlx5_gda_wqe_prepare_put_or_atomic(
+         uct_rc_gdaki_dev_ep_t *ep, void *wqe_ptr, uint16_t wqe_idx,
+         uint32_t opcode, unsigned ctrl_flags, uint64_t raddr, uint32_t rkey,
+         uint64_t laddr, uint32_t lkey, uint32_t bytes, bool is_atomic,
+-        uint64_t add, unsigned cid)
++        uint64_t add, unsigned cid, uint32_t immediate)
+ {
+     uct_rc_gdaki_dev_qp_t *qp = uct_rc_mlx5_gda_get_qp(ep, cid);
+     uint64_t *dseg_ptr  = (uint64_t*)wqe_ptr + 4 + 2 * is_atomic;
+@@ -182,6 +182,7 @@ UCS_F_DEVICE void uct_rc_mlx5_gda_wqe_prepare_put_or_atomic(
+             ((uint32_t)wqe_idx << DOCA_GPUNETIO_VERBS_WQE_IDX_SHIFT) | opcode);
+     cseg.qpn_ds           = doca_gpu_dev_verbs_bswap32((qp->sq_num << 8) | ds);
+     cseg.fm_ce_se         = ctrl_flags;
++    cseg.imm              = doca_gpu_dev_verbs_bswap32(immediate);
+ 
+     rseg.raddr = doca_gpu_dev_verbs_bswap64(raddr);
+     rseg.rkey  = rkey;
+@@ -239,7 +240,7 @@ UCS_F_DEVICE ucs_status_t uct_rc_mlx5_gda_ep_single(
+         const void *address, uint32_t lkey, uint64_t remote_address,
+         uint32_t rkey, size_t length, unsigned cid, uint64_t flags,
+         uct_device_completion_t *tl_comp, uint32_t opcode, bool is_atomic,
+-        uint64_t add)
++        uint64_t add, uint32_t immediate)
+ {
+     uct_rc_gda_completion_t *comp = &tl_comp->rc_gda;
+     unsigned cflag                = DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE;
+@@ -264,7 +265,7 @@ UCS_F_DEVICE ucs_status_t uct_rc_mlx5_gda_ep_single(
+                 ep, uct_rc_mlx5_gda_get_wqe_ptr(ep, cid, wqe_idx), wqe_idx,
+                 opcode, cflag, remote_address, rkey,
+                 reinterpret_cast<uint64_t>(address), lkey, length, is_atomic,
+-                add, cid);
++                add, cid, immediate);
+     }
+ 
+     uct_dev_sync<level>();
+@@ -296,7 +297,91 @@ UCS_F_DEVICE ucs_status_t uct_rc_mlx5_gda_ep_put(
+                                             local_mem_elem->lkey,
+                                             remote_address, mem_elem->rkey,
+                                             length, cid, flags, comp,
+-                                            MLX5_OPCODE_RDMA_WRITE, false, 0);
++                                            MLX5_OPCODE_RDMA_WRITE, false, 0, 0);
++}
++
++template<ucs_device_level_t level>
++UCS_F_DEVICE ucs_status_t uct_rc_mlx5_gda_ep_put_imm(
++        uct_device_ep_h tl_ep, const uct_device_mem_elem_t *src_uct_elem,
++        const uct_device_mem_elem_t *tl_mem_elem, const void *address,
++        uint64_t remote_address, size_t length, uint32_t immediate,
++        unsigned channel_id, uint64_t flags, uct_device_completion_t *comp)
++{
++    auto ep       = reinterpret_cast<uct_rc_gdaki_dev_ep_t*>(tl_ep);
++    auto mem_elem = reinterpret_cast<const uct_ib_md_device_mem_element_t*>(
++            tl_mem_elem);
++    auto local_mem_elem =
++            reinterpret_cast<const uct_ib_md_device_mem_element_t*>(
++                    src_uct_elem);
++    auto cid = channel_id & ep->channel_mask;
++
++    return uct_rc_mlx5_gda_ep_single<level>(ep, tl_mem_elem, address,
++                                            local_mem_elem->lkey,
++                                            remote_address, mem_elem->rkey,
++                                            length, cid, flags, comp,
++                                            MLX5_OPCODE_RDMA_WRITE_IMM, false, 0,
++                                            immediate);
++}
++
++/* Readers may scan a receive CQ with private cursors. One finalizer returns
++ * CQ/RQ credits after synchronizing every reader's payload use. */
++UCS_F_DEVICE ucs_status_t uct_rc_mlx5_gda_ep_poll_imm_at(
++        uct_device_ep_h tl_ep, unsigned channel_id, uint64_t *consumer_index,
++        uint32_t *immediate)
++{
++    auto ep = reinterpret_cast<uct_rc_gdaki_dev_ep_t*>(tl_ep);
++    auto cid = channel_id & ep->channel_mask;
++    auto qp = uct_rc_mlx5_gda_get_qp(ep, cid);
++    const uint64_t ci = *consumer_index;
++    auto cqe = reinterpret_cast<mlx5_cqe64*>(qp->rx_cq_daddr) + (ci & (ep->rq_wqe_num - 1));
++    uint16_t opown_raw;
++    asm volatile("ld.acquire.sys.global.L1::no_allocate.b8 %0, [%1];"
++                 : "=h"(opown_raw) : "l"(&cqe->op_own) : "memory");
++    const uint8_t opown = static_cast<uint8_t>(opown_raw);
++    if ((opown & 1) != !!(ci & ep->rq_wqe_num)) {
++        return UCS_INPROGRESS;
++    }
++
++    const unsigned opcode = opown >> 4;
++    const uint16_t wqe_counter = doca_gpu_dev_verbs_bswap32(
++            doca_gpu_dev_verbs_load_relaxed_sys_global(
++                    reinterpret_cast<uint32_t*>(&cqe->wqe_counter))) >> 16;
++    const uint32_t cqe_qpn = doca_gpu_dev_verbs_bswap32(
++            doca_gpu_dev_verbs_load_relaxed_sys_global(&cqe->sop_drop_qpn)) & 0x00ffffffu;
++    const uint32_t value = doca_gpu_dev_verbs_bswap32(
++            doca_gpu_dev_verbs_load_relaxed_sys_global(&cqe->imm_inval_pkey));
++    if ((opcode != DOCA_GPUNETIO_IB_MLX5_CQE_RESP_WR_IMM) ||
++        (wqe_counter != static_cast<uint16_t>(ci)) ||
++        (cqe_qpn != qp->sq_num)) {
++        // Includes request/response error CQEs and unexpected operations.
++        return UCS_ERR_IO_ERROR;
++    }
++    *consumer_index = ci + 1;
++    *immediate = value;
++
++    return UCS_OK;
++}
++
++UCS_F_DEVICE ucs_status_t uct_rc_mlx5_gda_ep_advance_rx(
++        uct_device_ep_h tl_ep, unsigned channel_id, uint64_t consumed,
++        uint64_t *consumer_index_p)
++{
++    auto ep = reinterpret_cast<uct_rc_gdaki_dev_ep_t*>(tl_ep);
++    auto cid = channel_id & ep->channel_mask;
++    auto qp = uct_rc_mlx5_gda_get_qp(ep, cid);
++    const uint32_t ci = static_cast<uint32_t>(qp->rx_cq_ci + consumed);
++    const uint32_t rx_rq_pi = ci + ep->rq_wqe_num;
++    qp->rx_cq_ci = ci;
++    // Equal CQ/RQ depths: new RQ credits enable reuse of consumed CQ slots.
++    // The RQ release orders prior CQE reads and the CQ DBR update before reuse.
++    const uint32_t cq_db = doca_gpu_dev_verbs_bswap32(ci & 0x00ffffffu);
++    asm volatile("st.relaxed.sys.global.b32 [%0], %1;"
++                 :: "l"(&qp->rx_cq_dbrec[0]), "r"(cq_db) : "memory");
++    const uint32_t rq_db = doca_gpu_dev_verbs_bswap32(rx_rq_pi & 0xffffu);
++    asm volatile("st.release.sys.global.b32 [%0], %1;"
++                 :: "l"(&qp->qp_dbrec[MLX5_RCV_DBR]), "r"(rq_db) : "memory");
++    *consumer_index_p = ci;
++    return UCS_OK;
+ }
+ 
+ template<ucs_device_level_t level>
+@@ -314,7 +399,7 @@ UCS_F_DEVICE ucs_status_t uct_rc_mlx5_gda_ep_atomic_add(
+                                             ep->atomic_lkey, remote_address,
+                                             mem_elem->rkey, sizeof(uint64_t),
+                                             cid, flags, comp,
+-                                            MLX5_OPCODE_ATOMIC_FA, true, value);
++                                            MLX5_OPCODE_ATOMIC_FA, true, value, 0);
+ }
+ 
+ UCS_F_DEVICE void
+diff --git a/src/uct/ib/mlx5/gdaki/gdaki.h b/src/uct/ib/mlx5/gdaki/gdaki.h
+index 4a9abdafe3ee8a0bb1c43202c56bc0b61f7dc426..92b770cb5f130a0e1ac16295e722ad89df780a32 100644
+--- a/src/uct/ib/mlx5/gdaki/gdaki.h
++++ b/src/uct/ib/mlx5/gdaki/gdaki.h
+@@ -21,6 +21,7 @@
+ 
+ typedef struct {
+     uct_ib_mlx5_cq_t   cq;
++    uct_ib_mlx5_cq_t   rx_cq;
+     uct_ib_mlx5_txwq_t qp;
+ } uct_rc_gdaki_channel_t;
+ 
+diff --git a/src/uct/ib/mlx5/gdaki/gdaki_dev.h b/src/uct/ib/mlx5/gdaki/gdaki_dev.h
+index 5c611decbc34f1458143c494dc4606066eb88472..6b2b7b77f86eaa03d6e57cc67e7a9922fda73057 100644
+--- a/src/uct/ib/mlx5/gdaki/gdaki_dev.h
++++ b/src/uct/ib/mlx5/gdaki/gdaki_dev.h
+@@ -21,7 +21,11 @@ typedef struct {
+ 
+     uint64_t                     *sq_db;
+     uint32_t                     qpn_ds;
+-    uint8_t                      pad[12];
++    uint32_t                     rx_cq_ci;
++
++    uint32_t                     rx_cq_dbrec[2];
++    uint8_t                      *rx_cq_daddr;
++    uint8_t                      pad[120];
+ } uct_rc_gdaki_dev_qp_t;
+ 
+ 
+@@ -32,9 +36,11 @@ typedef struct {
+ 
+     uint32_t                     atomic_lkey;
+     uint16_t                     sq_wqe_num;
++    uint16_t                     rq_wqe_num;
++    uint32_t                     wq_stride;
+     uint8_t                      channel_mask;
+ 
+-    uint8_t                      pad[33];
++    uint8_t                      pad[27];
+ 
+     uct_rc_gdaki_dev_qp_t        qps[0];
+ } uct_rc_gdaki_dev_ep_t;
+diff --git a/src/uct/ib/mlx5/ib_mlx5.c b/src/uct/ib/mlx5/ib_mlx5.c
+index 6a4f9fac364644c3360815616761a85e30bf469d..8a054fab26b60dec6547566c9fe1c2665a4e116a 100644
+--- a/src/uct/ib/mlx5/ib_mlx5.c
++++ b/src/uct/ib/mlx5/ib_mlx5.c
+@@ -358,7 +358,10 @@ void uct_ib_mlx5_iface_put_res_domain(uct_ib_mlx5_qp_t *qp)
+ void uct_ib_mlx5_wq_calc_sizes(uct_ib_mlx5_qp_attr_t *attr)
+ {
+     attr->max_tx = uct_ib_mlx5_devx_sq_length(attr->super.cap.max_send_wr);
+-    attr->len    = attr->max_tx * MLX5_SEND_WQE_BB;
++    attr->max_rx = (attr->super.srq_num != 0) ? 0 : uct_ib_mlx5_devx_rq_length(attr->super.cap.max_recv_wr);
++    /* A private RQ precedes the SQ in a DevX QP's WQ UMEM. */
++    attr->len    = attr->max_tx * MLX5_SEND_WQE_BB +
++                   attr->max_rx * ucs_roundup_pow2(ucs_max(1u, attr->super.cap.max_recv_sge)) * sizeof(struct mlx5_wqe_data_seg);
+ }
+ 
+ ucs_status_t uct_ib_mlx5_iface_create_qp(uct_ib_iface_t *iface,
+@@ -1160,6 +1163,11 @@ size_t uct_ib_mlx5_devx_sq_length(size_t tx_qp_length)
+     return ucs_roundup_pow2_or0(tx_qp_length * UCT_IB_MLX5_MAX_BB);
+ }
+ 
++size_t uct_ib_mlx5_devx_rq_length(size_t rx_qp_length)
++{
++    return ucs_roundup_pow2_or0(rx_qp_length);
++}
++
+ /* Keep the function as a separate to test SL selection */
+ ucs_status_t uct_ib_mlx5_select_sl(const uct_ib_iface_config_t *ib_config,
+                                    ucs_ternary_auto_value_t ar_enable,
+diff --git a/src/uct/ib/mlx5/ib_mlx5.h b/src/uct/ib/mlx5/ib_mlx5.h
+index c819431e27811ab631a44c9bb15934626ca43483..46c36e1d78c74c44c290ff7ff80a168bbe73ad7c 100644
+--- a/src/uct/ib/mlx5/ib_mlx5.h
++++ b/src/uct/ib/mlx5/ib_mlx5.h
+@@ -668,6 +668,7 @@ typedef struct uct_ib_mlx5_qp_attr {
+     int                         rdma_wr_disabled;
+     uint8_t                     log_num_dci_stream_channels;
+     unsigned                    max_tx;
++    unsigned                    max_rx;
+     unsigned                    len;
+     size_t                      umem_offset;
+     /* Configure the SQ with NO_DBR_INT so the NIC does not read the send
+@@ -1022,6 +1023,8 @@ void uct_ib_mlx5_parse_cqe_zipping(uct_ib_mlx5_md_t *md,
+ 
+ size_t uct_ib_mlx5_devx_sq_length(size_t tx_qp_length);
+ 
++size_t uct_ib_mlx5_devx_rq_length(size_t rx_qp_length);
++
+ /**
+  * DEVX QP API
+  */
+diff --git a/src/uct/ib/mlx5/rc/rc_mlx5_common.c b/src/uct/ib/mlx5/rc/rc_mlx5_common.c
+index 3264b9c8e56f72e9afde2b29c1f3eb2963756167..371137474c39fd612541b121961ea47a613f3454 100644
+--- a/src/uct/ib/mlx5/rc/rc_mlx5_common.c
++++ b/src/uct/ib/mlx5/rc/rc_mlx5_common.c
+@@ -530,12 +530,12 @@ void uct_rc_mlx5_iface_fill_attr(uct_rc_mlx5_iface_common_t *iface,
+ {
+     switch (srq->type) {
+     case UCT_IB_MLX5_OBJ_TYPE_VERBS:
+-        uct_rc_iface_fill_attr(&iface->super, &qp_attr->super, max_send_wr,
++        uct_rc_iface_fill_attr(&iface->super, &qp_attr->super, max_send_wr, 0,
+                                srq->verbs.srq);
+         break;
+     case UCT_IB_MLX5_OBJ_TYPE_DEVX:
+     case UCT_IB_MLX5_OBJ_TYPE_NULL:
+-        uct_rc_iface_fill_attr(&iface->super, &qp_attr->super, max_send_wr, NULL);
++        uct_rc_iface_fill_attr(&iface->super, &qp_attr->super, max_send_wr, 0, NULL);
+         break;
+     case UCT_IB_MLX5_OBJ_TYPE_LAST:
+         break;
+diff --git a/src/uct/ib/rc/base/rc_iface.c b/src/uct/ib/rc/base/rc_iface.c
+index d2deba0cd47b48f1216cd455a47272c7b6aa0a85..088ce833dfb2673f62c6e57dbf53a80492d60544 100644
+--- a/src/uct/ib/rc/base/rc_iface.c
++++ b/src/uct/ib/rc/base/rc_iface.c
+@@ -591,6 +591,7 @@ UCS_CLASS_INIT_FUNC(uct_rc_iface_t, uct_iface_ops_t *tl_ops,
+     self->rx.srq.available      = 0;
+     self->rx.srq.quota          = 0;
+     self->config.tx_qp_len      = config->super.tx.queue_len;
++    self->config.rx_qp_len      = config->super.rx.queue_len;
+     self->config.tx_min_sge     = config->super.tx.min_sge;
+     self->config.tx_min_inline  = config->super.tx.min_inline;
+     self->config.tx_moderation  = init_attr->tx_moderation;
+@@ -810,11 +811,12 @@ static UCS_CLASS_CLEANUP_FUNC(uct_rc_iface_t)
+ UCS_CLASS_DEFINE(uct_rc_iface_t, uct_ib_iface_t);
+ 
+ void uct_rc_iface_fill_attr(uct_rc_iface_t *iface, uct_ib_qp_attr_t *attr,
+-                            unsigned max_send_wr, struct ibv_srq *srq)
++                            unsigned max_send_wr, unsigned max_recv_wr,
++                            struct ibv_srq *srq)
+ {
+     attr->srq                        = srq;
+     attr->cap.max_send_wr            = max_send_wr;
+-    attr->cap.max_recv_wr            = 0;
++    attr->cap.max_recv_wr            = max_recv_wr;
+     attr->cap.max_send_sge           = iface->config.tx_min_sge;
+     attr->cap.max_recv_sge           = 1;
+     attr->cap.max_inline_data        = iface->config.tx_min_inline;
+@@ -828,7 +830,7 @@ ucs_status_t uct_rc_iface_qp_create(uct_rc_iface_t *iface, struct ibv_qp **qp_p,
+                                     uct_ib_qp_attr_t *attr, unsigned max_send_wr,
+                                     struct ibv_srq *srq)
+ {
+-    uct_rc_iface_fill_attr(iface, attr, max_send_wr, srq);
++    uct_rc_iface_fill_attr(iface, attr, max_send_wr, 0, srq);
+ 
+     return uct_ib_iface_create_qp(&iface->super, attr, qp_p);
+ }
+diff --git a/src/uct/ib/rc/base/rc_iface.h b/src/uct/ib/rc/base/rc_iface.h
+index 737fc4de75d24bb8a4516e57fe9391a8af4591eb..e76c9a0b8f67a7c286dd7c783e2f8cf7b7c39daf 100644
+--- a/src/uct/ib/rc/base/rc_iface.h
++++ b/src/uct/ib/rc/base/rc_iface.h
+@@ -282,6 +282,7 @@ struct uct_rc_iface {
+ 
+     struct {
+         unsigned             tx_qp_len;
++        unsigned             rx_qp_len;
+         unsigned             tx_min_sge;
+         unsigned             tx_min_inline;
+         unsigned             tx_cq_len;
+@@ -412,7 +413,7 @@ ucs_status_t uct_rc_iface_qp_create(uct_rc_iface_t *iface, struct ibv_qp **qp_p,
+ 
+ void uct_rc_iface_fill_attr(uct_rc_iface_t *iface,
+                             uct_ib_qp_attr_t *qp_init_attr,
+-                            unsigned max_send_wr,
++                            unsigned max_send_wr, unsigned max_recv_wr,
+                             struct ibv_srq *srq);
+ 
+ ucs_status_t uct_rc_iface_qp_init(uct_rc_iface_t *iface, struct ibv_qp *qp);

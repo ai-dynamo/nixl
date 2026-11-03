@@ -128,6 +128,62 @@ put(const memViewElem &src,
     return convertSubmitStatus(status);
 }
 
+/** Post one write whose receive completion carries an immutable 32-bit value. */
+template<level_t level>
+__device__ nixl_status_t
+putWithIMM(const memViewElem &src,
+           const memViewElem &dst,
+           size_t size,
+           uint32_t immediate,
+           unsigned channel_id,
+           uint64_t flags,
+           xferStatusH *xfer_status) {
+    const auto status = ucp_device_put_imm<ucsDeviceLevel<level>::value>(
+        localMemList(src.mvh), src.index, src.offset,
+        remoteMemList(dst.mvh), dst.index, dst.offset, size, immediate,
+        channel_id, toUcpFlags(flags), requestPtr(xfer_status));
+    return convertSubmitStatus(status);
+}
+
+template<level_t level>
+__device__ nixl_status_t
+pollIMM(const memViewElem &peer,
+        unsigned channel_id,
+        uint64_t *consumer_index,
+        uint32_t *immediate) {
+    if constexpr (level != level_t::THREAD) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    } else {
+        switch (ucp_device_poll_imm_at(remoteMemList(peer.mvh), peer.index, channel_id,
+                                      consumer_index, immediate)) {
+        case UCS_OK:
+            return NIXL_SUCCESS;
+        case UCS_INPROGRESS:
+            return NIXL_IN_PROG;
+        case UCS_ERR_UNSUPPORTED:
+            return NIXL_ERR_NOT_SUPPORTED;
+        default:
+            return NIXL_ERR_BACKEND;
+        }
+    }
+}
+
+template<level_t level>
+__device__ nixl_status_t
+advanceRx(const memViewElem &peer,
+          unsigned channel_id,
+          uint64_t consumed,
+          uint64_t *consumer_index) {
+    if constexpr (level != level_t::THREAD) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    } else {
+        const auto status = ucp_device_advance_rx(
+            remoteMemList(peer.mvh), peer.index, channel_id, consumed, consumer_index);
+        return status == UCS_OK ? NIXL_SUCCESS :
+               status == UCS_ERR_UNSUPPORTED ? NIXL_ERR_NOT_SUPPORTED : NIXL_ERR_BACKEND;
+    }
+}
+
 template<level_t level>
 __device__ nixl_status_t
 atomicAdd(uint64_t value,
