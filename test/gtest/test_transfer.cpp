@@ -156,9 +156,7 @@ protected:
         // Disabling Telemetry until the corresponding test
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
-        if (isSglEnabled()) {
-            env.addVar("NIXL_UCX_SGL_ENABLE", "y");
-        }
+        env.addVar("NIXL_UCX_SGL_ENABLE", isSglEnabled() ? "y" : "n");
 
         if (getBackendName() == "MOONCAKE") {
             // TCP loopback on host memory: CI hosts may expose RDMA devices the
