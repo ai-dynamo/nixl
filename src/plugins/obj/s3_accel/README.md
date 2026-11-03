@@ -25,7 +25,8 @@ library. Specify each client IP address associated with an RDMA device in the
 
 To reduce S3 RDMA backend initialization time, set `execution.parallel_io` to
 `false` and `execution.max_io_threads` to `0` in your application's JSON
-configuration. This is a temporary workaround for affected cuObject versions.
+configuration. This is a temporary workaround for affected cuObject versions and
+does not affect cuObject I/O.
 Preserve your existing RDMA addresses and other settings when applying the example
 below.
 
