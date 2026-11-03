@@ -69,7 +69,6 @@ nixl_lib_sources = [
     'nixl_enum_strings.cpp',
     'nixl_metadata_worker.cpp',
     'nixl_plugin_manager.cpp',
-    'telemetry/telemetry.cpp',
     'telemetry/telemetry_staging_queue.cpp',
     'telemetry/buffer_exporter.cpp',
     'telemetry/buffer_plugin.cpp',
@@ -78,29 +77,32 @@ nixl_lib_sources = [
     'tracing/tracer.cpp',
 ]
 
-nixl_metadata_sources = [
+nixl_asio_dep_sources = [
     'nixl_md_manager.cpp',
-
     'nixl_p2p_metadata_backend.cpp',
     'nixl_etcd_metadata_backend.cpp',
     'nixl_tcpstore_metadata_backend.cpp',
     'nixl_tcpstore_client_async.cpp',
+    'telemetry/telemetry.cpp',
 ]
 
+asio_dep = dependency('asio', version: '>=1.38.2', required: true)
+nixl_asio_deps = [nixl_lib_deps, asio_dep]
+
 # Compile metadata code with hidden visibility to hide ASIO symbols.
-nixl_metadata_lib = static_library('nixl_metadata',
-                                 nixl_metadata_sources,
-                                 cpp_args: ['-fvisibility=hidden'],
-                                 include_directories: [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ],
-                                 link_args: ['-lstdc++fs'],
-                                 dependencies: nixl_lib_deps
+nixl_asio_dep_lib = static_library('nixl_asio_dep',
+                                   nixl_asio_dep_sources,
+                                   cpp_args: ['-fvisibility=hidden'],
+                                   include_directories: [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ],
+                                   link_args: ['-lstdc++fs'],
+                                   dependencies: nixl_asio_deps
 )
 
 nixl_lib = library('nixl',
                    nixl_lib_sources,
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ],
                    link_args: ['-lstdc++fs'],
-                   link_with: nixl_metadata_lib,
+                   link_with: nixl_asio_dep_lib,
                    dependencies: nixl_lib_deps,
                    install: true,
                    install_rpath: join_paths(get_option('prefix'), get_option('libdir')))

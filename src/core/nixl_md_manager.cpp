@@ -32,6 +32,8 @@
 #include <string>
 #include <string_view>
 
+#include <asio.hpp>
+
 // Definition of the default metadata label (declared in nixl_types.h). It used
 // to live in the now-deleted nixl_listener.cpp; the manager is a natural home.
 const std::string default_metadata_label = "metadata";
@@ -86,6 +88,21 @@ noTransport() {
 
 } // namespace
 
+class nixlMDManager::AsioImpl {
+public:
+    AsioImpl() : ioContext_(), workGuard_(asio::make_work_guard(ioContext_)) {}
+
+    ~AsioImpl() = default;
+
+    // The shared I/O context for all metadata backends. Async I/O completion
+    // handlers from all backends are invoked on this context.
+    asio::io_context ioContext_;
+    // Use a work guard to keep the context alive when there is no work to do.
+    asio::executor_work_guard<asio::io_context::executor_type> workGuard_;
+    // The dedicated thread that runs I/O completion handlers.
+    std::thread ioThread_;
+};
+
 bool
 nixlMDManager::etcdConfigured() {
 #if HAVE_ETCD
@@ -100,10 +117,9 @@ nixlMDManager::etcdConfigured() {
 // otherwise the configured backend. This preserves the agent's original per-call
 // precedence (address wins over a configured backend).
 nixlMDManager::nixlMDManager(nixlMetadataContext &ctx, const nixlMDConfig &config)
-    : ioContext_(),
-      workGuard_(asio::make_work_guard(ioContext_)),
+    : asioImpl_(std::make_unique<AsioImpl>()),
       p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx, config)),
-      backend_(makeBackend(ctx, config, ioContext_)) {}
+      backend_(makeBackend(ctx, config, asioImpl_->ioContext_)) {}
 
 nixlMDManager::~nixlMDManager() {
     stop();
@@ -157,12 +173,12 @@ nixlMDManager::start() {
         backend_->start();
     }
 
-    ioThread_ = std::thread([this] {
+    asioImpl_->ioThread_ = std::thread([this] {
         // All I/O errors are handled by the backend implementation.
         // An unexpected exception may leave the backend in an inconsistent state.
         // Terminate the program to avoid undefined behavior.
         try {
-            ioContext_.run();
+            asioImpl_->ioContext_.run();
             NIXL_DEBUG << "I/O thread exited normally.";
         }
         catch (const std::exception &e) {
@@ -180,8 +196,8 @@ nixlMDManager::stop() {
     if (backend_) {
         backend_->stop();
     }
-    workGuard_.reset();
-    if (ioThread_.joinable()) {
-        ioThread_.join();
+    asioImpl_->workGuard_.reset();
+    if (asioImpl_->ioThread_.joinable()) {
+        asioImpl_->ioThread_.join();
     }
 }
