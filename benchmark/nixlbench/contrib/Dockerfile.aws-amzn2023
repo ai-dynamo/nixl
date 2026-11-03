@@ -14,11 +14,17 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvidia/cuda"
-ARG BASE_IMAGE_TAG="13.0.2-devel-amzn2023"
+# CUDA 13.1+ devel images ship libcuobjclient-devel, which the OBJ plugin needs
+# for its S3 accelerated engines; CUDA 13.0 has no cuObject package at all.
+ARG BASE_IMAGE_TAG="13.4.2-devel-amzn2023"
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
 ARG DEFAULT_PYTHON_VERSION="3.12"
+# Pinned rather than derived from CUDA_VERSION, as in the main nixlbench
+# Dockerfile. Deliberately not named CUDA_VERSION: the base exports that as ENV,
+# which wins over an ARG of the same name.
+ARG TORCH_CUDA_INDEX="cu130"
 ARG EFA_VERSION="1.49.0"
 ARG UCX_REF="v1.20.x"
 ARG ARCH="x86_64"
@@ -54,7 +60,8 @@ RUN dnf install -y \
     hwloc \
     hwloc-libs \
     hwloc-devel \
-    openssl-devel
+    openssl-devel \
+    pkgconf-pkg-config
 
 WORKDIR /workspace
 
@@ -200,9 +207,8 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install python dependencies
 RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Install PyTorch
-RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
-    FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION" && \
-    uv pip install $FLAGS torch torchvision torchaudio
+RUN uv pip install --index-url "https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" \
+        torch torchvision torchaudio
 # Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
@@ -217,6 +223,20 @@ RUN rm -rf build && \
     cd build && \
     ninja && \
     ninja install
+
+# Fail the build if cuObject acceleration did not make it into the plugin.
+RUN set -e; \
+    T="$(echo "$(readlink -f /usr/local/cuda)"/targets/*-linux)"; \
+    if ! ls "$T"/lib/libcuobjclient.so.1.* >/dev/null 2>&1; then \
+        echo "cuObject: no runtime in base, skipping OBJ plugin check"; \
+    else \
+        P="$(find /usr/local/nixl -name libplugin_OBJ.so -print -quit)"; \
+        test -n "$P" || { echo "ERROR: libplugin_OBJ.so not found" >&2; exit 1; }; \
+        readelf -d "$P" | grep -q libcuobjclient || { \
+            echo "ERROR: libplugin_OBJ.so is missing libcuobjclient; S3 acceleration is not compiled in" >&2; \
+            exit 1; }; \
+        echo "cuObject: libplugin_OBJ.so links libcuobjclient"; \
+    fi
 
 RUN echo "/usr/local/nixl/lib64" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib64/plugins" >> /etc/ld.so.conf.d/nixl.conf && \

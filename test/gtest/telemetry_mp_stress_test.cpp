@@ -74,7 +74,7 @@ TEST_F(MpExporterTest, ConcurrentAddXferStatsOverflowConservation) {
     const gtest::LogIgnoreGuard lig(PLUGIN_PROBE_WARNING);
     const auto scrape = gtest::scrapeCoreOverflow(
         {.port = port_,
-         .exporter = "prometheus_mp",
+         .exporter = "prometheus",
          .agent = "mp_concurrent_xfer_overflow_agent",
          .accepted_metric = "agent_tx_requests_num_total",
          .accepted_event_weight = kEventsPerCall,
@@ -106,7 +106,7 @@ TEST_F(MpExporterTest, ConcurrentMixedWorkloadAggregation) {
     env_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "65536");
     env_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "5");
     const gtest::LogIgnoreGuard lig(PLUGIN_PROBE_WARNING);
-    nixlTelemetry telemetry(agent_name, "prometheus_mp");
+    nixlTelemetry telemetry(agent_name, "prometheus");
     runConcurrently(kIters,
                     {[&] { telemetry.updateTxBytes(kTxA); },
                      [&] { telemetry.updateTxBytes(kTxB); },

@@ -7,7 +7,7 @@
 #
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.08-py3
-ARG INFINIA_LIBS_IMAGE=harbor.mellanox.com/nixl/infinia-libs:v2.5.0-rcx.1
+ARG INFINIA_LIBS_IMAGE=il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/static/infinia-libs:v2.5.0-rcx.1
 
 # Stage that just holds the pre-fetched DDN Infinia libraries.
 # See .ci/dockerfiles/Dockerfile.infinia-libs for how this image is produced.
@@ -44,7 +44,7 @@ LABEL version="1.0"
 RUN . /etc/os-release && \
     printf '%s\n' \
         'Types: deb' \
-        'URIs: https://urm.nvidia.com/artifactory/ubuntu-public' \
+        'URIs: https://artifactory.nvidia.com/artifactory/ubuntu-public' \
         "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
         'Components: main restricted universe multiverse' \
         'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
@@ -52,12 +52,18 @@ RUN . /etc/os-release && \
 
 # Update package list and install required packages in one layer
 RUN apt-get update && \
-    apt-get install -y sudo python3 python3-pip kmod && \
+    apt-get install -y sudo python3 python3-pip kmod curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Drop the pre-fetched DDN Infinia libs (for the current ARCH) into ${INFINIA_DEST}.
 ARG INFINIA_DEST=/opt/ddn/red
 COPY --from=infinia /infinia/${ARCH}/ ${INFINIA_DEST}/
+
+# ucx_drop_tool: internal fault-injection tool for fault-tolerance tests.
+RUN curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 60 --retry-max-time 300 \
+        -o /usr/local/bin/ucx_drop_tool \
+        https://il.artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-generic-local/ucx_drop_tool/${ARCH}/ucx_drop_tool && \
+    chmod 755 /usr/local/bin/ucx_drop_tool
 
 # Create group and user in one RUN command to reduce layers
 RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \

@@ -204,6 +204,13 @@ TEST_F(LoadedPluginTestFixture, StaleTelemetryPluginApiVersionIsRejected) {
     EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
 }
 
+TEST_F(LoadedPluginTestFixture, StaleTracePluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+
+    EXPECT_EQ(plugin_manager_.loadTracePlugin("mock_stale"), nullptr);
+    EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
+}
+
 TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {
     const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
     const LogIgnoreGuard lig_missing("Plugin file does not exist");
