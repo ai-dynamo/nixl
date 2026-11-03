@@ -32,7 +32,7 @@
 namespace nixl::gpu {
 class agent {
 public:
-    agent(const std::string &);
+    agent(const std::string &, bool);
     agent(const agent &) = delete;
     agent &
     operator=(const agent &) = delete;

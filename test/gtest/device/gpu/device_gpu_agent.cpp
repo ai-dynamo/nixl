@@ -22,18 +22,31 @@
 namespace {
 const std::string backend_name{"UCX"};
 
-[[nodiscard]] constexpr nixlAgentConfig
-getAgentConfig() noexcept {
+[[nodiscard]] nixlAgentConfig
+getAgentConfig(bool proxy) noexcept {
     nixlAgentConfig config;
-    config.useProgThread = true;
+    config.useProgThread = !proxy;
     return config;
+}
+
+[[nodiscard]] nixl_b_params_t
+getBackendParams(bool proxy) {
+    if (!proxy) {
+        return {{"ucx_error_handling_mode", "none"}};
+    }
+    return {{"device_proxy", "true"},
+            {"proxy_channel_count", "4"},
+            {"proxy_thread_count", "4"},
+            {"proxy_max_peers", "2"},
+            {"ucx_error_handling_mode", "none"}};
 }
 } // namespace
 
 namespace nixl::gpu {
-agent::agent(const std::string &name) : agent_(name, getAgentConfig()) {
+agent::agent(const std::string &name, bool proxy) : agent_(name, getAgentConfig(proxy)) {
     nixlBackendH *backend_handle;
-    if (agent_.createBackend(backend_name, {}, backend_handle) != NIXL_SUCCESS) {
+    if (agent_.createBackend(backend_name, getBackendParams(proxy), backend_handle) !=
+        NIXL_SUCCESS) {
         throw std::runtime_error("Failed to create backend");
     }
 }

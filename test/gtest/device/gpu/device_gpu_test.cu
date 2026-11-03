@@ -24,6 +24,9 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <thread>
+
 namespace {
 constexpr size_t max_polls{1000000};
 constexpr uint64_t test_value{0x1234567890ABCDEFULL};
@@ -31,6 +34,7 @@ constexpr size_t size{sizeof(test_value)};
 constexpr size_t half_size{size / 2};
 const std::string sender_agent_name{"sender"};
 const std::string receiver_agent_name{"receiver"};
+constexpr std::chrono::seconds data_arrival_timeout{5};
 } // namespace
 
 namespace nixl::gpu {
@@ -87,10 +91,23 @@ putChannelKernel(void *src_mvh, void *dst_mvh) {
     }
 }
 
-class deviceApiTest : public testing::Test {
+void
+waitForData(const memBuffer &actual, const memBuffer &expected) {
+    const auto deadline = std::chrono::steady_clock::now() + data_arrival_timeout;
+    while (!(actual == expected) && (std::chrono::steady_clock::now() < deadline)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+class test : public testing::TestWithParam<bool> {
 protected:
     void
     SetUp() override {
+#ifndef HAVE_UCX_GPU_DEVICE_API
+        if (!isProxy()) {
+            GTEST_SKIP() << "UCX direct GPU API is unavailable";
+        }
+#endif
         int count;
         if ((cudaGetDeviceCount(&count) != cudaSuccess) || (count < 1)) {
             GTEST_SKIP() << "No CUDA-capable GPU is available";
@@ -102,8 +119,8 @@ protected:
         lig_ = std::make_unique<gtest::LogIgnoreGuard>(
             "IB device\\(s\\) were detected, but accelerated IB support was not found");
 
-        senderAgent_ = std::make_unique<agent>(sender_agent_name);
-        receiverAgent_ = std::make_unique<agent>(receiver_agent_name);
+        senderAgent_ = std::make_unique<agent>(sender_agent_name, isProxy());
+        receiverAgent_ = std::make_unique<agent>(receiver_agent_name, isProxy());
     }
 
     [[nodiscard]] void *
@@ -119,25 +136,34 @@ protected:
     }
 
 private:
+    [[nodiscard]] bool
+    isProxy() const {
+        return GetParam();
+    }
+
     std::unique_ptr<gtest::LogIgnoreGuard> lig_;
     std::unique_ptr<agent> senderAgent_;
     std::unique_ptr<agent> receiverAgent_;
 };
 
-TEST_F(deviceApiTest, atomicAdd) {
+TEST_P(test, atomicAdd) {
     std::vector<memBuffer> counters;
     counters.emplace_back(std::move(memBuffer{size}));
 
     void *counter_mvh = prepRemoteMemView(counters);
 
     atomicAddKernel<<<1, 1>>>(counter_mvh);
+    // Launch errors are reported only here, not by cudaDeviceSynchronize().
+    const cudaError_t launch_status = cudaGetLastError();
+    ASSERT_EQ(launch_status, cudaSuccess) << cudaGetErrorString(launch_status);
 
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
     const memBuffer expected{size, &test_value};
+    waitForData(counters[0], expected);
     EXPECT_EQ(counters[0], expected);
 }
 
-TEST_F(deviceApiTest, putOffset) {
+TEST_P(test, putOffset) {
     std::vector<memBuffer> src_mbs;
     src_mbs.emplace_back(std::move(memBuffer{size, &test_value}));
     std::vector<memBuffer> dst_mbs;
@@ -147,12 +173,16 @@ TEST_F(deviceApiTest, putOffset) {
     void *dst_mvh = prepRemoteMemView(dst_mbs);
 
     putOffsetKernel<<<1, 1>>>(src_mvh, dst_mvh);
+    // Launch errors are reported only here, not by cudaDeviceSynchronize().
+    const cudaError_t launch_status = cudaGetLastError();
+    ASSERT_EQ(launch_status, cudaSuccess) << cudaGetErrorString(launch_status);
 
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    waitForData(dst_mbs[0], src_mbs[0]);
     EXPECT_EQ(src_mbs[0], dst_mbs[0]);
 }
 
-TEST_F(deviceApiTest, putChannel) {
+TEST_P(test, putChannel) {
     std::vector<memBuffer> src_mbs;
     src_mbs.emplace_back(std::move(memBuffer{size, &test_value}));
     std::vector<memBuffer> dst_mbs;
@@ -163,9 +193,21 @@ TEST_F(deviceApiTest, putChannel) {
     void *dst_mvh = prepRemoteMemView(dst_mbs);
 
     putChannelKernel<<<1, 1>>>(src_mvh, dst_mvh);
+    // Launch errors are reported only here, not by cudaDeviceSynchronize().
+    const cudaError_t launch_status = cudaGetLastError();
+    ASSERT_EQ(launch_status, cudaSuccess) << cudaGetErrorString(launch_status);
 
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    waitForData(dst_mbs[0], src_mbs[0]);
+    waitForData(dst_mbs[1], src_mbs[0]);
     EXPECT_EQ(src_mbs[0], dst_mbs[0]);
     EXPECT_EQ(src_mbs[0], dst_mbs[1]);
 }
+
+INSTANTIATE_TEST_SUITE_P(deviceGpu,
+                         test,
+                         testing::Bool(),
+                         [](const testing::TestParamInfo<bool> &info) {
+                             return info.param ? "PROXY" : "UCX";
+                         });
 } // namespace nixl::gpu
