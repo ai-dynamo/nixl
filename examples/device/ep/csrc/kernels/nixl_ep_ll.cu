@@ -81,10 +81,12 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
          int* atomic_counter_per_expert, int* atomic_finish_counter_per_expert,
          uint64_t* next_clean, int num_next_clean_int,
          int num_tokens, int num_max_dispatch_tokens_per_rank,
-         int num_topk, int active_rank_bound, int num_local_experts, int rank,
+         int num_topk, int active_rank_bound, int num_local_experts,
          int num_warp_groups, int num_warps_per_group,
          bool round_scale, uint64_t timeout_cycles, int phases, nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
     auto nixl_ctx = *nixl_ctx_ptr;
+    // The rank lives in device memory, so a captured graph follows Buffer::set_rank.
+    const int rank = nixl_ctx.rank;
     const auto sm_id = static_cast<int>(blockIdx.x);
     const auto thread_id = static_cast<int>(threadIdx.x);
     const auto warp_id = thread_id / 32, lane_id = get_lane_id();
@@ -404,7 +406,7 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               const void* x, const topk_idx_t* topk_idx,
               uint64_t* next_clean, int num_next_clean_int,
               int num_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
-              int num_topk, int active_rank_bound, int num_experts_per_rank, int rank,
+              int num_topk, int active_rank_bound, int num_experts_per_rank,
               bool use_fp8, bool round_scale, bool use_ue8m0,
               uint64_t timeout_cycles,
               void* workspace, int num_device_sms,
@@ -447,7 +449,7 @@ LAUNCH_KERNEL(&cfg, dispatch_func, \
               atomic_counter_per_expert, atomic_finish_counter_per_expert, \
               next_clean, num_next_clean_int, \
               num_tokens, num_max_dispatch_tokens_per_rank, \
-              num_topk, active_rank_bound, num_experts_per_rank, rank, \
+              num_topk, active_rank_bound, num_experts_per_rank, \
               num_warp_groups, num_warps_per_group, \
               round_scale, timeout_cycles, phases, nixl_ctx); } break
 
@@ -627,10 +629,12 @@ combine(void* combined_x,
         int* atomic_clean_flag,
         int num_combined_tokens, int hidden, int num_topk,
         int num_max_dispatch_tokens_per_rank,
-        int active_rank_bound, int num_local_experts, int rank,
+        int active_rank_bound, int num_local_experts,
         int num_warp_groups, int num_warps_per_group,
         uint64_t timeout_cycles, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
     auto nixl_ctx = *nixl_ctx_ptr;
+    // The rank lives in device memory, so a captured graph follows Buffer::set_rank.
+    const int rank = nixl_ctx.rank;
     const auto sm_id = __shfl_sync(0xffffffff, static_cast<int>(blockIdx.x), 0);
     const auto num_sms = __shfl_sync(0xffffffff, static_cast<int>(gridDim.x), 0);
     const auto thread_id = static_cast<int>(threadIdx.x);
@@ -1024,7 +1028,7 @@ void combine(void* combined_x,
              int64_t* combine_wait_recv_cost_stats,
              uint64_t* next_clean, int num_next_clean_int,
              int num_combined_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
-             int num_topk, int active_rank_bound, int num_experts_per_rank, int rank,
+             int num_topk, int active_rank_bound, int num_experts_per_rank,
              bool use_logfmt, uint64_t timeout_cycles,
              void* workspace, int num_device_sms,
              cudaStream_t stream, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx) {
@@ -1078,7 +1082,7 @@ LAUNCH_KERNEL(&cfg, combine_func, \
               atomic_clean_flag, \
               num_combined_tokens, hidden, num_topk, \
               num_max_dispatch_tokens_per_rank, \
-              active_rank_bound, num_experts_per_rank, rank, \
+              active_rank_bound, num_experts_per_rank, \
               num_warp_groups, num_warps_per_group, \
               timeout_cycles, phases, zero_copy, nixl_ctx); } break
 
