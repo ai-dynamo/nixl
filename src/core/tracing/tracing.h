@@ -112,7 +112,37 @@ struct Attribute {
 };
 
 class Tracer;
-class SpanBackend;
+
+/**
+ * @brief A single active span within one backend. Its destructor ends the
+ *        range / fixes the duration for that backend.
+ */
+class SpanBackend {
+public:
+    virtual ~SpanBackend() = default;
+
+    virtual void
+    addAttribute(AttributeKey key, std::string_view value) = 0;
+    virtual void
+    addAttribute(AttributeKey key, std::int64_t value) = 0;
+    virtual void
+    addAttribute(AttributeKey key, double value) = 0;
+
+    virtual void
+    addAttributes(std::span<const Attribute> attrs) {
+        for (const Attribute &attr : attrs) {
+            std::visit([&](const auto value) { addAttribute(attr.key, value); }, attr.value);
+        }
+    }
+
+    virtual void
+    addCtrlDep(SpanId parent) = 0;
+    virtual void
+    addDataDep(SpanId parent) = 0;
+
+    [[nodiscard]] virtual SpanId
+    id() const noexcept = 0;
+};
 
 struct TracerDeleter {
     void
@@ -128,12 +158,47 @@ struct BackendTraceSinkDeleter {
 
 using BackendTraceSinkPtr = std::unique_ptr<nixlBackendTraceSink, BackendTraceSinkDeleter>;
 
-struct SpanBackendDeleter {
-    void
-    operator()(SpanBackend *span) const noexcept;
-};
-
 inline constexpr std::size_t maxTraceBackends = 4;
+
+class Span;
+
+} // namespace nixl::trace
+
+namespace nixl::trace::detail {
+
+[[nodiscard]] Span
+beginSpan(Tracer &tracer, std::string_view name, Kind kind);
+
+[[nodiscard]] Span
+beginContextSpan(Tracer &tracer,
+                 std::string_view name,
+                 Kind kind,
+                 const TraceContext &context,
+                 std::uint64_t request_id);
+
+void
+mark(Tracer &tracer, std::string_view name, Kind kind);
+
+void
+pushContext(Tracer &tracer, const TraceContext &context, std::uint64_t request_id);
+
+void
+popContext(Tracer &tracer);
+
+void
+emitEvent(Tracer &tracer,
+          std::string_view name,
+          Kind kind,
+          const TraceContext &context,
+          std::uint64_t request_id,
+          std::span<const Attribute> attrs);
+
+void
+emitSpan(Tracer &tracer, std::string_view name, Kind kind, nixlTime::us_t start);
+
+} // namespace nixl::trace::detail
+
+namespace nixl::trace {
 
 /**
  * @brief Public span handle. Fans out attribute/dependency calls to every
@@ -177,13 +242,20 @@ public:
     id() const noexcept;
 
 private:
-    friend class Tracer;
+    friend Span
+    detail::beginSpan(Tracer &tracer, std::string_view name, Kind kind);
+    friend Span
+    detail::beginContextSpan(Tracer &tracer,
+                             std::string_view name,
+                             Kind kind,
+                             const TraceContext &context,
+                             std::uint64_t request_id);
 
     template<typename Call>
     void
     forEachBackend(const Call &call) const;
 
-    std::array<std::unique_ptr<SpanBackend, SpanBackendDeleter>, maxTraceBackends> backends_;
+    std::array<std::unique_ptr<SpanBackend>, maxTraceBackends> backends_;
 };
 
 [[nodiscard]] TracerPtr
@@ -191,44 +263,6 @@ makeAgentTracer(const std::string &name);
 
 [[nodiscard]] BackendTraceSinkPtr
 makeBackendTraceSink(Tracer &tracer, std::string backend, nixlTelemetry *telemetry);
-
-} // namespace nixl::trace
-
-namespace nixl::trace::detail {
-
-[[nodiscard]] Span
-beginSpan(Tracer &tracer, std::string_view name, Kind kind);
-
-[[nodiscard]] Span
-beginContextSpan(Tracer &tracer,
-                 std::string_view name,
-                 Kind kind,
-                 const TraceContext &context,
-                 std::uint64_t request_id);
-
-void
-mark(Tracer &tracer, std::string_view name, Kind kind);
-
-void
-pushContext(Tracer &tracer, const TraceContext &context, std::uint64_t request_id);
-
-void
-popContext(Tracer &tracer);
-
-void
-emitEvent(Tracer &tracer,
-          std::string_view name,
-          Kind kind,
-          const TraceContext &context,
-          std::uint64_t request_id,
-          std::span<const Attribute> attrs);
-
-void
-emitSpan(Tracer &tracer, std::string_view name, Kind kind, nixlTime::us_t start);
-
-} // namespace nixl::trace::detail
-
-namespace nixl::trace {
 
 /**
  * @brief RAII guard that keeps a trace context active on the tracer for its

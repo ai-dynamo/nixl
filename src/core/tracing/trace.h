@@ -34,37 +34,6 @@
 namespace nixl::trace {
 
 /**
- * @brief A single active span within one backend. Its destructor ends the
- *        range / fixes the duration for that backend.
- */
-class SpanBackend {
-public:
-    virtual ~SpanBackend() = default;
-
-    virtual void
-    addAttribute(AttributeKey key, std::string_view value) = 0;
-    virtual void
-    addAttribute(AttributeKey key, std::int64_t value) = 0;
-    virtual void
-    addAttribute(AttributeKey key, double value) = 0;
-
-    virtual void
-    addAttributes(std::span<const Attribute> attrs) {
-        for (const Attribute &attr : attrs) {
-            std::visit([&](const auto value) { addAttribute(attr.key, value); }, attr.value);
-        }
-    }
-
-    virtual void
-    addCtrlDep(SpanId parent) = 0;
-    virtual void
-    addDataDep(SpanId parent) = 0;
-
-    [[nodiscard]] virtual SpanId
-    id() const noexcept = 0;
-};
-
-/**
  * @brief One enabled backend type (NVTX, Chakra, ...). Each record names the
  *        span id of its context, pushed or passed, as its parent, except the
  *        span beginContextSpan() begins, which has that id as its own.
@@ -186,22 +155,38 @@ public:
     void
     reportContextFailure(std::string_view reason) const noexcept;
 
+    [[nodiscard]] std::span<const std::unique_ptr<TraceBackend>>
+    backends() const noexcept {
+        return backends_;
+    }
+
     [[nodiscard]] Span
-    beginSpan(std::string_view name, Kind kind = Kind::Generic);
+    beginSpan(std::string_view name, Kind kind = Kind::Generic) {
+        return detail::beginSpan(*this, name, kind);
+    }
 
     [[nodiscard]] Span
     beginContextSpan(std::string_view name,
                      Kind kind,
                      const TraceContext &context,
-                     std::uint64_t request_id);
+                     std::uint64_t request_id) {
+        return detail::beginContextSpan(*this, name, kind, context, request_id);
+    }
 
     void
-    mark(std::string_view name, Kind kind = Kind::Metadata);
+    mark(std::string_view name, Kind kind = Kind::Metadata) {
+        detail::mark(*this, name, kind);
+    }
 
     void
-    pushContext(const TraceContext &context, std::uint64_t request_id);
+    pushContext(const TraceContext &context, std::uint64_t request_id) {
+        detail::pushContext(*this, context, request_id);
+    }
+
     void
-    popContext();
+    popContext() {
+        detail::popContext(*this);
+    }
 
     void
     emitSpan(std::string_view name,

@@ -63,9 +63,8 @@ includes one of them, `tracing/tracing.h`, which holds the call-site macros, `Ki
 `Span`, a request's trace state, and the tracer and the backends' sinks as opaque
 handles that `makeAgentTracer()` and `makeBackendTraceSink()` return. Plugins include
 `tracing/backend_trace.h` (see [Backend phases](#backend-phases)). The tracer itself,
-the backend interfaces (`tracing/trace.h`), the plugin contract
-(`tracing/trace_plugin.h`), the sink and the wire codec are seen only by tracing, its
-backends and its tests. Only NIXL core instruments it today; because internal→public
+`TraceBackend` (`tracing/trace.h`), the plugin contract (`tracing/trace_plugin.h`),
+the sink and the wire codec are seen only by tracing, its backends and its tests. Only NIXL core instruments it today; because internal→public
 is a non-breaking change, it can be promoted to a public header later if an external
 consumer appears.
 
