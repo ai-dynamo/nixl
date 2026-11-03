@@ -207,14 +207,10 @@ nixlMemSection::populate(const nixl_stride_dlist_t &query,
     size_t start_idx = 0;
     for (int i = 0; i < n; ++i) {
         const nixlStrideDesc &run = query[i];
-        if (run.count == 0 || run.len == 0 || run.stride < run.len) [[unlikely]] {
-            resp.clear();
-            return NIXL_ERR_INVALID_PARAM;
-        }
-
-        // Reject runs whose span or flat block count would overflow size_t.
-        if ((run.count - 1 > (SIZE_MAX - run.len) / run.stride) ||
-            (run.count > SIZE_MAX - start_idx)) [[unlikely]] {
+        if (run.count == 0 || run.len == 0 || run.stride < run.len ||
+            run.len > UINTPTR_MAX - run.addr ||
+            run.count - 1 > (UINTPTR_MAX - run.addr - run.len) / run.stride ||
+            run.count > SIZE_MAX - start_idx) [[unlikely]] {
             resp.clear();
             return NIXL_ERR_INVALID_PARAM;
         }

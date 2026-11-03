@@ -1455,6 +1455,14 @@ namespace agent {
         EXPECT_EQ(agent_->prepXferDlist(overflow, dlist_hndl, &setup.extraParams),
                   NIXL_ERR_NOT_FOUND);
         EXPECT_EQ(dlist_hndl, nullptr);
+
+        // addr + (2 - 1) * stride + 1 wraps to 0x1001 in uintptr_t.
+        nixl_stride_dlist_t end_wrap(DRAM_SEG);
+        end_wrap.addDesc(nixlStrideDesc(desc.addr, 1, desc.devId, 0 - desc.addr + 0x1000, 2));
+        dlist_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(end_wrap, dlist_hndl, &setup.extraParams),
+                  NIXL_ERR_NOT_FOUND);
+        EXPECT_EQ(dlist_hndl, nullptr);
     }
 
     INSTANTIATE_TEST_SUITE_P(DramRegisterMemoryInstantiation,
