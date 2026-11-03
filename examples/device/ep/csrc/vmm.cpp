@@ -17,6 +17,7 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 #include "config.hpp"
 #include "vmm.hpp"
@@ -25,15 +26,21 @@ namespace {
 
 constexpr const char *k_vmm_ctx = "vmm_region";
 
+const char *
+cu_error_string(CUresult status) noexcept {
+    const char *msg = nullptr;
+    if (cuGetErrorString(status, &msg) != CUDA_SUCCESS || msg == nullptr) {
+        msg = "unknown CUDA driver error";
+    }
+    return msg;
+}
+
 /** Log a non-fatal warning if a CUDA driver API call failed (e.g. during teardown). */
 void
 warn_cu_api(CUresult status, const char *context, const char *operation) noexcept {
     if (status != CUDA_SUCCESS) {
-        const char *msg = nullptr;
-        if (cuGetErrorString(status, &msg) != CUDA_SUCCESS || msg == nullptr) {
-            msg = "unknown CUDA driver error";
-        }
-        std::cerr << "WARNING: " << context << " failed to " << operation << ": " << msg << '\n';
+        std::cerr << "WARNING: " << context << " failed to " << operation << ": "
+                  << cu_error_string(status) << '\n';
     }
 }
 
@@ -107,6 +114,16 @@ alloc_ctx() {
     return ctx;
 }
 
+/** A region that is not exportable gets no export handle type. */
+CUmemAllocationProp
+alloc_prop(bool exportable) {
+    CUmemAllocationProp prop = alloc_ctx().prop;
+    if (!exportable) {
+        prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_NONE;
+    }
+    return prop;
+}
+
 } // namespace
 
 namespace nixl_ep {
@@ -139,7 +156,7 @@ vmm_region::~vmm_region() {
     release();
 }
 
-vmm_region::vmm_region(size_t size) {
+vmm_region::vmm_region(size_t size, bool exportable) : exportable_(exportable) {
     if (size == 0) {
         throw std::invalid_argument("vmm_region: size must be non-zero");
     }
@@ -149,7 +166,8 @@ vmm_region::vmm_region(size_t size) {
     if (ctx.fabric_supported) {
         size_ = nixl_ep::align_up<size_t>(size, ctx.granularity);
 
-        const CUresult mem_create_status = cuMemCreate(&handle_, size_, &ctx.prop, 0);
+        const CUmemAllocationProp prop = alloc_prop(exportable_);
+        const CUresult mem_create_status = cuMemCreate(&handle_, size_, &prop, 0);
         if (mem_create_status != CUDA_SUCCESS) {
             handle_ = 0;
             ctx.fabric_supported = false;
@@ -179,6 +197,39 @@ vmm_region::vmm_region(size_t size) {
     if (cuMemAlloc(&ptr_, size) != CUDA_SUCCESS) {
         throw std::runtime_error("cuMemAlloc fallback failed");
     }
+}
+
+bool
+vmm_region::make_exportable() {
+    if (is_cuda_malloc_ || exportable_) {
+        return false;
+    }
+    // Back the same virtual addresses with new physical memory, so that
+    // pointers captured in CUDA graphs stay valid. Contents are not kept.
+    if (cuMemUnmap(ptr_, size_) != CUDA_SUCCESS) {
+        throw std::runtime_error("Failed to unmap CUDA VMM memory to make it exportable");
+    }
+    vmm_mapped_ = false;
+    warn_cu_api(cuMemRelease(handle_), k_vmm_ctx, "cuMemRelease");
+    handle_ = 0;
+    const CUmemAllocationProp prop = alloc_prop(true);
+    const CUresult status = cuMemCreate(&handle_, size_, &prop, 0);
+    if (status != CUDA_SUCCESS) {
+        handle_ = 0;
+        // In a restored process, creating FABRIC memory needs a checkpoint
+        // layer that allows it and a subscription to the IMEX channel.
+        throw std::runtime_error(std::string("Failed to create exportable CUDA VMM memory: ") +
+                                 cu_error_string(status));
+    }
+    if (cuMemMap(ptr_, size_, 0, handle_, 0) != CUDA_SUCCESS) {
+        throw std::runtime_error("Failed to map exportable CUDA VMM memory");
+    }
+    vmm_mapped_ = true;
+    if (cuMemSetAccess(ptr_, size_, &alloc_ctx().access_desc, 1) != CUDA_SUCCESS) {
+        throw std::runtime_error("Failed to set CUDA memory access");
+    }
+    exportable_ = true;
+    return true;
 }
 
 } // namespace nixl_ep
