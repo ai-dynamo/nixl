@@ -24,9 +24,17 @@
  * runtime (NVTX today; Chakra and others later). This is an internal core API
  * (compiled into libnixl, not installed as a public header). It is kept
  * deliberately self-contained -- depending only on standard headers and on
- * attribute_key.h, log_once.h, record.h, trace_identity.h and nixl_time.h
- * -- so it stays easy to reason about and could be promoted to a public header
- * later without churn if an external consumer appears.
+ * attribute.h, attribute_key.h, detail/trace_impl.h, log_once.h, record.h,
+ * trace_identity.h and nixl_time.h -- so it stays easy to reason about and
+ * could be promoted to a public header later without churn if an external
+ * consumer appears.
+ *
+ * A module uses only the NIXL_TRACE_* macros, Span, CorrelationScope and
+ * Traceable, with Record, Attribute and AttributeKey as their arguments;
+ * logOnce(); what trace_identity.h declares; and the tracer and the backends'
+ * trace sinks as opaque handles from makeAgentTracer() and
+ * makeBackendTraceSink(). nixl::trace::detail, declared in
+ * tracing/detail/trace_impl.h, is only what the macros expand into.
  */
 
 #include <array>
@@ -43,7 +51,9 @@
 #include <variant>
 
 #include "common/nixl_time.h"
+#include "tracing/attribute.h"
 #include "tracing/attribute_key.h"
+#include "tracing/detail/trace_impl.h"
 #include "tracing/log_once.h"
 #include "tracing/record.h"
 #include "tracing/trace_identity.h"
@@ -59,43 +69,6 @@ namespace nixl::trace {
  */
 struct SpanId {
     std::uint64_t value{0};
-};
-
-/**
- * @brief An attribute value as a record holds it: integers and enums as
- *        std::int64_t, floating-point values as double, strings as views.
- */
-template<typename T>
-    requires std::is_integral_v<T> || std::is_enum_v<T>
-[[nodiscard]] constexpr std::int64_t
-attributeValue(T value) noexcept {
-    return static_cast<std::int64_t>(value);
-}
-
-template<typename T>
-    requires std::is_floating_point_v<T>
-[[nodiscard]] constexpr double
-attributeValue(T value) noexcept {
-    return static_cast<double>(value);
-}
-
-[[nodiscard]] constexpr std::string_view
-attributeValue(std::string_view value) noexcept {
-    return value;
-}
-
-/**
- * @brief Typed attribute of an emitted span or event. The key is a string
- *        literal; a string value is a view, valid only for the call.
- */
-struct Attribute {
-    template<typename Value>
-    constexpr Attribute(AttributeKey attr_key, const Value &attr_value) noexcept
-        : key(attr_key),
-          value(attributeValue(attr_value)) {}
-
-    AttributeKey key;
-    std::variant<std::string_view, std::int64_t, double> value;
 };
 
 class Name {
@@ -137,39 +110,6 @@ private:
     std::uint8_t record_;
 };
 
-class Tracer;
-
-/**
- * @brief A single active span within one backend. Its destructor ends the
- *        range / fixes the duration for that backend.
- */
-class SpanBackend {
-public:
-    virtual ~SpanBackend() = default;
-
-    virtual void
-    addAttribute(AttributeKey key, std::string_view value) = 0;
-    virtual void
-    addAttribute(AttributeKey key, std::int64_t value) = 0;
-    virtual void
-    addAttribute(AttributeKey key, double value) = 0;
-
-    virtual void
-    addAttributes(std::span<const Attribute> attrs) {
-        for (const Attribute &attr : attrs) {
-            std::visit([&](const auto value) { addAttribute(attr.key, value); }, attr.value);
-        }
-    }
-
-    virtual void
-    addCtrlDep(SpanId parent) = 0;
-    virtual void
-    addDataDep(SpanId parent) = 0;
-
-    [[nodiscard]] virtual SpanId
-    id() const noexcept = 0;
-};
-
 struct TracerDeleter {
     void
     operator()(Tracer *tracer) const noexcept;
@@ -185,46 +125,6 @@ struct BackendTraceSinkDeleter {
 using BackendTraceSinkPtr = std::unique_ptr<nixlBackendTraceSink, BackendTraceSinkDeleter>;
 
 inline constexpr std::size_t maxTraceBackends = 4;
-
-class Span;
-
-} // namespace nixl::trace
-
-namespace nixl::trace::detail {
-
-[[nodiscard]] Span
-beginSpan(Tracer &tracer, Name name, Kind kind);
-
-[[nodiscard]] Span
-beginContextSpan(Tracer &tracer,
-                 Name name,
-                 Kind kind,
-                 const TraceContext &context,
-                 std::uint64_t request_id);
-
-void
-mark(Tracer &tracer, Name name, Kind kind);
-
-void
-pushContext(Tracer &tracer, const TraceContext &context, std::uint64_t request_id);
-
-void
-popContext(Tracer &tracer);
-
-void
-emitEvent(Tracer &tracer,
-          Name name,
-          Kind kind,
-          const TraceContext &context,
-          std::uint64_t request_id,
-          std::span<const Attribute> attrs);
-
-void
-emitSpan(Tracer &tracer, Name name, Kind kind, nixlTime::us_t start);
-
-} // namespace nixl::trace::detail
-
-namespace nixl::trace {
 
 /**
  * @brief Public span handle. Fans out attribute/dependency calls to every
