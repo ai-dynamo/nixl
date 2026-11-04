@@ -150,8 +150,8 @@ NB_ARG_STRING(backend,
               "OBJ, REDIS, GUSLI, AZURE_BLOB] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
-              "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
-              "use DRAM locally.");
+              "Type of memory segment for initiator [DRAM, VRAM]. Note: the backend must support "
+              "the chosen type. Defaults to DRAM.");
 NB_ARG_STRING(target_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for target [DRAM, VRAM]. Note: Storage backends determine "
@@ -577,6 +577,31 @@ discoverPluginMems(const std::string &backend) {
     }
     return mems;
 }
+
+[[nodiscard]] bool
+isValidStorageInitiatorSeg(const std::string &backend,
+                           const std::string &seg_type_str,
+                           const nixl_mem_list_t &backend_mems) {
+    nixl_mem_t seg_type; // Should only be DRAM or VRAM
+    if (seg_type_str.compare(XFERBENCH_SEG_TYPE_DRAM) == 0) {
+        seg_type = DRAM_SEG;
+    } else if (seg_type_str.compare(XFERBENCH_SEG_TYPE_VRAM) == 0) {
+        seg_type = VRAM_SEG;
+    } else {
+        std::cerr << "Unknown --initiator_seg_type=" << seg_type_str << std::endl;
+        return false;
+    }
+    if (std::find(backend_mems.begin(), backend_mems.end(), seg_type) == backend_mems.end()) {
+        std::cerr << backend << " does not support --initiator_seg_type=" << seg_type_str;
+        if (backend == XFERBENCH_BACKEND_AIS) {
+            std::cerr << "; use --initiator_seg_type=VRAM";
+        }
+        std::cerr << std::endl;
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int
@@ -773,6 +798,11 @@ xferBenchConfig::loadParams(void) {
     }
 
     initiator_seg_type = NB_ARG(initiator_seg_type);
+    if (isStorageBackend() &&
+        !isValidStorageInitiatorSeg(backend, initiator_seg_type, backend_mems)) {
+        // isValidStorageInitiatorSeg will report the error message.
+        return -1;
+    }
     target_seg_type = NB_ARG(target_seg_type);
     if (use_localized >= 0 && initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM &&
         target_seg_type != XFERBENCH_SEG_TYPE_VRAM) {
