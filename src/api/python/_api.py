@@ -69,13 +69,13 @@ class nixl_prepped_dlist_handle:
 
     def release(self):
         if not self._released:
-            self._agent.releasedDlistH(self._handle)
+            self._agent.agent.releasedDlistH(self._handle)
             self._released = True
 
     def __del__(self):
         if not self._released:
             try:
-                self._agent.releasedDlistH(self._handle)
+                self._agent.agent.releasedDlistH(self._handle)
             except Exception:
                 try:
                     logger.error(
@@ -110,13 +110,13 @@ class nixl_xfer_handle:
 
     def release(self):
         if not self._released:
-            self._agent.releaseXferReq(self._handle)
+            self._agent.agent.releaseXferReq(self._handle)
             self._released = True
 
     def __del__(self):
         if not self._released:
             try:
-                self._agent.releaseXferReq(self._handle)
+                self._agent.agent.releaseXferReq(self._handle)
             except Exception:
                 try:
                     logger.error(
@@ -160,6 +160,12 @@ class nixl_agent_config:
             configuration has its own default backend list.
         sync_mode: Thread synchronization mode to use for the agent.
             If None, sync_mode is set based on the enable_listen flag.
+        prog_thread_delay_us: Delay in microseconds between progress thread
+            iterations, for backends that run one. 0 polls continuously.
+            LIBFABRIC sleeps for exactly this long when no completions are
+            pending. UCX rounds the delay up to whole milliseconds for its
+            poll() timeout (so 50 and 250 both become 1ms) and wakes earlier
+            on pending events.
     """
 
     def __init__(
@@ -171,6 +177,7 @@ class nixl_agent_config:
         num_threads: int = 0,
         backends: Optional[list[str]] = None,
         sync_mode: Optional[nixl_thread_sync_t] = None,
+        prog_thread_delay_us: int = 0,
     ):
         """Initialize the configuration, creating a fresh default backend list."""
         # TODO: add backend init parameters
@@ -186,6 +193,12 @@ class nixl_agent_config:
             )
 
         self.sync_mode = sync_mode
+        if not isinstance(prog_thread_delay_us, int) or prog_thread_delay_us < 0:
+            raise ValueError(
+                "prog_thread_delay_us must be a non-negative int "
+                f"(got {prog_thread_delay_us!r})"
+            )
+        self.prog_thread_delay_us = prog_thread_delay_us
 
 
 class nixl_agent:
@@ -225,7 +238,7 @@ class nixl_agent:
         agent_config.useListenThread = nixl_conf.enable_listen
         agent_config.listenPort = nixl_conf.port
         agent_config.syncMode = (nixl_conf.sync_mode or default_sync_mode).value
-        agent_config.pthrDelay = 0
+        agent_config.pthrDelay = nixl_conf.prog_thread_delay_us
         agent_config.lthrDelay = 100000
         agent_config.captureTelemetry = nixl_conf.capture_telemetry
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
@@ -544,7 +557,7 @@ class nixl_agent:
         else:
             descs = self.get_xfer_descs(xfer_list, mem_type)
             handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
-        return nixl_prepped_dlist_handle(self.agent, handle)
+        return nixl_prepped_dlist_handle(self, handle)
 
     def estimate_xfer_cost(self, req_handle: nixl_xfer_handle) -> tuple[int, int, int]:
         """Estimate the cost of a transfer operation.
@@ -609,7 +622,7 @@ class nixl_agent:
             skip_desc_merge,
         )
 
-        return nixl_xfer_handle(self.agent, handle)
+        return nixl_xfer_handle(self, handle)
 
     def initialize_xfer(
         self,
@@ -648,7 +661,7 @@ class nixl_agent:
             op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
         )
 
-        return nixl_xfer_handle(self.agent, handle)
+        return nixl_xfer_handle(self, handle)
 
     def transfer(self, handle: nixl_xfer_handle, notif_msg: bytes = b"") -> str:
         """Initiate a data transfer operation.
