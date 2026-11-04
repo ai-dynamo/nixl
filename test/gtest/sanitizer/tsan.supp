@@ -31,6 +31,8 @@ race:libucs
 race:libucp
 race:libuct
 race:libucm
+race:libtransfer_engine
+race:libasio
 
 # Function/namespace backstops for the families we have actually seen racing, in
 # case module-name matching misses a frame.
