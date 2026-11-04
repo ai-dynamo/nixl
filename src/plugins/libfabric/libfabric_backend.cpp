@@ -2087,7 +2087,9 @@ nixlLibfabricEngine::progressThread() {
     while (!progress_thread_stop_.load()) {
         // Process completions only on rails (non-blocking)
         bool any_completions = false;
-        nixl_status_t status = rail_manager_.progressActiveRails();
+        // set_cuda_device: target-side shm CUDA IPC copies run here and need the device of the
+        // targeted VRAM current
+        nixl_status_t status = rail_manager_.progressActiveRails(true);
         if (status == NIXL_SUCCESS) {
             any_completions = true;
             NIXL_DEBUG << "PT: Processed completions on rails";

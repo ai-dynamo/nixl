@@ -289,10 +289,13 @@ public:
                        std::function<void(nixl_status_t)> completion_callback = nullptr);
     // Progress APIs
     /** Process completions on active rails only (optimized for CPU overhead)
+     * @param set_cuda_device  Before progressing each rail, make the CUDA device of the VRAM
+     *                         registered on it current on the calling thread. Only for threads
+     *                         NIXL owns (the progress thread): it changes the current device.
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
      */
     nixl_status_t
-    progressActiveRails();
+    progressActiveRails(bool set_cuda_device = false);
 
     /** Validate that all rails are properly initialized
      * @return NIXL_SUCCESS if all rails initialized, error code otherwise
