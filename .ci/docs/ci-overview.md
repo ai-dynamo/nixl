@@ -334,6 +334,22 @@ symlinks `docker` to `podman` in two different containers, and the push in
 `manylinux` runner. Check the step's `containerSelector` against
 `runs_on_dockers`, not just whether `docker` is podman.
 
+## Registry login retries
+
+A single registry login used to fail the whole build. Two transient failures
+have done this while sibling branches logged in with the same credentials
+seconds apart: `invalid username/password` from `il.artifactory.nvidia.com` or
+`gitlab-master.nvidia.com:5005`, and `lookup il.artifactory.nvidia.com: i/o
+timeout`. Every explicit login step therefore pipes its token into
+`.ci/scripts/registry-login.sh <registry> <username>`, which runs `podman login
+--password-stdin` up to 5 times, 15 seconds apart. Unlike podman's own push
+retry, it also retries auth errors, because those are the transient ones here. A
+revoked credential therefore fails after about a minute rather than at once.
+
+The logins ci-demo performs for `registry_auth` (`docker.withRegistry` in its
+`Matrix.groovy`) are not covered. They have no retry, so a transient failure in
+`Setup Image` / `Build Docker` still fails the build until ci-demo adds one.
+
 ## Authenticated dependency clones in image builds
 
 `contrib/Dockerfile`, `contrib/Dockerfile.manylinux` and

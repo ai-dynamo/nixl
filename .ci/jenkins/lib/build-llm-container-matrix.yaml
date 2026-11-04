@@ -123,8 +123,7 @@ steps:
       podman system reset -f || true
       podman info
 
-      echo "$ARTIFACTORY_PASSWORD" | podman login "${REGISTRY_HOST_NAME}" \
-        -u "$ARTIFACTORY_USERNAME" --password-stdin
+      echo "$ARTIFACTORY_PASSWORD" | .ci/scripts/registry-login.sh "${REGISTRY_HOST_NAME}" "$ARTIFACTORY_USERNAME"
 
       # Pre-flight: refuse to build if any destination tag already exists in
       # the registry, to avoid silently overwriting a published image.
@@ -346,8 +345,7 @@ pipeline_stop:
         passwordVariable: 'ARTIFACTORY_TOKEN')]) {
 
       sh """
-        echo "\$ARTIFACTORY_TOKEN" | podman login "${env.REGISTRY_HOST_NAME}" \
-          -u "\$ARTIFACTORY_USER" --password-stdin
+        echo "\$ARTIFACTORY_TOKEN" | .ci/scripts/registry-login.sh "${env.REGISTRY_HOST_NAME}" "\$ARTIFACTORY_USER"
       """
 
       def stageDir = "${env.PVC_STAGING_ROOT}/${env.BUILD_NUMBER}"

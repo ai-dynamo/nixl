@@ -136,7 +136,7 @@ steps:
       # agent-side clones below.
       . .ci/scripts/common.sh
       write_github_gitconfig /tmp/ghconfig
-      echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
+      echo "$ARTIFACTORY_TOKEN" | .ci/scripts/registry-login.sh "https://${registry_host}" "$ARTIFACTORY_USER"
 
   - name: Checkout Source
     containerSelector: "{name: 'manylinux'}"
