@@ -114,14 +114,6 @@ topk_idx_bits = meson.get_external_property('topk_idx_bits', '32')
 nixl_ep_cpp_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
 nixl_ep_cuda_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
 
-# NVCC 12.9 workaround for bug (https://nvbugspro.nvidia.com/bug/5595631)
-# This workaround is needed because NVCC 12.9 has a bug which fails UCX compilation
-nvcc = meson.get_compiler('cuda')
-if nvcc.version().version_compare('>=12.9') and nvcc.version().version_compare('<12.10')
-    nixl_ep_cpp_args += ['-D_LIBCUDACXX_ATOMIC_UNSAFE_AUTOMATIC_STORAGE']
-    nixl_ep_cuda_args += ['-D_LIBCUDACXX_ATOMIC_UNSAFE_AUTOMATIC_STORAGE']
-endif
-
 nixl_ep_rpath = torch_lib_dir
 nixl_ep_rpath += ':' + nixl_lib_dir
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'core')
@@ -142,8 +134,8 @@ nixl_ep_install_rpath = join_paths(get_option('prefix'), get_option('libdir'))
 nixl_ep_install_rpath += ':' + join_paths(get_option('prefix'), get_option('libdir'), 'plugins')
 nixl_ep_install_rpath += ':' + torch_lib_dir
 
-# CUDA-versioned install dir so cu12 and cu13 wheels don't collide.
-nixl_ep_install_dir = 'nixl_ep_' + cuda_wheel_dir.split('_')[-1]  # nixl_ep_cu12 or nixl_ep_cu13
+# CUDA-versioned install dir, e.g. nixl_ep_cu13.
+nixl_ep_install_dir = 'nixl_ep_' + cuda_wheel_dir.split('_')[-1]
 
 nixl_ep_ext = py.extension_module(nixl_ep_ext_name,
     nixl_ep_sources,

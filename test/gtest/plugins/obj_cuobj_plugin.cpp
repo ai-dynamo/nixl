@@ -647,11 +647,7 @@ TEST_P(setupObjAccelTestFixture, AccelVramRegistrationRestoresContextTest) {
         CUdevice device;
         ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
         CUcontext context = nullptr;
-#if CUDA_VERSION >= 13000
         ASSERT_EQ(cuCtxCreate(&context, nullptr, 0, device), CUDA_SUCCESS);
-#else
-        ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
-#endif
         nixlBackendMD *mem_md = nullptr;
         EXPECT_EQ(localBackendEngine_->registerMem(mem_desc, VRAM_SEG, mem_md), NIXL_SUCCESS);
         CUcontext current = nullptr;

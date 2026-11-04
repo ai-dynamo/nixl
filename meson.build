@@ -339,26 +339,19 @@ if cuda_dep.found()
     endif
     message('nvcc version: ' + nvcc.version())
     message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
-    if nvcc.version().version_compare('>=12.8')
-        doca_gpunetio_dep = dependency('doca-gpunetio', version : '>=3.5', required : false)
-    else
-        warning('GPUNETIO plugin not supported in CUDA version: ' + nvcc.version())
-        doca_gpunetio_dep = disabler()
-    endif
+    doca_gpunetio_dep = dependency('doca-gpunetio', version : '>=3.5', required : false)
 
     # Set the Python CUDA-specific wheel directory
     cuda_version_major = nvcc.version().split('.')[0]
-    if cuda_version_major == '12'
-        cuda_wheel_dir = 'nixl_cu12'
-    elif cuda_version_major == '13'
+    if cuda_version_major == '13'
         cuda_wheel_dir = 'nixl_cu13'
     else
-        error('Unsupported CUDA version: ' + cuda_version_major)
+        error('Unsupported CUDA version: ' + cuda_version_major + ' (NIXL requires CUDA 13)')
     endif
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
-    cuda_wheel_dir = 'nixl_cu12'
+    cuda_wheel_dir = 'nixl_cu13'
 endif
 
 # Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
