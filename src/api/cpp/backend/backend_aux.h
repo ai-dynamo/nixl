@@ -172,6 +172,7 @@ public:
 
     void
     getMetaDesc(nixlMetaDesc &desc, size_t idx, size_t size) const noexcept {
+        // TODO: Use nixlMetaDesc once it's inlined (API breaking release)
         desc.addr = addr + static_cast<uintptr_t>(idx - start_idx) * stride;
         desc.len = len * size;
         desc.devId = devId;

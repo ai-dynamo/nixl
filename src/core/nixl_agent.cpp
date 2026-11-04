@@ -2034,8 +2034,8 @@ nixlAgentData::invalidateRemoteMDLocked(const std::string &remote_agent) {
         for (const auto &[backend, conn_info] : rb_it->second) {
             const nixl_status_t status = backendEngines_[backend]->disconnect(remote_agent);
             if (status != NIXL_SUCCESS) {
-                NIXL_ERROR_FUNC << "backend '" << backend << "' failed to disconnect from agent '"
-                                << remote_agent << "' with status " << status;
+                NIXL_WARN << "backend '" << backend << "' failed to disconnect from agent '"
+                          << remote_agent << "' with status " << status;
                 ret = status;
             }
         }
