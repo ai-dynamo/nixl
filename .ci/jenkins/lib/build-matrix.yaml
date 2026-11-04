@@ -6,7 +6,7 @@
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
 # - Docker Images: Specifies the container images used for different build stages
-#   - Build/test images: cuda-dl-base 25.06-cuda12.9 (Ubuntu 24.04), the PyTorch
+#   - Build/test images: cuda-dl-base 26.08-cuda13.4 (Ubuntu 24.04), the PyTorch
 #     NGC container pinned in Dockerfile.base (Ubuntu 24.04), and nvidia/cuda 13.4.2
 #     (Ubuntu 22.04). Only the 13.4.2 devel image ships the cuObject dev package, so
 #     it is the build that compiles the OBJ plugin's S3 accelerated engines.
@@ -66,8 +66,8 @@ pipeline_on_image_build:
 
 runs_on_dockers:
   - {
-     file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-ci-non-gpu-base-cuda12.9", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --secret id=ghconfig,src=/tmp/ghconfig',
+     file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-ci-non-gpu-base-cuda13.4", tag: "${CI_IMAGE_TAG}",
+     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:26.08-cuda13.4-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --secret id=ghconfig,src=/tmp/ghconfig',
      credentialsId: 'svc-nixl-github-read-only-token'
     }
   - {
