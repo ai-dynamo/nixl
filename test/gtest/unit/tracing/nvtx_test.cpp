@@ -31,7 +31,6 @@
 #include "nvtx_trace_backend.h"
 #include "tracing/trace.h"
 #include "tracing/trace_context.h"
-#include "nvtx_span.h"
 
 namespace {
 
@@ -39,6 +38,8 @@ namespace nvtx = nixl::trace::nvtx_internal;
 
 static_assert(!std::is_copy_constructible_v<nvtx::NvtxEvent>);
 static_assert(!std::is_copy_assignable_v<nvtx::NvtxEvent>);
+static_assert(!std::is_copy_constructible_v<nvtx::NvtxSpan>);
+static_assert(!std::is_move_constructible_v<nvtx::NvtxSpan>);
 
 [[nodiscard]] std::vector<nixl::trace::Record>
 allRecords() {

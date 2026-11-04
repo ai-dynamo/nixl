@@ -490,21 +490,23 @@ The two-process test starts its receiver agent as a separate executable,
 `ucx_trace_receiver`, which is built and installed next to `gtest`, and checks the
 spans both agents record against the sender's request; with `-Dwith_trace=false`,
 which compiles the sender's `postXferReq` span out, it checks only the phases, which
-go through the sink either way. Nine single-process tests in the same suite check
-the phases. Transfers to the agent itself, on the default and the
-thread-pool engine, record `nixl::submit` and `nixl::wire.submitted` once per post
-and `nixl::notif.sent` once per notifying post. A transfer split across the
-thread-pool engine's dedicated workers also records one `nixl::wire.completed` and
-one `nixl::wire.inflight` per post, before a late status check, and none when released in flight; an unsplit one
-and one on the default engine record none. A transfer to a second agent that
-nothing progresses cannot finish inside `postXfer`, so its `notif.sent` must come
-from the status check. An unsampled request, or an agent with tracing off, records
-none of them. An agent that sends itself two notifications records
-`nixl::notif.received` for each, with that post's execution number. The agents
-trace through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in
-the mocks directory) that appends one line per finished or emitted span, per
-emitted event and per mark to the file named by `NIXL_TEST_TRACE_FILE`; the tests
-set both variables themselves.
+go through the sink either way. Thirteen single-process tests in the same suite
+check the phases. Transfers to the agent itself, on the default and the thread-pool
+engine, record `nixl::submit` and `nixl::wire.submitted` once per post and
+`nixl::notif.sent` once per notifying post. A transfer split across the thread-pool
+engine's dedicated workers also records one `nixl::wire.completed` and one
+`nixl::wire.inflight` per post, before a late status check, and none when released
+in flight. Without the progress thread, an unsplit one and one on the default engine
+record none; while it runs, both record one of each per post, the default engine's
+before a late status check and none when released in flight. A transfer to a second
+agent that nothing progresses cannot finish inside `postXfer`, so its `notif.sent`
+must come from the status check. An unsampled request, or an agent with tracing off,
+records none of them. An agent that sends itself two notifications records
+`nixl::notif.received` for each, with that post's execution number. The agents trace
+through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in the mocks
+directory) that appends one line per finished or emitted span, per emitted event and
+per mark to the file named by `NIXL_TEST_TRACE_FILE`; the tests set both variables
+themselves.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
 test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically

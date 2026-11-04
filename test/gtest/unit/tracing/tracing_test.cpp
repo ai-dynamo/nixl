@@ -583,11 +583,12 @@ TEST(Tracing, AttributeListReachesEveryBackendInOrder) {
 TEST(Tracing, AttributeHoldsItsValueAsARecordDoes) {
     const nixl::trace::Attribute count{"desc_count", 8};
     const nixl::trace::Attribute ratio{"ratio", 0.5f};
-    const nixl::trace::Attribute peer{"peer", std::string("agent_1")};
+    const std::string agent = "agent_1";
+    const nixl::trace::Attribute peer{"peer", agent};
 
     EXPECT_EQ(std::get<std::int64_t>(count.value), 8);
     EXPECT_DOUBLE_EQ(std::get<double>(ratio.value), 0.5);
-    EXPECT_EQ(std::get<std::string_view>(peer.value).size(), 7u);
+    EXPECT_EQ(std::get<std::string_view>(peer.value), "agent_1");
 }
 
 TEST(Tracing, AttrMacroPassesPlainValues) {

@@ -42,6 +42,13 @@ public:
 
     ~NvtxSpan() override;
 
+    NvtxSpan(const NvtxSpan &) = delete;
+    NvtxSpan &
+    operator=(const NvtxSpan &) = delete;
+    NvtxSpan(NvtxSpan &&) = delete;
+    NvtxSpan &
+    operator=(NvtxSpan &&) = delete;
+
     [[nodiscard]] static void *
     operator new(std::size_t size);
 

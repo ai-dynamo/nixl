@@ -24,7 +24,7 @@
  * runtime (NVTX today; Chakra and others later). This is an internal core API
  * (compiled into libnixl, not installed as a public header). It is kept
  * deliberately self-contained -- depending only on standard headers and on
- * attribute_key.h, log_once.h, trace_identity.h, traceable.h and nixl_time.h
+ * attribute_key.h, log_once.h, record.h, trace_identity.h and nixl_time.h
  * -- so it stays easy to reason about and could be promoted to a public header
  * later without churn if an external consumer appears.
  */
