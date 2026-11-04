@@ -216,7 +216,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 
 ### `nixl-ci-build-llm-container` (standalone)
 - **Trigger:** Manual only (no cron, no webhook).
-- **What it does:** Builds the 4 LLM inference container variants (`vllm-nixl`, `vllm-cu12-nixl`, `sglang-nixl`, `sglang-cu13-nixl`) for x86_64/aarch64 from a published NIXL wheel set, publishes multi-arch manifests, and optionally (`RUN_TEST`) fires `nixl-ci-test-llm-container` per built variant.
+- **What it does:** Builds the 2 LLM inference container variants (`vllm-cu13-nixl`, `sglang-cu13-nixl`) for x86_64/aarch64 from a published NIXL wheel set, publishes multi-arch manifests, and optionally (`RUN_TEST`) fires `nixl-ci-test-llm-container` per built variant.
 - **Automatic on every PR:** No — standalone/manual only, used for release verification.
 
 ### `nixl-ci-cleanup-artifacts` (standalone)
