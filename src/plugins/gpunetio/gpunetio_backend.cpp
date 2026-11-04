@@ -325,16 +325,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     dataQpCount_ = parseDataQpCount((*custom_params)["data_qp_count"]);
-    uint32_t byte_striping = 0;
-    const auto byte_option = custom_params->find("write_byte_striping");
-    if (byte_option != custom_params->end() && !byte_option->second.empty() &&
-        (!parseUnsigned(byte_option->second, byte_striping) || byte_striping > 1)) {
-        throw std::invalid_argument("write_byte_striping must be 0 or 1");
-    }
-    writeByteStriping_ = byte_striping != 0;
-    if (writeByteStriping_ && dataQpCount_ == 1) {
-        NIXL_WARN << "write_byte_striping has no effect with data_qp_count=1";
-    }
+    writeByteStriping_ = (*custom_params)["write_byte_striping"] == "1";
     if (dataQpCount_ > 1 &&
         (nstreams < static_cast<int>(dataQpCount_) ||
          nstreams > static_cast<int>(DOCA_POST_STREAM_NUM))) {
@@ -1686,28 +1677,23 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     // the WQEs of the request even if no descriptor is merged or paired.
     constexpr uint64_t max_wqes = uint64_t{DOCA_XFER_REQ_SIZE} * DOCA_XFER_REQ_MAX;
     uint64_t wqe_count = 0;
+    const bool byte_striping = operation == NIXL_WRITE && writeByteStriping_ && dataQpCount_ > 1 &&
+        (lcnt == 1 ||
+         nixl::gpunetio::descriptorWqeCount(local[lcnt - 1].len) <= DOCA_XFER_REQ_SIZE);
+    size_t write_bytes = 0;
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         if (local[idx].len != remote[idx].len) {
             return NIXL_ERR_INVALID_PARAM;
         }
         wqe_count += nixl::gpunetio::descriptorWqeCount(local[idx].len);
+        if (byte_striping) {
+            write_bytes += local[idx].len;
+        }
         if (wqe_count > max_wqes) {
             return NIXL_ERR_INVALID_PARAM;
         }
     }
 
-    size_t write_bytes = 0;
-    if (operation == NIXL_WRITE && writeByteStriping_ && dataQpCount_ > 1) {
-        for (uint32_t idx = 0; idx < lcnt; ++idx) {
-            if (local[idx].len > std::numeric_limits<size_t>::max() - write_bytes ||
-                local[idx].addr > std::numeric_limits<uintptr_t>::max() - local[idx].len ||
-                remote[idx].addr > std::numeric_limits<uintptr_t>::max() - remote[idx].len) {
-                return NIXL_ERR_INVALID_PARAM;
-            }
-            write_bytes += local[idx].len;
-        }
-    }
-    const bool byte_striping = operation == NIXL_WRITE && writeByteStriping_ && dataQpCount_ > 1;
     const size_t final_bytes = byte_striping && lcnt > 1 ? local[lcnt - 1].len : 0;
     const size_t ordering_tail =
         byte_striping && lcnt == 1 ? std::min(write_bytes, sizeof(uint64_t)) : 0;
@@ -1793,14 +1779,10 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     uint32_t desc_offset = 0;
     // Bytes of local[desc_offset] already staged in earlier WQEs, possibly in an earlier slot.
     size_t split_offset = 0;
-    treq->finalStart = UINT32_MAX;
     do {
         const bool final_chunk = byte_striping &&
             ((lcnt > 1 && desc_offset == lcnt - 1) ||
              (lcnt == 1 && local[0].len - split_offset <= ordering_tail));
-        if (final_chunk && treq->finalStart == UINT32_MAX) {
-            treq->finalStart = treq->positions.size() - 1;
-        }
         if (byte_striping) {
             treq->qpOwners.push_back(final_chunk ? 0 : owner);
         }
@@ -1880,7 +1862,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             split_offset = 0;
             ++desc_offset;
 
-            if (operation == NIXL_WRITE && lcnt - desc_idx > 2 && desc_offset == desc_idx + 1 &&
+            if (operation == NIXL_WRITE && lcnt - desc_idx > 2 &&
                 (!byte_striping || local[desc_offset].len <= owner_remaining - chunk_bytes)) {
                 auto *next_lmd =
                     static_cast<nixlDocaPrivateMetadata *>(local[desc_offset].metadataP);
@@ -1912,10 +1894,6 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             staged_req.has_two_sge ? sizeof(staged_req) : offsetof(docaSlotDesc, lbuf2);
         memcpy(&xferReqRingCpu[pos], &staged_req, publish_size);
 
-        if (byte_striping) {
-            NIXL_DEBUG << "WRITE byte stripe position " << pos << " bytes " << chunk_bytes;
-        }
-
         if (byte_striping && !final_chunk) {
             owner_remaining -= chunk_bytes;
             if (owner_remaining == 0 && owner + 1 < qps_used) {
@@ -1924,15 +1902,11 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             }
         }
         if (desc_offset < lcnt && !reserve_position()) {
-            const bool too_large = treq->positions.size() == DOCA_XFER_REQ_MAX;
             abandon_request();
-            return too_large ? NIXL_ERR_INVALID_PARAM : NIXL_ERR_BACKEND;
+            return NIXL_ERR_BACKEND;
         }
     } while (desc_offset < lcnt);
 
-    if (treq->finalStart == UINT32_MAX) {
-        treq->finalStart = treq->positions.size() - 1;
-    }
     const uint32_t final_pos = treq->positions.back();
 
     if (opt_args && opt_args->hasNotif) {
@@ -2081,7 +2055,6 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
     // Publish all dependencies before any kernel can consume the final chunk.
     docaStripedWriteLaunch launch{};
     launch.count = static_cast<uint32_t>(request->positions.size());
-    launch.final_start = request->finalStart;
     for (size_t ordinal = 0; ordinal < request->positions.size(); ++ordinal) {
         launch.positions[ordinal] = request->positions[ordinal];
         const uint32_t owner =
@@ -2092,22 +2065,18 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
         entry.qp_progress = peer->progress_gpu + 1 + owner;
         entry.wait_completion_mask = 0;
         entry.peer_write_completed = nullptr;
-        entry.peer_write_wait = nullptr;
         entry.write_ticket = 0;
     }
     auto &last = xferReqRingCpu[request->positions.back()];
     last.posting_ctas_done = 0;
     last.peer_write_completed = peer->writeCompletedGpu.get();
     last.write_ticket = ++peer->postedWriteTicket;
-    auto &first_final = xferReqRingCpu[request->positions[request->finalStart]];
-    first_final.peer_write_wait = peer->writeCompletedGpu.get();
-    first_final.write_ticket = last.write_ticket;
     // Build the mask locally: |= on the slot would read it back through the GPU mapping.
     uint32_t wait_completion_mask = 0;
-    for (size_t ordinal = 0; ordinal < request->finalStart; ++ordinal) {
+    for (size_t ordinal = 0; ordinal + 1 < request->positions.size(); ++ordinal) {
         wait_completion_mask |= 1U << request->positions[ordinal];
     }
-    first_final.wait_completion_mask = wait_completion_mask;
+    last.wait_completion_mask = wait_completion_mask;
     std::atomic_thread_fence(std::memory_order_release);
 
     // One stream orders all grids, including the previous same-peer final post.

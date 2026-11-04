@@ -252,9 +252,9 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
             abort_write =
                 abort_write || nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U;
         }
-        if (xferReqRing[pos].peer_write_wait != nullptr) {
+        if (xferReqRing[pos].peer_write_completed != nullptr) {
             while (!abort_write &&
-                   DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].peer_write_wait) <
+                   DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].peer_write_completed) <
                        xferReqRing[pos].write_ticket - 1) {
                 if (nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U) {
                     abort_write = true;
@@ -263,7 +263,7 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
         }
         if (!abort_write) {
             if (xferReqRing[pos].wait_completion_mask != 0 ||
-                xferReqRing[pos].peer_write_wait != nullptr) {
+                xferReqRing[pos].peer_write_completed != nullptr) {
                 doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
             }
         }
@@ -363,7 +363,7 @@ kernel_write_striped(struct docaSlotDesc *xferReqRing,
     __shared__ bool final_owner;
     const uint32_t final_pos = launch.positions[launch.count - 1];
 
-    for (uint32_t ordinal = 0; ordinal < launch.final_start; ++ordinal) {
+    for (uint32_t ordinal = 0; ordinal + 1 < launch.count; ++ordinal) {
         if (launch.owners[ordinal] != blockIdx.x) {
             continue;
         }
@@ -382,12 +382,8 @@ kernel_write_striped(struct docaSlotDesc *xferReqRing,
     __syncthreads();
     if (final_owner) {
         // The last arrival acquired every CTA's completed posting publications.
-        for (uint32_t ordinal = launch.final_start; ordinal < launch.count; ++ordinal) {
-            const uint32_t pos = launch.positions[ordinal];
-            nixl_gpunetio_dev_write_chunk(
-                xferReqRing[pos].qp_data, xferReqRing, gpu_state, host_state, pos);
-            __syncthreads();
-        }
+        nixl_gpunetio_dev_write_chunk(
+            xferReqRing[final_pos].qp_data, xferReqRing, gpu_state, host_state, final_pos);
     }
 }
 

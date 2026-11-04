@@ -202,7 +202,6 @@ private:
         uint32_t devId;
         std::vector<uint32_t> positions;
         std::vector<uint32_t> qpOwners;
-        uint32_t finalStart = 0;
         doca_gpu_dev_verbs_qp *qpData = nullptr;
         uintptr_t backendHandleGpu;
         size_t postedCount = 0;
