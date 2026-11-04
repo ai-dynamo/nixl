@@ -1,0 +1,18 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
+ * Keep the header-only asio used by telemetry out of the dynamic symbol table.
+ * Exported copies interpose on other libraries' asio, such as the Mooncake
+ * Transfer Engine's libasio.so, which crashes when the asio versions differ.
+ */
+{
+  local:
+    asio_*;
+    extern "C++" {
+      asio_*;
+      *asio::*;
+    };
+};

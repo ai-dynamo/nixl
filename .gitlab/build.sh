@@ -405,14 +405,7 @@ else
       mkdir build && cd build && \
       cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -DWITH_STORE_RUST=OFF -G Ninja && \
       ninja -j"$NPROC" && \
-      $SUDO ninja install &&
-      # libnixl.so's header-only asio overrides libtransfer_engine.so's libasio.so
-      # symbols, so build NIXL with the asio libasio.so is built from. Before
-      # v0.3.13, dependencies.sh already installed it into /usr/local/include.
-      if [ -d _deps/yalantinglibs-src ]; then \
-        $SUDO cp -r _deps/yalantinglibs-src/include/ylt/thirdparty/asio \
-          _deps/yalantinglibs-src/include/ylt/thirdparty/asio.hpp /usr/local/include/; \
-      fi && \
+      $SUDO ninja install && \
       $SUDO ldconfig && \
       cd .. && \
       rm -rf Mooncake &&

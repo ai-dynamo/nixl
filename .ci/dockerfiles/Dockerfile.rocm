@@ -420,8 +420,7 @@ RUN set -eux; \
 # live in builder-base (and thus final) for build==runtime parity; (2) git submodules
 # (pybind11), used for this compile only; (3) Go — installed by the script but
 # unused here (WITH_STORE=OFF) and not propagated to final.
-# Installs to /usr/local -> /out/usr/local, plus the asio headers libasio.so is
-# built from (see the Mooncake step in .gitlab/build.sh).
+# Installs to /usr/local -> /out/usr/local.
 # ============================================================================
 FROM ${BUILDER_BASE_IMAGE} AS mooncake-build
 ARG MOONCAKE_VERSION=v0.3.14
@@ -436,11 +435,7 @@ RUN set -eux; \
     mkdir build; cd build; \
     cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -DWITH_STORE_RUST=OFF -DUSE_HIP=ON -G Ninja; \
     ninja -j"$NPROC"; \
-    DESTDIR=/out ninja install; \
-    if [ -d _deps/yalantinglibs-src ]; then \
-        cp -r _deps/yalantinglibs-src/include/ylt/thirdparty/asio \
-            _deps/yalantinglibs-src/include/ylt/thirdparty/asio.hpp /out/usr/local/include/; \
-    fi
+    DESTDIR=/out ninja install
 
 # ============================================================================
 # gusli-build  (tiny build)
