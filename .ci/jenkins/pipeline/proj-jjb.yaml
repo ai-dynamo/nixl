@@ -993,8 +993,8 @@
             conf_file=.ci/jenkins/lib/build-wheel-nightly-matrix.yaml
     description: >
       <b>NIXL nightly wheel verification build</b><br/>
-      • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> for CUDA 13
-      and CUDA 12 in one run, with the UCX spcx and Infinia plugins always bundled, and
+      • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> for CUDA 13,
+      with the UCX spcx and Infinia plugins always bundled, and
       publishes them to the verification Artifactory space<br/>
       • Run manually from any NIXL branch / tag / PR / SHA via <code>NIXL_VERSION</code><br/>
       • Also triggered per missing commit by <code>nixl-build-wheel-release-poller</code>
@@ -1012,8 +1012,8 @@
     triggers:
       - parameterized-timer:
           cron: |
-            # Build NIXL wheels nightly around midnight. One run covers both CUDA
-            # majors (cuda is a matrix axis) and the nixl meta wheel.
+            # Build NIXL wheels nightly around midnight. One run covers the
+            # cu13 wheels and the nixl meta wheel.
             H 0 * * * %NIXL_VERSION=main
     # Manual build parameters
     parameters:
@@ -1067,7 +1067,7 @@
 
 # Release wheel poller: every 4 hours, compares release/* branch commits against
 # the wheels already published in Artifactory and triggers the nightly wheel
-# builder once per commit per CUDA variant that has no published wheels yet.
+# builder once per commit that has no published wheels yet.
 # Named without the nixl-ci- prefix: a scheduled standalone job, not part of CI.
 - job-template:
     name: "nixl-build-wheel-release-poller"
@@ -1087,8 +1087,8 @@
       • Runs every 4 hours and scans all <code>release/*</code> branches (version &gt;= 1.4.0),
       looking for commits with no
       published wheel set under <code>sw-nbu-swx-nixl-pypi-local/release/</code> in Artifactory<br/>
-      • Triggers <code>nixl-ci-build-wheel-nightly</code> once per missing commit (one run
-      covers every CUDA major) &mdash; a failed build is retried on the next cycle; delete the
+      • Triggers <code>nixl-ci-build-wheel-nightly</code> once per missing commit
+      &mdash; a failed build is retried on the next cycle; delete the
       commit's folder in Artifactory to force a full rebuild<br/>
       • A commit counts as published when a folder under <code>release/&lt;ver&gt;/</code>
       carries it as a <code>NIXL_SHA</code> property, which the wheel job stamps only after a
