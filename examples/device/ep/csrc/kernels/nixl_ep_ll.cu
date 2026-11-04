@@ -25,7 +25,7 @@
 #include "launch.cuh"
 
 #include "api.cuh"
-#include "nixl_device.cuh"
+#include <gpu/nixl_device.cuh>
 #include "utils.cuh"
 #include <cooperative_groups.h>
 namespace cg = cooperative_groups;
@@ -409,7 +409,7 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               uint64_t timeout_cycles,
               void* workspace, int num_device_sms,
               cudaStream_t stream, int phases, nixl_ep::gpu_nixl_ctx* nixl_ctx) {
-    constexpr int kNumMaxTopK = 11;
+    constexpr int kNumMaxTopK = 16;
     const int active_expert_bound = active_rank_bound * num_experts_per_rank;
     const int num_warp_groups = ceil_div(active_expert_bound, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
@@ -1028,7 +1028,7 @@ void combine(void* combined_x,
              bool use_logfmt, uint64_t timeout_cycles,
              void* workspace, int num_device_sms,
              cudaStream_t stream, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx) {
-    constexpr int kNumMaxTopk = 11;
+    constexpr int kNumMaxTopk = 16;
     const int active_expert_bound = active_rank_bound * num_experts_per_rank;
     const int num_warp_groups = ceil_div(active_expert_bound, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
@@ -1087,8 +1087,9 @@ LAUNCH_KERNEL(&cfg, combine_func, \
 #undef COMBINE_LAUNCH_CASE
 }
 
-template <int kNumThreads> __launch_bounds__(kNumThreads, 1)
-__global__ void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask_tensor) {
+template<int kNumThreads>
+__launch_bounds__(kNumThreads, 1) __global__
+    void query_mask_buffer(const int *mask_buffer_ptr, int num_ranks, int *mask_tensor) {
     const auto num_sms = static_cast<int>(gridDim.x);
     const auto sm_id = static_cast<int>(blockIdx.x);
     const auto num_threads = num_sms * kNumThreads;
@@ -1098,7 +1099,11 @@ __global__ void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask
     }
 }
 
-void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask_tensor, cudaStream_t stream) {
+void
+query_mask_buffer(const int *mask_buffer_ptr,
+                  int num_ranks,
+                  int *mask_tensor,
+                  cudaStream_t stream) {
     constexpr int num_sms = 1;
     constexpr int kNumThreads = 1024;
     SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
@@ -1149,16 +1154,25 @@ __forceinline__ __device__ void barrier(nixl_ep::gpu_nixl_ctx nixl_ctx, int* mas
 
             nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 1, dst_rank * sizeof(int)};
             nixlMemViewElem dst_mdesc{nixl_ctx.barrier_mvh, (size_t) dst_rank, nixl_ctx.rank * sizeof(int)};
-            EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::THREAD>(src_mdesc, dst_mdesc, sizeof(int), 0) == NIXL_IN_PROG);
+            nixlGpuXferStatusH xfer_status;
+            EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::THREAD>(src_mdesc, dst_mdesc, sizeof(int), 0, 0, &xfer_status) == NIXL_IN_PROG);
 
             auto start_time = clock64();
-            uint64_t wait_recv_cost = 0;
-            while (ld_acquire_sys_global(nixl_ctx.sync_buffer_ptr + dst_rank) != expected_cnt
-                   && (wait_recv_cost = clock64() - start_time) <= timeout_cycles);
+            // Wait for the peer's value first: once it has ours, its next barrier may overwrite it.
+            int received_cnt;
+            do {
+                received_cnt = ld_acquire_sys_global(nixl_ctx.sync_buffer_ptr + dst_rank);
+            } while ((received_cnt != expected_cnt) && (clock64() - start_time <= timeout_cycles));
 
-            if (wait_recv_cost > timeout_cycles) {
-                printf("Warning: NixlEP timeout for barrier, rank %d, thread %d, dst_rank %d, expected value %d, actual value %d\n",
-                       nixl_ctx.rank, thread_id, dst_rank, expected_cnt, ld_acquire_global(nixl_ctx.sync_buffer_ptr + dst_rank));
+            // Wait for the put to complete before the next barrier can modify its source.
+            nixl_status_t put_status;
+            do {
+                put_status = nixlGpuGetXferStatus<nixl_gpu_level_t::THREAD>(xfer_status);
+            } while ((put_status == NIXL_IN_PROG) && (clock64() - start_time <= timeout_cycles));
+
+            if ((received_cnt != expected_cnt) || (put_status != NIXL_SUCCESS)) {
+                printf("Warning: NixlEP timeout for barrier, rank %d, thread %d, dst_rank %d, expected value %d, actual value %d, put status %d\n",
+                       nixl_ctx.rank, thread_id, dst_rank, expected_cnt, received_cnt, put_status);
                 if (mask_buffer_ptr == nullptr)
                     trap();
                 atomicExch(mask_buffer_ptr + dst_rank, 1);

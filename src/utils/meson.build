@@ -18,7 +18,8 @@ subdir('serdes')
 subdir('stream')
 subdir('file')
 subdir('object')
+subdir('device')
 
-if libfabric_dep.found()
+if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     subdir('libfabric')
 endif

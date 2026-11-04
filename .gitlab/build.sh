@@ -21,6 +21,13 @@ set -e
 set -x
 set -o pipefail
 
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+export CMAKE_INSTALL_ALWAYS=1
+
 # Parse commandline arguments with first argument being the install directory
 # and second argument being the UCX installation directory.
 INSTALL_DIR=$1
@@ -29,16 +36,16 @@ EXTRA_BUILD_ARGS=${3:-""}
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 NIXLBENCH_BUILD_DIR=${NIXLBENCH_BUILD_DIR:-nixlbench_build}
 # UCX_VERSION is the version of UCX to build override default with env variable.
-UCX_VERSION=${UCX_VERSION:-v1.22.x}
+UCX_VERSION=${UCX_VERSION:-v1.23.x}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
-LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
+LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.7.0}
 # Abseil and gRPC versions for consistent toolchain build.
 ABSL_TAG=${ABSL_TAG:-lts_2025_08_14}
 GRPC_TAG=${GRPC_TAG:-v1.73.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
-UCCL_COMMIT_SHA="0cdb740cf369a4f4dd63b9b773c8937f187b179a"
+UCCL_COMMIT_SHA="da914a2054c29725464803e379bb3b98de90dfa1"
 AZURITE_VER="3.35.0"
 BUILD_TMP=$(mktemp -d)
 
@@ -82,6 +89,16 @@ if [ "$(id -u)" -ne 0 ]; then
 else
     SUDO=""
 fi
+
+# Install prefixes may live under a root-owned parent (e.g. /opt). Create and
+# own them once up front so the builds below install without sudo; sudo-created
+# dirs would otherwise be root-owned and break later non-sudo steps.
+_prefixes=("$INSTALL_DIR" "$LIBFABRIC_INSTALL_DIR")
+# A pre-installed UCX is not rebuilt, so its prefix is left untouched.
+[ -z "$PRE_INSTALLED_UCX_ENV" ] && _prefixes+=("$UCX_INSTALL_DIR")
+for _prefix in "${_prefixes[@]}"; do
+    $SUDO mkdir -p "$_prefix" && $SUDO chown -R "$(id -u):$(id -g)" "$_prefix"
+done
 
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
@@ -134,6 +151,9 @@ else
                                  protobuf-compiler-grpc \
                                  pybind11-dev \
                                  etcd-server \
+                                 redis-server \
+                                 redis-tools \
+                                 libevent-dev \
                                  net-tools \
                                  iproute2 \
                                  pciutils \
@@ -154,6 +174,31 @@ else
         $SUDO pip3 install --upgrade pip
     fi
 
+    # Build hiredis from source (apt ships 0.14.x on Ubuntu 22.04 and 1.2.0 on
+    # Ubuntu 24.04; build a consistent version everywhere to match contrib/Dockerfile).
+    $SUDO apt-get remove -y libhiredis-dev 2>/dev/null || true
+    HIREDIS_VERSION="1.4.0"
+    ( \
+      cd "${BUILD_TMP}" && \
+      wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+          -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+      tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+      mkdir -p "hiredis-${HIREDIS_VERSION}/build" && \
+      cd "hiredis-${HIREDIS_VERSION}/build" && \
+      cmake .. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=ON && \
+      make -j"$NPROC" && \
+      make install && \
+      $SUDO ldconfig && \
+      pkg-config --atleast-version=1.0.1 hiredis && \
+      cd "${BUILD_TMP}" && \
+      rm -rf "hiredis-${HIREDIS_VERSION}" "hiredis-${HIREDIS_VERSION}.tar.gz" \
+    )
+
     # Install python dependencies and upgrade to latest version
     $SUDO pip3 --no-cache-dir install --break-system-packages \
         meson meson-python pybind11 patchelf \
@@ -169,28 +214,33 @@ else
         echo "Using PyTorch from system site-packages"
     else
         echo "System torch check failed: ${_torch_check_err}" >&2
-        cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
+        cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+')
         if [ -z "$cuda_version" ]; then
             echo "ERROR: unable to determine CUDA version from nvcc" >&2
             exit 1
         fi
+        if [ "${cuda_version%%.*}" = "13" ]; then
+            torch_cu_tag="cu130"
+        else
+            torch_cu_tag="cu$(echo "${cuda_version}" | tr -d .)"
+        fi
         $SUDO pip3 --no-cache-dir install --break-system-packages \
-            --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
+            --index-url "https://download.pytorch.org/whl/${torch_cu_tag}" torch
     fi
 
     # DOCA + RDMA build dependencies.
-    #  - Bases without DOCA (cuda-dl-base, nvidia/cuda, ubuntu22.04): add the DOCA
-    #    3.3.0 host repo, install the SDK + headers, then reinstall the RDMA packages
-    #    to repair cuda-dl-base's broken libibverbs-dev.
+    #  - Bases without DOCA (cuda-dl-base, nvidia/cuda, ubuntu22.04): add the pinned
+    #    DOCA host repo (wget below), install the SDK + headers, then reinstall the
+    #    RDMA packages to repair cuda-dl-base's broken libibverbs-dev.
     #  - Bases that already ship DOCA (nvcr.io/nvidia/pytorch bundles >=3.4): use that
-    #    stack as-is. Adding the older 3.3 repo would only downgrade/mismatch it, so
+    #    stack as-is. Adding a second DOCA repo would only downgrade/mismatch it, so
     #    skip the whole repo add + SDK install + RDMA reinstall.
-    if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then
-        echo "DOCA $(dpkg-query -W -f='${Version}' doca-sdk-gpunetio) provided by base image; skipping DOCA 3.3 repo, SDK install, and RDMA reinstall"
+    if dpkg -s libdoca-sdk-gpunetio-dev >/dev/null 2>&1; then
+        echo "DOCA $(dpkg-query -W -f='${Version}' libdoca-sdk-gpunetio-dev) provided by base image; skipping DOCA repo add, SDK install, and RDMA reinstall"
     else
         ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
         MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
-        wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${BUILD_TMP}/doca-host.deb
+        wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${BUILD_TMP}/doca-host.deb
         $SUDO dpkg -i ${BUILD_TMP}/doca-host.deb
         $SUDO apt-get update
         $SUDO apt-get upgrade -y
@@ -219,7 +269,16 @@ else
     export NVM_DIR=${HOME}/.nvm
     [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
     nvm install --lts  # install nodejs
-    npm install -g azurite@${AZURITE_VER}
+    # npm's fetch-retries don't cover a connection dropped mid-download
+    for i in {1..3}; do
+        npm install -g "azurite@${AZURITE_VER}" && break
+        if [ "$i" = 3 ]; then
+            echo "ERROR: failed to install azurite@${AZURITE_VER}" >&2
+            exit 1
+        fi
+        echo "npm install azurite failed (attempt $i), retrying..." >&2
+        sleep $((10 * i))
+    done
 
     wget --tries=3 --waitretry=5 -O "${BUILD_TMP}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
     tar xjf "${BUILD_TMP}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -C ${BUILD_TMP}
@@ -258,7 +317,7 @@ else
           -DABSL_PROPAGATE_CXX_STD=ON \
           -DABSL_ENABLE_INSTALL=ON && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig && \
       cd ${BUILD_TMP} && \
       rm -rf abseil-cpp \
@@ -286,7 +345,7 @@ else
           -DgRPC_PROTOBUF_PROVIDER=module \
           -DgRPC_ZLIB_PROVIDER=package && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig && \
       cd ${BUILD_TMP} && \
       rm -rf grpc \
@@ -308,7 +367,7 @@ else
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig \
     )
 
@@ -328,7 +387,7 @@ else
       cd ${BUILD_TMP} && \
       git clone https://github.com/nvidia/gusli.git && \
       cd gusli && \
-      $SUDO make all CXX="g++ -std=c++20" BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+      $SUDO make all CXX="g++ -std=c++20" BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 && \
       $SUDO ldconfig && \
       cd .. && \
       $SUDO rm -rf gusli
@@ -340,7 +399,8 @@ else
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
       git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
-      sed -i '/liburing-dev/d' dependencies.sh
+      sed -i '/liburing-dev/d' dependencies.sh && \
+      sed -i 's/^\([[:space:]]*\)install_go$/\1true/' dependencies.sh && \
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
       cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
@@ -406,6 +466,7 @@ else
             --disable-static \
             --disable-doxygen-doc \
             --enable-optimizations \
+            --without-avx \
             --enable-cma \
             --enable-devel-headers \
             --with-verbs \
@@ -413,7 +474,7 @@ else
             --without-gdrcopy \
             ${UCX_CUDA_BUILD_ARGS} && \
           make -j"$NPROC" && \
-          $SUDO make -j install-strip && \
+          make -j install-strip && \
           $SUDO ldconfig \
     )
 fi # PRE_INSTALLED_UCX_ENV end
@@ -430,9 +491,27 @@ else
     if [ "${BUILD_NIXL_EP}" = "true" ]; then
         EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
     fi
+    # When NIXL_PYTHON is set (currently only by test-dl-ep-matrix.yaml), build and
+    # install NIXL EP against vLLM's Python/Torch venv to prevent ABI mismatches.
+    # Only NIXL's Meson build uses this venv; dependency builds keep system Python.
+    # Other jobs leave NIXL_PYTHON_ARGS empty and keep the existing build behavior.
+    NIXL_PYTHON_ARGS=()
+    NIXL_PYTHON_NATIVE_FILE=""
+    if [ -n "${NIXL_PYTHON:-}" ]; then
+        if [ ! -x "${NIXL_PYTHON}" ]; then
+            echo "ERROR: NIXL_PYTHON is not executable: ${NIXL_PYTHON}" >&2
+            exit 1
+        fi
+        NIXL_PYTHON_NATIVE_FILE=$(mktemp)
+        printf "[binaries]\npython = '%s'\n" "${NIXL_PYTHON}" > "${NIXL_PYTHON_NATIVE_FILE}"
+        NIXL_PYTHON_ARGS=(--native-file "${NIXL_PYTHON_NATIVE_FILE}" -Dpython.install_env=venv)
+    fi
     # shellcheck disable=SC2086
-    meson setup ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
+    meson setup "${NIXL_PYTHON_ARGS[@]}" ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
+    if [ -n "${NIXL_PYTHON_NATIVE_FILE}" ]; then
+        rm -f "${NIXL_PYTHON_NATIVE_FILE}"
+    fi
     mkdir -p dist && cp ${NIXL_BUILD_DIR}/src/bindings/python/nixl-meta/nixl-*.whl dist/
 
     # TODO(kapila): Copy the nixl.pc file to the install directory if needed.

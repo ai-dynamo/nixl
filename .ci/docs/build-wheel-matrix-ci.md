@@ -91,7 +91,7 @@ ARG UCX_SONAME_SUFFIX=""
 # ... builds NIXL and generates wheels
 ```
 
-**Base Image**: `artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09`
+**Base Image**: `il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09`
 
 ### Stage Usage Patterns
 
@@ -100,7 +100,7 @@ In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` 
 
 ```bash
 ./contrib/build-container.sh \
-  --base-image 'artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda' \
+  --base-image 'il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda' \
   --base-image-tag '13.0-devel-manylinux--25.09' \
   --wheel-base "manylinux_2_28" \
   --python-versions "${python_version}" \
@@ -112,7 +112,7 @@ In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` 
 
 `--wheel-base-image` causes the script to pass `--build-arg wheel_base=<url> --target wheel`, so only the `wheel` stage runs and the pre-built deps are pulled from Artifactory rather than recompiled.
 
-`--torch-versions "2.13"` limits PR builds to the latest torch version. The nightly job omits this flag, building the full matrix.
+`--torch-versions "2.13"` limits PR builds to a single torch version. The nightly job builds the full per-CUDA-major matrix.
 
 #### User Usage (Full Build)
 Users can build the complete image locally without specifying a target:
@@ -124,17 +124,23 @@ Users can build the complete image locally without specifying a target:
 This builds both stages from scratch without the `--wheel-base-image` override.
 
 #### Nightly Build
-The nightly job (`nixl-ci-build-wheel-nightly`) omits `--torch-versions` and `--wheel-base-image`, so it builds all torch versions and runs the full two-stage build.
+The nightly job (`nixl-ci-build-wheel-nightly`) omits `--wheel-base-image`, so it runs the full two-stage build. It selects `--torch-versions` from its `CUDA_MAJOR` parameter (`13` default or `12`), since torch package availability differs between the two.
 
 #### Optional: UCX spcx external plugin
-`build-container.sh --build-ucx-spcx-plugin` opt-in flag fetches the internal `ucx-spcx-plugin` source on the host into the build context, compiles it against the just-built UCX inside the Dockerfile, and installs it into the UCX plugins dir where `wheel_add_ucx_plugins.py` bundles it like any other UCX module. It requires `--dockerfile contrib/Dockerfile.manylinux` and two environment variables — neither is hardcoded so the repo location and token stay out of the source and image layers:
+`build-container.sh --build-ucx-spcx-plugin` opt-in flag fetches the internal `ucx-spcx-plugin` source on the host into the build context, compiles it against the just-built UCX inside the Dockerfile, and installs it into the UCX plugins dir. It works with `contrib/Dockerfile.manylinux` (the wheel build, where `wheel_add_ucx_plugins.py` then bundles the plugin into the wheel like any other UCX module) and with the default `contrib/Dockerfile` (the container build, where the plugin is only installed into the image). It requires two environment variables — neither is hardcoded so the repo location and token stay out of the source and image layers:
 
 | Env var | Purpose | Jenkins credential | Credential type |
 |---|---|---|---|
 | `NIXL_SPCX_PLUGIN_REPO_URL` | Git URL of the plugin repo | `ucx-plugin-gitlab-url` | Secret text |
 | `NIXL_GITLAB_TOKEN` | GitLab token (`read_repository` scope) used via a git credential helper so it never appears in URLs, argv, or git error output | `svc-nixl-gitlab-token` | Username/Password (token in password field) |
 
-The plugin ref defaults to `main` and is selectable with `--ucx-spcx-plugin-ref`. This flag is not enabled in the PR CI pipeline; it is consumed by the QA/release invocations of `build-container.sh`, which bind both credentials into the environment.
+The plugin ref defaults to `v0.3.x` and is selectable with `--ucx-spcx-plugin-ref`. This source-cloning path serves the standalone `nixl-ci-build-container` verification job (`BUILD_UCX_SPCX_PLUGIN`, uncheck to disable) and the QA/release invocations of `build-container.sh`, all of which bind both credentials into the environment. It is not enabled in the PR CI pipeline: `nixl-ci-build-container-pr` never passes it, so the `ARG` default of `false` applies.
+
+#### Per-PR: pre-built plugin module
+
+`nixl-ci-build-wheel` never clones or builds the plugin. Its `pipeline_start` triggers `nixl-ci-compile-ucx-plugin`, whose definition, matrix and build scripts all live in the closed-source plugin repo, and which runs on the NIXL Jenkins so it can write to the shared PVC. That job builds both arches against the same `wheel_base` image this job will use, and stages the module under `SPCX_STAGING_ROOT/<build>/<arch>/`. The Build Wheel step passes it to `build-container.sh --ucx-spcx-plugin-install <dir>`, which copies it into the build context as `ucx-spcx-plugin-install/` for the Dockerfile to install into the UCX plugins dir. No gitlab credentials are needed on this path, and a compile failure fails the job before any wheel is built.
+
+The split exists because this repo is public and everything in a PR's checkout — Dockerfiles, build scripts, CI matrices — is editable by whoever opened the PR. Cloning the plugin here would put its read credential and its source inside PR-authored code, in a job whose console can be published back to the PR. Only the built module and a pass/fail cross back; the build log stays in the plugin job. Which plugin ref gets built is that job's own default rather than anything pinned here: the plugin developers own those updates, so a bump needs no change on this side. The `build-container.sh` default above still applies to the container path.
 
 ### Key Dependencies Installed
 

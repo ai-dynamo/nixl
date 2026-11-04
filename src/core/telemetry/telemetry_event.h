@@ -27,7 +27,7 @@ constexpr char TELEMETRY_BUFFER_SIZE_VAR[] = "NIXL_TELEMETRY_BUFFER_SIZE";
 constexpr char TELEMETRY_RUN_INTERVAL_VAR[] = "NIXL_TELEMETRY_RUN_INTERVAL";
 constexpr char TELEMETRY_ENABLED_METRICS_VAR[] = "NIXL_TELEMETRY_ENABLED_METRICS";
 
-constexpr inline int TELEMETRY_VERSION = 4;
+constexpr inline int TELEMETRY_VERSION = 6;
 
 /**
  * @enum nixl_telemetry_event_type_t
@@ -54,7 +54,8 @@ enum class nixl_telemetry_event_type_t : uint32_t {
     AGENT_ERR_REMOTE_DISCONNECT = 17,
     AGENT_ERR_CANCELED = 18,
     AGENT_ERR_NO_TELEMETRY = 19,
-    AGENT_TELEMETRY_EVENTS_DROPPED = 20,
+    AGENT_TRACE_PHASES_DROPPED = 20,
+    AGENT_TELEMETRY_EVENTS_DROPPED = 21,
 };
 
 inline constexpr std::size_t nixl_telemetry_event_type_count =
@@ -90,6 +91,7 @@ inline constexpr std::array telemetry_metric_event_types = {
     nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED,
     nixl_telemetry_event_type_t::AGENT_XFER_TIME,
     nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
+    nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED,
     nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED,
 };
 
@@ -97,6 +99,10 @@ static_assert(nixl_telemetry_event_type_count ==
                   telemetry_metric_event_types.size() + telemetry_error_event_types.size(),
               "AGENT_TELEMETRY_EVENTS_DROPPED must remain the last enumerator; "
               "nixl_telemetry_event_type_count is out of sync with the event-type enum");
+
+// The error events share one family, so they have no per-type descriptor row.
+inline constexpr const char *telemetry_error_family_name = "agent_errors_total";
+inline constexpr const char *telemetry_error_family_help = "Cumulative error count by status";
 
 struct nixlTelemetryMetricDescriptor {
     const char *counterName;
@@ -151,6 +157,8 @@ telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
         return "agent_err_canceled";
     case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
         return "agent_err_no_telemetry";
+    case nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED:
+        return "agent_trace_phases_dropped";
     case nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED:
         return "agent_telemetry_events_dropped";
     }
@@ -192,6 +200,7 @@ telemetryErrorStatusLabel(const nixl_telemetry_event_type_t type) noexcept {
     case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
     case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
     case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
+    case nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED:
     case nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED:
         return nullptr;
     }
@@ -201,11 +210,12 @@ telemetryErrorStatusLabel(const nixl_telemetry_event_type_t type) noexcept {
 /**
  * @brief Exporter-side Prometheus series descriptor for a telemetry event.
  *
- * Both the native Prometheus and DOCA/CollectX exporters derive their series
- * from this single mapping, so they emit identical output. A null @c counterName,
- * @c gaugeName, or @c histogramName means the event has no cumulative counter, no
- * last-operation gauge, or no distribution histogram, respectively. Error events
- * (@c AGENT_ERR_*) and any unmapped value return an all-null descriptor.
+ * The Prometheus and DOCA/CollectX exporters
+ * derive their series from this single mapping, so they emit the same metric
+ * definitions. A null @c counterName, @c gaugeName, or @c histogramName means the
+ * event has no cumulative counter, no last-operation gauge, or no distribution
+ * histogram, respectively. Error events (@c AGENT_ERR_*) and any unmapped value
+ * return an all-null descriptor.
  *
  * @param type Telemetry event type.
  * @return Counter/gauge series names and HELP strings for @p type.
@@ -269,6 +279,13 @@ telemetryMetricDescriptor(const nixl_telemetry_event_type_t type) noexcept {
                 "Post time of the last request",
                 "agent_xfer_post_time_us",
                 "Distribution of time from start to posting to the back-end, in microseconds"};
+    case nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED:
+        return {"agent_trace_phases_dropped_total",
+                "Cumulative backend trace phases dropped because recording them failed",
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr};
     case nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED:
         return {"agent_telemetry_events_dropped_total",
                 "Cumulative telemetry events dropped at the producer-side staging queue",

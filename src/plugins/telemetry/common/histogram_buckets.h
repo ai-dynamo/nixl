@@ -84,7 +84,7 @@ parseHistogramBucketsUs(const std::string &spec) {
 
 /**
  * @brief Resolve the histogram bucket boundaries (microsecond upper bounds) shared by
- *        both duration histograms in both exporters.
+ *        both duration histograms in every exporter that exposes them.
  * @return The parsed env override when set and valid; the built-in microsecond defaults
  *         when the override is absent or empty.
  * @throws std::invalid_argument when a non-empty override is provided but malformed, so a

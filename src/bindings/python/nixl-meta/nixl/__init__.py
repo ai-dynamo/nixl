@@ -17,7 +17,7 @@ import importlib
 import sys
 from typing import TYPE_CHECKING
 
-from nixl_meta_utils import detect_cuda_major
+from nixl_meta_utils import detect_cuda_major, detect_rocm
 
 
 def _load_cuda_backend() -> str:
@@ -34,7 +34,10 @@ def _load_cuda_backend() -> str:
                 f"detected CUDA {cuda_major} but {pip_name} is not installed"
             ) from e
     # No CUDA stack detected — use whatever backend is installed.
-    for mod_name in ("nixl_cu13", "nixl_cu12"):
+    backends = ("nixl_cu13", "nixl_cu12", "nixl_rocm")
+    if detect_rocm():
+        backends = ("nixl_rocm", "nixl_cu13", "nixl_cu12")
+    for mod_name in backends:
         try:
             return importlib.import_module(mod_name).__name__
         except ModuleNotFoundError as e:
@@ -42,12 +45,12 @@ def _load_cuda_backend() -> str:
                 # Re-raise if the error is not about the module we're trying to import
                 raise
             continue
-    raise ImportError("No NIXL CUDA backend found")
+    raise ImportError("No NIXL backend found (tried nixl_cu13, nixl_cu12, nixl_rocm)")
 
 
 _pkg = sys.modules[_load_cuda_backend()]
 
-submodules = ["_api", "_bindings", "_utils", "logging"]
+submodules = ["_bindings", "_utils", "logging", "_api"]
 for sub_name in submodules:
     # Import submodule from actual wheel
     module = importlib.import_module(f"{_pkg.__name__}.{sub_name}")

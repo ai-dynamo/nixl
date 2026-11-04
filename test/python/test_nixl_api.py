@@ -13,16 +13,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
+import gc
 import os
+import re
 import tempfile
+import time
 import uuid
 
+import numpy as np
 import pytest
 import torch
 
 import nixl._bindings as bindings
 import nixl._utils as utils
-from nixl._api import nixl_agent, nixl_agent_config, nixl_thread_sync_t
+from nixl._api import (
+    nixl_agent,
+    nixl_agent_config,
+    nixl_thread_sync_t,
+    nixl_xfer_handle,
+)
 
 # NIXL pytest fixtures
 
@@ -113,7 +123,11 @@ def test_sync_mode_agent(monkeypatch, sync_mode, enable_listen):
         return real_ctor(agent_name, agent_config)
 
     monkeypatch.setattr(bindings, "nixlAgent", spy_ctor)
-    config = nixl_agent_config(sync_mode=sync_mode, enable_listen_thread=enable_listen)
+    # listen_port=0 lets the OS pick an ephemeral port, so concurrent agents (parametrized
+    # cases here, or parallel CI jobs sharing a node) don't collide on the fixed default port.
+    config = nixl_agent_config(
+        sync_mode=sync_mode, enable_listen_thread=enable_listen, listen_port=0
+    )
     nixl_agent(str(uuid.uuid4()), nixl_conf=config)
     if sync_mode is not None:
         assert captured["syncMode"] == sync_mode.value
@@ -126,6 +140,58 @@ def test_sync_mode_agent(monkeypatch, sync_mode, enable_listen):
 def test_nixl_conf_bad_sync_mode():
     with pytest.raises(TypeError, match="sync_mode must be a nixl_thread_sync_t"):
         nixl_agent_config(sync_mode=1)
+
+
+@pytest.mark.parametrize("delay_us", [None, 0, 50])
+def test_prog_thread_delay_agent(monkeypatch, delay_us):
+    captured = {}
+    real_ctor = bindings.nixlAgent
+
+    def spy_ctor(agent_name, agent_config):
+        captured["pthrDelay"] = agent_config.pthrDelay
+        return real_ctor(agent_name, agent_config)
+
+    monkeypatch.setattr(bindings, "nixlAgent", spy_ctor)
+    kwargs = {} if delay_us is None else {"prog_thread_delay_us": delay_us}
+    nixl_agent(str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[], **kwargs))
+    assert captured["pthrDelay"] == (delay_us or 0)
+
+
+@pytest.mark.parametrize("delay_us", [-1, 1.5])
+def test_nixl_conf_bad_prog_thread_delay(delay_us):
+    with pytest.raises(ValueError, match="prog_thread_delay_us must be"):
+        nixl_agent_config(prog_thread_delay_us=delay_us)
+
+
+def test_default_backend_configs_are_independent():
+    """Keep each configuration's default backend list independent."""
+    first_config = nixl_agent_config()
+    original_backends = first_config.backends.copy()
+    try:
+        second_config = nixl_agent_config()
+        first_config.backends.append("POSIX")
+        assert second_config.backends == ["UCX"]
+        assert nixl_agent_config().backends == ["UCX"]
+    finally:
+        first_config.backends[:] = original_backends
+
+
+def test_default_agent_keeps_ucx_after_another_config_is_cleared():
+    """Retain UCX for a default agent after clearing another configuration."""
+    config = nixl_agent_config()
+    original_backends = config.backends.copy()
+    try:
+        config.backends.clear()
+        agent = nixl_agent(str(uuid.uuid4()))
+        assert "UCX" in agent.backends
+    finally:
+        config.backends[:] = original_backends
+
+
+@pytest.mark.parametrize("backends", [[], ["UCX"], ["POSIX", "UCX"]])
+def test_explicit_backend_config_preserves_selection(backends):
+    """Preserve an explicitly supplied backend selection, including an empty list."""
+    assert nixl_agent_config(backends=backends).backends == backends
 
 
 def test_make_invalid_op(one_empty_agent, two_xfer_lists):
@@ -182,6 +248,33 @@ def test_empty_notif_tag(two_connected_agents):
         found = agent2.check_remote_xfer_done(agent1.name, b"")
 
 
+@pytest.mark.timeout(5, func_only=True)
+@pytest.mark.parametrize(
+    "message, lookup_tag, tag_is_prefix",
+    [
+        (b"", b"", True),
+        (b"", b"", False),
+        (b"notification", b"not", True),
+        (b"notification", b"fic", False),
+    ],
+)
+def test_notification_is_consumed_once(
+    two_connected_agents, message, lookup_tag, tag_is_prefix
+):
+    """Consume matching notifications once, including empty messages."""
+    agent1, agent2 = two_connected_agents
+    agent1.send_notif(agent2.name, message)
+
+    while not agent2.check_remote_xfer_done(
+        agent1.name, lookup_tag, tag_is_prefix=tag_is_prefix
+    ):
+        pass
+
+    assert not agent2.check_remote_xfer_done(
+        agent1.name, lookup_tag, tag_is_prefix=tag_is_prefix
+    )
+
+
 def test_improper_get_xfer_descs(one_empty_agent, one_reg_list):
     # xfer list should be 3-tuple, not 4-tuple
     bad_list = [(1, 2, 3, 4)]
@@ -222,6 +315,296 @@ def test_improper_get_reg_descs(one_empty_agent, one_xfer_list):
     # Passing reg list will not work
     ret = one_empty_agent.get_reg_descs(one_xfer_list)
     assert ret is None
+
+
+_DESC_METHODS = {
+    "get_reg_descs": bindings.nixlRegDList,
+    "get_xfer_descs": bindings.nixlXferDList,
+    "get_remote_descs": bindings.nixlRemoteDList,
+}
+
+
+@pytest.mark.parametrize("container", [[], ()])
+@pytest.mark.parametrize("mem_type", ["DRAM", "FILE"])
+@pytest.mark.parametrize("method", list(_DESC_METHODS))
+def test_empty_descriptor_containers(one_empty_agent, container, mem_type, method):
+    """An empty list/tuple with a memory type converts to an empty typed list."""
+    descs = getattr(one_empty_agent, method)(container, mem_type)
+
+    assert isinstance(descs, _DESC_METHODS[method])
+    assert descs.getType() == one_empty_agent.nixl_mems[mem_type]
+    assert descs.descCount() == 0
+    assert descs.isEmpty()
+
+
+@pytest.mark.parametrize("container", [[], ()])
+@pytest.mark.parametrize("method", list(_DESC_METHODS))
+def test_empty_descriptor_containers_without_mem_type(
+    one_empty_agent, container, method
+):
+    """An empty list/tuple without a memory type follows the existing error convention."""
+    descs = getattr(one_empty_agent, method)(container, mem_type=None)
+    assert descs is None
+
+
+@pytest.mark.parametrize("container", [[], ()])
+@pytest.mark.parametrize("method", list(_DESC_METHODS))
+def test_empty_descriptor_containers_invalid_mem_type(
+    one_empty_agent, container, method
+):
+    """An empty list/tuple with an invalid memory type follows the existing KeyError."""
+    with pytest.raises(KeyError):
+        getattr(one_empty_agent, method)(container, "V-RAM")
+
+
+@pytest.mark.parametrize("dtype", [np.uint64, np.int64])
+@pytest.mark.parametrize("method", ["get_reg_descs", "get_xfer_descs"])
+def test_empty_descriptor_numpy_arrays(one_empty_agent, dtype, method):
+    """A zero-row Nx3 numpy array converts to an empty typed list."""
+    descs = getattr(one_empty_agent, method)(np.empty((0, 3), dtype=dtype), "DRAM")
+
+    assert isinstance(descs, _DESC_METHODS[method])
+    assert descs.getType() == bindings.DRAM_SEG
+    assert descs.descCount() == 0
+    assert descs.isEmpty()
+
+
+@pytest.mark.parametrize("method", ["get_reg_descs", "get_xfer_descs"])
+def test_empty_descriptor_numpy_validation(one_empty_agent, method):
+    """Emptiness does not bypass numpy array shape, dtype, and mem-type validation."""
+    # Wrong second dimension
+    descs = getattr(one_empty_agent, method)(np.empty((0, 2), dtype=np.uint64), "DRAM")
+    assert descs is None
+
+    # Unsupported dtype is rejected by the native constructor
+    with pytest.raises(ValueError, match="uint64 or int64"):
+        getattr(one_empty_agent, method)(np.empty((0, 3), dtype=np.float64), "DRAM")
+
+    # Missing memory type
+    descs = getattr(one_empty_agent, method)(
+        np.empty((0, 3), dtype=np.uint64), mem_type=None
+    )
+    assert descs is None
+
+
+@pytest.mark.parametrize("method", list(_DESC_METHODS))
+def test_empty_descriptor_typed_list_passthrough(one_empty_agent, method):
+    """An already-typed empty list is returned as the same object, mem_type or not."""
+    typed = _DESC_METHODS[method](bindings.DRAM_SEG)
+    assert getattr(one_empty_agent, method)(typed) is typed
+    assert getattr(one_empty_agent, method)(typed, "DRAM") is typed
+
+
+def test_empty_descriptor_callers(one_empty_agent):
+    """Higher-level APIs accept empty inputs like their typed-empty equivalents."""
+    if "POSIX" not in one_empty_agent.plugin_list:
+        pytest.skip("POSIX plugin not available")
+    one_empty_agent.create_backend("POSIX")
+    agent = one_empty_agent
+
+    # An empty query returns an empty result list
+    assert agent.query_memory([], "POSIX", "FILE") == []
+    assert agent.query_memory(bindings.nixlRegDList(bindings.FILE_SEG), "POSIX") == []
+
+    # An empty list behaves like the typed empty list for the callers that reject
+    # one; the concrete error type is an internal detail, so assert parity only.
+    with pytest.raises(Exception) as typed:
+        agent.register_memory(bindings.nixlRegDList(bindings.FILE_SEG))
+    with pytest.raises(type(typed.value)):
+        agent.register_memory([], "FILE")
+
+    with pytest.raises(Exception) as typed:
+        agent.prep_xfer_dlist(
+            "NIXL_INIT_AGENT", bindings.nixlXferDList(bindings.FILE_SEG)
+        )
+    with pytest.raises(type(typed.value)):
+        agent.prep_xfer_dlist("NIXL_INIT_AGENT", [], "FILE")
+
+
+def _prep_mem_view_worker(rank, exch_dir, backend_name):
+    # One process per GPU. The remote overload of prep_mem_view needs a real
+    # device-capable lane (cuda_ipc) to the peer, which is an inter-process /
+    # inter-GPU mechanism -- a same-process, same-GPU loopback has no such lane
+    # (UCX v1.21.x tolerated it, newer UCX rejects it with "lane not found for
+    # element 0"). So each rank runs in its own process, on its own GPU, and the
+    # two connect for real -- mirroring examples/device/ep.
+    import json
+    import sys
+    import time
+
+    peer = 1 - rank
+    torch.cuda.set_device(rank)
+    # Allocate the VRAM buffer (and its CUDA context) BEFORE creating the agent,
+    # so the UCX worker comes up GPU-capable.
+    buf = torch.zeros(1024, dtype=torch.uint8, device=f"cuda:{rank}")
+    torch.cuda.synchronize()
+    addr, size, dev = buf.data_ptr(), buf.numel(), rank
+    name = f"pmv_agent_{rank}"
+
+    agent = nixl_agent(name, nixl_agent_config(backends=[backend_name]))
+    # Register BEFORE publishing metadata: get_agent_metadata() snapshots the
+    # local section at call time, so the buffer must already be registered for
+    # the peer to find a matching backend (else NIXL_ERR_NOT_FOUND).
+    agent.register_memory(agent.get_reg_descs([(addr, size, dev, "")], mem_type="VRAM"))
+
+    def _publish(tag, data=None):
+        path = os.path.join(exch_dir, f"{tag}_{rank}")
+        mode, payload = ("wb", data) if isinstance(data, bytes) else ("w", data or "")
+        with open(path, mode) as f:
+            f.write(payload)
+
+    def _await(tag):
+        path = os.path.join(exch_dir, f"{tag}_{peer}")
+        while not os.path.exists(path):
+            time.sleep(0.05)
+        return path
+
+    # File-based rendezvous: exchange agent metadata + the peer's buffer coords.
+    _publish("md", agent.get_agent_metadata())
+    _publish("info", json.dumps({"name": name, "addr": addr, "size": size, "dev": dev}))
+    _publish("published")
+    _await("published")
+    with open(os.path.join(exch_dir, f"md_{peer}"), "rb") as f:
+        peer_md = f.read()
+    with open(os.path.join(exch_dir, f"info_{peer}")) as f:
+        peer_info = json.load(f)
+    agent.add_remote_agent(peer_md)
+
+    # Establish the endpoint BEFORE prep_mem_view: the remote device mem-list needs
+    # a live cuda_ipc lane, which only exists once the peers are connected. A notif
+    # round-trip forces the wire-up to complete.
+    agent.make_connection(peer_info["name"])
+    agent.send_notif(peer_info["name"], b"connect")
+    deadline = time.time() + 20
+    while peer_info["name"] not in agent.get_new_notifs():
+        assert time.time() < deadline, f"rank {rank}: no notif from peer"
+        time.sleep(0.05)
+    _publish("connected")
+    _await("connected")
+
+    # Local overload: a nixlXferDList describing this rank's own buffer.
+    local_mvh = agent.prep_mem_view(
+        agent.get_xfer_descs([(addr, size, dev)], mem_type="VRAM")
+    )
+    assert isinstance(local_mvh, int)
+    assert local_mvh != 0
+
+    # Remote overload: a nixlRemoteDList describing the peer's buffer on the peer's GPU.
+    remote_descs = agent.get_remote_descs(
+        [(peer_info["addr"], peer_info["size"], peer_info["dev"], peer_info["name"])],
+        mem_type="VRAM",
+    )
+    remote_mvh = agent.prep_mem_view(remote_descs)
+    assert isinstance(remote_mvh, int)
+    assert remote_mvh != 0
+
+    agent.release_mem_view(local_mvh)
+    agent.release_mem_view(remote_mvh)
+
+    # Final barrier: the remote overload reaches into the PEER's endpoint, so
+    # neither rank may tear down until BOTH have finished every NIXL op --
+    # otherwise one rank's exit kills the endpoint the other still needs.
+    _publish("done")
+    _await("done")
+
+    # Both ranks are done. Exit hard, skipping Python/C++/UCX/CUDA destructors:
+    # tearing those down in a spawned worker can segfault on exit (fragile
+    # ordering / cross-process UCX disconnect), which would flake the test even
+    # though the checks above passed. A raised assertion above still propagates
+    # normally (mp.spawn writes an error file before this point).
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
+
+
+@pytest.mark.timeout(120)
+@pytest.mark.skipif(
+    not bindings.HAVE_UCX_GPU_DEVICE_API,
+    reason="prep_mem_view requires NIXL built against a UCX with the GPU device API",
+)
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2,
+    reason="prep_mem_view's remote overload needs a real cuda_ipc device peer, "
+    "i.e. two GPUs driven by two processes",
+)
+def test_prep_mem_view(backend_name, capfd):
+    # Two processes, one GPU each: this is the setup the UCX GPU device API is
+    # built for (real cuda_ipc peers). Each worker asserts internally; mp.spawn
+    # re-raises any worker failure here, so the test fails if either rank fails.
+    #
+    # capfd.disabled(): pytest captures stdout/stderr at the file-descriptor
+    # level, and the spawned children write there from C (UCX/CUDA) -- leaving
+    # that capture in place segfaults the children on teardown. Disabling it
+    # around the spawn restores the real fds (equivalent to running with -s).
+    import torch.multiprocessing as mp
+
+    with tempfile.TemporaryDirectory(prefix="pmv_exch_") as exch_dir:
+        with capfd.disabled():
+            mp.spawn(
+                _prep_mem_view_worker,
+                args=(exch_dir, backend_name),
+                nprocs=2,
+                join=True,
+            )
+
+
+@pytest.mark.parametrize("shape", [(), (0,), (1,), (2, 4)])
+@pytest.mark.parametrize("as_list", [False, True])
+@pytest.mark.parametrize("method", ["get_reg_descs", "get_xfer_descs"])
+def test_tensor_descriptors(one_empty_agent, shape, as_list, method):
+    """Single tensors and tensor lists describe their entire contiguous buffer."""
+    tensor = torch.ones(shape, dtype=torch.float32)
+    tensor_input = [tensor] if as_list else tensor
+    expected = (tensor.data_ptr(), tensor.numel() * tensor.element_size(), 0)
+
+    descs = getattr(one_empty_agent, method)(tensor_input)
+    assert descs.getType() == bindings.DRAM_SEG
+    assert descs.descCount() == 1
+    assert descs[0][:3] == expected
+
+
+@pytest.mark.timeout(10)
+def test_scalar_tensor_transfer(two_agents):
+    """The tensor API can register and transfer a scalar without reshaping it."""
+    source, target = two_agents
+    source_tensor = torch.tensor(123.5)
+    target_tensor = torch.tensor(0.0)
+    source_reg = None
+    target_reg = None
+    handle = None
+    remote_added = False
+
+    try:
+        source_reg = source.register_memory(source_tensor)
+        target_reg = target.register_memory(target_tensor)
+        assert source_reg is not None
+        assert target_reg is not None
+        source.add_remote_agent(target.get_agent_metadata())
+        remote_added = True
+
+        handle = source.initialize_xfer(
+            "WRITE",
+            source.get_xfer_descs(source_tensor),
+            source.get_xfer_descs(target_tensor),
+            target.name,
+        )
+        state = source.transfer(handle)
+        deadline = time.monotonic() + 5
+        while state == "PROC" and time.monotonic() < deadline:
+            time.sleep(0.001)
+            state = source.check_xfer_state(handle)
+
+        assert state == "DONE"
+        assert target_tensor.item() == source_tensor.item()
+    finally:
+        if handle is not None:
+            source.release_xfer_handle(handle)
+        if remote_added:
+            source.remove_remote_agent(target.name)
+        if source_reg is not None:
+            source.deregister_memory(source_reg)
+        if target_reg is not None:
+            target.deregister_memory(target_reg)
 
 
 def test_noncontiguous_tensor(one_empty_agent):
@@ -361,3 +744,181 @@ def test_get_xfer_telemetry_cfg(backend_name):
     finally:
         os.environ.pop("NIXL_TELEMETRY_ENABLE")
         os.environ.pop("NIXL_TELEMETRY_DIR")
+
+
+_TRACEPARENT = re.compile(
+    r"00-(?P<trace_id>[0-9a-f]{32})-(?P<span_id>[0-9a-f]{16})-(?P<flags>[0-9a-f]{2})"
+)
+
+
+def _nixl_plugin_dir():
+    if "NIXL_PLUGIN_DIR" in os.environ:
+        return os.environ["NIXL_PLUGIN_DIR"]
+    with open("/proc/self/maps") as maps:
+        for line in maps:
+            path = line.split(maxsplit=5)[-1].strip()
+            if os.path.basename(path) == "libnixl.so":
+                return os.path.join(os.path.dirname(path), "plugins")
+    return ""
+
+
+_NIXL_PLUGIN_DIR = _nixl_plugin_dir()
+
+requires_nvtx_plugin = pytest.mark.skipif(
+    not _NIXL_PLUGIN_DIR
+    or not os.path.isfile(os.path.join(_NIXL_PLUGIN_DIR, "libtrace_backend_nvtx.so")),
+    reason="libtrace_backend_nvtx.so is not in NIXL's plugin directory",
+)
+
+
+@contextlib.contextmanager
+def _xfer_handle(backend_name, prepped=False):
+    agent, target = (
+        nixl_agent(
+            str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+        )
+        for _ in range(2)
+    )
+    src = torch.ones(64, dtype=torch.uint8)
+    dst = torch.zeros(64, dtype=torch.uint8)
+    agent.register_memory(src)
+    target.register_memory(dst)
+    agent.add_remote_agent(target.get_agent_metadata())
+    if prepped:
+        local = agent.prep_xfer_dlist("NIXL_INIT_AGENT", src)
+        remote = agent.prep_xfer_dlist(target.name, dst)
+        handle = agent.make_prepped_xfer("WRITE", local, [0], remote, [0])
+    else:
+        handle = agent.initialize_xfer(
+            "WRITE", agent.get_xfer_descs(src), agent.get_xfer_descs(dst), target.name
+        )
+    try:
+        yield agent, handle
+    finally:
+        agent.release_xfer_handle(handle)
+        agent.remove_remote_agent(target.name)
+
+
+def _post_to_done(agent, handle):
+    state = agent.transfer(handle)
+    deadline = time.monotonic() + 5
+    while state == "PROC" and time.monotonic() < deadline:
+        state = agent.check_xfer_state(handle)
+    assert state == "DONE"
+
+
+def _trace_info(agent, handle):
+    info = agent.get_xfer_trace_info(handle)
+    assert info is not None
+    return info.requestId, info.execution, info.traceparent
+
+
+def test_xfer_trace_info_without_tracing(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "")
+    with _xfer_handle(backend_name) as (agent, handle):
+        assert agent.get_xfer_trace_info(handle) is None
+        _post_to_done(agent, handle)
+        assert agent.get_xfer_trace_info(handle) is None
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_counts_posts(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "0")
+    with _xfer_handle(backend_name) as (agent, handle):
+        request_id, execution, traceparent = _trace_info(agent, handle)
+        assert request_id != 0 and execution == 0
+        match = _TRACEPARENT.fullmatch(traceparent)
+        assert match and match["flags"] == "02"
+        for expected in (1, 2):
+            _post_to_done(agent, handle)
+            assert _trace_info(agent, handle) == (request_id, expected, traceparent)
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_prepped_handle(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    with _xfer_handle(backend_name, prepped=True) as (agent, handle):
+        request_id, execution, _ = _trace_info(agent, handle)
+        assert request_id != 0 and execution == 0
+        _post_to_done(agent, handle)
+        assert _trace_info(agent, handle)[:2] == (request_id, 1)
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_sampled_posts_differ(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "1")
+    with _xfer_handle(backend_name) as (agent, handle):
+        posts = []
+        for _ in range(2):
+            _post_to_done(agent, handle)
+            posts.append(_TRACEPARENT.fullmatch(_trace_info(agent, handle)[2]))
+        first, second = posts
+        assert first and second and first["flags"] == second["flags"] == "03"
+        assert first["trace_id"] == second["trace_id"]
+        assert first["span_id"] != second["span_id"]
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_after_release(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    with _xfer_handle(backend_name) as (agent, handle):
+        assert agent.get_xfer_trace_info(handle) is not None
+        agent.release_xfer_handle(handle)
+        assert agent.get_xfer_trace_info(handle) is None
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_is_a_read_only_snapshot(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    with _xfer_handle(backend_name) as (agent, handle):
+        _post_to_done(agent, handle)
+        info = agent.get_xfer_trace_info(handle)
+        values = _trace_info(agent, handle)
+        _post_to_done(agent, handle)
+        agent.release_xfer_handle(handle)
+    assert values[1] == 1
+    assert (info.requestId, info.execution, info.traceparent) == values
+    for field in ("requestId", "execution", "traceparent"):
+        with pytest.raises(AttributeError):
+            setattr(info, field, getattr(info, field))
+
+
+def test_xfer_trace_info_binding_rejects_a_null_handle(one_empty_agent):
+    with pytest.raises(bindings.nixlInvalidParamError):
+        one_empty_agent.agent.getXferTraceInfo(0)
+
+
+def test_xfer_trace_info_released_handle_skips_the_binding(one_empty_agent):
+    handle = nixl_xfer_handle(one_empty_agent, 0)
+    handle._released = True
+    assert one_empty_agent.get_xfer_trace_info(handle) is None
+
+
+def test_leaked_xfer_handle_is_queued_on_the_agent(one_empty_agent, monkeypatch):
+    """A release that fails in the finalizer defers to the nixl_agent's leak list.
+
+    The handle comes from initialize_xfer, so it holds whatever the agent passes
+    it. That used to be the pybind agent, which has no leak list, and the handle
+    was dropped without a trace.
+    """
+
+    class FailingNative:
+        def createXferReq(self, *args):
+            return 0xDEAD
+
+        def releaseXferReq(self, handle):
+            raise RuntimeError("release refused")
+
+    monkeypatch.setattr(one_empty_agent, "agent", FailingNative())
+    try:
+        handle = one_empty_agent.initialize_xfer("WRITE", None, None, "peer")
+        del handle
+        gc.collect()
+
+        assert one_empty_agent._leaked_xfer_handles == [0xDEAD]
+    finally:
+        # 0xDEAD is not a real request, so the agent's destructor must not
+        # hand it to the native release once the real agent is back.
+        one_empty_agent._leaked_xfer_handles.clear()

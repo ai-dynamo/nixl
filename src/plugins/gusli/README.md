@@ -15,7 +15,7 @@ GUSLI supports multiple connection modes:
 ## Usage Guide
 1. Build and install [Gusli](https://github.com/nvidia/gusli).
 2. Do it via: git clone git clone https://github.com/nvidia/gusli.git
-3. cd gusli; `make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0`
+3. cd gusli; `make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1`
 4. Ensure that libraries: `libgusli_clnt.so`, are installed under `/usr/lib/`.
 5. Ensure that headers are installed under `/usr/include/gusli_*.hpp`.
 6. Build NIXL. [!IMPORTANT] You must build gusli before building NIXL

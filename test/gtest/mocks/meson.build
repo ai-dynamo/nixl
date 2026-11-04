@@ -27,5 +27,47 @@ run_command('sh', '-c',
                 check: true
             )
 
+mock_stale_plugin = shared_library('MOCK_STALE_BACKEND', ['mock_stale_plugin.cpp'],
+               dependencies: [nixl_infra, nixl_common_dep],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
+               name_prefix: 'libplugin_',
+               install: true,
+               install_dir: plugin_install_dir)
+run_command('sh', '-c',
+            'echo "MOCK_STALE_BACKEND=' + mock_stale_plugin.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
+                check: true
+            )
+
+mock_stale_telemetry_plugin = shared_library('libtelemetry_exporter_mock_stale',
+               ['mock_stale_telemetry_plugin.cpp'],
+               dependencies: [nixl_infra, nixl_common_dep],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
+               name_prefix: '',
+               install: true,
+               install_dir: plugin_install_dir)
+
+mock_bind_failed_telemetry_plugin = shared_library('libtelemetry_exporter_mock_bind_failed',
+               ['mock_bind_failed_telemetry_plugin.cpp'],
+               dependencies: [nixl_infra, nixl_common_dep],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
+               name_prefix: '',
+               install: true,
+               install_dir: plugin_install_dir)
+
+trace_recorder_plugin = shared_library('libtrace_backend_recorder', ['trace_recorder_plugin.cpp'],
+               dependencies: [nixl_infra, nixl_common_dep],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               name_prefix: '',
+               install: true,
+               install_dir: plugin_install_dir)
+
+mock_stale_trace_plugin = shared_library('libtrace_backend_mock_stale',
+               ['mock_stale_trace_plugin.cpp'],
+               dependencies: [nixl_infra, nixl_common_dep],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               name_prefix: '',
+               install: true,
+               install_dir: plugin_install_dir)
+
 source_root = meson.project_source_root()
 mocks_dep = declare_dependency(variables : {'path' : meson.current_source_dir().split(source_root + '/')[1]})

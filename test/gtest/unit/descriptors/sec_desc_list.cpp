@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -80,6 +81,15 @@ protected:
             EXPECT_EQ(list[i].devId, expected[i].second) << "devId mismatch at index " << i;
             EXPECT_EQ(list[i].len, defaultLen) << "len mismatch at index " << i;
         }
+    }
+};
+
+class testMemSection : public nixlMemSection {
+public:
+    void
+    addDescs(nixlSecDescList descs) {
+        nixlSecDescList &target = emplace(descs.getType(), nullptr);
+        target.addDescs(std::move(descs));
     }
 };
 
@@ -207,7 +217,7 @@ TEST_F(secDescListTest, AddRandomBatches) {
         list.addDescs(std::move(batch));
 
         num_added += batch_size;
-        ASSERT_EQ(list.descCount(), num_added);
+        ASSERT_EQ(static_cast<size_t>(list.descCount()), num_added);
         assertSorted(list);
     }
 }
@@ -241,6 +251,91 @@ TEST_F(secDescListTest, ZeroLenObjSegQuery) {
     EXPECT_EQ(list.getIndex(query), 0);
 }
 
+TEST_F(secDescListTest, UnboundedFileSegCoversFiniteRangeFromNonzeroOffset) {
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(4096, 0, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(4096, 64, 0)), 0);
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(8192, 64, 0)), 0);
+}
+
+TEST_F(secDescListTest, UnboundedFileSegDoesNotCoverEarlierRange) {
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(4096, 0, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(0, 64, 0)), -1);
+}
+
+TEST_F(secDescListTest, FiniteFileSegDoesNotCoverOverflowingRange) {
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(4096, 4096, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(4160, SIZE_MAX, 0)), -1);
+}
+
+TEST_F(secDescListTest, UnboundedFileSegDoesNotCoverOverflowingRange) {
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(4096, 0, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(4160, SIZE_MAX, 0)), -1);
+}
+
+TEST_F(secDescListTest, OverflowingFiniteFileSegDoesNotCoverRange) {
+    constexpr uintptr_t max_addr = std::numeric_limits<uintptr_t>::max();
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(max_addr - 64, 128, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(max_addr - 32, 16, 0)), -1);
+}
+
+TEST_F(secDescListTest, PopulateWalksOrderedSectionsAndDevices) {
+    nixlBackendMD metadata1(false);
+    nixlBackendMD metadata2(false);
+    nixlBackendMD metadata3(false);
+
+    nixlSecDescList registrations(DRAM_SEG);
+    registrations.addDesc(nixlSectionDesc(100, 64, 1, &metadata1));
+    registrations.addDesc(nixlSectionDesc(200, 64, 1, &metadata2));
+    registrations.addDesc(nixlSectionDesc(100, 64, 2, &metadata3));
+
+    testMemSection section;
+    section.addDescs(std::move(registrations));
+
+    nixl_xfer_dlist_t query(DRAM_SEG);
+    query.addDesc(nixlBasicDesc(112, 16, 1));
+    query.addDesc(nixlBasicDesc(208, 16, 1));
+    query.addDesc(nixlBasicDesc(112, 16, 2));
+
+    nixl_meta_dlist_t response(DRAM_SEG);
+    ASSERT_EQ(section.populate(query, nullptr, response), NIXL_SUCCESS);
+    ASSERT_EQ(response.descCount(), 3);
+    EXPECT_EQ(response[0].metadataP, &metadata1);
+    EXPECT_EQ(response[1].metadataP, &metadata2);
+    EXPECT_EQ(response[2].metadataP, &metadata3);
+}
+
+TEST_F(secDescListTest, PopulateFallsBackForDisorderedQueries) {
+    nixlBackendMD metadata1(false);
+    nixlBackendMD metadata2(false);
+
+    nixlSecDescList registrations(DRAM_SEG);
+    registrations.addDesc(nixlSectionDesc(100, 64, 1, &metadata1));
+    registrations.addDesc(nixlSectionDesc(200, 64, 1, &metadata2));
+
+    testMemSection section;
+    section.addDescs(std::move(registrations));
+
+    nixl_xfer_dlist_t query(DRAM_SEG);
+    query.addDesc(nixlBasicDesc(208, 16, 1));
+    query.addDesc(nixlBasicDesc(112, 16, 1));
+
+    nixl_meta_dlist_t response(DRAM_SEG);
+    ASSERT_EQ(section.populate(query, nullptr, response), NIXL_SUCCESS);
+    ASSERT_EQ(response.descCount(), 2);
+    EXPECT_EQ(response[0].metadataP, &metadata2);
+    EXPECT_EQ(response[1].metadataP, &metadata1);
+}
+
 TEST_F(secDescListTest, ZeroLenQueryNotFound) {
     nixlSecDescList list(FILE_SEG);
     nixlSectionDesc desc(0, SIZE_MAX, 0);
@@ -259,6 +354,79 @@ TEST_F(secDescListTest, ZeroLenDramSegQueryNotRewritten) {
 
     nixlBasicDesc query(0, 0, 0);
     EXPECT_EQ(list.getIndex(query), NIXL_ERR_NOT_FOUND);
+}
+
+TEST_F(secDescListTest, AddDescNormalizesZeroLenFileSeg) {
+    nixlSecDescList list(FILE_SEG);
+    nixlSectionDesc desc(0, 0, 0);
+    list.addDesc(desc);
+
+    EXPECT_EQ(list[0].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescNormalizesZeroLenBlkSeg) {
+    nixlSecDescList list(BLK_SEG);
+    nixlSectionDesc desc(100, 0, 1);
+    list.addDesc(desc);
+
+    EXPECT_EQ(list[0].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescNormalizesZeroLenObjSeg) {
+    nixlSecDescList list(OBJ_SEG);
+    nixlSectionDesc desc(200, 0, 2);
+    list.addDesc(desc);
+
+    EXPECT_EQ(list[0].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescsBatchNormalizesZeroLen) {
+    nixlSecDescList list(FILE_SEG);
+    std::vector<nixlSectionDesc> batch;
+    batch.emplace_back(0, 0, 0);
+    batch.emplace_back(64, 0, 1);
+    list.addDescs(std::move(batch));
+
+    EXPECT_EQ(list[0].len, SIZE_MAX);
+    EXPECT_EQ(list[1].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescsSingleElementNormalizesZeroLen) {
+    nixlSecDescList list(OBJ_SEG);
+    std::vector<nixlSectionDesc> batch;
+    batch.emplace_back(128, 0, 0);
+    list.addDescs(std::move(batch));
+
+    EXPECT_EQ(list[0].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescsFromOtherListNormalizesZeroLen) {
+    nixlSecDescList src(BLK_SEG);
+    src.addDesc(nixlSectionDesc(256, 0, 0));
+
+    nixlSecDescList dst(BLK_SEG);
+    dst.addDescs(std::move(src));
+
+    EXPECT_EQ(dst[0].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescDoesNotNormalizeDramSeg) {
+    nixlSecDescList list(DRAM_SEG);
+    nixlSectionDesc desc(0, 0, 0);
+    list.addDesc(desc);
+
+    EXPECT_EQ(list[0].len, 0);
+}
+
+TEST_F(secDescListTest, AddDescsDoesNotNormalizeDramSeg) {
+    nixlSecDescList list(DRAM_SEG);
+    std::vector<nixlSectionDesc> batch;
+    batch.emplace_back(0, 0, 0);
+    batch.emplace_back(64, 0, 1);
+    list.addDescs(std::move(batch));
+
+    EXPECT_EQ(list[0].len, 0);
+    EXPECT_EQ(list[1].len, 0);
 }
 
 } // namespace descriptors

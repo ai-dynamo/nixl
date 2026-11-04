@@ -20,15 +20,27 @@
 # wheels on top of this image.
 # BASE_IMAGE is pinned to a concrete version so the per-PR sanity gate is reproducible;
 # bump it (and CI_IMAGE_TAG) deliberately to move to a newer vLLM.
-ARG BASE_IMAGE=docker.io/vllm/vllm-openai:v0.23.0
+ARG BASE_IMAGE=docker.io/vllm/vllm-openai:v0.27.1
 FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
 
 ARG MODEL_ID=Qwen/Qwen3-8B
 
 ENV NIXL_SANITY_MODEL_ID=${MODEL_ID}
 
+# Use only the internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable);
+# the upstream image's other repos (CUDA, devtools, PPAs) aren't needed for iproute2.
+RUN . /etc/os-release && \
+    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* && \
+    printf '%s\n' \
+        'Types: deb' \
+        'URIs: https://artifactory.nvidia.com/artifactory/ubuntu-public' \
+        "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+        'Components: main restricted universe multiverse' \
+        'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources
+
 # iproute2 provides `ss`, used by the sanity's get_next_tcp_port helper to skip occupied
 # host ports (concurrent jobs share a SLURM node under host networking).
-RUN apt-get update \
- && apt-get install -y --no-install-recommends iproute2 \
+# timeout: apt's own per-read timeouts once let a stalled fetch hang the build for hours.
+RUN timeout -k 30s 10m apt-get update --error-on=any \
+ && timeout -k 30s 10m apt-get install -y --no-install-recommends iproute2 \
  && rm -rf /var/lib/apt/lists/*

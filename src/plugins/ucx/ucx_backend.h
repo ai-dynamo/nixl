@@ -19,26 +19,41 @@
 
 #include <vector>
 #include <span>
+#include <cstdint>
 #include <cstring>
-#include <iostream>
-#include <thread>
-#include <mutex>
 #include <memory>
-#include <condition_variable>
 #include <atomic>
 #include <chrono>
 #include <poll.h>
 #include <optional>
-
-#include "nixl.h"
+#include <utility>
 
 #include "backend/backend_engine.h"
-#include "common/nixl_time.h"
+#include "tracing/trace_context.h"
 
 #include "mem_list.h"
 #include "rkey.h"
-#include "ucx_enums.h"
 #include "ucx_utils.h"
+
+namespace nixl::ucx {
+struct notifMessage {
+    std::string agent;
+    std::string msg;
+    std::optional<nixl::trace::TraceContext> traceContext;
+    std::uint64_t traceRequestId = 0;
+    std::uint64_t traceExecution = 0;
+};
+
+[[nodiscard]] std::string
+serializeNotif(const std::string &agent,
+               const std::string &msg,
+               const nixl::trace::TraceContext *trace_context,
+               std::uint64_t request_id = 0,
+               std::uint64_t execution = 0);
+
+[[nodiscard]] notifMessage
+deserializeNotif(const std::string &buffer, bool with_trace_context);
+} // namespace nixl::ucx
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
@@ -112,6 +127,11 @@ public:
 
     bool
     supportsNotif() const override {
+        return true;
+    }
+
+    [[nodiscard]] bool
+    supportsTraceContext() const noexcept override {
         return true;
     }
 
@@ -207,6 +227,13 @@ public:
 protected:
     using worker_span_t = std::span<const std::unique_ptr<nixlUcxWorker>>;
 
+    template<typename workerType, typename... argTypes>
+    void
+    addWorker(argTypes &&...args) {
+        workers_.emplace_back(std::make_unique<workerType>(
+            *uc, errHandlingMode_, workers_.size(), std::forward<argTypes>(args)...));
+    }
+
     [[nodiscard]] worker_span_t
     getSharedWorkers() const {
         return {workers_.data(), numSharedWorkers_};
@@ -233,6 +260,11 @@ protected:
         return numSharedWorkers_;
     }
 
+    [[nodiscard]] bool
+    isSglEnabled() const noexcept {
+        return sglEnabled_;
+    }
+
     virtual void
     appendNotif(std::string &&remote_name, std::string &&msg);
 
@@ -250,6 +282,14 @@ protected:
     notif_list_t notifList_;
 
 private:
+    /** Shared by the local and remote prepMemView overloads; kind names which. */
+    template<typename DlistT>
+    nixl_status_t
+    prepMemViewImpl(const DlistT &dlist,
+                    nixlMemViewH &mvh,
+                    const nixl_opt_b_args_t *opt_args,
+                    const char *kind) const;
+
     // Memory management helpers
     nixl_status_t
     internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);
@@ -263,29 +303,30 @@ private:
               size_t length,
               const ucp_am_recv_param_t *param);
 
+    [[nodiscard]] std::string
+    buildNotif(const std::string &msg,
+               const nixl::trace::TraceContext *trace_context,
+               std::uint64_t request_id = 0,
+               std::uint64_t execution = 0) const;
+
     nixl_status_t
     notifSendPriv(const std::string &remote_agent,
                   const std::string &msg,
-                  const std::unique_ptr<nixlUcxEp> &ep,
+                  const nixlUcxEp &ep,
                   nixlUcxReq *req = nullptr) const;
 
     ucx_connection_ptr_t
     getConnection(const std::string &remote_agent) const;
 
-    struct batchResult {
-        nixl_status_t status;
-        size_t size;
-        nixlUcxReq req;
-    };
+#ifdef HAVE_UCX_SGL_API
+    nixl_status_t
+    prepXferSgl(const nixl_meta_dlist_t &local,
+                const nixl_meta_dlist_t &remote,
+                nixlBackendReqH *handle) const;
 
-    static batchResult
-    sendXferRangeBatch(nixlUcxEp &ep,
-                       nixl_xfer_op_t operation,
-                       const nixl_meta_dlist_t &local,
-                       const nixl_meta_dlist_t &remote,
-                       size_t worker_id,
-                       size_t start_idx,
-                       size_t end_idx);
+    nixl_status_t
+    sendXferSgl(nixlBackendReqH *handle) const;
+#endif
 
     /**
      * Get the worker ID from the optional arguments.
@@ -298,68 +339,14 @@ private:
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> workers_;
     size_t numSharedWorkers_;
+    const ucp_err_handling_mode_t errHandlingMode_;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
+    const bool sglEnabled_;
+    nixlBackendTraceSink *const traceSink_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
-};
-
-class nixlUcxThread;
-
-/**
- * Engine with an optional single progress thread that progresses all shared
- * workers. The thread is started only when there are shared workers; with none
- * shared workers no progress thread is created and progress is synchronous.
- */
-class nixlUcxThreadEngine : public nixlUcxEngine {
-public:
-    nixlUcxThreadEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers = 0);
-    ~nixlUcxThreadEngine();
-
-    nixl_status_t
-    getNotifs(notif_list_t &notif_list) override;
-
-protected:
-    void
-    appendNotif(std::string &&remote_name, std::string &&msg) override;
-
-private:
-    std::unique_ptr<nixlUcxThread> thread_;
-    std::mutex notifMutex_;
-};
-
-namespace asio {
-class io_context;
-}
-
-class nixlUcxThreadPoolEngine : public nixlUcxThreadEngine {
-public:
-    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params, size_t num_threads);
-    ~nixlUcxThreadPoolEngine();
-
-    nixl_status_t
-    prepXfer(const nixl_xfer_op_t &operation,
-             const nixl_meta_dlist_t &local,
-             const nixl_meta_dlist_t &remote,
-             const std::string &remote_agent,
-             nixlBackendReqH *&handle,
-             const nixl_opt_b_args_t *opt_args = nullptr) const override;
-
-protected:
-    nixl_status_t
-    sendXferRange(const nixl_xfer_op_t &operation,
-                  const nixl_meta_dlist_t &local,
-                  const nixl_meta_dlist_t &remote,
-                  const std::string &remote_agent,
-                  nixlBackendReqH *handle,
-                  size_t start_idx,
-                  size_t end_idx) const override;
-
-private:
-    std::unique_ptr<asio::io_context> io_;
-    std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;
-    size_t splitBatchSize_;
 };
 
 #endif

@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <limits>
 #include <algorithm>
 #include "nixl_types.h"
 
@@ -57,7 +58,7 @@ public:
      *
      * @param str   Serialized Descriptor
      */
-    nixlBasicDesc(const nixl_blob_t &str); // deserializer
+    explicit nixlBasicDesc(const nixl_blob_t &str);
     /**
      * @brief Copy constructor for nixlBasicDesc
      *
@@ -105,6 +106,7 @@ public:
      */
     friend bool
     operator!=(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs);
+
     /**
      * @brief Check if current object address range covers the input object's
      *
@@ -112,8 +114,21 @@ public:
      */
     bool
     covers(const nixlBasicDesc &query) const noexcept {
-        return (devId == query.devId) && (addr <= query.addr) &&
-            ((addr + len) >= (query.addr + query.len));
+        if (devId != query.devId || addr > query.addr) {
+            return false;
+        }
+
+        constexpr uintptr_t max_addr = std::numeric_limits<uintptr_t>::max();
+        // File-like section lists normalize len=0 to SIZE_MAX to represent an
+        // unbounded registration. Avoid adding that sentinel to a nonzero address.
+        if (len == SIZE_MAX) {
+            return query.len <= max_addr - query.addr;
+        }
+
+        // If this finite range wraps, end is below addr and therefore below
+        // query.addr. The first comparison also keeps the subtraction safe.
+        const uintptr_t end = addr + len;
+        return query.addr <= end && query.len <= end - query.addr;
     }
 
     /**
@@ -135,6 +150,60 @@ public:
      */
     void
     print(const std::string &suffix) const;
+};
+
+/**
+ * @class nixlStrideDesc
+ * @brief A compressed transfer descriptor describing a run of `count`
+ *        equal-length blocks, with consecutive block starts spaced `stride`
+ *        bytes apart (stride == len means a dense/contiguous run). Lets callers
+ *        express a large, regular access pattern without materializing every
+ *        block as a separate nixlBasicDesc.
+ */
+struct nixlStrideDesc : public nixlBasicDesc {
+    /** @var Byte distance between consecutive block starts (stride == len => dense) */
+    size_t stride = 0;
+    /** @var Number of equal-length blocks in this run */
+    size_t count = 0;
+
+    using nixlBasicDesc::nixlBasicDesc;
+
+    nixlStrideDesc() = default;
+
+    /**
+     * @brief Parametrized constructor for nixlStrideDesc
+     *
+     * @param addr    Start address of the first block
+     * @param len     Length of each block
+     * @param dev_id  deviceID/blockID/fileID
+     * @param stride  Byte distance between consecutive block starts
+     * @param count   Number of blocks in the run
+     */
+    nixlStrideDesc(const uintptr_t &addr,
+                   const size_t &len,
+                   const uint64_t &dev_id,
+                   const size_t &stride,
+                   const size_t &count)
+        : nixlBasicDesc(addr, len, dev_id),
+          stride(stride),
+          count(count) {}
+
+    /**
+     * @brief Compare all nixlStrideDesc fields for equality
+     */
+    friend bool
+    operator==(const nixlStrideDesc &lhs, const nixlStrideDesc &rhs) {
+        return static_cast<const nixlBasicDesc &>(lhs) == static_cast<const nixlBasicDesc &>(rhs) &&
+            lhs.stride == rhs.stride && lhs.count == rhs.count;
+    }
+
+    /**
+     * @brief Compare all nixlStrideDesc fields for inequality
+     */
+    friend bool
+    operator!=(const nixlStrideDesc &lhs, const nixlStrideDesc &rhs) {
+        return !(lhs == rhs);
+    }
 };
 
 /**
@@ -174,7 +243,7 @@ public:
      *
      * @param str   Serialized blob from another nixlBlobDesc
      */
-    nixlBlobDesc(const nixl_blob_t &str);
+    explicit nixlBlobDesc(const nixl_blob_t &str);
     /**
      * @brief Operator overloading (==) to compare nixlBlobDesc objects
      *
@@ -464,6 +533,13 @@ public:
  *        used for creating transfer descriptor lists
  */
 using nixl_xfer_dlist_t = nixlDescList<nixlBasicDesc>;
+
+/**
+ * @brief A typedef for a nixlDescList<nixlStrideDesc>
+ *        used for creating compressed (strided) transfer descriptor lists
+ */
+using nixl_stride_dlist_t = nixlDescList<nixlStrideDesc>;
+
 /**
  * @brief A typedef for a nixlDescList<nixlBlobDesc>
  *        used for creating registratoin descriptor lists

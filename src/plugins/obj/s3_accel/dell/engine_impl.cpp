@@ -371,8 +371,8 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
  * @param mem Memory blob descriptor containing address, length, device ID, and metadata
  * @param nixl_mem Memory type (OBJ_SEG, DRAM_SEG, or VRAM_SEG)
  * @param out Output backend metadata handle
- * @return NIXL_SUCCESS on success, NIXL_ERR_BACKEND on cuObject failure, NIXL_ERR_NOT_SUPPORTED for
- * unsupported memory types
+ * @return NIXL_SUCCESS on success, NIXL_ERR_INVALID_PARAM if the OBJ devId is already registered,
+ * NIXL_ERR_BACKEND on cuObject failure, or NIXL_ERR_NOT_SUPPORTED for unsupported memory types
  */
 nixl_status_t
 S3DellObsObjEngineImpl::registerMem(const nixlBlobDesc &mem,
@@ -391,7 +391,12 @@ S3DellObsObjEngineImpl::registerMem(const nixlBlobDesc &mem,
     if (nixl_mem == OBJ_SEG) {
         std::unique_ptr<nixlObsObjMetadata> obj_md = std::make_unique<nixlObsObjMetadata>(
             nixl_mem, mem.devId, mem.metaInfo.empty() ? std::to_string(mem.devId) : mem.metaInfo);
-        devIdToObjKey_[mem.devId] = obj_md->objKey;
+        const bool inserted = devIdToObjKey_.emplace(mem.devId, obj_md->objKey).second;
+        if (!inserted) {
+            NIXL_ERROR << "OBJ requires a unique devId per object (devId=" << mem.devId
+                       << " already registered)";
+            return NIXL_ERR_INVALID_PARAM;
+        }
         out = obj_md.release();
     } else if ((nixl_mem == DRAM_SEG) || (nixl_mem == VRAM_SEG)) {
 

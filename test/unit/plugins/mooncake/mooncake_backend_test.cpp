@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -122,7 +122,7 @@ createEngine(std::string name, bool p_thread) {
     init.pthrDelay = 100;
     init.localAgent = name;
     init.customParams = &custom_params;
-    init.type = "Mooncake";
+    init.type = "MOONCAKE";
 
     mooncake = (nixlBackendEngine *)new nixlMooncakeEngine(&init);
     assert(!mooncake->getInitErr());
@@ -293,6 +293,7 @@ allocateWrongGPUTest(nixlBackendEngine *mooncake, int dev_id) {
     nixlBackendMD *md;
     void *buf;
 
+    desc.len = 4096;
     allocateBuffer(VRAM_SEG, dev_id, desc.len, buf);
 
     desc.devId = dev_id;

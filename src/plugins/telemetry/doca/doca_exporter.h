@@ -22,7 +22,9 @@
 #include "nixl_types.h"
 
 #include <doca_error.h>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 struct DocaSharedContext;
@@ -42,24 +44,43 @@ public:
     [[nodiscard]] nixl_status_t
     flush();
 
+    [[nodiscard]] const std::string &
+    sourceId() const noexcept;
+
+    [[nodiscard]] const std::string &
+    sourceTag() const noexcept;
+
 private:
     const std::string agent_name_;
     std::shared_ptr<DocaSharedContext> ctx_;
+    std::optional<uint64_t> batchTimestamp_;
+
+    void
+    onBatchBegin() noexcept override;
+    void
+    onBatchEnd() noexcept override;
+
+    [[nodiscard]] uint64_t
+    currentTimestamp() noexcept;
 
     // Appends a counter sample to the time-series. DOCA accumulates the value
     // (add_counter_increment), so repeated per-operation deltas produce a
     // monotonic cumulative total, matching the Prometheus exporter.
     [[nodiscard]] doca_error_t
     appendCounterSample(const nixlTelemetryEvent &event,
+                        uint64_t timestamp,
                         const char *counter_name,
                         const char *label_values[]);
 
     [[nodiscard]] doca_error_t
-    appendErrorCounterSample(const nixlTelemetryEvent &event, const char *status);
+    appendErrorCounterSample(const nixlTelemetryEvent &event,
+                             uint64_t timestamp,
+                             const char *status);
 
     // Appends a gauge sample to the time-series (absolute last-operation value).
     [[nodiscard]] doca_error_t
     appendGaugeSample(const nixlTelemetryEvent &event,
+                      uint64_t timestamp,
                       const char *metric_name,
                       const char *label_values[]);
 

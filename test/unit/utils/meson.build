@@ -14,7 +14,7 @@
 # limitations under the License.
 
 subdir('common')
-if libfabric_dep.found()
+if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     subdir('libfabric')
 endif
 subdir('serdes')

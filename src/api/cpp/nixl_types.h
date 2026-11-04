@@ -21,6 +21,7 @@
 #include <unordered_map>
 #include <optional>
 #include <chrono>
+#include <cstdint>
 
 
 /*** Forward declarations ***/
@@ -205,8 +206,10 @@ struct nixlAgentOptionalArgs {
     bool includeConnInfo = false;
 
     /**
-     * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
-     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+     * @var ipAddr Numeric IPv4 or IPv6 address of a remote peer for metadata transfer.
+     *             IPv6 addresses must be unbracketed, e.g. "::1" or "fe80::1%eth0".
+     *             A zone suffix selects an interface on the calling host by name or index.
+     *             Used by sendLocalMD, fetchRemoteMD, invalidateLocalMD and sendLocalPartialMD.
      */
     std::string ipAddr;
 
@@ -228,7 +231,12 @@ struct nixlAgentOptionalArgs {
     std::string metadataLabel;
 
     /**
-     * @var Backend custom parameter
+     * @brief Backend-specific binary parameter, including embedded NUL bytes.
+     *      makeXferReq and createXferReq forward this value to the backend's prepXfer.
+     *      Each postXferReq call forwards the value supplied for that call to the
+     *      backend's postXfer. Empty values and omitted extra_params forward an
+     *      empty blob at that stage. The backend defines the format, supported
+     *      stages, and any state retained in its prepared request.
      */
     nixl_blob_t customParam;
 };
@@ -292,6 +300,35 @@ struct nixlXferTelemetry {
  *        for telemetry output.
  */
 using nixl_xfer_telem_t = nixlXferTelemetry;
+
+/**
+ * @struct nixlXferTraceInfo
+ * @brief A structure for the trace identity of a transfer request from agent API
+ */
+struct nixlXferTraceInfo {
+    /**
+     * @var requestId Request id, recorded as nixl.xfer_request_id and as the NVTX payload
+     */
+    std::uint64_t requestId;
+
+    /**
+     * @var execution Execution number of the latest accepted post, recorded as
+     *      nixl.xfer_execution; 0 before any post
+     */
+    std::uint64_t execution;
+
+    /**
+     * @var traceparent W3C traceparent of the latest accepted post's trace context,
+     *      or of the request's before any post
+     */
+    std::string traceparent;
+};
+
+/**
+ * @brief A typedef for a nixlXferTraceInfo
+ *        for trace identity output.
+ */
+using nixl_xfer_trace_info_t = nixlXferTraceInfo;
 
 /**
  * @brief A define for an empty string, that indicates the descriptor list is being

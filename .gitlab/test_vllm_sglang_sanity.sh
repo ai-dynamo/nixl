@@ -18,19 +18,14 @@ FRAMEWORK="${1:?usage: test_vllm_sglang_sanity.sh <vllm|sglang>}"
 # resolve the model by its HuggingFace repo id from the cache prefetched below.
 MODEL="${NIXL_SANITY_MODEL_ID:?NIXL_SANITY_MODEL_ID not set (set by the base image)}"
 
-# Multiple sanity jobs can share a SLURM node (8 GPUs, 2 per job) and the srun/enroot
-# containers use HOST networking, so fixed ports would collide across concurrent jobs.
+# This run needs several listeners at once (prefill, decode, proxy, and the frameworks'
+# own side channels) and the srun/enroot containers use HOST networking, so fixed ports
+# would collide with each other and with anything else already bound on the node.
 # Reuse the CI helper (from the workspace copied into the image) to hand out free TCP
 # ports that roll over. common.sh references unset env vars (CI_CONCURRENT_ID/
 # EXECUTOR_NUMBER) at source time, so disable nounset while sourcing, then restore it.
-#
-# Neither CI_CONCURRENT_ID nor EXECUTOR_NUMBER is set inside the enroot container, so
-# common.sh would fall back to a random concurrency id over its FULL port space (base
-# ports up to ~65500). SGLang derives internal ports from the server port (e.g.
-# SGLANG_GRPC_PORT = port + 10000), which overflows 65535 for base ports > 55535 and
-# kills the server on startup. Pin the id so every handed-out port stays <= 55500.
-CI_CONCURRENT_ID="${CI_CONCURRENT_ID:-$((RANDOM % 45))}"
-export CI_CONCURRENT_ID
+# CI passes a per-build CI_CONCURRENT_ID (see build-wheel-matrix.yaml); without it
+# common.sh picks a random port block.
 set +u
 # shellcheck disable=SC1091
 . /workspace/nixl/.ci/scripts/common.sh
@@ -41,9 +36,9 @@ PROXY_PORT="${PROXY_PORT:-$(get_next_tcp_port)}"
 PROMPT="${PROMPT:-San Francisco is a}"
 SERVER_TIMEOUT="${SERVER_TIMEOUT:-300}"
 # Fraction of GPU memory each server may claim. The frameworks default to ~0.9, which
-# demands nearly the whole GPU to be free at startup; on the shared GB200 CI nodes other
-# processes may already hold GPU memory, and the sanity model needs only a small slice
-# anyway (0.3 of a 186 GiB GB200 is ~56 GiB, ample for 8B weights + KV cache).
+# demands nearly the whole GPU to be free at startup; the sanity model needs only a small
+# slice (0.3 of a 186 GiB GB200 is ~56 GiB, ample for 8B weights + KV cache), so the lower
+# value leaves room for anything the driver or a previous step has not yet released.
 GPU_MEM_FRACTION="${GPU_MEM_FRACTION:-0.3}"
 PROXY_TIMEOUT="${PROXY_TIMEOUT:-120}"
 REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-120}"
@@ -57,6 +52,10 @@ GSM8K_DATA_PATH="${GSM8K_DATA_PATH:-/opt/gsm8k/test.jsonl}"
 GSM8K_NUM_QUESTIONS="${GSM8K_NUM_QUESTIONS:-200}"
 GSM8K_MIN_ACCURACY="${GSM8K_MIN_ACCURACY:-0.8}"
 
+# Slurm sets CUDA_VISIBLE_DEVICES to the allocated GPUs (e.g. 2,3), but the container
+# still sees every GPU on the node, so pin each server to one of ours, not to 0/1.
+IFS=, read -r PREFILL_GPU DECODE_GPU _ <<< "${CUDA_VISIBLE_DEVICES:-0,1}"
+
 log() { echo "[sanity:${FRAMEWORK}] $*"; }
 
 # Per-request curl caps so a stalled/half-open connection can't hang past the loop's
@@ -66,6 +65,7 @@ CURL_OPTS=(--connect-timeout 5 --max-time 30)
 wait_for() {  # wait_for <url> <timeout_s>
   local url="$1" t="${2:-180}" i=0
   until curl -sf "${CURL_OPTS[@]}" "$url" >/dev/null 2>&1; do
+    check_alive || return 1
     i=$((i + 1))
     if [ "$i" -ge "$t" ]; then
       log "timeout (${t}s) waiting for ${url}"
@@ -77,15 +77,27 @@ wait_for() {  # wait_for <url> <timeout_s>
 }
 
 # Servers are started with setsid so each gets its own process group; cleanup signals the
-# whole group so forked engine/worker subprocesses can't survive and keep holding GPUs on
-# the shared SLURM node.
+# whole group so forked engine/worker subprocesses can't survive this job and keep holding
+# GPUs against whatever the SLURM node runs next.
 pids=()
+names=()
 cleanup() {
   for p in "${pids[@]:-}"; do
     kill -TERM -- "-$p" 2>/dev/null || true
   done
 }
 trap cleanup EXIT
+
+# Fail fast instead of polling a server that has already died.
+check_alive() {
+  local k
+  for k in "${!pids[@]}"; do
+    if ! kill -0 "${pids[$k]}" 2>/dev/null; then
+      log "${names[$k]} (pid ${pids[$k]}) exited"
+      return 1
+    fi
+  done
+}
 
 log "model: ${MODEL}"
 nvidia-smi -L
@@ -95,6 +107,15 @@ python3 -c "import nixl; from importlib.metadata import version; print('nixl', v
 # the image, and vllm/sglang otherwise discover the cache miss deep in their own startup
 # path (burning the health-check timeout); an explicit download fails fast and clearly.
 # huggingface_hub ships in both framework images, so no extra install is needed.
+#
+# HF_ENDPOINT (set by the CI step to SANITY_HF_ENDPOINT, the internal HuggingFace mirror)
+# routes the pull through the mirror instead of huggingface.co, which rate-limits the shared
+# CI egress IP; huggingface_hub reads it from the environment, and the mirror allows anonymous
+# reads so no token is needed. Unset (e.g. a local run) it falls back to huggingface.co. The
+# long HF_HUB_*_TIMEOUT values keep the mirror's cold-cache first fetch from tripping the
+# default (10s) metadata/download timeouts.
+export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-86400}"
+export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-86400}"
 log "prefetching ${MODEL}"
 python3 -c "from huggingface_hub import snapshot_download; snapshot_download('${MODEL}')"
 
@@ -102,21 +123,22 @@ if [ "$FRAMEWORK" = "vllm" ]; then
   python3 -c "from importlib.metadata import version; print('vllm', version('vllm'))"
 
   # Prefill and decode are co-located on one node, so each needs its own NIXL
-  # side-channel handshake port (default 5600 for both -> "Address already in use"),
-  # and they must be host-unique so concurrent jobs on the same node don't collide.
+  # side-channel handshake port (default 5600 for both -> "Address already in use").
   PREFILL_SIDE_PORT="$(get_next_tcp_port)"
   DECODE_SIDE_PORT="$(get_next_tcp_port)"
-  setsid env CUDA_VISIBLE_DEVICES=0 VLLM_NIXL_SIDE_CHANNEL_PORT="$PREFILL_SIDE_PORT" \
+  setsid env CUDA_VISIBLE_DEVICES="$PREFILL_GPU" VLLM_NIXL_SIDE_CHANNEL_PORT="$PREFILL_SIDE_PORT" \
     vllm serve "$MODEL" --port "$PREFILL_PORT" \
     --enforce-eager --gpu-memory-utilization "$GPU_MEM_FRACTION" \
     --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' &
   pids+=($!)
+  names+=(prefill)
 
-  setsid env CUDA_VISIBLE_DEVICES=1 VLLM_NIXL_SIDE_CHANNEL_PORT="$DECODE_SIDE_PORT" \
+  setsid env CUDA_VISIBLE_DEVICES="$DECODE_GPU" VLLM_NIXL_SIDE_CHANNEL_PORT="$DECODE_SIDE_PORT" \
     vllm serve "$MODEL" --port "$DECODE_PORT" \
     --enforce-eager --gpu-memory-utilization "$GPU_MEM_FRACTION" \
     --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}' &
   pids+=($!)
+  names+=(decode)
 
   wait_for "http://localhost:${PREFILL_PORT}/health" "$SERVER_TIMEOUT"
   wait_for "http://localhost:${DECODE_PORT}/health" "$SERVER_TIMEOUT"
@@ -126,6 +148,7 @@ if [ "$FRAMEWORK" = "vllm" ]; then
   setsid python3 /usr/local/bin/toy_proxy_server.py --port "$PROXY_PORT" \
     --prefiller-ports "$PREFILL_PORT" --decoder-ports "$DECODE_PORT" &
   pids+=($!)
+  names+=(proxy)
   wait_for "http://localhost:${PROXY_PORT}/healthcheck" "$PROXY_TIMEOUT"
   ENDPOINT="http://localhost:${PROXY_PORT}/v1/completions"
 
@@ -133,34 +156,52 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
   python3 -c "from importlib.metadata import version; print('sglang', version('sglang'))"
 
   # The prefill binds a bootstrap server on --disaggregation-bootstrap-port (default
-  # 8998); make it host-unique so concurrent jobs on the same node don't collide. Both
-  # sides are configured with the same port (decode connects to the prefill's bootstrap).
+  # 8998); take a free port rather than trusting the default to be unbound. Both sides
+  # are configured with the same port (decode connects to the prefill's bootstrap).
   BOOTSTRAP_PORT="$(get_next_tcp_port)"
-  setsid env CUDA_VISIBLE_DEVICES=0 python3 -m sglang.launch_server --model-path "$MODEL" \
+  # Without --nccl-port SGLang picks an ephemeral port for its torch.distributed
+  # rendezvous and binds it later, racing other listeners on the host network.
+  PREFILL_NCCL_PORT="$(get_next_tcp_port)"
+  DECODE_NCCL_PORT="$(get_next_tcp_port)"
+  setsid env CUDA_VISIBLE_DEVICES="$PREFILL_GPU" python3 -m sglang.launch_server --model-path "$MODEL" \
     --mem-fraction-static "$GPU_MEM_FRACTION" \
     --disaggregation-mode prefill --disaggregation-transfer-backend nixl \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
+    --nccl-port "$PREFILL_NCCL_PORT" \
     --trust-remote-code --host 0.0.0.0 --port "$PREFILL_PORT" &
   pids+=($!)
+  names+=(prefill)
 
-  setsid env CUDA_VISIBLE_DEVICES=1 python3 -m sglang.launch_server --model-path "$MODEL" \
+  setsid env CUDA_VISIBLE_DEVICES="$DECODE_GPU" python3 -m sglang.launch_server --model-path "$MODEL" \
     --mem-fraction-static "$GPU_MEM_FRACTION" \
     --disaggregation-mode decode --disaggregation-transfer-backend nixl \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
+    --nccl-port "$DECODE_NCCL_PORT" \
     --trust-remote-code --host 0.0.0.0 --port "$DECODE_PORT" &
   pids+=($!)
+  names+=(decode)
 
   wait_for "http://localhost:${PREFILL_PORT}/health" "$SERVER_TIMEOUT"
   wait_for "http://localhost:${DECODE_PORT}/health" "$SERVER_TIMEOUT"
+
+  # Re-pick PROXY_PORT now that the SGLang servers are fully up. SGLang binds internal
+  # ports derived from its base port (gRPC, ZMQ, etc.) that aren't visible to
+  # get_next_tcp_port() until the servers are running; re-allocating here ensures the
+  # router gets a port that doesn't collide with any of those.
+  PROXY_PORT="$(get_next_tcp_port)"
+  # The router always binds a Prometheus listener (default 29000, cannot be disabled).
+  ROUTER_METRICS_PORT="$(get_next_tcp_port)"
 
   # sglang-router fronts the prefill/decode pair (replaces the removed in-core mini_lb).
   # Installed into the sglang weights-base image (contrib/Dockerfile.sglang-base).
   setsid python3 -m sglang_router.launch_router --pd-disaggregation \
     --prefill "http://localhost:${PREFILL_PORT}" \
     --decode "http://localhost:${DECODE_PORT}" \
+    --prometheus-host 127.0.0.1 --prometheus-port "$ROUTER_METRICS_PORT" \
     --host 0.0.0.0 --port "$PROXY_PORT" &
   pids+=($!)
-  wait_for "http://localhost:${PROXY_PORT}/health" "$PROXY_TIMEOUT" || true
+  names+=(router)
+  wait_for "http://localhost:${PROXY_PORT}/health" "$PROXY_TIMEOUT"
   ENDPOINT="http://localhost:${PROXY_PORT}/v1/completions"
 
 else
@@ -176,6 +217,7 @@ log "waiting for the proxy to accept requests"
 i=0
 until curl -sf "${CURL_OPTS[@]}" "$ENDPOINT" -H 'Content-Type: application/json' \
         -d "{\"model\":\"${MODEL}\",\"prompt\":\"hi\",\"max_tokens\":1,\"temperature\":0}" >/dev/null; do
+  check_alive || exit 1
   i=$((i + 1))
   if [ "$i" -ge "$REQUEST_TIMEOUT" ]; then
     log "timeout (${REQUEST_TIMEOUT}s) waiting for the proxy to serve a request"
