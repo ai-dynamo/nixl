@@ -91,6 +91,7 @@ ARG APT_MIRROR=""
 ARG WGET_RETRY_OPTS="--tries=10 --waitretry=15 --retry-connrefused --retry-on-http-error=429,500,502,503,504 --no-http-keep-alive --timeout=30 --read-timeout=60"
 
 ARG DISABLE_RXDM_DXS="false"
+ARG DISABLE_GPUDIRECT_TCPXO_CUDA="false"
 ARG RXDM_DXS_INSTALL_PATH="/usr/local/lib"
 ARG FASTRAK_RXDM_URI=""
 ARG DXS_CLIENT_URI=""
@@ -494,7 +495,8 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     else \
         NIXL_EP_FLAG=""; \
     fi && \
-    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
+    protoc --cpp_out=./ src/plugins/gpudirect_tcpxo/control_channel.proto && \
+    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE -Ddisable_rxdm_dxs=$DISABLE_RXDM_DXS -Ddisable_gpudirect_tcpxo_cuda=$DISABLE_GPUDIRECT_TCPXO_CUDA && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install || { cat /workspace/nixl/build/meson-logs/meson-log.txt || true; exit 1; }

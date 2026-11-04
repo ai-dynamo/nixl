@@ -391,6 +391,7 @@ WORKDIR /workspace/nixl
 # meson setup clones the taskflow and prometheus-cpp [wrap-git] subprojects from github.com.
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     mkdir build && \
+    protoc --cpp_out=./ src/plugins/gpudirect_tcpxo/control_channel.proto && \
     meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \

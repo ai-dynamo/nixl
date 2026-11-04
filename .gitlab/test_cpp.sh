@@ -138,6 +138,21 @@ gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port=
 if [ -x ./bin/doca_test ]; then ./bin/doca_test; fi
 if [ -x ./bin/doca_nixl_test ]; then ./bin/doca_nixl_test; fi
 
+# GPUDirect TCPXO plugin unit tests: present when built with TCPXO plugin.
+for tcpxo_test in tcpxo_params_test \
+                  tcpxo_validation_test \
+                  tcpxo_backend_test \
+                  mpmc_queue_test \
+                  control_channel_test \
+                  host_connection_test \
+                  tcpxo_nixl_memory_metadata_test \
+                  dxs_endpoint_test; do
+    if [ -x "./bin/${tcpxo_test}" ]; then
+        echo "==== Running ${tcpxo_test} ===="
+        "./bin/${tcpxo_test}"
+    fi
+done
+
 # Run NIXL client-server test
 nixl_test_port=$(get_next_tcp_port)
 parallel --line-buffer --halt now,fail=1 ::: "./bin/nixl_test target" "sleep 3 ; ./bin/nixl_test initiator" ::: "127.0.0.1 $nixl_test_port"

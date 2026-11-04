@@ -71,6 +71,7 @@ UCX_SPCX_PLUGIN_INSTALL=""
 BUILD_OPTIONS_FILE=""
 
 DISABLE_RXDM_DXS="false"
+DISABLE_GPUDIRECT_TCPXO_CUDA="false"
 FASTRAK_RXDM_URI=""
 DXS_CLIENT_URI=""
 
@@ -293,6 +294,9 @@ get_options() {
         --disable-rxdm-dxs)
             DISABLE_RXDM_DXS=true
             ;;
+        --disable-gpudirect-tcpxo-cuda)
+            DISABLE_GPUDIRECT_TCPXO_CUDA=true
+            ;;
         --rxdm-uri)
             if [ "$2" ]; then
                 FASTRAK_RXDM_URI=$2
@@ -384,6 +388,7 @@ show_build_options() {
     fi
     echo "Build Type: ${BUILD_TYPE}"
     echo "RxDM/DXS disabled: ${DISABLE_RXDM_DXS}"
+    echo "GPUDirect-TCPXO CUDA disabled: ${DISABLE_GPUDIRECT_TCPXO_CUDA}"
     echo "RxDM URI: ${FASTRAK_RXDM_URI}"
     echo "DXS URI: ${DXS_CLIENT_URI}"
 }
@@ -465,6 +470,7 @@ show_help() {
     echo "  [--build-options-file path to write the resolved build options as KEY=VALUE lines]"
     echo "  [DOCKER_BUILD_EXTRA_ARGS env var: extra arguments passed through to docker build, e.g. --secret id=ghconfig,src=<file>; word-split, so paths with spaces are not supported]"
     echo "  [--disable-rxdm-dxs to stub out RxDM/DXS and disable this capability in GPUDirect-TCPXO]"
+    echo "  [--disable-gpudirect-tcpxo-cuda to disable CUDA support in GPUDirect-TCPXO]"
     echo "  [--rxdm-uri URI to fastrak-rxdm]"
     echo "  [--dxs-uri URI to dxs-client]"
     exit 0
@@ -511,6 +517,7 @@ BUILD_ARGS+=" --build-arg BUILD_INFINIA=$BUILD_INFINIA"
 BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
 BUILD_ARGS+=" --build-arg BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
 BUILD_ARGS+=" --build-arg DISABLE_RXDM_DXS=$DISABLE_RXDM_DXS"
+BUILD_ARGS+=" --build-arg DISABLE_GPUDIRECT_TCPXO_CUDA=$DISABLE_GPUDIRECT_TCPXO_CUDA"
 BUILD_ARGS+="${FASTRAK_RXDM_URI:+ --build-arg FASTRAK_RXDM_URI=$FASTRAK_RXDM_URI}"
 BUILD_ARGS+="${DXS_CLIENT_URI:+ --build-arg DXS_CLIENT_URI=$DXS_CLIENT_URI}"
 WEBRTC_BUILD_ARGS=(
