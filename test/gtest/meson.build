@@ -39,7 +39,10 @@ sanitizer_opts = get_option('sanitizer').split(',')
 sanitizer_env = environment()
 sanitizer_supp_dir = meson.current_source_dir() / 'sanitizer'
 if sanitizer_opts.contains('address')
-    sanitizer_env.set('ASAN_OPTIONS', 'halt_on_error=1:abort_on_error=1:detect_leaks=1')
+    # The Mooncake Transfer Engine's libstdc++ calls bind to NIXL's
+    # instrumented copies, and with stack-use-after-return detection
+    # RandomSizes alone takes more than 5 minutes.
+    sanitizer_env.set('ASAN_OPTIONS', 'halt_on_error=1:abort_on_error=1:detect_leaks=1:detect_stack_use_after_return=0')
     sanitizer_env.set('LSAN_OPTIONS', 'suppressions=' + sanitizer_supp_dir / 'lsan.supp')
 endif
 if sanitizer_opts.contains('undefined')
@@ -92,11 +95,7 @@ if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     cpp_flags += '-DHAVE_LIBFABRIC'
 endif
 
-# Set only when src/plugins/mooncake was built, and not under ASAN: the Transfer
-# Engine calls NIXL's instrumented asio and libstdc++ code, and ASAN's
-# stack-use-after-return check makes RandomSizes alone take about 13 minutes.
-if (is_variable('mooncake_backend_interface') and not sanitizer_opts.contains('address')
-        and not get_option('b_sanitize').split(',').contains('address'))
+if is_variable('mooncake_backend_interface')
     cpp_flags += '-DHAVE_MOONCAKE'
 endif
 
