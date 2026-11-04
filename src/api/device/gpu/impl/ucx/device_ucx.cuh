@@ -155,12 +155,24 @@ getPtr(nixlMemViewH mvh, size_t index) {
     return ptr;
 }
 
-template<level_t level>
+// Make the PUSH flag lookup dependent so older UCX headers can omit it.
+template<level_t level, typename UcpFlags = ucp_device_flags_t>
 __device__ nixl_status_t
 flush(const nixlMemViewH &remote, unsigned channel_id) {
-    const auto status = ucp_device_flush<ucsDeviceLevel<level>::value>(
-        remoteMemList(remote), channel_id, UCP_DEVICE_FLAG_PUSH);
-    return status == UCS_OK ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
+    // Compile the UCX flush call only when the headers support it.
+    if constexpr (requires {
+                      ucp_device_flush<ucsDeviceLevel<level>::value>(
+                          remoteMemList(remote), channel_id, UcpFlags::UCP_DEVICE_FLAG_PUSH);
+                  }) {
+        const auto status = ucp_device_flush<ucsDeviceLevel<level>::value>(
+            remoteMemList(remote), channel_id, UcpFlags::UCP_DEVICE_FLAG_PUSH);
+        if (status == UCS_OK) [[likely]] {
+            return NIXL_SUCCESS;
+        }
+        return NIXL_ERR_BACKEND;
+    } else {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
 }
 
 } // namespace nixl::gpu::impl::ucx
