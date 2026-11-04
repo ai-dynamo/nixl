@@ -4,8 +4,8 @@
 # release-branch commit whose wheels are still missing.
 #
 # How it works:
-# - One trigger per commit, not per CUDA variant: the wheel job builds every
-#   CUDA major in a single run. The scan is .ci/scripts/scan-missing-release-wheels.sh.
+# - One trigger per commit; the wheel job builds the complete set in a single
+#   run. The scan is .ci/scripts/scan-missing-release-wheels.sh.
 # - Which releases build: every release/* branch with version >= MIN_RELEASE
 #   whose build-container.sh accepts --build-options-file (the nightly always
 #   passes it) - picked up automatically, new release branches need no change.

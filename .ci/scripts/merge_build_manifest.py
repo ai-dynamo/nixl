@@ -200,7 +200,7 @@ def assemble(
         if not c["valid"]:
             errors.append(f"staging entry '{c['key']}' is not a cell key - ignored")
     cells = [c for c in all_cells if c["valid"]]
-    expected = int(os.environ.get("EXPECTED_WHEEL_CELLS") or 20)
+    expected = int(os.environ.get("EXPECTED_WHEEL_CELLS") or 10)
     if len(cells) != expected:
         errors.append(f"expected {expected} cell fragments, found {len(cells)}")
 
@@ -216,18 +216,6 @@ def assemble(
         if len(seen) > 1:
             errors.append(f"{what} differs across cells: {seen}")
         return next(iter(seen)) if len(seen) == 1 else None
-
-    def per_cuda(
-        what: str, get: Callable[[dict[str, Any]], Any]
-    ) -> dict[str, Optional[str]]:
-        return {
-            cu: agree(
-                f"{what} (cu{cu})",
-                get,
-                [c for c in cells if c["cell"].get("CUDA") == cu],
-            )
-            for cu in ("12", "13")
-        }
 
     def side(c: dict[str, Any], *path: str) -> Any:
         node: Any = c["sidecar"]
@@ -283,17 +271,17 @@ def assemble(
     image_commit = agree("NIXL commit (image)", lambda c: side(c, "nixl", "commit"))
     # Empty in build_options.env when the cell relied on the Dockerfile
     # defaults; Build Wheel records those in cell.env.
-    base_image = per_cuda(
+    base_image = agree(
         "BASE_IMAGE",
         lambda c: c["opts"].get("BASE_IMAGE") or c["cell"].get("BASE_IMAGE_DEFAULT"),
     )
-    base_tag = per_cuda(
+    base_tag = agree(
         "BASE_IMAGE_TAG",
         lambda c: c["opts"].get("BASE_IMAGE_TAG")
         or c["cell"].get("BASE_IMAGE_TAG_DEFAULT"),
     )
-    cuda_version = per_cuda("CUDA_VERSION", lambda c: c["opts"].get("CUDA_VERSION"))
-    torch_requested = per_cuda(
+    cuda_version = agree("CUDA_VERSION", lambda c: c["cell"].get("CUDA_VERSION"))
+    torch_requested = agree(
         "TORCH_VERSIONS_REQUESTED", lambda c: c["cell"].get("TORCH_VERSIONS_REQUESTED")
     )
 
@@ -316,7 +304,7 @@ def assemble(
             f"NIXL commit in the image ({image_commit}) does not start with NIXL_SHA ({nixl_sha})"
         )
 
-    # One binary wheel per cell, one meta wheel for the build (uploaded by the cu12 cells).
+    # One binary wheel per cell, one meta wheel for the build (every cell uploads it).
     binary_names: list[str] = []
     meta_cells: dict[str, list[str]] = {}
     for c in cells:
@@ -368,7 +356,6 @@ def assemble(
             "local_sha256_matches": (
                 (side(c, "wheel", "sha256") == art.get("sha256")) if s else None
             ),
-            "cuda": c["cell"].get("CUDA"),
             "python": c["cell"].get("PYTHON_VERSION"),
             "arch": c["cell"].get("ARCH"),
             "platform": side(c, "wheel", "platform_tag"),
@@ -408,7 +395,6 @@ def assemble(
                 {
                     "version": k.get("version"),
                     "python": c["cell"].get("PYTHON_VERSION"),
-                    "cuda": c["cell"].get("CUDA"),
                     "reason": k.get("reason"),
                 }
                 for k in skipped
@@ -432,7 +418,7 @@ def assemble(
 
     publish_dir = os.environ.get("PUBLISH_DIR") or "verification"
     doc = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "complete": not errors,
         "errors": errors,
@@ -457,15 +443,10 @@ def assemble(
             "digest": inf_digest,
         },
         "base_image": {
-            cu: {
-                "image": base_image[cu],
-                "tag": base_tag[cu],
-                "cuda_version": cuda_version[cu],
-                "torch_requested": [
-                    t for t in (torch_requested[cu] or "").split(",") if t
-                ],
-            }
-            for cu in ("12", "13")
+            "image": base_image,
+            "tag": base_tag,
+            "cuda_version": cuda_version,
+            "torch_requested": [t for t in (torch_requested or "").split(",") if t],
         },
         "torch": {"built": sorted(set(built_all)), "skipped": skipped_all},
         "toolchain": {
