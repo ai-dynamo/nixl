@@ -41,7 +41,8 @@ nixlLibblkioEngine::nixlLibblkioEngine(const nixlBackendInitParams *init_params)
       num_queues_(1),
       queue_size_(128),
       direct_io_(false),
-      io_polling_(false) {
+      io_polling_(false),
+      queue_lock_(init_params->syncMode) {
     const nixl_b_params_t &params = getCustomParams();
 
     auto api_type_it = params.find("api_type");
@@ -106,6 +107,13 @@ nixlLibblkioEngine::nixlLibblkioEngine(const nixlBackendInitParams *init_params)
         }
     }
 
+    if (num_queues_ > 1) {
+        NIXL_WARN << absl::StrFormat(
+            "libblkio: num_queues=%u requested but multi-queue I/O dispatch is "
+            "not yet implemented; all I/O will use queue 0",
+            num_queues_);
+    }
+
     NIXL_INFO << absl::StrFormat(
         "libblkio: initialized with driver=%s, direct_io=%d, io_polling=%d, "
         "num_queues=%d, queue_size=%d",
@@ -117,6 +125,13 @@ nixlLibblkioEngine::nixlLibblkioEngine(const nixlBackendInitParams *init_params)
 }
 
 nixlLibblkioEngine::~nixlLibblkioEngine() {
+    // Free pooled bounce buffers before destroying devices
+    for (auto &entry : bounce_pool_) {
+        blkio_unmap_mem_region(entry.handle, &entry.region);
+        blkio_free_mem_region(entry.handle, &entry.region);
+    }
+    bounce_pool_.clear();
+
     for (auto &device : devices_) {
         if (device.handle) {
             blkio_destroy(&device.handle);
@@ -157,8 +172,19 @@ nixlLibblkioEngine::getBlkioQueue(uint64_t devId) const {
 
 nixl_status_t
 nixlLibblkioEngine::createBlkioDevice(const std::string &path, uint64_t devId) {
-    if (getBlkioHandle(devId)) {
-        return NIXL_SUCCESS;
+    for (const auto &dev : devices_) {
+        if (dev.devId == devId) {
+            if (dev.path != path) {
+                NIXL_ERROR << absl::StrFormat(
+                    "libblkio: devId=0x%lx already registered with path '%s', "
+                    "cannot re-register with different path '%s'",
+                    devId,
+                    dev.path,
+                    path);
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            return NIXL_SUCCESS;
+        }
     }
 
     NIXL_INFO << absl::StrFormat(
@@ -229,11 +255,8 @@ nixlLibblkioEngine::createBlkioDevice(const std::string &path, uint64_t devId) {
     }
 
     if (num_queues_ > 1) {
-        ret = blkio_set_int(dev.handle, "num-queues", static_cast<int>(num_queues_));
-        if (ret < 0) {
-            NIXL_WARN << absl::StrFormat(
-                "libblkio: failed to set num-queues=%u: %s", num_queues_, strerror(-ret));
-        }
+        NIXL_DEBUG << absl::StrFormat(
+            "libblkio: num-queues=%u not set (multi-queue dispatch not implemented)", num_queues_);
     }
 
     // For virtio drivers, set queue-size between connect and start
@@ -242,13 +265,6 @@ nixlLibblkioEngine::createBlkioDevice(const std::string &path, uint64_t devId) {
         if (ret < 0) {
             NIXL_WARN << absl::StrFormat(
                 "libblkio: failed to set queue-size=%u: %s", queue_size_, strerror(-ret));
-        }
-
-        if (io_polling_) {
-            ret = blkio_set_int(dev.handle, "num-poll-queues", 1);
-            if (ret < 0) {
-                NIXL_WARN << "libblkio: failed to set num-poll-queues";
-            }
         }
     }
 
@@ -281,11 +297,18 @@ nixlLibblkioEngine::createBlkioDevice(const std::string &path, uint64_t devId) {
         needs_mem_region_fd_ = nmrf;
     }
 
-    NIXL_INFO << absl::StrFormat(
-        "libblkio: device ready, capacity=%lu, needs-mem-regions=%d, needs-mem-region-fd=%d",
-        capacity,
-        needs_mem_regions_,
-        needs_mem_region_fd_);
+    int mra = 1;
+    ret = blkio_get_int(dev.handle, "mem-region-alignment", &mra);
+    if (ret == 0 && mra > 1) {
+        mem_region_alignment_ = static_cast<size_t>(mra);
+    }
+
+    NIXL_INFO << absl::StrFormat("libblkio: device ready, capacity=%lu, needs-mem-regions=%d, "
+                                 "needs-mem-region-fd=%d, mem-region-alignment=%zu",
+                                 capacity,
+                                 needs_mem_regions_,
+                                 needs_mem_region_fd_,
+                                 mem_region_alignment_);
 
     // Cache queue 0 for this device
     dev.queue = blkio_get_queue(dev.handle, 0);
@@ -453,7 +476,7 @@ nixlLibblkioEngine::postXfer(const nixl_xfer_op_t &operation,
     }
     auto *req = static_cast<nixlLibblkioBackendReqH *>(handle);
 
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    NIXL_LOCK_GUARD(queue_lock_);
 
     // Reap any previously orphaned requests while we hold the lock
     reapOrphanedRequests();
@@ -483,21 +506,44 @@ nixlLibblkioEngine::postXfer(const nixl_xfer_op_t &operation,
             bounce.size = io_len;
             bounce.needs_copy_back = (req->operation_ == NIXL_READ);
 
-            int ret = blkio_alloc_mem_region(bh, &bounce.region, io_len);
-            if (ret < 0) {
-                NIXL_ERROR << absl::StrFormat(
-                    "libblkio: blkio_alloc_mem_region(%zu) failed: %s", io_len, strerror(-ret));
-                cleanupReqResources(req);
-                return NIXL_ERR_BACKEND;
+            // Align allocation size to mem-region-alignment
+            size_t alloc_len = io_len;
+            if (mem_region_alignment_ > 1) {
+                alloc_len = (io_len + mem_region_alignment_ - 1) & ~(mem_region_alignment_ - 1);
             }
+            bounce.alloc_size = alloc_len;
 
-            ret = blkio_map_mem_region(bh, &bounce.region);
-            if (ret < 0) {
-                NIXL_ERROR << absl::StrFormat("libblkio: blkio_map_mem_region (bounce) failed: %s",
-                                              strerror(-ret));
-                blkio_free_mem_region(bh, &bounce.region);
-                cleanupReqResources(req);
-                return NIXL_ERR_BACKEND;
+            // Try to reuse a pooled bounce buffer before allocating
+            auto pool_it = std::find_if(bounce_pool_.begin(),
+                                        bounce_pool_.end(),
+                                        [bh, alloc_len](const BouncePoolEntry &e) {
+                                            return e.handle == bh && e.alloc_size >= alloc_len;
+                                        });
+
+            if (pool_it != bounce_pool_.end()) {
+                bounce.region = pool_it->region;
+                bounce.alloc_size = pool_it->alloc_size;
+                *pool_it = bounce_pool_.back();
+                bounce_pool_.pop_back();
+            } else {
+                int ret = blkio_alloc_mem_region(bh, &bounce.region, alloc_len);
+                if (ret < 0) {
+                    NIXL_ERROR << absl::StrFormat(
+                        "libblkio: blkio_alloc_mem_region(%zu) failed: %s",
+                        alloc_len,
+                        strerror(-ret));
+                    cleanupReqResources(req);
+                    return NIXL_ERR_BACKEND;
+                }
+
+                ret = blkio_map_mem_region(bh, &bounce.region);
+                if (ret < 0) {
+                    NIXL_ERROR << absl::StrFormat(
+                        "libblkio: blkio_map_mem_region (bounce) failed: %s", strerror(-ret));
+                    blkio_free_mem_region(bh, &bounce.region);
+                    cleanupReqResources(req);
+                    return NIXL_ERR_BACKEND;
+                }
             }
 
             // For writes, copy user data to bounce buffer before submission
@@ -550,7 +596,16 @@ nixlLibblkioEngine::postXfer(const nixl_xfer_op_t &operation,
     for (auto *q : req->unique_queues_) {
         int ret = blkioq_do_io(q, nullptr, 0, 0, nullptr);
         if (ret < 0) {
-            NIXL_WARN << absl::StrFormat("libblkio: do_io submit flush failed: %s", strerror(-ret));
+            NIXL_ERROR << absl::StrFormat("libblkio: do_io submit flush failed: %s",
+                                          strerror(-ret));
+            // Mark all slots dispatched to this queue as failed
+            for (unsigned j = 0; j < req->desc_count_; j++) {
+                if (req->queues_[j] == q && !req->io_slots_[j].completed) {
+                    req->io_slots_[j].completed = true;
+                    req->io_slots_[j].ret = ret;
+                }
+            }
+            req->had_error_ = true;
         }
     }
 
@@ -570,10 +625,18 @@ nixlLibblkioEngine::checkXfer(nixlBackendReqH *handle) const {
         return req->had_error_ ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
     }
 
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    NIXL_LOCK_GUARD(queue_lock_);
 
     // Poll all queues that have pending I/Os
-    pollQueues(req->unique_queues_);
+    auto failed_queues = pollQueues(req->unique_queues_);
+
+    // Mark slots for any fatally-failed queues
+    for (unsigned i = 0; i < req->desc_count_; i++) {
+        if (!req->io_slots_[i].completed && failed_queues.count(req->queues_[i])) {
+            req->io_slots_[i].completed = true;
+            req->io_slots_[i].ret = -EIO;
+        }
+    }
 
     // Check if all this request's I/Os are done
     bool all_done = true;
@@ -611,7 +674,7 @@ nixlLibblkioEngine::releaseReqH(nixlBackendReqH *handle) const {
     }
     auto *req = static_cast<nixlLibblkioBackendReqH *>(handle);
 
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    NIXL_LOCK_GUARD(queue_lock_);
 
     if (req->submitted_ && !req->completed_) {
         drainReqCompletions(req);
@@ -641,13 +704,15 @@ nixlLibblkioEngine::releaseReqH(nixlBackendReqH *handle) const {
 // Helper Methods
 // -----------------------------------------------------------------------------
 
-void
+std::set<blkioq *>
 nixlLibblkioEngine::pollQueues(const std::set<blkioq *> &queues) const {
+    std::set<blkioq *> failed_queues;
     for (auto *q : queues) {
         struct blkio_completion comps[COMPLETION_BATCH_SIZE];
         int n = blkioq_do_io(q, comps, 0, COMPLETION_BATCH_SIZE, nullptr);
         if (n < 0) {
-            NIXL_WARN << absl::StrFormat("libblkio: blkioq_do_io poll failed: %s", strerror(-n));
+            NIXL_ERROR << absl::StrFormat("libblkio: blkioq_do_io poll failed: %s", strerror(-n));
+            failed_queues.insert(q);
             continue;
         }
         for (int j = 0; j < n; j++) {
@@ -656,6 +721,7 @@ nixlLibblkioEngine::pollQueues(const std::set<blkioq *> &queues) const {
             slot->ret = comps[j].ret;
         }
     }
+    return failed_queues;
 }
 
 void
@@ -729,9 +795,9 @@ nixlLibblkioEngine::cleanupReqResources(nixlLibblkioBackendReqH *req) const {
     }
     req->mapped_regions_.clear();
 
+    // Return bounce buffers to pool for reuse instead of freeing
     for (auto &bounce : req->bounce_bufs_) {
-        blkio_unmap_mem_region(bounce.handle, &bounce.region);
-        blkio_free_mem_region(bounce.handle, &bounce.region);
+        bounce_pool_.push_back({bounce.handle, bounce.region, bounce.alloc_size});
     }
     req->bounce_bufs_.clear();
 }

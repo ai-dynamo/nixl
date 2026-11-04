@@ -19,12 +19,12 @@
 #define NIXL_SRC_PLUGINS_LIBBLKIO_LIBBLKIO_BACKEND_H
 
 #include <blkio.h>
-#include <mutex>
 #include <string>
 #include <vector>
 #include <set>
 #include <map>
 #include "backend/backend_engine.h"
+#include "sync.h"
 
 /** Per-I/O completion slot, referenced via blkioq user_data for dispatch. */
 struct nixlBlkioIoSlot {
@@ -38,6 +38,7 @@ struct nixlBlkioBounce {
     blkio_mem_region region;
     void *user_addr;
     size_t size;
+    size_t alloc_size;
     bool needs_copy_back;
 };
 
@@ -243,6 +244,7 @@ private:
     bool io_polling_;
     bool needs_mem_regions_ = false;
     bool needs_mem_region_fd_ = false;
+    size_t mem_region_alignment_ = 1;
 
     struct BlkioDevice {
         blkio *handle = nullptr;
@@ -257,9 +259,18 @@ private:
     std::vector<BlkioDevice> devices_;
     size_t next_blk_reg_idx_ = 0;
 
-    mutable std::mutex queue_mutex_;
+    mutable nixlLock queue_lock_;
     /** Requests whose drain timed out; cleaned up when completions arrive. */
     mutable std::vector<nixlLibblkioBackendReqH *> orphaned_reqs_;
+
+    /** Pooled bounce buffers returned from completed requests for reuse. */
+    struct BouncePoolEntry {
+        blkio *handle;
+        blkio_mem_region region;
+        size_t alloc_size;
+    };
+
+    mutable std::vector<BouncePoolEntry> bounce_pool_;
 
     blkio *
     getBlkioHandle(uint64_t devId) const;
@@ -268,11 +279,12 @@ private:
     nixl_status_t
     createBlkioDevice(const std::string &path, uint64_t devId);
 
-    /** Poll all given queues for completions, dispatching via user_data. */
-    void
+    /** Poll all given queues for completions, dispatching via user_data.
+     *  Returns the set of queues that reported fatal errors. */
+    std::set<blkioq *>
     pollQueues(const std::set<blkioq *> &queues) const;
 
-    /** Drain all completions for a request (blocking). Must hold queue_mutex_. */
+    /** Drain all completions for a request (blocking). Must hold queue_lock_. */
     void
     drainReqCompletions(nixlLibblkioBackendReqH *req) const;
 
