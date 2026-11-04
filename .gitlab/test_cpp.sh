@@ -46,7 +46,16 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
-ibv_devinfo || true
+if $TEST_LIBFABRIC ; then
+    ibv_devinfo_out=$(ibv_devinfo 2>&1 || true)
+    echo "$ibv_devinfo_out"
+    if ! echo "$ibv_devinfo_out" | grep -q "hca_id:"; then
+        echo "ERROR: TEST_LIBFABRIC=true but ibv_devinfo found no RDMA/EFA devices" >&2
+        exit 1
+    fi
+else
+    ibv_devinfo || true
+fi
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
 
@@ -75,6 +84,9 @@ fi
 
 start_etcd_server "/nixl/cpp_ci"
 
+trap 'kill -9 ${REDIS_PID:-} 2>/dev/null || true' EXIT
+start_redis_server
+
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
 ./bin/desc_example
@@ -82,6 +94,7 @@ cd ${INSTALL_DIR}
 ./bin/nixl_example
 if $TEST_LIBFABRIC ; then
     ./bin/nixl_example LIBFABRIC
+    ./bin/libfabric_backend_test
 fi
 ./bin/nixl_etcd_example
 ./bin/ucx_backend_test
@@ -116,6 +129,9 @@ done
 gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
+# Redis unit tests
+./bin/unit --gtest_filter='redis*:redisPool*'
+
 # DOCA telemetry exporter tests: present only when built with the DOCA SDK
 # (TELEMETRY_DOCA). Self-contained - each binds a free loopback port via
 # findFreePort(); the DOCA telemetry exporter libs resolve through ldconfig.
@@ -133,6 +149,8 @@ echo "./bin/ucx_worker_test disabled"
 echo "${TEXT_CLEAR}"
 
 kill -9 $ETCD_PID 2>/dev/null || true
+
+kill -9 $REDIS_PID 2>/dev/null || true
 
 sleep 5
 

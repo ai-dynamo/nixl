@@ -24,6 +24,7 @@
 
 #include "device/device_ops.h"
 #include "nixl_types.h"
+#include "proxy_config.h"
 #include "proxy_transport.h"
 #include "proxy_control_buffer.h"
 #include "proxy_protocol.h"
@@ -34,8 +35,8 @@ namespace nixl {
 /**
  * One proxy channel: the ring of every peer that shares this channel id.
  *
- * A channel is the striping unit: exactly one worker thread drives all of its
- * rings, and it is the only caller of the transport for them.
+ * Each ring is driven by exactly one worker thread, the only caller of the transport
+ * for it; a channel's peers may be split across threads.
  */
 class proxyChannel {
 public:
@@ -45,9 +46,6 @@ public:
      */
     [[nodiscard]] nixl_status_t
     allocate(deviceOps &allocator, uint32_t depth, proxyControlBuffer &control);
-
-    void
-    deallocate() noexcept;
 
     [[nodiscard]] uint32_t
     id() const noexcept {
@@ -65,30 +63,30 @@ public:
         return rings_;
     }
 
-    // Owning-worker thread only: each call is one pass over every peer of this channel.
+    // The thread owning `peers` only: each call is one pass over those peers' rings.
 
     /** Take at most one published record per ring, resolve it and submit it. */
     void
-    submitReady(proxyTransport &transport);
+    submitReady(proxyTransport &transport, proxyPeerSlice peers);
 
     void
-    progress(proxyTransport &transport);
+    progress(proxyTransport &transport, proxyPeerSlice peers);
 
     /** Publish completions in submission order, stopping at a ring's first pending request. */
     void
-    publishCompletions(proxyTransport &transport);
+    publishCompletions(proxyTransport &transport, proxyPeerSlice peers);
 
     /** No ring has submitted or published work left. */
     [[nodiscard]] bool
-    drained() const noexcept;
+    drained(proxyPeerSlice peers) const noexcept;
 
     [[nodiscard]] bool
-    skipAbandonedTickets() noexcept;
+    skipAbandonedTickets(proxyPeerSlice peers) noexcept;
 
     /** Once drained: check each ring, quiesce the transport for it, then reset it; fatal on
      * failure. */
     void
-    drainAndRearm(proxyTransport &transport) noexcept;
+    drainAndRearm(proxyTransport &transport, proxyPeerSlice peers) noexcept;
 
     /** Device-side views of this channel's rings, in peer order, for the runtime to flatten. */
     void

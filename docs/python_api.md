@@ -46,12 +46,21 @@ agent = nixl_agent("example_agent", nixl_agent_config(backends=[]))
 
 params = agent.get_plugin_params("UCX")
 params["ucx_error_handling_mode"] = "peer"   # or "none"
+params["ucx_vram_memtype_hint"] = "auto"     # recommended default
 agent.create_backend("UCX", params)
 ```
 
 See [UCX backend initialization options](BackendGuide.md#ucx-backend-initialization-options)
 for the supported UCX keys and their semantics. Note that `ucx_error_handling_mode` influences
 UCP transport lane selection in addition to error reporting.
+
+For `ucx_vram_memtype_hint`:
+
+- `auto` is the recommended default. It hints `ze-device` when the UCX context supports `ze-device` and none of `cuda`, `cuda-managed` or `rocm`, and otherwise leaves detection to UCX.
+- `none` never hints and always leaves detection to UCX. It differs from `auto` only on those contexts, where it turns the `ze-device` hint off.
+- Explicit accelerator hints are also supported for advanced tuning: `cuda`, `cuda-managed`, `rocm`, `ze-device`.
+- Values are case-sensitive, so `CUDA` is rejected.
+- An explicit hint fails backend creation when the UCX context does not support the requested memory type.
 
 ## Examples
 

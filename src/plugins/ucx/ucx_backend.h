@@ -19,6 +19,7 @@
 
 #include <vector>
 #include <span>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <atomic>
@@ -39,12 +40,16 @@ struct notifMessage {
     std::string agent;
     std::string msg;
     std::optional<nixl::trace::TraceContext> traceContext;
+    std::uint64_t traceRequestId = 0;
+    std::uint64_t traceExecution = 0;
 };
 
 [[nodiscard]] std::string
 serializeNotif(const std::string &agent,
                const std::string &msg,
-               const nixl::trace::TraceContext *trace_context);
+               const nixl::trace::TraceContext *trace_context,
+               std::uint64_t request_id = 0,
+               std::uint64_t execution = 0);
 
 [[nodiscard]] notifMessage
 deserializeNotif(const std::string &buffer, bool with_trace_context);
@@ -299,7 +304,10 @@ private:
               const ucp_am_recv_param_t *param);
 
     [[nodiscard]] std::string
-    buildNotif(const std::string &msg, const nixl::trace::TraceContext *trace_context) const;
+    buildNotif(const std::string &msg,
+               const nixl::trace::TraceContext *trace_context,
+               std::uint64_t request_id = 0,
+               std::uint64_t execution = 0) const;
 
     nixl_status_t
     notifSendPriv(const std::string &remote_agent,

@@ -25,3 +25,15 @@ redis_unit_test_dep = declare_dependency(
         redis_backend_interface,
     ],
 )
+
+# Keep scheduling interposition local to this executable and compile the real client.
+redis_event_loop_test = executable(
+    'redis_event_loop_test',
+    sources: ['../main.cpp', 'redis_event_loop.cpp', '../../../../src/plugins/redis/redis_client.cpp'],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../../../src/plugins/redis'],
+    cpp_args: compile_defs_redis,
+    dependencies: [redis_plugin_deps, gtest_dep],
+    link_args: ['-Wl,--wrap=event_base_once', '-Wl,--wrap=event_base_dispatch', '-Wl,--wrap=event_base_loop'],
+)
+
+test('redis_event_loop', redis_event_loop_test, env: sanitizer_env, suite: 'sanitizer')

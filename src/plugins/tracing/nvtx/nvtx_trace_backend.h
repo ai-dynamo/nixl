@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -38,14 +39,37 @@ public:
     [[nodiscard]] std::unique_ptr<SpanBackend>
     beginSpan(std::string_view name, Kind kind) override;
 
+    [[nodiscard]] std::unique_ptr<SpanBackend>
+    beginContextSpan(std::string_view name,
+                     Kind kind,
+                     const TraceContext &context,
+                     std::uint64_t request_id) override;
+
     void
     mark(std::string_view name, Kind kind) override;
 
     void
-    pushCorrelationId(std::uint64_t id) override;
+    emitSpan(std::string_view name,
+             Kind kind,
+             const TraceContext &context,
+             std::uint64_t request_id,
+             nixlTime::us_t start,
+             nixlTime::us_t end,
+             std::span<const Attribute> attrs) override;
 
     void
-    popCorrelationId() override;
+    emitEvent(std::string_view name,
+              Kind kind,
+              const TraceContext &context,
+              std::uint64_t request_id,
+              nixlTime::us_t at,
+              std::span<const Attribute> attrs) override;
+
+    void
+    pushContext(const TraceContext &context, std::uint64_t request_id) override;
+
+    void
+    popContext() override;
 
     [[nodiscard]] std::string_view
     name() const noexcept override {

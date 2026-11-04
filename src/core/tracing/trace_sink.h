@@ -43,7 +43,9 @@ public:
                 std::string_view label,
                 nixlTime::us_t timestamp,
                 std::span<const nixlBackendTraceAttr> attrs,
-                const TraceContext *context) noexcept override;
+                const TraceContext *context,
+                std::uint64_t request_id,
+                std::uint64_t execution) noexcept override;
 
 private:
     Tracer &tracer_;
