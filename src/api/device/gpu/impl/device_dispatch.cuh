@@ -59,6 +59,30 @@ getPtr(nixlMemViewH, size_t) {
 } // namespace nixl::gpu::impl::ucx
 #endif
 
+#if defined(NIXL_ENABLE_GPUNETIO_DEVICE_API) && NIXL_ENABLE_GPUNETIO_DEVICE_API
+#include <gpu/impl/gpunetio/device_gpunetio.cuh>
+
+namespace nixl::gpu::impl::gpunetio {
+inline constexpr bool available = true;
+}
+#else
+namespace nixl::gpu::impl::gpunetio {
+inline constexpr bool available = false;
+
+template<level_t level>
+__device__ nixl_status_t
+getXferStatus(xferStatusH &) {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+template<level_t level>
+__device__ nixl_status_t
+get(const memViewElem &, const memViewElem &, size_t, const memViewElem &, xferStatusH *) {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+} // namespace nixl::gpu::impl::gpunetio
+#endif
+
 // The proxy implementation needs only CUDA, so unlike the UCX arm it is always
 // present and needs no capability gate.
 #include "proxy/device_proxy.cuh"
@@ -73,7 +97,8 @@ namespace detail {
     }
 
     template<exec_mode_t mode>
-    inline constexpr bool buildable = mode != exec_mode_t::UCX_DIRECT || ucx::available;
+    inline constexpr bool buildable = (mode != exec_mode_t::UCX_DIRECT || ucx::available) &&
+        (mode != exec_mode_t::GPUNETIO_DIRECT || gpunetio::available);
 
     template<exec_mode_t mode>
     __device__ __forceinline__ exec_mode_t
@@ -123,6 +148,8 @@ getXferStatus(xferStatusH &xfer_status) {
         return ucx::getXferStatus<level>(xfer_status);
     case exec_mode_t::PROXY:
         return proxy::getXferStatus<level>(xfer_status);
+    case exec_mode_t::GPUNETIO_DIRECT:
+        return gpunetio::getXferStatus<level>(xfer_status);
     default:
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -153,6 +180,43 @@ put(const memViewElem &src,
     }
     detail::writeExecutionMode<level, mode>(xfer_status, status, execution_mode);
     return status;
+}
+
+template<level_t level, exec_mode_t mode>
+__device__ nixl_status_t
+get(const memViewElem &src,
+    const memViewElem &dst,
+    const memViewElem &scratch,
+    size_t size,
+    xferStatusH *status) {
+    if (!src.mvh || !dst.mvh || !scratch.mvh || !status) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    const auto *remote = detail::asDeviceMemView(src.mvh);
+    const auto *local = detail::asDeviceMemView(dst.mvh);
+    const auto *dump = detail::asDeviceMemView(scratch.mvh);
+    const auto execution_mode = detail::executionMode<mode>(*remote);
+    if (execution_mode != exec_mode_t::GPUNETIO_DIRECT) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+    if (local->execution_mode != execution_mode || dump->execution_mode != execution_mode ||
+        !remote->backend_memview || !local->backend_memview || !dump->backend_memview ||
+        (status->mode != exec_mode_t{} && status->mode != execution_mode)) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+#if defined(NIXL_ENABLE_GPUNETIO_DEVICE_API) && NIXL_ENABLE_GPUNETIO_DEVICE_API
+    if ((mode == exec_mode_t::GPUNETIO_DIRECT || status->mode == execution_mode) &&
+        gpunetio::isStatusInProgress(*status)) {
+        return NIXL_ERR_REPOST_ACTIVE;
+    }
+#endif
+    const auto result = gpunetio::get<level>({local->backend_memview, dst.index, dst.offset},
+                                             {remote->backend_memview, src.index, src.offset},
+                                             size,
+                                             {dump->backend_memview, scratch.index, scratch.offset},
+                                             status);
+    detail::writeExecutionMode<level, mode>(status, result, execution_mode);
+    return result;
 }
 
 template<level_t level, exec_mode_t mode>

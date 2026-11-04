@@ -25,6 +25,7 @@
 #include <sys/types.h>
 #include <thread>
 #include <vector>
+#include <stdexcept>
 
 #include <infiniband/verbs.h>
 #include <infiniband/mlx5dv.h>
@@ -47,6 +48,11 @@
 #include "common/nixl_log.h"
 
 namespace nixl::doca::verbs {
+class teardown_error : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 class cq {
 public:
     cq(doca_gpu *gpu_dev,
@@ -55,6 +61,9 @@ public:
        doca_verbs_pd *verbs_pd,
        uint16_t ncqe);
     ~cq();
+
+    bool
+    close() noexcept;
 
     [[nodiscard]] doca_verbs_cq *
     get_cq() const {
@@ -65,8 +74,8 @@ private:
     [[nodiscard]] doca_verbs_cq *
     createCq();
 
-    void
-    destroyCq();
+    bool
+    destroyCq() noexcept;
 
     doca_gpu *gpu_dev;
     doca_dev *dev;
@@ -96,7 +105,7 @@ public:
 
     /**
      * @brief Unexport the GPU QP and release its backing resources.
-     * @return true when teardown completed; false when the exported QP must remain alive.
+     * @return true when teardown completed; false when resources must remain alive.
      */
     bool
     close() noexcept;
@@ -120,8 +129,8 @@ private:
     [[nodiscard]] doca_verbs_qp *
     createQp();
 
-    void
-    destroyQp();
+    bool
+    destroyQp() noexcept;
 
     doca_gpu *gpu_dev;
     doca_dev *dev;

@@ -17,11 +17,14 @@ plugin_gpunetio_deps = [nixl_common_dep, dependency('libibverbs'), dependency('l
 
 # C++20 for CUDA is set project-wide in the root meson.build.
 compile_flags = ['-D DOCA_ALLOW_EXPERIMENTAL_API']
+if not get_option('gpunetio_device_api').disabled()
+    compile_flags += ['-DNIXL_GPUNETIO_DEVICE_API_HOST=1']
+endif
 
 if 'GPUNETIO' in static_plugins
     gpunetio_backend_lib = static_library('GPUNETIO',
-               'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_completion_status.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep],
+               'gpunetio_device_memview.cpp', 'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_completion_status.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep, device_utils_interface],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags,
@@ -30,8 +33,8 @@ if 'GPUNETIO' in static_plugins
                install_dir: plugin_install_dir)  # Custom prefix for plugin libraries
 else
     gpunetio_backend_lib = shared_library('GPUNETIO',
-               'verbs/verbs.cpp', 'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_completion_status.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep],
+               'verbs/verbs.cpp', 'gpunetio_device_memview.cpp', 'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_completion_status.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep, device_utils_interface],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],

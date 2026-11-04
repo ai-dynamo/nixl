@@ -18,6 +18,24 @@ Please look at the [DOCA GPUNetIO](https://docs.nvidia.com/doca/sdk/doca+gpuneti
 
 The following instructions assume DOCA libraries and NIXL libraries are set in LD_LIBRARY_PATH environment variable.
 
+With `build_tests=true`, a non-release build, and `gpunetio_device_api=enabled`,
+`nixl_gpunetio_device_get_test` exercises GPU-initiated GET from registered
+pinned Host or VRAM memory. It creates two agents on the selected GPUs and checks scalar and
+CTA-batched reads, individual completions, result bytes, and guard bytes.
+It also rejects a malformed metadata section and verifies that the same live
+peer can reload valid metadata and execute the reads. The malformed-section
+check emits an expected `NIXL_ERR_MISMATCH` log.
+Run it manually on a configured GPUNETIO system with two free consecutive OOB
+ports; the GPU index is relative to `CUDA_VISIBLE_DEVICES`:
+
+```
+./nixl_gpunetio_device_get_test <rdma-device> <oob-interface> <gid-index> <base-port> <owner-gpu> [DRAM|VRAM] [reader-gpu]
+```
+
+The source type defaults to `DRAM`, and the reader GPU defaults to the owner
+GPU. The test requires the explicitly enabled DOCA 3.5 device API. Its
+same-host result does not establish cross-node correctness or performance.
+
 Target should start first. A command line example:
 
 ```
