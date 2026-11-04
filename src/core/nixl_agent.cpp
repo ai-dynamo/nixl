@@ -22,6 +22,7 @@
 #include <numeric>
 #include <optional>
 #include <set>
+#include <span>
 
 #include "nixl.h"
 #include "serdes/serdes.h"
@@ -146,17 +147,17 @@ private:
     size_t chunkEnd_ = 0;
 };
 
-} // namespace
-
-nixl_status_t
-nixlAgentData::mergeIndices(const nixl_meta_stride_dlist_t &local_descs,
-                            const nixl_meta_stride_dlist_t &remote_descs,
-                            std::span<const int> local_indices,
-                            std::span<const int> remote_indices,
-                            bool skip_desc_merge,
-                            nixl_meta_dlist_t &initiator_descs,
-                            nixl_meta_dlist_t &target_descs,
-                            size_t &total_bytes) {
+// Builds the transfer descriptors, merging consecutive pairs inside dense stride runs.
+// Inlined or IPA-cloned into its single caller, the merge loop gets slower code.
+[[gnu::noinline, gnu::noclone]] nixl_status_t
+mergeIndices(const nixl_meta_stride_dlist_t &local_descs,
+             const nixl_meta_stride_dlist_t &remote_descs,
+             std::span<const int> local_indices,
+             std::span<const int> remote_indices,
+             bool skip_desc_merge,
+             nixl_meta_dlist_t &initiator_descs,
+             nixl_meta_dlist_t &target_descs,
+             size_t &total_bytes) {
     const size_t desc_count = local_indices.size();
     // Compared as unsigned, so that the difference of two indices wraps instead of overflowing.
     auto local = reinterpret_cast<const unsigned *>(local_indices.data());
@@ -223,6 +224,8 @@ nixlAgentData::mergeIndices(const nixl_meta_stride_dlist_t &local_descs,
     }
     return NIXL_SUCCESS;
 }
+
+} // namespace
 
 void
 nixlEngineDeleter::operator()(nixlBackendEngine *engine) const noexcept {
@@ -1065,14 +1068,14 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
-    ret = nixlAgentData::mergeIndices(local_descs,
-                                      remote_descs,
-                                      local_indices,
-                                      remote_indices,
-                                      skip_desc_merge,
-                                      handle->initiatorDescs,
-                                      handle->targetDescs,
-                                      total_bytes);
+    ret = mergeIndices(local_descs,
+                       remote_descs,
+                       local_indices,
+                       remote_indices,
+                       skip_desc_merge,
+                       handle->initiatorDescs,
+                       handle->targetDescs,
+                       total_bytes);
     if (ret != NIXL_SUCCESS) {
         return ret;
     }
