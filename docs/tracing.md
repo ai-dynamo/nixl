@@ -58,10 +58,13 @@ execution-trace tools.
   `Metadata`.
 
 `nixl::trace` is an **internal NIXL core API**: it is compiled into `libnixl` but its
-headers (`tracing/trace.h`, `tracing/trace_macros.h`, `tracing/trace_plugin.h`, under
-`src/core/tracing/`) are not installed as public headers. Only NIXL core instruments
-it today; because internal→public is a non-breaking change, it can be promoted to a
-public header later if an external consumer appears.
+headers (under `src/core/tracing/`) are not installed as public headers. Each kind of
+module includes one of them: NIXL core includes `tracing/tracing.h` (the call-site
+macros and a request's `Traceable`), a backend plugin includes `tracing/backend_trace.h`
+(the phase sink, the post trace and the notification trace tags), and a trace backend
+includes `tracing/trace_plugin.h`. The tracer, the sink and the wire codec stay inside
+tracing. Only NIXL core instruments it today; because internal→public is a non-breaking
+change, it can be promoted to a public header later if an external consumer appears.
 
 ## Two gates: build/packaging and runtime
 

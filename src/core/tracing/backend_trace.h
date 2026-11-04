@@ -27,12 +27,15 @@
  */
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 
 #include "backend/backend_aux.h"
 #include "common/nixl_time.h"
-#include "tracing/trace_context.h"
+#include "tracing/trace_identity.h"
+
+class nixlSerDes;
 
 /**
  * @brief Fixed set of backend phases.
@@ -225,5 +228,15 @@ private:
     nixlBackendTraceSink *sink_ = nullptr;
     nixl::trace::TraceIdentity identity_;
 };
+
+namespace nixl::trace {
+
+void
+addTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity);
+
+[[nodiscard]] std::optional<TraceIdentity>
+getTraceTags(nixlSerDes &ser_des);
+
+} // namespace nixl::trace
 
 #endif // NIXL_SRC_CORE_TRACING_BACKEND_TRACE_H

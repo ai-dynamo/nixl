@@ -21,6 +21,7 @@
 
 #include "common/nixl_log.h"
 #include "plugin_manager.h"
+#include "tracing/trace_plugin.h"
 
 namespace nixl::trace {
 
@@ -85,56 +86,6 @@ Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
 
 Tracer::~Tracer() = default;
 
-Span
-Tracer::beginSpan(std::string_view name, Kind kind) {
-    std::vector<std::unique_ptr<SpanBackend>> spans;
-    spans.reserve(backends_.size());
-    for (auto &backend : backends_) {
-        // Drop null backend spans so an all-null Span is not reported active()
-        // (which would null-deref in addAttribute()/id()).
-        if (auto span = backend->beginSpan(name, kind)) {
-            spans.push_back(std::move(span));
-        }
-    }
-    return Span{std::move(spans)};
-}
-
-Span
-Tracer::beginContextSpan(std::string_view name,
-                         Kind kind,
-                         const TraceContext &context,
-                         std::uint64_t request_id) {
-    std::vector<std::unique_ptr<SpanBackend>> spans;
-    spans.reserve(backends_.size());
-    for (auto &backend : backends_) {
-        if (auto span = backend->beginContextSpan(name, kind, context, request_id)) {
-            spans.push_back(std::move(span));
-        }
-    }
-    return Span{std::move(spans)};
-}
-
-void
-Tracer::mark(std::string_view name, Kind kind) {
-    for (auto &backend : backends_) {
-        backend->mark(name, kind);
-    }
-}
-
-void
-Tracer::pushContext(const TraceContext &context, std::uint64_t request_id) {
-    for (auto &backend : backends_) {
-        backend->pushContext(context, request_id);
-    }
-}
-
-void
-Tracer::popContext() {
-    for (auto &backend : backends_) {
-        backend->popContext();
-    }
-}
-
 void
 Tracer::emitSpan(std::string_view name,
                  Kind kind,
@@ -148,17 +99,77 @@ Tracer::emitSpan(std::string_view name,
     }
 }
 
+} // namespace nixl::trace
+
+namespace nixl::trace::detail {
+
+Span
+beginSpan(Tracer &tracer, std::string_view name, Kind kind) {
+    std::vector<std::unique_ptr<SpanBackend>> spans;
+    spans.reserve(tracer.backends().size());
+    for (const auto &backend : tracer.backends()) {
+        // Drop null backend spans so an all-null Span is not reported active()
+        // (which would null-deref in addAttribute()/id()).
+        if (auto span = backend->beginSpan(name, kind)) {
+            spans.push_back(std::move(span));
+        }
+    }
+    return Span{std::move(spans)};
+}
+
+Span
+beginContextSpan(Tracer &tracer,
+                 std::string_view name,
+                 Kind kind,
+                 const TraceContext &context,
+                 std::uint64_t request_id) {
+    std::vector<std::unique_ptr<SpanBackend>> spans;
+    spans.reserve(tracer.backends().size());
+    for (const auto &backend : tracer.backends()) {
+        if (auto span = backend->beginContextSpan(name, kind, context, request_id)) {
+            spans.push_back(std::move(span));
+        }
+    }
+    return Span{std::move(spans)};
+}
+
 void
-Tracer::emitEvent(std::string_view name,
-                  Kind kind,
-                  const TraceContext &context,
-                  std::uint64_t request_id,
-                  nixlTime::us_t at,
-                  std::span<const Attribute> attrs) {
-    for (auto &backend : backends_) {
+mark(Tracer &tracer, std::string_view name, Kind kind) {
+    for (const auto &backend : tracer.backends()) {
+        backend->mark(name, kind);
+    }
+}
+
+void
+pushContext(Tracer &tracer, const TraceContext &context, std::uint64_t request_id) {
+    for (const auto &backend : tracer.backends()) {
+        backend->pushContext(context, request_id);
+    }
+}
+
+void
+popContext(Tracer &tracer) {
+    for (const auto &backend : tracer.backends()) {
+        backend->popContext();
+    }
+}
+
+void
+emitEvent(Tracer &tracer,
+          std::string_view name,
+          Kind kind,
+          const TraceContext &context,
+          std::uint64_t request_id,
+          nixlTime::us_t at,
+          std::span<const Attribute> attrs) {
+    for (const auto &backend : tracer.backends()) {
         backend->emitEvent(name, kind, context, request_id, at, attrs);
     }
 }
+
+} // namespace nixl::trace::detail
+
+namespace nixl::trace {
 
 /*** Factory ***/
 

@@ -16,6 +16,7 @@
  */
 
 #include "plugin_manager.h"
+#include "tracing/trace_plugin.h"
 #include "nixl.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"

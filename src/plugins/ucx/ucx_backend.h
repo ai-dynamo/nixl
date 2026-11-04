@@ -29,7 +29,7 @@
 #include <utility>
 
 #include "backend/backend_engine.h"
-#include "tracing/trace_context.h"
+#include "tracing/backend_trace.h"
 
 #include "mem_list.h"
 #include "rkey.h"
