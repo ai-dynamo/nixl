@@ -124,7 +124,7 @@ Users can build the complete image locally without specifying a target:
 This builds both stages from scratch without the `--wheel-base-image` override.
 
 #### Nightly Build
-The nightly job (`nixl-ci-build-wheel-nightly`) omits `--wheel-base-image`, so it runs the full two-stage build. It selects `--torch-versions` from its `CUDA_MAJOR` parameter (`13` default or `12`), since torch package availability differs between the two.
+The nightly job (`nixl-ci-build-wheel-nightly`) builds its own `wheel_base` images per run and passes the full `--torch-versions` list for the cu13 index.
 
 #### Optional: UCX spcx external plugin
 `build-container.sh --build-ucx-spcx-plugin` opt-in flag fetches the internal `ucx-spcx-plugin` source on the host into the build context, compiles it against the just-built UCX inside the Dockerfile, and installs it into the UCX plugins dir. It works with `contrib/Dockerfile.manylinux` (the wheel build, where `wheel_add_ucx_plugins.py` then bundles the plugin into the wheel like any other UCX module) and with the default `contrib/Dockerfile` (the container build, where the plugin is only installed into the image). It requires two environment variables — neither is hardcoded so the repo location and token stay out of the source and image layers:
@@ -303,8 +303,8 @@ nixl-cu{cuda_version}-{version}+build.{build_number}-cp{python_version_no_dots}-
 ```
 
 Examples:
-- `nixl-cu12-0.7.1+build.68-cp39-cp39-manylinux_2_28_x86_64.whl`
-- `nixl-cu12-0.7.1+build.68-cp312-cp312-manylinux_2_28_x86_64.whl`
+- `nixl-cu13-0.7.1+build.68-cp39-cp39-manylinux_2_28_x86_64.whl`
+- `nixl-cu13-0.7.1+build.68-cp312-cp312-manylinux_2_28_x86_64.whl`
 
 ### Build Versioning
 The build system automatically appends the Jenkins build number to the package version as a PEP 440 compliant local version identifier:
@@ -313,7 +313,7 @@ The build system automatically appends the Jenkins build number to the package v
 
 This is handled by `contrib/tomlutil.py` which modifies `pyproject.toml` during the build:
 ```python
-./contrib/tomlutil.py --wheel-name nixl-cu12 --build-id 68 pyproject.toml
+./contrib/tomlutil.py --wheel-name nixl-cu13 --build-id 68 pyproject.toml
 ```
 
 **Benefits:**
@@ -378,7 +378,7 @@ Users can install wheels from Artifactory:
 
 ```bash
 # Using pip with extra index
-pip install nixl-cu12 \
+pip install nixl-cu13 \
   --extra-index-url https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
 
 # Or configure in pip.conf
@@ -468,13 +468,13 @@ A utility script for modifying `pyproject.toml` during the build process:
 
 ```bash
 # Set wheel name
-./contrib/tomlutil.py --wheel-name nixl-cu12 pyproject.toml
+./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
 
 # Add build ID to version
-./contrib/tomlutil.py --wheel-name nixl-cu12 --build-id 68 pyproject.toml
+./contrib/tomlutil.py --wheel-name nixl-cu13 --build-id 68 pyproject.toml
 
 # Both together
-./contrib/tomlutil.py --wheel-name nixl-cu12 --build-id 68 pyproject.toml
+./contrib/tomlutil.py --wheel-name nixl-cu13 --build-id 68 pyproject.toml
 ```
 
 **Features:**
