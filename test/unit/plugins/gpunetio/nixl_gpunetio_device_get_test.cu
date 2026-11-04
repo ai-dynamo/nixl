@@ -35,7 +35,7 @@ check(nixl_status_t rc, const char *what) {
 }
 
 __device__ uint64_t
-nowNs() {
+globalTimerNs() {
     uint64_t value;
     asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(value));
     return value;
@@ -62,10 +62,10 @@ scalarGet(nixlMemViewH local, nixlMemViewH remote, int *result) {
         *result = 1;
         return;
     }
-    const uint64_t deadline = nowNs() + 5000000000ull;
+    const uint64_t deadline = globalTimerNs() + 5000000000ull;
     do {
         rc = nixl::gpu::getXferStatus(status);
-    } while (rc == NIXL_IN_PROG && nowNs() < deadline);
+    } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
     if (rc != NIXL_SUCCESS) {
         *result = 2;
     }
@@ -114,10 +114,10 @@ batchGet(nixlMemViewH local, nixlMemViewH remote, int *result) {
     __syncthreads();
     if (!error && threadIdx.x < kCount) {
         nixl_status_t rc;
-        const uint64_t deadline = nowNs() + 5000000000ull;
+        const uint64_t deadline = globalTimerNs() + 5000000000ull;
         do {
             rc = session->poll(first + threadIdx.x);
-        } while (rc == NIXL_IN_PROG && nowNs() < deadline);
+        } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
         if (rc != NIXL_SUCCESS) {
             atomicExch(&error, 6);
         }
@@ -134,10 +134,10 @@ batchGet(nixlMemViewH local, nixlMemViewH remote, int *result) {
             }
             if (!error) {
                 nixl_status_t rc;
-                const uint64_t deadline = nowNs() + 5000000000ull;
+                const uint64_t deadline = globalTimerNs() + 5000000000ull;
                 do {
                     rc = session->poll(ticket);
-                } while (rc == NIXL_IN_PROG && nowNs() < deadline);
+                } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
                 if (rc != NIXL_SUCCESS || session->retire(ticket, 1) != NIXL_SUCCESS) {
                     error = 9;
                 }
