@@ -277,10 +277,11 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 
     ACLOCAL_PATH=/usr/share/aclocal ./autogen.sh && make -j${NPROC:-$(nproc)} && \
     make install
 
-COPY contrib/patches/azure-core-openssl4.patch /tmp/azure-core-openssl4.patch
+# Fetch the upstream fix with its parent so git show can produce the patch.
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
-    git apply /tmp/azure-core-openssl4.patch && \
+    git fetch --depth 2 origin 7ebdd503aa8da2987f42715a37a031d4d88947db && \
+    git show 7ebdd503aa8da2987f42715a37a031d4d88947db -- sdk/core/azure-core/src/http/curl/curl.cpp | git apply && \
     mkdir build && cd build && \
     export LDFLAGS="-L/usr/local/openssl/lib64 -L/usr/local/openssl/lib" && \
     export CFLAGS="-isystem /usr/local/openssl/include" && \

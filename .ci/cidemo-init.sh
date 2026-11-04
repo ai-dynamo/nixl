@@ -11,7 +11,6 @@ CI_FILES=(
     ".gitlab/build.sh"
     ".ci/scripts/common.sh"
     "contrib/Dockerfile.manylinux"
-    "contrib/patches/azure-core-openssl4.patch"
 )
 
 # Matrix YAML files that contain the CI_MANAGED placeholder.
