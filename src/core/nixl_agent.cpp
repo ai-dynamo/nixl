@@ -15,10 +15,9 @@
  * limitations under the License.
  */
 
-#include <iostream>
-#include <chrono>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <iostream>
 #include <numeric>
 #include <optional>
@@ -160,8 +159,8 @@ nixlAgentData::mergeIndices(const nixl_meta_stride_dlist_t &local_descs,
                             size_t &total_bytes) {
     const size_t desc_count = local_indices.size();
     // Compared as unsigned, so that the difference of two indices wraps instead of overflowing.
-    const auto *local = reinterpret_cast<const unsigned *>(local_indices.data());
-    const auto *remote = reinterpret_cast<const unsigned *>(remote_indices.data());
+    auto local = reinterpret_cast<const unsigned *>(local_indices.data());
+    auto remote = reinterpret_cast<const unsigned *>(remote_indices.data());
     const size_t local_size = local_descs.flatSize();
     const size_t remote_size = remote_descs.flatSize();
     // Ceiling division so that find()'s first probe (flat_idx / run_size) can never exceed
@@ -172,7 +171,7 @@ nixlAgentData::mergeIndices(const nixl_meta_stride_dlist_t &local_descs,
         (remote_size + remote_descs.descCount() - 1) / remote_descs.descCount();
 
     // Cached stride runs; the first pair leaves the empty run.
-    const nixlMetaStrideDesc empty_run{};
+    const nixlMetaStrideDesc empty_run;
     const nixlMetaStrideDesc *local_run = &empty_run;
     const nixlMetaStrideDesc *remote_run = &empty_run;
     bool dense = false;

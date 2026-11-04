@@ -1858,7 +1858,7 @@ namespace agent {
         struct testCase {
             std::vector<int> local, remote;
             std::vector<piece> pieces;
-            bool skip_merge = false;
+            bool skipMerge = false;
         };
 
         std::vector<int> all(blocks);
@@ -1876,7 +1876,7 @@ namespace agent {
                 .WillOnce(testing::DoAll(testing::SaveArg<1>(&src),
                                          testing::SaveArg<2>(&dst),
                                          testing::Return(NIXL_SUCCESS)));
-            extra_params.skipDescMerge = c.skip_merge;
+            extra_params.skipDescMerge = c.skipMerge;
             nixlXferReqH *req = nullptr;
             ASSERT_EQ(
                 agent->makeXferReq(
