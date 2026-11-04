@@ -23,7 +23,6 @@ NIXL_PLUGINS_DIR="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins"
 OUTPUT_DIR="dist"
 BUILD_NIXL_EP="false"
 TORCH_VERSIONS=""
-TORCH_CUDA_INDEX=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -61,7 +60,6 @@ while [[ $# -gt 0 ]]; do
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
             echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires a CUDA sm_90 or newer target environment)"
             echo "  --torch-versions: Comma-separated list of torch versions to build the wheel for (default: $TORCH_VERSIONS)"
-            echo "  --torch-cuda-index: torch wheel index, e.g. cu132 (default: cu132 for CUDA 13, cu<major><minor> of the nvcc toolkit for CUDA 12)"
             echo "  --help: Show this help message"
             echo ""
             echo "Must be executed from the root of the NIXL repository."
@@ -73,11 +71,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --torch-versions)
             TORCH_VERSIONS=$2
-            shift
-            shift
-            ;;
-        --torch-cuda-index)
-            TORCH_CUDA_INDEX=$2
             shift
             shift
             ;;
@@ -99,27 +92,19 @@ set -x
 TMP_DIR=$(mktemp -d)
 
 CUDA_MAJOR=$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 | cut -d'.' -f1)
-# Must be 12 or 13
-if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
-    echo "Invalid CUDA_MAJOR: '$CUDA_MAJOR'"
+if [ "$CUDA_MAJOR" != "13" ]; then
+    echo "ERROR: NIXL requires CUDA 13, found CUDA '${CUDA_MAJOR}'" >&2
     exit 1
 fi
 AUDITWHEEL_EXCLUDES="--exclude libcuda* --exclude libcufile* --exclude libcuobjclient* --exclude libssl* --exclude libcrypto* --exclude libefa* --exclude libhwloc* --exclude libfabric* --exclude libtorch* --exclude libc10* --exclude libdoca* --exclude libred_client* --exclude libred_async* --exclude liblz4*"
 
-PKG_NAME="nixl-cu${CUDA_MAJOR}"
-# torch index: --torch-cuda-index, else cu132 for CUDA 13 (PyTorch has no stable
-# cu134 wheels) or cu<major><minor> of the toolkit; the CUDA major must match.
-if [ -n "$TORCH_CUDA_INDEX" ]; then
-    CU_TAG="$TORCH_CUDA_INDEX"
-elif [ "$CUDA_MAJOR" -eq 13 ]; then
-    CU_TAG="cu132"
-else
-    CU_TAG="cu$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 | tr -d .)"
-fi
+PKG_NAME="nixl-cu13"
+# torch wheel index, pinned in Dockerfile.manylinux; PyTorch has no stable cu134 wheels.
+CU_TAG="${TORCH_CUDA_INDEX:-cu132}"
 case "$CU_TAG" in
-    cu${CUDA_MAJOR}[0-9]*) ;;
+    cu13[0-9]*) ;;
     *)
-        echo "ERROR: torch index '$CU_TAG' does not match the CUDA ${CUDA_MAJOR} toolkit" >&2
+        echo "ERROR: torch index '$CU_TAG' is not a CUDA 13 index" >&2
         exit 1
         ;;
 esac
@@ -361,7 +346,7 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
             --base-wheel "$BASE_WHL" \
             --source-wheel "$EP_WHL" \
             --pattern "nixl_ep_cpp_torch${TORCH_MM}.*" \
-            --target-dir "nixl_ep_cu${CUDA_MAJOR}"
+            --target-dir "nixl_ep_cu13"
 
         rm -rf "$EP_TMP"
     done

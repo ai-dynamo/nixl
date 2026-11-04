@@ -48,13 +48,11 @@ then
     # [build-system].requires itself.
     # --ignore-installed: the distro-packaged copies have no pip RECORD and cannot be uninstalled.
     $pip3 install --break-system-packages --upgrade --ignore-installed meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
-    # Set the correct wheel name based on the CUDA version
     cuda_major=$(nvcc --version | grep -oP 'release \K[0-9]+')
-    case "$cuda_major" in
-        12|13) echo "CUDA $cuda_major detected" ;;
-        *) echo "Error: Unsupported CUDA version $cuda_major"; exit 1 ;;
-    esac
-    ./contrib/tomlutil.py --wheel-name "nixl-cu${cuda_major}" pyproject.toml
+    if [ "$cuda_major" != "13" ]; then
+        echo "Error: NIXL requires CUDA 13, found CUDA $cuda_major"; exit 1
+    fi
+    ./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
     # Control ninja parallelism during pip build to prevent OOM (NPROC from common.sh)
     $pip3 install --break-system-packages --no-build-isolation --config-settings=compile-args="-j${NPROC}" .
     $pip3 install --break-system-packages dist/nixl-*none-any.whl
