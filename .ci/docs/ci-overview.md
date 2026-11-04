@@ -334,7 +334,15 @@ symlinks `docker` to `podman` in two different containers, and the push in
 `manylinux` runner. Check the step's `containerSelector` against
 `runs_on_dockers`, not just whether `docker` is podman.
 
-## Registry login retries
+## Registry logins
+
+`il.artifactory.nvidia.com` allows anonymous pulls. A pipeline whose own steps
+never push an image therefore does not log in to it, and does not bind
+`svc-nixl-il-artifactory-token`, before its podman builds. Two pipelines qualify:
+`build-container-pr` (`Setup docker`) and `build-wheel-nightly` (`Prepare`).
+`build-container-pr` still logs in to `gitlab-master.nvidia.com:5005`, which
+needs auth to pull. Pipelines whose steps push keep their login where it was.
+ci-demo's own login for `registry_auth` image builds is separate and unchanged.
 
 A single registry login used to fail the whole build. Two transient failures
 have done this while sibling branches logged in with the same credentials

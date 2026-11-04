@@ -21,10 +21,7 @@ registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
-  # IL: wheel_base (CI image). artifactory.nvidia.com: wheel publishing.
-  - credentialsId: 'svc-nixl-il-artifactory-token'
-    usernameVariable: 'ARTIFACTORY_USER'
-    passwordVariable: 'ARTIFACTORY_TOKEN'
+  # artifactory.nvidia.com: wheel publishing.
   - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
@@ -124,11 +121,10 @@ steps:
   - name: Prepare
     containerSelector: "{name: 'manylinux'}"
     credentialsId:
-      - 'svc-nixl-il-artifactory-token'
       - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
-      # Set up podman and log in to Artifactory (base image pull)
+      # Set up podman
       rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
       podman system reset -f || true
       ln -sfT $(type -p podman) /usr/bin/docker
@@ -136,7 +132,6 @@ steps:
       # agent-side clones below.
       . .ci/scripts/common.sh
       write_github_gitconfig /tmp/ghconfig
-      echo "$ARTIFACTORY_TOKEN" | .ci/scripts/registry-login.sh "https://${registry_host}" "$ARTIFACTORY_USER"
 
   - name: Checkout Source
     containerSelector: "{name: 'manylinux'}"
