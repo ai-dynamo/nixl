@@ -413,13 +413,16 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MARVELL_ODM)) {
         const std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : name;
         odm_.bindNixl(agent, backend_engine, target);
-        xferBenchOdm::setConsistencyState(&odm_);
+        xferBenchUtils::setWriteFetcher(
+            [this](const xferBenchIOV &iov, void **addr_out, bool *allocated_out) {
+                return odm_.fetchWriteBuffer(iov, addr_out, allocated_out);
+            });
     }
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MARVELL_ODM)) {
-        xferBenchOdm::setConsistencyState(nullptr);
+        xferBenchUtils::setWriteFetcher(nullptr);
     }
 
     remote_regs_.clear();
@@ -1517,8 +1520,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                         exit(EXIT_FAILURE);
                     }
                     const size_t block_in_dev = devidx % entries_per_device;
-                    const size_t buffer_size = xferBenchConfig::total_buffer_size /
-                        (cfg_num_devices * xferBenchConfig::num_threads);
+                    const size_t buffer_size =
+                        remote_regs_[0].iovs()[odm_dev].len / local_iovs.size();
                     const size_t block_offset = (block_in_dev * block_size) % buffer_size;
                     // remote_regs_[0] is the single combined per-device
                     // registration (buffer_size * num_threads long); this

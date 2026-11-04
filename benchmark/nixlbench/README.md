@@ -1002,10 +1002,8 @@ export NIXL_PLUGIN_DIR=.../build/src/plugins/marvell_odm
   --num_iter 112 \
   --warmup_iter 16
 
-# Or use the provided TOML config
-./nixlbench --config_file ../marvell_odm/nixlbench_marvell_odm.toml
-
-# Consistency-checked WRITE
+# Consistency-checked WRITE (reads device memory back via NIXL READ and compares
+# with the initiator buffer)
 ./nixlbench \
   --backend MARVELL_ODM \
   --device_list odm0 \
@@ -1017,7 +1015,7 @@ export NIXL_PLUGIN_DIR=.../build/src/plugins/marvell_odm
   --num_iter 16
 ```
 
-See `benchmark/nixlbench/marvell_odm/README.md` and `src/plugins/marvell_odm/README.md`.
+See `src/plugins/marvell_odm/README.md`.
 
 ### Worker Types
 

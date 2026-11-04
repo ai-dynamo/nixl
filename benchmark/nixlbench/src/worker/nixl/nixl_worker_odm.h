@@ -53,12 +53,6 @@ configureBackend(const std::vector<std::string> &devices,
                  State &state,
                  nixl_b_params_t &backend_params);
 
-void
-setConsistencyState(State *state);
-
-bool
-fetchWriteBufferForConsistency(const xferBenchIOV &iov, void **addr_out, bool *allocated_out);
-
 } // namespace xferBenchOdm
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_ODM_H

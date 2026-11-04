@@ -87,7 +87,8 @@ Host DRAM -> device DRAM (host-VA path): register local buffers as host
 `DRAM_SEG` and remote buffers as device `DRAM_SEG` (IOVA). WRITE moves host ->
 device; READ moves device -> host. No GPU is required for this path.
 
-See `benchmark/nixlbench/marvell_odm/README.md` for sweep examples and TOML config.
+See `benchmark/nixlbench/README.md` (MARVELL_ODM Backend section) for sweep
+examples and command-line options.
 
 ## Tests
 
@@ -109,5 +110,4 @@ fail instead of skip when the device is missing.
 
 ## See Also
 
-- nixlbench examples: `benchmark/nixlbench/marvell_odm/`
 - Main nixlbench README: `benchmark/nixlbench/README.md`
