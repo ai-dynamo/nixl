@@ -19,8 +19,6 @@ utils_sources = [
   'utils.cpp',
   'utils.h',
   'scope_guard.h',
-  'odm_consistency.cpp',
-  'odm_consistency.h',
 ]
 
 utils_deps = [

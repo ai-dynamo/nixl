@@ -104,9 +104,8 @@ memTypeLabel(nixl_mem_t mem) {
         return "OBJ_SEG";
     case FILE_SEG:
         return "FILE_SEG";
-    default:
-        return "BAD_SEG";
     }
+    return "BAD_SEG";
 }
 
 } // namespace

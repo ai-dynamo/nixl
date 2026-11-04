@@ -36,7 +36,6 @@
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
-#include "utils/odm_consistency.h"
 #include "utils/utils.h"
 
 namespace {
@@ -1323,10 +1322,16 @@ xferBenchConfig::isBlkStorageBackend() {
  **********/
 xferBenchRT *xferBenchUtils::rt = nullptr;
 std::string xferBenchUtils::dev_to_use = "";
+xferBenchUtils::WriteConsistencyFetcher xferBenchUtils::write_fetcher_;
 
 void
 xferBenchUtils::setRT(xferBenchRT *rt) {
     xferBenchUtils::rt = rt;
+}
+
+void
+xferBenchUtils::setWriteFetcher(WriteConsistencyFetcher fetcher) {
+    write_fetcher_ = std::move(fetcher);
 }
 
 void
@@ -1479,8 +1484,6 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
     }
     bool pass_check_consistency = true;
 
-    OdmConsistencyContext odm_ctx(iov_lists);
-
     for (const auto &iov_list : iov_lists) {
         for (const auto &iov : iov_list) {
             void *addr = NULL;
@@ -1491,7 +1494,9 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
 
             len = iov.len;
 
-            if (odm_ctx.fetchWriteBuffer(iov, &addr, &is_allocated)) {
+            if (xferBenchConfig::backend == XFERBENCH_BACKEND_MARVELL_ODM &&
+                xferBenchConfig::op_type == XFERBENCH_OP_WRITE && write_fetcher_ &&
+                write_fetcher_(iov, &addr, &is_allocated)) {
                 // ODM WRITE consistency buffer prepared via NIXL READ.
             } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_MARVELL_ODM &&
                        xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {

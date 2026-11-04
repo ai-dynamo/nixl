@@ -21,6 +21,7 @@
 #include "config.h"
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -410,6 +411,9 @@ class xferBenchUtils {
 private:
     static xferBenchRT *rt;
     static std::string dev_to_use;
+    using WriteConsistencyFetcher =
+        std::function<bool(const xferBenchIOV &, void **addr, bool *allocated)>;
+    static WriteConsistencyFetcher write_fetcher_;
     static int
     createFile(size_t buffer_size, const std::string &filename);
     static void
@@ -428,6 +432,8 @@ public:
     debugEnabled(); // Whether NIXLBENCH_LOG_LEVEL is DEBUG or TRACE
     static void
     setRT(xferBenchRT *rt);
+    static void
+    setWriteFetcher(WriteConsistencyFetcher fetcher);
     static void
     setDevToUse(std::string dev);
     static std::string

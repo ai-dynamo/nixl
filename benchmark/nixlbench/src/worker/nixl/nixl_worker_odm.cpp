@@ -25,8 +25,6 @@
 
 namespace {
 
-xferBenchOdm::State *g_consistency_state = nullptr;
-
 static constexpr int kStagingDevId = 0;
 static constexpr size_t kSeedChunk = 0x400000ULL;
 
@@ -158,19 +156,6 @@ State::bindNixl(nixlAgent *agent, nixlBackendH *backend, const std::string &targ
     agent_ = agent;
     backend_ = backend;
     target_ = target;
-}
-
-void
-setConsistencyState(State *state) {
-    g_consistency_state = state;
-}
-
-bool
-fetchWriteBufferForConsistency(const xferBenchIOV &iov, void **addr_out, bool *allocated_out) {
-    if (!g_consistency_state) {
-        return false;
-    }
-    return g_consistency_state->fetchWriteBuffer(iov, addr_out, allocated_out);
 }
 
 bool
