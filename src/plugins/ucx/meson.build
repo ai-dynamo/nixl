@@ -14,6 +14,7 @@
 # limitations under the License.
 
 dl_dep = dependency('dl', required: true)
+absl_cleanup_dep = dependency('absl_cleanup')
 
 ucx_backend_includes = include_directories('.')
 
@@ -34,6 +35,7 @@ ucx_backend_dependencies = [nixl_common_dep,
                             nixl_infra,
                             serdes_interface,
                             dl_dep,
+                            absl_cleanup_dep,
                             thread_dep,
                             ucx_dep,
                             device_utils_interface,

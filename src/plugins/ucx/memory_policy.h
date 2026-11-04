@@ -5,26 +5,16 @@
 
 #include <nixl_descriptors.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <limits>
-#include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace nixl::ucx {
-
-class MemoryRegistrationPolicy {
-public:
-    virtual ~MemoryRegistrationPolicy() = default;
-
-    [[nodiscard]] virtual std::string_view
-    deviceMemoryType() const noexcept = 0;
-
-    [[nodiscard]] virtual nixl_status_t
-    validateBeforeMap(const nixlBlobDesc &desc, nixl_mem_t type) const = 0;
-};
-
-using MemoryPolicyPtr = std::shared_ptr<const MemoryRegistrationPolicy>;
 
 [[nodiscard]] inline bool
 validMemoryRange(uintptr_t address, size_t length) noexcept {
@@ -38,6 +28,27 @@ validateMemoryDescriptor(const nixlBlobDesc &desc, nixl_mem_t type) noexcept {
     }
     return validMemoryRange(desc.addr, desc.len) ? NIXL_SUCCESS : NIXL_ERR_INVALID_PARAM;
 }
+
+// An empty policy preserves stock UCX behavior. Named policies enforce the common
+// descriptor checks before an optional provider-runtime validation callback.
+struct MemoryRegistrationPolicy {
+    std::string device_memory_type;
+    std::function<nixl_status_t(const nixlBlobDesc &, nixl_mem_t)> validate;
+
+    [[nodiscard]] bool
+    isStrict() const noexcept {
+        return !device_memory_type.empty();
+    }
+
+    [[nodiscard]] nixl_status_t
+    validateBeforeMap(const nixlBlobDesc &desc, nixl_mem_t type) const {
+        if (!isStrict()) {
+            return NIXL_SUCCESS;
+        }
+        const auto status = validateMemoryDescriptor(desc, type);
+        return status == NIXL_SUCCESS && validate ? validate(desc, type) : status;
+    }
+};
 
 // Enum values are resolved from the linked provider's names, never invented for a vendor.
 [[nodiscard]] inline std::optional<unsigned>

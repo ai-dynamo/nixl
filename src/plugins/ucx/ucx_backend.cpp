@@ -69,7 +69,13 @@ errHandlingModeFromParams(const nixl_b_params_t *custom_params) {
  *****************************************/
 
 std::unique_ptr<nixlUcxEngine>
-nixlUcxEngine::create(const nixlBackendInitParams &init_params, nixl::ucx::MemoryPolicyPtr policy) {
+nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
+    return createWithMemoryPolicy(init_params, {});
+}
+
+std::unique_ptr<nixlUcxEngine>
+nixlUcxEngine::createWithMemoryPolicy(const nixlBackendInitParams &init_params,
+                                     nixl::ucx::MemoryRegistrationPolicy policy) {
     nixlUcxEngine *engine;
     const size_t num_threads =
         nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
@@ -84,7 +90,7 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params, nixl::ucx::Memor
             nixl::throwRuntimeError(
                 "num_threads is not supported with device_proxy=true; use proxy_thread_count");
         }
-        if (policy) {
+        if (policy.isStrict() || policy.validate) {
             nixl::throwRuntimeError("A memory policy is not supported with device_proxy=true");
         }
         engine = new nixl::ucx::proxyEngine(init_params, proxy_config);
@@ -100,17 +106,17 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params, nixl::ucx::Memor
 
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
                              size_t num_dedicated_workers,
-                             nixl::ucx::MemoryPolicyPtr policy)
+                             nixl::ucx::MemoryRegistrationPolicy policy)
     : nixlBackendEngine(&init_params),
       memoryPolicy_(std::move(policy)),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
       traceSink_(init_params.traceSink) {
-    if (memoryPolicy_ && memoryPolicy_->deviceMemoryType().empty()) {
+    if (memoryPolicy_.validate && !memoryPolicy_.isStrict()) {
         throw std::invalid_argument("A memory policy must name its required device memory type");
     }
-    if (memoryPolicy_ && sglEnabled_) {
+    if (memoryPolicy_.isStrict() && sglEnabled_) {
         throw std::invalid_argument("Strict device memory policies do not support UCX SGL");
     }
     std::vector<std::string> devs; /* Empty vector */
@@ -146,11 +152,10 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
                                           num_device_channels,
                                           engine_config,
                                           localAgent,
-                                          memoryPolicy_ ? memoryPolicy_->deviceMemoryType() :
-                                                          std::string_view{},
+                                          memoryPolicy_.device_memory_type,
                                           vram_memtype_hint_policy);
 
-    if (!memoryPolicy_) {
+    if (!memoryPolicy_.isStrict()) {
         uc->warnAboutHardwareSupportMismatch();
     }
 
@@ -246,11 +251,9 @@ nixlUcxEngine::registerMem(const nixlBlobDesc &mem,
                            nixlBackendMD *&out) {
     out = nullptr;
     try {
-        if (memoryPolicy_) {
-            const auto status = memoryPolicy_->validateBeforeMap(mem, nixl_mem);
-            if (status != NIXL_SUCCESS) {
-                return status;
-            }
+        const auto status = memoryPolicy_.validateBeforeMap(mem, nixl_mem);
+        if (status != NIXL_SUCCESS) {
+            return status;
         }
         auto priv = std::make_unique<nixlUcxPrivateMetadata>();
         if (uc->memReg(reinterpret_cast<void *>(mem.addr), mem.len, priv->mem, nixl_mem) != 0) {
@@ -360,7 +363,7 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
     if (!nixl::ucx::validMemoryRange(input.addr, input.len)) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    if (memoryPolicy_ && nixl_mem != DRAM_SEG && nixl_mem != VRAM_SEG) {
+    if (memoryPolicy_.isStrict() && nixl_mem != DRAM_SEG && nixl_mem != VRAM_SEG) {
         return NIXL_ERR_NOT_SUPPORTED;
     }
     return internalMDHelper(input.metaInfo, remote_agent, output);
@@ -910,7 +913,7 @@ nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
-    if (memoryPolicy_) {
+    if (memoryPolicy_.isStrict()) {
         return NIXL_ERR_NOT_SUPPORTED;
     }
     return prepMemViewImpl(dlist, mvh, opt_args, "remote");
@@ -920,7 +923,7 @@ nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
-    if (memoryPolicy_) {
+    if (memoryPolicy_.isStrict()) {
         return NIXL_ERR_NOT_SUPPORTED;
     }
     return prepMemViewImpl(dlist, mvh, opt_args, "local");

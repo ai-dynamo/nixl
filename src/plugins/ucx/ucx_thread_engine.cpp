@@ -120,7 +120,7 @@ private:
 
 nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_params,
                                          size_t num_dedicated_workers,
-                                         nixl::ucx::MemoryPolicyPtr policy)
+                                         nixl::ucx::MemoryRegistrationPolicy policy)
     : nixlUcxEngine(init_params, num_dedicated_workers, std::move(policy)) {
     if (!init_params.enableProgTh) {
         return;
