@@ -17,13 +17,22 @@ registry="$1"
 username="$2"
 attempts=5
 delay=15
+# podman login has no response deadline; a registry that accepts the
+# connection but never answers would hang the first attempt forever.
+attempt_timeout=60
 
 # Read once so every attempt can replay it.
 password="$(cat)"
 
 for attempt in $(seq 1 "${attempts}"); do
-    if printf '%s\n' "${password}" | podman login "${registry}" -u "${username}" --password-stdin; then
+    rc=0
+    printf '%s\n' "${password}" | timeout "${attempt_timeout}" \
+        podman login "${registry}" -u "${username}" --password-stdin || rc=$?
+    if [ "${rc}" -eq 0 ]; then
         exit 0
+    fi
+    if [ "${rc}" -eq 124 ]; then
+        echo "Login to ${registry} timed out after ${attempt_timeout}s" >&2
     fi
     if [ "${attempt}" -lt "${attempts}" ]; then
         echo "Login to ${registry} failed (attempt ${attempt}/${attempts}), retrying in ${delay}s" >&2

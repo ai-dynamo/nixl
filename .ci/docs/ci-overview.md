@@ -342,7 +342,10 @@ seconds apart: `invalid username/password` from `il.artifactory.nvidia.com` or
 `gitlab-master.nvidia.com:5005`, and `lookup il.artifactory.nvidia.com: i/o
 timeout`. Every explicit login step therefore pipes its token into
 `.ci/scripts/registry-login.sh <registry> <username>`, which runs `podman login
---password-stdin` up to 5 times, 15 seconds apart. Unlike podman's own push
+--password-stdin` up to 5 times, 15 seconds apart. Each attempt is capped at 60
+seconds, because `podman login` has no response deadline: a registry that
+accepts the connection but never answers would otherwise hang the step until the
+job timeout. Unlike podman's own push
 retry, it also retries auth errors, because those are the transient ones here. A
 revoked credential therefore fails after about a minute rather than at once.
 
