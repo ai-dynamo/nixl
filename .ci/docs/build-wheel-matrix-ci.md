@@ -86,7 +86,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS wheel_base
 FROM $wheel_base AS wheel
 ARG ARCH="x86_64"
 ARG BUILD_TYPE="release"
-ARG BUILD_NIXL_EP=""
+ARG BUILD_NIXL_EP="true"
 ARG UCX_SONAME_SUFFIX=""
 # ... builds NIXL and generates wheels
 ```
@@ -112,7 +112,7 @@ In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` 
 
 `--wheel-base-image` causes the script to pass `--build-arg wheel_base=<url> --target wheel`, so only the `wheel` stage runs and the pre-built deps are pulled from Artifactory rather than recompiled.
 
-`--torch-versions` limits PR builds to a single torch version. The nightly job builds the full per-CUDA-major matrix.
+`--torch-versions` limits PR builds to a single torch version. The nightly job builds the Dockerfile's `WHL_TORCH_VERSIONS` list.
 
 #### User Usage (Full Build)
 Users can build the complete image locally without specifying a target:
