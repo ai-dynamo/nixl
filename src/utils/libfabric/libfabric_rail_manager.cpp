@@ -1144,7 +1144,7 @@ nixlLibfabricRailManager::postControlMessage(
 }
 
 nixl_status_t
-nixlLibfabricRailManager::progressActiveRails(bool set_cuda_device) {
+nixlLibfabricRailManager::progressActiveRails(ProgressCudaDevice cuda_device) {
     std::unordered_set<size_t> rails_to_process;
 
     // Copy active rails under lock to avoid iterator invalidation
@@ -1161,15 +1161,39 @@ nixlLibfabricRailManager::progressActiveRails(bool set_cuda_device) {
     // targets at our VRAM (libfabric shm peer provider). libfabric runs those copies in the
     // calling thread's current CUDA context. If that is not the context of the VRAM's device,
     // the driver cannot use the peer-to-peer path and the copies are an order of magnitude
-    // slower. The progress thread has no CUDA device of its own, so make the right one current.
+    // slower. The progress thread has no CUDA device of its own, and an application thread may
+    // have any device current, so make the right one current for the CQ progress.
     bool per_rail_cuda_device = false;
-    if (set_cuda_device) {
+#ifdef HAVE_CUDA
+    // SetAndRestore: put the caller's CUDA context back on every return path, so progress driven
+    // from an application thread does not change the application's current device.
+    struct CudaCtxRestorer {
+        CUcontext saved = nullptr;
+        bool active = false;
+
+        ~CudaCtxRestorer() {
+            CUcontext current = nullptr;
+            if (active && cuCtxGetCurrent(&current) == CUDA_SUCCESS && current != saved) {
+                cuCtxSetCurrent(saved);
+            }
+        }
+    } ctx_restorer;
+#endif
+    if (cuda_device != ProgressCudaDevice::Keep) {
         for (size_t rail_id : rails_to_process) {
             if (rail_id < rails_.size() && rails_[rail_id]->getVramDevice() >= 0) {
                 per_rail_cuda_device = true;
                 break;
             }
         }
+#ifdef HAVE_CUDA
+        if (per_rail_cuda_device && cuda_device == ProgressCudaDevice::SetAndRestore) {
+            ctx_restorer.active = (cuCtxGetCurrent(&ctx_restorer.saved) == CUDA_SUCCESS);
+            if (!ctx_restorer.active) {
+                per_rail_cuda_device = false; // cannot restore, so do not touch the context
+            }
+        }
+#endif
         if (per_rail_cuda_device) {
             // With the CUDA address workaround the engine tracks the single context that owns
             // all registered VRAM. Prefer it over the device's primary context.

@@ -288,14 +288,25 @@ public:
                        fi_addr_t dest_addr,
                        std::function<void(nixl_status_t)> completion_callback = nullptr);
     // Progress APIs
+    /** How progressActiveRails() handles the calling thread's current CUDA device */
+    enum class ProgressCudaDevice {
+        /** Leave the current device alone */
+        Keep,
+        /** Before progressing each rail, make the CUDA device of the VRAM registered on it
+         *  current, and leave it current. For threads NIXL owns (the progress thread). */
+        Set,
+        /** Like Set, then restore the caller's CUDA context before returning. For progress
+         *  driven from an application thread (progress thread disabled). */
+        SetAndRestore,
+    };
+
     /** Process completions on active rails only (optimized for CPU overhead)
-     * @param set_cuda_device  Before progressing each rail, make the CUDA device of the VRAM
-     *                         registered on it current on the calling thread. Only for threads
-     *                         NIXL owns (the progress thread): it changes the current device.
+     * @param cuda_device  see ProgressCudaDevice. Same-host RMA through the shm peer provider
+     *                     runs CUDA IPC copies inside CQ progress, on the current CUDA device.
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
      */
     nixl_status_t
-    progressActiveRails(bool set_cuda_device = false);
+    progressActiveRails(ProgressCudaDevice cuda_device = ProgressCudaDevice::Keep);
 
     /** Validate that all rails are properly initialized
      * @return NIXL_SUCCESS if all rails initialized, error code otherwise
