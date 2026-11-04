@@ -59,9 +59,11 @@ execution-trace tools.
 
 `nixl::trace` is an **internal NIXL core API**: it is compiled into `libnixl` and none
 of its headers, under `src/core/tracing/`, are installed. Core code that traces
-includes one of them, `tracing/tracing.h`, which holds the call-site macros, `Kind`,
-`Span`, a request's trace state, and the tracer and the backends' sinks as opaque
-handles that `makeAgentTracer()` and `makeBackendTraceSink()` return. Plugins include
+includes one of them, `tracing/tracing.h`, which holds the call-site macros, the record
+vocabulary (`Record` and `Kind`, from `tracing/record.h`, which plugins share), `Span`,
+a request's trace state (`Traceable`, which also holds the tracer), and the tracer and
+the backends' sinks as opaque handles that `makeAgentTracer()` and
+`makeBackendTraceSink()` return. Plugins include
 `tracing/backend_trace.h` (see [Backend phases](#backend-phases)). The tracer itself,
 `TraceBackend` (`tracing/trace.h`), the plugin contract (`tracing/trace_plugin.h`),
 the sink and the wire codec are seen only by tracing, its backends and its tests. Only NIXL core instruments it today; because internal→public
@@ -203,6 +205,13 @@ backends/PRs):
 | `nixl::fetchRemoteMD` | `Metadata` | `remote_agent` |
 | `nixl::prepMemView` | `MemoryR` | `mem_type`, `desc_count` |
 | `nixl::releaseMemView` | `Generic` | - |
+
+Each name and its kind come from `nixl::trace::Record` in `tracing/record.h`, the one
+list of the agent's records and the backends' phases and spans. A call site names its
+record, such as `NIXL_TRACE_SCOPE(span, tracer, nixl::trace::Record::RegisterMem)`, and
+a request records its completion and errors itself, with
+`trace().record(nixl::trace::Record::XferComplete)`. NVTX registers the names in the
+list's order and finds a record's handle by its position.
 
 `nixl::getNotifs` is recorded only by a call that returns notifications, so polling an
 empty queue records nothing; it is emitted when the call returns, with its start and end

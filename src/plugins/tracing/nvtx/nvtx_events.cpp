@@ -30,17 +30,13 @@
 namespace nixl::trace::nvtx_internal {
 namespace {
 
-    constexpr std::string_view kRegisteredSpanNames[] = {
-        "nixl::registerMem",      "nixl::deregisterMem",   "nixl::makeConnection",
-        "nixl::makeXferReq",      "nixl::createXferReq",   "nixl::postXferReq.write",
-        "nixl::postXferReq.read", "nixl::genNotif",        "nixl::getNotifs",
-        "nixl::xfer.complete",    "nixl::loadRemoteMD",    "nixl::fetchRemoteMD",
-        "nixl::prepMemView",      "nixl::releaseMemView",  "nixl::submit",
-        "nixl::wire.submitted",   "nixl::wire.completed",  "nixl::notif.sent",
-        "nixl::notif.received",   "nixl::remote.observed", "nixl::span",
-        "nixl::wire.inflight",    "nixl::phase",           "nixl::xfer.error",
-        "nixl::releaseXferReq",
-    };
+    constexpr auto kRegisteredSpanNames = [] {
+        std::array<std::string_view, recordCount> names{};
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            names[i] = toStringView(static_cast<Record>(i));
+        }
+        return names;
+    }();
 
     [[nodiscard]] constexpr std::uint32_t
     colorFor(const Kind kind) noexcept {
@@ -197,12 +193,15 @@ registerSpanNames(const nvtxDomainHandle_t domain) {
 
 void
 eventForName(NvtxEvent &event,
-             const std::string_view name,
+             const Name record_name,
              const Kind kind,
              const nvtxDomainHandle_t domain,
              const std::vector<nvtxStringHandle_t> &registered_handles) {
     setEventBase(event.attributes, kind);
-    if (const auto index = registeredIndex(name)) {
+    const std::string_view name = record_name.view();
+    const auto record = record_name.record();
+    if (const auto index = record ? std::optional<std::size_t>(static_cast<std::size_t>(*record)) :
+                                    registeredIndex(name)) {
         if (registered_handles[*index] != nullptr) {
             setRegistered(event.attributes, registered_handles[*index]);
         } else {

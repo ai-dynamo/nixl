@@ -859,12 +859,12 @@ namespace {
 class throwingTraceBackend final : public nixl::trace::TraceBackend {
 public:
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
-    beginSpan(std::string_view, nixl::trace::Kind) override {
+    beginSpan(nixl::trace::Name, nixl::trace::Kind) override {
         throw std::runtime_error("beginSpan failed");
     }
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
-    beginContextSpan(std::string_view,
+    beginContextSpan(nixl::trace::Name,
                      nixl::trace::Kind,
                      const nixl::trace::TraceContext &,
                      std::uint64_t) override {
@@ -872,10 +872,10 @@ public:
     }
 
     void
-    mark(std::string_view, nixl::trace::Kind) override {}
+    mark(nixl::trace::Name, nixl::trace::Kind) override {}
 
     void
-    emitSpan(std::string_view,
+    emitSpan(nixl::trace::Name,
              nixl::trace::Kind,
              const nixl::trace::TraceContext &,
              std::uint64_t,
@@ -886,7 +886,7 @@ public:
     }
 
     void
-    emitEvent(std::string_view,
+    emitEvent(nixl::trace::Name,
               nixl::trace::Kind,
               const nixl::trace::TraceContext &,
               std::uint64_t,

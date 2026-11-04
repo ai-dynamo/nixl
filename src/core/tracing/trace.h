@@ -43,10 +43,10 @@ public:
     virtual ~TraceBackend() = default;
 
     [[nodiscard]] virtual std::unique_ptr<SpanBackend>
-    beginSpan(std::string_view name, Kind kind) = 0;
+    beginSpan(Name name, Kind kind) = 0;
 
     virtual void
-    mark(std::string_view name, Kind kind) = 0;
+    mark(Name name, Kind kind) = 0;
 
     virtual void
     pushContext(const TraceContext &context, std::uint64_t request_id) = 0;
@@ -74,7 +74,7 @@ public:
      *        is likewise the record's own, and 0 means none.
      */
     virtual void
-    emitSpan(std::string_view name,
+    emitSpan(Name name,
              Kind kind,
              const TraceContext &context,
              std::uint64_t request_id,
@@ -82,7 +82,7 @@ public:
              nixlTime::us_t end,
              std::span<const Attribute> attrs) = 0;
     virtual void
-    emitEvent(std::string_view name,
+    emitEvent(Name name,
               Kind kind,
               const TraceContext &context,
               std::uint64_t request_id,
@@ -95,7 +95,7 @@ public:
      *        span's own, as in emitSpan().
      */
     [[nodiscard]] virtual std::unique_ptr<SpanBackend>
-    beginContextSpan(std::string_view name,
+    beginContextSpan(Name name,
                      Kind kind,
                      const TraceContext &context,
                      std::uint64_t request_id) = 0;
@@ -161,20 +161,17 @@ public:
     }
 
     [[nodiscard]] Span
-    beginSpan(std::string_view name, Kind kind = Kind::Generic) {
+    beginSpan(Name name, Kind kind = Kind::Generic) {
         return detail::beginSpan(*this, name, kind);
     }
 
     [[nodiscard]] Span
-    beginContextSpan(std::string_view name,
-                     Kind kind,
-                     const TraceContext &context,
-                     std::uint64_t request_id) {
+    beginContextSpan(Name name, Kind kind, const TraceContext &context, std::uint64_t request_id) {
         return detail::beginContextSpan(*this, name, kind, context, request_id);
     }
 
     void
-    mark(std::string_view name, Kind kind = Kind::Metadata) {
+    mark(Name name, Kind kind = Kind::Metadata) {
         detail::mark(*this, name, kind);
     }
 
@@ -189,7 +186,7 @@ public:
     }
 
     void
-    emitSpan(std::string_view name,
+    emitSpan(Name name,
              Kind kind,
              const TraceContext &context,
              std::uint64_t request_id,
@@ -197,7 +194,7 @@ public:
              nixlTime::us_t end,
              std::span<const Attribute> attrs);
     void
-    emitEvent(std::string_view name,
+    emitEvent(Name name,
               Kind kind,
               const TraceContext &context,
               std::uint64_t request_id,

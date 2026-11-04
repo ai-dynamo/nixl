@@ -31,23 +31,6 @@ namespace {
     constexpr std::size_t inline_record_attrs = 12;
 
     [[nodiscard]] constexpr Kind
-    phaseKind(nixl_trace_phase_t phase) noexcept {
-        switch (phase) {
-        case nixl_trace_phase_t::NOTIF_SENT:
-            return Kind::CommSend;
-        case nixl_trace_phase_t::NOTIF_RECEIVED:
-            return Kind::CommRecv;
-        case nixl_trace_phase_t::SUBMIT:
-        case nixl_trace_phase_t::WIRE_SUBMITTED:
-        case nixl_trace_phase_t::WIRE_COMPLETED:
-        case nixl_trace_phase_t::REMOTE_OBSERVED:
-        case nixl_trace_phase_t::OTHER:
-            return Kind::Metadata;
-        }
-        return Kind::Metadata;
-    }
-
-    [[nodiscard]] constexpr Kind
     operationKind(nixl_xfer_op_t operation) noexcept {
         switch (operation) {
         case NIXL_WRITE:
@@ -119,8 +102,8 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
            identity,
            attrs,
            [&](std::span<const Attribute> event_attrs) {
-               tracer_.emitEvent(named ? label : toStringView(phase),
-                                 phaseKind(phase),
+               tracer_.emitEvent(named ? Name(label) : Name(toRecord(phase)),
+                                 kindOf(toRecord(phase)),
                                  identity.context,
                                  identity.requestId,
                                  timestamp,
@@ -143,7 +126,7 @@ TracerPhaseSink::recordSpan(nixl_trace_span_t span,
            identity,
            attrs,
            [&](std::span<const Attribute> span_attrs) {
-               tracer_.emitSpan(named ? label : toStringView(span),
+               tracer_.emitSpan(named ? Name(label) : Name(toRecord(span)),
                                 operationKind(operation),
                                 identity.context,
                                 identity.requestId,

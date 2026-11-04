@@ -28,7 +28,7 @@ namespace {
 
 void
 emitSpanTo(std::span<const std::unique_ptr<nixl::trace::TraceBackend>> backends,
-           std::string_view name,
+           nixl::trace::Name name,
            nixl::trace::Kind kind,
            const nixl::trace::TraceContext &context,
            std::uint64_t request_id,
@@ -42,7 +42,7 @@ emitSpanTo(std::span<const std::unique_ptr<nixl::trace::TraceBackend>> backends,
 
 void
 emitEventTo(std::span<const std::unique_ptr<nixl::trace::TraceBackend>> backends,
-            std::string_view name,
+            nixl::trace::Name name,
             nixl::trace::Kind kind,
             const nixl::trace::TraceContext &context,
             std::uint64_t request_id,
@@ -131,7 +131,7 @@ Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
 Tracer::~Tracer() = default;
 
 void
-Tracer::emitSpan(std::string_view name,
+Tracer::emitSpan(Name name,
                  Kind kind,
                  const TraceContext &context,
                  std::uint64_t request_id,
@@ -142,7 +142,7 @@ Tracer::emitSpan(std::string_view name,
 }
 
 void
-Tracer::emitEvent(std::string_view name,
+Tracer::emitEvent(Name name,
                   Kind kind,
                   const TraceContext &context,
                   std::uint64_t request_id,
@@ -154,7 +154,7 @@ Tracer::emitEvent(std::string_view name,
 /*** Call sites ***/
 
 Span
-detail::beginSpan(Tracer &tracer, std::string_view name, Kind kind) {
+detail::beginSpan(Tracer &tracer, Name name, Kind kind) {
     Span span;
     std::size_t count = 0;
     for (const auto &backend : tracer.backends()) {
@@ -172,7 +172,7 @@ detail::beginSpan(Tracer &tracer, std::string_view name, Kind kind) {
 
 Span
 detail::beginContextSpan(Tracer &tracer,
-                         std::string_view name,
+                         Name name,
                          Kind kind,
                          const TraceContext &context,
                          std::uint64_t request_id) {
@@ -190,7 +190,7 @@ detail::beginContextSpan(Tracer &tracer,
 }
 
 void
-detail::mark(Tracer &tracer, std::string_view name, Kind kind) {
+detail::mark(Tracer &tracer, Name name, Kind kind) {
     for (const auto &backend : tracer.backends()) {
         backend->mark(name, kind);
     }
@@ -212,7 +212,7 @@ detail::popContext(Tracer &tracer) {
 
 void
 detail::emitEvent(Tracer &tracer,
-                  std::string_view name,
+                  Name name,
                   Kind kind,
                   const TraceContext &context,
                   std::uint64_t request_id,
@@ -227,7 +227,7 @@ detail::emitEvent(Tracer &tracer,
 }
 
 void
-detail::emitSpan(Tracer &tracer, std::string_view name, Kind kind, nixlTime::us_t start) {
+detail::emitSpan(Tracer &tracer, Name name, Kind kind, nixlTime::us_t start) {
     emitSpanTo(tracer.backends(), name, kind, TraceContext{}, 0, start, nixlTime::getUs(), {});
 }
 

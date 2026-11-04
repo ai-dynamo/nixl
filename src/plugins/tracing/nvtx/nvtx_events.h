@@ -47,7 +47,7 @@ registerSpanNames(nvtxDomainHandle_t domain);
  *         registered on @p domain when it does not fit. */
 void
 eventForName(NvtxEvent &event,
-             std::string_view name,
+             Name name,
              Kind kind,
              nvtxDomainHandle_t domain,
              const std::vector<nvtxStringHandle_t> &registered_handles);

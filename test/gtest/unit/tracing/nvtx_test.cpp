@@ -40,17 +40,14 @@ namespace nvtx = nixl::trace::nvtx_internal;
 static_assert(!std::is_copy_constructible_v<nvtx::NvtxEvent>);
 static_assert(!std::is_copy_assignable_v<nvtx::NvtxEvent>);
 
-constexpr std::string_view fixed_names[] = {
-    "nixl::registerMem",      "nixl::deregisterMem",   "nixl::makeConnection",
-    "nixl::makeXferReq",      "nixl::createXferReq",   "nixl::postXferReq.write",
-    "nixl::postXferReq.read", "nixl::genNotif",        "nixl::getNotifs",
-    "nixl::xfer.complete",    "nixl::loadRemoteMD",    "nixl::fetchRemoteMD",
-    "nixl::prepMemView",      "nixl::releaseMemView",  "nixl::submit",
-    "nixl::wire.submitted",   "nixl::wire.completed",  "nixl::notif.sent",
-    "nixl::notif.received",   "nixl::remote.observed", "nixl::span",
-    "nixl::wire.inflight",    "nixl::phase",           "nixl::xfer.error",
-    "nixl::releaseXferReq",
-};
+[[nodiscard]] std::vector<nixl::trace::Record>
+allRecords() {
+    std::vector<nixl::trace::Record> records;
+    for (std::size_t i = 0; i < nixl::trace::recordCount; ++i) {
+        records.push_back(static_cast<nixl::trace::Record>(i));
+    }
+    return records;
+}
 
 [[nodiscard]] std::vector<nvtxStringHandle_t>
 unregisteredHandles() {
@@ -70,9 +67,10 @@ registeredHandles() {
 
 TEST(NvtxEvents, FixedNameWithoutRegistrationCarriesItsOwnText) {
     const auto handles = unregisteredHandles();
-    for (const std::string_view name : fixed_names) {
+    for (const nixl::trace::Record record : allRecords()) {
+        const std::string_view name = nixl::trace::toStringView(record);
         nvtx::NvtxEvent event;
-        nvtx::eventForName(event, name, nixl::trace::Kind::Generic, nullptr, handles);
+        nvtx::eventForName(event, record, nixl::trace::Kind::Generic, nullptr, handles);
         EXPECT_EQ(event.attributes.messageType, NVTX_MESSAGE_TYPE_ASCII) << name;
         EXPECT_EQ(std::string_view(event.attributes.message.ascii), name);
         EXPECT_NE(event.attributes.message.ascii, event.message.data()) << name;
@@ -82,14 +80,30 @@ TEST(NvtxEvents, FixedNameWithoutRegistrationCarriesItsOwnText) {
 TEST(NvtxEvents, FixedNameCarriesItsRegisteredHandle) {
     const auto handles = registeredHandles();
     std::set<nvtxStringHandle_t> seen;
-    for (const std::string_view name : fixed_names) {
+    for (const nixl::trace::Record record : allRecords()) {
+        const std::string_view name = nixl::trace::toStringView(record);
         nvtx::NvtxEvent event;
-        nvtx::eventForName(event, name, nixl::trace::Kind::Generic, nullptr, handles);
+        nvtx::eventForName(event, record, nixl::trace::Kind::Generic, nullptr, handles);
         EXPECT_EQ(event.attributes.messageType, NVTX_MESSAGE_TYPE_REGISTERED) << name;
         EXPECT_NE(event.attributes.message.registered, nullptr) << name;
         seen.insert(event.attributes.message.registered);
     }
-    EXPECT_EQ(seen.size(), std::size(fixed_names));
+    EXPECT_EQ(seen.size(), nixl::trace::recordCount);
+}
+
+TEST(NvtxEvents, FixedNameGivenAsTextFindsItsRecordsHandle) {
+    const auto handles = registeredHandles();
+    for (const nixl::trace::Record record : allRecords()) {
+        const std::string_view name = nixl::trace::toStringView(record);
+        nvtx::NvtxEvent by_record;
+        nvtx::NvtxEvent by_text;
+        nvtx::eventForName(by_record, record, nixl::trace::Kind::Generic, nullptr, handles);
+        nvtx::eventForName(
+            by_text, nixl::trace::Name(name), nixl::trace::Kind::Generic, nullptr, handles);
+        EXPECT_EQ(by_text.attributes.messageType, NVTX_MESSAGE_TYPE_REGISTERED) << name;
+        EXPECT_EQ(by_text.attributes.message.registered, by_record.attributes.message.registered)
+            << name;
+    }
 }
 
 TEST(NvtxEvents, OtherNameIsCopiedIntoTheEvent) {
@@ -100,7 +114,8 @@ TEST(NvtxEvents, OtherNameIsCopiedIntoTheEvent) {
                                         std::string_view("rail::wire.submitted"),
                                         std::string_view("span")}) {
         nvtx::NvtxEvent event;
-        nvtx::eventForName(event, name, nixl::trace::Kind::Metadata, nullptr, handles);
+        nvtx::eventForName(
+            event, nixl::trace::Name(name), nixl::trace::Kind::Metadata, nullptr, handles);
         EXPECT_EQ(event.attributes.messageType, NVTX_MESSAGE_TYPE_ASCII) << name;
         EXPECT_EQ(event.attributes.message.ascii, event.message.data()) << name;
         EXPECT_EQ(std::string_view(event.attributes.message.ascii), name);
@@ -110,7 +125,11 @@ TEST(NvtxEvents, OtherNameIsCopiedIntoTheEvent) {
 TEST(NvtxEvents, OtherNameThatDoesNotFitIsRegistered) {
     const std::string name(nvtx::NvtxEvent{}.message.size(), 'x');
     nvtx::NvtxEvent event;
-    nvtx::eventForName(event, name, nixl::trace::Kind::Metadata, nullptr, unregisteredHandles());
+    nvtx::eventForName(event,
+                       nixl::trace::Name(std::string_view(name)),
+                       nixl::trace::Kind::Metadata,
+                       nullptr,
+                       unregisteredHandles());
     EXPECT_EQ(event.attributes.messageType, NVTX_MESSAGE_TYPE_REGISTERED);
 }
 

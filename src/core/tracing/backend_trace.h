@@ -35,6 +35,7 @@
 #include "common/nixl_time.h"
 #include "nixl_types.h"
 #include "tracing/attribute_key.h"
+#include "tracing/record.h"
 #include "tracing/trace_identity.h"
 
 class nixlSerDes;
@@ -66,25 +67,30 @@ enum class nixl_trace_phase_t : std::uint8_t {
     OTHER,
 };
 
-[[nodiscard]] constexpr std::string_view
-toStringView(nixl_trace_phase_t phase) noexcept {
+[[nodiscard]] constexpr nixl::trace::Record
+toRecord(nixl_trace_phase_t phase) noexcept {
     switch (phase) {
     case nixl_trace_phase_t::SUBMIT:
-        return "nixl::submit";
+        return nixl::trace::Record::Submit;
     case nixl_trace_phase_t::WIRE_SUBMITTED:
-        return "nixl::wire.submitted";
+        return nixl::trace::Record::WireSubmitted;
     case nixl_trace_phase_t::WIRE_COMPLETED:
-        return "nixl::wire.completed";
+        return nixl::trace::Record::WireCompleted;
     case nixl_trace_phase_t::NOTIF_SENT:
-        return "nixl::notif.sent";
+        return nixl::trace::Record::NotifSent;
     case nixl_trace_phase_t::NOTIF_RECEIVED:
-        return "nixl::notif.received";
+        return nixl::trace::Record::NotifReceived;
     case nixl_trace_phase_t::REMOTE_OBSERVED:
-        return "nixl::remote.observed";
+        return nixl::trace::Record::RemoteObserved;
     case nixl_trace_phase_t::OTHER:
-        return "nixl::phase";
+        return nixl::trace::Record::Phase;
     }
-    return "nixl::phase";
+    return nixl::trace::Record::Phase;
+}
+
+[[nodiscard]] constexpr std::string_view
+toStringView(nixl_trace_phase_t phase) noexcept {
+    return nixl::trace::toStringView(toRecord(phase));
 }
 
 /**
@@ -104,15 +110,20 @@ enum class nixl_trace_span_t : std::uint8_t {
     OTHER,
 };
 
-[[nodiscard]] constexpr std::string_view
-toStringView(nixl_trace_span_t span) noexcept {
+[[nodiscard]] constexpr nixl::trace::Record
+toRecord(nixl_trace_span_t span) noexcept {
     switch (span) {
     case nixl_trace_span_t::WIRE_INFLIGHT:
-        return "nixl::wire.inflight";
+        return nixl::trace::Record::WireInflight;
     case nixl_trace_span_t::OTHER:
-        return "nixl::span";
+        return nixl::trace::Record::Span;
     }
-    return "nixl::span";
+    return nixl::trace::Record::Span;
+}
+
+[[nodiscard]] constexpr std::string_view
+toStringView(nixl_trace_span_t span) noexcept {
+    return nixl::trace::toStringView(toRecord(span));
 }
 
 /**
