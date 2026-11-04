@@ -248,79 +248,69 @@ else
     add_languages('cuda', native: false)
     add_project_arguments('-std=c++20', language: 'cuda')
     cuda = meson.get_compiler('cuda')
-    if not cuda.version().version_compare('>=12.8')
-        message(
-            'NIXL Device API is unavailable because CUDA ' +
-            cuda.version() + ' is older than 12.8.')
-    else
-        if cuda.version().version_compare('>=12.9') and cuda.version().version_compare('<12.10')
-            ucx_device_cuda_args += ['-D_LIBCUDACXX_ATOMIC_UNSAFE_AUTOMATIC_STORAGE']
-            message('Applying CUDA 12.9 atomic storage flag')
+    doca_gpunetio_dep = dependency('doca-gpunetio', required: false)
+    if ucx_device_cuda_arch_list == 'auto'
+        ucx_device_cuda_arch_list = '80,86,89,90,100,103,120'
+    endif
+    selected_cuda_archs = []
+    nvcc_ptx_arch_num = 0
+    foreach cuda_arch : ucx_device_cuda_arch_list.split(',')
+        cuda_arch = cuda_arch.strip()
+        if cuda_arch == ''
+            continue
         endif
-        doca_gpunetio_dep = dependency('doca-gpunetio', required: false)
-        if ucx_device_cuda_arch_list == 'auto'
-            ucx_device_cuda_arch_list = '80,86,89,90,100,103,120'
+        if cuda_arch.startswith('sm_')
+            cuda_arch = cuda_arch.replace('sm_', '')
         endif
-        selected_cuda_archs = []
-        nvcc_ptx_arch_num = 0
-        foreach cuda_arch : ucx_device_cuda_arch_list.split(',')
-            cuda_arch = cuda_arch.strip()
-            if cuda_arch == ''
-                continue
-            endif
-            if cuda_arch.startswith('sm_')
-                cuda_arch = cuda_arch.replace('sm_', '')
-            endif
-            # Validate format early so invalid option values fail fast.
-            cuda_arch_num = cuda_arch.to_int()
-            if cuda_arch_num > nvcc_ptx_arch_num
-                nvcc_ptx_arch_num = cuda_arch_num
-            endif
-            ucx_device_cuda_args += [
-                '-gencode=arch=compute_' + cuda_arch + ',code=sm_' + cuda_arch,
-            ]
-            selected_cuda_archs += ['sm_' + cuda_arch]
-        endforeach
-        if selected_cuda_archs.length() == 0
-            error('No CUDA targets selected for device kernels')
+        # Validate format early so invalid option values fail fast.
+        cuda_arch_num = cuda_arch.to_int()
+        if cuda_arch_num > nvcc_ptx_arch_num
+            nvcc_ptx_arch_num = cuda_arch_num
         endif
-        nvcc_ptx_arch = 'compute_' + nvcc_ptx_arch_num.to_string()
         ucx_device_cuda_args += [
-            '-gencode=arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch,
+            '-gencode=arch=compute_' + cuda_arch + ',code=sm_' + cuda_arch,
         ]
-        message(
-            'UCX device kernel CUDA targets: ' +
-            ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
+        selected_cuda_archs += ['sm_' + cuda_arch]
+    endforeach
+    if selected_cuda_archs.length() == 0
+        error('No CUDA targets selected for device kernels')
+    endif
+    nvcc_ptx_arch = 'compute_' + nvcc_ptx_arch_num.to_string()
+    ucx_device_cuda_args += [
+        '-gencode=arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch,
+    ]
+    message(
+        'UCX device kernel CUDA targets: ' +
+        ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
 
-        have_gpu_side = cuda.compiles(
-            '''
-            #include <ucp/api/device/ucp_device_impl.h>
-            int main() { return 0; }
-            ''',
-            dependencies: [ucx_dep, doca_gpunetio_dep],
-            args: ucx_device_cuda_args,
-            name: 'UCX GPU-side Device API')
+    have_gpu_side = cuda.compiles(
+        '''
+        #include <ucp/api/device/ucp_device_impl.h>
+        int main() { return 0; }
+        ''',
+        dependencies: [ucx_dep, doca_gpunetio_dep],
+        args: ucx_device_cuda_args,
+        name: 'UCX GPU-side Device API')
 
-        have_nixl_device_api = cuda.compiles(
-            '''
-            #include <gpu/nixl_device.cuh>
-            int main() { return 0; }
-            ''',
-            dependencies: [ucx_dep, doca_gpunetio_dep],
-            args: ['-I' + nixl_inc] + ucx_device_cuda_args,
-            name: 'NIXL Device API')
-        if have_nixl_device_api
-            nixl_device_api_available = true
-            add_project_arguments('-DNIXLBENCH_DEVICE_API', language: ['cpp', 'cuda'])
-        endif
+    have_nixl_device_api = cuda.compiles(
+        '''
+        #include <gpu/nixl_device.cuh>
+        int main() { return 0; }
+        ''',
+        dependencies: [ucx_dep, doca_gpunetio_dep],
+        args: ['-I' + nixl_inc] + ucx_device_cuda_args,
+        name: 'NIXL Device API')
+    if have_nixl_device_api
+        nixl_device_api_available = true
+        add_project_arguments('-DNIXLBENCH_DEVICE_API', language: ['cpp', 'cuda'])
+    endif
 
-        if have_gpu_side and have_nixl_device_api
-            message('UCX Device API is ready for nixlbench.')
-            ucx_gpu_device_api_available = true
-            add_project_arguments(
-                '-DHAVE_UCX_GPU_DEVICE_API',
-                language: ['cpp', 'cuda'])
-        endif
+    if have_gpu_side and have_nixl_device_api
+        message('UCX Device API is ready for nixlbench.')
+        ucx_gpu_device_api_available = true
+        add_project_arguments(
+            '-DHAVE_UCX_GPU_DEVICE_API',
+            language: ['cpp', 'cuda'])
     endif
 endif
 
