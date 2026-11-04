@@ -22,6 +22,7 @@ ARG UCX_VERSION=v1.23.x
 ARG HAS_GPU=true
 ARG BUILD_NIXL_EP=false
 ARG NIXL_PYTHON
+ARG DOCA_KV_ENV
 ARG WORKSPACE=/workspace/nixl
 
 
@@ -35,7 +36,12 @@ COPY --chown="${_UID}":"${_GID}" . .
 # Use the internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable).
 # CI supplies a github.com credential as the optional "ghconfig" build secret for
 # build.sh's clones, including meson's [wrap-git] subprojects.
-RUN --mount=type=secret,id=ghconfig,mode=0444 . /etc/os-release && \
+# ssh_key/git_user/git_pass are only supplied by the CMX job (DOCA_KV_ENV); unsupplied, they are skipped.
+RUN --mount=type=secret,id=ghconfig,mode=0444 \
+    --mount=type=secret,id=ssh_key,mode=0400,uid=${_UID},gid=${_GID} \
+    --mount=type=secret,id=git_user,uid=${_UID},gid=${_GID} \
+    --mount=type=secret,id=git_pass,uid=${_UID},gid=${_GID} \
+    . /etc/os-release && \
     printf '%s\n' \
         'Types: deb' \
         'URIs: https://artifactory.nvidia.com/artifactory/ubuntu-public' \
