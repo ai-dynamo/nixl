@@ -1172,6 +1172,74 @@ namespace agent {
         }
     };
 
+    class releaseCapabilityFixture : public singleAgentSessionFixture,
+                                     public testing::WithParamInterface<std::string> {
+        ScopedEnv capability_env_;
+
+    protected:
+        void
+        SetUp() override {
+            capability_env_.addVar("NIXL_TEST_MOCK_XFER_CANCEL", GetParam());
+            singleAgentSessionFixture::SetUp();
+        }
+
+        void
+        TearDown() override {
+            agent_helper_.reset();
+        }
+    };
+
+    TEST_P(releaseCapabilityFixture, PluginCapabilityIsCachedAndCannotBeOverridden) {
+        const bool cancellable = GetParam() == "true";
+        selfXferSetup setup;
+        nixl_b_params_t params{{"supports_xfer_cancel", cancellable ? "false" : "true"}};
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, setup.backend), NIXL_SUCCESS);
+        ASSERT_EQ(agent_helper_->initAndRegisterMemory(
+                      setup.localBlob, setup.regDlist, setup.extraParams, setup.backend),
+                  NIXL_SUCCESS);
+        setup.xferDlist.addDesc(setup.localBlob.getDesc());
+        // Changing the plugin's map after creation must not change the cached capability.
+        ScopedEnv changed_capability;
+        changed_capability.addVar("NIXL_TEST_MOCK_XFER_CANCEL", cancellable ? "false" : "true");
+
+        nixlBackendReqH backend_request;
+        const auto &engine = agent_helper_->getGMockEngine();
+        EXPECT_CALL(engine, prepXfer)
+            .WillOnce([&](const auto &,
+                          const auto &,
+                          const auto &,
+                          const auto &,
+                          nixlBackendReqH *&request,
+                          const auto *) {
+                request = &backend_request;
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(engine, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+        nixlXferReqH *request = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, request), NIXL_SUCCESS);
+        ASSERT_EQ(agent_->postXferReq(request), NIXL_IN_PROG);
+
+        EXPECT_CALL(engine, checkXfer(&backend_request))
+            .WillOnce(testing::Return(NIXL_IN_PROG))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        if (cancellable) {
+            EXPECT_CALL(engine, releaseReqH(&backend_request))
+                .WillOnce(testing::Return(NIXL_ERR_NOT_ALLOWED));
+        } else {
+            EXPECT_CALL(engine, releaseReqH).Times(0);
+        }
+        ASSERT_EQ(agent_->releaseXferReq(request), NIXL_ERR_REPOST_ACTIVE);
+        ASSERT_EQ(agent_->getXferStatus(request), NIXL_SUCCESS);
+        ASSERT_TRUE(testing::Mock::VerifyAndClearExpectations(
+            const_cast<mocks::GMockBackendEngine *>(&engine)));
+        EXPECT_CALL(engine, releaseReqH(&backend_request)).WillOnce(testing::Return(NIXL_SUCCESS));
+        EXPECT_EQ(agent_->releaseXferReq(request), NIXL_SUCCESS);
+    }
+
+    INSTANTIATE_TEST_SUITE_P(PluginOptions,
+                             releaseCapabilityFixture,
+                             testing::Values("", "false", "TRUE", "1", "true"));
+
     class dualAgentBridgeFixture : public testing::Test {
     protected:
         std::unique_ptr<agentHelper> local_agent_helper_, remote_agent_helper_;

@@ -446,7 +446,12 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     }
 
     // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
-    std::unique_ptr<nixlBackendH> bknd_temp(new nixlBackendH(backend.get()));
+    // Capabilities come from the plugin, never from caller-supplied parameters.
+    const auto plugin_options = plugin_handle->getBackendOptions();
+    const auto cancel_option = plugin_options.find("supports_xfer_cancel");
+    const bool supports_xfer_cancel =
+        cancel_option != plugin_options.end() && cancel_option->second == "true";
+    std::unique_ptr<nixlBackendH> bknd_temp(new nixlBackendH(backend.get(), supports_xfer_cancel));
     const auto [it, inserted] = data->backendHandles_.try_emplace(type, std::move(bknd_temp));
     NIXL_ASSERT(inserted);
     bknd_hndl = it->second.get();
@@ -1443,7 +1448,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
         trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(req_hndl->traceExecution()));
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    //attempt to cancel request
+    // Refresh the transfer status before deciding whether release needs cancellation.
     if(req_hndl->status == NIXL_IN_PROG) {
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
@@ -1456,6 +1461,14 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
             traceXferError(data->tracer_.get(), *req_hndl, req_hndl->status);
             data->addErrorTelemetry(req_hndl->status);
         }
+    }
+    if (req_hndl->status == NIXL_IN_PROG &&
+        !data->backendHandles_.at(req_hndl->engine->getType())->supportsXferCancel) {
+        NIXL_DEBUG << "backend '" << req_hndl->engine->getType()
+                   << "' does not support cancellation of active transfers";
+        NIXL_TRACE_ATTR(
+            trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_REPOST_ACTIVE));
+        return NIXL_ERR_REPOST_ACTIVE;
     }
     // Honor backend release refusal in every cached transfer state. Only a
     // successful release transfers ownership away from the caller.

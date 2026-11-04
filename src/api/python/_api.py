@@ -736,17 +736,19 @@ class nixl_agent:
 
         On refusal, the handle remains valid. Keep the agents, buffers, and memory
         registrations alive. Poll a pending transfer with check_xfer_state() and
-        retry after completion. UCX cannot cancel RMA and refuses release while
-        it reports pending work, including an in-flight notification. Backend
-        failures may prevent release indefinitely; agent destruction is not a
-        completion barrier for outstanding handles.
+        retry after completion. A transfer still reported in progress, including
+        an in-flight notification, can be released only if the backend supports
+        cancellation and successfully releases it. Backend failures may prevent release
+        indefinitely; agent destruction is not a completion barrier for
+        outstanding handles.
 
         Args:
             handle: Handle to the transfer operation from initialize_xfer or make_xfer.
 
         Raises:
-            nixlRepostActiveError: The backend refused release. Only successful
-                release invalidates the handle.
+            nixlRepostActiveError: The transfer is still active without
+                cancellation support, or the backend refused release. Only
+                successful release invalidates the handle.
         """
         handle.release()
 
