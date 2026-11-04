@@ -31,6 +31,7 @@
 #include <string_view>
 
 #include "common/nixl_time.h"
+#include "nixl_types.h"
 
 namespace nixl::trace {
 struct TraceContext;
@@ -85,10 +86,39 @@ toStringView(nixl_trace_phase_t phase) noexcept {
 }
 
 /**
- * @brief One key/value attribute on a recorded phase.
+ * @brief Fixed set of backend spans, the intervals a backend records with
+ *        @ref nixlBackendTraceSink::recordSpan.
+ *
+ * Closed on purpose, like @ref nixl_trace_phase_t, and apart from it: no span
+ * is named like a phase.
+ */
+enum class nixl_trace_span_t : std::uint8_t {
+    /** @brief The transfer in flight, from its @ref nixl_trace_phase_t::SUBMIT
+     *         to its @ref nixl_trace_phase_t::WIRE_COMPLETED. */
+    WIRE_INFLIGHT,
+    /** @brief Anything the vocabulary above does not cover; name it with the
+     *         `label` argument of @ref nixlBackendTraceSink::recordSpan. Meant
+     *         to be the rare escape hatch, not the default. */
+    OTHER,
+};
+
+[[nodiscard]] constexpr std::string_view
+toStringView(nixl_trace_span_t span) noexcept {
+    switch (span) {
+    case nixl_trace_span_t::WIRE_INFLIGHT:
+        return "nixl::wire.inflight";
+    case nixl_trace_span_t::OTHER:
+        return "nixl::span";
+    }
+    return "nixl::span";
+}
+
+/**
+ * @brief One key/value attribute on a recorded phase or span.
  *
  * Both views must stay valid only for the duration of the
- * @ref nixlBackendTraceSink::recordPhase call; the sink copies what it retains.
+ * @ref nixlBackendTraceSink::recordPhase or @ref nixlBackendTraceSink::recordSpan
+ * call; the sink copies what it retains.
  */
 struct nixlBackendTraceAttr {
     std::string_view key;
@@ -96,7 +126,7 @@ struct nixlBackendTraceAttr {
 };
 
 /**
- * @brief Sink a backend uses to record a phase of its own work.
+ * @brief Sink a backend uses to record a phase or a span of its own work.
  *
  * Implemented by core, never by a plugin. A backend receives one through
  * `nixlBackendInitParams::traceSink`, which is null when tracing is off -- so
@@ -144,6 +174,45 @@ public:
                 const nixl::trace::TraceContext *context = nullptr,
                 std::uint64_t request_id = 0,
                 std::uint64_t execution = 0) noexcept = 0;
+
+    /**
+     * @brief Record that @p span lasted from @p start to @p end.
+     *
+     * @param span      Which span; see @ref nixl_trace_span_t.
+     * @param operation Direction of the span's transfer: the span is recorded
+     *                  as a send (`CommSend`) for `NIXL_WRITE` and as a receive
+     *                  (`CommRecv`) for `NIXL_READ`.
+     * @param label     Name for a @ref nixl_trace_span_t::OTHER span. Recorded
+     *                  as `nixl.span.label` for every span, and additionally used
+     *                  as the span name for `OTHER`. May be empty.
+     * @param start     When the span began, on the clock of @ref recordPhase's
+     *                  `timestamp`. Recorded verbatim as the span's start.
+     * @param end       When the span ended, on the same clock. Recorded verbatim
+     *                  as the span's end.
+     * @param attrs     Extra attributes; see @ref nixlBackendTraceAttr for the
+     *                  lifetime rule, which applies to @p label as well.
+     * @param context   Trace context the span belongs to, or null. Valid for the
+     *                  call only; recorded as `nixl.traceparent`.
+     * @param request_id Request id of the span's transfer request, or 0 for none;
+     *                   recorded as `nixl.xfer_request_id` when non-zero, and the
+     *                   span is correlated on it.
+     * @param execution Execution number of the post the span belongs to, or 0 for
+     *                  none; recorded as `nixl.xfer_execution` when non-zero.
+     *
+     * Safe to call concurrently from any thread, including a progress thread,
+     * and `noexcept` for the same reasons as @ref recordPhase; each call records
+     * one span, and a span that fails to record is dropped like a phase.
+     */
+    virtual void
+    recordSpan(nixl_trace_span_t span,
+               nixl_xfer_op_t operation,
+               std::string_view label,
+               nixlTime::us_t start,
+               nixlTime::us_t end,
+               std::span<const nixlBackendTraceAttr> attrs = {},
+               const nixl::trace::TraceContext *context = nullptr,
+               std::uint64_t request_id = 0,
+               std::uint64_t execution = 0) noexcept = 0;
 };
 
 #endif // NIXL_SRC_CORE_TRACING_BACKEND_TRACE_H
