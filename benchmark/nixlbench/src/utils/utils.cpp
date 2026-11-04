@@ -1300,8 +1300,8 @@ copyVramToHost(void *host_addr, const void *device_addr, size_t len) {
     CHECK_CUDA_ERROR(cudaMemcpy(host_addr, (void *)device_addr, len, cudaMemcpyDeviceToHost),
                      "cudaMemcpy failed");
 #elif HAVE_ROCM
-    CHECK_CUDA_ERROR(hipMemcpy(host_addr, (void *)device_addr, len, hipMemcpyDeviceToHost),
-                     "hipMemcpy failed");
+    CHECK_HIP_ERROR(hipMemcpy(host_addr, (void *)device_addr, len, hipMemcpyDeviceToHost),
+                    "hipMemcpy failed");
 #else
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     exit(EXIT_FAILURE);

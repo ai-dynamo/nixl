@@ -61,7 +61,7 @@
 #elif HAVE_ROCM
 #include <hip/hip_runtime.h>
 
-#define CHECK_CUDA_ERROR(result, message)                                      \
+#define CHECK_HIP_ERROR(result, message)                                       \
     do {                                                                       \
         const auto _r = (result);                                              \
         if (_r != hipSuccess) {                                                \

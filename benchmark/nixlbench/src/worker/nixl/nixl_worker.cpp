@@ -732,15 +732,15 @@ cleanupVramCuda(xferBenchIOV &iov) {
 static std::optional<xferBenchIOV>
 getVramDescRocm(int devid, size_t buffer_size, uint8_t memset_value) {
     void *addr;
-    CHECK_CUDA_ERROR(hipMalloc(&addr, buffer_size), "Failed to allocate ROCm buffer");
-    CHECK_CUDA_ERROR(hipMemset(addr, memset_value, buffer_size), "Failed to set device memory");
+    CHECK_HIP_ERROR(hipMalloc(&addr, buffer_size), "Failed to allocate ROCm buffer");
+    CHECK_HIP_ERROR(hipMemset(addr, memset_value, buffer_size), "Failed to set device memory");
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
 }
 
 static void
 cleanupVramRocm(xferBenchIOV &iov) {
-    CHECK_CUDA_ERROR(hipSetDevice(iov.devId), "Failed to set device");
-    CHECK_CUDA_ERROR(hipFree((void *)iov.addr), "Failed to deallocate ROCm buffer");
+    CHECK_HIP_ERROR(hipSetDevice(iov.devId), "Failed to set device");
+    CHECK_HIP_ERROR(hipFree((void *)iov.addr), "Failed to deallocate ROCm buffer");
 }
 #endif /* HAVE_ROCM */
 
@@ -761,7 +761,7 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
         return getVramDescCuda(devid, buffer_size, memset_value);
     }
 #elif HAVE_ROCM
-    CHECK_CUDA_ERROR(hipSetDevice(devid), "Failed to set device");
+    CHECK_HIP_ERROR(hipSetDevice(devid), "Failed to set device");
     return getVramDescRocm(devid, buffer_size, memset_value);
 #else
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
