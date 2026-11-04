@@ -33,9 +33,9 @@ gtest_inc_dirs = include_directories('.')
 # Sanitizer runtime configuration. Built once and shared by every instrumented
 # test (tagged with the 'sanitizer' suite) so `meson test --suite sanitizer`
 # runs them with halt-on-error semantics and the third-party suppression lists.
-# When -Dsanitizer=none the environment stays empty, so tagging tests with the
-# suite is harmless for normal builds.
-sanitizer_opts = get_option('sanitizer').split(',')
+# Without -Dsanitizer or -Db_sanitize the environment stays empty, so tagging
+# tests with the suite is harmless for normal builds.
+sanitizer_opts = get_option('sanitizer').split(',') + get_option('b_sanitize').split(',')
 sanitizer_env = environment()
 sanitizer_supp_dir = meson.current_source_dir() / 'sanitizer'
 if sanitizer_opts.contains('address')

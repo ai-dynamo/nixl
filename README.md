@@ -182,7 +182,7 @@ $ meson setup build -Drocm_path=/custom/path/to/rocm
 **Plugins on ROCm hosts (CUDA toolchain absent):**
 - `UCX` — primary transport for AMD GPU memory (requires UCX built with `--with-rocm`).
 - `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
-- `MOONCAKE` — the Mooncake Transfer Engine must be built with `-DUSE_HIP=ON` to transfer AMD GPU memory, as `.gitlab/build-rocm.sh` does.
+- `MOONCAKE` — needs a Transfer Engine built with `-DUSE_HIP=ON` for AMD GPU memory.
 - `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — skip automatically because their CUDA / cuFile / DOCA dependencies are not found.
 
 **Known gaps (will be addressed in follow-up PRs):**

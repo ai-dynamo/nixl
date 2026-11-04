@@ -158,7 +158,7 @@ protected:
 
         if (getBackendName() == "MOONCAKE") {
             // TCP loopback on host memory: CI hosts may expose RDMA devices the
-            // test cannot use, and CI builds Mooncake without GPU support.
+            // test cannot use, and build.sh builds Mooncake without GPU support.
             env.addVar("MC_FORCE_TCP", "1");
             env.addVar("NIXL_MOONCAKE_IP_ADDR", "127.0.0.1");
             m_gpu_device = false;

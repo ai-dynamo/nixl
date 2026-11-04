@@ -10,7 +10,6 @@
  */
 {
   local:
-    asio_*;
     extern "C++" {
       asio_*;
       *asio::*;
