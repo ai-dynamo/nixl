@@ -328,7 +328,9 @@ PYBIND11_MODULE(_bindings, m) {
                  nixl_xfer_dlist_t new_list(mem, n);
                  // We assume that the Nx3 array matches the nixlBasicDesc layout so we can simply
                  // memcpy
-                 std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
+                 if (n > 0) {
+                     std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
+                 }
 
                  return new_list;
              }),
@@ -1013,7 +1015,16 @@ PYBIND11_MODULE(_bindings, m) {
                  }
                  return py::bytes(remote_name);
              })
-        .def("invalidateRemoteMD", &nixlAgent::invalidateRemoteMD)
+        .def("invalidateRemoteMD",
+             [](nixlAgent &agent, const std::string &remote_agent) -> nixl_status_t {
+                 const nixl_status_t ret = agent.invalidateRemoteMD(remote_agent);
+                 // Not finding the agent is a normal outcome, e.g. after the peer invalidated it
+                 if (ret == NIXL_ERR_NOT_FOUND) {
+                     return ret;
+                 }
+                 throw_nixl_exception(ret);
+                 return ret;
+             })
         .def(
             "sendLocalMD",
             [](nixlAgent &agent, std::string ip_addr, int port) {
