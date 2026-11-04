@@ -47,3 +47,7 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 
 # NIXL EP example
 /examples/device/ep @itayalroy @ebarilanM @rakhmets @ai-dynamo/nixl-maintainers
+
+# GPUDirect-TCPXO Plugins
+/src/plugins/gpudirect_tcpxo @kugurst @mathurvedant @weichic-tw
+/test/unit/plugins/gpudirect_tcpxo @kugurst @mathurvedant @weichic-tw
