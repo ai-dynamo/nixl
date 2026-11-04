@@ -22,6 +22,7 @@
 
 #include <tuple>
 #include <iostream>
+#include <optional>
 #include <span>
 
 #include "nixl.h"
@@ -288,6 +289,12 @@ PYBIND11_MODULE(_bindings, m) {
         .def_readonly("totalBytes", &nixl_xfer_telem_t::totalBytes)
         .def_readonly("descCount", &nixl_xfer_telem_t::descCount);
 
+    py::class_<nixl_xfer_trace_info_t>(m, "nixlXferTraceInfo")
+        .def(py::init<>())
+        .def_readonly("requestId", &nixl_xfer_trace_info_t::requestId)
+        .def_readonly("execution", &nixl_xfer_trace_info_t::execution)
+        .def_readonly("traceparent", &nixl_xfer_trace_info_t::traceparent);
+
 
     py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");
     py::register_exception<nixlInvalidParamError>(m, "nixlInvalidParamError");
@@ -321,7 +328,9 @@ PYBIND11_MODULE(_bindings, m) {
                  nixl_xfer_dlist_t new_list(mem, n);
                  // We assume that the Nx3 array matches the nixlBasicDesc layout so we can simply
                  // memcpy
-                 std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
+                 if (n > 0) {
+                     std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
+                 }
 
                  return new_list;
              }),
@@ -889,6 +898,18 @@ PYBIND11_MODULE(_bindings, m) {
                 nixl_status_t ret = agent.getXferTelemetry((nixlXferReqH *)reqh, telemetry);
                 throw_nixl_exception(ret);
                 return telemetry;
+            },
+            py::arg("reqh"))
+        .def(
+            "getXferTraceInfo",
+            [](nixlAgent &agent, uintptr_t reqh) -> std::optional<nixl_xfer_trace_info_t> {
+                nixl_xfer_trace_info_t info;
+                const nixl_status_t ret = agent.getXferTraceInfo((nixlXferReqH *)reqh, info);
+                if (ret == NIXL_ERR_NOT_FOUND) {
+                    return std::nullopt;
+                }
+                throw_nixl_exception(ret);
+                return info;
             },
             py::arg("reqh"))
         .def("queryXferBackend",
