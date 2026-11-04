@@ -126,7 +126,7 @@ open_ib_device(char *name) {
     }
 
     for (int i = 0; i < nb_ibdevs; i++) {
-        if (strncmp(ibv_get_device_name(ibdev_list[i]), name, strlen(name)) == 0) {
+        if (strcmp(ibv_get_device_name(ibdev_list[i]), name) == 0) {
             struct ibv_device *dev_handle = ibdev_list[i];
             ibv_free_device_list(ibdev_list);
 
