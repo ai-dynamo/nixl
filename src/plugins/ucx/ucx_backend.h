@@ -28,7 +28,9 @@
 #include <optional>
 #include <utility>
 
+#include "nixl.h"
 #include "backend/backend_engine.h"
+#include "backend/notif_callbacks.h"
 #include "tracing/trace_context.h"
 
 #include "mem_list.h"
@@ -132,6 +134,11 @@ public:
 
     [[nodiscard]] bool
     supportsTraceContext() const noexcept override {
+        return true;
+    }
+
+    [[nodiscard]] bool
+    supportsNotifCallback() const noexcept override {
         return true;
     }
 
@@ -335,6 +342,10 @@ private:
     [[nodiscard]] std::optional<size_t>
     getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const noexcept;
 
+    // Initialization helper to make notifCallbacks_ const.
+    [[nodiscard]] nixlNotifCallbacks
+    setDefaultCallback(nixlNotifCallbacks callbacks);
+
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> workers_;
@@ -344,6 +355,8 @@ private:
     mutable std::atomic<size_t> sharedWorkerIndex_;
     const bool sglEnabled_;
     nixlBackendTraceSink *const traceSink_;
+
+    const nixlNotifCallbacks notifCallbacks_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
