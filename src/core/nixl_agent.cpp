@@ -15,12 +15,14 @@
  * limitations under the License.
  */
 
-#include <iostream>
+#include <array>
+#include <bit>
 #include <chrono>
 #include <iostream>
 #include <numeric>
 #include <optional>
 #include <set>
+#include <span>
 
 #include "nixl.h"
 #include "serdes/serdes.h"
@@ -46,6 +48,182 @@ namespace {
 const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
 };
+
+// One continuation bit per index pair: set when both indices grow by one from the pair before.
+// Filled on the stack one chunk of pairs at a time.
+class nixlContinuationBitmap {
+public:
+    nixlContinuationBitmap(const unsigned *local, const unsigned *remote, size_t count) noexcept
+        : local_(local),
+          remote_(remote),
+          count_(count) {}
+
+    // Number of consecutive pairs from `pair` with a continuation bit, at most `limit`.
+    size_t
+    countContinuations(size_t pair, size_t limit) noexcept {
+        size_t count = 0;
+        while (count < limit) {
+            const size_t next = pair + count;
+            if (next >= chunkEnd_) {
+                fillChunk(next);
+            }
+            const size_t in_chunk = std::min(limit - count, chunkEnd_ - next);
+            const size_t continued = countInChunk(next, in_chunk);
+            count += continued;
+            if (continued < in_chunk) {
+                break;
+            }
+        }
+        return count;
+    }
+
+private:
+    static constexpr size_t chunkPairs = 8192;
+    static constexpr size_t wordBits = 64;
+    static constexpr size_t halfBits = wordBits / 2;
+
+    static bool
+    isContinuation(const unsigned *local, const unsigned *remote, size_t pair) noexcept {
+        return (local[pair] - local[pair - 1] == 1) & (remote[pair] - remote[pair - 1] == 1);
+    }
+
+    // Continuation bits of half a word of pairs
+    static unsigned
+    continuationBits(const unsigned *local, const unsigned *remote, size_t first) noexcept {
+        // The vectorizer cannot form 1u << lane on its own.
+        static constexpr auto lane_bits = [] {
+            std::array<unsigned, halfBits> bits{};
+            for (unsigned lane = 0; lane < halfBits; ++lane) {
+                bits[lane] = 1u << lane;
+            }
+            return bits;
+        }();
+
+        unsigned bits = 0;
+        for (unsigned lane = 0; lane < halfBits; ++lane) {
+            bits += (lane_bits[lane]) & (0u - isContinuation(local, remote, first + lane));
+        }
+        return bits;
+    }
+
+    void
+    fillChunk(size_t first) noexcept {
+        chunkFirst_ = first;
+        chunkEnd_ = std::min(first + chunkPairs, count_);
+        for (size_t i = 0; first < chunkEnd_; ++i, first += wordBits) {
+            if (first + wordBits <= count_) {
+                const uint64_t high = continuationBits(local_, remote_, first + halfBits);
+                words_[i] = continuationBits(local_, remote_, first) | high << halfBits;
+            } else {
+                words_[i] = 0;
+                for (size_t pair = first; pair < count_; ++pair) {
+                    if (isContinuation(local_, remote_, pair)) {
+                        words_[i] |= uint64_t{1} << (pair - first);
+                    }
+                }
+            }
+        }
+    }
+
+    // Consecutive continuation bits from `pair` inside the chunk, at most `limit`.
+    size_t
+    countInChunk(size_t pair, size_t limit) const noexcept {
+        const size_t first_bit = pair - chunkFirst_;
+        size_t ones = std::countr_one(words_[first_bit / wordBits] >> (first_bit % wordBits));
+        size_t count = ones;
+        // The run continues into the next word while it reaches a word boundary.
+        while (ones > 0 && count < limit && (first_bit + count) % wordBits == 0) {
+            ones = std::countr_one(words_[(first_bit + count) / wordBits]);
+            count += ones;
+        }
+        return std::min(count, limit);
+    }
+
+    const unsigned *local_;
+    const unsigned *remote_;
+    size_t count_;
+    uint64_t words_[chunkPairs / wordBits];
+    size_t chunkFirst_ = 0;
+    size_t chunkEnd_ = 0;
+};
+
+// Builds the transfer descriptors, merging consecutive pairs inside dense stride runs.
+// Inlined or IPA-cloned into its single caller, the merge loop gets slower code.
+[[gnu::noinline, gnu::noclone]] nixl_status_t
+mergeIndices(const nixl_meta_stride_dlist_t &local_descs,
+             const nixl_meta_stride_dlist_t &remote_descs,
+             std::span<const int> local_indices,
+             std::span<const int> remote_indices,
+             bool skip_desc_merge,
+             nixl_meta_dlist_t &initiator_descs,
+             nixl_meta_dlist_t &target_descs,
+             size_t &total_bytes) {
+    const size_t desc_count = local_indices.size();
+    // Compared as unsigned, so that the difference of two indices wraps instead of overflowing.
+    auto local = reinterpret_cast<const unsigned *>(local_indices.data());
+    auto remote = reinterpret_cast<const unsigned *>(remote_indices.data());
+    const size_t local_size = local_descs.flatSize();
+    const size_t remote_size = remote_descs.flatSize();
+    // Ceiling division so that find()'s first probe (flat_idx / run_size) can never exceed
+    // the last run index, letting find() skip a bounds clamp on its hot path.
+    const size_t local_run_size =
+        (local_size + local_descs.descCount() - 1) / local_descs.descCount();
+    const size_t remote_run_size =
+        (remote_size + remote_descs.descCount() - 1) / remote_descs.descCount();
+
+    // Cached stride runs; the first pair leaves the empty run.
+    const nixlMetaStrideDesc empty_run;
+    const nixlMetaStrideDesc *local_run = &empty_run;
+    const nixlMetaStrideDesc *remote_run = &empty_run;
+    bool dense = false;
+    nixlContinuationBitmap bitmap(local, remote, desc_count);
+
+    size_t seq_count = 1;
+    for (size_t i = 0; i < desc_count; i += seq_count) {
+        // A negative index becomes a huge one and fails the range check.
+        const size_t local_idx = local_indices[i];
+        const size_t remote_idx = remote_indices[i];
+
+        // The checks run only when a pair leaves the cached runs; inside them an index is valid.
+        if (local_idx - local_run->start_idx >= local_run->count ||
+            remote_idx - remote_run->start_idx >= remote_run->count) [[unlikely]] {
+            if (local_idx >= local_size) {
+                NIXL_ERROR_FUNC << "local index out of range at index " << i << " with value "
+                                << local_indices[i];
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            if (remote_idx >= remote_size) {
+                NIXL_ERROR_FUNC << "remote index out of range at index " << i << " with value "
+                                << remote_indices[i];
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            local_run = &local_descs.find(local_idx, local_run_size);
+            remote_run = &remote_descs.find(remote_idx, remote_run_size);
+            if (local_run->len != remote_run->len) {
+                NIXL_ERROR_FUNC << "length mismatch at index " << i << " with local index "
+                                << local_indices[i] << " and remote index " << remote_indices[i];
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            // Merge only dense strides
+            dense = !skip_desc_merge && local_run->stride == local_run->len &&
+                local_run->stride == remote_run->stride;
+        }
+
+        seq_count = 1;
+        if (dense) [[likely]] {
+            const size_t cap =
+                std::min(std::min(local_run->start_idx + local_run->count - local_idx,
+                                  remote_run->start_idx + remote_run->count - remote_idx),
+                         desc_count - i);
+            seq_count += bitmap.countContinuations(i + 1, cap - 1);
+        }
+
+        local_run->getMetaDesc(initiator_descs.emplace(), local_idx, seq_count);
+        remote_run->getMetaDesc(target_descs.emplace(), remote_idx, seq_count);
+        total_bytes += local_run->len * seq_count;
+    }
+    return NIXL_SUCCESS;
+}
 
 } // namespace
 
@@ -340,6 +518,7 @@ nixlAgentData::warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
     });
 }
 
+/** Create and register a backend engine. */
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
                          const nixl_b_params_t &params,
@@ -440,7 +619,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     if (backend->supportsRemote()) {
         data->notifEngines.push_back(backend.get());
         data->connMd_[type] = conn_info;
-        if ((data->tracer_ != nullptr) && !backend->supportsTraceContext()) {
+        if ((data->tracer_ != nullptr) &&
+            !backend->supportsCapability(nixl_backend_capability_t::TRACE_CONTEXT)) {
             data->traceContextUnsupported_.try_emplace(type);
         }
     }
@@ -890,62 +1070,16 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
-    const size_t local_size = local_descs.flatSize();
-    const size_t remote_size = remote_descs.flatSize();
-    // Ceiling division so that find()'s first probe (flat_idx / run_size) can never exceed
-    // the last run index, letting find() skip a bounds clamp on its hot path.
-    const size_t local_run_size =
-        (local_size + local_descs.descCount() - 1) / local_descs.descCount();
-    const size_t remote_run_size =
-        (remote_size + remote_descs.descCount() - 1) / remote_descs.descCount();
-    size_t seq_count = 1;
-
-    for (size_t i = 0; i < static_cast<size_t>(desc_count); i += seq_count) {
-        const size_t local_idx = static_cast<size_t>(local_indices[i]);
-        const size_t remote_idx = static_cast<size_t>(remote_indices[i]);
-
-        if (local_idx >= local_size) [[unlikely]] {
-            NIXL_ERROR_FUNC << "local index out of range at index " << i << " with value "
-                            << local_indices[i];
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        if (remote_idx >= remote_size) [[unlikely]] {
-            NIXL_ERROR_FUNC << "remote index out of range at index " << i << " with value "
-                            << remote_indices[i];
-            return NIXL_ERR_INVALID_PARAM;
-        }
-
-        // Keep by value to avoid reloads and keep in registers
-        const nixlMetaStrideDesc local_stride = local_descs.find(local_idx, local_run_size);
-        const nixlMetaStrideDesc remote_stride = remote_descs.find(remote_idx, remote_run_size);
-
-        if (local_stride.len != remote_stride.len) [[unlikely]] {
-            NIXL_ERROR_FUNC << "length mismatch at index " << i << " with local index "
-                            << local_indices[i] << " and remote index " << remote_indices[i];
-            return NIXL_ERR_INVALID_PARAM;
-        }
-
-        seq_count = 1;
-        // Merge only dense strides
-        if (!skip_desc_merge && local_stride.stride == local_stride.len &&
-            local_stride.stride == remote_stride.stride) [[likely]] {
-            const size_t cap =
-                std::min(std::min(local_stride.start_idx + local_stride.count - local_idx,
-                                  remote_stride.start_idx + remote_stride.count - remote_idx),
-                         static_cast<size_t>(desc_count) - i);
-
-            auto *local_indices_ptr = reinterpret_cast<const unsigned *>(&local_indices[i]);
-            auto *remote_indices_ptr = reinterpret_cast<const unsigned *>(&remote_indices[i]);
-            while (seq_count < cap && local_indices_ptr[seq_count] == local_idx + seq_count &&
-                   remote_indices_ptr[seq_count] == remote_idx + seq_count) {
-                ++seq_count;
-            }
-        }
-
-        const auto &local_desc =
-            handle->initiatorDescs.emplace(local_stride.getMetaDesc(local_idx, seq_count));
-        handle->targetDescs.emplace(remote_stride.getMetaDesc(remote_idx, seq_count));
-        total_bytes += local_desc.len;
+    ret = mergeIndices(local_descs,
+                       remote_descs,
+                       local_indices,
+                       remote_indices,
+                       skip_desc_merge,
+                       handle->initiatorDescs,
+                       handle->targetDescs,
+                       total_bytes);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
     }
 
     NIXL_DEBUG << "makeXfer bytes: " << total_bytes
@@ -1432,6 +1566,7 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
     return NIXL_SUCCESS;
 }
 
+/** Release only when safe; refusal preserves the request and its backend handle for retry. */
 nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
     NIXL_TRACE_CORRELATION_SCOPE(
@@ -1443,7 +1578,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
         trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(req_hndl->traceExecution()));
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    //attempt to cancel request
+    // Refresh the transfer status before releasing its resources.
     if(req_hndl->status == NIXL_IN_PROG) {
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
@@ -1456,27 +1591,34 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
             traceXferError(data->tracer_.get(), *req_hndl, req_hndl->status);
             data->addErrorTelemetry(req_hndl->status);
         }
-
-        if(req_hndl->status == NIXL_IN_PROG) {
-
-            const nixl_status_t release_status =
-                req_hndl->engine->releaseReqH(req_hndl->backendHandle);
-
-            if (release_status < 0) {
+    }
+    if (req_hndl->status == NIXL_IN_PROG) {
+        NIXL_DEBUG << "backend '" << req_hndl->engine->getType()
+                   << "' cannot release an active transfer";
+        NIXL_TRACE_ATTR(
+            trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_REPOST_ACTIVE));
+        return NIXL_ERR_REPOST_ACTIVE;
+    }
+    // Honor backend release refusal in every cached transfer state. Only a
+    // successful release transfers ownership away from the caller.
+    if (req_hndl->backendHandle != nullptr) {
+        const nixl_status_t release_status = req_hndl->engine->releaseReqH(req_hndl->backendHandle);
+        if (release_status != NIXL_SUCCESS) {
+            if (release_status == NIXL_IN_PROG || release_status == NIXL_ERR_NOT_ALLOWED) {
+                NIXL_DEBUG << "backend '" << req_hndl->engine->getType()
+                           << "' deferred transfer request release with status " << release_status;
+            } else {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
-                                << "' could not release transfer request and returned error status "
+                                << "' could not release transfer request and returned status "
                                 << release_status;
                 data->addErrorTelemetry(NIXL_ERR_REPOST_ACTIVE);
-                NIXL_TRACE_ATTR(
-                    trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_REPOST_ACTIVE));
-                return NIXL_ERR_REPOST_ACTIVE; // Might need renaming
             }
-            traceXferError(data->tracer_.get(), *req_hndl, NIXL_ERR_CANCELED);
-            req_hndl->status = release_status;
-            // just in case the backend doesn't set to NULL on success
-            // this will prevent calling releaseReqH again in destructor
-            req_hndl->backendHandle = nullptr;
+            NIXL_TRACE_ATTR(
+                trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_REPOST_ACTIVE));
+            return NIXL_ERR_REPOST_ACTIVE;
         }
+        // Prevent a second release in the destructor.
+        req_hndl->backendHandle = nullptr;
     }
     NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_SUCCESS));
     delete req_hndl;
@@ -1904,8 +2046,8 @@ nixlAgentData::invalidateRemoteMDLocked(const std::string &remote_agent) {
         for (const auto &[backend, conn_info] : rb_it->second) {
             const nixl_status_t status = backendEngines_[backend]->disconnect(remote_agent);
             if (status != NIXL_SUCCESS) {
-                NIXL_ERROR_FUNC << "backend '" << backend << "' failed to disconnect from agent '"
-                                << remote_agent << "' with status " << status;
+                NIXL_WARN << "backend '" << backend << "' failed to disconnect from agent '"
+                          << remote_agent << "' with status " << status;
                 ret = status;
             }
         }

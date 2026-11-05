@@ -14,6 +14,8 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 
 * [NIXL overview](https://github.com/ai-dynamo/nixl/blob/main/docs/nixl.md) - Core concepts/architecture overview (`docs/nixl.md`)
 
+* [NIXL EP API shell](https://github.com/ai-dynamo/nixl/blob/main/runtime/ep/README.md) - Interface review (`nixl.runtime.ep`)
+
 * [Python API](https://github.com/ai-dynamo/nixl/blob/main/docs/python_api.md) - Python API usage and examples (`docs/python_api.md`)
 
 * [Backend guide](https://github.com/ai-dynamo/nixl/blob/main/docs/BackendGuide.md) - Backend/plugin development guide (`docs/BackendGuide.md`)
@@ -27,6 +29,8 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 * [NIXLBench docs](https://github.com/ai-dynamo/nixl/blob/main/benchmark/nixlbench/README.md) - Benchmark usage guide (`benchmark/nixlbench/README.md`)
 
 * [KVBench docs](https://github.com/ai-dynamo/nixl/tree/main/benchmark/kvbench/docs) - KVBench workflows and tutorials (`benchmark/kvbench/docs/`)
+
+* [Use cases](https://github.com/ai-dynamo/nixl/blob/main/docs/uses.md) - NIXL usage examples and integrations (`docs/uses.md`)
 
 ## Supported Platforms
 NIXL is supported on a Linux environment only. It is tested on Ubuntu (22.04/24.04) and Fedora. macOS and Windows are not currently supported; use a Linux host or container/VM.
@@ -43,23 +47,21 @@ Install with:
 pip install nixl
 ```
 
-This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
-
 ## Prerequisites for source build (Linux)
 
 NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
 
 ### Ubuntu:
 
-`$ sudo apt install build-essential cmake pkg-config`
+`sudo apt install build-essential cmake pkg-config`
 
 ### Fedora:
 
-`$ sudo dnf install gcc-c++ cmake pkg-config`
+`sudo dnf install gcc-c++ cmake pkg-config`
 
 ### Python
 
-`$ pip3 install meson ninja pybind11 tomlkit`
+`pip3 install meson ninja pybind11 tomlkit`
 
 ### UCX
 
@@ -68,11 +70,11 @@ NIXL was tested with UCX version 1.23.x.
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
-$ git clone https://github.com/openucx/ucx.git
-$ cd ucx
-$ git checkout v1.23.x
-$ ./autogen.sh
-$ ./contrib/configure-release-mt       \
+git clone https://github.com/openucx/ucx.git
+cd ucx
+git checkout v1.23.x
+./autogen.sh
+./contrib/configure-release-mt       \
     --enable-shared                    \
     --disable-static                   \
     --disable-doxygen-doc              \
@@ -84,32 +86,36 @@ $ ./contrib/configure-release-mt       \
     --with-verbs                       \
     --with-dm                          \
     --with-gdrcopy=<gdrcopy install>
-$ make -j
-$ make -j install-strip
-$ ldconfig
+make -j
+make -j install-strip
+ldconfig
 ```
 
 ### ETCD (Optional)
 NIXL can use ETCD for metadata distribution and coordination between nodes in distributed environments. To use ETCD with NIXL:
 #### ETCD Server and Client
  ```
-$ sudo apt install etcd etcd-server etcd-client
+sudo apt install etcd etcd-server etcd-client
 
 # Or use Docker
-$ docker run -d -p 2379:2379 quay.io/coreos/etcd:v3.5.1
+docker run -d -p 2379:2379 \
+  --name etcd-server \
+  -e ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379 \
+  -e ETCD_ADVERTISE_CLIENT_URLS=http://0.0.0.0:2379 \
+  quay.io/coreos/etcd:v3.5.1
 ```
 
 #### ETCD CPP API
 Installed from https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3
 
 ```
-$ sudo apt install libgrpc-dev libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc
-$ sudo apt install libcpprest-dev
-$ git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git
-$ cd etcd-cpp-apiv3
-$ mkdir build && cd build
-$ cmake ..
-$ make -j$(nproc) && make install
+sudo apt install libgrpc-dev libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc
+sudo apt install libcpprest-dev
+git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git
+cd etcd-cpp-apiv3
+mkdir build && cd build
+cmake ..
+make -j$(nproc) && make install
 ```
 
 ### Additional plugins
@@ -124,10 +130,10 @@ Some plugins may have additional build requirements, see them here:
 ### Build & install
 
 ```
-$ meson setup <name_of_build_dir>
-$ cd <name_of_build_dir>
-$ ninja
-$ ninja install
+meson setup <name_of_build_dir>
+cd <name_of_build_dir>
+ninja
+ninja install
 ```
 
 ### Build Options
@@ -135,20 +141,20 @@ $ ninja install
 #### Release build (default)
 
 ```bash
-$ meson setup <name_of_build_dir>
+meson setup <name_of_build_dir>
 ```
 
 #### Debug build
 
 ```bash
-$ meson setup <name_of_build_dir> --buildtype=debug
+meson setup <name_of_build_dir> --buildtype=debug
 ```
 
 #### NIXL-specific build options
 
 ```bash
 # Example with custom options
-$ meson setup <name_of_build_dir> \
+meson setup <name_of_build_dir> \
     -Dbuild_docs=true \           # Build Doxygen documentation
     -Ducx_path=/path/to/ucx \     # Custom UCX installation path
     -Dinstall_headers=true \      # Install development headers
@@ -158,7 +164,7 @@ $ meson setup <name_of_build_dir> \
 Common build options:
 - `build_docs`: Build Doxygen documentation (default: false)
 - `ucx_path`: Path to UCX installation (default: system path)
-- `install_headers`: Install development headers (default: true)
+- `install_headers`: Install development headers (default: true for direct Meson builds; disabled for Python wheels)
 - `disable_gds_backend`: Disable GDS backend (default: false)
 - `cudapath_inc`, `cudapath_lib`: Custom CUDA paths
 - `static_plugins`: Comma-separated list of plugins to build statically
@@ -167,24 +173,39 @@ Common build options:
 - `wheel_variant`: Override the Python wheel variant suffix (e.g. `-Dwheel_variant=rocm` yields `nixl_rocm`). Empty (default) = autodetect from the CUDA major version.
 
 #### Building for AMD ROCm
+NIXL itself builds vendor-neutrally; CPU-side hardware detection
+(`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or
+not a ROCm toolchain is present. ROCm is requested by setting `-Drocm_path`;
+Meson then links HIP when `amdhip64` is found under that prefix. An empty
+`rocm_path` means ROCm is not used. HIP is detected independently of CUDA,
+so the NVIDIA and AMD plugin stacks can be built together when both toolchains
+are present.
 
-NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or not a ROCm toolchain is present. GPU-side ROCm/HIP build support is available for nixlbench and UCX plugin unit tests. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+`benchmark/nixlbench` is a separate Meson project and is the exception: a
+single translation unit cannot include CUDA and HIP headers together, so one
+build targets one stack. Use `-Dnixlbench_gpu=cuda|rocm` to force a stack
+(`auto`, the default, prefers CUDA); `-Duse_rocm=true` is a deprecated alias for
+`-Dnixlbench_gpu=rocm`. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
 
 **Building with ROCm support:**
 ```bash
 # For UCX unit tests with ROCm
-$ meson setup build -Drocm_path=/opt/rocm
+meson setup build -Drocm_path=/opt/rocm
 
 # Or specify a custom ROCm path
-$ meson setup build -Drocm_path=/custom/path/to/rocm
+meson setup build -Drocm_path=/custom/path/to/rocm
 ```
 
-**Plugins on ROCm hosts (CUDA toolchain absent):**
+**Platforms using ROCm / HIP (ROCm-only or CUDA + ROCm co-installed):**
 - `UCX` — primary transport for AMD GPU memory (requires UCX built with `--with-rocm`).
-- `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `MOONCAKE`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
-- `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — skip automatically because their CUDA / cuFile / DOCA dependencies are not found.
+- `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
+- `MOONCAKE` — needs a Transfer Engine built with `-DUSE_HIP=ON` for AMD GPU memory.
+- `AIS` — AMD Infinity Storage (hipFile) plugin under `src/plugins/rocm_ais/`. HIP is detected independently of CUDA, so **AIS** can be built alongside CUDA plugins when ROCm and hipFile are present. Both are found under `rocm_path`, which must be set to enable ROCm. See `disable_rocm_ais_backend` in `meson_options.txt`.
+- `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — on a ROCm-only host they skip automatically when CUDA / cuFile / DOCA are not found.
 
 **Known gaps (will be addressed in follow-up PRs):**
+- `nixlbench`: NVSHMEM and the CUDA-driver VMM/fabric helpers remain
+  NVIDIA-only; VRAM allocation prefers CUDA when both stacks are present.
 - `LIBFABRIC` plugin disabled on ROCm pending header refactor.
 - No NVSHMEM-equivalent backend yet (rocSHMEM analog is a candidate for a future plugin).
 
@@ -199,9 +220,9 @@ If you have Doxygen installed, you can build the documentation:
 
 ```bash
 # Configure with documentation enabled
-$ meson setup <name_of_build_dir> -Dbuild_docs=true
-$ cd <name_of_build_dir>
-$ ninja
+meson setup <name_of_build_dir> -Dbuild_docs=true
+cd <name_of_build_dir>
+ninja
 
 # Documentation will be generated in <name_of_build_dir>/html
 # After installation (ninja install), documentation will be available in <prefix>/share/doc/nixl/
@@ -216,8 +237,6 @@ The preferred way to install the Python bindings is through pip from PyPI:
 ```bash
 pip install nixl
 ```
-
-This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
 #### Installation from source
 
@@ -265,23 +284,11 @@ Then install PyTorch following the instructions on the PyTorch website: https://
 After installing the prerequisites, you can build and install the NIXL binaries and the Python bindings from source. You have to:
 
 1. Build NIXL binaries and install them
-2. Build and install the CUDA platform-specific package (`nixl-cu12` or `nixl-cu13`)
+2. Build and install the CUDA platform-specific package
 3. Build and install the `nixl` meta-package
 
-**For CUDA 12:**
-
 ```
 pip install .
-meson setup build
-ninja -C build install
-pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
-```
-
-**For CUDA 13:**
-
-```
-pip install .
-./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
 meson setup build
 ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
@@ -316,19 +323,19 @@ For more Python examples, see [examples/python/](examples/python/).
 - Use `--buildtype=debug` for a debug build (default is release).
 - Or build manually:
     ```bash
-    $ cargo build --release
+    cargo build --release
     ```
 #### Install
 The bindings will be installed under `nixl-sys` in the configured installation prefix.
 Can be done using ninja, from project build directory:
 ```bash
-$ ninja install
+ninja install
 ```
 
 #### Test
 ```
 # Rust bindings tests
-$ cargo test
+cargo test
 ```
 
 Use in your project by adding to `Cargo.toml`:
@@ -345,29 +352,40 @@ To build the docker container, first clone the current repository. Also make sur
 
 Run the following from the root folder of the cloned NIXL repository:
 ```
-$ ./contrib/build-container.sh
+./contrib/build-container.sh
 ```
 
 By default, the container is built with Ubuntu 24.04. To build a container for Ubuntu 22.04 use the --os option as follows:
 ```
-$ ./contrib/build-container.sh --os ubuntu22
+./contrib/build-container.sh --os ubuntu22
 ```
 
 To see all the options supported by the container use:
 ```
-$ ./contrib/build-container.sh -h
+./contrib/build-container.sh -h
 ```
 
 The container has the NIXL python bindings preinstalled (built from source against the container's own PyTorch). For a redistributable python wheel, use the wheel build script below or install the published `nixl` package.
 
 ### Building the python wheel
+
+Python wheel builds set `-Dinstall_headers=false` in [pyproject.toml](pyproject.toml),
+so installing a wheel does not install the NIXL C++ development headers. This
+overrides the default for direct Meson builds listed in [Build Options](#build-options).
+For C++ development, follow [Build & install](#build--install) with
+`install_headers` enabled. Headers are installed under `<prefix>/include`
+(`/opt/nvidia/nvda_nixl/include` by default); use Meson's `--prefix` option to
+choose a different installation prefix.
+
 The contrib folder also includes a script to build the python wheel with the UCX dependencies. Note, that UCX and other NIXL dependencies are required to be installed.
 ```
-$ ./contrib/build-wheel.sh
+./contrib/build-wheel.sh
 ```
 
 ## Running with ETCD
 NIXL can use ETCD for metadata exchange between distributed nodes. This is especially useful in containerized or cloud-native environments.
+
+The examples below require NIXL built with ETCD support. Install the [ETCD CPP API prerequisites](#etcd-cpp-api) before building NIXL.
 
 ### Environment Setup
 To use ETCD with NIXL, set the following environment variables:
@@ -376,23 +394,27 @@ To use ETCD with NIXL, set the following environment variables:
 # Set ETCD endpoints (required) - replace localhost with the hostname of the etcd server
 export NIXL_ETCD_ENDPOINTS="http://localhost:2379"
 
-# Set ETCD namespace (optional, defaults to /nixl/agents)
-export NIXL_ETCD_NAMESPACE="/nixl/agents"
+# Set ETCD namespace (optional, defaults to /nixl/agents/)
+export NIXL_ETCD_NAMESPACE="/nixl/agents/"
 ```
 
-### Running the ETCD Example
-NIXL includes an example demonstrating metadata exchange and data transfer using ETCD:
+### Running the ETCD Examples
+NIXL includes C++ and Python examples demonstrating metadata exchange and data transfer using ETCD:
 
 ```bash
-# Start an ETCD server if not already running
-# For example:
-# docker run -d -p 2379:2379 quay.io/coreos/etcd:v3.5.1
+# Start an ETCD server as described in "ETCD Server and Client" above
 
 # Set the ETCD env variables as above
 
 # Run the example. The two agents in the example will exchange metadata through ETCD
 # and perform data transfers
-./<nixl_build_path>/examples/nixl_etcd_example
+./<nixl_build_path>/examples/cpp/nixl_etcd_example
+```
+
+To run the Python example from the repository root after installing the Python bindings:
+
+```bash
+python3 examples/python/nixl_etcd_example.py
 ```
 
 ### nixlbench Benchmark

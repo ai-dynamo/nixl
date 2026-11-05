@@ -167,9 +167,9 @@ All code must adhere to the style guide in `docs/CodeStyle.md` and be formatted 
 
 ## Contributing Process
 
-Contributions to the code under `./examples/device/ep` (which is derived
-from DeepEP and licensed under the MIT License) must be licensed under Apache
-2.0.
+Contributions to the code under `./examples/device/ep` and `./runtime/ep`
+(which are derived from DeepEP and licensed under the MIT License) must be
+licensed under Apache 2.0.
 
 Contributions that fix documentation errors or that make small changes
 to existing code can be contributed directly by following the rules
@@ -424,6 +424,15 @@ Longer explanation of the change, its motivation, and impact.
 Fixes #123
 Signed-off-by: Your Name <your.email@example.com>
 ```
+
+### Agent Skills
+
+Pull requests from a fork that change `skills/` need NVSkills signing:
+
+1. Grant `svc-nvskills-signing` write access to your fork and make sure the invitation is accepted.
+2. Ask a NIXL maintainer to comment `/nvskills-ci` after each commit that changes `skills/`.
+
+See the [NVIDIA/skills contributing guide](https://github.com/NVIDIA/skills/blob/main/CONTRIBUTING.md) for details.
 
 ## Miscelaneous
 

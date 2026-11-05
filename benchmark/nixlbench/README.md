@@ -45,7 +45,8 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 ## Features
 
 - **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
-- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA for storage operations
+- **Storage Backend Support**: GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ (S3), AZURE_BLOB,
+  GUSLI, INFINIA, DAOS for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
@@ -79,7 +80,10 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 - **Operating System**: Ubuntu 22.04/24.04 LTS (recommended) or RHEL-based
 - **Docker**: Version 20.10+ (for container builds)
 - **Git**: For source code management
-- **CUDA Toolkit**: 12.8+ (for GPU features)
+- **CUDA Toolkit**: 13.x (for GPU features)
+- **ROCm / HIP** (optional): when CUDA is absent, Meson can build VRAM paths
+  with HIP. A single build can target one GPU stack. See
+  [Building NIXL and NIXLBench with ROCm](#building-nixl-and-nixlbench-with-rocm).
 - **Python**: 3.12+ (for benchmark utilities)
 
 ## Quick Start
@@ -181,7 +185,7 @@ cd nixl/benchmark/nixlbench/contrib
 | `--ucx <path>` | Path to custom UCX source (optional) | Uses base image UCX |
 | `--build-type <type>` | Build type: `debug` or `release` | `release` |
 | `--base-image <image>` | Base Docker image | `nvcr.io/nvidia/cuda-dl-base` |
-| `--base-image-tag <tag>` | Base image tag | `25.06-cuda12.9-devel-ubuntu24.04` |
+| `--base-image-tag <tag>` | Base image tag | `26.08-cuda13.4-devel-ubuntu24.04` |
 | `--arch <arch>` | Target architecture: `x86_64` or `aarch64` | Auto-detected |
 | `--python-versions <versions>` | Python versions (comma-separated) | `3.12` |
 | `--tag <tag>` | Custom Docker image tag | Auto-generated |
@@ -196,7 +200,7 @@ For development environments or when Docker is not available.
 **Required:**
 - **NIXL**: Core communication library
 - **UCX**: Unified Communication X library
-- **CUDA**: NVIDIA CUDA Toolkit (≥12.8)
+- **CUDA**: NVIDIA CUDA Toolkit 13.x
 - **CMake**: Build system (≥3.20)
 - **Meson**: Build system for NIXL/NIXLBench
 - **Ninja**: Build backend
@@ -245,9 +249,8 @@ sudo apt-get reinstall -y --no-install-recommends \
 
 #### CUDA Toolkit Installation
 ```bash
-# Download and install CUDA 12.8
-wget https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_550.54.15_linux.run
-sudo sh cuda_12.8.0_550.54.15_linux.run
+# Install the CUDA toolkit
+# Follow https://developer.nvidia.com/cuda-downloads for your distribution
 
 # Set environment variables
 export PATH=/usr/local/cuda/bin:$PATH
@@ -387,6 +390,29 @@ export PATH=/usr/local/nixlbench/bin:/usr/local/nixl/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 ```
 
+#### Building NIXL and NIXLBench with ROCm
+
+ROCm is never detected automatically. Pass `-Drocm_path=<prefix>` (the ROCm
+install root, e.g. `/opt/rocm`) to both the NIXL and NIXLBench configures:
+
+```bash
+# NIXL (builds the AIS plugin when hipFile is found under rocm_path)
+uv run meson setup build --prefix=/usr/local/nixl --buildtype=release \
+  -Drocm_path=/opt/rocm
+
+# NIXLBench
+uv run meson setup build -Dnixl_path=/usr/local/nixl/ --buildtype=release \
+  -Drocm_path=/opt/rocm -Dnixlbench_gpu=rocm
+```
+
+A single NIXLBench build targets one GPU stack, selected by `nixlbench_gpu`:
+- `auto` (default): CUDA when present, otherwise ROCm. Without `rocm_path`, an
+  AMD-only machine silently gets a CPU-only (DRAM) build.
+- `cuda` / `rocm`: force that stack; configure fails if it is not found.
+
+To build for both stacks on one machine, run two Meson configures in separate
+build directories.
+
 #### Available Meson Build Options
 - `nixl_path`: Path to NIXL installation (default: /usr/local)
 - `cudapath_inc`: Include path for CUDA
@@ -396,6 +422,9 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 - `etcd_lib_path`: Path to ETCD C++ client library
 - `nvshmem_inc_path`: Path to NVSHMEM include directory
 - `nvshmem_lib_path`: Path to NVSHMEM library directory
+- `rocm_path`: Path to ROCm installation; required for any ROCm build (default: empty, ROCm not used)
+- `nixlbench_gpu`: GPU stack to build against: `auto`, `cuda`, or `rocm` (default: auto)
+- `use_rocm`: Deprecated alias for `nixlbench_gpu=rocm`; an empty `rocm_path` then defaults to `/opt/rocm` (default: false)
 - `build_raw_cli`: Build the experimental CLI11-based raw command path (default: false)
 - `build_tests`: Build NIXLBench tests for non-release builds (default: true)
 - `buildtype`: Build type: `debug`, `release`, `debugoptimized` (default: release)
@@ -542,6 +571,9 @@ wait
 ./nixlbench --backend OBJ --obj_bucket_name my-bucket \
   --obj_access_key "$AWS_ACCESS_KEY_ID" --obj_secret_key "$AWS_SECRET_ACCESS_KEY"
 
+# DAOS object storage benchmark (single process, no ETCD required)
+./nixlbench --backend DAOS --daos_pool nixl_pool --daos_container nixl_cont --daos_mount_path /mnt/dfuse
+
 # Multi-threaded two-node UCX benchmark with progress threads
 ./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
   --backend UCX --num_threads 4 --enable_pt --progress_threads 2
@@ -555,7 +587,7 @@ wait
 --config_file PATH         # Configuration file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD, ASIO] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, AIS, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA, DAOS] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 ```
 
@@ -565,7 +597,7 @@ wait
 --target_seg_type TYPE     # Memory segment type for target [DRAM, VRAM] (default: DRAM)
 --scheme NAME              # Communication scheme [pairwise, manytoone, onetomany, tp] (default: pairwise)
 --mode MODE                # Process mode [SG (Single GPU per proc), MG (Multi GPU per proc)] (default: SG)
---op_type TYPE             # Operation type [READ, WRITE] (default: WRITE)
+--op_type TYPE             # Operation type [READ, WRITE, QUERY] (default: WRITE)
 --check_consistency        # Enable consistency checking
 --total_buffer_size SIZE   # Total buffer size across devices per process (default: 8GiB)
 --start_block_size SIZE    # Starting block size (default: 4KiB)
@@ -609,7 +641,7 @@ devices can differ between the initiator and target processes.
 --etcd_endpoints URL       # ETCD server URL when using --runtime_type ETCD
 ```
 
-#### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB)
+#### Storage Backend Options (GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ, AZURE_BLOB, DAOS)
 ```
 --filepath DIR             # Existing directory where the benchmark files are created (default: current directory)
 --num_files NUM            # Number of files used by benchmark (default: 1)
@@ -630,10 +662,15 @@ devices can differ between the initiator and target processes.
 --gds_batch_limit NUM      # Batch limit for GDS operations (default: 128)
 ```
 
-**GDS_MT Backend:**
+**GDS_MT / AIS `mt` mode (multi-threaded file backends):**
 ```
---gds_mt_num_threads NUM   # Number of threads used by GDS MT plugin (default: 1)
+--gds_mt_num_threads NUM   # Taskflow worker threads for GDS_MT and AIS (default: 1)
 ```
+
+Both plugins use a `thread_count` init parameter; nixlbench forwards your CLI
+`--gds_mt_num_threads` flag unchanged. Paths start at `src/plugins/cuda_gds/`,
+`src/plugins/rocm_ais/`, `src/utils/file/` (shared file helpers).
+
 
 **POSIX Backend:**
 ```
@@ -648,6 +685,9 @@ devices can differ between the initiator and target processes.
 --gpunetio_oob_list IFACE   # OOB interface name for the control path
 --gpunetio_gid_index N      # RoCE GID table index (default: 0)
 --gpunetio_oob_port PORT    # OOB TCP port (default: 6544)
+--gpunetio_data_qp_count N  # GPUNetIO WRITE QPs per peer [1-4] (default: 1)
+--gpunetio_write_stripe MODE # GPUNETIO WRITE distribution: slots (default) or bytes
+--gpunetio_write_stripe_min_bytes N # Minimum bytes per WRITE QP in bytes mode (default: 4194304)
 ```
 
 **OBJ (S3) Backend:**
@@ -668,6 +708,23 @@ devices can differ between the initiator and target processes.
 --azure_blob_account_url ACCOUNT_URL              # Account URL for Azure Blob backend
 --azure_blob_container_name CONTAINER_NAME        # Container name for Azure Blob backend
 --azure_blob_connection_string CONNECTION_STRING  # Connection string for Azure Blob backend
+```
+
+**DAOS Backend:**
+```
+--daos_pool NAME                       # DAOS pool label or UUID (required)
+--daos_container NAME                  # DAOS POSIX container label or UUID (required)
+--daos_system NAME                     # Optional DAOS system name
+--daos_mount_path PATH                 # dfuse mount used for setup, validation, and cleanup
+--daos_object_class NAME               # DAOS object class for newly created files
+--daos_object_class_hint HINT           # DAOS DFS object-class hint
+--daos_chunk_size BYTES                # DFS chunk size for newly created files (default: 0)
+--daos_oclass_id ID                    # Numeric DAOS object-class ID (default: 0)
+--daos_num_event_queues NUM            # Independent DAOS EQ/progress workers (default: 1)
+--daos_max_inflight_per_queue NUM      # Maximum in-flight I/O per EQ (default: 1024)
+--daos_submission_batch_size NUM       # Operations submitted per worker pass (default: 32)
+--daos_completion_batch_size NUM       # Completions reaped per progress call (default: 128)
+--daos_progress_cpu_affinity LIST       # Comma-separated CPUs, one entry per progress worker
 ```
 
 **GUSLI Backend:**
@@ -741,7 +798,7 @@ NIXLBench can also use an ETCD key-value store for coordination between benchmar
 **ETCD Requirements:**
 - **Optional**: Two-instance UCX, GPUNETIO, Mooncake, and Libfabric runs can use `--runtime_type ASIO` instead.
 - **Required**: Network backends when using `--runtime_type ETCD`.
-- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances.
+- **Optional**: Storage backends (GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ, GUSLI, DAOS) running as single instances.
 - **Required**: Storage backends when ETCD coordination is explicitly requested with `--etcd_endpoints`.
 
 For non-storage backends using `--runtime_type ETCD`, NIXLBench defaults to `http://localhost:2379` when `--etcd_endpoints` is not provided. In that case, an ETCD server must be running on `localhost:2379`; otherwise, provide `--etcd_endpoints` explicitly to point to a custom ETCD server.
@@ -812,7 +869,7 @@ The workers automatically coordinate ranks through ETCD as they connect. Note, t
   --backend UCX --device_list <ucx-device>
 ```
 
-For pairwise UCX runs, `--device_list` must match the configured initiator and target device counts. For UCX multi-rail experiments, keep `--device_list all` and use UCX environment variables such as `UCX_NET_DEVICES` to constrain NIC selection.
+For pairwise UCX runs, `--device_list` must match the configured initiator and target device counts. For UCX multi-rail experiments, keep `--device_list all` and use UCX environment variables such as `NIXL_UCX_NET_DEVICES` to constrain NIC selection. NIXL reads `NIXL_UCX_<X>` before falling back to `UCX_<X>`; the prefixed form does not affect other UCX users in the same process, such as MPI.
 
 **GPUNETIO Backend:**
 
@@ -832,6 +889,20 @@ one GPU is available.
 The examples below write their files into `/mnt/storage/testdir`. Create it on
 the device you want to measure first: `mkdir -p /mnt/storage/testdir`.
 
+**DOCA_MEMOS object keys:**
+
+DOCA_MEMOS uses a fresh random 128-bit object key for each registered thread/device/batch
+entry. Keys are supplied through `metaInfo` as 32 hexadecimal characters, which the backend
+decodes into 16 binary bytes. The descriptor `dev_id` remains a local numeric identifier;
+it is not used as the object key. This avoids small-integer keys with mostly constant bytes
+and gives independent clients independent object sets, with negligible collision probability.
+
+Keys are generated from OS entropy during registration, independently of
+`randomize_location_mode_seed`. The same registered keys are reused for READ prepopulation,
+verification, and timed iterations; separate runs generate new keys. This does not add a
+hash-library dependency or change the DOCA_MEMOS backend. Confirm placement with per-target
+counters when measuring a distributed deployment; random keys alone do not verify routing.
+
 **GDS (GPU Direct Storage):**
 ```bash
 # Basic GDS benchmark (no ETCD needed for single instance)
@@ -849,6 +920,17 @@ the device you want to measure first: `mkdir -p /mnt/storage/testdir`.
 # Multi-threaded GDS (no ETCD needed for single instance)
 ./nixlbench --backend GDS_MT --filepath /mnt/storage/testdir --gds_mt_num_threads 8
 ```
+
+**AIS (AMD Infinity Storage, multi-threaded `mt` mode):**
+```bash
+# Requires NIXL built with AIS; --filepath is a directory prefix (test files
+# are created under it). Use a hipFile-capable path (see plugin docs).
+./nixlbench --backend AIS --filepath /mnt/storage/ais-dir --initiator_seg_type VRAM --gds_mt_num_threads 8
+```
+
+For a containerized AMD GPU + NVMe directory + `ais-stats` workflow, see
+[`contrib/run-ais-amd-gpu-test.sh`](contrib/run-ais-amd-gpu-test.sh) and
+[`docs/rocm-ci.md`](../../docs/rocm-ci.md) (AIS on AMD GPU section).
 
 **POSIX Backend:**
 ```bash
@@ -970,6 +1052,48 @@ EOF
 # NVSHMEM (GPU-only, VRAM required)
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --worker_type nvshmem --initiator_seg_type VRAM --target_seg_type VRAM
 ```
+
+### DAOS Backend
+
+The timed transfers use the DAOS plugin's native asynchronous `libdfs` path. A dfuse mount is
+used only to create input objects for READ tests, verify WRITE results, and remove benchmark
+objects; it is not part of the measured data path. Set `NIXL_PLUGIN_DIR` to the directory that
+contains `libplugin_DAOS.so` before running either test.
+
+First run the focused real-cluster correctness test:
+
+```bash
+export NIXL_PLUGIN_DIR="$PWD/build-daos-tests/src/plugins/daos"
+./build-daos-tests/test/unit/plugins/daos/nixl_daos_test \
+  nixl_pool nixl_cont 1048576 32 10
+```
+
+Then run a verified write benchmark. This example uses four event queues and pins their progress
+workers to CPUs 4 through 7:
+
+```bash
+./build-nixlbench/nixlbench \
+  --backend DAOS \
+  --daos_pool nixl_pool \
+  --daos_container nixl_cont \
+  --daos_mount_path /home/rladmin/daos/mnt \
+  --op_type WRITE \
+  --check_consistency \
+  --max_block_size $((16 * 1024 * 1024)) \
+  --start_block_size $((1 * 1024 * 1024)) \
+  --num_threads 4 \
+  --pipeline_depth 8 \
+  --enable_pt \
+  --num_iter 100 \
+  --warmup_iter 10 \
+  --daos_num_event_queues 4 \
+  --daos_progress_cpu_affinity 4,5,6,7
+```
+
+For a READ benchmark, use the same command with `--op_type READ`. NIXLBench creates the source
+objects through the supplied dfuse mount before starting the timed reads. A WRITE run without
+`--check_consistency` may omit `--daos_mount_path`, but NIXLBench then cannot remove the generated
+objects and prints their names so they can be cleaned up separately.
 
 ### S3 Object Storage Backend
 
@@ -1187,9 +1311,11 @@ ip link show  # For Ethernet devices
 # Test UCX
 ucx_info -d  # List UCX devices
 
-export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging
+export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging (process-wide, no NIXL_UCX_ form)
 
-export UCX_PROTO_INFO=y # See transport used by UCX
+export NIXL_UCX_PROTO_INFO=y # See transport used by UCX
+
+export NIXL_UCX_TLS=rc,cuda_copy # Restrict NIXL's UCX transports without affecting MPI/UCC
 ```
 
 #### ETCD Cleanup

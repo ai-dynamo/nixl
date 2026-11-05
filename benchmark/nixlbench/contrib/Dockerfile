@@ -373,8 +373,7 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
-RUN CUDA_MAJOR=$(echo $CUDA_VERSION | cut -d. -f1) && \
-    ./contrib/tomlutil.py --wheel-name "nixl-cu${CUDA_MAJOR}" pyproject.toml && \
+RUN ./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml && \
     uv pip install --system . && \
     uv pip install --system \
         build/src/bindings/python/nixl-meta/nixl-*.whl

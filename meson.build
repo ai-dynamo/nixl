@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'DAOS', 'GDS', 'GDS_MT', 'AIS', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA', 'DOCA_MEMOS']
 
 enabled_plugins = {}
 
@@ -339,26 +339,19 @@ if cuda_dep.found()
     endif
     message('nvcc version: ' + nvcc.version())
     message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
-    if nvcc.version().version_compare('>=12.8')
-        doca_gpunetio_dep = dependency('doca-gpunetio', version : '>=3.5', required : false)
-    else
-        warning('GPUNETIO plugin not supported in CUDA version: ' + nvcc.version())
-        doca_gpunetio_dep = disabler()
-    endif
+    doca_gpunetio_dep = dependency('doca-gpunetio', version : '>=3.5', required : false)
 
     # Set the Python CUDA-specific wheel directory
     cuda_version_major = nvcc.version().split('.')[0]
-    if cuda_version_major == '12'
-        cuda_wheel_dir = 'nixl_cu12'
-    elif cuda_version_major == '13'
+    if cuda_version_major == '13'
         cuda_wheel_dir = 'nixl_cu13'
     else
-        error('Unsupported CUDA version: ' + cuda_version_major)
+        error('Unsupported CUDA version: ' + cuda_version_major + ' (NIXL requires CUDA 13)')
     endif
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
-    cuda_wheel_dir = 'nixl_cu12'
+    cuda_wheel_dir = 'nixl_cu13'
 endif
 
 # Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
@@ -369,49 +362,53 @@ if wheel_variant != ''
     cuda_wheel_dir = 'nixl_' + wheel_variant
 endif
 
-# AMD ROCm/HIP support for the libfabric plugin (mutually exclusive with CUDA;
-# default off). ROCm is requested by setting -Drocm_path=<prefix>; if rocm_path
-# is empty, ROCm support is not requested (there is no default path). Defined
-# here in the root meson.build -- ahead of subdir('src') and subdir('test') --
-# so every libfabric subdir (src/utils, src/plugins, test/unit/utils) consumes a
-# single rocm_dep and hipify_src, with no ordering dependency between them. The
-# plugin's CUDA sources are translated to HIP at build time via hipify-perl;
-# rocm_dep supplies the HIP headers and runtime those translated sources compile
-# and link against. __HIP_PLATFORM_AMD__ lets the HIP headers work under a
-# non-hipcc host compiler. Kept separate from cuda_dep.
-#
-# hipify injects <hip/hip_runtime.h> at the top of each translated source, ahead
-# of the nixl/toml++ headers. HIP defines __noinline__ as a macro, which breaks
-# toml++'s TOML_HAS_ATTR(__noinline__) preprocessor check; TOML_CUDA=1 routes
-# toml++ around that line. HIP also maps some CUDA driver calls onto deprecated
-# HIP APIs, so deprecation is downgraded from error (the tree builds with
-# werror=true) to a warning.
-#
-# hipify-perl ships only with the ROCm/HIP toolchain, so it is required when
-# ROCm is requested and unused (absent) on CUDA-only builds.
+# AMD ROCm/HIP support for NIXL (default off).
+# ROCm is requested by setting -Drocm_path=<prefix>; if rocm_path is empty,
+# ROCm support is disabled. All modules/plugins/tests using ROCm should use
+# the rocm_dep (and if needed, hipify_src) declared here. rocm_dep supplies
+# the HIP runtime and headers, hipify_src uses hipify-perl to translate
+# libfabric's CUDA sources into HIP at build time.
 rocm_path = get_option('rocm_path')
 if rocm_path != ''
-    if not fs.exists(rocm_path)
-        error('rocm_path set but ROCm install root not found at ' + rocm_path +
+    rocm_inc = include_directories(rocm_path + '/include')
+    rocm_lib_path = rocm_path + '/lib'
+    amdhip64_lib = cpp.find_library('amdhip64', dirs : [rocm_lib_path], required : true)
+    if not cpp.has_header('hip/hip_runtime.h', include_directories : rocm_inc)
+        error('rocm_path set but hip/hip_runtime.h not found under ' + rocm_path +
               '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
     endif
     rocm_dep = declare_dependency(
+        dependencies : amdhip64_lib,
         compile_args : [
-            '-I' + rocm_path + '/include',
+            # Lets the HIP headers work under a non-hipcc host compiler.
             '-D__HIP_PLATFORM_AMD__',
+
+            # HIP defines __noinline__, breaking toml++'s TOML_HAS_ATTR check.
+            # TOML_CUDA=1 routes around that line.
             '-DTOML_CUDA=1',
+
+            # hipify maps some CUDA driver calls to deprecated HIP APIs, and builds
+            # with error=true. Drop the errors to warnings.
             '-Wno-error=deprecated-declarations',
         ],
-        link_args : ['-L' + rocm_path + '/lib', '-lamdhip64', '-lhiprtc'],
+        # find_library resolves the libraries; the rpath keeps them reachable at
+        # runtime from a non-default prefix.
+        link_args : ['-Wl,-rpath,' + rocm_lib_path],
+        include_directories : rocm_inc,
     )
     message('ROCm/HIP enabled; toolchain path: ' + rocm_path)
 
+    # hipify-perl is shipped with ROCm and is required for all ROCm builds.
     hipify_cmd = find_program('hipify-perl')
     hipify_src = generator(hipify_cmd,
                            output : ['@BASENAME@_hip.cpp'],
                            arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
 else
     rocm_dep = disabler()
+endif
+
+if cuda_dep.found() and rocm_dep.found()
+    message('CUDA and ROCm/HIP are both available; NVIDIA and AMD plugin stacks may be built together when enabled.')
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
@@ -475,6 +472,20 @@ else
   libfabric_dep = dependency('libfabric', required: false)
 endif
 
+# DOCA KV (used by the DOCA_MEMOS plugin). These pkg-config files live in
+# /opt/mellanox/doca/lib64/pkgconfig, which is normally added to PKG_CONFIG_PATH
+# by /etc/profile.d when the DOCA SDK is installed.
+doca_kv_dep = dependency('doca-kv', required: false)
+doca_common_dep = dependency('doca-common', required: false)
+
+# libb2 provides Blake2 for the DOCA_MEMOS optional string-to-128-bit key mode.
+# Prefer pkg-config when present, but accept environments that only provide
+# libb2 as a linkable system library.
+libb2_dep = dependency('libb2', required: false)
+if not libb2_dep.found()
+    libb2_dep = cpp.find_library('b2', required: false)
+endif
+
 # UCX GPU device API detection
 nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
@@ -516,6 +527,10 @@ endif
 
 if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
+endif
+
+if get_option('disable_rocm_ais_backend')
+    add_project_arguments('-DDISABLE_AIS_BACKEND', language: 'cpp')
 endif
 
 # Configure NDEBUG for release builds
@@ -610,6 +625,9 @@ utils_inc_dirs = include_directories('src/utils')
 nixl_device_api_inc_dirs = [nixl_device_inc_dirs, utils_inc_dirs]
 
 subdir('src')
+if get_option('build_nixl_ep')
+  subdir('runtime/ep')
+endif
 if get_option('build_tests') and get_option('buildtype') != 'release'
   subdir('test')
 endif
@@ -631,8 +649,6 @@ if get_option('install_headers')
   install_headers('src/api/cpp/backend/backend_engine.h', install_dir: prefix_inc + '/backend')
   install_headers('src/api/cpp/backend/backend_aux.h', install_dir: prefix_inc + '/backend')
   install_headers('src/api/cpp/backend/backend_plugin.h', install_dir: prefix_inc + '/backend')
-  install_headers('src/core/transfer_request.h', install_dir: prefix_inc)
-  install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
   install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
 

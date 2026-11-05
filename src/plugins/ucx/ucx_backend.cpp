@@ -44,13 +44,16 @@
 namespace {
 [[nodiscard]] bool
 sglEnabledFromConfig() {
-    const bool enabled = nixl::config::getValueDefaulted("NIXL_UCX_SGL_ENABLE", false);
+    // TODO: Remove NIXL_PLUGIN_UCX_SGL_ENABLE once SGL has had enough field exposure.
+    const auto configured =
+        nixl::config::getValueOptional<bool>("NIXL_PLUGIN_UCX_SGL_ENABLE", "NIXL_UCX_SGL_ENABLE");
 #ifdef HAVE_UCX_SGL_API
+    const bool enabled = configured.value_or(true);
     NIXL_DEBUG << "UCX SGL offload " << (enabled ? "enabled" : "disabled");
     return enabled;
 #else
-    if (enabled) {
-        NIXL_WARN << "NIXL_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL support";
+    if (configured.value_or(false)) {
+        NIXL_WARN << "NIXL_PLUGIN_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL support";
     }
     return false;
 #endif
@@ -107,7 +110,10 @@ nixlUcxEngine::createWithMemoryPolicy(const nixlBackendInitParams &init_params,
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
                              size_t num_dedicated_workers,
                              nixl::ucx::MemoryRegistrationPolicy policy)
-    : nixlBackendEngine(&init_params),
+    : nixlBackendEngine(&init_params,
+                        nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::LOCAL |
+                            nixl_backend_capability_t::NOTIF |
+                            nixl_backend_capability_t::TRACE_CONTEXT),
       memoryPolicy_(std::move(policy)),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
@@ -670,53 +676,29 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
+    // TODO: build the notification lazily, after the data is posted (slightly faster).
+    // Revisit with the serdes optimization and UCX memory pool for notifications.
+    std::string notif;
+    if (opt_args && opt_args->hasNotif) {
+        notif = buildNotif(opt_args->notifMsg,
+                           opt_args->traceContext,
+                           int_handle->traceRequestId,
+                           int_handle->traceExecution);
+    }
+    int_handle->setNotif(std::move(notif));
+
     ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
     if (ret != NIXL_SUCCESS) {
         return ret;
     }
 
     recordPhase(traceSink_, nixl_trace_phase_t::WIRE_SUBMITTED, *int_handle);
-
-    ret = int_handle->status();
-    if (opt_args && opt_args->hasNotif && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
-        int_handle->notif = buildNotif(opt_args->notifMsg,
-                                       opt_args->traceContext,
-                                       int_handle->traceRequestId,
-                                       int_handle->traceExecution);
-        if (ret == NIXL_SUCCESS) {
-            ret = int_handle->sendNotif();
-            if (ret != NIXL_SUCCESS) {
-                return ret;
-            }
-
-            recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle);
-            ret = int_handle->status();
-        }
-    }
-
-    return ret;
+    return int_handle->hasPendingRequests() ? NIXL_IN_PROG : int_handle->status();
 }
 
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
-    const nixl_status_t handle_status = int_handle->status();
-
-    if ((handle_status == NIXL_IN_PROG) || int_handle->notif.empty()) {
-        return handle_status;
-    }
-
-    if (handle_status != NIXL_SUCCESS) [[unlikely]] {
-        int_handle->notif.clear();
-        return handle_status;
-    }
-
-    const nixl_status_t status = int_handle->sendNotif();
-    if (status != NIXL_SUCCESS) {
-        return status;
-    }
-
-    recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle);
     return int_handle->status();
 }
 
@@ -833,10 +815,9 @@ nixlUcxEngine::buildNotif(const std::string &msg,
 nixl_status_t
 nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::string &msg,
-                             const nixlUcxEp &ep,
-                             nixlUcxReq *req) const {
+                             const nixlUcxEp &ep) const {
     return ep.sendAm(
-        nixl::ucx::am_cb_op_t::NOTIF_STR, buildNotif(msg, nullptr), UCP_AM_SEND_FLAG_EAGER, req);
+        nixl::ucx::am_cb_op_t::NOTIF_STR, buildNotif(msg, nullptr), UCP_AM_SEND_FLAG_EAGER);
 }
 
 ucx_connection_ptr_t
