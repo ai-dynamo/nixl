@@ -102,7 +102,7 @@ private:
 
     // Publish blob under key, tracking it so invalidateLocal can remove it.
     void
-    publishKey(const std::string &key, const nixl_blob_t &blob);
+    publishKey(const std::string &key, nixl_blob_t &&blob);
 
     // Initiate one async fetch on the key.
     void
@@ -143,6 +143,8 @@ private:
     std::unordered_map<std::string, pendingInfo> pendingKeys_;
     // Timer for fetch retries.
     asio::steady_timer fetchRetryTimer_;
+    // Delay between fetch retries.
+    std::chrono::microseconds fetchRetryDelay_;
 
     // Queued metadata operations that change the published metadata.
     std::deque<std::unique_ptr<WriteTask>> writeQueue_;

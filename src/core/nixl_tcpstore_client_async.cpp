@@ -21,6 +21,7 @@
 #include <memory>
 #include <span>
 
+#include "asio/error.hpp"
 #include "asio/error_code.hpp"
 #include "byte_buffer.h"
 #include "common/nixl_log.h"
@@ -237,24 +238,20 @@ nixlTcpStoreClientAsync::doResolve(std::chrono::milliseconds timeout) {
 
     const auto deadline = std::chrono::steady_clock::now() + timeout;
 
-    if (resolvedEndpoints_.empty()) {
-        auto resolver = std::make_unique<asio::ip::tcp::resolver>(ioContext_);
-        resolver->async_resolve(
-            host_,
-            portStr_,
-            cancelAndErrorAdapter(
-                "resolve",
-                deadline,
-                [this, deadline, resolver = std::move(resolver)](
-                    asio::error_code error, asio::ip::tcp::resolver::results_type results) mutable {
-                    if (!error && connectionState_ == connection_state_t::CONNECTING) {
-                        resolvedEndpoints_ = results;
-                        doConnect(deadline);
-                    }
-                }));
-    } else {
-        doConnect(deadline);
-    }
+    auto resolver = std::make_unique<asio::ip::tcp::resolver>(ioContext_);
+    resolver->async_resolve(
+        host_,
+        portStr_,
+        cancelAndErrorAdapter(
+            "resolve",
+            deadline,
+            [this, deadline, resolver = std::move(resolver)](
+                asio::error_code error, asio::ip::tcp::resolver::results_type results) mutable {
+                if (!error && connectionState_ == connection_state_t::CONNECTING) {
+                    resolvedEndpoints_ = results;
+                    doConnect(deadline);
+                }
+            }));
 }
 
 // This function must be called from the I/O context.
@@ -397,7 +394,7 @@ nixlTcpStoreClientAsync::doShutdown() {
 
 void
 nixlTcpStoreClientAsync::set(const std::string &key,
-                             const std::string &value,
+                             std::string value,
                              std::function<void(asio::error_code)> on_complete) {
     // TCPStore SET request implementation.
     class setRequest : public Request {
@@ -405,11 +402,11 @@ nixlTcpStoreClientAsync::set(const std::string &key,
         setRequest(nixlTcpStoreClientAsync &client,
                    deadline_t deadline,
                    const std::string &key,
-                   const std::string &value,
+                   std::string value,
                    std::function<void(asio::error_code)> on_complete)
             : Request(client, deadline),
               key_(key),
-              value_(value),
+              value_(std::move(value)),
               onComplete_(on_complete) {}
 
         std::string
@@ -444,7 +441,7 @@ nixlTcpStoreClientAsync::set(const std::string &key,
     };
 
     scheduleRequest(std::make_unique<setRequest>(
-        *this, std::chrono::steady_clock::now() + opTimeout_, key, value, on_complete));
+        *this, std::chrono::steady_clock::now() + opTimeout_, key, std::move(value), on_complete));
 }
 
 void
@@ -488,7 +485,7 @@ nixlTcpStoreClientAsync::get(
             } else {
                 value = std::string(reinterpret_cast<char *>(response.data()), response.size());
             }
-            onComplete_(error, value);
+            onComplete_(error, std::move(value));
         }
 
     private:
@@ -839,6 +836,28 @@ nixlTcpStoreClientAsync::drainSendQueue() {
 
 // This function must be called from the I/O context.
 void
+nixlTcpStoreClientAsync::expireTimedOutRequests() {
+    std::deque<std::unique_ptr<Request>> expired_requests;
+    {
+        const std::lock_guard lock(sendQueueMutex_);
+        for (auto it = sendQueue_.begin(); it != sendQueue_.end();) {
+            if ((*it)->deadline_ < std::chrono::steady_clock::now()) {
+                expired_requests.push_back(std::move(*it));
+                it = sendQueue_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    for (auto &r : expired_requests) {
+        r->onComplete(asio::error::operation_aborted, nixl::fixedCapacityBuffer(0));
+    }
+    expired_requests.clear();
+}
+
+// This function must be called from the I/O context.
+void
 nixlTcpStoreClientAsync::drainRecvQueue() {
     for (auto &request : recvQueue_) {
         request->onComplete(asio::error::connection_reset, nixl::fixedCapacityBuffer(0));
@@ -885,6 +904,9 @@ nixlTcpStoreClientAsync::onError(std::string what,
         if (connectionState_ == connection_state_t::CONNECTING ||
             connectionState_ == connection_state_t::CONNECTED) {
             connectionState_ = connection_state_t::CLOSED;
+            if (connectionRetryCount_ > 0) {
+                expireTimedOutRequests();
+            }
             if (connectionRetryCount_ < max_connection_retry_count) {
                 connectionRetryTimer_.expires_after(connection_retry_interval);
                 connectionRetryTimer_.async_wait([this](asio::error_code error) {

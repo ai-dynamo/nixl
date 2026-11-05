@@ -91,7 +91,7 @@ public:
     // This function is thread-safe.
     void
     set(const std::string &key,
-        const std::string &value,
+        std::string value,
         std::function<void(asio::error_code)> on_complete);
 
     // Initiate a CHECK followed by a GET request with the given key.
@@ -164,6 +164,10 @@ private:
     // Drain the receive queue.
     void
     drainRecvQueue();
+
+    // Expire timed out requests.
+    void
+    expireTimedOutRequests();
 
     // Handle I/O error.
     void

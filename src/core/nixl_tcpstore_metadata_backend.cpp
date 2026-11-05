@@ -46,9 +46,6 @@ constexpr long default_timeout_ms = 30000;
 // budget so one degraded operation does not hold the worker for the window.
 constexpr long default_op_timeout_ms = 5000;
 
-// Default retry delay for fetch operations.
-constexpr auto default_retry_delay = std::chrono::milliseconds(50);
-
 [[nodiscard]] std::string
 makeKey(const std::string &label, const std::string &src, const std::string &dst) {
     return std::string(namespace_prefix) + "/" + label + "/" + src + "/" + dst;
@@ -112,7 +109,8 @@ nixlTcpStoreMetadataBackend::nixlTcpStoreMetadataBackend(nixlMetadataContext &ct
       ctx_(ctx),
       ioContext_(io_context),
       client_(makeClient(io_context)),
-      fetchRetryTimer_(io_context, std::chrono::steady_clock::now()) {
+      fetchRetryTimer_(io_context),
+      fetchRetryDelay_(config.workerDelay) {
     NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore backend ready";
 }
 
@@ -137,19 +135,19 @@ nixlTcpStoreMetadataBackend::stop() {
 }
 
 void
-nixlTcpStoreMetadataBackend::publishKey(const std::string &key, const nixl_blob_t &blob) {
+nixlTcpStoreMetadataBackend::publishKey(const std::string &key, nixl_blob_t &&blob) {
     class publishKeyTask : public nixlTcpStoreMetadataBackend::WriteTask {
     public:
         publishKeyTask(nixlTcpStoreMetadataBackend &backend,
                        const std::string &key,
-                       const nixl_blob_t &blob)
+                       nixl_blob_t &&blob)
             : WriteTask(backend),
               key_(key),
-              blob_(blob) {}
+              blob_(std::move(blob)) {}
 
         void
         initiate() override {
-            backend_.client_->set(key_, blob_, [this](asio::error_code error) {
+            backend_.client_->set(key_, std::move(blob_), [this](asio::error_code error) {
                 if (!error) {
                     NIXL_DEBUG << "[" << backend_.ctx_.agentName() << "] TCPStore published key "
                                << key_;
@@ -167,7 +165,7 @@ nixlTcpStoreMetadataBackend::publishKey(const std::string &key, const nixl_blob_
         nixl_blob_t blob_;
     };
 
-    postWriteTask(std::make_unique<publishKeyTask>(*this, key, blob));
+    postWriteTask(std::make_unique<publishKeyTask>(*this, key, std::move(blob)));
 }
 
 nixl_status_t
@@ -178,7 +176,7 @@ nixlTcpStoreMetadataBackend::sendLocal(const nixl_opt_args_t * /*extra_params*/)
         return ret;
     }
     const std::string key = makeKey(default_metadata_label, ctx_.agentName(), nixl_null_agent);
-    publishKey(key, blob);
+    publishKey(key, std::move(blob));
     return NIXL_SUCCESS;
 }
 
@@ -195,7 +193,7 @@ nixlTcpStoreMetadataBackend::sendLocalPartial(const nixl_reg_dlist_t &descs,
         return ret;
     }
     const std::string key = makeKey(extra_params->metadataLabel, ctx_.agentName(), nixl_null_agent);
-    publishKey(key, blob);
+    publishKey(key, std::move(blob));
     return NIXL_SUCCESS;
 }
 
@@ -238,7 +236,15 @@ nixlTcpStoreMetadataBackend::initiateFetch(const std::string &remote_name, const
                          pendingKeys_.erase(key);
 
                          std::string loaded_name;
-                         const nixl_status_t ret = ctx_.loadRemoteMD(*blob, loaded_name);
+                         nixl_status_t ret = NIXL_SUCCESS;
+                         try {
+                             ret = ctx_.loadRemoteMD(*blob, loaded_name);
+                         }
+                         catch (const std::exception &e) {
+                             NIXL_ERROR << "[" << ctx_.agentName()
+                                        << "] failed to load metadata fetched for " << remote
+                                        << ": " << e.what();
+                         }
                          if (ret < 0) {
                              NIXL_ERROR << "[" << ctx_.agentName()
                                         << "] failed to load metadata fetched for " << remote
@@ -280,7 +286,7 @@ nixlTcpStoreMetadataBackend::initiateFetch(const std::string &remote_name, const
                              it->second.fetchInProgress = false;
                              if (fetchRetryTimer_.expiry() < std::chrono::steady_clock::now()) {
                                  // Arm the retry timer.
-                                 fetchRetryTimer_.expires_after(default_retry_delay);
+                                 fetchRetryTimer_.expires_after(fetchRetryDelay_);
                                  fetchRetryTimer_.async_wait([this](asio::error_code error) {
                                      if (!error && !stopCalled_) {
                                          retryPendingFetches();
