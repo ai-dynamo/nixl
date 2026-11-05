@@ -21,6 +21,8 @@
 #include <cctype>
 #include <chrono>
 #include <cstring>
+/* CUDA/HIP: include only via headers that load toml++ before HIP (see utils.h).
+ * Early hip_runtime.h breaks toml++ on GCC + ROCm (__noinline__ macro). */
 #include <fcntl.h>
 #include <filesystem>
 #include <iomanip>
@@ -48,9 +50,7 @@
 
 static nixl_mem_t
 resolveVramSegment() {
-#if HAVE_CUDA
-    return VRAM_SEG;
-#elif HAVE_ROCM
+#if HAVE_CUDA || HAVE_ROCM
     return VRAM_SEG;
 #else
     if (neuronCoreCount() > 0) return VRAM_SEG;
@@ -234,6 +234,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         std::cout << "GDS_MT backend" << std::endl;
         backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
         std::cout << "GDS MT Num threads: " << xferBenchConfig::gds_mt_num_threads << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_AIS)) {
+        std::cout << "AIS backend" << std::endl;
+        backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
+        std::cout << "AIS thread_count: " << xferBenchConfig::gds_mt_num_threads << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
         if (!xferBenchConfig::plugin_parameters) {
             // Preserve the existing flags-only POSIX parameter assembly.
@@ -733,15 +737,15 @@ cleanupVramCuda(xferBenchIOV &iov) {
 static std::optional<xferBenchIOV>
 getVramDescRocm(int devid, size_t buffer_size, uint8_t memset_value) {
     void *addr;
-    CHECK_CUDA_ERROR(hipMalloc(&addr, buffer_size), "Failed to allocate ROCm buffer");
-    CHECK_CUDA_ERROR(hipMemset(addr, memset_value, buffer_size), "Failed to set device memory");
+    CHECK_HIP_ERROR(hipMalloc(&addr, buffer_size), "Failed to allocate ROCm buffer");
+    CHECK_HIP_ERROR(hipMemset(addr, memset_value, buffer_size), "Failed to set device memory");
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
 }
 
 static void
 cleanupVramRocm(xferBenchIOV &iov) {
-    CHECK_CUDA_ERROR(hipSetDevice(iov.devId), "Failed to set device");
-    CHECK_CUDA_ERROR(hipFree((void *)iov.addr), "Failed to deallocate ROCm buffer");
+    CHECK_HIP_ERROR(hipSetDevice(iov.devId), "Failed to set device");
+    CHECK_HIP_ERROR(hipFree((void *)iov.addr), "Failed to deallocate ROCm buffer");
 }
 #endif /* HAVE_ROCM */
 
@@ -762,7 +766,7 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
         return getVramDescCuda(devid, buffer_size, memset_value);
     }
 #elif HAVE_ROCM
-    CHECK_CUDA_ERROR(hipSetDevice(devid), "Failed to set device");
+    CHECK_HIP_ERROR(hipSetDevice(devid), "Failed to set device");
     return getVramDescRocm(devid, buffer_size, memset_value);
 #else
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;

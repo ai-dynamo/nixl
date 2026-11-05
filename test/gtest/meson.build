@@ -59,28 +59,12 @@ endif
 
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
-# ROCm detection (mutually exclusive with CUDA; default off)
-rocm_path = get_option('rocm_path')
-if rocm_path != ''
-    if not fs.exists(rocm_path)
-        error('rocm_path set but ROCm install root not found at ' + rocm_path +
-              '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
-    endif
-    rocm_lib_path = rocm_path + '/lib'
-    rocm_inc_path = rocm_path + '/include'
-    rocm_dep = declare_dependency(
-        link_args : ['-L' + rocm_lib_path, '-lamdhip64', '-lhiprtc'],
-        include_directories : include_directories(rocm_inc_path))
-else
-    rocm_dep = disabler()
-endif
-
 cpp_flags = []
 
 gpu_dependencies = []
 if rocm_dep.found()
     gpu_dependencies = [rocm_dep]
-    cpp_flags += ['-DHAVE_GPU', '-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
+    cpp_flags += ['-DHAVE_GPU', '-DHAVE_ROCM', '-Wno-deprecated-declarations']
 elif cuda_dep.found()
     gpu_dependencies = [cuda_dep]
     cpp_flags += ['-DHAVE_GPU', '-DHAVE_CUDA']
