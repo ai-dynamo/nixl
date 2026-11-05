@@ -60,7 +60,6 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
     try {
         const TraceContext event_context = (context != nullptr) ? *context : TraceContext{};
         std::string traceparent;
-        std::string request_id_text;
         std::vector<Attribute> event_attrs;
         event_attrs.reserve(max_core_attrs + attrs.size());
         event_attrs.push_back({"nixl.backend", backend_});
@@ -70,8 +69,7 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
             event_attrs.push_back({"nixl.traceparent", traceparent});
         }
         if (request_id != 0) {
-            request_id_text = std::to_string(request_id);
-            event_attrs.push_back({"nixl.xfer_request_id", request_id_text});
+            event_attrs.push_back({"nixl.xfer_request_id", attributeValue(request_id)});
         }
         if (execution != 0) {
             event_attrs.push_back({"nixl.xfer_execution", static_cast<std::int64_t>(execution)});

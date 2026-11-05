@@ -16,6 +16,7 @@
  */
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 #include <pthread.h>
@@ -38,6 +39,7 @@ constexpr std::size_t wire_span_id_offset = 18;
 constexpr std::size_t trace_id_randomness_bytes = 7;
 constexpr double two_pow_56 = 0x1p56;
 constexpr double min_sample_ratio = 0x1p-56;
+constexpr std::uint64_t max_request_id = std::numeric_limits<std::int64_t>::max();
 
 template<std::size_t Size>
 [[nodiscard]] bool
@@ -335,6 +337,7 @@ nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
     try {
         do {
             fill({reinterpret_cast<std::uint8_t *>(&id), sizeof(id)});
+            id &= max_request_id;
         } while (id == 0);
     }
     catch (const std::exception &e) {

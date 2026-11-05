@@ -88,11 +88,11 @@
     ::nixl::trace::CorrelationScope nixl_trace_correlation_scope_(    \
         (tracer_ptr), (context), (request_id))
 
-#define NIXL_TRACE_ATTR(span, attr_key, attr_value)        \
-    do {                                                   \
-        if ((span).active()) {                             \
-            (span).addAttribute((attr_key), (attr_value)); \
-        }                                                  \
+#define NIXL_TRACE_ATTR(span, attr_key, attr_value)                                     \
+    do {                                                                                \
+        if ((span).active()) {                                                          \
+            (span).addAttribute((attr_key), ::nixl::trace::attributeValue(attr_value)); \
+        }                                                                               \
     } while (0)
 
 #else // !NIXL_TRACE_ENABLED
