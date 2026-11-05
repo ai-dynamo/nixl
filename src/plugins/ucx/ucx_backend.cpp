@@ -901,7 +901,7 @@ nixlUcxEngine::prepMemViewImpl(const DlistT &dlist,
     // Device code takes the backend handle out of a tagged wrapper: the tag picks the
     // implementation at run time, or checks a mode a caller fixed at compile time.
     const nixl_status_t status =
-        nixl::deviceMemViewAllocate(*ops, nixl_device_exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
+        nixl::deviceMemViewAllocate(*ops, nixl::gpu::exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
     if (status != NIXL_SUCCESS) {
         nixl::ucx::releaseMemList(backend_mvh);
     }

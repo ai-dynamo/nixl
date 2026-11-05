@@ -149,7 +149,7 @@ getPtr(nixlMemViewH mvh, size_t index) {
  * @return NIXL_ERR_BACKEND An error occurred in the backend.
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD,
-         nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
+         nixl::gpu::exec_mode_t mode = nixl::gpu::exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
 nixlGpuGetXferStatus(nixlGpuXferStatusH &xfer_status) {
     return nixl::gpu::getXferStatus<level, mode>(xfer_status);
@@ -176,7 +176,7 @@ nixlGpuGetXferStatus(nixlGpuXferStatusH &xfer_status) {
  * @return NIXL_ERR_BACKEND An error occurred in the backend.
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD,
-         nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
+         nixl::gpu::exec_mode_t mode = nixl::gpu::exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
 nixlPut(const nixlMemViewElem &src,
         const nixlMemViewElem &dst,
@@ -207,7 +207,7 @@ nixlPut(const nixlMemViewElem &src,
  * @return NIXL_ERR_BACKEND An error occurred in the backend.
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD,
-         nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
+         nixl::gpu::exec_mode_t mode = nixl::gpu::exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
 nixlAtomicAdd(uint64_t value,
               const nixlMemViewElem &counter,
@@ -233,7 +233,7 @@ nixlAtomicAdd(uint64_t value,
  *
  * @return Pointer to the mapped memory, or nullptr if not available.
  */
-template<nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
+template<nixl::gpu::exec_mode_t mode = nixl::gpu::exec_mode_t::DYNAMIC>
 __device__ inline void *
 nixlGetPtr(nixlMemViewH mvh, size_t index) {
     return nixl::gpu::getPtr<mode>(mvh, index);
