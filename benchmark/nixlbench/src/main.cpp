@@ -52,6 +52,9 @@ static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int nu
     } else if (XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme) {
         if (worker.isTarget()) {
             count = initiator_device;
+            if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
+                buffer_size = xferBenchConfig::total_buffer_size / num_threads;
+            }
         }
     } else if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
         if (worker.isInitiator()) {
@@ -117,7 +120,10 @@ static int processBatchSizes(xferBenchWorker &worker,
          !worker.signaled() &&
              batch_size <= xferBenchConfig::max_batch_size;
          batch_size *= 2) {
-        size_t effective_batch = batch_size * xferBenchConfig::pipeline_depth;
+        const int descriptor_depth = xferBenchConfig::worker_type == XFERBENCH_WORKER_NIXL ?
+            xferBenchConfig::iterationPlan(block_size).descriptor_depth :
+            xferBenchConfig::pipeline_depth;
+        size_t effective_batch = batch_size * descriptor_depth;
         auto local_trans_lists =
             createTransferDescLists(worker, iov_lists, block_size, effective_batch, num_threads);
 
