@@ -326,6 +326,11 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     dataQpCount_ = parseDataQpCount((*custom_params)["data_qp_count"]);
     writeByteStriping_ = (*custom_params)["write_byte_striping"] == "1";
+    const auto min_bytes = custom_params->find("write_stripe_min_bytes");
+    if (min_bytes != custom_params->end() && !min_bytes->second.empty() &&
+        (!parseUnsigned(min_bytes->second, writeStripeMinBytes_) || writeStripeMinBytes_ == 0)) {
+        throw std::invalid_argument("write_stripe_min_bytes must be a positive integer");
+    }
     if (dataQpCount_ > 1 &&
         (nstreams < static_cast<int>(dataQpCount_) ||
          nstreams > static_cast<int>(DOCA_POST_STREAM_NUM))) {
@@ -1677,40 +1682,30 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     // the WQEs of the request even if no descriptor is merged or paired.
     constexpr uint64_t max_wqes = uint64_t{DOCA_XFER_REQ_SIZE} * DOCA_XFER_REQ_MAX;
     uint64_t wqe_count = 0;
-    const bool byte_striping = operation == NIXL_WRITE && writeByteStriping_ && dataQpCount_ > 1 &&
-        (lcnt == 1 ||
-         nixl::gpunetio::descriptorWqeCount(local[lcnt - 1].len) <= DOCA_XFER_REQ_SIZE);
+    const bool byte_striping = operation == NIXL_WRITE && writeByteStriping_ && dataQpCount_ > 1;
     size_t write_bytes = 0;
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         if (local[idx].len != remote[idx].len) {
             return NIXL_ERR_INVALID_PARAM;
         }
         wqe_count += nixl::gpunetio::descriptorWqeCount(local[idx].len);
-        if (byte_striping) {
-            write_bytes += local[idx].len;
-        }
         if (wqe_count > max_wqes) {
             return NIXL_ERR_INVALID_PARAM;
         }
+        if (byte_striping) {
+            write_bytes += local[idx].len;
+        }
     }
 
-    constexpr size_t min_chunk = 4 * 1024 * 1024;
-    const size_t final_bytes = byte_striping && lcnt > 1 ? local[lcnt - 1].len : 0;
-    const size_t ordering_tail =
-        byte_striping && lcnt == 1 && write_bytes >= 2 * min_chunk + sizeof(uint64_t) ?
-        sizeof(uint64_t) :
-        0;
-    const size_t stripeable_bytes = write_bytes - final_bytes - ordering_tail;
     const uint32_t qps_used = byte_striping ?
-        static_cast<uint32_t>(
-            std::min<size_t>(std::max<size_t>(stripeable_bytes / min_chunk, 1), dataQpCount_)) :
+        static_cast<uint32_t>(std::max<size_t>(
+            1, std::min<size_t>(write_bytes / writeStripeMinBytes_, dataQpCount_))) :
         1;
-    const size_t bulk_bytes = qps_used > 1 ? stripeable_bytes : write_bytes;
     uint32_t owner = 0;
-    size_t owner_remaining = bulk_bytes / qps_used + (bulk_bytes % qps_used != 0);
     auto owner_budget = [&](uint32_t qp) {
-        return bulk_bytes / qps_used + (qp < bulk_bytes % qps_used);
+        return write_bytes / qps_used + (qp < write_bytes % qps_used);
     };
+    size_t owner_remaining = owner_budget(0);
 
     if (operation == NIXL_WRITE && dataQpCount_ > 1 && opt_args != nullptr &&
         !opt_args->customParam.empty()) {
@@ -1783,11 +1778,8 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     // Bytes of local[desc_offset] already staged in earlier WQEs, possibly in an earlier slot.
     size_t split_offset = 0;
     do {
-        const bool final_chunk = byte_striping &&
-            ((lcnt > 1 && qps_used > 1 && desc_offset == lcnt - 1) ||
-             (lcnt == 1 && local[0].len - split_offset <= ordering_tail));
         if (byte_striping) {
-            treq->qpOwners.push_back(final_chunk ? 0 : owner);
+            treq->qpOwners.push_back(owner);
         }
         docaSlotDesc staged_req{};
         staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
@@ -1798,10 +1790,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                (operation == NIXL_READ || chunk_desc_count < DOCA_XFER_REQ_SIZE)) {
             const uint32_t desc_idx = desc_offset;
 
-            if (byte_striping && !final_chunk && staged_req.num > 0 &&
-                (chunk_bytes >= owner_remaining ||
-                 (lcnt > 1 && qps_used > 1 && desc_idx == lcnt - 1) ||
-                 (ordering_tail && local[desc_idx].len - split_offset == ordering_tail))) {
+            if (byte_striping && staged_req.num > 0 && chunk_bytes >= owner_remaining) {
                 break;
             }
 
@@ -1840,12 +1829,8 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             }
 
             const size_t remaining = local[desc_idx].len - split_offset;
-            // Split large descriptors at the SDK limit, and eligible WRITEs at their QP byte
-            // budget. For a single range, preserve its final eight bytes as the ordering tail.
-            const size_t bulk_remaining =
-                ordering_tail && remaining > ordering_tail ? remaining - ordering_tail : remaining;
-            const size_t wqe_size = byte_striping && !final_chunk ?
-                std::min({bulk_remaining,
+            const size_t wqe_size = byte_striping ?
+                std::min({remaining,
                           owner_remaining - chunk_bytes,
                           size_t(DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE)}) :
                 std::min<size_t>(remaining, DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
@@ -1898,7 +1883,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             staged_req.has_two_sge ? sizeof(staged_req) : offsetof(docaSlotDesc, lbuf2);
         memcpy(&xferReqRingCpu[pos], &staged_req, publish_size);
 
-        if (byte_striping && !final_chunk) {
+        if (byte_striping) {
             owner_remaining -= chunk_bytes;
             if (owner_remaining == 0 && owner + 1 < qps_used) {
                 ++owner;
@@ -2073,6 +2058,9 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
     }
     auto &last = xferReqRingCpu[request->positions.back()];
     last.posting_ctas_done = 0;
+    last.defer_completion = std::any_of(request->qpOwners.begin(),
+                                        request->qpOwners.end(),
+                                        [](uint32_t owner) { return owner != 0; });
     last.peer_write_completed = peer->writeCompletedGpu.get();
     last.write_ticket = ++peer->postedWriteTicket;
     // Build the mask locally: |= on the slot would read it back through the GPU mapping.

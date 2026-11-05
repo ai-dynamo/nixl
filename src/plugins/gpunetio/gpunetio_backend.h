@@ -153,6 +153,7 @@ private:
     int nstreams;
     uint32_t dataQpCount_ = 1;
     bool writeByteStriping_ = false;
+    size_t writeStripeMinBytes_ = 4 * 1024 * 1024;
 
     uint16_t local_port;
     int noSyncIters;

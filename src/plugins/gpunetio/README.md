@@ -38,8 +38,8 @@ Stream pool mode instead is when applications mostly wants to process data on th
 must use the same count. Counts above 1 retain a dedicated READ QP, stripe WRITE
 chunks over one block per QP in a single kernel launch and require
 `data_qp_count <= cuda_streams <= 4`.
-The final chunk waits for all preceding chunks and the previous peer WRITE
-before posting, preserving ordering-tail/notification semantics. Each block
+For the default mapping, the final chunk waits for preceding chunks and the
+previous peer WRITE before posting. Each block
 posts its non-final chunks and publishes arrival without waiting for other
 blocks. The last arriving block posts the final chunk after the existing RDMA
 completion checks. Requests share one posting stream, avoiding cross-stream
@@ -53,7 +53,8 @@ DOCA GPUNetIO backend takes these input parameters:
 - oob_port: TCP port used to listen for OOB connection setup. It must be an integer in the inclusive range [1, 65535] and defaults to 6544. Set a distinct port for each GPUNETIO backend sharing a host network namespace.
 - gid_index: RoCE GID table index, in [0, 255]. Defaults to 0; select the GID for the test fabric when a non-default index is required.
 - gpu_devices: GPU CUDA ID to be used during the execution (e.g. 0). Current release supports only 1 GPU device.
-- write_byte_striping: enable byte-balanced large WRITE preparation with `1`; disabled by default (`0`). NIXLBench exposes this as `--gpunetio_write_byte_striping=true`.
+- write_byte_striping: enable byte-balanced large WRITEs with `1` (default `0`). Completion and notification follow all chunks; payload chunks may arrive out of order.
+- write_stripe_min_bytes: minimum bytes per WRITE QP (default `4194304`); must be positive.
 - cuda_streams: how many CUDA streams the backend should create at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. It must be an integer in the inclusive range [1, 4]; if this parameter is not specified, default value is `DOCA_POST_STREAM_NUM` (4).
 
 ## Example

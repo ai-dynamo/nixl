@@ -268,6 +268,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["data_qp_count"] = std::to_string(xferBenchConfig::gpunetio_data_qp_count);
         if (xferBenchConfig::gpunetio_write_byte_striping) {
             backend_params["write_byte_striping"] = "1";
+            if (xferBenchConfig::gpunetio_write_stripe_min_bytes != 4194304) {
+                backend_params["write_stripe_min_bytes"] =
+                    std::to_string(xferBenchConfig::gpunetio_write_stripe_min_bytes);
+            }
         }
         backend_params["oob_port"] = xferBenchConfig::gpunetio_oob_port;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE)) {
