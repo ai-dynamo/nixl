@@ -340,6 +340,7 @@ nixlAgentData::warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
     });
 }
 
+/** Create a backend and cache cancellation support from plugin metadata, not caller options. */
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
                          const nixl_b_params_t &params,
@@ -1437,6 +1438,7 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
     return NIXL_SUCCESS;
 }
 
+/** Release only when safe; refusal preserves the request and its backend handle for retry. */
 nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
     NIXL_TRACE_CORRELATION_SCOPE(
@@ -1463,7 +1465,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
         }
     }
     if (req_hndl->status == NIXL_IN_PROG &&
-        !data->backendHandles_.at(req_hndl->engine->getType())->supportsXferCancel) {
+        !data->backendHandles_.at(req_hndl->engine->getType())->supportsXferCancel_) {
         NIXL_DEBUG << "backend '" << req_hndl->engine->getType()
                    << "' does not support cancellation of active transfers";
         NIXL_TRACE_ATTR(
