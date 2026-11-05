@@ -1,0 +1,96 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ *
+ * This file incorporates material from the DeepSeek project, licensed under the MIT License.
+ * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
+ *
+ * SPDX-License-Identifier: MIT AND Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#pragma once
+
+#include <ATen/cuda/CUDAContext.h>
+
+#include <nixl_ep_v2/common/exception.cuh>
+
+#include "../utils/format.hpp"
+#include "../utils/system.hpp"
+#include "compiler.hpp"
+#include "include_parser.hpp"
+
+namespace nixl_ep_v2::jit {
+
+struct LaunchArgs {
+    std::pair<int, int> grid_dim;
+    int num_threads;
+    int smem_size;
+    int cluster_dim;
+    bool cooperative;
+    bool pdl_enabled;
+
+    LaunchArgs(const int& grid_dim_x, const int& num_threads, const int& smem_size = 0, const int& cluster_dim = 1, const bool& cooperative = false, const bool& pdl_enabled = false):
+        grid_dim({grid_dim_x, 1}), num_threads(num_threads), smem_size(smem_size), cluster_dim(cluster_dim), cooperative(cooperative), pdl_enabled(pdl_enabled) {}
+
+    LaunchArgs(const std::pair<int, int>& grid_dim, const int& num_threads, const int& smem_size = 0, const int& cluster_dim = 1, const bool& cooperative = false, const bool& pdl_enabled = false):
+        grid_dim(grid_dim), num_threads(num_threads), smem_size(smem_size), cluster_dim(cluster_dim), cooperative(cooperative), pdl_enabled(pdl_enabled) {}
+};
+
+template <typename Derived>
+class LaunchRuntime {
+public:
+    template <typename Args>
+    static std::string generate(const Args& args) {
+        auto code = Derived::generate_impl(args);
+
+        // NOTES: we require that `generate_impl`'s includes never change
+        static std::string include_hash;
+        if (include_hash.empty())
+            include_hash = include_parser->get_hash_value(code);
+
+        // TODO: optimize string concat performance
+        code = fmt::format("// Includes' hash value: {}\n{}", include_hash, code);
+        if (get_env<int>("NIXL_EP_JIT_DEBUG", 0))
+            printf("Generated kernel code:\n%s\n", code.c_str());
+        return code;
+    }
+
+    template <typename Args>
+    static void launch(const std::shared_ptr<KernelRuntime>& kernel_runtime, const Args& args,
+                       const std::optional<at::cuda::CUDAStream>& stream_opt = std::nullopt) {
+        const auto kernel = kernel_runtime->kernel;
+        const auto stream = stream_opt.value_or(at::cuda::getCurrentCUDAStream());
+        const LaunchArgs& launch_args = args.launch_args;
+
+        const dim3& grid_dim = {static_cast<unsigned>(launch_args.grid_dim.first),
+                                static_cast<unsigned>(launch_args.grid_dim.second),
+                                1};
+        const dim3& block_dim = {static_cast<unsigned>(launch_args.num_threads), 1, 1};
+        auto config = construct_launch_config(kernel, stream, launch_args.smem_size,
+                                              grid_dim, block_dim, launch_args.cluster_dim,
+                                              launch_args.cooperative, launch_args.pdl_enabled);
+
+        // Launch in the derived class
+        if (get_env<int>("NIXL_EP_JIT_DEBUG")) {
+            printf("Launch kernel with {%d, %d} x %d (cooperative: %d), shared memory: %d bytes, cluster: %d, stream: %ld\n",
+                   launch_args.grid_dim.first, launch_args.grid_dim.second, launch_args.num_threads,
+                   launch_args.cooperative,
+                   launch_args.smem_size, launch_args.cluster_dim, stream.id());
+        }
+        Derived::launch_impl(kernel, config, args);
+    }
+};
+
+} // namespace nixl_ep_v2::jit
