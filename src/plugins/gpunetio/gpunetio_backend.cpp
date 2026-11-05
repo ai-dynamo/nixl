@@ -1694,11 +1694,13 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         }
     }
 
+    constexpr size_t min_chunk = 4 * 1024 * 1024;
     const size_t final_bytes = byte_striping && lcnt > 1 ? local[lcnt - 1].len : 0;
     const size_t ordering_tail =
-        byte_striping && lcnt == 1 ? std::min(write_bytes, sizeof(uint64_t)) : 0;
+        byte_striping && lcnt == 1 && write_bytes >= 2 * min_chunk + sizeof(uint64_t) ?
+        sizeof(uint64_t) :
+        0;
     const size_t bulk_bytes = write_bytes - final_bytes - ordering_tail;
-    constexpr size_t min_chunk = 4 * 1024 * 1024;
     const uint32_t qps_used = byte_striping ?
         static_cast<uint32_t>(
             std::min<size_t>(std::max<size_t>(bulk_bytes / min_chunk, 1), dataQpCount_)) :
