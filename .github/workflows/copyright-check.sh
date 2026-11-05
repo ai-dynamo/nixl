@@ -23,6 +23,9 @@ while IFS= read -r -d '' f; do
   # Normalize path
   f=${f#./}
 
+  # Symlinks have no content to carry a header
+  [ -L "$f" ] && continue
+
   # Skip ignored folders anywhere in path
   case "$f" in
     .github/*|.ci/*)
