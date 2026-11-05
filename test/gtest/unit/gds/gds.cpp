@@ -166,6 +166,95 @@ dramRoundTrip(nixlAgent &agent, const std::string &self, nixlBackendH *be, size_
     return ok;
 }
 
+// Round-trip multiple DRAM buffers through contiguous regions of one fd. With
+// vector_io=on this descriptor layout is eligible for one PIOV work item.
+bool
+dramVectorRoundTrip(nixlAgent &agent,
+                    const std::string &self,
+                    nixlBackendH *be,
+                    size_t block_size,
+                    size_t entry_count) {
+    if (entry_count < 2 || block_size == 0) {
+        return false;
+    }
+
+    const size_t total_size = block_size * entry_count;
+    const std::string path = makeSizedFile("nixl_gds_gtest_vector.bin", total_size);
+    const int fd = ::open(path.c_str(), O_RDWR);
+    if (fd < 0) {
+        std::filesystem::remove(path);
+        return false;
+    }
+
+    nixl_opt_args_t ep;
+    ep.backends = {be};
+    nixl_reg_dlist_t file_descs(FILE_SEG);
+    nixl_reg_dlist_t mem_descs(DRAM_SEG);
+    std::vector<void *> buffers(entry_count, nullptr);
+
+    bool allocations_ok = true;
+    for (size_t i = 0; i < entry_count; ++i) {
+        if (posix_memalign(&buffers[i], sysconf(_SC_PAGESIZE), block_size) != 0) {
+            allocations_ok = false;
+            break;
+        }
+        std::memset(buffers[i], static_cast<unsigned char>(kPattern + i), block_size);
+
+        nixlBlobDesc mdesc;
+        mdesc.addr = reinterpret_cast<uintptr_t>(buffers[i]);
+        mdesc.len = block_size;
+        mdesc.devId = 0;
+        mem_descs.addDesc(mdesc);
+
+        nixlBlobDesc fdesc;
+        fdesc.addr = i * block_size;
+        fdesc.len = block_size;
+        fdesc.devId = static_cast<uint64_t>(fd);
+        file_descs.addDesc(fdesc);
+    }
+
+    bool file_registered = false;
+    bool mem_registered = false;
+    bool ok = false;
+    if (allocations_ok) {
+        file_registered = agent.registerMem(file_descs, &ep) == NIXL_SUCCESS;
+        mem_registered = file_registered && agent.registerMem(mem_descs, &ep) == NIXL_SUCCESS;
+    }
+
+    if (mem_registered) {
+        nixl_xfer_dlist_t mx = mem_descs.trim();
+        nixl_xfer_dlist_t fx = file_descs.trim();
+        if (runTransfer(agent, self, be, NIXL_WRITE, mx, fx) == NIXL_SUCCESS) {
+            for (void *buffer : buffers) {
+                std::memset(buffer, 0, block_size);
+            }
+            if (runTransfer(agent, self, be, NIXL_READ, mx, fx) == NIXL_SUCCESS) {
+                ok = true;
+                for (size_t i = 0; i < entry_count && ok; ++i) {
+                    const auto expected = static_cast<unsigned char>(kPattern + i);
+                    const auto *begin = static_cast<unsigned char *>(buffers[i]);
+                    ok = std::all_of(begin, begin + block_size, [expected](unsigned char byte) {
+                        return byte == expected;
+                    });
+                }
+            }
+        }
+    }
+
+    if (mem_registered && agent.deregisterMem(mem_descs, &ep) != NIXL_SUCCESS) {
+        ok = false;
+    }
+    if (file_registered && agent.deregisterMem(file_descs, &ep) != NIXL_SUCCESS) {
+        ok = false;
+    }
+    for (void *buffer : buffers) {
+        free(buffer);
+    }
+    ::close(fd);
+    std::filesystem::remove(path);
+    return ok;
+}
+
 // Try to create the backend; on failure, the caller should skip (no GDS hw).
 nixl_status_t
 tryCreate(nixlAgent &agent,
@@ -214,6 +303,8 @@ TEST(GdsBatchOptions, AdvertisesBatchConfiguration) {
     EXPECT_EQ(params["max_request_size"], "16777216");
     EXPECT_EQ(params["thread_count"],
               std::to_string(std::max(1u, std::thread::hardware_concurrency() / 2)));
+    EXPECT_EQ(params["vector_io"], "auto");
+    EXPECT_EQ(params["vector_max_entries"], "32");
     EXPECT_EQ(params.find("submit_threads"), params.end());
     EXPECT_EQ(params.find("submit_cpus"), params.end());
 }
@@ -232,6 +323,8 @@ TEST(GdsMtOptions, AdvertisesThreadCount) {
     ASSERT_NE(thread_count, params.end());
     EXPECT_EQ(thread_count->second,
               std::to_string(std::max(1u, std::thread::hardware_concurrency() / 2)));
+    EXPECT_EQ(params["vector_io"], "auto");
+    EXPECT_EQ(params["vector_max_entries"], "32");
 }
 
 TEST(GdsMode, RejectsUnknownMode) {
@@ -311,6 +404,41 @@ TEST(GdsMode, MtRoundTripThroughGdsName) {
     }
 
     EXPECT_TRUE(dramRoundTrip(agent, self, be, 1 * 1024 * 1024));
+}
+
+// ---------------------------------------------------------------------------
+// Group B.1: vector I/O round-trip (hardware-gated). These tests use multiple
+// contiguous regions of one file handle so vector_io=on exercises PIOV.
+// ---------------------------------------------------------------------------
+
+TEST(GdsVectorIo, GdsMtCompatibilityRoundTrip) {
+    nixlAgentConfig cfg;
+    const std::string self = "gds_mt_vector_compat";
+    nixlAgent agent(self, cfg);
+
+    const nixl_b_params_t params = {
+        {"thread_count", "1"}, {"vector_io", "on"}, {"vector_max_entries", "4"}};
+    nixlBackendH *be = nullptr;
+    if (tryCreate(agent, "GDS_MT", be, params) != NIXL_SUCCESS || be == nullptr) {
+        GTEST_SKIP() << "GDS_MT vector backend unavailable (no cuFile readv/writev or GDS)";
+    }
+
+    EXPECT_TRUE(dramVectorRoundTrip(agent, self, be, 64 * 1024, 4));
+}
+
+TEST(GdsVectorIo, MtModeThroughGdsNameRoundTrip) {
+    nixlAgentConfig cfg;
+    const std::string self = "gds_mt_vector_primary";
+    nixlAgent agent(self, cfg);
+
+    const nixl_b_params_t params = {
+        {"mode", "mt"}, {"thread_count", "1"}, {"vector_io", "on"}, {"vector_max_entries", "4"}};
+    nixlBackendH *be = nullptr;
+    if (tryCreate(agent, "GDS", be, params) != NIXL_SUCCESS || be == nullptr) {
+        GTEST_SKIP() << "GDS mt vector backend unavailable (no cuFile readv/writev or GDS)";
+    }
+
+    EXPECT_TRUE(dramVectorRoundTrip(agent, self, be, 64 * 1024, 4));
 }
 
 // ---------------------------------------------------------------------------

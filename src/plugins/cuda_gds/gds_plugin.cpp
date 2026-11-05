@@ -31,7 +31,9 @@ getGdsBackendOptions() {
             {"batch_pool_size", "16"},
             {"batch_limit", "128"},
             {"max_request_size", "16777216"},
-            {"thread_count", std::to_string(defaultGdsMtThreadCount())}};
+            {"thread_count", std::to_string(defaultGdsMtThreadCount())},
+            {"vector_io", "auto"},
+            {"vector_max_entries", "32"}};
 }
 
 nixlBackendEngine *

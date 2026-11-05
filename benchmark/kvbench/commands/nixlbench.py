@@ -62,6 +62,8 @@ class NIXLBench:
         worker_type="nixl",
         benchmark_group="default",
         gds_mt_num_threads=1,
+        gds_mt_vector_io="auto",
+        gds_mt_vector_max_entries=32,
         gpunetio_device_list="0",
         gpunetio_oob_list="",
         hf3fs_iopool_size=64,
@@ -117,6 +119,8 @@ class NIXLBench:
             warmup_iter (int, optional): Number of warmup iterations. Defaults to 100.
             worker_type (str, optional): Type of worker. Defaults to "nixl".
             gds_mt_num_threads (int, optional): Number of threads for GDS_MT plugin. Defaults to 1.
+            gds_mt_vector_io (str, optional): Vector I/O mode for GDS_MT [auto, off, on]. Defaults to "auto".
+            gds_mt_vector_max_entries (int, optional): Maximum entries per GDS_MT vector I/O call. Defaults to 32.
             gpunetio_device_list (str, optional): GPU device list for GPUNETIO plugin. Defaults to "0".
             gpunetio_oob_list (str, optional): OOB network interface name for control path for GPUNETIO plugin. Defaults to "".
             hf3fs_iopool_size (int, optional): IO pool size for HF3FS plugin. Defaults to 64.
@@ -166,6 +170,8 @@ class NIXLBench:
         self.warmup_iter = warmup_iter
         self.worker_type = worker_type
         self.gds_mt_num_threads = gds_mt_num_threads
+        self.gds_mt_vector_io = gds_mt_vector_io
+        self.gds_mt_vector_max_entries = gds_mt_vector_max_entries
         self.gpunetio_device_list = gpunetio_device_list
         self.gpunetio_oob_list = gpunetio_oob_list
         self.hf3fs_iopool_size = hf3fs_iopool_size
@@ -345,6 +351,8 @@ class NIXLBench:
             "warmup_iter": self.warmup_iter,
             "worker_type": self.worker_type,
             "gds_mt_num_threads": self.gds_mt_num_threads,
+            "gds_mt_vector_io": self.gds_mt_vector_io,
+            "gds_mt_vector_max_entries": self.gds_mt_vector_max_entries,
             "gpunetio_device_list": self.gpunetio_device_list,
             "gpunetio_oob_list": self.gpunetio_oob_list,
             "hf3fs_iopool_size": self.hf3fs_iopool_size,
@@ -407,6 +415,8 @@ class NIXLBench:
             "worker_type": "nixl",
             "benchmark_group": "default",
             "gds_mt_num_threads": 1,
+            "gds_mt_vector_io": "auto",
+            "gds_mt_vector_max_entries": 32,
             "gpunetio_device_list": "0",
             "gpunetio_oob_list": "",
             "hf3fs_iopool_size": 64,

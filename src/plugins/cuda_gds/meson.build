@@ -30,6 +30,25 @@ else
     subdir_done()
 endif
 
+has_cufile_readv = cpp.links(
+    '''
+    #include <cufile.h>
+    int main() {
+        CUfileHandle_t fh = nullptr;
+        CUfileIOVec_t iov = {};
+        (void)cuFileReadv(fh, &iov, 1, 0, 0);
+        (void)cuFileWritev(fh, &iov, 1, 0, 0);
+        return 0;
+    }
+    ''',
+    dependencies: cufile_dep,
+    name: 'cuFileReadv/cuFileWritev with CUfileIOVec_t')
+
+gds_vector_cpp_args = []
+if has_cufile_readv
+    gds_vector_cpp_args += ['-DNIXL_HAVE_CUFILE_VECTOR_IO=1']
+endif
+
 gds_incs = [nixl_inc_dirs, utils_inc_dirs]
 gds_engine_deps = [
     nixl_infra,
@@ -50,6 +69,7 @@ gds_engine_lib = static_library('gds_engine',
     gds_engine_sources,
     dependencies: gds_engine_deps,
     include_directories: gds_incs,
+    cpp_args: gds_vector_cpp_args,
     pic: true,
     install: false)
 

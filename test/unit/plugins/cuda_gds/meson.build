@@ -51,4 +51,17 @@ if is_variable('gds_mt_backend_interface')
         install: true,
     )
     test('gds_mt_path_mode_smoke', nixl_gds_mt_app)
+
+    gds_mt_vector_test = executable(
+        'gds_mt_vector_test',
+        'gds_mt_vector_test.cpp',
+        dependencies: [gds_engine_dep],
+        include_directories: [
+            nixl_inc_dirs,
+            utils_inc_dirs,
+            include_directories('../../../../src/plugins/cuda_gds'),
+        ],
+        install: false,
+    )
+    test('gds_mt_vector_grouping', gds_mt_vector_test)
 endif
