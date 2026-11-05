@@ -210,7 +210,7 @@ class NIXLBench:
             raise ValueError(f"Invalid source for POSIX/HF3FS: {source}")
 
     def _configure_ucx(self, backend: str, source: str, destination: str):
-        """Configure UCX, GPUNETIO, and Mooncake plugins (same logic for all)"""
+        """Configure UCX, GPUNETIO, Mooncake, and Libfabric plugins (same logic for all)"""
         arg_to_seg_type = {
             "memory": "DRAM",
             "gpu": "VRAM",
