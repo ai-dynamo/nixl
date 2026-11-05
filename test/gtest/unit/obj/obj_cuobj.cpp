@@ -24,6 +24,16 @@
  */
 #include "obj_test_base.h"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cstdlib>
+#include <mutex>
+
+#include "object/rdma/s3_control_plane_http.h"
+
 namespace gtest::obj {
 
 // Accel and Dell test configurations for the common parameterized tests
@@ -706,6 +716,193 @@ TEST_F(objDellTestFixture, DellPrepXferLargeMemoryOffset) {
 
     objEngine_->deregisterMem(local_metadata);
     objEngine_->deregisterMem(remote_metadata);
+}
+
+/**
+ * Answers every request with 400 and records its Authorization header, or an
+ * empty string for an unsigned request, so a test can see every request the S3
+ * RDMA control plane sent and which credentials it signed with.
+ */
+class authRecordingServer {
+public:
+    authRecordingServer() {
+        fd_ = socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        bind(fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
+        listen(fd_, 4);
+        socklen_t len = sizeof(addr);
+        getsockname(fd_, reinterpret_cast<sockaddr *>(&addr), &len);
+        port_ = ntohs(addr.sin_port);
+        thread_ = std::thread([this] { serve(); });
+    }
+
+    ~authRecordingServer() {
+        shutdown(fd_, SHUT_RDWR);
+        close(fd_);
+        thread_.join();
+    }
+
+    [[nodiscard]] std::string
+    endpoint() const {
+        return "http://127.0.0.1:" + std::to_string(port_);
+    }
+
+    [[nodiscard]] std::vector<std::string>
+    authorizations() {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return authorizations_;
+    }
+
+private:
+    void
+    serve() {
+        for (;;) {
+            const int conn = accept(fd_, nullptr, nullptr);
+            if (conn < 0) {
+                return;
+            }
+            std::string request;
+            char buf[4096];
+            while (request.find("\r\n\r\n") == std::string::npos) {
+                const ssize_t n = recv(conn, buf, sizeof(buf), 0);
+                if (n <= 0) {
+                    break;
+                }
+                request.append(buf, n);
+            }
+            record(request);
+            const std::string response =
+                "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            send(conn, response.data(), response.size(), MSG_NOSIGNAL);
+            close(conn);
+        }
+    }
+
+    void
+    record(const std::string &request) {
+        std::string lower = request;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        const size_t start = lower.find("\r\nauthorization:");
+        std::string authorization;
+        if (start != std::string::npos) {
+            const size_t end = request.find("\r\n", start + 2);
+            authorization = request.substr(start + 2, end - start - 2);
+        }
+        const std::lock_guard<std::mutex> lock(mutex_);
+        authorizations_.push_back(std::move(authorization));
+    }
+
+    int fd_ = -1;
+    uint16_t port_ = 0;
+    std::thread thread_;
+    std::mutex mutex_;
+    std::vector<std::string> authorizations_;
+};
+
+/**
+ * Sets AWS credential environment variables for one test and restores them,
+ * keeping the default chain away from credential files and instance metadata.
+ */
+class scopedAwsEnv {
+public:
+    scopedAwsEnv() {
+        for (const char *name : kNames) {
+            const char *value = std::getenv(name);
+            saved_.emplace_back(name, value ? std::optional<std::string>(value) : std::nullopt);
+            unsetenv(name);
+        }
+        setenv("AWS_SHARED_CREDENTIALS_FILE", "/nonexistent/credentials", 1);
+        setenv("AWS_CONFIG_FILE", "/nonexistent/config", 1);
+        setenv("AWS_EC2_METADATA_DISABLED", "true", 1);
+    }
+
+    ~scopedAwsEnv() {
+        for (const auto &[name, value] : saved_) {
+            if (value) {
+                setenv(name, value->c_str(), 1);
+            } else {
+                unsetenv(name);
+            }
+        }
+    }
+
+    void
+    setKeys(const char *access_key, const char *secret_key) {
+        setenv("AWS_ACCESS_KEY_ID", access_key, 1);
+        setenv("AWS_SECRET_ACCESS_KEY", secret_key, 1);
+    }
+
+private:
+    static constexpr const char *kNames[] = {"AWS_ACCESS_KEY_ID",
+                                             "AWS_SECRET_ACCESS_KEY",
+                                             "AWS_SESSION_TOKEN",
+                                             "AWS_PROFILE",
+                                             "AWS_SHARED_CREDENTIALS_FILE",
+                                             "AWS_CONFIG_FILE",
+                                             "AWS_EC2_METADATA_DISABLED",
+                                             "AWS_WEB_IDENTITY_TOKEN_FILE",
+                                             "AWS_ROLE_ARN",
+                                             "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+                                             "AWS_CONTAINER_CREDENTIALS_FULL_URI"};
+    std::vector<std::pair<const char *, std::optional<std::string>>> saved_;
+};
+
+static void
+sendRdmaGet(nixl_obj_rdma::S3RdmaControlPlane &cp) {
+    nixl_obj_rdma::S3RdmaClientCtx ctx;
+    ctx.bucket = "bucket";
+    ctx.object = "key";
+    EXPECT_LT(cp.rdmaGet(ctx, "token", 16, 0), 0);
+}
+
+TEST(objRdmaControlPlaneTest, ChainCredentialsAreReadForEachRequest) {
+    scopedAwsEnv env;
+    env.setKeys("AKIDFIRST", "secret-first");
+    authRecordingServer server;
+    nixl_b_params_t params = {{"bucket", "bucket"}, {"endpoint_override", server.endpoint()}};
+    nixl_obj_rdma::S3RdmaControlPlane cp(&params);
+    ASSERT_TRUE(cp.valid());
+
+    sendRdmaGet(cp);
+    env.setKeys("AKIDSECOND", "secret-second");
+    sendRdmaGet(cp);
+
+    const auto auth = server.authorizations();
+    ASSERT_EQ(auth.size(), 2u);
+    EXPECT_NE(auth[0].find("Credential=AKIDFIRST/"), std::string::npos) << auth[0];
+    EXPECT_NE(auth[1].find("Credential=AKIDSECOND/"), std::string::npos) << auth[1];
+}
+
+TEST(objRdmaControlPlaneTest, ExplicitCredentialsStayFixed) {
+    scopedAwsEnv env;
+    env.setKeys("AKIDENV", "secret-env");
+    authRecordingServer server;
+    nixl_b_params_t params = {{"bucket", "bucket"},
+                              {"endpoint_override", server.endpoint()},
+                              {"access_key", "AKIDPARAM"},
+                              {"secret_key", "secret-param"}};
+    nixl_obj_rdma::S3RdmaControlPlane cp(&params);
+    ASSERT_TRUE(cp.valid());
+
+    env.setKeys("AKIDROTATED", "secret-rotated");
+    sendRdmaGet(cp);
+
+    const auto auth = server.authorizations();
+    ASSERT_EQ(auth.size(), 1u);
+    EXPECT_NE(auth[0].find("Credential=AKIDPARAM/"), std::string::npos) << auth[0];
+}
+
+TEST(objRdmaControlPlaneTest, MissingCredentialsSendNothing) {
+    scopedAwsEnv env;
+    authRecordingServer server;
+    nixl_b_params_t params = {{"bucket", "bucket"}, {"endpoint_override", server.endpoint()}};
+    nixl_obj_rdma::S3RdmaControlPlane cp(&params);
+    EXPECT_FALSE(cp.valid());
+
+    sendRdmaGet(cp);
+    EXPECT_TRUE(server.authorizations().empty());
 }
 
 } // namespace gtest::obj
