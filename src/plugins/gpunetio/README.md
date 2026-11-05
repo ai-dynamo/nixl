@@ -53,7 +53,7 @@ DOCA GPUNetIO backend takes these input parameters:
 - oob_port: TCP port used to listen for OOB connection setup. It must be an integer in the inclusive range [1, 65535] and defaults to 6544. Set a distinct port for each GPUNETIO backend sharing a host network namespace.
 - gid_index: RoCE GID table index, in [0, 255]. Defaults to 0; select the GID for the test fabric when a non-default index is required.
 - gpu_devices: GPU CUDA ID to be used during the execution (e.g. 0). Current release supports only 1 GPU device.
-- cuda_streams: how many CUDA streams the backend should created at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. If this parameter is not specified, default value is `DOCA_POST_STREAM_NUM`.
+- cuda_streams: how many CUDA streams the backend should create at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. It must be an integer in the inclusive range [1, 4]; if this parameter is not specified, default value is `DOCA_POST_STREAM_NUM` (4).
 
 ## Example
 
@@ -65,6 +65,18 @@ NIXL bench also has the option to specify the DOCA GPUNetIO backend. An example 
 ```
 
 ## Caveats
+
+### Descriptor size
+
+One RDMA operation carries at most `DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE` (1 GiB), so a larger
+descriptor is posted as several consecutive operations of at most 1 GiB each. A request holds at
+most 32 x 512 operations; `prepXfer` rejects larger requests with `NIXL_ERR_INVALID_PARAM`.
+
+### Notifications
+
+Each peer has 4096 notification send buffers. A prepared request with a notification owns one
+until the request is released, and `genNotif` holds one while it sends. When all of them are owned,
+`prepXfer` and `genNotif` return `NIXL_ERR_BACKEND`.
 
 ### Comparing striped WRITE submission designs
 
