@@ -21,8 +21,8 @@ job: nixl-ci-gpu
 failFast: false
 
 # Job cap. Axes run in parallel, so this bounds the longest single axis:
-# docker build (~11) + allocation wait (up to immediateTimeout 60) + run steps (150, incl. the 30 image sync) + stop (~5).
-timeout_minutes: 240
+# docker build (~11) + allocation wait (up to immediateTimeout 240) + run steps (150, incl. the 30 image sync) + stop (~5).
+timeout_minutes: 420
 
 registry_host: il.artifactory.nvidia.com
 registry_auth: svc-nixl-il-artifactory-token
@@ -52,7 +52,7 @@ env:
   SLURM_MEM: 128G
   SLURM_MINCPUS: 24
   SLURM_JOB_TIMEOUT: '02:50:00'
-  SLURM_IMMEDIATE_TIMEOUT: "3600"
+  SLURM_IMMEDIATE_TIMEOUT: "14400"
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay

@@ -159,23 +159,20 @@ private:
     struct sockaddr oob_saddr;
     struct sockaddr oob_netmask;
     std::thread pthr;
-    uint64_t *last_rsvd_flags;
-    uint64_t *last_posted_flags;
     cudaStream_t post_stream[DOCA_POST_STREAM_NUM]{};
     cudaStream_t wait_stream;
     mutable std::atomic<uint32_t> xferStream;
-    mutable std::atomic<uint32_t> lastPostedReq;
     mutable std::mutex postLock_;
 
-    struct docaXferReqGpu *xferReqRingGpu;
-    struct docaXferReqGpu *xferReqRingCpu;
+    struct docaSlotDesc *xferReqRingGpu;
+    struct docaSlotDesc *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
     mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved_;
+    docaHostState *host_state_cpu_ = nullptr;
+    docaHostState *host_state_gpu_ = nullptr;
 
-    struct docaXferCompletion *completion_list_gpu;
-    struct docaXferCompletion *completion_list_cpu;
-    uint32_t *wait_exit_gpu;
-    uint32_t *wait_exit_cpu;
+    struct docaGpuState *gpu_state_gpu = nullptr;
+    struct docaGpuState *gpu_state_cpu = nullptr;
     struct docaNotif *notif_fill_gpu;
     struct docaNotif *notif_fill_cpu;
     struct docaNotif *notif_progress_gpu;
@@ -200,21 +197,31 @@ private:
         enum class completion_state : uint8_t { IN_PROGRESS, COMPLETING, COMPLETE };
 
         cudaStream_t stream;
+        bool attachedStream = false;
         uint32_t devId;
         std::vector<uint32_t> positions;
+        doca_gpu_dev_verbs_qp *qpData = nullptr;
         uintptr_t backendHandleGpu;
         size_t postedCount = 0;
         nixl_status_t postStatus = NIXL_SUCCESS;
         std::atomic<completion_state> completionState{completion_state::IN_PROGRESS};
+        nixlDocaNotif *notif = nullptr;
+        uint32_t notifSlot = 0;
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
 
-        ~nixlDocaBckndReq() {}
+        ~nixlDocaBckndReq() {
+            if (notif != nullptr) {
+                notif->releaseSendSlot(notifSlot);
+            }
+        }
     };
 
     void
     retireRequest(nixlDocaBckndReq *request) const;
 
+    void
+    markFailed() const;
     nixl_status_t
     postStripedWrite(nixlDocaBckndReq *request, const std::string &remote_agent) const;
 
