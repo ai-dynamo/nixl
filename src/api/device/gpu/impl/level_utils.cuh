@@ -25,22 +25,22 @@ namespace nixl::gpu::impl {
 
 /** This thread's index among the threads that make one call at `level`. */
 template<level_t level>
-__device__ __forceinline__ uint32_t
+[[nodiscard]] __device__ __forceinline__ uint32_t
 laneId() {
-    uint32_t lane_id = 0;
     if constexpr (level == level_t::WARP) {
-        lane_id = threadIdx.x % warpSize;
+        return threadIdx.x % warpSize;
     } else if constexpr (level == level_t::BLOCK) {
-        lane_id = threadIdx.x;
+        return threadIdx.x;
     } else if constexpr (level == level_t::GRID) {
-        lane_id = threadIdx.x + blockIdx.x * blockDim.x;
+        return threadIdx.x + blockIdx.x * blockDim.x;
+    } else {
+        return 0;
     }
-    return lane_id;
 }
 
 /** Whether this thread acts for all the threads that make one call at `level`. */
 template<level_t level>
-__device__ __forceinline__ bool
+[[nodiscard]] __device__ __forceinline__ bool
 isLeader() {
     return laneId<level>() == 0;
 }
@@ -60,7 +60,7 @@ sync() {
 
 /** A barrier that also hands every thread the leader's status; only a barrier at grid level. */
 template<level_t level>
-__device__ __forceinline__ nixl_status_t
+[[nodiscard]] __device__ __forceinline__ nixl_status_t
 broadcastStatus(nixl_status_t status) {
     if constexpr (level == level_t::WARP) {
         status = static_cast<nixl_status_t>(__shfl_sync(0xffffffff, static_cast<int>(status), 0));

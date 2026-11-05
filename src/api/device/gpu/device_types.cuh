@@ -56,7 +56,7 @@ struct xferStatusH {
     exec_mode_t mode{}; /**< Mode that accepted the request; set by the dispatch layer */
 };
 
-constexpr size_t xfer_status_payload_size = sizeof(xferStatusH::storage);
+inline constexpr size_t xfer_status_payload_size = sizeof(xferStatusH::storage);
 
 static_assert(sizeof(xferStatusH) == 64);
 
@@ -72,7 +72,7 @@ enum class level_t : uint64_t { THREAD = 0, WARP = 1, BLOCK = 2, GRID = 3 };
  */
 struct memViewWrapper {
     exec_mode_t execution_mode;
-    nixlMemViewH backend_memview;
+    nixlMemViewH backend_memview = nullptr;
 };
 
 namespace flags {
