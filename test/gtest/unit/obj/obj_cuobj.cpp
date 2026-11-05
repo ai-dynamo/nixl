@@ -48,9 +48,9 @@ INSTANTIATE_TEST_SUITE_P(ObjAccelClientTests,
  * Dell ObjectScale accelerated engine test fixture.
  *
  * Exercises the Dell S3-over-RDMA code path by configuring the OBJ engine
- * with accelerated=true and type=dell. Uses mockDellS3Client to simulate
- * RDMA put/get operations via the iDellS3RdmaClient interface without
- * requiring real cuobjclient or ObjectScale infrastructure.
+ * with accelerated=true and type=dell. Uses the standard mock S3 client for asynchronous
+ * completion; memory registration requires a connected cuObject fabric. Token/request lifecycle is
+ * exercised separately with a fake cuObject API in test/gtest/plugins/dell_token.cpp.
  */
 class objDellTestFixture : public objTestBase, public testing::Test {
 protected:
@@ -118,20 +118,6 @@ TEST_F(objDellTestFixture, DellVramMemorySupport) {
     auto supported_mems = objEngine_->getSupportedMems();
     EXPECT_TRUE(std::find(supported_mems.begin(), supported_mems.end(), VRAM_SEG) !=
                 supported_mems.end());
-
-    std::vector<char> test_buffer1(512);
-    std::fill(test_buffer1.begin(), test_buffer1.end(), 'A');
-    nixlBlobDesc vram_desc;
-
-    vram_desc.addr = reinterpret_cast<uintptr_t>(test_buffer1.data());
-    vram_desc.len = test_buffer1.size();
-    vram_desc.devId = 3;
-    nixlBackendMD *vram_metadata = nullptr;
-    nixl_status_t status = objEngine_->registerMem(vram_desc, VRAM_SEG, vram_metadata);
-    EXPECT_EQ(status, NIXL_SUCCESS);
-    EXPECT_NE(vram_metadata, nullptr);
-
-    objEngine_->deregisterMem(vram_metadata);
 }
 
 /** Multi-descriptor RDMA write with two different buffer sizes. */
@@ -371,7 +357,7 @@ TEST_F(objDellTestFixture, DellRegisterMemExceedsMaxSize) {
 /** prepXfer handles zero-length descriptors without crashing. */
 TEST_F(objDellTestFixture, DellEngineZeroSizePrep) {
     // Test that prepXfer accepts zero-size descriptors without crashing.
-    // Note: both putObjectRdmaAsync and getObjectRdmaAsync in client.cpp
+    // Note: both putObjectAsync and getObjectAsync in client.cpp
     // reject data_len==0, so a zero-size transfer would fail at postXfer
     // in production. This test only verifies prepXfer handles the edge case.
     mockS3Client_->setSimulateSuccess(true);
@@ -624,88 +610,7 @@ TEST_F(objDellTestFixture, DellRegisterMemZeroLengthBuffer) {
     EXPECT_EQ(metadata, nullptr);
 }
 
-/** prepXfer fails when the local buffer address was never registered with cuObj. */
-TEST_F(objDellTestFixture, DellPrepXferUnregisteredAddress) {
-    // Test that cuObjPut fails when the local address was never registered with cuObj
-    std::vector<char> registered_buffer(1024);
-    std::vector<char> unregistered_buffer(1024);
-
-    nixlBlobDesc local_desc;
-    local_desc.addr = reinterpret_cast<uintptr_t>(registered_buffer.data());
-    local_desc.len = registered_buffer.size();
-    local_desc.devId = 1;
-    nixlBackendMD *local_metadata = nullptr;
-    ASSERT_EQ(objEngine_->registerMem(local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
-
-    nixlBlobDesc remote_desc;
-    remote_desc.devId = 2;
-    remote_desc.metaInfo = "unregistered-addr-key";
-    nixlBackendMD *remote_metadata = nullptr;
-    ASSERT_EQ(objEngine_->registerMem(remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
-
-    nixl_meta_dlist_t local_descs(DRAM_SEG);
-    nixl_meta_dlist_t remote_descs(OBJ_SEG);
-
-    // Use unregistered_buffer's address - not registered with cuMemObjGetDescriptor
-    nixlMetaDesc local_meta_desc(reinterpret_cast<uintptr_t>(unregistered_buffer.data()),
-                                 unregistered_buffer.size(),
-                                 local_desc.devId);
-    nixlMetaDesc remote_meta_desc(0, unregistered_buffer.size(), remote_desc.devId);
-    local_descs.addDesc(local_meta_desc);
-    remote_descs.addDesc(remote_meta_desc);
-
-    nixlBackendReqH *handle = nullptr;
-    nixl_status_t status = objEngine_->prepXfer(
-        NIXL_WRITE, local_descs, remote_descs, initParams_.localAgent, handle, nullptr);
-
-    EXPECT_EQ(status, NIXL_ERR_BACKEND);
-    EXPECT_EQ(handle, nullptr);
-
-    objEngine_->deregisterMem(local_metadata);
-    objEngine_->deregisterMem(remote_metadata);
-}
-
-/** prepXfer fails when the local address exceeds the 16 MiB RDMA descriptor coverage limit. */
-TEST_F(objDellTestFixture, DellPrepXferLargeMemoryOffset) {
-    // Test that cuObjPut fails when the local address is more than 16 MB from the
-    // base address of the registered memory region.
-    // This is a cuObject library constraint on RDMA descriptor coverage.
-    constexpr size_t k16MiB = 16ULL * 1024 * 1024;
-    constexpr size_t kBufSize = k16MiB + 4096;
-    std::vector<char> large_buffer(kBufSize);
-
-    nixlBlobDesc local_desc;
-    local_desc.addr = reinterpret_cast<uintptr_t>(large_buffer.data());
-    local_desc.len = large_buffer.size();
-    local_desc.devId = 1;
-    nixlBackendMD *local_metadata = nullptr;
-    ASSERT_EQ(objEngine_->registerMem(local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
-
-    nixlBlobDesc remote_desc;
-    remote_desc.devId = 2;
-    remote_desc.metaInfo = "large-offset-key";
-    nixlBackendMD *remote_metadata = nullptr;
-    ASSERT_EQ(objEngine_->registerMem(remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
-
-    nixl_meta_dlist_t local_descs(DRAM_SEG);
-    nixl_meta_dlist_t remote_descs(OBJ_SEG);
-
-    // Use an address > 16 MiB from the registered base
-    uintptr_t offset_addr = reinterpret_cast<uintptr_t>(large_buffer.data()) + k16MiB + 1;
-    nixlMetaDesc local_meta_desc(offset_addr, 1024, local_desc.devId);
-    nixlMetaDesc remote_meta_desc(0, 1024, remote_desc.devId);
-    local_descs.addDesc(local_meta_desc);
-    remote_descs.addDesc(remote_meta_desc);
-
-    nixlBackendReqH *handle = nullptr;
-    nixl_status_t status = objEngine_->prepXfer(
-        NIXL_WRITE, local_descs, remote_descs, initParams_.localAgent, handle, nullptr);
-
-    EXPECT_EQ(status, NIXL_ERR_BACKEND);
-    EXPECT_EQ(handle, nullptr);
-
-    objEngine_->deregisterMem(local_metadata);
-    objEngine_->deregisterMem(remote_metadata);
-}
+// Unregistered ranges and offsets within registered buffers are checked at
+// token minting time (postXfer), covered without hardware in test/gtest/plugins/dell_token.cpp.
 
 } // namespace gtest::obj

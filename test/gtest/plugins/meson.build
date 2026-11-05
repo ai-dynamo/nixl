@@ -46,7 +46,7 @@ endif
 
 plugins_gtest_sources = ['../main.cpp', '../common.cpp', 'obj_plugin.cpp']
 if cuobj_dep.found()
-    plugins_gtest_sources += 'obj_cuobj_plugin.cpp'
+    plugins_gtest_sources += ['obj_cuobj_plugin.cpp', 'dell_token.cpp']
 endif
 
 plugins_test_exe = executable('plugins_gtest',

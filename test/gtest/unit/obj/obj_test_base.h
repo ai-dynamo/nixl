@@ -35,6 +35,9 @@
 #include "obj_backend.h"
 #include "obj_executor.h"
 #include "mock_client_registry.h"
+#ifdef HAVE_CUOBJ_CLIENT
+#include "object/rdma/cuobj_client.h"
+#endif
 
 namespace gtest::obj {
 
@@ -302,6 +305,12 @@ protected:
 
     void
     setupEngine(const std::string &agentName, nixl_b_params_t params = {}) {
+#ifdef HAVE_CUOBJ_CLIENT
+        if (params.find("type") != params.end() && params.at("type") == "dell" &&
+            !nixl_obj_rdma::SharedCuObjClient::instance()) {
+            GTEST_SKIP() << "Dell registration tests require a connected RDMA fabric";
+        }
+#endif
         customParams_ = params;
         initParams_.localAgent = agentName;
         initParams_.type = "OBJ";

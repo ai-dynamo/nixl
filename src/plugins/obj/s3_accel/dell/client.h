@@ -6,68 +6,40 @@
 #ifndef NIXL_OBJ_PLUGIN_S3_DELL_CLIENT_H
 #define NIXL_OBJ_PLUGIN_S3_DELL_CLIENT_H
 
-#include <memory>
-#include <string_view>
-#include <cstdint>
-#include <aws/s3/S3Client.h>
-#include <aws/core/utils/memory/stl/AWSString.h>
 #include "s3_accel/client.h"
-#include "rdma_interface.h"
-#include "nixl_types.h"
+#include <aws/s3/model/PutObjectRequest.h>
+#include <aws/s3/model/GetObjectRequest.h>
 
-/**
- * S3 Accelerated Object Client for use with Dell Objectscale - Inherits from Accelerated S3 Client.
- * This client presents Put and GetObject interfaces to enable RDMA for S3-compatible storage using
- * the cuObject API
- */
-class awsS3DellObsClient : public awsS3AccelClient, public iDellS3RdmaClient {
+// Dell's body-less S3 requests use x-rdma-info rather than x-amz-rdma-token.
+class awsS3DellObsClient : public awsS3AccelClient {
 public:
-    /**
-     * Constructor that creates an AWS S3 client for use with Dell ObjectScale from custom
-     * parameters.
-     * @param custom_params Custom parameters containing S3 configuration
-     * @param executor Optional executor for async operations
-     */
     awsS3DellObsClient(nixl_b_params_t *custom_params,
+                       nixl_obj_rdma::SharedCuObjClient &rdma,
                        std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr);
 
-    virtual ~awsS3DellObsClient() = default;
-
-    /**
-     * Asynchronously puts an object to S3 using RDMA acceleration.
-     *
-     * @param key The object key to store
-     * @param data_ptr Pointer to the data buffer
-     * @param data_len Length of the data to transfer
-     * @param offset Offset within the object (must be 0 for Dell ObjectScale)
-     * @param rdma_desc RDMA descriptor for acceleration
-     * @param callback Callback function invoked on completion
-     */
     void
-    putObjectRdmaAsync(std::string_view key,
-                       uintptr_t data_ptr,
-                       size_t data_len,
-                       size_t offset,
-                       std::string_view rdma_desc,
-                       put_object_callback_t callback);
-
-    /**
-     * Asynchronously gets an object from S3 using RDMA acceleration.
-     *
-     * @param key The object key to retrieve
-     * @param data_ptr Pointer to the data buffer to fill
-     * @param data_len Length of the data to transfer
-     * @param offset Offset within the object
-     * @param rdma_desc RDMA descriptor for acceleration
-     * @param callback Callback function invoked on completion
-     */
+    putObjectAsync(std::string_view key,
+                   uintptr_t data_ptr,
+                   size_t data_len,
+                   size_t offset,
+                   put_object_callback_t callback) override;
     void
-    getObjectRdmaAsync(std::string_view key,
-                       uintptr_t data_ptr,
-                       size_t data_len,
-                       size_t offset,
-                       std::string_view rdma_desc,
-                       get_object_callback_t callback);
+    getObjectAsync(std::string_view key,
+                   uintptr_t data_ptr,
+                   size_t data_len,
+                   size_t offset,
+                   get_object_callback_t callback) override;
+
+protected:
+    // The SDK dispatch boundary lets tests inspect the actual request and hold
+    // completion pending without a server or RDMA NIC.
+    virtual void
+    submitPut(const Aws::S3::Model::PutObjectRequest &request, put_object_callback_t callback);
+    virtual void
+    submitGet(const Aws::S3::Model::GetObjectRequest &request, get_object_callback_t callback);
+
+private:
+    nixl_obj_rdma::SharedCuObjClient &rdma_;
 };
 
 #endif // NIXL_OBJ_PLUGIN_S3_DELL_CLIENT_H

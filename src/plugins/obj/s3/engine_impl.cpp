@@ -64,9 +64,9 @@ public:
 
     nixl_status_t
     getOverallStatus() {
-        // Iterate front-to-back to detect failures in earlier futures even if
-        // later futures are not yet ready. This ensures we return errors as
-        // soon as they occur rather than waiting for all futures to complete.
+        // A completed failure must be visible even when another request is
+        // still pending. Keep pending futures while consuming completed ones.
+        bool has_pending = false;
         auto it = statusFutures_.begin();
         while (it != statusFutures_.end()) {
             if (it->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
@@ -77,10 +77,11 @@ public:
                 }
                 it = statusFutures_.erase(it);
             } else {
-                return NIXL_IN_PROG;
+                ++it;
+                has_pending = true;
             }
         }
-        return NIXL_SUCCESS;
+        return has_pending ? NIXL_IN_PROG : NIXL_SUCCESS;
     }
 };
 
