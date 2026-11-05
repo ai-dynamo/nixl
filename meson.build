@@ -441,8 +441,13 @@ prefix_inc = prefix_path + '/include'
 
 ucx_path = get_option('ucx_path')
 if ucx_path != ''
-  ucx_lib_path = ucx_path + '/lib'
-  ucx_inc_path = ucx_path + '/include'
+  # Distros such as RHEL and Fedora install UCX under lib64.
+  if fs.is_dir(ucx_path / 'lib64')
+    ucx_lib_path = ucx_path / 'lib64'
+  else
+    ucx_lib_path = ucx_path / 'lib'
+  endif
+  ucx_inc_path = ucx_path / 'include'
   # Check if path is absolute
   if ucx_inc_path.startswith('/')
     ucx_dep = declare_dependency(
