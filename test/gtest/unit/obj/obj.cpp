@@ -362,6 +362,7 @@ INSTANTIATE_TEST_SUITE_P(ObjClientTests,
 #endif
 
 // Specialized tests for non-parameterized fixture
+/** @brief Release a pending transfer handle before running its completion callback. */
 TEST_F(objTestFixture, CancelTransfer) {
     mockS3Client_->setSimulateSuccess(true);
 
@@ -417,6 +418,7 @@ TEST_F(objTestFixture, CancelTransfer) {
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
+/** @brief Read the requested object range and leave the unused destination tail zeroed. */
 TEST_F(objTestFixture, ReadFromOffset) {
     mockS3Client_->setSimulateSuccess(true);
 
@@ -460,7 +462,9 @@ TEST_F(objTestFixture, ReadFromOffset) {
     mockS3Client_->execAsync();
     status = objEngine_->checkXfer(handle);
     EXPECT_EQ(status, NIXL_SUCCESS);
-    EXPECT_EQ(test_buffer[0], 'A' + (offset % 26));
+    expectReadPattern({test_buffer.data(), length}, offset);
+    EXPECT_TRUE(std::all_of(
+        test_buffer.begin() + length, test_buffer.end(), [](char c) { return c == '\0'; }));
 
     objEngine_->releaseReqH(handle);
     objEngine_->deregisterMem(local_metadata);
@@ -491,10 +495,159 @@ TEST_F(objCrtTestFixture, TransferBelowThreshold) {
     testTransferWithSize(NIXL_READ, 1048576, "-crt-below");
 }
 
+/** @brief Complete WRITE descriptors on opposite sides of the configured CRT threshold. */
 TEST_F(objCrtTestFixture, MixedSizeThreshold) {
     // Mixed: 1 MiB (standard client) + 6 MiB (CRT client via MPU)
     testMultiDescriptorWithSizes(NIXL_WRITE, 1048576, 6291456, "-crt-mixed");
 }
+
+/** @brief Exercise descriptor routing with independently observable Standard and CRT clients. */
+class objCrtRoutingTest : public objTestBase, public testing::TestWithParam<nixl_xfer_op_t> {
+protected:
+    /**
+     * @brief Check routing, completion, payloads, failures, and descriptor cleanup.
+     * @param params Backend settings, including the CRT selection threshold.
+     * @param sizes Byte count for each transfer descriptor.
+     * @param use_crt Expected client for each descriptor; true selects CRT.
+     * @param fail_standard Make Standard callbacks report failure.
+     * @param fail_crt Make CRT callbacks report failure.
+     */
+    void
+    testRouting(nixl_b_params_t params,
+                const std::vector<size_t> &sizes,
+                const std::vector<bool> &use_crt,
+                bool fail_standard = false,
+                bool fail_crt = false) {
+        ASSERT_EQ(sizes.size(), use_crt.size());
+        auto crt_client = std::make_shared<mockS3Client>();
+        setupEngine("test-routing-agent", std::move(params), crt_client);
+        mockS3Client_->setSimulateSuccess(!fail_standard);
+        crt_client->setSimulateSuccess(!fail_crt);
+
+        std::vector<std::vector<char>> buffers;
+        std::vector<nixlBackendMD *> local_metadata(sizes.size(), nullptr);
+        std::vector<nixlBackendMD *> remote_metadata(sizes.size(), nullptr);
+        nixl_meta_dlist_t local_descs(DRAM_SEG);
+        nixl_meta_dlist_t remote_descs(OBJ_SEG);
+        for (size_t i = 0; i < sizes.size(); ++i) {
+            buffers.emplace_back(sizes[i], '?');
+            nixlBlobDesc local_desc(
+                reinterpret_cast<uintptr_t>(buffers.back().data()), sizes[i], 1, "");
+            nixlBlobDesc remote_desc(0, sizes[i], i + 2, "routing-key-" + std::to_string(i));
+            ASSERT_EQ(objEngine_->registerMem(local_desc, DRAM_SEG, local_metadata[i]),
+                      NIXL_SUCCESS);
+            ASSERT_EQ(objEngine_->registerMem(remote_desc, OBJ_SEG, remote_metadata[i]),
+                      NIXL_SUCCESS);
+            local_descs.addDesc(nixlMetaDesc(local_desc.addr, sizes[i], local_desc.devId));
+            // Nonzero, distinct offsets also exercise read-pattern validation.
+            remote_descs.addDesc(nixlMetaDesc(7 + i * 29, sizes[i], remote_desc.devId));
+        }
+
+        nixlBackendReqH *handle = nullptr;
+        ASSERT_EQ(
+            objEngine_->prepXfer(
+                GetParam(), local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+            NIXL_SUCCESS);
+        ASSERT_NE(handle, nullptr);
+        EXPECT_EQ(
+            objEngine_->postXfer(
+                GetParam(), local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+            NIXL_IN_PROG);
+        const size_t crt_count = std::count(use_crt.begin(), use_crt.end(), true);
+        EXPECT_EQ(mockS3Client_->getPendingCount(), sizes.size() - crt_count);
+        EXPECT_EQ(crt_client->getPendingCount(), crt_count);
+        std::multiset<std::string> expected_standard_keys, expected_crt_keys;
+        for (size_t i = 0; i < sizes.size(); ++i) {
+            (use_crt[i] ? expected_crt_keys : expected_standard_keys)
+                .insert("routing-key-" + std::to_string(i));
+        }
+        const auto &standard_keys = mockS3Client_->getRequestedKeys();
+        const auto &crt_keys = crt_client->getRequestedKeys();
+        EXPECT_EQ(std::multiset<std::string>(standard_keys.begin(), standard_keys.end()),
+                  expected_standard_keys);
+        EXPECT_EQ(std::multiset<std::string>(crt_keys.begin(), crt_keys.end()), expected_crt_keys);
+        EXPECT_EQ(objEngine_->checkXfer(handle), NIXL_IN_PROG);
+
+        crt_client->execAsync();
+        if (crt_count > 0 && crt_count < sizes.size()) {
+            EXPECT_EQ(objEngine_->checkXfer(handle), NIXL_IN_PROG);
+        }
+        mockS3Client_->execAsync();
+        bool failed = false;
+        for (size_t i = 0; i < sizes.size(); ++i) {
+            const bool client_failed = use_crt[i] ? fail_crt : fail_standard;
+            failed |= client_failed;
+            if (GetParam() == NIXL_READ) {
+                if (client_failed) {
+                    EXPECT_EQ(buffers[i], std::vector<char>(sizes[i], '?'));
+                } else {
+                    expectReadPattern(buffers[i], 7 + i * 29);
+                }
+            }
+        }
+        EXPECT_EQ(objEngine_->checkXfer(handle), failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS);
+        EXPECT_EQ(objEngine_->releaseReqH(handle), NIXL_SUCCESS);
+        for (size_t i = 0; i < sizes.size(); ++i) {
+            EXPECT_EQ(objEngine_->deregisterMem(local_metadata[i]), NIXL_SUCCESS);
+            EXPECT_EQ(objEngine_->deregisterMem(remote_metadata[i]), NIXL_SUCCESS);
+        }
+    }
+};
+
+/** @brief An absent CRT threshold sends every descriptor to Standard. */
+TEST_P(objCrtRoutingTest, DisabledUsesStandard) {
+    testRouting({}, {1023, 1024, 1025}, {false, false, false});
+}
+
+/** @brief An explicit zero threshold disables CRT for every descriptor. */
+TEST_P(objCrtRoutingTest, ZeroDisablesCrt) {
+    testRouting({{"crtMinLimit", "0"}}, {1023, 1024, 1025}, {false, false, false});
+}
+
+/** @brief A descriptor one byte below the threshold uses Standard. */
+TEST_P(objCrtRoutingTest, BelowThresholdUsesStandard) {
+    testRouting({{"crtMinLimit", "1024"}}, {1023}, {false});
+}
+
+/** @brief A descriptor exactly at the threshold uses CRT. */
+TEST_P(objCrtRoutingTest, AtThresholdUsesCrt) {
+    testRouting({{"crtMinLimit", "1024"}}, {1024}, {true});
+}
+
+/** @brief A descriptor one byte above the threshold uses CRT. */
+TEST_P(objCrtRoutingTest, AboveThresholdUsesCrt) {
+    testRouting({{"crtMinLimit", "1024"}}, {1025}, {true});
+}
+
+/** @brief Route each descriptor by size and wait for both clients to complete. */
+TEST_P(objCrtRoutingTest, MixedDescriptorsUseBothClients) {
+    testRouting({{"crtMinLimit", "1024"}}, {1023, 1024, 1025}, {false, true, true});
+}
+
+/** @brief A threshold of one selects CRT for every tested descriptor. */
+TEST_P(objCrtRoutingTest, CrtOnlyUsesCrt) {
+    testRouting({{"crtMinLimit", "1"}}, {1, 1024}, {true, true});
+}
+
+/** @brief A failed Standard callback becomes a backend error without changing READ data. */
+TEST_P(objCrtRoutingTest, StandardFailurePropagates) {
+    testRouting({{"crtMinLimit", "1024"}}, {1023}, {false}, true);
+}
+
+/** @brief A failed CRT callback becomes a backend error without changing READ data. */
+TEST_P(objCrtRoutingTest, CrtFailurePropagates) {
+    testRouting({{"crtMinLimit", "1024"}}, {1024}, {true}, false, true);
+}
+
+/** @brief Run every routing case for READ and WRITE with descriptive operation suffixes. */
+INSTANTIATE_TEST_SUITE_P(ClientRouting,
+                         objCrtRoutingTest,
+                         testing::Values(NIXL_READ, NIXL_WRITE),
+                         // Use the transfer operation as the parameterized case suffix.
+                         [](const testing::TestParamInfo<nixl_xfer_op_t> &info) {
+                             return info.param == NIXL_READ ? "Read" : "Write";
+                         });
+
 
 // ---------------------------------------------------------------------------
 // Exact-once callback guard tests
