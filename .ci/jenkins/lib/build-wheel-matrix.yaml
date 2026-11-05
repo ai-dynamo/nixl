@@ -203,7 +203,7 @@ env:
   # the "CI_MANAGED" placeholder must not be hand-edited.
   CI_IMAGE_TAG: "CI_MANAGED"
   WHL_BASE: "manylinux_2_28"
-  TORCH_VERSIONS: "2.13"
+  TORCH_VERSIONS: "2.14"
   WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-cu13-manylinux_2_28"
   # Per-PR sanity images: <registry_host><registry_path>/pr/<arch>/<fw>-nixl:<BUILD_NUMBER>
   PR_REGISTRY: "${registry_host}${registry_path}"
