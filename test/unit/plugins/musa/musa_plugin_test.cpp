@@ -27,7 +27,7 @@ main(int argc, char **argv) {
     NIXL_TEST_CHECK(plugin->create_engine(nullptr) == nullptr);
     if (argc == 3) {
         NIXL_TEST_CHECK(std::string(argv[2]) == "--expect-no-provider");
-        nixlBackendInitParams params;
+        nixlBackendInitParams params{};
         nixl_b_params_t custom;
         params.localAgent = "musa-no-provider-test";
         params.type = "MUSA_UCX";
