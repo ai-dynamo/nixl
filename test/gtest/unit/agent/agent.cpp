@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <numeric>
 #include <random>
 #include <sstream>
 
@@ -1966,6 +1967,88 @@ namespace agent {
         EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
         EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
         EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST(agentMakeXferReq, MergeIndices) {
+        constexpr size_t block = 64;
+        constexpr size_t blocks = 20000;
+        agentHelper helper(local_agent_name);
+        nixlAgent *agent = helper.getAgent();
+        nixlBackendH *backend = nullptr;
+        nixl_b_params_t params;
+        ASSERT_EQ(helper.createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        std::vector<char> memory(block * blocks);
+        const auto base = reinterpret_cast<uintptr_t>(memory.data());
+        nixl_reg_dlist_t reg_dlist(DRAM_SEG);
+        reg_dlist.addDesc(nixlBlobDesc(base, memory.size(), 0));
+        nixl_opt_args_t extra_params;
+        extra_params.backends.push_back(backend);
+        ASSERT_EQ(agent->registerMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+
+        nixl_stride_dlist_t strides(DRAM_SEG);
+        strides.emplace(base, block, 0, block, blocks);
+        nixlDlistH *local_side = nullptr;
+        nixlDlistH *remote_side = nullptr;
+        ASSERT_EQ(agent->prepXferDlist(strides, local_side, &extra_params), NIXL_SUCCESS);
+        ASSERT_EQ(agent->prepXferDlist(local_agent_name, strides, remote_side, &extra_params),
+                  NIXL_SUCCESS);
+
+        struct piece {
+            int local, remote, count;
+        };
+
+        struct testCase {
+            std::vector<int> local, remote;
+            std::vector<piece> pieces;
+            bool skipMerge = false;
+        };
+
+        std::vector<int> all(blocks);
+        std::iota(all.begin(), all.end(), 0);
+        const std::vector<testCase> cases = {
+            {{0, 1, 2, 3}, {4, 5, 6, 7}, {{0, 4, 4}}},
+            {{0, 1, 5, 6, 7}, {0, 1, 2, 3, 4}, {{0, 0, 2}, {5, 2, 3}}},
+            {{0, 1, 2}, {0, 1, 7}, {{0, 0, 2}, {2, 7, 1}}},
+            {{0, 1, 2}, {0, 1, 2}, {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}}, true},
+            {all, all, {{0, 0, static_cast<int>(blocks)}}},
+        };
+        for (const auto &c : cases) {
+            nixl_meta_dlist_t src(DRAM_SEG), dst(DRAM_SEG);
+            EXPECT_CALL(helper.getGMockEngine(), prepXfer)
+                .WillOnce(testing::DoAll(testing::SaveArg<1>(&src),
+                                         testing::SaveArg<2>(&dst),
+                                         testing::Return(NIXL_SUCCESS)));
+            extra_params.skipDescMerge = c.skipMerge;
+            nixlXferReqH *req = nullptr;
+            ASSERT_EQ(
+                agent->makeXferReq(
+                    NIXL_WRITE, *local_side, c.local, *remote_side, c.remote, req, &extra_params),
+                NIXL_SUCCESS);
+            ASSERT_EQ(static_cast<size_t>(src.descCount()), c.pieces.size());
+            ASSERT_EQ(dst.descCount(), src.descCount());
+            for (size_t i = 0; i < c.pieces.size(); ++i) {
+                EXPECT_EQ(src[i].addr, base + c.pieces[i].local * block);
+                EXPECT_EQ(dst[i].addr, base + c.pieces[i].remote * block);
+                EXPECT_EQ(src[i].len, c.pieces[i].count * block);
+                EXPECT_EQ(dst[i].len, c.pieces[i].count * block);
+            }
+            EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        }
+
+        extra_params.skipDescMerge = false;
+        const std::vector<int> valid{0}, invalid{static_cast<int>(blocks)};
+        nixlXferReqH *req = nullptr;
+        EXPECT_EQ(agent->makeXferReq(
+                      NIXL_WRITE, *local_side, invalid, *remote_side, valid, req, &extra_params),
+                  NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(agent->makeXferReq(
+                      NIXL_WRITE, *local_side, valid, *remote_side, invalid, req, &extra_params),
+                  NIXL_ERR_INVALID_PARAM);
+
+        EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
+        EXPECT_EQ(agent->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
     }
 
 } // namespace agent
