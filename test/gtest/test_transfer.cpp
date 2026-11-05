@@ -156,9 +156,11 @@ protected:
         // Disabling Telemetry until the corresponding test
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
+        env.addVar("NIXL_UCX_SGL_ENABLE", isSglEnabled() ? "y" : "n");
+
         if (getBackendName() == "MOONCAKE") {
             // TCP loopback on host memory: CI hosts may expose RDMA devices the
-            // test cannot use, and CI builds Mooncake without GPU support.
+            // test cannot use, and build.sh builds Mooncake without GPU support.
             env.addVar("MC_FORCE_TCP", "1");
             env.addVar("NIXL_MOONCAKE_IP_ADDR", "127.0.0.1");
             m_gpu_device = false;
@@ -193,6 +195,11 @@ protected:
     size_t
     getNumThreads() const {
         return GetParam().numThreads;
+    }
+
+    bool
+    isSglEnabled() const {
+        return GetParam().sglEnabled;
     }
 
     nixl_opt_args_t
@@ -679,13 +686,6 @@ TEST_P(TestTransfer, ManyDescriptorsPayload) {
                 return status != NIXL_IN_PROG;
             }));
             ASSERT_EQ(NIXL_SUCCESS, status);
-            if ((op == NIXL_WRITE) && (getBackendName() == "MOONCAKE")) {
-                // Mooncake v0.3.10.post1, the CI pin, reports a TCP WRITE complete
-                // before the target has applied it (fixed in kvcache-ai/Mooncake#2850,
-                // v0.3.12). Wait for the bytes, or they can land on the next post.
-                // TODO: drop this wait once CI uses Mooncake >= v0.3.12.
-                wait_until_true([&]() { return findPayloadMismatch(dst, seed) == dst.size(); });
-            }
             checkPayloads(dst, seed);
         }
         EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
@@ -811,6 +811,14 @@ NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransfer, "UCX", true, 6, 4, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
 #ifdef HAVE_MOONCAKE
 NIXL_INSTANTIATE_TEST(mooncake, TestTransfer, "MOONCAKE", false, 1, 0, "");
+#endif
+
+#ifdef HAVE_UCX_SGL_API
+
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl, TestTransfer, "UCX", true, 2, 0, "");
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl_no_pt, TestTransfer, "UCX", false, 2, 0, "");
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl_threadpool, TestTransfer, "UCX", true, 6, 4, "");
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
 #endif
 
 NIXL_INSTANTIATE_TEST(ucx_telemetry, TestTransferTelemetry, "UCX", true, 2, 0, "");

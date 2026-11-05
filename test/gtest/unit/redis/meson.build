@@ -31,7 +31,7 @@ redis_event_loop_test = executable(
     'redis_event_loop_test',
     sources: ['../main.cpp', 'redis_event_loop.cpp', '../../../../src/plugins/redis/redis_client.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../../../src/plugins/redis'],
-    cpp_args: compile_defs_redis,
+    cpp_args: redis_compile_flags,
     dependencies: [redis_plugin_deps, gtest_dep],
     link_args: ['-Wl,--wrap=event_base_once', '-Wl,--wrap=event_base_dispatch', '-Wl,--wrap=event_base_loop'],
 )

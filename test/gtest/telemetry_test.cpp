@@ -1070,23 +1070,27 @@ TEST_F(telemetryXferTest, CompletionSeenByTheRepostCheckIsCounted) {
     EXPECT_EQ(sumOf(events, et::AGENT_TX_BYTES), 2 * buffer_.size());
 }
 
-TEST_F(telemetryXferTest, CompletionSeenByReleaseIsCountedButCancelledIsNot) {
+TEST_F(telemetryXferTest, ReleaseRefusalDoesNotCountCompletionOrError) {
     EXPECT_CALL(engine_, postXfer).Times(2).WillRepeatedly(testing::Return(NIXL_IN_PROG));
     EXPECT_CALL(engine_, checkXfer)
         .WillOnce(testing::Return(NIXL_SUCCESS))
-        .WillOnce(testing::Return(NIXL_IN_PROG));
-    EXPECT_CALL(engine_, releaseReqH).WillOnce(testing::Return(NIXL_SUCCESS));
+        .WillOnce(testing::Return(NIXL_IN_PROG))
+        .WillOnce(testing::Return(NIXL_SUCCESS));
+    EXPECT_CALL(engine_, releaseReqH).Times(0); // These mock requests have no backend handle.
     nixlXferReqH *completed = createLoopbackReq();
-    nixlXferReqH *cancelled = createLoopbackReq();
+    nixlXferReqH *pending = createLoopbackReq();
 
     EXPECT_EQ(agent_->postXferReq(completed), NIXL_IN_PROG);
-    EXPECT_EQ(agent_->postXferReq(cancelled), NIXL_IN_PROG);
+    EXPECT_EQ(agent_->postXferReq(pending), NIXL_IN_PROG);
     EXPECT_EQ(agent_->releaseXferReq(completed), NIXL_SUCCESS);
-    EXPECT_EQ(agent_->releaseXferReq(cancelled), NIXL_SUCCESS);
+    ASSERT_EQ(agent_->releaseXferReq(pending), NIXL_ERR_REPOST_ACTIVE);
+    EXPECT_EQ(agent_->getXferStatus(pending), NIXL_SUCCESS);
+    EXPECT_EQ(agent_->releaseXferReq(pending), NIXL_SUCCESS);
 
     const auto events = flushedEvents();
-    EXPECT_EQ(finishes(events), 1);
-    EXPECT_EQ(sumOf(events, et::AGENT_TX_BYTES), buffer_.size());
+    EXPECT_EQ(finishes(events), 2);
+    EXPECT_EQ(sumOf(events, et::AGENT_TX_BYTES), 2 * buffer_.size());
+    EXPECT_EQ(countOf(events, et::AGENT_ERR_REPOST_ACTIVE), 0);
 }
 
 TEST_F(telemetryXferTest, RejectedRepostKeepsTheInFlightTiming) {
@@ -1198,15 +1202,19 @@ TEST_F(telemetryXferTest, DisconnectSeenByTheStatusCheckIsCounted) {
 
 TEST_F(telemetryXferTest, FailedReleaseIsCountedAsRepostActive) {
     const gtest::LogIgnoreGuard lig("could not release transfer request");
+    nixlBackendReqH backend_request;
+    EXPECT_CALL(engine_, prepXfer)
+        .WillOnce(testing::DoAll(testing::SetArgReferee<4>(&backend_request),
+                                 testing::Return(NIXL_SUCCESS)));
     EXPECT_CALL(engine_, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
-    EXPECT_CALL(engine_, checkXfer)
-        .WillOnce(testing::Return(NIXL_IN_PROG))
+    EXPECT_CALL(engine_, checkXfer).WillOnce(testing::Return(NIXL_SUCCESS));
+    EXPECT_CALL(engine_, releaseReqH(&backend_request))
+        .WillOnce(testing::Return(NIXL_ERR_BACKEND))
         .WillOnce(testing::Return(NIXL_SUCCESS));
-    EXPECT_CALL(engine_, releaseReqH).WillOnce(testing::Return(NIXL_ERR_BACKEND));
     nixlXferReqH *req = createLoopbackReq();
 
     EXPECT_EQ(agent_->postXferReq(req), NIXL_IN_PROG);
-    EXPECT_EQ(agent_->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+    ASSERT_EQ(agent_->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
     EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
     EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
 
