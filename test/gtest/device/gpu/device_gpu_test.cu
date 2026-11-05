@@ -28,20 +28,27 @@
 #include <thread>
 
 namespace {
-constexpr size_t max_polls{1000000};
+constexpr uint64_t wait_timeout_ns{5ULL * 1000 * 1000 * 1000};
 constexpr uint64_t test_value{0x1234567890ABCDEFULL};
 constexpr size_t size{sizeof(test_value)};
 constexpr size_t half_size{size / 2};
 const std::string sender_agent_name{"sender"};
 const std::string receiver_agent_name{"receiver"};
 constexpr std::chrono::seconds data_arrival_timeout{5};
+
+__device__ uint64_t
+globalTimerNs() {
+    uint64_t ns;
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(ns));
+    return ns;
+}
 } // namespace
 
 namespace nixl::gpu {
 __device__ void
 waitPosted(nixl_status_t status, xferStatusH &xfer_status) {
-    size_t polls = 0;
-    while ((status == NIXL_IN_PROG) && (polls++ < max_polls)) {
+    const uint64_t deadline = globalTimerNs() + wait_timeout_ns;
+    while ((status == NIXL_IN_PROG) && (globalTimerNs() < deadline)) {
         status = getXferStatus(xfer_status);
     }
     assert(status == NIXL_SUCCESS);
