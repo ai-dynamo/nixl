@@ -90,7 +90,7 @@ else
 endif
 
 if 'OBJ' in static_plugins
-    obj_backend_interface = declare_dependency(link_whole: obj_backend_lib)
+    obj_backend_interface = declare_dependency(link_whole: obj_backend_lib, dependencies: aws_sdk_paths)
 else
-    obj_backend_interface = declare_dependency(link_with: obj_backend_lib)
+    obj_backend_interface = declare_dependency(link_with: obj_backend_lib, dependencies: aws_sdk_paths)
 endif

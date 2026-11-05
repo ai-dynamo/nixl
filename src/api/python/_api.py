@@ -69,13 +69,13 @@ class nixl_prepped_dlist_handle:
 
     def release(self):
         if not self._released:
-            self._agent.releasedDlistH(self._handle)
+            self._agent.agent.releasedDlistH(self._handle)
             self._released = True
 
     def __del__(self):
         if not self._released:
             try:
-                self._agent.releasedDlistH(self._handle)
+                self._agent.agent.releasedDlistH(self._handle)
             except Exception:
                 try:
                     logger.error(
@@ -110,13 +110,13 @@ class nixl_xfer_handle:
 
     def release(self):
         if not self._released:
-            self._agent.releaseXferReq(self._handle)
+            self._agent.agent.releaseXferReq(self._handle)
             self._released = True
 
     def __del__(self):
         if not self._released:
             try:
-                self._agent.releaseXferReq(self._handle)
+                self._agent.agent.releaseXferReq(self._handle)
             except Exception:
                 try:
                     logger.error(
@@ -557,7 +557,7 @@ class nixl_agent:
         else:
             descs = self.get_xfer_descs(xfer_list, mem_type)
             handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
-        return nixl_prepped_dlist_handle(self.agent, handle)
+        return nixl_prepped_dlist_handle(self, handle)
 
     def estimate_xfer_cost(self, req_handle: nixl_xfer_handle) -> tuple[int, int, int]:
         """Estimate the cost of a transfer operation.
@@ -622,7 +622,7 @@ class nixl_agent:
             skip_desc_merge,
         )
 
-        return nixl_xfer_handle(self.agent, handle)
+        return nixl_xfer_handle(self, handle)
 
     def initialize_xfer(
         self,
@@ -661,7 +661,7 @@ class nixl_agent:
             op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
         )
 
-        return nixl_xfer_handle(self.agent, handle)
+        return nixl_xfer_handle(self, handle)
 
     def transfer(self, handle: nixl_xfer_handle, notif_msg: bytes = b"") -> str:
         """Initiate a data transfer operation.
@@ -943,15 +943,25 @@ class nixl_agent:
         agent_name = self.agent.loadRemoteMD(metadata)
         return agent_name
 
-    def remove_remote_agent(self, agent: str):
+    def remove_remote_agent(self, agent: str) -> bool:
         """Remove a remote agent. After this call, current agent cannot initiate
         transfers towards the remote agent specified in the call anymore.
         This call will also result in a disconnect between the two agents.
 
         Args:
             agent: Name of the remote agent.
+
+        Returns:
+            True if the remote agent was removed, False if no metadata was loaded
+            for it, for example because it was already removed or the peer
+            invalidated it.
+
+        Raises:
+            nixlInvalidParamError: If agent is this agent's own name.
+            nixlBackendError: If a backend fails to disconnect from the agent. Other
+                backend failures raise their matching nixl error.
         """
-        self.agent.invalidateRemoteMD(agent)
+        return self.agent.invalidateRemoteMD(agent) == nixlBind.NIXL_SUCCESS
 
     def send_local_metadata(self, ip_addr: str = "", port: int = DEFAULT_COMM_PORT):
         """Send all of your metadata to a peer or central metadata server.
