@@ -238,20 +238,6 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
 
     if (threadIdx.x == 0) {
         abort_write = false;
-        const uint32_t dependencies = xferReqRing[pos].wait_completion_mask;
-        if (dependencies != 0U) {
-            // The last posting CTA acquired all sibling publications before reaching here.
-            while ((cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(gpu_state->inflight)
-                        .load(cuda::std::memory_order_acquire) &
-                    dependencies) != 0U) {
-                if (nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U) {
-                    abort_write = true;
-                    break;
-                }
-            }
-            abort_write =
-                abort_write || nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U;
-        }
         if (xferReqRing[pos].peer_write_completed != nullptr) {
             while (!abort_write &&
                    DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].peer_write_completed) <
@@ -416,13 +402,17 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
                     .load(cuda::std::memory_order_acquire);
             docaSlotDesc *request = &xfer_req_ring[pos];
             bool send_notification = false;
-            if ((active & (1U << pos)) != 0U) {
+            if ((active & (1U << pos)) != 0U && (active & request->wait_completion_mask) == 0U) {
                 const int poll_status =
                     nixl_gpunetio_dev_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                                      DOCA_GPUNETIO_VERBS_QP_SQ>(
                         doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_data), request->last_wqe);
                 if (poll_status == 0) {
-                    if (DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx) != DOCA_NOTIF_NULL) {
+                    if (request->wait_completion_mask != 0U &&
+                        nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U) {
+                        nixl_gpunetio_dev_fail_request(gpu_state, host_state, pos);
+                    } else if (DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx) !=
+                               DOCA_NOTIF_NULL) {
                         send_notification = true;
                     } else {
                         nixl_gpunetio_dev_complete_request(request, gpu_state, host_state, pos);
