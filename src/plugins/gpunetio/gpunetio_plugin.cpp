@@ -17,6 +17,7 @@
 
 #include "backend/backend_plugin.h"
 #include "gpunetio_backend.h"
+#include "common/nixl_log.h"
 
 // Plugin version information
 static const char *PLUGIN_NAME = "GPUNETIO";
@@ -28,6 +29,7 @@ create_engine(const nixlBackendInitParams *init_params) {
         return new nixlDocaEngine(init_params);
     }
     catch (const std::exception &e) {
+        NIXL_ERROR << "GPUNETIO backend creation failed: " << e.what();
         return nullptr;
     }
 }
@@ -60,6 +62,7 @@ get_backend_options() {
     params["cuda_streams"] = "";
     params["gid_index"] = "";
     params["data_qp_count"] = "";
+    params["native_device_api"] = "false";
     return params;
 }
 

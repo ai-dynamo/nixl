@@ -1276,6 +1276,34 @@ namespace agent {
         EXPECT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
     }
 
+    TEST_F(singleAgentSessionFixture, RemoteBackendWithoutNotifications) {
+        const auto &engine = agent_helper_->getGMockEngine();
+        ON_CALL(engine, supportsRemote()).WillByDefault(testing::Return(true));
+        ON_CALL(engine, supportsLocal()).WillByDefault(testing::Return(false));
+        ON_CALL(engine, supportsNotif()).WillByDefault(testing::Return(false));
+        EXPECT_CALL(engine, getConnInfo(testing::_)).Times(1);
+        EXPECT_CALL(engine, getNotifs).Times(0);
+        EXPECT_CALL(engine, genNotif).Times(0);
+
+        nixl_b_params_t params;
+        nixlBackendH *backend = nullptr;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+        ASSERT_NE(backend, nullptr);
+        nixl_blob_t metadata;
+        EXPECT_EQ(agent_->getLocalMD(metadata), NIXL_SUCCESS);
+
+        nixl_notifs_t notifications;
+        nixl_opt_args_t selected;
+        selected.backends.push_back(backend);
+        const LogIgnoreGuard no_backends("no backends support notifications");
+        const LogIgnoreGuard no_selected("none of specified backends support notifications");
+        const LogIgnoreGuard no_send("no specified or potential backend supports notifications");
+        EXPECT_EQ(agent_->getNotifs(notifications), NIXL_ERR_BACKEND);
+        EXPECT_EQ(agent_->getNotifs(notifications, &selected), NIXL_ERR_BACKEND);
+        EXPECT_EQ(agent_->genNotif(remote_agent_name, "message"), NIXL_ERR_BACKEND);
+        EXPECT_EQ(agent_->genNotif(remote_agent_name, "message", &selected), NIXL_ERR_BACKEND);
+    }
+
     // With no trace backend enabled the agent has no tracer, so a plugin is
     // handed a null sink and cannot record anything (NIX-1876).
     TEST_F(singleAgentSessionFixture, TracingOffLeavesTraceSinkNull) {

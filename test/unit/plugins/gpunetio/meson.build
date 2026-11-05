@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,4 +28,12 @@ if cuda_dep.found()
                                                 cuda_args: compile_flags,
                                                 link_with: [serdes_lib],
                                                 install: true)
+
+        if not get_option('gpunetio_device_api').disabled()
+                executable('nixl_gpunetio_device_get_test', 'nixl_gpunetio_device_get_test.cu',
+                           dependencies: [nixl_dep, nixl_infra, cuda_dep, doca_gpunetio_dep],
+                           include_directories: [nixl_inc_dirs, nixl_device_inc_dirs, utils_inc_dirs],
+                           cuda_args: ['-DNIXL_ENABLE_GPUNETIO_DEVICE_API=1'],
+                           install: false)
+        endif
 endif

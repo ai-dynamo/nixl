@@ -42,6 +42,38 @@ nixlDocaGpuCounterDeleter::operator()(uint64_t *counter) const {
 }
 
 namespace {
+doca_log_backend *
+initializeDocaLogging() {
+    static std::mutex mutex;
+    static bool standard_ready = false;
+    static doca_log_backend *sdk = nullptr;
+    static bool level_ready = false;
+    std::lock_guard lock(mutex);
+    if (!standard_ready) {
+        const auto rc = doca_log_backend_create_standard();
+        if (rc != DOCA_SUCCESS) {
+            throw std::runtime_error(std::string("DOCA standard logger: ") +
+                                     doca_error_get_descr(rc));
+        }
+        standard_ready = true;
+    }
+    if (!sdk) {
+        const auto rc = doca_log_backend_create_with_file_sdk(stderr, &sdk);
+        if (rc != DOCA_SUCCESS) {
+            throw std::runtime_error(std::string("DOCA SDK logger: ") + doca_error_get_descr(rc));
+        }
+    }
+    if (!level_ready) {
+        const auto rc = doca_log_backend_set_sdk_level(sdk, DOCA_LOG_LEVEL_ERROR);
+        if (rc != DOCA_SUCCESS) {
+            throw std::runtime_error(std::string("DOCA SDK logger level: ") +
+                                     doca_error_get_descr(rc));
+        }
+        level_ready = true;
+    }
+    return sdk;
+}
+
 template<typename unsignedType>
 inline bool
 parseUnsigned(std::string_view field, unsignedType &value) {
@@ -250,6 +282,18 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     std::vector<std::string> ndevs, tmp_gdevs; /* Empty vector */
     doca_error_t result;
     nixl_b_params_t *custom_params = init_params->customParams;
+    const auto native_option = custom_params->find("native_device_api");
+    if (native_option != custom_params->end()) {
+        if (native_option->second != "true" && native_option->second != "false") {
+            throw std::invalid_argument("native_device_api must be true or false");
+        }
+        nativeMode_ = native_option->second == "true";
+    }
+#ifndef NIXL_GPUNETIO_DEVICE_API_HOST
+    if (nativeMode_) {
+        throw std::invalid_argument("GPUNETIO device API is disabled");
+    }
+#endif
     int ret;
     union ibv_gid rgid;
 
@@ -257,20 +301,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         reserved.store(false, std::memory_order_relaxed);
     }
 
-    result = doca_log_backend_create_standard();
-    if (result != DOCA_SUCCESS) {
-        throw std::invalid_argument("Can't initialize doca log");
-    }
-
-    result = doca_log_backend_create_with_file_sdk(stderr, &sdk_log);
-    if (result != DOCA_SUCCESS) {
-        throw std::invalid_argument("Can't initialize doca log");
-    }
-
-    result = doca_log_backend_set_sdk_level(sdk_log, DOCA_LOG_LEVEL_ERROR);
-    if (result != DOCA_SUCCESS) {
-        throw std::invalid_argument("Can't initialize doca log");
-    }
+    sdk_log = initializeDocaLogging();
 
     NIXL_INFO << "DOCA network devices ";
     // Temporary: will extend to more GPUs in a dedicated PR
@@ -325,6 +356,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     dataQpCount_ = parseDataQpCount((*custom_params)["data_qp_count"]);
+    if (nativeMode_ && dataQpCount_ != 1) {
+        throw std::invalid_argument("native_device_api requires data_qp_count=1");
+    }
     if (dataQpCount_ > 1 &&
         (nstreams < static_cast<int>(dataQpCount_) ||
          nstreams > static_cast<int>(DOCA_POST_STREAM_NUM))) {
@@ -426,6 +460,27 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         if (result != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to create DOCA GPU device " << doca_error_get_descr(result);
         }
+    }
+
+    if (nativeMode_) {
+        try {
+            initializeNativeState();
+            if (progressThreadStart() != NIXL_SUCCESS) {
+                throw std::runtime_error("Failed to start GPUNETIO connection thread");
+            }
+        }
+        catch (...) {
+            nativeState_.reset();
+            if (gdevs[0].second && doca_gpu_destroy(gdevs[0].second) != DOCA_SUCCESS) {
+                throw;
+            }
+            if (verbs_ah_attr && doca_verbs_ah_attr_destroy(verbs_ah_attr) != DOCA_SUCCESS) {
+                throw;
+            }
+            rollbackOobDevice(ddev, verbs_pd, verbs_context);
+            throw;
+        }
+        return;
     }
 
     // DOCA_GPU_MEM_TYPE_GPU_CPU == GDRCopy
@@ -573,23 +628,36 @@ nixlDocaEngine::~nixlDocaEngine() {
     NIXL_DEBUG << "Before progressThreadStop ";
     progressThreadStop();
 
-    *reinterpret_cast<volatile uint32_t *>(&gpu_state_cpu->control) =
-        DOCA_GPU_EXIT | DOCA_GPU_ABORT;
+    if (!nativeMode_) {
+        *reinterpret_cast<volatile uint32_t *>(&gpu_state_cpu->control) =
+            DOCA_GPU_EXIT | DOCA_GPU_ABORT;
+    }
+    if (qpRollbackFailed_) {
+        NIXL_ERROR << "GPUNETIO QP construction rollback failed; retaining dependent resources";
+        nativeState_.release();
+        retainedQp_.release();
+        return;
+    }
     nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
     if (cuda_device.status() != cudaSuccess) {
         NIXL_ERROR << "Cannot select GPUNETIO engine device; retaining device resources";
         // Host progress is joined; do not destroy device-owned objects in another context.
+        nativeState_.release();
         retainedQp_.release();
         return;
     }
-    NIXL_DEBUG << "Before cudaStreamSynchronize ";
-    nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
-    nixlDocaEngineCheckCudaError(cudaStreamDestroy(wait_stream), "stream destroy");
-
-    for (int i = 0; i < nstreams; i++) {
-        NIXL_DEBUG << "Before cudaStreamSynchronize post_stream " << i;
-        nixlDocaEngineCheckCudaError(cudaStreamSynchronize(post_stream[i]), "stream synchronize");
-        nixlDocaEngineCheckCudaError(cudaStreamDestroy(post_stream[i]), "stream destroy");
+    if (!nativeMode_) {
+        nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
+        nixlDocaEngineCheckCudaError(cudaStreamDestroy(wait_stream), "stream destroy");
+        for (int i = 0; i < nstreams; i++) {
+            nixlDocaEngineCheckCudaError(cudaStreamSynchronize(post_stream[i]),
+                                         "stream synchronize");
+            nixlDocaEngineCheckCudaError(cudaStreamDestroy(post_stream[i]), "stream destroy");
+        }
+    } else if (cudaDeviceSynchronize() != cudaSuccess) {
+        nativeState_.release();
+        retainedQp_.release();
+        return;
     }
 
     bool qps_closed = true;
@@ -607,10 +675,11 @@ nixlDocaEngine::~nixlDocaEngine() {
         qps_closed = retained_closed && qps_closed;
     }
     if (!qps_closed) {
-        NIXL_ERROR << "GPUNETIO QP unexport failed; retaining dependent resources";
+        NIXL_ERROR << "GPUNETIO QP teardown failed; retaining dependent resources";
         if (!retained_closed) {
             retainedQp_.release();
         }
+        nativeState_.release();
         return;
     }
 
@@ -626,13 +695,15 @@ nixlDocaEngine::~nixlDocaEngine() {
         nixlDocaDestroyNotif(gdevs[0].second, notif.second);
     }
     notifMap.clear();
-
-    doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
-    doca_gpu_mem_free(gdevs[0].second, gpu_state_gpu);
-    doca_gpu_mem_free(gdevs[0].second, host_state_gpu_);
-    doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
-    doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
-    doca_gpu_mem_free(gdevs[0].second, notif_send_gpu);
+    nativeState_.reset();
+    if (!nativeMode_) {
+        doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
+        doca_gpu_mem_free(gdevs[0].second, gpu_state_gpu);
+        doca_gpu_mem_free(gdevs[0].second, host_state_gpu_);
+        doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
+        doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
+        doca_gpu_mem_free(gdevs[0].second, notif_send_gpu);
+    }
 
     result = doca_gpu_destroy(gdevs[0].second);
     if (result != DOCA_SUCCESS) {
@@ -672,6 +743,9 @@ nixlDocaEngine::~nixlDocaEngine() {
 
 nixl_status_t
 nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev, doca_gpu *gpu) {
+    if (nativeMode_) {
+        return NIXL_SUCCESS;
+    }
     const nixl_status_t completion_status =
         nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
     if (completion_status != NIXL_SUCCESS) {
@@ -908,7 +982,7 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     if (qpMap.find(remote_agent) != qpMap.end()) {
         return NIXL_IN_PROG;
     }
-    if (retainedQp_ != nullptr) {
+    if (retainedQp_ != nullptr || qpRollbackFailed_) {
         return NIXL_ERR_BACKEND;
     }
 
@@ -968,6 +1042,12 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
             *rdma_qp->writeCompletedCpu = 0;
         }
     }
+    catch (const nixl::doca::verbs::teardown_error &e) {
+        NIXL_ERROR << e.what();
+        qpRollbackFailed_ = true;
+        retainedQp_ = std::move(rdma_qp);
+        return NIXL_ERR_BACKEND;
+    }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
         if (!rdma_qp->closeDataQps()) {
@@ -988,6 +1068,12 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
                                                     RDMA_SEND_QUEUE_SIZE,
                                                     RDMA_RECV_QUEUE_SIZE,
                                                     DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB);
+    }
+    catch (const nixl::doca::verbs::teardown_error &e) {
+        NIXL_ERROR << e.what();
+        qpRollbackFailed_ = true;
+        retainedQp_ = std::move(rdma_qp);
+        return NIXL_ERR_BACKEND;
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
@@ -1474,8 +1560,14 @@ nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent,
     conn.connected = false;
     {
         std::lock_guard<std::mutex> lock(remoteConnLock);
-        if (!remoteConnMap.emplace(remote_agent, conn).second) {
-            return NIXL_ERR_INVALID_PARAM;
+        auto [it, inserted] = remoteConnMap.emplace(remote_agent, conn);
+        if (!inserted) {
+            // Invalidation currently retains the QP. Re-handshake it so the
+            // existing route checks reject a peer that has restarted.
+            if (!it->second.connected) {
+                return NIXL_ERR_NOT_ALLOWED;
+            }
+            it->second.connected = false;
         }
     }
     auto clear_pending = [&]() {
@@ -1534,6 +1626,15 @@ nixl_status_t
 nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
                             const nixl_mem_t &nixl_mem,
                             nixlBackendMD *&out) {
+    if (nativeMode_) {
+        cudaPointerAttributes attr{};
+        if (cudaPointerGetAttributes(&attr, reinterpret_cast<void *>(mem.addr)) != cudaSuccess ||
+            !((nixl_mem == VRAM_SEG && mem.devId == gdevs[0].first &&
+               attr.type == cudaMemoryTypeDevice && attr.device == int(gdevs[0].first)) ||
+              (nixl_mem == DRAM_SEG && attr.type == cudaMemoryTypeHost))) {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+    }
     auto priv = std::make_unique<nixlDocaPrivateMetadata>();
     std::stringstream ss;
 
@@ -1572,6 +1673,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_BACKEND;
     }
 
+    priv->devId = static_cast<uint32_t>(mem.devId);
     priv->peerGpu = nixl_mem == VRAM_SEG && it == gdevs.end();
     ss << (uint32_t)priv->mr->get_rkey() << info_delimiter << ((uintptr_t)priv->mr->get_addr())
        << info_delimiter << ((size_t)priv->mr->get_tot_size());
@@ -1656,6 +1758,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    if (nativeMode_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     uint32_t pos;
     nixlDocaBckndReq *treq;
     nixlDocaPrivateMetadata *lmd;
@@ -1921,6 +2026,9 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    if (nativeMode_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
     if (cuda_device.status() != cudaSuccess) {
         return NIXL_ERR_BACKEND;

@@ -55,6 +55,30 @@ DOCA GPUNetIO backend takes these input parameters:
 - gpu_devices: GPU CUDA ID to be used during the execution (e.g. 0). Current release supports only 1 GPU device.
 - cuda_streams: how many CUDA streams the backend should create at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. It must be an integer in the inclusive range [1, 4]; if this parameter is not specified, default value is `DOCA_POST_STREAM_NUM` (4).
 
+### Experimental GPU-initiated GET
+
+Build with `-Dgpunetio_device_api=enabled` and create a GPUNETIO backend with
+`native_device_api=true`. This mode supports GPU-initiated GET using local VRAM
+and registered remote VRAM or pinned Host memory. It does not support host
+transfer requests or notifications. Each engine has one data QP; applications
+can use independent engines for multiple QPs. The default backend remains in
+stream mode.
+
+CUDA consumers define `NIXL_ENABLE_GPUNETIO_DEVICE_API=1` and include
+`<gpu/nixl_device.cuh>` for scalar `get`, or `<gpu/nixl_device_batch.cuh>` for
+the split-phase `readSession`. The current implementation is restricted to
+DOCA 3.5 and its batch completion path uses an internal SDK helper; its SDK
+compatibility is not guaranteed. Scalar GET requires a registered scratch
+byte disjoint from the destination. For batch reads, one CTA owns a session;
+the caller must synchronize WQE builders, poll every completion, retire in FIFO
+order, and keep the views, registrations and buffers alive until work retires.
+When required, `postConsistency` also needs a registered disjoint scratch byte.
+The MCST-required path has not been validated on hardware that requires MCST;
+support for such platforms remains unverified.
+An unsuccessful or abandoned operation must be failed and its resources kept
+until the engine is safely torn down. See the manual hardware test in
+`test/unit/plugins/gpunetio` for a complete small example.
+
 ## Example
 
 In directory `test/unit/plugins/doca` there is a sample named `nixl_gpunetio_stream_test.cu` where initiator and target exchange data through DOCA GPUNetIO backend.

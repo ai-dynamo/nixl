@@ -243,7 +243,8 @@ public:
 // A private metadata has to implement get, and has all the metadata
 class nixlDocaPrivateMetadata : public nixlBackendMD {
 private:
-    std::unique_ptr<nixl::doca::verbs::mr> mr;
+    std::shared_ptr<nixl::doca::verbs::mr> mr;
+    uint32_t devId = 0;
     bool peerGpu = false; // VRAM owned by a GPU other than the engine's
     nixl_blob_t remoteMrStr;
 
