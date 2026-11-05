@@ -172,7 +172,10 @@ protected:
 
     void TearDown() override
     {
+        invalidateAllMD();
         agents.clear();
+        backend_handles.clear();
+        ports.clear();
     }
 
     std::string getBackendName() const
@@ -299,6 +302,24 @@ protected:
                 nixl_status_t status = agents[j]->invalidateRemoteMD(
                         getAgentName(i));
                 ASSERT_EQ(status, NIXL_SUCCESS);
+            }
+        }
+    }
+
+    void
+    invalidateAllMD() {
+        for (size_t local = 0; local < agents.size(); ++local) {
+            for (size_t remote = 0; remote < agents.size(); ++remote) {
+                if (local == remote) {
+                    continue;
+                }
+
+                const nixl_status_t status =
+                    agents[local]->invalidateRemoteMD(getAgentName(remote));
+                EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_ERR_NOT_FOUND))
+                    << "Failed to invalidate remote metadata for " << getAgentName(remote)
+                    << " from " << getAgentName(local) << ": "
+                    << nixlEnumStrings::statusStr(status);
             }
         }
     }
