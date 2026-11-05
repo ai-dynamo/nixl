@@ -32,51 +32,52 @@
 #define NIXL_PROXY_PROTO_FN inline
 #endif
 
-enum class nixl_proxy_opcode_t : uint8_t {
+namespace nixl {
+
+enum class proxy_opcode_t : uint8_t {
     PUT = 0,
     ATOMIC_ADD = 1,
 };
 
-enum class nixl_proxy_control_state_t : uint32_t {
+enum class proxy_control_state_t : uint32_t {
     RUNNING = 0,
     SHUTDOWN = 1,
 };
 
-struct nixlProxyDeviceContextData;
+struct proxyDeviceContextData;
 
 /**
  * A prepared memory view as device code sees it; `direct_ptr_count` pointers follow it,
  * then one peer per remote descriptor.
  */
-struct nixlProxyDeviceMemView {
+struct proxyDeviceMemView {
     uint64_t host_view = 0;
-    const nixlProxyDeviceContextData *context = nullptr;
+    const proxyDeviceContextData *context = nullptr;
     uint32_t direct_ptr_count = 0;
     uint32_t peer_count = 0;
 };
 
 NIXL_PROXY_PROTO_FN void **
-nixlProxyDeviceMemViewDirectPtrs(nixlProxyDeviceMemView *view) {
+proxyDeviceMemViewDirectPtrs(proxyDeviceMemView *view) {
     return reinterpret_cast<void **>(view + 1);
 }
 
 NIXL_PROXY_PROTO_FN void *const *
-nixlProxyDeviceMemViewDirectPtrs(const nixlProxyDeviceMemView *view) {
+proxyDeviceMemViewDirectPtrs(const proxyDeviceMemView *view) {
     return reinterpret_cast<void *const *>(view + 1);
 }
 
 NIXL_PROXY_PROTO_FN uint32_t
-nixlProxyDeviceMemViewPeer(const nixlProxyDeviceMemView *view, size_t index) {
+proxyDeviceMemViewPeer(const proxyDeviceMemView *view, size_t index) {
     assert(index < view->peer_count);
-    return reinterpret_cast<const uint32_t *>(nixlProxyDeviceMemViewDirectPtrs(view) +
+    return reinterpret_cast<const uint32_t *>(proxyDeviceMemViewDirectPtrs(view) +
                                               view->direct_ptr_count)[index];
 }
 
 /** Bytes to allocate for a view carrying `ptr_count` direct pointers and `peer_count` peers. */
 NIXL_PROXY_PROTO_FN size_t
-nixlProxyDeviceMemViewBytes(size_t ptr_count, size_t peer_count) {
-    return sizeof(nixlProxyDeviceMemView) + ptr_count * sizeof(void *) +
-        peer_count * sizeof(uint32_t);
+proxyDeviceMemViewBytes(size_t ptr_count, size_t peer_count) {
+    return sizeof(proxyDeviceMemView) + ptr_count * sizeof(void *) + peer_count * sizeof(uint32_t);
 }
 
 /**
@@ -97,7 +98,7 @@ nixlProxyDeviceMemViewBytes(size_t ptr_count, size_t peer_count) {
  * The ring the command is written into implies its channel and peer.
  * For ATOMIC_ADD the size field is unused and the host uses 8 bytes.
  */
-struct alignas(64) nixlProxyCommand {
+struct alignas(64) proxyCommand {
     uint64_t op_idx = 0;
     uint64_t operand = 0; // PUT: source offset; ATOMIC_ADD: value.
     uint64_t dst_offset = 0;
@@ -106,7 +107,7 @@ struct alignas(64) nixlProxyCommand {
     uint64_t dst_view = 0;
     uint32_t src_index = 0;
     uint32_t dst_index = 0;
-    nixl_proxy_opcode_t opcode = nixl_proxy_opcode_t::PUT;
+    proxy_opcode_t opcode = proxy_opcode_t::PUT;
     /** Reserved. Keeps the command 64 bytes. */
     uint8_t reserved[7] = {};
 
@@ -123,9 +124,9 @@ struct alignas(64) nixlProxyCommand {
     }
 };
 
-struct nixlProxyWorkRing {
+struct proxyWorkRing {
     /** Mapped host commands: GPU writes via device alias; CPU worker reads host alias. */
-    nixlProxyCommand *commands = nullptr;
+    proxyCommand *commands = nullptr;
     /** Device-resident producer index; only the GPU updates it. */
     uint64_t *producer_idx = nullptr;
     /** Authoritative consumer index. The CPU publishes it through host-published device memory. */
@@ -140,7 +141,7 @@ struct nixlProxyWorkRing {
  * The host writes completion_status, failed_idx, then completed_idx; a poller reads completed_idx
  * before failed_idx, so it reads completion_status only behind the failure that wrote it.
  */
-struct alignas(16) nixlProxyCompletionSlot {
+struct alignas(16) proxyCompletionSlot {
     uint64_t completed_idx = 0;
     /** op_idx of the first failed op, or 0 while none has failed. */
     uint64_t failed_idx = 0;
@@ -148,41 +149,40 @@ struct alignas(16) nixlProxyCompletionSlot {
     nixl_status_t completion_status = NIXL_IN_PROG;
 };
 
-struct nixlProxyRingDesc {
-    nixlProxyWorkRing *work_ring = nullptr;
+struct proxyRingDesc {
+    proxyWorkRing *work_ring = nullptr;
     /** Mapped pinned host memory (device alias); host writes via host pointer with atomics. */
-    nixlProxyCompletionSlot *completion_slot = nullptr;
+    proxyCompletionSlot *completion_slot = nullptr;
 };
 
-struct nixlProxyDeviceContextData {
-    nixlProxyRingDesc *rings = nullptr;
+struct proxyDeviceContextData {
+    proxyRingDesc *rings = nullptr;
     uint32_t max_peers = 0;
     uint32_t num_channels = 0;
     uint64_t *shutdown_word = nullptr;
 };
 
-static_assert(sizeof(nixlProxyCommand) == 64, "nixlProxyCommand must be 64 bytes");
-static_assert(offsetof(nixlProxyCommand, op_idx) == 0,
+static_assert(sizeof(proxyCommand) == 64, "proxyCommand must be 64 bytes");
+static_assert(offsetof(proxyCommand, op_idx) == 0,
               "op_idx must be the first word because it publishes command readiness");
-static_assert(alignof(nixlProxyCommand) == 64, "nixlProxyCommand must be cache-line aligned");
+static_assert(alignof(proxyCommand) == 64, "proxyCommand must be cache-line aligned");
 
-static_assert(sizeof(nixlProxyDeviceMemView) == 24, "nixlProxyDeviceMemView layout changed");
-static_assert(offsetof(nixlProxyDeviceMemView, host_view) == 0,
-              "nixlProxyDeviceMemView layout changed");
-static_assert(sizeof(nixlProxyDeviceMemView) % alignof(void *) == 0,
+static_assert(sizeof(proxyDeviceMemView) == 24, "proxyDeviceMemView size changed");
+static_assert(offsetof(proxyDeviceMemView, host_view) == 0, "proxyDeviceMemView layout changed");
+static_assert(sizeof(proxyDeviceMemView) % alignof(void *) == 0,
               "the trailing direct-pointer run must start aligned");
 
-static_assert(sizeof(nixlProxyWorkRing) == 40, "nixlProxyWorkRing layout changed");
-static_assert(sizeof(nixlProxyCompletionSlot) == 32, "nixlProxyCompletionSlot layout changed");
-static_assert(offsetof(nixlProxyCompletionSlot, completed_idx) == 0,
-              "nixlProxyCompletionSlot layout changed");
-static_assert(offsetof(nixlProxyCompletionSlot, failed_idx) == 8,
-              "nixlProxyCompletionSlot layout changed");
+static_assert(sizeof(proxyWorkRing) == 40, "proxyWorkRing size changed");
+static_assert(sizeof(proxyCompletionSlot) == 32, "proxyCompletionSlot size changed");
+static_assert(offsetof(proxyCompletionSlot, completed_idx) == 0,
+              "proxyCompletionSlot layout changed");
+static_assert(offsetof(proxyCompletionSlot, failed_idx) == 8, "proxyCompletionSlot layout changed");
 static_assert(sizeof(nixl_status_t) == 4, "nixl_status_t must be 4 bytes in a completion slot");
-static_assert(sizeof(nixlProxyRingDesc) == 16, "nixlProxyRingDesc layout changed");
-static_assert(sizeof(nixlProxyDeviceContextData) == 24,
-              "nixlProxyDeviceContextData layout changed");
-static_assert(offsetof(nixlProxyDeviceContextData, rings) == 0,
-              "nixlProxyDeviceContextData layout changed");
+static_assert(sizeof(proxyRingDesc) == 16, "proxyRingDesc size changed");
+static_assert(sizeof(proxyDeviceContextData) == 24, "proxyDeviceContextData size changed");
+static_assert(offsetof(proxyDeviceContextData, rings) == 0,
+              "proxyDeviceContextData layout changed");
+
+} // namespace nixl
 
 #endif // NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_PROTOCOL_H

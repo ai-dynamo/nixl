@@ -90,14 +90,14 @@ public:
 
     /** Device-side views of this channel's rings, in peer order, for the runtime to flatten. */
     void
-    appendDeviceViews(std::vector<nixlProxyRingDesc> &out) const;
+    appendDeviceViews(std::vector<proxyRingDesc> &out) const;
 
 private:
     void
     submitRecord(proxyTransport &transport,
                  uint32_t peer,
                  uint32_t slot,
-                 const nixlProxyCommand &submission);
+                 const proxyCommand &submission);
 
     uint32_t id_;
     std::vector<proxyRing> rings_;

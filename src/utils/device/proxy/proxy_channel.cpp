@@ -43,7 +43,7 @@ void
 proxyChannel::submitReady(proxyTransport &transport, proxyPeerSlice peers) {
     for (uint32_t peer = peers.first; peer < rings_.size(); peer += peers.stride) {
         uint32_t slot = 0;
-        const std::optional<nixlProxyCommand> submission = rings_[peer].tryDequeue(slot);
+        const std::optional<proxyCommand> submission = rings_[peer].tryDequeue(slot);
         if (submission) {
             NIXL_DEBUG << "proxyChannel::submitReady: channel=" << id_ << " slot=" << slot
                        << " opcode=" << static_cast<int>(submission->opcode)
@@ -57,7 +57,7 @@ void
 proxyChannel::submitRecord(proxyTransport &transport,
                            uint32_t peer,
                            uint32_t slot,
-                           const nixlProxyCommand &submission) {
+                           const proxyCommand &submission) {
     proxyRing &ring = rings_[peer];
     proxyRequestState inflight{};
     inflight.op_idx = submission.op_idx;
@@ -73,7 +73,7 @@ proxyChannel::submitRecord(proxyTransport &transport,
     }
 
     // An atomic add has no source, so its local descriptor is not set.
-    if (prepared_submission.opcode == nixl_proxy_opcode_t::PUT) {
+    if (prepared_submission.opcode == proxy_opcode_t::PUT) {
         NIXL_DEBUG << "proxyChannel::submitRecord: PUT op_idx=" << submission.op_idx
                    << " channel=" << id_ << " peer=" << peer << " local_addr=" << std::hex
                    << prepared_submission.local.addr
@@ -170,7 +170,7 @@ proxyChannel::drainAndRearm(proxyTransport &transport, proxyPeerSlice peers) noe
 }
 
 void
-proxyChannel::appendDeviceViews(std::vector<nixlProxyRingDesc> &out) const {
+proxyChannel::appendDeviceViews(std::vector<proxyRingDesc> &out) const {
     for (const proxyRing &ring : rings_) {
         out.push_back(ring.deviceView());
     }

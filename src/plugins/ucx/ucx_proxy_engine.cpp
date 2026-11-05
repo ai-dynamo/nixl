@@ -45,7 +45,7 @@ class proxyEngine::transport final : public nixl::proxyTransport {
 public:
     transport(worker_span_t workers, const nixl::proxyConfig &config) noexcept
         : workers_(workers),
-          max_peers_(config.max_peers) {}
+          max_peers_(config.maxPeers) {}
 
     nixl_status_t
     submit(const nixl::proxyBackendSubmission &submission,
@@ -56,10 +56,10 @@ public:
         nixlUcxReq req = nullptr;
         nixl_status_t status = NIXL_ERR_NOT_SUPPORTED;
         switch (submission.opcode) {
-        case nixl_proxy_opcode_t::PUT:
+        case proxy_opcode_t::PUT:
             status = postPut(submission, worker_id, req);
             break;
-        case nixl_proxy_opcode_t::ATOMIC_ADD:
+        case proxy_opcode_t::ATOMIC_ADD:
             status = postAtomicAdd(submission, worker_id, req);
             break;
         }
@@ -67,7 +67,7 @@ public:
         if (status == NIXL_IN_PROG) {
             request = nixl::proxyBackendRequest{tokenFrom(req)};
         }
-        if (submission.opcode == nixl_proxy_opcode_t::PUT) {
+        if (submission.opcode == proxy_opcode_t::PUT) {
             NIXL_DEBUG << "device proxy submit: PUT src_addr=" << std::hex << submission.local.addr
                        << " dst_addr=" << submission.remote.addr << std::dec
                        << " size=" << submission.size << " token=" << request.token
@@ -293,9 +293,9 @@ proxyEngine::proxyEngine(const nixlBackendInitParams &init_params, const nixl::p
       runtime_(nixl::proxyRuntime::create(std::make_unique<transport>(getSharedWorkers(), config),
                                           config,
                                           ops_)) {
-    NIXL_INFO << "Engine-owned device proxy enabled: " << config.channel_count << " channel(s), "
-              << config.thread_count << " thread(s), max_peers=" << config.max_peers
-              << ", ring_depth=" << config.ring_depth;
+    NIXL_INFO << "Engine-owned device proxy enabled: " << config.channelCount << " channel(s), "
+              << config.threadCount << " thread(s), max_peers=" << config.maxPeers
+              << ", ring_depth=" << config.ringDepth;
 }
 
 proxyEngine::~proxyEngine() = default;

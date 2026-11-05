@@ -30,7 +30,7 @@ namespace nixl {
 /** A ring command with its view tokens resolved into transport descriptors. */
 struct proxyBackendSubmission {
     uint64_t op_idx = 0;
-    nixl_proxy_opcode_t opcode = nixl_proxy_opcode_t::PUT;
+    proxy_opcode_t opcode = proxy_opcode_t::PUT;
     uint32_t channel_id = 0;
     uint32_t peer_index = 0;
 

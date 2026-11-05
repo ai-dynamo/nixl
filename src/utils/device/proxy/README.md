@@ -47,7 +47,7 @@ the proxy. It is internal to `libnixl_device_proxy` and the plugins: not install
 
 ### Requests
 
-- At most `config.ring_depth` requests are outstanding per (channel, peer).
+- At most `config.ringDepth` requests are outstanding per (channel, peer).
 - `submit()` returns `NIXL_IN_PROG` with a non-empty request, or a terminal status with an empty
   request (`NIXL_SUCCESS`: complete now; error: never posted). It must not return a transient
   error: a transport that cannot post now returns `NIXL_IN_PROG` and posts from `progress()`.
