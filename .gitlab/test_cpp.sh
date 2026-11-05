@@ -46,7 +46,16 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
-ibv_devinfo || true
+if $TEST_LIBFABRIC ; then
+    ibv_devinfo_out=$(ibv_devinfo 2>&1 || true)
+    echo "$ibv_devinfo_out"
+    if ! echo "$ibv_devinfo_out" | grep -q "hca_id:"; then
+        echo "ERROR: TEST_LIBFABRIC=true but ibv_devinfo found no RDMA/EFA devices" >&2
+        exit 1
+    fi
+else
+    ibv_devinfo || true
+fi
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
 
