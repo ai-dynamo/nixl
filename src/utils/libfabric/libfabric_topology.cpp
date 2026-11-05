@@ -331,7 +331,8 @@ nixlLibfabricTopology::getPcieDevData(const std::string &efa_device,
                                       size_t &device_link_speed,
                                       uint16_t &parent_switch_domain,
                                       uint8_t &parent_switch_bus_id,
-                                      size_t &parent_switch_link_speed) const {
+                                      size_t &parent_switch_link_speed,
+                                      bool &host_dma_starved) const {
     bool found = false;
     NicInfoMap::const_iterator itr = nic_info_map.find(efa_device);
     if (itr == nic_info_map.end()) {
@@ -343,6 +344,7 @@ nixlLibfabricTopology::getPcieDevData(const std::string &efa_device,
         parent_switch_domain = itr->second.parent_switch_domain;
         parent_switch_bus_id = itr->second.parent_switch_bus_id;
         parent_switch_link_speed = itr->second.parent_switch_link_speed;
+        host_dma_starved = itr->second.host_dma_starved;
         NIXL_DEBUG << "EFA device " << efa_device << " has upstream link speed "
                    << device_link_speed << " Gbps, and is associated with NUMA node "
                    << numa_node_id << " through PCIe switch on domain/bus-id "
@@ -1104,8 +1106,11 @@ nixlLibfabricTopology::collectNicInfo(NicInfo &nic,
         NIXL_TRACE << "Could not locate parent PCIe bridge/switch of NIC " << name;
         nic.parent_switch_domain = UINT16_MAX;
         nic.parent_switch_bus_id = UINT8_MAX;
-    } else if (nic.parent_switch_link_speed < nic.upstream_link_speed) {
-        nic.host_dma_starved = true;
+    } else {
+        // compare the uplink with what the NIC can put on the network: its line rate, or its own
+        // PCIe link when libfabric reports no rate
+        const size_t nic_rate = nic.line_speed != 0 ? nic.line_speed : nic.upstream_link_speed;
+        nic.host_dma_starved = nic.parent_switch_link_speed < nic_rate;
     }
     nic_info_map.insert(NicInfoMap::value_type(name, nic));
     NIXL_DEBUG << "EFA device " << name << " mapped to NUMA node " << nic.numa_node_id
@@ -1228,8 +1233,8 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
             ss << (i > 0 ? ", " : "") << starved_nics[i];
         }
         NIXL_WARN << "EFA devices [" << ss.str()
-                  << "] sit under a PCIe bridge/switch whose uplink is slower than their own "
-                     "link, and are left out of DRAM_SEG rail selection";
+                  << "] sit under a PCIe bridge/switch whose uplink is slower than their line "
+                     "rate, and are left out of DRAM_SEG rail selection";
     }
 
     // if nothing usable was found then stop
