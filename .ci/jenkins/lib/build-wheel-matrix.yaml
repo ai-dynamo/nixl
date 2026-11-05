@@ -19,7 +19,7 @@
 # =============================================================================
 # vLLM/SGLang NIXL disaggregation sanity (aarch64 only)
 # =============================================================================
-# The aarch64 branch (build_helper_sanity) builds the wheels once (reusing the cached
+# The aarch64 branch (build-wheel-sanity-helper) builds the wheels once (reusing the cached
 # wheel_base), then splits per framework: layer them onto the pinned framework base image
 # (built by the ci-demo runs_on_dockers mechanic from .ci/dockerfiles/Dockerfile.{vllm,sglang}-base)
 # while both SLURM allocations are requested, then run a 1-prefill/1-decode NIXL
@@ -131,7 +131,7 @@ runs_on_dockers:
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
-     name: 'build_helper_sanity',
+     name: 'build-wheel-sanity-helper',
      tag: "${CI_IMAGE_TAG}",
      arch: 'aarch64'
     }
@@ -279,7 +279,7 @@ steps:
   # build (contrib/Dockerfile.{vllm,sglang}: apt/curl/pip) needs egress, so default podman
   # to the pod's host network.
   - name: Prepare
-    containerSelector: "{name: 'build_helper_sanity'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
@@ -304,7 +304,7 @@ steps:
   # aarch64 wheels both sanities test. --wheel-base-image reuses the cached deps image so
   # only the wheel stage compiles.
   - name: Build Wheel
-    containerSelector: "{name: 'manylinux|build_helper_sanity'}"
+    containerSelector: "{name: 'manylinux|build-wheel-sanity-helper'}"
     credentialsId: 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
@@ -331,7 +331,7 @@ steps:
   # drawing anything, giving:
   #   [vLLM image | SGLang image | vLLM alloc | SGLang alloc] -> [syncs] -> [runs]
   - name: Extract wheels
-    containerSelector: "{name: 'build_helper_sanity'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     parallel: false
     run: |
       set -eux
@@ -349,20 +349,20 @@ steps:
       ls "$WHEELS_DIR"/*.whl
 
   - name: Build vLLM sanity image
-    containerSelector: "{name: 'build_helper_sanity'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: true
     run: .ci/scripts/build-sanity-image.sh vllm "$(pwd)/pr-wheels-${arch}"
 
   - name: Build SGLang sanity image
-    containerSelector: "{name: 'build_helper_sanity'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: true
     run: .ci/scripts/build-sanity-image.sh sglang "$(pwd)/pr-wheels-${arch}"
 
   # The allocations do not need the images, so they queue while the images build.
   - name: Allocate vLLM Environment
-    containerSelector: "{name: 'build_helper_sanity'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     parallel: true
     shell: action
     module: slurmCI
@@ -385,7 +385,7 @@ steps:
       ]
 
   - name: Allocate SGLang Environment
-    containerSelector: "{name: 'build_helper_sanity'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     parallel: true
     shell: action
     module: slurmCI
@@ -414,7 +414,7 @@ steps:
   # Import the image onto the node before the timed test stages, so a slow
   # registry pull is not counted against (and does not time out) a test stage.
   - name: Sync vLLM Container Image
-    containerSelector: "{name: 'build_helper_sanity'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     timeout: 30
     parallel: true
     shell: action
@@ -430,7 +430,7 @@ steps:
       containerName: "nixl-vs-vllm-${BUILD_NUMBER}"
 
   - name: Sync SGLang Container Image
-    containerSelector: "{name: 'build_helper_sanity'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     timeout: 30
     parallel: true
     shell: action
@@ -450,7 +450,7 @@ steps:
     parallel: false
 
   - name: Run vLLM sanity
-    containerSelector: "{name: 'build_helper_sanity'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     timeout: 40
     parallel: true
     shell: action
@@ -476,7 +476,7 @@ steps:
       containerName: "nixl-vs-vllm-${BUILD_NUMBER}"
 
   - name: Run SGLang sanity
-    containerSelector: "{name: 'build_helper_sanity'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     timeout: 40
     parallel: true
     shell: action
@@ -498,11 +498,11 @@ steps:
       credentialsId: "${SSH_CREDENTIALS_ID}"
       containerName: "nixl-vs-sglang-${BUILD_NUMBER}"
 
-# Release the SLURM allocations. Runs from the build_helper_sanity branch (it has the
+# Release the SLURM allocations. Runs from the build-wheel-sanity-helper branch (it has the
 # SSH client + key; the manylinux runner does not); stopAllForBuild scans the shared PVC
 # job-id dir, so it cleans up both framework allocations.
 pipeline_stop:
-  containerSelector: "{name: 'build_helper_sanity'}"
+  containerSelector: "{name: 'build-wheel-sanity-helper'}"
   parallel: false
   shell: action
   module: slurmCI
