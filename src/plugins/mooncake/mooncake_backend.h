@@ -20,6 +20,7 @@
 #include <vector>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <thread>
 #include <mutex>
 #include <unordered_set>
@@ -31,6 +32,7 @@
 #include "transfer_engine_c.h"
 
 class nixlMooncakeBackendMD;
+class nixlMooncakeSubmitPool;
 
 class nixlMooncakeEngine : public nixlBackendEngine {
 public:
@@ -119,6 +121,10 @@ private:
     mutable std::mutex mutex_;
     transfer_engine_t engine_;
     const std::string local_agent_name_;
+    // Splits a postXfer of at least split_batch_size_ requests into one batch
+    // per thread. Only created for more than one thread.
+    std::unique_ptr<nixlMooncakeSubmitPool> submit_pool_;
+    size_t split_batch_size_;
     std::unordered_map<uint64_t, nixlMooncakeBackendMD *> mem_reg_info_;
     std::unordered_map<std::string, AgentInfo> connected_agents_;
 };

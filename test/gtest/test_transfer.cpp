@@ -128,6 +128,9 @@ protected:
             params["num_workers"] = std::to_string(getNumWorkers());
             params["num_threads"] = std::to_string(getNumThreads());
             params["split_batch_size"] = "32";
+        } else if (getBackendName() == "MOONCAKE") {
+            params["num_threads"] = std::to_string(getNumThreads());
+            params["split_batch_size"] = "256";
         }
 
         params["engine_config"] = GetParam().engineConfig;
@@ -811,6 +814,7 @@ NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransfer, "UCX", true, 6, 4, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
 #ifdef HAVE_MOONCAKE
 NIXL_INSTANTIATE_TEST(mooncake, TestTransfer, "MOONCAKE", false, 1, 0, "");
+NIXL_INSTANTIATE_TEST(mooncake_threadpool, TestTransfer, "MOONCAKE", false, 1, 4, "");
 #endif
 
 NIXL_INSTANTIATE_TEST(ucx_telemetry, TestTransferTelemetry, "UCX", true, 2, 0, "");
