@@ -75,7 +75,7 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 
 std::unique_ptr<nixlUcxEngine>
 nixlUcxEngine::createWithMemoryPolicy(const nixlBackendInitParams &init_params,
-                                     nixl::ucx::MemoryRegistrationPolicy policy) {
+                                      nixl::ucx::MemoryRegistrationPolicy policy) {
     nixlUcxEngine *engine;
     const size_t num_threads =
         nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
