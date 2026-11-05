@@ -32,6 +32,7 @@
 
 #include <nixl_types.h>
 
+#include "common/configuration.h"
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
