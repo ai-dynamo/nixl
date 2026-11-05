@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "musa_policy.h"
 #include "../ucx/ucx_backend.h"
-#include "../ucx/ucx_binding.h"
 #include "backend/backend_plugin.h"
 #include "common/nixl_log.h"
 
 #include <exception>
-#include <memory>
 #include <utility>
 
 namespace {
@@ -17,8 +15,8 @@ createEngine(const nixlBackendInitParams *params) {
         return nullptr;
     }
     try {
-        auto policy = std::make_shared<nixl::musa::MemoryPolicy>(nixl::musa::makeRuntime());
-        return nixlUcxEngine::create(*params, std::move(policy)).release();
+        auto policy = nixl::musa::makeMemoryPolicy(nixl::musa::makeRuntime());
+        return nixlUcxEngine::createWithMemoryPolicy(*params, std::move(policy)).release();
     }
     catch (const std::exception &error) {
         NIXL_ERROR << "MUSA_UCX engine creation failed: " << error.what();

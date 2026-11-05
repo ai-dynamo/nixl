@@ -3,7 +3,6 @@
 musa_test_includes = include_directories('../../../../src/api/cpp', '../../../../src/plugins')
 musa_cpu_cases = {
     'memory_policy': files('memory_policy_test.cpp'),
-    'registration': files('registration_test.cpp'),
     'musa_policy': files('musa_policy_test.cpp', '../../../../src/plugins/musa/musa_policy.cpp'),
     'musa_runtime_fake': files('musa_runtime_test.cpp', 'fake_sdk/runtime.cpp',
                               '../../../../src/plugins/musa/musa_runtime.cpp',
@@ -20,7 +19,9 @@ musa_test_meson = find_program('meson', required: false)
 musa_test_python = find_program('python3', required: false)
 if musa_test_meson.found() and musa_test_python.found()
     test('musa_build_contract', musa_test_python,
-        args: [files('test_build_contract.py'), '-v'], suite: 'musa-configure', timeout: 180)
+        args: [files('test_build_contract.py'), '-v'],
+        env: {'MESON_EXE': musa_test_meson.full_path()},
+        suite: 'musa-configure', timeout: 180)
 endif
 
 if ucx_dep.found() and (enabled_plugins.get('UCX') or
@@ -31,6 +32,16 @@ if ucx_dep.found() and (enabled_plugins.get('UCX') or
     test('ucx_policy_factory', musa_factory_test, suite: 'musa-ucx', timeout: 60)
     test('ucx_policy_rejects_sgl', musa_factory_test,
         args: ['--reject-sgl'], env: ['NIXL_UCX_SGL_ENABLE=1'], suite: 'musa-ucx', timeout: 60)
+    if host_machine.system() == 'linux'
+        musa_registration_test = executable('test_ucx_registration_failure',
+            'ucx_registration_failure_test.cpp',
+            dependencies: [ucx_impl_interface],
+            include_directories: [musa_test_includes, nixl_inc_dirs, utils_inc_dirs],
+            link_args: ['-Wl,--wrap=ucp_mem_map', '-Wl,--wrap=ucp_mem_query',
+                        '-Wl,--wrap=ucp_rkey_pack', '-Wl,--wrap=ucp_mem_unmap'])
+        test('ucx_registration_failure', musa_registration_test,
+            suite: 'musa-ucx', timeout: 60)
+    endif
 endif
 
 if enabled_plugins.get('MUSA_UCX') and musa_dep.found() and ucx_dep.found()

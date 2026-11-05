@@ -17,7 +17,6 @@
 
 #include "backend/backend_plugin.h"
 #include "ucx_backend.h"
-#include "ucx_binding.h"
 
 // Plugin type alias for convenience
 using ucx_plugin_t = nixlBackendPluginCreator<nixlUcxEngine>;

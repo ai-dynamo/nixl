@@ -44,6 +44,11 @@ enum class nixl_ucx_vram_memtype_hint_t {
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
 inline constexpr std::string_view nixl_ucx_vram_memtype_hint_param_name = "ucx_vram_memtype_hint";
 
+namespace nixl::ucx {
+[[nodiscard]] bool
+validateBinding();
+}
+
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22
 inline constexpr unsigned ucp_version_mem_type_rdma = UCP_VERSION(1, 22);

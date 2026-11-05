@@ -30,12 +30,12 @@ public:
 int
 main() {
     auto runtime = std::make_shared<FakeRuntime>();
-    nixl::musa::MemoryPolicy policy(runtime);
+    auto policy = nixl::musa::makeMemoryPolicy(runtime);
     nixlBlobDesc desc;
     desc.addr = 4096;
     desc.len = 64;
     desc.devId = 1;
-    NIXL_TEST_CHECK(policy.deviceMemoryType() == "musa");
+    NIXL_TEST_CHECK(policy.device_memory_type == "musa");
     NIXL_TEST_CHECK(policy.validateBeforeMap(desc, VRAM_SEG) == NIXL_SUCCESS);
     NIXL_TEST_CHECK(policy.validateBeforeMap(desc, DRAM_SEG) == NIXL_SUCCESS);
     NIXL_TEST_CHECK(runtime->queries == 1);
@@ -63,7 +63,14 @@ main() {
     desc.addr = 0;
     NIXL_TEST_CHECK(policy.validateBeforeMap(desc, DRAM_SEG) == NIXL_ERR_INVALID_PARAM);
     runtime->count = 0;
-    checkThrows([&] { nixl::musa::MemoryPolicy no_device(runtime); });
-    checkThrows([] { nixl::musa::MemoryPolicy no_runtime(nullptr); });
+    checkThrows([&] { (void)nixl::musa::makeMemoryPolicy(runtime); });
+    checkThrows([] { (void)nixl::musa::makeMemoryPolicy(nullptr); });
+    std::weak_ptr<const nixl::musa::Runtime> lifetime = runtime;
+    runtime.reset();
+    NIXL_TEST_CHECK(!lifetime.expired());
+    desc.addr = 4096;
+    NIXL_TEST_CHECK(policy.validateBeforeMap(desc, VRAM_SEG) == NIXL_SUCCESS);
+    policy = {};
+    NIXL_TEST_CHECK(lifetime.expired());
     std::cout << "MUSA policy checks passed\n";
 }

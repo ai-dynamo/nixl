@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -29,11 +30,13 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "../allocation_counter.h"
 #include "common.h"
 #include "nixl.h"
 #include "transfer_request.h"
@@ -284,15 +287,15 @@ public:
 };
 
 void
-failRandomBytes(std::uint8_t *, std::size_t) {
+failRandomBytes(std::span<std::uint8_t>) {
     throw std::system_error(ENOSYS, std::generic_category(), "getentropy failed");
 }
 
 int zero_draws_left = 0;
 
 void
-zeroFirstRandomBytes(std::uint8_t *bytes, std::size_t size) {
-    std::fill_n(bytes, size, (zero_draws_left-- > 0) ? 0 : 0x5a);
+zeroFirstRandomBytes(std::span<std::uint8_t> bytes) {
+    std::ranges::fill(bytes, (zero_draws_left-- > 0) ? 0 : 0x5a);
 }
 
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
@@ -1093,4 +1096,36 @@ TEST(TracePhaseSink, ThrowingBackendIsReportedOnce) {
     EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 2, {}, nullptr, 0, 0));
 
     EXPECT_EQ(drops.count(), 1u);
+}
+
+TEST(Tracing, AllocationCounterCountsOnlyItsOwnThread) {
+    const gtest::AllocationCounter allocations;
+    void *const value = ::operator new(sizeof(std::uint64_t));
+    EXPECT_EQ(allocations.count(), 1u);
+
+    std::atomic<bool> start = false;
+    std::size_t worker_count = 0;
+    std::size_t worker_total = 0;
+    std::thread worker([&start, &worker_count, &worker_total] {
+        while (!start) {
+            std::this_thread::yield();
+        }
+        const gtest::AllocationCounter worker_allocations;
+        {
+            const gtest::AllocationCounter nested_allocations;
+            void *const other = ::operator new(sizeof(std::uint64_t));
+            worker_count = nested_allocations.count();
+            ::operator delete(other);
+        }
+        void *const after = ::operator new(sizeof(std::uint64_t));
+        worker_total = worker_allocations.count();
+        ::operator delete(after);
+    });
+    const std::size_t with_thread = allocations.count();
+    start = true;
+    worker.join();
+    EXPECT_EQ(allocations.count(), with_thread);
+    EXPECT_EQ(worker_count, 1u);
+    EXPECT_EQ(worker_total, 2u);
+    ::operator delete(value);
 }

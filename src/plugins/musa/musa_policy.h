@@ -6,26 +6,12 @@
 #include "musa_runtime.h"
 #include "../ucx/memory_policy.h"
 
-#include <cstdint>
-#include <string_view>
+#include <memory>
 
 namespace nixl::musa {
-class MemoryPolicy final : public nixl::ucx::MemoryRegistrationPolicy {
-public:
-    explicit MemoryPolicy(std::shared_ptr<const Runtime> runtime);
-
-    std::string_view
-    deviceMemoryType() const noexcept override {
-        return "musa";
-    }
-
-    nixl_status_t
-    validateBeforeMap(const nixlBlobDesc &desc, nixl_mem_t type) const override;
-
-private:
-    const std::shared_ptr<const Runtime> runtime_;
-    uint64_t device_count_;
-};
+// The callback owns the runtime for as long as any UCX engine uses the policy.
+[[nodiscard]] nixl::ucx::MemoryRegistrationPolicy
+makeMemoryPolicy(std::shared_ptr<const Runtime> runtime);
 } // namespace nixl::musa
 
 #endif

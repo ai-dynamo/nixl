@@ -384,7 +384,7 @@ nixlUcxDedicatedThread::nixlUcxDedicatedThread(nixlUcxEngine *engine,
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params,
                                                  size_t num_threads,
-                                                 nixl::ucx::MemoryPolicyPtr policy)
+                                                 nixl::ucx::MemoryRegistrationPolicy policy)
     : nixlUcxThreadEngine(init_params, num_threads, std::move(policy)),
       splitBatchSize_(
           std::max<size_t>(num_threads,

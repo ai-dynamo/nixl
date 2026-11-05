@@ -8,7 +8,7 @@
 int
 main() {
     auto runtime = nixl::musa::makeRuntime();
-    nixl::musa::MemoryPolicy policy(runtime);
+    auto policy = nixl::musa::makeMemoryPolicy(runtime);
     NIXL_TEST_CHECK(runtime->deviceCount() == 2);
     auto attributes = runtime->pointerAttributes(4096);
     NIXL_TEST_CHECK(attributes && attributes->device_memory && attributes->device == 1);

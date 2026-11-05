@@ -5,36 +5,37 @@
 #include "ucx/ucx_thread_pool_engine.h"
 
 #include <array>
+#include <memory>
 #include <string>
+#include <type_traits>
 
-class UnavailablePolicy final : public nixl::ucx::MemoryRegistrationPolicy {
-public:
-    std::string_view
-    deviceMemoryType() const noexcept override {
-        return "nixl_test_unavailable_device";
-    }
-
-    nixl_status_t
-    validateBeforeMap(const nixlBlobDesc &, nixl_mem_t) const override {
-        return NIXL_SUCCESS;
-    }
-};
+static_assert(std::is_same_v<decltype(&nixlUcxEngine::create),
+                             std::unique_ptr<nixlUcxEngine> (*)(const nixlBackendInitParams &)>);
 
 int
 main(int argc, char **) {
+#ifdef HAVE_UCX_SGL_API
     const bool reject_sgl = argc > 1;
-    auto policy = std::make_shared<UnavailablePolicy>();
+#else
+    const bool reject_sgl = false;
+    (void)argc;
+#endif
+    const nixl::ucx::MemoryRegistrationPolicy policy{"nixl_test_unavailable_device", {}};
     for (int mode = 0; mode < 3; ++mode) {
-        nixlBackendInitParams init;
+        nixlBackendInitParams init{};
         nixl_b_params_t params{{"num_threads", mode == 2 ? "2" : "0"}};
         init.enableProgTh = mode == 1;
         init.pthrDelay = 100;
         init.localAgent = "policy-test-" + std::to_string(mode);
         init.customParams = &params;
         init.type = "UCX";
+        checkThrows([&] {
+            (void)nixlUcxEngine::createWithMemoryPolicy(
+                init, {"", [](const nixlBlobDesc &, nixl_mem_t) { return NIXL_SUCCESS; }});
+        });
         bool rejected = false;
         try {
-            auto engine = nixlUcxEngine::create(init, policy);
+            auto engine = nixlUcxEngine::createWithMemoryPolicy(init, policy);
         }
         catch (const std::exception &error) {
             const std::string message = error.what();
@@ -44,7 +45,7 @@ main(int argc, char **) {
                             std::string::npos);
             rejected = true;
         }
-        NIXL_TEST_CHECK(rejected && policy.use_count() == 1);
+        NIXL_TEST_CHECK(rejected);
         if (reject_sgl) {
             continue;
         }
@@ -83,5 +84,21 @@ main(int argc, char **) {
         NIXL_TEST_CHECK(remote_metadata == nullptr); // Empty packed key must not reach UCP.
         NIXL_TEST_CHECK(engine->deregisterMem(metadata) == NIXL_SUCCESS);
     }
+    nixlBackendInitParams proxy_init{};
+    nixl_b_params_t proxy_params{{"device_proxy", "true"}};
+    proxy_init.customParams = &proxy_params;
+    proxy_init.localAgent = "policy-proxy-test";
+    proxy_init.type = "UCX";
+    bool proxy_rejected = false;
+    try {
+        (void)nixlUcxEngine::createWithMemoryPolicy(proxy_init, policy);
+    }
+    catch (const std::exception &error) {
+        NIXL_TEST_CHECK(std::string(error.what())
+                            .find("A memory policy is not supported with device_proxy=true") !=
+                        std::string::npos);
+        proxy_rejected = true;
+    }
+    NIXL_TEST_CHECK(proxy_rejected);
     std::cout << "real UCX factory modes and policy rejection passed\n";
 }

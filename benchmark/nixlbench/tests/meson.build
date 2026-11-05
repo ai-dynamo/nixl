@@ -16,6 +16,7 @@ if gtest_dep.found()
     include_directories: inc_dir,
     link_with: [utils_lib, nixlbench_runtimes],
     dependencies: deps + [gtest_dep],
+    link_language: 'cpp', # Let users pass -Wl,... in LDFLAGS (nvcc rejects it)
     install: true,
   )
 

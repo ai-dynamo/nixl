@@ -13,11 +13,11 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
-MESON = shutil.which("meson")
+MESON = os.environ.get("MESON_EXE") or shutil.which("meson")
 
 
 class UcxBuildSplitTests(unittest.TestCase):
-    def configure(self, public_plugin, static=False):
+    def configure(self, *, public_plugin, static=False):
         self.assertIsNotNone(
             MESON, "meson is required; this test must not silently skip"
         )
@@ -35,6 +35,8 @@ class UcxBuildSplitTests(unittest.TestCase):
                 "nixl_infra = declare_dependency()\n"
                 "serdes_interface = declare_dependency()\n"
                 "device_utils_interface = declare_dependency()\n"
+                "device_proxy_interface = declare_dependency()\n"
+                "meson.override_dependency('absl_cleanup', declare_dependency())\n"
                 "thread_dep = dependency('threads')\n"
                 "ucx_dep = declare_dependency()\n"
                 "nixl_inc_dirs = include_directories('.')\n"
@@ -65,16 +67,36 @@ class UcxBuildSplitTests(unittest.TestCase):
                 timeout=60,
             )
             self.assertEqual(result.returncode, 0, result.stdout)
-            return json.loads(
+            targets = json.loads(
                 subprocess.check_output(
                     [MESON, "introspect", str(build), "--targets"],
                     text=True,
                     timeout=30,
                 )
             )
+            link_command = []
+            if public_plugin:
+                target = next(target for target in targets if target["name"] == "UCX")
+                filename = str(
+                    Path(target["filename"][0]).resolve().relative_to(build.resolve())
+                )
+                commands = subprocess.check_output(
+                    [
+                        shutil.which("ninja") or "ninja",
+                        "-C",
+                        str(build),
+                        "-t",
+                        "commands",
+                        filename,
+                    ],
+                    text=True,
+                    timeout=30,
+                )
+                link_command = shlex.split(commands.splitlines()[-1])
+            return targets, link_command
 
     def test_public_ucx_links_private_implementation(self):
-        targets = self.configure(True)
+        targets, link_command = self.configure(public_plugin=True)
         by_name = {target["name"]: target for target in targets}
         self.assertIn("ucx_impl", by_name)
         self.assertIn("UCX", by_name)
@@ -85,18 +107,29 @@ class UcxBuildSplitTests(unittest.TestCase):
         ]
         self.assertFalse(any(source.endswith("ucx_plugin.cpp") for source in sources))
         self.assertTrue(any(source.endswith("ucx_backend.cpp") for source in sources))
+        archive = by_name["ucx_impl"]["filename"][0]
+        self.assertTrue(
+            any(Path(archive).name in token for token in link_command),
+            f"UCX link command does not include {archive}: {link_command}",
+        )
 
     def test_musa_only_does_not_export_public_ucx(self):
-        names = {target["name"] for target in self.configure(False)}
+        targets, _ = self.configure(public_plugin=False)
+        names = {target["name"] for target in targets}
         self.assertIn("ucx_impl", names)
         self.assertNotIn("UCX", names)
 
     def test_static_ucx_keeps_its_entry_point(self):
-        by_name = {
-            target["name"]: target for target in self.configure(True, static=True)
-        }
+        targets, _ = self.configure(public_plugin=True, static=True)
+        by_name = {target["name"]: target for target in targets}
         self.assertEqual(by_name["UCX"]["type"], "static library")
         self.assertIn("ucx_impl", by_name)
+        sources = [
+            source
+            for group in by_name["UCX"]["target_sources"]
+            for source in group.get("sources", [])
+        ]
+        self.assertTrue(any(source.endswith("ucx_plugin.cpp") for source in sources))
 
 
 class MusaDependencyTests(unittest.TestCase):

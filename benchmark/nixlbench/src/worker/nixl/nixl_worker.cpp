@@ -75,10 +75,13 @@ resolveVramSegment() {
         _seg_type;                                                                          \
     })
 
-constexpr size_t kDeviceCounterDoneOffsetBytes = 0;
-constexpr size_t kDeviceCounterErrorOffsetBytes = sizeof(uint64_t);
-constexpr size_t kDeviceCounterBytes = 2 * sizeof(uint64_t);
 constexpr uint64_t kUnwrittenDeviceDurationNs = std::numeric_limits<uint64_t>::max();
+
+static size_t
+deviceCounterBytes() {
+    return static_cast<size_t>(xferBenchConfig::device_channel_num) *
+        sizeof(nixlbenchDeviceCounters);
+}
 
 // Reuse parser from utils
 
@@ -150,19 +153,26 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 
     agent->getPluginParams(backend_name, mems, backend_params);
 
+    const bool device_proxy = xferBenchConfig::use_device_api &&
+        xferBenchConfig::device_mode == XFERBENCH_DEVICE_MODE_PROXY;
+    if (device_proxy) {
+        // Pairwise: each process talks to exactly one remote agent.
+        backend_params["device_proxy"] = "true";
+        backend_params["proxy_channel_count"] = std::to_string(xferBenchConfig::device_channel_num);
+        backend_params["proxy_max_peers"] = "1";
+        if (xferBenchConfig::device_proxy_threads > 0) {
+            backend_params["proxy_thread_count"] =
+                std::to_string(xferBenchConfig::device_proxy_threads);
+        }
+    }
+    if (xferBenchConfig::use_device_api) {
+        std::cout << "Device API mode: configuring " << xferBenchConfig::device_channel_num
+                  << (device_proxy ? " CPU proxy" : " UCX device") << " channels for "
+                  << xferBenchConfig::deviceGroupNum() << " execution groups" << std::endl;
+    }
+
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
-        const bool device_proxy = xferBenchConfig::use_device_api &&
-            xferBenchConfig::device_mode == XFERBENCH_DEVICE_MODE_PROXY;
         if (device_proxy) {
-            // Pairwise: each process talks to exactly one remote agent.
-            backend_params["device_proxy"] = "true";
-            backend_params["proxy_channel_count"] =
-                std::to_string(xferBenchConfig::device_channel_num);
-            backend_params["proxy_max_peers"] = "1";
-            if (xferBenchConfig::device_proxy_threads > 0) {
-                backend_params["proxy_thread_count"] =
-                    std::to_string(xferBenchConfig::device_proxy_threads);
-            }
             // UCX host atomics need err-mode none.
             backend_params["ucx_error_handling_mode"] = "none";
             backend_params["engine_config"] = "FENCE_MODE=ep_based";
@@ -172,11 +182,6 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
                 backend_params["ucx_num_device_channels"] =
                     std::to_string(xferBenchConfig::device_channel_num);
             }
-        }
-        if (xferBenchConfig::use_device_api) {
-            std::cout << "Device API mode: configuring " << xferBenchConfig::device_channel_num
-                      << (device_proxy ? " CPU proxy" : " UCX device") << " channels for "
-                      << xferBenchConfig::deviceGroupNum() << " execution groups" << std::endl;
         }
 
         // No need to set device_list if all is specified
@@ -768,7 +773,7 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
 /** Allocate @a nbytes of VRAM on @a devid with all bytes set to zero. */
 static std::optional<xferBenchIOV>
 allocVramValueZero(int devid, size_t nbytes) {
-#ifdef HAVE_UCX_GPU_DEVICE_API
+#ifdef NIXLBENCH_DEVICE_API
     if (neuronCoreCount() > 0) {
         return getVramDescNeuron(devid, nbytes, 0);
     }
@@ -788,7 +793,7 @@ allocVramValueZero(int devid, size_t nbytes) {
 std::optional<xferBenchIOV>
 xferBenchNixlWorker::initCompletionCounterVram() {
     int counter_dev = rt->getRank() - xferBenchConfig::num_initiator_dev; // pairwise SG only
-    return allocVramValueZero(counter_dev, kDeviceCounterBytes);
+    return allocVramValueZero(counter_dev, deviceCounterBytes());
 }
 
 std::optional<xferBenchIOV>
@@ -1582,9 +1587,11 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 std::exit(EXIT_FAILURE);
             }
             completion_counter_iov = cc_iovs[0];
-            if (completion_counter_iov->len < kDeviceCounterBytes) {
-                std::cerr << "NIXL: completion counter descriptor too small: "
-                          << completion_counter_iov->len << " bytes" << std::endl;
+            if (completion_counter_iov->len != deviceCounterBytes()) {
+                std::cerr << "NIXL: completion counter descriptor size mismatch: received "
+                          << completion_counter_iov->len << " bytes, expected "
+                          << deviceCounterBytes() << " bytes for "
+                          << xferBenchConfig::device_channel_num << " channels" << std::endl;
                 std::exit(EXIT_FAILURE);
             }
         }
@@ -2020,7 +2027,7 @@ execDeviceTransfer(nixlMemViewH local_mvh,
                    const bool collect_iteration_stats,
                    xferBenchStats &stats,
                    const std::atomic<int> *terminate_ptr = nullptr) {
-#ifdef HAVE_UCX_GPU_DEVICE_API
+#ifdef NIXLBENCH_DEVICE_API
     stats.clear();
     if (per_group_iter < 1) {
         std::cerr << "NIXL Device API requires at least one transfer iteration per group"
@@ -2074,8 +2081,6 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     params.channelNum = static_cast<unsigned>(xferBenchConfig::device_channel_num);
     params.postDurationNs = device_post_duration_ns;
     params.xferDurationNs = device_xfer_duration_ns;
-    params.completionCounterOffsetBytes = kDeviceCounterDoneOffsetBytes;
-    params.errorCounterOffsetBytes = kDeviceCounterErrorOffsetBytes;
     xferBenchTimer total_timer;
     nixl_status_t st = nixlbenchLaunchDevicePut(params, static_cast<unsigned>(block_threads));
     const nixlTime::us_t total_duration = total_timer.lap();
@@ -2139,30 +2144,33 @@ xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_
                                                     uint64_t expected_value,
                                                     const char *phase,
                                                     const std::function<void()> &checkLiveness) {
-#ifdef HAVE_UCX_GPU_DEVICE_API
-    struct xferBenchDeviceCounters {
-        uint64_t done;
-        uint64_t error;
-    };
-
+#ifdef NIXLBENCH_DEVICE_API
     if (expected_value == 0) {
         return true;
     }
+    const uint64_t channel_num = xferBenchConfig::device_channel_num;
+    const uint64_t expected_per_channel = expected_value / channel_num;
     CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId), "Failed to set completion counter device");
+    std::vector<nixlbenchDeviceCounters> counters(static_cast<size_t>(channel_num));
     while (!signaled()) {
-        xferBenchDeviceCounters counters{};
-        CHECK_CUDA_ERROR(cudaMemcpy(&counters,
+        CHECK_CUDA_ERROR(cudaMemcpy(counters.data(),
                                     reinterpret_cast<const void *>(counter_iov.addr),
-                                    sizeof(counters),
+                                    deviceCounterBytes(),
                                     cudaMemcpyDeviceToHost),
                          "Failed to read completion counters from VRAM");
-        if (counters.error > 0) {
-            std::cerr << "NIXL Device API: " << phase << " failed: remote error counter is "
-                      << counters.error << std::endl;
-            terminate.store(1);
-            return false;
+        bool all_done = true;
+        for (size_t channel = 0; channel < counters.size(); ++channel) {
+            const auto &counter = counters[channel];
+            if ((counter.error > 0) || (counter.done > expected_per_channel)) {
+                std::cerr << "NIXL Device API: " << phase << " failed on channel " << channel
+                          << ": done=" << counter.done << " expected=" << expected_per_channel
+                          << " error=" << counter.error << std::endl;
+                terminate.store(1);
+                return false;
+            }
+            all_done &= counter.done == expected_per_channel;
         }
-        if (counters.done >= expected_value) {
+        if (all_done) {
             return true;
         }
         checkLiveness();
@@ -2186,10 +2194,11 @@ xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_
 
 static void
 resetDeviceCounters(const xferBenchIOV &counter_iov) {
-#ifdef HAVE_UCX_GPU_DEVICE_API
+#ifdef NIXLBENCH_DEVICE_API
     CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId), "Failed to set completion counter device");
-    CHECK_CUDA_ERROR(cudaMemset(reinterpret_cast<void *>(counter_iov.addr), 0, kDeviceCounterBytes),
-                     "Failed to reset completion counters in VRAM");
+    CHECK_CUDA_ERROR(
+        cudaMemset(reinterpret_cast<void *>(counter_iov.addr), 0, deviceCounterBytes()),
+        "Failed to reset completion counters in VRAM");
     CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize completion counter reset");
 #else
     (void)counter_iov;

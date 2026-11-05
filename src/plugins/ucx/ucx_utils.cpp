@@ -21,6 +21,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <algorithm>
 #include <array>
+#include <dlfcn.h>
 #include <cstring>
 #include <exception>
 #include <optional>
@@ -31,10 +32,34 @@
 
 #include <nixl_types.h>
 
+#include "common/configuration.h"
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
 #include "serdes/serdes.h"
+
+namespace nixl::ucx {
+
+bool
+validateBinding() {
+    constexpr const char *expected_var = "NIXL_UCX_EXPECTED_SONAME";
+    Dl_info info{};
+    const std::string symbol_path =
+        (dladdr(reinterpret_cast<void *>(ucp_get_version_string), &info) && info.dli_fname) ?
+        info.dli_fname :
+        "<unknown>";
+    NIXL_INFO << "NIXL UCX backend bound to UCX " << ucp_get_version_string() << " at "
+              << symbol_path;
+    const auto expected = nixl::config::getValueOptional<std::string>(expected_var);
+    if (!expected || expected->empty() || symbol_path.find(*expected) != std::string::npos) {
+        return true;
+    }
+    NIXL_ERROR << expected_var << "=" << *expected << " but NIXL UCX backend bound to "
+               << symbol_path;
+    return false;
+}
+
+} // namespace nixl::ucx
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
@@ -573,7 +598,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modify("CUDA_IPC_ENABLE_GET_ZCOPY", "on");
     }
 
-    if (device_memory_type.empty()) {
+    if (device_memory_type.empty() || device_memory_type == "rocm") {
         // rocm_ipc reports a 128-byte minimum zero-copy size by default, and
         // UCP's put/get zero-copy protocols only accept lanes whose minimum is
         // 0. Without this, GPU-to-GPU RMA on AMD never uses rocm_ipc (XGMI)
