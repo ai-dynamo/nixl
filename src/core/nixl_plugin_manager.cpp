@@ -351,7 +351,7 @@ nixlPluginManager::loadPluginFromPath(const std::string &plugin_path,
 
     void *handle = dlopen(plugin_path.c_str(), flags);
     if (!handle) {
-        NIXL_INFO << "Failed to load plugin from " << plugin_path << ": " << dlerror();
+        NIXL_WARN << "Failed to load plugin from " << plugin_path << ": " << dlerror();
         return nullptr;
     }
 
