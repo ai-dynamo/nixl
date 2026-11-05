@@ -123,6 +123,8 @@ pub enum NixlError {
     NoTelemetry,
     #[error("Not found")]
     NotFound,
+    #[error("Agent lock is poisoned")]
+    AgentLockPoisoned,
 }
 
 /// A safe wrapper around NIXL memory list
@@ -156,7 +158,7 @@ impl RegistrationHandle {
     }
 
     pub fn deregister(&mut self) -> Result<(), NixlError> {
-        if let Some(agent) = self.agent.take() {
+        if let Some(agent) = self.agent.as_ref() {
             tracing::trace!(
                 ptr = self.ptr,
                 size = self.size,
@@ -165,15 +167,30 @@ impl RegistrationHandle {
                 "Deregistering memory"
             );
             let mut reg_dlist = RegDescList::new(self.mem_type)?;
-            unsafe {
-                reg_dlist.add_desc(self.ptr, self.size, self.dev_id);
-                let _opt_args = OptArgs::new().unwrap();
-                nixl_capi_deregister_mem(
-                    agent.write().unwrap().handle.as_ptr(),
-                    reg_dlist.handle(),
-                    _opt_args.inner.as_ptr(),
-                );
+            reg_dlist.add_desc(self.ptr, self.size, self.dev_id);
+            let descriptors = reg_dlist.handle();
+            if descriptors.is_null() {
+                return Err(NixlError::RegDescAddFailed);
             }
+            let opt_args = OptArgs::new()?;
+            let status = unsafe {
+                nixl_capi_deregister_mem(
+                    agent
+                        .write()
+                        .map_err(|_| NixlError::AgentLockPoisoned)?
+                        .handle
+                        .as_ptr(),
+                    descriptors,
+                    opt_args.inner.as_ptr(),
+                )
+            };
+            match status {
+                NIXL_CAPI_SUCCESS => {}
+                NIXL_CAPI_ERROR_INVALID_PARAM => return Err(NixlError::InvalidParam),
+                NIXL_CAPI_ERROR_NOT_FOUND => return Err(NixlError::NotFound),
+                _ => return Err(NixlError::BackendError),
+            }
+            self.agent = None;
             tracing::trace!("Memory deregistered successfully");
         }
         Ok(())
@@ -191,6 +208,10 @@ impl Drop for RegistrationHandle {
         );
         if let Err(e) = self.deregister() {
             tracing::debug!(error = ?e, "Failed to deregister memory");
+            // Keep the agent alive while the backend can still reference the memory.
+            if let Some(agent) = self.agent.take() {
+                std::mem::forget(agent);
+            }
         }
     }
 }
@@ -608,6 +629,19 @@ impl SystemStorage {
     }
 }
 
+impl Drop for SystemStorage {
+    fn drop(&mut self) {
+        if let Some(mut handle) = self.handle.take() {
+            if let Err(error) = handle.deregister() {
+                tracing::error!(?error, "Retaining storage after memory deregistration failed");
+                // The backend can still reference both the allocation and the agent.
+                std::mem::forget(std::mem::take(&mut self.data));
+                std::mem::forget(handle);
+            }
+        }
+    }
+}
+
 impl MemoryRegion for SystemStorage {
     fn size(&self) -> usize {
         self.data.len()
@@ -639,3 +673,6 @@ impl NixlRegistration for SystemStorage {
 pub fn is_stub() -> bool {
     unsafe { nixl_capi_is_stub() }
 }
+
+#[cfg(test)]
+mod registration_tests;
