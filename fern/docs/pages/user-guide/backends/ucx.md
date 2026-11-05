@@ -13,6 +13,17 @@ UCX is the general-purpose high-performance network transport backend in NIXL. I
 | **Protocol** | RoCE, InfiniBand, TCP |
 | **Best For** | GPU-to-GPU and CPU-to-CPU transfers between nodes |
 
+<Warning>
+GPUDirect RDMA support depends on the platform as well as the NIC.
+DGX Spark (GB10) has a [ConnectX-7 NIC with RoCE support](https://docs.nvidia.com/dgx/dgx-spark/spark-clustering.html),
+but [does not support GPUDirect RDMA or GDRCopy](https://docs.nvidia.com/dgx/dgx-spark-porting-guide/porting/cuda.html#gpudirect-rdma).
+
+For RDMA communication buffers on Spark, NVIDIA recommends `cudaHostAlloc`
+and registration with the RDMA verbs library. Use `DRAM_SEG` when registering
+host buffers with NIXL. A successful host buffer transfer verifies the host
+memory path only.
+</Warning>
+
 ## Installation
 
 UCX is the default transfer backend and is included automatically with the `pip install nixl` package. For source builds, UCX must be built before NIXL.
