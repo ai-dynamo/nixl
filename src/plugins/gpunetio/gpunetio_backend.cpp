@@ -1700,11 +1700,12 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         byte_striping && lcnt == 1 && write_bytes >= 2 * min_chunk + sizeof(uint64_t) ?
         sizeof(uint64_t) :
         0;
-    const size_t bulk_bytes = write_bytes - final_bytes - ordering_tail;
+    const size_t stripeable_bytes = write_bytes - final_bytes - ordering_tail;
     const uint32_t qps_used = byte_striping ?
         static_cast<uint32_t>(
-            std::min<size_t>(std::max<size_t>(bulk_bytes / min_chunk, 1), dataQpCount_)) :
+            std::min<size_t>(std::max<size_t>(stripeable_bytes / min_chunk, 1), dataQpCount_)) :
         1;
+    const size_t bulk_bytes = qps_used > 1 ? stripeable_bytes : write_bytes;
     uint32_t owner = 0;
     size_t owner_remaining = bulk_bytes / qps_used + (bulk_bytes % qps_used != 0);
     auto owner_budget = [&](uint32_t qp) {
@@ -1783,7 +1784,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     size_t split_offset = 0;
     do {
         const bool final_chunk = byte_striping &&
-            ((lcnt > 1 && desc_offset == lcnt - 1) ||
+            ((lcnt > 1 && qps_used > 1 && desc_offset == lcnt - 1) ||
              (lcnt == 1 && local[0].len - split_offset <= ordering_tail));
         if (byte_striping) {
             treq->qpOwners.push_back(final_chunk ? 0 : owner);
@@ -1798,7 +1799,8 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             const uint32_t desc_idx = desc_offset;
 
             if (byte_striping && !final_chunk && staged_req.num > 0 &&
-                (chunk_bytes >= owner_remaining || (lcnt > 1 && desc_idx == lcnt - 1) ||
+                (chunk_bytes >= owner_remaining ||
+                 (lcnt > 1 && qps_used > 1 && desc_idx == lcnt - 1) ||
                  (ordering_tail && local[desc_idx].len - split_offset == ordering_tail))) {
                 break;
             }
