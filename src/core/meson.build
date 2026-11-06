@@ -33,6 +33,10 @@ if 'POSIX' in static_plugins
     nixl_lib_deps += [ posix_backend_interface ]
 endif
 
+if 'IBM_SCALE' in static_plugins
+    nixl_lib_deps += [ ibm_scale_backend_interface ]
+endif
+
 if is_variable('infinia_backend_interface') and 'INFINIA' in static_plugins
     nixl_lib_deps += [ infinia_backend_interface ]
 endif
@@ -79,6 +83,7 @@ nixl_lib_sources = [
     'telemetry/buffer_exporter.cpp',
     'telemetry/buffer_plugin.cpp',
     'telemetry/nop_plugin.cpp',
+    'tracing/trace_context.cpp',
     'tracing/trace_sink.cpp',
     'tracing/tracer.cpp',
 ]

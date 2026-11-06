@@ -876,6 +876,14 @@ void nixlPluginManager::registerBuiltinPlugins() {
     NIXL_REGISTER_STATIC_PLUGIN(Backend, INFINIA)
 #endif
 
+#ifdef STATIC_PLUGIN_IBM_SCALE
+    // clang-format off
+    extern nixlBackendPlugin *
+    createStaticIBMScalePlugin();
+    // clang-format on
+    registerBackendStaticPlugin("IBM_SCALE", createStaticIBMScalePlugin);
+#endif
+
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, BUFFER)
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, NOP)
 }
