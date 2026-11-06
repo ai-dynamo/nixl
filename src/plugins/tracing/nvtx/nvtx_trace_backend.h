@@ -33,23 +33,23 @@ namespace nixl::trace::nvtx_internal {
 
 class NvtxTraceBackend final : public TraceBackend {
 public:
-    explicit NvtxTraceBackend(std::string_view domain);
+    explicit NvtxTraceBackend(std::string_view domain, bool record_without_profiler = false);
     ~NvtxTraceBackend() override;
 
     [[nodiscard]] std::unique_ptr<SpanBackend>
-    beginSpan(std::string_view name, Kind kind) override;
+    beginSpan(Name name, Kind kind) override;
 
     [[nodiscard]] std::unique_ptr<SpanBackend>
-    beginContextSpan(std::string_view name,
+    beginContextSpan(Name name,
                      Kind kind,
                      const TraceContext &context,
                      std::uint64_t request_id) override;
 
     void
-    mark(std::string_view name, Kind kind) override;
+    mark(Name name, Kind kind) override;
 
     void
-    emitSpan(std::string_view name,
+    emitSpan(Name name,
              Kind kind,
              const TraceContext &context,
              std::uint64_t request_id,
@@ -58,7 +58,7 @@ public:
              std::span<const Attribute> attrs) override;
 
     void
-    emitEvent(std::string_view name,
+    emitEvent(Name name,
               Kind kind,
               const TraceContext &context,
               std::uint64_t request_id,
@@ -76,11 +76,22 @@ public:
         return "nvtx";
     }
 
+    [[nodiscard]] bool
+    ownsTimestamps() const noexcept override {
+        return true;
+    }
+
+    [[nodiscard]] bool
+    recording() const noexcept override {
+        return (domain_ != nullptr) || recordWithoutProfiler_;
+    }
+
 private:
     const std::string domainName_;
     nvtxDomainHandle_t domain_;
     PayloadSchemaIds schemaIds_;
     std::vector<nvtxStringHandle_t> registeredHandles_;
+    const bool recordWithoutProfiler_;
 };
 
 } // namespace nixl::trace::nvtx_internal

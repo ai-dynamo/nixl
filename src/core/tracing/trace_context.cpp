@@ -15,7 +15,10 @@
  * limitations under the License.
  */
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstring>
+#include <limits>
 #include <stdexcept>
 
 #include <pthread.h>
@@ -26,7 +29,7 @@
 #include "common/nixl_log.h"
 #include "common/uuid_v4.h"
 #include "log_once.h"
-#include "random_buffer.h"
+#include "random_generator.h"
 #include "trace.h"
 #include "trace_context.h"
 
@@ -38,6 +41,8 @@ constexpr std::size_t wire_span_id_offset = 18;
 constexpr std::size_t trace_id_randomness_bytes = 7;
 constexpr double two_pow_56 = 0x1p56;
 constexpr double min_sample_ratio = 0x1p-56;
+constexpr double default_sample_ratio = 1.0;
+constexpr std::uint64_t max_request_id = std::numeric_limits<std::int64_t>::max();
 
 template<std::size_t Size>
 [[nodiscard]] bool
@@ -94,13 +99,13 @@ parseSampleRatio(const std::string &value) {
 
 [[nodiscard]] std::uint64_t
 traceIdRandomness(const nixl::trace::TraceContext &context) noexcept {
-    std::uint64_t result = 0;
-    for (auto index = context.traceId.size() - trace_id_randomness_bytes;
-         index < context.traceId.size();
-         ++index) {
-        result = (result << 8) | context.traceId[index];
+    std::uint64_t word;
+    std::memcpy(
+        &word, context.traceId.data() + context.traceId.size() - sizeof(word), sizeof(word));
+    if constexpr (std::endian::native == std::endian::little) {
+        word = __builtin_bswap64(word);
     }
-    return result;
+    return word & ((std::uint64_t{1} << (trace_id_randomness_bytes * 8)) - 1);
 }
 
 void
@@ -108,29 +113,42 @@ systemRandomBytes(std::span<std::uint8_t> output) {
     nixl::generateRandomBytes(output.data(), output.size());
 }
 
-constinit thread_local nixl::trace::RandomBuffer random_buffer{systemRandomBytes};
+constinit thread_local nixl::trace::RandomGenerator random_generator{systemRandomBytes};
 
 void
-clearRandomBuffer() noexcept {
-    random_buffer.clear();
+clearRandomGenerator() noexcept {
+    random_generator.clear();
 }
 
 void
-bufferedRandomBytes(std::span<std::uint8_t> output) {
+generatedRandomBytes(std::span<std::uint8_t> output) {
     // A forked child must not hand out the bytes its parent still holds.
-    static const bool fork_safe = (pthread_atfork(nullptr, nullptr, clearRandomBuffer) == 0);
+    static const bool fork_safe = (pthread_atfork(nullptr, nullptr, clearRandomGenerator) == 0);
     if (!fork_safe) {
         systemRandomBytes(output);
         return;
     }
-    random_buffer.fill(output);
+    random_generator.fill(output);
+}
+
+[[nodiscard]] nixl::trace::random_bytes_fn_t
+randomSource(nixl::trace::random_bytes_fn_t random_bytes) noexcept {
+    return (random_bytes != nullptr) ? random_bytes : generatedRandomBytes;
+}
+
+void
+setFlags(nixl::trace::TraceContext &context, double sample_ratio) noexcept {
+    context.flags = 0x02;
+    if (nixl::trace::sampledByRatio(context, sample_ratio)) {
+        context.flags |= 0x01;
+    }
 }
 
 void
 generateInto(nixl::trace::TraceContext &context,
              double sample_ratio,
              nixl::trace::random_bytes_fn_t random_bytes) {
-    const auto fill = (random_bytes != nullptr) ? random_bytes : bufferedRandomBytes;
+    const auto fill = randomSource(random_bytes);
     do {
         fill(context.traceId);
     } while (isAllZero(context.traceId));
@@ -139,20 +157,71 @@ generateInto(nixl::trace::TraceContext &context,
         fill(context.spanId);
     } while (isAllZero(context.spanId));
 
-    context.flags = 0x02;
-    if (nixl::trace::sampledByRatio(context, sample_ratio)) {
-        context.flags |= 0x01;
-    }
+    setFlags(context, sample_ratio);
 }
 
 void
-appendByte(std::string &result, std::uint8_t value) {
+drawRequestIdentity(nixl::trace::TraceIdentity &identity,
+                    double sample_ratio,
+                    nixl::trace::random_bytes_fn_t random_bytes) {
+    const auto fill = randomSource(random_bytes);
+    nixl::trace::TraceContext &context = identity.context;
+    std::array<std::uint8_t,
+               sizeof(context.traceId) + sizeof(context.spanId) + sizeof(identity.requestId)>
+        bytes;
+    fill(bytes);
+    std::memcpy(context.traceId.data(), bytes.data(), sizeof(context.traceId));
+    std::memcpy(
+        context.spanId.data(), bytes.data() + sizeof(context.traceId), sizeof(context.spanId));
+    std::memcpy(&identity.requestId,
+                bytes.data() + sizeof(context.traceId) + sizeof(context.spanId),
+                sizeof(identity.requestId));
+
+    while (isAllZero(context.traceId)) {
+        fill(context.traceId);
+    }
+    while (isAllZero(context.spanId)) {
+        fill(context.spanId);
+    }
+    identity.requestId &= max_request_id;
+    while (identity.requestId == 0) {
+        fill({reinterpret_cast<std::uint8_t *>(&identity.requestId), sizeof(identity.requestId)});
+        identity.requestId &= max_request_id;
+    }
+
+    setFlags(context, sample_ratio);
+}
+
+char *
+appendByte(char *out, std::uint8_t value) noexcept {
     constexpr std::array<char, 16> hex{
         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
-    result.push_back(hex[value >> 4]);
-    result.push_back(hex[value & 0x0f]);
+    *out++ = hex[value >> 4];
+    *out++ = hex[value & 0x0f];
+    return out;
 }
 } // namespace
+
+nixl::trace::TraceparentText::TraceparentText(const nixl::trace::TraceContext &context) noexcept
+    : size_(0) {
+    if (!context.valid()) {
+        return;
+    }
+    char *out = text_.data();
+    *out++ = '0';
+    *out++ = '0';
+    *out++ = '-';
+    for (const auto byte : context.traceId) {
+        out = appendByte(out, byte);
+    }
+    *out++ = '-';
+    for (const auto byte : context.spanId) {
+        out = appendByte(out, byte);
+    }
+    *out++ = '-';
+    out = appendByte(out, context.flags & supported_trace_flags);
+    size_ = static_cast<std::uint8_t>(out - text_.data());
+}
 
 nixl::trace::TraceContext::TraceContext(const nixl::trace::Tracer *tracer) {
     if (tracer == nullptr) {
@@ -203,23 +272,7 @@ nixl::trace::parseTraceparent(std::string_view value) {
 
 std::string
 nixl::trace::formatTraceparent(const nixl::trace::TraceContext &context) {
-    if (!context.valid()) {
-        return {};
-    }
-
-    std::string result;
-    result.reserve(55);
-    result.append("00-");
-    for (const auto byte : context.traceId) {
-        appendByte(result, byte);
-    }
-    result.push_back('-');
-    for (const auto byte : context.spanId) {
-        appendByte(result, byte);
-    }
-    result.push_back('-');
-    appendByte(result, context.flags & supported_trace_flags);
-    return result;
+    return std::string(nixl::trace::TraceparentText(context).view());
 }
 
 std::optional<std::size_t>
@@ -305,14 +358,14 @@ nixl::trace::resolveTraceSampleRatio() {
     const auto otel_spec = nixl::config::getValueOptional<std::string>(
         std::string(nixl::trace::otelTracesSampleRatioVar));
     if (!otel_spec || otel_spec->empty()) {
-        return 0.0;
+        return default_sample_ratio;
     }
 
     const auto ratio = parseSampleRatio(*otel_spec);
     if (!ratio) {
         NIXL_WARN << "nixl::trace: ignoring " << nixl::trace::otelTracesSampleRatioVar << "='"
                   << *otel_spec << "': not 0 or a number in [2^-56, 1]";
-        return 0.0;
+        return default_sample_ratio;
     }
     return *ratio;
 }
@@ -329,12 +382,12 @@ nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
     if (tracer == nullptr) {
         return 0;
     }
-    const auto fill =
-        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : bufferedRandomBytes;
+    const auto fill = randomSource(tracer->randomBytes());
     std::uint64_t id = 0;
     try {
         do {
             fill({reinterpret_cast<std::uint8_t *>(&id), sizeof(id)});
+            id &= max_request_id;
         } while (id == 0);
     }
     catch (const std::exception &e) {
@@ -344,14 +397,29 @@ nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
     return id;
 }
 
+nixl::trace::TraceIdentity
+nixl::trace::generateRequestIdentity(const nixl::trace::Tracer *tracer) {
+    if (tracer == nullptr) {
+        return {};
+    }
+    nixl::trace::TraceIdentity identity;
+    try {
+        drawRequestIdentity(identity, tracer->sampleRatio(), tracer->randomBytes());
+    }
+    catch (const std::exception &e) {
+        tracer->reportContextFailure(e.what());
+        return {};
+    }
+    return identity;
+}
+
 nixl::trace::TraceContext
 nixl::trace::generatePostContext(const nixl::trace::TraceContext &request,
                                  const nixl::trace::Tracer *tracer) {
     if (tracer == nullptr) {
         return request;
     }
-    const auto fill =
-        (tracer->randomBytes() != nullptr) ? tracer->randomBytes() : bufferedRandomBytes;
+    const auto fill = randomSource(tracer->randomBytes());
     nixl::trace::TraceContext context = request;
     try {
         do {

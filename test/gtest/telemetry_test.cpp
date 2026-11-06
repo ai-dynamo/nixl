@@ -859,12 +859,12 @@ namespace {
 class throwingTraceBackend final : public nixl::trace::TraceBackend {
 public:
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
-    beginSpan(std::string_view, nixl::trace::Kind) override {
+    beginSpan(nixl::trace::Name, nixl::trace::Kind) override {
         throw std::runtime_error("beginSpan failed");
     }
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
-    beginContextSpan(std::string_view,
+    beginContextSpan(nixl::trace::Name,
                      nixl::trace::Kind,
                      const nixl::trace::TraceContext &,
                      std::uint64_t) override {
@@ -872,10 +872,10 @@ public:
     }
 
     void
-    mark(std::string_view, nixl::trace::Kind) override {}
+    mark(nixl::trace::Name, nixl::trace::Kind) override {}
 
     void
-    emitSpan(std::string_view,
+    emitSpan(nixl::trace::Name,
              nixl::trace::Kind,
              const nixl::trace::TraceContext &,
              std::uint64_t,
@@ -886,7 +886,7 @@ public:
     }
 
     void
-    emitEvent(std::string_view,
+    emitEvent(nixl::trace::Name,
               nixl::trace::Kind,
               const nixl::trace::TraceContext &,
               std::uint64_t,
@@ -922,7 +922,7 @@ TEST_F(telemetryTest, TracePhaseDropsAreCounted) {
         nixl::trace::Tracer tracer(std::move(backends), 0.0);
         nixl::trace::TracerPhaseSink sink{tracer, "UCX", &telemetry};
         for (uint64_t i = 0; i < kDrops; ++i) {
-            sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, i, {}, nullptr, 0, 0);
+            sink.recordPhase(nixl_trace_phase_t::SUBMIT, i, {}, {}, {});
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -938,6 +938,40 @@ TEST_F(telemetryTest, TracePhaseDropsAreCounted) {
         }
     }
     EXPECT_EQ(dropped, kDrops);
+
+    envHelper_.popVar();
+}
+
+TEST_F(telemetryTest, TraceSpanDropsAreCounted) {
+    constexpr uint64_t kDrops = 3;
+    const gtest::LogIgnoreGuard lig("Dropping a trace phase or span");
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    testFile_ = "test_trace_span_drops";
+
+    {
+        nixlTelemetry telemetry(testFile_, "BUFFER");
+        std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+        backends.push_back(std::make_unique<throwingTraceBackend>());
+        nixl::trace::Tracer tracer(std::move(backends), 0.0);
+        nixl::trace::TracerPhaseSink sink{tracer, "UCX", &telemetry};
+        for (uint64_t i = 0; i < kDrops; ++i) {
+            sink.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, NIXL_WRITE, i, i + 1, {}, {}, {});
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    const auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+    uint64_t dropped = 0;
+    nixlTelemetryEvent event;
+    while (buffer->pop(event)) {
+        if (event.eventType_ == nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED) {
+            dropped += event.value_;
+        }
+    }
+    EXPECT_EQ(dropped, kDrops);
+    EXPECT_EQ(lig.getIgnoredCount(), 1u);
 
     envHelper_.popVar();
 }

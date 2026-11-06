@@ -119,6 +119,7 @@ gtest_sources = [
     'md_manager.cpp',
     'metadata_worker.cpp',
     'common.cpp',
+    'unit/allocation_counter.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
     'telemetry_mp_store_test.cpp',

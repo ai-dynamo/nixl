@@ -15,13 +15,16 @@
  * limitations under the License.
  */
 #include "common.h"
+#include "common/nixl_time.h"
 #include "common/scoped_fd.h"
 #include "nixl.h"
+#include "plugin_manager.h"
 #include "serdes/serdes.h"
 #include "tracing/trace_context.h"
 #include "transfer_request.h"
 #include "ucx_backend.h"
 #include "ucx_trace_peer.h"
+#include "unit/allocation_counter.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -37,11 +40,13 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -69,6 +74,9 @@ constexpr int wait_timeout_ms = static_cast<int>(std::chrono::milliseconds(wait_
 constexpr const char *target_name = "target";
 constexpr const char *unsampled_name = "unsampled";
 constexpr const char *untraced_name = "untraced";
+constexpr const char *unsplit_name = "unsplit";
+constexpr const char *default_engine_name = "default_engine";
+constexpr size_t split_desc_count = 2;
 constexpr std::array<const char *, 3> sender_phases{"nixl::submit",
                                                     "nixl::wire.submitted",
                                                     "nixl::notif.sent"};
@@ -103,11 +111,42 @@ encodedRecord(const nixl::trace::TraceContext &context) {
     return std::string(record.begin(), record.begin() + size);
 }
 
+class discardingSink final : public nixlBackendTraceSink {
+public:
+    void
+    recordPhase(nixl_trace_phase_t,
+                nixlTime::us_t,
+                const nixl::trace::TraceIdentity &,
+                std::span<const nixlBackendTraceAttr>,
+                std::string_view) noexcept override {}
+
+    void
+    recordSpan(nixl_trace_span_t,
+               nixl_xfer_op_t,
+               nixlTime::us_t,
+               nixlTime::us_t,
+               const nixl::trace::TraceIdentity &,
+               std::span<const nixlBackendTraceAttr>,
+               std::string_view) noexcept override {}
+};
+
 [[nodiscard]] bool
 awaitBytes(int fd, void *data, size_t size) {
     pollfd pfd{fd, POLLIN, 0};
     return (::poll(&pfd, 1, wait_timeout_ms) > 0) &&
         (::read(fd, data, size) == static_cast<ssize_t>(size));
+}
+
+[[nodiscard]] nixlAgentConfig
+idleConfig() {
+    nixlAgentConfig cfg;
+    cfg.useProgThread = false;
+    return cfg;
+}
+
+[[nodiscard]] nixl_b_params_t
+threadPoolParams() {
+    return {{"num_threads", "2"}, {"split_batch_size", std::to_string(split_desc_count)}};
 }
 
 [[nodiscard]] nixl_status_t
@@ -126,9 +165,10 @@ writeToSelf(const std::string &name,
             size_t desc_count,
             const std::vector<std::optional<std::string>> &post_notifs,
             std::vector<nixl::trace::TraceContext> &contexts,
-            std::uint64_t &request_id) {
+            std::uint64_t &request_id,
+            const nixlAgentConfig &config = agentConfig()) {
     const gtest::LogIgnoreGuard efa(efa_warning);
-    nixlAgent agent(name, agentConfig());
+    nixlAgent agent(name, config);
     nixlBackendH *backend = nullptr;
     ASSERT_EQ(agent.createBackend("UCX", backend_params, backend), NIXL_SUCCESS);
     const std::vector<char> src_buffer(desc_count * buffer_size, 'x');
@@ -146,12 +186,12 @@ writeToSelf(const std::string &name,
     }
     nixlXferReqH *req = nullptr;
     ASSERT_EQ(agent.createXferReq(NIXL_WRITE, src, dst, name, req), NIXL_SUCCESS);
-    request_id = req->traceRequestId();
+    request_id = req->trace().identity().requestId;
     for (const auto &notif : post_notifs) {
         nixl_opt_args_t params;
         params.notif = notif;
         ASSERT_EQ(awaitCompletion(agent, req, agent.postXferReq(req, &params)), NIXL_SUCCESS);
-        contexts.push_back(req->tracePostContext());
+        contexts.push_back(req->trace().identity().context);
     }
     const auto notifying_posts = static_cast<size_t>(std::ranges::count_if(
         post_notifs, [](const std::optional<std::string> &notif) { return notif.has_value(); }));
@@ -165,6 +205,113 @@ writeToSelf(const std::string &name,
     ASSERT_EQ(notifs[name].size(), notifying_posts);
     ASSERT_EQ(agent.releaseXferReq(req), NIXL_SUCCESS);
     ASSERT_EQ(agent.deregisterMem(regs), NIXL_SUCCESS);
+}
+
+[[nodiscard]] bool
+addNvtxPluginDirectory() {
+    const std::string nvtx_dir = std::string(BUILD_DIR) + "/src/plugins/tracing/nvtx";
+    if (!std::filesystem::exists(nvtx_dir)) {
+        return false;
+    }
+    const gtest::LogIgnoreGuard registered("Plugin directory already registered");
+    nixlPluginManager::getInstance().addPluginDirectory(nvtx_dir);
+    return true;
+}
+
+[[nodiscard]] std::size_t
+allocationsPerRequests(const std::string &name, size_t warmup, size_t measured, bool notify) {
+    const gtest::LogIgnoreGuard efa(efa_warning);
+    nixlAgent agent(name, idleConfig());
+    nixlBackendH *backend = nullptr;
+    EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
+    const std::vector<char> src_buffer(buffer_size, 'x');
+    const std::vector<char> dst_buffer(buffer_size);
+    nixl_reg_dlist_t regs(DRAM_SEG);
+    regs.addDesc(nixlBlobDesc(address(src_buffer), src_buffer.size(), 0));
+    regs.addDesc(nixlBlobDesc(address(dst_buffer), dst_buffer.size(), 0));
+    EXPECT_EQ(agent.registerMem(regs), NIXL_SUCCESS);
+    nixl_xfer_dlist_t src(DRAM_SEG);
+    nixl_xfer_dlist_t dst(DRAM_SEG);
+    src.addDesc(nixlBasicDesc(address(src_buffer), buffer_size, 0));
+    dst.addDesc(nixlBasicDesc(address(dst_buffer), buffer_size, 0));
+
+    nixl_opt_args_t params;
+    if (notify) {
+        params.notif = tagged_msg;
+    }
+    nixl_notifs_t notifs;
+    const auto run = [&](size_t requests) {
+        for (size_t i = 0; i < requests; ++i) {
+            nixlXferReqH *req = nullptr;
+            ASSERT_EQ(agent.createXferReq(NIXL_WRITE, src, dst, name, req), NIXL_SUCCESS);
+            ASSERT_EQ(awaitCompletion(agent, req, agent.postXferReq(req, &params)), NIXL_SUCCESS);
+            ASSERT_EQ(agent.releaseXferReq(req), NIXL_SUCCESS);
+            notifs.clear();
+            ASSERT_EQ(agent.getNotifs(notifs), NIXL_SUCCESS);
+            const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
+            while (notify && !notifs.contains(name) &&
+                   (std::chrono::steady_clock::now() < deadline)) {
+                std::this_thread::sleep_for(poll_interval);
+                ASSERT_EQ(agent.getNotifs(notifs), NIXL_SUCCESS);
+            }
+            ASSERT_EQ(notifs.contains(name), notify);
+        }
+    };
+    run(warmup);
+    const gtest::AllocationCounter allocations;
+    run(measured);
+    const std::size_t count = allocations.count();
+    EXPECT_EQ(agent.deregisterMem(regs), NIXL_SUCCESS);
+    return count;
+}
+
+template<typename afterPostType>
+void
+writeToIdleTarget(const nixl_b_params_t &sender_params,
+                  size_t desc_count,
+                  nixl::trace::TraceContext &context,
+                  std::uint64_t &request_id,
+                  afterPostType &&after_post) {
+    const gtest::LogIgnoreGuard efa(efa_warning);
+    nixlAgent target(target_name, idleConfig());
+    nixlBackendH *target_backend = nullptr;
+    ASSERT_EQ(target.createBackend("UCX", {}, target_backend), NIXL_SUCCESS);
+    const std::vector<char> dst_buffer(desc_count * buffer_size);
+    nixl_reg_dlist_t target_regs(DRAM_SEG);
+    target_regs.addDesc(nixlBlobDesc(address(dst_buffer), dst_buffer.size(), 0));
+    ASSERT_EQ(target.registerMem(target_regs), NIXL_SUCCESS);
+    std::string target_md;
+    ASSERT_EQ(target.getLocalMD(target_md), NIXL_SUCCESS);
+
+    nixlAgent sender(sender_name, agentConfig());
+    nixlBackendH *sender_backend = nullptr;
+    ASSERT_EQ(sender.createBackend("UCX", sender_params, sender_backend), NIXL_SUCCESS);
+    const std::vector<char> src_buffer(dst_buffer.size(), 'x');
+    nixl_reg_dlist_t sender_regs(DRAM_SEG);
+    sender_regs.addDesc(nixlBlobDesc(address(src_buffer), src_buffer.size(), 0));
+    ASSERT_EQ(sender.registerMem(sender_regs), NIXL_SUCCESS);
+    std::string loaded_name;
+    ASSERT_EQ(sender.loadRemoteMD(target_md, loaded_name), NIXL_SUCCESS);
+
+    nixl_xfer_dlist_t src(DRAM_SEG);
+    nixl_xfer_dlist_t dst(DRAM_SEG);
+    for (size_t i = 0; i < desc_count; ++i) {
+        src.addDesc(nixlBasicDesc(address(src_buffer) + i * buffer_size, buffer_size, 0));
+        dst.addDesc(nixlBasicDesc(address(dst_buffer) + i * buffer_size, buffer_size, 0));
+    }
+    nixlXferReqH *req = nullptr;
+    ASSERT_EQ(sender.createXferReq(NIXL_WRITE, src, dst, target_name, req), NIXL_SUCCESS);
+    ASSERT_EQ(sender.postXferReq(req), NIXL_IN_PROG);
+    nixl_xfer_trace_info_t info{};
+    ASSERT_EQ(sender.getXferTraceInfo(req, info), NIXL_SUCCESS);
+    request_id = info.requestId;
+    const auto post_context = nixl::trace::parseTraceparent(info.traceparent);
+    ASSERT_TRUE(post_context.has_value());
+    context = *post_context;
+    ASSERT_NO_FATAL_FAILURE(after_post(sender, target, req));
+    ASSERT_EQ(sender.invalidateRemoteMD(target_name), NIXL_SUCCESS);
+    ASSERT_EQ(sender.deregisterMem(sender_regs), NIXL_SUCCESS);
+    ASSERT_EQ(target.deregisterMem(target_regs), NIXL_SUCCESS);
 }
 
 [[nodiscard]] std::optional<std::string>
@@ -202,6 +349,17 @@ phaseEventTime(const span_record_t &span) {
         }
     }
     return testing::StartsWith(std::string(key));
+}
+
+[[nodiscard]] std::uint64_t
+eventTime(const span_record_t &span) {
+    constexpr std::string_view key = "at_us=";
+    for (const auto &field : span) {
+        if (field.starts_with(key)) {
+            return std::stoull(field.substr(key.size()));
+        }
+    }
+    return 0;
 }
 
 class ucxTraceContextPropagation : public testing::Test {
@@ -307,9 +465,10 @@ protected:
                 ASSERT_TRUE(context.sampled()) << phase;
                 const std::string traceparent = nixl::trace::formatTraceparent(context);
                 EXPECT_THAT(spans[i], testing::IsSupersetOf(expected)) << phase;
-                EXPECT_THAT(spans[i],
-                            testing::IsSupersetOf(
-                                {"context=" + traceparent, "nixl.traceparent=" + traceparent}))
+                EXPECT_THAT(spans[i], testing::Contains("context=" + traceparent)) << phase;
+                EXPECT_THAT(
+                    spans[i],
+                    testing::Not(testing::Contains(testing::StartsWith("nixl.traceparent="))))
                     << phase;
                 EXPECT_THAT(
                     spans[i],
@@ -318,6 +477,104 @@ protected:
                 EXPECT_THAT(spans[i], testing::Contains(phaseEventTime(spans[i]))) << phase;
             }
         }
+    }
+
+    void
+    expectWireCompletedPerPost(std::string_view agent,
+                               const std::vector<nixl::trace::TraceContext> &contexts,
+                               std::uint64_t request_id) const {
+        const auto submitted = recordedSpans(traceFile, agent, "nixl::submit");
+        const auto completed = recordedSpans(traceFile, agent, "nixl::wire.completed");
+        ASSERT_EQ(submitted.size(), contexts.size());
+        ASSERT_EQ(completed.size(), contexts.size());
+        for (size_t i = 0; i < completed.size(); ++i) {
+            const std::string traceparent = nixl::trace::formatTraceparent(contexts[i]);
+            EXPECT_THAT(completed[i],
+                        testing::IsSupersetOf({"correlation=" + std::to_string(request_id),
+                                               "context=" + traceparent,
+                                               "nixl.xfer_request_id=" + std::to_string(request_id),
+                                               "nixl.xfer_execution=" + std::to_string(i + 1),
+                                               std::string("nixl.backend=UCX")}));
+            EXPECT_THAT(completed[i], testing::Contains(phaseEventTime(completed[i])));
+            EXPECT_GE(eventTime(completed[i]), eventTime(submitted[i]));
+        }
+        const auto inflight = recordedSpans(traceFile, agent, "nixl::wire.inflight");
+        ASSERT_EQ(inflight.size(), contexts.size());
+        for (size_t i = 0; i < inflight.size(); ++i) {
+            const std::string traceparent = nixl::trace::formatTraceparent(contexts[i]);
+            EXPECT_THAT(
+                inflight[i],
+                testing::IsSupersetOf({"correlation=" + std::to_string(request_id),
+                                       "context=" + traceparent,
+                                       "start_us=" + std::to_string(eventTime(submitted[i])),
+                                       "end_us=" + std::to_string(eventTime(completed[i])),
+                                       "nixl.xfer_request_id=" + std::to_string(request_id),
+                                       "nixl.xfer_execution=" + std::to_string(i + 1),
+                                       std::string("nixl.backend=UCX")}));
+        }
+    }
+
+    void
+    expectWireCompletedPrecedesALatePoll(const nixl_b_params_t &sender_params,
+                                         size_t desc_count) const {
+        constexpr std::chrono::milliseconds late_poll{200};
+        nixl::trace::TraceContext context;
+        std::uint64_t request_id = 0;
+        nixlTime::us_t progressed_at = 0;
+        ASSERT_NO_FATAL_FAILURE(writeToIdleTarget(
+            sender_params,
+            desc_count,
+            context,
+            request_id,
+            [&](nixlAgent &sender, nixlAgent &target, nixlXferReqH *req) {
+                nixl_notifs_t notifs;
+                progressed_at = nixlTime::getUs();
+                const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
+                while (recordedSpans(traceFile, sender_name, "nixl::wire.completed").empty() &&
+                       (std::chrono::steady_clock::now() < deadline)) {
+                    ASSERT_EQ(target.getNotifs(notifs), NIXL_SUCCESS);
+                    std::this_thread::sleep_for(poll_interval);
+                }
+                ASSERT_EQ(recordedSpans(traceFile, sender_name, "nixl::wire.completed").size(), 1u);
+                std::this_thread::sleep_for(late_poll);
+                ASSERT_EQ(awaitCompletion(sender, req, sender.getXferStatus(req)), NIXL_SUCCESS);
+                ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
+            }));
+        const auto completed = recordedSpans(traceFile, sender_name, "nixl::wire.completed");
+        ASSERT_EQ(completed.size(), 1u);
+        const std::string traceparent = nixl::trace::formatTraceparent(context);
+        EXPECT_THAT(completed[0],
+                    testing::IsSupersetOf({"context=" + traceparent,
+                                           "nixl.xfer_request_id=" + std::to_string(request_id),
+                                           std::string("nixl.xfer_execution=1")}));
+        EXPECT_GE(eventTime(completed[0]), progressed_at);
+        EXPECT_EQ(recordedSpans(traceFile, sender_name, "nixl::wire.inflight").size(), 1u);
+#if defined(NIXL_TRACE_ENABLED)
+        const auto observed = recordedSpans(traceFile, sender_name, "nixl::xfer.complete");
+        ASSERT_EQ(observed.size(), 1u);
+        EXPECT_GE(eventTime(observed[0]),
+                  eventTime(completed[0]) + std::chrono::microseconds(late_poll).count());
+#endif
+    }
+
+    void
+    expectNoWireCompletedWhenReleasedInFlight(const nixl_b_params_t &sender_params,
+                                              size_t desc_count) const {
+        const gtest::LogIgnoreGuard released("released with [0-9]+ requests in progress");
+        const gtest::LogIgnoreGuard dropped("dropping [0-9]+ requests on exit");
+        nixl::trace::TraceContext context;
+        std::uint64_t request_id = 0;
+        ASSERT_NO_FATAL_FAILURE(
+            writeToIdleTarget(sender_params,
+                              desc_count,
+                              context,
+                              request_id,
+                              [](nixlAgent &sender, nixlAgent &, nixlXferReqH *req) {
+                                  ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
+                              }));
+        expectSenderPhases(sender_name, {context}, request_id, {1}, {});
+        EXPECT_TRUE(recordedSpans(traceFile, sender_name, "nixl::wire.completed").empty());
+        EXPECT_TRUE(recordedSpans(traceFile, sender_name, "nixl::wire.inflight").empty());
     }
 
     gtest::ScopedEnv env;
@@ -366,7 +623,7 @@ TEST(UcxTraceContextWire, OlderReceiverStillReadsTheMessage) {
     const auto context = nixl::trace::generateTraceContext(1.0);
     nixlSerDes older_receiver;
     ASSERT_EQ(older_receiver.importStr(nixl::ucx::serializeNotif(
-                  sender_name, "msg", &context, tagged_request_id, tagged_execution)),
+                  sender_name, "msg", {context, tagged_request_id, tagged_execution})),
               NIXL_SUCCESS);
 
     EXPECT_EQ(older_receiver.getStr("name"), sender_name);
@@ -378,32 +635,34 @@ TEST(UcxTraceContextWire, UnsampledRequestWritesNoContextBytes) {
     ASSERT_TRUE(unsampled.valid());
 
     EXPECT_EQ(nixl::ucx::serializeNotif(
-                  sender_name, "msg", &unsampled, tagged_request_id, tagged_execution),
+                  sender_name, "msg", {unsampled, tagged_request_id, tagged_execution}),
               olderSenderNotif(sender_name, "msg"));
     EXPECT_EQ(
-        nixl::ucx::serializeNotif(sender_name, "msg", nullptr, tagged_request_id, tagged_execution),
+        nixl::ucx::serializeNotif(sender_name, "msg", {{}, tagged_request_id, tagged_execution}),
         olderSenderNotif(sender_name, "msg"));
 }
 
 TEST(UcxTraceContextWire, SampledContextRoundTrips) {
     const auto context = nixl::trace::generateTraceContext(1.0);
+    discardingSink sink;
     const auto notif = nixl::ucx::deserializeNotif(
         nixl::ucx::serializeNotif(
-            sender_name, "msg", &context, tagged_request_id, tagged_execution),
-        true);
+            sender_name, "msg", {context, tagged_request_id, tagged_execution}),
+        &sink);
 
     EXPECT_EQ(notif.agent, sender_name);
     EXPECT_EQ(notif.msg, "msg");
-    EXPECT_EQ(notif.traceContext, context);
-    EXPECT_EQ(notif.traceRequestId, tagged_request_id);
-    EXPECT_EQ(notif.traceExecution, tagged_execution);
+    EXPECT_TRUE(notif.trace.active());
+    EXPECT_EQ(notif.trace.identity().context, context);
+    EXPECT_EQ(notif.trace.identity().requestId, tagged_request_id);
+    EXPECT_EQ(notif.trace.identity().execution, tagged_execution);
 }
 
 TEST(UcxTraceContextWire, RequestTagHoldsTheIdThenTheExecutionLittleEndian) {
     const auto context = nixl::trace::generateTraceContext(1.0);
 
     EXPECT_EQ(nixl::ucx::serializeNotif(
-                  sender_name, "msg", &context, tagged_request_id, tagged_execution),
+                  sender_name, "msg", {context, tagged_request_id, tagged_execution}),
               handBuiltNotif(
                   {{"tctx", encodedRecord(context)}, {"treq", std::string(tagged_request_bytes)}}));
 }
@@ -412,14 +671,14 @@ TEST(UcxTraceContextWire, ReceiverWithoutTracingIgnoresTheContext) {
     const auto context = nixl::trace::generateTraceContext(1.0);
     const auto notif = nixl::ucx::deserializeNotif(
         nixl::ucx::serializeNotif(
-            sender_name, "msg", &context, tagged_request_id, tagged_execution),
-        false);
+            sender_name, "msg", {context, tagged_request_id, tagged_execution}),
+        nullptr);
 
     EXPECT_EQ(notif.agent, sender_name);
     EXPECT_EQ(notif.msg, "msg");
-    EXPECT_FALSE(notif.traceContext.has_value());
-    EXPECT_EQ(notif.traceRequestId, 0u);
-    EXPECT_EQ(notif.traceExecution, 0u);
+    EXPECT_EQ(notif.trace.identity().context, nixl::trace::TraceContext{});
+    EXPECT_EQ(notif.trace.identity().requestId, 0u);
+    EXPECT_EQ(notif.trace.identity().execution, 0u);
 }
 
 TEST(UcxTraceContextWire, UndecodableContextKeepsTheMessage) {
@@ -435,46 +694,49 @@ TEST(UcxTraceContextWire, UndecodableContextKeepsTheMessage) {
         notifications.push_back(sender.exportStr());
     }
     const auto context = nixl::trace::generateTraceContext(1.0);
-    const std::string sampled = nixl::ucx::serializeNotif(sender_name, "msg", &context);
+    const std::string sampled = nixl::ucx::serializeNotif(sender_name, "msg", {context});
     notifications.push_back(sampled.substr(0, sampled.size() - 2));
+    discardingSink sink;
 
     for (const auto &notification : notifications) {
         const size_t problems = gtest::LogProblemCounter::getProblemCount();
 
-        const auto notif = nixl::ucx::deserializeNotif(notification, true);
+        const auto notif = nixl::ucx::deserializeNotif(notification, &sink);
 
         EXPECT_EQ(notif.agent, sender_name);
         EXPECT_EQ(notif.msg, "msg");
-        EXPECT_FALSE(notif.traceContext.has_value());
+        EXPECT_EQ(notif.trace.identity().context, nixl::trace::TraceContext{});
         EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
     }
 }
 
 TEST(UcxTraceContextWire, OlderSenderNotificationParsesWithoutLogging) {
     const size_t problems = gtest::LogProblemCounter::getProblemCount();
-    const auto notif = nixl::ucx::deserializeNotif(olderSenderNotif(sender_name, "msg"), true);
+    discardingSink sink;
+    const auto notif = nixl::ucx::deserializeNotif(olderSenderNotif(sender_name, "msg"), &sink);
 
     EXPECT_EQ(notif.agent, sender_name);
     EXPECT_EQ(notif.msg, "msg");
-    EXPECT_FALSE(notif.traceContext.has_value());
-    EXPECT_EQ(notif.traceRequestId, 0u);
-    EXPECT_EQ(notif.traceExecution, 0u);
+    EXPECT_EQ(notif.trace.identity().context, nixl::trace::TraceContext{});
+    EXPECT_EQ(notif.trace.identity().requestId, 0u);
+    EXPECT_EQ(notif.trace.identity().execution, 0u);
     EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
 }
 
 TEST(UcxTraceContextWire, SenderWithoutRequestTagGivesTheContextAlone) {
     const auto context = nixl::trace::generateTraceContext(1.0);
     const std::string context_only = handBuiltNotif({{"tctx", encodedRecord(context)}});
-    EXPECT_EQ(nixl::ucx::serializeNotif(sender_name, "msg", &context, 0, tagged_execution),
+    EXPECT_EQ(nixl::ucx::serializeNotif(sender_name, "msg", {context, 0, tagged_execution}),
               context_only);
     const size_t problems = gtest::LogProblemCounter::getProblemCount();
+    discardingSink sink;
 
-    const auto notif = nixl::ucx::deserializeNotif(context_only, true);
+    const auto notif = nixl::ucx::deserializeNotif(context_only, &sink);
 
     EXPECT_EQ(notif.msg, "msg");
-    EXPECT_EQ(notif.traceContext, context);
-    EXPECT_EQ(notif.traceRequestId, 0u);
-    EXPECT_EQ(notif.traceExecution, 0u);
+    EXPECT_EQ(notif.trace.identity().context, context);
+    EXPECT_EQ(notif.trace.identity().requestId, 0u);
+    EXPECT_EQ(notif.trace.identity().execution, 0u);
     EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
 }
 
@@ -491,18 +753,19 @@ TEST(UcxTraceContextWire, MalformedRequestTagKeepsTheContext) {
         notifications.push_back(handBuiltNotif({{"tctx", record}, {"treq", value}}));
     }
     const std::string sampled = nixl::ucx::serializeNotif(
-        sender_name, "msg", &context, tagged_request_id, tagged_execution);
+        sender_name, "msg", {context, tagged_request_id, tagged_execution});
     notifications.push_back(sampled.substr(0, sampled.size() - 2));
+    discardingSink sink;
 
     for (const auto &notification : notifications) {
         const size_t problems = gtest::LogProblemCounter::getProblemCount();
 
-        const auto notif = nixl::ucx::deserializeNotif(notification, true);
+        const auto notif = nixl::ucx::deserializeNotif(notification, &sink);
 
         EXPECT_EQ(notif.msg, "msg");
-        EXPECT_EQ(notif.traceContext, context);
-        EXPECT_EQ(notif.traceRequestId, 0u);
-        EXPECT_EQ(notif.traceExecution, 0u);
+        EXPECT_EQ(notif.trace.identity().context, context);
+        EXPECT_EQ(notif.trace.identity().requestId, 0u);
+        EXPECT_EQ(notif.trace.identity().execution, 0u);
         EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
     }
 }
@@ -511,17 +774,18 @@ TEST(UcxTraceContextWire, RequestTagWithoutADecodedContextIsIgnored) {
     const std::string later_version(nixl::trace::traceContextWireSize,
                                     static_cast<char>(nixl::trace::traceContextWireVersion + 1));
     const std::string request(tagged_request_bytes);
+    discardingSink sink;
     for (const auto &notification :
          {handBuiltNotif({{"treq", request}}),
           handBuiltNotif({{"tctx", later_version}, {"treq", request}})}) {
         const size_t problems = gtest::LogProblemCounter::getProblemCount();
 
-        const auto notif = nixl::ucx::deserializeNotif(notification, true);
+        const auto notif = nixl::ucx::deserializeNotif(notification, &sink);
 
         EXPECT_EQ(notif.msg, "msg");
-        EXPECT_FALSE(notif.traceContext.has_value());
-        EXPECT_EQ(notif.traceRequestId, 0u);
-        EXPECT_EQ(notif.traceExecution, 0u);
+        EXPECT_EQ(notif.trace.identity().context, nixl::trace::TraceContext{});
+        EXPECT_EQ(notif.trace.identity().requestId, 0u);
+        EXPECT_EQ(notif.trace.identity().execution, 0u);
         EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
     }
 }
@@ -567,12 +831,12 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     nixlXferReqH *req = nullptr;
     ASSERT_EQ(sender.createXferReq(NIXL_WRITE, src, dst, receiver_name, req, &extra_params),
               NIXL_SUCCESS);
-    const nixl::trace::TraceContext context = req->traceContext();
-    const std::uint64_t request_id = req->traceRequestId();
+    const nixl::trace::TraceContext context = req->trace().identity().context;
+    const std::uint64_t request_id = req->trace().identity().requestId;
     ASSERT_TRUE(context.sampled());
 
     ASSERT_EQ(awaitCompletion(sender, req, sender.postXferReq(req)), NIXL_SUCCESS);
-    EXPECT_EQ(req->tracePostContext(), context);
+    EXPECT_EQ(req->trace().identity().context, context);
     ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
     ASSERT_EQ(sender.genNotif(receiver_name, untagged_msg), NIXL_SUCCESS);
 
@@ -604,7 +868,6 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_THAT(received[0],
                 testing::IsSupersetOf({correlation,
                                        "context=" + traceparent,
-                                       "nixl.traceparent=" + traceparent,
                                        "nixl.xfer_request_id=" + std::to_string(request_id),
                                        std::string("nixl.xfer_execution=1"),
                                        std::string("nixl.remote_agent=") + sender_name}));
@@ -645,7 +908,6 @@ TEST_F(ucxTraceContextPropagation, ReceiverRecordsEachNotifyingPostsExecution) {
         EXPECT_THAT(received[i],
                     testing::IsSupersetOf({"correlation=" + std::to_string(request_id),
                                            "context=" + traceparent,
-                                           "nixl.traceparent=" + traceparent,
                                            "nixl.xfer_request_id=" + std::to_string(request_id),
                                            "nixl.xfer_execution=" + std::to_string(i + 1),
                                            std::string("nixl.remote_agent=") + sender_name}));
@@ -656,19 +918,88 @@ TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsItsPhasesOncePerPostNotPerCh
     std::vector<nixl::trace::TraceContext> contexts;
     std::uint64_t request_id = 0;
     ASSERT_NO_FATAL_FAILURE(writeToSelf(sender_name,
-                                        {{"num_threads", "2"}, {"split_batch_size", "2"}},
-                                        2,
+                                        threadPoolParams(),
+                                        split_desc_count,
                                         {tagged_msg, std::nullopt},
                                         contexts,
                                         request_id));
     expectSenderPhases(sender_name, contexts, request_id, {1, 2}, {1});
 }
 
+TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsWireCompletedOncePerSplitPost) {
+    std::vector<nixl::trace::TraceContext> contexts;
+    std::uint64_t request_id = 0;
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(sender_name,
+                                        threadPoolParams(),
+                                        split_desc_count,
+                                        {std::nullopt, std::nullopt},
+                                        contexts,
+                                        request_id));
+    expectWireCompletedPerPost(sender_name, contexts, request_id);
+}
+
+TEST_F(ucxTraceContextPropagation, ThreadPoolWireCompletedPrecedesALatePoll) {
+    expectWireCompletedPrecedesALatePoll(threadPoolParams(), split_desc_count);
+}
+
+TEST_F(ucxTraceContextPropagation, PostsWithoutADedicatedOrProgressThreadRecordNoWireCompleted) {
+    std::vector<nixl::trace::TraceContext> unsplit;
+    std::uint64_t unsplit_id = 0;
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(
+        unsplit_name, threadPoolParams(), 1, {std::nullopt}, unsplit, unsplit_id, idleConfig()));
+    std::vector<nixl::trace::TraceContext> default_engine;
+    std::uint64_t default_engine_id = 0;
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(default_engine_name,
+                                        {},
+                                        1,
+                                        {std::nullopt},
+                                        default_engine,
+                                        default_engine_id,
+                                        idleConfig()));
+    expectSenderPhases(unsplit_name, unsplit, unsplit_id, {1}, {});
+    expectSenderPhases(default_engine_name, default_engine, default_engine_id, {1}, {});
+    EXPECT_TRUE(recordedSpans(traceFile, unsplit_name, "nixl::wire.completed").empty());
+    EXPECT_TRUE(recordedSpans(traceFile, default_engine_name, "nixl::wire.completed").empty());
+    EXPECT_TRUE(recordedSpans(traceFile, unsplit_name, "nixl::wire.inflight").empty());
+    EXPECT_TRUE(recordedSpans(traceFile, default_engine_name, "nixl::wire.inflight").empty());
+}
+
+TEST_F(ucxTraceContextPropagation, ThreadPoolPostReleasedInFlightRecordsNoWireCompleted) {
+    expectNoWireCompletedWhenReleasedInFlight(threadPoolParams(), split_desc_count);
+}
+
+TEST_F(ucxTraceContextPropagation, ProgressThreadWireCompletedPrecedesALatePoll) {
+    expectWireCompletedPrecedesALatePoll({}, 1);
+}
+
+TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsWireCompletedOncePerPostUnderAProgressThread) {
+    std::vector<nixl::trace::TraceContext> unsplit;
+    std::uint64_t unsplit_id = 0;
+    ASSERT_NO_FATAL_FAILURE(
+        writeToSelf(unsplit_name, threadPoolParams(), 1, {std::nullopt}, unsplit, unsplit_id));
+    std::vector<nixl::trace::TraceContext> split;
+    std::uint64_t split_id = 0;
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(
+        sender_name, threadPoolParams(), split_desc_count, {std::nullopt}, split, split_id));
+    expectWireCompletedPerPost(unsplit_name, unsplit, unsplit_id);
+    expectWireCompletedPerPost(sender_name, split, split_id);
+}
+
+TEST_F(ucxTraceContextPropagation, ProgressThreadRecordsWireCompletedOncePerPost) {
+    std::vector<nixl::trace::TraceContext> contexts;
+    std::uint64_t request_id = 0;
+    ASSERT_NO_FATAL_FAILURE(
+        writeToSelf(sender_name, {}, 1, {std::nullopt, std::nullopt}, contexts, request_id));
+    expectWireCompletedPerPost(sender_name, contexts, request_id);
+}
+
+TEST_F(ucxTraceContextPropagation, ProgressThreadPostReleasedInFlightRecordsNoWireCompleted) {
+    expectNoWireCompletedWhenReleasedInFlight({}, 1);
+}
+
 TEST_F(ucxTraceContextPropagation, DeferredNotificationIsRecordedByTheStatusCheck) {
     const gtest::LogIgnoreGuard efa(efa_warning);
-    nixlAgentConfig idle_config;
-    idle_config.useProgThread = false;
-    nixlAgent target(target_name, idle_config);
+    nixlAgent target(target_name, idleConfig());
     nixlBackendH *target_backend = nullptr;
     ASSERT_EQ(target.createBackend("UCX", {}, target_backend), NIXL_SUCCESS);
     const std::vector<char> dst_buffer(buffer_size);
@@ -696,8 +1027,8 @@ TEST_F(ucxTraceContextPropagation, DeferredNotificationIsRecordedByTheStatusChec
     params.notif = tagged_msg;
     nixlXferReqH *req = nullptr;
     ASSERT_EQ(sender.createXferReq(NIXL_WRITE, src, dst, target_name, req, &params), NIXL_SUCCESS);
-    const nixl::trace::TraceContext context = req->traceContext();
-    const std::uint64_t request_id = req->traceRequestId();
+    const nixl::trace::TraceContext context = req->trace().identity().context;
+    const std::uint64_t request_id = req->trace().identity().requestId;
 
     nixl_status_t status = sender.postXferReq(req);
     ASSERT_EQ(status, NIXL_IN_PROG);
@@ -735,7 +1066,67 @@ TEST_F(ucxTraceContextPropagation, UnsampledAndUntracedPostsRecordNoPhases) {
         EXPECT_TRUE(recordedSpans(traceFile, unsampled_name, phase).empty()) << phase;
         EXPECT_TRUE(recordedSpans(traceFile, untraced_name, phase).empty()) << phase;
     }
-#if defined(NIXL_TRACE_ENABLED)
-    EXPECT_EQ(recordedSpans(traceFile, unsampled_name, "nixl::postXferReq.write").size(), 1u);
-#endif
+    EXPECT_TRUE(recordedSpans(traceFile, unsampled_name, "nixl::postXferReq.write").empty());
+}
+
+TEST_F(ucxTraceContextPropagation, SampledRequestAllocatesNoMoreThanAnUntracedOne) {
+    if (!addNvtxPluginDirectory()) {
+        GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+    }
+    constexpr size_t warmup = 50;
+    constexpr size_t measured = 200;
+
+    env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+    for (const bool notify : {false, true}) {
+        env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
+        const std::size_t traced = allocationsPerRequests(sender_name, warmup, measured, notify);
+        env.popVar();
+        env.addVar("NIXL_TRACE_BACKENDS", "");
+        const std::size_t untraced =
+            allocationsPerRequests(untraced_name, warmup, measured, notify);
+        env.popVar();
+
+        EXPECT_GT(untraced, 0u) << "notify " << notify;
+        EXPECT_EQ(traced, untraced) << "notify " << notify;
+    }
+    env.popVar();
+}
+
+TEST_F(ucxTraceContextPropagation, NvtxWithoutAProfilerLeavesTracingOff) {
+    if (std::getenv("NVTX_INJECTION64_PATH") != nullptr) {
+        GTEST_SKIP() << "a profiler is attached";
+    }
+    if (!addNvtxPluginDirectory()) {
+        GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+    }
+    const std::vector<char> src_buffer(buffer_size, 'x');
+    const std::vector<char> dst_buffer(buffer_size);
+    const auto traceInfoStatus = [&] {
+        const gtest::LogIgnoreGuard efa(efa_warning);
+        nixlAgent agent(sender_name, idleConfig());
+        nixlBackendH *backend = nullptr;
+        EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
+        nixl_reg_dlist_t regs(DRAM_SEG);
+        regs.addDesc(nixlBlobDesc(address(src_buffer), src_buffer.size(), 0));
+        regs.addDesc(nixlBlobDesc(address(dst_buffer), dst_buffer.size(), 0));
+        EXPECT_EQ(agent.registerMem(regs), NIXL_SUCCESS);
+        nixl_xfer_dlist_t src(DRAM_SEG);
+        nixl_xfer_dlist_t dst(DRAM_SEG);
+        src.addDesc(nixlBasicDesc(address(src_buffer), buffer_size, 0));
+        dst.addDesc(nixlBasicDesc(address(dst_buffer), buffer_size, 0));
+        nixlXferReqH *req = nullptr;
+        EXPECT_EQ(agent.createXferReq(NIXL_WRITE, src, dst, sender_name, req), NIXL_SUCCESS);
+        nixl_xfer_trace_info_t info;
+        const nixl_status_t status = agent.getXferTraceInfo(req, info);
+        EXPECT_EQ(agent.releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent.deregisterMem(regs), NIXL_SUCCESS);
+        return status;
+    };
+
+    env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
+    EXPECT_EQ(traceInfoStatus(), NIXL_ERR_NOT_FOUND);
+    env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+    EXPECT_EQ(traceInfoStatus(), NIXL_SUCCESS);
+    env.popVar();
+    env.popVar();
 }

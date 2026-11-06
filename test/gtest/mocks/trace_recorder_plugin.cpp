@@ -60,17 +60,17 @@ public:
     }
 
     void
-    addAttribute(std::string_view key, std::string_view value) override {
-        line_.append(" ").append(key).append("=").append(value);
+    addAttribute(nixl::trace::AttributeKey key, std::string_view value) override {
+        line_.append(" ").append(key.view()).append("=").append(value);
     }
 
     void
-    addAttribute(std::string_view key, std::int64_t value) override {
+    addAttribute(nixl::trace::AttributeKey key, std::int64_t value) override {
         addAttribute(key, std::to_string(value));
     }
 
     void
-    addAttribute(std::string_view, double) override {}
+    addAttribute(nixl::trace::AttributeKey, double) override {}
 
     void
     addCtrlDep(nixl::trace::SpanId) override {}
@@ -99,27 +99,29 @@ public:
     }
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
-    beginSpan(std::string_view name, nixl::trace::Kind) override {
+    beginSpan(nixl::trace::Name name, nixl::trace::Kind) override {
         const auto &stack = contextStack();
         const pushedScope top = stack.empty() ? pushedScope{} : stack.back();
-        return std::make_unique<recordingSpan>(fd_, lineFor(name, top.context, top.requestId));
+        return std::make_unique<recordingSpan>(fd_,
+                                               lineFor(name.view(), top.context, top.requestId));
     }
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
-    beginContextSpan(std::string_view name,
+    beginContextSpan(nixl::trace::Name name,
                      nixl::trace::Kind,
                      const nixl::trace::TraceContext &context,
                      std::uint64_t request_id) override {
-        return std::make_unique<recordingSpan>(fd_, lineFor(name, context, request_id, "span"));
+        return std::make_unique<recordingSpan>(fd_,
+                                               lineFor(name.view(), context, request_id, "span"));
     }
 
     void
-    mark(std::string_view name, nixl::trace::Kind kind) override {
+    mark(nixl::trace::Name name, nixl::trace::Kind kind) override {
         static_cast<void>(beginSpan(name, kind));
     }
 
     void
-    emitSpan(std::string_view name,
+    emitSpan(nixl::trace::Name name,
              nixl::trace::Kind,
              const nixl::trace::TraceContext &context,
              std::uint64_t request_id,
@@ -127,20 +129,20 @@ public:
              nixlTime::us_t end,
              std::span<const nixl::trace::Attribute> attrs) override {
         recordingSpan span(fd_,
-                           lineFor(name, context, request_id) + " start_us=" +
+                           lineFor(name.view(), context, request_id) + " start_us=" +
                                std::to_string(start) + " end_us=" + std::to_string(end));
         addAttributes(span, attrs);
     }
 
     void
-    emitEvent(std::string_view name,
+    emitEvent(nixl::trace::Name name,
               nixl::trace::Kind,
               const nixl::trace::TraceContext &context,
               std::uint64_t request_id,
               nixlTime::us_t at,
               std::span<const nixl::trace::Attribute> attrs) override {
-        recordingSpan event(fd_,
-                            lineFor(name, context, request_id) + " at_us=" + std::to_string(at));
+        recordingSpan event(
+            fd_, lineFor(name.view(), context, request_id) + " at_us=" + std::to_string(at));
         addAttributes(event, attrs);
     }
 

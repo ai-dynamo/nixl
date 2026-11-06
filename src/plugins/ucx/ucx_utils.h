@@ -113,7 +113,9 @@ public:
                  std::chrono::microseconds &err_margin,
                  nixl_cost_t &method);
     nixl_status_t
-    flushEp(nixlUcxReq &req) const noexcept;
+    flushEp(nixlUcxReq &req,
+            ucp_send_nbx_callback_t callback = nullptr,
+            void *user_data = nullptr) const noexcept;
 
 #ifdef HAVE_UCX_SGL_API
     /* Scatter-gather list (SGL) operations */
@@ -222,7 +224,8 @@ public:
     explicit nixlUcxWorker(
         const nixlUcxContext &,
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
-        size_t id = 0);
+        size_t id = 0,
+        bool records_deferred_traces = false);
 
     virtual ~nixlUcxWorker() = default;
 
@@ -291,6 +294,7 @@ private:
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     const ucp_err_handling_mode_t err_handling_mode_;
     const size_t id_;
+    const bool recordsDeferredTraces_;
 };
 
 std::ostream &

@@ -25,9 +25,9 @@
 #include <string>
 #include <string_view>
 
-namespace nixl::trace {
+#include "tracing/trace_identity.h"
 
-class Tracer;
+namespace nixl::trace {
 
 /**
  * @brief Wire encoding of a trace context, fixed at 26 bytes:
@@ -55,30 +55,6 @@ enum class WireDecodeResult : std::uint8_t {
     UnknownVersion,
     Malformed,
 };
-
-struct TraceContext {
-    TraceContext() = default;
-    explicit TraceContext(const Tracer *tracer);
-
-    std::array<std::uint8_t, 16> traceId{};
-    std::array<std::uint8_t, 8> spanId{};
-    std::uint8_t flags{};
-
-    [[nodiscard]] bool
-    valid() const noexcept;
-
-    [[nodiscard]] bool
-    sampled() const noexcept;
-
-    [[nodiscard]] bool
-    operator==(const TraceContext &) const noexcept = default;
-};
-
-[[nodiscard]] std::optional<TraceContext>
-parseTraceparent(std::string_view value);
-
-[[nodiscard]] std::string
-formatTraceparent(const TraceContext &context);
 
 /**
  * @brief Encode @p context into the first traceContextWireSize bytes of
@@ -155,13 +131,19 @@ generateTraceContext(double sample_ratio = 0.0);
 [[nodiscard]] std::uint64_t
 generateRequestId(const Tracer *tracer);
 
-/**
- * @brief Draw a context for one post of @p request: its trace id and flags with
- *        a span id from @p tracer's random source, again while it is zero;
- *        @p request itself when @p tracer is null or its source fails.
- */
-[[nodiscard]] TraceContext
-generatePostContext(const TraceContext &request, const Tracer *tracer);
+class TraceparentText {
+public:
+    explicit TraceparentText(const TraceContext &context) noexcept;
+
+    [[nodiscard]] std::string_view
+    view() const noexcept {
+        return {text_.data(), size_};
+    }
+
+private:
+    std::array<char, 55> text_;
+    std::uint8_t size_;
+};
 
 } // namespace nixl::trace
 

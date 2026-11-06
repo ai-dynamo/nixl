@@ -39,7 +39,7 @@ namespace {
 using record_t = std::vector<std::string>;
 
 constexpr const char *recorder_agent = "recorder_agent";
-constexpr std::uint64_t recorded_request_id = 0x8090a0b0c0d0e0f0ULL;
+constexpr std::uint64_t recorded_request_id = 0x7090a0b0c0d0e0f0ULL;
 
 class traceRecorder : public testing::Test {
 protected:
@@ -119,7 +119,7 @@ TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
         nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
         const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", "sender"}};
         sink.recordPhase(
-            nixl_trace_phase_t::NOTIF_RECEIVED, {}, 1234, attrs, &context, recorded_request_id, 1);
+            nixl_trace_phase_t::NOTIF_RECEIVED, 1234, {context, recorded_request_id, 1}, attrs, {});
     }
 
     const std::string traceparent = nixl::trace::formatTraceparent(context);
@@ -132,7 +132,6 @@ TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
                                       "at_us=1234",
                                       "nixl.backend=UCX",
                                       "nixl.phase.timestamp_us=1234",
-                                      "nixl.traceparent=" + traceparent,
                                       "nixl.xfer_request_id=" + request_id,
                                       "nixl.xfer_execution=1",
                                       "nixl.remote_agent=sender"}}));
@@ -144,8 +143,7 @@ TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
         const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
         ASSERT_NE(tracer, nullptr);
         {
-            const nixl::trace::CorrelationScope scope(
-                tracer.get(), nixl::trace::TraceContext{}, recorded_request_id);
+            const nixl::trace::CorrelationScope scope(tracer.get(), context, recorded_request_id);
             const auto span = tracer->beginSpan("nixl::test.scoped");
         }
         tracer->emitEvent("nixl::test.event", nixl::trace::Kind::Metadata, context, 0, 5, {});
@@ -154,7 +152,8 @@ TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
     EXPECT_EQ(records(),
               (std::vector<record_t>{{recorder_agent,
                                       "nixl::test.scoped",
-                                      "correlation=" + std::to_string(recorded_request_id)},
+                                      "correlation=" + std::to_string(recorded_request_id),
+                                      "context=" + nixl::trace::formatTraceparent(context)},
                                      {recorder_agent,
                                       "nixl::test.event",
                                       "context=" + nixl::trace::formatTraceparent(context),

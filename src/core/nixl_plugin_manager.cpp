@@ -19,6 +19,7 @@
 #include "nixl.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "tracing/trace_plugin.h"
 #include <dlfcn.h>
 #include <exception>
 #include <filesystem>

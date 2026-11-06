@@ -20,6 +20,9 @@ tracing_unit_test_deps = [gmock_dep, nixl_common_dep]
 if nixl_trace_nvtx_enabled
     tracing_unit_test_sources += files(
         '../../../../src/plugins/tracing/nvtx/nvtx_events.cpp',
+        '../../../../src/plugins/tracing/nvtx/nvtx_payload_schemas.cpp',
+        '../../../../src/plugins/tracing/nvtx/nvtx_span.cpp',
+        '../../../../src/plugins/tracing/nvtx/nvtx_trace_backend.cpp',
         'nvtx_test.cpp',
     )
     tracing_unit_test_inc_dirs += [include_directories('../../../../src/plugins/tracing/nvtx')]

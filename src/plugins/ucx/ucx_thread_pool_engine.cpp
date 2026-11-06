@@ -16,14 +16,18 @@
  */
 
 #include "ucx_thread_pool_engine.h"
+#include "ucx_deferred_trace.h"
 #include "ucx_backend_req.h"
 
 #include "common/backend.h"
 #include "common/blocking_queue.h"
 #include "common/nixl_log.h"
+#include "common/nixl_time.h"
+#include "tracing/backend_trace.h"
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <exception>
 #include <latch>
 #include <ostream>
@@ -155,8 +159,14 @@ struct nixlUcxBackendSharedState {
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
     std::vector<nixlUcxChunkBackendReqH> chunks;
+    nixlBackendPostTrace trace;
+    nixlTime::us_t inflightSince = 0;
+    nixl_xfer_op_t operation = NIXL_WRITE;
 
     nixlUcxBackendSharedState() : status(NIXL_SUCCESS), pendingReqs(0) {}
+
+    void
+    completeTracedChunk() noexcept;
 
     friend std::ostream &
     operator<<(std::ostream &os, const nixlUcxBackendSharedState &state) {
@@ -166,13 +176,38 @@ struct nixlUcxBackendSharedState {
 };
 
 void
+nixlUcxBackendSharedState::completeTracedChunk() noexcept {
+    const nixlBackendPostTrace post = trace;
+    const nixlTime::us_t post_since = inflightSince;
+    const nixl_xfer_op_t post_operation = operation;
+    // Read the status before pendingReqs reaches zero, after which a repost may rewrite it.
+    size_t pending = pendingReqs.load();
+    while ((pending > 1) && !pendingReqs.compare_exchange_weak(pending, pending - 1))
+        ;
+    if (pending != 1) {
+        return;
+    }
+    const nixlTime::us_t phase_at = post.now();
+    const nixlTime::us_t completed_at = (phase_at != 0) ? phase_at : nixlTime::getUs();
+    const bool succeeded = (status.load() == NIXL_SUCCESS);
+    pendingReqs.store(0);
+    if (succeeded) {
+        nixl::ucx::deferWireCompleted({post, post_operation, post_since, phase_at, completed_at});
+    }
+}
+
+void
 nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
     NIXL_ASSERT(sharedState_.get() != nullptr);
     if (status != NIXL_SUCCESS) {
         nixlUcxBackendReqH::release();
         sharedState_->status.store(status);
     }
-    sharedState_->pendingReqs.fetch_sub(1);
+    if (!sharedState_->trace.active()) [[likely]] {
+        sharedState_->pendingReqs.fetch_sub(1);
+    } else {
+        sharedState_->completeTracedChunk();
+    }
     NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
     setWorker(nullptr);
     sharedState_.reset();
@@ -211,6 +246,9 @@ public:
     startXfer() {
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
+        sharedState_->trace = trace;
+        sharedState_->inflightSince = inflightSince;
+        sharedState_->operation = operation;
         sharedState_->pendingReqs.store(getNumChunks());
     }
 
@@ -356,8 +394,9 @@ public:
     nixlUcxDedicatedWorker(const nixlUcxContext &context,
                            ucp_err_handling_mode_t err_handling_mode,
                            size_t id,
+                           bool records_deferred_traces,
                            nixlUcxEngine *engine)
-        : nixlUcxWorker(context, err_handling_mode, id),
+        : nixlUcxWorker(context, err_handling_mode, id, records_deferred_traces),
           thread_(std::in_place, engine, *this) {}
 
     void
