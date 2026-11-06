@@ -18,6 +18,7 @@ tomlplusplus_dep = dependency('tomlplusplus', required: true, default_options: [
 nixl_common_inc = include_directories('.')
 
 nixl_common_deps = [
+    thread_dep,
     absl_log_dep,
     absl_log_initialize_dep,
     absl_flat_hash_map_dep,
