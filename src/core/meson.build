@@ -86,9 +86,6 @@ nixl_asio_dep_sources = [
     'telemetry/telemetry.cpp',
 ]
 
-asio_dep = dependency('asio', version: '>=1.38.2', required: true, fallback: ['asio'])
-nixl_asio_deps = [nixl_lib_deps, asio_dep]
-
 # Compile metadata code with hidden visibility to hide ASIO symbols.
 nixl_asio_dep_lib = static_library('nixl_asio_dep',
                                    nixl_asio_dep_sources,
@@ -96,7 +93,7 @@ nixl_asio_dep_lib = static_library('nixl_asio_dep',
                                    gnu_symbol_visibility: 'hidden',
                                    include_directories: [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ],
                                    link_args: ['-lstdc++fs'],
-                                   dependencies: nixl_asio_deps
+                                   dependencies: nixl_lib_deps
 )
 
 nixl_lib = library('nixl',

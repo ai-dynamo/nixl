@@ -67,4 +67,4 @@ endif
 
 azure_blob_backend_interface = declare_dependency(
     link_with: azure_blob_backend_lib,
-    dependencies: dependency('asio', required: true))
+    dependencies: dependency('asio', version: '>=1.38.2', required: true, fallback: ['asio']))

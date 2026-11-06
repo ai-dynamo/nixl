@@ -26,6 +26,7 @@ nixl_common_deps = [
     absl_statusor_dep,
     absl_synchronization_dep,
     tomlplusplus_dep,
+    dependency('asio', version: '>=1.38.2', required: true, fallback: ['asio']),
 ]
 
 # Get git commit hash
