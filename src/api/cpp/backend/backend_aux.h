@@ -46,8 +46,6 @@ struct nixlBackendOptionalArgs {
     // id of its own. Valid for the call only, so copy it at each post to keep it.
     // Null when no request is involved (prepMemView).
     const nixl::trace::TraceIdentity *traceIdentity = nullptr;
-    std::uint64_t traceRequestId = 0;
-    std::uint64_t traceExecution = 0;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;

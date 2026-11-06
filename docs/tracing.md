@@ -355,10 +355,9 @@ when building a notification, copies the value onto its own request handle at ea
 post. A carrier never encodes it itself: `nixl::trace::addTraceTags()` appends a
 post's identity to a `nixlSerDes` message as the tags described below, and
 `getTraceTags()` reads a peer's back. `TraceIdentity` is internal like the sink, so
-only in-tree plugins can read it. Next to it, `traceRequestId` and `traceExecution`
-hold the request's id and the post's execution number as plain integers that any
-plugin can read, 0 meaning none: the id is the same at prep and at every post, the
-execution number is 0 at prep, and both are 0 when tracing is off.
+only in-tree plugins can read it. Its request id is the same at prep and at every
+post, its execution number is 0 at prep, and both are 0, meaning none, when tracing
+is off.
 
 A plugin that records phases keeps a `nixlBackendPostTrace`, built at each post
 from its sink and these arguments: it records only with a sink and a sampled post,
