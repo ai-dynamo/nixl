@@ -265,6 +265,11 @@ protected:
         return sglEnabled_;
     }
 
+    [[nodiscard]] nixlBackendTraceSink *
+    getTraceSink() const noexcept {
+        return traceSink_;
+    }
+
     virtual void
     appendNotif(std::string &&remote_name, std::string &&msg);
 
