@@ -94,11 +94,6 @@ public:
         return traceExecution_.load(std::memory_order_relaxed);
     }
 
-    [[nodiscard]] nixl::trace::TraceIdentity
-    traceIdentity() const noexcept {
-        return {tracePostContext_, traceRequestId_, traceExecution()};
-    }
-
     friend class nixlAgent;
 
 private:
