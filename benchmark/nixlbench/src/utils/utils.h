@@ -219,6 +219,8 @@ public:
     static std::string gpunetio_gid_index;
     static std::string gpunetio_oob_port;
     static int gpunetio_data_qp_count;
+    static bool gpunetio_write_byte_striping;
+    static uint64_t gpunetio_write_stripe_min_bytes;
     static long page_size;
     static std::string obj_access_key;
     static std::string obj_secret_key;

@@ -150,6 +150,7 @@ struct docaSlotDesc {
     uint64_t *peer_write_completed;
     uint64_t write_ticket;
     uint32_t posting_ctas_done;
+    uint8_t defer_completion;
     uint8_t has_two_sge;
     // Keep optional fields last so one-SGE requests need not publish them.
     uintptr_t lbuf2[DOCA_XFER_REQ_SIZE];
@@ -161,6 +162,7 @@ struct docaSlotDesc {
 struct docaStripedWriteLaunch {
     uint32_t count;
     uint32_t positions[DOCA_XFER_REQ_MAX];
+    uint32_t owners[DOCA_XFER_REQ_MAX];
 };
 
 enum docaSlotState : uint32_t {
