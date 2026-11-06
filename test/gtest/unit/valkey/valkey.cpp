@@ -15,8 +15,7 @@
  * limitations under the License.
  */
 
-// Server-free tests for the VALKEY backend. Transfers against a server are
-// covered by test/unit/plugins/valkey/nixl_valkey_test.
+// Server-free tests for the VALKEY backend.
 
 #include <gtest/gtest.h>
 

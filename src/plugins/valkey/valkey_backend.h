@@ -138,12 +138,16 @@ private:
 
     // regions is shared with registerMem/deregisterMem on the calling thread
     // and guarded by lock; conn is written by the worker thread only (others
-    // read it under lock). Neither is locked during a transfer. deadline is the
-    // running transfer's cancel time for the watchdog (steady_clock ns; 0 = idle).
+    // read it under lock). Neither is locked during a transfer. active is the
+    // region id the running transfer uses (0 = none, guarded by lock), so
+    // deregisterMem can wait on idle before freeing it. deadline is the running
+    // transfer's cancel time for the watchdog (steady_clock ns; 0 = idle).
     struct worker {
         std::mutex lock;
         client *conn = nullptr;
         std::unordered_map<uint64_t, glide::RdmaRegion *> regions; // region id -> registration
+        uint64_t active = 0;
+        std::condition_variable idle;
         std::atomic<int64_t> deadline{0};
     };
 

@@ -218,7 +218,9 @@ nixlValkeyEngine::dropRegistrations(uint64_t id) const {
     inParallel(workers(), [&](worker &w) {
         glide::RdmaRegion *r = nullptr;
         {
-            std::lock_guard<std::mutex> lk(w.lock);
+            std::unique_lock<std::mutex> lk(w.lock);
+            // GLIDE must not free a region while a transfer still uses it.
+            w.idle.wait(lk, [&] { return w.active != id; });
             if (auto it = w.regions.find(id); it != w.regions.end()) {
                 r = it->second;
                 w.regions.erase(it);
@@ -405,22 +407,25 @@ nixlValkeyEngine::runJob(worker &w, const job &j) const {
         }
     }
     memRegion reg;
-    {
-        std::lock_guard<std::mutex> lk(regMutex_);
-        auto live = liveRegions_.find(j.regionId);
-        if (live == liveRegions_.end()) {
-            NIXL_ERROR << "VALKEY: " << j.key << ": local memory was deregistered";
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        reg = live->second;
-    }
     glide::RdmaRegion *region = nullptr;
     {
+        // Checked under w.lock: deregisterMem either has already removed the
+        // region, or finds this transfer active and waits for it.
         std::lock_guard<std::mutex> lk(w.lock);
+        {
+            std::lock_guard<std::mutex> rlk(regMutex_);
+            auto live = liveRegions_.find(j.regionId);
+            if (live == liveRegions_.end()) {
+                NIXL_ERROR << "VALKEY: " << j.key << ": local memory was deregistered";
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            reg = live->second;
+        }
         nixl_status_t st = regionFor(w, j.regionId, reg, region);
         if (st != NIXL_SUCCESS) {
             return st;
         }
+        w.active = j.regionId;
     }
 
     const bool write = j.op == NIXL_WRITE;
@@ -430,10 +435,19 @@ nixlValkeyEngine::runJob(worker &w, const job &j) const {
     }
     nixl_status_t st = w.conn->transfer(
         write, j.key, region, j.addr - reg.addr, j.len, config_.writeChecksum, closed);
-    w.deadline = 0;
+    // A zero here means the watchdog claimed the deadline and closed the
+    // regions, possibly after the transfer returned, so the client must go.
+    if (config_.transferTimeoutMs > 0 && w.deadline.exchange(0) == 0) {
+        closed = true;
+    }
     if (closed) {
         dropConn(w);
     }
+    {
+        std::lock_guard<std::mutex> lk(w.lock);
+        w.active = 0;
+    }
+    w.idle.notify_all();
     // A value larger than the buffer is refused before anything is written.
     if (st == NIXL_ERR_BACKEND && !write && w.conn && w.conn->blobLen(j.key) > (long long)j.len) {
         st = NIXL_ERR_MISMATCH;
@@ -460,7 +474,7 @@ nixlValkeyEngine::watchdogLoop() {
                 continue;
             }
             std::lock_guard<std::mutex> lk(w->lock);
-            if (w->conn && w->deadline.exchange(0) != 0) {
+            if (w->conn && w->deadline.compare_exchange_strong(deadline, 0)) {
                 NIXL_ERROR << "VALKEY: transfer exceeded " << config_.transferTimeoutMs
                            << " ms, cancelling";
                 w->conn->closeRegions();
