@@ -163,6 +163,8 @@ kindOf(Record record) noexcept {
     return Kind::Generic;
 }
 
+static_assert(toStringView(static_cast<Record>(recordCount)) == "nixl::record");
+
 } // namespace nixl::trace
 
 #endif // NIXL_SRC_CORE_TRACING_RECORD_H

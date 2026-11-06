@@ -1356,8 +1356,6 @@ static_assert(nixl::trace::kindOf(nixl::trace::Record::PostXferReqWrite) ==
               nixl::trace::Kind::CommSend);
 static_assert(nixl::trace::kindOf(nixl::trace::Record::PostXferReqRead) ==
               nixl::trace::Kind::CommRecv);
-static_assert(nixl::trace::toStringView(
-                  static_cast<nixl::trace::Record>(nixl::trace::recordCount)) == "nixl::record");
 
 TEST(Tracing, EveryRecordHasItsOwnName) {
     std::set<std::string_view> names;

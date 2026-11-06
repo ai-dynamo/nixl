@@ -47,8 +47,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <type_traits>
-#include <variant>
 
 #include "common/nixl_time.h"
 #include "tracing/attribute.h"
