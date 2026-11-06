@@ -547,6 +547,16 @@ wait
   --backend UCX --num_threads 4 --enable_pt --progress_threads 2
 ```
 
+### Pipeline depth
+
+For NIXL workers, descriptor depth is the smaller of the configured pipeline depth
+and the larger per-worker iteration count across warmup and measurement, after
+iteration rounding and the large-block reduction. Each phase caps active requests
+to its iteration count while preserving each request's batch size.
+
+The POSIX integration tests cover short READ/WRITE phases, capped WRITE byte
+boundaries, large blocks with multiple workers, and phase warning behavior.
+
 ### Command Line Options
 
 #### Core Configuration
