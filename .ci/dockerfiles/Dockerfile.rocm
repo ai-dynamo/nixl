@@ -22,7 +22,7 @@
 # Dependency version refs (kept identical to build-rocm.sh; see mutability notes)
 # ----------------------------------------------------------------------------
 # Pinned to IMMUTABLE tags (safe to cache; only audit when deliberately bumping):
-#   abseil lts_2025_08_14, gRPC v1.73.0, AWS 1.11.760, Mooncake v0.3.10.post1,
+#   abseil lts_2025_08_14, gRPC v1.73.0, AWS 1.11.760, Mooncake v0.3.14,
 #   Azure azure-storage-blobs_12.15.0, libfabric v1.21.0
 # MUTABLE ref (WILL serve stale layer cache after upstream moves — audit before trust):
 #   UCX v1.23.x (moving branch), Node.js `nvm install --lts` (floating)
@@ -417,13 +417,13 @@ RUN set -eux; \
 # mooncake-build
 # dependencies.sh does 3 things: (1) apt SYSTEM_PACKAGES — already in builder-base, so
 # this re-install is fast/redundant but harmless; the copies that matter for runtime
-# live in builder-base (and thus final) for build==runtime parity; (2) yalantinglibs,
-# header-only, built here for this compile only; (3) Go — installed by the script but
+# live in builder-base (and thus final) for build==runtime parity; (2) git submodules
+# (pybind11), used for this compile only; (3) Go — installed by the script but
 # unused here (WITH_STORE=OFF) and not propagated to final.
 # Installs to /usr/local -> /out/usr/local.
 # ============================================================================
 FROM ${BUILDER_BASE_IMAGE} AS mooncake-build
-ARG MOONCAKE_VERSION=v0.3.10.post1
+ARG MOONCAKE_VERSION=v0.3.14
 RUN set -eux; \
     NPROC=$(nproc); \
     cd /tmp; \
@@ -433,7 +433,7 @@ RUN set -eux; \
     sed -i 's/^\([[:space:]]*\)install_go$/\1true/' dependencies.sh; \
     bash dependencies.sh -y; \
     mkdir build; cd build; \
-    cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja; \
+    cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -DWITH_STORE_RUST=OFF -DUSE_HIP=ON -DBUILD_UNIT_TESTS=OFF -G Ninja; \
     ninja -j"$NPROC"; \
     DESTDIR=/out ninja install
 

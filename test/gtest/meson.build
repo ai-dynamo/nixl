@@ -33,13 +33,16 @@ gtest_inc_dirs = include_directories('.')
 # Sanitizer runtime configuration. Built once and shared by every instrumented
 # test (tagged with the 'sanitizer' suite) so `meson test --suite sanitizer`
 # runs them with halt-on-error semantics and the third-party suppression lists.
-# When -Dsanitizer=none the environment stays empty, so tagging tests with the
-# suite is harmless for normal builds.
-sanitizer_opts = get_option('sanitizer').split(',')
+# Without -Dsanitizer or -Db_sanitize the environment stays empty, so tagging
+# tests with the suite is harmless for normal builds.
+sanitizer_opts = get_option('sanitizer').split(',') + get_option('b_sanitize').split(',')
 sanitizer_env = environment()
 sanitizer_supp_dir = meson.current_source_dir() / 'sanitizer'
 if sanitizer_opts.contains('address')
-    sanitizer_env.set('ASAN_OPTIONS', 'halt_on_error=1:abort_on_error=1:detect_leaks=1')
+    # The Mooncake Transfer Engine's libstdc++ calls bind to NIXL's
+    # instrumented copies, and with stack-use-after-return detection
+    # RandomSizes alone takes more than 5 minutes.
+    sanitizer_env.set('ASAN_OPTIONS', 'halt_on_error=1:abort_on_error=1:detect_leaks=1:detect_stack_use_after_return=0')
     sanitizer_env.set('LSAN_OPTIONS', 'suppressions=' + sanitizer_supp_dir / 'lsan.supp')
 endif
 if sanitizer_opts.contains('undefined')
@@ -92,13 +95,7 @@ if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     cpp_flags += '-DHAVE_LIBFABRIC'
 endif
 
-# Set only when src/plugins/mooncake was built, and not under TSAN: the
-# Transfer Engine's TCP transport (v0.3.10.post1) locks a session mutex on the
-# submitting thread and unlocks it on its own thread, so a post with more than 64
-# descriptors overflows TSAN's per-thread lock tracking.
-# TODO: drop this exclusion once CI uses Mooncake >= v0.3.12 (kvcache-ai/Mooncake#2850).
-if (is_variable('mooncake_backend_interface') and not sanitizer_opts.contains('thread')
-        and not get_option('b_sanitize').split(',').contains('thread'))
+if is_variable('mooncake_backend_interface')
     cpp_flags += '-DHAVE_MOONCAKE'
 endif
 

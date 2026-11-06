@@ -342,7 +342,7 @@ else
         $SUDO rm -rf gusli
     )
 # Mookcake
-    MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}"
+    MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.14}"
     ( \
         cd ${TMPDIR} && \
         echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
@@ -352,7 +352,7 @@ else
         sed -i 's/^\([[:space:]]*\)install_go$/\1true/' dependencies.sh && \
         $SUDO bash dependencies.sh -y && \
         mkdir build && cd build && \
-        cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
+        cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -DWITH_STORE_RUST=OFF -DUSE_HIP=ON -DBUILD_UNIT_TESTS=OFF -G Ninja && \
         ninja -j"$NPROC" && \
         $SUDO ninja install && \
         $SUDO ldconfig && \
