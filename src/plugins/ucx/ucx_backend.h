@@ -29,7 +29,6 @@
 #include <utility>
 
 #include "backend/backend_engine.h"
-#include "tracing/trace_context.h"
 
 #include "mem_list.h"
 #include "rkey.h"
@@ -39,20 +38,13 @@ namespace nixl::ucx {
 struct notifMessage {
     std::string agent;
     std::string msg;
-    std::optional<nixl::trace::TraceContext> traceContext;
-    std::uint64_t traceRequestId = 0;
-    std::uint64_t traceExecution = 0;
 };
 
 [[nodiscard]] std::string
-serializeNotif(const std::string &agent,
-               const std::string &msg,
-               const nixl::trace::TraceContext *trace_context,
-               std::uint64_t request_id = 0,
-               std::uint64_t execution = 0);
+serializeNotif(const std::string &agent, const std::string &msg);
 
 [[nodiscard]] notifMessage
-deserializeNotif(const std::string &buffer, bool with_trace_context);
+deserializeNotif(const std::string &buffer);
 } // namespace nixl::ucx
 
 class nixlUcxConnection : public nixlBackendConnMD {
@@ -304,10 +296,7 @@ private:
               const ucp_am_recv_param_t *param);
 
     [[nodiscard]] std::string
-    buildNotif(const std::string &msg,
-               const nixl::trace::TraceContext *trace_context,
-               std::uint64_t request_id = 0,
-               std::uint64_t execution = 0) const;
+    buildNotif(const std::string &msg) const;
 
     nixl_status_t
     notifSendPriv(const std::string &remote_agent,
@@ -343,7 +332,6 @@ private:
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
     const bool sglEnabled_;
-    nixlBackendTraceSink *const traceSink_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;

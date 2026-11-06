@@ -27,6 +27,7 @@
 
 #include "backend/backend_engine.h"
 #include "common/nixl_log.h"
+#include "tracing/traceable.h"
 
 #include "ucx_backend.h"
 #include "ucx_sgl.h"
@@ -38,9 +39,7 @@ public:
     // Empty if there is no pending notification.
     std::string notif;
 
-    std::optional<nixl::trace::TraceContext> traceContext;
-    std::uint64_t traceRequestId = 0;
-    std::uint64_t traceExecution = 0;
+    nixl::trace::Traceable *tracing = nixl::trace::Traceable::from(nullptr);
 
 #ifdef HAVE_UCX_SGL_API
     std::optional<nixl::ucx::sglXfer> sgl;
