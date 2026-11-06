@@ -34,13 +34,6 @@
 
 const char info_delimiter = '-';
 
-void
-nixlDocaGpuCounterDeleter::operator()(uint64_t *counter) const {
-    if (doca_gpu_mem_free(gpu, counter) != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to free striped WRITE completion counter";
-    }
-}
-
 namespace {
 template<typename unsignedType>
 inline bool
@@ -952,20 +945,6 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
                 rdma_qp->qp_write.push_back(std::move(qp));
             }
             rdma_qp->writeProgrammed.resize(dataQpCount_, false);
-            uint64_t *gpu_counter = nullptr;
-            const auto result =
-                doca_gpu_mem_alloc(gdevs[0].second,
-                                   sizeof(uint64_t),
-                                   64,
-                                   DOCA_GPU_MEM_TYPE_GPU_CPU,
-                                   reinterpret_cast<void **>(&gpu_counter),
-                                   reinterpret_cast<void **>(&rdma_qp->writeCompletedCpu));
-            if (result != DOCA_SUCCESS) {
-                throw std::runtime_error("Failed to allocate striped WRITE completion counter");
-            }
-            rdma_qp->writeCompletedGpu.get_deleter().gpu = gdevs[0].second;
-            rdma_qp->writeCompletedGpu.reset(gpu_counter);
-            *rdma_qp->writeCompletedCpu = 0;
         }
     }
     catch (const std::exception &e) {
@@ -2007,13 +1986,9 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
         entry.qp_data = peer->qp_write[ordinal % dataQpCount_]->get_qp_gpu_dev();
         entry.qp_progress = peer->progress_gpu + 1 + ordinal % dataQpCount_;
         entry.wait_completion_mask = 0;
-        entry.peer_write_completed = nullptr;
-        entry.write_ticket = 0;
     }
     auto &last = xferReqRingCpu[request->positions.back()];
     last.posting_ctas_done = 0;
-    last.peer_write_completed = peer->writeCompletedGpu.get();
-    last.write_ticket = ++peer->postedWriteTicket;
     // Build the mask locally: |= on the slot would read it back through the GPU mapping.
     uint32_t wait_completion_mask = 0;
     for (size_t ordinal = 0; ordinal + 1 < request->positions.size(); ++ordinal) {
@@ -2022,8 +1997,6 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
     last.wait_completion_mask = wait_completion_mask;
     std::atomic_thread_fence(std::memory_order_release);
 
-    // One stream orders all grids, including the previous same-peer final post.
-    // This can reduce overlap between requests compared with per-QP streams.
     const auto result = doca_kernel_write_striped(
         post_stream[0], xferReqRingGpu, gpu_state_gpu, host_state_gpu_, launch, dataQpCount_);
     if (result != DOCA_SUCCESS) {
