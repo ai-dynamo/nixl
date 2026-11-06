@@ -16,6 +16,7 @@
  */
 
 #include <iostream>
+#include <algorithm>
 #include <set>
 #include <string>
 #include "nixl.h"
@@ -76,7 +77,8 @@ int main(int argc, char** argv) {
                                      "GUSLI",
                                      "UCCL",
                                      "AZURE_BLOB",
-                                     "REDIS"};
+                                     "REDIS",
+                                     "WQS"};
 
     if (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
         print_usage(argv[0]);
@@ -107,8 +109,19 @@ int main(int argc, char** argv) {
         plugin_manager.unloadBackendPluginForUnitTest(plugin);
     }
 
+    const auto available_plugins = plugin_manager.getAvailBackendPluginNames();
+    bool load_failed = false;
     for (const auto& plugin : plugins) {
-        verify_plugin(plugin, plugin_manager);
+        if (std::find(available_plugins.begin(), available_plugins.end(), plugin) ==
+            available_plugins.end()) {
+            continue;
+        }
+        if (verify_plugin(plugin, plugin_manager) != 0) {
+            load_failed = true;
+        }
+    }
+    if (load_failed) {
+        return -1;
     }
 
     // List all loaded plugins

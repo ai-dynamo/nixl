@@ -434,6 +434,17 @@ RUN if [ "$BUILD_INFINIA" = "true" ]; then \
         cp -a /workspace/nixl/infinia-libs/. /opt/ddn/red/; \
     fi
 
+# Optional SDK staged in the build context, with include/ and lib/ subdirectories.
+ARG WQS_SDK_DIR=""
+RUN if [ -n "$WQS_SDK_DIR" ]; then \
+        test -f "$WQS_SDK_DIR/include/shared_client.h" && \
+        test -f "$WQS_SDK_DIR/lib/libwqs_store.so" && \
+        mkdir -p /opt/wqs && \
+        cp -a "$WQS_SDK_DIR/include" "$WQS_SDK_DIR/lib" /opt/wqs/ && \
+        printf '%s\n' /opt/wqs/lib > /etc/ld.so.conf.d/wqs.conf && \
+        ldconfig; \
+    fi
+
 # Set PKG_CONFIG_PATH for NIXL EP dependencies (rdma-core, UCX, DOCA)
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib/$ARCH-linux-gnu/pkgconfig
 ENV PKG_CONFIG_PATH=$RDMA_CORE_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$UCX_PREFIX/lib/pkgconfig:$DOCA_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
@@ -448,7 +459,11 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     else \
         NIXL_EP_FLAG=""; \
     fi && \
-    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
+    WQS_FLAGS="" && \
+    if [ -n "$WQS_SDK_DIR" ]; then \
+        WQS_FLAGS="-Dwqs_inc_path=/opt/wqs/include -Dwqs_lib_path=/opt/wqs/lib"; \
+    fi && \
+    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG $WQS_FLAGS build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install
