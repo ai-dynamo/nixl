@@ -17,7 +17,9 @@
 #ifndef NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H
 #define NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H
 
+#include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,10 +36,6 @@
 
 class nixlUcxBackendReqH : public nixlBackendReqH {
 public:
-    // Notification to be sent over the bound connection after completion of all requests.
-    // Empty if there is no pending notification.
-    std::string notif;
-
     std::optional<nixl::trace::TraceContext> traceContext;
     std::uint64_t traceRequestId = 0;
     std::uint64_t traceExecution = 0;
@@ -53,8 +51,12 @@ public:
     void
     init(const ucx_connection_ptr_t &conn, const nixlUcxEp &ep) {
         NIXL_ASSERT(requests_.empty());
+        NIXL_ASSERT(notifReq_ == nullptr);
         conn_ = conn;
         ep_ = &ep;
+        notif_.clear();
+        notifState_ = notif_state_t::NONE;
+        notifStatus_ = NIXL_SUCCESS;
     }
 
     [[nodiscard]] const nixlUcxEp &
@@ -82,17 +84,30 @@ public:
     [[nodiscard]] nixl_status_t
     flush() {
         nixlUcxReq req = nullptr;
-        const nixl_status_t status = ep_->flushEp(req);
-        return append(status, req);
+        const nixl_status_t status = ep_->flushEp(req, notifBuild_ ? flushCb : nullptr, this);
+        const nixl_status_t ret = append(status, req);
+        if (ret == NIXL_SUCCESS) {
+            buildNotif();
+        }
+
+        return ret;
     }
 
-    [[nodiscard]] nixl_status_t
-    sendNotif() {
-        nixlUcxReq req = nullptr;
-        const nixl_status_t status = getEp().sendAm(
-            nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(notif), UCP_AM_SEND_FLAG_EAGER, &req);
-        notif.clear();
-        return append(status, req);
+    void
+    setNotif(std::function<std::string(const nixlUcxBackendReqH &)> &&build) {
+        notifBuild_ = std::move(build);
+    }
+
+    void
+    buildNotif() {
+        if (notifBuild_) {
+            notif_ = notifBuild_(*this);
+            notifBuild_ = nullptr;
+            notifStatus_ = NIXL_IN_PROG;
+            if (notifState_.exchange(notif_state_t::BUILT) == notif_state_t::FLUSHED) {
+                sendNotif();
+            }
+        }
     }
 
     [[nodiscard]] virtual bool
@@ -104,14 +119,11 @@ public:
     release() {
         size_t incomplete_reqs = 0;
         for (nixlUcxReq req : requests_) {
-            const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
-            if (ret == NIXL_IN_PROG) {
-                // TODO: Need process this properly.
-                // it may not be enough to cancel UCX request
-                worker_->reqCancel(req);
-                ++incomplete_reqs;
-            }
-            worker_->reqRelease(req);
+            incomplete_reqs += releaseRequest(req);
+        }
+        const nixlUcxReq notif_req = notifReq_.exchange(nullptr);
+        if (notif_req != nullptr) {
+            incomplete_reqs += releaseRequest(notif_req);
         }
         if (incomplete_reqs != 0) {
             NIXL_WARN << "request handle " << this << " released with " << incomplete_reqs
@@ -124,7 +136,10 @@ public:
     status() {
         if (requests_.empty()) {
             /* No pending transmissions */
-            return NIXL_SUCCESS;
+            if (notifStatus_.load(std::memory_order_acquire) == NIXL_IN_PROG) {
+                worker_->progressLoop();
+            }
+            return notifStatus();
         }
 
         worker_->progressLoop();
@@ -159,7 +174,12 @@ public:
         }
 
         requests_.resize(incomplete_reqs);
-        return out_ret;
+        return (out_ret == NIXL_SUCCESS) ? notifStatus() : out_ret;
+    }
+
+    [[nodiscard]] bool
+    hasPendingRequests() const noexcept {
+        return !requests_.empty();
     }
 
     [[nodiscard]] nixlUcxWorker *
@@ -180,13 +200,81 @@ protected:
     }
 
 private:
-    // A post to a single endpoint issues at most three requests:
-    // one data request, one flush request, and one notification request.
-    static constexpr size_t max_requests = 3;
+    enum class notif_state_t : uint8_t { NONE, BUILT, FLUSHED };
+
+    // A post to a single endpoint issues at most two requests:
+    // one data request and one flush request.
+    static constexpr size_t max_requests = 2;
+
+    static void
+    flushCb(void *, ucs_status_t status, void *user_data) {
+        if (status == UCS_OK) {
+            static_cast<nixlUcxBackendReqH *>(user_data)->flushed();
+        }
+    }
+
+    void
+    flushed() {
+        if (notifState_.exchange(notif_state_t::FLUSHED) == notif_state_t::BUILT) {
+            sendNotif();
+        }
+    }
+
+    void
+    sendNotif() {
+        nixlUcxReq req = nullptr;
+        const nixl_status_t status = getEp().sendAm(
+            nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(notif_), UCP_AM_SEND_FLAG_EAGER, &req);
+        notif_.clear();
+        if (status == NIXL_IN_PROG) {
+            notifReq_ = req;
+        } else {
+            notifStatus_ = status;
+        }
+    }
+
+    [[nodiscard]] nixl_status_t
+    notifStatus() {
+        flushed();
+
+        const nixlUcxReq req = notifReq_.load(std::memory_order_acquire);
+        if (req != nullptr) {
+            const nixl_status_t status = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
+            if (status == NIXL_IN_PROG) {
+                return status;
+            }
+
+            worker_->reqRelease(req);
+            notifReq_ = nullptr;
+            notifStatus_ = status;
+        }
+
+        const nixl_status_t status = notifStatus_.load(std::memory_order_acquire);
+        if ((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG)) {
+            return status;
+        }
+
+        return checkConnection(status);
+    }
+
+    [[nodiscard]] bool
+    releaseRequest(nixlUcxReq req) {
+        const bool incomplete =
+            nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req)) == NIXL_IN_PROG;
+        if (incomplete) {
+            // TODO: Need process this properly.
+            // it may not be enough to cancel UCX request
+            worker_->reqCancel(req);
+        }
+        worker_->reqRelease(req);
+        return incomplete;
+    }
 
     void
     reset() noexcept {
         requests_.clear();
+        notifReq_ = nullptr;
+        notifBuild_ = nullptr;
         conn_.reset();
         ep_ = nullptr;
     }
@@ -205,6 +293,11 @@ private:
     const nixlUcxEp *ep_ = nullptr;
     absl::InlinedVector<nixlUcxReq, max_requests> requests_;
     nixlUcxWorker *worker_ = nullptr;
+    std::function<std::string(const nixlUcxBackendReqH &)> notifBuild_;
+    std::string notif_;
+    std::atomic<nixlUcxReq> notifReq_{nullptr};
+    std::atomic<nixl_status_t> notifStatus_{NIXL_SUCCESS};
+    std::atomic<notif_state_t> notifState_{notif_state_t::NONE};
 };
 
 #endif // NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H

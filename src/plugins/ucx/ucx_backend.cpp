@@ -623,53 +623,26 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
+    if (opt_args && opt_args->hasNotif) {
+        int_handle->setNotif([this, opt_args](const nixlUcxBackendReqH &req_handle) {
+            return buildNotif(opt_args->notifMsg,
+                              opt_args->traceContext,
+                              req_handle.traceRequestId,
+                              req_handle.traceExecution);
+        });
+    }
     ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
     if (ret != NIXL_SUCCESS) {
         return ret;
     }
 
     recordPhase(traceSink_, nixl_trace_phase_t::WIRE_SUBMITTED, *int_handle);
-
-    ret = int_handle->status();
-    if (opt_args && opt_args->hasNotif && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
-        int_handle->notif = buildNotif(opt_args->notifMsg,
-                                       opt_args->traceContext,
-                                       int_handle->traceRequestId,
-                                       int_handle->traceExecution);
-        if (ret == NIXL_SUCCESS) {
-            ret = int_handle->sendNotif();
-            if (ret != NIXL_SUCCESS) {
-                return ret;
-            }
-
-            recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle);
-            ret = int_handle->status();
-        }
-    }
-
-    return ret;
+    return int_handle->hasPendingRequests() ? NIXL_IN_PROG : int_handle->status();
 }
 
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
-    const nixl_status_t handle_status = int_handle->status();
-
-    if ((handle_status == NIXL_IN_PROG) || int_handle->notif.empty()) {
-        return handle_status;
-    }
-
-    if (handle_status != NIXL_SUCCESS) [[unlikely]] {
-        int_handle->notif.clear();
-        return handle_status;
-    }
-
-    const nixl_status_t status = int_handle->sendNotif();
-    if (status != NIXL_SUCCESS) {
-        return status;
-    }
-
-    recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle);
     return int_handle->status();
 }
 
