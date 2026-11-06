@@ -19,7 +19,8 @@ redis_unit_test_dep = declare_dependency(
     ],
     include_directories: [
         nixl_inc_dirs, utils_inc_dirs,
-        '../../../../src/plugins/redis',
+        '../../../../src/plugins/respkv',
+        '../../../../src/plugins/respkv/redis',
     ],
     dependencies: [
         redis_backend_interface,
@@ -29,8 +30,8 @@ redis_unit_test_dep = declare_dependency(
 # Keep scheduling interposition local to this executable and compile the real client.
 redis_event_loop_test = executable(
     'redis_event_loop_test',
-    sources: ['../main.cpp', 'redis_event_loop.cpp', '../../../../src/plugins/redis/redis_client.cpp'],
-    include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../../../src/plugins/redis'],
+    sources: ['../main.cpp', 'redis_event_loop.cpp', '../../../../src/plugins/respkv/redis/redis_client.cpp'],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../../../src/plugins/respkv/redis'],
     cpp_args: redis_compile_flags,
     dependencies: [redis_plugin_deps, gtest_dep],
     link_args: ['-Wl,--wrap=event_base_once', '-Wl,--wrap=event_base_dispatch', '-Wl,--wrap=event_base_loop'],

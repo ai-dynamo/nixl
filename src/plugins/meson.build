@@ -29,9 +29,7 @@ if enabled_plugins.get('OBJ')
     subdir('obj')
 endif
 
-if enabled_plugins.get('REDIS')
-    subdir('redis')
-endif
+subdir('respkv')
 
 if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')

@@ -76,7 +76,8 @@ int main(int argc, char** argv) {
                                      "GUSLI",
                                      "UCCL",
                                      "AZURE_BLOB",
-                                     "REDIS"};
+                                     "REDIS",
+                                     "VALKEY"};
 
     if (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
         print_usage(argv[0]);

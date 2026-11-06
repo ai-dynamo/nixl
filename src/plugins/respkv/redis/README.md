@@ -10,12 +10,14 @@ The `REDIS` plugin exposes Redis as a local NIXL storage backend. It supports
 - asynchronous `NIXL_WRITE`/`NIXL_READ` transfers and
 - synchronous `queryMem()` checks.
 
+Family layout, the shared `nixlRespKvEngine` base, and how `REDIS` relates to `VALKEY`: [`../README.md`](../README.md).
+
 ## Architecture
 
 The plugin follows the direct-backend layout similar to existing backends:
 
 ```text
-src/plugins/redis/
+src/plugins/respkv/redis/
   redis_backend.h/.cpp  nixlRedisKVEngine and NIXL transfer logic
   redis_client.h/.cpp   hiredis client and its unit-test interface
   redis_plugin.cpp      NIXL plugin registration
@@ -23,7 +25,7 @@ src/plugins/redis/
   README.md
 ```
 
-`nixlRedisKVEngine` derives directly from `nixlBackendEngine`. The internal `iRedisClient`
+`nixlRedisKVEngine` derives from `nixlRespKvEngine`. The internal `iRedisClient`
 interface isolates hiredis/libevent and permits Redis-free unit tests; it is not a generic KV
 extension API.
 
@@ -160,7 +162,7 @@ running Redis server; use the live smoke test below to exercise hiredis and a re
 The dynamic plugin is produced at:
 
 ```text
-build/src/plugins/redis/libplugin_REDIS.so
+build/src/plugins/respkv/redis/libplugin_REDIS.so
 ```
 
 For a static build:
