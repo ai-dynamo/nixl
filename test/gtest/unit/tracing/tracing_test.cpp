@@ -1356,6 +1356,8 @@ static_assert(nixl::trace::kindOf(nixl::trace::Record::PostXferReqWrite) ==
               nixl::trace::Kind::CommSend);
 static_assert(nixl::trace::kindOf(nixl::trace::Record::PostXferReqRead) ==
               nixl::trace::Kind::CommRecv);
+static_assert(nixl::trace::toStringView(
+                  static_cast<nixl::trace::Record>(nixl::trace::recordCount)) == "nixl::record");
 
 TEST(Tracing, EveryRecordHasItsOwnName) {
     std::set<std::string_view> names;
@@ -1706,7 +1708,7 @@ TEST(TracePhaseSink, BackendsThatOwnTimestampsGetNoClockReading) {
     }
 }
 
-TEST(Tracing, EventMacroReadsNoClockForBackendsThatOwnTimestamps) {
+TEST(Tracing, RecordReadsNoClockForBackendsThatOwnTimestamps) {
 #if !defined(NIXL_TRACE_ENABLED)
     GTEST_SKIP() << "the trace macros are compiled out";
 #endif
@@ -1715,12 +1717,9 @@ TEST(Tracing, EventMacroReadsNoClockForBackendsThatOwnTimestamps) {
     backends.push_back(std::make_unique<SelfTimedBackend>("a", &a, 0));
     backends.push_back(std::make_unique<SelfTimedBackend>("b", &b, 0));
     nixl::trace::Tracer tracer{std::move(backends)};
+    const nixl::trace::Traceable traced{&tracer, {testContext(0x3d), 0x3d}};
 
-    NIXL_TRACE_EVENT(&tracer,
-                     nixl::trace::Record::XferComplete,
-                     testContext(0x3d),
-                     0x3d,
-                     {"nixl.xfer_execution", std::int64_t{1}});
+    traced.record(nixl::trace::Record::XferComplete);
 
     for (const CallLog *log : {&a, &b}) {
         ASSERT_EQ(log->emittedEvents.size(), 1u);

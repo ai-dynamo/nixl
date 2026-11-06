@@ -440,22 +440,6 @@ finish(Span &span, Status status) {
         }                                                                           \
     } while (0)
 
-#define NIXL_TRACE_EVENT(tracer_ptr, trace_record, event_context, event_request_id, ...) \
-    do {                                                                                 \
-        auto *nixl_trace_tracer_ = (tracer_ptr);                                         \
-        const ::nixl::trace::TraceContext &nixl_trace_context_ = (event_context);        \
-        if (nixl_trace_tracer_ && nixl_trace_context_.sampled()) {                       \
-            const ::nixl::trace::Record nixl_trace_record_ = (trace_record);             \
-            ::nixl::trace::detail::emitEvent(                                            \
-                *nixl_trace_tracer_,                                                     \
-                nixl_trace_record_,                                                      \
-                ::nixl::trace::kindOf(nixl_trace_record_),                               \
-                nixl_trace_context_,                                                     \
-                (event_request_id),                                                      \
-                std::initializer_list<::nixl::trace::Attribute>{__VA_ARGS__});           \
-        }                                                                                \
-    } while (0)
-
 #define NIXL_TRACE_NOW(tracer_ptr) ((tracer_ptr) ? ::nixlTime::getUs() : ::nixlTime::us_t{0})
 
 #define NIXL_TRACE_EMIT_SPAN(tracer_ptr, trace_record, start_us)                       \
@@ -496,9 +480,6 @@ finish(Span &span, Status status) {
 #define NIXL_TRACE_FINISH(span, status) (status)
 #define NIXL_TRACE_MARK(tracer_ptr, trace_record) \
     do {                                          \
-    } while (0)
-#define NIXL_TRACE_EVENT(tracer_ptr, trace_record, event_context, event_request_id, ...) \
-    do {                                                                                 \
     } while (0)
 #define NIXL_TRACE_ATTR(span, attr_key, attr_value) \
     do {                                            \
