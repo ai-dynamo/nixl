@@ -804,6 +804,20 @@ xferBenchConfig::loadParams(void) {
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
     num_target_dev = NB_ARG(num_target_dev);
+    // In pairwise SG mode, only the device of the rank gets a VRAM buffer, and a
+    // storage backend runs one initiator process.
+    if (IS_PAIRWISE_AND_SG() && isStorageBackend() &&
+        initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM && num_initiator_dev > 1) {
+        if (device_list != "all") {
+            std::cerr << "Only one initiator device transfers in pairwise SG mode with a "
+                      << "storage backend. Use --num_initiator_dev=1 with a single-entry "
+                      << "--device_list." << std::endl;
+            return -1;
+        }
+        std::cout << "WARNING: Only one initiator device transfers in pairwise SG mode with a "
+                  << "storage backend. Setting num_initiator_dev to 1." << std::endl;
+        num_initiator_dev = 1;
+    }
     start_block_size = NB_ARG(start_block_size);
     max_block_size = NB_ARG(max_block_size);
     start_batch_size = NB_ARG(start_batch_size);
