@@ -1095,6 +1095,9 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     opt_args.traceContext = &handle->traceContext();
     opt_args.traceRequestId = handle->traceRequestId();
+    const nixl::trace::TraceIdentity trace_identity{
+        handle->tracePostContext(), handle->traceRequestId(), handle->traceExecution()};
+    opt_args.traceIdentity = &trace_identity;
     ret = handle->engine->prepXfer(handle->backendOp,
                                    handle->initiatorDescs,
                                    handle->targetDescs,
@@ -1247,6 +1250,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     opt_args.traceContext = &handle->traceContext();
     opt_args.traceRequestId = handle->traceRequestId();
+    const nixl::trace::TraceIdentity trace_identity{
+        handle->tracePostContext(), handle->traceRequestId(), handle->traceExecution()};
+    opt_args.traceIdentity = &trace_identity;
     ret1 = handle->engine->prepXfer(handle->backendOp,
                                     handle->initiatorDescs,
                                     handle->targetDescs,
@@ -1429,6 +1435,9 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
     opt_args.traceRequestId = req_hndl->traceRequestId();
     opt_args.traceExecution = req_hndl->traceExecution();
+    const nixl::trace::TraceIdentity trace_identity{
+        req_hndl->tracePostContext(), req_hndl->traceRequestId(), req_hndl->traceExecution()};
+    opt_args.traceIdentity = &trace_identity;
     NIXL_TRACE_ATTR(
         trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(opt_args.traceExecution));
 
