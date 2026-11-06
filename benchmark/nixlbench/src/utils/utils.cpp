@@ -810,6 +810,10 @@ xferBenchConfig::loadParams(void) {
     large_blk_iter_ftr = NB_ARG(large_blk_iter_ftr);
     warmup_iter = NB_ARG(warmup_iter);
     num_threads = NB_ARG(num_threads);
+    if (num_threads < 1) {
+        std::cerr << "num_threads must be >= 1" << std::endl;
+        return -1;
+    }
     pipeline_depth = NB_ARG(pipeline_depth);
     if (pipeline_depth < 1) {
         std::cerr << "pipeline_depth must be >= 1" << std::endl;
@@ -1222,6 +1226,18 @@ int
 xferBenchConfig::workerNum() {
     return xferBenchConfig::use_device_api ? xferBenchConfig::deviceGroupNum() :
                                              xferBenchConfig::num_threads;
+}
+
+xferBenchIterationPlan
+xferBenchConfig::iterationPlan(size_t block_size) {
+    const int workers = workerNum();
+    int warmup = warmup_iter / workers;
+    int iterations = num_iter / workers;
+    if (block_size > LARGE_BLOCK_SIZE) {
+        warmup /= large_blk_iter_ftr;
+        iterations /= large_blk_iter_ftr;
+    }
+    return {warmup, iterations, std::min(pipeline_depth, std::max(warmup, iterations))};
 }
 
 bool
