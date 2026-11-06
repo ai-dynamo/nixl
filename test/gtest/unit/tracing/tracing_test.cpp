@@ -1087,43 +1087,27 @@ TEST(Tracing, NestedCorrelationScopesPopInReverseOrder) {
     }
 }
 
-TEST(Tracing, RequestStoresFixedCorrelationContext) {
-    nixl::trace::TraceContext context;
-    context.traceId = {0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6};
-    context.spanId = {0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7};
-    context.flags = 0x03;
+TEST(Tracing, RequestDrawsItsIdentityFromItsTracer) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
 
-    const nixlXferReqH request("remote",
-                               NIXL_WRITE,
-                               DRAM_SEG,
-                               DRAM_SEG,
-                               0,
-                               nixl_remote_section_weak_t{},
-                               nullptr,
-                               {context, 0x0123456789abcdefULL});
+    const nixlXferReqH request(
+        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, tracer.get());
 
-    EXPECT_EQ(request.trace().identity().context, context);
-    EXPECT_EQ(request.trace().identity().requestId, 0x0123456789abcdefULL);
-    EXPECT_EQ(request.trace().identity().execution, 0u);
+    const auto identity = request.trace().identity();
+    EXPECT_TRUE(identity.context.valid());
+    EXPECT_TRUE(identity.context.sampled());
+    EXPECT_NE(identity.requestId, 0u);
+    EXPECT_EQ(identity.execution, 0u);
 }
 
 TEST(Tracing, RequestContextsAreDistinctAndStable) {
-    const nixlXferReqH first("remote",
-                             NIXL_WRITE,
-                             DRAM_SEG,
-                             DRAM_SEG,
-                             0,
-                             nixl_remote_section_weak_t{},
-                             nullptr,
-                             {nixl::trace::generateTraceContext(), 0});
-    const nixlXferReqH second("remote",
-                              NIXL_WRITE,
-                              DRAM_SEG,
-                              DRAM_SEG,
-                              0,
-                              nixl_remote_section_weak_t{},
-                              nullptr,
-                              {nixl::trace::generateTraceContext(), 0});
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    const nixlXferReqH first(
+        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, tracer.get());
+    const nixlXferReqH second(
+        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, tracer.get());
     const auto first_context = first.trace().identity().context;
 
     EXPECT_NE(first_context, second.trace().identity().context);
@@ -1132,7 +1116,7 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
 
 TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
     const nixlXferReqH request(
-        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, nullptr, {});
+        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, nullptr);
 
     EXPECT_FALSE(request.trace().identity().context.valid());
 }

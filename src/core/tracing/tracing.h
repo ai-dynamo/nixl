@@ -231,6 +231,8 @@ private:
  */
 class Traceable {
 public:
+    explicit Traceable(Tracer *tracer) : Traceable(tracer, generateRequestIdentity(tracer)) {}
+
     Traceable(Tracer *tracer, const TraceIdentity &identity) noexcept
         : tracer_(tracer),
           context_(identity.context),

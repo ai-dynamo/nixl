@@ -51,8 +51,7 @@ public:
                  const nixl_mem_t remote_type,
                  const size_t desc_count,
                  const nixl_remote_section_weak_t &remote_section_ref,
-                 nixl::trace::Tracer *tracer,
-                 const nixl::trace::TraceIdentity &trace_identity);
+                 nixl::trace::Tracer *tracer);
 
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;

@@ -599,6 +599,30 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
+    TEST_F(recorderTracingAgentFixture, CreationRefusedBeforeTheRequestIsNotRecorded) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const nixl_xfer_dlist_t shorter(DRAM_SEG);
+        nixlXferReqH *req = nullptr;
+        EXPECT_EQ(
+            agent->createXferReq(
+                NIXL_WRITE, setup_.xferDlist, shorter, local_agent_name, req, &setup_.extraParams),
+            NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(req, nullptr);
+        EXPECT_TRUE(records("nixl::createXferReq").empty());
+    }
+
+    TEST_F(recorderTracingAgentFixture, CreationFailedInPrepIsRecorded) {
+        EXPECT_CALL(agent_helper_->getGMockEngine(), prepXfer)
+            .WillOnce(testing::Return(NIXL_ERR_BACKEND));
+        nixlXferReqH *req = nullptr;
+        EXPECT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_ERR_BACKEND);
+        EXPECT_EQ(req, nullptr);
+        EXPECT_THAT(records("nixl::createXferReq"),
+                    testing::ElementsAre(testing::Contains(
+                        testing::AllOf(testing::StartsWith("nixl.xfer_request_id="),
+                                       testing::Ne("nixl.xfer_request_id=0")))));
+    }
+
     TEST_F(recorderTracingAgentFixture, RequestIdIsOnCreationPostAndCompletion) {
         nixlAgent *agent = agent_helper_->getAgent();
         nixlXferReqH *req = nullptr;

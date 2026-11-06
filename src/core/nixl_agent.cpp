@@ -241,13 +241,12 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_mem_t remote_type,
                            const size_t desc_count,
                            const nixl_remote_section_weak_t &remote_section_ref,
-                           nixl::trace::Tracer *tracer,
-                           const nixl::trace::TraceIdentity &trace_identity)
+                           nixl::trace::Tracer *tracer)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
       remoteSection(remote_section_ref),
-      trace_(tracer, trace_identity),
+      trace_(tracer),
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
@@ -899,15 +898,6 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                        std::span<const int> remote_indices,
                        nixlXferReqH *&req_hndl,
                        const nixl_opt_args_t *extra_params) const {
-    const nixl::trace::TraceIdentity request_identity =
-        nixl::trace::generateRequestIdentity(data->tracer_.get());
-    NIXL_TRACE_SAMPLED_SCOPE(trace_span,
-                             data->tracer_.get(),
-                             nixl::trace::Record::MakeXferReq,
-                             request_identity.context,
-                             {"desc_count", local_indices.size()},
-                             {"nixl.xfer_request_id", request_identity.requestId});
-
     nixl_opt_b_args_t  opt_args;
     nixl_status_t      ret;
     int                desc_count = (int) local_indices.size();
@@ -995,8 +985,13 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                                                  remote_descs.getType(),
                                                  desc_count,
                                                  remote_side.remoteSectionRef,
-                                                 data->tracer_.get(),
-                                                 request_identity);
+                                                 data->tracer_.get());
+    NIXL_TRACE_SAMPLED_SCOPE(trace_span,
+                             data->tracer_.get(),
+                             nixl::trace::Record::MakeXferReq,
+                             handle->trace().identity().context,
+                             {"desc_count", local_indices.size()},
+                             {"nixl.xfer_request_id", handle->trace().identity().requestId});
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -1052,16 +1047,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlXferReqH* &req_hndl,
                          const nixl_opt_args_t* extra_params) const {
-    const nixl::trace::TraceIdentity request_identity =
-        nixl::trace::generateRequestIdentity(data->tracer_.get());
-    NIXL_TRACE_SAMPLED_SCOPE(trace_span,
-                             data->tracer_.get(),
-                             nixl::trace::Record::CreateXferReq,
-                             request_identity.context,
-                             {"remote_agent", remote_agent},
-                             {"desc_count", local_descs.descCount()},
-                             {"nixl.xfer_request_id", request_identity.requestId});
-
     nixl_status_t ret1, ret2;
     nixl_opt_b_args_t opt_args;
     backend_set_t backend_set;
@@ -1127,8 +1112,14 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  remote_descs.getType(),
                                                  local_descs.descCount(),
                                                  rem_sec_it->second,
-                                                 data->tracer_.get(),
-                                                 request_identity);
+                                                 data->tracer_.get());
+    NIXL_TRACE_SAMPLED_SCOPE(trace_span,
+                             data->tracer_.get(),
+                             nixl::trace::Record::CreateXferReq,
+                             handle->trace().identity().context,
+                             {"remote_agent", remote_agent},
+                             {"desc_count", local_descs.descCount()},
+                             {"nixl.xfer_request_id", handle->trace().identity().requestId});
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.

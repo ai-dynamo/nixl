@@ -217,6 +217,11 @@ list's order and finds a record's handle by its position.
 empty queue records nothing; it is emitted when the call returns, with its start and end
 times.
 
+`nixl::makeXferReq` and `nixl::createXferReq` start once the call has built its
+request, so a call refused before that, such as one with descriptor lists of different
+lengths, records nothing; a call that fails later, in the backend's `prepXfer`, records
+its span.
+
 Spans cover the synchronous call only; the `nixl::xfer.complete` event is emitted
 once per completed post, by the first call that sees the transfer complete:
 `postXferReq` when the backend completes it at once, and otherwise `getXferStatus`,
