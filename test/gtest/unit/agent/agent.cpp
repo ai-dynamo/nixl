@@ -1486,6 +1486,34 @@ namespace agent {
                              << timed1_ns << " ns2=" << timed2_ns << " ratio=" << ratio << ")";
     }
 
+    TEST_F(singleAgentSessionFixture, PrepStrideDlistRejectsOverflowingSpan) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        const nixlBlobDesc desc = setup.localBlob.getDesc();
+
+        nixl_stride_dlist_t valid(DRAM_SEG);
+        valid.addDesc(nixlStrideDesc(desc.addr, 1, desc.devId, 2, desc.len / 2));
+        nixlDlistH *dlist_hndl = nullptr;
+        ASSERT_EQ(agent_->prepXferDlist(valid, dlist_hndl, &setup.extraParams), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(dlist_hndl), NIXL_SUCCESS);
+
+        // (3 - 1) * 2^63 + 1 wraps to 1 in size_t.
+        nixl_stride_dlist_t overflow(DRAM_SEG);
+        overflow.addDesc(nixlStrideDesc(desc.addr, 1, desc.devId, size_t{1} << 63, 3));
+        dlist_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(overflow, dlist_hndl, &setup.extraParams),
+                  NIXL_ERR_NOT_FOUND);
+        EXPECT_EQ(dlist_hndl, nullptr);
+
+        // addr + (2 - 1) * stride + 1 wraps to 0x1001 in uintptr_t.
+        nixl_stride_dlist_t end_wrap(DRAM_SEG);
+        end_wrap.addDesc(nixlStrideDesc(desc.addr, 1, desc.devId, 0 - desc.addr + 0x1000, 2));
+        dlist_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(end_wrap, dlist_hndl, &setup.extraParams),
+                  NIXL_ERR_NOT_FOUND);
+        EXPECT_EQ(dlist_hndl, nullptr);
+    }
+
     INSTANTIATE_TEST_SUITE_P(DramRegisterMemoryInstantiation,
                              singleAgentWithMemParamFixture,
                              testing::Values(DRAM_SEG));
