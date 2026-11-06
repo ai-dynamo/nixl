@@ -104,3 +104,7 @@ if enabled_plugins.get('OBJ')
         subdir('object')
     endif
 endif
+
+if enabled_plugins.get('LIBBLKIO') and has_libblkio_plugin
+    subdir('libblkio')
+endif
