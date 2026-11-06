@@ -104,6 +104,9 @@ GMockBackendEngine::observeTraceContext(const nixl_opt_b_args_t *opt_args) {
     }
     if (opt_args != nullptr) {
         observedTraceRequests_.emplace_back(opt_args->traceRequestId, opt_args->traceExecution);
+        observedTraceIdentities_.push_back((opt_args->traceIdentity != nullptr) ?
+                                               std::make_optional(*opt_args->traceIdentity) :
+                                               std::nullopt);
     }
 }
 
@@ -123,6 +126,12 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>>
 GMockBackendEngine::observedTraceRequests() const {
     const std::lock_guard lock(observedMutex_);
     return observedTraceRequests_;
+}
+
+std::vector<std::optional<nixl::trace::TraceIdentity>>
+GMockBackendEngine::observedTraceIdentities() const {
+    const std::lock_guard lock(observedMutex_);
+    return observedTraceIdentities_;
 }
 
 GMockBackendEngine *
