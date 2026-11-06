@@ -42,6 +42,7 @@ enum class nixl_ucx_vram_memtype_hint_t {
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
 inline constexpr std::string_view nixl_ucx_vram_memtype_hint_param_name = "ucx_vram_memtype_hint";
+inline constexpr std::string_view nixl_ucx_device_list_param_name = "device_list";
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22
@@ -310,5 +311,16 @@ ucx_vram_memtype_hint_to_string(nixl_ucx_vram_memtype_hint_t t);
 
 [[nodiscard]] nixl_ucx_vram_memtype_hint_t
 ucx_vram_memtype_hint_from_string(std::string_view s);
+
+// Splits the "device_list" backend parameter on ',', trimming whitespace around
+// entries and dropping empty ones.
+[[nodiscard]] std::vector<std::string>
+ucxSplitDeviceList(std::string_view device_list);
+
+// UCX NET_DEVICES value for "device_list" entries. An entry without a port
+// gets port 1 (an IB HCA name such as "mlx5_0" becomes "mlx5_0:1"); an entry
+// that already names a port is kept as is.
+[[nodiscard]] std::string
+ucxDeviceListToNetDevices(const std::vector<std::string> &devs);
 
 #endif
