@@ -34,9 +34,9 @@ def _load_cuda_backend() -> str:
                 f"detected CUDA {cuda_major} but {pip_name} is not installed"
             ) from e
     # No CUDA stack detected — use whatever backend is installed.
-    backends = ("nixl_cu13", "nixl_cu12", "nixl_rocm")
+    backends = ("nixl_cu13", "nixl_rocm")
     if detect_rocm():
-        backends = ("nixl_rocm", "nixl_cu13", "nixl_cu12")
+        backends = ("nixl_rocm", "nixl_cu13")
     for mod_name in backends:
         try:
             return importlib.import_module(mod_name).__name__
@@ -45,7 +45,7 @@ def _load_cuda_backend() -> str:
                 # Re-raise if the error is not about the module we're trying to import
                 raise
             continue
-    raise ImportError("No NIXL backend found (tried nixl_cu13, nixl_cu12, nixl_rocm)")
+    raise ImportError("No NIXL backend found (tried nixl_cu13, nixl_rocm)")
 
 
 _pkg = sys.modules[_load_cuda_backend()]

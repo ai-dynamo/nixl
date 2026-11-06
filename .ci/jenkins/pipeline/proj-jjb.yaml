@@ -715,7 +715,7 @@
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
 # Job template for the LLM (vLLM / SGLang) container build pipeline.
-# Builds 4 image variants (vllm-cu12-nixl, vllm-cu13-nixl, sglang-cu12-nixl, sglang-cu13-nixl) from a
+# Builds 2 image variants (vllm-cu13-nixl, sglang-cu13-nixl) from a
 # published NIXL wheel set, for x86_64 and aarch64, and publishes multi-arch
 # manifests. Mirrors the manual procedure documented at
 # README.md
@@ -734,11 +734,11 @@
             conf_file=.ci/jenkins/lib/build-llm-container-matrix.yaml
     description: >
       <b>NIXL LLM container build</b><br/>
-      • Builds 4 inference container variants per release: <b>vllm-cu12-nixl</b>, <b>vllm-cu13-nixl</b>, <b>sglang-cu12-nixl</b>, <b>sglang-cu13-nixl</b><br/>
+      • Builds 2 inference container variants per release: <b>vllm-cu13-nixl</b>, <b>sglang-cu13-nixl</b><br/>
       • Builds for x86_64 and aarch64 (aarch64 via podman with QEMU)<br/>
       • Publishes multi-arch manifests after both arches succeed<br/>
       • Wheels pulled from <code>sw-nbu-swx-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/</code><br/>
-      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>verification/llm/{{vllm-cu12-nixl,vllm-cu13-nixl,sglang-cu12-nixl,sglang-cu13-nixl}}</code><br/>
+      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>verification/llm/{{vllm-cu13-nixl,sglang-cu13-nixl}}</code><br/>
       • For <b>rc0</b> leave the <code>BASE_IMAGE_*</code> params empty to use upstream defaults<br/>
       • For <b>rcN, N&gt;0</b> set each <code>BASE_IMAGE_*</code> to the matching rc0 image to isolate the verification to the NIXL change<br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
@@ -749,16 +749,12 @@
           name: "BUILD_TARGET"
           choices:
             - "all"
-            - "vllm-cu12"
             - "vllm-cu13"
-            - "sglang-cu12"
             - "sglang-cu13"
           description: >
             Which image variants to build:<br/>
-            • <b>all</b>: build all 4 variants (default)<br/>
-            • <b>vllm-cu12</b>: only vllm-cu12-nixl<br/>
+            • <b>all</b>: build both variants (default)<br/>
             • <b>vllm-cu13</b>: only vllm-cu13-nixl<br/>
-            • <b>sglang-cu12</b>: only sglang-cu12-nixl<br/>
             • <b>sglang-cu13</b>: only sglang-cu13-nixl
       - string:
           name: "NIXL_VERSION"
@@ -786,14 +782,6 @@
           default: "2_28"
           description: "manylinux platform tag used in wheel filename (e.g. 2_28)."
       - string:
-          name: "BASE_IMAGE_VLLM_CU12"
-          default: ""
-          description: >
-            Optional override for the vllm-cu12 base image build-arg.<br/>
-            Leave empty to use upstream <code>docker.io/vllm/vllm-openai:latest-cu129</code> (rc0 default).<br/>
-            For <b>rcN, N&gt;0</b> pin to the rc0 vllm-cu12-nixl image, e.g.<br/>
-            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu12-nixl:1.1.0-rc0</code>
-      - string:
           name: "BASE_IMAGE_VLLM_CU13"
           default: ""
           description: >
@@ -801,14 +789,6 @@
             Leave empty for <b>rc0</b> (uses the CUDA 13 default <code>docker.io/vllm/vllm-openai:latest</code>).<br/>
             For <b>rcN, N&gt;0</b> set to the corresponding rc0 image, e.g.<br/>
             <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code>
-      - string:
-          name: "BASE_IMAGE_SGLANG_CU12"
-          default: ""
-          description: >
-            Optional override for the sglang-cu12 base image build-arg.<br/>
-            Leave empty for <b>rc0</b> (uses the CUDA 12 default <code>docker.io/lmsysorg/sglang:latest-cu129-runtime</code>).<br/>
-            For <b>rcN, N&gt;0</b> pin to the rc0 sglang-cu12-nixl image, e.g.<br/>
-            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-cu12-nixl:1.1.0-rc0</code>
       - string:
           name: "BASE_IMAGE_SGLANG_CU13"
           default: ""
@@ -995,8 +975,8 @@
             conf_file=.ci/jenkins/lib/build-wheel-nightly-matrix.yaml
     description: >
       <b>NIXL nightly wheel verification build</b><br/>
-      • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> for CUDA 13
-      and CUDA 12 in one run, with the UCX spcx and Infinia plugins always bundled, and
+      • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> for CUDA 13,
+      with the UCX spcx and Infinia plugins always bundled, and
       publishes them to the verification Artifactory space<br/>
       • Run manually from any NIXL branch / tag / PR / SHA via <code>NIXL_VERSION</code><br/>
       • Also triggered per missing commit by <code>nixl-build-wheel-release-poller</code>
@@ -1014,8 +994,8 @@
     triggers:
       - parameterized-timer:
           cron: |
-            # Build NIXL wheels nightly around midnight. One run covers both CUDA
-            # majors (cuda is a matrix axis) and the nixl meta wheel.
+            # Build NIXL wheels nightly around midnight. One run covers the
+            # cu13 wheels and the nixl meta wheel.
             H 0 * * * %NIXL_VERSION=main
     # Manual build parameters
     parameters:
@@ -1069,7 +1049,7 @@
 
 # Release wheel poller: every 4 hours, compares release/* branch commits against
 # the wheels already published in Artifactory and triggers the nightly wheel
-# builder once per commit per CUDA variant that has no published wheels yet.
+# builder once per commit that has no published wheels yet.
 # Named without the nixl-ci- prefix: a scheduled standalone job, not part of CI.
 - job-template:
     name: "nixl-build-wheel-release-poller"
@@ -1089,8 +1069,8 @@
       • Runs every 4 hours and scans all <code>release/*</code> branches (version &gt;= 1.4.0),
       looking for commits with no
       published wheel set under <code>sw-nbu-swx-nixl-pypi-local/release/</code> in Artifactory<br/>
-      • Triggers <code>nixl-ci-build-wheel-nightly</code> once per missing commit (one run
-      covers every CUDA major) &mdash; a failed build is retried on the next cycle; delete the
+      • Triggers <code>nixl-ci-build-wheel-nightly</code> once per missing commit
+      &mdash; a failed build is retried on the next cycle; delete the
       commit's folder in Artifactory to force a full rebuild<br/>
       • A commit counts as published when a folder under <code>release/&lt;ver&gt;/</code>
       carries it as a <code>NIXL_SHA</code> property, which the wheel job stamps only after a

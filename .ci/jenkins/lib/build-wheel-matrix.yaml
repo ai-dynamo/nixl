@@ -193,10 +193,10 @@ env:
   NPROC: 32
   GRPC_NPROC: 10
   # wheel_base builds on the public PyPA manylinux_2_28 image and copies CUDA from
-  # an el8/ubi8 NGC CUDA *devel* image. Those images and CUDA_VERSION are pinned in
+  # an el8/ubi8 NGC CUDA *devel* image. Those images are pinned in
   # contrib/Dockerfile.manylinux and deliberately not restated here, so the cached
   # wheel_base image and the wheel stage cannot drift apart. Note build-container.sh
-  # reads BASE_IMAGE/CUDA_VERSION from the environment, so setting them here would
+  # reads BASE_IMAGE/BASE_IMAGE_TAG from the environment, so setting them here would
   # override the Dockerfile even without passing the flags.
   # REACHABILITY: the blossom runner must be able to pull nvcr.io and quay.io.
   # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;

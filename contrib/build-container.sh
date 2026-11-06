@@ -50,13 +50,6 @@ OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
-# CUDA MAJOR.MINOR for the manylinux wheel build (cu12/cu13 split, cuda-<ver>
-# symlink); keep in step with Dockerfile.manylinux's BASE_IMAGE_TAG.
-CUDA_VERSION_DEFAULT="13.4"
-CUDA_VERSION=${CUDA_VERSION:-}
-# torch wheel index for the manylinux wheel build; unset = Dockerfile default
-# (cu132 for CUDA 13, cu<CUDA_VERSION> for CUDA 12).
-TORCH_CUDA_INDEX=${TORCH_CUDA_INDEX:-}
 BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/static/infinia-libs:v2.5.0-rcx.1"
 APT_MIRROR=""
@@ -150,22 +143,6 @@ get_options() {
         --torch-versions)
             if [ "$2" ]; then
                 WHL_TORCH_VERSIONS=$2
-                shift
-            else
-                missing_requirement $1
-            fi
-            ;;
-        --cuda-version)
-            if [ "$2" ]; then
-                CUDA_VERSION=$2
-                shift
-            else
-                missing_requirement $1
-            fi
-            ;;
-        --torch-cuda-index)
-            if [ "$2" ]; then
-                TORCH_CUDA_INDEX=$2
                 shift
             else
                 missing_requirement $1
@@ -316,7 +293,6 @@ show_build_options() {
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
-    echo "Torch index: ${TORCH_CUDA_INDEX:-<Dockerfile default>}"
     echo "UCX Repo: ${UCX_REPO}"
     echo "UCX Ref: ${UCX_REF}"
     if [ -n "$UCX_SONAME_SUFFIX" ]; then
@@ -371,8 +347,6 @@ write_build_options_file() {
 BASE_IMAGE="${BASE_IMAGE}"
 BASE_IMAGE_TAG="${BASE_IMAGE_TAG}"
 ARCH="${ARCH}"
-CUDA_VERSION="${CUDA_VERSION}"
-TORCH_CUDA_INDEX="${TORCH_CUDA_INDEX}"
 UCX_REPO="${UCX_REPO}"
 UCX_REF="${UCX_REF}"
 UCX_SHA="${ucx_sha}"
@@ -410,9 +384,7 @@ show_help() {
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
-    echo "  [--cuda-version CUDA MAJOR.MINOR for the manylinux wheel build, e.g. 12.9 (default: ${CUDA_VERSION_DEFAULT})]
-  [--torch-cuda-index torch wheel index for the manylinux wheel build (default: cu132 for CUDA 13, cu<CUDA_VERSION> for CUDA 12)]
-  [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
+    echo "  [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
   [--manylinux-image-tag pinned PyPA manylinux image tag (default: ${MANYLINUX_IMAGE_TAG})]"
     echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
     echo "  [--build-infinia build and bundle the Infinia DDN plugin (requires --dockerfile contrib/Dockerfile.manylinux; il.artifactory.nvidia.com must be reachable)]"
@@ -445,9 +417,6 @@ BUILD_ARGS+=" --build-arg MANYLINUX_IMAGE=$MANYLINUX_IMAGE --build-arg MANYLINUX
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+="${DEFAULT_PYTHON_VERSION:+ --build-arg DEFAULT_PYTHON_VERSION=$DEFAULT_PYTHON_VERSION}"
 BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
-CUDA_VERSION="${CUDA_VERSION:-$CUDA_VERSION_DEFAULT}"
-BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
-BUILD_ARGS+="${TORCH_CUDA_INDEX:+ --build-arg TORCH_CUDA_INDEX=$TORCH_CUDA_INDEX}"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"

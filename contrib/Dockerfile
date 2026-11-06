@@ -480,7 +480,6 @@ RUN cd src/bindings/rust && cargo build --release --locked
 # Install the python bindings from source, built against the container's own
 # torch - works on any base, no dependency on public torch wheels.
 # Redistributable wheels are produced by the wheel CI pipelines, not here.
-RUN CUDA_MAJOR=$(echo "${CUDA_VERSION}" | cut -d. -f1) && \
-    ./contrib/tomlutil.py --wheel-name "nixl-cu${CUDA_MAJOR}" pyproject.toml && \
+RUN ./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml && \
     uv pip install --system --no-build-isolation . && \
     uv pip install --system build/src/bindings/python/nixl-meta/nixl-*.whl

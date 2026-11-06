@@ -1,12 +1,12 @@
 # Nightly NIXL wheel verification build. Pipeline and this config run from
-# main; the source ref (NIXL_VERSION) is cloned into nixl-src, so built refs
-# carry no CI config. Wheels publish to
+# ci_refspec (default main); the source ref (NIXL_VERSION) is cloned into
+# nixl-src. Wheels publish to
 # WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default) or
 # WHEEL_REPO_URL/<PUBLISH_DIR>/<build-number> for release runs.
 #
-# One run builds every CUDA major, so a release folder holds a complete wheel
-# set and is owned by this build alone - which is what lets pipeline_stop delete
-# it on failure and mark it, only on SUCCESS, for the release poller.
+# A release folder holds a complete wheel set and is owned by this build alone -
+# which is what lets pipeline_stop delete it on failure and mark it, only on
+# SUCCESS, for the release poller.
 
 ---
 job: nixl-ci-build-wheel-nightly
@@ -45,24 +45,16 @@ pvc_volumes:
 # podman-in-container runner; build-container.sh runs docker/podman inside it.
 #
 # wheel_base is built and pushed by ci-demo before any step runs, then reused by
-# every matrix cell via --wheel-base-image: previously each of the twenty cells
-# (5 python versions x 2 arches x 2 CUDA majors) compiled the full dependency
-# stack from scratch, now it compiles four times. One entry per CUDA major
-# because ci-demo keys images on arch alone (gen_image_map), so a single entry
-# cannot carry both lines - each is still built once per arch. Every step below
-# selects the podman runner explicitly; without a selector a step runs in each
-# runner, which would fan the whole matrix out over all three.
+# every matrix cell via --wheel-base-image: previously each of the ten cells
+# (5 python versions x 2 arches) compiled the full dependency stack from
+# scratch, now it compiles twice (once per arch). Every step below selects the
+# podman runner explicitly; without a selector a step runs in each runner,
+# which would fan the whole matrix out over both.
 # The tag is unique per run (cidemo-init.sh): the nightly rebuilds these every
 # time, and they must not collide with the CI_IMAGE_TAG-keyed image that per-PR
 # builds cache on.
 runs_on_dockers:
   - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
-  - {
-      file: 'contrib/Dockerfile.manylinux',
-      name: "${WHEEL_BASE_IMAGE_NAME}-cu12",
-      tag: "${WHEEL_BASE_TAG}",
-      build_args: '--build-arg BASE_IMAGE=${CU12_BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${CU12_BASE_TAG} --build-arg CUDA_VERSION=${CU12_CUDA_VERSION} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
-    }
   - {
       file: 'contrib/Dockerfile.manylinux',
       name: "${WHEEL_BASE_IMAGE_NAME}-cu13",
@@ -84,23 +76,10 @@ matrix:
     arch:
       - x86_64
       - aarch64
-    # Same build, or cu12 and cu13 land in different build-number folders.
-    # Not "cuda_major": Jenkins EnvVars is case-insensitive, so that name
-    # collides with the CUDA_MAJOR job parameter and the axis never reaches the
-    # shell - the leg is still labelled correctly, since taskName is rendered
-    # from the axis map rather than from the environment.
-    cuda:
-      - "12"
-      - "13"
 
 env:
   NPROC: 16
   GRPC_NPROC: 10
-  # CUDA 12 base image is pinned here (unlikely to change); CUDA 13 passes
-  # nothing and relies on build-container.sh's own default.
-  CU12_BASE_IMAGE: "nvcr.io/nvidia/cuda"
-  CU12_BASE_TAG: "12.9.1-devel-ubi8"
-  CU12_CUDA_VERSION: "12.9"
   # Unique per run, patched by cidemo-init.sh before the matrix is read.
   # The NIGHTLY_MANAGED placeholder must not be hand-edited.
   WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-nightly-manylinux_2_28"
@@ -179,37 +158,18 @@ steps:
       # Infinia is always bundled in the nightly; the built source ref's
       # build-container.sh pins the image. The spcx plugin is not built here -
       # it was compiled against the same wheel_base and comes off the PVC.
-      # The two CUDA majors have different torch coverage: 2.11 is not available
-      # on the cu13 index, and 2.14 is not available on the cu12 one.
-      # Never default the CUDA line: an unset axis falling through to cu13 made
-      # both cells build cu13 under identical filenames, so each overwrote the
-      # other and the folder silently held half a set.
-      case "${cuda}" in
-        12)
-          BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
-          TORCH_VERSIONS="2.11,2.12,2.13"
-          ;;
-        13)
-          BASE_IMAGE_FLAGS=""
-          TORCH_VERSIONS="2.12,2.13,2.14,2.15,2.16"
-          ;;
-        *)
-          echo "ERROR: cuda is '${cuda:-<unset>}', expected 12 or 13"
-          exit 1
-          ;;
-      esac
+      TORCH_VERSIONS="2.12,2.13,2.14,2.15,2.16"
       export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
       cd nixl-src
       ./contrib/build-container.sh \
-        ${BASE_IMAGE_FLAGS} \
         --wheel-base "manylinux_${manylinux}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
         --torch-versions "${TORCH_VERSIONS}" \
         --tag "${WHEEL_IMAGE_TAG}" \
         --dockerfile contrib/Dockerfile.manylinux \
-        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}-cu${cuda}:${WHEEL_BASE_TAG}" \
-        --ucx-spcx-plugin-install "${SPCX_STAGING_ROOT}/${BUILD_NUMBER}/cu${cuda}/${arch}" \
+        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}-cu13:${WHEEL_BASE_TAG}" \
+        --ucx-spcx-plugin-install "${SPCX_STAGING_ROOT}/${BUILD_NUMBER}/cu13/${arch}" \
         --build-infinia \
         --build-options-file ../build_options.env
 
@@ -225,6 +185,8 @@ steps:
       docker cp "${cid}:/workspace/nixl/dist/." ./dist/
       docker rm -f "${cid}" || true
       ls -l dist/
+      ls dist/nixl-*-py3-none-any.whl >/dev/null 2>&1 \
+        || { echo "ERROR: meta wheel missing from dist/ - the source ref's Dockerfile.manylinux must emit it unconditionally"; exit 1; }
 
       # Nightly runs leave PUBLISH_DIR empty and publish to verification/;
       # manual release runs can pass release/<ver>. Allowlist it - the URL is
@@ -249,7 +211,6 @@ steps:
       if [ -f build_options.env ]; then
         . ./build_options.env
         [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
-        [ -n "${CUDA_VERSION:-}" ] && PROPERTIES+=";CUDA_VERSION=${CUDA_VERSION}"
         [ "${BUILD_UCX_SPCX_PLUGIN:-}" = "true" ] && [ -n "${UCX_SPCX_PLUGIN_REF:-}" ] \
           && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
         [ "${BUILD_INFINIA:-}" = "true" ] && [ -n "${INFINIA_LIBS_IMAGE:-}" ] \
@@ -264,6 +225,11 @@ steps:
       UCX_SHA="$(docker run --rm "${WHEEL_IMAGE_TAG}" git -C /usr/local/src/ucx rev-parse HEAD | cut -c1-8)"
       [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot read the UCX commit from ${WHEEL_IMAGE_TAG}"; exit 1; }
       PROPERTIES+=";UCX_SHA=${UCX_SHA}"
+
+      # The toolkit the image compiled against; no longer a build option.
+      CUDA_VERSION="$(docker run --rm "${WHEEL_IMAGE_TAG}" nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2)"
+      [ -n "${CUDA_VERSION}" ] || { echo "ERROR: cannot read the CUDA version from ${WHEEL_IMAGE_TAG}"; exit 1; }
+      PROPERTIES+=";CUDA_VERSION=${CUDA_VERSION}"
 
       # verification/ keeps its g<nixl-sha>.ucx<ucx-sha> schema (consumed by the
       # build-llm-container verification pipeline) and is shared between builds;
@@ -288,7 +254,7 @@ steps:
       done
       exit $rc
 
-taskName: '${name}_${manylinux}/${arch}/python_${python_version}/cu${cuda}'
+taskName: '${name}_${manylinux}/${arch}/python_${python_version}/cu13'
 
 # Display name distinguishes builds in the history list: #N-<source>.
 pipeline_start:
@@ -302,21 +268,19 @@ pipeline_start:
     // Compile the closed-source UCX spcx plugin against the wheel_base images
     // ci-demo just pushed, before any wheel is built. The job lives in the
     // plugin repo, so this passes an image name and tag and gets back only the
-    // built module (on the PVC) and a result. Once per CUDA major: the module
-    // links that image's UCX, so a cu12 wheel cannot take the cu13 build.
-    for (cuda in ["12", "13"]) {
-      def staging = "${env.SPCX_STAGING_ROOT}/${env.BUILD_NUMBER}/cu${cuda}"
-      def res = build job: 'nixl-ci-compile-ucx-plugin',
-        parameters: [
-          string(name: 'WHEEL_BASE_NAME', value: "${env.WHEEL_BASE_IMAGE_NAME}-cu${cuda}"),
-          string(name: 'WHEEL_BASE_TAG',  value: env.WHEEL_BASE_TAG),
-          string(name: 'STAGING_DIR',     value: staging),
-        ],
-        propagate: false, wait: true
-      echo "UCX spcx plugin compile (cu${cuda}): ${res.result} (${res.absoluteUrl})"
-      if (res.result != 'SUCCESS') {
-        error("UCX spcx plugin failed to compile against ${env.WHEEL_BASE_IMAGE_NAME}-cu${cuda}:${env.WHEEL_BASE_TAG} - see ${res.absoluteUrl}")
-      }
+    // built module (on the PVC) and a result. The module links that image's
+    // UCX, so it is compiled against the same wheel_base the wheels use.
+    def staging = "${env.SPCX_STAGING_ROOT}/${env.BUILD_NUMBER}/cu13"
+    def res = build job: 'nixl-ci-compile-ucx-plugin',
+      parameters: [
+        string(name: 'WHEEL_BASE_NAME', value: "${env.WHEEL_BASE_IMAGE_NAME}-cu13"),
+        string(name: 'WHEEL_BASE_TAG',  value: env.WHEEL_BASE_TAG),
+        string(name: 'STAGING_DIR',     value: staging),
+      ],
+      propagate: false, wait: true
+    echo "UCX spcx plugin compile: ${res.result} (${res.absoluteUrl})"
+    if (res.result != 'SUCCESS') {
+      error("UCX spcx plugin failed to compile against ${env.WHEEL_BASE_IMAGE_NAME}-cu13:${env.WHEEL_BASE_TAG} - see ${res.absoluteUrl}")
     }
 
 # Settles the release folder - mark on SUCCESS, delete otherwise - then mails
