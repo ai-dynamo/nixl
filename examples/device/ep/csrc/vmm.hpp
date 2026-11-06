@@ -25,7 +25,10 @@ namespace nixl_ep {
 
 class vmm_region {
 public:
-    explicit vmm_region(size_t size);
+    /** A region that is not exportable gets no export handle type, for example
+     * so that a process checkpoint taken before it is made exportable holds no
+     * FABRIC memory. */
+    explicit vmm_region(size_t size, bool exportable = true);
 
     ~vmm_region();
 
@@ -35,6 +38,11 @@ public:
     vmm_region(vmm_region &&) = delete;
     vmm_region &
     operator=(vmm_region &&) = delete;
+
+    /** Backs the region with exportable memory at the same address if it is not
+     * exportable yet. Contents are not kept. Returns whether it re-backed. */
+    bool
+    make_exportable();
 
     [[nodiscard]] void *
     ptr() const noexcept {
@@ -50,6 +58,7 @@ private:
     CUmemGenericAllocationHandle handle_ = 0;
     bool is_cuda_malloc_ = false;
     bool vmm_mapped_ = false;
+    bool exportable_ = true;
 };
 
 } // namespace nixl_ep
