@@ -1851,8 +1851,8 @@ execTransferLoop(nixlAgent *agent,
                  const std::atomic<int> *terminate_ptr = nullptr) {
     const int depth = std::min(descriptor_depth, num_iter);
     if (depth < descriptor_depth && num_iter > 1 && omp_get_thread_num() == 0) {
-        std::cout << "Warning: capping descriptor_depth from " << descriptor_depth << " to " << depth
-                  << " (phase num_iter=" << num_iter << ")" << std::endl;
+        std::cout << "Warning: capping descriptor_depth from " << descriptor_depth << " to "
+                  << depth << " (phase num_iter=" << num_iter << ")" << std::endl;
     }
     const bool recreate = xferBenchConfig::recreate_xfer;
 
@@ -2325,8 +2325,7 @@ xferBenchNixlWorker::poll(size_t block_size) {
     const auto plan = xferBenchConfig::iterationPlan(block_size);
     const uint64_t workers = xferBenchConfig::workerNum();
     const uint64_t warmup_iter = static_cast<uint64_t>(plan.warmup_iter) * workers;
-    const uint64_t total_iter =
-        (static_cast<uint64_t>(plan.warmup_iter) + plan.num_iter) * workers;
+    const uint64_t total_iter = (static_cast<uint64_t>(plan.warmup_iter) + plan.num_iter) * workers;
 
     // Periodically check if all peers are still alive via etcd lease keys.
     // Fires at most once every liveness_check_interval to avoid
@@ -2349,13 +2348,11 @@ xferBenchNixlWorker::poll(size_t block_size) {
         xferBenchConfig::use_device_api && completion_counter_iov.has_value();
     if (use_device_completion_counter) {
         const xferBenchIOV &counter_iov = completion_counter_iov.value();
-        if (!waitForDeviceCompletionCounter(
-                counter_iov, warmup_iter, "warmup", checkLiveness)) {
+        if (!waitForDeviceCompletionCounter(counter_iov, warmup_iter, "warmup", checkLiveness)) {
             return;
         }
         synchronize();
-        if (!waitForDeviceCompletionCounter(
-                counter_iov, total_iter, "transfer", checkLiveness)) {
+        if (!waitForDeviceCompletionCounter(counter_iov, total_iter, "transfer", checkLiveness)) {
             return;
         }
         synchronize();
@@ -2374,8 +2371,7 @@ xferBenchNixlWorker::poll(size_t block_size) {
     do {
         status = agent->getNotifs(notifs);
         checkLiveness();
-    } while (!signaled() && status == NIXL_SUCCESS &&
-             total_iter != notifs["initiator"].size());
+    } while (!signaled() && status == NIXL_SUCCESS && total_iter != notifs["initiator"].size());
     synchronize();
 }
 

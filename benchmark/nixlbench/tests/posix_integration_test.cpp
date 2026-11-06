@@ -266,10 +266,13 @@ namespace {
             int warmup;
             bool warns;
         };
+
         // Two workers: only unequal phases with more than one iteration should warn.
-        for (const auto &test_case :
-             {Case{4, 6, true}, Case{6, 4, true}, Case{6, 2, false},
-              Case{4, 0, false}, Case{6, 6, false}}) {
+        for (const auto &test_case : {Case{4, 6, true},
+                                      Case{6, 4, true},
+                                      Case{6, 2, false},
+                                      Case{4, 0, false},
+                                      Case{6, 6, false}}) {
             TemporaryDirectory directory;
             const auto log = directory.path() / "pipeline-warning.log";
             const std::string command =
@@ -278,7 +281,8 @@ namespace {
                 " --start_block_size=4096 --max_block_size=4096"
                 " --start_batch_size=1 --max_batch_size=1 --num_threads=2"
                 " --pipeline_depth=4 --large_blk_iter_ftr=1 --check_consistency=true"
-                " --num_iter=" + std::to_string(test_case.iterations) +
+                " --num_iter=" +
+                std::to_string(test_case.iterations) +
                 " --warmup_iter=" + std::to_string(test_case.warmup);
             ASSERT_EQ(runCommand(command, log), 0) << readFile(log);
             const auto contents = readFile(log);
