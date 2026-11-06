@@ -237,33 +237,6 @@ public:
           postContext_(identity.context),
           requestId_(identity.requestId) {}
 
-    [[nodiscard]] Tracer *
-    tracer() const noexcept {
-        return tracer_;
-    }
-
-    [[nodiscard]] const TraceContext &
-    context() const noexcept {
-        return context_;
-    }
-
-    /** @brief Trace context of the latest post handed to the backend, which that
-     *         post's nixl::xfer.complete carries; context() before any post. */
-    [[nodiscard]] const TraceContext &
-    postContext() const noexcept {
-        return postContext_;
-    }
-
-    [[nodiscard]] std::uint64_t
-    requestId() const noexcept {
-        return requestId_;
-    }
-
-    [[nodiscard]] std::uint64_t
-    execution() const noexcept {
-        return execution_.load(std::memory_order_relaxed);
-    }
-
     [[nodiscard]] TraceIdentity
     identity() const noexcept {
         return {postContext_, requestId_, execution()};
@@ -309,12 +282,36 @@ public:
     }
 
 private:
+    friend struct detail::TraceableAccess;
+
+    [[nodiscard]] std::uint64_t
+    execution() const noexcept {
+        return execution_.load(std::memory_order_relaxed);
+    }
+
     Tracer *const tracer_;
     const TraceContext context_;
     TraceContext postContext_;
     bool spanIdUsed_ = false;
     const std::uint64_t requestId_;
     std::atomic<std::uint64_t> execution_ = 0;
+};
+
+struct detail::TraceableAccess {
+    [[nodiscard]] static Tracer *
+    tracer(const Traceable &traceable) noexcept {
+        return traceable.tracer_;
+    }
+
+    [[nodiscard]] static const TraceContext &
+    postContext(const Traceable &traceable) noexcept {
+        return traceable.postContext_;
+    }
+
+    [[nodiscard]] static std::uint64_t
+    requestId(const Traceable &traceable) noexcept {
+        return traceable.requestId_;
+    }
 };
 
 } // namespace nixl::trace
@@ -407,24 +404,30 @@ finish(Span &span, Status status) {
                                                     (request_id)) __VA_OPT__(, ) __VA_ARGS__); \
     }()
 
-#define NIXL_TRACE_CORRELATED_SPAN(span, request_trace, trace_record, context, ...) \
-    const ::nixl::trace::Traceable &span##_trace_ = (request_trace);                \
-    ::nixl::trace::CorrelationScope span##_correlation_(                            \
-        span##_trace_.tracer(), (context), span##_trace_.requestId());              \
-    NIXL_TRACE_CONTEXT_SPAN(span,                                                   \
-                            span##_trace_.tracer(),                                 \
-                            trace_record,                                           \
-                            context,                                                \
-                            span##_trace_.requestId() __VA_OPT__(, ) __VA_ARGS__)
+#define NIXL_TRACE_CORRELATED_SPAN(span, request_trace, trace_record, context, ...)          \
+    const ::nixl::trace::Traceable &span##_trace_ = (request_trace);                         \
+    ::nixl::trace::CorrelationScope span##_correlation_(                                     \
+        ::nixl::trace::detail::TraceableAccess::tracer(span##_trace_),                       \
+        (context),                                                                           \
+        ::nixl::trace::detail::TraceableAccess::requestId(span##_trace_));                   \
+    NIXL_TRACE_CONTEXT_SPAN(span,                                                            \
+                            ::nixl::trace::detail::TraceableAccess::tracer(span##_trace_),   \
+                            trace_record,                                                    \
+                            context,                                                         \
+                            ::nixl::trace::detail::TraceableAccess::requestId(span##_trace_) \
+                                __VA_OPT__(, ) __VA_ARGS__)
 
-#define NIXL_TRACE_CORRELATED_SCOPE(span, request_trace, trace_record, ...)              \
-    const ::nixl::trace::Traceable &span##_trace_ = (request_trace);                     \
-    ::nixl::trace::CorrelationScope span##_correlation_(                                 \
-        span##_trace_.tracer(), span##_trace_.postContext(), span##_trace_.requestId()); \
-    NIXL_TRACE_SAMPLED_SCOPE(span,                                                       \
-                             span##_trace_.tracer(),                                     \
-                             trace_record,                                               \
-                             span##_trace_.postContext() __VA_OPT__(, ) __VA_ARGS__)
+#define NIXL_TRACE_CORRELATED_SCOPE(span, request_trace, trace_record, ...)                     \
+    const ::nixl::trace::Traceable &span##_trace_ = (request_trace);                            \
+    ::nixl::trace::CorrelationScope span##_correlation_(                                        \
+        ::nixl::trace::detail::TraceableAccess::tracer(span##_trace_),                          \
+        ::nixl::trace::detail::TraceableAccess::postContext(span##_trace_),                     \
+        ::nixl::trace::detail::TraceableAccess::requestId(span##_trace_));                      \
+    NIXL_TRACE_SAMPLED_SCOPE(span,                                                              \
+                             ::nixl::trace::detail::TraceableAccess::tracer(span##_trace_),     \
+                             trace_record,                                                      \
+                             ::nixl::trace::detail::TraceableAccess::postContext(span##_trace_) \
+                                 __VA_OPT__(, ) __VA_ARGS__)
 
 #define NIXL_TRACE_FINISH(span, status) (::nixl::trace::detail::finish((span), (status)))
 

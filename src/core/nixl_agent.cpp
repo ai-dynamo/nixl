@@ -1040,7 +1040,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
         return ret;
     }
 
-    data->warnIfTraceContextUnsupported(*backend, handle->trace().context());
+    data->warnIfTraceContextUnsupported(*backend, trace_identity.context);
     req_hndl = handle.release();
     return NIXL_SUCCESS;
 }
@@ -1195,7 +1195,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return ret1;
     }
 
-    data->warnIfTraceContextUnsupported(*handle->engine, handle->trace().context());
+    data->warnIfTraceContextUnsupported(*handle->engine, trace_identity.context);
     req_hndl = handle.release();
     return NIXL_SUCCESS;
 }
@@ -1264,7 +1264,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                call_context,
                                {"remote_agent", req_hndl->remoteAgent},
                                {"bytes", req_hndl->telemetry.totalBytes},
-                               {"nixl.xfer_request_id", req_hndl->trace().requestId()});
+                               {"nixl.xfer_request_id", req_hndl->trace().identity().requestId});
 
     chrono_point_t start_time;
     std::optional<nixlTime::nixlDuration> timer;
@@ -1461,13 +1461,14 @@ nixlAgent::getXferTraceInfo(const nixlXferReqH *req_hndl, nixl_xfer_trace_info_t
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    if (req_hndl->trace().requestId() == 0) {
+    const nixl::trace::TraceIdentity identity = req_hndl->trace().identity();
+    if (identity.requestId == 0) {
         return NIXL_ERR_NOT_FOUND;
     }
 
-    info.requestId = req_hndl->trace().requestId();
-    info.execution = req_hndl->trace().execution();
-    info.traceparent = nixl::trace::formatTraceparent(req_hndl->trace().postContext());
+    info.requestId = identity.requestId;
+    info.execution = identity.execution;
+    info.traceparent = nixl::trace::formatTraceparent(identity.context);
     return NIXL_SUCCESS;
 }
 
@@ -1484,8 +1485,8 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
     NIXL_TRACE_CORRELATED_SCOPE(trace_span,
                                 req_hndl->trace(),
                                 nixl::trace::Record::ReleaseXferReq,
-                                {"nixl.xfer_request_id", req_hndl->trace().requestId()},
-                                {"nixl.xfer_execution", req_hndl->trace().execution()});
+                                {"nixl.xfer_request_id", req_hndl->trace().identity().requestId},
+                                {"nixl.xfer_execution", req_hndl->trace().identity().execution});
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     //attempt to cancel request

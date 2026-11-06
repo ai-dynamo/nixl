@@ -108,6 +108,8 @@ template<typename Status>
 [[nodiscard]] Status
 finish(Span &span, Status status);
 
+struct TraceableAccess;
+
 } // namespace nixl::trace::detail
 
 #endif

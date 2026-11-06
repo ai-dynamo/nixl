@@ -1102,9 +1102,9 @@ TEST(Tracing, RequestStoresFixedCorrelationContext) {
                                nullptr,
                                {context, 0x0123456789abcdefULL});
 
-    EXPECT_EQ(request.trace().context(), context);
-    EXPECT_EQ(request.trace().requestId(), 0x0123456789abcdefULL);
-    EXPECT_EQ(request.trace().execution(), 0u);
+    EXPECT_EQ(request.trace().identity().context, context);
+    EXPECT_EQ(request.trace().identity().requestId, 0x0123456789abcdefULL);
+    EXPECT_EQ(request.trace().identity().execution, 0u);
 }
 
 TEST(Tracing, RequestContextsAreDistinctAndStable) {
@@ -1124,17 +1124,17 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
                               nixl_remote_section_weak_t{},
                               nullptr,
                               {nixl::trace::generateTraceContext(), 0});
-    const auto first_context = first.trace().context();
+    const auto first_context = first.trace().identity().context;
 
-    EXPECT_NE(first_context, second.trace().context());
-    EXPECT_EQ(first.trace().context(), first_context);
+    EXPECT_NE(first_context, second.trace().identity().context);
+    EXPECT_EQ(first.trace().identity().context, first_context);
 }
 
 TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
     const nixlXferReqH request(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, nullptr, {});
 
-    EXPECT_FALSE(request.trace().context().valid());
+    EXPECT_FALSE(request.trace().identity().context.valid());
 }
 
 TEST(Tracing, ActiveTracerConstructsGeneratedContext) {
@@ -1310,16 +1310,16 @@ TEST(Tracing, TraceableAcceptedPostTakesTheNextExecution) {
     nixl::trace::Traceable traced{nullptr, {context, 0x33}};
     nixl::trace::Traceable untraced{nullptr, {}};
 
-    EXPECT_EQ(traced.postContext(), context);
-    EXPECT_EQ(traced.execution(), 0u);
+    EXPECT_EQ(traced.identity().context, context);
+    EXPECT_EQ(traced.identity().execution, 0u);
     traced.acceptPost(post);
     traced.acceptPost(post);
     untraced.acceptPost(post);
 
-    EXPECT_EQ(traced.postContext(), post);
-    EXPECT_EQ(traced.execution(), 2u);
-    EXPECT_EQ(untraced.postContext(), post);
-    EXPECT_EQ(untraced.execution(), 0u);
+    EXPECT_EQ(traced.identity().context, post);
+    EXPECT_EQ(traced.identity().execution, 2u);
+    EXPECT_EQ(untraced.identity().context, post);
+    EXPECT_EQ(untraced.identity().execution, 0u);
 }
 
 TEST(Tracing, TraceableIdentityIsItsLatestPosts) {
