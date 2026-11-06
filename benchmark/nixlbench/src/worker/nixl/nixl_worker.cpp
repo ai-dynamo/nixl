@@ -1496,16 +1496,22 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             size_t num_devices = iov_list.size();
 
             if (XFERBENCH_BACKEND_DOCA_MEMOS == xferBenchConfig::backend) {
-                const size_t remote_size = remote_iovs[list_idx].size();
-                if (remote_size == 0 || iov_list.size() % remote_size != 0) {
+                // allocateMemory() registers max_batch_size keys per device. The local
+                // list is device-major too, so each device's descriptors cycle through
+                // that device's keys. Smaller batches use a prefix of them.
+                const auto &keys = remote_iovs[list_idx];
+                const size_t keys_per_dev = xferBenchConfig::max_batch_size;
+                const size_t num_devs = keys.size() / keys_per_dev;
+                if (num_devs == 0 || iov_list.size() % num_devs != 0) {
                     std::cerr << "DOCA_MEMOS: local IOV count " << iov_list.size()
-                              << " is not a positive multiple of remote IOV count " << remote_size
-                              << std::endl;
+                              << " does not split across " << num_devs << " devices" << std::endl;
                     std::exit(EXIT_FAILURE);
                 }
-                const size_t entries_per_key = iov_list.size() / remote_size;
+                const size_t local_per_dev = iov_list.size() / num_devs;
                 for (size_t idx = 0; idx < iov_list.size(); idx++) {
-                    xferBenchIOV remote_iov(remote_iovs[list_idx][idx / entries_per_key]);
+                    const size_t dev = idx / local_per_dev;
+                    const size_t slot = (idx % local_per_dev) % keys_per_dev;
+                    xferBenchIOV remote_iov(keys[dev * keys_per_dev + slot]);
                     remote_iov.len = iov_list[idx].len;
                     remote_iov_list.push_back(remote_iov);
                 }
