@@ -46,6 +46,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 
 - **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
 - **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA for storage operations
+- **MARVELL_ODM Backend**: Marvell ODM DMA controller for GPU VRAM ↔ device memory transfers
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
@@ -555,7 +556,7 @@ wait
 --config_file PATH         # Configuration file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD, ASIO] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA, MARVELL_ODM] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 ```
 
@@ -704,6 +705,14 @@ RED_* environment variables or NIXL's common TOML configuration (NIXL_CONFIG_FIL
     batch_size = NUM                   # Async operations per batch (default: library default)
 
 See src/plugins/infinia/infinia_example.conf for a complete example.
+```
+
+**MARVELL_ODM Backend:**
+```
+--device_list LIST                     # ODM character device (e.g., odm0)
+--odm_use_io_uring                     # Enable io_uring submit path (default: false; ODM_USE_IO_URING=1 also accepted)
+--odm_qid_start N                      # First ODM queue ID (0-15; default: 0)
+--odm_qid_end N                        # Last ODM queue ID (0-15; default: 15)
 ```
 
 ### Configuration File
@@ -962,6 +971,51 @@ EOF
   --target_seg_type DRAM \
   --num_iter 16
 ```
+
+**MARVELL_ODM Backend:**
+
+MARVELL_ODM uses the Marvell ODM DMA controller for GPU VRAM ↔ device memory
+transfers. Build with `-Denable_plugins=MARVELL_ODM`. No ETCD is needed for
+single-instance runs.
+
+```bash
+export LD_LIBRARY_PATH=.../build/src/core:.../build/src/plugins/marvell_odm
+export NIXL_PLUGIN_DIR=.../build/src/plugins/marvell_odm
+# Load the ODM kernel module
+
+# Basic WRITE benchmark (io_uring + queues 0..15, 8 threads)
+./nixlbench \
+  --backend MARVELL_ODM \
+  --device_list odm0 \
+  --initiator_seg_type VRAM \
+  --target_seg_type DRAM \
+  --op_type WRITE \
+  --odm_use_io_uring \
+  --odm_qid_start 0 \
+  --odm_qid_end 15 \
+  --num_threads 8 \
+  --total_buffer_size 8589934592 \
+  --start_block_size 4096 \
+  --max_block_size 33554432 \
+  --start_batch_size 64 \
+  --max_batch_size 64 \
+  --num_iter 112 \
+  --warmup_iter 16
+
+# Consistency-checked WRITE (reads device memory back via NIXL READ and compares
+# with the initiator buffer)
+./nixlbench \
+  --backend MARVELL_ODM \
+  --device_list odm0 \
+  --initiator_seg_type VRAM \
+  --target_seg_type DRAM \
+  --op_type WRITE \
+  --check_consistency=1 \
+  --total_buffer_size 67108864 \
+  --num_iter 16
+```
+
+See `src/plugins/marvell_odm/README.md`.
 
 ### Worker Types
 
