@@ -541,6 +541,13 @@ setupDeviceAPIConfig() {
                   << group_num << std::endl;
         xferBenchConfig::device_channel_num = group_num;
     }
+    if ((group_num % xferBenchConfig::device_channel_num) != 0) {
+        std::cerr << "Invalid value for --device_channel_num: "
+                  << xferBenchConfig::device_channel_num
+                  << ". nixlbench requires Device API group number " << group_num
+                  << " to be a multiple of the channel number" << std::endl;
+        return false;
+    }
     if (xferBenchConfig::num_iter < group_num) {
         std::cerr << "Invalid value for --num_iter: " << xferBenchConfig::num_iter
                   << " , must not be smaller than Device API group number: " << group_num
@@ -791,6 +798,20 @@ xferBenchConfig::loadParams(void) {
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
     num_target_dev = NB_ARG(num_target_dev);
+    // In pairwise SG mode, only the device of the rank gets a VRAM buffer, and a
+    // storage backend runs one initiator process.
+    if (IS_PAIRWISE_AND_SG() && isStorageBackend() &&
+        initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM && num_initiator_dev > 1) {
+        if (device_list != "all") {
+            std::cerr << "Only one initiator device transfers in pairwise SG mode with a "
+                      << "storage backend. Use --num_initiator_dev=1 with a single-entry "
+                      << "--device_list." << std::endl;
+            return -1;
+        }
+        std::cout << "WARNING: Only one initiator device transfers in pairwise SG mode with a "
+                  << "storage backend. Setting num_initiator_dev to 1." << std::endl;
+        num_initiator_dev = 1;
+    }
     start_block_size = NB_ARG(start_block_size);
     max_block_size = NB_ARG(max_block_size);
     start_batch_size = NB_ARG(start_batch_size);
