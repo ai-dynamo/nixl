@@ -116,7 +116,6 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     gcc-toolset-14 \
     libaio \
     libaio-devel \
-    libevent-devel \
     libtool-ltdl \
     ninja-build \
     openssl \
@@ -166,19 +165,6 @@ RUN cd /tmp && \
     ldconfig && \
     rm -rf "/tmp/openssl-${OPENSSL_VERSION}" "/tmp/openssl-${OPENSSL_VERSION}.tar.gz"
 
-# Build hiredis from source: EPEL8's hiredis-devel is 0.13, which is affected by
-# CVE-2021-32765 (fixed in 1.0.1). The libevent adapter is header-only, so only
-# the core library is built.
-RUN cd /tmp && \
-    wget -q ${WGET_RETRY_OPTS} "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
-        -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
-    tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
-    cd "hiredis-${HIREDIS_VERSION}" && \
-    make -j"${NPROC:-$(nproc)}" PREFIX=/usr/local && \
-    make install PREFIX=/usr/local && \
-    ldconfig && \
-    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --atleast-version=1.0.1 hiredis && \
-    rm -rf "/tmp/hiredis-${HIREDIS_VERSION}" "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz"
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
 
 # Set environment variables to use the new OpenSSL
@@ -193,6 +179,26 @@ WORKDIR /workspace
 # CI supplies a github.com credential as the optional "ghconfig" build secret;
 # without it these clones stay anonymous. RUN --mount needs BuildKit or podman.
 ARG GIT_TERMINAL_PROMPT=0
+
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 --branch release-2.1.13-stable https://github.com/libevent/libevent.git && \
+    cmake -S libevent -B libevent/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DEVENT__LIBRARY_TYPE=SHARED -DEVENT__DISABLE_TESTS=ON -DEVENT__DISABLE_SAMPLES=ON && \
+    cmake --build libevent/build -j${NPROC:-$(nproc)} && \
+    cmake --install libevent/build && ldconfig
+
+# Build hiredis from source: EPEL8's hiredis-devel is 0.13, which is affected by
+# CVE-2021-32765 (fixed in 1.0.1). The libevent adapter is header-only, so only
+# the core library is built.
+RUN cd /tmp && \
+    wget -q ${WGET_RETRY_OPTS} "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+        -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+    tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+    cd "hiredis-${HIREDIS_VERSION}" && \
+    make -j"${NPROC:-$(nproc)}" PREFIX=/usr/local && \
+    make install PREFIX=/usr/local && \
+    ldconfig && \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --atleast-version=1.0.1 hiredis && \
+    rm -rf "/tmp/hiredis-${HIREDIS_VERSION}" "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz"
 
 # Build Abseil from source (required for absl/log).
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/abseil/abseil-cpp.git && \
@@ -452,12 +458,6 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src &&
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig
-
-RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 --branch release-2.1.13-stable https://github.com/libevent/libevent.git && \
-    cmake -S libevent -B libevent/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DEVENT__LIBRARY_TYPE=SHARED -DEVENT__DISABLE_TESTS=ON -DEVENT__DISABLE_SAMPLES=ON && \
-    cmake --build libevent/build -j${NPROC:-$(nproc)} && \
-    cmake --install libevent/build && ldconfig
 
 FROM $wheel_base AS wheel
 
