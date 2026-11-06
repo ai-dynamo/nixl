@@ -151,6 +151,7 @@ private:
     void _nixl_agents_peer_info_cleanup(const std::vector<int>& ranks);
 
     void _nixl_ep_init(void);
+    void _init_rank_state();
     void _nixl_ep_memory_views_destroy(NixlMemoryViews& memory_views);
     void _nixl_ep_memory_views_stage(void);
     void _nixl_ep_memory_views_commit(void);
@@ -169,6 +170,9 @@ public:
     // Creates the NIXL agent and registers the buffers if update_memory_buffers
     // deferred it. Idempotent. connect_ranks calls it.
     void init_transport();
+
+    // Moves a buffer whose transport has not started to another rank.
+    void set_rank(int new_rank);
 
     void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, bool activate = true);
 

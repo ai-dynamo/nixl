@@ -141,15 +141,10 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     rdma_buffer_ptr = m_rdma_alloc->ptr();
     CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
 
-    // Allocate and clean shrink buffer
+    // Allocate shrink buffer, _init_rank_state cleans it
     int num_mask_buffer_bytes = max_num_ranks * sizeof(int);
     m_mask_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_mask_buffer_bytes));
     mask_buffer_ptr = static_cast<int *>(m_mask_alloc->ptr());
-    CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, num_mask_buffer_bytes));
-    CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
-    active_ranks.assign(max_num_ranks, false);
-    active_ranks[rank] = true;
-    set_active_rank_bound(rank + 1);
 
     int num_sync_buffer_bytes = max_num_ranks * sizeof(int);
     m_sync_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes));
@@ -159,15 +154,12 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_count_ptr, 0, num_sync_buffer_bytes));
 
-    CUDA_CHECK(cudaDeviceSynchronize());
-
     my_peer_info.rdma_buffer_ptr = rdma_buffer_ptr;
     my_peer_info.device_id = get_local_device_id();
     my_peer_info.sync_buffer_ptr = sync_buffer_ptr;
-    my_peer_info.rank = rank;
+    _init_rank_state();
 
-    nixl_peer_info.resize(max_num_ranks);
-    nixl_peer_info[rank] = my_peer_info;
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     // A process that is checkpointed before it joins defers the agent: the
     // buffers and device context that CUDA graphs reference then exist without
@@ -176,6 +168,33 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
         _nixl_agent_init();
 
     _nixl_ep_init();
+}
+
+// Writes the state that depends on this buffer's rank, for a buffer with no
+// peers connected: the mask, the active ranks and the peer info.
+void Buffer::_init_rank_state() {
+    CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, max_num_ranks * sizeof(int)));
+    CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
+    active_ranks.assign(max_num_ranks, false);
+    active_ranks[rank] = true;
+    set_active_rank_bound(rank + 1);
+
+    my_peer_info.rank = rank;
+    nixl_peer_info.assign(max_num_ranks, NixlPeerInfo{});
+    nixl_peer_info[rank] = my_peer_info;
+}
+
+void Buffer::set_rank(int new_rank) {
+    // The agent is named after the rank, and peers address this rank's slots
+    // by it, so the rank can only move before the transport starts.
+    EP_HOST_ASSERT(available and "update_memory_buffers must be called first");
+    EP_HOST_ASSERT(nixl_agent_info == nullptr and "set_rank must precede init_transport");
+    EP_HOST_ASSERT(0 <= new_rank and new_rank < max_num_ranks);
+    rank = new_rank;
+    _init_rank_state();
+    // Kernels read the rank from the device context, at a fixed address.
+    gpu_ctx.rank = rank;
+    CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
 }
 
 void Buffer::init_transport() {
@@ -504,7 +523,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
                               x.data_ptr(), topk_idx.data_ptr<topk_idx_t>(),
                                next_clean_meta.first, next_clean_meta.second,
                                num_tokens, hidden, num_max_dispatch_tokens_per_rank,
-                               num_topk, rank_bound, num_experts_per_rank, rank,
+                               num_topk, rank_bound, num_experts_per_rank,
                                use_fp8, round_scale, use_ue8m0,
                                timeout_cycles,
                                workspace, num_device_sms,
@@ -607,7 +626,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
                               combine_wait_recv_cost_stats.has_value() ? combine_wait_recv_cost_stats->data_ptr<int64_t>() : nullptr,
                               next_clean_meta.first, next_clean_meta.second,
                               num_combined_tokens, hidden, num_max_dispatch_tokens_per_rank,
-                              num_topk, rank_bound, num_experts_per_rank, rank,
+                              num_topk, rank_bound, num_experts_per_rank,
                              use_logfmt, timeout_cycles,
                               workspace, num_device_sms,
                               launch_stream, phases, zero_copy, gpu_ctx_ptr);
@@ -917,6 +936,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def(pybind11::init<int, bool, int>())
         .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers, py::arg("num_ranks"), py::arg("num_experts_per_rank"), py::arg("num_rdma_bytes"), py::arg("init_transport") = true)
         .def("init_transport", &nixl_ep::Buffer::init_transport)
+        .def("set_rank", &nixl_ep::Buffer::set_rank)
         .def("barrier", &nixl_ep::Buffer::barrier)
         .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, bool activate) {
             buffer.connect_ranks(remote_ranks, nixl_ep::convert_mds(remote_mds), activate);
