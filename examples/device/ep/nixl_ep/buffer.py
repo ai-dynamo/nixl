@@ -78,6 +78,8 @@ class Buffer:
 
         if disable_ll_nvlink:
             os.environ["UCX_TLS"] = "^cuda_ipc"
+            os.environ["NIXL_LIBFABRIC_DISABLE_CUDA_IPC"] = "1"
+            os.environ["FI_EFA_ENABLE_SHM_TRANSFER"] = "0"
 
         self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy, timeout_ms)
 

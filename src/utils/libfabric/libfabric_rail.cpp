@@ -29,6 +29,8 @@
 #include <stdexcept>
 #include <stack>
 
+#include <rdma/fi_atomic.h>
+
 /*
  * The value of the following libfabric EFA provider option is hard-coded on purpose.
  * FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV first appears in the libfabric 2.5 headers, but NIXL (e.g.
@@ -489,6 +491,9 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
 #endif
 
     try {
+        if (provider == "efa") {
+            hints->caps |= FI_ATOMIC;
+        }
         // Get fabric info for this specific device - first try with FI_HMEM
         int ret = fi_getinfo(requested_api_version, NULL, NULL, 0, hints, &info);
 
@@ -1503,7 +1508,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
         // Libfabric fi_writemsg call (supports FI_MORE flag)
         {
             const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
-            ret = fi_writemsg(endpoint, &msg, fi_flags | FI_REMOTE_CQ_DATA);
+            ret = fi_writemsg(endpoint, &msg, fi_flags);
         }
 
         if (ret == 0) {
@@ -1549,6 +1554,42 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
     }
 
     NIXL_ERROR << "fi_writemsg failed on rail " << rail_id << ": " << fi_strerror(-ret);
+    return NIXL_ERR_BACKEND;
+}
+
+nixl_status_t
+nixlLibfabricRail::postAtomicAdd(const uint64_t *operand,
+                                 fi_addr_t dest_addr,
+                                 uint64_t remote_addr,
+                                 uint64_t remote_key,
+                                 nixlLibfabricReq *req,
+                                 uint64_t fi_flags) {
+    struct fi_ioc ioc{const_cast<uint64_t *>(operand), 1};
+    struct fi_rma_ioc rma_ioc{remote_addr, 1, remote_key};
+    struct fi_msg_atomic msg = {};
+    msg.msg_iov = &ioc;
+    msg.iov_count = 1;
+    msg.addr = dest_addr;
+    msg.rma_iov = &rma_ioc;
+    msg.rma_iov_count = 1;
+    msg.datatype = FI_UINT64;
+    msg.op = FI_SUM;
+    msg.context = &req->ctx;
+
+    ssize_t ret = -FI_EAGAIN;
+    while (ret == -FI_EAGAIN) {
+        {
+            const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
+            ret = fi_atomicmsg(endpoint, &msg, fi_flags);
+        }
+        if (ret == -FI_EAGAIN && !progress_thread_enabled_) {
+            progressCompletionQueue();
+        }
+    }
+    if (ret == 0) {
+        return NIXL_SUCCESS;
+    }
+    NIXL_ERROR << "fi_atomicmsg failed on rail " << rail_id << ": " << fi_strerror(-ret);
     return NIXL_ERR_BACKEND;
 }
 
