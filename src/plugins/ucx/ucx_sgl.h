@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 extern "C" {
 #include <ucp/api/ucp.h>
@@ -31,13 +32,22 @@ extern "C" {
 
 namespace nixl::ucx {
 
+struct affinePlan {
+    size_t runCount;
+    size_t rows;
+    size_t itemSize;
+    size_t localStrideBytes;
+    size_t remoteStrideBytes;
+};
+
 class sglXfer {
 public:
     sglXfer(const nixl_meta_dlist_t &local,
             const nixl_meta_dlist_t &remote,
             size_t worker_id,
             size_t start_idx,
-            size_t end_idx);
+            size_t end_idx,
+            const std::optional<affinePlan> &plan = std::nullopt);
 
     [[nodiscard]] const ucx_connection_ptr_t &
     conn() const noexcept {

@@ -27,9 +27,11 @@ sglXfer::sglXfer(const nixl_meta_dlist_t &local,
                  const nixl_meta_dlist_t &remote,
                  size_t worker_id,
                  size_t start_idx,
-                 size_t end_idx) {
+                 size_t end_idx,
+                 const std::optional<affinePlan> &plan) {
     NIXL_ASSERT(end_idx > start_idx);
-    size_ = end_idx - start_idx;
+    size_ = plan ? plan->runCount * plan->rows + end_idx - start_idx - plan->runCount :
+                   end_idx - start_idx;
     conn_ = static_cast<nixlUcxPublicMetadata *>(remote[start_idx].metadataP)->conn;
 
     static_assert(sizeof(void *) == sizeof(uint64_t) && sizeof(size_t) == sizeof(uint64_t) &&
@@ -47,18 +49,44 @@ sglXfer::sglXfer(const nixl_meta_dlist_t &local,
     memhs_ = reinterpret_cast<ucp_mem_h *>(base + 3 * array_bytes);
     rkeys_ = reinterpret_cast<ucp_rkey_h *>(base + 4 * array_bytes);
 
-    for (size_t i = start_idx; i < end_idx; ++i) {
-        const size_t out = i - start_idx;
+    if (!plan) {
+        for (size_t i = start_idx; i < end_idx; ++i) {
+            const size_t out = i - start_idx;
+            const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
+            const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
+            NIXL_ASSERT(local[i].len == remote[i].len);
+            NIXL_ASSERT(rmd->conn == conn_);
+
+            localAddrs_[out] = reinterpret_cast<void *>(local[i].addr);
+            remoteAddrs_[out] = static_cast<uint64_t>(remote[i].addr);
+            lengths_[out] = local[i].len;
+            memhs_[out] = lmd->getMem().getMemh();
+            rkeys_[out] = rmd->getRkey(worker_id).get();
+        }
+        return;
+    }
+
+    auto fill = [&](size_t i, size_t out, size_t row) {
         const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
         const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
         NIXL_ASSERT(local[i].len == remote[i].len);
         NIXL_ASSERT(rmd->conn == conn_);
 
-        localAddrs_[out] = reinterpret_cast<void *>(local[i].addr);
-        remoteAddrs_[out] = static_cast<uint64_t>(remote[i].addr);
-        lengths_[out] = local[i].len;
+        const bool affine = i - start_idx < plan->runCount;
+        localAddrs_[out] =
+            reinterpret_cast<void *>(local[i].addr + (affine ? row * plan->localStrideBytes : 0));
+        remoteAddrs_[out] =
+            static_cast<uint64_t>(remote[i].addr + (affine ? row * plan->remoteStrideBytes : 0));
+        lengths_[out] = affine ? plan->itemSize : local[i].len;
         memhs_[out] = lmd->getMem().getMemh();
         rkeys_[out] = rmd->getRkey(worker_id).get();
+    };
+    size_t out = 0;
+    for (size_t i = start_idx; i < end_idx; ++i) {
+        const size_t rows = i - start_idx < plan->runCount ? plan->rows : 1;
+        for (size_t row = 0; row < rows; ++row) {
+            fill(i, out++, row);
+        }
     }
 }
 

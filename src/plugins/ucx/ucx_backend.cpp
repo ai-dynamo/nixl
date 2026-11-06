@@ -30,8 +30,11 @@
 
 #include <array>
 #include <bit>
+#include <charconv>
 #include <cstdint>
+#include <limits>
 #include <optional>
+#include <string_view>
 #include <string.h>
 #include "absl/strings/str_split.h"
 
@@ -226,6 +229,8 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
                                           nixlBackendMD* &out)
 {
     auto priv = std::make_unique<nixlUcxPrivateMetadata>();
+    priv->regionAddr = mem.addr;
+    priv->regionLen = mem.len;
 
     // TODO: Add nixl_mem check?
     const int ret = uc->memReg((void*) mem.addr, mem.len, priv->mem, nixl_mem);
@@ -272,15 +277,21 @@ makePublicMetadataRkeys(const ucx_connection_ptr_t &conn, const size_t count, co
 } // namespace
 
 nixlUcxPublicMetadata::nixlUcxPublicMetadata(const ucx_connection_ptr_t &conn,
-                                             std::vector<nixl::ucx::rkey> &&rkeys)
+                                             std::vector<nixl::ucx::rkey> &&rkeys,
+                                             uintptr_t regionAddr,
+                                             size_t regionLen)
     : nixlBackendMD(false),
       conn(conn),
+      regionAddr(regionAddr),
+      regionLen(regionLen),
       rkeys_(std::move(rkeys)) {}
 
 nixl_status_t
-nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
-                                 const std::string &agent,
-                                 nixlBackendMD* &output) {
+nixlUcxEngine::internalMDHelper(const nixl_blob_t &blob,
+                                const std::string &agent,
+                                uintptr_t regionAddr,
+                                size_t regionLen,
+                                nixlBackendMD *&output) {
     try {
         const auto it = remoteConnMap.find(agent);
 
@@ -296,7 +307,10 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
         }
         // nixlSerDes::_stringToBytes() was used to "unpack" blob here.
         output = new nixlUcxPublicMetadata(
-            it->second, makePublicMetadataRkeys(it->second, workers_.size(), blob.data()));
+            it->second,
+            makePublicMetadataRkeys(it->second, workers_.size(), blob.data()),
+            regionAddr,
+            regionLen);
         return NIXL_SUCCESS;
     }
     catch (const std::runtime_error &e) {
@@ -310,7 +324,8 @@ nixlUcxEngine::loadLocalMD (nixlBackendMD* input,
                             nixlBackendMD* &output)
 {
     nixlUcxPrivateMetadata* input_md = (nixlUcxPrivateMetadata*) input;
-    return internalMDHelper(input_md->rkeyStr, localAgent, output);
+    return internalMDHelper(
+        input_md->rkeyStr, localAgent, input_md->regionAddr, input_md->regionLen, output);
 }
 
 // To be cleaned up
@@ -319,7 +334,7 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
                                            const std::string &remote_agent,
                                            nixlBackendMD* &output)
 {
-    return internalMDHelper(input.metaInfo, remote_agent, output);
+    return internalMDHelper(input.metaInfo, remote_agent, input.addr, input.len, output);
 }
 
 nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
@@ -417,6 +432,11 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
         NIXL_ERROR << "Local or remote descriptor list is empty";
         return NIXL_ERR_INVALID_PARAM;
     }
+    constexpr std::string_view compactPrefix = "ucx_affine_write_v1=";
+    if (opt_args && std::string_view(opt_args->customParam).starts_with(compactPrefix) &&
+        (!sglEnabled_ || operation != NIXL_WRITE)) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
 
     const size_t worker_id = getSharedWorkerId(opt_args);
     /* TODO: try to get from a pool first */
@@ -424,7 +444,12 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
 
 #ifdef HAVE_UCX_SGL_API
     if (sglEnabled_ && operation == NIXL_WRITE) {
-        return prepXferSgl(local, remote, handle);
+        const auto ret = prepXferSgl(local, remote, handle, opt_args);
+        if (ret != NIXL_SUCCESS) {
+            delete static_cast<nixlUcxBackendReqH *>(handle);
+            handle = nullptr;
+        }
+        return ret;
     }
 #endif
 
@@ -489,14 +514,111 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
 }
 
 #ifdef HAVE_UCX_SGL_API
+namespace {
+std::optional<nixl::ucx::affinePlan>
+parseUcxAffinePlan(std::string_view value) {
+    constexpr std::string_view prefix = "ucx_affine_write_v1=";
+    if (!value.starts_with(prefix)) {
+        return std::nullopt;
+    }
+    value.remove_prefix(prefix.size());
+    const auto optionSep = value.find(';');
+    const auto options =
+        optionSep == std::string_view::npos ? std::string_view{} : value.substr(optionSep + 1);
+    if (!options.empty()) {
+        constexpr std::string_view workerPrefix = "worker_id=";
+        size_t workerId;
+        if (!options.starts_with(workerPrefix)) {
+            throw std::invalid_argument("invalid UCX affine options");
+        }
+        const auto id = options.substr(workerPrefix.size());
+        const auto result = std::from_chars(id.data(), id.data() + id.size(), workerId);
+        if (id.empty() || result.ec != std::errc{} || result.ptr != id.data() + id.size()) {
+            throw std::invalid_argument("invalid UCX affine worker_id");
+        }
+        value = value.substr(0, optionSep);
+    }
+    std::array<size_t, 5> parts{};
+    for (size_t i = 0; i < parts.size(); ++i) {
+        const auto comma = value.find(',');
+        const auto field = value.substr(0, comma);
+        const auto result = std::from_chars(field.data(), field.data() + field.size(), parts[i]);
+        if (field.empty() || result.ec != std::errc{} ||
+            result.ptr != field.data() + field.size() || parts[i] == 0 ||
+            (i + 1 < parts.size()) != (comma != std::string_view::npos)) {
+            throw std::invalid_argument("invalid UCX affine plan");
+        }
+        if (comma != std::string_view::npos) {
+            value.remove_prefix(comma + 1);
+        }
+    }
+    return nixl::ucx::affinePlan{parts[0], parts[1], parts[2], parts[3], parts[4]};
+}
+
+bool
+spanCovered(uintptr_t addr,
+            size_t rows,
+            size_t itemSize,
+            size_t stride,
+            uintptr_t regionAddr,
+            size_t regionLen) {
+    constexpr auto max = std::numeric_limits<size_t>::max();
+    if (rows == 0 || itemSize == 0 || stride < itemSize || addr < regionAddr ||
+        rows - 1 > (max - itemSize) / stride) {
+        return false;
+    }
+    const size_t span = (rows - 1) * stride + itemSize;
+    const size_t offset = addr - regionAddr;
+    return addr <= max - span && offset <= regionLen && span <= regionLen - offset;
+}
+} // namespace
+
 nixl_status_t
 nixlUcxEngine::prepXferSgl(const nixl_meta_dlist_t &local,
                            const nixl_meta_dlist_t &remote,
-                           nixlBackendReqH *handle) const {
+                           nixlBackendReqH *handle,
+                           const nixl_opt_b_args_t *opt_args) const {
     NIXL_ASSERT(local.descCount() == remote.descCount());
 
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
-    int_handle->sgl.emplace(local, remote, int_handle->getWorkerId(), 0, local.descCount());
+    std::optional<nixl::ucx::affinePlan> plan;
+    try {
+        plan = parseUcxAffinePlan(opt_args ? std::string_view(opt_args->customParam) :
+                                             std::string_view{});
+    }
+    catch (const std::invalid_argument &) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    if (plan) {
+        const auto max = std::numeric_limits<size_t>::max();
+        const size_t count = size_t(local.descCount());
+        constexpr size_t sglEntryBytes = 5 * sizeof(uint64_t);
+        if (plan->runCount > count || plan->rows > max / plan->itemSize ||
+            plan->localStrideBytes < plan->itemSize || plan->remoteStrideBytes < plan->itemSize ||
+            plan->runCount > (max / sglEntryBytes - (count - plan->runCount)) / plan->rows) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        for (size_t i = 0; i < plan->runCount; ++i) {
+            const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
+            const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
+            if (local[i].len != plan->rows * plan->itemSize || remote[i].len != local[i].len ||
+                !spanCovered(local[i].addr,
+                             plan->rows,
+                             plan->itemSize,
+                             plan->localStrideBytes,
+                             lmd->regionAddr,
+                             lmd->regionLen) ||
+                !spanCovered(remote[i].addr,
+                             plan->rows,
+                             plan->itemSize,
+                             plan->remoteStrideBytes,
+                             rmd->regionAddr,
+                             rmd->regionLen)) {
+                return NIXL_ERR_INVALID_PARAM;
+            }
+        }
+    }
+    int_handle->sgl.emplace(local, remote, int_handle->getWorkerId(), 0, local.descCount(), plan);
     return NIXL_SUCCESS;
 }
 
