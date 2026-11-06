@@ -1147,10 +1147,13 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         total_bytes += local_descs[i].len;
     }
 
+    // Empty remote agent means loopback, same as passing our own name
+    const std::string &target_agent = remote_agent.empty() ? data->name_ : remote_agent;
+
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    const auto rem_sec_it = data->remoteSections_.find(remote_agent);
+    const auto rem_sec_it = data->remoteSections_.find(target_agent);
     if (data->remoteSections_.end() == rem_sec_it) {
-        NIXL_ERROR_FUNC << "metadata for remote agent '" << remote_agent << "' not found";
+        NIXL_ERROR_FUNC << "metadata for remote agent '" << target_agent << "' not found";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
@@ -1185,7 +1188,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
     auto handle =
-        std::make_unique<nixlXferReqH>(remote_agent,
+        std::make_unique<nixlXferReqH>(target_agent,
                                        operation,
                                        local_descs.getType(),
                                        remote_descs.getType(),
