@@ -29,6 +29,7 @@
 #include <string_view>
 #include <system_error>
 #include <unistd.h>
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include <absl/strings/str_split.h>
 
@@ -325,7 +326,8 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     dataQpCount_ = parseDataQpCount((*custom_params)["data_qp_count"]);
-    writeByteStriping_ = (*custom_params)["write_byte_striping"] == "1";
+    writeByteStriping_ =
+        nixl::getBackendParamDefaulted(*custom_params, "write_byte_striping", false);
     const auto min_bytes = custom_params->find("write_stripe_min_bytes");
     if (min_bytes != custom_params->end() && !min_bytes->second.empty() &&
         (!parseUnsigned(min_bytes->second, writeStripeMinBytes_) || writeStripeMinBytes_ == 0)) {
