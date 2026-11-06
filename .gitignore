@@ -27,3 +27,18 @@ subprojects/*
 # ucx-spcx-plugin source/module staged into the build context by build-container.sh
 ucx-spcx-plugin-src/
 ucx-spcx-plugin-install/
+
+# Local dev overrides
+.env
+.devcontainer/devcontainer-lock.json
+
+# logging
+*.log
+logs/
+
+# perf/FlameGraph
+*.perf
+*.svg
+*.folded
+
+*.pyc

@@ -501,6 +501,7 @@ else
     if [ "${BUILD_NIXL_EP}" = "true" ]; then
         EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
     fi
+    EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Ddisable_gpudirect_tcpxo_cuda=true -Ddisable_rxdm_dxs=true"
     # When NIXL_PYTHON is set (currently only by test-dl-ep-matrix.yaml), build and
     # install NIXL EP against vLLM's Python/Torch venv to prevent ABI mismatches.
     # Only NIXL's Meson build uses this venv; dependency builds keep system Python.

@@ -15,9 +15,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+set -e
+
 SOURCE_DIR=$(dirname "$(readlink -f "$0")")
 BUILD_CONTEXT=$(dirname "$(readlink -f "$SOURCE_DIR")")
 DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
+WEBRTC_DOCKER_FILE="${SOURCE_DIR}/Dockerfile.webrtc"
 commit_id=$(git rev-parse --short HEAD)
 
 # Get latest TAG and add COMMIT_ID for dev
@@ -36,6 +39,8 @@ BASE_IMAGE=${BASE_IMAGE:-}
 BASE_IMAGE_TAG=${BASE_IMAGE_TAG:-}
 MANYLINUX_IMAGE=quay.io/pypa/manylinux_2_28
 MANYLINUX_IMAGE_TAG=2026.06.06-1
+WEBRTC_BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
+WEBRTC_BASE_IMAGE_TAG=26.08-cuda13.4-devel-ubuntu24.04
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
@@ -64,6 +69,11 @@ BUILD_UCX_SPCX_PLUGIN="false"
 UCX_SPCX_PLUGIN_REF="v0.3.x"
 UCX_SPCX_PLUGIN_INSTALL=""
 BUILD_OPTIONS_FILE=""
+
+DISABLE_RXDM_DXS="false"
+DISABLE_GPUDIRECT_TCPXO_CUDA="false"
+FASTRAK_RXDM_URI=""
+DXS_CLIENT_URI=""
 
 get_options() {
     while :; do
@@ -126,6 +136,15 @@ get_options() {
         --tag)
             if [ "$2" ]; then
                 TAG="--tag $2"
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --webrtc-tag)
+            if [ "$2" ]; then
+                WEBRTC_IMAGE_REF="$2"
+                WEBRTC_TAG=("--tag" "$2")
                 shift
             else
                 missing_requirement $1
@@ -272,6 +291,28 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --disable-rxdm-dxs)
+            DISABLE_RXDM_DXS=true
+            ;;
+        --disable-gpudirect-tcpxo-cuda)
+            DISABLE_GPUDIRECT_TCPXO_CUDA=true
+            ;;
+        --rxdm-uri)
+            if [ "$2" ]; then
+                FASTRAK_RXDM_URI=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --dxs-uri)
+            if [ "$2" ]; then
+                DXS_CLIENT_URI=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --)
             shift
             break
@@ -302,6 +343,10 @@ get_options() {
 
     if [ -z "$TAG" ]; then
         TAG="--tag nixl:${VERSION}"
+    fi
+    if [ "${#WEBRTC_TAG[@]}" -eq 0 ]; then
+        WEBRTC_IMAGE_REF="webrtc:${BASE_IMAGE_TAG:-$WEBRTC_BASE_IMAGE_TAG}"
+        WEBRTC_TAG=("--tag" "${WEBRTC_IMAGE_REF}")
     fi
 }
 
@@ -342,6 +387,10 @@ show_build_options() {
         echo "UCX spcx plugin: Disabled"
     fi
     echo "Build Type: ${BUILD_TYPE}"
+    echo "RxDM/DXS disabled: ${DISABLE_RXDM_DXS}"
+    echo "GPUDirect-TCPXO CUDA disabled: ${DISABLE_GPUDIRECT_TCPXO_CUDA}"
+    echo "RxDM URI: ${FASTRAK_RXDM_URI}"
+    echo "DXS URI: ${DXS_CLIENT_URI}"
 }
 
 # UCX_REF is often a floating branch/tag (e.g. v1.22.x), so the same ref can
@@ -420,6 +469,10 @@ show_help() {
     echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
     echo "  [--build-options-file path to write the resolved build options as KEY=VALUE lines]"
     echo "  [DOCKER_BUILD_EXTRA_ARGS env var: extra arguments passed through to docker build, e.g. --secret id=ghconfig,src=<file>; word-split, so paths with spaces are not supported]"
+    echo "  [--disable-rxdm-dxs to stub out RxDM/DXS and disable this capability in GPUDirect-TCPXO]"
+    echo "  [--disable-gpudirect-tcpxo-cuda to disable CUDA support in GPUDirect-TCPXO]"
+    echo "  [--rxdm-uri URI to fastrak-rxdm]"
+    echo "  [--dxs-uri URI to dxs-client]"
     exit 0
 }
 
@@ -432,6 +485,7 @@ error() {
     exit 1
 }
 
+WEBRTC_TAG=()
 get_options "$@"
 
 if [ -d "$NIXL_DIR/build" ]; then
@@ -441,6 +495,7 @@ fi
 
 BUILD_ARGS+="${BASE_IMAGE:+ --build-arg BASE_IMAGE=$BASE_IMAGE}"
 BUILD_ARGS+="${BASE_IMAGE_TAG:+ --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG}"
+BUILD_ARGS+=" --build-arg WEBRTC_IMAGE=$WEBRTC_IMAGE_REF"
 BUILD_ARGS+=" --build-arg MANYLINUX_IMAGE=$MANYLINUX_IMAGE --build-arg MANYLINUX_IMAGE_TAG=$MANYLINUX_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+="${DEFAULT_PYTHON_VERSION:+ --build-arg DEFAULT_PYTHON_VERSION=$DEFAULT_PYTHON_VERSION}"
@@ -461,6 +516,14 @@ BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 BUILD_ARGS+=" --build-arg BUILD_INFINIA=$BUILD_INFINIA"
 BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
 BUILD_ARGS+=" --build-arg BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
+BUILD_ARGS+=" --build-arg DISABLE_RXDM_DXS=$DISABLE_RXDM_DXS"
+BUILD_ARGS+=" --build-arg DISABLE_GPUDIRECT_TCPXO_CUDA=$DISABLE_GPUDIRECT_TCPXO_CUDA"
+BUILD_ARGS+="${FASTRAK_RXDM_URI:+ --build-arg FASTRAK_RXDM_URI=$FASTRAK_RXDM_URI}"
+BUILD_ARGS+="${DXS_CLIENT_URI:+ --build-arg DXS_CLIENT_URI=$DXS_CLIENT_URI}"
+WEBRTC_BUILD_ARGS=(
+    --build-arg "BASE_IMAGE=$WEBRTC_BASE_IMAGE"
+    --build-arg "BASE_IMAGE_TAG=$WEBRTC_BASE_IMAGE_TAG"
+)
 
 # The plugin source is fetched on the host and placed inside the build
 # context (ucx-spcx-plugin-src/), where the Dockerfile's plugin RUN builds
@@ -581,6 +644,9 @@ fi
 
 show_build_options
 [ -n "$BUILD_OPTIONS_FILE" ] && write_build_options_file
+
+echo "Building WebRTC tagged: ${WEBRTC_TAG[*]}"
+docker build --platform linux/$ARCH -f "$WEBRTC_DOCKER_FILE" "${WEBRTC_BUILD_ARGS[@]}" "${WEBRTC_TAG[@]}" $NO_CACHE "$BUILD_CONTEXT"
 
 # The Dockerfiles use RUN --mount, which the legacy builder rejects. Default to
 # BuildKit for Docker releases that do not already (pre-23); podman ignores this.
