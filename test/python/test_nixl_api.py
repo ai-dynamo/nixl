@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import contextlib
+import gc
 import os
 import re
 import tempfile
@@ -141,6 +142,27 @@ def test_nixl_conf_bad_sync_mode():
         nixl_agent_config(sync_mode=1)
 
 
+@pytest.mark.parametrize("delay_us", [None, 0, 50])
+def test_prog_thread_delay_agent(monkeypatch, delay_us):
+    captured = {}
+    real_ctor = bindings.nixlAgent
+
+    def spy_ctor(agent_name, agent_config):
+        captured["pthrDelay"] = agent_config.pthrDelay
+        return real_ctor(agent_name, agent_config)
+
+    monkeypatch.setattr(bindings, "nixlAgent", spy_ctor)
+    kwargs = {} if delay_us is None else {"prog_thread_delay_us": delay_us}
+    nixl_agent(str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[], **kwargs))
+    assert captured["pthrDelay"] == (delay_us or 0)
+
+
+@pytest.mark.parametrize("delay_us", [-1, 1.5])
+def test_nixl_conf_bad_prog_thread_delay(delay_us):
+    with pytest.raises(ValueError, match="prog_thread_delay_us must be"):
+        nixl_agent_config(prog_thread_delay_us=delay_us)
+
+
 def test_default_backend_configs_are_independent():
     """Keep each configuration's default backend list independent."""
     first_config = nixl_agent_config()
@@ -212,6 +234,22 @@ def test_metadata_pass(two_agents):
     passed_name = agent2.add_remote_agent(agent1.get_agent_metadata())
     assert passed_name == agent1.name.encode()
     utils.free_passthru(addr)
+
+
+def test_remove_remote_agent_status(two_agents):
+    agent1, agent2 = two_agents
+
+    agent1.add_remote_agent(agent2.get_agent_metadata())
+    assert agent1.remove_remote_agent(agent2.name) is True
+    assert not agent1.check_remote_metadata(agent2.name)
+
+    # Removing an agent that isn't loaded is not an error, so teardown can repeat it
+    assert agent1.remove_remote_agent(agent2.name) is False
+    assert agent1.remove_remote_agent(str(uuid.uuid4())) is False
+
+    # Other failures raise
+    with pytest.raises(bindings.nixlInvalidParamError):
+        agent1.remove_remote_agent(agent1.name)
 
 
 @pytest.mark.timeout(5, func_only=True)
@@ -869,6 +907,34 @@ def test_xfer_trace_info_binding_rejects_a_null_handle(one_empty_agent):
 
 
 def test_xfer_trace_info_released_handle_skips_the_binding(one_empty_agent):
-    handle = nixl_xfer_handle(one_empty_agent.agent, 0)
+    handle = nixl_xfer_handle(one_empty_agent, 0)
     handle._released = True
     assert one_empty_agent.get_xfer_trace_info(handle) is None
+
+
+def test_leaked_xfer_handle_is_queued_on_the_agent(one_empty_agent, monkeypatch):
+    """A release that fails in the finalizer defers to the nixl_agent's leak list.
+
+    The handle comes from initialize_xfer, so it holds whatever the agent passes
+    it. That used to be the pybind agent, which has no leak list, and the handle
+    was dropped without a trace.
+    """
+
+    class FailingNative:
+        def createXferReq(self, *args):
+            return 0xDEAD
+
+        def releaseXferReq(self, handle):
+            raise RuntimeError("release refused")
+
+    monkeypatch.setattr(one_empty_agent, "agent", FailingNative())
+    try:
+        handle = one_empty_agent.initialize_xfer("WRITE", None, None, "peer")
+        del handle
+        gc.collect()
+
+        assert one_empty_agent._leaked_xfer_handles == [0xDEAD]
+    finally:
+        # 0xDEAD is not a real request, so the agent's destructor must not
+        # hand it to the native release once the real agent is back.
+        one_empty_agent._leaked_xfer_handles.clear()

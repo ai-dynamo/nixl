@@ -72,6 +72,7 @@ endif
 unit_test_exe = executable('unit',
     sources : [
         'main.cpp',
+        'allocation_counter.cpp',
         '../common.cpp',
     ],
     cpp_args : cpp_flags,
