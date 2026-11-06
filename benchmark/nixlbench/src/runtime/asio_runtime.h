@@ -52,7 +52,7 @@ struct xferBenchAsioIncoming {
 class xferBenchAsioRT : public xferBenchRT {
 public:
     xferBenchAsioRT(const std::string &ip, const std::uint16_t port)
-        : endpoint_(asio::ip::address::from_string(ip), asio::ip::port_type(port)),
+        : endpoint_(asio::ip::make_address(ip), asio::ip::port_type(port)),
           timer_(context_, asio::chrono::seconds(25)),
           acceptor_(attemptAcceptor()),
           thread_(&xferBenchAsioRT::main, this) {

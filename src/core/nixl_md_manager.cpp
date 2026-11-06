@@ -32,6 +32,8 @@
 #include <string>
 #include <string_view>
 
+#include <asio.hpp>
+
 // Definition of the default metadata label (declared in nixl_types.h). It used
 // to live in the now-deleted nixl_listener.cpp; the manager is a natural home.
 const std::string default_metadata_label = "metadata";
@@ -44,7 +46,8 @@ namespace {
 // ETCD and TCPStore are mutually exclusive (a run uses exactly one).
 [[nodiscard]] std::unique_ptr<nixlMetadataBackend>
 makeBackend([[maybe_unused]] nixlMetadataContext &ctx,
-            [[maybe_unused]] const nixlMDConfig &config) {
+            [[maybe_unused]] const nixlMDConfig &config,
+            asio::io_context &io_context) {
     const bool use_tcpstore = nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINT");
 #if HAVE_ETCD
     if (nixlMDManager::etcdConfigured()) {
@@ -56,7 +59,7 @@ makeBackend([[maybe_unused]] nixlMetadataContext &ctx,
     }
 #endif
     if (use_tcpstore) {
-        return std::make_unique<nixlTcpStoreMetadataBackend>(ctx, config);
+        return std::make_unique<nixlTcpStoreMetadataBackend>(ctx, config, io_context);
     }
     return nullptr;
 }
@@ -85,6 +88,21 @@ noTransport() {
 
 } // namespace
 
+class nixlMDManager::AsioImpl {
+public:
+    AsioImpl() : ioContext_(), workGuard_(asio::make_work_guard(ioContext_)) {}
+
+    ~AsioImpl() = default;
+
+    // The shared I/O context for all metadata backends. Async I/O completion
+    // handlers from all backends are invoked on this context.
+    asio::io_context ioContext_;
+    // Use a work guard to keep the context alive when there is no work to do.
+    asio::executor_work_guard<asio::io_context::executor_type> workGuard_;
+    // The dedicated thread that runs I/O completion handlers.
+    std::thread ioThread_;
+};
+
 bool
 nixlMDManager::etcdConfigured() {
 #if HAVE_ETCD
@@ -99,11 +117,13 @@ nixlMDManager::etcdConfigured() {
 // otherwise the configured backend. This preserves the agent's original per-call
 // precedence (address wins over a configured backend).
 nixlMDManager::nixlMDManager(nixlMetadataContext &ctx, const nixlMDConfig &config)
-    : p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx, config)),
-      backend_(makeBackend(ctx, config)) {}
+    : asioImpl_(std::make_unique<AsioImpl>()),
+      p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx, config)),
+      backend_(makeBackend(ctx, config, asioImpl_->ioContext_)) {}
 
-// Each backend joins its own thread as it is destroyed, so nothing to do here.
-nixlMDManager::~nixlMDManager() = default;
+nixlMDManager::~nixlMDManager() {
+    stop();
+}
 
 nixlMetadataBackend *
 nixlMDManager::select(const nixl_opt_args_t *extra_params) const noexcept {
@@ -152,6 +172,22 @@ nixlMDManager::start() {
     if (backend_) {
         backend_->start();
     }
+
+    asioImpl_->ioThread_ = std::thread([this] {
+        // All I/O errors are handled by the backend implementation.
+        // An unexpected exception may leave the backend in an inconsistent state.
+        // Terminate the program to avoid undefined behavior.
+        try {
+            asioImpl_->ioContext_.run();
+            NIXL_DEBUG << "I/O thread exited normally.";
+        }
+        catch (const std::exception &e) {
+            NIXL_FATAL << "I/O thread died: " << e.what();
+        }
+        catch (...) {
+            NIXL_FATAL << "I/O thread died with an unknown exception";
+        }
+    });
 }
 
 void
@@ -159,5 +195,9 @@ nixlMDManager::stop() {
     p2pBackend_->stop();
     if (backend_) {
         backend_->stop();
+    }
+    asioImpl_->workGuard_.reset();
+    if (asioImpl_->ioThread_.joinable()) {
+        asioImpl_->ioThread_.join();
     }
 }
