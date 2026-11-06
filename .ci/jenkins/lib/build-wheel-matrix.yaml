@@ -19,16 +19,14 @@
 # =============================================================================
 # vLLM/SGLang NIXL disaggregation sanity (aarch64 only)
 # =============================================================================
-# Each framework sanity runs as its own top-level branch (build_helper_vllm /
-# build_helper_sglang, aarch64): build the wheels (reusing the cached wheel_base), layer
-# them onto the pinned framework base image (built by the ci-demo runs_on_dockers mechanic
-# from .ci/dockerfiles/Dockerfile.{vllm,sglang}-base), then run a 1-prefill/1-decode NIXL
-# KV-transfer sanity on the gb200nvl72_ci partition of the dlcluster SLURM cluster
-# (Grace-Blackwell GB200 = aarch64). The x86_64 wheels build in the upstream `manylinux`
-# runner (wheel-only, no sanity). The aarch64 wheels are deliberately built twice (once
-# per framework branch) — independent branches keep the Jenkins UI readable, whereas nested
-# step-level parallelism renders as an unlabeled blob (JENKINS-54010). The test model
-# weights are pulled at runtime (not baked into the base image) to keep image pulls fast.
+# The aarch64 branch (build-wheel-sanity-helper) builds the wheels once (reusing the cached
+# wheel_base), then splits per framework: layer them onto the pinned framework base image
+# (built by the ci-demo runs_on_dockers mechanic from .ci/dockerfiles/Dockerfile.{vllm,sglang}-base)
+# while both SLURM allocations are requested, then run a 1-prefill/1-decode NIXL
+# KV-transfer sanity per framework in parallel on the gb200nvl72_ci partition of the
+# dlcluster SLURM cluster (Grace-Blackwell GB200 = aarch64). The x86_64 wheels build in the
+# upstream `manylinux` runner (wheel-only, no sanity). The test model weights are pulled at
+# runtime (not baked into the base image) to keep image pulls fast.
 #
 # =============================================================================
 # Key Components:
@@ -112,11 +110,9 @@ pipeline_on_image_build:
 # =============================================================================
 # Docker Build Configuration
 # =============================================================================
-# x86_64 wheels build in the upstream `manylinux` runner (podman-in-container). The two
-# aarch64 framework helpers (Dockerfile.build_helper: podman + openssh-client for the SSH
-# SLURM allocation) build the aarch64 wheels AND run the sanity — each as its own branch
-# so the two flows show up as separate, readable top-level branches in the Jenkins UI
-# (nested step-level parallelism renders as an unlabeled blob in Blue Ocean, JENKINS-54010).
+# x86_64 wheels build in the upstream `manylinux` runner (podman-in-container). The aarch64
+# helper (Dockerfile.build_helper: podman + openssh-client for the SSH SLURM allocation)
+# builds the aarch64 wheels once AND runs both framework sanities as parallel steps.
 # wheel_base is a cached deps image (no step selects it — built per-arch by ci-demo when
 # Dockerfile.manylinux changes and reused via --wheel-base-image). The vLLM/SGLang base
 # images (category 'tool') are built + pushed by ci-demo, no steps run in them, and only
@@ -133,20 +129,9 @@ runs_on_dockers:
       build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base --secret id=ghconfig,src=/tmp/ghconfig',
       credentialsId: 'svc-nixl-github-read-only-token'
     }
-  # The custom 'fw' key is injected as an env var into every step of the branch
-  # (ci-demo merges the docker entry into the branch axis), so the shared sanity
-  # steps below parameterize on ${fw} instead of being duplicated per framework.
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
-     name: 'build_helper_vllm',
-     fw: 'vllm',
-     tag: "${CI_IMAGE_TAG}",
-     arch: 'aarch64'
-    }
-  - {
-     file: '.ci/dockerfiles/Dockerfile.build_helper',
-     name: 'build_helper_sglang',
-     fw: 'sglang',
+     name: 'build-wheel-sanity-helper',
      tag: "${CI_IMAGE_TAG}",
      arch: 'aarch64'
     }
@@ -294,7 +279,7 @@ steps:
   # build (contrib/Dockerfile.{vllm,sglang}: apt/curl/pip) needs egress, so default podman
   # to the pod's host network.
   - name: Prepare
-    containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
@@ -314,13 +299,12 @@ steps:
   # =============================================================================
   # Step 2: Python Wheel Generation
   # =============================================================================
-  # Create distributable Python wheels that bundle native libraries. Runs in every branch:
-  # the x86_64 manylinux runner produces the x86_64 wheels, and each aarch64 framework
-  # helper builds the aarch64 wheels for itself (duplicated on purpose — the two sanity
-  # flows are independent branches so the UI stays readable). --wheel-base-image reuses the
-  # cached deps image so only the wheel stage compiles.
+  # Create distributable Python wheels that bundle native libraries. Runs in both branches:
+  # the x86_64 manylinux runner produces the x86_64 wheels, and the aarch64 helper the
+  # aarch64 wheels both sanities test. --wheel-base-image reuses the cached deps image so
+  # only the wheel stage compiles.
   - name: Build Wheel
-    containerSelector: "{name: 'manylinux|build_helper_(vllm|sglang)'}"
+    containerSelector: "{name: 'manylinux|build-wheel-sanity-helper'}"
     credentialsId: 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
@@ -340,15 +324,14 @@ steps:
         --ucx-spcx-plugin-install "${SPCX_STAGING_DIR}/${arch}"
 
   # =============================================================================
-  # Shared sanity steps (both framework helpers, parameterized by ${fw})
+  # vLLM/SGLang sanity (aarch64 helper)
   # =============================================================================
-  # Extract the wheels this branch just built from its manylinux image, layer them
-  # onto the ci-demo-built base (Dockerfile.${fw} force-reinstalls them), then copy
-  # the whole workspace in (so the sanity script and its helpers are present).
-  # Tagged by BUILD_NUMBER.
-  - name: Build sanity image
-    containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    credentialsId: 'svc-nixl-il-artifactory-token'
+  # ci-demo runs consecutive `parallel: true` steps as one group, which ends only at the
+  # next non-parallel step. The disabled Barrier steps end a group without running or
+  # drawing anything, giving:
+  #   [vLLM image | SGLang image | vLLM alloc | SGLang alloc] -> [syncs] -> [runs]
+  - name: Extract wheels
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     parallel: false
     run: |
       set -eux
@@ -365,26 +348,22 @@ steps:
       docker rm -f "wheel-extract-${arch}"
       ls "$WHEELS_DIR"/*.whl
 
-      BASE="${PR_REGISTRY}/${arch}/${fw}-nixl-base:${CI_IMAGE_TAG}"
-      IMG="${PR_REGISTRY}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
-      # 1. Layer the freshly built wheels onto the base (wheels-only context).
-      docker build --platform linux/${arch} \
-        --build-arg BASE_IMAGE="${BASE}" \
-        -f contrib/Dockerfile.${fw} \
-        -t "${IMG}" \
-        "$WHEELS_DIR/"
-      # 2. Copy the whole workspace in (test script + helpers), like the other pipelines.
-      printf 'FROM %s\nCOPY . /workspace/nixl\nWORKDIR /workspace/nixl\n' "${IMG}" \
-        | docker build --platform linux/${arch} -t "${IMG}" -f - .
-      for i in {1..6}; do
-          docker push "${IMG}" && break
-          [ "$i" = 6 ] && exit 1
-          sleep $((2 ** (i - 1)))
-      done
+  - name: Build vLLM sanity image
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
+    credentialsId: 'svc-nixl-il-artifactory-token'
+    parallel: true
+    run: .ci/scripts/build-sanity-image.sh vllm "$(pwd)/pr-wheels-${arch}"
 
-  - name: Allocate Environment
-    containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    parallel: false
+  - name: Build SGLang sanity image
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
+    credentialsId: 'svc-nixl-il-artifactory-token'
+    parallel: true
+    run: .ci/scripts/build-sanity-image.sh sglang "$(pwd)/pr-wheels-${arch}"
+
+  # The allocations do not need the images, so they queue while the images build.
+  - name: Allocate vLLM Environment
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
+    parallel: true
     shell: action
     module: slurmCI
     run: allocation
@@ -395,8 +374,8 @@ steps:
       nodes: "${SLURM_NODES}"
       jobTimeout: "${SLURM_JOB_TIMEOUT}"
       immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
-      jobName: "${JOB_BASE_NAME}-${fw}-${BUILD_NUMBER}"
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
+      jobName: "${JOB_BASE_NAME}-vllm-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_vllm_${BUILD_NUMBER}.txt"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       extraArgs: [
         "--account=${SLURM_ACCOUNT}",
@@ -405,35 +384,80 @@ steps:
         "--mincpus=${SLURM_MINCPUS}"
       ]
 
-  - name: Sync Container Image
-    # Import the image onto the node before the timed test stages, so a slow
-    # registry pull is not counted against (and does not time out) a test stage.
-    containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    timeout: 30
+  - name: Allocate SGLang Environment
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
+    parallel: true
+    shell: action
+    module: slurmCI
+    run: allocation
+    args:
+      partition: "${SLURM_PARTITION}"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      nodes: "${SLURM_NODES}"
+      jobTimeout: "${SLURM_JOB_TIMEOUT}"
+      immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
+      jobName: "${JOB_BASE_NAME}-sglang-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_sglang_${BUILD_NUMBER}.txt"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      extraArgs: [
+        "--account=${SLURM_ACCOUNT}",
+        "--gres=${SLURM_GRES}",
+        "--mem=${SLURM_MEM}",
+        "--mincpus=${SLURM_MINCPUS}"
+      ]
+
+  - name: Barrier
+    enable: false
     parallel: false
+
+  # Import the image onto the node before the timed test stages, so a slow
+  # registry pull is not counted against (and does not time out) a test stage.
+  - name: Sync vLLM Container Image
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
+    timeout: 30
+    parallel: true
     shell: action
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_vllm_${BUILD_NUMBER}.txt"
       testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/vllm-nixl:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-vs-${fw}-${BUILD_NUMBER}"
+      containerName: "nixl-vs-vllm-${BUILD_NUMBER}"
 
-  # The two run steps are identical modulo ${fw} as well, but are kept as separate,
-  # explicitly-named steps so the test that failed is obvious at a glance in the UI.
-  - name: Run vLLM sanity
-    containerSelector: "{name: 'build_helper_vllm'}"
-    timeout: 40
-    parallel: false
+  - name: Sync SGLang Container Image
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
+    timeout: 30
+    parallel: true
     shell: action
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_sglang_${BUILD_NUMBER}.txt"
+      testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/sglang-nixl:${BUILD_NUMBER}"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      containerName: "nixl-vs-sglang-${BUILD_NUMBER}"
+
+  - name: Barrier
+    enable: false
+    parallel: false
+
+  - name: Run vLLM sanity
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
+    timeout: 40
+    parallel: true
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_vllm_${BUILD_NUMBER}.txt"
       # Seed the port block per build and framework so the two sanity jobs of a build never
       # share one, and rerun on a server port collision (a probed port is not held until the
       # server binds it, minutes later). Kept on one line: the head node's shell is tcsh.
@@ -441,44 +465,44 @@ steps:
         set -o pipefail;
         export CI_CONCURRENT_ID=$((2 * ${BUILD_NUMBER}));
         for _ in 1 2 3; do
-        HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw} 2>&1 | tee /tmp/sanity.log && exit 0;
+        HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh vllm 2>&1 | tee /tmp/sanity.log && exit 0;
         grep -qi "address already in use" /tmp/sanity.log || exit 1;
         echo "[sanity] port collision, retrying on new ports";
         done; exit 1
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/vllm-nixl:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-vs-${fw}-${BUILD_NUMBER}"
+      containerName: "nixl-vs-vllm-${BUILD_NUMBER}"
 
   - name: Run SGLang sanity
-    containerSelector: "{name: 'build_helper_sglang'}"
+    containerSelector: "{name: 'build-wheel-sanity-helper'}"
     timeout: 40
-    parallel: false
+    parallel: true
     shell: action
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_sglang_${BUILD_NUMBER}.txt"
       testScript: >-
         set -o pipefail;
         export CI_CONCURRENT_ID=$((2 * ${BUILD_NUMBER} + 1));
         for _ in 1 2 3; do
-        HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw} 2>&1 | tee /tmp/sanity.log && exit 0;
+        HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh sglang 2>&1 | tee /tmp/sanity.log && exit 0;
         grep -qi "address already in use" /tmp/sanity.log || exit 1;
         echo "[sanity] port collision, retrying on new ports";
         done; exit 1
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/sglang-nixl:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-vs-${fw}-${BUILD_NUMBER}"
+      containerName: "nixl-vs-sglang-${BUILD_NUMBER}"
 
-# Release the SLURM allocations. Runs once, from the build_helper_vllm branch (it has the
+# Release the SLURM allocations. Runs from the build-wheel-sanity-helper branch (it has the
 # SSH client + key; the manylinux runner does not); stopAllForBuild scans the shared PVC
 # job-id dir, so it cleans up both framework allocations.
 pipeline_stop:
-  containerSelector: "{name: 'build_helper_vllm'}"
+  containerSelector: "{name: 'build-wheel-sanity-helper'}"
   parallel: false
   shell: action
   module: slurmCI
