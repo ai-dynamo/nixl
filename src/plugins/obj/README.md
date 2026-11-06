@@ -48,6 +48,9 @@ git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1
 
 If `cuobjclient-13.1` is not found during build, the S3 Accelerated engines will be automatically disabled, and the plugin will fall back to standard S3 and S3 CRT engines.
 
+See [CUObject Client Config for S3 Accelerated](s3_accel/README.md) for RDMA
+configuration and the startup latency workaround.
+
 ## Configuration
 
 The Object Storage backend supports configuration through two mechanisms: backend parameter maps passed during backend creation, and environment variables for system-wide settings. Backend parameters take precedence over environment variables.
