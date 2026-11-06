@@ -15,6 +15,10 @@
 
 subdir('python')
 
+if get_option('build_cute')
+  subdir('cute')
+endif
+
 # Shared library exposing the nixl C API (nixl_capi_* symbols).
 # Always built so LD_PRELOAD can override stub symbols at runtime when
 # downstream Rust binaries were compiled without nixl present.
