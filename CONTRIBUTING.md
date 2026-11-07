@@ -98,6 +98,16 @@ pip install pre-commit
 pre-commit install
 ```
 
+Run `pre-commit run` on staged changes. If hooks modify files, review and stage
+the fixes, then rerun. See [fixing pre-commit issues](docs/ContributorCI.md#fixing-pre-commit-issues)
+for branch-wide checks and the full validation workflow.
+
+### Validate locally
+
+Run `./contrib/check.py` before submitting to run repository checks and basic
+CPU integration tests. See [the local validation guide](docs/ContributorCI.md)
+for checking a commit/branch, interpreting results and testing a custom backend.
+
 ## Code Standards
 
 ### C++20 Guidelines
