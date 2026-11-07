@@ -29,6 +29,7 @@ struct putParams {
     size_t size;
     unsigned channelId{0};
     uint64_t flags{0};
+    bool completeWithFlush{false};
 };
 
 template<nixl_gpu_level_t level, nixl_device_exec_mode_t mode>
@@ -66,9 +67,13 @@ putKernel(putParams put_params,
             return;
         }
 
-        do {
-            status = nixlGpuGetXferStatus<level, mode>(xfer_status);
-        } while (status == NIXL_IN_PROG);
+        if (put_params.completeWithFlush) {
+            status = ::nixl::gpu::flush<level, mode>(put_params.dst.mvh, put_params.channelId);
+        } else {
+            do {
+                status = nixlGpuGetXferStatus<level, mode>(xfer_status);
+            } while (status == NIXL_IN_PROG);
+        }
 
         if (status != NIXL_SUCCESS) {
             atomicExch(reinterpret_cast<int *>(error), static_cast<int>(status));
@@ -624,9 +629,60 @@ TEST_P(SingleWriteTest, SingleWorkerPutFixedMode) {
     getAgent(SENDER_AGENT).releaseMemView(src_mvh);
     invalidateMD();
 }
+
+class FlushTest : public SingleWriteTest {};
+
+TEST_P(FlushTest, DeferredPutFlush) {
+    // Check header support before submitting any deferred operations.
+#if __has_include(<ucp/api/device/ucp_device_impl.h>)
+    if constexpr (!::nixl::gpu::impl::ucx::flush_available<nixl_gpu_level_t::THREAD>) {
+        GTEST_SKIP() << "UCX device flush API is unavailable";
+    }
+#else
+    GTEST_SKIP() << "UCX direct GPU API is unavailable";
+#endif
+    constexpr size_t size = 4 * 1024;
+    constexpr nixl_mem_t mem_type = VRAM_SEG;
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(getAgent(SENDER_AGENT), size, 1, mem_type, src_buffers);
+    createRegisteredMem(getAgent(RECEIVER_AGENT), size, 1, mem_type, dst_buffers);
+    ASSERT_EQ(cudaMemset(static_cast<void *>(src_buffers[0]), 0xAB, size), cudaSuccess);
+
+    exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
+    nixlMemViewH src_mvh, dst_mvh;
+    ASSERT_EQ(getAgent(SENDER_AGENT)
+                  .prepMemView(makeDescList<nixlBasicDesc>(src_buffers, mem_type), src_mvh),
+              NIXL_SUCCESS);
+    ASSERT_EQ(getAgent(SENDER_AGENT)
+                  .prepMemView(makeDescList<nixlRemoteDesc>(
+                                   dst_buffers, mem_type, getAgentName(RECEIVER_AGENT)),
+                               dst_mvh),
+              NIXL_SUCCESS);
+
+    putParams put_params{
+        {src_mvh, 0, 0}, {dst_mvh, 0, 0}, size, numWorkers - 1, ::nixl::gpu::flags::defer, true};
+    ASSERT_EQ(cudaMemset(static_cast<void *>(dst_buffers[0]), 0, size), cudaSuccess);
+    constexpr size_t num_iters = 10;
+    const auto status = dispatchLaunchPutKernel(GetParam(), put_params, num_iters);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    std::vector<uint32_t> dst_data(size / sizeof(uint32_t));
+    ASSERT_EQ(
+        cudaMemcpy(
+            dst_data.data(), static_cast<void *>(dst_buffers[0]), size, cudaMemcpyDeviceToHost),
+        cudaSuccess);
+    for (const auto value : dst_data) {
+        EXPECT_EQ(value, 0xABABABABu);
+    }
+
+    getAgent(SENDER_AGENT).releaseMemView(dst_mvh);
+    getAgent(SENDER_AGENT).releaseMemView(src_mvh);
+    invalidateMD();
+}
 } // namespace gtest::nixl::gpu::single_write
 
 using gtest::nixl::gpu::single_write::SingleWriteTest;
+using gtest::nixl::gpu::single_write::FlushTest;
 
 INSTANTIATE_TEST_SUITE_P(
     ucxDeviceApi,
@@ -635,4 +691,12 @@ INSTANTIATE_TEST_SUITE_P(
     [](const testing::TestParamInfo<gtest::nixl::gpu::single_write::TestParams> &info) {
         return std::string(std::get<0>(info.param) ? "PROXY_" : "UCX_") +
             gtest::gpu::GetGpuXferLevelStr(std::get<1>(info.param));
+    });
+
+INSTANTIATE_TEST_SUITE_P(
+    ucxDeviceApi,
+    FlushTest,
+    testing::Combine(testing::Values(false), testing::ValuesIn(gtest::gpu::_test_levels)),
+    [](const testing::TestParamInfo<gtest::nixl::gpu::single_write::TestParams> &info) {
+        return std::string("UCX_") + gtest::gpu::GetGpuXferLevelStr(std::get<1>(info.param));
     });
