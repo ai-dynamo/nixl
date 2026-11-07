@@ -19,10 +19,17 @@
 #include "common/nixl_log.h"
 #include <liburing.h>
 #include <absl/strings/str_format.h>
+#include <algorithm>
 #include <cerrno>
 
 #define MAX_IO_SUBMIT_BATCH_SIZE 64
 #define MAX_IO_CHECK_COMPLETED_BATCH_SIZE 64
+
+namespace {
+// An SQE carries a 32-bit length, and Linux moves less than 2 GiB per read/write anyway, so a
+// larger I/O is submitted in aligned chunks and handleIOCompletion() resubmits the remainder.
+constexpr size_t max_sqe_len = size_t{1} << 30;
+} // namespace
 
 enum class nixlPosixIoUringCQEKind {
     IO,
@@ -167,12 +174,11 @@ nixlPosixIOQueueUring::prepareSQEs(void) {
         } else {
             nixlPosixIoUringIO *io = ios_to_submit_.front();
             ios_to_submit_.pop_front();
+            const unsigned len = static_cast<unsigned>(std::min(io->remaining(), max_sqe_len));
             if (io->read_) {
-                io_uring_prep_read(
-                    sqe, io->fd, io->currentBuf(), io->remaining(), io->currentOffset());
+                io_uring_prep_read(sqe, io->fd, io->currentBuf(), len, io->currentOffset());
             } else {
-                io_uring_prep_write(
-                    sqe, io->fd, io->currentBuf(), io->remaining(), io->currentOffset());
+                io_uring_prep_write(sqe, io->fd, io->currentBuf(), len, io->currentOffset());
             }
             io_uring_sqe_set_data(sqe, static_cast<nixlPosixIoUringCQEData *>(io));
             io->in_flight_ = true;
