@@ -1179,6 +1179,18 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS ||
         xferBenchConfig::backend == XFERBENCH_BACKEND_VALKEY) {
         const bool is_valkey = xferBenchConfig::backend == XFERBENCH_BACKEND_VALKEY;
+        // VALKEY BLOB has no range ops: the registered object size must equal the
+        // transfer length. Use max_block_size (and require a single size in the sweep).
+        if (is_valkey) {
+            if (xferBenchConfig::start_block_size != xferBenchConfig::max_block_size) {
+                std::cerr << "VALKEY backend requires --start_block_size == --max_block_size "
+                             "(whole-object transfers only)"
+                          << std::endl;
+                exit(EXIT_FAILURE);
+            }
+            buffer_size = xferBenchConfig::max_block_size;
+            std::cout << "VALKEY: using whole-object size " << buffer_size << " bytes" << std::endl;
+        }
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -1191,7 +1203,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     std::to_string(timestamp);
 
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                    const size_t seed_size = xferBenchConfig::max_block_size;
+                    const size_t seed_size = is_valkey ? buffer_size :
+                                                          xferBenchConfig::max_block_size;
                     const bool seeded = is_valkey ?
                         xferBenchUtils::putValkey(seed_size, unique_name) :
                         xferBenchUtils::putRedis(seed_size, unique_name);

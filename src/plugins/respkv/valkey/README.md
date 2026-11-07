@@ -154,20 +154,23 @@ export VALKEY_HOST=127.0.0.1 VALKEY_PORT=6379
 export VALKEY_RDMA_PROVIDER=tcp   # default in nixlbench if unset
 nixlbench --help | grep VALKEY
 
+# Whole-object only: start_block_size must equal max_block_size.
+# total_buffer_size must be >= that size (local DRAM arena).
 nixlbench --backend=VALKEY --runtime_type=ASIO --op_type=WRITE \
   --start_block_size=4096 --max_block_size=4096 \
   --start_batch_size=1 --max_batch_size=1 --pipeline_depth=1 \
-  --num_threads=1 --total_buffer_size=67108864 \
+  --num_threads=1 --total_buffer_size=4096 \
   --warmup_iter=32 --num_iter=208 --check_consistency=true
 
 nixlbench --backend=VALKEY --runtime_type=ASIO --op_type=READ \
   --start_block_size=4096 --max_block_size=4096 \
   --start_batch_size=1 --max_batch_size=1 --pipeline_depth=1 \
-  --num_threads=1 --total_buffer_size=67108864 \
+  --num_threads=1 --total_buffer_size=4096 \
   --warmup_iter=32 --num_iter=208 --check_consistency=true
 ```
 
 READ seeding uses `BLOB.TCP_SET` via `valkey-cli`/`redis-cli`; transfers still use `BLOB.RDMA_*`.
+Do not use a large `--total_buffer_size` with a small block size: VALKEY rejects partial objects.
 Then run REDIS the same way with `--backend=REDIS` and `REDIS_HOST`/`REDIS_PORT` against a Redis
 server (see [`../redis/README.md`](../redis/README.md)).
 
