@@ -56,3 +56,7 @@ Both names are in the default `all_plugins` list. `src/plugins/meson.build` ente
 meson setup build                        # REDIS if hiredis and libevent are present
 meson setup build -Dglide_path=<prefix>  # REDIS as above, plus VALKEY
 ```
+
+nixlbench: `--backend=REDIS` or `--backend=VALKEY`. Container image: pass
+`--enable-valkey` to `benchmark/nixlbench/contrib/build.sh` (GLIDE built in-image).
+Smoke steps: [`valkey/README.md`](valkey/README.md), [`redis/README.md`](redis/README.md).

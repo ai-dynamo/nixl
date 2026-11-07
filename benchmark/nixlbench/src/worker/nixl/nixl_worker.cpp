@@ -334,6 +334,53 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         }
         std::cout << "REDIS backend configured (using REDIS_* environment variables or defaults)"
                   << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_VALKEY)) {
+        // VALKEY: GLIDE + large-object. Prefer VALKEY_* env; fall back to REDIS_* host/port.
+        if (const char *host = getenv("VALKEY_HOST")) {
+            if (host[0] != '\0') {
+                backend_params["host"] = host;
+            }
+        } else if (const char *host = getenv("REDIS_HOST")) {
+            if (host[0] != '\0') {
+                backend_params["host"] = host;
+            }
+        }
+        if (const char *port = getenv("VALKEY_PORT")) {
+            if (port[0] != '\0') {
+                backend_params["port"] = port;
+            }
+        } else if (const char *port = getenv("REDIS_PORT")) {
+            if (port[0] != '\0') {
+                backend_params["port"] = port;
+            }
+        }
+        if (const char *user = getenv("VALKEY_USERNAME")) {
+            if (user[0] != '\0') {
+                backend_params["username"] = user;
+            }
+        }
+        if (const char *pass = getenv("VALKEY_PASSWORD")) {
+            if (pass[0] != '\0') {
+                backend_params["password"] = pass;
+            }
+        }
+        // Default tcp for Emulated large-object / non-EFA labs. EFA hosts:
+        // export VALKEY_RDMA_PROVIDER=efa-direct
+        if (const char *prov = getenv("VALKEY_RDMA_PROVIDER")) {
+            if (prov[0] != '\0') {
+                backend_params["rdma_provider"] = prov;
+            }
+        } else {
+            backend_params["rdma_provider"] = "tcp";
+        }
+        if (const char *iface = getenv("VALKEY_RDMA_INTERFACE")) {
+            if (iface[0] != '\0') {
+                backend_params["rdma_interface"] = iface;
+            }
+        }
+        std::cout << "VALKEY backend configured (host=" << backend_params["host"]
+                  << " port=" << backend_params["port"]
+                  << " rdma_provider=" << backend_params["rdma_provider"] << ")" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically
         if (!xferBenchConfig::storage_enable_direct) {
@@ -1126,10 +1173,12 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
     opt_args.backends.push_back(backend_engine);
 
-    // REDIS stays an independent backend (putRedis seeding), but remote values
-    // use OBJ_SEG addressing semantics. Handle it before isObjStorageBackend()
-    // so REDIS does not enter the S3/Azure putObj registration path.
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+    // REDIS/VALKEY stay independent backends (CLI seeding), but remote values use
+    // OBJ_SEG addressing. Handle them before isObjStorageBackend() so they do not
+    // enter the S3/Azure putObj registration path.
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS ||
+        xferBenchConfig::backend == XFERBENCH_BACKEND_VALKEY) {
+        const bool is_valkey = xferBenchConfig::backend == XFERBENCH_BACKEND_VALKEY;
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -1137,20 +1186,26 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
-                std::string unique_name = "nixlbench_redis" + std::to_string(list_idx) + "_" +
-                    std::to_string(i) + "_" + std::to_string(timestamp);
+                std::string unique_name = (is_valkey ? "nixlbench_valkey" : "nixlbench_redis") +
+                    std::to_string(list_idx) + "_" + std::to_string(i) + "_" +
+                    std::to_string(timestamp);
 
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
                     const size_t seed_size = xferBenchConfig::max_block_size;
-                    if (!xferBenchUtils::putRedis(seed_size, unique_name)) {
-                        std::cerr << "Failed to seed Redis key: " << unique_name << std::endl;
+                    const bool seeded = is_valkey ?
+                        xferBenchUtils::putValkey(seed_size, unique_name) :
+                        xferBenchUtils::putRedis(seed_size, unique_name);
+                    if (!seeded) {
+                        std::cerr << "Failed to seed " << (is_valkey ? "Valkey" : "Redis")
+                                  << " key: " << unique_name << std::endl;
                         exit(EXIT_FAILURE);
                     }
                 }
 
-                xferBenchIOV redis_desc(0, buffer_size, i, unique_name);
-                std::cout << "Creating Redis key: " << unique_name << std::endl;
-                iov_list.push_back(redis_desc);
+                xferBenchIOV obj_desc(0, buffer_size, i, unique_name);
+                std::cout << "Creating " << (is_valkey ? "Valkey" : "Redis")
+                          << " key: " << unique_name << std::endl;
+                iov_list.push_back(obj_desc);
             }
             nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
@@ -1530,11 +1585,12 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
 
             for (size_t devidx = 0; devidx < num_devices; devidx++) {
                 const auto &iov = iov_list[devidx];
-                if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend) {
-                    xferBenchIOV redis_remote(iov);
-                    redis_remote.addr = 0;
-                    redis_remote.len = block_size;
-                    remote_iov_list.push_back(redis_remote);
+                if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend ||
+                    XFERBENCH_BACKEND_VALKEY == xferBenchConfig::backend) {
+                    xferBenchIOV kv_remote(iov);
+                    kv_remote.addr = 0;
+                    kv_remote.len = block_size;
+                    remote_iov_list.push_back(kv_remote);
                 } else if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
                     int obj_dev_id = list_idx * xferBenchConfig::num_initiator_dev + iov.devId;

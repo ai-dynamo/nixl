@@ -122,15 +122,54 @@ For a static build, add `-Dstatic_plugins=VALKEY`.
 
 ## Usage
 
-Start Valkey with the module. Without EFA, the module's emulated fabric and GLIDE's `tcp`
-provider run the RDMA protocol over TCP:
+Start Valkey **8.0+** with the module. Loadmodule size args must be **raw bytes** (not `2gb`).
+Without EFA, use `fabric-provider Emulated` and NIXL `rdma_provider=tcp`:
 
 ```bash
-valkey-server --bind 127.0.0.1 --port 6379 --save "" \
-    --loadmodule libvalkey_large_object.so operating-mode Dram \
-        dram-maxmemory 2147483648 segment-size 268435456 max-object-size 67108864 \
+./src/valkey-server --bind 127.0.0.1 --port 6379 --save "" \
+    --loadmodule /path/to/libvalkey_large_object.so \
+        operating-mode Dram \
+        segment-size 268435456 \
+        max-object-size 67108864 \
         fabric-provider Emulated          # EfaDirect on EFA hosts
 ```
+
+### nixlbench smoke (container)
+
+Build the image with VALKEY; GLIDE FFI is compiled **inside Docker** (needs network for
+`git`/`cargo`). Optionally pass `--glide-path` if you already have a host prefix.
+
+```bash
+cd benchmark/nixlbench/contrib
+./build.sh --nixl ../.. --enable-valkey
+# optional: --valkey-glide-ref v2.6.0-rc2
+# optional: --glide-path /path/to/prefix   # skip in-image cargo
+# image: nixlbench:v*.dev.*
+```
+
+Inside the container (`--network host`), with Valkey+large-object already listening on the host:
+
+```bash
+export VALKEY_HOST=127.0.0.1 VALKEY_PORT=6379
+export VALKEY_RDMA_PROVIDER=tcp   # default in nixlbench if unset
+nixlbench --help | grep VALKEY
+
+nixlbench --backend=VALKEY --runtime_type=ASIO --op_type=WRITE \
+  --start_block_size=4096 --max_block_size=4096 \
+  --start_batch_size=1 --max_batch_size=1 --pipeline_depth=1 \
+  --num_threads=1 --total_buffer_size=67108864 \
+  --warmup_iter=32 --num_iter=208 --check_consistency=true
+
+nixlbench --backend=VALKEY --runtime_type=ASIO --op_type=READ \
+  --start_block_size=4096 --max_block_size=4096 \
+  --start_batch_size=1 --max_batch_size=1 --pipeline_depth=1 \
+  --num_threads=1 --total_buffer_size=67108864 \
+  --warmup_iter=32 --num_iter=208 --check_consistency=true
+```
+
+READ seeding uses `BLOB.TCP_SET` via `valkey-cli`/`redis-cli`; transfers still use `BLOB.RDMA_*`.
+Then run REDIS the same way with `--backend=REDIS` and `REDIS_HOST`/`REDIS_PORT` against a Redis
+server (see [`../redis/README.md`](../redis/README.md)).
 
 Objects are `OBJ_SEG` descriptors whose `metaInfo` is the key; the local side is a registered
 `DRAM_SEG` buffer. A descriptor covers one whole object.

@@ -104,7 +104,11 @@ RUN apt-get update -y && \
     libhwloc-dev \
     build-essential \
     libevent-dev \
-    redis-tools
+    redis-tools \
+    libfabric-dev \
+    protobuf-compiler \
+    clang \
+    libclang-dev
 
 # Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
 # Skip only the DOCA SDK install when the base image already ships it.
@@ -345,12 +349,59 @@ RUN uv pip install --system --upgrade 'setuptools>=80.9.0'
 COPY --from=nixl . /workspace/nixl
 COPY --from=nixlbench . /workspace/nixlbench
 
+# VALKEY / GLIDE: build.sh always provides named context "glide".
+#   ENABLE_VALKEY=1 + GLIDE_FROM_SOURCE=1 → clone valkey-glide and cargo-build FFI in-image
+#   ENABLE_VALKEY=1 + GLIDE_FROM_SOURCE=0 → use prebuilt files from the glide context
+ARG ENABLE_VALKEY=0
+ARG GLIDE_FROM_SOURCE=0
+ARG VALKEY_GLIDE_REF=v2.6.0-rc2
+ARG VALKEY_GLIDE_REPO=https://github.com/valkey-io/valkey-glide.git
+COPY --from=glide / /opt/glide/
+
 WORKDIR /workspace/nixl
 
+# Build or validate the GLIDE prefix used by -Dglide_path.
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig set -e; \
+    if [ "$ENABLE_VALKEY" != "1" ]; then \
+        echo "VALKEY disabled (pass --enable-valkey or --glide-path to build.sh)"; \
+        exit 0; \
+    fi; \
+    if [ "$GLIDE_FROM_SOURCE" = "1" ]; then \
+        echo "Building valkey-glide FFI from source (${VALKEY_GLIDE_REF})"; \
+        if ! command -v cargo >/dev/null 2>&1; then \
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; \
+        fi; \
+        . "$HOME/.cargo/env"; \
+        cargo install --locked cbindgen@0.29.4; \
+        rm -rf /tmp/valkey-glide; \
+        git clone --depth 1 --branch "${VALKEY_GLIDE_REF}" "${VALKEY_GLIDE_REPO}" /tmp/valkey-glide; \
+        (cd /tmp/valkey-glide/ffi && cargo build --release --features rdma); \
+        mkdir -p /opt/glide/lib /opt/glide/include /opt/glide/proto; \
+        cp /tmp/valkey-glide/ffi/target/release/libglide_ffi.a /opt/glide/lib/; \
+        (cd /tmp/valkey-glide/ffi && cbindgen --config cbindgen.toml --crate glide-ffi --lang c \
+            --output /opt/glide/include/glide_ffi.h); \
+        cp /tmp/valkey-glide/glide-core/src/protobuf/connection_request.proto /opt/glide/proto/; \
+        rm -rf /tmp/valkey-glide /root/.cargo/registry/cache /root/.cargo/git/db; \
+    fi; \
+    test -f /opt/glide/lib/libglide_ffi.a || { echo "ERROR: missing /opt/glide/lib/libglide_ffi.a" >&2; exit 1; }; \
+    test -f /opt/glide/include/glide_ffi.h || { echo "ERROR: missing /opt/glide/include/glide_ffi.h" >&2; exit 1; }; \
+    test -f /opt/glide/proto/connection_request.proto || { echo "ERROR: missing connection_request.proto" >&2; exit 1; }; \
+    echo "GLIDE prefix ready at /opt/glide"
+
 # meson setup clones the taskflow and prometheus-cpp [wrap-git] subprojects from github.com.
-RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
-    mkdir build && \
-    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+ARG ENABLE_VALKEY=0
+ARG BUILD_TYPE
+ARG NPROC
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig set -e; \
+    rm -rf build && mkdir build; \
+    GLIDE_FLAGS=""; \
+    if [ "$ENABLE_VALKEY" = "1" ]; then \
+        GLIDE_FLAGS="-Dglide_path=/opt/glide"; \
+        echo "Building NIXL with VALKEY (glide_path=/opt/glide)"; \
+    else \
+        echo "Building NIXL without VALKEY"; \
+    fi; \
+    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE $GLIDE_FLAGS && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install
@@ -367,6 +418,17 @@ RUN set -e; \
             echo "ERROR: libplugin_OBJ.so is missing libcuobjclient; S3 acceleration is not compiled in" >&2; \
             exit 1; }; \
         echo "cuObject: libplugin_OBJ.so links libcuobjclient"; \
+    fi
+
+# When VALKEY was requested, the plugin must exist after install.
+ARG ENABLE_VALKEY=0
+RUN set -e; \
+    if [ "$ENABLE_VALKEY" = "1" ]; then \
+        P="$(find /usr/local/nixl -name 'libplugin_VALKEY.so' -print -quit)"; \
+        test -n "$P" || { echo "ERROR: libplugin_VALKEY.so not found after install" >&2; exit 1; }; \
+        echo "VALKEY: installed $P"; \
+        R="$(find /usr/local/nixl -name 'libplugin_REDIS.so' -print -quit)"; \
+        test -n "$R" || echo "WARNING: libplugin_REDIS.so not found (hiredis may be missing)"; \
     fi
 
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
