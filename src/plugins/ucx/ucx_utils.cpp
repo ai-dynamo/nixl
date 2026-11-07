@@ -611,6 +611,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     config.validateTlsCudaSupport();
 
     ucp_context_h new_ctx = nullptr;
+    nixl::ucx::syncDeepBoundEnviron();
     const auto status = ucp_init(&ucp_params, config.getUcpConfig(), &new_ctx);
     if (status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create UCX context ") + name_ + ": " +
@@ -717,6 +718,7 @@ ucp_worker *
 nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) const {
     ucp_worker *worker = nullptr;
     const nixlUcpWorkerParams params(ctx.mtType_, name_);
+    nixl::ucx::syncDeepBoundEnviron();
     const ucs_status_t status = ucp_worker_create(ctx.ctx.get(), &params, &worker);
     if (status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create UCX worker ") + name_ + ": " +
