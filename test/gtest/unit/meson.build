@@ -68,6 +68,7 @@ unit_test_exe = executable('unit',
     sources : [
         'main.cpp',
         'allocation_counter.cpp',
+        'ucx_memory_policy.cpp',
         '../common.cpp',
     ],
     cpp_args : cpp_flags,
