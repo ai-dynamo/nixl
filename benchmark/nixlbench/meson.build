@@ -141,6 +141,13 @@ endif
 # OpenMP
 openmp_dep = dependency('openmp', required: true)
 
+# libnuma, optional: enables --numa_node
+numa_dep = dependency('numa', required: false)
+numa_available = numa_dep.found()
+if not numa_available
+    message('libnuma not found. --numa_node will be unavailable.')
+endif
+
 # Check for etcd-cpp-api - use multiple methods for discovery
 etcd_dep = dependency('etcd-cpp-api', required : false)
 
@@ -351,6 +358,7 @@ configure_file(
         'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
         'HAVE_CUDA_LOCALITY_DOMAIN': cuda_locality_domain_available ? '1' :'0',
         'HAVE_RAW_CLI': raw_cli_available ? '1' : '0',
+        'HAVE_NUMA': numa_available ? '1' : '0',
     },
     install: true,
     install_dir: get_option('includedir') / 'nixlbench'
@@ -407,6 +415,9 @@ if nvshmem_available
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/runtime']
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/worker']
     nvcc_args += ['-lnixl', '-lnixl_build', '-lserdes', '-lcuda', '-lcudart', '-lnvshmem']
+    if numa_available
+        nvcc_args += ['-lnuma']
+    endif
     nvcc_args += args
     nvcc_cmd_files = [
                  meson.current_build_dir() + '/src/utils/libutils.a.p/utils.cpp.o',
