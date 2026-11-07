@@ -10,6 +10,7 @@ failures=()
 AUTHORS=(
   "NVIDIA CORPORATION & AFFILIATES"
   "Advanced Micro Devices, Inc"
+  "Google LLC"
 )
 
 # Base defaults to the PR merge ref's first parent; locally pass e.g. upstream/main.
