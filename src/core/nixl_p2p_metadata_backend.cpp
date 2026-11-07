@@ -35,11 +35,14 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 namespace {
+
+struct peerDisconnected : std::exception {};
 
 // Socket helpers, moved from the former nixl_listener.cpp. They are the wire
 // mechanics of the P2P transport and belong with this backend.
@@ -160,7 +163,7 @@ recvCommMessageType(int fd, void *data, size_t size, bool force = false) {
             continue;
         }
         if (bytes == 0 && received == 0 && !force) {
-            return false;
+            throw peerDisconnected{};
         }
         if (bytes < 0) {
             if (errno == EINTR) {
@@ -408,6 +411,10 @@ nixlP2PMetadataBackend::readIncoming() {
                 ++socket_iter;
                 continue;
             }
+        }
+        catch (const peerDisconnected &) {
+            socket_iter = remoteSockets_.erase(socket_iter);
+            continue;
         }
         // std::exception, not std::runtime_error: a frame that fails to allocate
         // throws std::bad_alloc, which must disconnect the peer rather than
