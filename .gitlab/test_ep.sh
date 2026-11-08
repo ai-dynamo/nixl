@@ -143,7 +143,7 @@ echo "==== Running vLLM Elastic EP test ===="
             -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
     )
 
-    if grep -Eiq '(^|[[:space:]])[0-9]+ skipped|SKIPPED' "${VLLM_LOG}"; then
+    if grep -Eq '(^|[[:space:]])[0-9]+ skipped([,[:space:]]|$)' "${VLLM_LOG}"; then
         echo "ERROR: vLLM Elastic EP test was skipped" >&2
         exit 1
     fi
