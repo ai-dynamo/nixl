@@ -20,11 +20,16 @@
 
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cstring>
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <sys/types.h>
+#include <system_error>
 #include <thread>
 #include <vector>
 #include <ifaddrs.h>
@@ -93,6 +98,13 @@ canPairWrite(uintptr_t address,
         next_length <= max_length && length <= max_length - next_length;
 }
 
+/** WQEs for one descriptor: a WQE carries at most the SDK transfer limit, and at least one. */
+inline uint64_t
+descriptorWqeCount(size_t length) {
+    constexpr size_t max_length = DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE;
+    return length <= max_length ? 1 : length / max_length + (length % max_length != 0 ? 1 : 0);
+}
+
 } // namespace nixl::gpunetio
 
 constexpr uint32_t RDMA_SEND_QUEUE_SIZE = 2048;
@@ -135,8 +147,6 @@ struct docaSlotDesc {
     doca_gpu_dev_verbs_qp *qp_notif;
     struct docaQpProgress *qp_progress;
     uint32_t wait_completion_mask;
-    uint64_t *peer_write_completed;
-    uint64_t write_ticket;
     uint32_t posting_ctas_done;
     uint8_t has_two_sge;
     // Keep optional fields last so one-SGE requests need not publish them.
@@ -184,11 +194,31 @@ struct nixlDocaNotif {
     uint32_t elems_num;
     uint32_t elems_size;
     uint8_t *send_addr = nullptr;
-    std::atomic<uint32_t> send_pi;
     std::unique_ptr<nixl::doca::verbs::mr> send_mr;
     uint8_t *recv_addr = nullptr;
     std::atomic<uint32_t> recv_pi;
     std::unique_ptr<nixl::doca::verbs::mr> recv_mr;
+    // Send buffers not owned by a prepared request or by a genNotif() in progress.
+    std::mutex send_lock;
+    std::vector<uint32_t> send_free;
+
+    /** Own a send buffer until releaseSendSlot(); false when every buffer is owned. */
+    bool
+    acquireSendSlot(uint32_t &slot) {
+        std::lock_guard<std::mutex> lock(send_lock);
+        if (send_free.empty()) {
+            return false;
+        }
+        slot = send_free.back();
+        send_free.pop_back();
+        return true;
+    }
+
+    void
+    releaseSendSlot(uint32_t slot) {
+        std::lock_guard<std::mutex> lock(send_lock);
+        send_free.push_back(slot);
+    }
 };
 
 struct docaNotif {
@@ -197,7 +227,6 @@ struct docaNotif {
     uintptr_t msg_buf;
     size_t msg_size;
     uint32_t msg_num;
-    uint32_t msg_last;
 };
 
 class nixlDocaConnection : public nixlBackendConnMD {
@@ -213,7 +242,7 @@ public:
 class nixlDocaPrivateMetadata : public nixlBackendMD {
 private:
     std::unique_ptr<nixl::doca::verbs::mr> mr;
-    uint32_t devId;
+    bool peerGpu = false; // VRAM owned by a GPU other than the engine's
     nixl_blob_t remoteMrStr;
 
 public:
@@ -241,13 +270,6 @@ public:
     ~nixlDocaPublicMetadata() {}
 };
 
-struct nixlDocaGpuCounterDeleter {
-    doca_gpu *gpu = nullptr;
-
-    void
-    operator()(uint64_t *counter) const;
-};
-
 struct nixlDocaRdmaQp {
     std::unique_ptr<nixl::doca::verbs::qp> qp_data;
     uint32_t qpn_data;
@@ -264,9 +286,6 @@ struct nixlDocaRdmaQp {
     std::vector<uint32_t> qpn_write;
     std::vector<uint32_t> rqpn_write;
     std::vector<bool> writeProgrammed;
-    std::unique_ptr<uint64_t, nixlDocaGpuCounterDeleter> writeCompletedGpu;
-    uint64_t *writeCompletedCpu = nullptr;
-    uint64_t postedWriteTicket = 0;
 
     bool
     closeDataQps() {

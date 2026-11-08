@@ -74,18 +74,6 @@ nixl_gpunetio_dev_fail_request(docaGpuState *gpu_state, docaHostState *host_stat
     nixl_gpunetio_dev_finish_request(gpu_state, host_state, pos, DOCA_XFER_STATE_ERROR);
 }
 
-__device__ void
-nixl_gpunetio_dev_complete_request(docaSlotDesc *request,
-                                   docaGpuState *gpu_state,
-                                   docaHostState *host_state,
-                                   uint32_t pos) {
-    if (request->peer_write_completed != nullptr) {
-        doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
-        DOCA_GPUNETIO_VOLATILE(*request->peer_write_completed) = request->write_ticket;
-    }
-    nixl_gpunetio_dev_finish_request(gpu_state, host_state, pos, DOCA_XFER_STATE_COMPLETE);
-}
-
 __device__ bool
 nixl_gpunetio_dev_reserve_data(docaSlotDesc *request,
                                uint32_t count,
@@ -237,44 +225,10 @@ nixl_gpunetio_dev_write_chunk(doca_gpu_dev_verbs_qp *qp,
     tot_wqe = xferReqRing[pos].num;
 
     if (threadIdx.x == 0) {
-        abort_write = false;
-        const uint32_t dependencies = xferReqRing[pos].wait_completion_mask;
-        if (dependencies != 0U) {
-            // The last posting CTA acquired all sibling publications before reaching here.
-            while ((cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(gpu_state->inflight)
-                        .load(cuda::std::memory_order_acquire) &
-                    dependencies) != 0U) {
-                if (nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U) {
-                    abort_write = true;
-                    break;
-                }
-            }
-            abort_write =
-                abort_write || nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U;
-        }
-        if (xferReqRing[pos].peer_write_completed != nullptr) {
-            while (!abort_write &&
-                   DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].peer_write_completed) <
-                       xferReqRing[pos].write_ticket - 1) {
-                if (nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U) {
-                    abort_write = true;
-                }
-            }
-        }
-        if (!abort_write) {
-            if (xferReqRing[pos].wait_completion_mask != 0 ||
-                xferReqRing[pos].peer_write_completed != nullptr) {
-                doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
-            }
-        }
+        abort_write =
+            !nixl_gpunetio_dev_reserve_data(&xferReqRing[pos], tot_wqe, gpu_state, &base_wqe_idx);
         if (abort_write) {
             nixl_gpunetio_dev_fail_request(gpu_state, host_state, pos);
-        } else {
-            abort_write = !nixl_gpunetio_dev_reserve_data(
-                &xferReqRing[pos], tot_wqe, gpu_state, &base_wqe_idx);
-            if (abort_write) {
-                nixl_gpunetio_dev_fail_request(gpu_state, host_state, pos);
-            }
         }
     }
     __syncthreads();
@@ -416,16 +370,21 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
                     .load(cuda::std::memory_order_acquire);
             docaSlotDesc *request = &xfer_req_ring[pos];
             bool send_notification = false;
-            if ((active & (1U << pos)) != 0U) {
+            if ((active & (1U << pos)) != 0U && (active & request->wait_completion_mask) == 0U) {
                 const int poll_status =
                     nixl_gpunetio_dev_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                                      DOCA_GPUNETIO_VERBS_QP_SQ>(
                         doca_gpu_dev_verbs_qp_get_cq_sq(request->qp_data), request->last_wqe);
                 if (poll_status == 0) {
-                    if (DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx) != DOCA_NOTIF_NULL) {
+                    if (request->wait_completion_mask != 0U &&
+                        nixl_gpunetio_dev_load_host_state(gpu_state->control) != 0U) {
+                        nixl_gpunetio_dev_fail_request(gpu_state, host_state, pos);
+                    } else if (DOCA_GPUNETIO_VOLATILE(request->has_notif_msg_idx) !=
+                               DOCA_NOTIF_NULL) {
                         send_notification = true;
                     } else {
-                        nixl_gpunetio_dev_complete_request(request, gpu_state, host_state, pos);
+                        nixl_gpunetio_dev_finish_request(
+                            gpu_state, host_state, pos, DOCA_XFER_STATE_COMPLETE);
                     }
                 } else if (poll_status != EBUSY) {
                     nixl_gpunetio_dev_fail_request(gpu_state, host_state, pos);
@@ -462,7 +421,8 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
                                notif_status,
                                out_ticket);
                     } else {
-                        nixl_gpunetio_dev_complete_request(request, gpu_state, host_state, pos);
+                        nixl_gpunetio_dev_finish_request(
+                            gpu_state, host_state, pos, DOCA_XFER_STATE_COMPLETE);
                     }
 #if ENABLE_DEBUG == 1
                     printf("Notif correctly sent %ld\n", out_ticket);
@@ -478,18 +438,22 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
         while ((nixl_gpunetio_dev_load_host_state(gpu_state->control) & DOCA_GPU_EXIT) == 0U) {
             // Check received notifications
             if (DOCA_GPUNETIO_VOLATILE(notif_progress->qp_gpu) != nullptr) {
-                uint32_t msg_last = DOCA_GPUNETIO_VOLATILE(notif_progress->msg_last);
+                // Each peer's notification QP has its own RQ CQ: poll that CQ's next CQE.
+                doca_gpu_dev_verbs_cq *const cq_rq =
+                    doca_gpu_dev_verbs_qp_get_cq_rq(notif_progress->qp_gpu);
+                const uint64_t msg_last =
+                    doca_gpu_dev_verbs_atomic_read<uint64_t,
+                                                   DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+                        &cq_rq->cqe_ci);
                 int ret =
                     nixl_gpunetio_dev_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-                                                     DOCA_GPUNETIO_VERBS_QP_RQ>(
-                        doca_gpu_dev_verbs_qp_get_cq_rq(notif_progress->qp_gpu), msg_last);
+                                                     DOCA_GPUNETIO_VERBS_QP_RQ>(cq_rq, msg_last);
                 if (ret == 0) {
 #if ENABLE_DEBUG == 1
-                    printf("kernel received notification at %d ret %d\n", msg_last, ret);
+                    printf("kernel received notification at %ld ret %d\n", msg_last, ret);
 #endif
 
                     DOCA_GPUNETIO_VOLATILE(notif_progress->msg_num) = 1;
-                    DOCA_GPUNETIO_VOLATILE(notif_progress->msg_last) = (msg_last + 1);
 
                     doca_gpu_dev_verbs_submit<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                               DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU,
@@ -499,9 +463,9 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
                         notif_progress->qp_gpu->rq_wqe_pi + 1);
 
 #if ENABLE_DEBUG == 1
-                    printf("kernel flush recv notification pi %ld last %d\n",
+                    printf("kernel flush recv notification pi %ld last %ld\n",
                            notif_progress->qp_gpu->rq_wqe_pi + 1,
-                           notif_progress->msg_last);
+                           msg_last + 1);
 #endif
 
                     doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
@@ -509,9 +473,9 @@ kernel_progress(struct docaSlotDesc *xfer_req_ring,
                 } else {
 #if ENABLE_DEBUG == 1
                     if (ret == EBUSY) {
-                        printf("kernel received notification EBUSY at %d ret %d\n", msg_last, ret);
+                        printf("kernel received notification EBUSY at %ld ret %d\n", msg_last, ret);
                     } else {
-                        printf("kernel notification CQ poll failed at %d ret %d\n", msg_last, ret);
+                        printf("kernel notification CQ poll failed at %ld ret %d\n", msg_last, ret);
                     }
 #endif
                     DOCA_GPUNETIO_VOLATILE(notif_progress->msg_num) = 0;

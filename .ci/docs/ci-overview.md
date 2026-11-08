@@ -19,8 +19,8 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | [Run Pre-Commit Hooks](#run-pre-commit-hooks-pre-commityml) | GitHub Actions | `push`, `pull_request` | Yes |
 | [Claude Code Review](#claude-code-review-claude-reviewyml) | GitHub Actions | `pull_request` (opened/synchronize/reopened) | Yes |
 | [External Contributor](#external-contributor-external_contributoryaml) | GitHub Actions | `pull_request_target` (opened, fork only) | Yes (fork PRs only) |
-| [Blossom-CI](#blossom-ci-blossom-ciyml) | GitHub Actions | `/build` PR comment, or `workflow_dispatch` | No — manual |
-| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | No — only after `/build`, but these 8 are the *only* Jenkins jobs in the PR CI path |
+| [Blossom-CI](#blossom-ci-blossom-ciyml) | GitHub Actions | `pull_request_target` (opened/synchronize/reopened), `/build` PR comment, or `workflow_dispatch` | Yes — subject to `Authorization` |
+| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | Yes — whenever Blossom-CI's `Job-trigger` runs; these 8 are the *only* Jenkins jobs in the PR CI path |
 | `nixl-ci-build-container` | Jenkins (standalone) | Nightly cron + manual | No — never runs as part of PR CI |
 | `nixl-ci-build-wheel-nightly` | Jenkins (standalone) | Nightly cron, triggered by `build-wheel-release-poller`, or manual | No — never runs as part of PR CI |
 | `nixl-build-wheel-release-poller` | Jenkins (standalone) | 4-hourly cron + manual | No — never runs as part of PR CI |
@@ -87,9 +87,9 @@ All files below live in `.github/workflows/`.
 - **Automatic on every PR:** Only fires for PRs from non-members — a no-op job condition otherwise.
 
 ### Blossom-CI (`blossom-ci.yml`)
-- **Trigger:** `issue_comment` (only proceeds `if` the comment body is exactly `/build`), or manual `workflow_dispatch`.
+- **Trigger:** `pull_request_target` (opened/synchronize/reopened), `issue_comment` (only proceeds `if` the comment body is exactly `/build`), or manual `workflow_dispatch`.
 - **What it does:** `Authorization` validates the commenter is authorized; `Vulnerability-scan` checks out the PR code and runs the Blossom vulnerability scan action; `Job-trigger` calls `blossom-ci` with `OPERATION: START-CI-JOB`, which kicks off the Jenkins `nixl-ci-dispatcher` job (see below); `Upload-Log` (on `workflow_dispatch` only) links the Jenkins build log back to the PR.
-- **Automatic on every PR:** **No.** This is a maintainer-gated, manual step — someone with commit access must comment `/build` on the PR to start the full Jenkins pipeline.
+- **Automatic on every PR:** **Yes**, on every PR open/push/reopen, subject to the `Authorization` check; commenting `/build` re-runs the full Jenkins pipeline on demand.
 
 #### Blossom-CI flow
 
@@ -123,8 +123,8 @@ sequenceDiagram
 
 Step by step, matching the jobs in `blossom-ci.yml`:
 
-1. A user comments `/build` on the PR.
-2. The `Blossom-CI` GitHub Action wakes up on the `issue_comment` event.
+1. A user opens, pushes to or reopens the PR, or comments `/build` on it.
+2. The `Blossom-CI` GitHub Action wakes up on the `pull_request_target` or `issue_comment` event.
 3. **Authorization** checks the commenter is allowed to trigger CI: non-NVIDIA
    users cannot trigger it at all, and NVIDIA employees need prior
    authorization from the Blossom SRE team. Unauthorized comments stop here.
@@ -151,7 +151,7 @@ their own nightly/manual trigger. They split into two groups:
 
 - **Dispatcher-triggered (part of the PR CI path):** `nixl-ci-dispatcher` and
   the 7 jobs it fans out to. This is the *only* way any Jenkins job runs
-  against a PR, and only after a `/build` comment.
+  against a PR, triggered by a PR push or a `/build` comment.
 - **Standalone (never run against a PR):** `nixl-ci-build-container`,
   `nixl-ci-build-wheel-nightly`, `nixl-build-wheel-release-poller`,
   `nixl-ci-build-llm-container`, `nixl-ci-test-llm-container`,
@@ -177,13 +177,13 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
   - `nixl-ci-test-sanitizers` — `.ci/jenkins/lib/test-sanitizer-matrix.yaml` (ASan/UBSan + TSan)
   - `nixl-ci-build-container-pr` — `.ci/jenkins/lib/build-container-pr-matrix.yaml`
 - **UCX version:** The four GPU test jobs (`nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr`) build and test against a single UCX version per run — the `UCX_VER` parameter, which defaults to empty and falls back to the `Dockerfile` `ARG UCX_VERSION` default (`v1.23.x`). UCX `master` is validated nightly, not per PR: the standalone `nixl-ci-nightly` job (see below) fans out to all four with `UCX_VER=master` and emails one consolidated report, so UCX regressions surface outside the PR path instead of blocking PRs.
-- **Automatic on every PR:** No — only runs after a `/build` comment triggers Blossom-CI. The dispatcher also aborts any stale in-flight dispatcher run for the same PR (and the leaf builds it started) before starting.
+- **Automatic on every PR:** Yes — runs whenever Blossom-CI triggers it (PR push or `/build` comment). The dispatcher also aborts any stale in-flight dispatcher run for the same PR, whichever of the two started it (and the leaf builds it started), before starting.
 
 ### `nixl-ci-build-container-pr` (dispatcher-triggered)
 
 - **Trigger:** Fan-out from `nixl-ci-dispatcher` (same as the other PR CI jobs).
 - **What it does:** Build-only verification (no push) of the `nixl` (EP + debug) and `nixlbench` container images — one matrix cell per target/arch (x86_64 and aarch64), all in parallel. It runs the same `contrib/build-container.sh` / `benchmark/nixlbench/contrib/build.sh` the standalone `nixl-ci-build-container` job runs, so container/packaging breakage (e.g. a missing `--torch-versions`, or an EP nvlink register-count failure) is caught on the PR instead of only by the nightly job. Like the other leaf jobs it runs whenever the dispatcher fans out. It passes no base-image flags, so each target builds on the base image pinned in its own Dockerfile (`nvcr.io/nvidia/cuda-dl-base`) — the gate therefore exercises the base the shipped images actually use. It previously pinned a DLFW PyTorch base, which skipped the torch and DOCA SDK installs that `cuda-dl-base` requires, so the build path under test diverged from the released one.
-- **Automatic on every PR:** No — only after a `/build` comment (like the other dispatcher jobs).
+- **Automatic on every PR:** Yes — whenever the dispatcher runs (like the other dispatcher jobs).
 
 ### `nixl-ci-build-wheel` (dispatcher-triggered)
 - **Config:** `.ci/jenkins/lib/build-wheel-matrix.yaml`
@@ -202,7 +202,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 ### `nixl-ci-build-wheel-nightly` (standalone)
 - **Trigger:** Nightly cron (one run covering both CUDA majors), triggered by [`nixl-build-wheel-release-poller`](#nixl-build-wheel-release-poller-standalone) for release publishing, or manual run. The pipeline and matrix config run from `ci_refspec` (default `main`; pass `refs/pull/<n>/head` to test CI changes end to end before merge); the NIXL source is cloned inside the build from the `NIXL_VERSION` parameter (branch/tag/PR ref/sha). Nightly runs therefore use main's CI config with any source ref, and a manual run uses whatever `ci_refspec` it passes (default `main`). Poller-spawned release runs pass `ci_refspec` = the release commit, so for them the matrix, `cidemo-init.sh`, the `wheel_base` Dockerfile and `contrib/` are all one commit and the wheel contains only what the release branch declares (CI fixes reach a live release branch by whole-commit cherry-pick).
 - **What it does:** Reuses the per-PR wheel build path (`contrib/build-container.sh` + `Dockerfile.manylinux`) and publishes wheels to `sw-nbu-swx-nixl-pypi-local`. With `PUBLISH_DIR` empty (the default, and what the nightly cron uses) wheels land under `verification/g<nixl-sha8>.ucx<ucx-sha8>/` — the long-standing schema the `build-llm-container` verification pipeline consumes; the poller and manual release runs pass `release/<ver>`, which publishes to `release/<ver>/<build-number>/`. `cuda` is a matrix axis, so both CUDA lines come out of one run: `13` passes no base-image flags to `build-container.sh` and relies on its own defaults, `12` passes the pinned CUDA 12 base image/tag from the matrix env. That is what keeps a build-number folder meaningful — the folder holds one complete cu12+cu13 set and belongs to exactly one build. The Infinia DDN plugin is always bundled (`--build-infinia`, unconditional — not a job parameter) and the source ref's `contrib/build-container.sh` must carry the flag and pin its version; the UCX spcx plugin is compiled by `nixl-ci-compile-ucx-plugin` against the same `wheel_base` images and passed in with `--ucx-spcx-plugin-install`. `wheel_base` is built and pushed per arch and CUDA major by ci-demo before any step runs, so each of the twenty matrix cells pulls it instead of recompiling the dependency stack.
-- **Wheel properties:** Publish attaches `NIXL_SHA`, `NIXL_VERSION`, `JOB_NAME` and `BUILD_NUMBER` to every uploaded wheel unconditionally — `NIXL_SHA` in particular, since the release path no longer carries the sha and the poller looks commits up by it. The resolved build options (base image, UCX ref/sha, plugin flags, etc.) are written to `build_options.env` via `--build-options-file`; Publish reads it and adds `UCX_REF`, `UCX_SHA`, `CUDA_VERSION`, and (when built) `UCX_SPCX_PLUGIN_REF`/`INFINIA_LIBS_IMAGE` (that group is skipped if the built ref's `build-container.sh` predates `--build-options-file`).
+- **Wheel properties:** Publish attaches `NIXL_SHA`, `NIXL_VERSION`, `JOB_NAME`, `BUILD_NUMBER` and `UCX_SHA` to every uploaded wheel unconditionally — `NIXL_SHA` in particular, since the release path no longer carries the sha and the poller looks commits up by it. `UCX_SHA` (also the `verification/` folder's `ucx<ucx-sha8>` key) is read from the wheel image itself (`git -C /usr/local/src/ucx rev-parse HEAD`), so it names the UCX actually compiled; `build_options.env` carries its own `UCX_SHA`, but that is only `UCX_REF` as `git ls-remote` resolved it when the cell started, which a cached `wheel_base` layer or a Dockerfile that pins UCX itself can contradict. The resolved build options (base image, UCX ref, plugin flags, etc.) are written to `build_options.env` via `--build-options-file`; Publish reads it and adds `UCX_REF`, `CUDA_VERSION`, and (when built) `UCX_SPCX_PLUGIN_REF`/`INFINIA_LIBS_IMAGE` (that group is skipped if the built ref's `build-container.sh` predates `--build-options-file`).
 - **Release folder lifecycle:** On a release run `pipeline_stop` owns the folder. Green build: it stamps `NIXL_SHA` as a *folder-level* property and points `currentBuild.description` at the folder in the Artifactory UI. Anything else: it DELETEs the folder outright (404 tolerated, and cleanup never changes the build result) and the failure mail says so. A partial wheel set is not salvageable — it has to be rebuilt — so publishing it would only confuse consumers and make the poller skip the commit. This is safe only because the folder is keyed by build number and therefore owned by one build; `verification/` folders are shared between builds of the same sha pair and are never deleted.
 - **Automatic on every PR:** No — standalone nightly/poller-triggered + manual only.
 
@@ -251,6 +251,12 @@ Jobs submitted via the `slurmCI` module are named `${JOB_BASE_NAME}-${BUILD_NUMB
 | `nixl-ci-test-llm-container` | `nixl-ci-test-llm-container-<build>` |
 
 Use `squeue --name <pattern>` or `squeue -u <user>` to identify which pipeline owns a running job.
+
+## Slurm allocation wait
+
+Every Slurm pipeline's allocation step waits up to 4h for resources (`SLURM_IMMEDIATE_TIMEOUT: 14400`, passed to `salloc --immediate`) before failing, so a busy partition queues the build instead of failing the PR. The allocation step has no step timeout of its own, so each job's `timeout_minutes` is sized to cover the full 4h wait plus the job's build and test runtime, and `nixl-ci-nightly`'s fan-out timeout exceeds the longest leaf job's. `SLURM_JOB_TIMEOUT` (`salloc --time`) counts from when the allocation is granted, so the wait does not shorten it.
+
+When changing `SLURM_IMMEDIATE_TIMEOUT`, change `timeout_minutes` (and the nightly fan-out timeout) by the same amount.
 
 ## Slurm container image sync
 
@@ -328,6 +334,33 @@ symlinks `docker` to `podman` in two different containers, and the push in
 `manylinux` runner. Check the step's `containerSelector` against
 `runs_on_dockers`, not just whether `docker` is podman.
 
+## Registry logins
+
+`il.artifactory.nvidia.com` allows anonymous pulls. A pipeline whose own steps
+never push an image therefore does not log in to it, and does not bind
+`svc-nixl-il-artifactory-token`, before its podman builds. Two pipelines qualify:
+`build-container-pr` (`Setup docker`) and `build-wheel-nightly` (`Prepare`).
+`build-container-pr` still logs in to `gitlab-master.nvidia.com:5005`, which
+needs auth to pull. Pipelines whose steps push keep their login where it was.
+ci-demo's own login for `registry_auth` image builds is separate and unchanged.
+
+A single registry login used to fail the whole build. Two transient failures
+have done this while sibling branches logged in with the same credentials
+seconds apart: `invalid username/password` from `il.artifactory.nvidia.com` or
+`gitlab-master.nvidia.com:5005`, and `lookup il.artifactory.nvidia.com: i/o
+timeout`. Every explicit login step therefore pipes its token into
+`.ci/scripts/registry-login.sh <registry> <username>`, which runs `podman login
+--password-stdin` up to 5 times, 15 seconds apart. Each attempt is capped at 60
+seconds, because `podman login` has no response deadline: a registry that
+accepts the connection but never answers would otherwise hang the step until the
+job timeout. Unlike podman's own push
+retry, it also retries auth errors, because those are the transient ones here. A
+revoked credential therefore fails after about a minute rather than at once.
+
+The logins ci-demo performs for `registry_auth` (`docker.withRegistry` in its
+`Matrix.groovy`) are not covered. They have no retry, so a transient failure in
+`Setup Image` / `Build Docker` still fails the build until ci-demo adds one.
+
 ## Authenticated dependency clones in image builds
 
 `contrib/Dockerfile`, `contrib/Dockerfile.manylinux` and
@@ -342,6 +375,10 @@ Every cloning `RUN` mounts an optional build secret,
 every request to github.com is authenticated rather than anonymous. This includes the
 NIXL `meson setup` `RUN`s, which clone the `taskflow` and `prometheus-cpp` `[wrap-git]`
 subprojects implicitly; later meson-python builds reuse the downloaded subprojects.
+It also includes the nixlbench custom-UCX build (`ucx_custom_image`), whose `autogen.sh`
+fetches UCX's `external/gpunetio` submodule. `autogen.sh` only warns when that fetch
+fails and `make` then dies in the `gdaki` module, so the stage checks for an empty
+`external/gpunetio` and fails right after `autogen.sh` instead.
 `GIT_TERMINAL_PROMPT=0` is an `ARG`, so it applies to these builds without persisting
 into the shipped images.
 
@@ -428,6 +465,22 @@ same credential:
   so no home directory is involved. A secret mount exists only during that `RUN`.
 
 As above, an empty config leaves the clones anonymous, and an invalid token fails them.
+
+## UCX drop tool in CI images
+
+`Dockerfile.base` installs `ucx_drop_tool` at `/usr/local/bin` in every image it
+builds. It is an internal fault-injection tool (UCX MR nbu-swx/ai/ucx!15) for
+fault-tolerance tests.
+
+- The binaries were built once by hand (static `libucs`, Ubuntu 22.04 glibc) and
+  uploaded to `sw-nbu-swx-nixl-generic-local/ucx_drop_tool/{x86_64,aarch64}/` on
+  il.artifactory, which allows anonymous reads. The path is not versioned.
+- The download uses `curl --retry 5 --retry-all-errors`, so a network blip retries
+  instead of failing the image build. `--max-time 60` caps each attempt and
+  `--retry-max-time 300` stops retrying after five minutes, so a stalled download
+  fails the build in minutes instead of hanging.
+- A re-uploaded binary reaches CI only when the base images rebuild, i.e. when
+  `CI_IMAGE_TAG` changes (see [CI_IMAGE_TAG management](#ci_image_tag-management)).
 
 ## Related docs
 
