@@ -53,7 +53,7 @@ env:
   NIXL_EP_PYTHON: /home/svc-nixl/vllm/.venv/bin/python
   NIXL_BUILD_DIR: nixl_build
   SLURM_NODES: 1
-  SLURM_PARTITION: gb200nvl72_cx8
+  SLURM_PARTITION: gb300nvl72_xdr
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
   SLURM_ACCOUNT: 'blackwell'
