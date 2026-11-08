@@ -390,10 +390,8 @@ nixlLibfabricEngine::vramApplyCtxEx(bool &use_cuda_addr_wa) const {
  *****************************************/
 
 nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op, const std::string &remote_agent)
-    : completed_requests_(0),
+    : sink_(new nixlLibfabricXferSink()),
       submitted_requests_(0),
-      error_status_(NIXL_SUCCESS),
-      successful_requests_(0),
       xfer_error_sent_(false),
       operation_(op),
       remote_agent_(remote_agent),
@@ -407,44 +405,67 @@ nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op, const std::strin
 }
 
 nixlLibfabricBackendH::~nixlLibfabricBackendH() {
+    delete sink_; // the engine detaches a busy sink before the handle is destroyed
     NIXL_DEBUG << "handle destructor called, address: " << this;
+}
+
+nixlLibfabricXferSink *
+nixlLibfabricBackendH::detachSinkIfBusy() {
+    if (sink_->completed.load(std::memory_order_acquire) ==
+        submitted_requests_.load(std::memory_order_relaxed)) {
+        return nullptr;
+    }
+    nixlLibfabricXferSink *busy = sink_;
+    sink_ = new nixlLibfabricXferSink();
+    return busy;
 }
 
 // Multi-request completion tracking methods
 void
 nixlLibfabricBackendH::init_request_tracking(size_t num_requests) {
     submitted_requests_.store(num_requests);
-    completed_requests_.store(0);
-    successful_requests_.store(0);
-    error_status_.store(NIXL_SUCCESS);
+    sink_->completed.store(0);
+    sink_->failed.store(0);
+    sink_->error.store(NIXL_SUCCESS);
+    abandoned_status_.store(NIXL_SUCCESS);
+    post_time_ = last_progress_time_ = std::chrono::steady_clock::now();
+    last_seen_completed_ = 0;
     NIXL_DEBUG << "Initialized request tracking for " << num_requests << " requests";
+}
+
+void
+nixlLibfabricXferSink::onError(void *ctx, nixl_status_t status) {
+    auto *sink = static_cast<nixlLibfabricXferSink *>(ctx);
+    nixl_status_t expected = NIXL_SUCCESS;
+    sink->error.compare_exchange_strong(
+        expected, status, std::memory_order_relaxed, std::memory_order_relaxed);
+    sink->failed.fetch_add(1, std::memory_order_relaxed);
+    // Release ensures the error store above is visible to any thread that
+    // observes the incremented count via an acquire load in is_completed().
+    sink->completed.fetch_add(1, std::memory_order_release);
 }
 
 void
 nixlLibfabricBackendH::complete_request(nixl_status_t status) {
     if (status != NIXL_SUCCESS) {
-        nixl_status_t expected = NIXL_SUCCESS;
-        error_status_.compare_exchange_strong(
-            expected, status, std::memory_order_relaxed, std::memory_order_relaxed);
+        nixlLibfabricXferSink::onError(sink_, status);
     } else {
-        successful_requests_.fetch_add(1, std::memory_order_relaxed);
+        sink_->completed.fetch_add(1, std::memory_order_release);
     }
-    // Release ensures the error store above is visible to any thread that
-    // observes the incremented count via an acquire load in is_completed().
-    completed_requests_.fetch_add(1, std::memory_order_release);
-    NIXL_DEBUG << "Request completed (status=" << status
-               << "), total completed: " << completed_requests_.load(std::memory_order_relaxed)
-               << "/" << submitted_requests_.load(std::memory_order_relaxed);
 }
 
 size_t
 nixlLibfabricBackendH::get_completed_requests_count() const {
-    return completed_requests_.load();
+    return sink_->completed.load();
 }
 
 size_t
 nixlLibfabricBackendH::get_successful_requests_count() const {
-    return successful_requests_.load(std::memory_order_acquire);
+    // Successful completions only add to completed (in batches), so the successful
+    // count is what completed without a failure.
+    const size_t completed = sink_->completed.load(std::memory_order_acquire);
+    const size_t failed = sink_->failed.load(std::memory_order_relaxed);
+    return completed >= failed ? completed - failed : 0;
 }
 
 size_t
@@ -460,7 +481,7 @@ nixlLibfabricBackendH::adjust_total_submitted_requests(size_t actual_count) {
 
 nixl_status_t
 nixlLibfabricBackendH::get_error_status() const {
-    return error_status_.load(std::memory_order_acquire);
+    return sink_->error.load(std::memory_order_acquire);
 }
 
 bool
@@ -470,9 +491,9 @@ nixlLibfabricBackendH::claim_xfer_error_send() {
 
 bool
 nixlLibfabricBackendH::is_completed() const {
-    // Acquire pairs with release in complete_request() — guarantees we see
-    // any error_status_ written before the final increment.
-    return completed_requests_.load(std::memory_order_acquire) ==
+    // Acquire pairs with the release in the completion paths — guarantees we see
+    // any error written before the final increment.
+    return sink_->completed.load(std::memory_order_acquire) ==
         submitted_requests_.load(std::memory_order_relaxed);
 }
 
@@ -484,6 +505,24 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     : nixlBackendEngine(init_params),
       progress_thread_enabled_(init_params->enableProgTh),
       progress_thread_delay_(std::chrono::microseconds(init_params->pthrDelay)),
+      write_no_imm_([] {
+          const char *e = getenv("NIXL_LIBFABRIC_WRITE_NO_IMM");
+          return !(e && std::string(e) == "0");
+      }()),
+      dead_peer_timeout_([] {
+          const char *e = getenv("NIXL_LIBFABRIC_DEAD_PEER_TIMEOUT_MS");
+          const long ms = e ? strtol(e, nullptr, 10) : 2000;
+          return std::chrono::milliseconds(ms > 0 ? ms : 2000);
+      }()),
+      merge_descs_([] {
+          const char *e = getenv("NIXL_LIBFABRIC_MERGE");
+          return !(e && std::string(e) == "0");
+      }()),
+      merge_max_bytes_([] {
+          const char *e = getenv("NIXL_LIBFABRIC_MERGE_MAX_BYTES");
+          const long long v = e ? strtoll(e, nullptr, 10) : 0;
+          return v > 0 ? static_cast<size_t>(v) : static_cast<size_t>(16) << 20;
+      }()),
       rail_manager_(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
       post_thread_count_(NIXL_LIBFABRIC_DEFAULT_POST_THREADS),
       post_split_batch_size_(NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE),
@@ -610,7 +649,22 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
             NIXL_INFO << "Starting Progress thread for rails with delay: "
                       << progress_thread_delay_.count() << " microseconds";
             progress_thread_stop_ = false;
-            progress_thread_ = std::thread(&nixlLibfabricEngine::progressThread, this);
+            // Two threads split the rails by default, since one thread runs out of CPU in the
+            // provider's post and CQ paths before two NICs are busy. Override with
+            // NIXL_LIBFABRIC_NUM_PROGRESS_THREADS or the num_progress_threads parameter.
+            num_progress_threads_ = NIXL_LIBFABRIC_DEFAULT_PROGRESS_THREADS;
+            if (const char *env = getenv("NIXL_LIBFABRIC_NUM_PROGRESS_THREADS")) {
+                num_progress_threads_ = std::max<long>(1, strtol(env, nullptr, 10));
+            }
+            LibfabricUtils::getCustomIntParam(
+                getCustomParams(), "num_progress_threads", num_progress_threads_);
+            num_progress_threads_ =
+                std::max<size_t>(1, std::min(num_progress_threads_, rail_manager_.getNumRails()));
+            progress_thread_ = std::thread(&nixlLibfabricEngine::progressThread, this, 0);
+            for (size_t w = 1; w < num_progress_threads_; ++w) {
+                extra_progress_threads_.emplace_back(&nixlLibfabricEngine::progressThread, this, w);
+            }
+            NIXL_INFO << "Progress threads: " << num_progress_threads_;
 
             if (!progress_thread_.joinable()) {
                 NIXL_ERROR << "Failed to start Progress thread";
@@ -674,12 +728,30 @@ nixlLibfabricEngine::~nixlLibfabricEngine() {
     if (progress_thread_enabled_ && progress_thread_.joinable()) {
         NIXL_DEBUG << "Waiting for Progress thread to exit";
         progress_thread_.join();
+        for (auto &t : extra_progress_threads_) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
+        extra_progress_threads_.clear();
         NIXL_DEBUG << "Progress thread joined successfully";
     } else if (!progress_thread_enabled_) {
         NIXL_DEBUG << "Progress thread was not running";
     }
     NIXL_DEBUG << "All threads stopped, now cleaning up resources";
     cleanup();
+    // Rails are closed, so no request can complete into a parked block any more.
+    std::lock_guard<std::mutex> lock(parked_sinks_mutex_);
+    parked_sinks_.clear();
+}
+
+void
+nixlLibfabricEngine::parkBusySink(nixlLibfabricBackendH *handle) const {
+    nixlLibfabricXferSink *busy = handle->detachSinkIfBusy();
+    if (busy) {
+        std::lock_guard<std::mutex> lock(parked_sinks_mutex_);
+        parked_sinks_.emplace_back(busy);
+    }
 }
 
 /****************************************
@@ -1392,6 +1464,7 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         }
     }
 
+    const nixlLibfabricCompletion completion = backend_handle->completion();
     for (int desc_idx = start_idx; desc_idx < end_idx; ++desc_idx) {
         const int rail_id = batch_writes ? batchingRail(local, desc_idx, xfer_base_offset) : -1;
         const bool apply_fi_more =
@@ -1436,9 +1509,7 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             remote_md->remote_selected_endpoints_,
             conn->rail_remote_addr_list_,
             backend_handle->post_xfer_id,
-            [backend_handle](nixl_status_t status) {
-                backend_handle->complete_request(status);
-            }, // Completion callback
+            completion,
             desc_submitted_count,
             desc_idx,
             xfer_base_offset,
@@ -1458,13 +1529,96 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
     return NIXL_SUCCESS;
 }
 
+size_t
+nixlLibfabricEngine::mergeContiguous(const nixl_meta_dlist_t &local,
+                                     const nixl_meta_dlist_t &remote,
+                                     nixl_meta_dlist_t &merged_local,
+                                     nixl_meta_dlist_t &merged_remote) const {
+    const int n = local.descCount();
+    if (!merge_descs_ || n < 2 || remote.descCount() != n) {
+        return 0;
+    }
+    // Merge a descriptor into the previous one when both sides continue it byte for byte,
+    // in the same registration on each side and on the same device.
+    auto continues = [&](int prev_first, uintptr_t prev_local_end, uintptr_t prev_remote_end,
+                         size_t prev_len, int i) {
+        return local[i].addr == prev_local_end && remote[i].addr == prev_remote_end &&
+            local[i].metadataP == local[prev_first].metadataP &&
+            remote[i].metadataP == remote[prev_first].metadataP &&
+            local[i].devId == local[prev_first].devId &&
+            remote[i].devId == remote[prev_first].devId &&
+            prev_len + local[i].len <= merge_max_bytes_ && local[i].len == remote[i].len;
+    };
+    // First pass: count the merges, so a list with none costs no copy.
+    size_t merges = 0;
+    {
+        int first = 0;
+        uintptr_t lend = local[0].addr + local[0].len;
+        uintptr_t rend = remote[0].addr + remote[0].len;
+        size_t len = local[0].len;
+        for (int i = 1; i < n; ++i) {
+            if (continues(first, lend, rend, len, i)) {
+                ++merges;
+                len += local[i].len;
+            } else {
+                first = i;
+                len = local[i].len;
+            }
+            lend = local[i].addr + local[i].len;
+            rend = remote[i].addr + remote[i].len;
+        }
+    }
+    if (merges == 0) {
+        return 0;
+    }
+    merged_local.clear();
+    merged_remote.clear();
+    merged_local.reserve(n - merges);
+    merged_remote.reserve(n - merges);
+    int first = 0;
+    size_t len = local[0].len;
+    for (int i = 1; i <= n; ++i) {
+        if (i < n &&
+            continues(first,
+                      local[i - 1].addr + local[i - 1].len,
+                      remote[i - 1].addr + remote[i - 1].len,
+                      len,
+                      i)) {
+            len += local[i].len;
+            continue;
+        }
+        merged_local.addDesc(
+            nixlMetaDesc(local[first].addr, len, local[first].devId, local[first].metadataP));
+        merged_remote.addDesc(
+            nixlMetaDesc(remote[first].addr, len, remote[first].devId, remote[first].metadataP));
+        if (i < n) {
+            first = i;
+            len = local[i].len;
+        }
+    }
+    return merges;
+}
+
 nixl_status_t
 nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
-                              const nixl_meta_dlist_t &local,
-                              const nixl_meta_dlist_t &remote,
+                              const nixl_meta_dlist_t &in_local,
+                              const nixl_meta_dlist_t &in_remote,
                               const std::string &remote_agent,
                               nixlBackendReqH *&handle,
                               const nixl_opt_b_args_t *opt_args) const {
+    // Goal B: post one RDMA operation per run of descriptors that are contiguous on both sides.
+    // The merged lists live for this call only; nothing below keeps a reference past it.
+    thread_local nixl_meta_dlist_t merged_local(DRAM_SEG);
+    thread_local nixl_meta_dlist_t merged_remote(DRAM_SEG);
+    if (merged_local.getType() != in_local.getType()) {
+        merged_local = nixl_meta_dlist_t(in_local.getType()); // keeps capacity across calls
+    }
+    if (merged_remote.getType() != in_remote.getType()) {
+        merged_remote = nixl_meta_dlist_t(in_remote.getType());
+    }
+    const bool merged = mergeContiguous(in_local, in_remote, merged_local, merged_remote) > 0;
+    const nixl_meta_dlist_t &local = merged ? merged_local : in_local;
+    const nixl_meta_dlist_t &remote = merged ? merged_remote : in_remote;
 
     // Validate connection
     std::shared_ptr<nixlLibfabricConnection> conn;
@@ -1511,6 +1665,10 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         backend_handle->binary_notifs.clear();
         backend_handle->total_notif_msg_len = 0;
     }
+
+    // A repost of a handle whose last posting was abandoned with requests in flight gets a
+    // fresh completion block, so stragglers cannot count toward the new posting.
+    parkBusySink(backend_handle);
 
     // Allocate xfer_id once in prepXfer
     backend_handle->post_xfer_id = LibfabricUtils::getNextXferId();
@@ -1659,7 +1817,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     // Send notification immediately after successful request submission
-    if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_WRITE) {
+    if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_WRITE &&
+        !write_no_imm_) {
         nixl_status_t notif_status = notifSendPriv(remote_agent,
                                                    backend_handle->binary_notifs,
                                                    backend_handle->total_notif_msg_len,
@@ -1684,7 +1843,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // For very small transfers we can check for local completions immediately.
     if (backend_handle->is_completed()) {
-        if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ) {
+        if (backend_handle->has_notif &&
+            (backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ || write_no_imm_)) {
             nixl_status_t notif_status = notifSendPriv(remote_agent,
                                                        backend_handle->binary_notifs,
                                                        backend_handle->total_notif_msg_len,
@@ -1713,7 +1873,42 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
         }
     }
 
+    const nixl_status_t abandoned = backend_handle->abandonedStatus();
+    if (abandoned != NIXL_SUCCESS) {
+        return abandoned;
+    }
+
     // Then check for completions after processing any pending completions
+    if (!backend_handle->is_completed()) {
+        // Dead-peer check. Requests to a peer that has exited never complete; the provider
+        // only reports the failure on the EQ. After such an error, a transfer whose completed
+        // count has not moved for dead_peer_timeout_ is failed. Transfers to healthy peers
+        // keep completing and are not touched.
+        const int64_t err_ns = rail_manager_.lastEqErrorNs();
+        if (err_ns != 0) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto err_time =
+                std::chrono::steady_clock::time_point(std::chrono::nanoseconds(err_ns));
+            const size_t done = backend_handle->get_completed_requests_count();
+            if (done != backend_handle->last_seen_completed_) {
+                backend_handle->last_seen_completed_ = done;
+                backend_handle->last_progress_time_ = now;
+            } else if (err_time >= backend_handle->post_time_ - dead_peer_timeout_) {
+                const auto quiet_since = std::max(backend_handle->last_progress_time_, err_time);
+                if (now - quiet_since > dead_peer_timeout_) {
+                    NIXL_ERROR << "Transfer XFER_ID=" << backend_handle->post_xfer_id << " to "
+                               << backend_handle->remote_agent_ << " made no progress for "
+                               << dead_peer_timeout_.count()
+                               << " ms after a provider error (" << done << " of "
+                               << backend_handle->get_submitted_requests_count()
+                               << " requests done); the peer is likely gone";
+                    backend_handle->abandon(NIXL_ERR_REMOTE_DISCONNECT);
+                    return NIXL_ERR_REMOTE_DISCONNECT;
+                }
+            }
+        }
+    }
+
     if (backend_handle->is_completed()) {
         // Check if any request completed with error
         nixl_status_t err = backend_handle->get_error_status();
@@ -1724,7 +1919,8 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
         }
 
         NIXL_DEBUG << "Data transfer completed successfully";
-        if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ) {
+        if (backend_handle->has_notif &&
+            (backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ || write_no_imm_)) {
             nixl_status_t notif_status = notifSendPriv(backend_handle->remote_agent_,
                                                        backend_handle->binary_notifs,
                                                        backend_handle->total_notif_msg_len,
@@ -1746,7 +1942,10 @@ nixlLibfabricEngine::releaseReqH(nixlBackendReqH *handle) const {
         return NIXL_SUCCESS;
     }
 
-    delete static_cast<nixlLibfabricBackendH *>(handle);
+    auto *backend_handle = static_cast<nixlLibfabricBackendH *>(handle);
+    // Requests still in flight point at the completion block; keep it alive.
+    parkBusySink(backend_handle);
+    delete backend_handle;
     NIXL_DEBUG << "releaseReqH completed successfully";
     return NIXL_SUCCESS;
 }
@@ -2081,13 +2280,14 @@ nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
 
 // Progress thread that continuously processes completions only on rails
 nixl_status_t
-nixlLibfabricEngine::progressThread() {
+nixlLibfabricEngine::progressThread(size_t worker) {
     NIXL_DEBUG << "PT: Thread started successfully for rails only";
     // Main progress loop - continuously process completions only on rails
     while (!progress_thread_stop_.load()) {
         // Process completions only on rails (non-blocking)
         bool any_completions = false;
-        nixl_status_t status = rail_manager_.progressActiveRails();
+        nixl_status_t status =
+            rail_manager_.progressActiveRails(worker, num_progress_threads_);
         if (status == NIXL_SUCCESS) {
             any_completions = true;
             NIXL_DEBUG << "PT: Processed completions on rails";

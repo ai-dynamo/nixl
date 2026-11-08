@@ -39,6 +39,27 @@
 class nixlLibfabricConnection;
 
 /**
+ * @brief How a data (READ/WRITE) request reports its completion.
+ *
+ * Successful completions only increment *done, and the rail adds up the completions of one CQ
+ * batch that share a counter before it touches the counter, so a transfer pays one atomic add
+ * per CQ batch instead of one per descriptor. A failed request calls on_error(ctx, status)
+ * instead, which must count the request as completed itself.
+ */
+struct nixlLibfabricCompletion {
+    std::atomic<size_t> *done = nullptr;
+    void (*on_error)(void *ctx, nixl_status_t status) = nullptr;
+    void *ctx = nullptr;
+
+    void
+    fail(nixl_status_t status) const {
+        if (on_error) {
+            on_error(ctx, status);
+        }
+    }
+};
+
+/**
  * @brief Request structure for libfabric operations
  *
  */
@@ -56,7 +77,8 @@ struct nixlLibfabricReq {
     bool in_use; ///< Pool management flag
     size_t chunk_offset; ///< Chunk offset for DATA requests
     size_t chunk_size; ///< Chunk size for DATA requests
-    std::function<void(nixl_status_t)> completion_callback; ///< Completion callback function
+    std::function<void(nixl_status_t)> completion_callback; ///< Completion callback (control)
+    nixlLibfabricCompletion data_completion; ///< Completion sink (data requests)
     void *local_addr; ///< Local memory address for transfers
     uint64_t remote_addr; ///< Remote memory address for transfers
     struct fid_mr *local_mr; ///< Local memory registration for transfers
@@ -163,7 +185,7 @@ public:
 
     /** Initialize pool with buffers */
     nixl_status_t
-    initialize(struct fid_domain *domain);
+    initialize(struct fid_domain *domain, std::mutex *domain_mutex = nullptr);
 
     /** Allocate control request with size validation */
     nixlLibfabricReq *
@@ -184,6 +206,7 @@ private:
 
     std::vector<BufferChunk> buffer_chunks_; ///< Multiple buffer chunks for expansion
     struct fid_domain *domain_; ///< Domain for MR registration (stored during init)
+    std::mutex *domain_mutex_ = nullptr; ///< Serializes fi_mr_reg under FI_THREAD_DOMAIN
     size_t chunk_size_; ///< Size of each buffer chunk
 };
 
@@ -387,10 +410,47 @@ struct nixlLibfabricPostRequest {
     fi_addr_t dest_addr;
     uint64_t remote_addr;
     uint64_t remote_key;
-    nixlLibfabricReq *req;
+    nixlLibfabricCompletion completion; // the PT allocates the request when it posts
+    uint32_t xfer_id;
     uint64_t fi_flags;
     int device_id; // CUDA device ordinal for cudaSetDevice in PT
     bool is_cuda_vram;
+};
+
+/**
+ * @brief Adds up the successful data completions of one CQ batch per completion counter, so
+ * each counter takes one atomic add per batch. flush() must run before the batch goes out of
+ * scope; nothing touches a counter after its flush, since its owner may free it once it sees
+ * the final count.
+ */
+struct nixlLibfabricDoneBatch {
+    static constexpr int kSlots = 8;
+    std::atomic<size_t> *ctr[kSlots];
+    size_t n[kSlots];
+    int used = 0;
+
+    void
+    add(std::atomic<size_t> *c) {
+        for (int i = 0; i < used; ++i) {
+            if (ctr[i] == c) {
+                ++n[i];
+                return;
+            }
+        }
+        if (used == kSlots) {
+            flush();
+        }
+        ctr[used] = c;
+        n[used++] = 1;
+    }
+
+    void
+    flush() {
+        for (int i = 0; i < used; ++i) {
+            ctr[i]->fetch_add(n[i], std::memory_order_release);
+        }
+        used = 0;
+    }
 };
 
 /** Individual libfabric rail managing fabric, domain, endpoint, CQ, and AV */
@@ -597,6 +657,12 @@ public:
     fi_info *
     getRailInfo() const;
 
+    /** steady_clock nanoseconds of the last provider error on this rail's EQ, 0 if none. */
+    int64_t
+    lastEqErrorNs() const {
+        return last_eq_error_ns_.load(std::memory_order_acquire);
+    }
+
 private:
     // Core libfabric resources
     struct fi_info *info; // from rail_infos[rail_id]
@@ -604,6 +670,14 @@ private:
     struct fid_domain *domain; // from rail_domains[rail_id]
     struct fid_cq *cq; // from rail_cqs[rail_id]
     struct fid_av *av; // from rail_avs[rail_id]
+    struct fid_eq *eq = nullptr; // provider error reports (keeps EFA from abort()ing)
+    std::atomic<uint64_t> eq_errors_{0};
+    std::atomic<int64_t> last_eq_error_ns_{0}; // steady_clock time of the last EQ error
+    uint32_t eq_poll_countdown_ = 0;
+
+    /** Drain the event queue and log provider errors. Called from the reap path. */
+    void
+    pollEventQueue();
 
     // Serializes every libfabric call on this rail's endpoint, CQ and AV. The rail opens its
     // domain with FI_THREAD_COMPLETION, under which the provider takes no locks for these
@@ -616,6 +690,9 @@ private:
     //    they take other locks and may re-enter (e.g. postRecv from a recv completion).
     mutable std::mutex ep_mutex_;
 
+    // Domain opened with FI_THREAD_DOMAIN: domain-level calls (MR registration) take ep_mutex_.
+    bool thread_domain_ = true;
+
     // Lock-free MPSC ring: main thread pushes, PT pops and posts
     using post_ring_t = MpscRing<nixlLibfabricPostRequest>;
     post_ring_t post_ring_;
@@ -626,6 +703,27 @@ private:
 
     // Whether a progress thread is handling CQ draining
     bool progress_thread_enabled_ = false;
+
+    // Data-path counters, kept only when NIXL_LIBFABRIC_STATS is set; printed at cleanup.
+    struct alignas(64) RailStats {
+        std::atomic<uint64_t> posted{0}; // data posts accepted by the provider
+        std::atomic<uint64_t> eagain{0}; // data posts that returned -FI_EAGAIN
+        std::atomic<uint64_t> reaped{0}; // CQ entries read
+        std::atomic<uint64_t> reap_calls{0}; // fi_cq_readfrom calls
+        std::atomic<uint64_t> empty_reaps{0}; // calls that returned nothing
+        std::atomic<uint64_t> inflight_sum{0}; // posted - reaped, summed at each non-empty reap
+        std::atomic<uint64_t> inflight_max{0};
+        std::atomic<uint64_t> drain_calls{0}; // drainPostQueue calls that posted something
+        std::atomic<uint64_t> drain_posts{0};
+    };
+    bool stats_enabled_ = false;
+    uint64_t write_flags_ = 0; // flags added to every data write
+    mutable RailStats stats_;
+
+    void
+    statsOnReap(int n) const;
+    void
+    printStats() const;
 
     // Callback functions. Receive completions carry the sender's index in OUR table,
     // resolved from the completion's source address (see resolveSourceAddress()).
@@ -658,11 +756,20 @@ private:
 
     // src_addr is FI_ADDR_NOTAVAIL when the provider has none (always for local completions).
     nixl_status_t
-    processCompletionQueueEntry(struct fi_cq_data_entry *comp, fi_addr_t src_addr) const;
+    processCompletionQueueEntry(struct fi_cq_data_entry *comp,
+                                fi_addr_t src_addr,
+                                nixlLibfabricDoneBatch &done) const;
     nixl_status_t
     processLocalSendCompletion(struct fi_cq_data_entry *comp) const;
     nixl_status_t
-    processLocalTransferCompletion(struct fi_cq_data_entry *comp, const char *operation_type) const;
+    processLocalTransferCompletion(struct fi_cq_data_entry *comp,
+                                   const char *operation_type,
+                                   nixlLibfabricDoneBatch &done) const;
+
+    /** Read and process up to one CQ batch. Takes ep_mutex_ only around fi_cq_readfrom.
+     *  Returns the number of entries processed, 0 for none, or a negative status error. */
+    int
+    reapCompletions(nixl_status_t &first_error);
     nixl_status_t
     processRecvCompletion(struct fi_cq_data_entry *comp, fi_addr_t src_addr) const;
     nixl_status_t

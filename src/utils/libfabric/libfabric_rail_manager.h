@@ -235,23 +235,13 @@ public:
                              const std::vector<size_t> &remote_selected_endpoints,
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
                              uint16_t xfer_id,
-                             std::function<void(nixl_status_t)> completion_callback,
+                             const nixlLibfabricCompletion &completion,
                              size_t &submitted_count_out,
                              int desc_idx,
                              size_t base_offset,
                              bool apply_fi_more = false,
                              int device_id = -1,
                              bool is_cuda_vram = false);
-
-    void
-    deferTransferRequest(nixlLibfabricReq::OpType op_type,
-                         uint16_t xfer_id,
-                         uint64_t fi_flags,
-                         fi_addr_t dest_addr,
-                         int device_id,
-                         bool is_cuda_vram,
-                         size_t rail_id,
-                         nixlLibfabricReq *req);
 
     /** Reserve a base offset for a transfer to ensure stable rail assignment
      *  across all descriptors in the transfer. Call once per postXfer. */
@@ -292,7 +282,24 @@ public:
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
      */
     nixl_status_t
-    progressActiveRails();
+    progressActiveRails() {
+        return progressActiveRails(0, 1);
+    }
+
+    /** Progress only the active rails with rail_id % num_workers == worker, so several
+     *  progress threads can split the rails; each rail is then drained by one thread only. */
+    nixl_status_t
+    progressActiveRails(size_t worker, size_t num_workers);
+
+    /** Latest provider (EQ) error time over all rails, steady_clock ns; 0 if none. */
+    int64_t
+    lastEqErrorNs() const {
+        int64_t latest = 0;
+        for (const auto &rail : rails_) {
+            latest = std::max(latest, rail->lastEqErrorNs());
+        }
+        return latest;
+    }
 
     /** Validate that all rails are properly initialized
      * @return NIXL_SUCCESS if all rails initialized, error code otherwise
@@ -406,9 +413,32 @@ private:
     // EFA device to rail mapping
     std::unordered_map<std::string, size_t> efa_device_to_rail_map;
 
-    // active rails with reference counting (always positive)
-    std::unordered_map<size_t, size_t> active_rails_;
+    // Per-rail registration reference counts, indexed by rail id. The progress loop reads
+    // them without a lock; inc/dec serialize on active_rails_mutex_.
+    std::unique_ptr<std::atomic<size_t>[]> active_rails_;
+    size_t active_rails_size_ = 0;
+
+    // Per rail: whether its domain uses FI_MR_VIRT_ADDR (remote addresses are virtual
+    // addresses rather than offsets into the registration). Cached so the post path does not
+    // read fi_info for every descriptor.
+    std::vector<uint8_t> rail_virt_addr_;
     mutable std::mutex active_rails_mutex_;
+
+    /** Post one data request on one rail, directly or through the rail's PT post queue. */
+    nixl_status_t
+    submitOnRail(nixlLibfabricReq::OpType op_type,
+                 size_t rail_id,
+                 void *local_addr,
+                 size_t length,
+                 void *local_desc,
+                 uint64_t remote_addr,
+                 uint64_t remote_key,
+                 fi_addr_t dest_addr,
+                 uint16_t xfer_id,
+                 const nixlLibfabricCompletion &completion,
+                 uint64_t fi_flags,
+                 int device_id,
+                 bool is_cuda_vram);
 
     // rail selection policy for DRAM memory type
     std::unique_ptr<nixlLibfabricRailSelectionPolicy> dram_rail_selection_policy_;

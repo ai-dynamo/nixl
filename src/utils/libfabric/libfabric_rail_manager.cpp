@@ -372,11 +372,17 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
     // Build EFA device to rail index mapping for O(1) lookup
     efa_device_to_rail_map.clear();
     efa_device_to_rail_map.reserve(num_rails_);
+    {
+        std::lock_guard<std::mutex> lock(active_rails_mutex_);
+        active_rails_.reset(new std::atomic<size_t>[num_rails_]);
+        active_rails_size_ = num_rails_;
+    }
     clearActiveRails();
 
     try {
         rails_.clear();
         rails_.reserve(num_rails_);
+        rail_virt_addr_.clear();
 
         for (size_t i = 0; i < num_rails_; ++i) {
             rails_.emplace_back(std::make_unique<nixlLibfabricRail>(
@@ -384,6 +390,8 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
 
             // Initialize EFA device mapping
             efa_device_to_rail_map[efa_devices[i]] = i;
+            rail_virt_addr_.push_back(
+                (rails_.back()->getRailInfo()->domain_attr->mr_mode & FI_MR_VIRT_ADDR) ? 1 : 0);
 
             NIXL_DEBUG << "Created rail " << i << " (device=" << efa_devices[i]
                        << ", provider=" << provider_name << ")";
@@ -402,6 +410,78 @@ nixlLibfabricRailManager::reserveBaseOffset() {
 }
 
 nixl_status_t
+nixlLibfabricRailManager::submitOnRail(nixlLibfabricReq::OpType op_type,
+                                       size_t rail_id,
+                                       void *local_addr,
+                                       size_t length,
+                                       void *local_desc,
+                                       uint64_t remote_addr,
+                                       uint64_t remote_key,
+                                       fi_addr_t dest_addr,
+                                       uint16_t xfer_id,
+                                       const nixlLibfabricCompletion &completion,
+                                       uint64_t fi_flags,
+                                       int device_id,
+                                       bool is_cuda_vram) {
+    nixlLibfabricRail &rail = *rails_[rail_id];
+    const bool is_write = (op_type == nixlLibfabricReq::WRITE);
+    const uint64_t imm_data = is_write ?
+        NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, xfer_id, LibfabricUtils::getNextSeqId()) :
+        0;
+
+    if (rail.isProgressThreadEnabled()) {
+        // PT-owns-endpoint: the progress thread allocates the request when it posts, so the
+        // request pool is only ever touched by the progress thread on this path.
+        nixlLibfabricPostRequest pr;
+        pr.type = is_write ? nixlLibfabricPostRequest::WRITE : nixlLibfabricPostRequest::READ;
+        pr.local_addr = local_addr;
+        pr.length = length;
+        pr.local_desc = local_desc;
+        pr.immediate_data = imm_data;
+        pr.dest_addr = dest_addr;
+        pr.remote_addr = remote_addr;
+        pr.remote_key = remote_key;
+        pr.completion = completion;
+        pr.xfer_id = xfer_id;
+        pr.fi_flags = fi_flags;
+        pr.device_id = device_id;
+        pr.is_cuda_vram = is_cuda_vram;
+        rail.enqueuePost(pr);
+        return NIXL_SUCCESS;
+    }
+
+    nixlLibfabricReq *req = rail.allocateDataRequest(op_type, xfer_id);
+    if (!req) {
+        NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
+        return NIXL_ERR_BACKEND;
+    }
+    req->data_completion = completion;
+    req->chunk_size = length;
+    req->local_addr = local_addr;
+    req->remote_addr = remote_addr;
+    req->remote_key = remote_key;
+    req->rail_id = rail_id;
+
+    nixl_status_t status = is_write ?
+        rail.postWrite(local_addr,
+                       length,
+                       local_desc,
+                       imm_data,
+                       dest_addr,
+                       remote_addr,
+                       remote_key,
+                       req,
+                       fi_flags) :
+        rail.postRead(local_addr, length, local_desc, dest_addr, remote_addr, remote_key, req);
+    if (status != NIXL_SUCCESS) {
+        rail.releaseRequest(req);
+        NIXL_ERROR << "Failed to submit " << (is_write ? "write" : "read") << " on rail "
+                   << rail_id << ", request released";
+    }
+    return status;
+}
+
+nixl_status_t
 nixlLibfabricRailManager::prepareAndSubmitTransfer(
     nixlLibfabricReq::OpType op_type,
     void *local_addr,
@@ -414,14 +494,13 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     const std::vector<size_t> &remote_selected_endpoints,
     const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
     uint16_t xfer_id,
-    std::function<void(nixl_status_t)> completion_callback,
+    const nixlLibfabricCompletion &completion,
     size_t &submitted_count_out,
     int desc_idx,
     size_t base_offset,
     bool apply_fi_more,
     int device_id,
     bool is_cuda_vram) {
-    // Initialize output parameter
     submitted_count_out = 0;
 
     if (selected_rails.empty()) {
@@ -429,230 +508,76 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Determine striping strategy
-    bool use_striping = usesStriping(transfer_size, selected_rails.size());
-    NIXL_DEBUG << "use_striping=" << use_striping;
-    if (!use_striping) {
+    if (!usesStriping(transfer_size, selected_rails.size())) {
         // WRITE: group NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE consecutive descriptors on one rail
         // for FI_MORE batching. READ: per-descriptor round-robin (FI_MORE has no benefit).
         // apply_fi_more is precomputed by the caller, which leaves it false for the last post
         // on each rail so that every rail's FI_MORE batch is flushed.
         const bool batch_write = (op_type == nixlLibfabricReq::WRITE);
-        const size_t rail_sel_idx =
-            railSelectionIndex(base_offset, desc_idx, batch_write, selected_rails.size());
-        const size_t rail_id = selected_rails[rail_sel_idx];
+        const size_t rail_id = selected_rails[railSelectionIndex(
+            base_offset, desc_idx, batch_write, selected_rails.size())];
         // The remote endpoint round-robins over its own count, which can differ from the
         // local rail count.
         const size_t remote_ep_id = remote_selected_endpoints[railSelectionIndex(
             base_offset, desc_idx, batch_write, remote_selected_endpoints.size())];
-        const uint64_t fi_flags = (batch_write && apply_fi_more) ? FI_MORE : 0;
-        NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
-        // Allocate request
-        nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
-        if (!req) {
-            NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
-            return NIXL_ERR_BACKEND;
-        }
-        // Set completion callback and populate request
-        req->completion_callback = completion_callback;
-        req->chunk_offset = 0;
-        req->chunk_size = transfer_size;
-        req->local_addr = local_addr;
-
-        if (rails_[rail_id]->getRailInfo()->domain_attr->mr_mode & FI_MR_VIRT_ADDR) {
-            req->remote_addr = remote_target_addr;
-        } else {
-            // providers without FI_MR_VIRT_ADDR expects offset-based addressing.
-            req->remote_addr = remote_target_addr - remote_registered_base;
-            NIXL_DEBUG << "calculated offset " << req->remote_addr << " (" << std::hex
-                       << req->remote_addr << std::dec << ")"
-                       << " from target " << (void *)remote_target_addr << " - base "
-                       << (void *)remote_registered_base << " for rail " << rail_id;
-        }
-
-        req->local_mr = local_mrs[rail_id];
-        req->remote_key = remote_keys[remote_ep_id];
-        req->rail_id = rail_id;
-        // Submit: either enqueue for PT, or post directly
-        nixl_status_t status;
-        if (rails_[rail_id]->isProgressThreadEnabled()) {
-            // PT-owns-endpoint: enqueue for progress thread to post
-            deferTransferRequest(op_type,
-                                 xfer_id,
-                                 fi_flags,
-                                 dest_addrs.at(rail_id)[remote_ep_id],
-                                 device_id,
-                                 is_cuda_vram,
-                                 rail_id,
-                                 req);
-            status = NIXL_SUCCESS;
-        } else if (op_type == nixlLibfabricReq::WRITE) {
-            // Direct post (PT OFF path)
-            // Generate next SEQ_ID for this specific write operation
-            uint8_t seq_id = LibfabricUtils::getNextSeqId();
-            uint64_t imm_data = NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, xfer_id, seq_id);
-            status = rails_[rail_id]->postWrite(req->local_addr,
-                                                req->chunk_size,
-                                                fi_mr_desc(req->local_mr),
-                                                imm_data,
-                                                dest_addrs.at(rail_id)[remote_ep_id],
-                                                req->remote_addr,
-                                                req->remote_key,
-                                                req,
-                                                fi_flags);
-        } else {
-            status = rails_[rail_id]->postRead(req->local_addr,
-                                               req->chunk_size,
-                                               fi_mr_desc(req->local_mr),
-                                               dest_addrs.at(rail_id)[remote_ep_id],
-                                               req->remote_addr,
-                                               req->remote_key,
-                                               req);
-        }
+        const uint64_t remote_addr = rail_virt_addr_[rail_id] ?
+            remote_target_addr :
+            remote_target_addr - remote_registered_base; // offset-based addressing
+        nixl_status_t status = submitOnRail(op_type,
+                                            rail_id,
+                                            local_addr,
+                                            transfer_size,
+                                            fi_mr_desc(local_mrs[rail_id]),
+                                            remote_addr,
+                                            remote_keys[remote_ep_id],
+                                            dest_addrs.at(rail_id)[remote_ep_id],
+                                            xfer_id,
+                                            completion,
+                                            (batch_write && apply_fi_more) ? FI_MORE : 0,
+                                            device_id,
+                                            is_cuda_vram);
         if (status != NIXL_SUCCESS) {
-            // Release the allocated request back to pool on failure
-            rails_[rail_id]->releaseRequest(req);
-            NIXL_ERROR << "Failed to submit "
-                       << (op_type == nixlLibfabricReq::WRITE ? "write" : "read") << " on rail "
-                       << rail_id << ", request released";
             return status;
         }
-
-        // Track submitted request
         submitted_count_out = 1;
-
-        NIXL_DEBUG << "Round-robin: submitted single request on rail " << rail_id << " for "
-                   << transfer_size << " bytes, XFER_ID=" << req->xfer_id;
-
-    } else {
-        // Striping: distribute across multiple rails (no FI_MORE for striped transfers)
-        uint64_t fi_flags = 0;
-        size_t num_rails = selected_rails.size();
-        size_t chunk_size = transfer_size / num_rails;
-        size_t remainder = transfer_size % num_rails;
-        for (size_t i = 0; i < num_rails; ++i) {
-            const size_t rail_id = selected_rails[i];
-            const size_t remote_ep_id =
-                remote_selected_endpoints[i % remote_selected_endpoints.size()];
-            NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id=" << remote_ep_id;
-            size_t current_chunk_size = chunk_size + (i == num_rails - 1 ? remainder : 0);
-            if (current_chunk_size == 0) {
-                break;
-            }
-            // Allocate request
-            nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
-            if (!req) {
-                NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
-                return NIXL_ERR_BACKEND;
-            }
-
-            req->completion_callback = completion_callback;
-
-            // Calculate and populate chunk info
-            size_t chunk_offset = i * chunk_size;
-            req->chunk_offset = chunk_offset;
-            req->chunk_size = current_chunk_size;
-            req->local_addr = static_cast<char *>(local_addr) + chunk_offset;
-
-            if (rails_[rail_id]->getRailInfo()->domain_attr->mr_mode & FI_MR_VIRT_ADDR) {
-                req->remote_addr = remote_target_addr + chunk_offset;
-            } else {
-                // providers without FI_MR_VIRT_ADDR expects offset-based addressing.
-                req->remote_addr = (remote_target_addr - remote_registered_base) + chunk_offset;
-                NIXL_DEBUG << "calculated offset " << req->remote_addr << " (" << std::hex
-                           << req->remote_addr << std::dec << ")"
-                           << " from (target " << (void *)remote_target_addr << " - base "
-                           << (void *)remote_registered_base << ") + chunk_offset " << chunk_offset
-                           << " for rail " << rail_id;
-            }
-
-            req->local_mr = local_mrs[rail_id];
-            req->remote_key = remote_keys[remote_ep_id];
-            req->rail_id = rail_id;
-            nixl_status_t status;
-            if (rails_[rail_id]->isProgressThreadEnabled()) {
-                // PT-owns-endpoint: enqueue for progress thread to post
-                deferTransferRequest(op_type,
-                                     xfer_id,
-                                     fi_flags,
-                                     dest_addrs.at(rail_id)[remote_ep_id],
-                                     device_id,
-                                     is_cuda_vram,
-                                     rail_id,
-                                     req);
-                status = NIXL_SUCCESS;
-            } else if (op_type == nixlLibfabricReq::WRITE) {
-                // Generate next SEQ_ID for this specific transfer operation
-                uint8_t seq_id = LibfabricUtils::getNextSeqId();
-                uint64_t imm_data =
-                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, xfer_id, seq_id);
-                status = rails_[rail_id]->postWrite(req->local_addr,
-                                                    req->chunk_size,
-                                                    fi_mr_desc(req->local_mr),
-                                                    imm_data,
-                                                    dest_addrs.at(rail_id)[remote_ep_id],
-                                                    req->remote_addr,
-                                                    req->remote_key,
-                                                    req,
-                                                    fi_flags);
-            } else {
-                status = rails_[rail_id]->postRead(req->local_addr,
-                                                   req->chunk_size,
-                                                   fi_mr_desc(req->local_mr),
-                                                   dest_addrs.at(rail_id)[remote_ep_id],
-                                                   req->remote_addr,
-                                                   req->remote_key,
-                                                   req);
-            }
-            if (status != NIXL_SUCCESS) {
-                // This request failed to submit - release it immediately
-                rails_[rail_id]->releaseRequest(req);
-                NIXL_ERROR << "Failed to submit "
-                           << (op_type == nixlLibfabricReq::WRITE ? "write" : "read") << " on rail "
-                           << rail_id << ", request released";
-                return status;
-            }
-
-            // Track submitted request
-            submitted_count_out++;
-        }
-        NIXL_DEBUG << "Striping: submitted " << submitted_count_out << " requests for "
-                   << transfer_size << " bytes";
+        return NIXL_SUCCESS;
     }
 
-    NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
-
+    // Striping: distribute across multiple rails (no FI_MORE for striped transfers)
+    const size_t num_rails = selected_rails.size();
+    const size_t chunk_size = transfer_size / num_rails;
+    const size_t remainder = transfer_size % num_rails;
+    for (size_t i = 0; i < num_rails; ++i) {
+        const size_t rail_id = selected_rails[i];
+        const size_t remote_ep_id = remote_selected_endpoints[i % remote_selected_endpoints.size()];
+        const size_t current_chunk_size = chunk_size + (i == num_rails - 1 ? remainder : 0);
+        if (current_chunk_size == 0) {
+            break;
+        }
+        const size_t chunk_offset = i * chunk_size;
+        const uint64_t remote_addr = (rail_virt_addr_[rail_id] ?
+                                          remote_target_addr :
+                                          remote_target_addr - remote_registered_base) +
+            chunk_offset;
+        nixl_status_t status = submitOnRail(op_type,
+                                            rail_id,
+                                            static_cast<char *>(local_addr) + chunk_offset,
+                                            current_chunk_size,
+                                            fi_mr_desc(local_mrs[rail_id]),
+                                            remote_addr,
+                                            remote_keys[remote_ep_id],
+                                            dest_addrs.at(rail_id)[remote_ep_id],
+                                            xfer_id,
+                                            completion,
+                                            0,
+                                            device_id,
+                                            is_cuda_vram);
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
+        submitted_count_out++;
+    }
     return NIXL_SUCCESS;
-}
-
-void
-nixlLibfabricRailManager::deferTransferRequest(nixlLibfabricReq::OpType op_type,
-                                               uint16_t xfer_id,
-                                               uint64_t fi_flags,
-                                               fi_addr_t dest_addr,
-                                               int device_id,
-                                               bool is_cuda_vram,
-                                               size_t rail_id,
-                                               nixlLibfabricReq *req) {
-    uint8_t seq_id = (op_type == nixlLibfabricReq::WRITE) ? LibfabricUtils::getNextSeqId() : 0;
-    uint64_t imm_data = (op_type == nixlLibfabricReq::WRITE) ?
-        NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, xfer_id, seq_id) :
-        0;
-    nixlLibfabricPostRequest pr{};
-    pr.type = (op_type == nixlLibfabricReq::WRITE) ? nixlLibfabricPostRequest::WRITE :
-                                                     nixlLibfabricPostRequest::READ;
-    pr.local_addr = req->local_addr;
-    pr.length = req->chunk_size;
-    pr.local_desc = fi_mr_desc(req->local_mr);
-    pr.immediate_data = imm_data;
-    pr.dest_addr = dest_addr;
-    pr.remote_addr = req->remote_addr;
-    pr.remote_key = req->remote_key;
-    pr.req = req;
-    pr.fi_flags = fi_flags;
-    pr.device_id = device_id;
-    pr.is_cuda_vram = is_cuda_vram;
-    rails_[rail_id]->enqueuePost(pr);
 }
 
 bool
@@ -1140,25 +1065,18 @@ nixlLibfabricRailManager::postControlMessage(
 }
 
 nixl_status_t
-nixlLibfabricRailManager::progressActiveRails() {
-    std::unordered_set<size_t> rails_to_process;
-
-    // Copy active rails under lock to avoid iterator invalidation
-    {
-        std::lock_guard<std::mutex> lock(active_rails_mutex_);
-        // Always progress rail 0 for notifications (SEND/RECV)
-        rails_to_process.insert(0);
-        for (const auto &[rail_id, refcount] : active_rails_) {
-            rails_to_process.insert(rail_id);
-        }
-    }
-
-    // Process rails without holding the lock
+nixlLibfabricRailManager::progressActiveRails(size_t worker, size_t num_workers) {
+    // Rail 0 always (notifications, SEND/RECV), and every rail with registered memory. The
+    // refcounts are read without a lock: a rail that becomes active concurrently is picked up
+    // on the next call, and progressing an idle rail is harmless.
     bool any_completions = false;
     nixl_status_t first_error = NIXL_SUCCESS;
-    for (size_t rail_id : rails_to_process) {
-        if (rail_id >= rails_.size()) {
-            NIXL_ERROR << "Invalid rail ID: " << rail_id;
+    const size_t n = std::min(active_rails_size_, rails_.size());
+    for (size_t rail_id = 0; rail_id < n; ++rail_id) {
+        if (num_workers > 1 && rail_id % num_workers != worker) {
+            continue;
+        }
+        if (rail_id != 0 && active_rails_[rail_id].load(std::memory_order_relaxed) == 0) {
             continue;
         }
         // Process completions on rails
@@ -1176,7 +1094,7 @@ nixlLibfabricRailManager::progressActiveRails() {
     }
 
     if (any_completions) {
-        NIXL_TRACE << "Processed " << rails_to_process.size() << " rails, completions found";
+        NIXL_TRACE << "Processed " << n << " rails, completions found";
     }
     if (first_error != NIXL_SUCCESS) {
         return first_error;
@@ -1383,45 +1301,48 @@ nixlLibfabricRailManager::incRailActive(size_t rail_id) {
     }
 
     std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    active_rails_[rail_id]++;
-    NIXL_DEBUG << "incRailActive rail " << rail_id << " (refcount: " << active_rails_[rail_id]
-               << ", total active: " << active_rails_.size() << ")";
+    if (rail_id >= active_rails_size_) {
+        return;
+    }
+    const size_t count = active_rails_[rail_id].load(std::memory_order_relaxed) + 1;
+    active_rails_[rail_id].store(count, std::memory_order_relaxed);
+    NIXL_DEBUG << "incRailActive rail " << rail_id << " (refcount: " << count << ")";
 }
 
 void
 nixlLibfabricRailManager::decRailActive(size_t rail_id) {
     std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    auto it = active_rails_.find(rail_id);
-    if (it != active_rails_.end()) {
-        // The reference count is always non-zero under normal situation.
-        // Here is a defensive check, assuming a bug somewhere else set it to zero.
-        if (it->second > 0) {
-            it->second--;
-        }
-        if (it->second == 0) {
-            active_rails_.erase(it);
-            NIXL_DEBUG << "decRailActive rail " << rail_id
-                       << " now inactive (total active: " << active_rails_.size() << ")";
-        } else {
-            NIXL_DEBUG << "decRailActive rail " << rail_id << " (refcount: " << it->second << ")";
-        }
-    } else {
-        NIXL_TRACE << "Rail " << rail_id << " was not in active set";
+    if (rail_id >= active_rails_size_) {
+        return;
     }
+    const size_t count = active_rails_[rail_id].load(std::memory_order_relaxed);
+    // The reference count is always non-zero under normal situation.
+    // Here is a defensive check, assuming a bug somewhere else set it to zero.
+    if (count == 0) {
+        NIXL_TRACE << "Rail " << rail_id << " was not in active set";
+        return;
+    }
+    active_rails_[rail_id].store(count - 1, std::memory_order_relaxed);
+    NIXL_DEBUG << "decRailActive rail " << rail_id << " (refcount: " << count - 1 << ")";
 }
 
 void
 nixlLibfabricRailManager::clearActiveRails() {
     std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    size_t cleared_count = active_rails_.size();
-    active_rails_.clear();
-    NIXL_DEBUG << "Cleared " << cleared_count << " active rails";
+    for (size_t i = 0; i < active_rails_size_; ++i) {
+        active_rails_[i].store(0, std::memory_order_relaxed);
+    }
+    NIXL_DEBUG << "Cleared active rails";
 }
 
 size_t
 nixlLibfabricRailManager::getActiveRailCount() const {
     std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    return active_rails_.size();
+    size_t active = 0;
+    for (size_t i = 0; i < active_rails_size_; ++i) {
+        active += active_rails_[i].load(std::memory_order_relaxed) > 0 ? 1 : 0;
+    }
+    return active;
 }
 
 // System accelerator type getter
