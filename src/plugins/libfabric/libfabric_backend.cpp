@@ -1497,25 +1497,25 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         uint64_t remote_registered_base = remote_md->remote_buf_addr_;
 
         size_t desc_submitted_count = 0;
-        nixl_status_t status = rail_manager_.prepareAndSubmitTransfer(
-            op_type,
-            transfer_addr,
-            transfer_size,
-            remote_target_addr,
-            remote_registered_base,
-            local_md->selected_rails_,
-            local_md->rail_mr_list_,
-            remote_md->rail_remote_key_list_,
-            remote_md->remote_selected_endpoints_,
-            conn->rail_remote_addr_list_,
-            backend_handle->post_xfer_id,
-            completion,
-            desc_submitted_count,
-            desc_idx,
-            xfer_base_offset,
-            apply_fi_more,
-            local[desc_idx].devId,
-            is_cuda_vram);
+        nixl_status_t status =
+            rail_manager_.prepareAndSubmitTransfer(op_type,
+                                                   transfer_addr,
+                                                   transfer_size,
+                                                   remote_target_addr,
+                                                   remote_registered_base,
+                                                   local_md->selected_rails_,
+                                                   local_md->rail_mr_list_,
+                                                   remote_md->rail_remote_key_list_,
+                                                   remote_md->remote_selected_endpoints_,
+                                                   conn->rail_remote_addr_list_,
+                                                   backend_handle->post_xfer_id,
+                                                   completion,
+                                                   desc_submitted_count,
+                                                   desc_idx,
+                                                   xfer_base_offset,
+                                                   apply_fi_more,
+                                                   local[desc_idx].devId,
+                                                   is_cuda_vram);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
@@ -1540,8 +1540,11 @@ nixlLibfabricEngine::mergeContiguous(const nixl_meta_dlist_t &local,
     }
     // Merge a descriptor into the previous one when both sides continue it byte for byte,
     // in the same registration on each side and on the same device.
-    auto continues = [&](int prev_first, uintptr_t prev_local_end, uintptr_t prev_remote_end,
-                         size_t prev_len, int i) {
+    auto continues = [&](int prev_first,
+                         uintptr_t prev_local_end,
+                         uintptr_t prev_remote_end,
+                         size_t prev_len,
+                         int i) {
         return local[i].addr == prev_local_end && remote[i].addr == prev_remote_end &&
             local[i].metadataP == local[prev_first].metadataP &&
             remote[i].metadataP == remote[prev_first].metadataP &&
@@ -1898,9 +1901,8 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
                 if (now - quiet_since > dead_peer_timeout_) {
                     NIXL_ERROR << "Transfer XFER_ID=" << backend_handle->post_xfer_id << " to "
                                << backend_handle->remote_agent_ << " made no progress for "
-                               << dead_peer_timeout_.count()
-                               << " ms after a provider error (" << done << " of "
-                               << backend_handle->get_submitted_requests_count()
+                               << dead_peer_timeout_.count() << " ms after a provider error ("
+                               << done << " of " << backend_handle->get_submitted_requests_count()
                                << " requests done); the peer is likely gone";
                     backend_handle->abandon(NIXL_ERR_REMOTE_DISCONNECT);
                     return NIXL_ERR_REMOTE_DISCONNECT;
@@ -2286,8 +2288,7 @@ nixlLibfabricEngine::progressThread(size_t worker) {
     while (!progress_thread_stop_.load()) {
         // Process completions only on rails (non-blocking)
         bool any_completions = false;
-        nixl_status_t status =
-            rail_manager_.progressActiveRails(worker, num_progress_threads_);
+        nixl_status_t status = rail_manager_.progressActiveRails(worker, num_progress_threads_);
         if (status == NIXL_SUCCESS) {
             any_completions = true;
             NIXL_DEBUG << "PT: Processed completions on rails";

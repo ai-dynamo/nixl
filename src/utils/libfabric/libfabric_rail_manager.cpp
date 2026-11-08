@@ -475,8 +475,8 @@ nixlLibfabricRailManager::submitOnRail(nixlLibfabricReq::OpType op_type,
         rail.postRead(local_addr, length, local_desc, dest_addr, remote_addr, remote_key, req);
     if (status != NIXL_SUCCESS) {
         rail.releaseRequest(req);
-        NIXL_ERROR << "Failed to submit " << (is_write ? "write" : "read") << " on rail "
-                   << rail_id << ", request released";
+        NIXL_ERROR << "Failed to submit " << (is_write ? "write" : "read") << " on rail " << rail_id
+                   << ", request released";
     }
     return status;
 }
@@ -555,9 +555,9 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             break;
         }
         const size_t chunk_offset = i * chunk_size;
-        const uint64_t remote_addr = (rail_virt_addr_[rail_id] ?
-                                          remote_target_addr :
-                                          remote_target_addr - remote_registered_base) +
+        const uint64_t remote_addr =
+            (rail_virt_addr_[rail_id] ? remote_target_addr :
+                                        remote_target_addr - remote_registered_base) +
             chunk_offset;
         nixl_status_t status = submitOnRail(op_type,
                                             rail_id,

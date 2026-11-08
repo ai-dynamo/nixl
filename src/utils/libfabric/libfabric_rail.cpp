@@ -488,8 +488,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     // post and completion paths. NIXL_LIBFABRIC_THREADING=completion restores the old model.
     {
         const char *threading_env = getenv("NIXL_LIBFABRIC_THREADING");
-        const bool completion_model =
-            threading_env && std::string(threading_env) == "completion";
+        const bool completion_model = threading_env && std::string(threading_env) == "completion";
         hints->domain_attr->threading = completion_model ? FI_THREAD_COMPLETION : FI_THREAD_DOMAIN;
         thread_domain_ = !completion_model;
     }
@@ -637,9 +636,8 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             struct fi_eq_attr eq_attr = {};
             eq_attr.wait_obj = FI_WAIT_NONE;
             // fi_eq_open() calls the fabric's eq_open op without a null check.
-            ret = (fabric->ops && fabric->ops->eq_open) ?
-                fi_eq_open(fabric, &eq_attr, &eq, NULL) :
-                -FI_ENOSYS;
+            ret = (fabric->ops && fabric->ops->eq_open) ? fi_eq_open(fabric, &eq_attr, &eq, NULL) :
+                                                          -FI_ENOSYS;
             if (ret == 0) {
                 ret = fi_ep_bind(endpoint, &eq->fid, 0);
                 if (ret) {
@@ -1596,8 +1594,7 @@ nixlLibfabricRail::printStats() const {
     const uint64_t drains = stats_.drain_calls.load();
     NIXL_INFO << "LFSTATS rail " << rail_id << " dev " << device_name
               << " posted=" << stats_.posted.load() << " eagain=" << stats_.eagain.load()
-              << " reaped=" << stats_.reaped.load() << " reap_calls=" << calls
-              << " empty=" << empty
+              << " reaped=" << stats_.reaped.load() << " reap_calls=" << calls << " empty=" << empty
               << " per_reap=" << (full ? stats_.reaped.load() / full : 0)
               << " inflight_avg=" << (full ? stats_.inflight_sum.load() / full : 0)
               << " inflight_max=" << stats_.inflight_max.load()
