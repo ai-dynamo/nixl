@@ -138,6 +138,11 @@ TEST_P(setupAzureBlobTestFixture, queryMemTest) {
     EXPECT_EQ(resp[2].has_value(), false);
 }
 
+TEST_P(setupAzureBlobTestFixture, ReadPastEndOfBlobFails) {
+    // 4 KiB blob: an 8 KiB READ must fail, a 2 KiB READ at offset 1 KiB must succeed.
+    testReadPastEnd(*localBackendEngine_, local_agent_name, "test-short-read", 4096, 1024, 2048);
+}
+
 INSTANTIATE_TEST_SUITE_P(AzureBlobTests,
                          setupAzureBlobTestFixture,
                          testing::Values(azure_blob_test_params));

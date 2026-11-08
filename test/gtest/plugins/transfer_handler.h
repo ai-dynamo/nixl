@@ -19,6 +19,8 @@
 
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
+#include <cstring>
+#include <vector>
 #include "backend_engine.h"
 #include "common/nixl_log.h"
 #include "gtest/gtest.h"
@@ -263,6 +265,74 @@ private:
         ASSERT_EQ(srcBackendEngine_->loadRemoteConnInfo(dstAgentName_, conn_info), NIXL_SUCCESS);
     }
 };
+
+// Run one transfer to completion and return its final status.
+inline nixl_status_t
+runXferToCompletion(nixlBackendEngine &engine,
+                    nixl_xfer_op_t op,
+                    const nixl_meta_dlist_t &local,
+                    const nixl_meta_dlist_t &remote,
+                    const std::string &agent_name) {
+    nixlBackendReqH *handle = nullptr;
+    nixl_status_t ret = engine.prepXfer(op, local, remote, agent_name, handle);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
+    ret = engine.postXfer(op, local, remote, agent_name, handle);
+    const absl::Time deadline = absl::Now() + absl::Seconds(30);
+    while (ret == NIXL_IN_PROG && absl::Now() < deadline) {
+        absl::SleepFor(absl::Milliseconds(50));
+        ret = engine.checkXfer(handle);
+    }
+    EXPECT_EQ(engine.releaseReqH(handle), NIXL_SUCCESS);
+    return ret;
+}
+
+// Write a blob of blob_size bytes, READ an in-range slice of it, then READ more bytes than the
+// blob holds. The in-range READ must succeed with the right bytes; the long READ must fail
+// instead of reporting success with a partly filled buffer.
+inline void
+testReadPastEnd(nixlBackendEngine &engine,
+                const std::string &agent_name,
+                const std::string &key,
+                size_t blob_size,
+                size_t in_range_offset,
+                size_t in_range_len) {
+    constexpr uint64_t dev_id = 0;
+    std::vector<uint8_t> src(blob_size);
+    for (size_t i = 0; i < src.size(); ++i) {
+        src[i] = static_cast<uint8_t>(i * 7 + 1);
+    }
+    std::vector<uint8_t> dst(2 * blob_size, 0);
+
+    nixlBackendMD *obj_md = nullptr;
+    ASSERT_EQ(engine.registerMem(nixlBlobDesc(0, blob_size, dev_id, key), OBJ_SEG, obj_md),
+              NIXL_SUCCESS);
+
+    nixl_meta_dlist_t write_local(DRAM_SEG), write_remote(OBJ_SEG);
+    write_local.addDesc(
+        nixlMetaDesc(reinterpret_cast<uintptr_t>(src.data()), blob_size, 0, nullptr));
+    write_remote.addDesc(nixlMetaDesc(0, blob_size, dev_id, obj_md));
+    EXPECT_EQ(runXferToCompletion(engine, NIXL_WRITE, write_local, write_remote, agent_name),
+              NIXL_SUCCESS);
+
+    nixl_meta_dlist_t in_range_local(DRAM_SEG), in_range_remote(OBJ_SEG);
+    in_range_local.addDesc(
+        nixlMetaDesc(reinterpret_cast<uintptr_t>(dst.data()), in_range_len, 0, nullptr));
+    in_range_remote.addDesc(nixlMetaDesc(in_range_offset, in_range_len, dev_id, obj_md));
+    EXPECT_EQ(runXferToCompletion(engine, NIXL_READ, in_range_local, in_range_remote, agent_name),
+              NIXL_SUCCESS);
+    EXPECT_EQ(0, std::memcmp(dst.data(), src.data() + in_range_offset, in_range_len));
+
+    nixl_meta_dlist_t long_local(DRAM_SEG), long_remote(OBJ_SEG);
+    long_local.addDesc(
+        nixlMetaDesc(reinterpret_cast<uintptr_t>(dst.data()), dst.size(), 0, nullptr));
+    long_remote.addDesc(nixlMetaDesc(0, dst.size(), dev_id, obj_md));
+    EXPECT_EQ(runXferToCompletion(engine, NIXL_READ, long_local, long_remote, agent_name),
+              NIXL_ERR_BACKEND);
+
+    EXPECT_EQ(engine.deregisterMem(obj_md), NIXL_SUCCESS);
+}
 
 } // namespace gtest::plugins
 #endif // __TRANSFER_HANDLER_H
