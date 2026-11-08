@@ -26,7 +26,7 @@ using deviceViewHandle = nixlMemViewH;
  */
 [[nodiscard]] nixl_status_t
 deviceMemViewAllocate(deviceOps &ops,
-                      nixl_device_exec_mode_t execution_mode,
+                      gpu::exec_mode_t execution_mode,
                       nixlMemViewH backend_memview,
                       deviceViewHandle &wrapper_out) noexcept;
 

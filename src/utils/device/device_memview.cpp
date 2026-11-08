@@ -8,13 +8,13 @@
 
 #include "device/device_ops.h"
 
-static_assert(sizeof(nixl_device_exec_mode_t) == 1);
+static_assert(sizeof(nixl::gpu::exec_mode_t) == 1);
 
 namespace nixl {
 
 nixl_status_t
 deviceMemViewAllocate(deviceOps &ops,
-                      nixl_device_exec_mode_t execution_mode,
+                      gpu::exec_mode_t execution_mode,
                       nixlMemViewH backend_memview,
                       deviceViewHandle &wrapper_out) noexcept {
     wrapper_out = nullptr;
@@ -23,12 +23,12 @@ deviceMemViewAllocate(deviceOps &ops,
     }
 
     deviceMem wrapper_mem;
-    auto status = ops.allocDeviceMem(sizeof(nixlDeviceMemViewWrapper), wrapper_mem);
+    auto status = ops.allocDeviceMem(sizeof(gpu::memViewWrapper), wrapper_mem);
     if (status != NIXL_SUCCESS) {
         return status;
     }
 
-    const nixlDeviceMemViewWrapper host_wrapper{
+    const gpu::memViewWrapper host_wrapper{
         execution_mode,
         backend_memview,
     };
@@ -55,7 +55,7 @@ deviceMemViewGetBackend(deviceOps &ops,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixlDeviceMemViewWrapper host_wrapper{};
+    gpu::memViewWrapper host_wrapper;
     const auto status = ops.copy(
         &host_wrapper, wrapper, sizeof(host_wrapper), deviceOps::copyDirection::DeviceToHost);
     if (status != NIXL_SUCCESS) {

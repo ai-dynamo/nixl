@@ -31,7 +31,7 @@ struct putParams {
     uint64_t flags{0};
 };
 
-template<nixl_gpu_level_t level, nixl_device_exec_mode_t mode>
+template<nixl_gpu_level_t level, ::nixl::gpu::exec_mode_t mode>
 __global__ void
 putKernel(putParams put_params,
           size_t num_iters,
@@ -129,7 +129,7 @@ struct gpuTimer {
     gpuVar<unsigned long long> end_;
 };
 
-template<nixl_gpu_level_t level, nixl_device_exec_mode_t mode>
+template<nixl_gpu_level_t level, ::nixl::gpu::exec_mode_t mode>
 nixl_status_t
 launchPutKernel(const putParams &put_params,
                 size_t num_iters,
@@ -305,7 +305,7 @@ protected:
         return absl::StrFormat("agent_%d", idx);
     }
 
-    template<nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
+    template<::nixl::gpu::exec_mode_t mode = ::nixl::gpu::exec_mode_t::DYNAMIC>
     nixl_status_t
     dispatchLaunchPutKernel(const TestParams &params,
                             const putParams &put_params,
@@ -603,11 +603,11 @@ TEST_P(SingleWriteTest, SingleWorkerPutFixedMode) {
     constexpr size_t num_iters = 100;
     nixl_status_t status;
     if (isProxy()) {
-        status = dispatchLaunchPutKernel<nixl_device_exec_mode_t::PROXY>(
+        status = dispatchLaunchPutKernel<::nixl::gpu::exec_mode_t::PROXY>(
             GetParam(), put_params, num_iters);
     } else {
 #ifdef HAVE_UCX_GPU_DEVICE_API
-        status = dispatchLaunchPutKernel<nixl_device_exec_mode_t::UCX_DIRECT>(
+        status = dispatchLaunchPutKernel<::nixl::gpu::exec_mode_t::UCX_DIRECT>(
             GetParam(), put_params, num_iters);
 #else
         status = NIXL_ERR_NOT_SUPPORTED;
