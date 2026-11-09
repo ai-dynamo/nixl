@@ -307,6 +307,13 @@ get_options() {
         WHL_BASE=${WHL_BASE:-manylinux_2_34}
         DEFAULT_PYTHON_VERSION="3.10"
         WHL_PYTHON_VERSIONS="${WHL_PYTHON_VERSIONS:-3.10}"
+        # The container image's default torch (cu134, 2.15) has no Python 3.10 wheels;
+        # cu130 2.14 does. Only when neither is given, and only for contrib/Dockerfile:
+        # Dockerfile.manylinux builds its own Python and picks its own index.
+        if [[ $(basename "$DOCKER_FILE") == Dockerfile && -z $TORCH_CUDA_INDEX && -z $DEFAULT_TORCH_VERSION ]]; then
+            TORCH_CUDA_INDEX=cu130
+            DEFAULT_TORCH_VERSION=2.14
+        fi
     fi
 
     WHL_PYTHON_VERSIONS="${WHL_PYTHON_VERSIONS:-3.12}"
@@ -425,7 +432,7 @@ show_help() {
     echo "  [--dockerfile path to a dockerfile to use]"
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
     echo "  [--cuda-version CUDA MAJOR.MINOR for the manylinux wheel build, e.g. 12.9 (default: ${CUDA_VERSION_DEFAULT})]
-  [--torch-cuda-index torch wheel index (default: cu132 for CUDA 13, cu<CUDA_VERSION> for CUDA 12 in the manylinux wheel build; cu134 in the container image). Also overrides the container image's torch, which needs >=cu134 to avoid slow sm_103 startup]
+  [--torch-cuda-index torch wheel index (default: cu132 for CUDA 13, cu<CUDA_VERSION> for CUDA 12 in the manylinux wheel build; cu134 in the container image, cu130 with --os ubuntu22). In the container image, used only when the base image has no torch >=2.7; needs >=cu134 to avoid slow sm_103 startup]
   [--default-torch-version torch version installed from that index, e.g. 2.15 (default: uses Dockerfile ARG default). Pass it with --torch-cuda-index: each index carries only some torch versions]
   [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
   [--manylinux-image-tag pinned PyPA manylinux image tag (default: ${MANYLINUX_IMAGE_TAG})]"
