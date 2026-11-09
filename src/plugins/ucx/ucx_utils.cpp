@@ -792,6 +792,12 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
         mem_params.memory_type = vramMemTypeHint_;
         NIXL_DEBUG << "memReg: hinting " << ucx_memory_type_to_string(mem_params.memory_type)
                    << " for VRAM_SEG";
+    } else if (nixl_mem_type == nixl_mem_t::DRAM_SEG) {
+        // UCX auto-detection classifies host memory allocated by the CUDA driver
+        // (e.g. cuMemCreate with a host location) as CUDA memory, and RDMA
+        // registration then fails.
+        mem_params.field_mask |= UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE;
+        mem_params.memory_type = UCS_MEMORY_TYPE_HOST;
     }
 
     ucs_status_t status = ucp_mem_map(ctx.get(), &mem_params, &mem.memh);
