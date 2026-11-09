@@ -630,6 +630,8 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
                               req_handle.traceRequestId,
                               req_handle.traceExecution);
         });
+    } else {
+        int_handle->setNotif(nullptr);
     }
     ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
     if (ret != NIXL_SUCCESS) {
