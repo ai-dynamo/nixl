@@ -224,7 +224,8 @@ TEST_P(test, putChannel) {
 
 class flushTest : public test {
 protected:
-    template<level_t level> void
+    template<level_t level>
+    void
     deferredPutFlush() {
         // Skip before submitting deferred work when the UCX headers lack flush support.
 #if __has_include(<ucp/api/device/ucp_device_impl.h>)
