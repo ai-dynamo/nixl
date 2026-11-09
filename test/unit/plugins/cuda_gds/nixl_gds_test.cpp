@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <algorithm>
@@ -53,29 +54,42 @@ static size_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
 // Progress bar configuration
 #define PROGRESS_WIDTH 50
 
-// Parse a positive integer option, optionally with a K, M or G suffix (1K, 2M,
-// 3G). Prints an error and exits on anything else.
-static size_t
-parsePositiveSize(const char *str, const char *name, bool allow_suffix) {
+// Parse a positive integer option into out, optionally with a K, M or G suffix
+// (1K, 2M, 3G). Prints an error and exits when the value is malformed, zero, or
+// too large for out, including after the suffix multiplication.
+template<typename T>
+static void
+parsePositive(const char *str, const char *name, T &out, bool allow_suffix = false) {
+    constexpr auto max = static_cast<unsigned long long>(std::numeric_limits<T>::max());
     char *end;
-    size_t value = strtoull(str, &end, 10);
-    bool valid = str[0] != '-' && end != str && value > 0;
+    errno = 0;
+    unsigned long long value = strtoull(str, &end, 10);
+    bool valid = strchr(str, '-') == nullptr && end != str && value > 0;
+    bool fits = errno != ERANGE;
 
     if (valid && *end != '\0') {
-        valid = allow_suffix && end[1] == '\0';
+        unsigned long long mult = 0;
         switch (toupper(*end)) {
         case 'K':
-            value *= 1024;
+            mult = 1ULL << 10;
             break;
         case 'M':
-            value *= 1024 * 1024;
+            mult = 1ULL << 20;
             break;
         case 'G':
-            value *= 1024 * 1024 * 1024;
+            mult = 1ULL << 30;
             break;
-        default:
-            valid = false;
         }
+        valid = allow_suffix && mult != 0 && end[1] == '\0';
+        if (valid && fits) {
+            fits = value <= max / mult;
+            if (fits) {
+                value *= mult;
+            }
+        }
+    }
+    if (fits && value > max) {
+        fits = false;
     }
 
     if (!valid) {
@@ -84,7 +98,11 @@ parsePositiveSize(const char *str, const char *name, bool allow_suffix) {
                   << "'\n";
         exit(1);
     }
-    return value;
+    if (!fits) {
+        std::cerr << "Error: " << name << " must be at most " << max << ", got '" << str << "'\n";
+        exit(1);
+    }
+    out = static_cast<T>(value);
 }
 
 void print_usage(const char* program_name) {
@@ -378,6 +396,7 @@ int main(int argc, char *argv[])
     bool run_path_mode_smoke = true;
     bool path_mode_only = false;
     bool run_failure_checks = true;
+    int exit_code = 1; // cleared only once the read-back validated
 
     // Parse command line options
     static struct option long_options[] = {{"dram", no_argument, 0, 'd'},
@@ -409,10 +428,10 @@ int main(int argc, char *argv[])
                 use_vram = true;
                 break;
             case 'n':
-                num_transfers = parsePositiveSize(optarg, "Number of transfers", false);
+                parsePositive(optarg, "Number of transfers", num_transfers);
                 break;
             case 's':
-                transfer_size = parsePositiveSize(optarg, "Transfer size", true);
+                parsePositive(optarg, "Transfer size", transfer_size, true);
                 break;
             case 'B':
                 backend_name = optarg;
@@ -430,30 +449,30 @@ int main(int argc, char *argv[])
                 }
                 break;
             case 'p':
-                pool_size = parsePositiveSize(optarg, "Batch pool size", false);
+                parsePositive(optarg, "Batch pool size", pool_size);
                 break;
             case 'b':
-                batch_limit = parsePositiveSize(optarg, "Batch limit", false);
+                parsePositive(optarg, "Batch limit", batch_limit);
                 if (batch_limit > 128) {
                     std::cerr << "Error: Batch limit must be between 1 and 128\n";
                     return 1;
                 }
                 break;
             case 'm':
-                max_request_size = parsePositiveSize(optarg, "Max request size", true);
+                parsePositive(optarg, "Max request size", max_request_size, true);
                 if (max_request_size > 16 * 1024 * 1024) {
                     std::cerr << "Error: Max request size cannot be greater than 16M\n";
                     return 1;
                 }
                 break;
             case 'G':
-                num_gpus = parsePositiveSize(optarg, "Number of GPUs", false);
+                parsePositive(optarg, "Number of GPUs", num_gpus);
                 break;
             case 'N':
-                num_threads = parsePositiveSize(optarg, "Number of threads", false);
+                parsePositive(optarg, "Number of threads", num_threads);
                 break;
             case 't':
-                iterations = parsePositiveSize(optarg, "Number of iterations", false);
+                parsePositive(optarg, "Number of iterations", iterations);
                 break;
             case 'D':
                 use_direct = true;
@@ -530,14 +549,15 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Allocate arrays based on num_transfers
+    // Allocate arrays based on num_transfers; zero them so the cleanup below
+    // only touches handles that were actually created
     if (use_vram) {
-        vram_addr = new void*[num_transfers];
+        vram_addr = new void *[num_transfers]();
     }
     if (use_dram) {
-        dram_addr = new void*[num_transfers];
+        dram_addr = new void *[num_transfers]();
     }
-    fd = new int[num_transfers];
+    fd = new int[num_transfers]();
 
     // Initialize NIXL components
     nixlAgentConfig cfg;
@@ -878,6 +898,7 @@ int main(int argc, char *argv[])
             printProgress(float(i + 1) / num_transfers);
         }
         std::cout << "\nVerification completed successfully!" << std::endl;
+        exit_code = 0;
     }
 
 cleanup:
@@ -937,5 +958,5 @@ cleanup:
     std::cout << "Total time: " << format_duration(total_time) << std::endl;
     std::cout << "Total data: " << std::fixed << std::setprecision(2) << total_data_gb << " GB" << std::endl;
     std::cout << "============================================================" << std::endl;
-    return 0;
+    return exit_code;
 }
