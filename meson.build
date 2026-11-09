@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA', 'DOCA_MEMOS']
 
 enabled_plugins = {}
 
@@ -475,6 +475,20 @@ else
   libfabric_dep = dependency('libfabric', required: false)
 endif
 
+# DOCA KV (used by the DOCA_MEMOS plugin). These pkg-config files live in
+# /opt/mellanox/doca/lib64/pkgconfig, which is normally added to PKG_CONFIG_PATH
+# by /etc/profile.d when the DOCA SDK is installed.
+doca_kv_dep = dependency('doca-kv', required: false)
+doca_common_dep = dependency('doca-common', required: false)
+
+# libb2 provides Blake2 for the DOCA_MEMOS optional string-to-128-bit key mode.
+# Prefer pkg-config when present, but accept environments that only provide
+# libb2 as a linkable system library.
+libb2_dep = dependency('libb2', required: false)
+if not libb2_dep.found()
+    libb2_dep = cpp.find_library('b2', required: false)
+endif
+
 # UCX GPU device API detection
 nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
@@ -631,8 +645,6 @@ if get_option('install_headers')
   install_headers('src/api/cpp/backend/backend_engine.h', install_dir: prefix_inc + '/backend')
   install_headers('src/api/cpp/backend/backend_aux.h', install_dir: prefix_inc + '/backend')
   install_headers('src/api/cpp/backend/backend_plugin.h', install_dir: prefix_inc + '/backend')
-  install_headers('src/core/transfer_request.h', install_dir: prefix_inc)
-  install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
   install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
 

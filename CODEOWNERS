@@ -2,16 +2,16 @@
 * @ai-dynamo/nixl-maintainers
 
 # CI/CD
-/.github/ @ai-dynamo/Devops @ai-dynamo/nixl-devops
+/.github/ @ai-dynamo/dynamo-ops-codeowners @ai-dynamo/nixl-devops
 /.ci/ @ai-dynamo/nixl-devops
-CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
+CODEOWNERS @ai-dynamo/dynamo-ops-codeowners @ai-dynamo/nixl-maintainers
 
 # Legal
-/ATTRIBUTIONS.md @ai-dynamo/Devops
-/CODE_OF_CONDUCT.md @ai-dynamo/Devops
-/CONTRIBUTING.md @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
-/LICENSE @ai-dynamo/Devops
-/SECURITY.md @ai-dynamo/Devops
+/ATTRIBUTIONS.md @ai-dynamo/dynamo-ops-codeowners
+/CODE_OF_CONDUCT.md @ai-dynamo/dynamo-ops-codeowners
+/CONTRIBUTING.md @ai-dynamo/dynamo-ops-codeowners @ai-dynamo/nixl-maintainers
+/LICENSE @ai-dynamo/dynamo-ops-codeowners
+/SECURITY.md @ai-dynamo/dynamo-ops-codeowners
 
 # Bindings
 /src/bindings/python @ovidiusm @tomerg-nvidia @mkhazraee @roiedanino
@@ -61,7 +61,7 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 # Device API
 /src/api/device/ @ofirfarjun7 @Artemy-Mellanox @rakhmets @ai-dynamo/nixl-maintainers
 /src/utils/device/ @ofirfarjun7 @Artemy-Mellanox @rakhmets @ai-dynamo/nixl-maintainers
-/test/gtest/device_api/ @ofirfarjun7 @Artemy-Mellanox @rakhmets @ai-dynamo/nixl-maintainers
+/test/gtest/device/ @ofirfarjun7 @Artemy-Mellanox @rakhmets @ai-dynamo/nixl-maintainers
 /test/gtest/unit/device_ops/ @ofirfarjun7 @Artemy-Mellanox @rakhmets @ai-dynamo/nixl-maintainers
 
 # NIXL EP example
