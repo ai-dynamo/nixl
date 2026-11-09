@@ -121,11 +121,11 @@ steps:
       write_github_gitconfig /tmp/ghconfig
       # Login to Artifactory
       set +x -v
-      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+      echo "$ARTIFACTORY_PASSWORD" | .ci/scripts/registry-login.sh "${REGISTRY_HOST_NAME}" "$ARTIFACTORY_USERNAME"
       # Login to the GitLab registry so DLFW base images hosted there can be pulled.
       # GitLab accepts any username with a read_registry token, so the username is a placeholder.
       if [ -n "${GITLAB_REGISTRY_TOKEN:-}" ]; then
-        echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 -u nixl-ci --password-stdin
+        echo "$GITLAB_REGISTRY_TOKEN" | .ci/scripts/registry-login.sh gitlab-master.nvidia.com:5005 nixl-ci
       fi
       set +v -x
 
