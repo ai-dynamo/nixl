@@ -29,7 +29,6 @@
 #include <string_view>
 #include <system_error>
 #include <unistd.h>
-#include "common/backend.h"
 #include "common/nixl_log.h"
 #include <absl/strings/str_split.h>
 
@@ -319,8 +318,6 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     dataQpCount_ = parseDataQpCount((*custom_params)["data_qp_count"]);
-    writeByteStriping_ =
-        nixl::getBackendParamDefaulted(*custom_params, "write_byte_striping", false);
     const auto min_bytes = custom_params->find("write_stripe_min_bytes");
     if (min_bytes != custom_params->end() && !min_bytes->second.empty() &&
         (!parseUnsigned(min_bytes->second, writeStripeMinBytes_) || writeStripeMinBytes_ == 0)) {
@@ -1663,7 +1660,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     // the WQEs of the request even if no descriptor is merged or paired.
     constexpr uint64_t max_wqes = uint64_t{DOCA_XFER_REQ_SIZE} * DOCA_XFER_REQ_MAX;
     uint64_t wqe_count = 0;
-    const bool byte_striping = operation == NIXL_WRITE && writeByteStriping_ && dataQpCount_ > 1;
+    const bool byte_striping = operation == NIXL_WRITE && dataQpCount_ > 1;
     size_t write_bytes = 0;
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         if (local[idx].len != remote[idx].len) {
