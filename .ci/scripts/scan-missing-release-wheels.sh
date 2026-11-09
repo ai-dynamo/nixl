@@ -65,12 +65,16 @@ for ver in ${branches}; do
   aql="items.find({\"repo\":\"${WHEEL_REPO_NAME}\",\"type\":\"folder\",\"path\":\"release/${ver}\",\"@NIXL_SHA\":{\"\$match\":\"*\"}}).include(\"repo\",\"path\",\"name\",\"@NIXL_SHA\")"
   # Only 200 is conclusive (no results is a valid 200); anything else skips the
   # release so an Artifactory hiccup cannot fan out a build for every commit.
-  http_code="$(curl -s --connect-timeout 10 --max-time 30 -o published.json -w '%{http_code}' \
+  # A failed curl leaves no body, or a partial one when the transfer dies after
+  # a 200, so its exit code overrides the HTTP code; the stale file from the
+  # previous release is removed so the dump below cannot show it.
+  rm -f published.json
+  http_code="$(curl -sS --connect-timeout 10 --max-time 30 -o published.json -w '%{http_code}' \
     -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -H 'Content-Type: text/plain' \
-    --data-binary "${aql}" "${AQL_API_URL}")" || http_code=""
+    --data-binary "${aql}" "${AQL_API_URL}")" || http_code="curl-exit-$?"
   if [ "${http_code}" != "200" ]; then
-    echo "release/${ver}: published AQL returned ${http_code:-<none>}, skipping this cycle"
-    head -c 500 published.json; echo
+    echo "release/${ver}: published AQL returned ${http_code}, skipping this cycle"
+    if [ -f published.json ]; then head -c 500 published.json; echo; fi
     continue
   fi
   published="$(grep -oE '"value"[[:space:]]*:[[:space:]]*"[0-9a-f]{8}"' published.json \
@@ -79,12 +83,13 @@ for ver in ${branches}; do
   # Reservations, aged here rather than in the query: AQL rejected both relative
   # date operators tried against this instance, and ?list already returns
   # lastModified per file. 404 just means nothing has been reserved yet.
-  http_code="$(curl -s --connect-timeout 10 --max-time 30 -o inflight.json -w '%{http_code}' \
+  rm -f inflight.json
+  http_code="$(curl -sS --connect-timeout 10 --max-time 30 -o inflight.json -w '%{http_code}' \
     -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
-    "${WHEEL_REPO_API}/release/${ver}/.inflight/?list&listFolders=0")" || http_code=""
+    "${WHEEL_REPO_API}/release/${ver}/.inflight/?list&listFolders=0")" || http_code="curl-exit-$?"
   if [ "${http_code}" != "200" ] && [ "${http_code}" != "404" ]; then
-    echo "release/${ver}: in-flight listing returned ${http_code:-<none>}, skipping this cycle"
-    head -c 500 inflight.json; echo
+    echo "release/${ver}: in-flight listing returned ${http_code}, skipping this cycle"
+    if [ -f inflight.json ]; then head -c 500 inflight.json; echo; fi
     continue
   fi
   reserved=""
