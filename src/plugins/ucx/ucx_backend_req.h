@@ -200,7 +200,7 @@ protected:
     }
 
 private:
-    enum class notif_state_t : uint8_t { NONE, BUILT, FLUSHED };
+    enum class notif_state_t : uint8_t { NONE, BUILT, FLUSHED, SENT };
 
     // A post to a single endpoint issues at most two requests:
     // one data request and one flush request.
@@ -226,6 +226,7 @@ private:
         const nixl_status_t status = getEp().sendAm(
             nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(notif_), UCP_AM_SEND_FLAG_EAGER, &req);
         notif_.clear();
+        notifState_ = notif_state_t::SENT;
         if (status == NIXL_IN_PROG) {
             notifReq_ = req;
         } else {
