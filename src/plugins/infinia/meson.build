@@ -78,11 +78,10 @@ infinia_dep = declare_dependency(
                '-Wl,--pop-state'],
   include_directories: infinia_inc_path)
 
-compile_flags = []
 if cuda_dep.found()
-    compile_flags = [ '-DHAVE_CUDA' ]
+    infinia_compile_flags = [ '-DHAVE_CUDA' ]
 else
-    compile_flags = [ '-UHAVE_CUDA' ]
+    infinia_compile_flags = [ '-UHAVE_CUDA' ]
 endif
 
 # Get Abseil dependencies
@@ -96,7 +95,7 @@ if 'INFINIA' in static_plugins
     dependencies: [ nixl_infra, cuda_dep, infinia_dep, absl_log_dep, nixl_common_dep ],
     include_directories: [nixl_inc_dirs,utils_inc_dirs, infinia_inc_path],
     install: false,
-    cpp_args : compile_flags + ['-fcoroutines'],
+    cpp_args : infinia_compile_flags + ['-fcoroutines'],
     name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
   infinia_backend_lib = shared_library('INFINIA',
@@ -106,7 +105,7 @@ else
     dependencies: [nixl_infra, cuda_dep, infinia_dep, absl_log_dep, nixl_common_dep ],
     include_directories: [nixl_inc_dirs,utils_inc_dirs, infinia_inc_path],
     install: true,
-    cpp_args : compile_flags + ['-fPIC', '-fcoroutines'],
+    cpp_args : infinia_compile_flags + ['-fPIC', '-fcoroutines'],
     name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
     install_dir: plugin_install_dir,
     install_rpath: '$ORIGIN/..')

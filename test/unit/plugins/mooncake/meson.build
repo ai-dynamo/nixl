@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,16 +16,16 @@
 mooncake_backend_dep = declare_dependency(link_with: mooncake_backend_lib, include_directories: [nixl_inc_dirs, '../../../../src/plugins/mooncake'])
 
 if cuda_dep.found()
-    cuda_dependencies = [cuda_dep]
-    cpp_args = '-DHAVE_CUDA'
+    mooncake_test_cuda_deps = [cuda_dep]
+    mooncake_test_cpp_args = '-DHAVE_CUDA'
 else
-    cuda_dependencies = []
-    cpp_args = '-UHAVE_CUDA'
+    mooncake_test_cuda_deps = []
+    mooncake_test_cpp_args = '-UHAVE_CUDA'
 endif
 
 mooncake_backend_test = executable('mooncake_backend_test',
         'mooncake_backend_test.cpp',
-        dependencies: [nixl_dep, nixl_infra, mooncake_backend_dep, thread_dep] + cuda_dependencies,
+        dependencies: [nixl_dep, nixl_infra, mooncake_backend_dep, thread_dep] + mooncake_test_cuda_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../../../src/plugins/mooncake'],
-        cpp_args : cpp_args,
+        cpp_args : mooncake_test_cpp_args,
         install: true)
