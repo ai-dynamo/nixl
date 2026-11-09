@@ -540,8 +540,6 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
 
     _nixl_agents_peer_info_cleanup(remote_ranks_list);
 
-    _nixl_agents_disconnect(remote_ranks_list);
-
     // Remove ranks from remote_ranks vector (arbitrary order)
     for (int removed_rank : remote_ranks_list) {
         remote_ranks.erase(
@@ -553,6 +551,8 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
     _nixl_ep_memory_views_stage();
 
     _nixl_ep_memory_views_commit();
+
+    _nixl_agents_disconnect(remote_ranks_list);
 }
 
 std::tuple<torch::stable::Tensor, std::optional<torch::stable::Tensor>, torch::stable::Tensor, torch::stable::Tensor, torch::stable::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>

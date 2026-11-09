@@ -36,22 +36,7 @@
 #include "absl/log/log_sink.h"
 #include "absl/log/log_entry.h"
 
-#ifdef HAVE_CUDA
-#include <cuda_runtime.h>
-#endif
-
 namespace gtest {
-
-inline bool
-hasCudaGpu() {
-#ifdef HAVE_CUDA
-    int count = 0;
-    auto err = cudaGetDeviceCount(&count);
-    return (err == cudaSuccess && count > 0);
-#else
-    return false;
-#endif
-}
 
 constexpr const char *
 GetMockBackendName() {
@@ -210,9 +195,18 @@ struct nixlTestParam {
     unsigned numWorkers;
     unsigned numThreads;
     std::string engineConfig;
+    bool sglEnabled = false;
 };
 
 using nixl_test_t = testing::TestWithParam<nixlTestParam>;
+
+// A payload starts with its full index and the seed, then a byte pattern, so
+// swapped buffers and stale writes both show up. size must be at least 8.
+void
+fillPayload(void *addr, size_t size, uint32_t index, uint32_t seed);
+
+[[nodiscard]] bool
+checkPayload(const void *addr, size_t size, uint32_t index, uint32_t seed);
 
 } // namespace gtest
 
@@ -228,5 +222,22 @@ using nixl_test_t = testing::TestWithParam<nixlTestParam>;
         _test_case,                                     \
         testing::ValuesIn(std::vector<nixlTestParam>(   \
             {{_backend, _progress_thread_enabled, _num_workers, _num_threads, _engine_config}})));
+
+#define NIXL_INSTANTIATE_TEST_SGL(_test_name,                                    \
+                                  _test_case,                                    \
+                                  _backend,                                      \
+                                  _progress_thread_enabled,                      \
+                                  _num_workers,                                  \
+                                  _num_threads,                                  \
+                                  _engine_config)                                \
+    INSTANTIATE_TEST_SUITE_P(                                                    \
+        _test_name,                                                              \
+        _test_case,                                                              \
+        testing::ValuesIn(std::vector<nixlTestParam>({{_backend,                 \
+                                                       _progress_thread_enabled, \
+                                                       _num_workers,             \
+                                                       _num_threads,             \
+                                                       _engine_config,           \
+                                                       true}})));
 
 #endif /* TEST_GTEST_COMMON_H */
