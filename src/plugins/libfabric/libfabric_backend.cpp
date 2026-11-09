@@ -1381,6 +1381,14 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
     // posts on the same rail, so a per-chunk walk cannot know a rail's true last post there.
     const bool batch_writes = allow_fi_more && op_type == nixlLibfabricReq::WRITE;
 
+    // With the progress thread off this thread posts directly, so each FI_MORE group is
+    // prepared descriptor by descriptor and then posted under one endpoint-lock hold:
+    // a locked instruction right after a WQE copy to the device waits for the copy to drain,
+    // and one such wait per group instead of per write is what keeps the post rate up.
+    nixlLibfabricWriteBatch write_batch;
+    nixlLibfabricWriteBatch *const write_batch_ptr =
+        (batch_writes && !progress_thread_enabled_) ? &write_batch : nullptr;
+
     std::vector<int> last_desc_idx_per_rail(rail_manager_.getNumRails(), -1);
     std::vector<int> posts_since_flush(rail_manager_.getNumRails(), 0);
     if (batch_writes) {
@@ -1409,6 +1417,16 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         // should take place in the context of the progress thread
         if (!progress_thread_enabled_ && is_cuda_vram && !use_cuda_addr_wa &&
             device_id != current_cuda_device) {
+            // Writes already prepared were for the previous device: post them first.
+            if (write_batch_ptr) {
+                size_t posted = 0;
+                const nixl_status_t flush_status =
+                    rail_manager_.flushWriteBatch(write_batch, posted);
+                submitted_count += posted;
+                if (flush_status != NIXL_SUCCESS) {
+                    return flush_status;
+                }
+            }
             cudaError_t cuda_ret = cudaSetDevice(device_id);
             if (cuda_ret != cudaSuccess) {
                 NIXL_ERROR << "Failed to set CUDA device " << device_id
@@ -1444,18 +1462,24 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             xfer_base_offset,
             apply_fi_more,
             local[desc_idx].devId,
-            is_cuda_vram);
+            is_cuda_vram,
+            write_batch_ptr);
 
+        submitted_count += desc_submitted_count;
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
                        << " device " << device_id;
+            rail_manager_.discardWriteBatch(write_batch);
             return status;
         }
-
-        submitted_count += desc_submitted_count;
     }
 
-    return NIXL_SUCCESS;
+    // The last group of each rail ends with a non-FI_MORE post and has been flushed already;
+    // anything left here was cut short by a rail change and still needs posting.
+    size_t posted = 0;
+    const nixl_status_t flush_status = rail_manager_.flushWriteBatch(write_batch, posted);
+    submitted_count += posted;
+    return flush_status;
 }
 
 nixl_status_t

@@ -24,6 +24,7 @@
 #include <unordered_set>
 #include <functional>
 #include <mutex>
+#include <array>
 #include <atomic>
 #include "libfabric_rail.h"
 
@@ -35,6 +36,16 @@
 #include <cuda_runtime.h>
 #endif
 #endif
+
+/** WRITEs prepared for one rail but not yet posted, so that a FI_MORE group is posted under a
+ * single endpoint-lock hold (see nixlLibfabricRail::postWriteBatch). Each entry owns its
+ * request until the batch is flushed or discarded.
+ */
+struct nixlLibfabricWriteBatch {
+    size_t rail_id = 0;
+    size_t count = 0;
+    std::array<nixlLibfabricPostRequest, NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE> writes{};
+};
 
 // Forward declarations
 class nixlLibfabricTopology;
@@ -221,6 +232,10 @@ public:
      *        Defaults to false so an unmarked descriptor flushes safely.
      * @param device_id Device id when multi-GPU is enabled.
      * @param is_cuda_device Specifies whether this is CUDA-VRAM transfer.
+     * @param write_batch Progress-thread-off only: when non-null, a non-striped WRITE is
+     *        prepared now but posted when its FI_MORE group ends (apply_fi_more false), when
+     *        the next write goes to another rail, or by flushWriteBatch(). submitted_count_out
+     *        then counts the writes actually posted during this call.
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
@@ -241,7 +256,18 @@ public:
                              size_t base_offset,
                              bool apply_fi_more = false,
                              int device_id = -1,
-                             bool is_cuda_vram = false);
+                             bool is_cuda_vram = false,
+                             nixlLibfabricWriteBatch *write_batch = nullptr);
+
+    /** Post every write held in @p batch and empty it.
+     * @param posted_out Number of writes posted. On failure the unposted requests are released.
+     */
+    nixl_status_t
+    flushWriteBatch(nixlLibfabricWriteBatch &batch, size_t &posted_out);
+
+    /** Release the requests of every unposted write in @p batch and empty it (error paths). */
+    void
+    discardWriteBatch(nixlLibfabricWriteBatch &batch);
 
     void
     deferTransferRequest(nixlLibfabricReq::OpType op_type,
