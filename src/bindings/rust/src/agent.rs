@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use super::*;
-use crate::descriptors::{QueryResponseList, RegDescList};
+use crate::descriptors::{QueryResponseList, RegDescList, RemoteDescList};
 use crate::bindings::{
     nixl_capi_agent_config_s as nixl_capi_agent_config_t,
     nixl_capi_thread_sync_t, nixl_capi_create_configured_agent};
@@ -313,6 +313,7 @@ impl Agent {
                 mem_type: descriptor.mem_type(),
             }),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -348,6 +349,80 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => Ok(resp),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Prepares a memory view for local buffers
+    ///
+    /// # Arguments
+    /// * `descs` - Descriptor list for the local buffers
+    /// * `opt_args` - Optional arguments, carrying the backend hint
+    ///
+    /// # Safety
+    /// The buffers must stay allocated and registered until the view is dropped.
+    pub unsafe fn prep_mem_view_local(
+        &self,
+        descs: &XferDescList,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<MemView, NixlError> {
+        let mut view = std::ptr::null_mut();
+        let inner_guard = self.inner.write().unwrap();
+
+        let status = unsafe {
+            nixl_capi_prep_mem_view_local(
+                inner_guard.handle.as_ptr(),
+                descs.handle(),
+                &mut view,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(MemView::new(
+                self.inner.clone(),
+                NonNull::new(view).ok_or(NixlError::InvalidDataPointer)?,
+            )),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Prepares a memory view for remote buffers
+    ///
+    /// # Arguments
+    /// * `descs` - Descriptor list for the remote buffers, each naming its
+    ///   owning agent
+    /// * `opt_args` - Optional arguments, carrying the backend hint
+    ///
+    /// # Safety
+    /// The buffers must stay allocated and registered until the view is dropped.
+    pub unsafe fn prep_mem_view_remote(
+        &self,
+        descs: &RemoteDescList,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<MemView, NixlError> {
+        let mut view = std::ptr::null_mut();
+        let inner_guard = self.inner.write().unwrap();
+
+        let status = unsafe {
+            nixl_capi_prep_mem_view_remote(
+                inner_guard.handle.as_ptr(),
+                descs.handle(),
+                &mut view,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(MemView::new(
+                self.inner.clone(),
+                NonNull::new(view).ok_or(NixlError::InvalidDataPointer)?,
+            )),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -368,16 +443,15 @@ impl Agent {
 
         let data = data as *const u8;
 
-        if data.is_null() {
-            tracing::trace!(
-                error = "invalid_data_pointer",
-                "Failed to get local metadata"
-            );
-            return Err(NixlError::InvalidDataPointer);
-        }
-
         match status {
             NIXL_CAPI_SUCCESS => {
+                if data.is_null() {
+                    tracing::trace!(
+                        error = "invalid_data_pointer",
+                        "Failed to get local metadata"
+                    );
+                    return Err(NixlError::InvalidDataPointer);
+                }
                 let bytes = unsafe {
                     let slice = std::slice::from_raw_parts(data, len);
                     let vec = slice.to_vec();
@@ -390,6 +464,10 @@ impl Agent {
             NIXL_CAPI_ERROR_INVALID_PARAM => {
                 tracing::error!(error = "invalid_param", "Failed to get local metadata");
                 Err(NixlError::InvalidParam)
+            }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to get local metadata");
+                Err(NixlError::NotFound)
             }
             _ => {
                 tracing::error!(error = "backend_error", "Failed to get local metadata");
@@ -437,6 +515,10 @@ impl Agent {
                 tracing::error!(error = "invalid_param", "Failed to get local partial metadata");
                 Err(NixlError::InvalidParam)
             }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to get local partial metadata");
+                Err(NixlError::NotFound)
+            }
             _ => {
                 tracing::error!(error = "backend_error", "Failed to get local partial metadata");
                 Err(NixlError::BackendError)
@@ -474,6 +556,10 @@ impl Agent {
                 tracing::error!(error = "invalid_param", "Failed to load remote metadata");
                 Err(NixlError::InvalidParam)
             }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to load remote metadata");
+                Err(NixlError::NotFound)
+            }
             _ => {
                 tracing::error!(error = "backend_error", "Failed to load remote metadata");
                 Err(NixlError::BackendError)
@@ -496,6 +582,7 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => Ok(()),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -522,6 +609,8 @@ impl Agent {
 
         match status {
             NIXL_CAPI_SUCCESS => Ok(XferDlistHandle::new(dlist_hndl, inner_guard.handle)),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -554,6 +643,7 @@ impl Agent {
                 self.inner.clone(),
             )),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -647,6 +737,10 @@ impl Agent {
                 );
                 Err(NixlError::InvalidParam)
             }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to send local metadata to etcd");
+                Err(NixlError::NotFound)
+            }
             _ => {
                 tracing::error!(
                     error = "backend_error",
@@ -680,6 +774,10 @@ impl Agent {
             NIXL_CAPI_ERROR_INVALID_PARAM => {
                 tracing::error!(error = "invalid_param", "Failed to send local partial metadata to etcd");
                 Err(NixlError::InvalidParam)
+            }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to send local partial metadata to etcd");
+                Err(NixlError::NotFound)
             }
             _ => Err(NixlError::BackendError)
         }
@@ -720,6 +818,10 @@ impl Agent {
                 tracing::trace!(remote_agent = %remote_name, "Successfully fetched remote metadata from etcd");
                 Ok(())
             }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", remote_agent = %remote_name, "Failed to fetch remote metadata from etcd");
+                Err(NixlError::NotFound)
+            }
             NIXL_CAPI_ERROR_INVALID_PARAM => {
                 tracing::error!(error = "invalid_param", remote_agent = %remote_name, "Failed to fetch remote metadata from etcd");
                 Err(NixlError::InvalidParam)
@@ -758,6 +860,10 @@ impl Agent {
                     "Failed to invalidate local metadata in etcd"
                 );
                 Err(NixlError::InvalidParam)
+            }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to invalidate local metadata in etcd");
+                Err(NixlError::NotFound)
             }
             _ => {
                 tracing::error!(
@@ -819,6 +925,10 @@ impl Agent {
             NIXL_CAPI_ERROR_INVALID_PARAM => {
                 tracing::error!(error = "invalid_param", remote_agent = %remote_agent, "Failed to send notification");
                 Err(NixlError::InvalidParam)
+            }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", remote_agent = %remote_agent, "Failed to send notification");
+                Err(NixlError::NotFound)
             }
             _ => {
                 tracing::error!(error = "backend_error", remote_agent = %remote_agent, "Failed to send notification");
@@ -910,6 +1020,7 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => Ok((duration_us, err_margin_us, CostMethod::from(method))),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -958,6 +1069,10 @@ impl Agent {
                 tracing::error!(error = "invalid_param", "Failed to post transfer request");
                 Err(NixlError::InvalidParam)
             }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to post transfer request");
+                Err(NixlError::NotFound)
+            }
             _ => {
                 tracing::error!(error = "backend_error", "Failed to post transfer request");
                 Err(NixlError::BackendError)
@@ -980,6 +1095,7 @@ impl Agent {
             NIXL_CAPI_SUCCESS => Ok(XferStatus::Success), // Transfer completed
             NIXL_CAPI_IN_PROG => Ok(XferStatus::InProgress),  // Transfer in progress
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -1009,6 +1125,7 @@ impl Agent {
                 Ok(Backend{ inner: NonNull::new(backend).ok_or(NixlError::FailedToCreateBackend)? })
             }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -1041,6 +1158,10 @@ impl Agent {
             NIXL_CAPI_ERROR_INVALID_PARAM => {
                 tracing::error!(error = "invalid_param", "Failed to get notifications");
                 Err(NixlError::InvalidParam)
+            }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to get notifications");
+                Err(NixlError::NotFound)
             }
             _ => {
                 tracing::error!(error = "backend_error", "Failed to get notifications");
@@ -1115,27 +1236,29 @@ impl AgentInner {
     }
 
     fn invalidate_remote_md(&mut self, remote_agent: &str) -> Result<(), NixlError> {
-        unsafe {
-            if self.remotes.remove(remote_agent) {
-                nixl_capi_invalidate_remote_md(
-                    self.handle.as_ptr(),
-                    CString::new(remote_agent)?.as_ptr().cast(),
-                );
-            } else {
-                return Err(NixlError::InvalidParam);
-            }
+        if !self.remotes.contains(remote_agent) {
+            return Err(NixlError::InvalidParam);
         }
-        Ok(())
+        let status = unsafe {
+            nixl_capi_invalidate_remote_md(
+                self.handle.as_ptr(),
+                CString::new(remote_agent)?.as_ptr().cast(),
+            )
+        };
+        match status {
+            // NOT_FOUND means the agent already dropped it, which is the goal state
+            NIXL_CAPI_SUCCESS | NIXL_CAPI_ERROR_NOT_FOUND => {
+                self.remotes.remove(remote_agent);
+                Ok(())
+            }
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
     }
 
     fn invalidate_all_remotes(&mut self) -> Result<(), NixlError> {
-        unsafe {
-            for remote in self.remotes.drain() {
-                nixl_capi_invalidate_remote_md(
-                    self.handle.as_ptr(),
-                    CString::new(remote.as_str())?.as_ptr().cast(),
-                );
-            }
+        for remote in self.remotes.iter().cloned().collect::<Vec<_>>() {
+            self.invalidate_remote_md(&remote)?;
         }
         Ok(())
     }

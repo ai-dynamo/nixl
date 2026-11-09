@@ -33,6 +33,7 @@ typedef enum {
     NIXL_CAPI_ERROR_EXCEPTION = -4,
     NIXL_CAPI_IN_PROG = 1,
     NIXL_CAPI_ERROR_NO_TELEMETRY = -5,
+    NIXL_CAPI_ERROR_NOT_FOUND = -6, ///< Agent metadata not loaded, or no backend serves the request
 } nixl_capi_status_t;
 
 // Memory types enum (matching nixl's memory types)
@@ -58,6 +59,8 @@ struct nixl_capi_reg_dlist_s;
 struct nixl_capi_xfer_req_s;
 struct nixl_capi_notif_map_s;
 struct nixl_capi_query_resp_list_s;
+struct nixl_capi_remote_dlist_s;
+struct nixl_capi_mem_view_s;
 
 struct nixl_capi_xfer_telemetry_s {
     uint64_t start_time_us; // Start time in microseconds since epoch
@@ -81,6 +84,8 @@ typedef struct nixl_capi_reg_dlist_s* nixl_capi_reg_dlist_t;
 typedef struct nixl_capi_xfer_req_s* nixl_capi_xfer_req_t;
 typedef struct nixl_capi_notif_map_s* nixl_capi_notif_map_t;
 typedef struct nixl_capi_query_resp_list_s *nixl_capi_query_resp_list_t;
+typedef struct nixl_capi_remote_dlist_s *nixl_capi_remote_dlist_t;
+typedef struct nixl_capi_mem_view_s *nixl_capi_mem_view_t;
 
 // Thread sync enum matching nixl_thread_sync_t
 typedef enum {
@@ -186,6 +191,35 @@ nixl_capi_status_t nixl_capi_opt_args_add_backend(nixl_capi_opt_args_t args, nix
 // OptArgs notification and merge control
 nixl_capi_status_t nixl_capi_opt_args_set_notif_msg(nixl_capi_opt_args_t args, const void* data, size_t len);
 nixl_capi_status_t nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void** data, size_t* len);
+
+/**
+ * @brief Set the backend custom parameter, a blob whose contents are backend-defined.
+ *
+ * Copies @a len bytes out of @a data, which may be freed once this returns. @a data
+ * may be NULL only when @a len is 0.
+ *
+ * @param  args  [in]  Optional arguments
+ * @param  data  [in]  Parameter bytes
+ * @param  len   [in]  Byte count
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_opt_args_set_custom_param(nixl_capi_opt_args_t args, const void *data, size_t len);
+
+/**
+ * @brief Get the backend custom parameter.
+ *
+ * On success the caller owns @a data and must release it with free(). An unset
+ * parameter yields NULL and a length of 0.
+ *
+ * @param  args  [in]  Optional arguments
+ * @param  data  [out] Newly allocated copy of the parameter bytes
+ * @param  len   [out] Byte count
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_opt_args_get_custom_param(nixl_capi_opt_args_t args, void **data, size_t *len);
+
 nixl_capi_status_t nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif);
 nixl_capi_status_t nixl_capi_opt_args_get_has_notif(nixl_capi_opt_args_t args, bool* has_notif);
 nixl_capi_status_t nixl_capi_opt_args_set_skip_desc_merge(nixl_capi_opt_args_t args, bool skip_merge);
@@ -348,6 +382,96 @@ nixl_capi_query_mem(nixl_capi_agent_t agent,
                     nixl_capi_reg_dlist_t descs,
                     nixl_capi_query_resp_list_t resp,
                     nixl_capi_opt_args_t opt_args);
+
+/**
+ * @brief Prepare a memory view handle for local buffers.
+ *
+ * The caller owns @a mvh and must release it with @ref nixl_capi_release_mem_view
+ * before @a agent is destroyed. @a descs may be destroyed once this returns.
+ *
+ * @param  agent     [in]  Agent the buffers are registered with
+ * @param  descs     [in]  Descriptor list for the local buffers
+ * @param  mvh       [out] Memory view handle
+ * @param  opt_args  [in]  Optional arguments, carrying the backend hint
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_prep_mem_view_local(nixl_capi_agent_t agent,
+                              nixl_capi_xfer_dlist_t descs,
+                              nixl_capi_mem_view_t *mvh,
+                              nixl_capi_opt_args_t opt_args);
+
+/**
+ * @brief Prepare a memory view handle for remote buffers.
+ *
+ * Ownership is as for @ref nixl_capi_prep_mem_view_local. A view can span peers,
+ * so each descriptor in @a descs names the agent that owns it.
+ *
+ * @param  agent     [in]  Initiator agent
+ * @param  descs     [in]  Descriptor list for the remote buffers
+ * @param  mvh       [out] Memory view handle
+ * @param  opt_args  [in]  Optional arguments, carrying the backend hint
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_prep_mem_view_remote(nixl_capi_agent_t agent,
+                               nixl_capi_remote_dlist_t descs,
+                               nixl_capi_mem_view_t *mvh,
+                               nixl_capi_opt_args_t opt_args);
+
+/**
+ * @brief Create a descriptor list for remote buffers.
+ *
+ * The caller owns @a dlist and must destroy it with
+ * @ref nixl_capi_destroy_remote_dlist.
+ *
+ * @param  mem_type  [in]  NIXL memory type of the descriptor list
+ * @param  dlist     [out] Created descriptor list
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_create_remote_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_remote_dlist_t *dlist);
+
+/**
+ * @brief Destroy a remote descriptor list.
+ *
+ * @param  dlist  [in] Descriptor list to destroy
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_destroy_remote_dlist(nixl_capi_remote_dlist_t dlist);
+
+/**
+ * @brief Add a descriptor to a remote descriptor list.
+ *
+ * @param  dlist         [in] Descriptor list to add to
+ * @param  addr          [in] Start of the remote buffer
+ * @param  len           [in] Length of the remote buffer
+ * @param  dev_id        [in] deviceID/BlockID/bufferID (remote ID)
+ * @param  remote_agent  [in] Name of the agent that owns the buffer. NULL means
+ *                            nixl_null_agent, a placeholder that keeps
+ *                            descriptor indices aligned when only some peers
+ *                            are addressed
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_remote_dlist_add_desc(nixl_capi_remote_dlist_t dlist,
+                                uintptr_t addr,
+                                size_t len,
+                                uint64_t dev_id,
+                                const char *remote_agent);
+
+/**
+ * @brief Release a memory view handle.
+ *
+ * @param  agent  [in] Agent that prepared @a mvh
+ * @param  mvh    [in] Memory view handle to release
+ * @return nixl_capi_status_t Error code if call was not successful. A handle
+ *         prepared by a different agent is not reported, as the underlying C++
+ *         call returns void and logs a warning
+ */
+nixl_capi_status_t
+nixl_capi_release_mem_view(nixl_capi_agent_t agent, nixl_capi_mem_view_t mvh);
 
 // Telemetry structure for transfer requests
 typedef struct nixl_capi_xfer_telemetry_s *nixl_capi_xfer_telemetry_t;
