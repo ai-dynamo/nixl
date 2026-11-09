@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <iostream>
+#include <memory>
 #include <string>
 #include <algorithm>
 #include <cassert>
@@ -52,23 +53,38 @@ static size_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
 // Progress bar configuration
 #define PROGRESS_WIDTH 50
 
-// Helper function to parse size strings like "1K", "2M", "3G"
-size_t parse_size(const char* size_str) {
-    char* end;
-    size_t size = strtoull(size_str, &end, 10);
-    if (end == size_str) {
-        return 0;  // Invalid number
-    }
+// Parse a positive integer option, optionally with a K, M or G suffix (1K, 2M,
+// 3G). Prints an error and exits on anything else.
+static size_t
+parsePositiveSize(const char *str, const char *name, bool allow_suffix) {
+    char *end;
+    size_t value = strtoull(str, &end, 10);
+    bool valid = str[0] != '-' && end != str && value > 0;
 
-    if (*end) {
+    if (valid && *end != '\0') {
+        valid = allow_suffix && end[1] == '\0';
         switch (toupper(*end)) {
-            case 'K': size *= 1024; break;
-            case 'M': size *= 1024 * 1024; break;
-            case 'G': size *= 1024 * 1024 * 1024; break;
-            default: return 0;  // Invalid suffix
+        case 'K':
+            value *= 1024;
+            break;
+        case 'M':
+            value *= 1024 * 1024;
+            break;
+        case 'G':
+            value *= 1024 * 1024 * 1024;
+            break;
+        default:
+            valid = false;
         }
     }
-    return size;
+
+    if (!valid) {
+        std::cerr << "Error: " << name << " must be a positive integer"
+                  << (allow_suffix ? " with an optional K, M or G suffix" : "") << ", got '" << str
+                  << "'\n";
+        exit(1);
+    }
+    return value;
 }
 
 void print_usage(const char* program_name) {
@@ -82,8 +98,6 @@ void print_usage(const char* program_name) {
         << "  -s, --size SIZE         Size of each transfer (default: " << DEFAULT_TRANSFER_SIZE
         << " bytes)\n"
         << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
-        << "  -r, --no-read           Skip read test\n"
-        << "  -w, --no-write          Skip write test\n"
         << "  -B, --backend NAME      Backend name: GDS or GDS_MT (default: " << DEFAULT_GDS_BACKEND
         << ")\n"
         << "  -M, --gds-mode MODE     GDS engine: batch or mt (default: batch)\n"
@@ -102,7 +116,7 @@ void print_usage(const char* program_name) {
         << "                          enabled by default)\n"
         << "  -h, --help              Show this help message\n"
         << "\nExample:\n"
-        << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -t 5 -D /path/to/dir\n";
+        << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 128 -m 16M -t 5 -D /path/to/dir\n";
 }
 
 void printProgress(float progress) {
@@ -132,13 +146,6 @@ std::string generate_timestamped_filename(const std::string& base_name) {
     std::strftime(timestamp, sizeof(timestamp),
                   "%Y%m%d%H%M%S", std::localtime(&t));
     return base_name + std::string(timestamp);
-}
-
-void validateBuffer(void* expected, void* actual, size_t size, const char* operation) {
-    if (memcmp(expected, actual, size) != 0) {
-        std::cerr << "Data validation failed for " << operation << std::endl;
-        exit(-1);
-    }
 }
 
 // Helper function to fill buffer with repeating pattern
@@ -176,33 +183,14 @@ cudaError_t clear_gpu_buffer(void* gpu_buffer, size_t size) {
     return cudaMemset(gpu_buffer, 0, size);
 }
 
-// Helper function to validate GPU buffer
-bool validate_gpu_buffer(void* gpu_buffer, size_t size) {
-    char* host_buffer = (char*)malloc(size);
-    char* expected_buffer = (char*)malloc(size);
-    if (!host_buffer || !expected_buffer) {
-        free(host_buffer);
-        free(expected_buffer);
+// Helper function to validate a GPU buffer against the expected pattern,
+// staging it through a caller-provided host buffer
+bool
+validate_gpu_buffer(void *gpu_buffer, size_t size, char *host_buffer, const char *expected_buffer) {
+    if (cudaMemcpy(host_buffer, gpu_buffer, size, cudaMemcpyDeviceToHost) != cudaSuccess) {
         return false;
     }
-
-    // Copy GPU data to host
-    cudaError_t err = cudaMemcpy(host_buffer, gpu_buffer, size, cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) {
-        free(host_buffer);
-        free(expected_buffer);
-        return false;
-    }
-
-    // Create expected pattern
-    fill_test_pattern(expected_buffer, size);
-
-    // Compare
-    bool match = (memcmp(host_buffer, expected_buffer, size) == 0);
-
-    free(host_buffer);
-    free(expected_buffer);
-    return match;
+    return memcmp(host_buffer, expected_buffer, size) == 0;
 }
 
 // Helper function to format duration
@@ -375,8 +363,6 @@ int main(int argc, char *argv[])
     std::string                 dir_path;
     size_t                      transfer_size = DEFAULT_TRANSFER_SIZE;
     int                         num_transfers = DEFAULT_NUM_TRANSFERS;
-    bool                        skip_read = false;
-    bool                        skip_write = false;
     std::string backend_name = DEFAULT_GDS_BACKEND;
     std::string gds_mode = "batch";
     bool mode_explicit = false;
@@ -398,8 +384,6 @@ int main(int argc, char *argv[])
                                            {"vram", no_argument, 0, 'v'},
                                            {"num-transfers", required_argument, 0, 'n'},
                                            {"size", required_argument, 0, 's'},
-                                           {"no-read", no_argument, 0, 'r'},
-                                           {"no-write", no_argument, 0, 'w'},
                                            {"backend", required_argument, 0, 'B'},
                                            {"gds-mode", required_argument, 0, 'M'},
                                            {"pool-size", required_argument, 0, 'p'},
@@ -415,7 +399,7 @@ int main(int argc, char *argv[])
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long(argc, argv, "dvn:s:rwB:M:p:b:m:G:N:t:DPSFh", long_options, NULL)) !=
+    while ((opt = getopt_long(argc, argv, "dvn:s:B:M:p:b:m:G:N:t:DPSFh", long_options, NULL)) !=
            -1) {
         switch (opt) {
             case 'd':
@@ -425,24 +409,10 @@ int main(int argc, char *argv[])
                 use_vram = true;
                 break;
             case 'n':
-                num_transfers = atoi(optarg);
-                if (num_transfers <= 0) {
-                    std::cerr << "Error: Number of transfers must be positive\n";
-                    return 1;
-                }
+                num_transfers = parsePositiveSize(optarg, "Number of transfers", false);
                 break;
             case 's':
-                transfer_size = parse_size(optarg);
-                if (transfer_size == 0) {
-                    std::cerr << "Error: Invalid transfer size format\n";
-                    return 1;
-                }
-                break;
-            case 'r':
-                skip_read = true;
-                break;
-            case 'w':
-                skip_write = true;
+                transfer_size = parsePositiveSize(optarg, "Transfer size", true);
                 break;
             case 'B':
                 backend_name = optarg;
@@ -460,42 +430,30 @@ int main(int argc, char *argv[])
                 }
                 break;
             case 'p':
-                pool_size = atoi(optarg);
+                pool_size = parsePositiveSize(optarg, "Batch pool size", false);
                 break;
             case 'b':
-                batch_limit = atoi(optarg);
-                if (batch_limit < 1 || batch_limit > 128) {
+                batch_limit = parsePositiveSize(optarg, "Batch limit", false);
+                if (batch_limit > 128) {
                     std::cerr << "Error: Batch limit must be between 1 and 128\n";
                     return 1;
                 }
                 break;
             case 'm':
-                max_request_size = parse_size(optarg);
-                if (max_request_size > 16*1024*1024) {
-                    std::cerr << "Error: Max request size cannot be greater than  16M\n";
+                max_request_size = parsePositiveSize(optarg, "Max request size", true);
+                if (max_request_size > 16 * 1024 * 1024) {
+                    std::cerr << "Error: Max request size cannot be greater than 16M\n";
                     return 1;
                 }
                 break;
             case 'G':
-                num_gpus = atoi(optarg);
-                if (num_gpus == 0) {
-                    std::cerr << "Error: Number of GPUs must be positive\n";
-                    return 1;
-                }
+                num_gpus = parsePositiveSize(optarg, "Number of GPUs", false);
                 break;
             case 'N':
-                num_threads = atoi(optarg);
-                if (num_threads == 0) {
-                    std::cerr << "Error: Number of threads must be positive\n";
-                    return 1;
-                }
+                num_threads = parsePositiveSize(optarg, "Number of threads", false);
                 break;
             case 't':
-                iterations = atoi(optarg);
-                if (iterations <= 0) {
-                    std::cerr << "Error: Number of iterations must be positive\n";
-                    return 1;
-                }
+                iterations = parsePositiveSize(optarg, "Number of iterations", false);
                 break;
             case 'D':
                 use_direct = true;
@@ -516,11 +474,6 @@ int main(int argc, char *argv[])
                 print_usage(argv[0]);
                 return 1;
         }
-    }
-
-    if (skip_read && skip_write) {
-        std::cerr << "Error: Cannot skip both read and write tests\n";
-        return 1;
     }
 
     if (backend_name == "GDS_MT" && mode_explicit) {
@@ -625,15 +578,6 @@ int main(int argc, char *argv[])
     }
     std::cout << "- Number of iterations: " << iterations << std::endl;
     std::cout << "- Use O_DIRECT: " << (use_direct ? "Yes" : "No") << std::endl;
-    std::cout << "- Operation: ";
-    if (!skip_read && !skip_write) {
-        std::cout << "Read and Write";
-    } else if (skip_read) {
-        std::cout << "Write Only";
-    } else {  // skip_write
-        std::cout << "Read Only";
-    }
-    std::cout << std::endl;
     std::cout << "============================================================\n" << std::endl;
 
     nixlAgent agent(agent_name, cfg);
@@ -734,14 +678,10 @@ int main(int argc, char *argv[])
         }
     }
 
-    // Prepare transfer lists
-    nixl_xfer_dlist_t file_for_gds_list = file_for_gds.trim();
-    nixl_xfer_dlist_t src_list = use_dram ? dram_for_gds.trim() : vram_for_gds.trim();
-
     using namespace nixlTime;
 
-    // Perform write test if not skipped
-    if (!skip_write) {
+    // Write test: the read test below validates what this phase wrote
+    {
         std::cout << "\n============================================================" << std::endl;
         std::cout << "PHASE 2: Memory to File Transfer (Write Test)" << std::endl;
         std::cout << "============================================================" << std::endl;
@@ -818,28 +758,26 @@ int main(int argc, char *argv[])
         std::cout << "- Speed: " << gbps << " GB/s" << std::endl;
     }
 
-    // Clear buffers before read if doing both operations
-    if (!skip_read && !skip_write) {
-        std::cout << "\n============================================================" << std::endl;
-        std::cout << "PHASE 3: Clearing buffers for read test" << std::endl;
-        std::cout << "============================================================" << std::endl;
-        for (i = 0; i < num_transfers; i++) {
-            if (use_vram && vram_addr[i]) {
-                cudaSetDevice(i % num_gpus);
-                if (clear_gpu_buffer(vram_addr[i], transfer_size) != cudaSuccess) {
-                    std::cerr << "Failed to clear VRAM buffer " << i << std::endl;
-                    goto cleanup;
-                }
+    // Clear the buffers so the read test cannot pass on the data written above
+    std::cout << "\n============================================================" << std::endl;
+    std::cout << "PHASE 3: Clearing buffers for read test" << std::endl;
+    std::cout << "============================================================" << std::endl;
+    for (i = 0; i < num_transfers; i++) {
+        if (use_vram && vram_addr[i]) {
+            cudaSetDevice(i % num_gpus);
+            if (clear_gpu_buffer(vram_addr[i], transfer_size) != cudaSuccess) {
+                std::cerr << "Failed to clear VRAM buffer " << i << std::endl;
+                goto cleanup;
             }
-            if (use_dram && dram_addr[i]) {
-                clear_buffer(dram_addr[i], transfer_size);
-            }
-            printProgress(float(i + 1) / num_transfers);
         }
+        if (use_dram && dram_addr[i]) {
+            clear_buffer(dram_addr[i], transfer_size);
+        }
+        printProgress(float(i + 1) / num_transfers);
     }
 
-    // Perform read test if not skipped
-    if (!skip_read) {
+    // Read test
+    {
         std::cout << "\n============================================================" << std::endl;
         std::cout << "PHASE 4: File to Memory Transfer (Read Test)" << std::endl;
         std::cout << "============================================================" << std::endl;
@@ -918,27 +856,24 @@ int main(int argc, char *argv[])
         std::cout << "\n============================================================" << std::endl;
         std::cout << "PHASE 5: Validating read data" << std::endl;
         std::cout << "============================================================" << std::endl;
+
+        // One expected pattern and one host staging buffer serve every transfer
+        auto expected_buffer = std::make_unique<char[]>(transfer_size);
+        auto host_buffer = use_vram ? std::make_unique<char[]>(transfer_size) : nullptr;
+        fill_test_pattern(expected_buffer.get(), transfer_size);
+
         for (i = 0; i < num_transfers; i++) {
             if (use_vram) {
                 cudaSetDevice(i % num_gpus);
-                if (!validate_gpu_buffer(vram_addr[i], transfer_size)) {
+                if (!validate_gpu_buffer(
+                        vram_addr[i], transfer_size, host_buffer.get(), expected_buffer.get())) {
                     std::cerr << "VRAM buffer " << i << " validation failed\n";
                     goto cleanup;
                 }
             }
-            if (use_dram) {
-                char* expected_buffer = (char*)malloc(transfer_size);
-                if (!expected_buffer) {
-                    std::cerr << "Failed to allocate validation buffer\n";
-                    goto cleanup;
-                }
-                fill_test_pattern(expected_buffer, transfer_size);
-                if (memcmp(dram_addr[i], expected_buffer, transfer_size) != 0) {
-                    std::cerr << "DRAM buffer " << i << " validation failed\n";
-                    free(expected_buffer);
-                    goto cleanup;
-                }
-                free(expected_buffer);
+            if (use_dram && memcmp(dram_addr[i], expected_buffer.get(), transfer_size) != 0) {
+                std::cerr << "DRAM buffer " << i << " validation failed\n";
+                goto cleanup;
             }
             printProgress(float(i + 1) / num_transfers);
         }
