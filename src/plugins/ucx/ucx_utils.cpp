@@ -394,7 +394,8 @@ nixlUcxEp::flushEp(nixlUcxReq &req) const noexcept {
 
 #ifdef HAVE_UCX_SGL_API
 nixl_status_t
-nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
+nixlUcxEp::postSgl(const nixl_xfer_op_t &operation,
+                   ucp_dt_local_sgl_t local,
                    const ucp_dt_remote_sgl_t &remote,
                    size_t count,
                    nixlUcxReq &req) {
@@ -412,7 +413,9 @@ nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
         .remote_count = count,
     };
 
-    const ucs_status_ptr_t request =
+    NIXL_ASSERT(operation == NIXL_READ || operation == NIXL_WRITE);
+    const ucs_status_ptr_t request = operation == NIXL_READ ?
+        ucp_get_nbx(eph_, &local, count, UCP_REMOTE_ADDR_INVALID, UCP_RKEY_INVALID, &param) :
         ucp_put_nbx(eph_, &local, count, UCP_REMOTE_ADDR_INVALID, UCP_RKEY_INVALID, &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);

@@ -63,8 +63,8 @@ sglXfer::sglXfer(const nixl_meta_dlist_t &local,
 }
 
 nixl_status_t
-sglXfer::post(nixlUcxEp &ep, nixlUcxReq &req) const {
-    return ep.postSgl(localView(), remoteView(), size_, req);
+sglXfer::post(const nixl_xfer_op_t &operation, nixlUcxEp &ep, nixlUcxReq &req) const {
+    return ep.postSgl(operation, localView(), remoteView(), size_, req);
 }
 
 } // namespace nixl::ucx

@@ -325,7 +325,7 @@ private:
                 nixlBackendReqH *handle) const;
 
     nixl_status_t
-    sendXferSgl(nixlBackendReqH *handle) const;
+    sendXferSgl(const nixl_xfer_op_t &operation, nixlBackendReqH *handle) const;
 #endif
 
     /**
