@@ -87,6 +87,9 @@ public:
         const nixl_status_t status = ep_->flushEp(req, notifBuild_ ? flushCb : nullptr, this);
         const nixl_status_t ret = append(status, req);
         if (ret == NIXL_SUCCESS) {
+            if (status == NIXL_SUCCESS) {
+                flushed();
+            }
             buildNotif();
         }
 
