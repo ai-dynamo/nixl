@@ -100,6 +100,9 @@ navigation:
             path: ./docs/pages/user-guide/backends/azure-blob.md
           - page: INFINIA
             path: ./docs/pages/user-guide/backends/infinia.md
+          - page: DOCA_MEMOS
+            slug: doca-memos
+            path: ./docs/pages/user-guide/backends/doca-memos.md
           - page: GUSLI
             path: ./docs/pages/user-guide/backends/gusli.md
       - page: "Metadata Exchange with etcd"

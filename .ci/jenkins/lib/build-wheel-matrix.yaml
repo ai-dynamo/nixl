@@ -285,7 +285,7 @@ steps:
       podman system reset -f || true
       ln -sfT $(type -p podman) /usr/bin/docker
       # Login to Artifactory
-      echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
+      echo "$ARTIFACTORY_TOKEN" | .ci/scripts/registry-login.sh "https://${registry_host}" "$ARTIFACTORY_USER"
 
   # =============================================================================
   # Step 1b: Environment Preparation — sanity helpers (aarch64 build_helper)
@@ -309,7 +309,7 @@ steps:
       # build-container.sh invokes `docker`; point it at podman
       sudo ln -sfT "$(command -v podman)" /usr/bin/docker
       # Login to Artifactory
-      echo "$ARTIFACTORY_TOKEN" | podman login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
+      echo "$ARTIFACTORY_TOKEN" | .ci/scripts/registry-login.sh "https://${registry_host}" "$ARTIFACTORY_USER"
 
   # =============================================================================
   # Step 2: Python Wheel Generation
