@@ -135,9 +135,9 @@ echo "==== Running vLLM Elastic EP test ===="
 
     (
         cd "${VLLM_ELASTIC_TEST_DIR}"
-        # TODO: drop VLLM_USE_V2_MODEL_RUNNER=0 once VLLM_REF includes
+        # TODO: drop VLLM_FLASHINFER_AUTOTUNE_SKIP_OPS once VLLM_REF includes
         # the upstream fix for FlashInfer autotuning on Elastic EP process groups.
-        VLLM_USE_V2_MODEL_RUNNER=0 \
+        VLLM_FLASHINFER_AUTOTUNE_SKIP_OPS=trtllm_batch_decode_mla \
         timeout 4500 "${VLLM_PYTHON}" -m pytest \
             "tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling[cuda_graphs_heavy_nixl_ep]" \
             -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
