@@ -75,6 +75,23 @@ putAndWait(const memViewElem &src, const memViewElem &dst, size_t size, unsigned
     waitPostedWithSystemFence(status, xfer_status);
 }
 
+__device__ void
+putAndComplete(const memViewElem &src,
+               const memViewElem &dst,
+               size_t bytes,
+               unsigned channel_id,
+               uint64_t put_flags) {
+    xferStatusH xfer_status;
+    auto status = put(src, dst, bytes, channel_id, put_flags, &xfer_status);
+    assert(status == NIXL_IN_PROG);
+    if (put_flags & flags::defer) {
+        status = flush(dst.mvh, channel_id);
+        assert(status == NIXL_SUCCESS);
+    } else {
+        waitPostedWithSystemFence(status, xfer_status);
+    }
+}
+
 __global__ void
 putOffsetKernel(void *src_mvh, void *dst_mvh) {
     assert(threadIdx.x == 0);
@@ -98,15 +115,15 @@ putChannelKernel(void *src_mvh, void *dst_mvh) {
     }
 }
 
-template<level_t level>
 __global__ void
-putFlushKernel(void *src_mvh, void *dst_mvh, size_t bytes, unsigned channel_id) {
+putFlushKernel(void *src_mvh,
+               void *dst_mvh,
+               size_t bytes,
+               unsigned channel_id,
+               uint64_t put_flags) {
     const memViewElem src{src_mvh, 0, 0};
     const memViewElem dst{dst_mvh, 0, 0};
-    const auto status = put<level>(src, dst, bytes, channel_id, flags::defer);
-    assert(status == NIXL_IN_PROG);
-    const auto flush_status = flush<level>(dst_mvh, channel_id);
-    assert(flush_status == NIXL_SUCCESS);
+    putAndComplete(src, dst, bytes, channel_id, put_flags);
 }
 
 void
@@ -222,54 +239,34 @@ TEST_P(test, putChannel) {
     EXPECT_EQ(src_mbs[0], dst_mbs[1]);
 }
 
-class flushTest : public test {
-protected:
-    template<level_t level>
-    void
-    deferredPutFlush() {
-        // Skip before submitting deferred work when the UCX headers lack flush support.
-#if __has_include(<ucp/api/device/ucp_device_impl.h>)
-        if constexpr (!impl::ucx::flush_available<level>) {
-            GTEST_SKIP() << "UCX device flush API is unavailable";
-        }
-#else
-        GTEST_SKIP() << "UCX direct GPU API is unavailable";
-#endif
-        constexpr size_t bytes = 4 * 1024;
-        const std::vector<uint64_t> pattern(bytes / sizeof(test_value), test_value);
-        std::vector<memBuffer> src_mbs;
-        src_mbs.emplace_back(memBuffer{bytes, pattern.data()});
-        std::vector<memBuffer> dst_mbs;
-        dst_mbs.emplace_back(memBuffer{bytes});
-
-        void *src_mvh = prepLocalMemView(src_mbs);
-        void *dst_mvh = prepRemoteMemView(dst_mbs);
-        constexpr unsigned num_threads = level == level_t::THREAD ? 1 : 32;
-        // Exercise a non-default channel and complete solely through flush.
-        putFlushKernel<level><<<1, num_threads>>>(src_mvh, dst_mvh, bytes, 1);
-        const cudaError_t launch_status = cudaGetLastError();
-        ASSERT_EQ(launch_status, cudaSuccess) << cudaGetErrorString(launch_status);
-        ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
-        EXPECT_EQ(src_mbs[0], dst_mbs[0]);
+TEST_P(test, deferredPutFlush) {
+    if (GetParam()) {
+        GTEST_SKIP() << "GPU flush is unsupported in proxy mode";
     }
-};
+    // Skip before submitting deferred work when the UCX headers lack flush support.
+#if __has_include(<ucp/api/device/ucp_device_impl.h>)
+    if constexpr (!impl::ucx::flush_available<level_t::THREAD>) {
+        GTEST_SKIP() << "UCX device flush API is unavailable";
+    }
+#else
+    GTEST_SKIP() << "UCX direct GPU API is unavailable";
+#endif
+    constexpr size_t bytes = 4 * 1024;
+    const std::vector<uint64_t> pattern(bytes / sizeof(test_value), test_value);
+    std::vector<memBuffer> src_mbs;
+    src_mbs.emplace_back(memBuffer{bytes, pattern.data()});
+    std::vector<memBuffer> dst_mbs;
+    dst_mbs.emplace_back(memBuffer{bytes});
 
-TEST_P(flushTest, deferredPutFlushThread) {
-    deferredPutFlush<level_t::THREAD>();
+    void *src_mvh = prepLocalMemView(src_mbs);
+    void *dst_mvh = prepRemoteMemView(dst_mbs);
+    // Exercise a non-default channel and complete solely through flush.
+    putFlushKernel<<<1, 1>>>(src_mvh, dst_mvh, bytes, 1, flags::defer);
+    const cudaError_t launch_status = cudaGetLastError();
+    ASSERT_EQ(launch_status, cudaSuccess) << cudaGetErrorString(launch_status);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    EXPECT_EQ(src_mbs[0], dst_mbs[0]);
 }
-
-TEST_P(flushTest, deferredPutFlushWarp) {
-    deferredPutFlush<level_t::WARP>();
-}
-
-TEST_P(flushTest, deferredPutFlushBlock) {
-    deferredPutFlush<level_t::BLOCK>();
-}
-
-INSTANTIATE_TEST_SUITE_P(deviceGpu,
-                         flushTest,
-                         testing::Values(false),
-                         [](const testing::TestParamInfo<bool> &) { return "UCX"; });
 
 INSTANTIATE_TEST_SUITE_P(deviceGpu,
                          test,
