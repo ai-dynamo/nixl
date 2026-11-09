@@ -402,6 +402,8 @@ RUN uv pip install --upgrade 'setuptools>=80.9.0'
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
 ARG UCX_REF="v1.23.x"
 ARG UCX_SONAME_SUFFIX=""
+# Older manylinux kernel headers omit pidfd declarations; the wheel UCX build
+# must still compile support for modern x86_64/aarch64 kernels.
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src && \
      git clone "$UCX_REPO" ucx && \
      cd ucx &&                       \
@@ -424,6 +426,15 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src &&
      else \
          UCX_SONAME_PARAM=""; \
          UCX_MODULE_DEEPBIND_PARAM=""; \
+     fi && \
+     if [ "$(uname -m)" = "x86_64" ] || [ "$(uname -m)" = "aarch64" ]; then \
+         printf '%s\n' '#include <sys/syscall.h>' \
+             '#ifndef SYS_pidfd_open' '#define SYS_pidfd_open 434' '#endif' \
+             '#ifndef SYS_pidfd_getfd' '#define SYS_pidfd_getfd 438' '#endif' \
+             > /tmp/nixl-pidfd-syscalls.h; \
+         export CPPFLAGS="-include /tmp/nixl-pidfd-syscalls.h ${CPPFLAGS}"; \
+     else \
+         echo "pidfd syscall numbers are unknown for $(uname -m); building UCX without the compatibility header" >&2; \
      fi && \
      ./contrib/configure-release-mt  \
          --enable-shared             \
