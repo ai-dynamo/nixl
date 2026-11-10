@@ -11,7 +11,7 @@ namespace nixl_ep_v2::elastic::nixl {
 // Host-written at every commit, device-read; lives at a fixed device address for the life of the buffer (graphs replay)
 struct alignas(16) NIXLDeviceContext {
     void* local_mvh;    // Local memory view: one entry, this rank's region
-    void* remote_mvh;   // Remote memory view: `num_world_ranks` entries indexed by world rank (null agent when absent)
+    void* remote_mvh;   // Remote memory view: `num_world_ranks` entries indexed by world rank (null agent without an endpoint)
     void** p2p_ptrs;    // `[num_world_ranks]`: a peer's region base when reachable with loads/stores, else nullptr
     void* local_base;   // This rank's region base (== the workspace pointer)
     int world_rank;     // This rank's world rank
@@ -43,8 +43,8 @@ static_assert(sizeof(NIXLDeviceContext) == 48, "Unexpected transport context siz
 // The transport of the adaptive EP kernels. Every rank registers ONE symmetric region (workspace, then the token
 // buffer) with NIXL, all with the identical layout, so one byte offset names the same word on every rank; a peer is
 // its world rank (`d * max_num_scaleup_ranks + k`). A peer mapped into our address space (UCX's CUDA IPC lane,
-// `p2p_ptrs[world_rank] != nullptr`) gets loads, stores and system-scope atomics on `base + offset`; any other peer gets
-// RDMA through the memory views. The context lives at a fixed device address, so a captured graph replays across commits.
+// `p2p_ptrs[world_rank] != nullptr`) gets loads, stores and system-scope atomics on `base + offset`; same-position peers in
+// other domains get RDMA. Kernels route through these endpoints only. The fixed context address lets graphs replay across commits.
 namespace nixl_ep_v2::elastic::nixl {
 
 // The kernels copy the transport context once per block, field by field through the read-only path into registers

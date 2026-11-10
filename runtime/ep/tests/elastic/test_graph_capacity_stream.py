@@ -43,9 +43,38 @@ def run(local_rank, num_local_ranks, args):
         namespace="graph-capacity-stream",
         timeout_seconds=args.store_timeout_secs,
     )
-    buffer = make_buffer(args, rank, num_ranks, store)
+    max_so, max_su = cohort.num_scaleout_ranks, cohort.num_scaleup_ranks
+    buffer = make_buffer(
+        args,
+        0,
+        1,
+        store,
+        bootstrap_id=f"graph-capacity-stream/{rank}",
+        max_num_scaleout_ranks=max_so,
+        max_num_scaleup_ranks=max_su,
+        scaleout_rank_idx=rank // max_su,
+        scaleup_rank_idx=rank % max_su,
+    )
     assert buffer.max_num_scaleout_ranks >= 2 and buffer.max_num_scaleup_ranks >= 2
-    full = buffer.get_active_ranks()
+    full = list(range(num_ranks))
+    buffer.publish(key_prefix="graph-capacity-stream/peers")
+    off_rail = [
+        peer
+        for peer in full
+        if peer // max_su != rank // max_su and peer % max_su != rank % max_su
+    ]
+    # Logical off-rail peers alone stage an all-null remote view.
+    buffer.connect_ranks(off_rail, key_prefix="graph-capacity-stream/peers")
+    assert buffer.get_connected_ranks() == off_rail
+    buffer.commit_topology()
+    buffer.disconnect_ranks(off_rail)
+    buffer.commit_topology()
+    buffer.connect_ranks(
+        [peer for peer in full if peer != rank],
+        key_prefix="graph-capacity-stream/peers",
+    )
+    buffer.stage_topology(active_ranks=full)
+    buffer.commit_topology()
     first_domain = list(range(buffer.max_num_scaleup_ranks))
     captured_at = {peer: full for peer in full}
 

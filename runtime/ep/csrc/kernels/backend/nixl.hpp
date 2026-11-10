@@ -19,7 +19,7 @@
 
 // The NIXL transport of the adaptive EP kernels, host side: one symmetric region per rank (workspace followed by the
 // token buffer) registered with a NIXL agent over UCX; peers are addressed by their world rank in the declared
-// maximum world. `connect_ranks` / `disconnect_ranks` stage memory views, `commit` probes every connected peer's NVLink
+// maximum world. `connect_ranks` / `disconnect_ranks` stage memory views, `commit` probes every endpoint peer's NVLink
 // pointer (`nixlGetPtr`), refuses when a same-domain peer has none or a rail peer has one, else swaps the views in and uploads the device context and the p2p table
 namespace nixl_ep_v2::elastic::nixl {
 
@@ -73,7 +73,7 @@ public:
     std::string get_local_metadata() const;
     NIXLPeerInfo get_local_peer_info() const;
 
-    // Load the peers' metadata, wire the endpoints up and stage new views; world ranks distinct, not ours, not connected; every peer calls this with us too.
+    // Register peers, wire required endpoints and stage new views; world ranks distinct, not ours, not connected; every peer calls this with us too.
     // Validate the whole peer list before loading metadata; later failures abort because peer state may have changed.
     void connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_mds,
                        const std::vector<NIXLPeerInfo>& peer_infos);
@@ -112,11 +112,11 @@ private:
         void operator()(void* ptr) const noexcept;
     };
 
-    // Peer registry
+    // Logical peer registry: endpoints are needed only within our domain or at our position in another domain.
     std::vector<NIXLPeerInfo> peers;           // `[num_world_ranks]`, valid iff `connected`
     std::vector<int> connected;                // `[num_world_ranks]`, 0/1
-    std::vector<int> connect_epoch;            // `[num_world_ranks]`: how many times we connected to the peer (hello tag)
-    std::vector<std::string> known_agent_names; // `[num_world_ranks]`: the agent behind the world rank (the connected peer's; kept across disconnects as the agent last seen: a different agent at reconnect = a new process behind the world rank, the epoch restarts)
+    std::vector<int> connect_epoch;            // `[num_world_ranks]`: endpoint connection epoch (hello tag)
+    std::vector<std::string> known_agent_names; // `[num_world_ranks]`: endpoint peer's last agent; retained across disconnects to restart epochs for a new process
     std::vector<int> pending_disconnects;      // Disconnected since the last commit, which invalidates their agents' metadata (a reconnect must wait for it)
 
     // Device tables
@@ -124,7 +124,7 @@ private:
     std::unique_ptr<NIXLDeviceContext, CudaDeleter> ctx_device;
     std::unique_ptr<void*, CudaDeleter> p2p_ptrs_device;        // The table the kernels read, at a fixed address
     std::unique_ptr<void*, CudaDeleter> p2p_ptrs_probe_device;  // The table a staged view yields, checked before it replaces the above
-    std::unique_ptr<int, CudaDeleter> connected_device;         // Presence mask: never query nixlGetPtr on a null-agent entry
+    std::unique_ptr<int, CudaDeleter> connected_device;         // Endpoint mask: never query nixlGetPtr on a null-agent entry
 
     // Destroy views and deregister memory before freeing any allocation, including when construction throws
     std::unique_ptr<NIXLAgentState> state;

@@ -239,7 +239,7 @@ private:
         EP_HOST_ASSERT(2 <= num_active_sms and num_active_sms <= topology::get_num_launch_sms() and num_active_sms % 2 == 0 and
                        "`num_active_sms` must be even, between 2 and the launch grid (`get_adaptive_num_launch_sms()`, NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS)");
 
-        // An active rank's kernels address every active peer (a rank that is not active launches nothing and may stage anything)
+        // An active rank requires every active peer in its logical membership; the transport chooses the endpoints.
         if (next.is_active())
             for (int d = 0; d < next.num_scaleout_ranks; ++ d) for (int k = 0; k < next.num_scaleup_ranks; ++ k) {
                 const int wr = topology::world_rank(d, k, max_num_scaleup_ranks);
@@ -351,8 +351,7 @@ public:
     }
 
     void disconnect_ranks(const std::vector<int>& world_ranks) {
-        // An active rank's kernels address every active peer: commit a world without the rank first (a rank that is not active may drop anyone);
-        // a staged world that holds the rank would reach the kernels with an unconnected active peer at its commit: stage one without it first
+        // Active and staged worlds must exclude a peer before it leaves the logical membership.
         if (topology_host.is_active()) {
             for (const int wr: world_ranks) {
                 if (topology_host.is_active(wr / max_num_scaleup_ranks, wr % max_num_scaleup_ranks))
