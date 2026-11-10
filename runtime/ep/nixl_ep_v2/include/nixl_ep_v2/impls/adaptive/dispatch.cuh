@@ -24,7 +24,6 @@ template <bool kDoCPUSync,
           int kNumNotifyWarps, int kNumChannelsPerSM,
           int kNumMaxScaleoutRanks, int kNumMaxScaleupRanks,
           int kNumHiddenBytes, int kNumSFPacks,
-          int kNumMaxTokensPerRank,
           int kNumExpertsPerRank, int kNumTopk, int kExpertAlignment,
           int64_t kNumTimeoutCycles,
           int kNumScaleupRanksPerLane = math::constexpr_ceil_div(kNumMaxScaleupRanks, 32),
@@ -50,7 +49,8 @@ adaptive_dispatch_impl(
     const int sf_token_stride, const int sf_hidden_stride,
     void* buffer, void* send_buffer,
     void* mapped_host_workspace,
-    const topology::EPTopology* topology_ptr) {
+    const topology::EPTopology* topology_ptr,
+    const int num_max_tokens_per_rank) {
     EP_STATIC_ASSERT(kNumNotifyWarps % 4 == 0, "Invalid warpgroup size");
     EP_STATIC_ASSERT(kNumMaxScaleoutRanks <= topology::kNumMaxScaleoutRanksCap, "Too many scale-out ranks");
     EP_STATIC_ASSERT(kNumMaxScaleupRanks <= topology::kNumMaxScaleupRanksCap, "Too many scale-up ranks");
@@ -83,7 +83,7 @@ adaptive_dispatch_impl(
     const int num_experts = num_ranks * kNumExpertsPerRank;
     const int num_experts_per_scaleout = num_scaleup_ranks * kNumExpertsPerRank;
     const int num_channels = kNumChannelsPerSM * num_active_sms;
-    const int num_max_tokens_per_channel = math::ceil_div(kNumMaxTokensPerRank, num_channels);
+    const int num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels);
 
     // Direct mode (MNNVL): one flat NVLink team = exactly one active NVLink domain, whatever its index (the extent
     // `num_scaleout_ranks` may exceed 1; ranks, experts and tokens keep their global numbering, NVLink peers and
@@ -138,9 +138,9 @@ adaptive_dispatch_impl(
     // The scale-out send buffer (the RDMA sources) is a region of its own: the NIC reads it after this kernel has ended; the next
     // dispatch rewrites it only past its start barrier, which every receiver reaches after consuming this launch's records (see `comm::gpu_barrier_rt`)
     auto scaleup_buffer = layout::BufferLayout<false>(
-        token_layout, num_scaleup_ranks, num_scaleout_ranks * kNumMaxTokensPerRank, buffer);
+        token_layout, num_scaleup_ranks, num_scaleout_ranks * num_max_tokens_per_rank, buffer);
     auto scaleout_send_buffer = layout::BufferLayout<false>(
-        token_layout, 1, kNumMaxTokensPerRank, send_buffer);
+        token_layout, 1, num_max_tokens_per_rank, send_buffer);
     auto scaleout_recv_buffer = layout::BufferLayout<false>(
         token_layout, num_scaleout_ranks, num_channels * num_max_tokens_per_channel, scaleup_buffer.get_buffer_end_ptr());
 
@@ -577,7 +577,7 @@ adaptive_dispatch_impl(
             // Add source metadata (rank index and token index)
             // Fence metadata writes here; SF copies are fenced after their completion wait below
             if (ptx::elect_one_sync())
-                *tma_buffer.get_src_token_global_idx_ptr() = rank_idx * kNumMaxTokensPerRank + token_idx;
+                *tma_buffer.get_src_token_global_idx_ptr() = rank_idx * num_max_tokens_per_rank + token_idx;
             ptx::tma_store_fence();
             __syncwarp();
 
@@ -650,7 +650,7 @@ adaptive_dispatch_impl(
 
             // Add source metadata (rank index and token index)
             if (ptx::elect_one_sync())
-                *tma_buffer.get_src_token_global_idx_ptr() = rank_idx * kNumMaxTokensPerRank + token_idx;
+                *tma_buffer.get_src_token_global_idx_ptr() = rank_idx * num_max_tokens_per_rank + token_idx;
             ptx::tma_store_fence();
             __syncwarp();
 
