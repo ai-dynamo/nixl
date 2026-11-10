@@ -56,6 +56,12 @@ struct NIXLAgentState {
 static const std::string kHelloPrefix = "nixl_ep_v2_hello:";
 static constexpr int kNumMaxUCXDeviceChannels = 64;  // UCX's worker address carries at most 64 device channels (`ucx_num_device_channels`)
 
+// Kernel edges stay within a domain or join the same position across domains; world-rank identity uses the fixed maximum width.
+static bool needs_endpoint(const NIXLEPContext& ctx, const int& wr) {
+    const int n = ctx.max_num_scaleup_ranks;
+    return wr / n == ctx.world_rank / n or wr % n == ctx.world_rank % n;
+}
+
 // Cleanup must preserve an exception already unwinding, and still attempt the remaining releases
 template <typename func_t>
 static void cleanup(const char* what, const func_t& func) noexcept {
@@ -189,6 +195,8 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
     init_params["ucx_num_device_channels"] = std::to_string(num_channels);
     init_params["ucx_error_handling_mode"] = "none";
     init_params["num_workers"] = "1";
+    init_params["engine_config"] =
+        "RC_GDA_NUM_PRE_ALLOC_EPS=" + std::to_string(std::max(1, num_world_ranks / max_num_scaleup_ranks - 1));
     NIXL_CHECK(state->agent->createBackend("UCX", init_params, state->backend));
     state->extra_params.backends.push_back(state->backend);
 
@@ -239,7 +247,7 @@ void NIXLEPContext::finalize() {
     if (state != nullptr and state->agent != nullptr) {
         release_staged_views();
         release_active_views();
-        for (const int wr: get_connected_ranks())
+        for (const int wr: get_connected_ranks()) if (needs_endpoint(*this, wr))
             invalidate_remote_md(*state->agent, known_agent_names[wr]);
     }
     state.reset();
@@ -291,9 +299,13 @@ void NIXLEPContext::connect_ranks(const std::vector<int>& world_ranks, const std
 
 void NIXLEPContext::connect_validated_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_mds,
                                             const std::vector<NIXLPeerInfo>& peer_infos) {
-    // Load every peer's metadata first (the loads proceed in parallel inside the agent).
+    // Load endpoint metadata first; the peer registry still includes peers reached through an intermediate rank.
+    std::vector<int> endpoint_ranks;
     for (size_t i = 0; i < world_ranks.size(); ++ i) {
         const int wr = world_ranks[i];
+        if (not needs_endpoint(*this, wr))
+            continue;
+        endpoint_ranks.push_back(wr);
         std::string name;
         NIXL_CHECK(state->agent->loadRemoteMD(remote_mds[i], name));
         // A different agent behind the world rank is a new process (a leaver's exited, a fresh one joined): its epochs start from
@@ -304,28 +316,28 @@ void NIXLEPContext::connect_validated_ranks(const std::vector<int>& world_ranks,
         }
     }
 
-    // Wire-up handshake: UCX endpoints connect lazily and `prepMemView` needs them connected, so every new peer gets a
+    // Wire-up handshake: UCX endpoints connect lazily and `prepMemView` needs them connected, so every new endpoint peer gets a
     // hello carrying the pair's connection epoch and we wait for its hello back (both sides call `connect_ranks` with
     // each other); a hello of an earlier epoch cannot satisfy this one, an asymmetric protocol shows as an epoch mismatch
     const auto start = std::chrono::steady_clock::now();
     const auto timeout_secs = get_env<int>("NIXL_EP_NIXL_CONNECT_TIMEOUT_SECS", 120);
-    for (size_t i = 0; i < world_ranks.size(); ++ i) {
-        const int wr = world_ranks[i];
+    for (size_t i = 0; i < endpoint_ranks.size(); ++ i) {
+        const int wr = endpoint_ranks[i];
         connect_epoch[wr] += 1;
         NIXL_CHECK(state->agent->genNotif(known_agent_names[wr], kHelloPrefix + std::to_string(connect_epoch[wr]),
                                           &state->extra_params));
     }
-    std::vector<bool> greeted(world_ranks.size(), false);
+    std::vector<bool> greeted(endpoint_ranks.size(), false);
     size_t num_greeted = 0;
-    while (num_greeted < world_ranks.size()) {
+    while (num_greeted < endpoint_ranks.size()) {
         nixl_notifs_t notif_map;
         NIXL_CHECK(state->agent->getNotifs(notif_map, &state->extra_params));
         for (const auto& [from, msgs]: notif_map) {
             for (const auto& msg: msgs) if (msg.rfind(kHelloPrefix, 0) == 0)
                 state->pending_hellos[from].push_back(std::atoi(msg.c_str() + kHelloPrefix.size()));
         }
-        for (size_t i = 0; i < world_ranks.size(); ++ i) if (not greeted[i]) {
-            const int wr = world_ranks[i];
+        for (size_t i = 0; i < endpoint_ranks.size(); ++ i) if (not greeted[i]) {
+            const int wr = endpoint_ranks[i];
             auto it = state->pending_hellos.find(known_agent_names[wr]);
             if (it == state->pending_hellos.end())
                 continue;
@@ -338,12 +350,12 @@ void NIXLEPContext::connect_validated_ranks(const std::vector<int>& world_ranks,
                 greeted[i] = true, ++ num_greeted;
             }
         }
-        if (num_greeted < world_ranks.size()) {
+        if (num_greeted < endpoint_ranks.size()) {
             const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count();
             if (elapsed >= timeout_secs) {
                 std::stringstream ss;
-                for (size_t i = 0; i < world_ranks.size(); ++ i) if (not greeted[i]) {
-                    const int wr = world_ranks[i];
+                for (size_t i = 0; i < endpoint_ranks.size(); ++ i) if (not greeted[i]) {
+                    const int wr = endpoint_ranks[i];
                     ss << " peer " << wr << " (epoch " << connect_epoch[wr] << ", received:";
                     if (const auto it = state->pending_hellos.find(known_agent_names[wr]); it != state->pending_hellos.end())
                         for (const int e: it->second) ss << " " << e;
@@ -384,7 +396,8 @@ void NIXLEPContext::disconnect_ranks(const std::vector<int>& world_ranks) {
         connected[wr] = 0;
         peers[wr] = NIXLPeerInfo{};
         pending_disconnects.push_back(wr);
-        state->pending_hellos.erase(known_agent_names[wr]);
+        if (needs_endpoint(*this, wr))
+            state->pending_hellos.erase(known_agent_names[wr]);
     }
     mutate_transport_or_abort(world_rank, "memory-view preparation", [&] { stage_views(); });
 }
@@ -405,13 +418,17 @@ std::vector<int> NIXLEPContext::get_connected_ranks() const {
 void NIXLEPContext::stage_views() {
     release_staged_views();
 
-    // One entry per world rank, a null-agent hole for an absent peer (an all-null view is not a valid request)
+    // Preserve world-rank indices with null-agent holes for peers without endpoints; an all-null view is invalid.
     nixl_remote_dlist_t remote_descs(VRAM_SEG);
-    for (int r = 0; r < num_world_ranks; ++ r)
-        remote_descs.addDesc(connected[r] ?
+    bool any_endpoint = false;
+    for (int r = 0; r < num_world_ranks; ++ r) {
+        const bool has_endpoint = connected[r] and needs_endpoint(*this, r);
+        any_endpoint |= has_endpoint;
+        remote_descs.addDesc(has_endpoint ?
             nixlRemoteDesc(static_cast<uintptr_t>(peers[r].region_base), static_cast<size_t>(num_region_bytes), static_cast<uint64_t>(peers[r].device_id), known_agent_names[r]) :
             nixlRemoteDesc(0, static_cast<size_t>(num_region_bytes), 0, nixl_null_agent));
-    if (std::find(connected.begin(), connected.end(), 1) != connected.end())
+    }
+    if (any_endpoint)
         NIXL_CHECK(state->agent->prepMemView(remote_descs, state->staged_remote, &state->extra_params));
     state->has_staged = true;
 }
@@ -454,7 +471,10 @@ void NIXLEPContext::commit(cudaStream_t stream) {
     probe.remote_mvh = state->staged_remote;
     probe.p2p_ptrs = p2p_ptrs_probe_device.get();
     std::vector<void*> probed(num_world_ranks, nullptr);
-    CUDA_RUNTIME_CHECK(cudaMemcpyAsync(connected_device.get(), connected.data(), num_world_ranks * sizeof(int), cudaMemcpyHostToDevice, stream));
+    std::vector<int> has_endpoint(num_world_ranks);
+    for (int wr = 0; wr < num_world_ranks; ++ wr)
+        has_endpoint[wr] = connected[wr] and needs_endpoint(*this, wr);
+    CUDA_RUNTIME_CHECK(cudaMemcpyAsync(connected_device.get(), has_endpoint.data(), num_world_ranks * sizeof(int), cudaMemcpyHostToDevice, stream));
     CUDA_RUNTIME_CHECK(cache_peer_pointers(probe, connected_device.get(), stream));
     CUDA_RUNTIME_CHECK(cudaMemcpyAsync(probed.data(), p2p_ptrs_probe_device.get(), num_world_ranks * sizeof(void*), cudaMemcpyDeviceToHost, stream));
     CUDA_RUNTIME_CHECK(cudaStreamSynchronize(stream));
@@ -465,7 +485,7 @@ void NIXLEPContext::commit(cudaStream_t stream) {
     for (int wr = 0; wr < num_world_ranks; ++ wr) {
         const bool same_domain = domain_of(wr) == domain_of(world_rank);
         const bool has_nvlink_ptr = probed[wr] != nullptr;
-        if (connected[wr] and same_domain != has_nvlink_ptr) {
+        if (has_endpoint[wr] and same_domain != has_nvlink_ptr) {
             std::stringstream ss;
             if (same_domain) ss << "nixlGetPtr returned no NVLink pointer from rank " << world_rank << " to same-domain peer " << wr
                << ": UCX must provide a CUDA IPC device lane for it (keep cuda_ipc in UCX_TLS or leave UCX_TLS "
@@ -488,7 +508,7 @@ void NIXLEPContext::commit(cudaStream_t stream) {
         CUDA_RUNTIME_CHECK(cudaStreamSynchronize(stream));
 
         // Peers that left: no view references their metadata any more
-        for (const int wr: pending_disconnects) {
+        for (const int wr: pending_disconnects) if (needs_endpoint(*this, wr)) {
             const auto status = invalidate_remote_md(*state->agent, known_agent_names[wr]);
             EP_HOST_ASSERT((status == NIXL_SUCCESS or status == NIXL_ERR_NOT_FOUND) and "invalidateRemoteMD failed");
         }
@@ -498,7 +518,7 @@ void NIXLEPContext::commit(cudaStream_t stream) {
     if (get_env<int>("NIXL_EP_BUFFER_DEBUG")) {
         std::stringstream ss;
         for (int i = 0; i < num_world_ranks; ++ i) if (i == world_rank or connected[i])
-            ss << i << (i == world_rank ? ":self" : probed[i] != nullptr ? ":p2p" : ":rdma") << " ";
+            ss << i << (i == world_rank ? ":self" : not has_endpoint[i] ? ":no-endpoint" : probed[i] != nullptr ? ":p2p" : ":rdma") << " ";
         printf("NIXL EP context (world rank %d) committed views (nixlGetPtr), peers: %s\n", world_rank, ss.str().c_str());
     }
 }
