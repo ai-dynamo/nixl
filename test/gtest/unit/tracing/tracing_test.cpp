@@ -660,11 +660,8 @@ TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
                          static_cast<nixl::trace::Tracer *>(nullptr),
                          nixl::trace::Record::RegisterMem,
                          {"bytes", ++evaluations});
-        NIXL_TRACE_SAMPLED_SCOPE(skipped,
-                                 tracer.get(),
-                                 nixl::trace::Record::RegisterMem,
-                                 testContext(0x41, 0x00),
-                                 {"bytes", ++evaluations});
+        const nixl::trace::Scope scope(tracer.get(), {testContext(0x41, 0x00), 0x41});
+        NIXL_TRACE_SPAN(skipped, nixl::trace::Record::RegisterMem, {"bytes", ++evaluations});
         EXPECT_FALSE(none.active());
         EXPECT_FALSE(skipped.active());
     }
@@ -699,23 +696,23 @@ TEST(Tracing, FinishMacroRecordsTheStatusAndReturnsIt) {
 #endif
 }
 
-TEST(Tracing, CorrelatedMacrosPushTheContextAroundTheirSpan) {
+TEST(Tracing, SpanMacrosTakeTheCurrentScopesIdentity) {
 #if defined(NIXL_TRACE_ENABLED)
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     const nixl::trace::TraceContext context = testContext(0x42);
-    const nixl::trace::Traceable request{tracer.get(), {context, 0x42}};
 
     {
-        NIXL_TRACE_CORRELATED_SPAN(
-            post, request, nixl::trace::Record::PostXferReqWrite, context, {"bytes", 8});
+        const nixl::trace::Scope scope(tracer.get(), {context, 0x42});
+        NIXL_TRACE_CONTEXT_SPAN(post, nixl::trace::Record::PostXferReqWrite, {"bytes", 8});
         EXPECT_TRUE(post.active());
         for (const CallLog *log : {&a, &b}) {
             EXPECT_EQ(log->activeContexts, std::vector<nixl::trace::TraceContext>{context});
         }
     }
     {
-        NIXL_TRACE_CORRELATED_SCOPE(release, request, nixl::trace::Record::ReleaseXferReq);
+        const nixl::trace::Scope scope(tracer.get(), {context, 0x42});
+        NIXL_TRACE_SPAN(release, nixl::trace::Record::ReleaseXferReq);
         EXPECT_TRUE(release.active());
         for (const CallLog *log : {&a, &b}) {
             EXPECT_EQ(log->activeContexts, std::vector<nixl::trace::TraceContext>{context});
@@ -729,6 +726,8 @@ TEST(Tracing, CorrelatedMacrosPushTheContextAroundTheirSpan) {
         ASSERT_EQ(log->contextSpans.size(), 1u);
         EXPECT_EQ(log->contextSpans[0].name, "nixl::postXferReq.write");
         EXPECT_EQ(log->contextSpans[0].kind, nixl::trace::Kind::CommSend);
+        EXPECT_EQ(log->contextSpans[0].context, context);
+        EXPECT_EQ(log->contextSpans[0].requestId, 0x42u);
         EXPECT_EQ(log->spanNames, std::vector<std::string>{"nixl::releaseXferReq"});
         EXPECT_EQ(log->intAttrs, (std::vector<std::pair<std::string, std::int64_t>>{{"bytes", 8}}));
     }
@@ -737,26 +736,23 @@ TEST(Tracing, CorrelatedMacrosPushTheContextAroundTheirSpan) {
 #endif
 }
 
-TEST(Tracing, CorrelatedSpanEvaluatesItsContextOnce) {
+TEST(Tracing, SpanMacrosRecordNothingOutsideAScope) {
 #if defined(NIXL_TRACE_ENABLED)
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
-    const nixl::trace::Traceable request{tracer.get(), {testContext(0x42), 0x42}};
-    std::uint8_t evaluations = 0;
-    const auto next_context = [&evaluations] { return testContext(0x43 + evaluations++); };
+    int evaluations = 0;
 
     {
-        NIXL_TRACE_CORRELATED_SPAN(
-            post, request, nixl::trace::Record::PostXferReqWrite, next_context());
-        EXPECT_TRUE(post.active());
+        NIXL_TRACE_CONTEXT_SPAN(
+            post, nixl::trace::Record::PostXferReqWrite, {"bytes", ++evaluations});
+        NIXL_TRACE_SPAN(release, nixl::trace::Record::ReleaseXferReq, {"bytes", ++evaluations});
+        EXPECT_FALSE(post.active());
+        EXPECT_FALSE(release.active());
     }
 
-    EXPECT_EQ(evaluations, 1);
-    for (const CallLog *log : {&a, &b}) {
-        EXPECT_EQ(log->pushedContexts, std::vector<nixl::trace::TraceContext>{testContext(0x43)});
-        ASSERT_EQ(log->contextSpans.size(), 1u);
-        EXPECT_EQ(log->contextSpans[0].context, testContext(0x43));
-    }
+    EXPECT_EQ(evaluations, 0);
+    EXPECT_EQ(a.spansBegun, 0);
+    EXPECT_TRUE(a.contextSpans.empty());
 #else
     GTEST_SKIP() << "the trace macros are compiled out";
 #endif
@@ -1004,15 +1000,15 @@ TEST(Tracing, ContextFansOutToAllBackends) {
     }
 }
 
-// CorrelationScope is the RAII guard used at call sites: it pushes on
+// Scope is the RAII guard used at call sites: it pushes on
 // construction and pops on destruction, across every backend.
-TEST(Tracing, CorrelationScopeBalancesPushPop) {
+TEST(Tracing, ScopeBalancesPushPop) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     const auto context = testContext(0x12);
 
     {
-        const nixl::trace::CorrelationScope scope(tracer.get(), context, 0x1212);
+        const nixl::trace::Scope scope(tracer.get(), {context, 0x1212});
         const auto span = tracer->beginSpan("op");
         for (const CallLog *log : {&a, &b}) {
             EXPECT_EQ(log->activeContexts, std::vector{context});
@@ -1028,14 +1024,14 @@ TEST(Tracing, CorrelationScopeBalancesPushPop) {
     }
 }
 
-TEST(Tracing, CorrelationScopeSkipsAnUnsampledContext) {
+TEST(Tracing, ScopeSkipsAnUnsampledContext) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     const auto unsampled = testContext(0x13, 0x02);
     ASSERT_TRUE(unsampled.valid());
     ASSERT_FALSE(unsampled.sampled());
 
-    { const nixl::trace::CorrelationScope scope(tracer.get(), unsampled, 0x1313); }
+    { const nixl::trace::Scope scope(tracer.get(), {unsampled, 0x1313}); }
 
     for (const CallLog *log : {&a, &b}) {
         EXPECT_TRUE(log->pushedContexts.empty());
@@ -1043,14 +1039,14 @@ TEST(Tracing, CorrelationScopeSkipsAnUnsampledContext) {
     }
 }
 
-TEST(Tracing, CorrelationScopePushesOnlyASampledContext) {
+TEST(Tracing, ScopePushesOnlyASampledContext) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     const auto context = testContext(0x18);
     const nixl::trace::TraceContext no_context;
 
-    { const nixl::trace::CorrelationScope scope(tracer.get(), context, 0); }
-    { const nixl::trace::CorrelationScope scope(tracer.get(), no_context, 0x1818); }
+    { const nixl::trace::Scope scope(tracer.get(), {context, 0}); }
+    { const nixl::trace::Scope scope(tracer.get(), {no_context, 0x1818}); }
 
     for (const CallLog *log : {&a, &b}) {
         EXPECT_EQ(log->pushedContexts, std::vector{context});
@@ -1059,14 +1055,14 @@ TEST(Tracing, CorrelationScopePushesOnlyASampledContext) {
     }
 }
 
-// A null tracer (no active backend) must make CorrelationScope a safe no-op.
-TEST(Tracing, CorrelationScopeNullTracerIsInert) {
+// A null tracer (no active backend) must make Scope a safe no-op.
+TEST(Tracing, ScopeNullTracerIsInert) {
     nixl::trace::Tracer *tracer = nullptr;
-    { const nixl::trace::CorrelationScope scope(tracer, testContext(0x14), 0x1414); }
+    { const nixl::trace::Scope scope(tracer, {testContext(0x14), 0x1414}); }
     SUCCEED();
 }
 
-TEST(Tracing, CorrelationScopeWithoutContextOrRequestIdIsInert) {
+TEST(Tracing, ScopeWithoutContextOrRequestIdIsInert) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     auto no_trace_id = testContext(0x15);
@@ -1075,7 +1071,7 @@ TEST(Tracing, CorrelationScopeWithoutContextOrRequestIdIsInert) {
     no_span_id.spanId.fill(0);
 
     for (const auto &context : {nixl::trace::TraceContext{}, no_trace_id, no_span_id}) {
-        const nixl::trace::CorrelationScope scope(tracer.get(), context, 0);
+        const nixl::trace::Scope scope(tracer.get(), {context, 0});
         const auto span = tracer->beginSpan("op");
     }
 
@@ -1086,16 +1082,16 @@ TEST(Tracing, CorrelationScopeWithoutContextOrRequestIdIsInert) {
     }
 }
 
-TEST(Tracing, NestedCorrelationScopesPopInReverseOrder) {
+TEST(Tracing, NestedScopesPopInReverseOrder) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     const auto outer = testContext(0x16);
     const auto inner = testContext(0x17);
 
     {
-        const nixl::trace::CorrelationScope outer_scope(tracer.get(), outer, 0x1616);
+        const nixl::trace::Scope outer_scope(tracer.get(), {outer, 0x1616});
         {
-            const nixl::trace::CorrelationScope inner_scope(tracer.get(), inner, 0x1717);
+            const nixl::trace::Scope inner_scope(tracer.get(), {inner, 0x1717});
             EXPECT_EQ(a.activeContexts, (std::vector{outer, inner}));
         }
         EXPECT_EQ(a.activeContexts, std::vector{outer});
@@ -1107,6 +1103,31 @@ TEST(Tracing, NestedCorrelationScopesPopInReverseOrder) {
         EXPECT_EQ(log->poppedContexts, (std::vector{inner, outer}));
         EXPECT_TRUE(log->activeContexts.empty());
     }
+}
+
+TEST(Tracing, ScopeIsCurrentUntilItEnds) {
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+    const nixl::trace::TraceIdentity outer{testContext(0x19), 0x1919, 1};
+    const nixl::trace::TraceIdentity inner{testContext(0x1a), 0x1a1a, 2};
+
+    EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
+    {
+        const nixl::trace::Scope outer_scope(tracer.get(), outer);
+        EXPECT_EQ(nixl::trace::Scope::current(), &outer_scope);
+        {
+            const nixl::trace::Scope inner_scope(nullptr, inner);
+            EXPECT_EQ(nixl::trace::Scope::current(), &inner_scope);
+            EXPECT_EQ(nixl::trace::Scope::current()->tracer(), nullptr);
+            EXPECT_EQ(nixl::trace::Scope::current()->identity().requestId, 0x1a1au);
+            EXPECT_EQ(nixl::trace::Scope::current()->identity().execution, 2u);
+        }
+        EXPECT_EQ(nixl::trace::Scope::current(), &outer_scope);
+        EXPECT_EQ(nixl::trace::Scope::current()->tracer(), tracer.get());
+        EXPECT_EQ(nixl::trace::Scope::current()->identity().context, outer.context);
+        std::thread([] { EXPECT_EQ(nixl::trace::Scope::current(), nullptr); }).join();
+    }
+    EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
 }
 
 TEST(Tracing, RequestDrawsItsIdentityFromItsTracer) {

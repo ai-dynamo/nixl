@@ -102,8 +102,8 @@ if not set(complete_ids).issubset(set(post_ids)):
 if max(post_ids.count(payload) for payload in set(post_ids)) < 2:
     raise SystemExit("tracing_nsys: no request correlation payload was reused")
 creations = [payload for name, payload, _ in rows if name == "nixl::createXferReq"]
-if not creations or any(payload is not None for payload in creations):
-    raise SystemExit("tracing_nsys: createXferReq carries a payload before the request has an id")
+if not creations or any(payload is None for payload in creations):
+    raise SystemExit("tracing_nsys: createXferReq does not carry its request's id")
 
 with open(sys.argv[2]) as report:
     recorded = [test["xfer_request_id"] for suite in json.load(report)["testsuites"]
@@ -118,9 +118,9 @@ for name, domain in (("nixl::postXferReq.write", "agent_0"), ("nixl::xfer.comple
                      ("nixl::notif.sent", "agent_0"), ("nixl::notif.received", "agent_1")):
     if placed.count((name, domain, request_id)) != 2:
         raise SystemExit(f"tracing_nsys: {domain}'s {name} does not carry the sampled request id")
-if placed.count(("nixl::releaseXferReq", "agent_0", request_id)) != 1:
-    raise SystemExit("tracing_nsys: agent_0's nixl::releaseXferReq does not carry the sampled "
-                     "request id")
+for name in ("nixl::createXferReq", "nixl::releaseXferReq"):
+    if placed.count((name, "agent_0", request_id)) != 1:
+        raise SystemExit(f"tracing_nsys: agent_0's {name} does not carry the sampled request id")
 PY
 
 echo "tracing_nsys: wrote ${OUT}.nsys-rep"

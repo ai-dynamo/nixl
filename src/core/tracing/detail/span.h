@@ -140,42 +140,6 @@ private:
     std::array<std::unique_ptr<SpanBackend>, maxTraceBackends> backends_;
 };
 
-/**
- * @brief RAII guard that keeps a trace context active on the tracer for its
- *        lifetime, so every span created while it is in scope carries
- *        that context. Null-tracer-safe; an unsampled context pushes nothing.
- *        Used to link spans emitted on different threads (e.g.
- *        postXferReq on the caller thread vs. the completion on the polling
- *        thread) to the same logical request.
- */
-class CorrelationScope {
-public:
-    [[nodiscard]] CorrelationScope(Tracer *tracer,
-                                   const TraceContext &context,
-                                   std::uint64_t request_id)
-        : tracer_(((tracer != nullptr) && context.valid() && context.sampled()) ? tracer :
-                                                                                  nullptr) {
-        if (tracer_ != nullptr) {
-            detail::pushContext(*tracer_, context, request_id);
-        }
-    }
-
-    ~CorrelationScope() {
-        if (tracer_ != nullptr) {
-            detail::popContext(*tracer_);
-        }
-    }
-
-    CorrelationScope(const CorrelationScope &) = delete;
-    CorrelationScope &
-    operator=(const CorrelationScope &) = delete;
-    CorrelationScope(CorrelationScope &&) = delete;
-    CorrelationScope &
-    operator=(CorrelationScope &&) = delete;
-
-private:
-    Tracer *tracer_;
-};
 
 } // namespace nixl::trace
 

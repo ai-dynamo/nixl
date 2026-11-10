@@ -151,7 +151,7 @@ TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
         const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
         ASSERT_NE(tracer, nullptr);
         {
-            const nixl::trace::CorrelationScope scope(tracer.get(), context, recorded_request_id);
+            const nixl::trace::Scope scope(tracer.get(), {context, recorded_request_id});
             const auto span = tracer->beginSpan("nixl::test.scoped");
         }
         tracer->emitEvent("nixl::test.event", nixl::trace::Kind::Metadata, context, 0, 5, {});
@@ -176,7 +176,7 @@ TEST_F(traceRecorder, ContextSpanRecordsItsOwnContextAndId) {
         const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
         ASSERT_NE(tracer, nullptr);
         {
-            const nixl::trace::CorrelationScope scope(tracer.get(), context, recorded_request_id);
+            const nixl::trace::Scope scope(tracer.get(), {context, recorded_request_id});
             auto span = tracer->beginContextSpan(
                 "nixl::test.post", nixl::trace::Kind::CommSend, context, recorded_request_id);
             span.addAttribute("bytes", std::int64_t{4096});

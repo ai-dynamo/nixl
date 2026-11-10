@@ -87,6 +87,12 @@ pushContext(Tracer &tracer, const TraceContext &context, std::uint64_t request_i
 void
 popContext(Tracer &tracer);
 
+[[nodiscard]] inline Tracer *
+scopeTracer() noexcept;
+
+[[nodiscard]] inline const TraceIdentity &
+scopeIdentity() noexcept;
+
 void
 emitEvent(Tracer &tracer,
           Name name,
@@ -105,7 +111,6 @@ template<typename Status>
 [[nodiscard]] Status
 finish(Span &span, Status status);
 
-struct TraceableAccess;
 
 } // namespace nixl::trace::detail
 

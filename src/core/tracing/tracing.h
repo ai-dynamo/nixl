@@ -29,7 +29,7 @@
  * promoted to a public header later without churn if an external consumer
  * appears.
  *
- * A module uses only the NIXL_TRACE_* macros and Traceable, with Record,
+ * A module uses only the NIXL_TRACE_* macros, Traceable and Scope, with Record,
  * Attribute and AttributeKey as their arguments; logOnce(); what
  * trace_identity.h declares; and the tracer and the backends' trace sinks as
  * opaque handles from makeAgentTracer() and makeBackendTraceSink().
@@ -99,10 +99,44 @@ public:
     trace(Record record, const Attribute &attr) const;
 
 private:
-    friend struct detail::TraceableAccess;
-
     Tracer *const tracer_;
     TraceIdentity identity_;
+};
+
+/**
+ * @brief Makes @p identity and the tracer that records it current on the
+ *        calling thread until it ends, so the spans NIXL_TRACE_SPAN and
+ *        NIXL_TRACE_CONTEXT_SPAN open meanwhile take them. Scopes nest. A scope
+ *        whose context is valid and sampled also pushes it to the tracer's
+ *        backends for its lifetime, to correlate records across threads.
+ */
+class Scope {
+public:
+    [[nodiscard]] Scope(Tracer *tracer, const TraceIdentity &identity);
+    ~Scope();
+
+    Scope(const Scope &) = delete;
+    Scope &
+    operator=(const Scope &) = delete;
+
+    [[nodiscard]] static const Scope *
+    current() noexcept;
+
+    [[nodiscard]] Tracer *
+    tracer() const noexcept {
+        return tracer_;
+    }
+
+    [[nodiscard]] const TraceIdentity &
+    identity() const noexcept {
+        return identity_;
+    }
+
+private:
+    const Scope *const previous_;
+    Tracer *const tracer_;
+    const TraceIdentity identity_;
+    const bool pushed_;
 };
 
 } // namespace nixl::trace
@@ -127,16 +161,11 @@ private:
 #define NIXL_TRACE_SCOPE(span, tracer_ptr, trace_record, ...) \
     NIXL_TRACE_DETAIL_SCOPE(span, tracer_ptr, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
-#define NIXL_TRACE_SAMPLED_SCOPE(span, tracer_ptr, trace_record, context, ...) \
-    NIXL_TRACE_DETAIL_SAMPLED_SCOPE(                                           \
-        span, tracer_ptr, trace_record, context __VA_OPT__(, ) __VA_ARGS__)
+#define NIXL_TRACE_SPAN(span, trace_record, ...) \
+    NIXL_TRACE_DETAIL_SPAN(span, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
-#define NIXL_TRACE_CORRELATED_SPAN(span, request_trace, trace_record, context, ...) \
-    NIXL_TRACE_DETAIL_CORRELATED_SPAN(                                              \
-        span, request_trace, trace_record, context __VA_OPT__(, ) __VA_ARGS__)
-
-#define NIXL_TRACE_CORRELATED_SCOPE(span, request_trace, trace_record, ...) \
-    NIXL_TRACE_DETAIL_CORRELATED_SCOPE(span, request_trace, trace_record __VA_OPT__(, ) __VA_ARGS__)
+#define NIXL_TRACE_CONTEXT_SPAN(span, trace_record, ...) \
+    NIXL_TRACE_DETAIL_SCOPE_CONTEXT_SPAN(span, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
 #define NIXL_TRACE_ATTR(span, attr_key, attr_value) \
     NIXL_TRACE_DETAIL_ATTR(span, attr_key, attr_value)

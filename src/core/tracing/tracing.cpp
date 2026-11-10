@@ -29,6 +29,12 @@
 #include "tracing/trace_context.h"
 #include "tracing/trace_sink.h"
 
+namespace {
+
+thread_local const nixl::trace::Scope *current_scope = nullptr;
+
+} // namespace
+
 namespace nixl::trace {
 
 // True when the process runs under Nsight Systems: nsys injects
@@ -92,6 +98,29 @@ makeAgentTracer(const std::string &name) {
 BackendTraceSinkPtr
 makeBackendTraceSink(Tracer &tracer, std::string backend, nixlTelemetry *telemetry) {
     return BackendTraceSinkPtr(new TracerPhaseSink(tracer, std::move(backend), telemetry));
+}
+
+Scope::Scope(Tracer *tracer, const TraceIdentity &identity)
+    : previous_(current_scope),
+      tracer_(tracer),
+      identity_(identity),
+      pushed_((tracer != nullptr) && identity.context.valid() && identity.context.sampled()) {
+    if (pushed_) {
+        detail::pushContext(*tracer_, identity_.context, identity_.requestId);
+    }
+    current_scope = this;
+}
+
+Scope::~Scope() {
+    current_scope = previous_;
+    if (pushed_) {
+        detail::popContext(*tracer_);
+    }
+}
+
+const Scope *
+Scope::current() noexcept {
+    return current_scope;
 }
 
 } // namespace nixl::trace

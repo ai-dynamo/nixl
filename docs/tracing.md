@@ -44,6 +44,11 @@ execution-trace tools.
   than a span inside the active correlation scope's context as `beginSpan()` does;
   like `emitSpan()`, it takes the context and the request id explicitly. Every other
   span and event names its context's span id as its parent.
+- **`nixl::trace::Scope`** — an RAII guard the agent opens around a request's
+  creation, each of its posts and its release. It makes the request's trace identity
+  current on the calling thread, so the spans opened meanwhile take it; a sampled one
+  also hands that context to every backend while it lasts, which makes it the active
+  correlation scope.
 - **`TraceBackend` / `SpanBackend`** — the backend interfaces. Each backend
   implementation provides them.
 - **Backend plugins** — each backend is a `libtrace_backend_<name>.so` that exports
@@ -538,15 +543,15 @@ In NIXL tracing, "correlation" can mean two different things:
 - **Cross-thread within a process** -- attributing spans emitted on different threads
   (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
   same request. Implemented via the backend-agnostic `pushContext()` / `popContext()`
-  API: NIXL wraps `postXferReq` in a correlation scope that hands every backend a
-  sampled call's trace context with the request id, and passes the post's context
-  and the request id to its `xfer.complete` event explicitly. A sampled call begins
-  its span as the span that context identifies (`beginContextSpan()`), so a backend
-  that records parents shows the completion as that span's child. The NVTX backend
-  records the request id as the event's `uint64` payload -- so a post and its
-  completion carry the same id on the timeline regardless of which thread emitted
-  each. A record without a request id carries no payload, and a call whose context
-  is unsampled or invalid pushes nothing.
+  API: NIXL's `nixl::trace::Scope` around a request's creation, posts and release
+  hands every backend a sampled request's trace context with the request id, and
+  passes the post's context and the request id to its `xfer.complete` event
+  explicitly. A sampled post begins its span as the span that context identifies
+  (`beginContextSpan()`), so a backend that records parents shows the completion as
+  that span's child. The NVTX backend records the request id as the event's `uint64`
+  payload -- so a post and its completion carry the same id on the timeline
+  regardless of which thread emitted each. A record without a request id carries no
+  payload, and a call whose context is unsampled or invalid pushes nothing.
 
 ## Planned work
 

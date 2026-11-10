@@ -231,7 +231,7 @@ TEST(NvtxSpan, TracerSpansAndEventsAllocateNothing) {
         {"nixl.xfer_execution", std::int64_t{1}},
     };
     const auto record = [&] {
-        const nixl::trace::CorrelationScope correlation(&tracer, *context, 42);
+        const nixl::trace::Scope scope(&tracer, {*context, 42});
         nixl::trace::Span span = tracer.beginContextSpan(
             "nixl::postXferReq.write", nixl::trace::Kind::CommSend, *context, 42);
         span.addAttribute("remote_agent", std::string_view("target"));
