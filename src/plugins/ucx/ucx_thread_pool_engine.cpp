@@ -16,7 +16,6 @@
  */
 
 #include "ucx_thread_pool_engine.h"
-#include "ucx_deferred_trace.h"
 #include "ucx_backend_req.h"
 
 #include "common/backend.h"
@@ -177,9 +176,6 @@ struct nixlUcxBackendSharedState {
 
 void
 nixlUcxBackendSharedState::completeTracedChunk() noexcept {
-    const nixlBackendPostTrace post = trace;
-    const nixlTime::us_t post_since = inflightSince;
-    const nixl_xfer_op_t post_operation = operation;
     // Read the status before pendingReqs reaches zero, after which a repost may rewrite it.
     size_t pending = pendingReqs.load();
     while ((pending > 1) && !pendingReqs.compare_exchange_weak(pending, pending - 1))
@@ -187,13 +183,13 @@ nixlUcxBackendSharedState::completeTracedChunk() noexcept {
     if (pending != 1) {
         return;
     }
-    const nixlTime::us_t phase_at = post.now();
-    const nixlTime::us_t completed_at = (phase_at != 0) ? phase_at : nixlTime::getUs();
-    const bool succeeded = (status.load() == NIXL_SUCCESS);
-    pendingReqs.store(0);
-    if (succeeded) {
-        nixl::ucx::deferWireCompleted({post, post_operation, post_since, phase_at, completed_at});
+    if (status.load() == NIXL_SUCCESS) {
+        const nixlTime::us_t phase_at = trace.now();
+        const nixlTime::us_t completed_at = (phase_at != 0) ? phase_at : nixlTime::getUs();
+        trace.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, phase_at);
+        trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, operation, inflightSince, completed_at);
     }
+    pendingReqs.store(0);
 }
 
 void

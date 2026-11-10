@@ -158,11 +158,18 @@ threadPoolParams() {
     return {{"num_threads", "2"}, {"split_batch_size", std::to_string(split_desc_count)}};
 }
 
+enum class completionPoll { sleeping, spinning };
+
 [[nodiscard]] nixl_status_t
-awaitCompletion(nixlAgent &agent, nixlXferReqH *req, nixl_status_t status) {
+awaitCompletion(nixlAgent &agent,
+                nixlXferReqH *req,
+                nixl_status_t status,
+                completionPoll poll = completionPoll::sleeping) {
     const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
     while ((status == NIXL_IN_PROG) && (std::chrono::steady_clock::now() < deadline)) {
-        std::this_thread::sleep_for(poll_interval);
+        if (poll == completionPoll::sleeping) {
+            std::this_thread::sleep_for(poll_interval);
+        }
         status = agent.getXferStatus(req);
     }
     return status;
@@ -175,7 +182,8 @@ writeToSelf(const std::string &name,
             const std::vector<std::optional<std::string>> &post_notifs,
             std::vector<nixl::trace::TraceContext> &contexts,
             std::uint64_t &request_id,
-            const nixlAgentConfig &config = agentConfig()) {
+            const nixlAgentConfig &config = agentConfig(),
+            completionPoll poll = completionPoll::sleeping) {
     const gtest::LogIgnoreGuard efa(efa_warning);
     nixlAgent agent(name, config);
     nixlBackendH *backend = nullptr;
@@ -199,7 +207,7 @@ writeToSelf(const std::string &name,
     for (const auto &notif : post_notifs) {
         nixl_opt_args_t params;
         params.notif = notif;
-        ASSERT_EQ(awaitCompletion(agent, req, agent.postXferReq(req, &params)), NIXL_SUCCESS);
+        ASSERT_EQ(awaitCompletion(agent, req, agent.postXferReq(req, &params), poll), NIXL_SUCCESS);
         contexts.push_back(req->trace().identity().context);
     }
     const auto notifying_posts = static_cast<size_t>(std::ranges::count_if(
@@ -332,6 +340,30 @@ pluginDirsArg() {
         }
     }
     return std::nullopt;
+}
+
+[[nodiscard]] std::vector<span_record_t>
+recordedSpans(const std::filesystem::path &path, std::string_view agent) {
+    std::vector<span_record_t> spans;
+    std::ifstream file(path);
+    for (std::string line; std::getline(file, line);) {
+        std::istringstream fields(line);
+        span_record_t span{std::istream_iterator<std::string>(fields),
+                           std::istream_iterator<std::string>()};
+        if ((span.size() >= 2) && (span[0] == agent)) {
+            spans.push_back(std::move(span));
+        }
+    }
+    return spans;
+}
+
+[[nodiscard]] std::ptrdiff_t
+recordIndex(const std::vector<span_record_t> &spans, std::string_view name, size_t execution) {
+    const std::string attr = "nixl.xfer_execution=" + std::to_string(execution);
+    const auto it = std::ranges::find_if(spans, [&](const span_record_t &span) {
+        return (span[1] == name) && (std::ranges::find(span, attr) != span.end());
+    });
+    return (it == spans.end()) ? -1 : std::distance(spans.begin(), it);
 }
 
 [[nodiscard]] std::vector<span_record_t>
@@ -945,6 +977,30 @@ TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsWireCompletedOncePerSplitPos
                                         contexts,
                                         request_id));
     expectWireCompletedPerPost(sender_name, contexts, request_id);
+}
+
+TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsWireCompletedBeforeItsCompletionIsSeen) {
+    constexpr size_t posts = 16;
+    std::vector<nixl::trace::TraceContext> contexts;
+    std::uint64_t request_id = 0;
+    ASSERT_NO_FATAL_FAILURE(writeToSelf(sender_name,
+                                        threadPoolParams(),
+                                        split_desc_count,
+                                        std::vector<std::optional<std::string>>(posts),
+                                        contexts,
+                                        request_id,
+                                        agentConfig(),
+                                        completionPoll::spinning));
+    const auto spans = recordedSpans(traceFile, sender_name);
+    for (size_t execution = 1; execution <= posts; ++execution) {
+        const auto completed = recordIndex(spans, "nixl::wire.completed", execution);
+        ASSERT_GE(completed, 0) << "post " << execution;
+#if defined(NIXL_TRACE_ENABLED)
+        const auto seen = recordIndex(spans, "nixl::xfer.complete", execution);
+        ASSERT_GE(seen, 0) << "post " << execution;
+        EXPECT_LT(completed, seen) << "post " << execution;
+#endif
+    }
 }
 
 TEST_F(ucxTraceContextPropagation, ThreadPoolWireCompletedPrecedesALatePoll) {
