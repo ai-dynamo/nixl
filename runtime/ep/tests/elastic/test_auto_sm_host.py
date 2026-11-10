@@ -60,7 +60,8 @@ class FakeRuntime:
         self.fail_commit = False
         self.dispatch_calls = 0
         self.commit_calls = 0
-        self.max_domains, self.max_positions = args[-6:-4]
+        self.max_domains, self.max_positions = args[7:9]
+        self.num_experts_per_rank = args[-1]
 
     def stage_topology_masks(self, mode, domains, position_words, sms):
         positions = sum(word << (64 * i) for i, word in enumerate(position_words))
@@ -223,6 +224,7 @@ class AutoSMHostTests(unittest.TestCase):
             num_max_tokens_per_rank=16,
             hidden=7168,
             num_topk=8,
+            num_experts_per_rank=16,
             max_num_scaleout_ranks=2,
             max_num_scaleup_ranks=16,
             store=object(),
@@ -264,24 +266,20 @@ class AutoSMHostTests(unittest.TestCase):
     def ranks(domains, positions):
         return [domain * 16 + position for domain in domains for position in positions]
 
-    def dispatch(self, num_sms=0, num_experts=256, num_topk=8):
+    def dispatch(self, num_sms=0, num_topk=8):
         return self.buffer.dispatch(
             object(),
             SimpleNamespace(shape=(16, num_topk)),
-            num_experts,
             num_sms=num_sms,
             do_cpu_sync=False,
         )
 
-    def expected_sms(self, domains, positions, num_experts=256, num_topk=8):
+    def expected_sms(self, domains, positions, num_topk=8):
         # Existing traffic model is the oracle; this task changes its invocation,
         # not its formula. Supply proposed dimensions explicitly, never read the
         # live descriptor that stage_topology has not committed yet.
         active_experts = (
-            num_experts
-            // ((max(domains) + 1) * (max(positions) + 1))
-            * len(domains)
-            * len(positions)
+            self.buffer.num_experts_per_rank * len(domains) * len(positions)
         )
         estimate = self.buffer._get_theoretical_num_sms(
             active_experts,
@@ -298,6 +296,8 @@ class AutoSMHostTests(unittest.TestCase):
     def test_constructor_and_membership_before_first_auto_dispatch_keep_current_count(
         self,
     ):
+        self.assertEqual(self.buffer.num_experts_per_rank, 16)
+        self.assertEqual(self.buffer.runtime.num_experts_per_rank, 16)
         self.assertEqual(self.buffer.get_topology(), ("direct", 24))
         self.assertEqual(self.probes, {"rdma": 0, "nvlink": 0})
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
@@ -322,7 +322,7 @@ class AutoSMHostTests(unittest.TestCase):
         self.assertEqual(self.buffer.get_topology_masks(), (3, 255))
 
     def test_estimate_query_does_not_enable_automatic_retuning(self):
-        self.buffer.get_theoretical_num_sms(256, 8)
+        self.buffer.get_theoretical_num_sms(8)
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
         self.assertEqual(self.buffer.get_topology()[1], 24)
 
@@ -332,28 +332,26 @@ class AutoSMHostTests(unittest.TestCase):
                 self.buffer._get_theoretical_num_sms.cache_clear()
                 with patch.dict(os.environ, NIXL_EP_BUFFER_DEBUG=value):
                     with patch("builtins.print") as output:
-                        self.buffer.get_theoretical_num_sms(256, 8)
+                        self.buffer.get_theoretical_num_sms(8)
                 self.assertEqual(output.called, enabled)
 
     def test_query_and_staging_reuse_one_numerical_model_cache_entry(self):
         self.dispatch()
         model = self.buffer._get_theoretical_num_sms
         before = model.cache_info()
-        self.buffer.get_theoretical_num_sms(256, 8)
+        self.buffer.get_theoretical_num_sms(8)
         self.buffer.stage_topology(active_ranks=self.ranks([0], range(16)))
         after = model.cache_info()
         self.assertEqual(after.misses, before.misses)
         self.assertGreaterEqual(after.hits - before.hits, 2)
 
-    def test_most_recent_automatic_dispatch_supplies_expert_and_topk_configuration(
-        self,
-    ):
+    def test_most_recent_automatic_dispatch_supplies_topk_configuration(self):
         self.dispatch()
-        self.dispatch(num_experts=128, num_topk=1)
+        self.dispatch(num_topk=1)
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
         self.assertEqual(
             self.buffer.get_topology()[1],
-            self.expected_sms([0, 1], range(8), num_experts=128, num_topk=1),
+            self.expected_sms([0, 1], range(8), num_topk=1),
         )
         self.assertNotEqual(
             self.buffer.get_topology()[1],
@@ -382,9 +380,26 @@ class AutoSMHostTests(unittest.TestCase):
                 self.assertEqual(
                     self.buffer.get_topology()[1], self.expected_sms(domains, positions)
                 )
+                self.assertEqual(self.buffer.num_experts_per_rank, 16)
         self.assertEqual(self.buffer.runtime.dispatch_calls, dispatch_calls)
         self.assertEqual(self.cuda.synchronizations, 0)
         self.assertEqual(self.probes, {"rdma": 1, "nvlink": 1})
+
+    def test_holes_do_not_change_active_slot_count_or_estimate(self):
+        estimates = []
+        with patch.object(
+            self.buffer,
+            "_get_theoretical_num_sms",
+            wraps=self.buffer._get_theoretical_num_sms,
+        ) as model:
+            for domains, positions in (([0], [0, 1]), ([0], [0, 15]), ([1], [0, 15])):
+                self.buffer.set_active_ranks(self.ranks(domains, positions))
+                estimates.append(self.buffer.get_theoretical_num_sms(8))
+            self.assertEqual(
+                [call.args[0] for call in model.call_args_list], [32, 32, 32]
+            )
+        self.assertEqual(estimates, [estimates[0]] * len(estimates))
+        self.assertEqual(self.probes, {"rdma": 0, "nvlink": 1})
 
     def test_one_position_per_domain_does_not_probe_nvlink(self):
         self.buffer.set_active_ranks(self.ranks([0, 1], [0]))
@@ -582,7 +597,7 @@ class AutoSMHostTests(unittest.TestCase):
         }
         exec(compile(module, str(plan_source), "exec"), namespace)
         self.assertEqual(MIN_ACTIVE_RANKS, 2)
-        plan = namespace["default_plan"](8, 256, list(range(16)))
+        plan = namespace["default_plan"](8, list(range(16)))
         self.assertIn([0, 1], plan)  # One domain, two positions.
         self.assertIn([0, 8], plan)  # Two domains, one position.
         self.assertTrue(all(len(phase) >= MIN_ACTIVE_RANKS for phase in plan))

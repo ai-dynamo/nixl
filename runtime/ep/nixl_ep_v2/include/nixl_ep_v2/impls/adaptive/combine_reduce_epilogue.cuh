@@ -21,7 +21,7 @@ template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
           int kNumSMs, int kNumWarps, int kNumChannelsPerSM,
           int kHidden,
           int kNumMaxTokensPerRank,
-          int kNumExperts, int kNumTopk,
+          int kNumExpertsPerRank, int kNumTopk,
           int64_t kNumTimeoutCycles,
           int kNumThreads = kNumWarps * 32,
           int kNumHiddenBytes = kHidden * sizeof(nv_bfloat16)>
@@ -39,10 +39,8 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
 #endif
     EP_PROFILE_STAMP(profile_workspace, CombineReduceEntry);
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
-    const int num_ranks = num_scaleout_ranks * num_scaleup_ranks;
     const int num_channels = kNumChannelsPerSM * topo.num_active_sms;
-    EP_DEVICE_ASSERT(kNumExperts % num_ranks == 0 and "The expert count must divide by the extent product `num_scaleout_ranks * num_scaleup_ranks`");
-    const int num_experts_per_rank = kNumExperts / num_ranks;
+    const int num_experts_per_rank = kNumExpertsPerRank;
     const int num_tokens_in_scaleup_layout = get_num_tokens_in_layout(kAllowMultipleReduction, num_scaleup_ranks, kNumTopk);
 
     // Which rows hold the data to reduce:

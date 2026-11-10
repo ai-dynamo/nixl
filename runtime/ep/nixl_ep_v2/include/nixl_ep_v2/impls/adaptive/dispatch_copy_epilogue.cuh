@@ -20,7 +20,7 @@ template <bool kDoExpand, bool kDoZeroPadding,
           int kNumMaxScaleupRanks,
           int kNumHiddenBytes, int kNumSFPacks,
           int kNumMaxTokensPerRank,
-          int kNumExperts, int kNumTopk, int kExpertAlignment,
+          int kNumExpertsPerRank, int kNumTopk, int kExpertAlignment,
           int kNumThreads = kNumWarps * 32>
 __global__ void __launch_bounds__(kNumThreads, 1)
 dispatch_copy_epilogue_impl(void* buffer, void* workspace,
@@ -40,7 +40,6 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
     const auto topo = topology::load(topology_ptr);
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
     const int scaleout_rank_idx = topo.scaleout_rank_idx, scaleup_rank_idx = topo.scaleup_rank_idx;
-    const int num_ranks = num_scaleout_ranks * num_scaleup_ranks;
     const int num_channels = kNumChannelsPerSM * topo.num_active_sms;
     // Direct mode has no forwarding stage, hence no linked list to build
     const bool is_direct = topo.mode == topology::kModeDirect;
@@ -51,7 +50,7 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
     const auto global_warp_idx = warp_idx * kNumSMs + sm_idx;
 
     // For top-k index transformations
-    const int num_experts_per_rank = kNumExperts / num_ranks;
+    const int num_experts_per_rank = kNumExpertsPerRank;
     const auto rank_idx = scaleout_rank_idx * num_scaleup_ranks + scaleup_rank_idx;
     const auto expert_start_idx = num_experts_per_rank * rank_idx, expert_end_idx = num_experts_per_rank * (rank_idx + 1);
 
@@ -241,8 +240,8 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
         __syncwarp();
 
         // Read all expert unaligned counts in parallel
-        // NOTES: the per-lane array is sized for the compile-time bound (all experts on one rank)
-        constexpr int kNumMaxExpertsPerLane = math::constexpr_ceil_div(kNumExperts, 32);
+        // NOTES: the per-lane array is sized for the fixed local slot count
+        constexpr int kNumMaxExpertsPerLane = math::constexpr_ceil_div(kNumExpertsPerRank, 32);
         const int num_expert_waves = math::ceil_div(num_experts_per_rank, 32);
         int num_experts_per_lane[kNumMaxExpertsPerLane];
         #pragma unroll

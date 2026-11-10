@@ -64,6 +64,8 @@ class ElasticBuffer {
     // The declared maximum world and this rank's coordinates in it; the staged topology descriptor (`EPTopology`) awaits `commit_topology`
     int max_num_scaleout_ranks = 0, max_num_scaleup_ranks = 0, max_num_ranks = 0;
     int scaleout_rank_idx = 0, scaleup_rank_idx = 0;
+    // Physical routing slots per rank; independent of the model's logical expert count.
+    int num_experts_per_rank = 0;
     // Adaptive kernels: device-side topology descriptor (+ host mirror)
     torch::Tensor topology_tensor;
     topology::EPTopology topology_host{}, staged_topology{};
@@ -81,7 +83,8 @@ public:
                   const bool& explicitly_destroy,
                   const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
                   const int& scaleout_rank_idx, const int& scaleup_rank_idx,
-                  const int& num_nixl_channels, const std::string& agent_name_prefix):
+                  const int& num_nixl_channels, const std::string& agent_name_prefix,
+                  const int& num_experts_per_rank):
         num_buffer_bytes(num_buffer_bytes),
         explicitly_destroy(explicitly_destroy),
         comm_stream(get_global_comm_stream()),
@@ -89,7 +92,7 @@ public:
         use_fp8_dispatch(use_fp8_dispatch),
         prefer_overlap_with_compute(prefer_overlap_with_compute),
         max_num_scaleout_ranks(max_num_scaleout_ranks), max_num_scaleup_ranks(max_num_scaleup_ranks), max_num_ranks(max_num_scaleout_ranks * max_num_scaleup_ranks),
-        scaleout_rank_idx(scaleout_rank_idx), scaleup_rank_idx(scaleup_rank_idx) {
+        scaleout_rank_idx(scaleout_rank_idx), scaleup_rank_idx(scaleup_rank_idx), num_experts_per_rank(num_experts_per_rank) {
         // Check buffer bytes alignment (2 MB)
         EP_HOST_ASSERT(num_buffer_bytes > 0 and num_buffer_bytes % kNumAlignmentBytes == 0);
 
@@ -106,6 +109,12 @@ public:
         EP_HOST_ASSERT(0 <= scaleout_rank_idx and scaleout_rank_idx < max_num_scaleout_ranks and
                        0 <= scaleup_rank_idx and scaleup_rank_idx < max_num_scaleup_ranks and
                        "This rank's coordinates are outside the declared maximum world");
+
+        // All declared slots must fit, including currently inactive ranks. Zero is for barrier-only buffers.
+        EP_HOST_ASSERT(0 <= num_experts_per_rank and
+                       "Invalid number of physical expert slots per rank");
+        EP_HOST_ASSERT(static_cast<int64_t>(max_num_ranks) * num_experts_per_rank <= layout::WorkspaceLayout::kNumMaxExperts and
+                       "The declared maximum world's physical expert slots exceed workspace capacity");
 
         // Create the transport: one symmetric region per rank, registered with this rank's agent
         // Symmetric memory layout: [[Workspace] GPU buffer]
@@ -559,7 +568,7 @@ public:
              const std::optional<torch::Tensor>& topk_weights,
              const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
              const int& num_max_tokens_per_rank,
-             const int& num_experts, const int& expert_alignment,
+             const int& expert_alignment,
              const std::optional<EventHandle>& previous_event,
              const std::optional<EventHandle>& previous_event_before_epilogue,
              const bool& async_with_compute_stream,
@@ -580,18 +589,15 @@ public:
         EP_HOST_ASSERT((not nvfp4 or (sf.has_value() and hidden % 64 == 0)) and
                        "NVFP4 requires packed uint8 codes and block scales, with logical hidden divisible by 64");
         EP_HOST_ASSERT(not (nvfp4 and use_tma_aligned_col_major_sf) and "NVFP4 scales must use row-major layout");
-        // The committed extent product (the kernels' `num_ranks`), not the active rank count
-        const int num_ranks = topo.num_scaleout_ranks * topo.num_scaleup_ranks;
-        EP_HOST_ASSERT(num_experts % num_ranks == 0 and
-                       "The expert count must divide by the committed extent `num_scaleout_ranks * num_scaleup_ranks` of the topology descriptor (not the active rank count; see `topology.cuh`)");
-        const auto num_local_experts = num_experts / num_ranks;
+        EP_HOST_ASSERT(num_experts_per_rank > 0 and "Dispatch requires num_experts_per_rank at buffer construction");
+        const int num_local_experts = num_experts_per_rank;
         EP_HOST_ASSERT(x.is_cuda() and x.is_contiguous());
         EP_HOST_ASSERT((not use_fp8_dispatch or x.element_size() == sizeof(__nv_fp8_e4m3)) and
                        "An FP8-capacity buffer requires one-byte dispatch activations; construct with use_fp8_dispatch=False for BF16");
         EP_HOST_ASSERT((x.size(1) * x.element_size()) % sizeof(int4) == 0);
         EP_HOST_ASSERT(num_tokens <= num_max_tokens_per_rank);
 
-        // Capacities of the handle tensors: the maximum world, every expert local, the whole launch grid
+        // Capacities of the handle tensors: the maximum world, fixed local slots, the whole launch grid
         const int num_launch_channels = get_num_launch_channels();
 
         // Check SF stuffs
@@ -638,11 +644,9 @@ public:
             const auto [num_local_experts_] = get_shape<1>(cumulative_local_expert_recv_stats.value());
             EP_HOST_ASSERT(cumulative_local_expert_recv_stats->is_cuda() and
                            cumulative_local_expert_recv_stats->is_contiguous());
-            const int required_stats = is_capturing ? num_experts / topology::kMinNumActiveRanks : num_local_experts;
-            if (num_local_experts_ < required_stats)
-                EP_HOST_UNREACHABLE(fmt::format("`cumulative_local_expert_recv_stats` has {} entries: allocate at least {} for {}",
-                                               num_local_experts_, required_stats,
-                                               is_capturing ? "graph replay across supported worlds" : "the current world"));
+            if (num_local_experts_ < num_local_experts)
+                EP_HOST_UNREACHABLE(fmt::format("`cumulative_local_expert_recv_stats` has {} entries: allocate at least {} for the fixed local expert slots",
+                                               num_local_experts_, num_local_experts));
             cumulative_local_expert_recv_stats_ptr = cumulative_local_expert_recv_stats->data_ptr<int>();
         }
 
@@ -666,11 +670,11 @@ public:
         // The number of received tokens per expert
         // This is useful for expanding mode
         // NOTES: for expand mode, the input is exclusive prefix sum, while for non-expand, it is inclusive
-        auto psum_num_recv_tokens_per_expert = alloc_flat(num_experts + 1, {num_local_experts + 1});
+        auto psum_num_recv_tokens_per_expert = torch::empty({num_local_experts + 1}, int_options);
 
         // The unaligned (actual) number of received tokens per expert
         // Written by the dispatch kernel's notify warps, used by the epilogue for zero padding
-        auto num_unaligned_recv_tokens_per_expert = alloc_flat(num_experts, {num_local_experts});
+        auto num_unaligned_recv_tokens_per_expert = torch::empty({num_local_experts}, int_options);
         int* num_unaligned_recv_tokens_per_expert_ptr = num_unaligned_recv_tokens_per_expert.data_ptr<int>();
 
         // The prefix sum tensor of number of received tokens from each rank
@@ -683,14 +687,11 @@ public:
         // Decide number of channels by shared memory consumption
         const int num_smem_bytes = jit::device_runtime->get_num_smem_bytes();
         const int num_channels_per_sm = get_num_channels_per_sm(
-            hidden, num_hidden_bytes, num_sf_packs, num_topk, num_experts,
+            hidden, num_hidden_bytes, num_sf_packs, num_topk, max_num_ranks * num_experts_per_rank,
             max_num_ranks, num_smem_bytes, prefer_overlap_with_compute);
         if (get_env<int>("NIXL_EP_BUFFER_DEBUG"))
             printf("Elastic buffer uses %d channels per SM\n", num_channels_per_sm);
         const int num_channels = topo.num_active_sms * num_channels_per_sm;
-
-        EP_HOST_ASSERT(num_experts <= layout::WorkspaceLayout::kNumMaxExperts and
-                       "Too many experts for the workspace (see `WorkspaceLayout::kNumMaxExperts`)");
 
         // Handles: the forwarding metadata and the linked list are allocated in both modes (the direct mode
         // leaves them unused), so that a captured graph can switch modes
@@ -750,7 +751,7 @@ public:
                         num_tokens, num_max_tokens_per_rank,
                         num_hidden_bytes,
                         num_sf_packs, sf_token_stride, sf_hidden_stride,
-                        num_experts, num_topk, expert_alignment,
+                        num_experts_per_rank, num_topk, expert_alignment,
                         buffer, math::advance_ptr(buffer, arena.dispatch_send_offset),
                         mapped_host_workspace,
                         get_topology_ptr(),
@@ -817,10 +818,10 @@ public:
                     throw EPExceptionWithLineInfo("Dispatch CPU wait", get_buffer_info());
             }
         } else {
-            // Without CPU sync, allocate for the worst case of the declared maximum world: `min(n * num_topk, num_experts)` per source token at the largest `n`
+            // Reserve every source token in each local slot it may select, plus fixed local alignment slack.
             num_recv_tokens = num_max_tokens_per_rank * max_num_ranks;
-            num_expanded_tokens = num_max_tokens_per_rank * std::min(max_num_ranks * num_topk, num_experts);
-            num_expanded_tokens += (expert_alignment - 1) * num_experts;
+            num_expanded_tokens = num_recv_tokens * std::min(num_topk, num_local_experts);
+            num_expanded_tokens += (expert_alignment - 1) * num_local_experts;
             num_expanded_tokens = math::align(num_expanded_tokens, expert_alignment);
         }
 
@@ -880,7 +881,7 @@ public:
                                       do_cpu_sync ? num_recv_tokens : -1, max_num_scaleup_ranks, num_max_tokens_per_rank,
                                       num_hidden_bytes,
                                       num_sf_packs, recv_sf_token_stride, recv_sf_hidden_stride,
-                                      num_experts, num_topk, expert_alignment,
+                                      num_experts_per_rank, num_topk, expert_alignment,
                                       get_topology_ptr(),
                                       jit::device_runtime->get_num_sms(),
                                       jit::device_runtime->get_num_smem_bytes(),
@@ -927,7 +928,6 @@ public:
             const torch::Tensor& token_metadata_at_forward,
             const torch::Tensor& channel_linked_list,
             const bool& recv_count_is_exact,
-            const int& num_experts,
             const int& num_max_tokens_per_rank,
             const int& num_sms,
             const std::optional<EventHandle>& previous_event,
@@ -938,6 +938,7 @@ public:
         const auto& topo = active_rank_topology();
 
         // Check data
+        EP_HOST_ASSERT(num_experts_per_rank > 0 and "Combine requires num_experts_per_rank at buffer construction");
         const auto [num_tokens, hidden] = get_shape<2>(x);
         EP_HOST_ASSERT(x.is_cuda() and x.is_contiguous());
         EP_HOST_ASSERT(x.scalar_type() == torch::kBFloat16);
@@ -1033,7 +1034,7 @@ public:
                                        combined_topk_idx.data_ptr<topk_idx_t>(),
                                        num_combined_tokens, num_max_tokens_per_rank,
                                        hidden,
-                                       num_experts, num_topk,
+                                       num_experts_per_rank, num_topk,
                                        num_gpu_timeout_cycles,
                                        buffer,
                                        bias_ptrs[0], bias_ptrs[1],
@@ -1065,7 +1066,7 @@ static void register_apis(pybind11::module_& m) {
         .def("current_stream_wait", &EventHandle::current_stream_wait);
 
     pybind11::class_<ElasticBuffer>(m, "ElasticBuffer")
-        .def(pybind11::init<int64_t, bool, bool, bool, int, int, bool, int, int, int, int, int, std::string>())
+        .def(pybind11::init<int64_t, bool, bool, bool, int, int, bool, int, int, int, int, int, std::string, int>())
         .def("destroy", &ElasticBuffer::destroy)
         .def("get_comm_stream", &ElasticBuffer::get_comm_stream)
         .def("stage_topology_masks", &ElasticBuffer::stage_topology_masks)

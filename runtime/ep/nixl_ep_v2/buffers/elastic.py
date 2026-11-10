@@ -37,7 +37,6 @@ class EPHandle:
 
     Attributes:
         do_expand: whether the expanding (one-token-per-expert-slot) layout is used.
-        num_experts: the number of all experts.
         expert_alignment: align the number of tokens received by each local expert to this variable.
         num_max_tokens_per_rank: the maximum number of tokens per rank, all the ranks must hold the same value.
         num_sms: the active SM count recorded when the handle was created, checked by eager combine. A captured
@@ -48,7 +47,7 @@ class EPHandle:
             multiple of its top-k experts land on the same rank. The last element equals the total number
             of received tokens.
         psum_num_recv_tokens_per_expert: prefix sum of alignment-padded received token counts per local
-            expert, shape `[num_local_experts]`. Each expert's count is padded to `expert_alignment`.
+            expert, shape `[num_experts_per_rank]`. Each expert's count is padded to `expert_alignment`.
             In non-expand mode, this is the inclusive prefix sum. In expand mode, `psum[i]` equals
             the aligned cumulative count of experts before `i` plus the actual (unaligned) token count
             of expert `i` — so `psum[i] - align(psum[i-1], expert_alignment)` recovers the real
@@ -56,7 +55,7 @@ class EPHandle:
             starting offset.
         num_recv_tokens_per_expert_list: Python list of per-expert received token counts (CPU-side).
         num_unaligned_recv_tokens_per_expert: the actual (unaligned) number of tokens received per local
-            expert, shape `[num_local_experts]` with `torch.int`, in both compact and expanded layouts.
+            expert, shape `[num_experts_per_rank]` with `torch.int`, in both compact and expanded layouts.
         recv_src_metadata: source token indices and buffer slot indices.
         token_metadata_at_forward: per-channel forwarded token metadata (allocated in both modes, written in hybrid mode).
         channel_linked_list: per-channel per-scaleup-peer linked list (allocated in both modes, written in hybrid mode).
@@ -69,7 +68,6 @@ class EPHandle:
     def __init__(
         self,
         do_expand: bool,
-        num_experts: int,
         expert_alignment: int,
         num_max_tokens_per_rank: int,
         num_sms: int,
@@ -87,7 +85,6 @@ class EPHandle:
         assert topk_idx is not None
 
         self.do_expand = do_expand
-        self.num_experts = num_experts
         self.expert_alignment = expert_alignment
         self.num_max_tokens_per_rank = num_max_tokens_per_rank
         self.num_sms = num_sms
@@ -313,6 +310,8 @@ class ElasticBuffer:
         num_cpu_timeout_secs: int = 300,
         num_gpu_timeout_secs: int = 100,
         explicitly_destroy: bool = False,
+        *,
+        num_experts_per_rank: int = 0,
     ):
         """
         Initialize the elastic communication buffer.
@@ -329,6 +328,10 @@ class ElasticBuffer:
             num_topk: the number of top-k experts per token.
             use_fp8_dispatch: reserve smaller dispatch arenas for FP8/NVFP4 inputs; False reserves BF16 capacity and also
                 accepts either quantized format. Must match across peers, including with explicit `num_bytes`; it does not cast inputs.
+            num_experts_per_rank: fixed physical routing slots per GPU, shared by all peers, including joiners.
+                Required (positive) for dispatch/combine; zero permits barrier-only buffers. This is not the model's
+                logical expert count. Slots may remain unused; the caller assigns weights and maps logical experts
+                to physical slots. The transport neither replicates experts nor creates weights.
             deterministic: whether to sort received tokens deterministically (eager execution only).
             allow_multiple_reduction: whether to allow multiple reductions in combine.
             prefer_overlap_with_compute: whether to prefer overlapping communication with compute.
@@ -354,6 +357,11 @@ class ElasticBuffer:
                 concurrent cohort, fresh after a partial construction or a change of the cohort's membership).
             store_timeout_secs: how long the bootstrap waits for the cohort at each of its Store steps.
         """
+
+        if type(num_experts_per_rank) is not int or num_experts_per_rank < 0:
+            raise ValueError("num_experts_per_rank must be a nonnegative integer")
+        self.num_experts_per_rank = num_experts_per_rank
+
         if group is not None:
             if rank_idx not in (None, group.rank()) or num_ranks not in (
                 None,
@@ -377,8 +385,8 @@ class ElasticBuffer:
         self.deterministic = deterministic
         self.store = store
         # Automatic/manual selection follows the topology's stage/commit transaction.
-        self._auto_sm_config: Optional[Tuple[int, int]] = None
-        self._staged_auto_sm_config: Optional[Tuple[int, int]] = None
+        self._auto_sm_config: Optional[Tuple[int]] = None
+        self._staged_auto_sm_config: Optional[Tuple[int]] = None
 
         # Coordinate the cohort through a Store: the domain count and size, the session token, the peer metadata, the barrier
         bootstrap_store, namespace = resolve_bootstrap_store(
@@ -453,6 +461,7 @@ class ElasticBuffer:
             scaleup_rank_idx,
             num_nixl_channels,
             bootstrap.session_token,
+            num_experts_per_rank,
         )
 
         # Adaptive kernels: the fixed launch grid; the active SM count is set per topology via `set_num_active_sms`
@@ -598,7 +607,6 @@ class ElasticBuffer:
 
     def get_theoretical_num_sms(
         self,
-        num_experts: int,
         num_topk: int,
         rdma_gbs: float = 0,
         nvlink_gbs: float = 0,
@@ -611,12 +619,11 @@ class ElasticBuffer:
         The result is cached per set of active ranks and argument set. This assumes a balanced gate distribution.
         This query does not change the buffer's automatic/manual SM policy.
         The raw estimate may exceed `num_launch_sms`; automatic selection clamps it to that launch limit.
-        Traffic uses active domain/position counts; experts per rank follow the extent product. One active domain
+        Traffic uses active domain/position counts and their fixed physical slots. One active domain
         has no RDMA traffic even above domain index 0. Fewer active experts than `num_topk` requires explicit `num_sms`.
         Every active rank's `dispatch(num_sms=0)` commits the same active SM count.
 
         Arguments:
-            num_experts: the number of all experts.
             num_topk: the number of top-k experts per token.
             rdma_gbs: the RDMA bandwidth in GB/s (0 for auto-detect).
             nvlink_gbs: the NVLink bandwidth in GB/s (0 for auto-detect).
@@ -627,7 +634,6 @@ class ElasticBuffer:
             num_sms: the raw model estimate (even, at least 2), before the launch-grid limit.
         """
         return self._get_theoretical_num_sms_for_topology(
-            num_experts,
             num_topk,
             *self.get_topology_masks(),
             rdma_gbs=rdma_gbs,
@@ -638,7 +644,6 @@ class ElasticBuffer:
 
     def _get_theoretical_num_sms_for_topology(
         self,
-        num_experts: int,
         num_topk: int,
         scaleout_mask: int,
         scaleup_mask: int,
@@ -651,21 +656,14 @@ class ElasticBuffer:
             "1"
         ), bin(scaleup_mask).count("1")
         num_active_ranks = num_active_scaleout_ranks * num_active_scaleup_ranks
-        # The active ranks' expert count: their number times the experts per rank of the requested extent (the kernels
-        # divide `num_experts` over the extent product, so an extent with holes owns fewer experts than the total)
-        num_scaleout_extent, num_scaleup_extent = (
-            scaleout_mask.bit_length(),
-            scaleup_mask.bit_length(),
-        )
         assert (
-            num_experts % (num_scaleout_extent * num_scaleup_extent) == 0
-        ), f"{num_experts} experts do not divide by the topology extent {num_scaleout_extent}x{num_scaleup_extent}"
-        num_active_experts = (
-            num_experts // (num_scaleout_extent * num_scaleup_extent) * num_active_ranks
-        )
+            self.num_experts_per_rank > 0
+        ), "Set num_experts_per_rank when constructing an EP buffer"
+        # Holes occupy routing IDs but generate no traffic; estimate only the active ranks' physical slots.
+        num_active_experts = self.num_experts_per_rank * num_active_ranks
         assert (
             num_active_experts >= num_topk
-        ), f"the active ranks own {num_active_experts} experts, fewer than num_topk={num_topk}: the traffic model has no estimate, pass num_sms"
+        ), f"the active ranks own {num_active_experts} physical slots, fewer than num_topk={num_topk}: the traffic model has no estimate, pass num_sms"
         return self._get_theoretical_num_sms(
             num_active_experts,
             num_topk,
@@ -1045,7 +1043,6 @@ class ElasticBuffer:
         self,
         x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
         topk_idx: torch.Tensor,
-        num_experts: int,
         topk_weights: Optional[torch.Tensor] = None,
         cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
         num_max_tokens_per_rank: Optional[int] = None,
@@ -1082,21 +1079,19 @@ class ElasticBuffer:
                 Dispatch transports bytes without quantizing or applying scales. The caller supplies any global scale
                 to the consuming GEMM; a shared GEMM scale requires inputs quantized with that same global scale.
             topk_idx: `[num_tokens, num_topk]` with `nixl.runtime.ep.topk_idx_t` (typically `torch.int64`), the expert
-                indices selected by each token, `-1` means no selections.
-            num_experts: the number of all experts, no longer optional because cached dispatch was removed. Upstream
-                required it for a fresh dispatch and could obtain it from a cached handle. A multiple of the committed
-                extent product (`get_topology_extent()`):
-                each world rank inside the extent owns `num_experts / product` experts, so the active ranks own fewer
-                than `num_experts` when the extent has holes.
+                physical slot indices selected by each token, `-1` means no selection. With S = `num_experts_per_rank`,
+                slot e belongs to extent rank e // S, whose physical coordinates are
+                `(rank // scaleup_extent, rank % scaleup_extent)`. The routing range is
+                `scaleout_extent * scaleup_extent * S`, including holes; inactive slots are not renumbered away.
+                The caller updates routing IDs when the scaleup extent changes, and supplies correct weights.
             topk_weights: `[num_tokens, num_topk]` with `torch.float`, the expert weights of each token to dispatch.
-            cumulative_local_expert_recv_stats: `[num_local_experts]` with `torch.int`, a cumulative expert count
-                tensor for statistics, useful for online EP load balance monitoring.
-                For capture, reserve `num_experts // 2` entries for shrink/expand replay on at least two active GPUs.
-                Replay updates the current local-expert prefix without changing the allocation or recapturing.
+            cumulative_local_expert_recv_stats: `[num_experts_per_rank]` with `torch.int`, cumulative physical-slot
+                receive counts. The local slot count and required allocation stay fixed across topology changes,
+                including graph replay; unused slots receive no tokens.
             num_max_tokens_per_rank: the maximum number of tokens per rank (the constructor's value if not given).
             expert_alignment: align the number of tokens received by each local expert to this variable.
             num_sms: the number of SMs to use (0 for automatic via `get_theoretical_num_sms`). A successful automatic
-                dispatch remembers `num_experts`/top-k for later topology updates; a nonzero value pins manual mode.
+                dispatch remembers top-k for later topology updates; a nonzero value pins manual mode.
                 The policy is shared by all graphs using this buffer; the latest successful dispatch selects it.
                 This is the active block count of the fixed grid, clamped to `num_launch_sms` (even, at least 2).
                 A value other than the committed active SM count rewrites the topology descriptor (`EPTopology`) eagerly;
@@ -1124,19 +1119,18 @@ class ElasticBuffer:
             event: the event after executing the kernel (valid only if `async_with_compute_stream` is set).
         """
         check_torch_deterministic()
+        assert (
+            self.num_experts_per_rank > 0
+        ), "Set num_experts_per_rank when constructing an EP buffer"
 
         # Automatic decide SM count
         num_topk = topk_idx.shape[1]
-        auto_sm_config = (num_experts, num_topk) if num_sms == 0 else None
+        auto_sm_config = (num_topk,) if num_sms == 0 else None
         assert (
             auto_sm_config == self._auto_sm_config
             or not self.runtime.has_staged_topology()
         ), "A staged world awaits commit_topology(): commit it before changing the automatic/manual SM policy"
-        num_sms = (
-            self.get_theoretical_num_sms(num_experts, num_topk)
-            if num_sms == 0
-            else num_sms
-        )
+        num_sms = self.get_theoretical_num_sms(num_topk) if num_sms == 0 else num_sms
         # Fixed grid: `num_sms` becomes the active block count of the topology descriptor
         num_sms = self._adaptive_active_sms(num_sms)
 
@@ -1180,7 +1174,6 @@ class ElasticBuffer:
             topk_weights,
             cumulative_local_expert_recv_stats,
             num_max_tokens_per_rank,
-            num_experts,
             expert_alignment,
             previous_event,
             previous_event_before_epilogue,
@@ -1195,7 +1188,6 @@ class ElasticBuffer:
 
         handle = EPHandle(
             do_expand,
-            num_experts,
             expert_alignment,
             num_max_tokens_per_rank,
             num_sms,
@@ -1297,7 +1289,6 @@ class ElasticBuffer:
             handle.token_metadata_at_forward,
             handle.channel_linked_list,
             handle.recv_count_is_exact,
-            handle.num_experts,
             handle.num_max_tokens_per_rank,
             handle.num_sms,
             previous_event,

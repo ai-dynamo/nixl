@@ -32,6 +32,7 @@ def run(rank, port):
     tokens, hidden = 64, 512
     buffer = ElasticBuffer(
         dist.group.WORLD,
+        num_experts_per_rank=8,
         num_max_tokens_per_rank=tokens,
         hidden=hidden,
         num_topk=1,
@@ -52,7 +53,6 @@ def run(rank, port):
         return buffer.dispatch(
             data,
             routes,
-            num_experts=16,
             topk_weights=weights,
             num_sms=4,
             previous_event=ready,

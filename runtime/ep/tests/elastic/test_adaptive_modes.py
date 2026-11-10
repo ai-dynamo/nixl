@@ -15,9 +15,11 @@ initial-mode override; production buffers always select their mode from the acti
      combined result against the reference; then rewrites the topology descriptor to the other mode WITHOUT re-capturing, replays the
      same graph again and checks again. Same kernels, same launch parameters, same buffers: only the
      topology descriptor (`EPTopology`) changed. Every rank flips collectively between replays, as a real resize would;
-  4. captures one graph at the full world, commits a sub-world (half the positions; across domains the first domain
-     alone) in direct and in hybrid mode, replays the SAME graph on the ranks still in, checks against the smaller
-     world's reference and brings every rank back. Sub-worlds below the supported active-GPU minimum are skipped.
+  4. captures one graph per output layout (nonexpanded and expanded with alignment 16), commits a sub-world
+     (half the positions; across domains the first domain alone) in direct and hybrid mode, and brings every rank back.
+     The same graph receives routed, empty and rerouted inputs in each world; output capacity, local-slot statistics
+     and metadata retain their shapes and addresses. Expanded payloads and zero padding are checked as well.
+     Sub-worlds below the supported active-GPU minimum are skipped.
 On several NVLink domains only the hybrid-legal parts run (1 in hybrid, 2, 4); `--max-num-scaleup-ranks 8` on 4 GPUs
 sizes the buffer and the handles for a world the group does not fill.
 
@@ -29,10 +31,14 @@ import os
 
 import torch
 import torch.distributed as dist
-from test_ep import add_test_dispatch_combine_arguments, test_dispatch_combine
+from test_ep import (
+    add_test_dispatch_combine_arguments,
+    check_expanded_slot_mapping,
+    test_dispatch_combine,
+)
 
 import nixl.runtime.ep as nixl_ep_v2
-from nixl.runtime.ep.utils.envs import dist_print, init_dist
+from nixl.runtime.ep.utils.envs import dist_print, get_logical_domain_size, init_dist
 from nixl.runtime.ep.utils.gate import get_unbalanced_scores
 from nixl.runtime.ep.utils.math import align, calc_diff
 from nixl.runtime.ep.utils.refs import combine as ref_combine
@@ -76,17 +82,22 @@ def combine_recipe(buffer: nixl_ep_v2.ElasticBuffer):
     )
 
 
-def make_graph_case(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
+def make_graph_case(
+    buffer: nixl_ep_v2.ElasticBuffer,
+    args: argparse.Namespace,
+    do_expand: bool = False,
+    expert_alignment: int = 1,
+):
     num_max_tokens_per_rank, hidden = args.num_tokens, args.hidden
     num_tokens = max(1, args.num_tokens - dist.get_rank())
-    num_topk, num_experts = args.num_topk, args.num_experts
+    num_topk = args.num_topk
+    so_extent, su_extent = buffer.get_topology_extent()
+    num_experts = so_extent * su_extent * buffer.num_experts_per_rank
     num_sms = (
-        buffer.get_theoretical_num_sms(num_experts, num_topk)
-        if args.num_sms == 0
-        else args.num_sms
+        buffer.get_theoretical_num_sms(num_topk) if args.num_sms == 0 else args.num_sms
     )
 
-    # Fixed routing and data (the graph bakes in the addresses; the contents stay the same across replays)
+    # Fixed addresses; world-retention tests update routing in place between replays.
     scores = get_unbalanced_scores(
         num_tokens, num_experts, buffer.num_ranks, num_topk, 1.0, False
     )
@@ -94,6 +105,33 @@ def make_graph_case(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
         scores, num_topk, dim=-1, largest=True, sorted=False
     )
     topk_idx = topk_idx.to(nixl_ep_v2.topk_idx_t)
+    slots_per_rank = buffer.num_experts_per_rank
+    stats_guard = 104729
+    stats_storage = torch.full(
+        (slots_per_rank + 1,), stats_guard, dtype=torch.int, device="cuda"
+    )
+    stats = stats_storage[:-1]
+    routing_round = None
+    fixed_layout = None
+
+    def routing(rank, extent, round_idx):
+        # Route only even slots, leaving physical capacity unused; pad when fewer eligible slots than top-k.
+        count = max(1, args.num_tokens - rank)
+        eligible = (extent[0] * extent[1] * slots_per_rank + 1) // 2
+        choice = torch.arange(num_topk, device="cuda").unsqueeze(0)
+        token = torch.arange(count, device="cuda").unsqueeze(1)
+        idx = 2 * ((token * num_topk + choice + rank + round_idx) % eligible)
+        return torch.where((choice < eligible) & (round_idx != 1), idx, -1).to(
+            nixl_ep_v2.topk_idx_t
+        )
+
+    def prepare(round_idx):
+        nonlocal routing_round
+        routing_round = round_idx
+        topk_idx.copy_(
+            routing(dist.get_rank(), buffer.get_topology_extent(), round_idx)
+        )
+        topk_weights.copy_((topk_idx >= 0).float())
 
     def payload(src_global_idx):
         # Stable world-rank numbering, independent of the committed extent used by the metadata
@@ -118,45 +156,64 @@ def make_graph_case(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
         topk_weights=topk_weights,
         num_sms=num_sms,
         num_max_tokens_per_rank=num_max_tokens_per_rank,
-        num_experts=num_experts,
-        expert_alignment=1,
+        expert_alignment=expert_alignment,
         do_handle_copy=True,
         do_cpu_sync=False,
+        do_expand=do_expand,
+        do_zero_padding=do_expand,
+        cumulative_local_expert_recv_stats=stats,
     )
 
     def forward():
+        stats.zero_()
         recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(
             **dispatch_args
         )
         # `num_recv_tokens` is only known on the GPU without a CPU sync: build the combine input for the
         # worst-case-sized output, rows past the real count are never read
-        src_token_global_idx = handle.recv_src_metadata[:, 0]
-        local_y = generate_pre_combine_data(
-            src_token_global_idx.clamp_min(0), num_max_tokens_per_rank, num_topk, hidden
-        )
-        local_y[recv_topk_idx == -1] = 0
-        y = ordered_accumulate(local_y)
+        if do_expand:
+            y = recv_x
+        else:
+            src_token_global_idx = handle.recv_src_metadata[:, 0]
+            local_y = generate_pre_combine_data(
+                src_token_global_idx.clamp_min(0),
+                num_max_tokens_per_rank,
+                num_topk,
+                hidden,
+            )
+            local_y[recv_topk_idx == -1] = 0
+            y = ordered_accumulate(local_y)
         combined_x, _ = buffer.combine(x=y, handle=handle)
         return combined_x, handle, recv_x
 
     def reference(num_scaleout_ranks: int, num_scaleup_ranks: int):
         # Seeded as captured (the process group's world size); the reduction order follows the extent and the mode
-        ref_y = generate_pre_combine_data(
-            dist.get_rank() * num_max_tokens_per_rank
-            + torch.arange(num_tokens, device="cuda"),
-            num_max_tokens_per_rank,
-            num_topk,
-            hidden,
+        ref_y = (
+            x.unsqueeze(1).expand(-1, num_topk, -1).clone()
+            if do_expand
+            else generate_pre_combine_data(
+                dist.get_rank() * num_max_tokens_per_rank
+                + torch.arange(num_tokens, device="cuda"),
+                num_max_tokens_per_rank,
+                num_topk,
+                hidden,
+            )
         )
-        ref_y[topk_idx == -1] = 0
+        num_live_slots = (
+            num_scaleout_ranks * num_scaleup_ranks * buffer.num_experts_per_rank
+        )
+        live_idx = torch.where(topk_idx < num_live_slots, topk_idx, -1)
+        ref_y[live_idx == -1] = 0
+        reduce_local, reduce_scaleup = combine_recipe(buffer)
         return ref_combine(
             ref_y,
-            topk_idx,
+            live_idx,
             num_scaleout_ranks,
             num_scaleup_ranks,
-            num_experts,
+            num_live_slots,
             None,
-            *combine_recipe(buffer),
+            buffer.allow_multiple_reduction if do_expand else reduce_local,
+            reduce_scaleup,
         )
 
     def check(
@@ -165,7 +222,43 @@ def make_graph_case(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
         handle: nixl_ep_v2.EPHandle,
         recv_x: torch.Tensor,
     ):
+        nonlocal fixed_layout
         torch.cuda.synchronize()
+        layout = tuple(
+            (tensor.shape, tensor.data_ptr())
+            for tensor in (
+                recv_x,
+                stats,
+                handle.psum_num_recv_tokens_per_expert,
+                handle.num_unaligned_recv_tokens_per_expert,
+            )
+        )
+        if fixed_layout is None:
+            fixed_layout = layout
+        assert (
+            layout == fixed_layout
+        ), f"[{tag}] replay changed output or local-slot storage"
+        assert (
+            handle.psum_num_recv_tokens_per_expert.shape
+            == stats.shape
+            == (slots_per_rank,)
+        )
+        assert handle.num_unaligned_recv_tokens_per_expert.shape == (slots_per_rank,)
+        assert (
+            stats_storage[-1].item() == stats_guard
+        ), f"[{tag}] statistics overran fixed local slots"
+        assert torch.equal(stats, handle.num_unaligned_recv_tokens_per_expert)
+        max_tokens = (
+            num_max_tokens_per_rank
+            * buffer.max_num_scaleout_ranks
+            * buffer.max_num_scaleup_ranks
+        )
+        expanded_capacity = align(
+            max_tokens * min(num_topk, slots_per_rank)
+            + (expert_alignment - 1) * slots_per_rank,
+            expert_alignment,
+        )
+        assert recv_x.shape == (expanded_capacity if do_expand else max_tokens, hidden)
         ref = reference(*buffer.get_topology_extent())
         assert torch.equal(
             combined_x, ref
@@ -181,16 +274,64 @@ def make_graph_case(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
             src_rank // num_scaleup_ranks
         ) * buffer.max_num_scaleup_ranks + src_rank % num_scaleup_ranks
         expected_x = payload(src_world_rank * num_max_tokens_per_rank + src_token)
-        assert torch.equal(
-            recv_x[:num_recv], expected_x
-        ), f"[{tag}] graph dispatched payload mismatch"
+        if do_expand:
+            slots = handle.recv_src_metadata[:num_recv, 2:]
+            valid = slots >= 0
+            expected_expanded = expected_x.unsqueeze(1).expand(-1, num_topk, -1)
+            assert torch.equal(
+                recv_x[slots[valid].long()], expected_expanded[valid]
+            ), f"[{tag}] expanded payload mismatch"
+            ends = handle.psum_num_recv_tokens_per_expert
+            for end in ends.tolist():
+                assert (
+                    not recv_x[end : align(end, expert_alignment)].any().item()
+                ), f"[{tag}] nonzero alignment padding"
+        else:
+            assert torch.equal(
+                recv_x[:num_recv], expected_x
+            ), f"[{tag}] graph dispatched payload mismatch"
+        if routing_round is not None:
+            extent = buffer.get_topology_extent()
+            owner = buffer.scaleout_rank_idx * extent[1] + buffer.scaleup_rank_idx
+            expected_stats = torch.zeros_like(stats)
+            if do_expand:
+                expected_local_idx = torch.full_like(slots, -1)
+            for domain in range(extent[0]):
+                for position in range(extent[1]):
+                    src_idx = routing(
+                        domain * su_extent + position, extent, routing_round
+                    )
+                    local_idx = (
+                        src_idx[src_idx // slots_per_rank == owner] % slots_per_rank
+                    )
+                    expected_stats += torch.bincount(
+                        local_idx.long(), minlength=slots_per_rank
+                    ).to(stats.dtype)
+                    if do_expand:
+                        rows = src_rank == domain * extent[1] + position
+                        row_idx = src_idx[src_token[rows]]
+                        expected_local_idx[rows] = torch.where(
+                            row_idx // slots_per_rank == owner,
+                            row_idx % slots_per_rank,
+                            -1,
+                        ).to(slots.dtype)
+            assert torch.equal(
+                stats, expected_stats
+            ), f"[{tag}] fixed-slot statistics mismatch"
+            if do_expand:
+                check_expanded_slot_mapping(
+                    slots,
+                    expected_local_idx,
+                    handle.psum_num_recv_tokens_per_expert,
+                    expert_alignment,
+                )
         dist_print(
             f" > [{tag}] mode={buffer.get_topology()[0]} bitwise match with the reference",
             once_in_node=True,
         )
         return num_recv
 
-    return forward, check, num_sms
+    return forward, check, num_sms, prepare
 
 
 # The barriers `capture` runs (before the warm-ups, before the capture, after it), for idle ranks that mirror them
@@ -222,7 +363,7 @@ def run_graph_retention(
     first_mode: str,
     second_mode: str,
 ):
-    forward, check, _ = make_graph_case(buffer, args)
+    forward, check, _, _ = make_graph_case(buffer, args)
 
     buffer.set_topology_forced(first_mode)
     graph, outputs = capture(forward)
@@ -249,23 +390,24 @@ def run_graph_retention(
     torch.cuda.synchronize()
 
 
-def run_world_retention(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
+def run_world_retention(
+    buffer: nixl_ep_v2.ElasticBuffer,
+    args: argparse.Namespace,
+    do_expand: bool = False,
+    expert_alignment: int = 1,
+):
     # One graph captured at the full world keeps working after a commit of the topology descriptor (`EPTopology`) to a
     # sub-world in either mode (1 x N: half the positions; S x N: the first domain alone, across a domain boundary) and back
     num_scaleout_ranks, num_scaleup_ranks = buffer.get_topology_extent()
     so_idx, su_idx = buffer.scaleout_rank_idx, buffer.scaleup_rank_idx
     if num_scaleout_ranks == 1:
-        assert (
-            num_scaleup_ranks % 2 == 0
-            and args.num_experts % (num_scaleup_ranks // 2) == 0
-        )
+        assert num_scaleup_ranks % 2 == 0
         capture_extent, capture_mode = (1, num_scaleup_ranks), "direct"
         sub_extents = [
             ((1, num_scaleup_ranks // 2), "direct"),
             ((1, num_scaleup_ranks // 2), "hybrid"),
         ]
     else:
-        assert args.num_experts % num_scaleup_ranks == 0
         capture_extent, capture_mode = (num_scaleout_ranks, num_scaleup_ranks), "hybrid"
         sub_extents = [
             ((1, num_scaleup_ranks), "hybrid"),
@@ -277,7 +419,10 @@ def run_world_retention(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespa
         if extent[0] * extent[1] >= nixl_ep_v2._C.min_num_active_ranks
     ]
     num_active_sms = buffer.get_topology()[1]
-    forward, check, _ = make_graph_case(buffer, args)
+    forward, check, _, prepare = make_graph_case(
+        buffer, args, do_expand, expert_alignment
+    )
+    prepare(0)
 
     def participates(extent) -> bool:
         return so_idx < extent[0] and su_idx < extent[1]
@@ -303,21 +448,28 @@ def run_world_retention(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespa
         assert buffer.is_active == participates(extent)
 
     def replay_in_world(tag: str, extent):
-        if participates(extent):
-            graph.replay()
-            num_recv_tokens = check(tag, *outputs)
-            # The exact receive count of the active ranks is on the device, in a topology-independent slot
-            handle = outputs[1]
-            assert (
-                num_recv_tokens
-                == handle.psum_num_recv_tokens_per_scaleup_rank[extent[1] - 1].item()
-            )
-            assert 0 <= num_recv_tokens <= extent[0] * extent[1] * args.num_tokens
-        else:
-            assert not buffer.is_active
-            # Mirror the active ranks' collectives (`check` prints through `dist_print`, which ends in a barrier)
+        for round_idx in range(
+            3
+        ):  # Routed, empty, rerouted; all reuse the same captured graph and allocations.
+            if participates(extent):
+                prepare(round_idx)
+                graph.replay()
+                num_recv_tokens = check(
+                    f"{tag}, expanded={do_expand}, round={round_idx}", *outputs
+                )
+                handle = outputs[1]
+                assert (
+                    num_recv_tokens
+                    == handle.psum_num_recv_tokens_per_scaleup_rank[
+                        extent[1] - 1
+                    ].item()
+                )
+                assert 0 <= num_recv_tokens <= extent[0] * extent[1] * args.num_tokens
+            else:
+                assert not buffer.is_active
+                # Mirror the active ranks' collective inside `check`.
+                dist.barrier()
             dist.barrier()
-        dist.barrier()
 
     buffer.set_topology_forced(capture_mode, num_active_sms)
     graph, outputs = capture(forward)
@@ -340,7 +492,7 @@ def run_world_retention(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespa
 
 def check_handle_sizing(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
     # Tensors stored for the declared maximum world and the whole launch grid, extent shapes reported, the exact count in its slot
-    forward, _, num_sms = make_graph_case(buffer, args)
+    forward, _, num_sms, _ = make_graph_case(buffer, args)
     _, handle, _ = forward()
     torch.cuda.synchronize()
     max_so, max_su = buffer.max_num_scaleout_ranks, buffer.max_num_scaleup_ranks
@@ -366,8 +518,14 @@ def check_handle_sizing(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespa
         2 + 2 * args.num_topk
     )
     assert capacity(handle.channel_linked_list) >= max_linked_list_len * max_su
-    assert capacity(handle.psum_num_recv_tokens_per_expert) >= args.num_experts + 1
-    assert capacity(handle.num_unaligned_recv_tokens_per_expert) >= args.num_experts
+    assert (
+        capacity(handle.psum_num_recv_tokens_per_expert)
+        == buffer.num_experts_per_rank + 1
+    )
+    assert (
+        capacity(handle.num_unaligned_recv_tokens_per_expert)
+        == buffer.num_experts_per_rank
+    )
     dist_print(
         f" > handle sizing: extent {active_so}x{active_su} of max {max_so}x{max_su}, "
         f"{num_channels} channels ({channels_per_sm}/SM), exact count {handle.num_recv_tokens_device.item()} "
@@ -379,8 +537,14 @@ def check_handle_sizing(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespa
 @torch.inference_mode()
 def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     rank_idx, num_ranks, group = init_dist(local_rank, num_local_ranks, seed=args.seed)
+    cohort_so, cohort_su = get_logical_domain_size(group)
+    max_ranks = (args.max_num_scaleout_ranks or cohort_so) * (
+        args.max_num_scaleup_ranks or cohort_su
+    )
+    assert args.num_experts > 0 and args.num_experts % max_ranks == 0
     buffer = ModeTestBuffer(
         group,
+        num_experts_per_rank=args.num_experts // max_ranks,
         num_max_tokens_per_rank=args.num_tokens,
         hidden=args.hidden,
         allow_multiple_reduction=bool(args.allow_multiple_reduction),
@@ -401,6 +565,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     )
 
     # Settings of the shared `test_dispatch_combine` that this test fixes: first case only, no benchmark
+    args.num_experts = num_ranks * buffer.num_experts_per_rank
     args.test_first_only = True
     args.skip_perf_test = True
     args.dump_profile_traces = ""
@@ -425,6 +590,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
 
     dist_print("==== CUDA graph retention: world switch ====", once_in_node=True)
     run_world_retention(buffer, args)
+    run_world_retention(buffer, args, do_expand=True, expert_alignment=16)
 
     dist_print("Adaptive modes test passed", once_in_node=True)
     buffer.destroy()
@@ -442,7 +608,12 @@ if __name__ == "__main__":
     parser.add_argument("--num-tokens", type=int, default=1024)
     parser.add_argument("--hidden", type=int, default=7168)
     parser.add_argument("--num-topk", type=int, default=8)
-    parser.add_argument("--num-experts", type=int, default=256)
+    parser.add_argument(
+        "--num-experts",
+        type=int,
+        default=256,
+        help="physical slots in the declared maximum world",
+    )
     parser.add_argument("--allow-multiple-reduction", type=int, default=1)
     parser.add_argument("--prefer-overlap-with-compute", type=int, default=0)
     parser.add_argument("--max-num-scaleout-ranks", type=int, default=0)

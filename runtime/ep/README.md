@@ -74,10 +74,11 @@ buffer = ElasticBuffer(
     num_max_tokens_per_rank=4096,
     hidden=7168,
     num_topk=8,
+    num_experts_per_rank=8,  # Fixed physical routing slots per GPU.
     explicitly_destroy=True,
 )
 recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(
-    x, topk_idx, num_experts=256, topk_weights=topk_weights,
+    x, topk_idx, topk_weights=topk_weights,
 )
 # Replace recv_x with the local experts' BF16 output before combining.
 combined_x, _ = buffer.combine(recv_x, handle)
@@ -103,7 +104,7 @@ throughout a dispatch/combine pair, including its epilogues. Topology
 changes are collective, between completed pairs, with updates and replay
 ordered on the same stream or through explicit event dependencies.
 
-`dispatch(num_sms=0)` remembers its expert count and top-k for automatic
+`dispatch(num_sms=0)` remembers its top-k for automatic
 SM selection. Subsequent `stage_topology` / `set_active_ranks` calls with
 the default `num_active_sms=0` recompute the estimate for the proposed
 membership using cached bandwidth information. Commit publishes the new
@@ -124,9 +125,25 @@ replay; no profiling or correctness checks are added to communication.
 
 Dispatch/combine require at least two active GPUs, checked before launch
 and again inside the kernels for graph replay. Smaller cohorts may still
-bootstrap or tear down. If `cumulative_local_expert_recv_stats` is supplied
-during capture, allocate at least `num_experts // 2` entries; its address
-stays fixed as the local-expert count changes across shrink and expansion.
+bootstrap or tear down. `num_experts_per_rank` fixes the physical routing
+slots per GPU at construction; peers, including joiners, must agree on it.
+Local expert metadata and `cumulative_local_expert_recv_stats` retain that
+fixed length through shrink/expand. Without a CPU sync, received token
+storage covers the declared maximum world, including expanded outputs and
+alignment padding, so one captured graph can reuse those allocations.
+
+The model's logical expert count is separate from these physical slots.
+Unused slots may remain unrouted; the transport does not replicate experts
+or create weights. The caller owns the mapping from logical experts to
+physical slots and supplies the corresponding routing weights.
+
+For S slots per GPU, the physical routing range is
+`scaleout_extent * scaleup_extent * S`. Slot `e` belongs to extent rank
+`e // S`, with coordinates `(rank // scaleup_extent, rank % scaleup_extent)`.
+Extents are the highest active coordinates plus one. Holes keep their IDs;
+active ranks are not packed together. A changed scaleup extent therefore
+requires the caller to update routing IDs for the intended coordinates.
+The SM traffic estimate uses active-rank counts times S, excluding holes.
 
 `connect_ranks` / `disconnect_ranks` stage peer views; `stage_topology`
 stages membership. `commit_topology` activates both. The convenience method
@@ -162,11 +179,13 @@ of attempting recovery.
 
 - This fork exposes V2 dispatch/combine only. Legacy `Buffer`/`Config`,
   NVSHMEM, Engram, PP, AGRS and CPU-segment APIs are removed.
-- `dispatch`'s `num_experts` is no longer optional and appears immediately
-  after `topk_idx`. Upstream already required it for a fresh dispatch; the
-  omitted value came from a cached handle. The cached `dispatch(handle=...)`
-  path is removed, along with `allow_hybrid_mode`, the buffer's `group` and
-  alignment exports.
+- Constructor keyword `num_experts_per_rank` fixes physical routing slots
+  per GPU; it must be positive for dispatch/combine (zero permits a
+  barrier-only buffer). `num_experts` is removed from `dispatch`,
+  `get_theoretical_num_sms`, `EPHandle`, and native dispatch/combine; slot
+  totals follow the topology. The cached `dispatch(handle=...)` path is
+  removed, along with `allow_hybrid_mode`, the buffer's `group` and alignment
+  exports.
 - `combine` takes no top-k weights and returns `(combined_x, event)`.
   Upstream used the optional weight return for routing-weight gradients in
   dispatch backward; this fork omits that path. It is independent of cached
@@ -183,7 +202,7 @@ of attempting recovery.
   attributes/accessors. `get_physical_domain_size` and the
   `barrier(sequential=)` argument are removed.
 - `get_theoretical_num_sms` drops the zero-only `num_scaleout_topk` argument;
-  its third positional argument is now `rdma_gbs`. It returns the raw estimate,
+  its second positional argument is now `rdma_gbs`. It returns the raw estimate,
   before the launch-grid limit. `EPHandle.deterministic_sort` uses the handle's
   channel list instead of accepting a separate one. The constant-true private
   `_C.is_sm90_compiled` query is removed.

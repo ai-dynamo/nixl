@@ -96,7 +96,10 @@ enum Mode : int {
 // Device-resident topology descriptor (`EPTopology`): written by the host between launches, read by every adaptive kernel block at entry
 // The active ranks are the product of the active domains (`scaleout_mask`, bit d) and the active positions of a domain
 // (`scaleup_mask`, bit k): rank (d, k) takes part iff both bits are set; `num_scaleout_ranks` / `num_scaleup_ranks`
-// are the extents of the masks (highest active index + 1), so nothing is renumbered when the masks change
+// are the extents of the masks (highest active index + 1), so physical coordinates do not change with holes.
+// With S fixed physical expert slots per rank, routing slot e has extent rank e / S, whose coordinates
+// are (rank / num_scaleup_ranks, rank % num_scaleup_ranks). Holes retain their slots; they are not packed
+// away. The slot range is num_scaleout_ranks * num_scaleup_ranks * S, not the active rank count times S.
 struct alignas(128) EPTopology {
     Mode mode;
     int num_scaleout_ranks, num_scaleup_ranks;

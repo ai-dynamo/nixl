@@ -39,6 +39,7 @@ class NVFP4HostTests(unittest.TestCase):
             num_max_tokens_per_rank=16,
             hidden=128,
             num_topk=2,
+            num_experts_per_rank=4,
             max_num_scaleout_ranks=1,
             max_num_scaleup_ranks=4,
             store=object(),
@@ -74,7 +75,7 @@ class NVFP4HostTests(unittest.TestCase):
         self.topk = SimpleNamespace(shape=(2, 2))
 
     def send(self, scales):
-        return self.buffer.dispatch((self.codes, scales), self.topk, 16, num_sms=2)[0]
+        return self.buffer.dispatch((self.codes, scales), self.topk, num_sms=2)[0]
 
     def test_scale_bytes_are_packed_and_returned_without_copy_or_cast(self):
         for dtype in ("uint8", "float8"):

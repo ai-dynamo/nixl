@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: MIT AND Apache-2.0
 
-// Host-only launch-guard and capture-capacity regression; no GPU or transport is initialized.
+// Host-only launch-guard and routing-coordinate regression; no GPU or transport is initialized.
 // From runtime/ep, with CUDA_INCLUDE pointing to the CUDA include directory:
 // g++ -std=c++20 -O2 -Wno-attributes -Inixl_ep_v2/include -I"$CUDA_INCLUDE" \
 //     -I"$CUDA_INCLUDE/cccl" tests/elastic/test_topology_host.cpp -o /tmp/test_topology_host
@@ -61,24 +61,22 @@ int main() {
     out_of_extent.scaleup_rank_idx = 2;
     refuse(out_of_extent, false);
 
-    // Local experts follow the extent, including holes; an admitted world has extent >= active count >= minimum.
-    unsigned bound_cases = 0, odd_expert_cases = 0;
-    for (int experts = 2; experts <= 2048; ++experts) {
-        for (int d = 1; d <= topology::kNumMaxScaleoutRanksCap; ++d) {
-            for (int k = 1; k <= topology::kNumMaxScaleupRanksCap; ++k) {
-                const int extent = d * k;
-                if (extent < topology::kMinNumActiveRanks || experts % extent != 0) continue;
-                assert(experts / extent <= experts / topology::kMinNumActiveRanks);
-                ++bound_cases;
-                if (experts % 2) ++odd_expert_cases;
-            }
-        }
+    // Fixed slots use extent rank IDs, including holes and positions above bit 63.
+    constexpr int slots_per_rank = 4;
+    const auto wide = make({1}, {65, 71});
+    assert(wide.num_scaleout_ranks * wide.num_scaleup_ranks * slots_per_rank == 576);
+    assert(wide.num_active_scaleout_ranks() * wide.num_active_scaleup_ranks() * slots_per_rank == 8);
+    for (int local_slot = 0; local_slot < slots_per_rank; ++local_slot) {
+        const int slot = (1 * 72 + 65) * slots_per_rank + local_slot;
+        assert(topology::is_rank_active<72>(wide, slot / slots_per_rank));
+        assert(!topology::is_rank_active<72>(wide, (1 * 72 + 64)));
+        assert(!topology::is_rank_active<72>(wide, (2 * 72 + 65)));
     }
-    assert(odd_expert_cases > 0);  // Three-rank worlds permit expert counts not divisible by two.
-    const int stats_capacity = 256 / topology::kMinNumActiveRanks;
-    assert(stats_capacity == 128);
-    for (int extent : {16, 8, 4, 2, 4, 8, 16}) assert(256 / extent <= stats_capacity);
+    const auto shrunk = make({1}, {64, 65});
+    const int rerouted_slot = (1 * shrunk.num_scaleup_ranks + 65) * slots_per_rank;
+    assert(topology::is_rank_active<72>(shrunk, rerouted_slot / slots_per_rank));
+    assert(topology::scaleup_peer<72>(wide, 65) == topology::scaleup_peer<72>(shrunk, 65));
     std::printf("Passed: %u accepted worlds, %u single-GPU refusals, %u inactive-rank refusals, "
-                "%u capacity bounds (%u with odd expert counts); 256 experts reserve %d entries.\n",
-                accepted, refused_small, refused_inactive, bound_cases, odd_expert_cases, stats_capacity);
+                "fixed-slot routing through wide-domain holes and extent changes.\n",
+                accepted, refused_small, refused_inactive);
 }

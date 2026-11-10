@@ -21,7 +21,7 @@ Launch: one invocation per node (`--num-processes` GPUs each) under the node-lev
 no process group; the rank 0 process serves a TCPStore on `MASTER_ADDR` / `MASTER_PORT` (127.0.0.1:8361) for the whole
 run and keeps it alive until every peer has torn down (if a previous run still holds the port, choose another).
 `--store-timeout-secs` bounds every Store wait, `--num-cpu-timeout-secs` only the dispatch's CPU sync. `--num-experts`
-must be divisible by every phase's extent product (192 covers every default-plan world up to 4 x 4). `--max-scaleup-ranks 72
+is the total physical slot count of the declared maximum world and must divide its rank count. `--max-scaleup-ranks 72
 --position-offset 64` places a 1 x 8 job at positions 64..71 of a 1 x 72 world (the extent is then 72: `--num-experts 288`).
     python tests/elastic/test_adaptive_elastic.py --num-processes 4 --num-tokens 512 --hidden 7168 --num-topk 8 --num-experts 192
     python tests/elastic/test_adaptive_elastic.py --plan '[[0,1,2,3,4,5,6,7],[0,1,2,3],[0,1,2,3,4,5,6,7]]' ...
@@ -75,14 +75,25 @@ def make_buffer(
     rank_idx: int,
     num_ranks: int,
     store: dist.Store,
+    num_expert_ranks: Optional[int] = None,
     **placement,
 ) -> nixl_ep_v2.ElasticBuffer:
+    max_ranks = (
+        num_expert_ranks
+        or (
+            placement.get("max_num_scaleout_ranks", 0)
+            * placement.get("max_num_scaleup_ranks", 0)
+        )
+        or num_ranks
+    )
+    assert args.num_experts > 0 and args.num_experts % max_ranks == 0
     return nixl_ep_v2.ElasticBuffer(
         rank_idx=rank_idx,
         num_ranks=num_ranks,
         store=store,
         num_max_tokens_per_rank=args.num_tokens,
         hidden=args.hidden,
+        num_experts_per_rank=args.num_experts // max_ranks,
         allow_multiple_reduction=bool(args.allow_multiple_reduction),
         prefer_overlap_with_compute=bool(args.prefer_overlap_with_compute),
         num_nixl_channels=args.num_nixl_channels,
@@ -99,9 +110,9 @@ def extent_of(phase: Sequence[int], max_su: int) -> Tuple[int, int]:
     return max(r // max_su for r in phase) + 1, max(r % max_su for r in phase) + 1
 
 
-def default_plan(max_su: int, num_experts: int, present: List[int]) -> List[List[int]]:
+def default_plan(max_su: int, present: List[int]) -> List[List[int]]:
     """The full world, then each candidate (a domain alone, uniform and holed position shrinks) followed by the full
-    world again; only worlds with enough active GPUs and whose extent product divides `num_experts`.
+    world again; only worlds with enough active GPUs.
     The full world is the set of PRESENT ranks."""
     domains = sorted(set(r // max_su for r in present))
     positions = sorted(set(r % max_su for r in present))
@@ -138,16 +149,12 @@ def default_plan(max_su: int, num_experts: int, present: List[int]) -> List[List
     for num_domains in range(1, min(len(domains), minimum) + 1):
         if minimum % num_domains == 0 and minimum // num_domains <= len(positions):
             smallest = ids(domains[:num_domains], positions[: minimum // num_domains])
-            so_extent, su_extent = extent_of(smallest, max_su)
-            if num_experts % (so_extent * su_extent) == 0:
-                candidates.append(smallest)
+            candidates.append(smallest)
     for c in candidates:
-        so_extent, su_extent = extent_of(c, max_su)
         if (
             len(c) >= nixl_ep_v2._C.min_num_active_ranks
             and c != all_ranks
             and c not in phases
-            and num_experts % (so_extent * su_extent) == 0
         ):
             phases.append(c)
             phases.append(all_ranks)
@@ -166,8 +173,16 @@ def sample_routing(
     """
     scores = torch.rand(num_tokens, num_experts, generator=generator, device="cuda")
     scores[:, ~active_mask] = -1.0
-    weights, idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)
-    weights = weights / weights.sum(dim=-1, keepdim=True)
+    weights, idx = torch.topk(
+        scores, min(num_topk, num_experts), dim=-1, largest=True, sorted=False
+    )
+    idx = torch.where(weights >= 0, idx, -1)
+    weights = weights.clamp_min(0)
+    weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1e-20)
+    if idx.shape[1] < num_topk:
+        padding = num_topk - idx.shape[1]
+        idx = torch.nn.functional.pad(idx, (0, padding), value=-1)
+        weights = torch.nn.functional.pad(weights, (0, padding))
     return idx.to(nixl_ep_v2.topk_idx_t), weights.float().contiguous()
 
 
@@ -201,15 +216,12 @@ class Case:
         _, su_extent = self.extent(phase)
         return (world_rank // self.max_su) * su_extent + world_rank % self.max_su
 
-    def experts_per_rank(self, phase: List[int]) -> int:
+    def num_slots(self, phase: List[int]) -> int:
         so_extent, su_extent = self.extent(phase)
-        assert (
-            self.num_experts % (so_extent * su_extent) == 0
-        ), f"{self.num_experts} experts do not divide by the extent {so_extent}x{su_extent} (--num-experts must be divisible by every phase's extent product)"
-        return self.num_experts // (so_extent * su_extent)
+        return so_extent * su_extent * self.buffer.num_experts_per_rank
 
     def active_expert_mask(self, phase: List[int]) -> torch.Tensor:
-        epr = self.experts_per_rank(phase)
+        epr = self.buffer.num_experts_per_rank
         active_flat = torch.tensor(
             [self.flat_idx(r, phase) for r in phase], device="cuda"
         )
@@ -219,7 +231,7 @@ class Case:
     def reaches_me(self, topk_idx: torch.Tensor, phase: List[int]) -> torch.Tensor:
         """Per token of a source's routing: does one of its selections name an expert this rank owns in the phase's extent"""
         return (
-            (topk_idx // self.experts_per_rank(phase))
+            (topk_idx // self.buffer.num_experts_per_rank)
             == self.flat_idx(self.buffer.world_rank, phase)
         ).any(dim=1)
 
@@ -269,7 +281,6 @@ class Case:
         return dict(
             num_sms=self.num_sms,
             num_max_tokens_per_rank=self.num_max_tokens_per_rank,
-            num_experts=self.num_experts,
             expert_alignment=1,
             do_handle_copy=True,
             do_cpu_sync=do_cpu_sync,
@@ -297,7 +308,7 @@ class Case:
             topk_idx,
             so_extent,
             su_extent,
-            self.num_experts,
+            self.num_slots(phase),
             None,
             *combine_recipe(self.buffer),
         )
@@ -308,7 +319,7 @@ class Case:
         """What this rank receives in the phase, sorted by source global index: `(global_idx, x, local_topk_idx, weights)`"""
         me = self.buffer.world_rank
         my_flat = self.flat_idx(me, phase)
-        epr = self.experts_per_rank(phase)
+        epr = self.buffer.num_experts_per_rank
         chunks = []
         for src in phase:
             topk_idx, topk_weights = self.routing(phase_idx, src, phase)
@@ -335,8 +346,7 @@ def validate_plan(
     case: Case, plan: List[List[int]], present: Optional[List[int]] = None
 ) -> None:
     """Host-only, before any kernel: every phase names distinct world ranks of the maximum world (of the job's `present`
-    ranks when given) that form a product set and own at least `--num-topk` experts; `experts_per_rank` raises on divisibility
-    """
+    ranks when given) that form a product set"""
     max_so, max_su = case.max_so, case.max_su
     for phase in plan:
         assert (
@@ -350,9 +360,6 @@ def validate_plan(
                 present
             ), f"Phase {phase} names ranks that are not in the job {present}"
         case.buffer.masks_of(phase)  # product-set check, raises otherwise
-        assert (
-            case.experts_per_rank(phase) * len(phase) >= case.num_topk
-        ), f"phase {phase} owns fewer active experts than --num-topk {case.num_topk}"
 
 
 def check_dispatch(
@@ -560,9 +567,9 @@ class GraphCase:
             self.CAPTURE_ROUTING_PHASE, me, full_phase
         )
         self.x = case.payload(case.global_idx(me, full_phase))
-        # Fixed capacity, including the smallest supported world; the same graph uses a different prefix after resize.
+        # Fixed local slots and a guard word: replay must neither resize statistics nor write past them.
         self.stats_storage = torch.full(
-            (case.num_experts // nixl_ep_v2._C.min_num_active_ranks + 1,),
+            (case.buffer.num_experts_per_rank + 1,),
             self.STATS_GUARD,
             dtype=torch.int,
             device="cuda",
@@ -591,10 +598,10 @@ class GraphCase:
                 )
             except RuntimeError as error:
                 assert "cumulative_local_expert_recv_stats" in str(error), str(error)
-                assert "graph replay across supported worlds" in str(error), str(error)
+                assert "fixed local expert slots" in str(error), str(error)
             else:
                 raise AssertionError(
-                    "captured dispatch accepted statistics below the minimum-world capacity"
+                    "captured dispatch accepted statistics shorter than the fixed local expert slots"
                 )
         recv_x, recv_topk_idx, recv_topk_weights, handle, _ = case.buffer.dispatch(
             cumulative_local_expert_recv_stats=self.stats, **dispatch_args
@@ -626,9 +633,10 @@ class GraphCase:
         torch.cuda.synchronize()
         combined_x = self.outputs
 
-        # Selections of experts owned by ranks outside the phase are dropped by the kernels (the captured routing holds
-        # valid expert indices only, no -1, so it indexes the mask of this phase's active experts directly)
-        active_sel = case.active_expert_mask(phase)[self.topk_idx]
+        # Captured selections outside this phase's active slots are dropped; -1 remains an empty selection.
+        active_sel = (self.topk_idx >= 0) & case.active_expert_mask(phase)[
+            self.topk_idx.clamp_min(0)
+        ]
         topk_idx = torch.where(
             active_sel, self.topk_idx, torch.full_like(self.topk_idx, -1)
         )
@@ -640,7 +648,7 @@ class GraphCase:
         # Every active source replays its captured routing and payload; ownership and source metadata follow THIS
         # phase's extent. Zero receives is legitimate after an extent change.
         expected_src_parts, expected_x_parts = [], []
-        epr = case.experts_per_rank(phase)
+        epr = case.buffer.num_experts_per_rank
         my_flat = case.flat_idx(me, phase)
         expected_stats = torch.zeros(epr, dtype=torch.int64, device="cuda")
         for src in phase:
@@ -676,8 +684,11 @@ class GraphCase:
             self.stats[:epr].to(torch.int64), expected_stats
         ), f"[{tag}] graph expert statistics mismatch"
         assert (
-            not self.stats[epr:].any().item()
-        ), f"[{tag}] graph wrote statistics past the current local expert count"
+            self.stats.shape
+            == self.handle.psum_num_recv_tokens_per_expert.shape
+            == (epr,)
+        )
+        assert self.handle.num_unaligned_recv_tokens_per_expert.shape == (epr,)
         assert (
             self.stats_storage[-1].item() == self.STATS_GUARD
         ), f"[{tag}] graph wrote past statistics capacity"
@@ -839,6 +850,8 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         store,
         bootstrap_id="adaptive-elastic-buffer",
         max_num_scaleup_ranks=args.max_scaleup_ranks,
+        num_expert_ranks=cohort.num_scaleout_ranks
+        * (args.max_scaleup_ranks or cohort.num_scaleup_ranks),
         **placement,
     )
     max_so, max_su = buffer.max_num_scaleout_ranks, buffer.max_num_scaleup_ranks
@@ -849,11 +862,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     assert mode == expected_mode(
         present, max_su
     ), f"the constructor derived {mode} for {present}"
-    plan = (
-        json.loads(args.plan)
-        if args.plan
-        else default_plan(max_su, args.num_experts, present)
-    )
+    plan = json.loads(args.plan) if args.plan else default_plan(max_su, present)
     cohort_print(
         f"Elastic test: world {max_so}x{max_su}, world rank {buffer.world_rank} = ({buffer.scaleout_rank_idx}, {buffer.scaleup_rank_idx}), "
         f"initial mode {mode}, active SMs {num_active_sms}, launch grid {buffer.num_launch_sms}, "
@@ -1019,7 +1028,12 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--num-tokens", type=int, default=512)
     parser.add_argument("--hidden", type=int, default=7168)
     parser.add_argument("--num-topk", type=int, default=8)
-    parser.add_argument("--num-experts", type=int, default=192)
+    parser.add_argument(
+        "--num-experts",
+        type=int,
+        default=192,
+        help="physical slots in the declared maximum world",
+    )
     parser.add_argument("--allow-multiple-reduction", type=int, default=1)
     parser.add_argument("--prefer-overlap-with-compute", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
