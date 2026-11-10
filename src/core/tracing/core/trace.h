@@ -88,6 +88,12 @@ public:
     void
     reportContextFailure(std::string_view reason) const noexcept;
 
+    /** @brief Logs this tracer's first supplied trace context that is neither a
+     *         traceparent nor a trace context record at WARN; later ones are not
+     *         logged. */
+    void
+    reportUnparsableParent(std::size_t size) const noexcept;
+
     [[nodiscard]] std::span<const std::unique_ptr<TraceBackend>>
     backends() const noexcept {
         return backends_;
@@ -143,6 +149,7 @@ private:
     const random_bytes_fn_t randomBytes_;
     const bool needsTimestamps_;
     mutable std::atomic<bool> contextFailureLogged_ = false;
+    mutable std::atomic<bool> unparsableParentLogged_ = false;
 };
 
 /** @brief Inputs used to build the composite tracer from enabled backends. */

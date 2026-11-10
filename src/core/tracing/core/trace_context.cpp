@@ -175,6 +175,21 @@ drawRequestIdentity(nixl::trace::TraceIdentity &identity,
     setFlags(context, sample_ratio);
 }
 
+[[nodiscard]] std::optional<nixl::trace::TraceContext>
+parseParent(const nixl_blob_t &value) {
+    if ((value.size() == nixl::trace::traceContextWireSize) &&
+        (static_cast<std::uint8_t>(value.front()) == nixl::trace::traceContextWireVersion)) {
+        const std::span<const std::uint8_t> record(
+            reinterpret_cast<const std::uint8_t *>(value.data()), value.size());
+        nixl::trace::TraceContext context;
+        if (nixl::trace::decodeTraceContext(record, context) != nixl::trace::WireDecodeResult::Ok) {
+            return std::nullopt;
+        }
+        return context;
+    }
+    return nixl::trace::parseTraceparent(value);
+}
+
 char *
 appendByte(char *out, std::uint8_t value) noexcept {
     constexpr std::array<char, 16> hex{
@@ -212,6 +227,15 @@ nixl::trace::Tracer::reportContextFailure(std::string_view reason) const noexcep
         NIXL_ERROR << "nixl::trace: could not generate a trace context (" << reason
                    << "); the request or post continues without it and further failures "
                       "are not logged";
+    });
+}
+
+void
+nixl::trace::Tracer::reportUnparsableParent(std::size_t size) const noexcept {
+    logOnce(unparsableParentLogged_, [size] {
+        NIXL_WARN << "nixl::trace: ignoring a supplied trace context of " << size
+                  << " bytes that is neither a traceparent nor a trace context record; the "
+                     "request draws its own, and further ones are not logged";
     });
 }
 
@@ -341,9 +365,14 @@ nixl::trace::resolveTraceSampleRatio() {
 }
 
 nixl::trace::TraceIdentity
-nixl::trace::generateRequestIdentity(const nixl::trace::Tracer *tracer) {
+nixl::trace::generateRequestIdentity(const nixl::trace::Tracer *tracer, const nixl_blob_t &parent) {
     if (tracer == nullptr) {
         return {};
+    }
+    const std::optional<nixl::trace::TraceContext> parent_context =
+        parent.empty() ? std::nullopt : parseParent(parent);
+    if (!parent.empty() && !parent_context) {
+        tracer->reportUnparsableParent(parent.size());
     }
     nixl::trace::TraceIdentity identity;
     try {
@@ -352,6 +381,11 @@ nixl::trace::generateRequestIdentity(const nixl::trace::Tracer *tracer) {
     catch (const std::exception &e) {
         tracer->reportContextFailure(e.what());
         return {};
+    }
+    if (parent_context) {
+        identity.context.traceId = parent_context->traceId;
+        identity.context.flags = parent_context->flags & supported_trace_flags;
+        identity.context.parentSpanId = parent_context->spanId;
     }
     return identity;
 }

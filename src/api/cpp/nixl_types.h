@@ -239,6 +239,15 @@ struct nixlAgentOptionalArgs {
      *      stages, and any state retained in its prepared request.
      */
     nixl_blob_t customParam;
+
+    /**
+     * @var traceContext The trace context of the application's span, as a W3C
+     *      `traceparent` or NIXL's 26-byte trace context record. createXferReq and
+     *      makeXferReq make the request's span a child of that span, in its trace,
+     *      and its sampled flag decides whether the request is traced. A value that
+     *      is neither is ignored, and logged once per agent.
+     */
+    nixl_blob_t traceContext;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs

@@ -1350,6 +1350,83 @@ TEST(Tracing, RequestIdFitsAnInt64) {
               static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
 }
 
+TEST(Tracing, RequestIdentityJoinsASuppliedTraceparent) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    zero_draws_left = 0;
+    const auto parent = testContext(0x41, 0x01);
+
+    const nixl::trace::TraceIdentity identity =
+        nixl::trace::generateRequestIdentity(tracer.get(), nixl::trace::formatTraceparent(parent));
+
+    std::array<std::uint8_t, 8> span_id{};
+    span_id.fill(0x5a);
+    EXPECT_EQ(identity.context.traceId, parent.traceId);
+    EXPECT_EQ(identity.context.spanId, span_id);
+    EXPECT_EQ(identity.context.flags, 0x01);
+    EXPECT_EQ(identity.context.parentSpanId, parent.spanId);
+    EXPECT_EQ(identity.requestId, 0x5a5a5a5a5a5a5a5aULL);
+    EXPECT_EQ(identity.execution, 0u);
+}
+
+TEST(Tracing, RequestIdentityJoinsASuppliedRecord) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    const auto parent = testContext(0x42, 0x02);
+    std::array<std::uint8_t, nixl::trace::traceContextWireSize> record{};
+    ASSERT_TRUE(nixl::trace::encodeTraceContext(parent, record).has_value());
+
+    const nixl::trace::TraceIdentity identity = nixl::trace::generateRequestIdentity(
+        tracer.get(), {reinterpret_cast<const char *>(record.data()), record.size()});
+
+    EXPECT_EQ(identity.context.traceId, parent.traceId);
+    EXPECT_NE(identity.context.spanId, parent.spanId);
+    EXPECT_EQ(identity.context.flags, 0x02);
+    EXPECT_FALSE(identity.context.sampled());
+    EXPECT_EQ(identity.context.parentSpanId, parent.spanId);
+    EXPECT_NE(identity.requestId, 0u);
+}
+
+TEST(Tracing, RequestIdentityKeepsOnlyTheFlagsItDefines) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+
+    const nixl::trace::TraceIdentity identity = nixl::trace::generateRequestIdentity(
+        tracer.get(), "00-43434343434343434343434343434343-4343434343434343-ff");
+
+    EXPECT_EQ(identity.context.traceId, testContext(0x43).traceId);
+    EXPECT_EQ(identity.context.flags, 0x03);
+}
+
+TEST(Tracing, UnparsableParentIsIgnoredAndLoggedOncePerTracer) {
+    gtest::LogMessageCounter ignored("ignoring a supplied trace context");
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    std::string later_version(nixl::trace::traceContextWireSize, '\x43');
+    later_version.front() = '\x02';
+
+    EXPECT_EQ(nixl::trace::generateRequestIdentity(nullptr, "neither").requestId, 0u);
+    EXPECT_EQ(ignored.count(), 0u);
+    for (const nixl_blob_t &parent :
+         {nixl_blob_t("neither"),
+          nixl_blob_t("00-00000000000000000000000000000000-4444444444444444-01"),
+          later_version}) {
+        const nixl::trace::TraceIdentity identity =
+            nixl::trace::generateRequestIdentity(tracer.get(), parent);
+        EXPECT_TRUE(identity.context.valid());
+        EXPECT_TRUE(identity.context.sampled());
+        EXPECT_EQ(identity.context.parentSpanId, (std::array<std::uint8_t, 8>{}));
+        EXPECT_NE(identity.requestId, 0u);
+    }
+    EXPECT_EQ(ignored.count(), 1u);
+
+    CallLog c, d;
+    const auto other_tracer = makeMockTracer(c, d, 0, 0, 1.0);
+    EXPECT_TRUE(
+        nixl::trace::generateRequestIdentity(other_tracer.get(), "neither").context.valid());
+    EXPECT_EQ(ignored.count(), 2u);
+}
+
 TEST(Tracing, TraceableDrawsEachPostASpanIdUnderItsRequest) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);

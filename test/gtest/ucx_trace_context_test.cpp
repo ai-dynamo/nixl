@@ -242,7 +242,11 @@ addNvtxPluginDirectory() {
 }
 
 [[nodiscard]] std::size_t
-allocationsPerRequests(const std::string &name, size_t warmup, size_t measured, bool notify) {
+allocationsPerRequests(const std::string &name,
+                       size_t warmup,
+                       size_t measured,
+                       bool notify,
+                       const nixl_blob_t &trace_parent) {
     const gtest::LogIgnoreGuard efa(efa_warning);
     nixlAgent agent(name, idleConfig());
     nixlBackendH *backend = nullptr;
@@ -258,6 +262,8 @@ allocationsPerRequests(const std::string &name, size_t warmup, size_t measured, 
     src.addDesc(nixlBasicDesc(address(src_buffer), buffer_size, 0));
     dst.addDesc(nixlBasicDesc(address(dst_buffer), buffer_size, 0));
 
+    nixl_opt_args_t creation;
+    creation.traceContext = trace_parent;
     nixl_opt_args_t params;
     if (notify) {
         params.notif = tagged_msg;
@@ -266,7 +272,8 @@ allocationsPerRequests(const std::string &name, size_t warmup, size_t measured, 
     const auto run = [&](size_t requests) {
         for (size_t i = 0; i < requests; ++i) {
             nixlXferReqH *req = nullptr;
-            ASSERT_EQ(agent.createXferReq(NIXL_WRITE, src, dst, name, req), NIXL_SUCCESS);
+            ASSERT_EQ(agent.createXferReq(NIXL_WRITE, src, dst, name, req, &creation),
+                      NIXL_SUCCESS);
             ASSERT_EQ(awaitCompletion(agent, req, agent.postXferReq(req, &params)), NIXL_SUCCESS);
             ASSERT_EQ(agent.releaseXferReq(req), NIXL_SUCCESS);
             notifs.clear();
@@ -888,14 +895,20 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     src.addDesc(nixlBasicDesc(address(sender_buffer), buffer_size, 0));
     nixl_xfer_dlist_t dst(DRAM_SEG);
     dst.addDesc(nixlBasicDesc(receiver_address, buffer_size, 0));
+    const nixl::trace::TraceContext application =
+        nixl::trace::parseTraceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+            .value();
     nixl_opt_args_t extra_params;
     extra_params.notif = tagged_msg;
+    extra_params.traceContext = nixl::trace::formatTraceparent(application);
     nixlXferReqH *req = nullptr;
     ASSERT_EQ(sender.createXferReq(NIXL_WRITE, src, dst, receiver_name, req, &extra_params),
               NIXL_SUCCESS);
     const nixl::trace::TraceContext context = req->traceable().identity().context;
     const std::uint64_t request_id = req->traceable().identity().requestId;
     ASSERT_TRUE(context.sampled());
+    EXPECT_EQ(context.traceId, application.traceId);
+    EXPECT_EQ(context.parentSpanId, application.spanId);
 
     ASSERT_EQ(awaitCompletion(sender, req, sender.postXferReq(req)), NIXL_SUCCESS);
     const nixl::trace::TraceContext post = req->traceable().identity().context;
@@ -933,8 +946,8 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_THAT(requests[0],
                 testing::IsSupersetOf({correlation,
                                        "span=" + nixl::trace::formatTraceparent(context),
+                                       parentField(application),
                                        std::string("nixl.xfer_execution=1")}));
-    EXPECT_THAT(requests[0], testing::Not(testing::Contains(testing::StartsWith("parent="))));
 #endif
     const auto received = recordedSpans(traceFile, receiver_name, "nixl::notif.received");
     ASSERT_EQ(received.size(), 1u);
@@ -1175,17 +1188,21 @@ TEST_F(ucxTraceContextPropagation, SampledRequestAllocatesNoMoreThanAnUntracedOn
     constexpr size_t measured = 200;
 
     env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+    const nixl_blob_t application = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     for (const bool notify : {false, true}) {
-        env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
-        const std::size_t traced = allocationsPerRequests(sender_name, warmup, measured, notify);
-        env.popVar();
-        env.addVar("NIXL_TRACE_BACKENDS", "");
-        const std::size_t untraced =
-            allocationsPerRequests(untraced_name, warmup, measured, notify);
-        env.popVar();
+        for (const nixl_blob_t &parent : {nixl_blob_t(), application}) {
+            env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
+            const std::size_t traced =
+                allocationsPerRequests(sender_name, warmup, measured, notify, parent);
+            env.popVar();
+            env.addVar("NIXL_TRACE_BACKENDS", "");
+            const std::size_t untraced =
+                allocationsPerRequests(untraced_name, warmup, measured, notify, parent);
+            env.popVar();
 
-        EXPECT_GT(untraced, 0u) << "notify " << notify;
-        EXPECT_EQ(traced, untraced) << "notify " << notify;
+            EXPECT_GT(untraced, 0u) << "notify " << notify << ", parent '" << parent << "'";
+            EXPECT_EQ(traced, untraced) << "notify " << notify << ", parent '" << parent << "'";
+        }
     }
     env.popVar();
 }

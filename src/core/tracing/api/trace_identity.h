@@ -23,9 +23,13 @@
 #include <string>
 #include <string_view>
 
+#include "nixl_types.h"
+
 namespace nixl::trace {
 
 class Tracer;
+
+inline constinit const nixl_blob_t noSuppliedContext{};
 
 struct TraceContext {
     std::array<std::uint8_t, 16> traceId{};
@@ -56,7 +60,7 @@ parseTraceparent(std::string_view value);
 formatTraceparent(const TraceContext &context);
 
 [[nodiscard]] TraceIdentity
-generateRequestIdentity(const Tracer *tracer);
+generateRequestIdentity(const Tracer *tracer, const nixl_blob_t &parent = noSuppliedContext);
 
 /**
  * @brief Draw a context for one post of @p request: its trace id and flags with

@@ -164,6 +164,9 @@ activates the backend anyway, so tests can exercise the traced paths without a p
 The ratio applies to the trace contexts the agent generates, so it does nothing
 on its own: with no backend active — no `NIXL_TRACE_BACKENDS`, no nsys — the
 agent creates no contexts, and setting only the ratio produces nothing to see.
+A request created under an application's trace context (see "Joining an
+application's trace") takes that context's sampled flag instead, so the ratio
+does not apply to it.
 
 The decision is head-based: it is taken once, when the agent creates the trace
 context for a request, and derives from that context's own trace id, so it is
@@ -308,6 +311,20 @@ request has no identity or the handle has been released.
 From Rust, `XferRequest::get_trace_info()` returns `Ok(Some(XferTraceInfo))` with
 `request_id`, `execution` and `traceparent`, or `Ok(None)` when the request has no
 identity.
+
+### Joining an application's trace
+
+An application joins a request to its own trace by passing its span's trace context to
+`createXferReq` or `makeXferReq` in `nixl_opt_args_t::traceContext`, either as a W3C
+`traceparent` or as the 26-byte record UCX carries: byte 0 the version (1), byte 1 the
+flags, bytes 2–17 the trace id and bytes 18–25 the span id. The request's span,
+`nixl::xferReq`, then takes that trace id and flags, a span id of its own and the
+application's span as its parent, so the request's records, and the receiver's, join
+the application's trace. The context's sampled flag decides whether the request is
+traced; `NIXL_TRACE_SAMPLE_RATIO` applies only to the contexts NIXL draws itself. A
+value of neither form is ignored, so the request draws its own context, and the agent
+logs the first such value at WARN. With no tracing backend active, the field is
+ignored.
 
 ### Backend phases
 

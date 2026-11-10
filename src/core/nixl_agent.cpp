@@ -221,6 +221,11 @@ mergeIndices(const nixl_meta_stride_dlist_t &local_descs,
     return NIXL_SUCCESS;
 }
 
+[[nodiscard]] const nixl_blob_t &
+traceContextOf(const nixl_opt_args_t *extra_params) noexcept {
+    return (extra_params != nullptr) ? extra_params->traceContext : nixl::trace::noSuppliedContext;
+}
+
 } // namespace
 
 void
@@ -241,12 +246,13 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_mem_t remote_type,
                            const size_t desc_count,
                            const nixl_remote_section_weak_t &remote_section_ref,
-                           nixl::trace::Tracer *tracer)
+                           nixl::trace::Tracer *tracer,
+                           const nixl_blob_t &trace_context)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
       remoteSection(remote_section_ref),
-      traceable_(tracer),
+      traceable_(tracer, nixl::trace::generateRequestIdentity(tracer, trace_context)),
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
@@ -980,7 +986,8 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                                                  remote_descs.getType(),
                                                  desc_count,
                                                  remote_side.remoteSectionRef,
-                                                 data->tracer_.get());
+                                                 data->tracer_.get(),
+                                                 traceContextOf(extra_params));
     const nixl::trace::Scope trace_scope(data->tracer_.get(),
                                          handle->traceable().requestIdentity());
     NIXL_TRACE_SPAN(trace_span,
@@ -1106,7 +1113,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  remote_descs.getType(),
                                                  local_descs.descCount(),
                                                  rem_sec_it->second,
-                                                 data->tracer_.get());
+                                                 data->tracer_.get(),
+                                                 traceContextOf(extra_params));
     const nixl::trace::Scope trace_scope(data->tracer_.get(),
                                          handle->traceable().requestIdentity());
     NIXL_TRACE_SPAN(trace_span,
