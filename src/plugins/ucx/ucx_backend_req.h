@@ -139,7 +139,7 @@ public:
     status() {
         if (requests_.empty()) {
             /* No pending transmissions */
-            if (notifStatus_.load(std::memory_order_acquire) == NIXL_IN_PROG) {
+            if (notifStatus_.load(std::memory_order_relaxed) == NIXL_IN_PROG) {
                 worker_->progressLoop();
             }
             return notifStatus();
