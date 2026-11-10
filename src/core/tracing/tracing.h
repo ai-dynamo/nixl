@@ -73,8 +73,8 @@ makeAgentTracer(const std::string &name);
 makeBackendTraceSink(Tracer &tracer, std::string backend, nixlTelemetry *telemetry);
 
 /**
- * @brief A traced object's trace state: the context and request id it was
- *        created with, and the context and execution number of its latest post.
+ * @brief A traced object's trace state: the request id it was created with, and
+ *        the context and execution number of its latest post, its own before any.
  */
 class Traceable {
 public:
@@ -89,11 +89,8 @@ public:
     [[nodiscard]] const TraceIdentity &
     identity() const noexcept;
 
-    [[nodiscard]] TraceContext
-    beginPost();
-
     [[nodiscard]] const TraceIdentity &
-    acceptPost(const TraceContext &post_context) noexcept;
+    post();
 
     void
     record(Record record) const;
@@ -106,7 +103,6 @@ private:
 
     Tracer *const tracer_;
     TraceIdentity identity_;
-    bool spanIdUsed_ = false;
 };
 
 } // namespace nixl::trace

@@ -1245,18 +1245,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const nixl::trace::TraceContext call_context = req_hndl->trace_.beginPost();
-
-    NIXL_TRACE_CORRELATED_SPAN(trace_span,
-                               req_hndl->trace(),
-                               req_hndl->backendOp == NIXL_WRITE ?
-                                   nixl::trace::Record::PostXferReqWrite :
-                                   nixl::trace::Record::PostXferReqRead,
-                               call_context,
-                               {"remote_agent", req_hndl->remoteAgent},
-                               {"bytes", req_hndl->telemetry.totalBytes},
-                               {"nixl.xfer_request_id", req_hndl->trace().identity().requestId});
-
     chrono_point_t start_time;
     std::optional<nixlTime::nixlDuration> timer;
     if (data->telemetry_) {
@@ -1272,7 +1260,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                         << "' was invalidated or re-registered after transfer request creation; "
                            "not posting stale handle";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
-        return NIXL_TRACE_FINISH(trace_span, NIXL_ERR_NOT_FOUND);
+        return NIXL_ERR_NOT_FOUND;
     }
 
     // We can't repost while a request is in progress
@@ -1288,7 +1276,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         if (req_hndl->status == NIXL_IN_PROG) {
             NIXL_ERROR_FUNC << "transfer request is still in progress and cannot be reposted";
             data->addErrorTelemetry(NIXL_ERR_REPOST_ACTIVE);
-            return NIXL_TRACE_FINISH(trace_span, NIXL_ERR_REPOST_ACTIVE);
+            return NIXL_ERR_REPOST_ACTIVE;
         }
 
         if (req_hndl->status < 0) {
@@ -1300,7 +1288,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
-            return NIXL_TRACE_FINISH(trace_span, NIXL_ERR_REMOTE_DISCONNECT);
+            return NIXL_ERR_REMOTE_DISCONNECT;
         }
     }
 
@@ -1333,12 +1321,21 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         NIXL_ERROR_FUNC << "the selected backend '" << req_hndl->engine->getType()
                         << "' does not support notifications";
         data->addErrorTelemetry(NIXL_ERR_BACKEND);
-        return NIXL_TRACE_FINISH(trace_span, NIXL_ERR_BACKEND);
+        return NIXL_ERR_BACKEND;
     }
 
-    const nixl::trace::TraceIdentity trace_identity = req_hndl->trace_.acceptPost(call_context);
+    const nixl::trace::TraceIdentity trace_identity = req_hndl->trace_.post();
+    NIXL_TRACE_CORRELATED_SPAN(trace_span,
+                               req_hndl->trace(),
+                               req_hndl->backendOp == NIXL_WRITE ?
+                                   nixl::trace::Record::PostXferReqWrite :
+                                   nixl::trace::Record::PostXferReqRead,
+                               trace_identity.context,
+                               {"remote_agent", req_hndl->remoteAgent},
+                               {"bytes", req_hndl->telemetry.totalBytes},
+                               {"nixl.xfer_request_id", trace_identity.requestId},
+                               {"nixl.xfer_execution", trace_identity.execution});
     setTraceArgs(opt_args, trace_identity);
-    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_execution", trace_identity.execution);
 
     if (timer) {
         req_hndl->telemetry.startTime = start_time;

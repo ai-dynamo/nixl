@@ -221,7 +221,9 @@ times.
 `nixl::makeXferReq` and `nixl::createXferReq` start once the call has built its
 request, so a call refused before that, such as one with descriptor lists of different
 lengths, records nothing; a call that fails later, in the backend's `prepXfer`, records
-its span.
+its span. Likewise `nixl::postXferReq.write` and `nixl::postXferReq.read` start once
+the post has passed `postXferReq`'s checks, so a call they refuse, such as a repost
+refused with `NIXL_ERR_REPOST_ACTIVE`, records nothing.
 
 Spans cover the synchronous call only; the `nixl::xfer.complete` event is emitted
 once per completed post, by the first call that sees the transfer complete:
@@ -238,12 +240,12 @@ otherwise `getXferStatus`, a repost of the same request, or `releaseXferReq`. A
 release that cancels a post it still sees in flight records one with
 `NIXL_ERR_CANCELED`. Once its end is seen, each post that took an execution
 number has exactly one of the two. `nixl.status` is the native `nixl_status_t`:
-on a `postXferReq` span the call's return, refused calls included; on
+on a `postXferReq` span the call's return; on
 `nixl::xfer.error` the failure; on `nixl::releaseXferReq` the call's return. Each
 release attempt is a span of its own, inside its latest post's context, so a
 release refused with `NIXL_ERR_REPOST_ACTIVE` and its retry are two records.
 
-For a sampled request, each `postXferReq` span is the span that its call's trace
+For a sampled request, each `postXferReq` span is the span that its post's trace
 context identifies (see "Backend phases"), so the post's `nixl::xfer.complete` and
 backend phases and the receiver's `nixl::notif.received` name it as their parent,
 even after it has ended.
@@ -255,8 +257,7 @@ While tracing is active, each request gets a request id when `createXferReq` or
 as `nixl.xfer_request_id`. Each post that passes `postXferReq`'s checks and reaches
 the backend takes the request's next execution number, `nixl.xfer_execution`,
 starting at 1, whether or not the backend then fails it. A post rejected before
-that, such as a repost refused with `NIXL_ERR_REPOST_ACTIVE`, takes none, so its
-span carries the request id but no execution number. A post's `nixl::xfer.complete`
+that takes none. A post's `nixl::xfer.complete`
 carries the same pair as its span. Both are recorded as `int64_t` attributes; 63
 bits keep every id positive. A receiver keeps any non-zero id it receives: a NIXL 1.6
 sender draws from all 64 bits, so about half its ids read as negative attributes,
@@ -276,8 +277,8 @@ creation until `releaseXferReq`, for a request from `createXferReq` or `makeXfer
 but not while another thread posts or releases that request. It returns the request
 id, the execution number of the latest post that took one (0 before any) and that
 post's trace context as a W3C `traceparent`: the values that post's records carry.
-Before any accepted post the `traceparent` is the request's own, whose span id a
-sampled request's first `postXferReq` call takes, refused or not. A post refused by
+Before any post the `traceparent` is the request's own, whose span id a sampled
+request's first post takes. A post refused by
 `postXferReq`'s checks changes none of the three. A request without an id, such as
 one created while no tracing backend is active, returns `NIXL_ERR_NOT_FOUND`; the
 getter never enables tracing.
@@ -355,8 +356,8 @@ one internal `nixl::trace::TraceIdentity` holding the trace `context`, the
 `requestId` and the `execution` number. The context's trace id and flags are the
 same at prep and at every post of that request, reposts included, and it is the
 zeroed, invalid context when tracing is off. For a sampled request each post also
-has a span id of its own: the first `postXferReq` call keeps the one prep saw, and
-each later call draws another. The pointer is null in `prepMemView`, which has no
+has a span id of its own: the first post keeps the one prep saw, and each later
+post draws another. The pointer is null in `prepMemView`, which has no
 request, and `opt_args` itself may be null when an engine is called directly. It is
 valid only for the call: a plugin that needs the identity later, at completion or
 when building a notification, copies the value onto its own request handle at each

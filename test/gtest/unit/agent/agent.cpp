@@ -653,7 +653,7 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
-    TEST_F(recorderTracingAgentFixture, RejectedRepostTakesNoExecution) {
+    TEST_F(recorderTracingAgentFixture, RejectedRepostRecordsNoSpanAndTakesNoExecution) {
         nixlAgent *agent = agent_helper_->getAgent();
         const auto &engine = agent_helper_->getGMockEngine();
         EXPECT_CALL(engine, postXfer)
@@ -669,11 +669,8 @@ namespace agent {
         EXPECT_EQ(agent->postXferReq(req), NIXL_ERR_REPOST_ACTIVE);
         EXPECT_EQ(agent->getXferStatus(req), NIXL_SUCCESS);
         EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
-        const auto rejected = testing::AllOf(
-            identifies(req),
-            testing::Not(testing::Contains(testing::StartsWith("nixl.xfer_execution="))));
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(postedAs(req, 1), rejected, postedAs(req, 2)));
+                    testing::ElementsAre(postedAs(req, 1), postedAs(req, 2)));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(postedAs(req, 1), postedAs(req, 2)));
         EXPECT_THAT(handedToPlugin(),
                     testing::ElementsAre(handed(req, 0), handed(req, 1), handed(req, 2)));
@@ -718,7 +715,6 @@ namespace agent {
         EXPECT_THAT(records("nixl::postXferReq.write"),
                     testing::ElementsAre(withStatus(NIXL_SUCCESS),
                                          withStatus(NIXL_IN_PROG),
-                                         withStatus(NIXL_ERR_REPOST_ACTIVE),
                                          withStatus(NIXL_ERR_BACKEND)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
@@ -1017,7 +1013,7 @@ namespace agent {
         EXPECT_THAT(traceInfo(req),
                     testing::FieldsAre(posted.requestId, posted.execution, posted.traceparent));
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(carriesTraceInfo(posted, "span="), testing::_));
+                    testing::ElementsAre(carriesTraceInfo(posted, "span=")));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -1117,7 +1113,7 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
-    TEST_F(sampledRecorderTracingAgentFixture, RejectedAndRepostedCallsGetTheirOwnSpanIds) {
+    TEST_F(sampledRecorderTracingAgentFixture, RefusedRepostRecordsNoSpan) {
         nixlAgent *agent = agent_helper_->getAgent();
         const auto &engine = agent_helper_->getGMockEngine();
         EXPECT_CALL(engine, postXfer)
@@ -1141,21 +1137,18 @@ namespace agent {
         EXPECT_THAT(engine.observedTraceContext(), testing::Optional(last));
 
         const auto calls = records("nixl::postXferReq.write");
-        ASSERT_EQ(calls.size(), 3u);
-        const auto rejected = contextOf(calls[1], "span=");
+        ASSERT_EQ(calls.size(), 2u);
         EXPECT_THAT(calls[0], isSpanOf(req, first));
         EXPECT_THAT(calls[0], carriesTraceInfo(posted, "span="));
-        EXPECT_THAT(calls[1], isSpanOf(req, rejected));
-        EXPECT_THAT(calls[2], isSpanOf(req, last));
-        EXPECT_EQ(rejected.traceId, first.traceId);
-        EXPECT_NE(rejected.spanId, first.spanId);
-        EXPECT_NE(last.spanId, rejected.spanId);
+        EXPECT_THAT(calls[1], isSpanOf(req, last));
+        EXPECT_EQ(last.traceId, first.traceId);
         EXPECT_NE(last.spanId, first.spanId);
         EXPECT_THAT(completionMarks(), testing::ElementsAre(carries(first), carries(last)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
-    TEST_F(sampledRecorderTracingAgentFixture, RejectedFirstCallUsesTheRequestsSpanId) {
+    TEST_F(sampledRecorderTracingAgentFixture,
+           RefusedFirstCallLeavesTheRequestsSpanIdToTheFirstPost) {
         nixlAgent *agent = agent_helper_->getAgent();
         ON_CALL(agent_helper_->getGMockEngine(), supportsNotif())
             .WillByDefault(testing::Return(false));
@@ -1169,11 +1162,9 @@ namespace agent {
         nixl_opt_args_t without_notif;
         EXPECT_EQ(agent->postXferReq(req, &without_notif), NIXL_SUCCESS);
 
-        const auto post = req->trace().identity().context;
-        EXPECT_EQ(post.traceId, request.traceId);
-        EXPECT_NE(post.spanId, request.spanId);
+        EXPECT_EQ(req->trace().identity().context, request);
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(isSpanOf(req, request), isSpanOf(req, post)));
+                    testing::ElementsAre(isSpanOf(req, request)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -1251,10 +1242,9 @@ namespace agent {
         EXPECT_EQ(agent->postXferReq(req, &without_notif), NIXL_SUCCESS);
         const auto posted = traceInfo(req);
         EXPECT_EQ(posted.execution, 1u);
-        EXPECT_NE(posted.traceparent, refused.traceparent);
+        EXPECT_EQ(posted.traceparent, refused.traceparent);
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(testing::Contains("span=" + refused.traceparent),
-                                         carriesTraceInfo(posted, "span=")));
+                    testing::ElementsAre(carriesTraceInfo(posted, "span=")));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 

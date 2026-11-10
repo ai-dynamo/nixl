@@ -1292,7 +1292,7 @@ TEST(Tracing, RequestIdFitsAnInt64) {
               static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
 }
 
-TEST(Tracing, TraceableDrawsAPostSpanIdOnceItsOwnIsUsed) {
+TEST(Tracing, TraceableKeepsItsOwnSpanIdForItsFirstPost) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
@@ -1303,48 +1303,50 @@ TEST(Tracing, TraceableDrawsAPostSpanIdOnceItsOwnIsUsed) {
     auto drawn = sampled;
     drawn.spanId.fill(0x5a);
 
-    EXPECT_EQ(sampled_trace.beginPost(), sampled);
-    EXPECT_EQ(unsampled_trace.beginPost(), unsampled);
-    EXPECT_EQ(sampled_trace.beginPost(), drawn);
-    EXPECT_EQ(unsampled_trace.beginPost(), unsampled);
+    EXPECT_EQ(sampled_trace.post().context, sampled);
+    EXPECT_EQ(unsampled_trace.post().context, unsampled);
+    EXPECT_EQ(sampled_trace.post().context, drawn);
+    EXPECT_EQ(unsampled_trace.post().context, unsampled);
 }
 
-TEST(Tracing, TraceableAcceptedPostTakesTheNextExecution) {
+TEST(Tracing, TraceablePostTakesTheNextExecution) {
     const auto context = testContext(0x33);
-    const auto post = testContext(0x34);
     nixl::trace::Traceable traced{nullptr, {context, 0x33}};
     nixl::trace::Traceable untraced{nullptr, {}};
 
     EXPECT_EQ(traced.identity().context, context);
     EXPECT_EQ(traced.identity().execution, 0u);
-    EXPECT_EQ(traced.acceptPost(post).execution, 1u);
-    EXPECT_EQ(traced.acceptPost(post).execution, 2u);
-    EXPECT_EQ(untraced.acceptPost(post).execution, 0u);
+    EXPECT_EQ(traced.post().execution, 1u);
+    EXPECT_EQ(traced.post().execution, 2u);
+    EXPECT_EQ(untraced.post().execution, 0u);
 
-    EXPECT_EQ(traced.identity().context, post);
     EXPECT_EQ(traced.identity().execution, 2u);
-    EXPECT_EQ(untraced.identity().context, post);
     EXPECT_EQ(untraced.identity().execution, 0u);
 }
 
 TEST(Tracing, TraceableIdentityIsItsLatestPosts) {
-    const auto context = testContext(0x35);
-    const auto post = testContext(0x36);
-    nixl::trace::Traceable traced{nullptr, {context, 0x35}};
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);
+    zero_draws_left = 0;
+    const auto context = testContext(0x35, 0x03);
+    nixl::trace::Traceable traced{tracer.get(), {context, 0x35}};
+    auto drawn = context;
+    drawn.spanId.fill(0x5a);
 
     const auto prepped = traced.identity();
-    const auto first = traced.acceptPost(post);
-    const auto second = traced.acceptPost(post);
+    const auto first = traced.post();
+    const auto second = traced.post();
     const auto posted = traced.identity();
 
     EXPECT_EQ(prepped.context, context);
     EXPECT_EQ(prepped.requestId, 0x35u);
     EXPECT_EQ(prepped.execution, 0u);
-    EXPECT_EQ(first.context, post);
+    EXPECT_EQ(first.context, context);
     EXPECT_EQ(first.requestId, 0x35u);
     EXPECT_EQ(first.execution, 1u);
+    EXPECT_EQ(second.context, drawn);
     EXPECT_EQ(second.execution, 2u);
-    EXPECT_EQ(posted.context, post);
+    EXPECT_EQ(posted.context, drawn);
     EXPECT_EQ(posted.requestId, 0x35u);
     EXPECT_EQ(posted.execution, 2u);
 }
@@ -1379,9 +1381,9 @@ TEST(Tracing, TraceableRecordsItsEventsInItsLatestPost) {
 #endif
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
-    const auto post = testContext(0x38);
-    nixl::trace::Traceable traced{tracer.get(), {testContext(0x37), 0x37}};
-    static_cast<void>(traced.acceptPost(post));
+    const auto request = testContext(0x37);
+    nixl::trace::Traceable traced{tracer.get(), {request, 0x37}};
+    static_cast<void>(traced.post());
 
     traced.record(nixl::trace::Record::XferComplete);
     traced.record(nixl::trace::Record::XferError, {"nixl.status", NIXL_ERR_BACKEND});
@@ -1390,7 +1392,7 @@ TEST(Tracing, TraceableRecordsItsEventsInItsLatestPost) {
         ASSERT_EQ(log->emittedEvents.size(), 2u);
         EXPECT_EQ(log->emittedEvents[0].name, "nixl::xfer.complete");
         EXPECT_EQ(log->emittedEvents[0].kind, nixl::trace::Kind::Metadata);
-        EXPECT_EQ(log->emittedEvents[0].context, post);
+        EXPECT_EQ(log->emittedEvents[0].context, request);
         EXPECT_EQ(log->emittedEvents[0].requestId, 0x37u);
         EXPECT_EQ(log->emittedEvents[0].attrs,
                   (attr_list_t{{"nixl.xfer_request_id", std::int64_t{0x37}},

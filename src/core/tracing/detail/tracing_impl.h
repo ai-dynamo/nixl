@@ -40,19 +40,12 @@ Traceable::identity() const noexcept {
     return identity_;
 }
 
-inline TraceContext
-Traceable::beginPost() {
-    const TraceContext post_context = (identity_.context.sampled() && spanIdUsed_) ?
-        generatePostContext(identity_.context, tracer_) :
-        identity_.context;
-    spanIdUsed_ = true;
-    return post_context;
-}
-
 inline const TraceIdentity &
-Traceable::acceptPost(const TraceContext &post_context) noexcept {
-    identity_.context = post_context;
+Traceable::post() {
     if (identity_.requestId != 0) {
+        if (identity_.context.sampled() && (identity_.execution != 0)) {
+            identity_.context = generatePostContext(identity_.context, tracer_);
+        }
         ++identity_.execution;
     }
     return identity_;
