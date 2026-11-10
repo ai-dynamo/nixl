@@ -289,6 +289,8 @@ writeToIdleTarget(const nixl_b_params_t &sender_params,
                   nixl::trace::TraceContext &context,
                   std::uint64_t &request_id,
                   afterPostType &&after_post) {
+    gtest::ScopedEnv tls;
+    tls.addVar("UCX_TLS", "tcp");
     const gtest::LogIgnoreGuard efa(efa_warning);
     nixlAgent target(target_name, idleConfig());
     nixlBackendH *target_backend = nullptr;
@@ -1065,6 +1067,7 @@ TEST_F(ucxTraceContextPropagation, ProgressThreadPostReleasedInFlightRecordsNoWi
 }
 
 TEST_F(ucxTraceContextPropagation, DeferredNotificationIsRecordedByTheStatusCheck) {
+    env.addVar("UCX_TLS", "tcp");
     const gtest::LogIgnoreGuard efa(efa_warning);
     nixlAgent target(target_name, idleConfig());
     nixlBackendH *target_backend = nullptr;
