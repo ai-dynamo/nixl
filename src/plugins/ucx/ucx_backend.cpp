@@ -389,19 +389,32 @@ sampledTraceContext(const nixlBackendTraceSink *sink, const nixl_opt_b_args_t *o
     return *opt_args->traceContext;
 }
 
+[[nodiscard]] nixlTime::us_t
+phaseTime(const nixlBackendTraceSink *sink, const nixlUcxBackendReqH &handle) noexcept {
+    return ((sink != nullptr) && handle.traceContext) ? nixlTime::getUs() : 0;
+}
+
 void
 recordPhase(nixlBackendTraceSink *sink,
             nixl_trace_phase_t phase,
-            const nixlUcxBackendReqH &handle) noexcept {
+            const nixlUcxBackendReqH &handle,
+            nixlTime::us_t timestamp) noexcept {
     if ((sink != nullptr) && handle.traceContext) {
         sink->recordPhase(phase,
                           {},
-                          nixlTime::getUs(),
+                          timestamp,
                           {},
                           &*handle.traceContext,
                           handle.traceRequestId,
                           handle.traceExecution);
     }
+}
+
+void
+recordPhase(nixlBackendTraceSink *sink,
+            nixl_trace_phase_t phase,
+            const nixlUcxBackendReqH &handle) noexcept {
+    recordPhase(sink, phase, handle, phaseTime(sink, handle));
 }
 
 } // namespace
@@ -628,8 +641,8 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return ret;
     }
 
-    recordPhase(traceSink_, nixl_trace_phase_t::WIRE_SUBMITTED, *int_handle);
-
+    const nixlTime::us_t submitted_at = phaseTime(traceSink_, *int_handle);
+    std::optional<nixlTime::us_t> sent_at;
     ret = int_handle->status();
     if (opt_args && opt_args->hasNotif && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
         int_handle->notif = buildNotif(opt_args->notifMsg,
@@ -638,15 +651,17 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
                                        int_handle->traceExecution);
         if (ret == NIXL_SUCCESS) {
             ret = int_handle->sendNotif();
-            if (ret != NIXL_SUCCESS) {
-                return ret;
+            if (ret == NIXL_SUCCESS) {
+                sent_at = phaseTime(traceSink_, *int_handle);
+                ret = int_handle->status();
             }
-
-            recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle);
-            ret = int_handle->status();
         }
     }
 
+    recordPhase(traceSink_, nixl_trace_phase_t::WIRE_SUBMITTED, *int_handle, submitted_at);
+    if (sent_at) {
+        recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle, *sent_at);
+    }
     return ret;
 }
 
@@ -669,8 +684,10 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
         return status;
     }
 
-    recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle);
-    return int_handle->status();
+    const nixlTime::us_t sent_at = phaseTime(traceSink_, *int_handle);
+    const nixl_status_t ret = int_handle->status();
+    recordPhase(traceSink_, nixl_trace_phase_t::NOTIF_SENT, *int_handle, sent_at);
+    return ret;
 }
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
