@@ -350,6 +350,26 @@ replace the request's notification, so a post given a context sends the notifica
 at creation only if its options carry it again, which in Python means repeating
 `notif_msg`.
 
+### Where a backend's trace state comes from
+
+The agent passes no tracing through the plugin API. It opens a
+`nixl::trace::Scope`, a thread-local value, around the calls that carry
+tracing, and a backend reads it from there:
+
+- `nixl::trace::currentSink()` returns the backend's sink only while `createBackend`
+  constructs the engine, on that thread, so a backend keeps it from its constructor.
+- `nixl::trace::currentIdentity()` returns the identity of the call only while
+  `prepXfer`, `postXfer`, or a `genNotif` given a context, runs on the calling thread,
+  so a backend that needs it later, at completion or on another thread, copies it
+  during the call.
+- Outside those calls, on any other thread, or while no tracer is active, both return
+  null. Reading them at the wrong time is not an error, so a mistake shows only as a
+  call that is not traced.
+- The thread-local slot lives in `libnixl_build`, which libnixl and every plugin link,
+  so a plugin sees the agent's scope only through the one shared copy of that library.
+  In a build with `-Ddefault_library=static`, each plugin loaded at run time holds a
+  copy of its own and traces nothing, while the agent's own spans are unaffected.
+
 ### Backend phases
 
 A backend plugin can record a phase of its own work through its
@@ -412,21 +432,21 @@ to the same per-metric filter as every other metric (see
 [telemetry](telemetry.md)).
 
 A backend also sees the trace identity of the request it is executing, from
-`nixl::trace::currentIdentity()` while `prepXfer` and `postXfer` run: the agent opens a
-`nixl::trace::Scope` around both, and the pointer is null outside one, as in
-`prepMemView`, which has no request, or when an engine is called directly. It is one
-internal `nixl::trace::TraceIdentity` holding the trace `context`, the `requestId` and
-the `execution` number. The context's trace id and flags are the same at prep and at
-every post of that request, reposts included, and it is the zeroed, invalid context when
-tracing is off. For a sampled request each post also has a span id of its own, whose
-parent is the span id prep saw. It is valid only for the call: a plugin that needs the
-identity later, at completion or when building a notification, copies the value onto its
-own request handle at each post. A carrier never encodes it itself:
-`nixl::trace::addTraceTags()` appends a post's identity to a `nixlSerDes` message as the
-tags described below, and `getTraceTags()` reads a peer's back. `TraceIdentity` is
-internal like the sink, so only in-tree plugins can read it. Its request id is the same
-at prep and at every post, its execution number is 0 at prep, and both are 0, meaning
-none, when tracing is off.
+`nixl::trace::currentIdentity()` while `prepXfer` and `postXfer` run (see "Where a
+backend's trace state comes from"): the agent opens a `nixl::trace::Scope` around both
+while a tracer is active, and the pointer is null outside one, as in `prepMemView`,
+which has no request, or when an engine is called directly. It is one internal
+`nixl::trace::TraceIdentity` holding the trace `context`, the `requestId` and the
+`execution` number. The context's trace id and flags are the same at prep and at every
+post of that request, reposts included. For a sampled request each post also has a span
+id of its own, whose parent is the span id prep saw. It is valid only for the call: a
+plugin that needs the identity later, at completion or when building a notification,
+copies the value onto its own request handle at each post. A carrier never encodes it
+itself: `nixl::trace::addTraceTags()` appends a post's identity to a `nixlSerDes`
+message as the tags described below, and `getTraceTags()` reads a peer's back.
+`TraceIdentity` is internal like the sink, so only in-tree plugins can read it. Its
+request id is the same at prep and at every post, its execution number is 0 at prep, and
+both are 0, meaning none, when tracing is off.
 
 A plugin that records phases keeps a `nixlBackendPostTrace`, built at each post from its
 sink and the current identity, as `nixlBackendPostTrace{sink}`: it records only with a

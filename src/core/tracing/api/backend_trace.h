@@ -41,9 +41,20 @@ class nixlBackendTraceSink;
 
 namespace nixl::trace {
 
+/**
+ * @brief The sink of the backend being constructed: non-null only on the
+ * thread that runs createBackend, while it constructs the engine, and only
+ * when tracing is active. A backend keeps it from its constructor.
+ */
 [[nodiscard]] nixlBackendTraceSink *
 currentSink() noexcept;
 
+/**
+ * @brief The trace identity of the agent's call into this backend: non-null
+ * only on the calling thread, while prepXfer, postXfer or a genNotif given a
+ * context runs, and only when tracing is active. It is valid for that call; a
+ * backend that needs it later copies it.
+ */
 [[nodiscard]] const TraceIdentity *
 currentIdentity() noexcept;
 
