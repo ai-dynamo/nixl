@@ -136,7 +136,7 @@ public:
         int num_channels_per_sm;
         int hidden;
         int num_max_tokens_per_rank;
-        int num_experts, num_topk;
+        int num_experts_per_rank, num_topk;
         int64_t num_timeout_cycles;
 
         // Parameters
@@ -166,7 +166,7 @@ static void __instantiate_kernel() {{
                            args.num_channels_per_sm,
                            args.hidden,
                            args.num_max_tokens_per_rank,
-                           args.num_experts, args.num_topk,
+                           args.num_experts_per_rank, args.num_topk,
                            args.num_timeout_cycles);
     }
 
@@ -185,7 +185,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
                                            topk_idx_t* combined_topk_idx,
                                            const int& num_combined_tokens, const int& num_max_tokens_per_rank,
                                            const int& hidden,
-                                           const int& num_experts, const int& num_topk,
+                                           const int& num_experts_per_rank, const int& num_topk,
                                            const int64_t& num_timeout_cycles,
                                            void* buffer,
                                            void* bias_0, void* bias_1,
@@ -207,7 +207,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
         .num_channels_per_sm = num_channels_per_sm,
         .hidden = hidden,
         .num_max_tokens_per_rank = num_max_tokens_per_rank,
-        .num_experts = num_experts, .num_topk = num_topk,
+        .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk,
         .num_timeout_cycles = num_timeout_cycles,
         .combined_x = static_cast<nv_bfloat16*>(combined_x),
         .combined_topk_idx = combined_topk_idx,

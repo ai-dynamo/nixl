@@ -26,7 +26,7 @@ public:
         int num_max_scaleout_ranks, num_max_scaleup_ranks;
         int num_hidden_bytes, num_sf_packs;
         int num_max_tokens_per_rank;
-        int num_experts, num_topk, expert_alignment;
+        int num_experts_per_rank, num_topk, expert_alignment;
         int64_t num_timeout_cycles;
 
         // Parameters
@@ -62,7 +62,7 @@ static void __instantiate_kernel() {{
             args.num_max_scaleout_ranks, args.num_max_scaleup_ranks,
             args.num_hidden_bytes, args.num_sf_packs,
             args.num_max_tokens_per_rank,
-            args.num_experts, args.num_topk, args.expert_alignment,
+            args.num_experts_per_rank, args.num_topk, args.expert_alignment,
             args.num_timeout_cycles);
     }
 
@@ -87,8 +87,8 @@ static void __instantiate_kernel() {{
 constexpr int kNumNotifyWarps = 4;
 
 // Notify shared memory at the kernel's template maxima.
-static int get_num_notify_smem_bytes(const int& num_max_ranks, const int& num_experts) {
-    return layout::get_num_notify_smem_bytes(num_max_ranks, num_experts, kNumNotifyWarps * 32);
+static int get_num_notify_smem_bytes(const int& num_max_ranks, const int& num_max_expert_slots) {
+    return layout::get_num_notify_smem_bytes(num_max_ranks, num_max_expert_slots, kNumNotifyWarps * 32);
 }
 
 // Dispatch token layout with routing metadata
@@ -103,13 +103,13 @@ static layout::TokenLayout get_combine_token_layout(const int& hidden) {
 
 // Decide the number of channels per SM by shared memory consumption (both dispatch and combine must fit)
 static int get_num_channels_per_sm(const int& hidden, const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk,
-                                   const int& num_experts, const int& num_max_ranks,
+                                   const int& num_max_expert_slots, const int& num_max_ranks,
                                    const int& num_smem_bytes,
                                    const bool& prefer_overlap_with_compute) {
     const auto dispatch_token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk);
     const auto combine_token_layout = get_combine_token_layout(hidden);
     int num_channels_per_sm = std::min<int>(
-        (num_smem_bytes - get_num_notify_smem_bytes(num_max_ranks, num_experts)) / dispatch_token_layout.get_num_bytes<true>(),
+        (num_smem_bytes - get_num_notify_smem_bytes(num_max_ranks, num_max_expert_slots)) / dispatch_token_layout.get_num_bytes<true>(),
         32 - kNumNotifyWarps);
     num_channels_per_sm = std::min<int>(
         num_smem_bytes / combine_token_layout.get_num_bytes<true>(),
@@ -133,7 +133,7 @@ static void launch_dispatch(void* x, void* sf,
                             const int& num_tokens, const int& num_max_tokens_per_rank,
                             const int& num_hidden_bytes,
                             const int& num_sf_packs, const int& sf_token_stride, const int& sf_hidden_stride,
-                            const int& num_experts, const int& num_topk, const int& expert_alignment,
+                            const int& num_experts_per_rank, const int& num_topk, const int& expert_alignment,
                             void* buffer, void* send_buffer,
                             void* mapped_host_workspace,
                             const topology::EPTopology* topology,
@@ -153,7 +153,7 @@ static void launch_dispatch(void* x, void* sf,
         .num_max_scaleout_ranks = num_max_scaleout_ranks, .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
         .num_max_tokens_per_rank = num_max_tokens_per_rank,
-        .num_experts = num_experts, .num_topk = num_topk, .expert_alignment = expert_alignment,
+        .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk, .expert_alignment = expert_alignment,
         .num_timeout_cycles = num_timeout_cycles,
         .x = x, .sf = static_cast<sf_pack_t*>(sf), .topk_idx = topk_idx, .topk_weights = topk_weights,
         .copied_topk_idx = copied_topk_idx,
@@ -184,7 +184,7 @@ public:
         int num_max_scaleup_ranks;
         int num_hidden_bytes, num_sf_packs;
         int num_max_tokens_per_rank;
-        int num_experts, num_topk, expert_alignment;
+        int num_experts_per_rank, num_topk, expert_alignment;
 
         // Parameters
         void *buffer, *workspace;
@@ -217,7 +217,7 @@ static void __instantiate_kernel() {{
                            args.num_max_scaleup_ranks,
                            args.num_hidden_bytes, args.num_sf_packs,
                            args.num_max_tokens_per_rank,
-                           args.num_experts, args.num_topk, args.expert_alignment);
+                           args.num_experts_per_rank, args.num_topk, args.expert_alignment);
     }
 
     static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
@@ -246,7 +246,7 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
                                           const int& num_recv_tokens, const int& num_max_scaleup_ranks, const int& num_max_tokens_per_rank,
                                           const int& num_hidden_bytes,
                                           const int& num_sf_packs, const int& recv_sf_token_stride, const int& recv_sf_hidden_stride,
-                                          const int& num_experts, const int& num_topk, const int& expert_alignment,
+                                          const int& num_experts_per_rank, const int& num_topk, const int& expert_alignment,
                                           const topology::EPTopology* topology,
                                           const int& num_sms, const int& num_smem_bytes,
                                           const int& num_channels_per_sm,
@@ -266,7 +266,7 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
         .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
         .num_max_tokens_per_rank = num_max_tokens_per_rank,
-        .num_experts = num_experts, .num_topk = num_topk, .expert_alignment = expert_alignment,
+        .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk, .expert_alignment = expert_alignment,
         .buffer = buffer, .workspace = workspace,
         .psum_num_recv_tokens_per_scaleup_rank = psum_num_recv_tokens_per_scaleup_rank,
         .psum_num_recv_tokens_per_expert = psum_num_recv_tokens_per_expert,

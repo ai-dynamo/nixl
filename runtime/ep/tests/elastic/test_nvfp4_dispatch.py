@@ -32,7 +32,7 @@ def run(buffer, args):
     weights = torch.ones_like(topk, dtype=torch.float32)
     codes = torch.empty((n, args.hidden // 2), dtype=torch.uint8, device="cuda")
     scales = torch.empty((n, args.hidden // 16), dtype=torch.uint8, device="cuda")
-    common = dict(topk_idx=topk, topk_weights=weights, num_experts=args.num_experts)
+    common = dict(topk_idx=topk, topk_weights=weights)
 
     def fill(salt):
         for tensor, factor in ((codes, 17), (scales, 31)):
@@ -165,11 +165,13 @@ def run(buffer, args):
 
 
 def test_loop(local_rank, num_processes, args):
-    _, _, group = init_dist(local_rank, num_processes)
+    _, world, group = init_dist(local_rank, num_processes)
+    assert args.num_experts > 0 and args.num_experts % world == 0
     buffer = nixl_ep_v2.ElasticBuffer(
         group,
         num_max_tokens_per_rank=args.num_tokens,
         hidden=args.hidden,
+        num_experts_per_rank=args.num_experts // world,
         num_topk=args.num_topk,
         use_fp8_dispatch=args.fp8_capacity,
         prefer_overlap_with_compute=True,
@@ -187,7 +189,12 @@ if __name__ == "__main__":
     parser.add_argument("--num-tokens", type=int, default=16)
     parser.add_argument("--hidden", type=int, default=7168)
     parser.add_argument("--num-topk", type=int, default=8)
-    parser.add_argument("--num-experts", type=int, default=256)
+    parser.add_argument(
+        "--num-experts",
+        type=int,
+        default=256,
+        help="Total physical expert slots across the world",
+    )
     parser.add_argument(
         "--fp8-capacity", action=argparse.BooleanOptionalAction, default=True
     )

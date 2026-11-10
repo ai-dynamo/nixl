@@ -49,6 +49,8 @@ def graph_addresses(graph):
             handle.token_metadata_at_forward,
             handle.channel_linked_list,
             handle.psum_num_recv_tokens_per_scaleup_rank,
+            handle.psum_num_recv_tokens_per_expert,
+            handle.num_unaligned_recv_tokens_per_expert,
         )
     )
 

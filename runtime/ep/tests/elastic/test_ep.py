@@ -115,11 +115,9 @@ def test_dispatch_combine(
         args.hidden,
     )
     num_topk, num_experts = args.num_topk, args.num_experts
-    num_local_experts = num_experts // buffer.num_ranks
+    num_local_experts = buffer.num_experts_per_rank
     num_sms = (
-        buffer.get_theoretical_num_sms(num_experts, num_topk)
-        if args.num_sms == 0
-        else args.num_sms
+        buffer.get_theoretical_num_sms(num_topk) if args.num_sms == 0 else args.num_sms
     )
     dist_print(
         f"Config:\n"
@@ -247,7 +245,6 @@ def test_dispatch_combine(
             topk_weights=topk_weights,
             num_sms=num_sms,
             num_max_tokens_per_rank=num_max_tokens_per_rank,
-            num_experts=num_experts,
             expert_alignment=expert_alignment,
             async_with_compute_stream=async_with_compute_stream,
             allocate_on_comm_stream=allocate_on_comm_stream,
@@ -836,10 +833,12 @@ def add_test_dispatch_combine_arguments(parser: argparse.ArgumentParser) -> None
 @torch.inference_mode()
 def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     rank_idx, num_ranks, group = init_dist(local_rank, num_local_ranks, seed=args.seed)
+    assert args.num_experts > 0 and args.num_experts % num_ranks == 0
 
     def construct_elastic_buffer(use_fp8_dispatch):
         return nixl_ep_v2.ElasticBuffer(
             group,
+            num_experts_per_rank=args.num_experts // num_ranks,
             num_max_tokens_per_rank=args.num_tokens,
             hidden=args.hidden,
             use_fp8_dispatch=use_fp8_dispatch,
@@ -932,7 +931,10 @@ if __name__ == "__main__":
         "--num-topk", type=int, default=6, help="Number of top-k experts"
     )
     parser.add_argument(
-        "--num-experts", type=int, default=256, help="Number of experts"
+        "--num-experts",
+        type=int,
+        default=256,
+        help="Total physical expert slots across the world",
     )
 
     # Scenario settings

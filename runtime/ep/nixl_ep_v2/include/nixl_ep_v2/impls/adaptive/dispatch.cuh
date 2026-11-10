@@ -25,7 +25,7 @@ template <bool kDoCPUSync,
           int kNumMaxScaleoutRanks, int kNumMaxScaleupRanks,
           int kNumHiddenBytes, int kNumSFPacks,
           int kNumMaxTokensPerRank,
-          int kNumExperts, int kNumTopk, int kExpertAlignment,
+          int kNumExpertsPerRank, int kNumTopk, int kExpertAlignment,
           int64_t kNumTimeoutCycles,
           int kNumScaleupRanksPerLane = math::constexpr_ceil_div(kNumMaxScaleupRanks, 32),
           int kNumScaleoutWarps = kNumChannelsPerSM,
@@ -79,11 +79,11 @@ adaptive_dispatch_impl(
     const int num_active_sms = topo.num_active_sms;
     const int num_ranks = num_scaleout_ranks * num_scaleup_ranks;
     const int num_active_scaleup_ranks = topo.num_active_scaleup_ranks();
-    const int num_experts_per_rank = kNumExperts / num_ranks;
-    const int num_experts_per_scaleout = kNumExperts / num_scaleout_ranks;
+    const int num_experts_per_rank = kNumExpertsPerRank;
+    const int num_experts = num_ranks * kNumExpertsPerRank;
+    const int num_experts_per_scaleout = num_scaleup_ranks * kNumExpertsPerRank;
     const int num_channels = kNumChannelsPerSM * num_active_sms;
     const int num_max_tokens_per_channel = math::ceil_div(kNumMaxTokensPerRank, num_channels);
-    EP_DEVICE_ASSERT(kNumExperts % num_ranks == 0 and "The expert count must divide by the extent product `num_scaleout_ranks * num_scaleup_ranks`");
 
     // Direct mode (MNNVL): one flat NVLink team = exactly one active NVLink domain, whatever its index (the extent
     // `num_scaleout_ranks` may exceed 1; ranks, experts and tokens keep their global numbering, NVLink peers and
@@ -110,7 +110,7 @@ adaptive_dispatch_impl(
     // The kernel uses a fixed space of dynamic shared memory (no static shared memory)
     // The notify region is sized for the compile-time maxima
     extern __shared__ __align__(ptx::kNumTMAAlignBytes) int8_t smem[];
-    constexpr int kNumSmemBytesForNotify = layout::get_num_notify_smem_bytes(kNumMaxRanks, kNumExperts, kNumNotifyThreads);
+    constexpr int kNumSmemBytesForNotify = layout::get_num_notify_smem_bytes(kNumMaxRanks, kNumMaxRanks * kNumExpertsPerRank, kNumNotifyThreads);
     EP_STATIC_ASSERT(kNumSmemBytesForNotify % ptx::kNumTMAAlignBytes == 0, "Invalid TMA alignment");
 
     // Named barrier indices
@@ -221,7 +221,7 @@ adaptive_dispatch_impl(
         EP_PROFILE_STAMP(ctx.local_base, DispatchCountLocal);
 
         // Do full-grid reduction
-        for (int i = thread_idx; i < num_ranks + kNumExperts; i += kNumNotifyThreads) {
+        for (int i = thread_idx; i < num_ranks + num_experts; i += kNumNotifyThreads) {
             const int64_t counter = (1ll << 32ll) | rank_expert_count[i];
             ptx::red_add(workspace_layout.get_notify_reduction_workspace_ptr() + i, counter);
         }
@@ -230,7 +230,7 @@ adaptive_dispatch_impl(
         if (sm_idx == 0) {
             // Reduce all SM's count
             // Wait all active SMs' arrival
-            for (int i = thread_idx; i < num_ranks + kNumExperts; i += kNumNotifyThreads) {
+            for (int i = thread_idx; i < num_ranks + num_experts; i += kNumNotifyThreads) {
                 comm::timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
                     const auto status = ptx::ld_volatile<int64_t>(workspace_layout.get_notify_reduction_workspace_ptr() + i);
                     if ((status >> 32) == num_active_sms) {
@@ -286,7 +286,7 @@ adaptive_dispatch_impl(
                 __syncwarp();
 
                 // Issue scaleup expert count writes to peers (per-element NVLink stores)
-                for (int i = thread_idx; i < kNumExperts; i += kNumNotifyThreads) {
+                for (int i = thread_idx; i < num_experts; i += kNumNotifyThreads) {
                     const auto dst_rank = i / num_experts_per_rank;
                     if (not topology::is_rank_active<kNumMaxScaleupRanks>(topo, dst_rank))
                         continue;
@@ -300,9 +300,9 @@ adaptive_dispatch_impl(
                 ptx::named_barrier<kNumNotifyThreads>(kNotifyBarrierIndex);
 
                 // Wait for rank and expert count: `num_scaleup_ranks` rank slots (writer = position `i`), then the
-                // `kNumExperts` expert slots (writer = the rank index owning expert `i - num_scaleup_ranks`)
+                // `num_experts` expert slots (writer = the rank index owning expert `i - num_scaleup_ranks`)
                 const auto start_clock = clock64();
-                for (int i = thread_idx; i < num_scaleup_ranks + kNumExperts; i += kNumNotifyThreads) {
+                for (int i = thread_idx; i < num_scaleup_ranks + num_experts; i += kNumNotifyThreads) {
                     const bool is_rank_slot = i < num_scaleup_ranks;
                     const int expert_slot = i - num_scaleup_ranks;
                     const bool active = is_rank_slot ? topology::is_scaleup_active<kNumMaxScaleupRanks>(topo, i)
