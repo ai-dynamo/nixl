@@ -1,105 +1,257 @@
-# NIXL EP API shell
+# NIXL EP v2
 
-The public exports, method signatures, defaults and argument annotations follow
-the production API. Construction requires `world_rank`,
-`max_num_scaleout_ranks`, `max_num_scaleup_ranks`, positive
-`num_max_tokens_per_rank` and `hidden`, and `num_experts_per_rank`; it does not
-discover a group or connect peers. The constructor has no `num_bytes` or
-`num_nixl_channels` overrides. Public metadata getters and `publish` are absent;
-`connect_ranks` takes a Store instead of manual metadata. Production discovers
-physical topology and maps caller-assigned rank IDs internally;
-`set_active_ranks` validates and activates membership in one call, and
-`disconnect_ranks` excludes and retires peers in one call.
+This fork adapts DeepEP V2's BF16/FP8 dispatch and BF16 combine to a fixed
+launch grid. Direct and hybrid modes share one kernel family; kernels read
+the mode and active block count from a device topology descriptor. The
+NIXL/UCX transport supports planned membership changes between
+completed dispatch/combine pairs, including replay of retained CUDA graphs.
 
-`get_buffer_size_hint` requires both maximum-world dimensions and queries size
-locally without a process group or Store. The constructor and size hint require
-`num_topk` from 1 through 32 for buffer sizing; dispatch takes its actual
-routing width from `topk_idx.shape[1]`.
+## Quick start
 
-Method docstrings describe the production contracts, not operations executed by
-this shell.
+### Requirements
 
-`world_rank` is a caller-assigned ID in
-`[0, max_num_scaleout_ranks * max_num_scaleup_ranks)`. Its numeric value does
-not encode a physical domain or a position within one. The maximum dimensions
-bound capacity; they do not impose a numbering scheme on application ranks.
+- Hopper (SM90) or newer GPUs with the required TMA instructions.
+- PyTorch 2.14 or newer, with a matching Python and CUDA installation.
+- CUDA 13.0 or newer, supporting the target GPU and the selected NIXL/UCX builds.
+- NIXL and UCX builds with the GPU device API (`nixlAtomicAdd` and UCX
+  device channels), including CUDA IPC support.
+- RDMA development headers on JIT hosts, including `infiniband/mlx5dv.h`
+  from rdma-core or OFED, for UCX's GPU RDMA device implementation.
+- `nvidia-ml-py>=13.580.65` (installed with the package).
+- NVLink within scale-up domains and RDMA between domains.
 
-`num_experts_per_rank` is a required positive integer specifying the fixed
-physical slot capacity per GPU; slots may remain unused. Choose it for the
-largest per-GPU expert placement across all intended topologies, including
-shrink, rather than just the initial placement.
+### Installation
 
-Public expert IDs use `world_rank * num_experts_per_rank + local_expert_idx`,
-where `0 <= local_expert_idx < num_experts_per_rank`. The ID range covers the
-declared maximum world:
-`[0, max_num_scaleout_ranks * max_num_scaleup_ranks * num_experts_per_rank)`.
-IDs stay fixed across membership and extent changes, including graph replay.
-`-1` means no selection; production dispatch drops selections owned by inactive
-ranks. The caller owns logical expert placement and routing weights, without
-renumbering IDs solely because an extent changes. Internal source metadata
-continues to use committed-extent rank encoding. The shell does not read or
-route these IDs.
-
-`num_launch_sms` selects the fixed main dispatch/combine block count for the
-buffer's lifetime: an even integer from 2 through 64, exposed as a read-only
-property and matching across peers. Dispatch, combine and captured graph replays
-always use this count. Membership and direct/hybrid mode may change between
-completed dispatch/combine pairs while reusing the same graph. `dispatch` and
-`set_active_ranks` have no SM-count argument, and there is no runtime SM setter
-or estimator. Handles do not record an SM count.
-
-## Install
-
-Use an isolated Python environment with PyTorch installed, without the NIXL core
-or backend wheels. The standalone distribution provides the namespace
-`nixl.runtime.ep` and does not build the rest of this repository:
+Build from the NIXL repository root with NIXL EP enabled:
 
 ```bash
-python -m pip install ./runtime/ep
+meson setup build -Dbuild_nixl_ep=true -Ducx_path=/path/to/ucx/install
+meson compile -C build
+meson install -C build
 ```
 
-An installed NIXL core package owns the same `nixl` namespace and may load its
-native backend first. Keep the shell in its own environment.
+`nixl_cuda_arch_list` selects extension targets (for example `100` for
+B200/GB200); communication kernels are JIT-compiled for the running GPU.
+The build uses fmt headers from the system or the pinned Meson fallback.
+`build_nixl_ep` enables both EP implementations and defaults to false.
+This runtime requires CUDA 13; manylinux wheel builds default EP off on CUDA 12.
+With EP disabled, its build prerequisites are not required. The wheel builder
+accepts `--build-nixl-ep --torch-versions 2.14` and merges the extensions produced
+for each Torch version. The container builder enables EP by default on CUDA 13.
 
-## What the shell models
+The public import is `nixl.runtime.ep`, routed through the selected NIXL CUDA
+backend wheel. For a Meson installation, put its Python site-packages and
+`src/bindings/python/nixl-meta` on `PYTHONPATH`; installed wheels handle this.
+NIXL's wheel builder includes the matching Torch-versioned extension and
+NIXL/UCX device headers. Explicit header overrides remain available through
+`NIXL_EP_NIXL_ROOT_DIR` and `NIXL_EP_UCX_ROOT_DIR` and must match the loaded libraries.
 
-- Configuration, fixed expert slots per rank, connected peers, active
-  membership, the fixed SM count and explicit destruction are local Python
-  state. No other rank participates. Construction starts with only `world_rank`
-  active and no connected peers. Dispatch/combine work in this initial
-  single-rank state. To add peers, connect them explicitly, then activate them
-  with `set_active_ranks`.
-- Tensors created by the shell use the `meta` device and have no values or data
-  storage. With `do_handle_copy=False`, `handle.topk_idx` retains the original
-  input tensor, including its device and storage. BF16 and quantized input
-  forms, optional weights and expanded return structure can be exercised;
-  routing, reductions, alignment, layout strides and numerical correctness are
-  not simulated. Input tensors and cumulative counters are never read or
-  modified.
-- Events are inert. Waiting performs no synchronization. Registered hooks are
-  discarded when a wait is requested, without invoking caller code. The
-  communication stream is an opaque placeholder, not a usable CUDA stream.
-  Explicit event release also clears `extra_tensors`.
-- `num_bytes` is `0`, `get_buffer_size_hint()` returns `0`, and `read_profile()`
-  returns an empty mapping. These are placeholders, not sizing or performance
-  results.
-- Peer connections and retirement are local state. `connect_ranks` ignores
-  already-connected peers and requires a Store only for new peers, passed
-  directly or at construction, but never accesses it. On an active local rank,
-  `disconnect_ranks` also removes requested peers from membership. The fixed SM
-  count stays unchanged. On an inactive local rank, retirement preserves its
-  active membership, including when all peers in that world are retired. The
-  entire request is validated before either state changes; invalid requests
-  leave both membership and connections unchanged, and an empty request is a
-  no-op. The caller must drain the old world and complete a host rendezvous
-  before retiring peers; the call does not coordinate ranks. A disconnected peer
-  can reconnect after `disconnect_ranks` returns. No data is exchanged.
-  `init_jit()` is a no-op, and `topk_idx_t` is fixed to `torch.int64`.
+Runtime settings use `NIXL_EP_*`; compiler macros retain `EP_*`. Set
+`NIXL_EP_NUM_TOPK_IDX_BITS=32` or `64` when building to choose the routing-index
+width. The JIT uses the extension's compiled width; this setting has no
+effect at runtime.
 
-The shell does not discover hardware, infer direct/hybrid mode, or validate
-physical topology shapes from rank IDs. Production validates those shapes using
-its discovered internal mapping. The shell does not validate other
-execution-dependent constraints, CUDA graph or stream behavior, memory
-ownership, timeouts, transport completion or GPU correctness. The existing core
-NIXL and EP example sources remain in this repository; none is loaded by the
-standalone shell.
+Construction defaults `UCX_UD_LINGER_TIMEOUT` to `1s` to avoid matching a
+replacement process to a stale wire-up endpoint. This process-wide default
+affects subsequent UCX initialization; set the variable before construction
+to override it.
+
+### Dispatch and combine
+
+Given an initialized process group `group` and CUDA tensors `x` (BF16,
+`[tokens, hidden]`), `topk_idx` (`nixl.runtime.ep.topk_idx_t`, `[tokens, topk]`) and
+optional `topk_weights` (float32, the same shape):
+
+```python
+from nixl.runtime.ep import ElasticBuffer
+
+buffer = ElasticBuffer(
+    group,
+    num_max_tokens_per_rank=4096,
+    hidden=7168,
+    num_topk=8,
+    explicitly_destroy=True,
+)
+recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(
+    x, topk_idx, num_experts=256, topk_weights=topk_weights,
+)
+# Replace recv_x with the local experts' BF16 output before combining.
+combined_x, _ = buffer.combine(recv_x, handle)
+buffer.destroy()
+```
+
+Construction is collective over the constructing cohort; communication and
+destruction are collective over the committed active world.
+When using `async_with_compute_stream=True`, wait on the returned event
+before consuming the result. Deterministic sorting is supported only in eager
+execution. Use `do_cpu_sync=False` for graph capture;
+receive tensors then have maximum capacity, with actual counts in the
+handle. See the `ElasticBuffer` method docstrings for expanded layouts and
+FP8 scale-factor inputs.
+
+## Topology and graph replay
+
+The main dispatch/combine launch grid defaults to 24 blocks.
+`NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS` selects an even grid size from 2 through 64
+before construction. Each launch reads the active block count from the
+topology descriptor; surplus blocks return. Keep that count unchanged
+throughout a dispatch/combine pair, including its epilogues. Topology
+changes are collective, between completed pairs, with updates and replay
+ordered on the same stream or through explicit event dependencies.
+
+`dispatch(num_sms=0)` remembers its expert count and top-k for automatic
+SM selection. Subsequent `stage_topology` / `set_active_ranks` calls with
+the default `num_active_sms=0` recompute the estimate for the proposed
+membership using cached bandwidth information. Commit publishes the new
+topology and count together. An explicit dispatch or topology SM count
+pins manual selection until a successful `dispatch(num_sms=0)` enables
+automatic selection again. Before the first automatic dispatch, topology
+updates retain the existing count.
+
+The selection policy belongs to the buffer: its most recent successful
+dispatch selects automatic or manual mode for all graphs using it.
+Participants must agree on that policy and its estimator inputs; joining
+ranks establish their policy through their normal dispatch warm-up/capture.
+Captured non-deterministic dispatch/combine graphs use the updated active count
+without recapture. Their backing allocations cover the full launch grid;
+Python handle fields and tensor shapes still describe capture-time metadata.
+The estimator runs on the host during topology staging, never during graph
+replay; no profiling or correctness checks are added to communication.
+
+Dispatch/combine require at least two active GPUs, checked before launch
+and again inside the kernels for graph replay. Smaller cohorts may still
+bootstrap or tear down. If `cumulative_local_expert_recv_stats` is supplied
+during capture, allocate at least `num_experts // 2` entries; its address
+stays fixed as the local-expert count changes across shrink and expansion.
+
+`connect_ranks` / `disconnect_ranks` stage peer views; `stage_topology`
+stages membership. `commit_topology` activates both. The convenience method
+`set_active_ranks` stages and commits membership immediately. Exclude
+departing peers in a committed topology before disconnecting them.
+Size the buffer for its maximum world at construction. Active ranks form a
+product of active domains and positions within those domains. Use one CUDA
+device per process. Serialize control operations on each buffer and select
+that device in any background setup thread. Before membership or
+transport-view changes, every old-world rank must finish
+queued CUDA work, call `buffer.barrier(with_cpu_sync=True)` to drain the
+transport, and complete a host rendezvous before any peer departs. Joining
+cohorts use an explicit Store and fresh `bootstrap_id`; see `publish` and
+`connect_ranks` for metadata exchange. Mid-launch rank failure and transport
+recovery are unsupported.
+
+For process replacement, use a fresh shared publication `key_prefix`, or
+rendezvous after every target's current process has completed `publish`
+before calling `connect_ranks`. Store keys survive departing processes;
+`bootstrap_id` isolates cohort construction, not publication keys.
+
+Invalid inputs and incompatible mappings are refused before activation.
+Failures after transport mutation terminate the process; restart it instead
+of attempting recovery.
+
+## API changes from upstream V2
+
+- Import `nixl.runtime.ep`. The component has no separate `__version__`;
+  its release version is the installed NIXL distribution version.
+  Root exports are `ElasticBuffer`, `EPHandle`, `EventHandle`, `EventOverlap`,
+  `topk_idx_t` and `get_logical_domain_size`; wildcard imports exclude
+  initialization helpers.
+
+- This fork exposes V2 dispatch/combine only. Legacy `Buffer`/`Config`,
+  NVSHMEM, Engram, PP, AGRS and CPU-segment APIs are removed.
+- `dispatch`'s `num_experts` is no longer optional and appears immediately
+  after `topk_idx`. Upstream already required it for a fresh dispatch; the
+  omitted value came from a cached handle. The cached `dispatch(handle=...)`
+  path is removed, along with `allow_hybrid_mode`, the buffer's `group` and
+  alignment exports.
+- `combine` takes no top-k weights and returns `(combined_x, event)`.
+  Upstream used the optional weight return for routing-weight gradients in
+  dispatch backward; this fork omits that path. It is independent of cached
+  dispatch, which upstream used for combine backward.
+- `combine(num_sms=...)` is removed: dispatch and combine use the topology
+  descriptor's active block count throughout each pair, so combine has no
+  independent SM setting. Set the count through dispatch or topology updates
+  between completed pairs. Communicator, QP and service-level arguments are removed.
+- Constructor and size-hint `use_fp8_dispatch=True` reserve smaller FP8
+  dispatch capacity; peers must use matching capacity settings. These buffers
+  reject BF16 dispatch. Default BF16-capacity buffers accept either wire
+  format, selected by dispatch input tensors.
+- Committed masks/extents and connected world ranks replace static domain
+  attributes/accessors. `get_physical_domain_size` and the
+  `barrier(sequential=)` argument are removed.
+- `get_theoretical_num_sms` drops the zero-only `num_scaleout_topk` argument;
+  its third positional argument is now `rdma_gbs`. It returns the raw estimate,
+  before the launch-grid limit. `EPHandle.deterministic_sort` uses the handle's
+  channel list instead of accepting a separate one. The constant-true private
+  `_C.is_sm90_compiled` query is removed.
+
+## Automatic combine optimization
+
+Hybrid combine across multiple active domains automatically uses incremental
+completion for destinations with at most 16 original input tokens, letting
+the reduction epilogue wait for each token's contributions. Larger batches
+and single-domain hybrid mode use final channel completion; direct mode is
+unchanged. Selection uses actual input counts, independently
+for each rank, rather than buffer capacity. Traversal remains forward.
+
+The threshold follows BF16 measurements on a 2×8 GB200 topology: incremental
+completion materially improved batches 1 and 16, while larger batches had
+small gains or regressions. Other configurations have not been performance
+validated.
+
+## Tests
+
+Run tests from `runtime/ep` after installing the package.
+The existing tests are `tests/elastic/test_ep.py` and
+`tests/elastic/test_barrier.py`. Their launcher uses
+`nixl_ep_v2/utils/envs.py:init_dist`; configure it for your cluster before
+running distributed tests. Run either script with `--help` for its options.
+
+## Phase profiling
+
+Set `NIXL_EP_ADAPTIVE_PROFILE=1` before importing NIXL EP v2 to record diagnostic
+timestamps. Dispatch and combine keep their existing arguments. Profiling
+adds one buffer-owned timestamp table and a descriptor after the workspace
+controls; existing control offsets and kernel signatures are unchanged.
+Without the flag, timestamp recording is compiled out.
+
+`buffer.read_profile()` returns named CPU tensors indexed by `[block, warp]`.
+Each nonzero value is a device global-timer timestamp in nanoseconds; zero
+means that warp did not reach the phase. The call synchronizes the device,
+copies the samples, and completes their reset before returning. Discard
+warm-up samples with one read, then read after each isolated pair or graph
+replay. The method cannot run inside graph capture. Resetting between
+replays also removes samples from blocks or roles that become inactive.
+
+For eager and graph-replay profiles with the elastic test's correctness checks:
+
+```bash
+NIXL_EP_ADAPTIVE_PROFILE=1 python tests/elastic/test_adaptive_elastic.py --profile --num-tokens 16
+```
+
+`PROFILE` reports the first and last observed phase boundaries relative to
+the earliest entry of that operation, in microseconds, plus the number of
+writers. These are samples from different warps, not additive phase durations:
+
+- Entry and barrier markers sample each participating warp. Dispatch count
+  reduction/exchange markers sample block 0's notify warps; prefix markers
+  sample its two prefix-sum warps.
+- `copy_ready` and `reduce_ready` follow the PDL dependency wait. Incremental
+  combine can still wait for remote contributions inside the reduction body.
+- `*_submitted` markers mean the role issued its work; they do not wait for
+  asynchronous stores to complete. `combine.main_end` likewise does not imply
+  remote readiness when incremental completion is active.
+
+No per-token counters, profiling atomics or extra kernel barriers are added.
+Instrumentation still changes execution, so use profiling to locate work and
+waits, and use the uninstrumented `PERF` measurements for performance claims.
+
+## JIT cache
+
+The JIT cache defaults to `~/.nixl_ep_v2`; `NIXL_EP_JIT_CACHE_DIR` selects another
+directory. NIXL and UCX dependency headers are not fingerprinted by the cache key.
+
+When changing NIXL or UCX builds between runs, including build configuration or
+device-header changes, clear the existing cache or set `NIXL_EP_JIT_CACHE_DIR` to a
+directory dedicated to the new dependency builds before starting the process.
+This requirement also applies to persistent or shared caches across container
+images.

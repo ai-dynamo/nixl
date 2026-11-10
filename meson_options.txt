@@ -49,5 +49,5 @@ option('trace_backends', type: 'string', value: 'nvtx', description: 'Comma-sepa
 # Tests
 option('build_tests', type: 'boolean', value: true, description: 'Build all tests')
 option('build_examples', type: 'boolean', value: true, description: 'Build all examples')
-option('build_nixl_ep', type: 'boolean', value: false, description: 'Build the NIXL EP example (requires sm_90 or newer) and install the experimental topology-aware API shell')
+option('build_nixl_ep', type: 'boolean', value: false, description: 'Build NIXL EP, including the experimental topology-aware runtime (requires sm_90 or newer; runtime requires CUDA 13)')
 option('test_all_plugins', type: 'boolean', value: false, description: 'Testing all plugins in addition to the mocks..')
