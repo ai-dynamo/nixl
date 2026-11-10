@@ -676,11 +676,11 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     const nixlTime::us_t submitted_at = int_handle->trace.now();
-    ret = int_handle->hasPendingRequests() ? NIXL_IN_PROG : int_handle->status();
     int_handle->trace.recordAt(nixl_trace_phase_t::WIRE_SUBMITTED, submitted_at);
     if (int_handle->wireCompletedAtOnce) {
         int_handle->recordWireCompleted(submitted_at);
     }
+    ret = int_handle->hasPendingRequests() ? NIXL_IN_PROG : int_handle->status();
     if (int_handle->trace.active()) {
         nixl::ucx::recordDeferredTraces();
     }
