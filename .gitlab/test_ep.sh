@@ -135,20 +135,16 @@ echo "==== Running vLLM Elastic EP test ===="
 
     (
         cd "${VLLM_ELASTIC_TEST_DIR}"
-        # Disable the FlashInfer autotuner: with vLLM v0.33 + FlashInfer 0.7 it
-        # fails during kernel warmup with "Process group ... is not initialized
-        # in the world group map".
-        TEST_FILE=tests/distributed/test_elastic_ep.py
-        trap 'git checkout -- "${TEST_FILE}"' EXIT
-        sed -i 's|^        "--enable-elastic-ep",$|&\n        "--no-enable-flashinfer-autotune",|' "${TEST_FILE}"
-        grep -q -- '--no-enable-flashinfer-autotune' "${TEST_FILE}"
+        # TODO: drop VLLM_FLASHINFER_AUTOTUNE_SKIP_OPS once VLLM_REF includes
+        # the upstream fix for FlashInfer autotuning on Elastic EP process groups.
+        VLLM_FLASHINFER_AUTOTUNE_SKIP_OPS=trtllm_batch_decode_mla \
         timeout 4500 "${VLLM_PYTHON}" -m pytest \
             "tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling[cuda_graphs_heavy_nixl_ep]" \
-            -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
+            -v -s --tb=short --color=no 2>&1 | tee "${VLLM_LOG}"
     )
 
-    if grep -Eiq '(^|[[:space:]])[0-9]+ skipped|SKIPPED' "${VLLM_LOG}"; then
-        echo "ERROR: vLLM Elastic EP test was skipped" >&2
+    if ! grep -Eq '=+ 1 passed(, [0-9]+ warnings?)? in [0-9.]+s' "${VLLM_LOG}"; then
+        echo "ERROR: vLLM Elastic EP test did not pass" >&2
         exit 1
     fi
 
