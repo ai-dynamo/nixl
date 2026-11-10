@@ -140,11 +140,11 @@ echo "==== Running vLLM Elastic EP test ===="
         VLLM_FLASHINFER_AUTOTUNE_SKIP_OPS=trtllm_batch_decode_mla \
         timeout 4500 "${VLLM_PYTHON}" -m pytest \
             "tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling[cuda_graphs_heavy_nixl_ep]" \
-            -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
+            -v -s --tb=short --color=no 2>&1 | tee "${VLLM_LOG}"
     )
 
-    if grep -Eq '(^|[[:space:]])[0-9]+ skipped([,[:space:]]|$)' "${VLLM_LOG}"; then
-        echo "ERROR: vLLM Elastic EP test was skipped" >&2
+    if ! grep -Eq '=+ 1 passed(, [0-9]+ warnings?)? in [0-9.]+s' "${VLLM_LOG}"; then
+        echo "ERROR: vLLM Elastic EP test did not pass" >&2
         exit 1
     fi
 
