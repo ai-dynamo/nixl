@@ -18,10 +18,15 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <memory>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 extern "C" {
 #include <ucs/config/global_opts.h>
@@ -53,6 +58,18 @@ namespace nixl::ucx {
 
 void
 config::modify(std::string_view key, std::string_view value) const {
+    const auto it = initialValues_.find(std::string(key));
+    if (it == initialValues_.end()) {
+        modifyUnlessInEnv(key, value);
+    } else if (!it->second.isDefault) {
+        NIXL_DEBUG << "UCX config already set: UCX_" << key << "=" << it->second.value;
+    } else {
+        modifyAlways(key, value);
+    }
+}
+
+void
+config::modifyUnlessInEnv(std::string_view key, std::string_view value) const {
     const auto ucx_key = "UCX_" + std::string(key);
     const auto env_val = nixl::config::internal::getenvOptional(ucx_key);
 
@@ -77,6 +94,18 @@ config::modifyAlways(std::string_view key, std::string_view value) const {
 }
 
 void
+config::modifyIfEqual(std::string_view key,
+                      std::string_view expected,
+                      std::string_view value) const {
+    const auto it = initialValues_.find(std::string(key));
+    if ((it != initialValues_.end()) && (it->second.value != expected)) {
+        NIXL_DEBUG << "UCX config already set: UCX_" << key << "=" << it->second.value;
+    } else {
+        modify(key, value);
+    }
+}
+
+void
 config::validateTlsCudaSupport() const {
     const auto tls = nixl::config::getValueOptional<std::string>("UCX_TLS");
     if (nixl::hwInfo::instance().numNvidiaGpus == 0 || !tls || tlsEnablesCudaSupport(*tls)) {
@@ -89,6 +118,13 @@ config::validateTlsCudaSupport() const {
         "basic GPU support, or cuda to also include NVLink support.";
     NIXL_ERROR << error;
     throw std::runtime_error(error);
+}
+
+bool
+config::dumpsConfigFileValues() noexcept {
+    unsigned major_version, minor_version, release_number;
+    ucp_get_version(&major_version, &minor_version, &release_number);
+    return std::tuple(major_version, minor_version, release_number) >= std::tuple(1U, 23U, 3U);
 }
 
 ucp_config_t *
@@ -113,5 +149,47 @@ config::readUcpConfig() {
                                  std::string(ucs_status_string(status)));
     }
     return config;
+}
+
+config::dumped_values_t
+config::dumpValues(const ucp_config_t *config) {
+    char *buf = nullptr;
+    size_t size = 0;
+    FILE *stream = open_memstream(&buf, &size);
+    if (stream == nullptr) {
+        NIXL_PDEBUG << "Failed to open a memory stream for the UCX config";
+        return {};
+    }
+
+    ucp_config_print(config,
+                     stream,
+                     nullptr,
+                     static_cast<ucs_config_print_flags_t>(UCS_CONFIG_PRINT_CONFIG |
+                                                           UCS_CONFIG_PRINT_COMMENT_DEFAULT));
+    fclose(stream);
+    const std::unique_ptr<char, decltype(&free)> buf_guard(buf, &free);
+
+    // The lines are "UCX_<key>=<value>", commented out by "# " for a default value
+    constexpr std::string_view default_prefix = "# ";
+    constexpr std::string_view ucx_prefix = "UCX_";
+    dumped_values_t values;
+    std::istringstream dump(std::string(buf, size));
+    for (std::string line; std::getline(dump, line);) {
+        std::string_view entry = line;
+        const bool is_default = entry.starts_with(default_prefix);
+        if (is_default) {
+            entry.remove_prefix(default_prefix.size());
+        }
+
+        const auto pos = entry.find('=');
+        if (!entry.starts_with(ucx_prefix) || (pos == std::string_view::npos)) {
+            continue;
+        }
+
+        values.try_emplace(std::string(entry.substr(ucx_prefix.size(), pos - ucx_prefix.size())),
+                           dumpedValue{std::string(entry.substr(pos + 1)), is_default});
+    }
+
+    return values;
 }
 } // namespace nixl::ucx
