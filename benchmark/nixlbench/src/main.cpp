@@ -130,7 +130,7 @@ static int processBatchSizes(xferBenchWorker &worker,
             worker.exchangeIOV(local_trans_lists, block_size);
             worker.poll(block_size);
 
-            if (!xferBenchUtils::validateTransfer(false, local_trans_lists, local_trans_lists)) {
+            if (!worker.validateTransfer(false, local_trans_lists, local_trans_lists)) {
                 return EXIT_FAILURE;
             }
             if (IS_PAIRWISE_AND_SG()) {
@@ -147,7 +147,7 @@ static int processBatchSizes(xferBenchWorker &worker,
                 return 1;
             }
 
-            if (!xferBenchUtils::validateTransfer(true, local_trans_lists, remote_trans_lists)) {
+            if (!worker.validateTransfer(true, local_trans_lists, remote_trans_lists)) {
                 return EXIT_FAILURE;
             }
 

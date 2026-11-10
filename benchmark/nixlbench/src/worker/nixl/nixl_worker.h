@@ -51,6 +51,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<GusliDeviceConfig> gusli_devices;
         std::string remote_agent_name;
         std::optional<xferBenchIOV> completion_counter_iov;
+        std::string wqs_run_prefix_;
+        uint64_t next_wqs_object_ = 0;
 
     public:
         explicit xferBenchNixlWorker(const std::vector<std::string> &devices);
@@ -76,7 +78,16 @@ class xferBenchNixlWorker: public xferBenchWorker {
                  const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
 
+        bool
+        validateTransfer(bool is_initiator,
+                         std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                         std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+
     private:
+        nixl_status_t
+        transferObjects(nixl_xfer_op_t operation,
+                        const std::vector<xferBenchIOV> &local,
+                        const std::vector<xferBenchIOV> &remote);
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
         std::optional<xferBenchIOV>
