@@ -47,6 +47,11 @@ inline constexpr std::string_view nixl_ucx_vram_memtype_hint_param_name = "ucx_v
 // field only from UCX 1.22
 inline constexpr unsigned ucp_version_mem_type_rdma = UCP_VERSION(1, 22);
 
+// Failover error handling is the default from UCX 1.24.
+#ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
+inline constexpr unsigned ucp_version_err_handling_failover = UCP_VERSION(1, 24);
+#endif
+
 using nixlUcxReq = void *;
 
 class nixlUcxMem;
@@ -300,6 +305,10 @@ operator<<(std::ostream &os, const nixlUcxWorker &worker);
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options();
+
+// peer, or failover when this UCX has the enumerator and is new enough.
+[[nodiscard]] ucp_err_handling_mode_t
+defaultErrHandlingMode() noexcept;
 
 [[nodiscard]] std::string_view
 ucx_err_mode_to_string(ucp_err_handling_mode_t t);
