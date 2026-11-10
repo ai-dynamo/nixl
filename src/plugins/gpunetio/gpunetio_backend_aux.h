@@ -147,8 +147,6 @@ struct docaSlotDesc {
     doca_gpu_dev_verbs_qp *qp_notif;
     struct docaQpProgress *qp_progress;
     uint32_t wait_completion_mask;
-    uint64_t *peer_write_completed;
-    uint64_t write_ticket;
     uint32_t posting_ctas_done;
     uint8_t has_two_sge;
     // Keep optional fields last so one-SGE requests need not publish them.
@@ -272,13 +270,6 @@ public:
     ~nixlDocaPublicMetadata() {}
 };
 
-struct nixlDocaGpuCounterDeleter {
-    doca_gpu *gpu = nullptr;
-
-    void
-    operator()(uint64_t *counter) const;
-};
-
 struct nixlDocaRdmaQp {
     std::unique_ptr<nixl::doca::verbs::qp> qp_data;
     uint32_t qpn_data;
@@ -295,9 +286,6 @@ struct nixlDocaRdmaQp {
     std::vector<uint32_t> qpn_write;
     std::vector<uint32_t> rqpn_write;
     std::vector<bool> writeProgrammed;
-    std::unique_ptr<uint64_t, nixlDocaGpuCounterDeleter> writeCompletedGpu;
-    uint64_t *writeCompletedCpu = nullptr;
-    uint64_t postedWriteTicket = 0;
 
     bool
     closeDataQps() {

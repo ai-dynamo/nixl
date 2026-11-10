@@ -53,6 +53,10 @@ if not disable_odm_backend and 'MARVELL_ODM' in static_plugins
     nixl_lib_deps += [ odm_backend_interface ]
 endif
 
+if is_variable('doca_memos_backend_interface') and 'DOCA_MEMOS' in static_plugins
+    nixl_lib_deps += [ doca_memos_backend_interface ]
+endif
+
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and 'GDS' in static_plugins
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]

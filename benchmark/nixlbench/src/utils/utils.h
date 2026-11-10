@@ -109,6 +109,7 @@
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 #define XFERBENCH_BACKEND_INFINIA "INFINIA"
 #define XFERBENCH_BACKEND_MARVELL_ODM "MARVELL_ODM"
+#define XFERBENCH_BACKEND_DOCA_MEMOS "DOCA_MEMOS"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -138,6 +139,7 @@
 // Operation types
 #define XFERBENCH_OP_READ "READ"
 #define XFERBENCH_OP_WRITE "WRITE"
+#define XFERBENCH_OP_QUERY "QUERY"
 
 // Mode types
 #define XFERBENCH_MODE_SG "SG"
@@ -262,6 +264,9 @@ public:
     /* Parallel workers split iterations across both CPU and Device API. */
     static int
     workerNum();
+    static std::string doca_memos_device_name;
+    static int doca_memos_num_tasks;
+    static std::string doca_memos_nguid;
 
     // Cached set of memory segment types reported by the selected backend.
     // Populated pre-instantiation in loadParams via getPluginParams, then refreshed

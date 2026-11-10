@@ -144,7 +144,8 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, "
-              "REDIS, GUSLI, AZURE_BLOB, INFINIA, MARVELL_ODM] (only used with nixl worker)");
+              "REDIS, GUSLI, AZURE_BLOB, INFINIA, MARVELL_ODM, DOCA_MEMOS] (only used with "
+              "nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -155,7 +156,7 @@ NB_ARG_STRING(target_seg_type,
               "remote type automatically.");
 NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, manytoone, onetomany, tp");
 NB_ARG_STRING(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc)");
-NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
+NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE, QUERY");
 NB_ARG_BOOL(check_consistency, false, "Enable Consistency Check");
 // Override the byte value the consistency check expects (default: -1 = use the
 // built-in 0xbb for WRITE / 0xaa for READ). Useful for a write-then-read
@@ -369,6 +370,10 @@ NB_ARG_UINT32(device_proxy_threads,
               0,
               "Number of CPU proxy threads draining the device channels, 0 for one per channel. "
               "Only used with --device_mode=proxy.");
+// DOCA_MEMOS options - only used when backend is DOCA_MEMOS
+NB_ARG_STRING(doca_memos_device_name, "/dev/nvme0n1", "DOCA_MEMOS device name");
+NB_ARG_INT32(doca_memos_num_tasks, 8192, "DOCA_MEMOS number of tasks");
+NB_ARG_STRING(doca_memos_nguid, "", "DOCA_MEMOS namespace GUID (32 hex chars, optional)");
 
 /* ODM device IOVA is auto-allocated by the MARVELL_ODM plugin on registerMem
  * when remote DRAM_SEG is registered with addr=0. */
@@ -610,6 +615,9 @@ std::string xferBenchConfig::odm_device_path = "/dev/odm0";
 bool xferBenchConfig::odm_use_io_uring = false;
 int xferBenchConfig::odm_qid_start = 0;
 int xferBenchConfig::odm_qid_end = 15;
+std::string xferBenchConfig::doca_memos_device_name = "/dev/nvme0n1";
+int xferBenchConfig::doca_memos_num_tasks = 8192;
+std::string xferBenchConfig::doca_memos_nguid = "";
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -777,6 +785,21 @@ xferBenchConfig::loadParams(void) {
             gusli_try_use_uring = NB_ARG(gusli_try_use_uring);
         }
 
+        // Load DOCA_MEMOS-specific configurations if backend is DOCA_MEMOS
+        if (backend == XFERBENCH_BACKEND_DOCA_MEMOS) {
+            doca_memos_device_name = NB_ARG(doca_memos_device_name);
+            doca_memos_num_tasks = NB_ARG(doca_memos_num_tasks);
+            doca_memos_nguid = NB_ARG(doca_memos_nguid);
+
+            // The generic consistency check reads written data back through the
+            // S3/Azure object helpers, which DOCA_MEMOS does not implement. The
+            // plugin verifies retrieved data internally on READ instead.
+            if (NB_ARG(check_consistency)) {
+                std::cerr << "DOCA_MEMOS backend does not support --check_consistency" << std::endl;
+                return -1;
+            }
+        }
+
         // Load OBJ-specific configurations if backend is OBJ
         if (backend == XFERBENCH_BACKEND_OBJ) {
             obj_access_key = NB_ARG(obj_access_key);
@@ -827,9 +850,14 @@ xferBenchConfig::loadParams(void) {
     scheme = NB_ARG(scheme);
     mode = NB_ARG(mode);
     op_type = NB_ARG(op_type);
-    if (op_type != XFERBENCH_OP_READ && op_type != XFERBENCH_OP_WRITE) {
-        std::cerr << "Invalid op type: " << op_type << ". Must be one of [READ, WRITE]"
+    if (op_type != XFERBENCH_OP_READ && op_type != XFERBENCH_OP_WRITE &&
+        op_type != XFERBENCH_OP_QUERY) {
+        std::cerr << "Invalid op type: " << op_type << ". Must be one of [READ, WRITE, QUERY]"
                   << std::endl;
+        return -1;
+    }
+    if (op_type == XFERBENCH_OP_QUERY && worker_type != XFERBENCH_WORKER_NIXL) {
+        std::cerr << "QUERY requires --worker_type nixl" << std::endl;
         return -1;
     }
     check_consistency = NB_ARG(check_consistency);
@@ -875,6 +903,12 @@ xferBenchConfig::loadParams(void) {
     pipeline_depth = NB_ARG(pipeline_depth);
     if (pipeline_depth < 1) {
         std::cerr << "pipeline_depth must be >= 1" << std::endl;
+        return -1;
+    }
+    // execQuery() issues the whole batch_size * pipeline_depth descriptor list
+    // as one synchronous queryMem() call, while the stats count batch_size.
+    if (op_type == XFERBENCH_OP_QUERY && pipeline_depth != 1) {
+        std::cerr << "QUERY requires pipeline_depth=1" << std::endl;
         return -1;
     }
     use_device_api = NB_ARG(use_device_api);
@@ -1117,7 +1151,7 @@ xferBenchConfig::printConfig() {
         printOption(
             "Backend "
             "(--backend=[UCX,GDS,GDS_MT,POSIX,MOONCAKE,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB,INFINIA,"
-            "MARVELL_ODM])",
+            "MARVELL_ODM,DOCA_MEMOS])",
             backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
@@ -1233,7 +1267,7 @@ xferBenchConfig::printConfig() {
     printOption("Target seg type (--target_seg_type=[DRAM,VRAM])", target_seg_type);
     printOption("Scheme (--scheme=[pairwise,manytoone,onetomany,tp])", scheme);
     printOption("Mode (--mode=[SG,MG])", mode);
-    printOption("Op type (--op_type=[READ,WRITE])", op_type);
+    printOption("Op type (--op_type=[READ,WRITE,QUERY])", op_type);
     printOption("Check consistency (--check_consistency=[0,1])", std::to_string(check_consistency));
     if (check_value >= 0) {
         printOption("Check value (--check_value=byte)", std::to_string(check_value));
