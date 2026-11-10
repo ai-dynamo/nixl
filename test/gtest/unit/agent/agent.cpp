@@ -1749,6 +1749,40 @@ namespace agent {
         EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
     }
 
+    TEST_F(singleAgentSessionFixture, PostGivenOnlyATraceContextKeepsTheRequestsNotification) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        const auto &engine = agent_helper_->getGMockEngine();
+        ON_CALL(engine, supportsNotif()).WillByDefault(testing::Return(true));
+        std::vector<std::string> sent;
+        EXPECT_CALL(engine, postXfer)
+            .Times(4)
+            .WillRepeatedly([&sent](const nixl_xfer_op_t &,
+                                    const nixl_meta_dlist_t &,
+                                    const nixl_meta_dlist_t &,
+                                    const std::string &,
+                                    nixlBackendReqH *&,
+                                    const nixl_opt_b_args_t *extra_args) {
+                sent.push_back(extra_args->hasNotif ? extra_args->notifMsg : "none");
+                return NIXL_SUCCESS;
+            });
+        setup.extraParams.notif = "created";
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, req), NIXL_SUCCESS);
+
+        nixl_opt_args_t context_only;
+        context_only.traceContext = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+        EXPECT_EQ(agent_->postXferReq(req, &context_only), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+        nixl_opt_args_t context_and_param = context_only;
+        context_and_param.customParam = "param";
+        EXPECT_EQ(agent_->postXferReq(req, &context_and_param), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+
+        EXPECT_THAT(sent, testing::ElementsAre("created", "created", "none", "none"));
+        EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
     TEST_F(singleAgentSessionFixture, TracingOffDrawsNoRequestId) {
         selfXferSetup setup;
         agent_helper_->setupSelfXfer(setup);

@@ -226,6 +226,12 @@ traceContextOf(const nixl_opt_args_t *extra_params) noexcept {
     return (extra_params != nullptr) ? extra_params->traceContext : nixl::trace::noSuppliedContext;
 }
 
+[[nodiscard]] bool
+carriesOnlyTraceContext(const nixl_opt_args_t &extra_params) noexcept {
+    return !extra_params.notif && !extra_params.hasNotif && extra_params.customParam.empty() &&
+        !extra_params.traceContext.empty();
+}
+
 } // namespace
 
 void
@@ -1296,7 +1302,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     // Updating the notification based on opt_args
-    if (extra_params) {
+    if ((extra_params != nullptr) && !carriesOnlyTraceContext(*extra_params)) {
         opt_args.customParam = extra_params->customParam;
         if (extra_params->notif) {
             req_hndl->notifMsg = *extra_params->notif;

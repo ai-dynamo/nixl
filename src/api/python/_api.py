@@ -692,7 +692,7 @@ class nixl_agent:
             notif_msg: Optional notification message can be specified or updated per transfer call.
                 notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
             trace_context: Optional trace context of the caller's span, for this post alone, as a traceparent str or the 26-byte record as bytes.
-                Giving one posts with this call's options, so a notification given at creation is sent only if notif_msg repeats it.
+                It does not change which notification is sent.
 
         Returns:
             Status of the transfer operation ("DONE", "PROC", or "ERR").

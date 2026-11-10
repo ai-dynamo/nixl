@@ -345,10 +345,9 @@ carries no context.
 
 From Python, `initialize_xfer`, `make_prepped_xfer`, `transfer` and `send_notif` take it
 as `trace_context`, a `traceparent` string or the record as bytes; from Rust,
-`OptArgs::set_trace_context` sets it for any of the four calls. Options passed to a post
-replace the request's notification, so a post given a context sends the notification set
-at creation only if its options carry it again, which in Python means repeating
-`notif_msg`.
+`OptArgs::set_trace_context` sets it for any of the four calls. A post whose options
+carry only a context keeps the request's notification; any other options replace it,
+with the one they carry or with none, for that post and every later one.
 
 ### Where a backend's trace state comes from
 
