@@ -25,6 +25,8 @@ readme = "README.md"
 license = "MIT AND Apache-2.0"
 license-files = [
   "LICENSE",
+  "runtime/ep/LICENSE-DeepEP",
+  "runtime/ep/LICENSE-fmt",
   "licenses/NVIDIA-proprietary-LICENSE.txt",
 ]
 requires-python = ">=3.10"
@@ -32,7 +34,7 @@ authors = [
   {name = "NIXL Developers", email = "nixl-developers@nvidia.com"}
 ]
 
-dependencies = ["torch", "numpy"]
+dependencies = ["torch", "numpy", "nvidia-ml-py>=13.580.65"]
 
 [tool.mypy]
 mypy_path = ["src/bindings/python/nixl-meta"]

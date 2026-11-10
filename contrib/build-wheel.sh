@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --output-dir: Directory to output the wheel to (default: $OUTPUT_DIR)"
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
-            echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires a CUDA sm_90 or newer target environment)"
+            echo "  --build-nixl-ep: Include NIXL EP v1 and experimental v2 (sm_90 or newer; v2 requires CUDA 13)"
             echo "  --torch-versions: Comma-separated list of torch versions to build the wheel for (default: $TORCH_VERSIONS)"
             echo "  --help: Show this help message"
             echo ""
@@ -323,7 +323,7 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
 
     for ((i=1; i<${#TORCH_ARRAY[@]}; i++)); do
         TORCH="${TORCH_ARRAY[$i]}"
-        echo "=== Building nixl_ep .so for torch ${TORCH} ==="
+        echo "=== Building EP extensions for torch ${TORCH} ==="
 
         EP_TMP=$(mktemp -d)
         build_wheel "$EP_TMP" "$TORCH"
@@ -340,6 +340,29 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
             --source-wheel "$EP_WHL" \
             --pattern "nixl_ep_cpp_torch${TORCH_MM}.*" \
             --target-dir "nixl_ep_cu${CUDA_MAJOR}"
+
+        if python3 - "$EP_WHL" "nixl_ep_v2_cpp_torch${TORCH_MM}.*" <<'PY'
+import fnmatch
+import os
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as wheel:
+    found = any(
+        fnmatch.fnmatch(os.path.basename(name), sys.argv[2])
+        for name in wheel.namelist()
+    )
+raise SystemExit(0 if found else 1)
+PY
+        then
+            ./contrib/wheel_merge.py \
+                --base-wheel "$BASE_WHL" \
+                --source-wheel "$EP_WHL" \
+                --pattern "nixl_ep_v2_cpp_torch${TORCH_MM}.*" \
+                --target-dir "nixl_cu${CUDA_MAJOR}/runtime/ep"
+        else
+            echo "=== NIXL-EP V2 was not built for torch ${TORCH}; skipping merge ==="
+        fi
 
         rm -rf "$EP_TMP"
     done

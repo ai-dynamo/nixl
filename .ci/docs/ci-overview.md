@@ -53,7 +53,7 @@ All files below live in `.github/workflows/`.
 
 ### Clang Format Check (`clang-format.yml`)
 - **Trigger:** `pull_request`.
-- **What it does:** Runs `clang-format-19` over the C/C++ lines changed in the PR (excluding `examples/device/ep`) and fails on formatting violations.
+- **What it does:** Runs `clang-format-19` over the C/C++ lines changed in the PR (excluding `examples/device/ep` and `runtime/ep`) and fails on formatting violations.
 - **Automatic on every PR:** Yes.
 
 ### Copyright Checks (`copyright-checks.yml`)
@@ -194,7 +194,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 
 ### `nixl-ci-build-container` (standalone)
 - **Trigger:** Nightly cron (builds `nixlbench` and `nixl` targets, on both the default CUDA base image and the PyTorch release image `nvcr.io/nvidia/pytorch:26.06-py3`, ~22:00), or manual run with parameters (`BUILD_TARGET`, `NIXL_VERSION`, `UCX_VERSION`, base image overrides, etc.).
-- **What it does:** Builds and pushes x86_64/aarch64 NIXL/NIXLBench container images to Artifactory, then sets build metadata properties on each image via the Artifactory REST API. The Push step runs with `set -eo pipefail` so auth or API failures abort the build immediately. `BUILD_UCX_SPCX_PLUGIN` (default on, `nixl` target only) builds the internal UCX spcx plugin against the image's UCX and installs it into the UCX plugin dir; it needs the `svc-nixl-gitlab-token` + `ucx-plugin-gitlab-url` credentials, bound on the Build NIXL step. `BUILD_NIXL_EP` is on by default and has no off-switch — `contrib/build-container.sh` builds EP regardless. `BUILD_INFINIA` (default off, `nixl` target only) stages the DDN libs from harbor.mellanox.com and builds `libplugin_INFINIA.so` into the image; it is off by default because it adds an external registry dependency.
+- **What it does:** Builds and pushes x86_64/aarch64 NIXL/NIXLBench container images to Artifactory, then sets build metadata properties on each image via the Artifactory REST API. The Push step runs with `set -eo pipefail` so auth or API failures abort the build immediately. `BUILD_UCX_SPCX_PLUGIN` (default on, `nixl` target only) builds the internal UCX spcx plugin against the image's UCX and installs it into the UCX plugin dir; it needs the `svc-nixl-gitlab-token` + `ucx-plugin-gitlab-url` credentials, bound on the Build NIXL step. `BUILD_NIXL_EP` is on by default; this Jenkins parameter does not pass the container builder’s `--no-build-nixl-ep` off-switch, so EP remains enabled in this job (V2 is skipped on CUDA 12). `BUILD_INFINIA` (default off, `nixl` target only) stages the DDN libs from harbor.mellanox.com and builds `libplugin_INFINIA.so` into the image; it is off by default because it adds an external registry dependency.
 - **Image tag:** `pipeline_start` resolves the NIXL and UCX commits once (`NIXL_SHA`, `UCX_SHA`) and exports `IMAGE_TAG_BASE`; both arches build from those exact commits and tag from that base, and `pipeline_stop` reuses it to name the images. Previously each arch re-resolved UCX independently, so a branch moving mid-build could ship two arches from different UCX commits under one tag.
 - **Completion mail:** When `MAIL_TO` is set, `pipeline_stop` mails the build result, listing the pushed image URLs (and the `-latest` tags when `UPDATE_LATEST`) so the verification team can pull them directly. The list is included only on `SUCCESS` — a failed run may not have pushed, and a link to a missing image is worse than no link.
 - **Automatic on every PR:** No — standalone/nightly + manual only.
