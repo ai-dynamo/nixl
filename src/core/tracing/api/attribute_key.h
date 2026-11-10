@@ -20,6 +20,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 
 namespace nixl::trace {
@@ -65,18 +66,21 @@ public:
     }
 
 private:
-    [[nodiscard]] static consteval std::uint8_t
+    using index_t = std::uint16_t;
+    static_assert(attributeKeys.size() <= std::size_t{std::numeric_limits<index_t>::max()} + 1);
+
+    [[nodiscard]] static consteval index_t
     indexOf(std::string_view key) noexcept {
         for (std::size_t i = 0; i < attributeKeys.size(); ++i) {
             if (attributeKeys[i] == key) {
-                return static_cast<std::uint8_t>(i);
+                return static_cast<index_t>(i);
             }
         }
         attributeKeyIsNotInAttributeKeys();
         return 0;
     }
 
-    std::uint8_t index_;
+    index_t index_;
 };
 
 } // namespace nixl::trace

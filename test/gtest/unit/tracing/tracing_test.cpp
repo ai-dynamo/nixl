@@ -1642,7 +1642,8 @@ TEST(Tracing, TraceablePostIgnoresAnUnparsableContext) {
     EXPECT_EQ(ignored.count(), 1u);
 }
 
-static_assert(sizeof(nixl::trace::AttributeKey) == 1);
+static_assert(sizeof(nixl::trace::AttributeKey) == 2);
+static_assert(sizeof(nixl::trace::Attribute) == 32);
 static_assert(nixl::trace::AttributeKey("remote_agent").view() == "remote_agent");
 static_assert(nixl::trace::attributeKeys[nixl::trace::AttributeKey("nixl.status").index()] ==
               "nixl.status");
