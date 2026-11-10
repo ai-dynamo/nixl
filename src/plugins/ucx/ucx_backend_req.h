@@ -94,7 +94,7 @@ public:
         return ret;
     }
 
-    void
+    virtual void
     setNotif(std::string &&notif) {
         notif_ = std::move(notif);
     }

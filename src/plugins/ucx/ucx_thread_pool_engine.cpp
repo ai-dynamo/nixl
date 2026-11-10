@@ -27,6 +27,7 @@
 #include <exception>
 #include <latch>
 #include <ostream>
+#include <utility>
 
 #include "absl/container/inlined_vector.h"
 
@@ -154,6 +155,7 @@ private:
 struct nixlUcxBackendSharedState {
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
+    std::string notif;
     std::vector<nixlUcxChunkBackendReqH> chunks;
 
     explicit nixlUcxBackendSharedState(size_t num_chunks)
@@ -183,11 +185,26 @@ nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
 
 nixl_status_t
 nixlUcxChunkBackendReqH::status() {
+    // Read before the shared status: a failed chunk stores its status before it decrements
+    const bool last = sharedState_->pendingReqs.load() == 1;
     // First check if entire request was cancelled or failed
     const nixl_status_t status = sharedState_->status.load();
     if (status != NIXL_SUCCESS) {
         return status;
     }
+
+    const nixl_status_t ret = nixlUcxBackendReqH::status();
+    if ((ret != NIXL_SUCCESS) || (this != &sharedState_->chunks.front()) ||
+        sharedState_->notif.empty()) {
+        return ret;
+    }
+
+    if (!last) {
+        return NIXL_IN_PROG;
+    }
+
+    setNotif(std::exchange(sharedState_->notif, {}));
+    posted();
     return nixlUcxBackendReqH::status();
 }
 
@@ -229,6 +246,11 @@ public:
     }
 
     void
+    setNotif(std::string &&notif) override {
+        sharedState_->notif = std::move(notif);
+    }
+
+    void
     release() override {
         NIXL_TRACE << *this << " releasing";
         nixlUcxBackendReqH::release();
@@ -249,12 +271,7 @@ public:
             return NIXL_IN_PROG;
         }
 
-        const nixl_status_t status = sharedState_->status.load();
-        if (status != NIXL_SUCCESS) {
-            return status;
-        }
-
-        return nixlUcxBackendReqH::status();
+        return sharedState_->status.load();
     }
 
     friend std::ostream &
@@ -486,8 +503,5 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     });
 
     NIXL_TRACE << "sent " << *comp_handle << " with status: " << status;
-    if (status == NIXL_SUCCESS) {
-        comp_handle->posted();
-    }
     return status;
 }
