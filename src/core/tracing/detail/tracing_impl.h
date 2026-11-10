@@ -33,39 +33,39 @@ inline Traceable::Traceable(Tracer *tracer) : Traceable(tracer, generateRequestI
 
 inline Traceable::Traceable(Tracer *tracer, const TraceIdentity &identity) noexcept
     : tracer_(tracer),
-      context_(identity.context),
-      postContext_(identity.context),
-      requestId_(identity.requestId) {}
+      identity_{identity.context, identity.requestId, 0} {}
 
-inline TraceIdentity
+inline const TraceIdentity &
 Traceable::identity() const noexcept {
-    return {postContext_, requestId_, execution()};
+    return identity_;
 }
 
 inline TraceContext
 Traceable::beginPost() {
-    const TraceContext post_context =
-        (context_.sampled() && spanIdUsed_) ? generatePostContext(context_, tracer_) : context_;
+    const TraceContext post_context = (identity_.context.sampled() && spanIdUsed_) ?
+        generatePostContext(identity_.context, tracer_) :
+        identity_.context;
     spanIdUsed_ = true;
     return post_context;
 }
 
-inline TraceIdentity
+inline const TraceIdentity &
 Traceable::acceptPost(const TraceContext &post_context) noexcept {
-    postContext_ = post_context;
-    if (requestId_ != 0) {
-        ++execution_;
+    identity_.context = post_context;
+    if (identity_.requestId != 0) {
+        ++identity_.execution;
     }
-    return identity();
+    return identity_;
 }
 
 inline void
 Traceable::record([[maybe_unused]] Record record) const {
 #if defined(NIXL_TRACE_ENABLED)
-    if ((tracer_ != nullptr) && postContext_.sampled()) {
-        const Attribute attrs[] = {{"nixl.xfer_request_id", requestId_},
-                                   {"nixl.xfer_execution", execution()}};
-        detail::emitEvent(*tracer_, record, kindOf(record), postContext_, requestId_, attrs);
+    if ((tracer_ != nullptr) && identity_.context.sampled()) {
+        const Attribute attrs[] = {{"nixl.xfer_request_id", identity_.requestId},
+                                   {"nixl.xfer_execution", identity_.execution}};
+        detail::emitEvent(
+            *tracer_, record, kindOf(record), identity_.context, identity_.requestId, attrs);
     }
 #endif
 }
@@ -73,17 +73,14 @@ Traceable::record([[maybe_unused]] Record record) const {
 inline void
 Traceable::record([[maybe_unused]] Record record, [[maybe_unused]] const Attribute &attr) const {
 #if defined(NIXL_TRACE_ENABLED)
-    if ((tracer_ != nullptr) && postContext_.sampled()) {
-        const Attribute attrs[] = {
-            {"nixl.xfer_request_id", requestId_}, {"nixl.xfer_execution", execution()}, attr};
-        detail::emitEvent(*tracer_, record, kindOf(record), postContext_, requestId_, attrs);
+    if ((tracer_ != nullptr) && identity_.context.sampled()) {
+        const Attribute attrs[] = {{"nixl.xfer_request_id", identity_.requestId},
+                                   {"nixl.xfer_execution", identity_.execution},
+                                   attr};
+        detail::emitEvent(
+            *tracer_, record, kindOf(record), identity_.context, identity_.requestId, attrs);
     }
 #endif
-}
-
-inline std::uint64_t
-Traceable::execution() const noexcept {
-    return execution_;
 }
 
 struct detail::TraceableAccess {
@@ -94,12 +91,12 @@ struct detail::TraceableAccess {
 
     [[nodiscard]] static const TraceContext &
     postContext(const Traceable &traceable) noexcept {
-        return traceable.postContext_;
+        return traceable.identity_.context;
     }
 
     [[nodiscard]] static std::uint64_t
     requestId(const Traceable &traceable) noexcept {
-        return traceable.requestId_;
+        return traceable.identity_.requestId;
     }
 };
 

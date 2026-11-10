@@ -86,13 +86,13 @@ public:
     Traceable &
     operator=(const Traceable &) = delete;
 
-    [[nodiscard]] TraceIdentity
+    [[nodiscard]] const TraceIdentity &
     identity() const noexcept;
 
     [[nodiscard]] TraceContext
     beginPost();
 
-    [[nodiscard]] TraceIdentity
+    [[nodiscard]] const TraceIdentity &
     acceptPost(const TraceContext &post_context) noexcept;
 
     void
@@ -104,15 +104,9 @@ public:
 private:
     friend struct detail::TraceableAccess;
 
-    [[nodiscard]] std::uint64_t
-    execution() const noexcept;
-
     Tracer *const tracer_;
-    const TraceContext context_;
-    TraceContext postContext_;
+    TraceIdentity identity_;
     bool spanIdUsed_ = false;
-    const std::uint64_t requestId_;
-    std::uint64_t execution_ = 0;
 };
 
 } // namespace nixl::trace
