@@ -179,14 +179,15 @@ finish(Span &span, Status status) {
 
 #define NIXL_TRACE_DETAIL_CORRELATED_SPAN(span, request_trace, trace_record, context, ...)        \
     const ::nixl::trace::Traceable &span##_trace_ = (request_trace);                              \
+    const ::nixl::trace::TraceContext &span##_context_ = (context);                               \
     ::nixl::trace::CorrelationScope span##_correlation_(                                          \
         ::nixl::trace::detail::TraceableAccess::tracer(span##_trace_),                            \
-        (context),                                                                                \
+        span##_context_,                                                                          \
         ::nixl::trace::detail::TraceableAccess::requestId(span##_trace_));                        \
     NIXL_TRACE_DETAIL_CONTEXT_SPAN(span,                                                          \
                                    ::nixl::trace::detail::TraceableAccess::tracer(span##_trace_), \
                                    trace_record,                                                  \
-                                   context,                                                       \
+                                   span##_context_,                                               \
                                    ::nixl::trace::detail::TraceableAccess::requestId(             \
                                        span##_trace_) __VA_OPT__(, ) __VA_ARGS__)
 

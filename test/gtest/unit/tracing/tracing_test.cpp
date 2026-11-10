@@ -750,6 +750,31 @@ TEST(Tracing, CorrelatedMacrosPushTheContextAroundTheirSpan) {
 #endif
 }
 
+TEST(Tracing, CorrelatedSpanEvaluatesItsContextOnce) {
+#if defined(NIXL_TRACE_ENABLED)
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+    const nixl::trace::Traceable request{tracer.get(), {testContext(0x42), 0x42}};
+    std::uint8_t evaluations = 0;
+    const auto next_context = [&evaluations] { return testContext(0x43 + evaluations++); };
+
+    {
+        NIXL_TRACE_CORRELATED_SPAN(
+            post, request, nixl::trace::Record::PostXferReqWrite, next_context());
+        EXPECT_TRUE(post.active());
+    }
+
+    EXPECT_EQ(evaluations, 1);
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->pushedContexts, std::vector<nixl::trace::TraceContext>{testContext(0x43)});
+        ASSERT_EQ(log->contextSpans.size(), 1u);
+        EXPECT_EQ(log->contextSpans[0].context, testContext(0x43));
+    }
+#else
+    GTEST_SKIP() << "the trace macros are compiled out";
+#endif
+}
+
 TEST(Tracing, AttrMacroSkipsItsValueOnAnInactiveSpan) {
 #if !defined(NIXL_TRACE_ENABLED)
     GTEST_SKIP() << "the trace macros are compiled out";
