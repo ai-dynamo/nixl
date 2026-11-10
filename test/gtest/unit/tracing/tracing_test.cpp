@@ -708,6 +708,7 @@ TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
                 release, *traced, nixl::trace::Record::ReleaseXferReq, {"bytes", ++evaluations});
             EXPECT_FALSE(post.active());
             EXPECT_FALSE(release.active());
+            EXPECT_EQ(nixl::trace::Scope::current() != nullptr, traced == &unsampled);
         }
     }
 

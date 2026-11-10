@@ -47,10 +47,10 @@ execution-trace tools.
   request id explicitly, and the span's parent is the context's `parentSpanId`, when
   set. Every other span and event names its context's span id as its parent.
 - **`nixl::trace::Scope`** — an RAII guard the agent opens around a request's
-  creation, each of its posts and its release. It makes the request's trace identity
-  current on the calling thread, so the spans opened meanwhile take it; a sampled one
-  also hands that context to every backend while it lasts, which makes it the active
-  correlation scope.
+  creation, each of its posts and its release, while a tracer is active. It makes the
+  request's trace identity current on the calling thread, so the spans opened meanwhile
+  take it; a sampled one also hands that context to every backend while it lasts, which
+  makes it the active correlation scope.
 - **`TraceBackend` / `SpanBackend`** — the backend interfaces. Each backend
   implementation provides them.
 - **Backend plugins** — each backend is a `libtrace_backend_<name>.so` that exports

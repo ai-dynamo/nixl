@@ -1711,7 +1711,7 @@ namespace agent {
         EXPECT_EQ(*observed, nullptr);
     }
 
-    TEST_F(singleAgentSessionFixture, TracingOffHandsPluginTheZeroedRequestContext) {
+    TEST_F(singleAgentSessionFixture, TracingOffHandsPluginNoTraceIdentity) {
         selfXferSetup setup;
         agent_helper_->setupSelfXfer(setup);
         const auto &engine = agent_helper_->getGMockEngine();
@@ -1719,12 +1719,10 @@ namespace agent {
         nixlXferReqH *req = nullptr;
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup, req), NIXL_SUCCESS);
         EXPECT_EQ(req->traceable().identity().context, nixl::trace::TraceContext{});
-        EXPECT_THAT(engine.observedTraceContext(),
-                    testing::Optional(req->traceable().identity().context));
+        EXPECT_FALSE(engine.observedTraceContext().has_value());
 
         EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
-        EXPECT_THAT(engine.observedTraceContext(),
-                    testing::Optional(req->traceable().identity().context));
+        EXPECT_FALSE(engine.observedTraceContext().has_value());
 
         EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
     }
@@ -1740,10 +1738,12 @@ namespace agent {
         EXPECT_EQ(req->traceable().identity().execution, 0u);
         EXPECT_THAT(agent_helper_->getGMockEngine().observedTraceRequests(),
                     testing::ElementsAre(testing::Pair(0u, 0u), testing::Pair(0u, 0u)));
-        const auto zeroed =
-            testing::Optional(testing::FieldsAre(nixl::trace::TraceContext{}, 0u, 0u));
+        const auto none =
+            testing::Truly([](const std::optional<nixl::trace::TraceIdentity> &identity) {
+                return !identity.has_value();
+            });
         EXPECT_THAT(agent_helper_->getGMockEngine().observedTraceIdentities(),
-                    testing::ElementsAre(zeroed, zeroed));
+                    testing::ElementsAre(none, none));
         EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
     }
 

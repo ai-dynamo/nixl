@@ -172,10 +172,10 @@ private:
  * When tracing is compiled out (NIXL_TRACE_ENABLED undefined) every macro
  * expands to nothing, and NIXL_TRACE_FINISH to its status, so call sites cost
  * nothing. The request macros and NIXL_TRACE_SCOPE_UNDER are the exception: they
- * still open their scope, and NIXL_TRACE_POST_SPAN still begins the post, since
- * the backend carries the context either way. When compiled in, the span macros
- * declare a caller-named RAII Span and take a predictable null-check branch on the
- * tracer.
+ * still open their scope while a tracer is active, and NIXL_TRACE_POST_SPAN still
+ * begins the post, since the backend carries the context either way. When compiled
+ * in, the span macros declare a caller-named RAII Span and take a predictable
+ * null-check branch on the tracer.
  *
  * Usage: NIXL_TRACE_SCOPE(span, tracer, record, {key, value}...) declares
  * the local `span` with its attributes; NIXL_TRACE_ATTR(span, key, value) adds
