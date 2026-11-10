@@ -53,6 +53,16 @@ emitEventTo(std::span<const std::unique_ptr<nixl::trace::TraceBackend>> backends
     }
 }
 
+[[nodiscard]] std::vector<std::unique_ptr<nixl::trace::TraceBackend>>
+capBackends(std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends) noexcept {
+    if (backends.size() > nixl::trace::maxTraceBackends) {
+        NIXL_WARN << "nixl::trace: only the first " << nixl::trace::maxTraceBackends << " of "
+                  << backends.size() << " backends are active";
+        backends.resize(nixl::trace::maxTraceBackends);
+    }
+    return backends;
+}
+
 } // namespace
 
 namespace nixl::trace {
@@ -121,7 +131,7 @@ Span::id() const noexcept {
 Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
                double sample_ratio,
                random_bytes_fn_t random_bytes) noexcept
-    : backends_(std::move(backends)),
+    : backends_(capBackends(std::move(backends))),
       sampleRatio_(sample_ratio),
       randomBytes_(random_bytes),
       needsTimestamps_(std::ranges::any_of(backends_, [](const auto &backend) {

@@ -828,6 +828,25 @@ TEST(Tracing, EmittedRecordsFanOutToAllBackends) {
     }
 }
 
+TEST(Tracing, TracerKeepsAtMostMaxTraceBackends) {
+    std::vector<CallLog> logs(nixl::trace::maxTraceBackends + 1);
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+    for (CallLog &log : logs) {
+        backends.push_back(std::make_unique<MockBackend>("mock", &log, 0));
+    }
+    nixl::trace::Tracer tracer{std::move(backends), 1.0};
+
+    EXPECT_EQ(tracer.backends().size(), nixl::trace::maxTraceBackends);
+    { auto span = tracer.beginSpan("op", nixl::trace::Kind::CommSend); }
+    tracer.emitEvent("event", nixl::trace::Kind::CommRecv, testContext(0x21), 0x2121, 42, {});
+
+    for (std::size_t i = 0; i < logs.size(); ++i) {
+        const std::size_t expected = i < nixl::trace::maxTraceBackends ? 1 : 0;
+        EXPECT_EQ(static_cast<std::size_t>(logs[i].spansBegun), expected) << "backend " << i;
+        EXPECT_EQ(logs[i].emittedEvents.size(), expected) << "backend " << i;
+    }
+}
+
 // Span::id() reports the first non-zero backend id, independent of ordering:
 // a backend with no id (e.g. NVTX, id {0}) must not mask a later backend's id.
 TEST(Tracing, SpanIdFromFirstNonZeroBackend) {
