@@ -917,6 +917,41 @@ TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
 #endif
 }
 
+TEST(Tracing, ScopeUnderMacroEvaluatesItsTracerAndParentOnce) {
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+    const nixl_blob_t sampled = nixl::trace::formatTraceparent(testContext(0x63));
+    int tracers = 0;
+    int parents = 0;
+    const auto tracerOf = [&tracers](nixl::trace::Tracer *chosen) {
+        ++tracers;
+        return chosen;
+    };
+    const auto parentOf = [&parents, &sampled]() -> const nixl_blob_t & {
+        ++parents;
+        return sampled;
+    };
+
+    {
+        NIXL_TRACE_SCOPE_UNDER(
+            traced, tracerOf(tracer.get()), parentOf(), nixl::trace::Record::GenNotif);
+        EXPECT_NE(nixl::trace::Scope::current(), nullptr);
+#if defined(NIXL_TRACE_ENABLED)
+        EXPECT_TRUE(traced.active());
+#endif
+    }
+    EXPECT_EQ(tracers, 1);
+    EXPECT_EQ(parents, 1);
+
+    {
+        NIXL_TRACE_SCOPE_UNDER(
+            untraced, tracerOf(nullptr), parentOf(), nixl::trace::Record::GenNotif);
+        EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
+    }
+    EXPECT_EQ(tracers, 2);
+    EXPECT_EQ(parents, 1);
+}
+
 TEST(Tracing, AttrMacroSkipsItsValueOnAnInactiveSpan) {
 #if !defined(NIXL_TRACE_ENABLED)
     GTEST_SKIP() << "the trace macros are compiled out";

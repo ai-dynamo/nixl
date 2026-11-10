@@ -146,11 +146,15 @@ detail::requestStart([[maybe_unused]] const Tracer *tracer,
         span##_scope.emplace(nixl_trace_scope_tracer_, (identity));       \
     }
 
-#define NIXL_TRACE_DETAIL_SUPPLIED_SCOPE_(span, tracer_ptr, parent)                            \
-    std::optional<::nixl::trace::Scope> span##_scope;                                          \
-    if (((tracer_ptr) != nullptr) && !(parent).empty()) {                                      \
-        span##_scope.emplace((tracer_ptr),                                                     \
-                             ::nixl::trace::detail::suppliedIdentity((tracer_ptr), (parent))); \
+#define NIXL_TRACE_DETAIL_SUPPLIED_SCOPE_(span, tracer_ptr, parent)                        \
+    std::optional<::nixl::trace::Scope> span##_scope;                                      \
+    if (::nixl::trace::Tracer *nixl_trace_scope_tracer_ = (tracer_ptr)) {                  \
+        if (const nixl_blob_t &nixl_trace_scope_parent_ = (parent);                        \
+            !nixl_trace_scope_parent_.empty()) {                                           \
+            span##_scope.emplace(nixl_trace_scope_tracer_,                                 \
+                                 ::nixl::trace::detail::suppliedIdentity(                  \
+                                     nixl_trace_scope_tracer_, nixl_trace_scope_parent_)); \
+        }                                                                                  \
     }
 
 #if defined(NIXL_TRACE_ENABLED)
@@ -203,9 +207,10 @@ end(Span &span, Status status) {
     }()
 
 #define NIXL_TRACE_DETAIL_SCOPE_UNDER(span, tracer_ptr, parent, trace_record, ...)             \
-    NIXL_TRACE_DETAIL_SUPPLIED_SCOPE_(span, tracer_ptr, parent)                                \
+    ::nixl::trace::Tracer *const span##_tracer = (tracer_ptr);                                 \
+    NIXL_TRACE_DETAIL_SUPPLIED_SCOPE_(span, span##_tracer, parent)                             \
     ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                  \
-        auto *nixl_trace_tracer_ = (tracer_ptr);                                               \
+        auto *nixl_trace_tracer_ = span##_tracer;                                              \
         if (nixl_trace_tracer_ == nullptr) {                                                   \
             return ::nixl::trace::Span{};                                                      \
         }                                                                                      \
