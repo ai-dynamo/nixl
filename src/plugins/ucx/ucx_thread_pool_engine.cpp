@@ -199,13 +199,12 @@ nixlUcxChunkBackendReqH::status() {
         return ret;
     }
 
-    if (!last) {
-        return NIXL_IN_PROG;
+    if (last) {
+        setNotif(std::exchange(sharedState_->notif, {}));
+        posted();
     }
 
-    setNotif(std::exchange(sharedState_->notif, {}));
-    posted();
-    return nixlUcxBackendReqH::status();
+    return NIXL_IN_PROG;
 }
 
 /*
