@@ -18,7 +18,6 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
-#include <limits>
 #include <stdexcept>
 
 #include <pthread.h>
@@ -41,7 +40,6 @@ constexpr std::size_t wire_span_id_offset = 18;
 constexpr std::size_t trace_id_randomness_bytes = 7;
 constexpr double two_pow_56 = 0x1p56;
 constexpr double min_sample_ratio = 0x1p-56;
-constexpr std::uint64_t max_request_id = std::numeric_limits<std::int64_t>::max();
 
 template<std::size_t Size>
 [[nodiscard]] bool
@@ -166,10 +164,10 @@ drawRequestIdentity(nixl::trace::TraceIdentity &identity,
     while (isAllZero(context.spanId)) {
         fill(context.spanId);
     }
-    identity.requestId &= max_request_id;
+    identity.requestId &= nixl::trace::maxRequestId;
     while (identity.requestId == 0) {
         fill({reinterpret_cast<std::uint8_t *>(&identity.requestId), sizeof(identity.requestId)});
-        identity.requestId &= max_request_id;
+        identity.requestId &= nixl::trace::maxRequestId;
     }
 
     setFlags(context, sample_ratio);

@@ -82,10 +82,10 @@ constexpr size_t split_desc_count = 2;
 constexpr std::array<const char *, 3> sender_phases{"nixl::submit",
                                                     "nixl::wire.submitted",
                                                     "nixl::notif.sent"};
-constexpr std::uint64_t tagged_request_id = 0x8090a0b0c0d0e0f0;
+constexpr std::uint64_t tagged_request_id = 0x7090a0b0c0d0e0f0;
 constexpr std::uint64_t tagged_execution = 0x0102030405060708;
 constexpr std::string_view tagged_request_bytes =
-    "\xf0\xe0\xd0\xc0\xb0\xa0\x90\x80\x08\x07\x06\x05\x04\x03\x02\x01";
+    "\xf0\xe0\xd0\xc0\xb0\xa0\x90\x70\x08\x07\x06\x05\x04\x03\x02\x01";
 
 [[nodiscard]] nixl::trace::TraceContext
 drawContext(double sample_ratio) {
@@ -790,7 +790,9 @@ TEST(UcxTraceContextWire, MalformedRequestTagKeepsTheContext) {
          {request.substr(1),
           request + '\x01',
           std::string{},
-          std::string(sizeof(std::uint64_t), '\0') + request.substr(sizeof(std::uint64_t))}) {
+          std::string(sizeof(std::uint64_t), '\0') + request.substr(sizeof(std::uint64_t)),
+          request.substr(0, sizeof(std::uint64_t) - 1) + '\x80' +
+              request.substr(sizeof(std::uint64_t))}) {
         notifications.push_back(handBuiltNotif({{"tctx", record}, {"treq", value}}));
     }
     const std::string sampled = nixl::ucx::serializeNotif(
