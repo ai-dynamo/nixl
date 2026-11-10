@@ -265,6 +265,7 @@ allocationsPerRequests(const std::string &name,
     nixl_opt_args_t creation;
     creation.traceContext = trace_parent;
     nixl_opt_args_t params;
+    params.traceContext = trace_parent;
     if (notify) {
         params.notif = tagged_msg;
     }

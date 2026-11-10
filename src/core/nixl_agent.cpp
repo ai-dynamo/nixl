@@ -1323,6 +1323,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     NIXL_TRACE_POST_SPAN(trace_span,
                          req_hndl->traceable_,
+                         traceContextOf(extra_params),
                          req_hndl->backendOp == NIXL_WRITE ? nixl::trace::Record::PostXferReqWrite :
                                                              nixl::trace::Record::PostXferReqRead,
                          {"remote_agent", req_hndl->remoteAgent},

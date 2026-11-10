@@ -1006,6 +1006,27 @@ namespace agent {
         }
     }
 
+    TEST_F(unsampledRecorderTracingAgentFixture, SuppliedSampledPostContextIsRecorded) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+        ASSERT_FALSE(req->traceable().identity().context.sampled());
+        const auto application = applicationContext("01");
+        nixl_opt_args_t with_context;
+        with_context.traceContext = nixl::trace::formatTraceparent(application);
+
+        EXPECT_EQ(agent->postXferReq(req, &with_context), NIXL_SUCCESS);
+        const auto joined = req->traceable().identity().context;
+        const auto joined_span = testing::AllOf(isSpanOf(req, joined), childOf(application));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_THAT(records("nixl::postXferReq.write"), testing::ElementsAre(joined_span));
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(carries(joined)));
+        for (const std::string_view name :
+             {"nixl::createXferReq", "nixl::releaseXferReq", "nixl::xferReq"}) {
+            EXPECT_TRUE(records(name).empty()) << name;
+        }
+    }
+
     TEST_F(recorderTracingAgentFixture, TraceInfoBeforeAnyPostNamesTheRequest) {
         nixlAgent *agent = agent_helper_->getAgent();
         nixlXferReqH *req = nullptr;
@@ -1221,6 +1242,36 @@ namespace agent {
         EXPECT_THAT(records("nixl::postXferReq.write"),
                     testing::ElementsAre(testing::AllOf(post_span, childOf(request))));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(carries(post)));
+    }
+
+    TEST_F(sampledRecorderTracingAgentFixture, SuppliedPostContextIsThatPostsParent) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+        const auto request = req->traceable().identity().context;
+        const auto application = applicationContext("01");
+        nixl_opt_args_t with_context;
+        with_context.traceContext = nixl::trace::formatTraceparent(application);
+
+        EXPECT_EQ(agent->postXferReq(req, &with_context), NIXL_SUCCESS);
+        const auto joined = req->traceable().identity().context;
+        EXPECT_THAT(engine.observedTraceContext(), testing::Optional(joined));
+        EXPECT_EQ(joined.traceId, application.traceId);
+        EXPECT_EQ(joined.parentSpanId, application.spanId);
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        const auto own = req->traceable().identity().context;
+        EXPECT_EQ(own.traceId, request.traceId);
+        EXPECT_EQ(own.parentSpanId, request.spanId);
+        const auto joined_span = testing::AllOf(isSpanOf(req, joined), childOf(application));
+        const auto own_span = testing::AllOf(isSpanOf(req, own), childOf(request));
+        const auto request_span = testing::AllOf(isSpanOf(req, request), postedAs(req, 2));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+
+        EXPECT_THAT(records("nixl::postXferReq.write"),
+                    testing::ElementsAre(joined_span, own_span));
+        EXPECT_THAT(completionMarks(), testing::ElementsAre(carries(joined), carries(own)));
+        EXPECT_THAT(records("nixl::xferReq"), testing::ElementsAre(request_span));
     }
 
     TEST_F(sampledRecorderTracingAgentFixture, SuppliedUnsampledContextRecordsNothing) {

@@ -74,11 +74,12 @@ Traceable::requestIdentity() const noexcept {
 }
 
 inline const TraceIdentity &
-Traceable::post() {
+Traceable::post(const nixl_blob_t &parent) {
     if (identity_.requestId != 0) {
-        if (request_.sampled()) {
-            identity_.context = generatePostContext(request_, tracer_);
-        }
+        const std::optional<TraceContext> supplied =
+            parent.empty() ? std::nullopt : parseParentContext(tracer_, parent);
+        const TraceContext &under = supplied ? *supplied : request_;
+        identity_.context = under.sampled() ? generatePostContext(under, tracer_) : under;
         ++identity_.execution;
     }
     return identity_;
@@ -203,8 +204,8 @@ finish(Span &span, Status status) {
         __VA_ARGS__ __VA_OPT__(, ){"nixl.xfer_request_id", span##_scope.identity().requestId},    \
         {"nixl.xfer_execution", span##_scope.identity().execution})
 
-#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, trace_record, ...)                        \
-    const ::nixl::trace::Scope span##_scope((traceable).tracer(), (traceable).post());         \
+#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, parent, trace_record, ...)                \
+    const ::nixl::trace::Scope span##_scope((traceable).tracer(), (traceable).post(parent));   \
     NIXL_TRACE_DETAIL_CONTEXT_SPAN(                                                            \
         span,                                                                                  \
         span##_scope.tracer(),                                                                 \
@@ -246,8 +247,8 @@ finish(Span &span, Status status) {
     } while (0)
 #define NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record, ...) \
     const ::nixl::trace::Scope span##_scope((traceable).tracer(), (traceable).requestIdentity())
-#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, trace_record, ...) \
-    const ::nixl::trace::Scope span##_scope((traceable).tracer(), (traceable).post())
+#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, parent, trace_record, ...) \
+    const ::nixl::trace::Scope span##_scope((traceable).tracer(), (traceable).post(parent))
 #define NIXL_TRACE_DETAIL_FINISH(span, status) (status)
 #define NIXL_TRACE_DETAIL_ATTR(span, attr_key, attr_value) \
     do {                                                   \

@@ -699,8 +699,11 @@ TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
         nixl::trace::Traceable unsampled{tracer.get(), {testContext(0x41, 0x00), 0x41}};
         nixl::trace::Traceable untraced{nullptr, {testContext(0x43), 0x43}};
         for (nixl::trace::Traceable *traced : {&unsampled, &untraced}) {
-            NIXL_TRACE_POST_SPAN(
-                post, *traced, nixl::trace::Record::PostXferReqWrite, {"bytes", ++evaluations});
+            NIXL_TRACE_POST_SPAN(post,
+                                 *traced,
+                                 nixl::trace::noSuppliedContext,
+                                 nixl::trace::Record::PostXferReqWrite,
+                                 {"bytes", ++evaluations});
             NIXL_TRACE_REQUEST_SPAN(
                 release, *traced, nixl::trace::Record::ReleaseXferReq, {"bytes", ++evaluations});
             EXPECT_FALSE(post.active());
@@ -754,7 +757,11 @@ TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
     {
         nixl::trace::Traceable traced{tracer.get(), {request, 0x42}};
         {
-            NIXL_TRACE_POST_SPAN(post, traced, nixl::trace::Record::PostXferReqWrite, {"bytes", 8});
+            NIXL_TRACE_POST_SPAN(post,
+                                 traced,
+                                 nixl::trace::noSuppliedContext,
+                                 nixl::trace::Record::PostXferReqWrite,
+                                 {"bytes", 8});
             EXPECT_TRUE(post.active());
             EXPECT_EQ(traced.identity().context, post_context);
             for (const CallLog *log : {&a, &b}) {
@@ -1488,6 +1495,62 @@ TEST(Tracing, TraceableIdentityIsItsLatestPosts) {
     EXPECT_EQ(posted.context, drawn);
     EXPECT_EQ(posted.requestId, 0x35u);
     EXPECT_EQ(posted.execution, 2u);
+}
+
+TEST(Tracing, TraceablePostJoinsASuppliedContextForThatPostOnly) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    zero_draws_left = 0;
+    const auto request = testContext(0x51);
+    const auto application = testContext(0x52);
+    nixl::trace::Traceable traced{tracer.get(), {request, 0x51}};
+    auto under_application = application;
+    under_application.spanId.fill(0x5a);
+    under_application.parentSpanId = application.spanId;
+    auto under_request = request;
+    under_request.spanId.fill(0x5a);
+    under_request.parentSpanId = request.spanId;
+
+    EXPECT_EQ(traced.post(nixl::trace::formatTraceparent(application)).context, under_application);
+    EXPECT_EQ(traced.post().context, under_request);
+    EXPECT_EQ(traced.identity().execution, 2u);
+}
+
+TEST(Tracing, TraceablePostTakesASuppliedContextsSampledFlag) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    zero_draws_left = 0;
+    const auto unsampled_request = testContext(0x53, 0x02);
+    const auto sampled_application = testContext(0x55, 0x01);
+    const auto unsampled_application = testContext(0x56, 0x00);
+    nixl::trace::Traceable unsampled{tracer.get(), {unsampled_request, 0x53}};
+    nixl::trace::Traceable sampled{tracer.get(), {testContext(0x54, 0x01), 0x54}};
+
+    const auto joined = unsampled.post(nixl::trace::formatTraceparent(sampled_application)).context;
+    EXPECT_TRUE(joined.sampled());
+    EXPECT_EQ(joined.traceId, sampled_application.traceId);
+    EXPECT_EQ(joined.parentSpanId, sampled_application.spanId);
+    EXPECT_EQ(unsampled.post().context, unsampled_request);
+
+    EXPECT_EQ(sampled.post(nixl::trace::formatTraceparent(unsampled_application)).context,
+              unsampled_application);
+    EXPECT_TRUE(sampled.post().context.sampled());
+}
+
+TEST(Tracing, TraceablePostIgnoresAnUnparsableContext) {
+    gtest::LogMessageCounter ignored("ignoring a supplied trace context");
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    zero_draws_left = 0;
+    const auto request = testContext(0x57);
+    nixl::trace::Traceable traced{tracer.get(), {request, 0x57}};
+    auto under_request = request;
+    under_request.spanId.fill(0x5a);
+    under_request.parentSpanId = request.spanId;
+
+    EXPECT_EQ(traced.post("neither").context, under_request);
+    EXPECT_EQ(traced.post("neither").context, under_request);
+    EXPECT_EQ(ignored.count(), 1u);
 }
 
 static_assert(sizeof(nixl::trace::AttributeKey) == 1);

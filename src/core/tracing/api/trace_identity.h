@@ -59,6 +59,15 @@ parseTraceparent(std::string_view value);
 [[nodiscard]] std::string
 formatTraceparent(const TraceContext &context);
 
+/**
+ * @brief The context an application supplied as @p value, a `traceparent` or a
+ *        trace context record, with only the flags this version defines;
+ *        std::nullopt when @p value is empty, @p tracer is null, or @p value is
+ *        neither form, which @p tracer reports once.
+ */
+[[nodiscard]] std::optional<TraceContext>
+parseParentContext(const Tracer *tracer, const nixl_blob_t &value);
+
 [[nodiscard]] TraceIdentity
 generateRequestIdentity(const Tracer *tracer, const nixl_blob_t &parent = noSuppliedContext);
 

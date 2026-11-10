@@ -75,7 +75,8 @@ makeBackendTraceSink(Tracer &tracer, std::string backend, nixlTelemetry *telemet
 /**
  * @brief A traced object's trace state: the context and request id it was
  *        created with, and the context and execution number of its latest post,
- *        whose parent is the request's span.
+ *        whose parent is the span supplied to that post or else the request's
+ *        span.
  */
 class Traceable {
 public:
@@ -99,7 +100,7 @@ public:
     requestIdentity() const noexcept;
 
     [[nodiscard]] const TraceIdentity &
-    post();
+    post(const nixl_blob_t &parent = noSuppliedContext);
 
     void
     trace(Record record) const;
@@ -180,8 +181,9 @@ private:
  * one known later, and `return NIXL_TRACE_FINISH(span, status);` records the
  * call's status as it returns it. NIXL_TRACE_REQUEST_SPAN(span, traceable,
  * record, {key, value}...) does the same for a call on a request, inside the
- * request's scope, and NIXL_TRACE_POST_SPAN for a post, inside the scope of the
- * post it begins; both add the request id and execution number.
+ * request's scope, and NIXL_TRACE_POST_SPAN(span, traceable, parent, record, ...)
+ * for a post, inside the scope of the post it begins under `parent`, the context
+ * the application supplied, if any; both add the request id and execution number.
  * The explicit name avoids any hidden coupling/shadowing and allows more than
  * one span per scope. Attribute arguments are only evaluated when a backend is
  * actually active.
@@ -193,8 +195,8 @@ private:
 #define NIXL_TRACE_REQUEST_SPAN(span, traceable, trace_record, ...) \
     NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
-#define NIXL_TRACE_POST_SPAN(span, traceable, trace_record, ...) \
-    NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, trace_record __VA_OPT__(, ) __VA_ARGS__)
+#define NIXL_TRACE_POST_SPAN(span, traceable, parent, trace_record, ...) \
+    NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, parent, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
 #define NIXL_TRACE_ATTR(span, attr_key, attr_value) \
     NIXL_TRACE_DETAIL_ATTR(span, attr_key, attr_value)

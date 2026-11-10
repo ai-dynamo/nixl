@@ -164,9 +164,9 @@ activates the backend anyway, so tests can exercise the traced paths without a p
 The ratio applies to the trace contexts the agent generates, so it does nothing
 on its own: with no backend active — no `NIXL_TRACE_BACKENDS`, no nsys — the
 agent creates no contexts, and setting only the ratio produces nothing to see.
-A request created under an application's trace context (see "Joining an
-application's trace") takes that context's sampled flag instead, so the ratio
-does not apply to it.
+A request created under an application's trace context, or a post given one (see
+"Joining an application's trace"), takes that context's sampled flag instead, so the
+ratio does not apply to it.
 
 The decision is head-based: it is taken once, when the agent creates the trace
 context for a request, and derives from that context's own trace id, so it is
@@ -180,7 +180,8 @@ wire: UCX carries only sampled contexts to the remote agent.
 Only a sampled request is recorded: its `nixl::xferReq` span, its creation, post and
 release spans, its `nixl::xfer.complete` and `nixl::xfer.error` events and its backend
 phases. An
-unsampled request records nothing, so the requests a ratio below `1` skips cost
+unsampled request records nothing, except a post given a sampled context of its own
+(see "Joining an application's trace"), so the requests a ratio below `1` skips cost
 only their ids. Calls that belong to no request, such as registration,
 connections, metadata and notifications, are recorded whenever a backend is
 active.
@@ -271,7 +272,8 @@ For a sampled request, each `postXferReq` span is the span that its post's trace
 identifies (see "Backend phases"): a span id of its own, whose parent is the request's
 span. The post's `nixl::xfer.complete` and backend phases and the receiver's
 `nixl::notif.received` name it as their parent, even after it has ended, so every record
-of the request descends from its `nixl::xferReq`.
+of the request descends from its `nixl::xferReq`. A post given an application's context
+of its own is the exception (see "Joining an application's trace").
 
 ### Request id and execution number
 
@@ -325,6 +327,12 @@ traced; `NIXL_TRACE_SAMPLE_RATIO` applies only to the contexts NIXL draws itself
 value of neither form is ignored, so the request draws its own context, and the agent
 logs the first such value at WARN. With no tracing backend active, the field is
 ignored.
+
+An application can also pass a context to `postXferReq`, for that post alone: its span
+then takes that trace id and flags, a span id of its own and the supplied span as its
+parent instead of the request's, and the supplied sampled flag decides whether the post
+is traced, whether or not the request is. The receiver's records of that post join the
+same trace. A later post without a context is under the request's span again.
 
 ### Backend phases
 

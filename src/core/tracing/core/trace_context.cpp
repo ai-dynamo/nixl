@@ -364,16 +364,27 @@ nixl::trace::resolveTraceSampleRatio() {
     return *ratio;
 }
 
+std::optional<nixl::trace::TraceContext>
+nixl::trace::parseParentContext(const nixl::trace::Tracer *tracer, const nixl_blob_t &value) {
+    if (value.empty() || (tracer == nullptr)) {
+        return std::nullopt;
+    }
+    std::optional<nixl::trace::TraceContext> context = parseParent(value);
+    if (!context) {
+        tracer->reportUnparsableParent(value.size());
+        return std::nullopt;
+    }
+    context->flags &= supported_trace_flags;
+    return context;
+}
+
 nixl::trace::TraceIdentity
 nixl::trace::generateRequestIdentity(const nixl::trace::Tracer *tracer, const nixl_blob_t &parent) {
     if (tracer == nullptr) {
         return {};
     }
     const std::optional<nixl::trace::TraceContext> parent_context =
-        parent.empty() ? std::nullopt : parseParent(parent);
-    if (!parent.empty() && !parent_context) {
-        tracer->reportUnparsableParent(parent.size());
-    }
+        parseParentContext(tracer, parent);
     nixl::trace::TraceIdentity identity;
     try {
         drawRequestIdentity(identity, tracer->sampleRatio(), tracer->randomBytes());
@@ -384,7 +395,7 @@ nixl::trace::generateRequestIdentity(const nixl::trace::Tracer *tracer, const ni
     }
     if (parent_context) {
         identity.context.traceId = parent_context->traceId;
-        identity.context.flags = parent_context->flags & supported_trace_flags;
+        identity.context.flags = parent_context->flags;
         identity.context.parentSpanId = parent_context->spanId;
     }
     return identity;
