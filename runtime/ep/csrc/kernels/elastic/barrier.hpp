@@ -43,19 +43,25 @@ static void __instantiate_kernel() {{
     }
 };
 
-static void launch_barrier(const topology::EPTopology* topology,
-                           const int& num_max_scaleup_ranks, const int64_t& num_timeout_cycles,
-                           const at::cuda::CUDAStream& stream) {
-    // Number of threads equals to the number of ranks
+static BarrierRuntime::Args get_barrier_args(const topology::EPTopology* topology,
+                                             const int& num_max_scaleup_ranks, const int64_t& num_timeout_cycles) {
     constexpr auto kNumThreads = 512;
-
-    // Generate, build and launch
-    const BarrierRuntime::Args args = {
+    return {
         .num_max_scaleup_ranks = num_max_scaleup_ranks, .num_timeout_cycles = num_timeout_cycles,
         .topology = topology,
         .launch_args = jit::LaunchArgs(1, kNumThreads)};
-    const auto code = BarrierRuntime::generate(args);
-    const auto runtime = jit::compiler->build("barrier", code);
+}
+
+static void build_barrier(const int& num_max_scaleup_ranks, const int64_t& num_timeout_cycles) {
+    const auto args = get_barrier_args(nullptr, num_max_scaleup_ranks, num_timeout_cycles);
+    jit::compiler->build("barrier", BarrierRuntime::generate(args));
+}
+
+static void launch_barrier(const topology::EPTopology* topology,
+                           const int& num_max_scaleup_ranks, const int64_t& num_timeout_cycles,
+                           const at::cuda::CUDAStream& stream) {
+    const auto args = get_barrier_args(topology, num_max_scaleup_ranks, num_timeout_cycles);
+    const auto runtime = jit::compiler->build("barrier", BarrierRuntime::generate(args));
     BarrierRuntime::launch(runtime, args, stream);
 }
 

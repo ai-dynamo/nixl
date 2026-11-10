@@ -132,6 +132,8 @@ public:
         this->num_cpu_timeout_secs = num_cpu_timeout_secs;
         this->num_gpu_timeout_cycles = static_cast<int64_t>(num_gpu_timeout_secs);
         this->num_gpu_timeout_cycles *= jit::device_runtime->get_clock_rate();
+        // Compile during setup so the first barrier, including destruction, never triggers compilation.
+        build_barrier(max_num_scaleup_ranks, num_gpu_timeout_cycles);
 
         // Assign workspaces and buffers
         workspace_layout = std::make_shared<layout::WorkspaceLayout>(workspace);
@@ -328,10 +330,15 @@ public:
     void connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_mds,
                        const std::vector<peer_info_t>& peer_infos) {
         EP_HOST_ASSERT(c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None and
-                       "`connect_ranks` inside a CUDA-graph capture: connect between launches");
+                       "`connect_ranks` inside a CUDA-graph capture: prepare peers outside capture");
+        std::vector<nixl::NIXLPeerInfo> infos;
+        for (const auto& [base, device, world_rank, num_bytes]: peer_infos)
+            infos.push_back({base, device, world_rank, num_bytes});
+        // Native preparation may wait for joining peers while another Python thread replays the committed graph.
+        pybind11::gil_scoped_release release;
         // A connected pair counts its barriers from zero on both sides (the peer runs this for us too): zero our words for
         // the world rank now, before our hello goes out, since the peer can write to us only once it has our hello and committed
-        const auto stream = at::cuda::getCurrentCUDAStream();
+        const auto stream = at::cuda::getStreamFromPool();
         const auto& wl = *workspace_layout;
         for (const int wr: world_ranks) {
             if (nixl_context->is_connected(wr))
@@ -340,9 +347,6 @@ public:
             CUDA_RUNTIME_CHECK(cudaMemsetAsync(wl.get_peer_barrier_expected_ptr(wr), 0, sizeof(int64_t), stream));
         }
         CUDA_RUNTIME_CHECK(cudaStreamSynchronize(stream));
-        std::vector<nixl::NIXLPeerInfo> infos;
-        for (const auto& [base, device, world_rank, num_bytes]: peer_infos)
-            infos.push_back({base, device, world_rank, num_bytes});
         nixl_context->connect_ranks(world_ranks, remote_mds, infos);
     }
 
