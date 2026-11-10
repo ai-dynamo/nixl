@@ -696,7 +696,8 @@ TEST(TraceContext, ForkedChildDrawsItsOwnIds) {
 }
 
 TEST(TraceContext, DefaultSourceIdsAreDistinct) {
-    const nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}};
+    const nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{},
+                                     0.0};
     constexpr std::size_t count = 10000;
     std::set<std::uint64_t> ids;
 

@@ -113,7 +113,7 @@ using random_bytes_fn_t = void (*)(std::span<std::uint8_t>);
 class Tracer {
 public:
     explicit Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
-                    double sample_ratio = 0.0,
+                    double sample_ratio,
                     random_bytes_fn_t random_bytes = nullptr) noexcept;
     ~Tracer();
     Tracer(const Tracer &) = delete;
@@ -208,7 +208,7 @@ struct TracerConfig {
     /** @brief Backend names requested at runtime (e.g. {"nvtx"}). */
     std::vector<std::string> backends;
     /** @brief Head-based sampling probability in [0, 1]; 0 samples nothing. */
-    double sampleRatio{0.0};
+    double sampleRatio{defaultSampleRatio};
 };
 
 /**

@@ -43,6 +43,7 @@ inline constexpr std::size_t traceContextWireSize = 26;
 
 inline constexpr std::string_view traceSampleRatioVar = "NIXL_TRACE_SAMPLE_RATIO";
 inline constexpr std::string_view otelTracesSampleRatioVar = "OTEL_TRACES_SAMPLE_RATIO";
+inline constexpr double defaultSampleRatio = 1.0;
 
 /**
  * @brief Outcome of decoding a wire record. UnknownVersion is a record written
@@ -101,11 +102,12 @@ sampledByRatio(const TraceContext &context, double ratio) noexcept;
  *        otelTracesSampleRatioVar, which is Dynamo's convention rather than an
  *        OpenTelemetry one (the SDK spec defines OTEL_TRACES_SAMPLER and
  *        OTEL_TRACES_SAMPLER_ARG) but carries the same head-sampling meaning,
- *        so a NIXL running inside Dynamo inherits it. Unset diverges:
- *        Dynamo samples everything, NIXL samples nothing. Setting
+ *        so a NIXL running inside Dynamo inherits it. When neither is set,
+ *        every request is sampled, as in Dynamo. Setting
  *        traceSampleRatioVar empty is an explicit "off" that beats the
  *        fallback, matching how NIXL_TRACE_BACKENDS is treated.
- * @return The resolved ratio, or 0 (sample nothing) when neither is usable.
+ * @return The resolved ratio, or defaultSampleRatio (every request) when
+ *         neither is set or otelTracesSampleRatioVar is empty or unusable.
  * @throws std::invalid_argument when traceSampleRatioVar holds anything other
  *         than 0 or a number in [2^-56, 1] — OpenTelemetry's range, 2^-56 being
  *         one trace in every value 56 bits can express — so a caller who asked

@@ -842,7 +842,7 @@ TEST(Tracing, SpanIdFromFirstNonZeroBackend) {
 // A tracer with no backends is empty; spans are inactive and all calls are
 // safe no-ops (this is the zero-overhead, nothing-requested path).
 TEST(Tracing, EmptyTracerIsInert) {
-    nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}};
+    nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}, 0.0};
     EXPECT_TRUE(tracer.empty());
 
     auto span = tracer.beginSpan("op", nixl::trace::Kind::CommRecv);
@@ -1676,7 +1676,7 @@ TEST(Tracing, TracerNeedsTimestampsUnlessEveryBackendOwnsThem) {
                 backends.push_back(std::make_unique<MockBackend>("mock", &log, 0));
             }
         }
-        return nixl::trace::Tracer{std::move(backends)}.needsTimestamps();
+        return nixl::trace::Tracer{std::move(backends), 0.0}.needsTimestamps();
     };
 
     EXPECT_TRUE(needs({false}));
@@ -1692,7 +1692,7 @@ TEST(TracePhaseSink, BackendsThatOwnTimestampsGetNoClockReading) {
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     backends.push_back(std::make_unique<SelfTimedBackend>("a", &a, 0));
     backends.push_back(std::make_unique<SelfTimedBackend>("b", &b, 0));
-    nixl::trace::Tracer tracer{std::move(backends)};
+    nixl::trace::Tracer tracer{std::move(backends), 0.0};
     nixl::trace::TracerPhaseSink sink{tracer, "UCX"};
     const nixl::trace::TraceIdentity identity{testContext(0x3c), 0x3c, 1};
     const nixlBackendPostTrace post{&sink, identity};
@@ -1719,7 +1719,7 @@ TEST(Tracing, RecordReadsNoClockForBackendsThatOwnTimestamps) {
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     backends.push_back(std::make_unique<SelfTimedBackend>("a", &a, 0));
     backends.push_back(std::make_unique<SelfTimedBackend>("b", &b, 0));
-    nixl::trace::Tracer tracer{std::move(backends)};
+    nixl::trace::Tracer tracer{std::move(backends), 0.0};
     const nixl::trace::Traceable traced{&tracer, {testContext(0x3d), 0x3d}};
 
     traced.record(nixl::trace::Record::XferComplete);
@@ -1836,7 +1836,7 @@ TEST(Tracing, InactiveSpanRecordsNothing) {
     CallLog a;
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     backends.push_back(std::make_unique<MockBackend>("a", &a, 0, /*null_spans=*/true));
-    nixl::trace::Tracer tracer{std::move(backends)};
+    nixl::trace::Tracer tracer{std::move(backends), 0.0};
     auto span = tracer.beginSpan("op");
     auto context_span =
         tracer.beginContextSpan("op", nixl::trace::Kind::Generic, testContext(0x25), 0x2525);
