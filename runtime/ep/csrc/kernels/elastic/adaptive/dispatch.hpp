@@ -25,7 +25,6 @@ public:
         int num_notify_warps, num_channels_per_sm;
         int num_max_scaleout_ranks, num_max_scaleup_ranks;
         int num_hidden_bytes, num_sf_packs;
-        int num_max_tokens_per_rank;
         int num_experts_per_rank, num_topk, expert_alignment;
         int64_t num_timeout_cycles;
 
@@ -42,6 +41,7 @@ public:
         void* buffer; void* send_buffer;
         void* mapped_host_workspace;
         const topology::EPTopology* topology;
+        int num_max_tokens_per_rank;
 
         jit::LaunchArgs launch_args;
     };
@@ -53,7 +53,7 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
             args.do_cpu_sync,
@@ -61,7 +61,6 @@ static void __instantiate_kernel() {{
             args.num_notify_warps, args.num_channels_per_sm,
             args.num_max_scaleout_ranks, args.num_max_scaleup_ranks,
             args.num_hidden_bytes, args.num_sf_packs,
-            args.num_max_tokens_per_rank,
             args.num_experts_per_rank, args.num_topk, args.expert_alignment,
             args.num_timeout_cycles);
     }
@@ -80,7 +79,8 @@ static void __instantiate_kernel() {{
             args.sf_token_stride, args.sf_hidden_stride,
             args.buffer, args.send_buffer,
             args.mapped_host_workspace,
-            args.topology));
+            args.topology,
+            args.num_max_tokens_per_rank));
     }
 };
 
@@ -152,7 +152,6 @@ static void launch_dispatch(void* x, void* sf,
         .num_notify_warps = kNumNotifyWarps, .num_channels_per_sm = num_channels_per_sm,
         .num_max_scaleout_ranks = num_max_scaleout_ranks, .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
-        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk, .expert_alignment = expert_alignment,
         .num_timeout_cycles = num_timeout_cycles,
         .x = x, .sf = static_cast<sf_pack_t*>(sf), .topk_idx = topk_idx, .topk_weights = topk_weights,
@@ -167,6 +166,7 @@ static void launch_dispatch(void* x, void* sf,
         .buffer = buffer, .send_buffer = send_buffer,
         .mapped_host_workspace = mapped_host_workspace,
         .topology = topology,
+        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         // NOTES: make cluster dim 2 to overlap with clustered computation kernels
         .launch_args = jit::LaunchArgs(topology::get_num_launch_sms(), num_threads, num_smem_bytes, 2, true)};
     const auto code = DispatchRuntime::generate(args);
@@ -183,7 +183,6 @@ public:
         int num_warps;
         int num_max_scaleup_ranks;
         int num_hidden_bytes, num_sf_packs;
-        int num_max_tokens_per_rank;
         int num_experts_per_rank, num_topk, expert_alignment;
 
         // Parameters
@@ -198,6 +197,7 @@ public:
         int num_recv_tokens;
         int recv_sf_token_stride, recv_sf_hidden_stride;
         const topology::EPTopology* topology;
+        int num_max_tokens_per_rank;
 
         jit::LaunchArgs launch_args;
     };
@@ -209,14 +209,13 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
                            args.do_expand, args.do_zero_padding,
                            args.launch_args.grid_dim.first, args.num_channels_per_sm, args.num_warps,
                            args.num_max_scaleup_ranks,
                            args.num_hidden_bytes, args.num_sf_packs,
-                           args.num_max_tokens_per_rank,
                            args.num_experts_per_rank, args.num_topk, args.expert_alignment);
     }
 
@@ -231,7 +230,8 @@ static void __instantiate_kernel() {{
                                                  args.num_unaligned_recv_tokens_per_expert,
                                                  args.num_recv_tokens,
                                                  args.recv_sf_token_stride, args.recv_sf_hidden_stride,
-                                                 args.topology));
+                                                 args.topology,
+                                                 args.num_max_tokens_per_rank));
     }
 };
 
@@ -265,7 +265,6 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
         .num_channels_per_sm = num_channels_per_sm, .num_warps = num_warps,
         .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
-        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk, .expert_alignment = expert_alignment,
         .buffer = buffer, .workspace = workspace,
         .psum_num_recv_tokens_per_scaleup_rank = psum_num_recv_tokens_per_scaleup_rank,
@@ -278,6 +277,7 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
         .num_recv_tokens = num_recv_tokens,
         .recv_sf_token_stride = recv_sf_token_stride, .recv_sf_hidden_stride = recv_sf_hidden_stride,
         .topology = topology,
+        .num_max_tokens_per_rank = num_max_tokens_per_rank,
         .launch_args = jit::LaunchArgs(num_sms, num_threads, num_smem_bytes, 1, false, true)};
     const auto code = DispatchCopyEpilogueRuntime::generate(args);
     const auto runtime = jit::compiler->build("adaptive_dispatch_copy_epilogue", code);

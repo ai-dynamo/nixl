@@ -19,7 +19,6 @@ template <bool kDoExpand, bool kDoZeroPadding,
           int kNumSMs, int kNumChannelsPerSM, int kNumWarps,
           int kNumMaxScaleupRanks,
           int kNumHiddenBytes, int kNumSFPacks,
-          int kNumMaxTokensPerRank,
           int kNumExpertsPerRank, int kNumTopk, int kExpertAlignment,
           int kNumThreads = kNumWarps * 32>
 __global__ void __launch_bounds__(kNumThreads, 1)
@@ -33,7 +32,8 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
                             int* num_unaligned_recv_tokens_per_expert,
                             int num_recv_tokens,
                             const int recv_sf_token_stride, const int recv_sf_hidden_stride,
-                            const topology::EPTopology* topology_ptr) {
+                            const topology::EPTopology* topology_ptr,
+                            const int num_max_tokens_per_rank) {
     EP_PROFILE_STAMP(workspace, DispatchCopyEntry);
 
     // Topology
@@ -59,7 +59,7 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
     const auto token_layout = layout::TokenLayout(kNumHiddenBytes, kNumSFPacks * sizeof(sf_pack_t), kNumTopk, true);
     const auto tma_buffer = layout::BufferLayout<true>(token_layout, kNumWarps, 1, smem)
         .get_rank_buffer(warp_idx).get_token_buffer(0);
-    const auto scaleup_buffer = layout::BufferLayout<false>(token_layout, num_scaleup_ranks, num_scaleout_ranks * kNumMaxTokensPerRank, buffer);
+    const auto scaleup_buffer = layout::BufferLayout<false>(token_layout, num_scaleup_ranks, num_scaleout_ranks * num_max_tokens_per_rank, buffer);
 
     // Init TMA
     ptx::arrival_phase phase = 0;

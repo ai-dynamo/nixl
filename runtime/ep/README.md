@@ -267,7 +267,8 @@ through departure cleanup. It reports completion gaps during preparation,
 cutover and retirement. `--max-completion-gap-ms 1000` applies a one-second
 acceptance bound; the default reports gaps without enforcing a bound.
 Joiner capture is prepared ahead of cutover; its first execution is timed
-after activation.
+after activation. `tests/elastic/test_runtime_tokens.py` checks BF16 payloads
+and JIT reuse across token capacities.
 
 ## Phase profiling
 
@@ -312,6 +313,10 @@ waits, and use the uninstrumented `PERF` measurements for performance claims.
 
 The JIT cache defaults to `~/.nixl_ep_v2`; `NIXL_EP_JIT_CACHE_DIR` selects another
 directory. NIXL and UCX dependency headers are not fingerprinted by the cache key.
+
+Token capacity is a runtime kernel argument, so changing it between eager
+calls or new captures reuses the compiled specialization. Each existing
+graph retains the capacity supplied at capture.
 
 When changing NIXL or UCX builds between runs, including build configuration or
 device-header changes, clear the existing cache or set `NIXL_EP_JIT_CACHE_DIR` to a
