@@ -555,6 +555,10 @@ if nixl_trace_enabled
     endif
     add_project_arguments('-DNIXL_TRACE_ENABLED', language: nixl_trace_arg_langs)
 
+    if get_option('default_library') == 'static'
+        warning('With default_library=static each plugin loaded at run time holds its own copy of libnixl_build and records no tracing; see docs/tracing.md')
+    endif
+
     requested_trace_backends = []
     foreach b : get_option('trace_backends').split(',')
         b_stripped = b.strip()
