@@ -175,7 +175,7 @@ overridden before passing it to `createBackend` in C++ or `create_backend` in Py
 
 | Option key | Default | Description |
 | ---------- | ------- | ----------- |
-| `ucx_error_handling_mode` | `peer` | UCX endpoint error handling policy. `peer` requests peer failure reporting; `none` disables it. |
+| `ucx_error_handling_mode` | `peer`, or `failover` when UCX provides that mode and the loaded library is 1.24 or newer | UCX endpoint error handling policy. `peer` requests peer failure reporting; `failover` retries on another channel; `none` disables reporting. |
 | `ucx_vram_memtype_hint` | `auto` | Controls how NIXL hints the UCX memory type during VRAM registration. Supported values are exactly: `auto`, `none`, `cuda`, `cuda-managed`, `rocm`, `ze-device`. |
 
 The two options are independent; you do not need to set one to use the other.
