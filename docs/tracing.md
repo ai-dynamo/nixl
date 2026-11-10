@@ -478,10 +478,12 @@ them are posted to UCX, `nixl::notif.sent` when the notification is posted, and,
 for the posts named below, `nixl::wire.completed` when the transfer completes.
 If handing a validated post to UCX fails, at a put, a get or the flush, for
 example because the peer disconnected, only `nixl::submit` is recorded.
-The notification goes out from `postXfer` if the transfer has already completed,
-and otherwise from the first status check that finds it complete, so
-`notif.sent` appears once per notifying post, from either call, with that post's
-execution number. UCX records `nixl::wire.completed` only where a thread other
+The notification goes out once the transfer completes: from `postXfer` if it
+completes at once, from the flush callback while the progress thread runs, and
+otherwise from the first status check that finds it complete. Its `notif.sent` is
+recorded at the end of that call, or right after the progress call that ran the
+callback, once per notifying post, with that post's execution number.
+UCX records `nixl::wire.completed` only where a thread other
 than the application's sees a transfer complete: on the thread-pool engine, for
 a post split across its dedicated workers (at least `split_batch_size`
 descriptors, and at least `num_threads`), from the dedicated thread whose chunk
@@ -491,9 +493,10 @@ every other post, when the flush behind its puts or gets completes, or in
 transfer fails or that is released in flight, and none without the progress
 thread for a post that is not split, as on the default engine, where a transfer
 is seen to complete only when the application checks its status, so a stamp
-would time the poll rather than the transport. A transfer can complete before `postXfer`
-records `nixl::wire.submitted`, so `nixl::wire.completed` can come first; both
-follow `nixl::submit`. `nixl::wire.completed` marks the data's completion only,
+would time the poll rather than the transport. A transfer can complete, and its
+notification go out, before `postXfer` records `nixl::wire.submitted`, so
+`nixl::wire.completed` and `nixl::notif.sent` can come first; all three follow
+`nixl::submit`. `nixl::wire.completed` marks the data's completion only,
 so a post whose notification fails afterwards keeps it. With each
 `nixl::wire.completed`, UCX records the span `nixl::wire.inflight` from that post's
 `nixl::submit` to its `nixl::wire.completed`, at their times. A span's times are its
@@ -588,8 +591,9 @@ engine's dedicated workers also records one `nixl::wire.completed` and one
 in flight. Without the progress thread, an unsplit one and one on the default engine
 record none; while it runs, both record one of each per post, the default engine's
 before a late status check and none when released in flight. A transfer to a second
-agent that nothing progresses cannot finish inside `postXfer`, so its `notif.sent`
-must come from the status check. An unsampled request, or an agent with tracing off,
+agent that only the test progresses cannot finish inside `postXfer`; the sender's
+progress thread then sends its notification and records `notif.sent` without a
+status check. An unsampled request, or an agent with tracing off,
 records none of them. An agent that sends itself two notifications records
 `nixl::notif.received` for each, with that post's execution number. The agents trace
 through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in the mocks
