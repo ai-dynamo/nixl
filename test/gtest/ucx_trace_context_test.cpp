@@ -20,6 +20,7 @@
 #include "nixl.h"
 #include "plugin_manager.h"
 #include "serdes/serdes.h"
+#include "tracing/trace.h"
 #include "tracing/trace_context.h"
 #include "transfer_request.h"
 #include "ucx_backend.h"
@@ -45,6 +46,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <span>
 #include <sstream>
@@ -84,6 +86,13 @@ constexpr std::uint64_t tagged_request_id = 0x8090a0b0c0d0e0f0;
 constexpr std::uint64_t tagged_execution = 0x0102030405060708;
 constexpr std::string_view tagged_request_bytes =
     "\xf0\xe0\xd0\xc0\xb0\xa0\x90\x80\x08\x07\x06\x05\x04\x03\x02\x01";
+
+[[nodiscard]] nixl::trace::TraceContext
+drawContext(double sample_ratio) {
+    const nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{},
+                                     sample_ratio};
+    return nixl::trace::generateRequestIdentity(&tracer).context;
+}
 
 [[nodiscard]] std::string
 olderSenderNotif(const std::string &agent, const std::string &msg) {
@@ -620,7 +629,7 @@ TEST(SerDesProbe, PeekBufLenReportsEmptyValuesAndRejectsTruncatedOnes) {
 }
 
 TEST(UcxTraceContextWire, OlderReceiverStillReadsTheMessage) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     nixlSerDes older_receiver;
     ASSERT_EQ(older_receiver.importStr(nixl::ucx::serializeNotif(
                   sender_name, "msg", {context, tagged_request_id, tagged_execution})),
@@ -631,7 +640,7 @@ TEST(UcxTraceContextWire, OlderReceiverStillReadsTheMessage) {
 }
 
 TEST(UcxTraceContextWire, UnsampledRequestWritesNoContextBytes) {
-    const auto unsampled = nixl::trace::generateTraceContext(0.0);
+    const auto unsampled = drawContext(0.0);
     ASSERT_TRUE(unsampled.valid());
 
     EXPECT_EQ(nixl::ucx::serializeNotif(
@@ -643,7 +652,7 @@ TEST(UcxTraceContextWire, UnsampledRequestWritesNoContextBytes) {
 }
 
 TEST(UcxTraceContextWire, SampledContextRoundTrips) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     discardingSink sink;
     const auto notif = nixl::ucx::deserializeNotif(
         nixl::ucx::serializeNotif(
@@ -659,7 +668,7 @@ TEST(UcxTraceContextWire, SampledContextRoundTrips) {
 }
 
 TEST(UcxTraceContextWire, RequestTagHoldsTheIdThenTheExecutionLittleEndian) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
 
     EXPECT_EQ(nixl::ucx::serializeNotif(
                   sender_name, "msg", {context, tagged_request_id, tagged_execution}),
@@ -668,7 +677,7 @@ TEST(UcxTraceContextWire, RequestTagHoldsTheIdThenTheExecutionLittleEndian) {
 }
 
 TEST(UcxTraceContextWire, ReceiverWithoutTracingIgnoresTheContext) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     const auto notif = nixl::ucx::deserializeNotif(
         nixl::ucx::serializeNotif(
             sender_name, "msg", {context, tagged_request_id, tagged_execution}),
@@ -693,7 +702,7 @@ TEST(UcxTraceContextWire, UndecodableContextKeepsTheMessage) {
         sender.addStr("tctx", record);
         notifications.push_back(sender.exportStr());
     }
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     const std::string sampled = nixl::ucx::serializeNotif(sender_name, "msg", {context});
     notifications.push_back(sampled.substr(0, sampled.size() - 2));
     discardingSink sink;
@@ -724,7 +733,7 @@ TEST(UcxTraceContextWire, OlderSenderNotificationParsesWithoutLogging) {
 }
 
 TEST(UcxTraceContextWire, SenderWithoutRequestTagGivesTheContextAlone) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     const std::string context_only = handBuiltNotif({{"tctx", encodedRecord(context)}});
     EXPECT_EQ(nixl::ucx::serializeNotif(sender_name, "msg", {context, 0, tagged_execution}),
               context_only);
@@ -741,7 +750,7 @@ TEST(UcxTraceContextWire, SenderWithoutRequestTagGivesTheContextAlone) {
 }
 
 TEST(UcxTraceContextWire, MalformedRequestTagKeepsTheContext) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     const std::string record = encodedRecord(context);
     const std::string request(tagged_request_bytes);
     std::vector<std::string> notifications;

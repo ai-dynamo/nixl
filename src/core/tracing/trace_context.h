@@ -116,21 +116,6 @@ sampledByRatio(const TraceContext &context, double ratio) noexcept;
 [[nodiscard]] double
 resolveTraceSampleRatio();
 
-/**
- * @brief Generate a context with fresh random ids, marked sampled when
- *        @p sample_ratio selects it by the rule sampledByRatio documents.
- * @param sample_ratio Probability in [0, 1]; the default samples nothing.
- */
-[[nodiscard]] TraceContext
-generateTraceContext(double sample_ratio = 0.0);
-
-/**
- * @brief Draw a request id from @p tracer's random source, again while it is
- *        zero; 0, which means none, when @p tracer is null or its source fails.
- */
-[[nodiscard]] std::uint64_t
-generateRequestId(const Tracer *tracer);
-
 class TraceparentText {
 public:
     explicit TraceparentText(const TraceContext &context) noexcept;

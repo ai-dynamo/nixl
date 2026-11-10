@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -40,6 +41,13 @@ using record_t = std::vector<std::string>;
 
 constexpr const char *recorder_agent = "recorder_agent";
 constexpr std::uint64_t recorded_request_id = 0x7090a0b0c0d0e0f0ULL;
+
+[[nodiscard]] nixl::trace::TraceContext
+drawContext(double sample_ratio) {
+    const nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{},
+                                     sample_ratio};
+    return nixl::trace::generateRequestIdentity(&tracer).context;
+}
 
 class traceRecorder : public testing::Test {
 protected:
@@ -75,7 +83,7 @@ protected:
 } // namespace
 
 TEST_F(traceRecorder, EmittedSpanRecordsItsTimesAndContext) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     {
         const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
         ASSERT_NE(tracer, nullptr);
@@ -112,7 +120,7 @@ TEST_F(traceRecorder, EmittedSpanRecordsItsTimesAndContext) {
 }
 
 TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     {
         const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
         ASSERT_NE(tracer, nullptr);
@@ -138,7 +146,7 @@ TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
 }
 
 TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     {
         const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
         ASSERT_NE(tracer, nullptr);
@@ -162,8 +170,8 @@ TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
 
 TEST_F(traceRecorder, ContextSpanRecordsItsOwnContextAndId) {
     constexpr std::uint64_t other_request_id = 0x0102030405060708ULL;
-    const auto context = nixl::trace::generateTraceContext(1.0);
-    const auto other_context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
+    const auto other_context = drawContext(1.0);
     {
         const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
         ASSERT_NE(tracer, nullptr);

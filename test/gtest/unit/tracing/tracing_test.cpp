@@ -1142,12 +1142,12 @@ TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
     EXPECT_FALSE(request.trace().identity().context.valid());
 }
 
-TEST(Tracing, ActiveTracerConstructsGeneratedContext) {
+TEST(Tracing, ActiveTracerGeneratesValidDistinctContexts) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
 
-    const nixl::trace::TraceContext first{tracer.get()};
-    const nixl::trace::TraceContext second{tracer.get()};
+    const auto first = nixl::trace::generateRequestIdentity(tracer.get()).context;
+    const auto second = nixl::trace::generateRequestIdentity(tracer.get()).context;
 
     EXPECT_TRUE(first.valid());
     EXPECT_TRUE(second.valid());
@@ -1160,13 +1160,13 @@ TEST(Tracing, TracerSampleRatioReachesGeneratedContexts) {
     CallLog a, b;
     const auto unsampled_tracer = makeMockTracer(a, b);
     EXPECT_EQ(unsampled_tracer->sampleRatio(), 0.0);
-    EXPECT_FALSE(nixl::trace::TraceContext{unsampled_tracer.get()}.sampled());
+    EXPECT_FALSE(nixl::trace::generateRequestIdentity(unsampled_tracer.get()).context.sampled());
 
     CallLog c, d;
     const auto sampled_tracer = makeMockTracer(c, d, 0, 0, /*sample_ratio=*/1.0);
     EXPECT_EQ(sampled_tracer->sampleRatio(), 1.0);
 
-    const nixl::trace::TraceContext context{sampled_tracer.get()};
+    const auto context = nixl::trace::generateRequestIdentity(sampled_tracer.get()).context;
     EXPECT_TRUE(context.valid());
     EXPECT_TRUE(context.sampled());
 }
@@ -1177,32 +1177,32 @@ TEST(Tracing, ContextGenerationFailureIsUntracedAndLoggedOncePerTracer) {
     const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, failRandomBytes);
 
     for (int i = 0; i < 2; ++i) {
-        EXPECT_EQ(nixl::trace::TraceContext{tracer.get()}, nixl::trace::TraceContext{});
+        EXPECT_EQ(nixl::trace::generateRequestIdentity(tracer.get()).context,
+                  nixl::trace::TraceContext{});
     }
     EXPECT_EQ(failures.count(), 1u);
 
     CallLog c, d;
     const auto other_tracer = makeMockTracer(c, d, 0, 0, 1.0, failRandomBytes);
-    EXPECT_EQ(nixl::trace::TraceContext{other_tracer.get()}, nixl::trace::TraceContext{});
+    EXPECT_EQ(nixl::trace::generateRequestIdentity(other_tracer.get()).context,
+              nixl::trace::TraceContext{});
     EXPECT_EQ(failures.count(), 2u);
 }
 
-TEST(Tracing, RequestIdIsDrawnAgainWhileZero) {
+TEST(Tracing, RequestIdentityDrawsItsIdsAgainWhileZero) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
     zero_draws_left = 2;
 
-    EXPECT_EQ(nixl::trace::generateRequestId(tracer.get()), 0x5a5a5a5a5a5a5a5aULL);
-}
+    const nixl::trace::TraceIdentity identity = nixl::trace::generateRequestIdentity(tracer.get());
 
-TEST(Tracing, RequestIdIsNoneWithoutTracerOrSource) {
-    gtest::LogMessageCounter failures("could not generate a trace context");
-    CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, failRandomBytes);
-
-    EXPECT_EQ(nixl::trace::generateRequestId(nullptr), 0u);
-    EXPECT_EQ(nixl::trace::generateRequestId(tracer.get()), 0u);
-    EXPECT_EQ(failures.count(), 1u);
+    std::array<std::uint8_t, 16> trace_id{};
+    trace_id.fill(0x5a);
+    std::array<std::uint8_t, 8> span_id{};
+    span_id.fill(0x5a);
+    EXPECT_EQ(identity.context.traceId, trace_id);
+    EXPECT_EQ(identity.context.spanId, span_id);
+    EXPECT_EQ(identity.requestId, 0x5a5a5a5a5a5a5a5aULL);
 }
 
 TEST(Tracing, RequestIdentityTakesItsIdsFromOneDraw) {
@@ -1288,7 +1288,7 @@ TEST(Tracing, RequestIdFitsAnInt64) {
         0.0,
         [](std::span<std::uint8_t> bytes) { std::ranges::fill(bytes, std::uint8_t{0xff}); }};
 
-    EXPECT_EQ(nixl::trace::generateRequestId(&tracer),
+    EXPECT_EQ(nixl::trace::generateRequestIdentity(&tracer).requestId,
               static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
 }
 

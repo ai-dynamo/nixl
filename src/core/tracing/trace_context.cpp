@@ -145,22 +145,6 @@ setFlags(nixl::trace::TraceContext &context, double sample_ratio) noexcept {
 }
 
 void
-generateInto(nixl::trace::TraceContext &context,
-             double sample_ratio,
-             nixl::trace::random_bytes_fn_t random_bytes) {
-    const auto fill = randomSource(random_bytes);
-    do {
-        fill(context.traceId);
-    } while (isAllZero(context.traceId));
-
-    do {
-        fill(context.spanId);
-    } while (isAllZero(context.spanId));
-
-    setFlags(context, sample_ratio);
-}
-
-void
 drawRequestIdentity(nixl::trace::TraceIdentity &identity,
                     double sample_ratio,
                     nixl::trace::random_bytes_fn_t random_bytes) {
@@ -221,19 +205,6 @@ nixl::trace::TraceparentText::TraceparentText(const nixl::trace::TraceContext &c
     *out++ = '-';
     out = appendByte(out, context.flags & supported_trace_flags);
     size_ = static_cast<std::uint8_t>(out - text_.data());
-}
-
-nixl::trace::TraceContext::TraceContext(const nixl::trace::Tracer *tracer) {
-    if (tracer == nullptr) {
-        return;
-    }
-    try {
-        generateInto(*this, tracer->sampleRatio(), tracer->randomBytes());
-    }
-    catch (const std::exception &e) {
-        *this = TraceContext{};
-        tracer->reportContextFailure(e.what());
-    }
 }
 
 void
@@ -368,33 +339,6 @@ nixl::trace::resolveTraceSampleRatio() {
         return default_sample_ratio;
     }
     return *ratio;
-}
-
-nixl::trace::TraceContext
-nixl::trace::generateTraceContext(double sample_ratio) {
-    nixl::trace::TraceContext context;
-    generateInto(context, sample_ratio, nullptr);
-    return context;
-}
-
-std::uint64_t
-nixl::trace::generateRequestId(const nixl::trace::Tracer *tracer) {
-    if (tracer == nullptr) {
-        return 0;
-    }
-    const auto fill = randomSource(tracer->randomBytes());
-    std::uint64_t id = 0;
-    try {
-        do {
-            fill({reinterpret_cast<std::uint8_t *>(&id), sizeof(id)});
-            id &= max_request_id;
-        } while (id == 0);
-    }
-    catch (const std::exception &e) {
-        tracer->reportContextFailure(e.what());
-        return 0;
-    }
-    return id;
 }
 
 nixl::trace::TraceIdentity
