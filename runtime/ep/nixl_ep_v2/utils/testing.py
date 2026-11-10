@@ -105,14 +105,18 @@ def bench_kineto(
 
     Returns:
         durations: the average kernel duration(s) in seconds.
+
+    Raises:
+        RuntimeError: if external NVIDIA tools are enabled, which conflict with Kineto.
     """
     assert isinstance(kernel_names, (str, tuple))
     is_tuple = isinstance(kernel_names, tuple)
 
-    # Skip profiling
-    # Conflict with Nsight Systems, Nsight Compute and Compute Sanitizer
     if int(os.environ.get("NIXL_EP_USE_NVIDIA_TOOLS", 0)):
-        return (1,) * len(kernel_names) if is_tuple else 1
+        raise RuntimeError(
+            "Kineto timing conflicts with NIXL_EP_USE_NVIDIA_TOOLS: disable Kineto "
+            "timing in the caller, or unset NIXL_EP_USE_NVIDIA_TOOLS when external tools are not active"
+        )
 
     # For some auto-tuning kernels with prints
     fn()
