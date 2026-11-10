@@ -174,7 +174,7 @@ TEST(NvtxSpan, AttributesThatFitAllocateNothing) {
             std::string_view("agent-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7"));
         span->addAttribute("nixl.xfer_request_id", std::int64_t{0x7edcba9876543210});
         span->addAttribute("nixl.xfer_execution", std::int64_t{3});
-        span->addAttribute("ratio", 0.5);
+        span->addAttribute("nixl.start_us", 0.5);
     }
     {
         nvtx::NvtxSpan range(nullptr, schema_ids);
@@ -186,7 +186,7 @@ TEST(NvtxSpan, AttributesThatFitAllocateNothing) {
         const nixl::trace::Attribute attrs[] = {
             {"remote_agent", std::string_view("target")},
             {"bytes", 32768},
-            {"ratio", 0.5},
+            {"nixl.start_us", 0.5},
         };
         nvtx::NvtxSpan range(nullptr, schema_ids);
         range.addAttributes(attrs);
@@ -200,9 +200,9 @@ TEST(NvtxSpan, AttributesThatDoNotFitGoToTheHeap) {
         const gtest::AllocationCounter allocations;
         {
             nvtx::NvtxSpan span(nullptr, {});
-            span.addAttribute("first", std::int64_t{0});
-            span.addAttribute("value", std::string_view(long_value));
-            span.addAttribute("after", std::int64_t{2});
+            span.addAttribute("bytes", std::int64_t{0});
+            span.addAttribute("remote_agent", std::string_view(long_value));
+            span.addAttribute("desc_count", std::int64_t{2});
         }
         EXPECT_GT(allocations.count(), 0u);
     }

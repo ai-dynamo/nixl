@@ -17,30 +17,66 @@
 #ifndef NIXL_SRC_CORE_TRACING_ATTRIBUTE_KEY_H
 #define NIXL_SRC_CORE_TRACING_ATTRIBUTE_KEY_H
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 namespace nixl::trace {
 
+inline constexpr std::array<std::string_view, 14> attributeKeys{
+    "bytes",
+    "desc_count",
+    "mem_type",
+    "nixl.backend",
+    "nixl.end_us",
+    "nixl.phase.label",
+    "nixl.phase.timestamp_us",
+    "nixl.remote_agent",
+    "nixl.span.label",
+    "nixl.start_us",
+    "nixl.status",
+    "nixl.xfer_execution",
+    "nixl.xfer_request_id",
+    "remote_agent",
+};
+
+void
+attributeKeyIsNotInAttributeKeys();
+
 class AttributeKey {
 public:
     template<std::size_t Size>
-    consteval AttributeKey(const char (&key)[Size]) noexcept : key_(key),
-                                                               size_(Size - 1) {}
+    consteval AttributeKey(const char (&key)[Size]) noexcept : index_(indexOf({key, Size - 1})) {}
 
     [[nodiscard]] constexpr const char *
     c_str() const noexcept {
-        return key_;
+        return attributeKeys[index_].data();
     }
 
     [[nodiscard]] constexpr std::string_view
     view() const noexcept {
-        return {key_, size_};
+        return attributeKeys[index_];
+    }
+
+    [[nodiscard]] constexpr std::size_t
+    index() const noexcept {
+        return index_;
     }
 
 private:
-    const char *key_;
-    std::size_t size_;
+    [[nodiscard]] static consteval std::uint8_t
+    indexOf(std::string_view key) noexcept {
+        for (std::size_t i = 0; i < attributeKeys.size(); ++i) {
+            if (attributeKeys[i] == key) {
+                return static_cast<std::uint8_t>(i);
+            }
+        }
+        attributeKeyIsNotInAttributeKeys();
+        return 0;
+    }
+
+    std::uint8_t index_;
 };
 
 } // namespace nixl::trace

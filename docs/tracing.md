@@ -212,7 +212,9 @@ list of the agent's records and the backends' phases and spans. A call site name
 record, such as `NIXL_TRACE_SCOPE(span, tracer, nixl::trace::Record::RegisterMem)`, and
 a request records its completion and errors itself, with
 `traceable().trace(nixl::trace::Record::XferComplete)`. NVTX registers the names in the
-list's order and finds a record's handle by its position.
+list's order and finds a record's handle by its position. Attribute keys come from one
+list too, `nixl::trace::attributeKeys` in `tracing/attribute_key.h`: a call site
+writes a key as its literal, and a literal outside the list does not compile.
 
 `nixl::getNotifs` is recorded only by a call that returns notifications, so polling an
 empty queue records nothing; it is emitted when the call returns, with its start and end

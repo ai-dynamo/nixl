@@ -129,7 +129,8 @@ toStringView(nixl_trace_span_t span) noexcept {
 /**
  * @brief One key/value attribute on a recorded phase or span.
  *
- * The key is a string literal. The value must stay valid only for the
+ * The key is one of nixl::trace::attributeKeys, written as its string literal.
+ * The value must stay valid only for the
  * duration of the @ref nixlBackendTraceSink::recordPhase or
  * @ref nixlBackendTraceSink::recordSpan call; the sink copies what it retains.
  */
