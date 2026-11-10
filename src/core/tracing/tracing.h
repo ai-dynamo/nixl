@@ -36,7 +36,6 @@
  * tracing/detail/ holds only what the macros and Traceable expand into.
  */
 
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -83,6 +82,10 @@ public:
 
     Traceable(Tracer *tracer, const TraceIdentity &identity) noexcept;
 
+    Traceable(const Traceable &) = delete;
+    Traceable &
+    operator=(const Traceable &) = delete;
+
     [[nodiscard]] TraceIdentity
     identity() const noexcept;
 
@@ -109,7 +112,7 @@ private:
     TraceContext postContext_;
     bool spanIdUsed_ = false;
     const std::uint64_t requestId_;
-    std::atomic<std::uint64_t> execution_ = 0;
+    std::uint64_t execution_ = 0;
 };
 
 } // namespace nixl::trace

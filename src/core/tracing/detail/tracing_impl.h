@@ -17,7 +17,6 @@
 #ifndef NIXL_SRC_CORE_TRACING_DETAIL_TRACING_IMPL_H
 #define NIXL_SRC_CORE_TRACING_DETAIL_TRACING_IMPL_H
 
-#include <atomic>
 #include <cstdint>
 #include <initializer_list>
 
@@ -55,7 +54,7 @@ inline TraceIdentity
 Traceable::acceptPost(const TraceContext &post_context) noexcept {
     postContext_ = post_context;
     if (requestId_ != 0) {
-        execution_.fetch_add(1, std::memory_order_relaxed);
+        ++execution_;
     }
     return identity();
 }
@@ -84,7 +83,7 @@ Traceable::record([[maybe_unused]] Record record, [[maybe_unused]] const Attribu
 
 inline std::uint64_t
 Traceable::execution() const noexcept {
-    return execution_.load(std::memory_order_relaxed);
+    return execution_;
 }
 
 struct detail::TraceableAccess {
