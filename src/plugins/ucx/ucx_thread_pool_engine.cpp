@@ -487,7 +487,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     NIXL_TRACE << "sent " << *comp_handle << " with status: " << status;
     if (status == NIXL_SUCCESS) {
-        comp_handle->buildNotif();
+        comp_handle->posted();
     }
     return status;
 }

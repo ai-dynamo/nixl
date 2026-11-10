@@ -19,7 +19,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -54,7 +53,6 @@ public:
         NIXL_ASSERT(notifReq_ == nullptr);
         conn_ = conn;
         ep_ = &ep;
-        notif_.clear();
         notifState_ = notif_state_t::NONE;
         notifStatus_ = NIXL_SUCCESS;
     }
@@ -84,30 +82,28 @@ public:
     [[nodiscard]] nixl_status_t
     flush() {
         nixlUcxReq req = nullptr;
-        const nixl_status_t status = ep_->flushEp(req, notifBuild_ ? flushCb : nullptr, this);
+        const nixl_status_t status = ep_->flushEp(req, notif_.empty() ? nullptr : flushCb, this);
         const nixl_status_t ret = append(status, req);
         if (ret == NIXL_SUCCESS) {
             if (status == NIXL_SUCCESS) {
                 flushed();
             }
-            buildNotif();
+            posted();
         }
 
         return ret;
     }
 
     void
-    setNotif(std::function<std::string(const nixlUcxBackendReqH &)> &&build) {
-        notifBuild_ = std::move(build);
+    setNotif(std::string &&notif) {
+        notif_ = std::move(notif);
     }
 
     void
-    buildNotif() {
-        if (notifBuild_) {
-            notif_ = notifBuild_(*this);
-            notifBuild_ = nullptr;
+    posted() {
+        if (!notif_.empty()) {
             notifStatus_ = NIXL_IN_PROG;
-            if (notifState_.exchange(notif_state_t::BUILT) == notif_state_t::FLUSHED) {
+            if (notifState_.exchange(notif_state_t::POSTED) == notif_state_t::FLUSHED) {
                 sendNotif();
             }
         }
@@ -203,7 +199,7 @@ protected:
     }
 
 private:
-    enum class notif_state_t : uint8_t { NONE, BUILT, FLUSHED, SENT };
+    enum class notif_state_t : uint8_t { NONE, POSTED, FLUSHED, SENT };
 
     // A post to a single endpoint issues at most two requests:
     // one data request and one flush request.
@@ -218,7 +214,7 @@ private:
 
     void
     flushed() {
-        if (notifState_.exchange(notif_state_t::FLUSHED) == notif_state_t::BUILT) {
+        if (notifState_.exchange(notif_state_t::FLUSHED) == notif_state_t::POSTED) {
             sendNotif();
         }
     }
@@ -278,7 +274,7 @@ private:
     reset() noexcept {
         requests_.clear();
         notifReq_ = nullptr;
-        notifBuild_ = nullptr;
+        notif_.clear();
         conn_.reset();
         ep_ = nullptr;
     }
@@ -297,7 +293,6 @@ private:
     const nixlUcxEp *ep_ = nullptr;
     absl::InlinedVector<nixlUcxReq, max_requests> requests_;
     nixlUcxWorker *worker_ = nullptr;
-    std::function<std::string(const nixlUcxBackendReqH &)> notifBuild_;
     std::string notif_;
     std::atomic<nixlUcxReq> notifReq_{nullptr};
     std::atomic<nixl_status_t> notifStatus_{NIXL_SUCCESS};

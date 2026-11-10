@@ -623,16 +623,17 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
+    // TODO: build the notification lazily, after the data is posted (slightly faster).
+    // Revisit with the serdes optimization and UCX memory pool for notifications.
+    std::string notif;
     if (opt_args && opt_args->hasNotif) {
-        int_handle->setNotif([this, opt_args](const nixlUcxBackendReqH &req_handle) {
-            return buildNotif(opt_args->notifMsg,
-                              opt_args->traceContext,
-                              req_handle.traceRequestId,
-                              req_handle.traceExecution);
-        });
-    } else {
-        int_handle->setNotif(nullptr);
+        notif = buildNotif(opt_args->notifMsg,
+                           opt_args->traceContext,
+                           int_handle->traceRequestId,
+                           int_handle->traceExecution);
     }
+    int_handle->setNotif(std::move(notif));
+
     ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
     if (ret != NIXL_SUCCESS) {
         return ret;
