@@ -69,13 +69,6 @@ atomicAddKernel(void *counter_mvh) {
 }
 
 __device__ void
-putAndWait(const memViewElem &src, const memViewElem &dst, size_t size, unsigned channel_id = 0) {
-    xferStatusH xfer_status;
-    nixl_status_t status = put(src, dst, size, channel_id, 0, &xfer_status);
-    waitPostedWithSystemFence(status, xfer_status);
-}
-
-__device__ void
 putAndComplete(const memViewElem &src,
                const memViewElem &dst,
                size_t bytes,
@@ -90,6 +83,11 @@ putAndComplete(const memViewElem &src,
     } else {
         waitPostedWithSystemFence(status, xfer_status);
     }
+}
+
+__device__ void
+putAndWait(const memViewElem &src, const memViewElem &dst, size_t size, unsigned channel_id = 0) {
+    putAndComplete(src, dst, size, channel_id, 0);
 }
 
 __global__ void
@@ -170,12 +168,12 @@ protected:
         return senderAgent_->regAndPrepLocalMemView(mbs);
     }
 
-private:
     [[nodiscard]] bool
     isProxy() const {
         return GetParam();
     }
 
+private:
     std::unique_ptr<gtest::LogIgnoreGuard> lig_;
     std::unique_ptr<agent> senderAgent_;
     std::unique_ptr<agent> receiverAgent_;
@@ -240,12 +238,12 @@ TEST_P(test, putChannel) {
 }
 
 TEST_P(test, deferredPutFlush) {
-    if (GetParam()) {
+    if (isProxy()) {
         GTEST_SKIP() << "GPU flush is unsupported in proxy mode";
     }
     // Skip before submitting deferred work when the UCX headers lack flush support.
 #if __has_include(<ucp/api/device/ucp_device_impl.h>)
-    if constexpr (!impl::ucx::flush_available<level_t::THREAD>) {
+    if constexpr (!impl::ucx::flush_supported<level_t::THREAD>) {
         GTEST_SKIP() << "UCX device flush API is unavailable";
     }
 #else
