@@ -73,8 +73,9 @@ makeAgentTracer(const std::string &name);
 makeBackendTraceSink(Tracer &tracer, std::string backend, nixlTelemetry *telemetry);
 
 /**
- * @brief A traced object's trace state: the request id it was created with, and
- *        the context and execution number of its latest post, its own before any.
+ * @brief A traced object's trace state: the context and request id it was
+ *        created with, and the context and execution number of its latest post,
+ *        whose parent is the request's span.
  */
 class Traceable {
 public:
@@ -100,6 +101,7 @@ public:
 
 private:
     Tracer *const tracer_;
+    const TraceContext request_;
     TraceIdentity identity_;
 };
 

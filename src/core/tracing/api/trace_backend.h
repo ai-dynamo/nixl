@@ -34,7 +34,8 @@ namespace nixl::trace {
 /**
  * @brief One enabled backend type (NVTX, Chakra, ...). Each record names the
  *        span id of its context, pushed or passed, as its parent, except the
- *        span beginContextSpan() begins, which has that id as its own.
+ *        span beginContextSpan() begins, which has that id as its own and the
+ *        context's parentSpanId, when set, as its parent.
  */
 class TraceBackend {
 public:

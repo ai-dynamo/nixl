@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -41,6 +42,17 @@ struct pushedScope {
 contextStack() noexcept {
     static thread_local std::vector<pushedScope> stack;
     return stack;
+}
+
+[[nodiscard]] std::string
+hexOf(std::span<const std::uint8_t> bytes) {
+    static constexpr char digits[] = "0123456789abcdef";
+    std::string text;
+    for (const std::uint8_t byte : bytes) {
+        text += digits[byte >> 4];
+        text += digits[byte & 0x0f];
+    }
+    return text;
 }
 
 void
@@ -170,6 +182,11 @@ private:
         }
         if (context.valid()) {
             line += " " + std::string(context_key) + "=" + nixl::trace::formatTraceparent(context);
+            if ((context_key == "span") &&
+                std::ranges::any_of(context.parentSpanId,
+                                    [](std::uint8_t byte) { return byte != 0; })) {
+                line += " parent=" + hexOf(context.parentSpanId);
+            }
         }
         return line;
     }

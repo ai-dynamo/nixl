@@ -885,7 +885,10 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     ASSERT_TRUE(context.sampled());
 
     ASSERT_EQ(awaitCompletion(sender, req, sender.postXferReq(req)), NIXL_SUCCESS);
-    EXPECT_EQ(req->traceable().identity().context, context);
+    const nixl::trace::TraceContext post = req->traceable().identity().context;
+    EXPECT_EQ(post.traceId, context.traceId);
+    EXPECT_NE(post.spanId, context.spanId);
+    EXPECT_EQ(post.parentSpanId, context.spanId);
     ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
     ASSERT_EQ(sender.genNotif(receiver_name, untagged_msg), NIXL_SUCCESS);
 
@@ -903,7 +906,7 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
 
     const std::string correlation = "correlation=" + std::to_string(request_id);
-    const std::string traceparent = nixl::trace::formatTraceparent(context);
+    const std::string traceparent = nixl::trace::formatTraceparent(post);
 #if defined(NIXL_TRACE_ENABLED)
     const auto posted = recordedSpans(traceFile, sender_name, "nixl::postXferReq.write");
     ASSERT_EQ(posted.size(), 1u);
@@ -921,7 +924,7 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
                                        std::string("nixl.xfer_execution=1"),
                                        std::string("nixl.remote_agent=") + sender_name}));
     EXPECT_THAT(received[0], testing::Contains(phaseEventTime(received[0])));
-    expectSenderPhases(sender_name, {context}, request_id, {1}, {1});
+    expectSenderPhases(sender_name, {post}, request_id, {1}, {1});
 }
 
 TEST_F(ucxTraceContextPropagation, SenderRecordsItsPhasesOncePerPost) {
@@ -1101,11 +1104,11 @@ TEST_F(ucxTraceContextPropagation, DeferredNotificationIsRecordedByTheStatusChec
     params.notif = tagged_msg;
     nixlXferReqH *req = nullptr;
     ASSERT_EQ(sender.createXferReq(NIXL_WRITE, src, dst, target_name, req, &params), NIXL_SUCCESS);
-    const nixl::trace::TraceContext context = req->traceable().identity().context;
     const std::uint64_t request_id = req->traceable().identity().requestId;
 
     nixl_status_t status = sender.postXferReq(req);
     ASSERT_EQ(status, NIXL_IN_PROG);
+    const nixl::trace::TraceContext context = req->traceable().identity().context;
     EXPECT_TRUE(recordedSpans(traceFile, sender_name, "nixl::notif.sent").empty());
     nixl_notifs_t notifs;
     const auto deadline = std::chrono::steady_clock::now() + wait_timeout;

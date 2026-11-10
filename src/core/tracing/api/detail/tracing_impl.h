@@ -33,6 +33,7 @@ inline Traceable::Traceable(Tracer *tracer) : Traceable(tracer, generateRequestI
 
 inline Traceable::Traceable(Tracer *tracer, const TraceIdentity &identity) noexcept
     : tracer_(tracer),
+      request_(identity.context),
       identity_{identity.context, identity.requestId, 0} {}
 
 inline const TraceIdentity &
@@ -43,8 +44,8 @@ Traceable::identity() const noexcept {
 inline const TraceIdentity &
 Traceable::post() {
     if (identity_.requestId != 0) {
-        if (identity_.context.sampled() && (identity_.execution != 0)) {
-            identity_.context = generatePostContext(identity_.context, tracer_);
+        if (request_.sampled()) {
+            identity_.context = generatePostContext(request_, tracer_);
         }
         ++identity_.execution;
     }

@@ -31,6 +31,7 @@ struct TraceContext {
     std::array<std::uint8_t, 16> traceId{};
     std::array<std::uint8_t, 8> spanId{};
     std::uint8_t flags{};
+    std::array<std::uint8_t, 8> parentSpanId{};
 
     [[nodiscard]] bool
     valid() const noexcept;
@@ -59,8 +60,9 @@ generateRequestIdentity(const Tracer *tracer);
 
 /**
  * @brief Draw a context for one post of @p request: its trace id and flags with
- *        a span id from @p tracer's random source, again while it is zero;
- *        @p request itself when @p tracer is null or its source fails.
+ *        a span id from @p tracer's random source, again while it is zero, and
+ *        its span id as the parent; @p request itself when @p tracer is null or
+ *        its source fails.
  */
 [[nodiscard]] TraceContext
 generatePostContext(const TraceContext &request, const Tracer *tracer);

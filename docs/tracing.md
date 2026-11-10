@@ -41,9 +41,10 @@ execution-trace tools.
   as zero-length ranges there, and an emitted span carries its times as the
   `nixl.start_us` and `nixl.end_us` attributes.
 - **`beginContextSpan()`** — begins the span that a trace context identifies, rather
-  than a span inside the active correlation scope's context as `beginSpan()` does;
-  like `emitSpan()`, it takes the context and the request id explicitly. Every other
-  span and event names its context's span id as its parent.
+  than a span inside the active correlation scope's context as `beginSpan()` does; like
+  `emitSpan()`, it takes the context and the request id explicitly, and the span's
+  parent is the context's `parentSpanId`, when set. Every other span and event names its
+  context's span id as its parent.
 - **`nixl::trace::Scope`** — an RAII guard the agent opens around a request's
   creation, each of its posts and its release. It makes the request's trace identity
   current on the calling thread, so the spans opened meanwhile take it; a sampled one
@@ -254,10 +255,10 @@ on a `postXferReq` span the call's return; on
 release attempt is a span of its own, inside its latest post's context, so a
 release refused with `NIXL_ERR_REPOST_ACTIVE` and its retry are two records.
 
-For a sampled request, each `postXferReq` span is the span that its post's trace
-context identifies (see "Backend phases"), so the post's `nixl::xfer.complete` and
-backend phases and the receiver's `nixl::notif.received` name it as their parent,
-even after it has ended.
+For a sampled request, each `postXferReq` span is the span that its post's trace context
+identifies (see "Backend phases"): a span id of its own, whose parent is the request's
+span. The post's `nixl::xfer.complete` and backend phases and the receiver's
+`nixl::notif.received` name it as their parent, even after it has ended.
 
 ### Request id and execution number
 
@@ -283,14 +284,13 @@ reads it from the notification, so the records of both sides join on the pair.
 
 An application reads a request's identity with `nixlAgent::getXferTraceInfo()` from
 creation until `releaseXferReq`, for a request from `createXferReq` or `makeXferReq`,
-but not while another thread posts or releases that request. It returns the request
-id, the execution number of the latest post that took one (0 before any) and that
-post's trace context as a W3C `traceparent`: the values that post's records carry.
-Before any post the `traceparent` is the request's own, whose span id a sampled
-request's first post takes. A post refused by
-`postXferReq`'s checks changes none of the three. A request without an id, such as
-one created while no tracing backend is active, returns `NIXL_ERR_NOT_FOUND`; the
-getter never enables tracing.
+but not while another thread posts or releases that request. It returns the request id,
+the execution number of the latest post that took one (0 before any) and that post's
+trace context as a W3C `traceparent`: the values that post's records carry. Before any
+post the `traceparent` is the request's own; each post of a sampled request has one of
+its own. A post refused by `postXferReq`'s checks changes none of the three. A request
+without an id, such as one created while no tracing backend is active, returns
+`NIXL_ERR_NOT_FOUND`; the getter never enables tracing.
 From Python, `nixl_agent.get_xfer_trace_info(handle)` returns the same three as a
 `nixlXferTraceInfo` (`requestId`, `execution`, `traceparent`), or `None` when the
 request has no identity or the handle has been released.
@@ -367,15 +367,15 @@ A backend also sees the trace identity of the request it is executing, from
 internal `nixl::trace::TraceIdentity` holding the trace `context`, the `requestId` and
 the `execution` number. The context's trace id and flags are the same at prep and at
 every post of that request, reposts included, and it is the zeroed, invalid context when
-tracing is off. For a sampled request each post also has a span id of its own: the first
-post keeps the one prep saw, and each later post draws another. It is valid only for the
-call: a plugin that needs the identity later, at completion or when building a
-notification, copies the value onto its own request handle at each post. A carrier never
-encodes it itself: `nixl::trace::addTraceTags()` appends a post's identity to a
-`nixlSerDes` message as the tags described below, and `getTraceTags()` reads a peer's
-back. `TraceIdentity` is internal like the sink, so only in-tree plugins can read it.
-Its request id is the same at prep and at every post, its execution number is 0 at prep,
-and both are 0, meaning none, when tracing is off.
+tracing is off. For a sampled request each post also has a span id of its own, whose
+parent is the span id prep saw. It is valid only for the call: a plugin that needs the
+identity later, at completion or when building a notification, copies the value onto its
+own request handle at each post. A carrier never encodes it itself:
+`nixl::trace::addTraceTags()` appends a post's identity to a `nixlSerDes` message as the
+tags described below, and `getTraceTags()` reads a peer's back. `TraceIdentity` is
+internal like the sink, so only in-tree plugins can read it. Its request id is the same
+at prep and at every post, its execution number is 0 at prep, and both are 0, meaning
+none, when tracing is off.
 
 A plugin that records phases keeps a `nixlBackendPostTrace`, built at each post from its
 sink and the current identity, as `nixlBackendPostTrace{sink}`: it records only with a

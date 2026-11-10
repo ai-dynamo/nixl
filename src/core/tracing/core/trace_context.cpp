@@ -373,5 +373,6 @@ nixl::trace::generatePostContext(const nixl::trace::TraceContext &request,
         tracer->reportContextFailure(e.what());
         return request;
     }
+    context.parentSpanId = request.spanId;
     return context;
 }

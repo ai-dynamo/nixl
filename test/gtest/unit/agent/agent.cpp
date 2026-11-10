@@ -492,6 +492,17 @@ namespace agent {
                 testing::Not(testing::Contains(testing::StartsWith("context="))));
         }
 
+        [[nodiscard]] static auto
+        childOf(const nixl::trace::TraceContext &parent) {
+            static constexpr char digits[] = "0123456789abcdef";
+            std::string field = "parent=";
+            for (const std::uint8_t byte : parent.spanId) {
+                field += digits[byte >> 4];
+                field += digits[byte & 0x0f];
+            }
+            return testing::Contains(field);
+        }
+
         [[nodiscard]] static nixl::trace::TraceContext
         contextOf(const std::vector<std::string> &record, std::string_view key) {
             for (const auto &field : record) {
@@ -1104,12 +1115,17 @@ namespace agent {
         const auto second = req->traceable().identity().context;
         EXPECT_THAT(engine.observedTraceContext(), testing::Optional(second));
 
-        EXPECT_EQ(first, request);
+        EXPECT_EQ(first.traceId, request.traceId);
+        EXPECT_EQ(first.flags, request.flags);
+        EXPECT_NE(first.spanId, request.spanId);
+        EXPECT_EQ(first.parentSpanId, request.spanId);
         EXPECT_EQ(second.traceId, first.traceId);
         EXPECT_EQ(second.flags, first.flags);
         EXPECT_NE(second.spanId, first.spanId);
+        EXPECT_EQ(second.parentSpanId, request.spanId);
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(isSpanOf(req, first), isSpanOf(req, second)));
+                    testing::ElementsAre(testing::AllOf(isSpanOf(req, first), childOf(request)),
+                                         testing::AllOf(isSpanOf(req, second), childOf(request))));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(carries(first), carries(second)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
@@ -1148,8 +1164,7 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
-    TEST_F(sampledRecorderTracingAgentFixture,
-           RefusedFirstCallLeavesTheRequestsSpanIdToTheFirstPost) {
+    TEST_F(sampledRecorderTracingAgentFixture, RefusedFirstCallRecordsNothing) {
         nixlAgent *agent = agent_helper_->getAgent();
         ON_CALL(agent_helper_->getGMockEngine(), supportsNotif())
             .WillByDefault(testing::Return(false));
@@ -1163,9 +1178,11 @@ namespace agent {
         nixl_opt_args_t without_notif;
         EXPECT_EQ(agent->postXferReq(req, &without_notif), NIXL_SUCCESS);
 
-        EXPECT_EQ(req->traceable().identity().context, request);
+        const auto post = req->traceable().identity().context;
+        EXPECT_NE(post.spanId, request.spanId);
+        EXPECT_EQ(post.parentSpanId, request.spanId);
         EXPECT_THAT(records("nixl::postXferReq.write"),
-                    testing::ElementsAre(isSpanOf(req, request)));
+                    testing::ElementsAre(testing::AllOf(isSpanOf(req, post), childOf(request))));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -1243,7 +1260,7 @@ namespace agent {
         EXPECT_EQ(agent->postXferReq(req, &without_notif), NIXL_SUCCESS);
         const auto posted = traceInfo(req);
         EXPECT_EQ(posted.execution, 1u);
-        EXPECT_EQ(posted.traceparent, refused.traceparent);
+        EXPECT_NE(posted.traceparent, refused.traceparent);
         EXPECT_THAT(records("nixl::postXferReq.write"),
                     testing::ElementsAre(carriesTraceInfo(posted, "span=")));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
@@ -1272,7 +1289,10 @@ namespace agent {
         EXPECT_EQ(agent->postXferReq(created), NIXL_SUCCESS);
         const auto second = created->traceable().identity().context;
         EXPECT_EQ(agent->postXferReq(made), NIXL_SUCCESS);
+        const auto made_post = made->traceable().identity().context;
+        EXPECT_NE(first.spanId, created_context.spanId);
         EXPECT_NE(second.spanId, created_context.spanId);
+        EXPECT_NE(made_post.spanId, made_context.spanId);
 
         const auto identityOf = [](const nixl::trace::TraceContext &context,
                                    const nixlXferReqH *req,
@@ -1285,7 +1305,7 @@ namespace agent {
                                          identityOf(made_context, made, 0),
                                          identityOf(first, created, 1),
                                          identityOf(second, created, 2),
-                                         identityOf(made_context, made, 1)));
+                                         identityOf(made_post, made, 1)));
 
         EXPECT_EQ(agent->releaseXferReq(made), NIXL_SUCCESS);
         EXPECT_EQ(agent->releaseXferReq(created), NIXL_SUCCESS);

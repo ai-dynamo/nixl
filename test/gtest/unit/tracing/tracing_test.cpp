@@ -1287,6 +1287,7 @@ TEST(Tracing, PostContextDrawsOnlyItsSpanIdAgainWhileZero) {
     const auto request = testContext(0x21, 0x03);
     auto expected = request;
     expected.spanId.fill(0x5a);
+    expected.parentSpanId = request.spanId;
 
     EXPECT_EQ(nixl::trace::generatePostContext(request, tracer.get()), expected);
 }
@@ -1314,7 +1315,7 @@ TEST(Tracing, RequestIdFitsAnInt64) {
               static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
 }
 
-TEST(Tracing, TraceableKeepsItsOwnSpanIdForItsFirstPost) {
+TEST(Tracing, TraceableDrawsEachPostASpanIdUnderItsRequest) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
@@ -1324,8 +1325,9 @@ TEST(Tracing, TraceableKeepsItsOwnSpanIdForItsFirstPost) {
     nixl::trace::Traceable unsampled_trace{tracer.get(), {unsampled, 0x32}};
     auto drawn = sampled;
     drawn.spanId.fill(0x5a);
+    drawn.parentSpanId = sampled.spanId;
 
-    EXPECT_EQ(sampled_trace.post().context, sampled);
+    EXPECT_EQ(sampled_trace.post().context, drawn);
     EXPECT_EQ(unsampled_trace.post().context, unsampled);
     EXPECT_EQ(sampled_trace.post().context, drawn);
     EXPECT_EQ(unsampled_trace.post().context, unsampled);
@@ -1354,6 +1356,7 @@ TEST(Tracing, TraceableIdentityIsItsLatestPosts) {
     nixl::trace::Traceable traced{tracer.get(), {context, 0x35}};
     auto drawn = context;
     drawn.spanId.fill(0x5a);
+    drawn.parentSpanId = context.spanId;
 
     const auto prepped = traced.identity();
     const auto first = traced.post();
@@ -1363,7 +1366,7 @@ TEST(Tracing, TraceableIdentityIsItsLatestPosts) {
     EXPECT_EQ(prepped.context, context);
     EXPECT_EQ(prepped.requestId, 0x35u);
     EXPECT_EQ(prepped.execution, 0u);
-    EXPECT_EQ(first.context, context);
+    EXPECT_EQ(first.context, drawn);
     EXPECT_EQ(first.requestId, 0x35u);
     EXPECT_EQ(first.execution, 1u);
     EXPECT_EQ(second.context, drawn);
@@ -1407,9 +1410,8 @@ TEST(Tracing, TraceableRecordsItsEventsInItsLatestPost) {
 #endif
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
-    const auto request = testContext(0x37);
-    nixl::trace::Traceable traced{tracer.get(), {request, 0x37}};
-    static_cast<void>(traced.post());
+    nixl::trace::Traceable traced{tracer.get(), {testContext(0x37), 0x37}};
+    const auto post = traced.post().context;
 
     traced.trace(nixl::trace::Record::XferComplete);
     traced.trace(nixl::trace::Record::XferError, {"nixl.status", NIXL_ERR_BACKEND});
@@ -1418,7 +1420,7 @@ TEST(Tracing, TraceableRecordsItsEventsInItsLatestPost) {
         ASSERT_EQ(log->emittedEvents.size(), 2u);
         EXPECT_EQ(log->emittedEvents[0].name, "nixl::xfer.complete");
         EXPECT_EQ(log->emittedEvents[0].kind, nixl::trace::Kind::Metadata);
-        EXPECT_EQ(log->emittedEvents[0].context, request);
+        EXPECT_EQ(log->emittedEvents[0].context, post);
         EXPECT_EQ(log->emittedEvents[0].requestId, 0x37u);
         EXPECT_EQ(log->emittedEvents[0].attrs,
                   (attr_list_t{{"nixl.xfer_request_id", std::int64_t{0x37}},
