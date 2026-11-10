@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "common.h"
+#include "common/hw_info.h"
 #include "common/nixl_time.h"
 #include "common/scoped_fd.h"
 #include "nixl.h"
@@ -151,6 +152,11 @@ idleConfig() {
     nixlAgentConfig cfg;
     cfg.useProgThread = false;
     return cfg;
+}
+
+[[nodiscard]] std::string
+idleTargetTls() {
+    return (nixl::hwInfo::instance().numNvidiaGpus == 0) ? "tcp" : "tcp,cuda_copy";
 }
 
 [[nodiscard]] nixl_b_params_t
@@ -290,7 +296,7 @@ writeToIdleTarget(const nixl_b_params_t &sender_params,
                   std::uint64_t &request_id,
                   afterPostType &&after_post) {
     gtest::ScopedEnv tls;
-    tls.addVar("UCX_TLS", "tcp");
+    tls.addVar("UCX_TLS", idleTargetTls());
     const gtest::LogIgnoreGuard efa(efa_warning);
     nixlAgent target(target_name, idleConfig());
     nixlBackendH *target_backend = nullptr;
@@ -1067,7 +1073,7 @@ TEST_F(ucxTraceContextPropagation, ProgressThreadPostReleasedInFlightRecordsNoWi
 }
 
 TEST_F(ucxTraceContextPropagation, DeferredNotificationIsRecordedByTheStatusCheck) {
-    env.addVar("UCX_TLS", "tcp");
+    env.addVar("UCX_TLS", idleTargetTls());
     const gtest::LogIgnoreGuard efa(efa_warning);
     nixlAgent target(target_name, idleConfig());
     nixlBackendH *target_backend = nullptr;
