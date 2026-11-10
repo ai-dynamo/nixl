@@ -1451,17 +1451,48 @@ TEST(Tracing, PostContextDrawsOnlyItsSpanIdAgainWhileZero) {
     EXPECT_EQ(nixl::trace::generatePostContext(request, tracer.get()), expected);
 }
 
-TEST(Tracing, PostContextIsTheRequestsWithoutTracerOrSource) {
+TEST(Tracing, PostContextIsUnsampledWhenItsSourceFails) {
     gtest::LogMessageCounter failures("could not generate a trace context");
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, failRandomBytes);
     const auto request = testContext(0x22, 0x03);
+    auto unsampled = request;
+    unsampled.flags = 0x02;
 
     EXPECT_EQ(nixl::trace::generatePostContext(request, nullptr), request);
     for (int i = 0; i < 2; ++i) {
-        EXPECT_EQ(nixl::trace::generatePostContext(request, tracer.get()), request);
+        EXPECT_EQ(nixl::trace::generatePostContext(request, tracer.get()), unsampled);
     }
     EXPECT_EQ(failures.count(), 1u);
+}
+
+TEST(Tracing, TraceablePostIsUntracedWhenItsSpanIdCannotBeDrawn) {
+    gtest::LogMessageCounter failures("could not generate a trace context");
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, failRandomBytes);
+    const auto request = testContext(0x58);
+    const auto application = testContext(0x59);
+    nixl::trace::Traceable traced{tracer.get(), {request, 0x58}};
+    auto unsampled_request = request;
+    unsampled_request.flags = 0x00;
+    auto unsampled_application = application;
+    unsampled_application.flags = 0x00;
+
+    EXPECT_EQ(traced.post().context, unsampled_request);
+    EXPECT_EQ(traced.post(nixl::trace::formatTraceparent(application)).context,
+              unsampled_application);
+    EXPECT_EQ(failures.count(), 1u);
+#if defined(NIXL_TRACE_ENABLED)
+    {
+        NIXL_TRACE_POST_SPAN(
+            post, traced, nixl::trace::noSuppliedContext, nixl::trace::Record::PostXferReqWrite);
+        EXPECT_FALSE(post.active());
+    }
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_TRUE(log->contextSpans.empty());
+        EXPECT_TRUE(log->pushedContexts.empty());
+    }
+#endif
 }
 
 TEST(Tracing, RequestIdFitsAnInt64) {

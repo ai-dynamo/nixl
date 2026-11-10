@@ -288,7 +288,9 @@ bits keep every id positive. A receiver keeps any non-zero id it receives: a NIX
 sender draws from all 64 bits, so about half its ids read as negative attributes,
 though its NVTX payloads still match. With no tracing backend active, a request has
 neither. A drawn id is never 0: if the agent's random source fails while drawing it,
-the request has neither an id nor a trace context and records nothing. Both are
+the request has neither an id nor a trace context and records nothing. If it fails while
+drawing a post's or a notification's span id, that post or notification records nothing
+and carries no context, rather than reuse its parent's span id. Both are
 attributes, which UCX also carries to the receiver (see "Backend phases"), and the
 request id is also the NVTX payload on both sides (see "Correlation").
 

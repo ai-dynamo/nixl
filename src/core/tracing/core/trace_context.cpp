@@ -35,6 +35,7 @@
 
 namespace {
 constexpr std::uint8_t supported_trace_flags = 0x03;
+constexpr std::uint8_t sampled_trace_flag = 0x01;
 constexpr std::size_t wire_flags_offset = 1;
 constexpr std::size_t wire_trace_id_offset = 2;
 constexpr std::size_t wire_span_id_offset = 18;
@@ -139,7 +140,7 @@ void
 setFlags(nixl::trace::TraceContext &context, double sample_ratio) noexcept {
     context.flags = 0x02;
     if (nixl::trace::sampledByRatio(context, sample_ratio)) {
-        context.flags |= 0x01;
+        context.flags |= sampled_trace_flag;
     }
 }
 
@@ -246,7 +247,7 @@ nixl::trace::TraceContext::valid() const noexcept {
 
 bool
 nixl::trace::TraceContext::sampled() const noexcept {
-    return (flags & 0x01) != 0;
+    return (flags & sampled_trace_flag) != 0;
 }
 
 std::optional<nixl::trace::TraceContext>
@@ -416,7 +417,9 @@ nixl::trace::generatePostContext(const nixl::trace::TraceContext &request,
     }
     catch (const std::exception &e) {
         tracer->reportContextFailure(e.what());
-        return request;
+        nixl::trace::TraceContext unsampled = request;
+        unsampled.flags &= static_cast<std::uint8_t>(~sampled_trace_flag);
+        return unsampled;
     }
     context.parentSpanId = request.spanId;
     return context;

@@ -74,8 +74,9 @@ generateRequestIdentity(const Tracer *tracer, const nixl_blob_t &parent = noSupp
 /**
  * @brief Draw a context for one post of @p request: its trace id and flags with
  *        a span id from @p tracer's random source, again while it is zero, and
- *        its span id as the parent; @p request itself when @p tracer is null or
- *        its source fails.
+ *        its span id as the parent; @p request itself when @p tracer is null, and
+ *        @p request unsampled when its source fails, so the post records nothing
+ *        rather than reuse a span id.
  */
 [[nodiscard]] TraceContext
 generatePostContext(const TraceContext &request, const Tracer *tracer);
