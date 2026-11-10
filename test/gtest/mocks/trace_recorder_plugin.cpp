@@ -116,11 +116,6 @@ public:
     }
 
     void
-    mark(nixl::trace::Name name, nixl::trace::Kind kind) override {
-        static_cast<void>(beginSpan(name, kind));
-    }
-
-    void
     emitSpan(nixl::trace::Name name,
              nixl::trace::Kind,
              const nixl::trace::TraceContext &context,

@@ -80,7 +80,6 @@ struct EmittedRecord {
 struct CallLog {
     int spansBegun = 0;
     int spansEnded = 0;
-    int marks = 0;
     std::vector<std::string> spanNames;
     std::vector<std::pair<std::string, std::string>> strAttrs;
     std::vector<std::pair<std::string, std::int64_t>> intAttrs;
@@ -185,11 +184,6 @@ public:
             return nullptr;
         }
         return std::make_unique<MockSpan>(log_, spanId_);
-    }
-
-    void
-    mark(nixl::trace::Name, nixl::trace::Kind) override {
-        ++log_->marks;
     }
 
     void
@@ -299,9 +293,6 @@ public:
     }
 
     void
-    mark(nixl::trace::Name, nixl::trace::Kind) override {}
-
-    void
     emitSpan(nixl::trace::Name,
              nixl::trace::Kind,
              const nixl::trace::TraceContext &,
@@ -350,9 +341,6 @@ public:
                      std::uint64_t) override {
         return nullptr;
     }
-
-    void
-    mark(nixl::trace::Name, nixl::trace::Kind) override {}
 
     void
     emitSpan(nixl::trace::Name,
@@ -788,16 +776,6 @@ TEST(Tracing, AttrMacroSkipsItsValueOnAnInactiveSpan) {
     EXPECT_EQ(evaluations, 0);
 }
 
-// mark() must fan out to every backend.
-TEST(Tracing, MarkFanOut) {
-    CallLog a, b;
-    auto tracer = makeMockTracer(a, b);
-    tracer->mark("connected");
-    tracer->mark("done");
-    EXPECT_EQ(a.marks, 2);
-    EXPECT_EQ(b.marks, 2);
-}
-
 TEST(Tracing, EmittedRecordsFanOutToAllBackends) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
@@ -873,7 +851,6 @@ TEST(Tracing, EmptyTracerIsInert) {
     span.addAttribute("n", std::int64_t{1});
     span.addCtrlDep(nixl::trace::SpanId{7});
     EXPECT_EQ(span.id().value, 0u);
-    tracer.mark("m"); // no crash
     tracer.emitSpan("s", nixl::trace::Kind::Generic, testContext(0x23), 0x2323, 1, 2, {});
     tracer.emitEvent("e", nixl::trace::Kind::Metadata, testContext(0x23), 0x2323, 3, {});
     const auto context_span =

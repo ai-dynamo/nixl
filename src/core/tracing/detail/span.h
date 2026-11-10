@@ -142,7 +142,7 @@ private:
 
 /**
  * @brief RAII guard that keeps a trace context active on the tracer for its
- *        lifetime, so every span/mark created while it is in scope carries
+ *        lifetime, so every span created while it is in scope carries
  *        that context. Null-tracer-safe; an unsampled context pushes nothing.
  *        Used to link spans emitted on different threads (e.g.
  *        postXferReq on the caller thread vs. the completion on the polling

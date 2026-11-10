@@ -82,9 +82,6 @@ beginContextSpan(Tracer &tracer,
                  std::uint64_t request_id);
 
 void
-mark(Tracer &tracer, Name name, Kind kind);
-
-void
 pushContext(Tracer &tracer, const TraceContext &context, std::uint64_t request_id);
 
 void

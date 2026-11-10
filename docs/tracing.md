@@ -26,7 +26,7 @@ execution-trace tools.
 
 - **`nixl::trace::Tracer`** — a composite tracer **owned by each `nixlAgent`** (no
   singleton; injected into call sites). One `beginSpan()`, `beginContextSpan()`,
-  `mark()`, `emitSpan()` or `emitEvent()` call fans out to every active backend.
+  `emitSpan()` or `emitEvent()` call fans out to every active backend.
 - **`nixl::trace::Span`** — a move-only handle returned by `beginSpan()` and
   `beginContextSpan()`. It forwards attributes/dependencies to each backend span and
   **ends them all on destruction** (RAII), so a span covers the scope in which it is
@@ -509,8 +509,8 @@ must come from the status check. An unsampled request, or an agent with tracing 
 records none of them. An agent that sends itself two notifications records
 `nixl::notif.received` for each, with that post's execution number. The agents trace
 through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in the mocks
-directory) that appends one line per finished or emitted span, per emitted event and
-per mark to the file named by `NIXL_TEST_TRACE_FILE`; the tests set both variables
+directory) that appends one line per finished or emitted span and per emitted event
+to the file named by `NIXL_TEST_TRACE_FILE`; the tests set both variables
 themselves.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent

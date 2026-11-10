@@ -102,14 +102,6 @@ NvtxTraceBackend::beginContextSpan(const Name name,
 }
 
 void
-NvtxTraceBackend::mark(const Name name, const Kind kind) {
-    NvtxEvent ev;
-    eventForName(ev, name, kind, domain_, registeredHandles_);
-    applyCorrelation(ev.attributes);
-    nvtxDomainMarkEx(domain_, &ev.attributes);
-}
-
-void
 NvtxTraceBackend::emitSpan(const Name name,
                            const Kind kind,
                            const TraceContext &,

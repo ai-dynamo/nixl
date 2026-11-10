@@ -46,9 +46,6 @@ public:
                      std::uint64_t request_id) override;
 
     void
-    mark(Name name, Kind kind) override;
-
-    void
     emitSpan(Name name,
              Kind kind,
              const TraceContext &context,

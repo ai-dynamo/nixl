@@ -37,11 +37,11 @@ struct NvtxEvent {
     std::array<char, 64> message;
 };
 
-/** @brief Register fixed `nixl::*` span/mark names on @p domain (hot-path labels). */
+/** @brief Register fixed `nixl::*` span names on @p domain (hot-path labels). */
 [[nodiscard]] std::vector<nvtxStringHandle_t>
 registerSpanNames(nvtxDomainHandle_t domain);
 
-/** @brief Fill @p event's NVTX attributes for a span/mark name and operation kind.
+/** @brief Fill @p event's NVTX attributes for a span name and operation kind.
  *         A fixed name uses its registered handle, or its own text when none was
  *         registered; any other name is copied into @p event's message, or
  *         registered on @p domain when it does not fit. */

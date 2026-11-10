@@ -46,9 +46,6 @@ public:
     beginSpan(Name name, Kind kind) = 0;
 
     virtual void
-    mark(Name name, Kind kind) = 0;
-
-    virtual void
     pushContext(const TraceContext &context, std::uint64_t request_id) = 0;
     virtual void
     popContext() = 0;
@@ -110,7 +107,7 @@ using random_bytes_fn_t = void (*)(std::span<std::uint8_t>);
 
 /**
  * @brief Composite tracer owned by the Agent. A single beginSpan(),
- *        beginContextSpan(), mark(), emitSpan() or emitEvent() call fans out to
+ *        beginContextSpan(), emitSpan() or emitEvent() call fans out to
  *        every enabled backend. No singleton; injected explicitly.
  */
 class Tracer {
@@ -168,11 +165,6 @@ public:
     [[nodiscard]] Span
     beginContextSpan(Name name, Kind kind, const TraceContext &context, std::uint64_t request_id) {
         return detail::beginContextSpan(*this, name, kind, context, request_id);
-    }
-
-    void
-    mark(Name name, Kind kind = Kind::Metadata) {
-        detail::mark(*this, name, kind);
     }
 
     void

@@ -872,9 +872,6 @@ public:
     }
 
     void
-    mark(nixl::trace::Name, nixl::trace::Kind) override {}
-
-    void
     emitSpan(nixl::trace::Name,
              nixl::trace::Kind,
              const nixl::trace::TraceContext &,

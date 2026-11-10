@@ -200,13 +200,6 @@ detail::beginContextSpan(Tracer &tracer,
 }
 
 void
-detail::mark(Tracer &tracer, Name name, Kind kind) {
-    for (const auto &backend : tracer.backends()) {
-        backend->mark(name, kind);
-    }
-}
-
-void
 detail::pushContext(Tracer &tracer, const TraceContext &context, std::uint64_t request_id) {
     for (const auto &backend : tracer.backends()) {
         backend->pushContext(context, request_id);

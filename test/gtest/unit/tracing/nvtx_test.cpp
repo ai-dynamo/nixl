@@ -240,7 +240,6 @@ TEST(NvtxSpan, TracerSpansAndEventsAllocateNothing) {
         tracer.emitEvent("nixl::submit", nixl::trace::Kind::Metadata, *context, 42, 1, attrs);
         tracer.emitSpan(
             "nixl::wire.inflight", nixl::trace::Kind::CommSend, *context, 42, 1, 2, attrs);
-        tracer.mark("nixl::xfer.complete", nixl::trace::Kind::Metadata);
     };
     record();
 
