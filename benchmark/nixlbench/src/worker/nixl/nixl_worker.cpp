@@ -267,6 +267,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["oob_interface"] = xferBenchConfig::gpunetio_oob_list;
         backend_params["gid_index"] = xferBenchConfig::gpunetio_gid_index;
         backend_params["data_qp_count"] = std::to_string(xferBenchConfig::gpunetio_data_qp_count);
+        backend_params["write_stripe"] = xferBenchConfig::gpunetio_write_stripe;
         if (xferBenchConfig::gpunetio_write_stripe_min_bytes != 4194304) {
             backend_params["write_stripe_min_bytes"] =
                 std::to_string(xferBenchConfig::gpunetio_write_stripe_min_bytes);

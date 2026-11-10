@@ -152,6 +152,7 @@ private:
     std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
     int nstreams;
     uint32_t dataQpCount_ = 1;
+    bool writeStripeBytes_ = false;
     size_t writeStripeMinBytes_ = 4 * 1024 * 1024;
 
     uint16_t local_port;

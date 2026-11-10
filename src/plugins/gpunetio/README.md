@@ -35,8 +35,8 @@ Stream pool mode instead is when applications mostly wants to process data on th
 ## Input parameters
 
 `data_qp_count` optionally selects 1–4 WRITE QPs per peer (default 1). Both peers
-must use the same count. Counts above 1 retain a dedicated READ QP, balance WRITE
-bytes across QPs, launch one block per QP in a single kernel and require
+must use the same count. Counts above 1 retain a dedicated READ QP, stripe WRITE
+chunks over one block per QP in a single kernel launch and require
 `data_qp_count <= cuda_streams <= 4`.
 Each block
 posts its non-final chunks and publishes arrival without waiting for other
@@ -52,7 +52,8 @@ DOCA GPUNetIO backend takes these input parameters:
 - oob_port: TCP port used to listen for OOB connection setup. It must be an integer in the inclusive range [1, 65535] and defaults to 6544. Set a distinct port for each GPUNETIO backend sharing a host network namespace.
 - gid_index: RoCE GID table index, in [0, 255]. Defaults to 0; select the GID for the test fabric when a non-default index is required.
 - gpu_devices: GPU CUDA ID to be used during the execution (e.g. 0). Current release supports only 1 GPU device.
-- write_stripe_min_bytes: minimum bytes per WRITE QP (default `4194304`); must be positive.
+- write_stripe: WRITE distribution across QPs: `slots` (default) or `bytes`. Byte balancing can help use multiple physical links with RoCE LAG.
+- write_stripe_min_bytes: minimum bytes per WRITE QP in `bytes` mode (default `4194304`); must be positive.
 - cuda_streams: how many CUDA streams the backend should create at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. It must be an integer in the inclusive range [1, 4]; if this parameter is not specified, default value is `DOCA_POST_STREAM_NUM` (4).
 
 ## Example

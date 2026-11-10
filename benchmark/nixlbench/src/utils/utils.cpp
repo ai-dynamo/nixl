@@ -273,6 +273,7 @@ NB_ARG_STRING(gpunetio_oob_port,
               "",
               "OOB TCP port for GPUNetIO (only used with nixl worker; default: 6544)");
 NB_ARG_INT32(gpunetio_data_qp_count, 1, "GPUNetIO WRITE QPs per peer [1,4]; default: 1");
+NB_ARG_STRING(gpunetio_write_stripe, "slots", "GPUNetIO WRITE distribution: slots or bytes");
 NB_ARG_UINT64(gpunetio_write_stripe_min_bytes, 4194304, "Minimum WRITE stripe size in bytes");
 
 // OBJ options - only used when backend is OBJ
@@ -408,6 +409,7 @@ std::string xferBenchConfig::gpunetio_oob_list = "";
 std::string xferBenchConfig::gpunetio_gid_index = "0";
 std::string xferBenchConfig::gpunetio_oob_port = "";
 int xferBenchConfig::gpunetio_data_qp_count = 1;
+std::string xferBenchConfig::gpunetio_write_stripe = "slots";
 uint64_t xferBenchConfig::gpunetio_write_stripe_min_bytes = 4194304;
 std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
@@ -732,6 +734,7 @@ xferBenchConfig::loadParams(void) {
             gpunetio_gid_index = NB_ARG(gpunetio_gid_index);
             gpunetio_oob_port = NB_ARG(gpunetio_oob_port);
             gpunetio_data_qp_count = NB_ARG(gpunetio_data_qp_count);
+            gpunetio_write_stripe = NB_ARG(gpunetio_write_stripe);
             gpunetio_write_stripe_min_bytes = NB_ARG(gpunetio_write_stripe_min_bytes);
         }
 
@@ -1198,6 +1201,8 @@ xferBenchConfig::printConfig() {
             printOption("RoCE GID table index (--gpunetio_gid_index=N)", gpunetio_gid_index);
             printOption("WRITE QPs per peer (--gpunetio_data_qp_count=N)",
                         std::to_string(gpunetio_data_qp_count));
+            printOption("WRITE distribution (--gpunetio_write_stripe=slots|bytes)",
+                        gpunetio_write_stripe);
             printOption("Minimum WRITE stripe bytes (--gpunetio_write_stripe_min_bytes=N)",
                         std::to_string(gpunetio_write_stripe_min_bytes));
             printOption("OOB TCP port (--gpunetio_oob_port=N)",
