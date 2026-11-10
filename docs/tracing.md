@@ -271,15 +271,16 @@ context and passes it back when it records a phase (see "Backend phases"). UCX's
 sender phases carry it, and so does the receiver's `nixl::notif.received`, which
 reads it from the notification, so the records of both sides join on the pair.
 
-An application reads a request's identity with `nixlAgent::getXferTraceInfo()`, at
-any time from creation until `releaseXferReq`, for a request from `createXferReq` or
-`makeXferReq`. It returns the request id, the execution number of the latest post
-that took one (0 before any) and that post's trace context as a W3C `traceparent`:
-the values that post's records carry. Before any accepted post the `traceparent` is
-the request's own, whose span id a sampled request's first `postXferReq` call takes,
-refused or not. A post refused by `postXferReq`'s checks changes none of the three.
-A request without an id, such as one created while no tracing backend is active,
-returns `NIXL_ERR_NOT_FOUND`; the getter never enables tracing.
+An application reads a request's identity with `nixlAgent::getXferTraceInfo()` from
+creation until `releaseXferReq`, for a request from `createXferReq` or `makeXferReq`,
+but not while another thread posts or releases that request. It returns the request
+id, the execution number of the latest post that took one (0 before any) and that
+post's trace context as a W3C `traceparent`: the values that post's records carry.
+Before any accepted post the `traceparent` is the request's own, whose span id a
+sampled request's first `postXferReq` call takes, refused or not. A post refused by
+`postXferReq`'s checks changes none of the three. A request without an id, such as
+one created while no tracing backend is active, returns `NIXL_ERR_NOT_FOUND`; the
+getter never enables tracing.
 From Python, `nixl_agent.get_xfer_trace_info(handle)` returns the same three as a
 `nixlXferTraceInfo` (`requestId`, `execution`, `traceparent`), or `None` when the
 request has no identity or the handle has been released.
