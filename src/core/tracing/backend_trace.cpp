@@ -23,6 +23,7 @@
 #include "backend_trace.h"
 #include "serdes/serdes.h"
 #include "trace_context.h"
+#include "tracing.h"
 
 namespace {
 
@@ -34,6 +35,18 @@ struct requestTag {
 };
 
 } // namespace
+
+nixlBackendTraceSink *
+nixl::trace::currentSink() noexcept {
+    const Scope *scope = Scope::current();
+    return (scope != nullptr) ? scope->sink() : nullptr;
+}
+
+const nixl::trace::TraceIdentity *
+nixl::trace::currentIdentity() noexcept {
+    const Scope *scope = Scope::current();
+    return (scope != nullptr) ? &scope->identity() : nullptr;
+}
 
 void
 nixl::trace::addTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity) {

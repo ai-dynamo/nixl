@@ -109,10 +109,14 @@ private:
  *        NIXL_TRACE_CONTEXT_SPAN open meanwhile take them. Scopes nest. A scope
  *        whose context is valid and sampled also pushes it to the tracer's
  *        backends for its lifetime, to correlate records across threads.
+ *        @p sink, when given, is the trace sink a backend constructed meanwhile
+ *        takes as its own.
  */
 class Scope {
 public:
-    [[nodiscard]] Scope(Tracer *tracer, const TraceIdentity &identity);
+    [[nodiscard]] Scope(Tracer *tracer,
+                        const TraceIdentity &identity,
+                        nixlBackendTraceSink *sink = nullptr);
     ~Scope();
 
     Scope(const Scope &) = delete;
@@ -132,10 +136,19 @@ public:
         return identity_;
     }
 
+    [[nodiscard]] nixlBackendTraceSink *
+    sink() const noexcept {
+        return sink_;
+    }
+
 private:
+    static void
+    makeCurrent(const Scope *scope) noexcept;
+
     const Scope *const previous_;
     Tracer *const tracer_;
     const TraceIdentity identity_;
+    nixlBackendTraceSink *const sink_;
     const bool pushed_;
 };
 

@@ -316,14 +316,6 @@ makeMDConfig(const nixlAgentConfig &config) {
             std::chrono::microseconds(config.lthrDelay)};
 }
 
-void
-setTraceArgs(nixl_opt_b_args_t &opt_args, const nixl::trace::TraceIdentity &identity) {
-    opt_args.traceIdentity = &identity;
-}
-
-void
-setTraceArgs(nixl_opt_b_args_t &opt_args, const nixl::trace::TraceIdentity &&identity) = delete;
-
 } // namespace
 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
@@ -482,7 +474,6 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     if (data->tracer_ != nullptr) {
         trace_sink =
             nixl::trace::makeBackendTraceSink(*data->tracer_, type, data->telemetry_.get());
-        init_params.traceSink = trace_sink.get();
     }
 
     // First, try to load the backend as a plugin
@@ -495,7 +486,11 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     }
 
     // Plugin found, use it to create the backend
-    backend_ptr_t backend(plugin_handle->createEngine(&init_params));
+    backend_ptr_t backend;
+    {
+        const nixl::trace::Scope trace_scope(nullptr, {}, trace_sink.get());
+        backend.reset(plugin_handle->createEngine(&init_params));
+    }
 
     if (!backend) {
         NIXL_ERROR_FUNC << "backend creation failed for '" << type << "'";
@@ -1020,7 +1015,6 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
     const nixl::trace::TraceIdentity trace_identity = handle->traceable().identity();
-    setTraceArgs(opt_args, trace_identity);
     ret = handle->engine->prepXfer(handle->backendOp,
                                    handle->initiatorDescs,
                                    handle->targetDescs,
@@ -1170,7 +1164,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
     const nixl::trace::TraceIdentity trace_identity = handle->traceable().identity();
-    setTraceArgs(opt_args, trace_identity);
     ret1 = handle->engine->prepXfer(handle->backendOp,
                                     handle->initiatorDescs,
                                     handle->targetDescs,
@@ -1332,7 +1325,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                             {"bytes", req_hndl->telemetry.totalBytes},
                             {"nixl.xfer_request_id", trace_identity.requestId},
                             {"nixl.xfer_execution", trace_identity.execution});
-    setTraceArgs(opt_args, trace_identity);
 
     if (timer) {
         req_hndl->telemetry.startTime = start_time;

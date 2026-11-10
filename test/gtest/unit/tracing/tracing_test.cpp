@@ -1765,19 +1765,24 @@ TEST(TracePhaseSink, PostTraceRecordsOnlyWithASinkAndASampledPost) {
     nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
     const nixl::trace::TraceIdentity sampled{testContext(0x39), 0x39, 1};
     const nixl::trace::TraceIdentity unsampled{testContext(0x3a, 0x02), 0x3a, 1};
-    nixl_opt_b_args_t sampled_args;
-    sampled_args.traceIdentity = &sampled;
-    nixl_opt_b_args_t unsampled_args;
-    unsampled_args.traceIdentity = &unsampled;
-    const nixl_opt_b_args_t no_identity_args;
-
-    const nixlBackendPostTrace inactive[] = {{},
-                                             {nullptr, &sampled_args},
-                                             {&sink, nullptr},
-                                             {&sink, &no_identity_args},
-                                             {&sink, &unsampled_args},
-                                             {nullptr, sampled},
-                                             {&sink, unsampled}};
+    std::vector<nixlBackendPostTrace> inactive{nixlBackendPostTrace{},
+                                               nixlBackendPostTrace{&sink},
+                                               {nullptr, sampled},
+                                               {&sink, unsampled}};
+    {
+        const nixl::trace::Scope scope(tracer.get(), sampled);
+        inactive.emplace_back(nullptr, sampled);
+        inactive.push_back(nixlBackendPostTrace{nullptr});
+        EXPECT_TRUE(nixlBackendPostTrace{&sink}.active());
+    }
+    {
+        const nixl::trace::Scope scope(tracer.get(), unsampled);
+        inactive.push_back(nixlBackendPostTrace{&sink});
+    }
+    {
+        const nixl::trace::Scope scope(nullptr, {}, &sink);
+        inactive.push_back(nixlBackendPostTrace{&sink});
+    }
     for (const auto &trace : inactive) {
         EXPECT_FALSE(trace.active());
         trace.record(nixl_trace_phase_t::SUBMIT);
@@ -1786,7 +1791,6 @@ TEST(TracePhaseSink, PostTraceRecordsOnlyWithASinkAndASampledPost) {
 
     EXPECT_TRUE(a.emittedEvents.empty());
     EXPECT_TRUE(b.emittedEvents.empty());
-    EXPECT_TRUE((nixlBackendPostTrace{&sink, &sampled_args}.active()));
     EXPECT_TRUE((nixlBackendPostTrace{&sink, sampled}.active()));
 }
 
@@ -1810,9 +1814,10 @@ TEST(TracePhaseSink, PostTraceRecordsItsPostsIdentity) {
     const auto tracer = makeMockTracer(a, b);
     nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
     const nixl::trace::TraceIdentity identity{testContext(0x3b), 0x3b, 2};
-    nixl_opt_b_args_t args;
-    args.traceIdentity = &identity;
-    const nixlBackendPostTrace posted{&sink, &args};
+    const nixlBackendPostTrace posted = [&] {
+        const nixl::trace::Scope scope(tracer.get(), identity);
+        return nixlBackendPostTrace{&sink};
+    }();
     const nixlBackendPostTrace received{&sink, identity};
     const nixlBackendTraceAttr rail[] = {{"remote_agent", "0"}};
     const nixlBackendTraceAttr peer[] = {{"nixl.remote_agent", "peer"}};

@@ -299,8 +299,9 @@ identity.
 
 ### Backend phases
 
-A backend plugin can record a phase of its own work through
-the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core records
+A backend plugin can record a phase of its own work through its
+`nixlBackendTraceSink`, which it takes from `nixl::trace::currentSink()` while
+`createBackend` constructs it. Core records
 each phase as a point event through `emitEvent()`, at the plugin's timestamp and
 under the context the plugin passed, so the event keeps its time whichever thread
 reports it. The event carries `nixl.backend` (the recording backend's type),
@@ -357,29 +358,28 @@ enabled, drops are also exported as `agent_trace_phases_dropped_total`, subject
 to the same per-metric filter as every other metric (see
 [telemetry](telemetry.md)).
 
-A backend also sees the trace identity of the request it is executing, as
-`traceIdentity` in the `nixl_opt_b_args_t` that `prepXfer` and `postXfer` receive:
-one internal `nixl::trace::TraceIdentity` holding the trace `context`, the
-`requestId` and the `execution` number. The context's trace id and flags are the
-same at prep and at every post of that request, reposts included, and it is the
-zeroed, invalid context when tracing is off. For a sampled request each post also
-has a span id of its own: the first post keeps the one prep saw, and each later
-post draws another. The pointer is null in `prepMemView`, which has no
-request, and `opt_args` itself may be null when an engine is called directly. It is
-valid only for the call: a plugin that needs the identity later, at completion or
-when building a notification, copies the value onto its own request handle at each
-post. A carrier never encodes it itself: `nixl::trace::addTraceTags()` appends a
-post's identity to a `nixlSerDes` message as the tags described below, and
-`getTraceTags()` reads a peer's back. `TraceIdentity` is internal like the sink, so
-only in-tree plugins can read it. Its request id is the same at prep and at every
-post, its execution number is 0 at prep, and both are 0, meaning none, when tracing
-is off.
+A backend also sees the trace identity of the request it is executing, from
+`nixl::trace::currentIdentity()` while `prepXfer` and `postXfer` run: the agent opens a
+`nixl::trace::Scope` around both, and the pointer is null outside one, as in
+`prepMemView`, which has no request, or when an engine is called directly. It is one
+internal `nixl::trace::TraceIdentity` holding the trace `context`, the `requestId` and
+the `execution` number. The context's trace id and flags are the same at prep and at
+every post of that request, reposts included, and it is the zeroed, invalid context when
+tracing is off. For a sampled request each post also has a span id of its own: the first
+post keeps the one prep saw, and each later post draws another. It is valid only for the
+call: a plugin that needs the identity later, at completion or when building a
+notification, copies the value onto its own request handle at each post. A carrier never
+encodes it itself: `nixl::trace::addTraceTags()` appends a post's identity to a
+`nixlSerDes` message as the tags described below, and `getTraceTags()` reads a peer's
+back. `TraceIdentity` is internal like the sink, so only in-tree plugins can read it.
+Its request id is the same at prep and at every post, its execution number is 0 at prep,
+and both are 0, meaning none, when tracing is off.
 
-A plugin that records phases keeps a `nixlBackendPostTrace`, built at each post
-from its sink and these arguments: it records only with a sink and a sampled post,
-`record(phase)` stamps the phase with `nixlTime::getUs()` itself when a backend
-needs the time, `recordAt(phase, timestamp)` records a time the plugin took
-earlier, and `now()` reads the clock under the same condition.
+A plugin that records phases keeps a `nixlBackendPostTrace`, built at each post from its
+sink and the current identity, as `nixlBackendPostTrace{sink}`: it records only with a
+sink and a sampled post, `record(phase)` stamps the phase with `nixlTime::getUs()`
+itself when a backend needs the time, `recordAt(phase, timestamp)` records a time the
+plugin took earlier, and `now()` reads the clock under the same condition.
 
 UCX is the first such carrier. For a sampled request `addTraceTags()` appends the
 26-byte record as a `tctx` tag after the notification's `name` and `msg`, then, when the

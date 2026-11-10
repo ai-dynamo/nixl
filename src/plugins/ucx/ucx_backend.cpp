@@ -99,7 +99,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
-      traceSink_(init_params.traceSink) {
+      traceSink_(nixl::trace::currentSink()) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -641,7 +641,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    int_handle->trace = nixlBackendPostTrace{traceSink_, opt_args};
+    int_handle->trace = nixlBackendPostTrace{traceSink_};
     int_handle->wireCompletedOnFlush =
         int_handle->trace.active() && hasProgressThread() && !int_handle->isComposite();
     int_handle->wireCompletedAtOnce = false;

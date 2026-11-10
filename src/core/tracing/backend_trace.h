@@ -20,10 +20,9 @@
 /*
  * Plugin-facing trace phase sink.
  *
- * This header is internal: it is NOT installed, and `nixlBackendInitParams`
- * only forward-declares `nixlBackendTraceSink`, so an out-of-tree plugin sees
- * an opaque pointer. Only in-tree plugins can record phases, and nothing here
- * carries an ABI guarantee -- `NIXL_PLUGIN_API_VERSION` does not cover it.
+ * This header is internal: it is NOT installed, so only in-tree plugins can
+ * record phases, and nothing here carries an ABI guarantee --
+ * `NIXL_PLUGIN_API_VERSION` does not cover it.
  */
 
 #include <cstdint>
@@ -31,7 +30,6 @@
 #include <span>
 #include <string_view>
 
-#include "backend/backend_aux.h"
 #include "common/nixl_time.h"
 #include "nixl_types.h"
 #include "tracing/attribute_key.h"
@@ -39,6 +37,17 @@
 #include "tracing/trace_identity.h"
 
 class nixlSerDes;
+class nixlBackendTraceSink;
+
+namespace nixl::trace {
+
+[[nodiscard]] nixlBackendTraceSink *
+currentSink() noexcept;
+
+[[nodiscard]] const TraceIdentity *
+currentIdentity() noexcept;
+
+} // namespace nixl::trace
 
 /**
  * @brief Fixed set of backend phases.
@@ -142,10 +151,10 @@ struct nixlBackendTraceAttr {
 /**
  * @brief Sink a backend uses to record a phase or a span of its own work.
  *
- * Implemented by core, never by a plugin. A backend receives one through
- * `nixlBackendInitParams::traceSink`, which is null when tracing is off -- so
- * every call site must null-check. When non-null the sink outlives the backend
- * engine that holds it.
+ * Implemented by core, never by a plugin. A backend takes its own from
+ * nixl::trace::currentSink() while it is constructed; it is null when tracing
+ * is off -- so every call site must null-check. When non-null the sink
+ * outlives the backend engine that holds it.
  */
 class nixlBackendTraceSink {
 public:
@@ -246,9 +255,9 @@ class nixlBackendPostTrace {
 public:
     nixlBackendPostTrace() = default;
 
-    nixlBackendPostTrace(nixlBackendTraceSink *sink, const nixl_opt_b_args_t *opt_args) noexcept {
-        if ((opt_args != nullptr) && (opt_args->traceIdentity != nullptr)) {
-            *this = nixlBackendPostTrace(sink, *opt_args->traceIdentity);
+    explicit nixlBackendPostTrace(nixlBackendTraceSink *sink) noexcept {
+        if (const nixl::trace::TraceIdentity *identity = nixl::trace::currentIdentity()) {
+            *this = nixlBackendPostTrace(sink, *identity);
         }
     }
 
