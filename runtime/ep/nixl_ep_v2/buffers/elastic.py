@@ -268,11 +268,11 @@ class ElasticBuffer:
     rewrite the topology descriptor (`EPTopology`) the kernels read, a rank that is not active sits the launches
     out (`is_active`). Construction coordinates the constructing cohort through a Store (see the constructor).
     Dispatch/combine and their graph replays require at least two active GPUs; smaller cohorts may bootstrap or tear down.
-    Every peer or topology change (`connect_ranks`, `disconnect_ranks`, `commit_topology`, `set_num_active_sms`)
-    is collective, runs between launches and never inside a CUDA-graph capture, and never between a
-    dispatch and its combine.
+    New-peer connections and host-only topology staging may run while the committed graph replays. Serialize
+    control operations on each buffer; a background setup thread must select the buffer's CUDA device.
+    Activation (`commit_topology`, `set_num_active_sms`) runs outside capture, between complete dispatch/combine pairs.
     Order topology commits and graph replays on the same CUDA stream, or establish the dependencies explicitly.
-    Before membership or transport-view changes, every rank of the old world, including departing ranks, must finish
+    Before activation or peer retirement, every rank of the old world, including departing ranks, must finish
     its queued CUDA work, call `barrier(with_cpu_sync=True)` to drain the transport, and rendezvous on the host before
     any peer departs. The update methods do not establish that completion boundary.
     Transport mutation/activation failures are fatal; invalid inputs and mapping refusals leave active views intact.
@@ -828,7 +828,8 @@ class ElasticBuffer:
         """
         Load peers' transport metadata and stage new memory views (made live by the next `commit_topology`), from
         `remote_mds` and `peer_infos` as published by the peers, or from a `store` they `publish`ed to.
-        The per-peer barrier words are reset and the stream synchronised.
+        Resets only new peers' barrier words on a setup stream. Native preparation releases the GIL so another
+        Python thread can replay the committed graph; it does not change the live topology or active views.
 
         Arguments:
             world_ranks: world ranks of the peers (not this rank, not connected yet).

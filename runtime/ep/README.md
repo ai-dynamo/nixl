@@ -150,15 +150,22 @@ stages membership. `commit_topology` activates both. The convenience method
 `set_active_ranks` stages and commits membership immediately. Exclude
 departing peers in a committed topology before disconnecting them.
 Size the buffer for its maximum world at construction. Active ranks form a
-product of active domains and positions within those domains. Use one CUDA
-device per process. Serialize control operations on each buffer and select
-that device in any background setup thread. Before membership or
-transport-view changes, every old-world rank must finish
+product of active domains and positions within those domains. New-peer
+connections and host-only topology staging may run while the committed
+graph replays. Use one CUDA device per process. Serialize control operations
+on each buffer and select that device in any background setup thread. Before
+activation or peer retirement, every old-world rank must finish
 queued CUDA work, call `buffer.barrier(with_cpu_sync=True)` to drain the
 transport, and complete a host rendezvous before any peer departs. Joining
 cohorts use an explicit Store and fresh `bootstrap_id`; see `publish` and
 `connect_ranks` for metadata exchange. Mid-launch rank failure and transport
 recovery are unsupported.
+
+An idle joiner can commit its future topology locally and capture its graph
+before cutover. Capture must skip eager communication and replay until the
+old world has drained and all new-world ranks have activated. Construction
+precompiles the barrier without launching it, including for singleton
+bootstrap cohorts; dispatch/combine still require two active GPUs.
 
 For process replacement, use a fresh shared publication `key_prefix`, or
 rendezvous after every target's current process has completed `publish`
@@ -253,6 +260,14 @@ plan file through `--plan`. `--benchmark`, `--kineto` and `--feed-pairs`
 enable call, kernel and transition timing; `--save-output PATH` saves
 per-rank results. Payload byte counts exclude transport overhead and are
 not per-NIC bandwidth measurements.
+
+`tests/elastic/test_elastic_warmup.py` prepares fresh joining buffers while
+survivors replay, checks the first replay after each switch and serves
+through departure cleanup. It reports completion gaps during preparation,
+cutover and retirement. `--max-completion-gap-ms 1000` applies a one-second
+acceptance bound; the default reports gaps without enforcing a bound.
+Joiner capture is prepared ahead of cutover; its first execution is timed
+after activation.
 
 ## Phase profiling
 
