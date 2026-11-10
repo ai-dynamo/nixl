@@ -90,6 +90,9 @@ popContext(Tracer &tracer);
 [[nodiscard]] inline nixlTime::us_t
 requestStart(const Tracer *tracer, const TraceContext &context) noexcept;
 
+[[nodiscard]] inline TraceIdentity
+suppliedIdentity(const Tracer *tracer, const nixl_blob_t &parent);
+
 void
 emitEvent(Tracer &tracer,
           Name name,

@@ -230,6 +230,37 @@ writeToSelf(const std::string &name,
     ASSERT_EQ(agent.deregisterMem(regs), NIXL_SUCCESS);
 }
 
+[[nodiscard]] std::size_t
+allocationsPerNotifications(const std::string &name,
+                            size_t warmup,
+                            size_t measured,
+                            const nixl_blob_t &trace_parent) {
+    const gtest::LogIgnoreGuard efa(efa_warning);
+    nixlAgent agent(name, idleConfig());
+    nixlBackendH *backend = nullptr;
+    EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
+    nixl_opt_args_t params;
+    params.traceContext = trace_parent;
+    nixl_notifs_t notifs;
+    const auto run = [&](size_t notifications) {
+        for (size_t i = 0; i < notifications; ++i) {
+            ASSERT_EQ(agent.genNotif(name, tagged_msg, &params), NIXL_SUCCESS);
+            notifs.clear();
+            ASSERT_EQ(agent.getNotifs(notifs), NIXL_SUCCESS);
+            const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
+            while (!notifs.contains(name) && (std::chrono::steady_clock::now() < deadline)) {
+                std::this_thread::sleep_for(poll_interval);
+                ASSERT_EQ(agent.getNotifs(notifs), NIXL_SUCCESS);
+            }
+            ASSERT_TRUE(notifs.contains(name));
+        }
+    };
+    run(warmup);
+    const gtest::AllocationCounter allocations;
+    run(measured);
+    return allocations.count();
+}
+
 [[nodiscard]] bool
 addNvtxPluginDirectory() {
     const std::string nvtx_dir = std::string(BUILD_DIR) + "/src/plugins/tracing/nvtx";
@@ -917,7 +948,9 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     EXPECT_NE(post.spanId, context.spanId);
     EXPECT_EQ(post.parentSpanId, context.spanId);
     ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
-    ASSERT_EQ(sender.genNotif(receiver_name, untagged_msg), NIXL_SUCCESS);
+    nixl_opt_args_t notif_params;
+    notif_params.traceContext = nixl::trace::formatTraceparent(application);
+    ASSERT_EQ(sender.genNotif(receiver_name, untagged_msg, &notif_params), NIXL_SUCCESS);
 
     char ack = 0;
     ASSERT_TRUE(awaitBytes(up_read.get(), &ack, 1))
@@ -951,14 +984,37 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
                                        std::string("nixl.xfer_execution=1")}));
 #endif
     const auto received = recordedSpans(traceFile, receiver_name, "nixl::notif.received");
-    ASSERT_EQ(received.size(), 1u);
-    EXPECT_THAT(received[0],
+    ASSERT_EQ(received.size(), 2u);
+    const bool transfer_first = std::ranges::find(received[0], correlation) != received[0].end();
+    const span_record_t &transfer_notif = transfer_first ? received[0] : received[1];
+    const span_record_t &standalone_notif = transfer_first ? received[1] : received[0];
+    EXPECT_THAT(transfer_notif,
                 testing::IsSupersetOf({correlation,
                                        "context=" + traceparent,
                                        "nixl.xfer_request_id=" + std::to_string(request_id),
                                        std::string("nixl.xfer_execution=1"),
                                        std::string("nixl.remote_agent=") + sender_name}));
-    EXPECT_THAT(received[0], testing::Contains(phaseEventTime(received[0])));
+    EXPECT_THAT(transfer_notif, testing::Contains(phaseEventTime(transfer_notif)));
+    EXPECT_THAT(standalone_notif,
+                testing::AllOf(
+                    testing::Contains(std::string("nixl.remote_agent=") + sender_name),
+                    testing::Not(testing::Contains(testing::StartsWith("correlation="))),
+                    testing::Not(testing::Contains(testing::StartsWith("nixl.xfer_request_id=")))));
+    const auto standalone_field = std::ranges::find_if(
+        standalone_notif, [](const std::string &field) { return field.starts_with("context="); });
+    ASSERT_NE(standalone_field, standalone_notif.end());
+    const std::string standalone_traceparent = standalone_field->substr(8);
+    const auto standalone = nixl::trace::parseTraceparent(standalone_traceparent);
+    ASSERT_TRUE(standalone.has_value());
+    EXPECT_EQ(standalone->traceId, application.traceId);
+    EXPECT_NE(standalone->spanId, application.spanId);
+#if defined(NIXL_TRACE_ENABLED)
+    const auto notified = recordedSpans(traceFile, sender_name, "nixl::genNotif");
+    ASSERT_EQ(notified.size(), 1u);
+    EXPECT_THAT(
+        notified[0],
+        testing::IsSupersetOf({"span=" + standalone_traceparent, parentField(application)}));
+#endif
     expectSenderPhases(sender_name, {post}, request_id, {1}, {1});
 }
 
@@ -1204,6 +1260,31 @@ TEST_F(ucxTraceContextPropagation, SampledRequestAllocatesNoMoreThanAnUntracedOn
             EXPECT_GT(untraced, 0u) << "notify " << notify << ", parent '" << parent << "'";
             EXPECT_EQ(traced, untraced) << "notify " << notify << ", parent '" << parent << "'";
         }
+    }
+    env.popVar();
+}
+
+TEST_F(ucxTraceContextPropagation, SampledNotificationAllocatesNoMoreThanAnUntracedOne) {
+    if (!addNvtxPluginDirectory()) {
+        GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+    }
+    constexpr size_t warmup = 50;
+    constexpr size_t measured = 200;
+
+    env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+    const nixl_blob_t application = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    for (const nixl_blob_t &parent : {nixl_blob_t(), application}) {
+        env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
+        const std::size_t traced =
+            allocationsPerNotifications(sender_name, warmup, measured, parent);
+        env.popVar();
+        env.addVar("NIXL_TRACE_BACKENDS", "");
+        const std::size_t untraced =
+            allocationsPerNotifications(untraced_name, warmup, measured, parent);
+        env.popVar();
+
+        EXPECT_GT(untraced, 0u) << "parent '" << parent << "'";
+        EXPECT_EQ(traced, untraced) << "parent '" << parent << "'";
     }
     env.popVar();
 }

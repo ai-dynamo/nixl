@@ -256,6 +256,9 @@ public:
     nixlBackendPostTrace() = default;
 
     explicit nixlBackendPostTrace(nixlBackendTraceSink *sink) noexcept {
+        if (sink == nullptr) {
+            return;
+        }
         if (const nixl::trace::TraceIdentity *identity = nixl::trace::currentIdentity()) {
             *this = nixlBackendPostTrace(sink, *identity);
         }

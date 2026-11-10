@@ -783,8 +783,10 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::string &msg,
                              const nixlUcxEp &ep,
                              nixlUcxReq *req) const {
-    return ep.sendAm(
-        nixl::ucx::am_cb_op_t::NOTIF_STR, buildNotif(msg), UCP_AM_SEND_FLAG_EAGER, req);
+    return ep.sendAm(nixl::ucx::am_cb_op_t::NOTIF_STR,
+                     buildNotif(msg, nixlBackendPostTrace{traceSink_}),
+                     UCP_AM_SEND_FLAG_EAGER,
+                     req);
 }
 
 ucx_connection_ptr_t

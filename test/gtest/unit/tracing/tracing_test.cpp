@@ -802,6 +802,95 @@ TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
 #endif
 }
 
+TEST(Tracing, ScopeUnderMacroRecordsTheSuppliedContextsChild) {
+#if defined(NIXL_TRACE_ENABLED)
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    zero_draws_left = 0;
+    const auto application = testContext(0x61);
+    const nixl_blob_t supplied = nixl::trace::formatTraceparent(application);
+    auto child = application;
+    child.spanId.fill(0x5a);
+    child.parentSpanId = application.spanId;
+
+    {
+        NIXL_TRACE_SCOPE_UNDER(
+            notif, tracer.get(), supplied, nixl::trace::Record::GenNotif, {"bytes", 1});
+        EXPECT_TRUE(notif.active());
+        ASSERT_NE(nixl::trace::Scope::current(), nullptr);
+        EXPECT_EQ(nixl::trace::Scope::current()->identity().context, child);
+        EXPECT_EQ(nixl::trace::Scope::current()->identity().requestId, 0u);
+    }
+
+    EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->pushedContexts, std::vector<nixl::trace::TraceContext>{child});
+        EXPECT_EQ(log->spansBegun, 0);
+        ASSERT_EQ(log->contextSpans.size(), 1u);
+        EXPECT_EQ(log->contextSpans[0].name, "nixl::genNotif");
+        EXPECT_EQ(log->contextSpans[0].context, child);
+        EXPECT_EQ(log->contextSpans[0].requestId, 0u);
+        EXPECT_EQ(log->intAttrs, (std::vector<std::pair<std::string, std::int64_t>>{{"bytes", 1}}));
+    }
+#else
+    GTEST_SKIP() << "the trace macros are compiled out";
+#endif
+}
+
+TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
+#if defined(NIXL_TRACE_ENABLED)
+    gtest::LogMessageCounter ignored("ignoring a supplied trace context");
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+    const nixl_blob_t unsampled = nixl::trace::formatTraceparent(testContext(0x62, 0x00));
+    const nixl_blob_t neither = "neither";
+    int evaluations = 0;
+
+    {
+        NIXL_TRACE_SCOPE_UNDER(plain,
+                               tracer.get(),
+                               nixl::trace::noSuppliedContext,
+                               nixl::trace::Record::GenNotif,
+                               {"bytes", 1});
+        EXPECT_TRUE(plain.active());
+        EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
+    }
+    {
+        NIXL_TRACE_SCOPE_UNDER(
+            unparsed, tracer.get(), neither, nixl::trace::Record::GenNotif, {"bytes", 2});
+        EXPECT_TRUE(unparsed.active());
+    }
+    {
+        NIXL_TRACE_SCOPE_UNDER(skipped,
+                               tracer.get(),
+                               unsampled,
+                               nixl::trace::Record::GenNotif,
+                               {"bytes", ++evaluations});
+        EXPECT_FALSE(skipped.active());
+    }
+    {
+        NIXL_TRACE_SCOPE_UNDER(untraced,
+                               static_cast<nixl::trace::Tracer *>(nullptr),
+                               unsampled,
+                               nixl::trace::Record::GenNotif,
+                               {"bytes", ++evaluations});
+        EXPECT_FALSE(untraced.active());
+    }
+
+    EXPECT_EQ(evaluations, 0);
+    EXPECT_EQ(ignored.count(), 1u);
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->spanNames, (std::vector<std::string>{"nixl::genNotif", "nixl::genNotif"}));
+        EXPECT_TRUE(log->contextSpans.empty());
+        EXPECT_TRUE(log->pushedContexts.empty());
+        EXPECT_EQ(log->intAttrs,
+                  (std::vector<std::pair<std::string, std::int64_t>>{{"bytes", 1}, {"bytes", 2}}));
+    }
+#else
+    GTEST_SKIP() << "the trace macros are compiled out";
+#endif
+}
+
 TEST(Tracing, AttrMacroSkipsItsValueOnAnInactiveSpan) {
 #if !defined(NIXL_TRACE_ENABLED)
     GTEST_SKIP() << "the trace macros are compiled out";

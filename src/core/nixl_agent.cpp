@@ -1581,10 +1581,11 @@ nixl_status_t
 nixlAgent::genNotif(const std::string &remote_agent,
                     const nixl_blob_t &msg,
                     const nixl_opt_args_t *extra_params) const {
-    NIXL_TRACE_SCOPE(trace_span,
-                     data->tracer_.get(),
-                     nixl::trace::Record::GenNotif,
-                     {"remote_agent", remote_agent});
+    NIXL_TRACE_SCOPE_UNDER(trace_span,
+                           data->tracer_.get(),
+                           traceContextOf(extra_params),
+                           nixl::trace::Record::GenNotif,
+                           {"remote_agent", remote_agent});
 
     backend_list_t backend_list_value;
     backend_list_t *backend_list;

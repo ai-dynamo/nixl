@@ -1274,6 +1274,71 @@ namespace agent {
         EXPECT_THAT(records("nixl::xferReq"), testing::ElementsAre(request_span));
     }
 
+    TEST_F(sampledRecorderTracingAgentFixture, SuppliedNotificationContextIsItsParent) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+        const auto application = applicationContext("01");
+        nixl_opt_args_t with_context;
+        with_context.traceContext = nixl::trace::formatTraceparent(application);
+        std::optional<nixl::trace::TraceIdentity> sent;
+        EXPECT_CALL(engine, genNotif)
+            .WillOnce(testing::Invoke([&sent](const std::string &, const std::string &) {
+                if (const nixl::trace::TraceIdentity *identity = nixl::trace::currentIdentity()) {
+                    sent = *identity;
+                }
+                return NIXL_SUCCESS;
+            }));
+
+        EXPECT_EQ(agent->genNotif(local_agent_name, "msg", &with_context), NIXL_SUCCESS);
+        ASSERT_TRUE(sent.has_value());
+        EXPECT_EQ(sent->context.traceId, application.traceId);
+        EXPECT_NE(sent->context.spanId, application.spanId);
+        EXPECT_EQ(sent->context.parentSpanId, application.spanId);
+        EXPECT_EQ(sent->requestId, 0u);
+        EXPECT_THAT(records("nixl::genNotif"),
+                    testing::ElementsAre(testing::AllOf(
+                        testing::Contains("span=" + nixl::trace::formatTraceparent(sent->context)),
+                        childOf(application),
+                        testing::Not(testing::Contains(testing::StartsWith("correlation="))))));
+    }
+
+    TEST_F(sampledRecorderTracingAgentFixture, SuppliedUnsampledNotificationContextRecordsNothing) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+        nixl_opt_args_t with_context;
+        with_context.traceContext = nixl::trace::formatTraceparent(applicationContext("00"));
+        bool sampled = true;
+        EXPECT_CALL(engine, genNotif)
+            .WillOnce(testing::Invoke([&sampled](const std::string &, const std::string &) {
+                const nixl::trace::TraceIdentity *identity = nixl::trace::currentIdentity();
+                sampled = (identity != nullptr) && identity->context.sampled();
+                return NIXL_SUCCESS;
+            }));
+
+        EXPECT_EQ(agent->genNotif(local_agent_name, "msg", &with_context), NIXL_SUCCESS);
+        EXPECT_FALSE(sampled);
+        EXPECT_TRUE(records("nixl::genNotif").empty());
+    }
+
+    TEST_F(sampledRecorderTracingAgentFixture, NotificationWithoutAContextIsAPlainSpan) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+        bool scoped = true;
+        EXPECT_CALL(engine, genNotif)
+            .WillOnce(testing::Invoke([&scoped](const std::string &, const std::string &) {
+                scoped = nixl::trace::currentIdentity() != nullptr;
+                return NIXL_SUCCESS;
+            }));
+
+        EXPECT_EQ(agent->genNotif(local_agent_name, "msg"), NIXL_SUCCESS);
+        EXPECT_FALSE(scoped);
+        EXPECT_THAT(records("nixl::genNotif"),
+                    testing::ElementsAre(testing::AllOf(
+                        testing::Contains("remote_agent=" + std::string(local_agent_name)),
+                        testing::Not(testing::Contains(testing::StartsWith("span="))),
+                        testing::Not(testing::Contains(testing::StartsWith("context="))))));
+    }
+
     TEST_F(sampledRecorderTracingAgentFixture, SuppliedUnsampledContextRecordsNothing) {
         nixlAgent *agent = agent_helper_->getAgent();
         setup_.extraParams.traceContext = nixl::trace::formatTraceparent(applicationContext("00"));

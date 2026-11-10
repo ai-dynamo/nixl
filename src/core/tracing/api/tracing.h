@@ -171,10 +171,11 @@ private:
  *
  * When tracing is compiled out (NIXL_TRACE_ENABLED undefined) every macro
  * expands to nothing, and NIXL_TRACE_FINISH to its status, so call sites cost
- * nothing. The request macros are the exception: they still open the request's
- * scope, and NIXL_TRACE_POST_SPAN still begins the post, since the backend
- * carries the context either way. When compiled in, the span macros declare a
- * caller-named RAII Span and take a predictable null-check branch on the tracer.
+ * nothing. The request macros and NIXL_TRACE_SCOPE_UNDER are the exception: they
+ * still open their scope, and NIXL_TRACE_POST_SPAN still begins the post, since
+ * the backend carries the context either way. When compiled in, the span macros
+ * declare a caller-named RAII Span and take a predictable null-check branch on the
+ * tracer.
  *
  * Usage: NIXL_TRACE_SCOPE(span, tracer, record, {key, value}...) declares
  * the local `span` with its attributes; NIXL_TRACE_ATTR(span, key, value) adds
@@ -184,6 +185,9 @@ private:
  * request's scope, and NIXL_TRACE_POST_SPAN(span, traceable, parent, record, ...)
  * for a post, inside the scope of the post it begins under `parent`, the context
  * the application supplied, if any; both add the request id and execution number.
+ * NIXL_TRACE_SCOPE_UNDER(span, tracer, parent, record, ...) is NIXL_TRACE_SCOPE for
+ * a call the application may give a context: under a sampled `parent` its span is
+ * a child of it, inside a scope of its own; under an unsampled one there is no span.
  * The explicit name avoids any hidden coupling/shadowing and allows more than
  * one span per scope. Attribute arguments are only evaluated when a backend is
  * actually active.
@@ -191,6 +195,9 @@ private:
 
 #define NIXL_TRACE_SCOPE(span, tracer_ptr, trace_record, ...) \
     NIXL_TRACE_DETAIL_SCOPE(span, tracer_ptr, trace_record __VA_OPT__(, ) __VA_ARGS__)
+
+#define NIXL_TRACE_SCOPE_UNDER(span, tracer_ptr, parent, trace_record, ...) \
+    NIXL_TRACE_DETAIL_SCOPE_UNDER(span, tracer_ptr, parent, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
 #define NIXL_TRACE_REQUEST_SPAN(span, traceable, trace_record, ...) \
     NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record __VA_OPT__(, ) __VA_ARGS__)

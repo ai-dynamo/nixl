@@ -244,9 +244,9 @@ struct nixlAgentOptionalArgs {
      * @var traceContext The trace context of the application's span, as a W3C
      *      `traceparent` or NIXL's 26-byte trace context record. createXferReq and
      *      makeXferReq make the request's span a child of that span, in its trace,
-     *      and postXferReq does the same for that post's span alone; its sampled
-     *      flag decides whether the request, or the post, is traced. A value that
-     *      is neither is ignored, and logged once per agent.
+     *      postXferReq does the same for that post's span alone, and genNotif for
+     *      the notification's span; its sampled flag decides whether each is
+     *      traced. A value that is neither is ignored, and logged once per agent.
      */
     nixl_blob_t traceContext;
 };

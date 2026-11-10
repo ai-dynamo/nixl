@@ -164,8 +164,8 @@ activates the backend anyway, so tests can exercise the traced paths without a p
 The ratio applies to the trace contexts the agent generates, so it does nothing
 on its own: with no backend active — no `NIXL_TRACE_BACKENDS`, no nsys — the
 agent creates no contexts, and setting only the ratio produces nothing to see.
-A request created under an application's trace context, or a post given one (see
-"Joining an application's trace"), takes that context's sampled flag instead, so the
+A request created under an application's trace context, or a post or notification given
+one (see "Joining an application's trace"), takes that context's sampled flag instead, so the
 ratio does not apply to it.
 
 The decision is head-based: it is taken once, when the agent creates the trace
@@ -184,7 +184,7 @@ unsampled request records nothing, except a post given a sampled context of its 
 (see "Joining an application's trace"), so the requests a ratio below `1` skips cost
 only their ids. Calls that belong to no request, such as registration,
 connections, metadata and notifications, are recorded whenever a backend is
-active.
+active, except a notification given an unsampled context.
 
 A value that is neither `0` nor a number in `[2^-56, 1]` makes agent
 construction fail, whether or not tracing is otherwise enabled, rather than
@@ -334,6 +334,13 @@ parent instead of the request's, and the supplied sampled flag decides whether t
 is traced, whether or not the request is. The receiver's records of that post join the
 same trace. A later post without a context is under the request's span again.
 
+`genNotif` takes a context too: its `nixl::genNotif` span then gets a span id of its own
+under the supplied span, UCX carries that context as the notification's `tctx` tag
+without `treq`, since a notification has no request, and the receiver's
+`nixl::notif.received` names it as its parent. An unsampled context records and sends
+nothing; without one, `genNotif` records its span as before, and the notification
+carries no context.
+
 ### Backend phases
 
 A backend plugin can record a phase of its own work through its
@@ -422,7 +429,9 @@ UCX is the first such carrier. For a sampled request `addTraceTags()` appends th
 26-byte record as a `tctx` tag after the notification's `name` and `msg`, then, when the
 request has an id, a 16-byte `treq` tag: the request id and the post's execution
 number, each 8 bytes little-endian. An older receiver stops reading after the tags it
-knows, so it is unaffected; unsampled requests and `genNotif` add nothing. When the
+knows, so it is unaffected; unsampled requests add nothing, and `genNotif` adds only
+`tctx`, for a sampled context the application supplied (see "Joining an application's
+trace"). When the
 notification arrives at an agent with tracing on, UCX records `nixl::notif.received`
 under the sender's context, with `nixl.remote_agent` naming the sender and, from
 `treq`, the sender's `nixl.xfer_request_id` and `nixl.xfer_execution`; a missing or
