@@ -3,9 +3,7 @@
 # CMX Test Matrix Configuration
 #
 # Builds NIXL with DOCA KV and runs nixlbench against the DOCA_MEMOS backend
-# as a smoke test, on a mizu node with a BlueField. The base and build_helper
-# images are shared with nixl-ci-gpu (identical build args), so only the
-# per-build PR image and Slurm container names are namespaced with -cmx.
+# as a smoke test, on a mizu node with a BlueField.
 #
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and server resources
@@ -88,7 +86,7 @@ pipeline_on_image_build:
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
-     name: 'nixl-ci-gpu-base',
+     name: 'nixl-ci-cmx-base',
      tag: "${CI_IMAGE_TAG}",
      build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghconfig,src=/tmp/ghconfig',
      credentialsId: 'svc-nixl-github-read-only-token'
@@ -130,7 +128,7 @@ steps:
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg DOCA_KV_ENV=true \
       --build-arg HAS_GPU=true \
-      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-gpu-base:${CI_IMAGE_TAG} \
+      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-cmx-base:${CI_IMAGE_TAG} \
       --secret id=ghconfig,src=/tmp/ghconfig \
       --tag ${PR_IMAGE} \
       --secret id=ssh_key,src=${SSH_KEY} \
