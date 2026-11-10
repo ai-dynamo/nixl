@@ -91,6 +91,7 @@ struct CallLog {
     std::vector<EmittedRecord> emittedSpans;
     std::vector<EmittedRecord> emittedEvents;
     std::vector<EmittedRecord> contextSpans;
+    std::vector<EmittedRecord> emittedContextSpans;
 };
 
 [[nodiscard]] EmittedRecord
@@ -210,6 +211,18 @@ public:
     }
 
     void
+    emitContextSpan(nixl::trace::Name name,
+                    nixl::trace::Kind kind,
+                    const nixl::trace::TraceContext &context,
+                    std::uint64_t request_id,
+                    nixlTime::us_t start,
+                    nixlTime::us_t end,
+                    std::span<const nixl::trace::Attribute> attrs) override {
+        log_->emittedContextSpans.push_back(
+            makeRecord(name.view(), kind, context, request_id, {start, end}, attrs));
+    }
+
+    void
     pushContext(const nixl::trace::TraceContext &context, std::uint64_t request_id) override {
         log_->pushedContexts.push_back(context);
         log_->pushedRequestIds.push_back(request_id);
@@ -314,6 +327,17 @@ public:
     }
 
     void
+    emitContextSpan(nixl::trace::Name,
+                    nixl::trace::Kind,
+                    const nixl::trace::TraceContext &,
+                    std::uint64_t,
+                    nixlTime::us_t,
+                    nixlTime::us_t,
+                    std::span<const nixl::trace::Attribute>) override {
+        throw std::runtime_error("emitContextSpan failed");
+    }
+
+    void
     pushContext(const nixl::trace::TraceContext &, std::uint64_t) override {}
 
     void
@@ -360,6 +384,17 @@ public:
               std::uint64_t,
               nixlTime::us_t,
               std::span<const nixl::trace::Attribute> attrs) override {
+        attrsSeen_ += attrs.size();
+    }
+
+    void
+    emitContextSpan(nixl::trace::Name,
+                    nixl::trace::Kind,
+                    const nixl::trace::TraceContext &,
+                    std::uint64_t,
+                    nixlTime::us_t,
+                    nixlTime::us_t,
+                    std::span<const nixl::trace::Attribute> attrs) override {
         attrsSeen_ += attrs.size();
     }
 
@@ -1433,17 +1468,63 @@ TEST(Tracing, TraceableRecordsItsEventsInItsLatestPost) {
     }
 }
 
+TEST(Tracing, TraceableRecordsItsRequestSpanWhenItEnds) {
+#if !defined(NIXL_TRACE_ENABLED)
+    GTEST_SKIP() << "the trace macros are compiled out";
+#endif
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    const auto request = testContext(0x3b);
+    const nixlTime::us_t before = nixlTime::getUs();
+    {
+        nixl::trace::Traceable traced{tracer.get(), {request, 0x3b}};
+        EXPECT_EQ(traced.post().execution, 1u);
+        EXPECT_EQ(traced.post().execution, 2u);
+        EXPECT_TRUE(a.emittedContextSpans.empty());
+        EXPECT_TRUE(b.emittedContextSpans.empty());
+    }
+    const nixlTime::us_t after = nixlTime::getUs();
+
+    for (const CallLog *log : {&a, &b}) {
+        ASSERT_EQ(log->emittedContextSpans.size(), 1u);
+        const EmittedRecord &span = log->emittedContextSpans[0];
+        EXPECT_EQ(span.name, "nixl::xferReq");
+        EXPECT_EQ(span.kind, nixl::trace::Kind::Generic);
+        EXPECT_EQ(span.context, request);
+        EXPECT_EQ(span.requestId, 0x3bu);
+        ASSERT_EQ(span.times.size(), 2u);
+        EXPECT_LE(before, span.times[0]);
+        EXPECT_LE(span.times[0], span.times[1]);
+        EXPECT_LE(span.times[1], after);
+        EXPECT_EQ(span.attrs,
+                  (attr_list_t{{"nixl.xfer_request_id", std::int64_t{0x3b}},
+                               {"nixl.xfer_execution", std::int64_t{2}}}));
+        EXPECT_TRUE(log->emittedEvents.empty());
+        EXPECT_TRUE(log->emittedSpans.empty());
+    }
+}
+
 TEST(Tracing, TraceableRecordsNothingUnsampledOrWithoutATracer) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
-    const nixl::trace::Traceable unsampled{tracer.get(), {testContext(0x39, 0x02), 0x39}};
-    const nixl::trace::Traceable untraced{nullptr, {testContext(0x3a), 0x3a}};
+    {
+        const nixl::trace::Traceable unsampled{tracer.get(), {testContext(0x39, 0x02), 0x39}};
+        const nixl::trace::Traceable untraced{nullptr, {testContext(0x3a), 0x3a}};
 
-    unsampled.trace(nixl::trace::Record::XferComplete);
-    untraced.trace(nixl::trace::Record::XferError, {"nixl.status", NIXL_ERR_BACKEND});
+        unsampled.trace(nixl::trace::Record::XferComplete);
+        untraced.trace(nixl::trace::Record::XferError, {"nixl.status", NIXL_ERR_BACKEND});
+    }
 
-    EXPECT_TRUE(a.emittedEvents.empty());
-    EXPECT_TRUE(b.emittedEvents.empty());
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_TRUE(log->emittedEvents.empty());
+        EXPECT_TRUE(log->emittedContextSpans.empty());
+    }
+}
+
+TEST(Tracing, TraceableEndsDespiteABackendThatThrows) {
+    const auto tracer = makeThrowingTracer();
+    const nixl::trace::TraceIdentity request{testContext(0x3c), 0x3c};
+    EXPECT_NO_THROW(nixl::trace::Traceable(tracer.get(), request));
 }
 
 // A phase recorded through the plugin-facing sink reaches every enabled trace

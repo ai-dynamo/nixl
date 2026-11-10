@@ -43,8 +43,8 @@ using random_bytes_fn_t = void (*)(std::span<std::uint8_t>);
 
 /**
  * @brief Composite tracer owned by the Agent. A single beginSpan(),
- *        beginContextSpan(), emitSpan() or emitEvent() call fans out to
- *        every enabled backend. No singleton; injected explicitly.
+ *        beginContextSpan(), emitSpan(), emitContextSpan() or emitEvent() call
+ *        fans out to every enabled backend. No singleton; injected explicitly.
  */
 class Tracer {
 public:
@@ -128,6 +128,14 @@ public:
               std::uint64_t request_id,
               nixlTime::us_t at,
               std::span<const Attribute> attrs);
+    void
+    emitContextSpan(Name name,
+                    Kind kind,
+                    const TraceContext &context,
+                    std::uint64_t request_id,
+                    nixlTime::us_t start,
+                    nixlTime::us_t end,
+                    std::span<const Attribute> attrs);
 
 private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;

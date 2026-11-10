@@ -883,6 +883,17 @@ public:
     }
 
     void
+    emitContextSpan(nixl::trace::Name,
+                    nixl::trace::Kind,
+                    const nixl::trace::TraceContext &,
+                    std::uint64_t,
+                    nixlTime::us_t,
+                    nixlTime::us_t,
+                    std::span<const nixl::trace::Attribute>) override {
+        throw std::runtime_error("emitContextSpan failed");
+    }
+
+    void
     emitEvent(nixl::trace::Name,
               nixl::trace::Kind,
               const nixl::trace::TraceContext &,

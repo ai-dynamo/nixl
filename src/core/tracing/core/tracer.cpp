@@ -165,6 +165,19 @@ Tracer::emitEvent(Name name,
     emitEventTo(backends_, name, kind, context, request_id, at, attrs);
 }
 
+void
+Tracer::emitContextSpan(Name name,
+                        Kind kind,
+                        const TraceContext &context,
+                        std::uint64_t request_id,
+                        nixlTime::us_t start,
+                        nixlTime::us_t end,
+                        std::span<const Attribute> attrs) {
+    for (const auto &backend : backends_) {
+        backend->emitContextSpan(name, kind, context, request_id, start, end, attrs);
+    }
+}
+
 /*** Call sites ***/
 
 Span
@@ -231,6 +244,18 @@ detail::emitEvent(Tracer &tracer,
                 request_id,
                 tracer.needsTimestamps() ? nixlTime::getUs() : nixlTime::us_t{0},
                 attrs);
+}
+
+void
+detail::emitContextSpan(Tracer &tracer,
+                        Name name,
+                        Kind kind,
+                        const TraceContext &context,
+                        std::uint64_t request_id,
+                        nixlTime::us_t start,
+                        nixlTime::us_t end,
+                        std::span<const Attribute> attrs) {
+    tracer.emitContextSpan(name, kind, context, request_id, start, end, attrs);
 }
 
 void

@@ -47,6 +47,7 @@ enum class Record : std::uint8_t {
     PostXferReqWrite,
     PostXferReqRead,
     ReleaseXferReq,
+    XferReq,
     XferComplete,
     XferError,
     GenNotif,
@@ -87,6 +88,8 @@ toStringView(Record record) noexcept {
         return "nixl::postXferReq.read";
     case Record::ReleaseXferReq:
         return "nixl::releaseXferReq";
+    case Record::XferReq:
+        return "nixl::xferReq";
     case Record::XferComplete:
         return "nixl::xfer.complete";
     case Record::XferError:
@@ -155,6 +158,7 @@ kindOf(Record record) noexcept {
     case Record::MakeXferReq:
     case Record::CreateXferReq:
     case Record::ReleaseXferReq:
+    case Record::XferReq:
     case Record::ReleaseMemView:
     case Record::WireInflight:
     case Record::Span:

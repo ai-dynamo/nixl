@@ -88,7 +88,7 @@ rows = connection.execute(
     WHERE COALESCE(events.text, strings.value) IN
           ('nixl::postXferReq.write', 'nixl::postXferReq.read', 'nixl::xfer.complete',
            'nixl::createXferReq', 'nixl::submit', 'nixl::wire.submitted', 'nixl::notif.sent',
-           'nixl::notif.received', 'nixl::releaseXferReq')
+           'nixl::notif.received', 'nixl::releaseXferReq', 'nixl::xferReq')
     """
 ).fetchall()
 post_ids = [payload for name, payload, _ in rows if name.startswith("nixl::postXferReq.")]
@@ -118,7 +118,7 @@ for name, domain in (("nixl::postXferReq.write", "agent_0"), ("nixl::xfer.comple
                      ("nixl::notif.sent", "agent_0"), ("nixl::notif.received", "agent_1")):
     if placed.count((name, domain, request_id)) != 2:
         raise SystemExit(f"tracing_nsys: {domain}'s {name} does not carry the sampled request id")
-for name in ("nixl::createXferReq", "nixl::releaseXferReq"):
+for name in ("nixl::createXferReq", "nixl::releaseXferReq", "nixl::xferReq"):
     if placed.count((name, "agent_0", request_id)) != 1:
         raise SystemExit(f"tracing_nsys: agent_0's {name} does not carry the sampled request id")
 PY

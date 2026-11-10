@@ -83,6 +83,8 @@ public:
 
     Traceable(Tracer *tracer, const TraceIdentity &identity) noexcept;
 
+    ~Traceable();
+
     Traceable(const Traceable &) = delete;
     Traceable &
     operator=(const Traceable &) = delete;
@@ -106,6 +108,7 @@ private:
     Tracer *const tracer_;
     const TraceContext request_;
     TraceIdentity identity_;
+    const nixlTime::us_t createdAt_;
 };
 
 /**

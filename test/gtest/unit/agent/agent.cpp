@@ -620,6 +620,7 @@ namespace agent {
             NIXL_ERR_INVALID_PARAM);
         EXPECT_EQ(req, nullptr);
         EXPECT_TRUE(records("nixl::createXferReq").empty());
+        EXPECT_TRUE(records("nixl::xferReq").empty());
     }
 
     TEST_F(recorderTracingAgentFixture, CreationFailedInPrepIsRecorded) {
@@ -845,11 +846,14 @@ namespace agent {
         const auto refused = testing::AllOf(postedAs(req, 1), withStatus(NIXL_ERR_REPOST_ACTIVE));
         const auto released = testing::AllOf(postedAs(req, 1), withStatus(NIXL_SUCCESS));
         const auto completion = postedAs(req, 1);
+        const auto request_span = postedAs(req, 1);
 
         EXPECT_EQ(agent->postXferReq(req), NIXL_IN_PROG);
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+        EXPECT_TRUE(records("nixl::xferReq").empty());
         EXPECT_EQ(agent->getXferStatus(req), NIXL_SUCCESS);
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_THAT(records("nixl::xferReq"), testing::ElementsAre(request_span));
         EXPECT_THAT(records("nixl::releaseXferReq"), testing::ElementsAre(refused, released));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(completion));
         EXPECT_TRUE(records("nixl::xfer.error").empty());
@@ -971,7 +975,8 @@ namespace agent {
         for (const std::string_view name : {"nixl::createXferReq",
                                             "nixl::postXferReq.write",
                                             "nixl::xfer.complete",
-                                            "nixl::releaseXferReq"}) {
+                                            "nixl::releaseXferReq",
+                                            "nixl::xferReq"}) {
             EXPECT_TRUE(records(name).empty()) << name;
         }
     }
@@ -1128,6 +1133,42 @@ namespace agent {
                                          testing::AllOf(isSpanOf(req, second), childOf(request))));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(carries(first), carries(second)));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(sampledRecorderTracingAgentFixture, ReleaseRecordsTheRequestSpanItsCallsDescendFrom) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+        const auto request = req->traceable().identity().context;
+        ASSERT_TRUE(request.sampled());
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        const auto request_span = testing::AllOf(isSpanOf(req, request), postedAs(req, 2));
+        EXPECT_TRUE(records("nixl::xferReq").empty());
+
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_THAT(
+            records("nixl::xferReq"),
+            testing::ElementsAre(testing::AllOf(
+                request_span, testing::Not(testing::Contains(testing::StartsWith("parent="))))));
+        EXPECT_THAT(records("nixl::createXferReq"), testing::ElementsAre(carries(request)));
+        EXPECT_THAT(records("nixl::postXferReq.write"),
+                    testing::AllOf(testing::SizeIs(2), testing::Each(childOf(request))));
+        EXPECT_THAT(records("nixl::releaseXferReq"), testing::ElementsAre(carries(request)));
+    }
+
+    TEST_F(sampledRecorderTracingAgentFixture, CreationFailedInPrepEndsItsRequest) {
+        EXPECT_CALL(agent_helper_->getGMockEngine(), prepXfer)
+            .WillOnce(testing::Return(NIXL_ERR_BACKEND));
+        nixlXferReqH *req = nullptr;
+        EXPECT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_ERR_BACKEND);
+
+        const auto requests = records("nixl::xferReq");
+        ASSERT_EQ(requests.size(), 1u);
+        const auto request = contextOf(requests[0], "span=");
+        EXPECT_TRUE(request.sampled());
+        EXPECT_THAT(requests[0], testing::Contains("nixl.xfer_execution=0"));
+        EXPECT_THAT(records("nixl::createXferReq"), testing::ElementsAre(carries(request)));
     }
 
     TEST_F(sampledRecorderTracingAgentFixture, RefusedRepostRecordsNoSpan) {

@@ -34,8 +34,9 @@ namespace nixl::trace {
 /**
  * @brief One enabled backend type (NVTX, Chakra, ...). Each record names the
  *        span id of its context, pushed or passed, as its parent, except the
- *        span beginContextSpan() begins, which has that id as its own and the
- *        context's parentSpanId, when set, as its parent.
+ *        span beginContextSpan() begins or emitContextSpan() records, which
+ *        has that id as its own and the context's parentSpanId, when set, as
+ *        its parent.
  */
 class TraceBackend {
 public:
@@ -95,6 +96,20 @@ public:
                      Kind kind,
                      const TraceContext &context,
                      std::uint64_t request_id) = 0;
+
+    /**
+     * @brief Record the span that @p context identifies, as beginContextSpan()
+     *        would begin it, from @p start to @p end, that already happened.
+     *        Times are as in emitSpan().
+     */
+    virtual void
+    emitContextSpan(Name name,
+                    Kind kind,
+                    const TraceContext &context,
+                    std::uint64_t request_id,
+                    nixlTime::us_t start,
+                    nixlTime::us_t end,
+                    std::span<const Attribute> attrs) = 0;
 };
 
 } // namespace nixl::trace

@@ -26,7 +26,8 @@ execution-trace tools.
 
 - **`nixl::trace::Tracer`** — a composite tracer **owned by each `nixlAgent`** (no
   singleton; injected into call sites). One `beginSpan()`, `beginContextSpan()`,
-  `emitSpan()` or `emitEvent()` call fans out to every active backend.
+  `emitSpan()`, `emitContextSpan()` or `emitEvent()` call fans out to every active
+  backend.
 - **`nixl::trace::Span`** — a move-only handle returned by `beginSpan()` and
   `beginContextSpan()`. It forwards attributes/dependencies to each backend span and
   **ends them all on destruction** (RAII), so a span covers the scope in which it is
@@ -40,11 +41,11 @@ execution-trace tools.
   converts at export. NVTX can draw only at the moment of the call, so it draws both
   as zero-length ranges there, and an emitted span carries its times as the
   `nixl.start_us` and `nixl.end_us` attributes.
-- **`beginContextSpan()`** — begins the span that a trace context identifies, rather
-  than a span inside the active correlation scope's context as `beginSpan()` does; like
-  `emitSpan()`, it takes the context and the request id explicitly, and the span's
-  parent is the context's `parentSpanId`, when set. Every other span and event names its
-  context's span id as its parent.
+- **`beginContextSpan()` / `emitContextSpan()`** — begin, or record after the fact, the
+  span that a trace context identifies, rather than a span inside the active correlation
+  scope's context as `beginSpan()` does; like `emitSpan()`, they take the context and the
+  request id explicitly, and the span's parent is the context's `parentSpanId`, when
+  set. Every other span and event names its context's span id as its parent.
 - **`nixl::trace::Scope`** — an RAII guard the agent opens around a request's
   creation, each of its posts and its release. It makes the request's trace identity
   current on the calling thread, so the spans opened meanwhile take it; a sampled one
@@ -173,8 +174,9 @@ later phase sampling at a lower ratio thins what NIXL kept instead of discarding
 all of it. The sampled flag is also what decides whether a context crosses the
 wire: UCX carries only sampled contexts to the remote agent.
 
-Only a sampled request is recorded: its creation, post and release spans, its
-`nixl::xfer.complete` and `nixl::xfer.error` events and its backend phases. An
+Only a sampled request is recorded: its `nixl::xferReq` span, its creation, post and
+release spans, its `nixl::xfer.complete` and `nixl::xfer.error` events and its backend
+phases. An
 unsampled request records nothing, so the requests a ratio below `1` skips cost
 only their ids. Calls that belong to no request, such as registration,
 connections, metadata and notifications, are recorded whenever a backend is
@@ -207,6 +209,7 @@ backends/PRs):
 | `nixl::xfer.complete` | `Metadata` (event) | `nixl.xfer_request_id`, `nixl.xfer_execution` |
 | `nixl::xfer.error` | `Metadata` (event) | `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
 | `nixl::releaseXferReq` | `Generic` | `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
+| `nixl::xferReq` | `Generic` | `nixl.xfer_request_id`, `nixl.xfer_execution` |
 | `nixl::makeConnection` | `Generic` | `remote_agent` |
 | `nixl::genNotif` | `Metadata` | `remote_agent` |
 | `nixl::getNotifs` | `Metadata` | - |
@@ -255,10 +258,17 @@ release attempt is a span of its own, inside the request's context and carrying 
 latest post's execution number, so a release refused with `NIXL_ERR_REPOST_ACTIVE` and
 its retry are two records.
 
+A sampled request is itself a span, `nixl::xferReq`: the span its trace context
+identifies, from the request's creation until it is freed by a `releaseXferReq` that
+succeeds, or by a creation that fails after building it. It is emitted then, with its
+latest post's execution number, and its creation and release spans are inside its
+context.
+
 For a sampled request, each `postXferReq` span is the span that its post's trace context
 identifies (see "Backend phases"): a span id of its own, whose parent is the request's
 span. The post's `nixl::xfer.complete` and backend phases and the receiver's
-`nixl::notif.received` name it as their parent, even after it has ended.
+`nixl::notif.received` name it as their parent, even after it has ended, so every record
+of the request descends from its `nixl::xferReq`.
 
 ### Request id and execution number
 
@@ -546,7 +556,8 @@ In NIXL tracing, "correlation" can mean two different things:
   (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
   same request. Implemented via the backend-agnostic `pushContext()` / `popContext()`
   API: NIXL's `nixl::trace::Scope` around a request's creation, posts and release
-  hands every backend a sampled request's trace context with the request id, and
+  hands every backend the trace context of a sampled request, or of its post while it
+  posts, with the request id, and
   passes the post's context and the request id to its `xfer.complete` event
   explicitly. A sampled post begins its span as the span that context identifies
   (`beginContextSpan()`), so a backend that records parents shows the completion as

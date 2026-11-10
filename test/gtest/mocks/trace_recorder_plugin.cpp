@@ -142,6 +142,20 @@ public:
     }
 
     void
+    emitContextSpan(nixl::trace::Name name,
+                    nixl::trace::Kind,
+                    const nixl::trace::TraceContext &context,
+                    std::uint64_t request_id,
+                    nixlTime::us_t start,
+                    nixlTime::us_t end,
+                    std::span<const nixl::trace::Attribute> attrs) override {
+        recordingSpan span(fd_,
+                           lineFor(name.view(), context, request_id, "span") + " start_us=" +
+                               std::to_string(start) + " end_us=" + std::to_string(end));
+        addAttributes(span, attrs);
+    }
+
+    void
     emitEvent(nixl::trace::Name name,
               nixl::trace::Kind,
               const nixl::trace::TraceContext &context,

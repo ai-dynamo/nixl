@@ -374,6 +374,19 @@ recordIndex(const std::vector<span_record_t> &spans, std::string_view name, size
     return (it == spans.end()) ? -1 : std::distance(spans.begin(), it);
 }
 
+#if defined(NIXL_TRACE_ENABLED)
+[[nodiscard]] std::string
+parentField(const nixl::trace::TraceContext &parent) {
+    static constexpr char digits[] = "0123456789abcdef";
+    std::string field = "parent=";
+    for (const std::uint8_t byte : parent.spanId) {
+        field += digits[byte >> 4];
+        field += digits[byte & 0x0f];
+    }
+    return field;
+}
+#endif
+
 [[nodiscard]] std::vector<span_record_t>
 recordedSpans(const std::filesystem::path &path, std::string_view agent, std::string_view name) {
     std::vector<span_record_t> spans;
@@ -910,10 +923,18 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
 #if defined(NIXL_TRACE_ENABLED)
     const auto posted = recordedSpans(traceFile, sender_name, "nixl::postXferReq.write");
     ASSERT_EQ(posted.size(), 1u);
-    EXPECT_THAT(
-        posted[0],
-        testing::IsSupersetOf(
-            {correlation, "span=" + traceparent, std::string("remote_agent=") + receiver_name}));
+    EXPECT_THAT(posted[0],
+                testing::IsSupersetOf({correlation,
+                                       "span=" + traceparent,
+                                       parentField(context),
+                                       std::string("remote_agent=") + receiver_name}));
+    const auto requests = recordedSpans(traceFile, sender_name, "nixl::xferReq");
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_THAT(requests[0],
+                testing::IsSupersetOf({correlation,
+                                       "span=" + nixl::trace::formatTraceparent(context),
+                                       std::string("nixl.xfer_execution=1")}));
+    EXPECT_THAT(requests[0], testing::Not(testing::Contains(testing::StartsWith("parent="))));
 #endif
     const auto received = recordedSpans(traceFile, receiver_name, "nixl::notif.received");
     ASSERT_EQ(received.size(), 1u);

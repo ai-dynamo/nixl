@@ -34,7 +34,29 @@ inline Traceable::Traceable(Tracer *tracer) : Traceable(tracer, generateRequestI
 inline Traceable::Traceable(Tracer *tracer, const TraceIdentity &identity) noexcept
     : tracer_(tracer),
       request_(identity.context),
-      identity_{identity.context, identity.requestId, 0} {}
+      identity_{identity.context, identity.requestId, 0},
+      createdAt_(detail::requestStart(tracer, identity.context)) {}
+
+inline Traceable::~Traceable() {
+#if defined(NIXL_TRACE_ENABLED)
+    if ((tracer_ != nullptr) && request_.sampled()) {
+        try {
+            const Attribute attrs[] = {{"nixl.xfer_request_id", identity_.requestId},
+                                       {"nixl.xfer_execution", identity_.execution}};
+            detail::emitContextSpan(*tracer_,
+                                    Record::XferReq,
+                                    kindOf(Record::XferReq),
+                                    request_,
+                                    identity_.requestId,
+                                    createdAt_,
+                                    nixlTime::getUs(),
+                                    attrs);
+        }
+        catch (...) {
+        }
+    }
+#endif
+}
 
 inline const TraceIdentity &
 Traceable::identity() const noexcept {
@@ -94,6 +116,17 @@ inline const TraceIdentity &
 detail::scopeIdentity() noexcept {
     const Scope *scope = Scope::current();
     return (scope != nullptr) ? scope->identity() : noTraceIdentity;
+}
+
+inline nixlTime::us_t
+detail::requestStart([[maybe_unused]] const Tracer *tracer,
+                     [[maybe_unused]] const TraceContext &context) noexcept {
+#if defined(NIXL_TRACE_ENABLED)
+    if ((tracer != nullptr) && context.sampled()) {
+        return nixlTime::getUs();
+    }
+#endif
+    return 0;
 }
 
 } // namespace nixl::trace

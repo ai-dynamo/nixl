@@ -120,6 +120,17 @@ NvtxTraceBackend::emitSpan(const Name name,
 }
 
 void
+NvtxTraceBackend::emitContextSpan(const Name name,
+                                  const Kind kind,
+                                  const TraceContext &context,
+                                  const std::uint64_t request_id,
+                                  const nixlTime::us_t start,
+                                  const nixlTime::us_t end,
+                                  const std::span<const Attribute> attrs) {
+    emitSpan(name, kind, context, request_id, start, end, attrs);
+}
+
+void
 NvtxTraceBackend::emitEvent(const Name name,
                             const Kind kind,
                             const TraceContext &,

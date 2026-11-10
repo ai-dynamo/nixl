@@ -55,6 +55,15 @@ public:
              std::span<const Attribute> attrs) override;
 
     void
+    emitContextSpan(Name name,
+                    Kind kind,
+                    const TraceContext &context,
+                    std::uint64_t request_id,
+                    nixlTime::us_t start,
+                    nixlTime::us_t end,
+                    std::span<const Attribute> attrs) override;
+
+    void
     emitEvent(Name name,
               Kind kind,
               const TraceContext &context,
