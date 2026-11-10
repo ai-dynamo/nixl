@@ -41,6 +41,11 @@ Traceable::identity() const noexcept {
     return identity_;
 }
 
+inline TraceIdentity
+Traceable::requestIdentity() const noexcept {
+    return {request_, identity_.requestId, identity_.execution};
+}
+
 inline const TraceIdentity &
 Traceable::post() {
     if (identity_.requestId != 0) {

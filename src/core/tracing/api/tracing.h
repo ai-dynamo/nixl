@@ -90,6 +90,9 @@ public:
     [[nodiscard]] const TraceIdentity &
     identity() const noexcept;
 
+    [[nodiscard]] TraceIdentity
+    requestIdentity() const noexcept;
+
     [[nodiscard]] const TraceIdentity &
     post();
 

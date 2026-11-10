@@ -981,7 +981,8 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                                                  desc_count,
                                                  remote_side.remoteSectionRef,
                                                  data->tracer_.get());
-    const nixl::trace::Scope trace_scope(data->tracer_.get(), handle->traceable().identity());
+    const nixl::trace::Scope trace_scope(data->tracer_.get(),
+                                         handle->traceable().requestIdentity());
     NIXL_TRACE_SPAN(trace_span,
                     nixl::trace::Record::MakeXferReq,
                     {"desc_count", local_indices.size()},
@@ -1106,7 +1107,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  local_descs.descCount(),
                                                  rem_sec_it->second,
                                                  data->tracer_.get());
-    const nixl::trace::Scope trace_scope(data->tracer_.get(), handle->traceable().identity());
+    const nixl::trace::Scope trace_scope(data->tracer_.get(),
+                                         handle->traceable().requestIdentity());
     NIXL_TRACE_SPAN(trace_span,
                     nixl::trace::Record::CreateXferReq,
                     {"remote_agent", remote_agent},
@@ -1460,7 +1462,8 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
 
 nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
-    const nixl::trace::Scope trace_scope(data->tracer_.get(), req_hndl->traceable().identity());
+    const nixl::trace::Scope trace_scope(data->tracer_.get(),
+                                         req_hndl->traceable().requestIdentity());
     NIXL_TRACE_SPAN(trace_span,
                     nixl::trace::Record::ReleaseXferReq,
                     {"nixl.xfer_request_id", req_hndl->traceable().identity().requestId},

@@ -1186,7 +1186,7 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
-    TEST_F(sampledRecorderTracingAgentFixture, FailureAndReleaseNameTheLatestPost) {
+    TEST_F(sampledRecorderTracingAgentFixture, FailureNamesTheLatestPostAndReleaseTheRequest) {
         nixlAgent *agent = agent_helper_->getAgent();
         const auto &engine = agent_helper_->getGMockEngine();
         EXPECT_CALL(engine, postXfer)
@@ -1202,10 +1202,12 @@ namespace agent {
         EXPECT_EQ(agent->getXferStatus(req), NIXL_ERR_BACKEND);
         const auto post = req->traceable().identity().context;
         EXPECT_NE(post.spanId, request.spanId);
-        const auto latest = testing::AllOf(postedAs(req, 2), carries(post));
+        const auto posted = postedAs(req, 2);
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
-        EXPECT_THAT(records("nixl::xfer.error"), testing::ElementsAre(latest));
-        EXPECT_THAT(records("nixl::releaseXferReq"), testing::ElementsAre(latest));
+        EXPECT_THAT(records("nixl::xfer.error"),
+                    testing::ElementsAre(testing::AllOf(posted, carries(post))));
+        EXPECT_THAT(records("nixl::releaseXferReq"),
+                    testing::ElementsAre(testing::AllOf(posted, carries(request))));
     }
 
     TEST_F(sampledRecorderTracingAgentFixture, ReadPostIsTheSpanItsContextIdentifies) {
