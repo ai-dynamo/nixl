@@ -1067,6 +1067,7 @@ nixlOdmEngine::odmUringInit() {
         use_io_uring_.store(false);
         return;
     }
+    uring_initialized_ = true;
     use_io_uring_.store(true);
     warnIfKernelOdmUringDisabled(device_path_);
 #if defined(HAVE_ODM_IO_URING_CMD128) || defined(HAVE_ODM_IO_URING_SQE128)
@@ -1078,10 +1079,11 @@ nixlOdmEngine::odmUringInit() {
 
 void
 nixlOdmEngine::odmUringDestroy() {
-    if (use_io_uring_.load()) {
+    if (uring_initialized_) {
         io_uring_queue_exit(&uring_);
-        use_io_uring_.store(false);
+        uring_initialized_ = false;
     }
+    use_io_uring_.store(false);
 }
 
 void

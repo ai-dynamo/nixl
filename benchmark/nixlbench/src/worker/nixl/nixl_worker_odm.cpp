@@ -18,15 +18,18 @@
 
 #include "worker/nixl/nixl_worker_odm.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <strings.h>
+#include <thread>
 
 namespace {
 
 static constexpr int kStagingDevId = 0;
 static constexpr size_t kSeedChunk = 0x400000ULL;
+static constexpr std::chrono::seconds kSyncXferTimeout{60};
 
 void
 addXferDesc(nixl_xfer_dlist_t &dlist, uint64_t addr, size_t len, int dev_id) {
@@ -68,12 +71,17 @@ runSyncXfer(nixlAgent *agent,
         return false;
     }
 
-    while (true) {
-        rc = agent->getXferStatus(req);
-        if (rc == NIXL_IN_PROG) {
-            continue;
+    const auto deadline = std::chrono::steady_clock::now() + kSyncXferTimeout;
+    rc = agent->getXferStatus(req);
+    while (rc == NIXL_IN_PROG) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            std::cerr << "ODM: transfer timed out after " << kSyncXferTimeout.count() << "s"
+                      << std::endl;
+            agent->releaseXferReq(req);
+            return false;
         }
-        break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        rc = agent->getXferStatus(req);
     }
 
     agent->releaseXferReq(req);

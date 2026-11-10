@@ -28,8 +28,8 @@ getOdmBackendOptions() {
     nixl_b_params_t params;
     params["dmadev"] = "odm0";
     params["odm_qid"] = "0";
-    params["odm_qid_start"] = "0";
-    params["odm_qid_end"] = "0";
+    params["odm_qid_start"] = "";
+    params["odm_qid_end"] = "";
     params["dmabuf_cache_max"] = "512";
     return params;
 }

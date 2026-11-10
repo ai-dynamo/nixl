@@ -345,6 +345,7 @@ private:
     odmUringDropSqe(struct io_uring_sqe *sqe) const;
 
     mutable struct io_uring uring_;
+    mutable bool uring_initialized_{false};
     mutable std::atomic<bool> use_io_uring_{false};
     mutable std::atomic<bool> warned_uring_host_{false};
     /*
