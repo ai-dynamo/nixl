@@ -1501,8 +1501,13 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
             req_hndl->backendHandle = nullptr;
         }
     }
+    if ((req_hndl->backendHandle != nullptr) && (req_hndl->engine != nullptr)) {
+        req_hndl->engine->releaseReqH(req_hndl->backendHandle);
+        req_hndl->backendHandle = nullptr;
+    }
+    const nixl_status_t status = NIXL_TRACE_END(trace_span, NIXL_SUCCESS);
     delete req_hndl;
-    return NIXL_TRACE_FINISH(trace_span, NIXL_SUCCESS);
+    return status;
 }
 
 nixl_status_t

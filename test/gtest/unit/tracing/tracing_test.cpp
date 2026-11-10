@@ -745,6 +745,31 @@ TEST(Tracing, FinishMacroRecordsTheStatusAndReturnsIt) {
 #endif
 }
 
+TEST(Tracing, EndMacroRecordsTheStatusAndEndsTheSpanAtOnce) {
+#if defined(NIXL_TRACE_ENABLED)
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+
+    {
+        NIXL_TRACE_SCOPE(span, tracer.get(), nixl::trace::Record::RegisterMem);
+        EXPECT_EQ(NIXL_TRACE_END(span, NIXL_ERR_BACKEND), NIXL_ERR_BACKEND);
+        EXPECT_FALSE(span.active());
+        for (const CallLog *log : {&a, &b}) {
+            EXPECT_EQ(log->spansEnded, 1);
+        }
+    }
+
+    const std::vector<std::pair<std::string, std::int64_t>> status{
+        {"nixl.status", NIXL_ERR_BACKEND}};
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->spansEnded, 1);
+        EXPECT_EQ(log->intAttrs, status);
+    }
+#else
+    GTEST_SKIP() << "the trace macros are compiled out";
+#endif
+}
+
 TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
 #if defined(NIXL_TRACE_ENABLED)
     CallLog a, b;

@@ -424,6 +424,21 @@ namespace agent {
             return records;
         }
 
+        [[nodiscard]] std::vector<std::string>
+        recordNames() const {
+            std::vector<std::string> names;
+            std::ifstream file(trace_file_);
+            for (std::string line; std::getline(file, line);) {
+                std::istringstream fields(line);
+                std::string agent;
+                std::string name;
+                if (fields >> agent >> name) {
+                    names.push_back(std::move(name));
+                }
+            }
+            return names;
+        }
+
         [[nodiscard]] std::vector<std::vector<std::string>>
         completionMarks() const {
             return records("nixl::xfer.complete");
@@ -1193,6 +1208,12 @@ namespace agent {
         EXPECT_TRUE(records("nixl::xferReq").empty());
 
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        const auto names = recordNames();
+        const auto release_at = std::ranges::find(names, "nixl::releaseXferReq");
+        const auto request_at = std::ranges::find(names, "nixl::xferReq");
+        ASSERT_NE(release_at, names.end());
+        ASSERT_NE(request_at, names.end());
+        EXPECT_LT(release_at - names.begin(), request_at - names.begin());
         EXPECT_THAT(
             records("nixl::xferReq"),
             testing::ElementsAre(testing::AllOf(

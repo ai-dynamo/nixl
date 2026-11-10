@@ -165,6 +165,14 @@ finish(Span &span, Status status) {
     return status;
 }
 
+template<typename Status>
+[[nodiscard]] Status
+end(Span &span, Status status) {
+    const Status finished = finish(span, status);
+    span = Span{};
+    return finished;
+}
+
 } // namespace nixl::trace::detail
 
 #define NIXL_TRACE_DETAIL_ANNOTATED_(begin, ...)                               \
@@ -265,6 +273,8 @@ finish(Span &span, Status status) {
 
 #define NIXL_TRACE_DETAIL_FINISH(span, status) (::nixl::trace::detail::finish((span), (status)))
 
+#define NIXL_TRACE_DETAIL_END(span, status) (::nixl::trace::detail::end((span), (status)))
+
 #define NIXL_TRACE_DETAIL_NOW(tracer_ptr) ((tracer_ptr) ? ::nixlTime::getUs() : ::nixlTime::us_t{0})
 
 #define NIXL_TRACE_DETAIL_EMIT_SPAN(tracer_ptr, trace_record, start_us)                \
@@ -303,6 +313,7 @@ finish(Span &span, Status status) {
     const ::nixl::trace::TraceIdentity &span##_identity = (traceable).post(parent); \
     NIXL_TRACE_DETAIL_REQUEST_SCOPE_(span, (traceable).tracer(), span##_identity)
 #define NIXL_TRACE_DETAIL_FINISH(span, status) (status)
+#define NIXL_TRACE_DETAIL_END(span, status) (status)
 #define NIXL_TRACE_DETAIL_ATTR(span, attr_key, attr_value) \
     do {                                                   \
     } while (0)

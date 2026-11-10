@@ -188,6 +188,8 @@ private:
  * NIXL_TRACE_SCOPE_UNDER(span, tracer, parent, record, ...) is NIXL_TRACE_SCOPE for
  * a call the application may give a context: under a sampled `parent` its span is
  * a child of it, inside a scope of its own; under an unsampled one there is no span.
+ * NIXL_TRACE_END(span, status) records the status as NIXL_TRACE_FINISH does and
+ * ends the span at once, for a call whose last step must follow its span.
  * The explicit name avoids any hidden coupling/shadowing and allows more than
  * one span per scope. Attribute arguments are only evaluated when a backend is
  * actually active.
@@ -209,6 +211,8 @@ private:
     NIXL_TRACE_DETAIL_ATTR(span, attr_key, attr_value)
 
 #define NIXL_TRACE_FINISH(span, status) NIXL_TRACE_DETAIL_FINISH(span, status)
+
+#define NIXL_TRACE_END(span, status) NIXL_TRACE_DETAIL_END(span, status)
 
 #define NIXL_TRACE_NOW(tracer_ptr) NIXL_TRACE_DETAIL_NOW(tracer_ptr)
 

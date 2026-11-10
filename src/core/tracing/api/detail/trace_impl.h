@@ -121,6 +121,10 @@ template<typename Status>
 [[nodiscard]] Status
 finish(Span &span, Status status);
 
+template<typename Status>
+[[nodiscard]] Status
+end(Span &span, Status status);
+
 
 } // namespace nixl::trace::detail
 
