@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_ATTRIBUTE_KEY_H
-#define NIXL_SRC_CORE_TRACING_ATTRIBUTE_KEY_H
+#ifndef NIXL_SRC_CORE_TRACING_API_ATTRIBUTE_KEY_H
+#define NIXL_SRC_CORE_TRACING_API_ATTRIBUTE_KEY_H
 
 #include <array>
 #include <cstddef>
@@ -81,4 +81,4 @@ private:
 
 } // namespace nixl::trace
 
-#endif // NIXL_SRC_CORE_TRACING_ATTRIBUTE_KEY_H
+#endif // NIXL_SRC_CORE_TRACING_API_ATTRIBUTE_KEY_H

@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_DETAIL_SPAN_H
-#define NIXL_SRC_CORE_TRACING_DETAIL_SPAN_H
+#ifndef NIXL_SRC_CORE_TRACING_API_DETAIL_SPAN_H
+#define NIXL_SRC_CORE_TRACING_API_DETAIL_SPAN_H
 
 #include <array>
 #include <cstddef>
@@ -25,11 +25,11 @@
 #include <span>
 #include <string_view>
 
-#include "tracing/attribute.h"
-#include "tracing/attribute_key.h"
-#include "tracing/detail/trace_impl.h"
-#include "tracing/record.h"
-#include "tracing/trace_identity.h"
+#include "tracing/api/attribute.h"
+#include "tracing/api/attribute_key.h"
+#include "tracing/api/detail/trace_impl.h"
+#include "tracing/api/record.h"
+#include "tracing/api/trace_identity.h"
 
 namespace nixl::trace {
 

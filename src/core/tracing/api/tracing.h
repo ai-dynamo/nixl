@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_TRACING_H
-#define NIXL_SRC_CORE_TRACING_TRACING_H
+#ifndef NIXL_SRC_CORE_TRACING_API_TRACING_H
+#define NIXL_SRC_CORE_TRACING_API_TRACING_H
 
 /*
  * nixl::trace -- internal NIXL core tracing API.
@@ -25,7 +25,7 @@
  * (compiled into libnixl, not installed as a public header). It is kept
  * deliberately self-contained -- depending only on standard headers and on
  * attribute.h, attribute_key.h, log_once.h, record.h, trace_identity.h and the
- * tracing/detail/ headers -- so it stays easy to reason about and could be
+ * tracing/api/detail/ headers -- so it stays easy to reason about and could be
  * promoted to a public header later without churn if an external consumer
  * appears.
  *
@@ -33,19 +33,19 @@
  * Attribute and AttributeKey as their arguments; logOnce(); what
  * trace_identity.h declares; and the tracer and the backends' trace sinks as
  * opaque handles from makeAgentTracer() and makeBackendTraceSink().
- * tracing/detail/ holds only what the macros and Traceable expand into.
+ * tracing/api/detail/ holds only what the macros and Traceable expand into.
  */
 
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include "tracing/attribute.h"
-#include "tracing/attribute_key.h"
-#include "tracing/detail/span.h"
-#include "tracing/log_once.h"
-#include "tracing/record.h"
-#include "tracing/trace_identity.h"
+#include "tracing/api/attribute.h"
+#include "tracing/api/attribute_key.h"
+#include "tracing/api/detail/span.h"
+#include "tracing/api/log_once.h"
+#include "tracing/api/record.h"
+#include "tracing/api/trace_identity.h"
 
 class nixlBackendTraceSink;
 class nixlTelemetry;
@@ -190,6 +190,6 @@ private:
 #define NIXL_TRACE_EMIT_SPAN(tracer_ptr, trace_record, start_us) \
     NIXL_TRACE_DETAIL_EMIT_SPAN(tracer_ptr, trace_record, start_us)
 
-#include "tracing/detail/tracing_impl.h"
+#include "tracing/api/detail/tracing_impl.h"
 
-#endif // NIXL_SRC_CORE_TRACING_TRACING_H
+#endif // NIXL_SRC_CORE_TRACING_API_TRACING_H

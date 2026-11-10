@@ -32,7 +32,7 @@
 #include "nixl.h"
 #include "plugin_manager.h"
 #include "transfer_request.h"
-#include "tracing/trace_context.h"
+#include "tracing/core/trace_context.h"
 #include "mocks/gmock_engine.h"
 
 namespace gtest {

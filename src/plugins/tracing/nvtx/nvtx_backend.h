@@ -19,7 +19,7 @@
 
 #include <memory>
 
-#include "tracing/trace_plugin.h"
+#include "tracing/api/trace_plugin.h"
 
 namespace nixl::trace {
 

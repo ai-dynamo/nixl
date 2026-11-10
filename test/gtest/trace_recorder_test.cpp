@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 #include "common.h"
-#include "tracing/backend_trace.h"
-#include "tracing/trace.h"
-#include "tracing/trace_context.h"
-#include "tracing/trace_sink.h"
+#include "tracing/api/backend_trace.h"
+#include "tracing/core/trace.h"
+#include "tracing/core/trace_context.h"
+#include "tracing/core/trace_sink.h"
 
 #include <gtest/gtest.h>
 

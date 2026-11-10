@@ -44,10 +44,10 @@
 #include "common.h"
 #include "nixl.h"
 #include "transfer_request.h"
-#include "tracing/trace.h"
-#include "tracing/trace_context.h"
-#include "tracing/tracing.h"
-#include "tracing/trace_sink.h"
+#include "tracing/core/trace.h"
+#include "tracing/core/trace_context.h"
+#include "tracing/api/tracing.h"
+#include "tracing/core/trace_sink.h"
 
 namespace nixl::trace {
 // Agent-wiring backend-selection policy, defined in nixl_agent.cpp (not exposed

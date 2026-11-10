@@ -14,27 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_LOG_ONCE_H
-#define NIXL_SRC_CORE_TRACING_LOG_ONCE_H
 
-#include <atomic>
+#include "tracing/api/tracing.h"
 
-namespace nixl::trace {
+namespace {
 
-template<typename logFn>
-void
-logOnce(std::atomic<bool> &logged, logFn &&log) noexcept {
-    if (logged.load(std::memory_order_relaxed) ||
-        logged.exchange(true, std::memory_order_relaxed)) {
-        return;
-    }
-    try {
-        log();
-    }
-    catch (...) {
-    }
+thread_local const nixl::trace::Scope *current_scope = nullptr;
+
+} // namespace
+
+const nixl::trace::Scope *
+nixl::trace::Scope::current() noexcept {
+    return current_scope;
 }
 
-} // namespace nixl::trace
-
-#endif // NIXL_SRC_CORE_TRACING_LOG_ONCE_H
+void
+nixl::trace::Scope::makeCurrent(const Scope *scope) noexcept {
+    current_scope = scope;
+}

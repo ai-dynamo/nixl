@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_TRACE_IDENTITY_H
-#define NIXL_SRC_CORE_TRACING_TRACE_IDENTITY_H
+#ifndef NIXL_SRC_CORE_TRACING_API_TRACE_IDENTITY_H
+#define NIXL_SRC_CORE_TRACING_API_TRACE_IDENTITY_H
 
 #include <array>
 #include <cstdint>

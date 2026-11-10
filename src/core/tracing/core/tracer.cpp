@@ -18,11 +18,11 @@
 #include <algorithm>
 #include <unordered_set>
 
-#include "tracing/trace.h"
+#include "tracing/core/trace.h"
 
 #include "common/nixl_log.h"
 #include "plugin_manager.h"
-#include "tracing/trace_plugin.h"
+#include "tracing/api/trace_plugin.h"
 
 namespace {
 

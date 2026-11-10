@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_TRACE_SINK_H
-#define NIXL_SRC_CORE_TRACING_TRACE_SINK_H
+#ifndef NIXL_SRC_CORE_TRACING_CORE_TRACE_SINK_H
+#define NIXL_SRC_CORE_TRACING_CORE_TRACE_SINK_H
 
 #include <atomic>
 #include <optional>
@@ -23,8 +23,8 @@
 #include <string>
 #include <string_view>
 
-#include "tracing/backend_trace.h"
-#include "tracing/trace.h"
+#include "tracing/api/backend_trace.h"
+#include "tracing/core/trace.h"
 
 class nixlTelemetry;
 
@@ -80,4 +80,4 @@ private:
 
 } // namespace nixl::trace
 
-#endif // NIXL_SRC_CORE_TRACING_TRACE_SINK_H
+#endif // NIXL_SRC_CORE_TRACING_CORE_TRACE_SINK_H

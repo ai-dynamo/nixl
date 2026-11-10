@@ -20,10 +20,10 @@
 #include <cstdint>
 #include <optional>
 
-#include "backend_trace.h"
+#include "tracing/api/backend_trace.h"
 #include "serdes/serdes.h"
-#include "trace_context.h"
-#include "tracing.h"
+#include "tracing/core/trace_context.h"
+#include "tracing/api/tracing.h"
 
 namespace {
 

@@ -56,25 +56,27 @@ execution-trace tools.
   factory + api version). `nixlPluginManager::loadTracePlugin()` discovers and
   `dlopen`s them on demand by the `libtrace_backend_` prefix — the same machinery used
   for data backends and telemetry exporters. The plugin contract lives in
-  `src/core/tracing/trace_plugin.h`.
+  `src/core/tracing/api/trace_plugin.h`.
 - **`Kind`** — the operation kind attached to a span or event. It selects an NVTX
   color and maps 1:1 onto the Chakra `NodeType` vocabulary:
   `Generic`, `Compute`, `MemoryR`, `MemoryW`, `CommSend`, `CommRecv`, `CommColl`,
   `Metadata`.
 
 `nixl::trace` is an **internal NIXL core API**: it is compiled into `libnixl` and none
-of its headers, under `src/core/tracing/`, are installed. Core code that traces
-includes one of them, `tracing/tracing.h`, which holds only the call-site macros, the
-record vocabulary (`Record` and `Kind`, from `tracing/record.h`, which plugins share),
-a request's trace state (`Traceable`, which also holds the tracer), and the tracer and
-the backends' sinks as opaque handles that `makeAgentTracer()` and
+of its headers, under `src/core/tracing/`, are installed. What other modules include is
+under `tracing/api/`, and the implementation under `tracing/core/`. Core code that
+traces includes `tracing/api/tracing.h`, which holds only the call-site macros, the
+record vocabulary (`Record` and `Kind`, from `tracing/api/record.h`, which plugins
+share), a request's trace state (`Traceable`, which also holds the tracer), `Scope`, and
+the tracer and the backends' sinks as opaque handles that `makeAgentTracer()` and
 `makeBackendTraceSink()` return; what they expand into, `Span` included, is under
-`tracing/detail/`. Plugins include `tracing/backend_trace.h` (see
-[Backend phases](#backend-phases)). The tracer itself, `TraceBackend`
-(`tracing/trace.h`), the plugin contract (`tracing/trace_plugin.h`), the sink and the
-wire codec are seen only by tracing, its backends and its tests. Only NIXL core
-instruments it today; because internal→public is a non-breaking change, it can be
-promoted to a public header later if an external consumer appears.
+`tracing/api/detail/`. Data plugins include `tracing/api/backend_trace.h` (see
+[Backend phases](#backend-phases)), and trace backends `tracing/api/trace_backend.h`,
+the `TraceBackend` interface, and the plugin contract, `tracing/api/trace_plugin.h`. The
+tracer itself (`tracing/core/trace.h`), the sink and the wire codec are seen only by
+tracing and its tests. Only NIXL core instruments it today; because internal→public is a
+non-breaking change, it can be promoted to a public header later if an external consumer
+appears.
 
 ## Two gates: build/packaging and runtime
 
@@ -212,13 +214,13 @@ backends/PRs):
 | `nixl::prepMemView` | `MemoryR` | `mem_type`, `desc_count` |
 | `nixl::releaseMemView` | `Generic` | - |
 
-Each name and its kind come from `nixl::trace::Record` in `tracing/record.h`, the one
+Each name and its kind come from `nixl::trace::Record` in `tracing/api/record.h`, the one
 list of the agent's records and the backends' phases and spans. A call site names its
 record, such as `NIXL_TRACE_SCOPE(span, tracer, nixl::trace::Record::RegisterMem)`, and
 a request records its completion and errors itself, with
 `traceable().trace(nixl::trace::Record::XferComplete)`. NVTX registers the names in the
 list's order and finds a record's handle by its position. Attribute keys come from one
-list too, `nixl::trace::attributeKeys` in `tracing/attribute_key.h`: a call site
+list too, `nixl::trace::attributeKeys` in `tracing/api/attribute_key.h`: a call site
 writes a key as its literal, and a literal outside the list does not compile.
 
 `nixl::getNotifs` is recorded only by a call that returns notifications, so polling an
@@ -346,7 +348,7 @@ become the span's start and end times (in NVTX, `nixl.start_us` and
 | `nixl::wire.inflight` | `WIRE_INFLIGHT` | the transfer in flight, from `submit` to `wire.completed` |
 | `nixl::span` | `OTHER` | escape hatch; the plugin's label becomes the span name |
 
-The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
+The sink interface is internal (`src/core/tracing/api/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. UCX emits
 `nixl::submit`, `nixl::wire.submitted`, `nixl::wire.completed`, `nixl::notif.sent`
 and `nixl::notif.received`, and the span `nixl::wire.inflight`, described below;

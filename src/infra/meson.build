@@ -16,9 +16,9 @@
 nixl_build_lib = library('nixl_build',
                         'nixl_descriptors.cpp',
                         'nixl_memory_section.cpp',
-                        '../core/tracing/backend_trace.cpp',
-                        '../core/tracing/scope.cpp',
-                        '../core/tracing/trace_context.cpp',
+                        '../core/tracing/core/backend_trace.cpp',
+                        '../core/tracing/core/scope.cpp',
+                        '../core/tracing/core/trace_context.cpp',
                         include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
                         dependencies: [serdes_interface, nixl_common_dep],
                         install: true)

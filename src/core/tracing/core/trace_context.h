@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_TRACE_CONTEXT_H
-#define NIXL_SRC_CORE_TRACING_TRACE_CONTEXT_H
+#ifndef NIXL_SRC_CORE_TRACING_CORE_TRACE_CONTEXT_H
+#define NIXL_SRC_CORE_TRACING_CORE_TRACE_CONTEXT_H
 
 #include <array>
 #include <cstddef>
@@ -25,7 +25,7 @@
 #include <string>
 #include <string_view>
 
-#include "tracing/trace_identity.h"
+#include "tracing/api/trace_identity.h"
 
 namespace nixl::trace {
 

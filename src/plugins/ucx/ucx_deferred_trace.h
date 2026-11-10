@@ -18,7 +18,7 @@
 #define NIXL_SRC_PLUGINS_UCX_UCX_DEFERRED_TRACE_H
 
 #include "nixl_types.h"
-#include "tracing/backend_trace.h"
+#include "tracing/api/backend_trace.h"
 
 namespace nixl::ucx {
 

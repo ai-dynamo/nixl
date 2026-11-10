@@ -37,9 +37,9 @@
 #include <unistd.h>
 
 #include "common.h"
-#include "tracing/random_generator.h"
-#include "tracing/trace.h"
-#include "tracing/trace_context.h"
+#include "tracing/core/random_generator.h"
+#include "tracing/core/trace.h"
+#include "tracing/core/trace_context.h"
 
 constexpr char kCanonicalTraceparent[] = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 

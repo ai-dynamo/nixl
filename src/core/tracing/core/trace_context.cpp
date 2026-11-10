@@ -28,10 +28,10 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/uuid_v4.h"
-#include "log_once.h"
-#include "random_generator.h"
-#include "trace.h"
-#include "trace_context.h"
+#include "tracing/api/log_once.h"
+#include "tracing/core/random_generator.h"
+#include "tracing/core/trace.h"
+#include "tracing/core/trace_context.h"
 
 namespace {
 constexpr std::uint8_t supported_trace_flags = 0x03;

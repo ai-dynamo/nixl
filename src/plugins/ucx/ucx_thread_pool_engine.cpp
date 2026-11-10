@@ -22,7 +22,7 @@
 #include "common/blocking_queue.h"
 #include "common/nixl_log.h"
 #include "common/nixl_time.h"
-#include "tracing/backend_trace.h"
+#include "tracing/api/backend_trace.h"
 
 #include <algorithm>
 #include <atomic>

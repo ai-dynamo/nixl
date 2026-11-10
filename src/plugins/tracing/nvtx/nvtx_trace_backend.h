@@ -27,7 +27,7 @@
 #include <nvtx3/nvToolsExt.h>
 
 #include "nvtx_payload_schemas.h"
-#include "tracing/trace.h"
+#include "tracing/api/trace_backend.h"
 
 namespace nixl::trace::nvtx_internal {
 

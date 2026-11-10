@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "tracing/trace_sink.h"
+#include "tracing/core/trace_sink.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -23,7 +23,7 @@
 #include "absl/container/inlined_vector.h"
 #include "common/nixl_log.h"
 #include "telemetry.h"
-#include "tracing/trace_context.h"
+#include "tracing/core/trace_context.h"
 
 namespace nixl::trace {
 namespace {

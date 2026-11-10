@@ -21,13 +21,13 @@
 #include <utility>
 #include <vector>
 
-#include "tracing/tracing.h"
+#include "tracing/api/tracing.h"
 
 #include "common/configuration.h"
 #include "common/str_util.h"
-#include "tracing/trace.h"
-#include "tracing/trace_context.h"
-#include "tracing/trace_sink.h"
+#include "tracing/core/trace.h"
+#include "tracing/core/trace_context.h"
+#include "tracing/core/trace_sink.h"
 
 namespace nixl::trace {
 

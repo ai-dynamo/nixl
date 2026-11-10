@@ -29,8 +29,8 @@
 #include "nvtx_events.h"
 #include "nvtx_span.h"
 #include "nvtx_trace_backend.h"
-#include "tracing/trace.h"
-#include "tracing/trace_context.h"
+#include "tracing/core/trace.h"
+#include "tracing/core/trace_context.h"
 
 namespace {
 

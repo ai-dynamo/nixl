@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_TRACE_H
-#define NIXL_SRC_CORE_TRACING_TRACE_H
+#ifndef NIXL_SRC_CORE_TRACING_CORE_TRACE_H
+#define NIXL_SRC_CORE_TRACING_CORE_TRACE_H
 
 #include <atomic>
 #include <cstdint>
@@ -27,76 +27,12 @@
 #include <vector>
 
 #include "common/nixl_time.h"
-#include "tracing/attribute_key.h"
-#include "tracing/trace_context.h"
-#include "tracing/tracing.h"
+#include "tracing/api/attribute_key.h"
+#include "tracing/api/trace_backend.h"
+#include "tracing/core/trace_context.h"
+#include "tracing/api/tracing.h"
 
 namespace nixl::trace {
-
-/**
- * @brief One enabled backend type (NVTX, Chakra, ...). Each record names the
- *        span id of its context, pushed or passed, as its parent, except the
- *        span beginContextSpan() begins, which has that id as its own.
- */
-class TraceBackend {
-public:
-    virtual ~TraceBackend() = default;
-
-    [[nodiscard]] virtual std::unique_ptr<SpanBackend>
-    beginSpan(Name name, Kind kind) = 0;
-
-    virtual void
-    pushContext(const TraceContext &context, std::uint64_t request_id) = 0;
-    virtual void
-    popContext() = 0;
-
-    [[nodiscard]] virtual std::string_view
-    name() const noexcept = 0;
-
-    [[nodiscard]] virtual bool
-    ownsTimestamps() const noexcept {
-        return false;
-    }
-
-    [[nodiscard]] virtual bool
-    recording() const noexcept {
-        return true;
-    }
-
-    /**
-     * @brief Record a span from @p start to @p end, or an event at @p at, that
-     *        already happened. Times are `nixlTime` microseconds on
-     *        `std::chrono::steady_clock`; @p context is the record's own, not
-     *        the pushed one, and an invalid context means none. @p request_id
-     *        is likewise the record's own, and 0 means none.
-     */
-    virtual void
-    emitSpan(Name name,
-             Kind kind,
-             const TraceContext &context,
-             std::uint64_t request_id,
-             nixlTime::us_t start,
-             nixlTime::us_t end,
-             std::span<const Attribute> attrs) = 0;
-    virtual void
-    emitEvent(Name name,
-              Kind kind,
-              const TraceContext &context,
-              std::uint64_t request_id,
-              nixlTime::us_t at,
-              std::span<const Attribute> attrs) = 0;
-
-    /**
-     * @brief Begin the span that @p context identifies, rather than a span
-     *        inside the pushed context. @p context and @p request_id are the
-     *        span's own, as in emitSpan().
-     */
-    [[nodiscard]] virtual std::unique_ptr<SpanBackend>
-    beginContextSpan(Name name,
-                     Kind kind,
-                     const TraceContext &context,
-                     std::uint64_t request_id) = 0;
-};
 
 /**
  * @brief Fills its buffer with random bytes for trace-context ids, or throws a
@@ -221,4 +157,4 @@ makeTracer(const TracerConfig &config);
 
 } // namespace nixl::trace
 
-#endif // NIXL_SRC_CORE_TRACING_TRACE_H
+#endif // NIXL_SRC_CORE_TRACING_CORE_TRACE_H

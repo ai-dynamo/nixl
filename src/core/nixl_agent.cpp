@@ -37,7 +37,7 @@
 #include "common/hw_info.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
-#include "tracing/tracing.h"
+#include "tracing/api/tracing.h"
 
 namespace {
 

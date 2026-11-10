@@ -16,7 +16,7 @@
  */
 
 #include "nvtx_backend.h"
-#include "tracing/trace_plugin.h"
+#include "tracing/api/trace_plugin.h"
 
 // Loaded by nixlPluginManager via the `libtrace_backend_` prefix.
 extern "C" NIXL_TRACE_PLUGIN_EXPORT nixlTracePlugin *

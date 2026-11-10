@@ -29,8 +29,8 @@
 #include <vector>
 
 #include "backend/backend_engine.h"
-#include "tracing/backend_trace.h"
-#include "tracing/trace_context.h"
+#include "tracing/api/backend_trace.h"
+#include "tracing/core/trace_context.h"
 
 namespace mocks {
 

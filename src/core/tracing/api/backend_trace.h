@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_BACKEND_TRACE_H
-#define NIXL_SRC_CORE_TRACING_BACKEND_TRACE_H
+#ifndef NIXL_SRC_CORE_TRACING_API_BACKEND_TRACE_H
+#define NIXL_SRC_CORE_TRACING_API_BACKEND_TRACE_H
 
 /*
  * Plugin-facing trace phase sink.
@@ -32,9 +32,9 @@
 
 #include "common/nixl_time.h"
 #include "nixl_types.h"
-#include "tracing/attribute_key.h"
-#include "tracing/record.h"
-#include "tracing/trace_identity.h"
+#include "tracing/api/attribute_key.h"
+#include "tracing/api/record.h"
+#include "tracing/api/trace_identity.h"
 
 class nixlSerDes;
 class nixlBackendTraceSink;
@@ -325,4 +325,4 @@ getTraceTags(nixlSerDes &ser_des);
 
 } // namespace nixl::trace
 
-#endif // NIXL_SRC_CORE_TRACING_BACKEND_TRACE_H
+#endif // NIXL_SRC_CORE_TRACING_API_BACKEND_TRACE_H
