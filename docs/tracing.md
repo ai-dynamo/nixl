@@ -205,8 +205,8 @@ backends/PRs):
 | ------------- | ---- | ---------- |
 | `nixl::registerMem` | `MemoryW` | `mem_type` |
 | `nixl::deregisterMem` | `Generic` | `mem_type` |
-| `nixl::makeXferReq` | `Generic` | `desc_count`, `nixl.xfer_request_id` |
-| `nixl::createXferReq` | `Generic` | `remote_agent`, `desc_count`, `nixl.xfer_request_id` |
+| `nixl::makeXferReq` | `Generic` | `desc_count`, `nixl.xfer_request_id`, `nixl.xfer_execution` |
+| `nixl::createXferReq` | `Generic` | `remote_agent`, `desc_count`, `nixl.xfer_request_id`, `nixl.xfer_execution` |
 | `nixl::postXferReq.write` | `CommSend` | `remote_agent`, `bytes`, `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
 | `nixl::postXferReq.read` | `CommRecv` | `remote_agent`, `bytes`, `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
 | `nixl::xfer.complete` | `Metadata` (event) | `nixl.xfer_request_id`, `nixl.xfer_execution` |

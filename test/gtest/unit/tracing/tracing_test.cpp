@@ -695,15 +695,25 @@ TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
                          static_cast<nixl::trace::Tracer *>(nullptr),
                          nixl::trace::Record::RegisterMem,
                          {"bytes", ++evaluations});
-        const nixl::trace::Scope scope(tracer.get(), {testContext(0x41, 0x00), 0x41});
-        NIXL_TRACE_SPAN(skipped, nixl::trace::Record::RegisterMem, {"bytes", ++evaluations});
         EXPECT_FALSE(none.active());
-        EXPECT_FALSE(skipped.active());
+        nixl::trace::Traceable unsampled{tracer.get(), {testContext(0x41, 0x00), 0x41}};
+        nixl::trace::Traceable untraced{nullptr, {testContext(0x43), 0x43}};
+        for (nixl::trace::Traceable *traced : {&unsampled, &untraced}) {
+            NIXL_TRACE_POST_SPAN(
+                post, *traced, nixl::trace::Record::PostXferReqWrite, {"bytes", ++evaluations});
+            NIXL_TRACE_REQUEST_SPAN(
+                release, *traced, nixl::trace::Record::ReleaseXferReq, {"bytes", ++evaluations});
+            EXPECT_FALSE(post.active());
+            EXPECT_FALSE(release.active());
+        }
     }
 
     EXPECT_EQ(evaluations, 0);
-    EXPECT_EQ(a.spansBegun, 0);
-    EXPECT_EQ(b.spansBegun, 0);
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->spansBegun, 0);
+        EXPECT_TRUE(log->contextSpans.empty());
+        EXPECT_TRUE(log->pushedContexts.empty());
+    }
 #else
     GTEST_SKIP() << "the trace macros are compiled out";
 #endif
@@ -731,63 +741,55 @@ TEST(Tracing, FinishMacroRecordsTheStatusAndReturnsIt) {
 #endif
 }
 
-TEST(Tracing, SpanMacrosTakeTheCurrentScopesIdentity) {
+TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
 #if defined(NIXL_TRACE_ENABLED)
     CallLog a, b;
-    auto tracer = makeMockTracer(a, b);
-    const nixl::trace::TraceContext context = testContext(0x42);
+    auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    zero_draws_left = 0;
+    const nixl::trace::TraceContext request = testContext(0x42);
+    auto post_context = request;
+    post_context.spanId.fill(0x5a);
+    post_context.parentSpanId = request.spanId;
 
     {
-        const nixl::trace::Scope scope(tracer.get(), {context, 0x42});
-        NIXL_TRACE_CONTEXT_SPAN(post, nixl::trace::Record::PostXferReqWrite, {"bytes", 8});
-        EXPECT_TRUE(post.active());
-        for (const CallLog *log : {&a, &b}) {
-            EXPECT_EQ(log->activeContexts, std::vector<nixl::trace::TraceContext>{context});
+        nixl::trace::Traceable traced{tracer.get(), {request, 0x42}};
+        {
+            NIXL_TRACE_POST_SPAN(post, traced, nixl::trace::Record::PostXferReqWrite, {"bytes", 8});
+            EXPECT_TRUE(post.active());
+            EXPECT_EQ(traced.identity().context, post_context);
+            for (const CallLog *log : {&a, &b}) {
+                EXPECT_EQ(log->activeContexts,
+                          std::vector<nixl::trace::TraceContext>{post_context});
+            }
         }
-    }
-    {
-        const nixl::trace::Scope scope(tracer.get(), {context, 0x42});
-        NIXL_TRACE_SPAN(release, nixl::trace::Record::ReleaseXferReq);
-        EXPECT_TRUE(release.active());
-        for (const CallLog *log : {&a, &b}) {
-            EXPECT_EQ(log->activeContexts, std::vector<nixl::trace::TraceContext>{context});
+        {
+            NIXL_TRACE_REQUEST_SPAN(release, traced, nixl::trace::Record::ReleaseXferReq);
+            EXPECT_TRUE(release.active());
+            for (const CallLog *log : {&a, &b}) {
+                EXPECT_EQ(log->activeContexts, std::vector<nixl::trace::TraceContext>{request});
+            }
         }
+        EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
     }
 
     for (const CallLog *log : {&a, &b}) {
-        EXPECT_EQ(log->pushedContexts, (std::vector<nixl::trace::TraceContext>{context, context}));
+        EXPECT_EQ(log->pushedContexts,
+                  (std::vector<nixl::trace::TraceContext>{post_context, request}));
         EXPECT_EQ(log->pushedRequestIds, (std::vector<std::uint64_t>{0x42, 0x42}));
         EXPECT_TRUE(log->activeContexts.empty());
         ASSERT_EQ(log->contextSpans.size(), 1u);
         EXPECT_EQ(log->contextSpans[0].name, "nixl::postXferReq.write");
         EXPECT_EQ(log->contextSpans[0].kind, nixl::trace::Kind::CommSend);
-        EXPECT_EQ(log->contextSpans[0].context, context);
+        EXPECT_EQ(log->contextSpans[0].context, post_context);
         EXPECT_EQ(log->contextSpans[0].requestId, 0x42u);
         EXPECT_EQ(log->spanNames, std::vector<std::string>{"nixl::releaseXferReq"});
-        EXPECT_EQ(log->intAttrs, (std::vector<std::pair<std::string, std::int64_t>>{{"bytes", 8}}));
+        EXPECT_EQ(log->intAttrs,
+                  (std::vector<std::pair<std::string, std::int64_t>>{{"bytes", 8},
+                                                                     {"nixl.xfer_request_id", 0x42},
+                                                                     {"nixl.xfer_execution", 1},
+                                                                     {"nixl.xfer_request_id", 0x42},
+                                                                     {"nixl.xfer_execution", 1}}));
     }
-#else
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
-}
-
-TEST(Tracing, SpanMacrosRecordNothingOutsideAScope) {
-#if defined(NIXL_TRACE_ENABLED)
-    CallLog a, b;
-    auto tracer = makeMockTracer(a, b);
-    int evaluations = 0;
-
-    {
-        NIXL_TRACE_CONTEXT_SPAN(
-            post, nixl::trace::Record::PostXferReqWrite, {"bytes", ++evaluations});
-        NIXL_TRACE_SPAN(release, nixl::trace::Record::ReleaseXferReq, {"bytes", ++evaluations});
-        EXPECT_FALSE(post.active());
-        EXPECT_FALSE(release.active());
-    }
-
-    EXPECT_EQ(evaluations, 0);
-    EXPECT_EQ(a.spansBegun, 0);
-    EXPECT_TRUE(a.contextSpans.empty());
 #else
     GTEST_SKIP() << "the trace macros are compiled out";
 #endif

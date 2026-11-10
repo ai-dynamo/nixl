@@ -87,12 +87,6 @@ pushContext(Tracer &tracer, const TraceContext &context, std::uint64_t request_i
 void
 popContext(Tracer &tracer);
 
-[[nodiscard]] inline Tracer *
-scopeTracer() noexcept;
-
-[[nodiscard]] inline const TraceIdentity &
-scopeIdentity() noexcept;
-
 [[nodiscard]] inline nixlTime::us_t
 requestStart(const Tracer *tracer, const TraceContext &context) noexcept;
 

@@ -89,6 +89,9 @@ public:
     Traceable &
     operator=(const Traceable &) = delete;
 
+    [[nodiscard]] Tracer *
+    tracer() const noexcept;
+
     [[nodiscard]] const TraceIdentity &
     identity() const noexcept;
 
@@ -113,8 +116,8 @@ private:
 
 /**
  * @brief Makes @p identity and the tracer that records it current on the
- *        calling thread until it ends, so the spans NIXL_TRACE_SPAN and
- *        NIXL_TRACE_CONTEXT_SPAN open meanwhile take them. Scopes nest. A scope
+ *        calling thread until it ends, so a backend called meanwhile reads the
+ *        identity through currentIdentity(). Scopes nest. A scope
  *        whose context is valid and sampled also pushes it to the tracer's
  *        backends for its lifetime, to correlate records across threads.
  *        @p sink, when given, is the trace sink a backend constructed meanwhile
@@ -167,13 +170,18 @@ private:
  *
  * When tracing is compiled out (NIXL_TRACE_ENABLED undefined) every macro
  * expands to nothing, and NIXL_TRACE_FINISH to its status, so call sites cost
- * nothing. When compiled in, the span macros declare a caller-named RAII Span
- * and take a predictable null-check branch on the tracer.
+ * nothing. The request macros are the exception: they still open the request's
+ * scope, and NIXL_TRACE_POST_SPAN still begins the post, since the backend
+ * carries the context either way. When compiled in, the span macros declare a
+ * caller-named RAII Span and take a predictable null-check branch on the tracer.
  *
  * Usage: NIXL_TRACE_SCOPE(span, tracer, record, {key, value}...) declares
  * the local `span` with its attributes; NIXL_TRACE_ATTR(span, key, value) adds
  * one known later, and `return NIXL_TRACE_FINISH(span, status);` records the
- * call's status as it returns it.
+ * call's status as it returns it. NIXL_TRACE_REQUEST_SPAN(span, traceable,
+ * record, {key, value}...) does the same for a call on a request, inside the
+ * request's scope, and NIXL_TRACE_POST_SPAN for a post, inside the scope of the
+ * post it begins; both add the request id and execution number.
  * The explicit name avoids any hidden coupling/shadowing and allows more than
  * one span per scope. Attribute arguments are only evaluated when a backend is
  * actually active.
@@ -182,11 +190,11 @@ private:
 #define NIXL_TRACE_SCOPE(span, tracer_ptr, trace_record, ...) \
     NIXL_TRACE_DETAIL_SCOPE(span, tracer_ptr, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
-#define NIXL_TRACE_SPAN(span, trace_record, ...) \
-    NIXL_TRACE_DETAIL_SPAN(span, trace_record __VA_OPT__(, ) __VA_ARGS__)
+#define NIXL_TRACE_REQUEST_SPAN(span, traceable, trace_record, ...) \
+    NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
-#define NIXL_TRACE_CONTEXT_SPAN(span, trace_record, ...) \
-    NIXL_TRACE_DETAIL_SCOPE_CONTEXT_SPAN(span, trace_record __VA_OPT__(, ) __VA_ARGS__)
+#define NIXL_TRACE_POST_SPAN(span, traceable, trace_record, ...) \
+    NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
 #define NIXL_TRACE_ATTR(span, attr_key, attr_value) \
     NIXL_TRACE_DETAIL_ATTR(span, attr_key, attr_value)

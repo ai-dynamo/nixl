@@ -58,6 +58,11 @@ inline Traceable::~Traceable() {
 #endif
 }
 
+inline Tracer *
+Traceable::tracer() const noexcept {
+    return tracer_;
+}
+
 inline const TraceIdentity &
 Traceable::identity() const noexcept {
     return identity_;
@@ -102,20 +107,6 @@ Traceable::trace([[maybe_unused]] Record record, [[maybe_unused]] const Attribut
             *tracer_, record, kindOf(record), identity_.context, identity_.requestId, attrs);
     }
 #endif
-}
-
-inline constexpr TraceIdentity noTraceIdentity{};
-
-inline Tracer *
-detail::scopeTracer() noexcept {
-    const Scope *scope = Scope::current();
-    return (scope != nullptr) ? scope->tracer() : nullptr;
-}
-
-inline const TraceIdentity &
-detail::scopeIdentity() noexcept {
-    const Scope *scope = Scope::current();
-    return (scope != nullptr) ? scope->identity() : noTraceIdentity;
 }
 
 inline nixlTime::us_t
@@ -202,20 +193,26 @@ finish(Span &span, Status status) {
                                                     (request_id)) __VA_OPT__(, ) __VA_ARGS__);   \
     }()
 
-#define NIXL_TRACE_DETAIL_SPAN(span, trace_record, ...)                                           \
-    NIXL_TRACE_DETAIL_SAMPLED_SCOPE(span,                                                         \
-                                    ::nixl::trace::detail::scopeTracer(),                         \
-                                    trace_record,                                                 \
-                                    ::nixl::trace::detail::scopeIdentity().context __VA_OPT__(, ) \
-                                        __VA_ARGS__)
+#define NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record, ...)                        \
+    const ::nixl::trace::Scope span##_scope((traceable).tracer(), (traceable).requestIdentity()); \
+    NIXL_TRACE_DETAIL_SAMPLED_SCOPE(                                                              \
+        span,                                                                                     \
+        span##_scope.tracer(),                                                                    \
+        trace_record,                                                                             \
+        span##_scope.identity().context,                                                          \
+        __VA_ARGS__ __VA_OPT__(, ){"nixl.xfer_request_id", span##_scope.identity().requestId},    \
+        {"nixl.xfer_execution", span##_scope.identity().execution})
 
-#define NIXL_TRACE_DETAIL_SCOPE_CONTEXT_SPAN(span, trace_record, ...)                              \
-    NIXL_TRACE_DETAIL_CONTEXT_SPAN(span,                                                           \
-                                   ::nixl::trace::detail::scopeTracer(),                           \
-                                   trace_record,                                                   \
-                                   ::nixl::trace::detail::scopeIdentity().context,                 \
-                                   ::nixl::trace::detail::scopeIdentity().requestId __VA_OPT__(, ) \
-                                       __VA_ARGS__)
+#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, trace_record, ...)                        \
+    const ::nixl::trace::Scope span##_scope((traceable).tracer(), (traceable).post());         \
+    NIXL_TRACE_DETAIL_CONTEXT_SPAN(                                                            \
+        span,                                                                                  \
+        span##_scope.tracer(),                                                                 \
+        trace_record,                                                                          \
+        span##_scope.identity().context,                                                       \
+        span##_scope.identity().requestId,                                                     \
+        __VA_ARGS__ __VA_OPT__(, ){"nixl.xfer_request_id", span##_scope.identity().requestId}, \
+        {"nixl.xfer_execution", span##_scope.identity().execution})
 
 #define NIXL_TRACE_DETAIL_FINISH(span, status) (::nixl::trace::detail::finish((span), (status)))
 
@@ -247,12 +244,10 @@ finish(Span &span, Status status) {
 #define NIXL_TRACE_DETAIL_SAMPLED_SCOPE(span, tracer_ptr, trace_record, context, ...) \
     do {                                                                              \
     } while (0)
-#define NIXL_TRACE_DETAIL_SPAN(span, trace_record, ...) \
-    do {                                                \
-    } while (0)
-#define NIXL_TRACE_DETAIL_SCOPE_CONTEXT_SPAN(span, trace_record, ...) \
-    do {                                                              \
-    } while (0)
+#define NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record, ...) \
+    const ::nixl::trace::Scope span##_scope((traceable).tracer(), (traceable).requestIdentity())
+#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, trace_record, ...) \
+    const ::nixl::trace::Scope span##_scope((traceable).tracer(), (traceable).post())
 #define NIXL_TRACE_DETAIL_FINISH(span, status) (status)
 #define NIXL_TRACE_DETAIL_ATTR(span, attr_key, attr_value) \
     do {                                                   \
