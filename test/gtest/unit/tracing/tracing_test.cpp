@@ -1340,9 +1340,9 @@ TEST(Tracing, TraceableAcceptedPostTakesTheNextExecution) {
 
     EXPECT_EQ(traced.identity().context, context);
     EXPECT_EQ(traced.identity().execution, 0u);
-    traced.acceptPost(post);
-    traced.acceptPost(post);
-    untraced.acceptPost(post);
+    EXPECT_EQ(traced.acceptPost(post).execution, 1u);
+    EXPECT_EQ(traced.acceptPost(post).execution, 2u);
+    EXPECT_EQ(untraced.acceptPost(post).execution, 0u);
 
     EXPECT_EQ(traced.identity().context, post);
     EXPECT_EQ(traced.identity().execution, 2u);
@@ -1404,7 +1404,7 @@ TEST(Tracing, TraceableRecordsItsEventsInItsLatestPost) {
     const auto tracer = makeMockTracer(a, b);
     const auto post = testContext(0x38);
     nixl::trace::Traceable traced{tracer.get(), {testContext(0x37), 0x37}};
-    traced.acceptPost(post);
+    static_cast<void>(traced.acceptPost(post));
 
     traced.record(nixl::trace::Record::XferComplete);
     traced.record(nixl::trace::Record::XferError, {"nixl.status", NIXL_ERR_BACKEND});

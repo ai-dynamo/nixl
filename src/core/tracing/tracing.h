@@ -89,7 +89,7 @@ public:
     [[nodiscard]] TraceContext
     beginPost();
 
-    TraceIdentity
+    [[nodiscard]] TraceIdentity
     acceptPost(const TraceContext &post_context) noexcept;
 
     void
