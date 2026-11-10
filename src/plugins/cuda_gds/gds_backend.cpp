@@ -39,13 +39,9 @@ struct fileSegData {
 
 struct memSegData {
     gdsMemBuf buf;
-    void *registered_base{nullptr};
-    size_t registered_size{0};
 
     memSegData(void *address, size_t buffer_size, int registration_flags)
-        : buf(address, buffer_size, registration_flags),
-          registered_base(address),
-          registered_size(buffer_size) {}
+        : buf(address, buffer_size, registration_flags) {}
 };
 
 class nixlGdsMetadata : public nixlBackendMD {
@@ -69,34 +65,10 @@ public:
 
 } // namespace
 
-nixl_status_t
-gdsResolveRegisteredBuffer(void *registered_base,
-                           size_t registered_size,
-                           uintptr_t descriptor_addr,
-                           size_t descriptor_size,
-                           gdsResolvedBuffer &resolved) {
-    if (registered_base == nullptr || registered_size == 0 || descriptor_addr == 0) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
+gdsResolvedBuffer
+gdsResolveRegisteredBuffer(void *registered_base, uintptr_t descriptor_addr) noexcept {
     const uintptr_t base_addr = reinterpret_cast<uintptr_t>(registered_base);
-    if (descriptor_addr < base_addr) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    const uintptr_t offset = descriptor_addr - base_addr;
-    if (offset > static_cast<uintptr_t>(registered_size)) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    const size_t offset_size = static_cast<size_t>(offset);
-    if (descriptor_size > registered_size - offset_size) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    resolved.dev_ptr_base = registered_base;
-    resolved.dev_ptr_offset = offset_size;
-    return NIXL_SUCCESS;
+    return {registered_base, static_cast<size_t>(descriptor_addr - base_addr)};
 }
 
 nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams *init_params)
@@ -253,19 +225,9 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
 
         gdsResolvedBuffer resolved{};
         if (mem_data->buf.isRegistered()) {
-            const nixl_status_t resolve_status =
-                gdsResolveRegisteredBuffer(mem_data->registered_base,
-                                           mem_data->registered_size,
-                                           mem_desc.addr,
-                                           mem_desc.len,
-                                           resolved);
-            if (resolve_status != NIXL_SUCCESS) {
-                NIXL_ERROR << "GDS: descriptor is outside registered memory range";
-                return resolve_status;
-            }
+            resolved = gdsResolveRegisteredBuffer(mem_data->buf.base(), mem_desc.addr);
         } else {
-            resolved.dev_ptr_base = reinterpret_cast<void *>(mem_desc.addr);
-            resolved.dev_ptr_offset = 0;
+            resolved = {reinterpret_cast<void *>(mem_desc.addr), 0};
         }
 
         const auto *md = static_cast<const nixlGdsMetadata *>(file_desc.metadataP);

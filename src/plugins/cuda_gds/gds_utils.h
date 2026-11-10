@@ -65,6 +65,11 @@ public:
         return registered_;
     }
 
+    void *
+    base() const noexcept {
+        return base_;
+    }
+
     gdsMemBuf(const gdsMemBuf &) = delete;
     gdsMemBuf &
     operator=(const gdsMemBuf &) = delete;

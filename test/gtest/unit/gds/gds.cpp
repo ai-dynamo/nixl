@@ -33,6 +33,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -42,6 +43,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <cuda_runtime_api.h>
 #include <gtest/gtest.h>
 
 #include "common.h"
@@ -55,6 +57,13 @@ namespace {
 constexpr unsigned char kPattern = 0xAB;
 constexpr auto kTransferTimeout = std::chrono::seconds(30);
 constexpr auto kPollInterval = std::chrono::milliseconds(50);
+constexpr size_t kVramAllocationSize = 16ULL * 1024ULL * 1024ULL;
+constexpr size_t kVramInteriorOffset = 4ULL * 1024ULL * 1024ULL;
+constexpr size_t kVramPayloadSize = 1ULL * 1024ULL * 1024ULL;
+constexpr uint8_t kVramInitialValue = 0x5A;
+constexpr uint8_t kVramClearedValue = 0xCD;
+
+static_assert(kVramInteriorOffset + kVramPayloadSize < kVramAllocationSize);
 
 bool
 hasMem(const nixl_mem_list_t &mems, nixl_mem_t m) {
@@ -311,6 +320,141 @@ TEST(GdsMode, MtRoundTripThroughGdsName) {
     }
 
     EXPECT_TRUE(dramRoundTrip(agent, self, be, 1 * 1024 * 1024));
+}
+
+TEST_P(GdsBackend, VramInteriorPointerRoundTrip) {
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "An NVIDIA GPU is required for the VRAM interior-pointer test";
+    }
+    nixlAgentConfig cfg;
+    const std::string self = "gds_vram_interior_" + GetParam();
+    nixlAgent agent(self, cfg);
+
+    nixl_b_params_t backend_params = {{"thread_count", "4"}};
+    if (GetParam() == "GDS") {
+        // BatchIO is outside this PR. Exercise the MT path when using the GDS
+        // plugin name so this test covers the registered base/offset change.
+        backend_params["mode"] = "mt";
+    }
+
+    nixlBackendH *be = nullptr;
+    if (tryCreate(agent, GetParam(), be, backend_params) != NIXL_SUCCESS || be == nullptr) {
+        GTEST_SKIP() << GetParam() << " backend unavailable (no cuFile/GDS)";
+    }
+
+    nixl_opt_args_t ep;
+    ep.backends = {be};
+    nixl_reg_dlist_t gpu_registration(VRAM_SEG);
+    nixl_reg_dlist_t file_registration(FILE_SEG);
+
+    struct Cleanup {
+        nixlAgent &agent;
+        nixl_opt_args_t &ep;
+        nixl_reg_dlist_t &gpu_registration;
+        nixl_reg_dlist_t &file_registration;
+        bool gpu_registered = false;
+        bool file_registered = false;
+        void *gpu_buffer = nullptr;
+        int file_fd = -1;
+        std::filesystem::path file_path;
+
+        ~Cleanup() {
+            if (file_registered) {
+                agent.deregisterMem(file_registration, &ep);
+            }
+            if (gpu_registered) {
+                agent.deregisterMem(gpu_registration, &ep);
+            }
+            if (file_fd >= 0) {
+                close(file_fd);
+            }
+            if (gpu_buffer != nullptr) {
+                cudaFree(gpu_buffer);
+            }
+            if (!file_path.empty()) {
+                std::error_code error;
+                std::filesystem::remove(file_path, error);
+            }
+        }
+    } cleanup{agent, ep, gpu_registration, file_registration};
+
+    cleanup.file_path = makeSizedFile("nixl_gds_gtest_vram_interior.bin", kVramPayloadSize);
+    cleanup.file_fd = open(cleanup.file_path.c_str(), O_RDWR);
+    if (cleanup.file_fd < 0) {
+        ADD_FAILURE() << "failed to open " << cleanup.file_path;
+        return;
+    }
+    ASSERT_EQ(ftruncate(cleanup.file_fd, static_cast<off_t>(kVramPayloadSize)), 0);
+
+    int device = -1;
+    ASSERT_EQ(cudaGetDevice(&device), cudaSuccess);
+    ASSERT_EQ(cudaMalloc(&cleanup.gpu_buffer, kVramAllocationSize), cudaSuccess);
+
+    std::vector<uint8_t> initial_contents(kVramAllocationSize, kVramInitialValue);
+    std::vector<uint8_t> expected_contents(kVramAllocationSize, kVramClearedValue);
+    for (size_t index = 0; index < kVramPayloadSize; ++index) {
+        const uint8_t pattern_value = static_cast<uint8_t>((index * 17 + 3) & 0xff);
+        initial_contents[kVramInteriorOffset + index] = pattern_value;
+        expected_contents[kVramInteriorOffset + index] = pattern_value;
+    }
+
+    ASSERT_EQ(cudaMemcpy(cleanup.gpu_buffer,
+                         initial_contents.data(),
+                         initial_contents.size(),
+                         cudaMemcpyHostToDevice),
+              cudaSuccess);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    const nixlBlobDesc full_gpu_desc(reinterpret_cast<uintptr_t>(cleanup.gpu_buffer),
+                                     kVramAllocationSize,
+                                     static_cast<uint64_t>(device));
+    gpu_registration.addDesc(full_gpu_desc);
+    ASSERT_EQ(agent.registerMem(gpu_registration, &ep), NIXL_SUCCESS);
+    cleanup.gpu_registered = true;
+
+    const nixlBlobDesc file_desc(0, kVramPayloadSize, cleanup.file_fd);
+    file_registration.addDesc(file_desc);
+    ASSERT_EQ(agent.registerMem(file_registration, &ep), NIXL_SUCCESS);
+    cleanup.file_registered = true;
+
+    auto *interior_ptr = static_cast<uint8_t *>(cleanup.gpu_buffer) + kVramInteriorOffset;
+    const nixlBlobDesc interior_gpu_desc(
+        reinterpret_cast<uintptr_t>(interior_ptr), kVramPayloadSize, static_cast<uint64_t>(device));
+
+    nixl_xfer_dlist_t write_gpu(VRAM_SEG);
+    nixl_xfer_dlist_t write_file(FILE_SEG);
+    write_gpu.addDesc(interior_gpu_desc);
+    write_file.addDesc(file_desc);
+    ASSERT_EQ(runTransfer(agent, self, be, NIXL_WRITE, write_gpu, write_file), NIXL_SUCCESS);
+    ASSERT_EQ(fsync(cleanup.file_fd), 0);
+
+    ASSERT_EQ(cudaMemset(cleanup.gpu_buffer, kVramClearedValue, kVramAllocationSize), cudaSuccess);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    nixl_xfer_dlist_t read_gpu(VRAM_SEG);
+    nixl_xfer_dlist_t read_file(FILE_SEG);
+    read_gpu.addDesc(interior_gpu_desc);
+    read_file.addDesc(file_desc);
+    ASSERT_EQ(runTransfer(agent, self, be, NIXL_READ, read_gpu, read_file), NIXL_SUCCESS);
+
+    std::vector<uint8_t> actual_contents(kVramAllocationSize);
+    ASSERT_EQ(cudaMemcpy(actual_contents.data(),
+                         cleanup.gpu_buffer,
+                         actual_contents.size(),
+                         cudaMemcpyDeviceToHost),
+              cudaSuccess);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    EXPECT_TRUE(std::all_of(actual_contents.begin(),
+                            actual_contents.begin() + kVramInteriorOffset,
+                            [](uint8_t value) { return value == kVramClearedValue; }));
+    EXPECT_TRUE(std::equal(actual_contents.begin() + kVramInteriorOffset,
+                           actual_contents.begin() + kVramInteriorOffset + kVramPayloadSize,
+                           expected_contents.begin() + kVramInteriorOffset));
+    EXPECT_TRUE(std::all_of(actual_contents.begin() + kVramInteriorOffset + kVramPayloadSize,
+                            actual_contents.end(),
+                            [](uint8_t value) { return value == kVramClearedValue; }));
 }
 
 // ---------------------------------------------------------------------------
