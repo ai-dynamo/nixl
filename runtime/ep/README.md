@@ -316,7 +316,10 @@ directory. NIXL and UCX dependency headers are not fingerprinted by the cache ke
 
 Token capacity is a runtime kernel argument, so changing it between eager
 calls or new captures reuses the compiled specialization. Each existing
-graph retains the capacity supplied at capture.
+graph retains the capacity supplied at capture. Compilation uses `cuobjdump`
+once to store the kernel symbol with the CUBIN; cached loads read that symbol
+file. Clear caches created before `kernel.symbol` was introduced, or select a
+fresh cache directory when upgrading.
 
 When changing NIXL or UCX builds between runs, including build configuration or
 device-header changes, clear the existing cache or set `NIXL_EP_JIT_CACHE_DIR` to a

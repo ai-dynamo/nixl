@@ -146,6 +146,9 @@ public:
             disassemble(tmp_cubin_path, tmp_sass_path);
         }
 
+        // Publish the symbol with the CUBIN so cache loads do not need cuobjdump.
+        put(tmp_dir_path / "kernel.symbol", KernelRuntime::find_kernel_symbol(tmp_dir_path));
+
         // Fsync before rename to ensure visibility on distributed filesystems
         fsync_dir(tmp_dir_path);
 
