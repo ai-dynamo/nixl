@@ -937,7 +937,7 @@ nixlUcxWorker::test(nixlUcxReq req) {
     if (req == nullptr) {
         return NIXL_SUCCESS;
     }
-    ucp_worker_progress(worker.get());
+    progress();
     return nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
 }
 
