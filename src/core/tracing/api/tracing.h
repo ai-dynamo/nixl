@@ -94,7 +94,7 @@ public:
     tracer() const noexcept;
 
     [[nodiscard]] const TraceIdentity &
-    identity() const noexcept;
+    postIdentity() const noexcept;
 
     [[nodiscard]] TraceIdentity
     requestIdentity() const noexcept;
@@ -110,8 +110,8 @@ public:
 
 private:
     Tracer *const tracer_;
-    const TraceContext request_;
-    TraceIdentity identity_;
+    const TraceContext requestContext_;
+    TraceIdentity postIdentity_;
     const nixlTime::us_t createdAt_;
 };
 

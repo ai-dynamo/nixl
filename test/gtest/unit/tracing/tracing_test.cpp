@@ -789,7 +789,7 @@ TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
                                  nixl::trace::Record::PostXferReqWrite,
                                  {"bytes", 8});
             EXPECT_TRUE(post.active());
-            EXPECT_EQ(traced.identity().context, post_context);
+            EXPECT_EQ(traced.postIdentity().context, post_context);
             for (const CallLog *log : {&a, &b}) {
                 EXPECT_EQ(log->activeContexts,
                           std::vector<nixl::trace::TraceContext>{post_context});
@@ -1296,7 +1296,7 @@ TEST(Tracing, RequestDrawsItsIdentityFromItsTracer) {
     const nixlXferReqH request(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, tracer.get());
 
-    const auto identity = request.traceable().identity();
+    const auto identity = request.traceable().requestIdentity();
     EXPECT_TRUE(identity.context.valid());
     EXPECT_TRUE(identity.context.sampled());
     EXPECT_NE(identity.requestId, 0u);
@@ -1310,17 +1310,17 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, tracer.get());
     const nixlXferReqH second(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, tracer.get());
-    const auto first_context = first.traceable().identity().context;
+    const auto first_context = first.traceable().requestIdentity().context;
 
-    EXPECT_NE(first_context, second.traceable().identity().context);
-    EXPECT_EQ(first.traceable().identity().context, first_context);
+    EXPECT_NE(first_context, second.traceable().requestIdentity().context);
+    EXPECT_EQ(first.traceable().requestIdentity().context, first_context);
 }
 
 TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
     const nixlXferReqH request(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, nullptr);
 
-    EXPECT_FALSE(request.traceable().identity().context.valid());
+    EXPECT_FALSE(request.traceable().requestIdentity().context.valid());
 }
 
 TEST(Tracing, ActiveTracerGeneratesValidDistinctContexts) {
@@ -1605,17 +1605,17 @@ TEST(Tracing, TraceablePostTakesTheNextExecution) {
     nixl::trace::Traceable traced{nullptr, {context, 0x33}};
     nixl::trace::Traceable untraced{nullptr, {}};
 
-    EXPECT_EQ(traced.identity().context, context);
-    EXPECT_EQ(traced.identity().execution, 0u);
+    EXPECT_EQ(traced.requestIdentity().context, context);
+    EXPECT_EQ(traced.requestIdentity().execution, 0u);
     EXPECT_EQ(traced.post().execution, 1u);
     EXPECT_EQ(traced.post().execution, 2u);
     EXPECT_EQ(untraced.post().execution, 0u);
 
-    EXPECT_EQ(traced.identity().execution, 2u);
-    EXPECT_EQ(untraced.identity().execution, 0u);
+    EXPECT_EQ(traced.postIdentity().execution, 2u);
+    EXPECT_EQ(untraced.postIdentity().execution, 0u);
 }
 
-TEST(Tracing, TraceableIdentityIsItsLatestPosts) {
+TEST(Tracing, TraceablePostIdentityIsItsLatestPosts) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
@@ -1625,10 +1625,10 @@ TEST(Tracing, TraceableIdentityIsItsLatestPosts) {
     drawn.spanId.fill(0x5a);
     drawn.parentSpanId = context.spanId;
 
-    const auto prepped = traced.identity();
+    const auto prepped = traced.requestIdentity();
     const auto first = traced.post();
     const auto second = traced.post();
-    const auto posted = traced.identity();
+    const auto posted = traced.postIdentity();
 
     EXPECT_EQ(prepped.context, context);
     EXPECT_EQ(prepped.requestId, 0x35u);
@@ -1659,7 +1659,7 @@ TEST(Tracing, TraceablePostJoinsASuppliedContextForThatPostOnly) {
 
     EXPECT_EQ(traced.post(nixl::trace::formatTraceparent(application)).context, under_application);
     EXPECT_EQ(traced.post().context, under_request);
-    EXPECT_EQ(traced.identity().execution, 2u);
+    EXPECT_EQ(traced.postIdentity().execution, 2u);
 }
 
 TEST(Tracing, TraceablePostTakesASuppliedContextsSampledFlag) {

@@ -1020,7 +1020,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     handle->telemetry.totalBytes = total_bytes;
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
-    const nixl::trace::TraceIdentity trace_identity = handle->traceable().identity();
+    const nixl::trace::TraceIdentity trace_identity = handle->traceable().requestIdentity();
     ret = handle->engine->prepXfer(handle->backendOp,
                                    handle->initiatorDescs,
                                    handle->targetDescs,
@@ -1169,7 +1169,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     handle->telemetry.totalBytes = total_bytes;
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
-    const nixl::trace::TraceIdentity trace_identity = handle->traceable().identity();
+    const nixl::trace::TraceIdentity trace_identity = handle->traceable().requestIdentity();
     ret1 = handle->engine->prepXfer(handle->backendOp,
                                     handle->initiatorDescs,
                                     handle->targetDescs,
@@ -1442,7 +1442,7 @@ nixlAgent::getXferTraceInfo(const nixlXferReqH *req_hndl, nixl_xfer_trace_info_t
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const nixl::trace::TraceIdentity identity = req_hndl->traceable().identity();
+    const nixl::trace::TraceIdentity identity = req_hndl->traceable().postIdentity();
     if (identity.requestId == 0) {
         return NIXL_ERR_NOT_FOUND;
     }
