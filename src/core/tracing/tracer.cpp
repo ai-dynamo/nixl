@@ -56,8 +56,12 @@ emitEventTo(std::span<const std::unique_ptr<nixl::trace::TraceBackend>> backends
 [[nodiscard]] std::vector<std::unique_ptr<nixl::trace::TraceBackend>>
 capBackends(std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends) noexcept {
     if (backends.size() > nixl::trace::maxTraceBackends) {
-        NIXL_WARN << "nixl::trace: only the first " << nixl::trace::maxTraceBackends << " of "
-                  << backends.size() << " backends are active";
+        try {
+            NIXL_WARN << "nixl::trace: only the first " << nixl::trace::maxTraceBackends << " of "
+                      << backends.size() << " backends are active";
+        }
+        catch (...) {
+        }
         backends.resize(nixl::trace::maxTraceBackends);
     }
     return backends;
