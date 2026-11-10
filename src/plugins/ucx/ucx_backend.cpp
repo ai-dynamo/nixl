@@ -419,9 +419,12 @@ nixl::ucx::recordDeferredTraces() noexcept {
 }
 
 void
-nixlUcxBackendReqH::flushCallback(void *, ucs_status_t status, void *user_data) noexcept {
-    if (status == UCS_OK) {
-        const auto *const handle = static_cast<const nixlUcxBackendReqH *>(user_data);
+nixlUcxBackendReqH::flushCb(void *, ucs_status_t status, void *user_data) {
+    if (status != UCS_OK) {
+        return;
+    }
+    auto *const handle = static_cast<nixlUcxBackendReqH *>(user_data);
+    if (handle->wireCompletedOnFlush) {
         const nixlTime::us_t phase_at = handle->trace.now();
         nixl::ucx::deferWireCompleted({handle->trace,
                                        handle->operation,
@@ -429,6 +432,7 @@ nixlUcxBackendReqH::flushCallback(void *, ucs_status_t status, void *user_data) 
                                        phase_at,
                                        (phase_at != 0) ? phase_at : nixlTime::getUs()});
     }
+    handle->flushed();
 }
 
 nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
@@ -655,60 +659,35 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
+    // TODO: build the notification lazily, after the data is posted (slightly faster).
+    // Revisit with the serdes optimization and UCX memory pool for notifications.
+    std::string notif;
+    if (opt_args && opt_args->hasNotif) {
+        notif = buildNotif(opt_args->notifMsg, int_handle->trace);
+    }
+    int_handle->setNotif(std::move(notif));
+
     ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
     if (ret != NIXL_SUCCESS) {
         return ret;
     }
 
     const nixlTime::us_t submitted_at = int_handle->trace.now();
-    nixlTime::us_t sent_at = 0;
-    bool sent = false;
-    ret = int_handle->status();
-    if (opt_args && opt_args->hasNotif && (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG)) {
-        int_handle->notif = buildNotif(opt_args->notifMsg, int_handle->trace);
-        if (ret == NIXL_SUCCESS) {
-            ret = int_handle->sendNotif();
-            if (ret == NIXL_SUCCESS) {
-                sent_at = int_handle->trace.now();
-                sent = true;
-                ret = int_handle->status();
-            }
-        }
-    }
-
+    ret = int_handle->hasPendingRequests() ? NIXL_IN_PROG : int_handle->status();
     int_handle->trace.recordAt(nixl_trace_phase_t::WIRE_SUBMITTED, submitted_at);
     if (int_handle->wireCompletedAtOnce) {
         int_handle->recordWireCompleted(submitted_at);
     }
-    if (sent) {
-        int_handle->trace.recordAt(nixl_trace_phase_t::NOTIF_SENT, sent_at);
-    }
+    int_handle->recordNotifSent();
     return ret;
 }
 
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
-    const nixl_status_t handle_status = int_handle->status();
-
-    if ((handle_status == NIXL_IN_PROG) || int_handle->notif.empty()) {
-        return handle_status;
-    }
-
-    if (handle_status != NIXL_SUCCESS) [[unlikely]] {
-        int_handle->notif.clear();
-        return handle_status;
-    }
-
-    const nixl_status_t status = int_handle->sendNotif();
-    if (status != NIXL_SUCCESS) {
-        return status;
-    }
-
-    const nixlTime::us_t sent_at = int_handle->trace.now();
-    const nixl_status_t ret = int_handle->status();
-    int_handle->trace.recordAt(nixl_trace_phase_t::NOTIF_SENT, sent_at);
-    return ret;
+    const nixl_status_t status = int_handle->status();
+    int_handle->recordNotifSent();
+    return status;
 }
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const

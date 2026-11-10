@@ -114,7 +114,7 @@ public:
                  nixl_cost_t &method);
     nixl_status_t
     flushEp(nixlUcxReq &req,
-            ucp_send_nbx_callback_t callback = nullptr,
+            ucp_send_nbx_callback_t cb = nullptr,
             void *user_data = nullptr) const noexcept;
 
 #ifdef HAVE_UCX_SGL_API

@@ -378,16 +378,14 @@ nixlUcxEp::estimateCost(size_t size,
 }
 
 nixl_status_t
-nixlUcxEp::flushEp(nixlUcxReq &req,
-                   ucp_send_nbx_callback_t callback,
-                   void *user_data) const noexcept {
+nixlUcxEp::flushEp(nixlUcxReq &req, ucp_send_nbx_callback_t cb, void *user_data) const noexcept {
     ucp_request_param_t param;
     ucs_status_ptr_t request;
 
     param.op_attr_mask = 0;
-    if (callback != nullptr) {
+    if (cb != nullptr) {
         param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA;
-        param.cb.send = callback;
+        param.cb.send = cb;
         param.user_data = user_data;
     }
     request = ucp_ep_flush_nbx(eph_, &param);
