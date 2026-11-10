@@ -13,15 +13,15 @@ commits it, connections kept (with `--reconnect-on-leave` a leave is a symmetric
 any collective (every rank regenerates every other rank's routing from a seed), then replay the CUDA graph captured at
 the first phase they took part in against the reference of the current phase (payloads and expert statistics checked;
 selections of experts owned by ranks that left are dropped). Every traffic phase has at least two active GPUs.
-Ranks that are not active mirror every collective and touch no kernel. `--perf-phases` and `--feed-pairs` switch
-on opt-in timing paths (`run_perf`, `PairCase`, `run_feed`, the stamps in `switch_world`: the PERF and TRANS lines) that are off
-by default and not part of the correctness check.
+Ranks that are not active mirror every collective and touch no kernel. Timing is opt-in: `--benchmark` measures CUDA-event
+call/pair times, `--kineto` measures kernels, `--perf-phases` selects phases for both, and `--feed-pairs` measures transitions.
+`--skip-perf-test` suppresses event benchmarks; `--save-output [PATH]` saves per-rank results and configuration as JSON.
 
 Launch: one invocation per node (`--num-processes` GPUs each) under the node-level `WORLD_SIZE` / `RANK` of `init_dist`,
 no process group; the rank 0 process serves a TCPStore on `MASTER_ADDR` / `MASTER_PORT` (127.0.0.1:8361) for the whole
 run and keeps it alive until every peer has torn down (if a previous run still holds the port, choose another).
 `--store-timeout-secs` bounds every Store wait, `--num-cpu-timeout-secs` only the dispatch's CPU sync. `--num-experts`
-is the total physical slot count of the declared maximum world and must divide its rank count. `--max-scaleup-ranks 72
+is the total physical slot count of the declared maximum world and must be divisible by its rank count. `--max-scaleup-ranks 72
 --position-offset 64` places a 1 x 8 job at positions 64..71 of a 1 x 72 world (the extent is then 72: `--num-experts 288`).
     python tests/elastic/test_adaptive_elastic.py --num-processes 4 --num-tokens 512 --hidden 7168 --num-topk 8 --num-experts 192
     python tests/elastic/test_adaptive_elastic.py --plan '[[0,1,2,3,4,5,6,7],[0,1,2,3],[0,1,2,3,4,5,6,7]]' ...
@@ -108,6 +108,14 @@ def make_buffer(
 def extent_of(phase: Sequence[int], max_su: int) -> Tuple[int, int]:
     """The extent of a set of world ranks: highest domain index + 1, highest position + 1"""
     return max(r // max_su for r in phase) + 1, max(r % max_su for r in phase) + 1
+
+
+def load_plan(spec: str) -> List[List[int]]:
+    """Read the phase list from inline JSON or a JSON file."""
+    if os.path.isfile(spec):
+        with open(spec) as source:
+            spec = source.read()
+    return json.loads(spec)
 
 
 def default_plan(max_su: int, present: List[int]) -> List[List[int]]:
@@ -429,9 +437,68 @@ def run_eager(case: Case, phase_idx: int, phase: List[int], tag: str):
     return num_recv
 
 
+def remote_payload_rows(
+    topk_rows: Sequence[Sequence[int]],
+    slots_per_rank: int,
+    scaleup_extent: int,
+    source_domain: int,
+) -> Tuple[int, int]:
+    """Per-source token/destination pairs outside its domain, deduplicated by domain and by rank."""
+    domains = ranks = 0
+    for row in topk_rows:
+        remote = {
+            slot // slots_per_rank
+            for slot in row
+            if slot >= 0 and slot // slots_per_rank // scaleup_extent != source_domain
+        }
+        domains += len({rank // scaleup_extent for rank in remote})
+        ranks += len(remote)
+    return domains, ranks
+
+
+def pair_bytes(case: Case, pc: "PairCase", phase: List[int]) -> Dict[str, int]:
+    """Payload only: activation/scale bytes, excluding routing metadata, padding and completion traffic.
+    Remote bytes include both directions attributable to this source's routing, not a physical NIC's traffic.
+    Received/input bytes include local delivery; their pair bandwidth is effective throughput, not NVLink bandwidth.
+    """
+    _, scaleup_extent = case.extent(phase)
+    domains, ranks = remote_payload_rows(
+        pc.dispatch_args["topk_idx"].tolist(),
+        case.buffer.num_experts_per_rank,
+        scaleup_extent,
+        case.buffer.scaleout_rank_idx,
+    )
+    return dict(
+        dispatch_received_payload=pc.num_recv * pc.dispatch_bytes_per_token,
+        combine_input_payload=pc.num_recv * pc.combine_bytes_per_token,
+        dispatch_remote_payload=domains * pc.dispatch_bytes_per_token,
+        combine_remote_payload=(
+            domains if case.buffer.allow_multiple_reduction else ranks
+        )
+        * pc.combine_bytes_per_token,
+    )
+
+
+def benchmark_options(
+    args: argparse.Namespace, phase_idx: int, perf_phases: set
+) -> Tuple[bool, bool]:
+    selected = phase_idx in perf_phases
+    return (
+        (args.benchmark or selected) and not args.skip_perf_test,
+        args.kineto or selected,
+    )
+
+
 def run_perf(
-    case: Case, phase_idx: int, phase: List[int], mode: str, args: argparse.Namespace
-) -> None:
+    case: Case,
+    phase_idx: int,
+    phase: List[int],
+    mode: str,
+    args: argparse.Namespace,
+    *,
+    measure_events: bool = True,
+    measure_kernels: bool = True,
+) -> dict:
     """Mean kernel and CUDA-event call/pair times, with L2 flushing and active-rank alignment before each sample.
     PDL kernel durations include dependency waits and can overlap; their sum is not end-to-end latency.
     Each isolated call starts with flushed L2; the pair flushes only before dispatch, so its time need not equal their sum.
@@ -449,29 +516,83 @@ def run_perf(
     def combine():
         return buffer.combine(**pc.combine_args)
 
-    t_d, copy_d = bench_kineto(
-        dispatch,
-        kernel_names=("dispatch_impl", "dispatch_copy_epilogue_impl"),
-        barrier=buffer.barrier,
-    )
-    t_c, red_c = bench_kineto(
-        combine,
-        kernel_names=("combine_impl", "combine_reduce_epilogue_impl"),
-        barrier=buffer.barrier,
-    )
-    dispatch_wall, combine_wall, pair_wall = (
-        bench(fn, num_warmups=5, num_tests=20, flush_l2=True, barrier=buffer.barrier)[0]
-        for fn in (dispatch, combine, pc.pair)
-    )
+    record = dict(tokens=pc.num_tokens, num_recv=pc.num_recv)
+    fields = {}
+    if measure_kernels:
+        t_d, copy_d = bench_kineto(
+            dispatch,
+            kernel_names=("dispatch_impl", "dispatch_copy_epilogue_impl"),
+            barrier=buffer.barrier,
+        )
+        t_c, red_c = bench_kineto(
+            combine,
+            kernel_names=("combine_impl", "combine_reduce_epilogue_impl"),
+            barrier=buffer.barrier,
+        )
+        record["kineto"] = dict(
+            zip(
+                ("dispatch_us", "copy_us", "combine_us", "reduce_us"),
+                (float(t) * 1e6 for t in (t_d, copy_d, t_c, red_c)),
+            )
+        )
+        fields.update(record["kineto"])
+    if measure_events:
+        record["events"] = {}
+        for name, fn in (
+            ("dispatch", dispatch),
+            ("combine", combine),
+            ("pair", pc.pair),
+        ):
+            times = bench(
+                fn, num_warmups=5, num_tests=20, flush_l2=True, barrier=buffer.barrier
+            )
+            record["events"][name] = dict(
+                zip(("avg_us", "min_us", "max_us"), (float(t) * 1e6 for t in times))
+            )
+            fields[f"{name}_wall_us"] = record["events"][name]["avg_us"]
     torch.cuda.synchronize()
+    record["bytes"] = sizes = pair_bytes(case, pc, phase)
+    if measure_events:
+        pair = record["events"]["pair"]
+        fields.update(pair_min_us=pair["min_us"], pair_max_us=pair["max_us"])
+        # bytes / microseconds / 1000 = GB/s; a zero duration cannot yield a bandwidth.
+        for name, size in (
+            (
+                "pair_payload_gbps",
+                sizes["dispatch_received_payload"] + sizes["combine_input_payload"],
+            ),
+            (
+                "remote_payload_gbps",
+                sizes["dispatch_remote_payload"] + sizes["combine_remote_payload"],
+            ),
+        ):
+            if pair["avg_us"] > 0:
+                record[name] = fields[name] = size / pair["avg_us"] / 1000
     so_extent, su_extent = case.extent(phase)
     print(
         f"PERF tag={args.perf_tag} mode={mode} phase={phase_idx} live={len(phase)} bounds={so_extent}x{su_extent} rank={me} "
-        f"tokens={pc.num_tokens} dispatch_us={t_d * 1e6:.1f} copy_us={copy_d * 1e6:.1f} combine_us={t_c * 1e6:.1f} "
-        f"reduce_us={red_c * 1e6:.1f} dispatch_wall_us={dispatch_wall * 1e6:.1f} "
-        f"combine_wall_us={combine_wall * 1e6:.1f} pair_wall_us={pair_wall * 1e6:.1f}",
+        f"tokens={pc.num_tokens} "
+        + " ".join(f"{name}={value:.1f}" for name, value in fields.items()),
         flush=True,
     )
+    return record
+
+
+def save_results(
+    cohort: NixlBootstrap, path: str, config: dict, plan: List[List[int]], records: dict
+) -> None:
+    ranks = cohort._all_gather("results", records)
+    if cohort.rank == 0:
+        with open(path, "w") as output:
+            json.dump(
+                dict(schema_version=1, config=config, plan=plan, ranks=ranks),
+                output,
+                indent=2,
+                allow_nan=False,
+            )
+            output.write("\n")
+        print(f"Results saved to {path}", flush=True)
+    cohort.barrier("results-written")
 
 
 def print_profile(
@@ -512,6 +633,10 @@ class PairCase:
             topk_weights=topk_weights,
             **case.dispatch_kwargs(do_cpu_sync=True),
         )
+        payload = x if isinstance(x, tuple) else (x,)
+        self.dispatch_bytes_per_token = (
+            sum(t.numel() * t.element_size() for t in payload) // n
+        )
         # Each active source can contribute at most n deduplicated rows; allocate before the measured transition.
         self.y = torch.randn(
             n * len(phase),
@@ -520,10 +645,12 @@ class PairCase:
             device="cuda",
             generator=g,
         )
+        self.combine_bytes_per_token = case.hidden * self.y.element_size()
 
     def pair(self):
         _, _, _, handle, _ = self.case.buffer.dispatch(**self.dispatch_args)
-        self.combine_args = dict(x=self.y[: handle.num_recv_tokens], handle=handle)
+        self.num_recv = handle.num_recv_tokens
+        self.combine_args = dict(x=self.y[: self.num_recv], handle=handle)
         self.case.buffer.combine(**self.combine_args)
 
 
@@ -625,12 +752,16 @@ class GraphCase:
 
     def replay_and_check(self, phase: List[int], tag: str):
         assert self.graph is not None
-        assert self.handle is not None and self.recv_x is not None
-        case = self.case
-        me = case.buffer.world_rank
         self.stats.zero_()
         self.graph.replay()
         torch.cuda.synchronize()
+        return self.check(phase, tag)
+
+    def check(self, phase: List[int], tag: str, num_replays: int = 1):
+        """Check completed outputs; num_replays counts executions since the expert statistics were reset."""
+        case = self.case
+        me = case.buffer.world_rank
+        assert self.handle is not None and self.recv_x is not None
         combined_x = self.outputs
 
         # Captured selections outside this phase's active slots are dropped; -1 remains an empty selection.
@@ -681,7 +812,7 @@ class GraphCase:
             self.recv_x[:num_recv][order], expected_x[expected_order]
         ), f"[{tag}] graph received payload mismatch"
         assert torch.equal(
-            self.stats[:epr].to(torch.int64), expected_stats
+            self.stats[:epr].to(torch.int64), expected_stats * num_replays
         ), f"[{tag}] graph expert statistics mismatch"
         assert (
             self.stats.shape
@@ -862,7 +993,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     assert mode == expected_mode(
         present, max_su
     ), f"the constructor derived {mode} for {present}"
-    plan = json.loads(args.plan) if args.plan else default_plan(max_su, present)
+    plan = load_plan(args.plan) if args.plan else default_plan(max_su, present)
     cohort_print(
         f"Elastic test: world {max_so}x{max_su}, world rank {buffer.world_rank} = ({buffer.scaleout_rank_idx}, {buffer.scaleup_rank_idx}), "
         f"initial mode {mode}, active SMs {num_active_sms}, launch grid {buffer.num_launch_sms}, "
@@ -881,6 +1012,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     assert all(
         0 <= p < len(plan) for p in perf_phases
     ), f"--perf-phases {sorted(perf_phases)} outside the plan of {len(plan)} phases"
+    phase_records, transition_records = [], []
 
     # The phase each rank captures its graph at: the first phase of the plan it takes part in (reversed: the first wins)
     capture_phase_of = {r: list(phase) for phase in reversed(plan) for r in phase}
@@ -929,6 +1061,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
             )
             gpu_gap = after = float("nan")
             first_list = ""
+            times: List[float] = []
             if buffer.is_active:
                 assert pc is not None
                 first_event, _, times = run_feed(pc, feed)
@@ -948,6 +1081,32 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
                 f"commit_dev_ms={dev_ms:.3f} gpu_gap_ms={gpu_gap:.2f} before_us={before:.0f} first_us={first_list} after_us={after:.0f}",
                 flush=True,
             )
+            if args.save_output:
+                transition_records.append(
+                    dict(
+                        from_phase=phase_idx - 1,
+                        to_phase=phase_idx,
+                        mode=active_mode,
+                        role=role,
+                        live_before=len(prev),
+                        live_after=len(phase),
+                        num_connect=tim["num_connect"],
+                        num_disconnect=tim["num_disconnect"],
+                        connect_ms=tim["connect"],
+                        stage_ms=tim["stage"],
+                        commit_ms=tim["commit"],
+                        disconnect_ms=tim["disconnect"],
+                        barrier_ms=tim["barrier"],
+                        total_ms=tim["total"],
+                        commit_dev_ms=dev_ms,
+                        gpu_gap_ms=(
+                            gpu_gap if pre is not None and buffer.is_active else None
+                        ),
+                        before_us=before if pre is not None else None,
+                        first_us=times[:3],
+                        after_us=after if times else None,
+                    )
+                )
 
         # Ranks active for the first time capture now; the other active ranks run the warm-ups with them, idle ranks mirror the barriers
         new_capturers = sorted(set(phase) - captured)
@@ -979,8 +1138,34 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
                     f"graph replay (captured at phase {graph.capture_phase_of[me]}): {num_recv_graph} tokens received, bitwise match",
                     flush=True,
                 )
-            if phase_idx in perf_phases:
-                run_perf(case, phase_idx, phase, active_mode, args)
+            measure_events, measure_kernels = benchmark_options(
+                args, phase_idx, perf_phases
+            )
+            performance = (
+                run_perf(
+                    case,
+                    phase_idx,
+                    phase,
+                    active_mode,
+                    args,
+                    measure_events=measure_events,
+                    measure_kernels=measure_kernels,
+                )
+                if measure_events or measure_kernels
+                else None
+            )
+            if args.save_output:
+                phase_records.append(
+                    dict(
+                        phase=phase_idx,
+                        ranks=phase,
+                        mode=active_mode,
+                        extent=[so_extent, su_extent],
+                        eager_num_recv=num_recv,
+                        graph_num_recv=num_recv_graph,
+                        performance=performance,
+                    )
+                )
         # Prepare the next phase before the final old-world feed, keeping setup out of the transition gap.
         next_pc = None
         if feed > 0 and phase_idx + 1 < len(plan) and me in plan[phase_idx + 1]:
@@ -1002,6 +1187,18 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         buffer, present, barrier, args.store_timeout_secs, args.reconnect_on_leave
     )
     cohort_print("Adaptive elastic test passed")
+    if args.save_output:
+        save_results(
+            cohort,
+            args.save_output,
+            dict(
+                vars(args),
+                maximum_world=[max_so, max_su],
+                torch_version=str(torch.__version__),
+            ),
+            plan,
+            dict(world_rank=me, phases=phase_records, transitions=transition_records),
+        )
     buffer.destroy()
     # Rank 0 owns the TCPStore server; keep it alive until all peers finish teardown.
     barrier()
@@ -1045,7 +1242,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-if __name__ == "__main__":
+def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Adaptive EP kernels: elastic membership on the NIXL transport"
     )
@@ -1054,7 +1251,29 @@ if __name__ == "__main__":
         "--plan",
         type=str,
         default="",
-        help="JSON list of phases (lists of world ranks); default: a built-in plan",
+        help="inline JSON or JSON file of phases (lists of world ranks); default: a built-in plan",
+    )
+    parser.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="CUDA-event call/pair timings in every phase (off by default)",
+    )
+    parser.add_argument(
+        "--kineto",
+        action="store_true",
+        help="per-kernel timings in every phase (off by default)",
+    )
+    parser.add_argument(
+        "--skip-perf-test",
+        action="store_true",
+        help="skip event benchmarks, including those selected by --perf-phases; Kineto and feed timings are independent",
+    )
+    parser.add_argument(
+        "--save-output",
+        nargs="?",
+        const="adaptive_elastic_results.json",
+        default="",
+        help="save configuration, correctness counts, optional PERF and TRANS records as JSON",
     )
     parser.add_argument(
         "--perf-phases",
@@ -1101,6 +1320,11 @@ if __name__ == "__main__":
         default=0,
         help="declared maximum positions per domain (0 = the job's), e.g. 72 for an NVL72 domain",
     )
+    return parser
+
+
+if __name__ == "__main__":
+    parser = make_parser()
     args = parser.parse_args()
     assert (
         not args.profile or os.environ.get("NIXL_EP_ADAPTIVE_PROFILE") == "1"

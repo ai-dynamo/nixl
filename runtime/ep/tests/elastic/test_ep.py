@@ -471,7 +471,6 @@ def test_dispatch_combine(
                     """
                     Get the number of valid destinations, with deduplication within each token and numbers within `[ignored_nums_l, ignored_nums_r)` being ignored
                     """
-                    dst_idx = dst_idx.clone()
                     ignore_mask = dst_idx == -1
                     if args.ignore_local_traffic and ignored_nums_l is not None:
                         assert ignored_nums_r is not None
@@ -483,10 +482,7 @@ def test_dispatch_combine(
                     ).unsqueeze(-1) * (
                         max_num_in_dst_idx + 1
                     )  # So that different rows will have different values
-                    dst_idx[ignore_mask] = dst_idx[0][
-                        0
-                    ].item()  # So that these `-1`s won't affect the count of unique numbers
-                    return torch.unique(dst_idx, sorted=False).numel()
+                    return torch.unique(dst_idx[~ignore_mask], sorted=False).numel()
 
                 if not args.allow_multiple_reduction:
                     # No multiple reduction
