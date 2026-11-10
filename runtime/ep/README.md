@@ -59,6 +59,9 @@ to override it.
 
 ### Dispatch and combine
 
+BF16 combine requires `hidden` divisible by 256, including pairs that use
+FP8 or NVFP4 dispatch.
+
 Given an initialized process group `group` and CUDA tensors `x` (BF16,
 `[tokens, hidden]`), `topk_idx` (`nixl.runtime.ep.topk_idx_t`, `[tokens, topk]`) and
 optional `topk_weights` (float32, the same shape):
@@ -174,8 +177,8 @@ of attempting recovery.
   between completed pairs. Communicator, QP and service-level arguments are removed.
 - Constructor and size-hint `use_fp8_dispatch=True` reserve smaller FP8
   dispatch capacity; peers must use matching capacity settings. These buffers
-  reject BF16 dispatch. Default BF16-capacity buffers accept either wire
-  format, selected by dispatch input tensors.
+  accept FP8/NVFP4 and reject BF16 dispatch. Default BF16-capacity buffers
+  accept all three wire formats, selected by dispatch input tensors.
 - Committed masks/extents and connected world ranks replace static domain
   attributes/accessors. `get_physical_domain_size` and the
   `barrier(sequential=)` argument are removed.
@@ -184,6 +187,25 @@ of attempting recovery.
   before the launch-grid limit. `EPHandle.deterministic_sort` uses the handle's
   channel list instead of accepting a separate one. The constant-true private
   `_C.is_sm90_compiled` query is removed.
+
+## NVFP4 dispatch
+
+Construct the buffer with the model's logical `hidden`. Pass `dispatch`
+an already quantized `(codes, scales)` tuple: contiguous uint8 codes shaped
+`[tokens, hidden // 2]` and contiguous float8_e4m3fn or uint8 scales shaped
+`[tokens, hidden // 16]`, with `hidden` divisible by 64. Scale storage offsets
+must be divisible by four; clone unaligned scale slices before dispatch. Each code byte holds
+two e2m1 values, with the even element in its low nibble. Dispatch returns
+the codes unchanged and row-major float8_e4m3fn block scales. Combine remains
+BF16 and requires the logical hidden size divisible by 256; use this stricter
+alignment for a complete dispatch/combine pair.
+
+No new constructor flag is needed: either existing capacity setting fits
+NVFP4, and `use_fp8_dispatch=True` reserves the smaller one. Dispatch does
+not quantize, apply scales, or transmit a global scale. The caller must
+supply the consuming GEMM's global scale and any required scale swizzle;
+using one shared GEMM scale requires inputs quantized with that same scale.
+Column-major scale output is unsupported for NVFP4.
 
 ## Automatic combine optimization
 

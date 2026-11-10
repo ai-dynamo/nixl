@@ -327,8 +327,8 @@ class ElasticBuffer:
             num_max_tokens_per_rank: the maximum number of tokens per rank, used for buffer size calculation.
             hidden: the hidden dimension of each token.
             num_topk: the number of top-k experts per token.
-            use_fp8_dispatch: reserve smaller dispatch arenas for FP8 inputs only; False reserves BF16 capacity and also
-                accepts FP8 inputs. Must match across peers, including with explicit `num_bytes`; it does not cast inputs.
+            use_fp8_dispatch: reserve smaller dispatch arenas for FP8/NVFP4 inputs; False reserves BF16 capacity and also
+                accepts either quantized format. Must match across peers, including with explicit `num_bytes`; it does not cast inputs.
             deterministic: whether to sort received tokens deterministically (eager execution only).
             allow_multiple_reduction: whether to allow multiple reductions in combine.
             prefer_overlap_with_compute: whether to prefer overlapping communication with compute.
@@ -521,7 +521,7 @@ class ElasticBuffer:
             num_max_tokens_per_rank: the maximum number of tokens per rank.
             hidden: the hidden dimension of each token.
             num_topk: the number of top-k experts per token.
-            use_fp8_dispatch: size dispatch arenas for FP8 inputs only; pass the same value to the constructor.
+            use_fp8_dispatch: size dispatch arenas for FP8/NVFP4 inputs; pass the same value to the constructor.
             allow_multiple_reduction: whether to allow multiple reductions in combine.
             max_num_scaleout_ranks: the declared maximum world to size for (0 = the group's domain count).
             max_num_scaleup_ranks: likewise (0 = the group's domain size).
@@ -1075,7 +1075,12 @@ class ElasticBuffer:
             x: `torch.Tensor` or tuple of `torch.Tensor`, for the first type, the shape must be
                 `[num_tokens, hidden]`, and type must be `torch.bfloat16`; for the second type (FP8 mode),
                 the first element of the tuple must be `[num_tokens, hidden]` with type `torch.float8_e4m3fn`,
-                the second is the scale factors.
+                the second is the scale factors. NVFP4 uses `(codes, scales)`: contiguous uint8 codes of shape
+                `[num_tokens, hidden // 2]` (two e2m1 values per byte, even element in the low nibble) and contiguous
+                float8_e4m3fn or uint8 block scales of shape `[num_tokens, hidden // 16]`, with `hidden % 64 == 0`
+                and scale storage offset divisible by four; clone unaligned scale slices before dispatch.
+                Dispatch transports bytes without quantizing or applying scales. The caller supplies any global scale
+                to the consuming GEMM; a shared GEMM scale requires inputs quantized with that same global scale.
             topk_idx: `[num_tokens, num_topk]` with `nixl.runtime.ep.topk_idx_t` (typically `torch.int64`), the expert
                 indices selected by each token, `-1` means no selections.
             num_experts: the number of all experts, no longer optional because cached dispatch was removed. Upstream
@@ -1108,10 +1113,11 @@ class ElasticBuffer:
             do_expand: whether to use the expanding layout (one slot per expert per token).
             do_zero_padding: whether to zero out the alignment padding slots in the expanded output.
                 Only valid when `do_expand` is True. Ensures alignment gaps between experts are zeroed.
-            use_tma_aligned_col_major_sf: whether to use TMA-aligned column-major layout for scale factors.
+            use_tma_aligned_col_major_sf: whether to use TMA-aligned column-major layout for scale factors (FP8 only).
 
         Returns:
-            recv_x: received tokens, the same type and tuple as the input `x`
+            recv_x: received tokens, the same type and tuple as the input `x`. NVFP4 returns uint8 codes and
+                row-major float8_e4m3fn scales; GEMM-specific scale swizzling is left to the caller.
             recv_topk_idx: received expert indices
             recv_topk_weights: received expert weights (`None` if `topk_weights` was not provided).
             handle: the returned communication handle.
@@ -1136,6 +1142,18 @@ class ElasticBuffer:
 
         # Unpack SF
         x, sf = x if isinstance(x, tuple) else (x, None)
+
+        # NVFP4 scale bytes share storage with the int32 packs copied by the kernels.
+        nvfp4 = sf is not None and x.dtype == torch.uint8
+        if nvfp4:
+            assert (
+                x.ndim == 2
+                and sf.dtype in (torch.float8_e4m3fn, torch.uint8)
+                and x.shape[1] % 32 == 0
+                and sf.shape == (x.shape[0], x.shape[1] // 8)
+                and sf.is_contiguous()
+            ), "NVFP4 requires codes [tokens, hidden / 2] uint8 and contiguous scales [tokens, hidden / 16] float8_e4m3fn or uint8, hidden divisible by 64"
+            sf = sf.view(torch.int32)
 
         if num_max_tokens_per_rank is None:
             num_max_tokens_per_rank = self.num_max_tokens_per_rank
@@ -1211,6 +1229,8 @@ class ElasticBuffer:
                 else epilogue()
             )
 
+        if nvfp4:
+            recv_sf = recv_sf.view(torch.float8_e4m3fn)
         recv_x = (recv_x, recv_sf) if recv_sf is not None else recv_x
 
         self._auto_sm_config = auto_sm_config
@@ -1249,7 +1269,7 @@ class ElasticBuffer:
 
         Arguments:
             x: `[num_tokens, hidden]` with `torch.bfloat16` and `hidden` divisible by 256, the tokens to send for
-                reducing to their original ranks. This combine alignment also applies after FP8 dispatch.
+                reducing to their original ranks. This combine alignment also applies after FP8/NVFP4 dispatch.
             handle: a must-set communication handle, you can obtain this from the `dispatch` function.
             bias: 0, 1 or 2 `[num_combined_tokens, hidden]` with `torch.bfloat16` final bias to the output.
             previous_event: the event to wait before actually executing the kernel.

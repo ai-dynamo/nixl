@@ -102,11 +102,11 @@ static layout::TokenLayout get_combine_token_layout(const int& hidden) {
 }
 
 // Decide the number of channels per SM by shared memory consumption (both dispatch and combine must fit)
-static int get_num_channels_per_sm(const int& hidden, const int& elem_size, const int& num_sf_packs, const int& num_topk,
+static int get_num_channels_per_sm(const int& hidden, const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk,
                                    const int& num_experts, const int& num_max_ranks,
                                    const int& num_smem_bytes,
                                    const bool& prefer_overlap_with_compute) {
-    const auto dispatch_token_layout = get_dispatch_token_layout(hidden * elem_size, num_sf_packs, num_topk);
+    const auto dispatch_token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk);
     const auto combine_token_layout = get_combine_token_layout(hidden);
     int num_channels_per_sm = std::min<int>(
         (num_smem_bytes - get_num_notify_smem_bytes(num_max_ranks, num_experts)) / dispatch_token_layout.get_num_bytes<true>(),
@@ -131,7 +131,7 @@ static void launch_dispatch(void* x, void* sf,
                             int* num_unaligned_recv_tokens_per_expert,
                             int* token_metadata_at_forward,
                             const int& num_tokens, const int& num_max_tokens_per_rank,
-                            const int& hidden, const int& elem_size,
+                            const int& num_hidden_bytes,
                             const int& num_sf_packs, const int& sf_token_stride, const int& sf_hidden_stride,
                             const int& num_experts, const int& num_topk, const int& expert_alignment,
                             void* buffer, void* send_buffer,
@@ -151,7 +151,7 @@ static void launch_dispatch(void* x, void* sf,
         .do_cpu_sync = do_cpu_sync,
         .num_notify_warps = kNumNotifyWarps, .num_channels_per_sm = num_channels_per_sm,
         .num_max_scaleout_ranks = num_max_scaleout_ranks, .num_max_scaleup_ranks = num_max_scaleup_ranks,
-        .num_hidden_bytes = hidden * elem_size, .num_sf_packs = num_sf_packs,
+        .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
         .num_max_tokens_per_rank = num_max_tokens_per_rank,
         .num_experts = num_experts, .num_topk = num_topk, .expert_alignment = expert_alignment,
         .num_timeout_cycles = num_timeout_cycles,

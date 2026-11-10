@@ -459,10 +459,9 @@ public:
     }
 
     static std::tuple<int64_t, int64_t> get_dispatch_buffer_size(const int& num_max_tokens_per_rank,
-                                            const int& hidden, const int& num_sf_packs, const int& num_topk,
-                                            const int& elem_size,
+                                            const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk,
                                             const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
-        const auto token_layout = get_dispatch_token_layout(hidden * elem_size, num_sf_packs, num_topk);
+        const auto token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk);
 
         const auto scaleup_recv_buffer = layout::BufferLayout<false>(
             token_layout, num_scaleup_ranks, num_scaleout_ranks * num_max_tokens_per_rank);
@@ -507,7 +506,7 @@ public:
         const auto elem_size = use_fp8_dispatch ? sizeof(__nv_fp8_e4m3) : sizeof(nv_bfloat16);
         const auto num_sf_packs = use_fp8_dispatch ? get_max_num_fp8_sf_packs(hidden) : 0;
         const auto [num_dispatch_recv_bytes, num_dispatch_send_bytes] = get_dispatch_buffer_size(
-            num_max_tokens_per_rank, hidden, num_sf_packs, num_topk, elem_size, num_scaleout_ranks, num_scaleup_ranks);
+            num_max_tokens_per_rank, hidden * elem_size, num_sf_packs, num_topk, num_scaleout_ranks, num_scaleup_ranks);
         const auto [num_combine_recv_bytes, num_combine_send_bytes] = get_combine_buffer_size(
             num_max_tokens_per_rank, hidden, num_topk, num_scaleout_ranks, num_scaleup_ranks, allow_multiple_reduction);
         return {std::max(num_dispatch_recv_bytes, num_combine_recv_bytes), num_dispatch_send_bytes, num_combine_send_bytes};
@@ -574,8 +573,13 @@ public:
         const auto& topo = active_rank_topology();
 
         // Check data tensor
-        const auto [num_tokens, hidden] = get_shape<2>(x);
-        const auto num_hidden_bytes = hidden * static_cast<int>(x.element_size());
+        const auto [num_tokens, num_cols] = get_shape<2>(x);
+        const bool nvfp4 = x.scalar_type() == torch::kByte;
+        const int hidden = nvfp4 ? 2 * num_cols : num_cols;
+        const auto num_hidden_bytes = num_cols * static_cast<int>(x.element_size());
+        EP_HOST_ASSERT((not nvfp4 or (sf.has_value() and hidden % 64 == 0)) and
+                       "NVFP4 requires packed uint8 codes and block scales, with logical hidden divisible by 64");
+        EP_HOST_ASSERT(not (nvfp4 and use_tma_aligned_col_major_sf) and "NVFP4 scales must use row-major layout");
         // The committed extent product (the kernels' `num_ranks`), not the active rank count
         const int num_ranks = topo.num_scaleout_ranks * topo.num_scaleup_ranks;
         EP_HOST_ASSERT(num_experts % num_ranks == 0 and
@@ -595,11 +599,13 @@ public:
         void* sf_ptr = nullptr;
         int sf_token_stride = 0, sf_hidden_stride = 0;
         if (sf.has_value()) {
-            // SF must be FP32 or packed UE8M0x4
+            // SF is FP32, packed UE8M0x4, or packed NVFP4 block-scale bytes.
             const auto [num_tokens_, num_sf_packs_] = get_shape<2>(sf.value());
             EP_HOST_ASSERT(num_tokens == num_tokens_);
             EP_HOST_ASSERT(sf->is_cuda());
             EP_HOST_ASSERT(sf->element_size() == sizeof(sf_pack_t));
+            EP_HOST_ASSERT((not nvfp4 or (num_sf_packs_ == hidden / 64 and sf->is_contiguous())) and
+                           "NVFP4 block scales require contiguous int32 packs of shape [tokens, hidden / 64]");
             num_sf_packs = num_sf_packs_;
             sf_ptr = sf->data_ptr();
             sf_token_stride = sf->stride(0);
@@ -677,7 +683,7 @@ public:
         // Decide number of channels by shared memory consumption
         const int num_smem_bytes = jit::device_runtime->get_num_smem_bytes();
         const int num_channels_per_sm = get_num_channels_per_sm(
-            hidden, x.element_size(), num_sf_packs, num_topk, num_experts,
+            hidden, num_hidden_bytes, num_sf_packs, num_topk, num_experts,
             max_num_ranks, num_smem_bytes, prefer_overlap_with_compute);
         if (get_env<int>("NIXL_EP_BUFFER_DEBUG"))
             printf("Elastic buffer uses %d channels per SM\n", num_channels_per_sm);
@@ -742,7 +748,7 @@ public:
                         num_unaligned_recv_tokens_per_expert_ptr,
                         token_metadata_at_forward_ptr,
                         num_tokens, num_max_tokens_per_rank,
-                        hidden, x.element_size(),
+                        num_hidden_bytes,
                         num_sf_packs, sf_token_stride, sf_hidden_stride,
                         num_experts, num_topk, expert_alignment,
                         buffer, math::advance_ptr(buffer, arena.dispatch_send_offset),
@@ -821,7 +827,7 @@ public:
         // Allocate received tensors
         // `recv_src_metadata` includes source token indices and buffer slot indices
         const auto num_allocated_tokens = do_expand ? num_expanded_tokens : num_recv_tokens;
-        auto recv_x = torch::empty({num_allocated_tokens, hidden}, x.options());
+        auto recv_x = torch::empty({num_allocated_tokens, num_cols}, x.options());
         auto recv_sf = std::optional<torch::Tensor>();
         auto recv_topk_idx = std::optional<torch::Tensor>();
         auto recv_topk_weights = std::optional<torch::Tensor>();
