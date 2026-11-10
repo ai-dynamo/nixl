@@ -63,8 +63,7 @@ nixl::trace::getTraceTags(nixlSerDes &ser_des) {
     }
     requestTag tag;
     if ((ser_des.peekBufLen("treq") == sizeof(tag)) &&
-        (ser_des.getBuf("treq", &tag, sizeof(tag)) == NIXL_SUCCESS) && (tag.requestId != 0) &&
-        (tag.requestId <= maxRequestId)) {
+        (ser_des.getBuf("treq", &tag, sizeof(tag)) == NIXL_SUCCESS) && (tag.requestId != 0)) {
         identity.requestId = tag.requestId;
         identity.execution = tag.execution;
     }

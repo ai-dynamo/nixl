@@ -20,7 +20,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -45,7 +44,6 @@ inline constexpr std::size_t traceContextWireSize = 26;
 inline constexpr std::string_view traceSampleRatioVar = "NIXL_TRACE_SAMPLE_RATIO";
 inline constexpr std::string_view otelTracesSampleRatioVar = "OTEL_TRACES_SAMPLE_RATIO";
 inline constexpr double defaultSampleRatio = 1.0;
-inline constexpr std::uint64_t maxRequestId = std::numeric_limits<std::int64_t>::max();
 
 /**
  * @brief Outcome of decoding a wire record. UnknownVersion is a record written

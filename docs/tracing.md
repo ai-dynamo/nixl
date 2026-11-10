@@ -258,11 +258,13 @@ starting at 1, whether or not the backend then fails it. A post rejected before
 that, such as a repost refused with `NIXL_ERR_REPOST_ACTIVE`, takes none, so its
 span carries the request id but no execution number. A post's `nixl::xfer.complete`
 carries the same pair as its span. Both are recorded as `int64_t` attributes; 63
-bits keep every id positive. With no tracing backend active, a request has neither. A
-drawn id is never 0: if the agent's random source fails while drawing it, the request
-has neither an id nor a trace context and records nothing. Both are attributes, which
-UCX also carries to the receiver (see "Backend phases"), and the request id is also
-the NVTX payload on both sides (see "Correlation").
+bits keep every id positive. A receiver keeps any non-zero id it receives: a NIXL 1.6
+sender draws from all 64 bits, so about half its ids read as negative attributes,
+though its NVTX payloads still match. With no tracing backend active, a request has
+neither. A drawn id is never 0: if the agent's random source fails while drawing it,
+the request has neither an id nor a trace context and records nothing. Both are
+attributes, which UCX also carries to the receiver (see "Backend phases"), and the
+request id is also the NVTX payload on both sides (see "Correlation").
 
 Backend phases carry the pair too: a plugin receives it with the request's trace
 context and passes it back when it records a phase (see "Backend phases"). UCX's
