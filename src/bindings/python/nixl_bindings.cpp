@@ -752,7 +752,8 @@ PYBIND11_MODULE(_bindings, m) {
                py::object remote_indices,
                const std::string &notif_msg,
                const std::vector<uintptr_t> &backends,
-               bool skip_desc_merge) -> uintptr_t {
+               bool skip_desc_merge,
+               const std::string &trace_context) -> uintptr_t {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
@@ -768,6 +769,7 @@ PYBIND11_MODULE(_bindings, m) {
                     extra_params.notif = notif_msg;
                 }
                 extra_params.skipDescMerge = skip_desc_merge;
+                extra_params.traceContext = trace_context;
                 std::vector<int> local_indices_vec;
                 std::vector<int> remote_indices_vec;
 
@@ -822,7 +824,8 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("remote_indices"),
             py::arg("notif_msg") = std::string(""),
             py::arg("backend") = std::vector<uintptr_t>({}),
-            py::arg("skip_desc_merg") = false)
+            py::arg("skip_desc_merg") = false,
+            py::arg("trace_context") = std::string(""))
         .def(
             "createXferReq",
             [](nixlAgent &agent,
@@ -831,7 +834,8 @@ PYBIND11_MODULE(_bindings, m) {
                const nixl_xfer_dlist_t &remote_descs,
                const std::string &remote_agent,
                const std::string &notif_msg,
-               const std::vector<uintptr_t> &backends) -> uintptr_t {
+               const std::vector<uintptr_t> &backends,
+               const std::string &trace_context) -> uintptr_t {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
@@ -841,6 +845,7 @@ PYBIND11_MODULE(_bindings, m) {
                 if (notif_msg.size() > 0) {
                     extra_params.notif = notif_msg;
                 }
+                extra_params.traceContext = trace_context;
                 nixl_status_t ret = agent.createXferReq(
                     operation, local_descs, remote_descs, remote_agent, handle, &extra_params);
 
@@ -853,6 +858,7 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("remote_agent"),
             py::arg("notif_msg") = std::string(""),
             py::arg("backend") = std::vector<uintptr_t>({}),
+            py::arg("trace_context") = std::string(""),
             py::call_guard<py::gil_scoped_release>())
         .def(
             "estimateXferCost",
@@ -868,11 +874,17 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("req_handle"))
         .def(
             "postXferReq",
-            [](nixlAgent &agent, uintptr_t reqh, std::string notif_msg) -> nixl_status_t {
+            [](nixlAgent &agent,
+               uintptr_t reqh,
+               std::string notif_msg,
+               const std::string &trace_context) -> nixl_status_t {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
-                if (notif_msg.size() > 0) {
-                    extra_params.notif = notif_msg;
+                if ((notif_msg.size() > 0) || (trace_context.size() > 0)) {
+                    if (notif_msg.size() > 0) {
+                        extra_params.notif = notif_msg;
+                    }
+                    extra_params.traceContext = trace_context;
                     ret = agent.postXferReq((nixlXferReqH *)reqh, &extra_params);
                 } else {
                     ret = agent.postXferReq((nixlXferReqH *)reqh);
@@ -882,6 +894,7 @@ PYBIND11_MODULE(_bindings, m) {
             },
             py::arg("reqh"),
             py::arg("notif_msg") = std::string(""),
+            py::arg("trace_context") = std::string(""),
             py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferStatus",
@@ -961,12 +974,14 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                const std::string &remote_agent,
                const std::string &msg,
-               const std::vector<uintptr_t> &backends) {
+               const std::vector<uintptr_t> &backends,
+               const std::string &trace_context) {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
 
                 for (uintptr_t backend : backends)
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                extra_params.traceContext = trace_context;
 
 
                 ret = agent.genNotif(remote_agent, msg, &extra_params);
@@ -977,6 +992,7 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("remote_agent"),
             py::arg("msg"),
             py::arg("backends") = std::vector<uintptr_t>({}),
+            py::arg("trace_context") = std::string(""),
             py::call_guard<py::gil_scoped_release>())
         .def("getLocalMD",
              [](nixlAgent &agent) -> py::bytes {

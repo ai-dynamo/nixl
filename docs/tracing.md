@@ -341,6 +341,13 @@ without `treq`, since a notification has no request, and the receiver's
 nothing; without one, `genNotif` records its span as before, and the notification
 carries no context.
 
+From Python, `initialize_xfer`, `make_prepped_xfer`, `transfer` and `send_notif` take it
+as `trace_context`, a `traceparent` string or the record as bytes; from Rust,
+`OptArgs::set_trace_context` sets it for any of the four calls. Options passed to a post
+replace the request's notification, so a post given a context sends the notification set
+at creation only if its options carry it again, which in Python means repeating
+`notif_msg`.
+
 ### Backend phases
 
 A backend plugin can record a phase of its own work through its

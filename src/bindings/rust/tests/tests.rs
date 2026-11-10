@@ -132,8 +132,19 @@ fn nvtx_plugin_missing(test_name: &str) -> bool {
 }
 
 fn with_write_request(prepped: bool, test: impl FnOnce(&Agent, &XferRequest, &OptArgs)) {
+    with_write_request_under(prepped, b"", test);
+}
+
+fn with_write_request_under(
+    prepped: bool,
+    trace_context: &[u8],
+    test: impl FnOnce(&Agent, &XferRequest, &OptArgs),
+) {
     let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
     let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+    let mut creation_args = OptArgs::new().expect("Failed to create OptArgs");
+    creation_args.set_trace_context(trace_context).expect("Failed to set the trace context");
+    let creation = if trace_context.is_empty() { None } else { Some(&creation_args) };
 
     let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
     let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
@@ -155,7 +166,7 @@ fn with_write_request(prepped: bool, test: impl FnOnce(&Agent, &XferRequest, &Op
                 &[0],
                 &remote_handle,
                 &[0],
-                Some(&opt_args)
+                creation.or(Some(&opt_args))
             ).expect("Failed to make transfer request");
             test(&agent1, &xfer_req, &opt_args);
         } else {
@@ -164,7 +175,7 @@ fn with_write_request(prepped: bool, test: impl FnOnce(&Agent, &XferRequest, &Op
                 &local_dlist,
                 &remote_dlist,
                 "agent2",
-                None
+                creation
             ).expect("Failed to create transfer request");
             test(&agent1, &xfer_req, &opt_args);
         }
@@ -1891,6 +1902,72 @@ fn test_get_xfer_trace_info_sampled_posts_differ() {
         assert_eq!((first_flags, second_flags), ("03", "03"));
         assert_eq!(first_trace_id, second_trace_id);
         assert_ne!(first_span_id, second_span_id);
+    });
+}
+
+const APPLICATION: &str = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+
+#[test]
+fn test_opt_args_trace_context_round_trips() {
+    let mut opt_args = OptArgs::new().expect("Failed to create OptArgs");
+    assert!(opt_args.get_trace_context().expect("get_trace_context failed").is_empty());
+    opt_args.set_trace_context(APPLICATION.as_bytes()).expect("set_trace_context failed");
+    assert_eq!(opt_args.get_trace_context().expect("get_trace_context failed"), APPLICATION.as_bytes());
+}
+
+#[test]
+fn test_supplied_trace_context_is_the_requests_parent() {
+    if nvtx_plugin_missing("test_supplied_trace_context_is_the_requests_parent") {
+        return;
+    }
+    let env_guard = EnvGuard::new([
+        "NIXL_TRACE_BACKENDS",
+        "NIXL_TRACE_NVTX_WITHOUT_PROFILER",
+        "NIXL_TRACE_SAMPLE_RATIO",
+    ]);
+    env_guard.set("NIXL_TRACE_BACKENDS", "nvtx");
+    env_guard.set("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+    env_guard.set("NIXL_TRACE_SAMPLE_RATIO", "0");
+    let (application_trace_id, application_span_id, _) = split_traceparent(APPLICATION);
+
+    for prepped in [false, true] {
+        with_write_request_under(prepped, APPLICATION.as_bytes(), |_, xfer_req, _| {
+            let created = trace_info(xfer_req);
+            let (trace_id, span_id, flags) = split_traceparent(&created.traceparent);
+            assert_eq!(trace_id, application_trace_id);
+            assert_ne!(span_id, application_span_id);
+            assert_eq!(flags, "01");
+        });
+    }
+}
+
+#[test]
+fn test_supplied_post_trace_context_is_that_posts_parent() {
+    if nvtx_plugin_missing("test_supplied_post_trace_context_is_that_posts_parent") {
+        return;
+    }
+    let env_guard = EnvGuard::new([
+        "NIXL_TRACE_BACKENDS",
+        "NIXL_TRACE_NVTX_WITHOUT_PROFILER",
+        "NIXL_TRACE_SAMPLE_RATIO",
+    ]);
+    env_guard.set("NIXL_TRACE_BACKENDS", "nvtx");
+    env_guard.set("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+    env_guard.set("NIXL_TRACE_SAMPLE_RATIO", "1");
+    let (application_trace_id, _, _) = split_traceparent(APPLICATION);
+
+    with_write_request(false, |agent, xfer_req, opt_args| {
+        let created = trace_info(xfer_req);
+        let mut with_context = OptArgs::new().expect("Failed to create OptArgs");
+        with_context.set_trace_context(APPLICATION.as_bytes()).expect("set_trace_context failed");
+        post_to_completion(agent, xfer_req, &with_context);
+        let joined = trace_info(xfer_req);
+        post_to_completion(agent, xfer_req, opt_args);
+        let own = trace_info(xfer_req);
+
+        assert_eq!(split_traceparent(&joined.traceparent).0, application_trace_id);
+        assert_eq!(split_traceparent(&own.traceparent).0, split_traceparent(&created.traceparent).0);
+        assert_ne!(split_traceparent(&own.traceparent).0, application_trace_id);
     });
 }
 

@@ -586,6 +586,7 @@ class nixl_agent:
         notif_msg: bytes = b"",
         backends: list[str] = [],
         skip_desc_merge: bool = False,
+        trace_context: Union[str, bytes] = "",
     ) -> nixl_xfer_handle:
         """Prepare a transfer operation using prep_xfer_dlist handles.
 
@@ -601,6 +602,8 @@ class nixl_agent:
                 notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
             backends: Optional list of backend names to limit which backends NIXL can use.
             skip_desc_merge: Deprecated: Whether to skip descriptor merging optimization.
+            trace_context: Optional trace context of the caller's span, a W3C traceparent str or NIXL's 26-byte trace context record as bytes.
+                The request's span becomes its child, in its trace, and its sampled flag decides whether the request is traced.
 
         Returns:
             Opaque handle for posting/checking transfer.
@@ -620,6 +623,7 @@ class nixl_agent:
             notif_msg,
             handle_list,
             skip_desc_merge,
+            trace_context,
         )
 
         return nixl_xfer_handle(self, handle)
@@ -632,6 +636,7 @@ class nixl_agent:
         remote_agent: str,
         notif_msg: bytes = b"",
         backends: list[str] = [],
+        trace_context: Union[str, bytes] = "",
     ) -> nixl_xfer_handle:
         """Initialize a transfer operation. This is a combined API, to create a transfer request
         from two descriptor lists, where NIXL prepares the descriptor lists and then the transfer.
@@ -647,6 +652,8 @@ class nixl_agent:
             notif_msg: Optional notification message.
                 notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
             backends: Optional list of backend names to limit which backends NIXL can use.
+            trace_context: Optional trace context of the caller's span, a W3C traceparent str or NIXL's 26-byte trace context record as bytes.
+                The request's span becomes its child, in its trace, and its sampled flag decides whether the request is traced.
 
         Returns:
             Opaque handle for posting/checking transfer.
@@ -658,12 +665,23 @@ class nixl_agent:
             handle_list.append(self.backends[backend_string])
 
         handle = self.agent.createXferReq(
-            op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
+            op,
+            local_descs,
+            remote_descs,
+            remote_agent,
+            notif_msg,
+            handle_list,
+            trace_context,
         )
 
         return nixl_xfer_handle(self, handle)
 
-    def transfer(self, handle: nixl_xfer_handle, notif_msg: bytes = b"") -> str:
+    def transfer(
+        self,
+        handle: nixl_xfer_handle,
+        notif_msg: bytes = b"",
+        trace_context: Union[str, bytes] = "",
+    ) -> str:
         """Initiate a data transfer operation.
         After calling this, the transfer state can be checked asynchronously till completion.
         In case of small transfers that are completed as part of the call itself, return value
@@ -673,11 +691,13 @@ class nixl_agent:
             handle: Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
             notif_msg: Optional notification message can be specified or updated per transfer call.
                 notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
+            trace_context: Optional trace context of the caller's span, for this post alone, as a traceparent str or the 26-byte record as bytes.
+                Giving one posts with this call's options, so a notification given at creation is sent only if notif_msg repeats it.
 
         Returns:
             Status of the transfer operation ("DONE", "PROC", or "ERR").
         """
-        status = self.agent.postXferReq(handle._handle, notif_msg)
+        status = self.agent.postXferReq(handle._handle, notif_msg, trace_context)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
         elif status == nixlBind.NIXL_IN_PROG:
@@ -885,7 +905,11 @@ class nixl_agent:
         return found
 
     def send_notif(
-        self, remote_agent_name: str, notif_msg: bytes, backend: Optional[str] = None
+        self,
+        remote_agent_name: str,
+        notif_msg: bytes,
+        backend: Optional[str] = None,
+        trace_context: Union[str, bytes] = "",
     ):
         """Send a standalone notification to a remote agent, not bound to a transfer.
 
@@ -894,11 +918,18 @@ class nixl_agent:
             notif_msg: Message to send, it will be received as bytes.
                 notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
             backends: Optional a backend name to use to send the notifications.
+            trace_context: Optional trace context of the caller's span, as a traceparent str or the 26-byte record as bytes.
+                The notification's span becomes its child, and the receiver records the notification under it.
         """
         if backend is None:
-            self.agent.genNotif(remote_agent_name, notif_msg)
+            self.agent.genNotif(remote_agent_name, notif_msg, [], trace_context)
         else:
-            self.agent.genNotif(remote_agent_name, notif_msg, self.backends[backend])
+            self.agent.genNotif(
+                remote_agent_name,
+                notif_msg,
+                self.backends[backend],
+                trace_context,
+            )
 
     def get_agent_metadata(self) -> bytes:
         """Get the full metadata of the local agent.

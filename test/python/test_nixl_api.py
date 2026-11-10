@@ -788,7 +788,7 @@ requires_nvtx_plugin = pytest.mark.skipif(
 
 
 @contextlib.contextmanager
-def _xfer_handle(backend_name, prepped=False):
+def _xfer_handle(backend_name, prepped=False, trace_context=""):
     agent, target = (
         nixl_agent(
             str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
@@ -803,10 +803,16 @@ def _xfer_handle(backend_name, prepped=False):
     if prepped:
         local = agent.prep_xfer_dlist("NIXL_INIT_AGENT", src)
         remote = agent.prep_xfer_dlist(target.name, dst)
-        handle = agent.make_prepped_xfer("WRITE", local, [0], remote, [0])
+        handle = agent.make_prepped_xfer(
+            "WRITE", local, [0], remote, [0], trace_context=trace_context
+        )
     else:
         handle = agent.initialize_xfer(
-            "WRITE", agent.get_xfer_descs(src), agent.get_xfer_descs(dst), target.name
+            "WRITE",
+            agent.get_xfer_descs(src),
+            agent.get_xfer_descs(dst),
+            target.name,
+            trace_context=trace_context,
         )
     try:
         yield agent, handle
@@ -815,8 +821,8 @@ def _xfer_handle(backend_name, prepped=False):
         agent.remove_remote_agent(target.name)
 
 
-def _post_to_done(agent, handle):
-    state = agent.transfer(handle)
+def _post_to_done(agent, handle, trace_context=""):
+    state = agent.transfer(handle, trace_context=trace_context)
     deadline = time.monotonic() + 5
     while state == "PROC" and time.monotonic() < deadline:
         state = agent.check_xfer_state(handle)
@@ -904,6 +910,73 @@ def test_xfer_trace_info_is_a_read_only_snapshot(monkeypatch, backend_name):
     for field in ("requestId", "execution", "traceparent"):
         with pytest.raises(AttributeError):
             setattr(info, field, getattr(info, field))
+
+
+_APPLICATION = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+
+
+def _application_record():
+    match = _TRACEPARENT.fullmatch(_APPLICATION)
+    return (
+        bytes([1, 1])
+        + bytes.fromhex(match["trace_id"])
+        + bytes.fromhex(match["span_id"])
+    )
+
+
+@requires_nvtx_plugin
+@pytest.mark.parametrize("prepped", [False, True])
+@pytest.mark.parametrize("form", ["traceparent", "record"])
+def test_xfer_joins_a_supplied_trace_context(monkeypatch, backend_name, prepped, form):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1")
+    monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "0")
+    supplied = _APPLICATION if form == "traceparent" else _application_record()
+    application = _TRACEPARENT.fullmatch(_APPLICATION)
+    with _xfer_handle(backend_name, prepped, supplied) as (agent, handle):
+        created = _TRACEPARENT.fullmatch(_trace_info(agent, handle)[2])
+    assert created and created["trace_id"] == application["trace_id"]
+    assert created["span_id"] != application["span_id"]
+    assert created["flags"] == "01"
+
+
+@requires_nvtx_plugin
+def test_transfer_joins_a_supplied_trace_context(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1")
+    monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "1")
+    application = _TRACEPARENT.fullmatch(_APPLICATION)
+    with _xfer_handle(backend_name) as (agent, handle):
+        request = _TRACEPARENT.fullmatch(_trace_info(agent, handle)[2])
+        _post_to_done(agent, handle, _APPLICATION)
+        joined = _TRACEPARENT.fullmatch(_trace_info(agent, handle)[2])
+        _post_to_done(agent, handle)
+        own = _TRACEPARENT.fullmatch(_trace_info(agent, handle)[2])
+    assert joined and joined["trace_id"] == application["trace_id"]
+    assert own and own["trace_id"] == request["trace_id"]
+    assert own["trace_id"] != application["trace_id"]
+
+
+@requires_nvtx_plugin
+@pytest.mark.timeout(10, func_only=True)
+def test_send_notif_takes_a_trace_context(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1")
+    agent, target = (
+        nixl_agent(
+            str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+        )
+        for _ in range(2)
+    )
+    agent.add_remote_agent(target.get_agent_metadata())
+    target.add_remote_agent(agent.get_agent_metadata())
+    try:
+        agent.send_notif(target.name, b"traced", trace_context=_APPLICATION)
+        while not target.check_remote_xfer_done(agent.name, b"traced"):
+            pass
+    finally:
+        agent.remove_remote_agent(target.name)
+        target.remove_remote_agent(agent.name)
 
 
 def test_xfer_trace_info_binding_rejects_a_null_handle(one_empty_agent):
