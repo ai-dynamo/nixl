@@ -71,8 +71,8 @@ public:
     updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
 
     [[nodiscard]] const nixl::trace::Traceable &
-    trace() const noexcept {
-        return trace_;
+    traceable() const noexcept {
+        return traceable_;
     }
 
     friend class nixlAgent;
@@ -86,7 +86,7 @@ private:
 
     const std::string remoteAgent;
     const nixl_remote_section_weak_t remoteSection;
-    nixl::trace::Traceable trace_;
+    nixl::trace::Traceable traceable_;
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 

@@ -93,10 +93,10 @@ public:
     post();
 
     void
-    record(Record record) const;
+    trace(Record record) const;
 
     void
-    record(Record record, const Attribute &attr) const;
+    trace(Record record, const Attribute &attr) const;
 
 private:
     friend struct detail::TraceableAccess;

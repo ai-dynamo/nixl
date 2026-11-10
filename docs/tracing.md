@@ -211,7 +211,7 @@ Each name and its kind come from `nixl::trace::Record` in `tracing/record.h`, th
 list of the agent's records and the backends' phases and spans. A call site names its
 record, such as `NIXL_TRACE_SCOPE(span, tracer, nixl::trace::Record::RegisterMem)`, and
 a request records its completion and errors itself, with
-`trace().record(nixl::trace::Record::XferComplete)`. NVTX registers the names in the
+`traceable().trace(nixl::trace::Record::XferComplete)`. NVTX registers the names in the
 list's order and finds a record's handle by its position.
 
 `nixl::getNotifs` is recorded only by a call that returns notifications, so polling an

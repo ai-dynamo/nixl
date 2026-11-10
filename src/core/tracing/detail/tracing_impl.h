@@ -52,7 +52,7 @@ Traceable::post() {
 }
 
 inline void
-Traceable::record([[maybe_unused]] Record record) const {
+Traceable::trace([[maybe_unused]] Record record) const {
 #if defined(NIXL_TRACE_ENABLED)
     if ((tracer_ != nullptr) && identity_.context.sampled()) {
         const Attribute attrs[] = {{"nixl.xfer_request_id", identity_.requestId},
@@ -64,7 +64,7 @@ Traceable::record([[maybe_unused]] Record record) const {
 }
 
 inline void
-Traceable::record([[maybe_unused]] Record record, [[maybe_unused]] const Attribute &attr) const {
+Traceable::trace([[maybe_unused]] Record record, [[maybe_unused]] const Attribute &attr) const {
 #if defined(NIXL_TRACE_ENABLED)
     if ((tracer_ != nullptr) && identity_.context.sampled()) {
         const Attribute attrs[] = {{"nixl.xfer_request_id", identity_.requestId},

@@ -1115,7 +1115,7 @@ TEST(Tracing, RequestDrawsItsIdentityFromItsTracer) {
     const nixlXferReqH request(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, tracer.get());
 
-    const auto identity = request.trace().identity();
+    const auto identity = request.traceable().identity();
     EXPECT_TRUE(identity.context.valid());
     EXPECT_TRUE(identity.context.sampled());
     EXPECT_NE(identity.requestId, 0u);
@@ -1129,17 +1129,17 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, tracer.get());
     const nixlXferReqH second(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, tracer.get());
-    const auto first_context = first.trace().identity().context;
+    const auto first_context = first.traceable().identity().context;
 
-    EXPECT_NE(first_context, second.trace().identity().context);
-    EXPECT_EQ(first.trace().identity().context, first_context);
+    EXPECT_NE(first_context, second.traceable().identity().context);
+    EXPECT_EQ(first.traceable().identity().context, first_context);
 }
 
 TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
     const nixlXferReqH request(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, nullptr);
 
-    EXPECT_FALSE(request.trace().identity().context.valid());
+    EXPECT_FALSE(request.traceable().identity().context.valid());
 }
 
 TEST(Tracing, ActiveTracerGeneratesValidDistinctContexts) {
@@ -1385,8 +1385,8 @@ TEST(Tracing, TraceableRecordsItsEventsInItsLatestPost) {
     nixl::trace::Traceable traced{tracer.get(), {request, 0x37}};
     static_cast<void>(traced.post());
 
-    traced.record(nixl::trace::Record::XferComplete);
-    traced.record(nixl::trace::Record::XferError, {"nixl.status", NIXL_ERR_BACKEND});
+    traced.trace(nixl::trace::Record::XferComplete);
+    traced.trace(nixl::trace::Record::XferError, {"nixl.status", NIXL_ERR_BACKEND});
 
     for (const CallLog *log : {&a, &b}) {
         ASSERT_EQ(log->emittedEvents.size(), 2u);
@@ -1411,8 +1411,8 @@ TEST(Tracing, TraceableRecordsNothingUnsampledOrWithoutATracer) {
     const nixl::trace::Traceable unsampled{tracer.get(), {testContext(0x39, 0x02), 0x39}};
     const nixl::trace::Traceable untraced{nullptr, {testContext(0x3a), 0x3a}};
 
-    unsampled.record(nixl::trace::Record::XferComplete);
-    untraced.record(nixl::trace::Record::XferError, {"nixl.status", NIXL_ERR_BACKEND});
+    unsampled.trace(nixl::trace::Record::XferComplete);
+    untraced.trace(nixl::trace::Record::XferError, {"nixl.status", NIXL_ERR_BACKEND});
 
     EXPECT_TRUE(a.emittedEvents.empty());
     EXPECT_TRUE(b.emittedEvents.empty());
@@ -1724,7 +1724,7 @@ TEST(Tracing, RecordReadsNoClockForBackendsThatOwnTimestamps) {
     nixl::trace::Tracer tracer{std::move(backends), 0.0};
     const nixl::trace::Traceable traced{&tracer, {testContext(0x3d), 0x3d}};
 
-    traced.record(nixl::trace::Record::XferComplete);
+    traced.trace(nixl::trace::Record::XferComplete);
 
     for (const CallLog *log : {&a, &b}) {
         ASSERT_EQ(log->emittedEvents.size(), 1u);
