@@ -334,6 +334,33 @@ symlinks `docker` to `podman` in two different containers, and the push in
 `manylinux` runner. Check the step's `containerSelector` against
 `runs_on_dockers`, not just whether `docker` is podman.
 
+## Registry logins
+
+`il.artifactory.nvidia.com` allows anonymous pulls. A pipeline whose own steps
+never push an image therefore does not log in to it, and does not bind
+`svc-nixl-il-artifactory-token`, before its podman builds. Two pipelines qualify:
+`build-container-pr` (`Setup docker`) and `build-wheel-nightly` (`Prepare`).
+`build-container-pr` still logs in to `gitlab-master.nvidia.com:5005`, which
+needs auth to pull. Pipelines whose steps push keep their login where it was.
+ci-demo's own login for `registry_auth` image builds is separate and unchanged.
+
+A single registry login used to fail the whole build. Two transient failures
+have done this while sibling branches logged in with the same credentials
+seconds apart: `invalid username/password` from `il.artifactory.nvidia.com` or
+`gitlab-master.nvidia.com:5005`, and `lookup il.artifactory.nvidia.com: i/o
+timeout`. Every explicit login step therefore pipes its token into
+`.ci/scripts/registry-login.sh <registry> <username>`, which runs `podman login
+--password-stdin` up to 5 times, 15 seconds apart. Each attempt is capped at 60
+seconds, because `podman login` has no response deadline: a registry that
+accepts the connection but never answers would otherwise hang the step until the
+job timeout. Unlike podman's own push
+retry, it also retries auth errors, because those are the transient ones here. A
+revoked credential therefore fails after about a minute rather than at once.
+
+The logins ci-demo performs for `registry_auth` (`docker.withRegistry` in its
+`Matrix.groovy`) are not covered. They have no retry, so a transient failure in
+`Setup Image` / `Build Docker` still fails the build until ci-demo adds one.
+
 ## Authenticated dependency clones in image builds
 
 `contrib/Dockerfile`, `contrib/Dockerfile.manylinux` and
