@@ -22,8 +22,9 @@
 
 namespace nixl::ucx {
 
-struct DeferredWireCompleted {
+struct DeferredPhase {
     nixlBackendPostTrace trace;
+    nixl_trace_phase_t phase = nixl_trace_phase_t::WIRE_COMPLETED;
     nixl_xfer_op_t operation = NIXL_WRITE;
     nixlTime::us_t inflightSince = 0;
     nixlTime::us_t phaseAt = 0;
@@ -31,7 +32,7 @@ struct DeferredWireCompleted {
 };
 
 void
-deferWireCompleted(const DeferredWireCompleted &completion) noexcept;
+deferPhase(const DeferredPhase &deferred) noexcept;
 
 void
 recordDeferredTraces() noexcept;

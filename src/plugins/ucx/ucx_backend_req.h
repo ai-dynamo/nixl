@@ -30,6 +30,7 @@
 #include "common/nixl_log.h"
 
 #include "ucx_backend.h"
+#include "ucx_deferred_trace.h"
 #include "ucx_sgl.h"
 #include "ucx_utils.h"
 
@@ -57,8 +58,6 @@ public:
         ep_ = &ep;
         notifState_ = notif_state_t::NONE;
         notifStatus_ = NIXL_SUCCESS;
-        notifSent_ = false;
-        notifSentRecorded_ = false;
     }
 
     [[nodiscard]] const nixlUcxEp &
@@ -105,16 +104,6 @@ public:
         const nixlTime::us_t completed_at = (phase_at != 0) ? phase_at : nixlTime::getUs();
         trace.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, phase_at);
         trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, operation, inflightSince, completed_at);
-    }
-
-    void
-    recordNotifSent() noexcept {
-        if (!notifSentRecorded_ && notifSent_.load(std::memory_order_acquire)) {
-            notifSentRecorded_ = true;
-            if (notifSentOk_) {
-                trace.recordAt(nixl_trace_phase_t::NOTIF_SENT, notifSentAt_);
-            }
-        }
     }
 
     void
@@ -244,9 +233,10 @@ private:
         const nixl_status_t status = getEp().sendAm(
             nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(notif_), UCP_AM_SEND_FLAG_EAGER, &req);
         notif_.clear();
-        notifSentOk_ = (status == NIXL_SUCCESS) || (status == NIXL_IN_PROG);
-        notifSentAt_ = trace.now();
-        notifSent_.store(true, std::memory_order_release);
+        if (trace.active() && ((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG))) {
+            nixl::ucx::deferPhase(
+                {.trace = trace, .phase = nixl_trace_phase_t::NOTIF_SENT, .phaseAt = trace.now()});
+        }
         notifState_ = notif_state_t::SENT;
         if (status == NIXL_IN_PROG) {
             notifReq_ = req;
@@ -319,10 +309,6 @@ private:
     std::atomic<nixlUcxReq> notifReq_{nullptr};
     std::atomic<nixl_status_t> notifStatus_{NIXL_SUCCESS};
     std::atomic<notif_state_t> notifState_{notif_state_t::NONE};
-    nixlTime::us_t notifSentAt_ = 0;
-    bool notifSentOk_ = false;
-    std::atomic<bool> notifSent_{false};
-    bool notifSentRecorded_ = false;
 };
 
 #endif // NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H

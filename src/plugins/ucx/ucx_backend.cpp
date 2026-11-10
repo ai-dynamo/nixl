@@ -381,39 +381,41 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const n
 
 namespace {
 
-struct DeferredWireCompletedQueue {
-    std::array<nixl::ucx::DeferredWireCompleted, 64> entries;
+struct DeferredPhaseQueue {
+    std::array<nixl::ucx::DeferredPhase, 64> entries;
     std::size_t count = 0;
 };
 
-thread_local DeferredWireCompletedQueue deferred_wire_completed;
+thread_local DeferredPhaseQueue deferred_phases;
 
 void
-recordWireCompleted(const nixl::ucx::DeferredWireCompleted &completion) noexcept {
-    completion.trace.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, completion.phaseAt);
-    completion.trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT,
-                                completion.operation,
-                                completion.inflightSince,
-                                completion.completedAt);
+recordPhase(const nixl::ucx::DeferredPhase &deferred) noexcept {
+    deferred.trace.recordAt(deferred.phase, deferred.phaseAt);
+    if (deferred.phase == nixl_trace_phase_t::WIRE_COMPLETED) {
+        deferred.trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT,
+                                  deferred.operation,
+                                  deferred.inflightSince,
+                                  deferred.completedAt);
+    }
 }
 
 } // namespace
 
 void
-nixl::ucx::deferWireCompleted(const DeferredWireCompleted &completion) noexcept {
-    DeferredWireCompletedQueue &queue = deferred_wire_completed;
+nixl::ucx::deferPhase(const DeferredPhase &deferred) noexcept {
+    DeferredPhaseQueue &queue = deferred_phases;
     if (queue.count == queue.entries.size()) {
-        recordWireCompleted(completion);
+        recordPhase(deferred);
         return;
     }
-    queue.entries[queue.count++] = completion;
+    queue.entries[queue.count++] = deferred;
 }
 
 void
 nixl::ucx::recordDeferredTraces() noexcept {
-    DeferredWireCompletedQueue &queue = deferred_wire_completed;
+    DeferredPhaseQueue &queue = deferred_phases;
     for (std::size_t i = 0; i < queue.count; ++i) {
-        recordWireCompleted(queue.entries[i]);
+        recordPhase(queue.entries[i]);
     }
     queue.count = 0;
 }
@@ -426,11 +428,12 @@ nixlUcxBackendReqH::flushCb(void *, ucs_status_t status, void *user_data) {
     auto *const handle = static_cast<nixlUcxBackendReqH *>(user_data);
     if (handle->wireCompletedOnFlush) {
         const nixlTime::us_t phase_at = handle->trace.now();
-        nixl::ucx::deferWireCompleted({handle->trace,
-                                       handle->operation,
-                                       handle->inflightSince,
-                                       phase_at,
-                                       (phase_at != 0) ? phase_at : nixlTime::getUs()});
+        nixl::ucx::deferPhase({.trace = handle->trace,
+                               .phase = nixl_trace_phase_t::WIRE_COMPLETED,
+                               .operation = handle->operation,
+                               .inflightSince = handle->inflightSince,
+                               .phaseAt = phase_at,
+                               .completedAt = (phase_at != 0) ? phase_at : nixlTime::getUs()});
     }
     handle->flushed();
 }
@@ -678,7 +681,9 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     if (int_handle->wireCompletedAtOnce) {
         int_handle->recordWireCompleted(submitted_at);
     }
-    int_handle->recordNotifSent();
+    if (int_handle->trace.active()) {
+        nixl::ucx::recordDeferredTraces();
+    }
     return ret;
 }
 
@@ -686,7 +691,9 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     const nixl_status_t status = int_handle->status();
-    int_handle->recordNotifSent();
+    if (int_handle->trace.active()) {
+        nixl::ucx::recordDeferredTraces();
+    }
     return status;
 }
 

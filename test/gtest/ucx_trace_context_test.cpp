@@ -1164,7 +1164,7 @@ TEST_F(ucxTraceContextPropagation, ProgressThreadPostReleasedInFlightRecordsNoWi
     expectNoWireCompletedWhenReleasedInFlight({}, 1);
 }
 
-TEST_F(ucxTraceContextPropagation, DeferredNotificationIsRecordedByTheStatusCheck) {
+TEST_F(ucxTraceContextPropagation, ProgressThreadRecordsTheNotificationItSends) {
     env.addVar("UCX_TLS", idleTargetTls());
     const gtest::LogIgnoreGuard efa(efa_warning);
     nixlAgent target(target_name, idleConfig());
@@ -1203,10 +1203,19 @@ TEST_F(ucxTraceContextPropagation, DeferredNotificationIsRecordedByTheStatusChec
     EXPECT_TRUE(recordedSpans(traceFile, sender_name, "nixl::notif.sent").empty());
     nixl_notifs_t notifs;
     const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
-    while ((status == NIXL_IN_PROG) && (std::chrono::steady_clock::now() < deadline)) {
+    while (notifs[sender_name].empty() && (std::chrono::steady_clock::now() < deadline)) {
         ASSERT_EQ(target.getNotifs(notifs), NIXL_SUCCESS);
         std::this_thread::sleep_for(poll_interval);
+    }
+    ASSERT_FALSE(notifs[sender_name].empty());
+    while (recordedSpans(traceFile, sender_name, "nixl::notif.sent").empty() &&
+           (std::chrono::steady_clock::now() < deadline)) {
+        std::this_thread::sleep_for(poll_interval);
+    }
+    EXPECT_EQ(recordedSpans(traceFile, sender_name, "nixl::notif.sent").size(), 1u);
+    while ((status == NIXL_IN_PROG) && (std::chrono::steady_clock::now() < deadline)) {
         status = sender.getXferStatus(req);
+        std::this_thread::sleep_for(poll_interval);
     }
     ASSERT_EQ(status, NIXL_SUCCESS);
     ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
