@@ -16,6 +16,9 @@ namespace nixl::gpu {
  * polls every ticket, and retires batches in FIFO order. A failed or abandoned
  * reserved batch must be failed, not published or reused. Views, registrations,
  * buffers and the session remain alive until all accepted work has retired.
+ * For CUDA graph capture, retain the views, registrations and buffers until
+ * every replay has completed and the graph can no longer be replayed. Graph
+ * replay does not grant simultaneous ownership of a lane to multiple CTAs.
  */
 class readSession {
     using View = impl::gpunetio::GpunetioDeviceView;
@@ -28,12 +31,15 @@ class readSession {
     doca_gpu_dev_verbs_cq *cq_ = nullptr;
     uint64_t generation_ = 0;
     uint64_t next_retire_ = 0;
+    uint64_t next_fifo_ = 0;
     uint64_t reserved_first_ = 0;
     uint64_t dump_ticket_ = 0;
     uint32_t capacity_ = 0;
     uint32_t outstanding_ = 0;
     uint32_t reserved_count_ = 0;
     bool acquired_ = false;
+    bool fifo_mode_ = false;
+    bool fifo_failed_ = false;
     bool reserved_ = false;
     bool consistency_pending_ = false;
     bool dump_pending_ = false;
@@ -145,9 +151,21 @@ public:
         outstanding_ = 0;
         reserved_ = false;
         acquired_ = true;
+        fifo_mode_ = false;
+        fifo_failed_ = false;
         consistency_pending_ = false;
         dump_pending_ = false;
         return NIXL_SUCCESS;
+    }
+
+    /** Claim a lane for single-thread FIFO polling using the public DOCA API. */
+    __device__ nixl_status_t
+    acquireFifo() {
+        const auto rc = acquire();
+        if (rc == NIXL_SUCCESS) {
+            fifo_mode_ = true;
+        }
+        return rc;
     }
 
     /** Reserve at most capacity-1 entries. No concurrent reservation in this session. */
@@ -160,6 +178,7 @@ public:
         first = doca_gpu_dev_verbs_reserve_wq_slots<>(qp_, count);
         if (!outstanding_) {
             next_retire_ = first;
+            next_fifo_ = first;
         }
         outstanding_ += count;
         reserved_ = true;
@@ -248,18 +267,29 @@ public:
                                   DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(qp_, ticket + 1);
         dump_ticket_ = ticket;
         next_retire_ = ticket;
+        next_fifo_ = ticket;
         outstanding_ = 1;
         dump_pending_ = true;
         return NIXL_IN_PROG;
     }
 
-    /** Poll without advancing the CQ; individual CTA threads may poll in parallel. */
+    /**
+     * Check one CQE without advancing the CQ; CTA threads may poll in parallel.
+     * Success here does not by itself make the destination ready for consumption.
+     * After all pollers synchronize, retire the successful FIFO range. If
+     * needsConsistency() is true, retire all outstanding reads, then post,
+     * poll and retire the consistency operation. Synchronize the CTA before
+     * other threads consume the data.
+     */
     __device__ nixl_status_t
     poll(uint64_t ticket) const {
-        if (!acquired_ ||
+        if (!acquired_ || fifo_mode_ ||
             ticket - next_retire_ >= outstanding_ - (reserved_ ? reserved_count_ : 0)) {
             return NIXL_ERR_INVALID_PARAM;
         }
+#if defined(NIXL_GPUNETIO_PUBLIC_FIFO_ONLY) && NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
+        return NIXL_ERR_NOT_SUPPORTED;
+#else
         const int rc = impl::gpunetio::compat::nixl_gpunetio_dev_priv_poll_one_cq_at<>(cq_, ticket);
         if (rc == 0) {
             return NIXL_SUCCESS;
@@ -267,6 +297,38 @@ public:
         if (rc == EBUSY) {
             return NIXL_IN_PROG;
         }
+        impl::gpunetio::deviceAtomic(lane_->failed).store(1, cuda::memory_order_relaxed);
+        return NIXL_ERR_BACKEND;
+#endif
+    }
+
+    /**
+     * Poll the next published ticket using the public SDK helper. One thread
+     * owns this operation and must check every ticket in FIFO order. A later
+     * ticket is rejected even if its CQE is already available. Success does
+     * not replace retire() or a required consistency operation.
+     */
+    __device__ nixl_status_t
+    pollFifo(uint64_t ticket) {
+        if (!acquired_ || !fifo_mode_) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        if (fifo_failed_) {
+            return NIXL_ERR_BACKEND;
+        }
+        if (ticket != next_fifo_ ||
+            ticket - next_retire_ >= outstanding_ - (reserved_ ? reserved_count_ : 0)) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        const int rc = impl::gpunetio::compat::pollOne(qp_, ticket);
+        if (rc == 0) {
+            ++next_fifo_;
+            return NIXL_SUCCESS;
+        }
+        if (rc == EBUSY) {
+            return NIXL_IN_PROG;
+        }
+        fifo_failed_ = true;
         impl::gpunetio::deviceAtomic(lane_->failed).store(1, cuda::memory_order_relaxed);
         return NIXL_ERR_BACKEND;
     }
@@ -279,7 +341,8 @@ public:
             return NIXL_ERR_BACKEND;
         }
         if (!acquired_ || !count || first != next_retire_ ||
-            count > outstanding_ - (reserved_ ? reserved_count_ : 0)) {
+            count > outstanding_ - (reserved_ ? reserved_count_ : 0) ||
+            (fifo_mode_ && count > next_fifo_ - next_retire_)) {
             return NIXL_ERR_INVALID_PARAM;
         }
         doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
@@ -366,6 +429,11 @@ public:
     }
 
     __device__ nixl_status_t
+    acquireFifo() {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    __device__ nixl_status_t
     reserve(uint32_t, uint64_t &) {
         return NIXL_ERR_NOT_SUPPORTED;
     }
@@ -387,6 +455,11 @@ public:
 
     __device__ nixl_status_t
     poll(uint64_t) const {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    __device__ nixl_status_t
+    pollFifo(uint64_t) {
         return NIXL_ERR_NOT_SUPPORTED;
     }
 

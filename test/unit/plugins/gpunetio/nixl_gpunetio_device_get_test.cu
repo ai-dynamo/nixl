@@ -71,8 +71,55 @@ scalarGet(nixlMemViewH local, nixlMemViewH remote, int *result) {
     }
 }
 
+// Disposable-process FIFO fault check. Do not release the failed lane or MRs.
 __global__ void
-batchGet(nixlMemViewH local, nixlMemViewH remote, int *result) {
+expectFifoCqError(nixlMemViewH local, nixlMemViewH remote, int *result) {
+    using namespace nixl::gpu::impl::gpunetio;
+    nixl::gpu::readSession session;
+    uint64_t first = 0;
+    if (session.bind(local, remote) != NIXL_SUCCESS || session.acquireFifo() != NIXL_SUCCESS ||
+        session.reserve(3, first) != NIXL_SUCCESS ||
+        session.prepare(first, 0, 17, 0, kBatchDst, 128) != NIXL_SUCCESS) {
+        session.fail();
+        *result = 22;
+        return;
+    }
+    const auto *wrapper = static_cast<const nixl::gpu::memViewWrapper *>(remote);
+    const auto *view = static_cast<const GpunetioDeviceView *>(wrapper->backend_memview);
+    auto *elem = const_cast<GpunetioViewElem *>(view->elems);
+    const auto saved_key = elem[0].key;
+    elem[0].key = 0;
+    const auto bad_prepare = session.prepare(first + 1, 0, 145, 0, kBatchDst + 128, 128);
+    elem[0].key = saved_key;
+    if (bad_prepare != NIXL_SUCCESS ||
+        session.prepare(first + 2, 0, 273, 0, kBatchDst + 256, 128) != NIXL_SUCCESS ||
+        session.publish(first, 3) != NIXL_IN_PROG) {
+        session.fail();
+        *result = 22;
+        return;
+    }
+    nixl_status_t rc;
+    const uint64_t deadline = globalTimerNs() + 5000000000ull;
+    do {
+        rc = session.pollFifo(first);
+    } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
+    if (rc != NIXL_SUCCESS) {
+        session.fail();
+        *result = 24;
+        return;
+    }
+    do {
+        rc = session.pollFifo(first + 1);
+    } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
+    const bool sticky = rc == NIXL_ERR_BACKEND && session.pollFifo(first + 2) == NIXL_ERR_BACKEND &&
+        session.retire(first, 1) == NIXL_ERR_BACKEND && session.finish() == NIXL_ERR_BACKEND;
+    session.fail();
+    *result = sticky ? 0 : 23;
+}
+
+template<bool Fifo>
+__global__ void
+batchGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *result) {
     __shared__ __align__(16) unsigned char storage[sizeof(nixl::gpu::readSession)];
     __shared__ uint64_t first;
     __shared__ int error;
@@ -80,7 +127,8 @@ batchGet(nixlMemViewH local, nixlMemViewH remote, int *result) {
     if (!threadIdx.x) {
         ::new (session) nixl::gpu::readSession{};
         error = 0;
-        if (session->bind(local, remote) != NIXL_SUCCESS || session->acquire() != NIXL_SUCCESS) {
+        if (session->bind(local, remote) != NIXL_SUCCESS ||
+            (Fifo ? session->acquireFifo() : session->acquire()) != NIXL_SUCCESS) {
             error = 3;
         }
         if (!error &&
@@ -112,7 +160,34 @@ batchGet(nixlMemViewH local, nixlMemViewH remote, int *result) {
         error = 5;
     }
     __syncthreads();
-    if (!error && threadIdx.x < kCount) {
+    if constexpr (Fifo) {
+        if (!threadIdx.x && !error) {
+            if (session->pollFifo(first + 1) != NIXL_ERR_INVALID_PARAM ||
+                session->retire(first, 1) != NIXL_ERR_INVALID_PARAM ||
+                session->poll(first) != NIXL_ERR_INVALID_PARAM) {
+                error = 19;
+            }
+            for (uint32_t i = 0; !error && i < kCount; ++i) {
+                nixl_status_t rc;
+                const uint64_t deadline = globalTimerNs() + 5000000000ull;
+                do {
+                    rc = session->pollFifo(first + i);
+                } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
+                if (rc != NIXL_SUCCESS) {
+                    error = 6;
+                } else if (session->pollFifo(first + i) != NIXL_ERR_INVALID_PARAM) {
+                    error = 20;
+                }
+                if (!error && i == kCount / 2 - 1) {
+                    if (session->retire(first, kCount) != NIXL_ERR_INVALID_PARAM ||
+                        session->retire(first, kCount / 2) != NIXL_SUCCESS ||
+                        session->retire(first + kCount / 2, 1) != NIXL_ERR_INVALID_PARAM) {
+                        error = 21;
+                    }
+                }
+            }
+        }
+    } else if (!error && threadIdx.x < kCount) {
         nixl_status_t rc;
         const uint64_t deadline = globalTimerNs() + 5000000000ull;
         do {
@@ -124,7 +199,9 @@ batchGet(nixlMemViewH local, nixlMemViewH remote, int *result) {
     }
     __syncthreads();
     if (!threadIdx.x) {
-        if (!error && session->retire(first, kCount) != NIXL_SUCCESS) {
+        if (!error &&
+            session->retire(Fifo ? first + kCount / 2 : first, Fifo ? kCount / 2 : kCount) !=
+                NIXL_SUCCESS) {
             error = 7;
         }
         if (!error && session->needsConsistency()) {
@@ -136,7 +213,7 @@ batchGet(nixlMemViewH local, nixlMemViewH remote, int *result) {
                 nixl_status_t rc;
                 const uint64_t deadline = globalTimerNs() + 5000000000ull;
                 do {
-                    rc = session->poll(ticket);
+                    rc = Fifo ? session->pollFifo(ticket) : session->poll(ticket);
                 } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
                 if (rc != NIXL_SUCCESS || session->retire(ticket, 1) != NIXL_SUCCESS) {
                     error = 9;
@@ -150,6 +227,14 @@ batchGet(nixlMemViewH local, nixlMemViewH remote, int *result) {
             session->fail();
         }
         *result = error;
+    }
+    __syncthreads();
+    if (!error) {
+        for (size_t i = threadIdx.x; i < kCount * kItemBytes; i += blockDim.x) {
+            if (destination[kBatchDst + i] != uint8_t(((512 + i) * 13 + 7) % 251)) {
+                atomicExch(result, 15);
+            }
+        }
     }
 }
 } // namespace
@@ -266,13 +351,26 @@ main(int argc, char **argv) {
         if (result) {
             throw std::runtime_error("scalar GET failed: " + std::to_string(result));
         }
-        batchGet<<<1, 32>>>(local_view, remote_view, device_result);
-        check(cudaGetLastError(), "launch batch GET");
-        check(cudaDeviceSynchronize(), "complete batch GET");
-        check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
-              "read batch status");
-        if (result) {
-            throw std::runtime_error("batch GET failed: " + std::to_string(result));
+        // Repeated batches exercise FIFO cursor and CQ ring wrap.
+        for (unsigned round = 0; round < 130; ++round) {
+#if !defined(NIXL_GPUNETIO_PUBLIC_FIFO_ONLY) || !NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
+            batchGet<false><<<1, 32>>>(local_view, remote_view, destination, device_result);
+            check(cudaGetLastError(), "launch parallel batch GET");
+            check(cudaDeviceSynchronize(), "complete parallel batch GET");
+            check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
+                  "read parallel batch status");
+            if (result) {
+                throw std::runtime_error("parallel batch GET failed: " + std::to_string(result));
+            }
+#endif
+            batchGet<true><<<1, 32>>>(local_view, remote_view, destination, device_result);
+            check(cudaGetLastError(), "launch FIFO batch GET");
+            check(cudaDeviceSynchronize(), "complete FIFO batch GET");
+            check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
+                  "read FIFO batch status");
+            if (result) {
+                throw std::runtime_error("FIFO batch GET failed: " + std::to_string(result));
+            }
         }
         uint8_t received[kBytes];
         check(cudaMemcpy(received, destination, kBytes, cudaMemcpyDeviceToHost),
@@ -288,6 +386,20 @@ main(int argc, char **argv) {
             if (i != kScratch && received[i] != expected) {
                 throw std::runtime_error("data/guard mismatch at " + std::to_string(i));
             }
+        }
+        if (std::getenv("NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR")) {
+            expectFifoCqError<<<1, 1>>>(local_view, remote_view, device_result);
+            check(cudaGetLastError(), "launch FIFO fault check");
+            check(cudaDeviceSynchronize(), "complete FIFO fault check");
+            check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
+                  "read FIFO fault status");
+            if (result) {
+                throw std::runtime_error("FIFO fault check failed: " + std::to_string(result));
+            }
+            std::cout << "PASS FIFO mixed CQ error and sticky refusal; "
+                         "QUARANTINED_UNTIL_PROCESS_EXIT\n"
+                      << std::flush;
+            std::_Exit(0);
         }
         reader.releaseMemView(remote_view);
         reader.releaseMemView(local_view);

@@ -54,6 +54,7 @@ usesGpuSmDoorbell(const doca_gpu_dev_verbs_qp *qp) {
                &qp->nic_handler))) == DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB;
 }
 
+#if !defined(NIXL_GPUNETIO_PUBLIC_FIFO_ONLY) || !NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
 // This internal SDK helper does not advance the CQ; independent CTA threads
 // check every CQE before the leader advances the consumer index.
 template<enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode =
@@ -63,6 +64,8 @@ __device__ int
 nixl_gpunetio_dev_priv_poll_one_cq_at(doca_gpu_dev_verbs_cq *cq, uint64_t index) {
     return doca_priv_gpu_dev_verbs_poll_one_cq_device_at<resource_sharing_mode, qp_type>(cq, index);
 }
+
+#endif
 
 __device__ inline bool
 needsDump(const doca_gpu_dev_verbs_qp *qp) {

@@ -65,11 +65,21 @@ transfer requests or notifications. Each engine has one data QP; applications
 can use independent engines for multiple QPs. The default backend remains in
 stream mode.
 
+The experimental split-phase session also offers `acquireFifo()` and
+`pollFifo(ticket)` for single-thread, ordered checks through the public DOCA
+poll helper. `pollFifo` rejects out-of-order tickets and `retire` rejects a
+range that has not been checked. Do not mix this mode with parallel `poll` in
+one session. Define `NIXL_GPUNETIO_PUBLIC_FIFO_ONLY=1` consistently in CUDA
+consumers to avoid NIXL's direct reference to the SDK internal CQ helper;
+parallel `poll` then returns `NIXL_ERR_NOT_SUPPORTED`. Applications must still
+retire successful reads, perform any required consistency operation and keep
+all graph resources alive. The public FIFO mode has workload-dependent cost.
+
 CUDA consumers define `NIXL_ENABLE_GPUNETIO_DEVICE_API=1` and include
 `<gpu/nixl_device.cuh>` for scalar `get`, or `<gpu/nixl_device_batch.cuh>` for
 the split-phase `readSession`. The current implementation is restricted to
-DOCA 3.5 and its batch completion path uses an internal SDK helper; its SDK
-compatibility is not guaranteed. Scalar GET requires a registered scratch
+DOCA 3.5. Its default parallel batch completion path uses an internal SDK
+helper; that path has no SDK compatibility guarantee. Scalar GET requires a registered scratch
 byte disjoint from the destination. For batch reads, one CTA owns a session;
 the caller must synchronize WQE builders, poll every completion, retire in FIFO
 order, and keep the views, registrations and buffers alive until work retires.
