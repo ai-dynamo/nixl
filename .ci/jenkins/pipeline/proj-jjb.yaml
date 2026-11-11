@@ -715,7 +715,7 @@
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
 # Job template for the LLM (vLLM / SGLang) container build pipeline.
-# Builds 2 image variants (vllm-cu13-nixl, sglang-cu13-nixl) from a
+# Builds the vLLM and SGLang image variants from a
 # published NIXL wheel set, for x86_64 and aarch64, and publishes multi-arch
 # manifests. Mirrors the manual procedure documented at
 # README.md
@@ -975,7 +975,7 @@
             conf_file=.ci/jenkins/lib/build-wheel-nightly-matrix.yaml
     description: >
       <b>NIXL nightly wheel verification build</b><br/>
-      • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> for CUDA 13,
+      • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code>,
       with the UCX spcx and Infinia plugins always bundled, and
       publishes them to the verification Artifactory space<br/>
       • Run manually from any NIXL branch / tag / PR / SHA via <code>NIXL_VERSION</code><br/>
@@ -995,7 +995,7 @@
       - parameterized-timer:
           cron: |
             # Build NIXL wheels nightly around midnight. One run covers the
-            # cu13 wheels and the nixl meta wheel.
+            # backend wheels and the nixl meta wheel.
             H 0 * * * %NIXL_VERSION=main
     # Manual build parameters
     parameters:

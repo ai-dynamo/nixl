@@ -46,8 +46,8 @@ FROM ${MANYLINUX_IMAGE}_${ARCH}:${MANYLINUX_IMAGE_TAG} AS wheel_base
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.14"
 
-# torch wheel index. Decoupled from the toolkit version: PyTorch has no stable
-# cu134 wheels.
+# torch wheel index. Decoupled from the toolkit version: PyTorch does not
+# publish wheels for every CUDA minor.
 ARG TORCH_CUDA_INDEX="cu132"
 ENV TORCH_CUDA_INDEX=${TORCH_CUDA_INDEX}
 

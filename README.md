@@ -45,8 +45,6 @@ Install with:
 pip install nixl
 ```
 
-This installs the CUDA 13 backend (`nixl-cu13`).
-
 ## Prerequisites for source build (Linux)
 
 NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
@@ -223,8 +221,6 @@ The preferred way to install the Python bindings is through pip from PyPI:
 pip install nixl
 ```
 
-This installs the CUDA 13 backend (`nixl-cu13`).
-
 #### Installation from source
 
 Prerequisites:
@@ -271,12 +267,11 @@ Then install PyTorch following the instructions on the PyTorch website: https://
 After installing the prerequisites, you can build and install the NIXL binaries and the Python bindings from source. You have to:
 
 1. Build NIXL binaries and install them
-2. Build and install the CUDA package (`nixl-cu13`)
+2. Build and install the CUDA platform-specific package
 3. Build and install the `nixl` meta-package
 
 ```
 pip install .
-./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
 meson setup build
 ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl

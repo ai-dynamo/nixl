@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # This file is a type stub for static analysis tools (pyright, mypy, IDEs).
-# At runtime it is shadowed by the actual nixl_cu13.logging
+# At runtime it is shadowed by the installed backend's logging
 # module, which __init__.py injects into sys.modules["nixl.logging"].
 from typing import TYPE_CHECKING
 

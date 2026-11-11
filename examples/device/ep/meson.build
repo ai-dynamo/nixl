@@ -134,7 +134,7 @@ nixl_ep_install_rpath = join_paths(get_option('prefix'), get_option('libdir'))
 nixl_ep_install_rpath += ':' + join_paths(get_option('prefix'), get_option('libdir'), 'plugins')
 nixl_ep_install_rpath += ':' + torch_lib_dir
 
-# CUDA-versioned install dir, e.g. nixl_ep_cu13.
+# Install dir follows the wheel variant.
 nixl_ep_install_dir = 'nixl_ep_' + cuda_wheel_dir.split('_')[-1]
 
 nixl_ep_ext = py.extension_module(nixl_ep_ext_name,
