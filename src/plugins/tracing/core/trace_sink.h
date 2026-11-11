@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_CORE_TRACE_SINK_H
-#define NIXL_SRC_CORE_TRACING_CORE_TRACE_SINK_H
+#ifndef NIXL_SRC_PLUGINS_TRACING_CORE_TRACE_SINK_H
+#define NIXL_SRC_PLUGINS_TRACING_CORE_TRACE_SINK_H
 
 #include <atomic>
 #include <cstdint>
@@ -95,4 +95,4 @@ private:
 
 } // namespace nixl::trace
 
-#endif // NIXL_SRC_CORE_TRACING_CORE_TRACE_SINK_H
+#endif // NIXL_SRC_PLUGINS_TRACING_CORE_TRACE_SINK_H

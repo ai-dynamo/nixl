@@ -22,12 +22,12 @@
  *
  * A single set of call sites fans out to every enabled tracing backend at
  * runtime (NVTX today; Chakra and others later). This is an internal core API
- * (compiled into libnixl, not installed as a public header). It is kept
- * deliberately self-contained -- depending only on standard headers and on
- * attribute.h, attribute_key.h, log_once.h, record.h, trace_identity.h,
- * tracer.h and the tracing/api/detail/ headers -- so it stays easy to reason
- * about and could be promoted to a public header later without churn if an
- * external consumer appears.
+ * (implemented by the tracing core plugin, libtrace_core.so, and not installed
+ * as a public header). It is kept deliberately self-contained -- depending only
+ * on standard headers and on attribute.h, attribute_key.h, log_once.h, record.h,
+ * trace_identity.h, tracer.h and the tracing/api/detail/ headers -- so it stays
+ * easy to reason about and could be promoted to a public header later without
+ * churn if an external consumer appears.
  *
  * A module uses only the NIXL_TRACE_* macros, Traceable and Scope, with Record,
  * Attribute and AttributeKey as their arguments; logOnce(); what

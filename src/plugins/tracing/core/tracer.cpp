@@ -16,13 +16,10 @@
  */
 
 #include <algorithm>
-#include <unordered_set>
 
 #include "tracing/core/trace.h"
 
 #include "common/nixl_log.h"
-#include "plugin_manager.h"
-#include "tracing/api/trace_plugin.h"
 #include "tracing/core/trace_sink.h"
 
 namespace {
@@ -195,60 +192,6 @@ CompositeTracer::traceparent(const TraceContext &context) const {
 std::unique_ptr<nixlBackendTraceSink>
 CompositeTracer::makeSink(std::string backend, std::function<void(std::uint64_t)> on_dropped) {
     return std::make_unique<TracerPhaseSink>(*this, std::move(backend), std::move(on_dropped));
-}
-
-/*** Factory ***/
-
-std::unique_ptr<CompositeTracer>
-makeTracer(const TracerConfig &config) {
-    std::vector<std::unique_ptr<TraceBackend>> backends;
-    std::unordered_set<std::string> seen;
-
-    auto &plugin_manager = nixlPluginManager::getInstance();
-    const nixlTraceBackendInitParams init_params{config.agentName};
-
-    for (const auto &requested : config.backends) {
-        // Skip blanks and duplicates so e.g. "nvtx,nvtx" activates one backend.
-        if (requested.empty() || !seen.insert(requested).second) {
-            continue;
-        }
-
-        if (backends.size() == maxTraceBackends) {
-            NIXL_WARN << "nixl::trace: backend '" << requested << "' not activated: at most "
-                      << maxTraceBackends << " backends can be active";
-            continue;
-        }
-
-        // Each backend is an on-demand .so plugin (libtrace_backend_<name>.so).
-        // A missing plugin is not fatal: warn and skip so the rest still apply.
-        auto handle = plugin_manager.loadTracePlugin(requested);
-        if (!handle) {
-            NIXL_WARN << "nixl::trace: backend '" << requested
-                      << "' requested but plugin libtrace_backend_" << requested
-                      << ".so was not found";
-            continue;
-        }
-
-        auto backend = handle->createBackend(init_params);
-        if (!backend) {
-            NIXL_WARN << "nixl::trace: backend '" << requested << "' failed to initialize";
-            continue;
-        }
-        if (!backend->recording()) {
-            NIXL_INFO << "nixl::trace: backend '" << requested
-                      << "' has nothing to record to and is not activated";
-            continue;
-        }
-
-        NIXL_DEBUG << "nixl::trace: activated '" << requested << "' backend for agent '"
-                   << config.agentName << "'";
-        backends.push_back(std::move(backend));
-    }
-
-    if (backends.empty()) {
-        return nullptr;
-    }
-    return std::make_unique<CompositeTracer>(std::move(backends), config.sampleRatio);
 }
 
 } // namespace nixl::trace

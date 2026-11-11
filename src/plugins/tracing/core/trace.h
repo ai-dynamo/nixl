@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_CORE_TRACE_H
-#define NIXL_SRC_CORE_TRACING_CORE_TRACE_H
+#ifndef NIXL_SRC_PLUGINS_TRACING_CORE_TRACE_H
+#define NIXL_SRC_PLUGINS_TRACING_CORE_TRACE_H
 
 #include <atomic>
 #include <cstdint>
@@ -178,24 +178,6 @@ private:
     mutable std::atomic<bool> unparsableParentLogged_ = false;
 };
 
-/** @brief Inputs used to build the composite tracer from enabled backends. */
-struct TracerConfig {
-    /** @brief Agent name; used e.g. as the NVTX domain name. */
-    std::string agentName;
-    /** @brief Backend names requested at runtime (e.g. {"nvtx"}). */
-    std::vector<std::string> backends;
-    /** @brief Head-based sampling probability in [0, 1]; 0 samples nothing. */
-    double sampleRatio{defaultSampleRatio};
-};
-
-/**
- * @brief Build a tracer from (requested backends) intersected with (backends
- *        compiled in). Returns nullptr when the result is empty, so callers can
- *        cheaply null-check before tracing.
- */
-[[nodiscard]] std::unique_ptr<CompositeTracer>
-makeTracer(const TracerConfig &config);
-
 } // namespace nixl::trace
 
-#endif // NIXL_SRC_CORE_TRACING_CORE_TRACE_H
+#endif // NIXL_SRC_PLUGINS_TRACING_CORE_TRACE_H

@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_CORE_RANDOM_GENERATOR_H
-#define NIXL_SRC_CORE_TRACING_CORE_RANDOM_GENERATOR_H
+#ifndef NIXL_SRC_PLUGINS_TRACING_CORE_RANDOM_GENERATOR_H
+#define NIXL_SRC_PLUGINS_TRACING_CORE_RANDOM_GENERATOR_H
 
 #include <algorithm>
 #include <array>

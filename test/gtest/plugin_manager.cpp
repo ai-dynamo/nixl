@@ -211,6 +211,23 @@ TEST_F(LoadedPluginTestFixture, StaleTracePluginApiVersionIsRejected) {
     EXPECT_EQ(plugin_manager_.loadTracePlugin("mock_stale"), nullptr);
     EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
 }
+
+TEST_F(LoadedPluginTestFixture, StaleTraceCorePluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+
+    EXPECT_EQ(plugin_manager_.loadTraceCorePlugin("core_mock_stale"), nullptr);
+    EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
+}
+
+TEST_F(LoadedPluginTestFixture, AbsentTraceCorePluginIsNotLoaded) {
+    EXPECT_EQ(plugin_manager_.loadTraceCorePlugin("core_absent"), nullptr);
+}
+
+TEST_F(LoadedPluginTestFixture, TraceCorePluginIsLoadedOnce) {
+    const auto core = plugin_manager_.loadTraceCorePlugin();
+    ASSERT_NE(core, nullptr);
+    EXPECT_EQ(plugin_manager_.loadTraceCorePlugin(), core);
+}
 #endif
 
 TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {

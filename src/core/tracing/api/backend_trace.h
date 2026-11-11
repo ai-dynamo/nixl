@@ -147,10 +147,10 @@ struct nixlBackendTraceAttr {
 /**
  * @brief Sink a backend uses to record a phase or a span of its own work.
  *
- * Implemented by core, never by a plugin. A backend takes its own from
- * nixlBackendInitParams::traceSink when it is constructed; it is null when
- * tracing is off -- so every call site must null-check. When non-null the sink
- * outlives the backend engine that holds it.
+ * Implemented by the tracing core, never by a data plugin. A backend takes its
+ * own from nixlBackendInitParams::traceSink when it is constructed; it is null
+ * when tracing is off -- so every call site must null-check. When non-null the
+ * sink outlives the backend engine that holds it.
  */
 class nixlBackendTraceSink {
 public:

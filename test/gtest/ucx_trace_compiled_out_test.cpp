@@ -16,12 +16,12 @@
  */
 
 #include "serdes/serdes.h"
-#include "tracing/core/trace_context.h"
 #include "ucx_backend.h"
 #include "ucx_trace.h"
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <type_traits>
@@ -31,6 +31,7 @@
 namespace {
 
 constexpr const char *sender_name = "sender";
+constexpr std::size_t trace_context_record_size = 26;
 
 [[nodiscard]] std::string
 notification(const std::vector<std::pair<std::string, std::string>> &tags) {
@@ -63,7 +64,7 @@ TEST(UcxTraceCompiledOut, SampledPostSendsTheOlderNotification) {
 
 TEST(UcxTraceCompiledOut, TracingSendersNotificationKeepsItsMessage) {
     const auto notif = nixl::ucx::deserializeNotif(
-        notification({{"tctx", std::string(nixl::trace::traceContextWireSize, '\x01')},
+        notification({{"tctx", std::string(trace_context_record_size, '\x01')},
                       {"treq", std::string(2 * sizeof(std::uint64_t), '\x02')}}),
         nullptr);
 

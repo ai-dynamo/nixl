@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_CORE_TRACE_CONTEXT_H
-#define NIXL_SRC_CORE_TRACING_CORE_TRACE_CONTEXT_H
+#ifndef NIXL_SRC_PLUGINS_TRACING_CORE_TRACE_CONTEXT_H
+#define NIXL_SRC_PLUGINS_TRACING_CORE_TRACE_CONTEXT_H
 
 #include <array>
 #include <cstddef>
@@ -42,10 +42,6 @@ namespace nixl::trace {
  */
 inline constexpr std::uint8_t traceContextWireVersion = 0x01;
 inline constexpr std::size_t traceContextWireSize = 26;
-
-inline constexpr std::string_view traceSampleRatioVar = "NIXL_TRACE_SAMPLE_RATIO";
-inline constexpr std::string_view otelTracesSampleRatioVar = "OTEL_TRACES_SAMPLE_RATIO";
-inline constexpr double defaultSampleRatio = 1.0;
 
 /**
  * @brief Outcome of decoding a wire record. UnknownVersion is a record written
@@ -98,27 +94,6 @@ decodeTraceContext(std::span<const std::uint8_t> buffer, TraceContext &context);
  */
 [[nodiscard]] bool
 sampledByRatio(const TraceContext &context, double ratio) noexcept;
-
-/**
- * @brief Resolve the sampling ratio: traceSampleRatioVar when set, else
- *        otelTracesSampleRatioVar, which is Dynamo's convention rather than an
- *        OpenTelemetry one (the SDK spec defines OTEL_TRACES_SAMPLER and
- *        OTEL_TRACES_SAMPLER_ARG) but carries the same head-sampling meaning,
- *        so a NIXL running inside Dynamo inherits it. When neither is set,
- *        every request is sampled, as in Dynamo. Setting
- *        traceSampleRatioVar empty is an explicit "off" that beats the
- *        fallback, matching how NIXL_TRACE_BACKENDS is treated.
- * @return The resolved ratio, or defaultSampleRatio (every request) when
- *         neither is set or otelTracesSampleRatioVar is empty or unusable.
- * @throws std::invalid_argument when traceSampleRatioVar holds anything other
- *         than 0 or a number in [2^-56, 1] — OpenTelemetry's range, 2^-56 being
- *         one trace in every value 56 bits can express — so a caller who asked
- *         for sampling is not silently given none. A bad value in the shared
- *         OpenTelemetry variable only warns: NIXL does not own it and must not
- *         fail construction on it.
- */
-[[nodiscard]] double
-resolveTraceSampleRatio();
 
 [[nodiscard]] std::optional<TraceContext>
 parseTraceparent(std::string_view value);

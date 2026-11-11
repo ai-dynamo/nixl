@@ -17,6 +17,7 @@
 #include "common.h"
 #include "tracing/api/backend_trace.h"
 #include "tracing/core/trace.h"
+#include "tracing/core/trace_config.h"
 #include "tracing/core/trace_context.h"
 #include "tracing/core/trace_sink.h"
 
@@ -47,6 +48,16 @@ drawContext(double sample_ratio) {
     const nixl::trace::CompositeTracer tracer{
         std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}, sample_ratio};
     return nixl::trace::generateRequestIdentity(&tracer).context;
+}
+
+[[nodiscard]] std::unique_ptr<nixl::trace::CompositeTracer>
+makeRecorderTracer() {
+    auto backends = nixl::trace::loadTraceBackends({"recorder"}, recorder_agent);
+    if (backends.empty()) {
+        return nullptr;
+    }
+    return std::make_unique<nixl::trace::CompositeTracer>(std::move(backends),
+                                                          nixl::trace::defaultSampleRatio);
 }
 
 class traceRecorder : public testing::Test {
@@ -85,7 +96,7 @@ protected:
 TEST_F(traceRecorder, EmittedSpanRecordsItsTimesAndContext) {
     const auto context = drawContext(1.0);
     {
-        const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
+        const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         const std::array attrs{
             nixl::trace::Attribute{"bytes", std::int64_t{4096}},
@@ -122,7 +133,7 @@ TEST_F(traceRecorder, EmittedSpanRecordsItsTimesAndContext) {
 TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
     const auto context = drawContext(1.0);
     {
-        const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
+        const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
         const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", "sender"}};
@@ -148,7 +159,7 @@ TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
 TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
     const auto context = drawContext(1.0);
     {
-        const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
+        const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         {
             const nixl::trace::Scope scope(tracer.get(), {context, recorded_request_id});
@@ -173,7 +184,7 @@ TEST_F(traceRecorder, ContextSpanRecordsItsOwnContextAndId) {
     const auto context = drawContext(1.0);
     const auto other_context = drawContext(1.0);
     {
-        const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
+        const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         {
             const nixl::trace::Scope scope(tracer.get(), {context, recorded_request_id});

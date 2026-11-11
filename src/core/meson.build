@@ -82,17 +82,11 @@ nixl_lib_sources = [
     'telemetry/nop_plugin.cpp',
 ]
 
-# Tracing (nixl::trace), only with with_trace. The facade is compiled into
-# libnixl; each backend ships as a separate .so plugin under src/plugins/tracing,
-# loaded on demand by nixlPluginManager.
+# Tracing (nixl::trace), only with with_trace. The agent's glue is compiled into
+# libnixl; the tracing core and each backend ship as separate .so plugins under
+# src/plugins/tracing, loaded on demand by nixlPluginManager.
 if nixl_trace_enabled
-    nixl_lib_sources += [
-        'tracing/core/agent_trace.cpp',
-        'tracing/core/scope.cpp',
-        'tracing/core/trace_sink.cpp',
-        'tracing/core/tracer.cpp',
-        'tracing/core/tracing.cpp',
-    ]
+    nixl_lib_sources += ['tracing/core/agent_trace.cpp', 'tracing/core/tracing.cpp']
 else
     nixl_lib_sources += ['tracing/core/compiled_out.cpp']
 endif

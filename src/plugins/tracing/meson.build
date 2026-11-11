@@ -13,8 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tracing-backend plugins (nixl::trace). Each backend is a separate .so loaded
-# on demand by nixlPluginManager; gating happens in the root meson.build.
+# Tracing plugins (nixl::trace): the tracing core and each backend, each a
+# separate .so loaded on demand by nixlPluginManager; gating happens in the root
+# meson.build.
+subdir('core')
+
 if nixl_trace_nvtx_enabled
     subdir('nvtx')
 endif

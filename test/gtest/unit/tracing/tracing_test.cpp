@@ -46,6 +46,7 @@
 #include "nixl.h"
 #include "transfer_request.h"
 #include "tracing/core/trace.h"
+#include "tracing/core/trace_config.h"
 #include "tracing/core/trace_context.h"
 #include "tracing/api/tracing.h"
 #include "tracing/core/trace_sink.h"
@@ -1142,30 +1143,27 @@ TEST(Tracing, InvalidSampleRatioIsRejectedWithTracingOff) {
     EXPECT_THROW(nixlAgent("sample_ratio_agent", config), std::invalid_argument);
 }
 
-// makeTracer ignores empty entries and returns null when no backend resolves to
-// a loadable plugin (so callers can cheaply null-check).
-TEST(Tracing, MakeTracerUnknownBackendReturnsNull) {
+// loadTraceBackends ignores empty entries and loads nothing when no backend
+// resolves to a loadable plugin, so the agent builds no tracer.
+TEST(Tracing, LoadTraceBackendsSkipsAnUnknownBackend) {
     {
-        // No plugin exists for this backend, so it resolves to null with a warning.
+        // No plugin exists for this backend, so it loads nothing, with a warning.
         const gtest::LogIgnoreGuard ignore("requested but plugin");
-        const auto tracer = nixl::trace::makeTracer({"agent", {kUnloadableBackend}});
-        EXPECT_EQ(tracer, nullptr);
+        EXPECT_TRUE(nixl::trace::loadTraceBackends({kUnloadableBackend}, "agent").empty());
     }
 
-    const auto none = nixl::trace::makeTracer({"agent", {}});
-    EXPECT_EQ(none, nullptr);
+    EXPECT_TRUE(nixl::trace::loadTraceBackends({}, "agent").empty());
 }
 
 // The no-backend runtime path: a backend is requested but no plugin provides
-// it, so makeTracer yields a null tracer. Call sites then fall back to a
-// default-constructed Span -- the stub path that does essentially nothing --
+// it, so no backend loads and the agent has no tracer. Call sites then fall back
+// to a default-constructed Span -- the stub path that does essentially nothing --
 // and it must stay safe. NVTX's functional coverage lives in the e2e transfer
 // tests, which load the real plugin.
 TEST(Tracing, RequestedBackendWithoutPluginIsInert) {
     {
         const gtest::LogIgnoreGuard ignore("requested but plugin");
-        const auto tracer = nixl::trace::makeTracer({"stub_agent", {kUnloadableBackend}});
-        EXPECT_EQ(tracer, nullptr);
+        EXPECT_TRUE(nixl::trace::loadTraceBackends({kUnloadableBackend}, "stub_agent").empty());
     }
 
     // What every traced call site binds to when the tracer is null.

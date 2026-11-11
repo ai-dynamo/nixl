@@ -34,7 +34,9 @@
 #include "plugin_manager.h"
 #include "transfer_request.h"
 #include "tracing/api/agent_trace.h"
+#if defined(NIXL_TRACE_ENABLED)
 #include "tracing/core/trace_context.h"
+#endif
 #include "mocks/gmock_engine.h"
 
 namespace gtest {
@@ -178,6 +180,8 @@ namespace agent {
             nvtxPluginAvailable_ = std::filesystem::exists(dir);
             if (nvtxPluginAvailable_) {
                 nixlPluginManager::getInstance().addPluginDirectory(dir);
+                nixlPluginManager::getInstance().addPluginDirectory(std::string(BUILD_DIR) +
+                                                                    "/src/plugins/tracing/core");
             }
         }
 

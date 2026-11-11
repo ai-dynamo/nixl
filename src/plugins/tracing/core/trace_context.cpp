@@ -23,9 +23,6 @@
 
 #include <pthread.h>
 
-#include <absl/strings/numbers.h>
-
-#include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/uuid_v4.h"
 #include "serdes/serdes.h"
@@ -41,7 +38,6 @@ constexpr std::size_t wire_trace_id_offset = 2;
 constexpr std::size_t wire_span_id_offset = 18;
 constexpr std::size_t trace_id_randomness_bytes = 7;
 constexpr double two_pow_56 = 0x1p56;
-constexpr double min_sample_ratio = 0x1p-56;
 constexpr std::uint64_t max_request_id = std::numeric_limits<std::int64_t>::max();
 
 static_assert(std::endian::native == std::endian::little);
@@ -90,18 +86,6 @@ parseBytes(std::string_view value,
         }
     }
     return true;
-}
-
-[[nodiscard]] std::optional<double>
-parseSampleRatio(const std::string &value) {
-    double ratio = 0.0;
-    if (!absl::SimpleAtod(value, &ratio) || !std::isfinite(ratio) || ratio < 0.0 || ratio > 1.0) {
-        return std::nullopt;
-    }
-    if (ratio > 0.0 && ratio < min_sample_ratio) {
-        return std::nullopt;
-    }
-    return ratio;
 }
 
 [[nodiscard]] std::uint64_t
@@ -363,38 +347,6 @@ nixl::trace::sampledByRatio(const nixl::trace::TraceContext &context, double rat
     const auto threshold =
         static_cast<std::uint64_t>(two_pow_56) - static_cast<std::uint64_t>(kept);
     return traceIdRandomness(context) >= threshold;
-}
-
-double
-nixl::trace::resolveTraceSampleRatio() {
-    const auto spec =
-        nixl::config::getValueOptional<std::string>(std::string(nixl::trace::traceSampleRatioVar));
-    if (spec) {
-        if (spec->empty()) {
-            return 0.0;
-        }
-
-        const auto ratio = parseSampleRatio(*spec);
-        if (!ratio) {
-            throw std::invalid_argument(std::string(nixl::trace::traceSampleRatioVar) + "='" +
-                                        *spec + "' must be 0 or a number in [2^-56, 1]");
-        }
-        return *ratio;
-    }
-
-    const auto otel_spec = nixl::config::getValueOptional<std::string>(
-        std::string(nixl::trace::otelTracesSampleRatioVar));
-    if (!otel_spec || otel_spec->empty()) {
-        return nixl::trace::defaultSampleRatio;
-    }
-
-    const auto ratio = parseSampleRatio(*otel_spec);
-    if (!ratio) {
-        NIXL_WARN << "nixl::trace: ignoring " << nixl::trace::otelTracesSampleRatioVar << "='"
-                  << *otel_spec << "': not 0 or a number in [2^-56, 1]; sampling every request";
-        return nixl::trace::defaultSampleRatio;
-    }
-    return *ratio;
 }
 
 std::optional<nixl::trace::TraceContext>

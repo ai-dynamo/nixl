@@ -7,11 +7,11 @@ operations and routes them to one or more tracing backends. A single set of call
 sites inside NIXL fans out to **every active backend at runtime**, so adding a new
 backend never changes the call sites.
 
-Tracing **backends ship as separate, on-demand `.so` plugins** — loaded by
-`nixlPluginManager` exactly like NIXL's data backends and telemetry exporters. Only
-the tracing **facade** is compiled into `libnixl`; a backend's (often heavy) optional
-dependency stays out of `libnixl` and is `dlopen`'d only when the backend is actually
-requested.
+Tracing **ships as separate, on-demand `.so` plugins** — loaded by `nixlPluginManager`
+exactly like NIXL's data backends and telemetry exporters: the **tracing core**,
+`libtrace_core.so`, and one plugin per backend. `libnixl` keeps only the call sites and
+the glue that loads them, so the core and a backend's (often heavy) optional dependency
+are `dlopen`'d only when tracing is actually requested.
 
 The first backend is **NVTX** (NVIDIA Tools Extension), which makes NIXL operations
 visible as ranges on an [NVIDIA Nsight Systems](https://docs.nvidia.com/nsight-systems/)
@@ -64,10 +64,11 @@ execution-trace tools.
   `Generic`, `Compute`, `MemoryR`, `MemoryW`, `CommSend`, `CommRecv`, `CommColl`,
   `Metadata`.
 
-`nixl::trace` is an **internal NIXL core API**: it is compiled into `libnixl` and none
-of its headers, under `src/core/tracing/`, are installed. What other modules include is
-under `tracing/api/`, and the implementation under `tracing/core/`. Core code that
-traces includes `tracing/api/tracing.h`, which holds only the call-site macros, the
+`nixl::trace` is an **internal NIXL core API**: none of its headers, under
+`src/core/tracing/api/`, are installed. The agent's glue, which reads the environment and
+loads the plugins, is compiled into `libnixl` from `src/core/tracing/core/`, and the
+implementation is the tracing core plugin, built from `src/plugins/tracing/core/`. Core
+code that traces includes `tracing/api/tracing.h`, which holds only the call-site macros, the
 record vocabulary (`Record` and `Kind`, from `tracing/api/record.h`, which plugins
 share), a request's trace state (`Traceable`, which also holds the tracer), `Scope`, and
 the tracer from `makeAgentTracer()`, the `Tracer` interface of `tracing/api/tracer.h`,
@@ -100,6 +101,9 @@ runtime**.
   trace, by `NIXL_TRACE_BACKENDS` naming a backend or by running under Nsight Systems, logs
   one warning that nothing is traced. UCX notifications go out in the older format, and a
   peer's trace tags are skipped.
+- The tracing core builds as `libtrace_core.so` under `src/plugins/tracing/core/`,
+  installed alongside the other NIXL plugins; a package that ships tracing ships it too.
+  An agent asked to trace without it logs one warning and traces nothing.
 - Each requested backend builds a `libtrace_backend_<name>.so` under
   `src/plugins/tracing/<name>/`, installed alongside the other NIXL plugins. A
   backend with an unmet dependency (e.g. NVTX without the CUDA-toolkit `nvtx3`
@@ -121,10 +125,12 @@ export NIXL_TRACE_BACKENDS=nvtx
 ```
 
 The variable is read when the agent is constructed, so set it before creating the
-`nixlAgent`. Each requested name is loaded as `libtrace_backend_<name>.so` through
-`nixlPluginManager`. If the requested set is empty (or no requested plugin is found, or
-none has anything to record to, see "NVTX without a profiler"), the agent holds no
-tracer and call sites take a cheap null-check branch — no `dlopen`, no allocation.
+`nixlAgent`. The agent then loads the tracing core, `libtrace_core.so`, once per process,
+and each requested name as `libtrace_backend_<name>.so`, both through
+`nixlPluginManager`, and the core builds the agent's tracer over those backends. If the
+requested set is empty (or the core or every requested plugin is missing, or none has
+anything to record to, see "NVTX without a profiler"), the agent holds no tracer and
+call sites take a cheap null-check branch — no `dlopen`, no allocation.
 
 #### Auto-enable under Nsight Systems
 
@@ -582,7 +588,7 @@ NVTX active:
 
 ```bash
 ninja -C build test/gtest/unit/unit test/gtest/gtest test/gtest/ucx_trace_receiver \
-    test/gtest/mocks/libtrace_backend_recorder.so
+    test/gtest/mocks/libtrace_backend_recorder.so test/gtest/mocks/libtrace_core.so
 # facade unit suite (no backend plugin needed):
 ./build/test/gtest/unit/unit --gtest_filter='Tracing.*'
 # real-agent NVTX suite (loads libtrace_backend_nvtx.so from the build tree):
@@ -612,7 +618,8 @@ records none of them. An agent that sends itself two notifications records
 through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in the mocks
 directory) that appends one line per finished or emitted span and per emitted event
 to the file named by `NIXL_TEST_TRACE_FILE`; the tests set both variables
-themselves.
+themselves. The tracing core reaches them as a copy of `libtrace_core.so` in the same
+directory, while the facade unit tests link its code directly.
 
 With `-Dwith_trace=false` none of these tests is built. `tracingCompiledOut.*` in `unit`
 and `UcxTraceCompiledOut.*` in `gtest` check instead that the hooks are empty types; that

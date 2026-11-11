@@ -29,9 +29,11 @@
 #include <map>
 
 #if defined(NIXL_TRACE_ENABLED)
+#include "tracing/api/trace_core_plugin.h"
 #include "tracing/api/trace_plugin.h"
 
 const std::string tracePluginPrefix = "libtrace_backend_";
+const std::string traceCorePluginPrefix = "libtrace_";
 #endif
 
 const std::string backendPluginPrefix = "libplugin_";
@@ -277,6 +279,72 @@ traceLoader(void *handle, const std::string &plugin_path) {
     }
 
     return std::make_shared<const nixlTracePluginHandle>(handle, plugin);
+}
+} // namespace
+
+nixlTraceCorePluginHandle::nixlTraceCorePluginHandle(void *handle, nixlTraceCorePlugin *plugin)
+    : nixlPluginHandle(handle),
+      plugin_(plugin) {}
+
+nixlTraceCorePluginHandle::~nixlTraceCorePluginHandle() {
+    if (handle_) {
+        typedef void (*fini_func_t)();
+        fini_func_t fini = (fini_func_t)dlsym(handle_, "nixl_trace_core_plugin_fini");
+        if (fini) {
+            fini();
+        }
+        dlclose(handle_);
+        handle_ = nullptr;
+        plugin_ = nullptr;
+    }
+}
+
+std::unique_ptr<nixl::trace::Tracer>
+nixlTraceCorePluginHandle::createTracer(nixlTraceCoreConfig config) const {
+    if (plugin_ && plugin_->create_tracer) {
+        return plugin_->create_tracer(std::move(config));
+    }
+    return nullptr;
+}
+
+const char *
+nixlTraceCorePluginHandle::getName() const {
+    return "core";
+}
+
+const char *
+nixlTraceCorePluginHandle::getVersion() const {
+    return "1";
+}
+
+namespace {
+std::shared_ptr<const nixlPluginHandle>
+traceCoreLoader(void *handle, const std::string &plugin_path) {
+    typedef nixlTraceCorePlugin *(*init_func_t)();
+    init_func_t init = (init_func_t)dlsym(handle, "nixl_trace_core_plugin_init");
+    if (!init) {
+        NIXL_ERROR << "Failed to find nixl_trace_core_plugin_init in " << plugin_path << ": "
+                   << dlerror();
+        dlclose(handle);
+        return nullptr;
+    }
+
+    nixlTraceCorePlugin *plugin = init();
+    if (!plugin) {
+        NIXL_ERROR << "Plugin initialization failed for " << plugin_path;
+        dlclose(handle);
+        return nullptr;
+    }
+
+    if (plugin->api_version != nixl_trace_core_api_version::V1) {
+        NIXL_ERROR << "Plugin API version mismatch for " << plugin_path << ": expected "
+                   << static_cast<unsigned int>(nixl_trace_core_api_version::V1) << ", got "
+                   << static_cast<unsigned int>(plugin->api_version);
+        dlclose(handle);
+        return nullptr;
+    }
+
+    return std::make_shared<const nixlTraceCorePluginHandle>(handle, plugin);
 }
 } // namespace
 #endif
@@ -612,6 +680,34 @@ nixlPluginManager::loadTracePlugin(const std::string &plugin_name) {
     }
 
     NIXL_INFO << "Failed to load trace plugin '" << plugin_name << "' from any directory";
+    return nullptr;
+}
+
+std::shared_ptr<const nixlTraceCorePluginHandle>
+nixlPluginManager::loadTraceCorePlugin(const std::string &plugin_name) {
+    const std::lock_guard lock(mutex_);
+
+    auto it = loaded_trace_core_plugins_.find(plugin_name);
+    if (it != loaded_trace_core_plugins_.end()) {
+        return it->second;
+    }
+
+    for (const auto &dir : plugin_dirs_) {
+        std::string plugin_path = composePluginPath(dir, traceCorePluginPrefix, plugin_name);
+        if (plugin_path.empty() || !std::filesystem::exists(plugin_path)) {
+            continue;
+        }
+
+        auto plugin_handle = loadPluginFromPath(plugin_path, traceCoreLoader);
+        if (plugin_handle) {
+            auto core_plugin =
+                std::dynamic_pointer_cast<const nixlTraceCorePluginHandle>(plugin_handle);
+            loaded_trace_core_plugins_[plugin_name] = core_plugin;
+            return core_plugin;
+        }
+    }
+
+    NIXL_INFO << "Failed to load trace core plugin '" << plugin_name << "' from any directory";
     return nullptr;
 }
 #endif
