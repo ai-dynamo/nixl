@@ -52,7 +52,7 @@ globalTimerNs() {
 isIbPortActive(const std::filesystem::directory_entry &port) {
     std::ifstream state_file(port.path() / "state");
     std::string state;
-    return std::getline(state_file, state) && (state.find("ACTIVE") != std::string::npos);
+    return std::getline(state_file, state) && (state == "4: ACTIVE");
 }
 
 [[nodiscard]] bool
