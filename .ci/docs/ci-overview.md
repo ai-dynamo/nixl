@@ -237,6 +237,61 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 - **Matrix:** `.ci/jenkins/lib/nightly-matrix.yaml` — a lightweight ci-demo orchestrator (one groovy step: fan out, wait, mail), no GPU of its own.
 - **Automatic on every PR:** No — standalone/scheduled + manual only.
 
+## Path filtering
+
+On PR runs, `nixl-ci-dispatcher` fans out only to the leaf jobs whose
+components the PR touches, and posts a green "skipped" status for the rest so
+the required checks stay satisfied. Which repository paths belong to which
+component is declared in `.ci/path-filters.yaml`, maintained by the repo
+maintainers and reviewed by DevOps (`CODEOWNERS` routes `.ci/` to
+`@ai-dynamo/nixl-devops`). Which jobs run for which component is the job table
+in `Jenkinsfile.dispatcher`, owned by DevOps. Manual and nightly runs are not
+filtered.
+
+Match rules follow gitignore conventions, applied to the repo-relative path
+exactly as the GitHub API returns it:
+
+| Entry | Meaning | Example |
+|---|---|---|
+| contains `/` and a wildcard | `**` spans directories, `*` stays within one segment | `examples/device/ep/**` is the whole subtree; `src/plugins/*/meson.build` is one level |
+| contains `/`, no wildcard | that exact file, or anything beneath a directory of that path | `.gitlab/test_ep.sh`; `examples/device/ep` and `examples/device/ep/` both mean the subtree |
+| no `/` | matched against any single path component, at any depth; a directory name matches its subtree, as in gitignore | `*.md`, `Cargo.lock` |
+| leading `/` | anchored at the repository root, as in gitignore | `/README.md` is the root README only |
+
+`**` is the form to write for a directory; the bare and trailing-slash forms
+are accepted so a forgotten slash never turns a subtree into a dead entry.
+`dir/*` means direct children only, as in gitignore. `**` is accepted only as
+the last path segment. Entries starting with `*` must be quoted in YAML. No
+other glob syntax is supported (`?`, `[...]`, `!` and `\` are rejected).
+
+**Most specific entry wins.** A path takes the component of the matching entry
+with the longest literal prefix (the text before the first wildcard, or the
+whole entry when it has none). An entry without `/` can match at any depth,
+so it always has specificity 0, below every path-bearing entry. Entries that
+tie contribute together. This is what lets `/README.md` under `all` beat
+`*.md` under `docs`, and what lets `all` keep `examples/**` while a more
+specific component claims `examples/device/ep/**`. A PR's component set is the
+union over its changed paths; for a renamed file both the old and the new path
+count. A path that matches nothing counts as `all`. `all` is reserved and
+always means "run every job".
+
+### Registering a path
+
+Every file in the repository must match an entry. New paths go into the
+component they belong to, or into `all` when they should keep running the full
+CI; every top-level directory and root file is listed explicitly under `all`,
+so adding a top-level path means adding a line. The `check-path-filters`
+pre-commit hook (`.ci/scripts/check_path_filters.py`, the reference
+implementation of the rules above) fails on any staged or PR-modified file
+that matches nothing:
+
+```
+tools/new.sh: not registered in .ci/path-filters.yaml; add it to a component or to 'all'
+```
+
+It also rejects an invalid config (unknown top-level key, missing `all`,
+duplicate component key, unsupported glob) with exit code 2 and the reason.
+
 ## Slurm job naming
 
 Jobs submitted via the `slurmCI` module are named `${JOB_BASE_NAME}-${BUILD_NUMBER}`; jobs that run multiple parallel allocations within a build insert a `<variant>` before the build number to disambiguate:
