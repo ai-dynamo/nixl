@@ -173,6 +173,28 @@ start_redis_server() {
     wait_for_redis_server "${redis_port}"
 }
 
+# The WQS plugin allocates its staging pool from a 2 MiB hugepage memfd (also with the
+# wqs_mock SDK). Make sure at least $1 (default 16) hugepages are free, reserving them when
+# the container is allowed to write /proc/sys/vm/nr_hugepages. Returns non-zero when they
+# cannot be provided, so callers can skip the transfer tests loudly.
+ensure_wqs_hugepages() {
+    local need=${1:-16}
+    local dir=/sys/kernel/mm/hugepages/hugepages-2048kB
+    local free total
+    free=$(cat "${dir}/free_hugepages" 2>/dev/null || echo 0)
+    if [ "${free}" -lt "${need}" ]; then
+        total=$(cat "${dir}/nr_hugepages" 2>/dev/null || echo 0)
+        echo "WQS: ${free} free 2 MiB hugepages, need ${need}; trying to reserve $((total + need - free))"
+        if [ "$(id -u)" -eq 0 ]; then
+            echo $((total + need - free)) > /proc/sys/vm/nr_hugepages 2>/dev/null || true
+        else
+            echo $((total + need - free)) | sudo -n tee /proc/sys/vm/nr_hugepages >/dev/null 2>&1 || true
+        fi
+        free=$(cat "${dir}/free_hugepages" 2>/dev/null || echo 0)
+    fi
+    [ "${free}" -ge "${need}" ]
+}
+
 start_etcd_server() {
     local namespace_prefix=$1
     if [ -z "${namespace_prefix}" ]; then

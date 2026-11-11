@@ -90,6 +90,15 @@ python3 partial_md_example.py --init-port "$(get_next_tcp_port)" --target-port "
 python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
+# WQS storage example against the wqs_mock SDK (needs 2 MiB hugepages for the staging pool)
+if [ -f "${NIXL_PLUGIN_DIR}/libplugin_WQS.so" ] && [ -f wqs_example.py ]; then
+    if ensure_wqs_hugepages 16; then
+        python3 wqs_example.py --socket /unused/wqs_mock --bytes 1048577 --pool-bytes 8388608
+    else
+        echo "WARNING: WQS python example SKIPPED: no free 2 MiB hugepages and cannot reserve them"
+    fi
+fi
+
 # Run a two-peers example: starts a target on an OS-assigned port,
 # reads the port from the target's NIXL_INFO log line on stderr,
 # then launches the initiator against it.
