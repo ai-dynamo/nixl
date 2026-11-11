@@ -72,7 +72,7 @@ BackendTraces::warnIfContextUnsupported(const nixlBackendEngine &backend,
 nixl_status_t
 traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info) {
     const TraceIdentity identity = traceable.postIdentity();
-    if (identity.requestId == 0) {
+    if ((identity.requestId == 0) || (traceable.tracer() == nullptr)) {
         return NIXL_ERR_NOT_FOUND;
     }
     info.requestId = identity.requestId;

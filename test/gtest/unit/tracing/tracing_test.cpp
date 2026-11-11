@@ -48,6 +48,7 @@
 #include "tracing/core/trace.h"
 #include "tracing/core/trace_config.h"
 #include "tracing/core/trace_context.h"
+#include "tracing/api/agent_trace.h"
 #include "tracing/api/tracing.h"
 #include "tracing/core/trace_sink.h"
 
@@ -1843,6 +1844,12 @@ TEST(Tracing, TraceableEndsDespiteABackendThatThrows) {
     const auto tracer = makeThrowingTracer();
     const nixl::trace::TraceIdentity request{testContext(0x3c), 0x3c};
     EXPECT_NO_THROW(nixl::trace::Traceable(tracer.get(), request));
+}
+
+TEST(Tracing, TraceInfoWithoutATracerIsNotFound) {
+    const nixl::trace::Traceable traceable(nullptr, {testContext(0x3e), 0x3e});
+    nixl_xfer_trace_info_t info;
+    EXPECT_EQ(nixl::trace::traceInfo(traceable, info), NIXL_ERR_NOT_FOUND);
 }
 
 // A phase recorded through the plugin-facing sink reaches every enabled trace
