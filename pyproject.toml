@@ -34,7 +34,7 @@ authors = [
   {name = "NIXL Developers", email = "nixl-developers@nvidia.com"}
 ]
 
-dependencies = ["torch", "numpy", "nvidia-ml-py>=13.580.65"]
+dependencies = ["torch", "numpy"]
 
 [tool.mypy]
 mypy_path = ["src/bindings/python/nixl-meta"]

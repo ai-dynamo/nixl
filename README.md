@@ -14,7 +14,7 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 
 * [NIXL overview](https://github.com/ai-dynamo/nixl/blob/main/docs/nixl.md) - Core concepts/architecture overview (`docs/nixl.md`)
 
-* [NIXL EP v2](runtime/ep/README.md) - Adaptive expert-parallel dispatch/combine with elasticity (`nixl.runtime.ep`)
+* [NIXL EP v2 API shell](runtime/ep/README.md) - Interface review and CPU-only API tests (`nixl.runtime.ep`)
 
 * [Python API](https://github.com/ai-dynamo/nixl/blob/main/docs/python_api.md) - Python API usage and examples (`docs/python_api.md`)
 

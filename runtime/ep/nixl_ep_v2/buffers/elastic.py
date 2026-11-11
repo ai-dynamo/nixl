@@ -2,32 +2,27 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
-import functools
-import math
-import os
-import pickle
-from datetime import timedelta
+"""Host-only API shell. Method docstrings retain the production contract for review.
+
+Only lightweight topology/lifecycle state is modeled. Tensor results are meta
+placeholders, never communicated or computed; see the API-shell README.
+"""
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.distributed as dist
 
-# noinspection PyUnresolvedReferences
-from .. import _C
-
-# noinspection PyUnresolvedReferences
-from .._C import EventHandle
-from ..utils.envs import (
-    check_torch_deterministic,
-    get_logical_domain_size,
-    get_nvlink_gbs,
-    get_rdma_gbs,
-)
-from ..utils.event import EventOverlap
-from ..utils.nixl_bootstrap import NixlBootstrap, resolve_bootstrap_store
-from ..utils.semantic import align, value_or, weak_lru
+from ..utils.event import EventHandle, EventOverlap
 
 _DEFAULT_SM_READ_GBS, _DEFAULT_SM_WRITE_GBS = 200, 50
+
+
+def _empty(shape, dtype):
+    return torch.empty(shape, dtype=dtype, device="meta")
+
+
+class _StreamPlaceholder:
+    """Opaque token: deliberately not a CUDA stream and cannot schedule work."""
 
 
 class EPHandle:
@@ -106,7 +101,7 @@ class EPHandle:
     @property
     def num_recv_tokens_device(self) -> torch.Tensor:
         """The real receive count: a 0-d view of the fixed last prefix-sum slot."""
-        return self.psum_num_recv_tokens_per_scaleup_rank[-1]
+        return _empty((), torch.int32)
 
     def deterministic_sort(
         self,
@@ -123,118 +118,7 @@ class EPHandle:
           - Expand mode: only sort the expanded arrays — `recv_x`, `recv_sf`, and `recv_topk_weights`.
             The slot pointers in `self.recv_src_metadata[:, 2:]` are updated to reflect the new positions, but `self.recv_src_metadata` itself is not permuted.
         """
-
-        sort_keys = self.recv_src_metadata[:, 0]
-
-        # Ignore trailing tokens by setting their `sort_keys` to max
-        num_recv_tokens = (
-            self.num_recv_tokens_device
-            if not self.recv_count_is_exact
-            else self.recv_src_metadata.shape[0]
-        )
-        if not self.recv_count_is_exact:
-            oob_tokens_mask = (
-                torch.arange(
-                    0,
-                    self.recv_src_metadata.shape[0],
-                    device=self.recv_src_metadata.device,
-                )
-                >= num_recv_tokens
-            )
-            sort_keys = sort_keys.clone()
-            sort_keys[oob_tokens_mask] = torch.iinfo(sort_keys.dtype).max
-        orig_indices = torch.sort(sort_keys).indices
-
-        def get_reverse_permutation(perm: torch.Tensor) -> torch.Tensor:
-            assert perm.dim() == 1
-            result = torch.empty_like(perm)
-            result[perm] = torch.arange(
-                0, perm.shape[0], dtype=perm.dtype, device=perm.device
-            )
-            return result
-
-        def permute(tensor: Optional[torch.Tensor], orig_indices: torch.Tensor):
-            if tensor is not None:
-                tmp = tensor[orig_indices]
-                tensor.copy_(tmp)
-
-        if not self.do_expand:
-            # Non-expand mode
-            permute(recv_x, orig_indices)
-            permute(recv_sf, orig_indices)
-            permute(recv_topk_weights, orig_indices)
-            permute(recv_topk_idx, orig_indices)
-            permute(self.recv_src_metadata, orig_indices)
-
-            valid_mask = (self.channel_linked_list >= 0) & (
-                self.channel_linked_list < num_recv_tokens
-            )
-            to_indices = get_reverse_permutation(orig_indices)
-            self.channel_linked_list[valid_mask] = to_indices[
-                self.channel_linked_list[valid_mask]
-            ].to(self.channel_linked_list.dtype)
-
-        else:
-            # In expand mode, `recv_x`, `recv_sf`, and `recv_topk_weights` are grouped by expert ID, possibly with padding (expert alignment). We permute tokens within each expert and update `self.recv_src_metadata[:, 2:]` accordingly.
-
-            # Now we're going to construct the sorting key, which is:
-            #  - `expert_idx*src_token_global_index_max_x2 + (-src_token_global_index_max) + src_token_global_idx`, for valid tokens
-            #  - `expert_idx * src_token_global_index_max_x2`, for padding slots
-            # This guarantees a two-key sort: first by expert, then by order within each expert.
-            # Valid tokens precede padding tokens, and valid tokens are sorted by `src_token_global_idx`.
-            src_token_global_index_max_x2 = 10000000000  # 1e10
-            tensor_dim0_after_expand = recv_x.shape[0]
-
-            expert_token_idx_start = (
-                self.psum_num_recv_tokens_per_expert
-                - self.num_unaligned_recv_tokens_per_expert
-            )
-            token_idx2expert_idx = torch.bucketize(
-                torch.arange(tensor_dim0_after_expand, device="cuda"),
-                expert_token_idx_start[1:],
-                right=True,
-                out_int32=False,
-            )
-            sort_keys_for_expanded_tensors = (
-                token_idx2expert_idx * src_token_global_index_max_x2
-            )
-
-            slots = self.recv_src_metadata[:, 2:]  # [num_recv_tokens, topk]
-            src_global_idx = self.recv_src_metadata[:, 0]
-            valid_mask = slots >= 0
-            if not self.recv_count_is_exact:
-                valid_mask[oob_tokens_mask] = False
-            sort_keys_for_expanded_tensors.scatter_add_(
-                0,
-                slots[valid_mask],
-                -src_token_global_index_max_x2 // 2
-                + src_global_idx.unsqueeze(1)
-                .expand_as(slots)[valid_mask]
-                .to(torch.int64),
-            )
-
-            orig_indices_for_expanded_tensors = torch.sort(
-                sort_keys_for_expanded_tensors, stable=True
-            ).indices.to(torch.int32)
-            permute(recv_x, orig_indices_for_expanded_tensors)
-            permute(recv_sf, orig_indices_for_expanded_tensors)
-            permute(recv_topk_weights, orig_indices_for_expanded_tensors)
-
-            to_indices_for_expanded_tensors = get_reverse_permutation(
-                orig_indices_for_expanded_tensors
-            )
-            self.recv_src_metadata[:, 2:][valid_mask] = to_indices_for_expanded_tensors[
-                self.recv_src_metadata[:, 2:][valid_mask]
-            ]
-
-
-# The `mode` field of the topology descriptor (`EPTopology`): direct = 0, hybrid = 1 (the index in `_MODE_NAMES`)
-_MODE_NAMES = ("direct", "hybrid")
-
-
-def _mode_code(mode: str) -> int:
-    assert mode in _MODE_NAMES, f"mode must be direct or hybrid, got {mode!r}"
-    return _MODE_NAMES.index(mode)
+        pass
 
 
 class ElasticBuffer:
@@ -357,11 +241,6 @@ class ElasticBuffer:
                 concurrent cohort, fresh after a partial construction or a change of the cohort's membership).
             store_timeout_secs: how long the bootstrap waits for the cohort at each of its Store steps.
         """
-
-        if type(num_experts_per_rank) is not int or num_experts_per_rank < 0:
-            raise ValueError("num_experts_per_rank must be a nonnegative integer")
-        self.num_experts_per_rank = num_experts_per_rank
-
         if group is not None:
             if rank_idx not in (None, group.rank()) or num_ranks not in (
                 None,
@@ -370,138 +249,81 @@ class ElasticBuffer:
                 raise ValueError(
                     "rank_idx / num_ranks do not match the supplied process group"
                 )
-            rank_idx, num_ranks = group.rank(), group.size()
+            (rank_idx, num_ranks) = (group.rank(), group.size())
         if (
             type(rank_idx) is not int
             or type(num_ranks) is not int
-            or not 0 <= rank_idx < num_ranks
+            or (not 0 <= rank_idx < num_ranks)
         ):
             raise ValueError(
                 "Without a process group, rank_idx and a positive num_ranks are required"
             )
-        self.rank_idx, self.num_ranks = rank_idx, num_ranks
+        if type(num_experts_per_rank) is not int or num_experts_per_rank < 0:
+            raise ValueError("num_experts_per_rank must be a nonnegative integer")
+        positions = num_group_scaleup_ranks or num_ranks
+        if positions <= 0 or num_ranks % positions:
+            raise ValueError("num_group_scaleup_ranks must divide num_ranks")
+        (self.rank_idx, self.num_ranks) = (rank_idx, num_ranks)
+        self.num_experts_per_rank = num_experts_per_rank
+        self.num_max_tokens_per_rank = num_max_tokens_per_rank
         self.allow_multiple_reduction = allow_multiple_reduction
         self.prefer_overlap_with_compute = prefer_overlap_with_compute
-        self.deterministic = deterministic
-        self.store = store
-        # Automatic/manual selection follows the topology's stage/commit transaction.
-        self._auto_sm_config: Optional[Tuple[int]] = None
-        self._staged_auto_sm_config: Optional[Tuple[int]] = None
-
-        # Coordinate the cohort through a Store: the domain count and size, the session token, the peer metadata, the barrier
-        bootstrap_store, namespace = resolve_bootstrap_store(
-            group,
+        (self.deterministic, self.explicitly_destroy) = (
+            deterministic,
+            explicitly_destroy,
+        )
+        (self.store, self.num_bytes) = (
             store,
-            bootstrap_id,
-            "elastic-buffer",
-            timeout_seconds=store_timeout_secs,
+            num_bytes if num_bytes is not None else 0,
         )
-        bootstrap = NixlBootstrap(
-            bootstrap_store,
-            self.rank_idx,
-            self.num_ranks,
-            namespace=namespace,
-            num_scaleup_ranks=num_group_scaleup_ranks,
-            timeout_seconds=store_timeout_secs,
+        self.max_num_scaleout_ranks = max_num_scaleout_ranks or num_ranks // positions
+        self.max_num_scaleup_ranks = max_num_scaleup_ranks or positions
+        self.scaleout_rank_idx = (
+            rank_idx // positions if scaleout_rank_idx is None else scaleout_rank_idx
         )
-        num_group_scaleout_ranks = bootstrap.num_scaleout_ranks
-        group_scaleup_ranks: int = bootstrap.num_scaleup_ranks
-
-        # The declared maximum world and this rank's coordinates in it: explicit values win, else the cohort's domain count and size
-        max_num_scaleout_ranks = max_num_scaleout_ranks or num_group_scaleout_ranks
-        max_num_scaleup_ranks = max_num_scaleup_ranks or group_scaleup_ranks
-        if scaleout_rank_idx is None:
-            scaleout_rank_idx = self.rank_idx // group_scaleup_ranks
-        if scaleup_rank_idx is None:
-            scaleup_rank_idx = self.rank_idx % group_scaleup_ranks
-
-        # Calculate buffer size (already 2 MB-aligned from hint functions / calculate_elastic_buffer_size)
-        if num_bytes is None:
-            # NOTES: we allow `num_topk == 0`, as the buffer size can also be calculated by number of ranks (maybe bigger though)
-            num_bytes = _C.calculate_elastic_buffer_size(
-                max_num_scaleout_ranks,
-                max_num_scaleup_ranks,
-                num_max_tokens_per_rank,
-                hidden,
-                num_topk,
-                use_fp8_dispatch,
-                allow_multiple_reduction,
+        self.scaleup_rank_idx = (
+            rank_idx % positions if scaleup_rank_idx is None else scaleup_rank_idx
+        )
+        domain_base = self.scaleout_rank_idx - rank_idx // positions
+        position_base = self.scaleup_rank_idx - rank_idx % positions
+        if not (
+            0 <= domain_base
+            and domain_base + num_ranks // positions <= self.max_num_scaleout_ranks
+            and 0 <= position_base
+            and position_base + positions <= self.max_num_scaleup_ranks
+        ):
+            raise ValueError(
+                "Cohort coordinates must be within the declared maximum world"
             )
-
-        if int(os.environ.get("NIXL_EP_BUFFER_DEBUG", 0)):
-            print(
-                f"Initializing EP elastic buffer with {num_bytes} bytes "
-                f"at cohort rank {self.rank_idx}/{self.num_ranks}"
+        self.world_rank = self.world_rank_of(
+            self.scaleout_rank_idx, self.scaleup_rank_idx
+        )
+        self.num_launch_sms = 24
+        self.runtime = None
+        self._destroyed = False
+        self._auto_sm_config: Optional[Tuple[int]] = None
+        (self._sms, self._pending, self._peers_changed) = (24, None, False)
+        self._stream = _StreamPlaceholder()
+        self._active = tuple(
+            (
+                self.world_rank_of(
+                    domain_base + i // positions, position_base + i % positions
+                )
+                for i in range(num_ranks)
             )
-        self.num_bytes = num_bytes
-
-        self.num_max_tokens_per_rank = num_max_tokens_per_rank
-
-        # Avoid matching replacement processes to closed UD wire-up endpoints. This process-wide default can be
-        # overridden before construction; see the README deployment guidance.
-        os.environ.setdefault("UCX_UD_LINGER_TIMEOUT", "1s")
-
-        # NIXL: the UCX device channels of the agent (a warp is a channel; the transport refuses more than UCX's 64)
-        num_nixl_channels = num_nixl_channels or int(
-            os.getenv("NIXL_EP_NIXL_NUM_CHANNELS", 64)
         )
-
-        self.explicitly_destroy = explicitly_destroy
-        self.runtime = _C.ElasticBuffer(
-            num_bytes,
-            allow_multiple_reduction,
-            use_fp8_dispatch,
-            prefer_overlap_with_compute,
-            num_cpu_timeout_secs,
-            num_gpu_timeout_secs,
-            self.explicitly_destroy,
-            max_num_scaleout_ranks,
-            max_num_scaleup_ranks,
-            scaleout_rank_idx,
-            scaleup_rank_idx,
-            num_nixl_channels,
-            bootstrap.session_token,
-            num_experts_per_rank,
-        )
-
-        # Adaptive kernels: the fixed launch grid; the active SM count is set per topology via `set_num_active_sms`
-        self.num_launch_sms = _C.get_adaptive_num_launch_sms()
-        self.max_num_scaleout_ranks, self.max_num_scaleup_ranks = (
-            max_num_scaleout_ranks,
-            max_num_scaleup_ranks,
-        )
-
-        self.scaleout_rank_idx, self.scaleup_rank_idx = (
-            scaleout_rank_idx,
-            scaleup_rank_idx,
-        )
-        self.world_rank = self.world_rank_of(scaleout_rank_idx, scaleup_rank_idx)
-
-        # Connect the whole cohort and make it the active ranks (the constructor is collective over the cohort); the gather
-        # returns every member's `(metadata, peer info)` by world rank
-        infos = bootstrap.all_gather_peer_infos(
-            (self.get_local_metadata(), self.get_local_peer_info())
-        )
-        peers = [wr for wr in infos if wr != self.world_rank]
-        self.connect_ranks(
-            peers, [infos[wr][0] for wr in peers], [infos[wr][1] for wr in peers]
-        )
-        self.stage_topology(
-            num_active_sms=self.num_launch_sms, active_ranks=sorted(infos)
-        )
-        self.commit_topology()
-
-        # Call a barrier to ensure initialization visibility for all peers
-        torch.cuda.synchronize()
-        bootstrap.barrier("ready")
+        self.masks_of(self._active)
+        self._connected = set(self._active) - {self.world_rank}
+        self._pending_disconnects = set()
 
     def destroy(self) -> None:
         """Destroy the runtime; requires `explicitly_destroy=True` at construction."""
-        assert self.explicitly_destroy
-
-        if self.runtime is not None:
-            self.runtime.destroy()
-            self.runtime = None  # Cannot use anymore
+        if not self.explicitly_destroy:
+            raise ValueError("destroy() requires explicitly_destroy=True")
+        self._destroyed = True
+        self._connected.clear()
+        self._pending_disconnects.clear()
+        self._pending = None
 
     @staticmethod
     def get_buffer_size_hint(
@@ -542,30 +364,7 @@ class ElasticBuffer:
         Returns:
             size: the recommended buffer size in bytes (2 MB-aligned).
         """
-        if max_num_scaleout_ranks == 0 or max_num_scaleup_ranks == 0:
-            if group is None:
-                raise ValueError(
-                    "get_buffer_size_hint without a process group needs both max_num_scaleout_ranks and max_num_scaleup_ranks"
-                )
-            group_domains, group_positions = get_logical_domain_size(
-                group,
-                num_scaleup_ranks=num_group_scaleup_ranks,
-                store=store,
-                bootstrap_id=bootstrap_id,
-                store_timeout_secs=store_timeout_secs,
-            )
-            max_num_scaleout_ranks = max_num_scaleout_ranks or group_domains
-            max_num_scaleup_ranks = max_num_scaleup_ranks or group_positions
-        # NOTES: calculate_elastic_buffer_size already returns 2 MB-aligned values
-        return _C.calculate_elastic_buffer_size(
-            max_num_scaleout_ranks,
-            max_num_scaleup_ranks,
-            num_max_tokens_per_rank,
-            hidden,
-            num_topk,
-            use_fp8_dispatch,
-            allow_multiple_reduction,
-        )
+        return 0
 
     def read_profile(self) -> Dict[str, torch.Tensor]:
         """Read and clear diagnostic timestamps; requires NIXL_EP_ADAPTIVE_PROFILE=1 before library initialization.
@@ -576,8 +375,8 @@ class ElasticBuffer:
         Discard warm-up samples with one read, then run one isolated dispatch/combine pair or graph replay per read.
         Instrumented phase boundaries are diagnostic samples, not uninstrumented kernel completion times.
         """
-        timestamps, names = self.runtime.read_profile()
-        return {name: timestamps[index] for index, name in enumerate(names)}
+        self._ensure_open()
+        return {}
 
     def barrier(
         self, use_comm_stream: bool = True, with_cpu_sync: bool = False
@@ -589,7 +388,7 @@ class ElasticBuffer:
             use_comm_stream: whether to use the communication stream (otherwise uses the current compute stream).
             with_cpu_sync: whether to also call `cudaDeviceSynchronize` before and after the barrier.
         """
-        self.runtime.barrier(use_comm_stream, with_cpu_sync)
+        self._ensure_open()
 
     @staticmethod
     def capture() -> EventHandle:
@@ -598,12 +397,8 @@ class ElasticBuffer:
 
     def get_comm_stream(self) -> torch.Stream:
         """Return the buffer's communication stream."""
-        ts: torch.Stream = self.runtime.get_comm_stream()
-        return torch.cuda.Stream(
-            stream_id=ts.stream_id,
-            device_index=ts.device_index,
-            device_type=ts.device_type,
-        )
+        self._ensure_open()
+        return self._stream
 
     def get_theoretical_num_sms(
         self,
@@ -633,165 +428,18 @@ class ElasticBuffer:
         Returns:
             num_sms: the raw model estimate (even, at least 2), before the launch-grid limit.
         """
-        return self._get_theoretical_num_sms_for_topology(
-            num_topk,
-            *self.get_topology_masks(),
-            rdma_gbs=rdma_gbs,
-            nvlink_gbs=nvlink_gbs,
-            sm_read_gbs=sm_read_gbs,
-            sm_write_gbs=sm_write_gbs,
-        )
-
-    def _get_theoretical_num_sms_for_topology(
-        self,
-        num_topk: int,
-        scaleout_mask: int,
-        scaleup_mask: int,
-        rdma_gbs: float = 0,
-        nvlink_gbs: float = 0,
-        sm_read_gbs: float = _DEFAULT_SM_READ_GBS,
-        sm_write_gbs: float = _DEFAULT_SM_WRITE_GBS,
-    ) -> int:
-        num_active_scaleout_ranks, num_active_scaleup_ranks = bin(scaleout_mask).count(
-            "1"
-        ), bin(scaleup_mask).count("1")
-        num_active_ranks = num_active_scaleout_ranks * num_active_scaleup_ranks
-        assert (
-            self.num_experts_per_rank > 0
-        ), "Set num_experts_per_rank when constructing an EP buffer"
-        # Holes occupy routing IDs but generate no traffic; estimate only the active ranks' physical slots.
-        num_active_experts = self.num_experts_per_rank * num_active_ranks
-        assert (
-            num_active_experts >= num_topk
-        ), f"the active ranks own {num_active_experts} physical slots, fewer than num_topk={num_topk}: the traffic model has no estimate, pass num_sms"
-        return self._get_theoretical_num_sms(
-            num_active_experts,
-            num_topk,
-            num_active_scaleout_ranks,
-            num_active_scaleup_ranks,
-            rdma_gbs,
-            nvlink_gbs,
-            sm_read_gbs,
-            sm_write_gbs,
-        )
-
-    @weak_lru(maxsize=None)
-    def _get_theoretical_num_sms(
-        self,
-        num_experts: int,
-        num_topk: int,
-        num_active_scaleout_ranks: int,
-        num_active_scaleup_ranks: int,
-        rdma_gbs: float,
-        nvlink_gbs: float,
-        sm_read_gbs: float,
-        sm_write_gbs: float,
-    ) -> int:
-        # TODO: support `do_expand` and `allow_multiple_reduction`
-
-        # The `1` in this function means scale-up traffic
-        # i.e. the HBM read volume of the dispatch copy epilogue, equals to "the number of tokens" * "num_expected_topk" * "data size per token"
-        num_active_ranks = num_active_scaleout_ranks * num_active_scaleup_ranks
-
-        # Get bandwidth
-        if rdma_gbs == 0 and num_active_scaleout_ranks > 1:
-            rdma_gbs = get_rdma_gbs()
-        if nvlink_gbs == 0 and num_active_scaleup_ranks > 1:
-            nvlink_gbs = get_nvlink_gbs()
-
-        # Initial count
-        # NOTES: we don't count HBM traffic
-        sm_read: float = 0
-        sm_write: float = 0
-        rdma_traffic: float = 0
-        nvlink_traffic: float = 0
-
-        def get_expected_topk(num_groups: int) -> float:
-            assert num_experts % num_groups == 0
-            return num_groups * (
-                1
-                - math.comb(num_experts - num_experts // num_groups, num_topk)
-                / math.comb(num_experts, num_topk)
-            )
-
-        # Expected top-k scale-out ranks
-        num_expected_scaleout_topk = (
-            get_expected_topk(num_active_scaleout_ranks)
-            if num_active_scaleout_ranks > 1
-            else 0
-        )
-
-        # Expected top-k scale-up ranks
-        num_expected_topk = get_expected_topk(num_active_ranks)
-
-        # Read tokens
-        sm_read += 1 / num_expected_topk
-
-        # NOTES: we don't consider the skip-send-buffer cases (all selections fall in the local)
-        if num_active_scaleout_ranks > 1:
-            # Scaleup warps: write send buffer
-            sm_write += 1 / num_expected_topk
-
-            # Scaleout traffic
-            sm_write += (1 / num_expected_topk) * (
-                num_expected_scaleout_topk / num_active_scaleout_ranks
-            )  # Local bypass
-            rdma_traffic += (1 / num_expected_topk) * (
-                num_expected_scaleout_topk * (1 - 1 / num_active_scaleout_ranks)
-            )
-
-            # Forward warps
-            sm_read += num_expected_scaleout_topk / num_expected_topk
-            sm_write += 1  # Issue scaleup
-            nvlink_traffic += 1 - (1 / num_active_scaleup_ranks)
-        else:
-            # One active domain: `num_active_ranks == num_active_scaleup_ranks`, no send buffer and no scale-out traffic
-            # Issue NVLink
-            sm_write += 1.0
-
-            # NVLink traffic, except local bypass
-            nvlink_traffic += 1 - 1 / num_active_scaleup_ranks
-
-        # Found the bounded one
-        if num_active_scaleout_ranks > 1 and (
-            num_active_scaleup_ranks == 1
-            or (rdma_traffic / rdma_gbs) > (nvlink_traffic / nvlink_gbs)
-        ):
-            bounded_traffic, bounded_gbs = rdma_traffic, rdma_gbs
-        else:
-            bounded_traffic, bounded_gbs = nvlink_traffic, nvlink_gbs
-
-        # Calculate SM count
-        # NOTES: will try to use more SMs if not overlap with compute
-        num_device_sms = torch.cuda.get_device_properties("cuda").multi_processor_count
-        num_sms = num_device_sms  # No traffic, e.g., EP=1
-        if bounded_traffic > 0:
-            num_sms = max(
-                bounded_gbs / bounded_traffic * sm_read / sm_read_gbs,
-                bounded_gbs / bounded_traffic * sm_write / sm_write_gbs,
-            )
-        num_sms = align(max(2, math.ceil(num_sms * 1.25)), 2)
-        num_sms = num_sms if self.prefer_overlap_with_compute else max(num_sms, 64)
-        num_sms = min(num_sms, num_device_sms)
-
-        # Summary
-        if int(os.environ.get("NIXL_EP_BUFFER_DEBUG", 0)):
-            print(
-                f"EP SM approximation: "
-                f"{sm_read=}, {sm_write=}, {rdma_traffic=}, {nvlink_traffic=}, "
-                f"{rdma_gbs=}, {nvlink_gbs=}, "
-                f"{num_expected_scaleout_topk=}, {num_expected_topk=}, "
-                f"{bounded_traffic=}, {bounded_gbs=}, {num_sms=}"
-            )
-        return num_sms
+        self._ensure_open()
+        return 2
 
     def get_local_metadata(self) -> bytes:
         """This rank's NIXL agent metadata, which a peer loads to address this rank (`connect_ranks`)."""
-        return self.runtime.get_local_metadata()
+        self._ensure_open()
+        return f"api-shell:{self.world_rank}".encode()
 
     def get_local_peer_info(self) -> Tuple[int, int, int, int]:
         """This region's `(base address, CUDA device index, world rank, allocation bytes)`."""
-        return self.runtime.get_local_peer_info()
+        self._ensure_open()
+        return (0, 0, self.world_rank, 0)
 
     def publish(
         self, store: Optional[dist.Store] = None, key_prefix: str = "EP_NIXL"
@@ -806,15 +454,7 @@ class ElasticBuffer:
             store: the publication Store; defaults to the constructor's explicit `store` (never the bootstrap Store).
             key_prefix: the key prefix the readers pass to `connect_ranks`.
         """
-        store = value_or(store, self.store)
-        if store is None:
-            raise ValueError(
-                "Peer publication requires an explicit Store; pass store to ElasticBuffer or publish(store=...)"
-            )
-        store.set(
-            f"{key_prefix}/{self.world_rank}",
-            pickle.dumps((self.get_local_metadata(), self.get_local_peer_info())),
-        )
+        self._ensure_open()
 
     def connect_ranks(
         self,
@@ -839,27 +479,34 @@ class ElasticBuffer:
             key_prefix: the publisher's key prefix; replacement freshness is the caller's responsibility (see `publish`).
             timeout_secs: how long to wait for each peer's key in `store` (the wire-up has its own `NIXL_EP_NIXL_CONNECT_TIMEOUT_SECS`).
         """
+        self._ensure_open()
         if (remote_mds is None) != (peer_infos is None):
             raise ValueError(
                 "remote_mds and peer_infos are given together (the peers' metadata and peer info), or neither (Store discovery)"
             )
-        if remote_mds is None or peer_infos is None:
-            store = value_or(store, self.store)
-            if store is None:
+        if remote_mds is not None and not (
+            len(remote_mds) == len(peer_infos) == len(world_ranks)
+        ):
+            raise ValueError("Metadata lists must match the length of world_ranks")
+        peers = set(world_ranks)
+        if len(peers) != len(world_ranks) or peers.intersection(self._connected):
+            raise ValueError(
+                "Connect each peer once; peers must not already be connected"
+            )
+        if peers.intersection(self._pending_disconnects):
+            raise ValueError(
+                "Commit the pending disconnect before reconnecting the same rank"
+            )
+        for rank in peers:
+            if (
+                not 0 <= rank < self.max_num_scaleout_ranks * self.max_num_scaleup_ranks
+                or rank == self.world_rank
+            ):
                 raise ValueError(
-                    "Peer discovery requires an explicit Store; pass store to ElasticBuffer or "
-                    "connect_ranks(store=...), or pass remote_mds and peer_infos"
+                    "Connected ranks must be other ranks within the declared maximum world"
                 )
-            remote_mds, peer_infos = [], []
-            for world_rank in world_ranks:
-                key = f"{key_prefix}/{world_rank}"
-                store.wait([key], timedelta(seconds=timeout_secs))
-                md, info = pickle.loads(store.get(key))
-                remote_mds.append(md)
-                peer_infos.append(info)
-        self.runtime.connect_ranks(
-            list(world_ranks), list(remote_mds), [tuple(info) for info in peer_infos]
-        )
+        self._connected.update(peers)
+        self._peers_changed = bool(peers) or self._peers_changed
 
     def disconnect_ranks(self, world_ranks: List[int]) -> None:
         """
@@ -867,11 +514,25 @@ class ElasticBuffer:
         the peer first (a staged, uncommitted topology must not hold it either). A rank that stays alive but sits a world
         out is left out of `active_ranks` instead.
         """
-        self.runtime.disconnect_ranks(list(world_ranks))
+        self._ensure_open()
+        peers = set(world_ranks)
+        if len(peers) != len(world_ranks) or not peers.issubset(self._connected):
+            raise ValueError("Disconnect only connected peers, each once")
+        protected = set(self._active) if self.world_rank in self._active else set()
+        if self._pending is not None and self.world_rank in self._pending[0]:
+            protected.update(self._pending[0])
+        if protected.intersection(peers):
+            raise ValueError(
+                "Commit a topology excluding peers before disconnecting them; exclude them from staged topology too"
+            )
+        self._connected.difference_update(peers)
+        self._pending_disconnects.update(peers)
+        self._peers_changed = bool(peers) or self._peers_changed
 
     def get_connected_ranks(self) -> List[int]:
         """World ranks of the connected peers (this rank excluded)."""
-        return list(self.runtime.get_connected_ranks())
+        self._ensure_open()
+        return sorted(self._connected)
 
     def world_rank_of(self, scaleout_rank_idx: int, scaleup_rank_idx: int) -> int:
         """The world rank of coordinates `(scaleout_rank_idx, scaleup_rank_idx)` in the declared maximum world."""
@@ -879,59 +540,28 @@ class ElasticBuffer:
 
     def masks_of(self, active_ranks: Sequence[int]) -> Tuple[int, int]:
         """The `(scaleout_mask, scaleup_mask)` of world ranks forming a product of domains and positions."""
-        active = sorted(set(int(r) for r in active_ranks))
-        domains = sorted(set(r // self.max_num_scaleup_ranks for r in active))
-        positions = sorted(set(r % self.max_num_scaleup_ranks for r in active))
-        product = sorted(self.world_rank_of(d, k) for d in domains for k in positions)
-        assert (
-            product == active
-        ), f"The active ranks must be a product of domains and positions; {domains} x {positions} != {active}"
-        return sum(1 << d for d in domains), sum(1 << k for k in positions)
+        active = sorted(set(active_ranks))
+        if not active or any(
+            (
+                r < 0 or r >= self.max_num_scaleout_ranks * self.max_num_scaleup_ranks
+                for r in active
+            )
+        ):
+            raise ValueError(
+                "Active ranks must be nonempty and within the declared maximum world"
+            )
+        domains = sorted({r // self.max_num_scaleup_ranks for r in active})
+        positions = sorted({r % self.max_num_scaleup_ranks for r in active})
+        if active != [self.world_rank_of(d, p) for d in domains for p in positions]:
+            raise ValueError(
+                "Active ranks must form a product of domains and positions"
+            )
+        return (sum((1 << d for d in domains)), sum((1 << p for p in positions)))
 
     @staticmethod
     def mode_of(scaleout_mask: int) -> str:
         """Exactly one active NVLink domain selects direct mode, regardless of its index."""
         return "direct" if bin(scaleout_mask).count("1") == 1 else "hybrid"
-
-    def _stage(
-        self,
-        *,
-        mode: Optional[str] = None,
-        num_active_sms: int = 0,
-        active_ranks: Optional[Sequence[int]] = None,
-    ) -> None:
-        scaleout_mask, scaleup_mask = (
-            self.masks_of(active_ranks)
-            if active_ranks is not None
-            else self.get_topology_masks()
-        )
-        auto_sm_config = None if num_active_sms else self._auto_sm_config
-        if not num_active_sms:
-            num_active_sms = self.get_topology()[1]
-            # Inactive ranks and bootstrap/teardown worlds do not launch dispatch/combine.
-            if (
-                auto_sm_config is not None
-                and bin(scaleout_mask).count("1") * bin(scaleup_mask).count("1")
-                >= _C.min_num_active_ranks
-                and scaleout_mask & (1 << self.scaleout_rank_idx)
-                and scaleup_mask & (1 << self.scaleup_rank_idx)
-            ):
-                num_active_sms = self._clamp_active_sms(
-                    self._get_theoretical_num_sms_for_topology(
-                        *auto_sm_config, scaleout_mask, scaleup_mask
-                    )
-                )
-        if mode is None:
-            mode = self.mode_of(scaleout_mask)
-        # The position mask crosses the extension as 64-bit words (a whole NVL72 domain needs more than 64 bits)
-        words = [
-            (scaleup_mask >> (64 * i)) & ((1 << 64) - 1)
-            for i in range(max(1, (scaleup_mask.bit_length() + 63) // 64))
-        ]
-        self.runtime.stage_topology_masks(
-            _mode_code(mode), scaleout_mask, words, num_active_sms
-        )
-        self._staged_auto_sm_config = auto_sm_config
 
     def stage_topology(
         self, *, num_active_sms: int = 0, active_ranks: Optional[Sequence[int]] = None
@@ -949,51 +579,66 @@ class ElasticBuffer:
             active_ranks: the world ranks of the active ranks, a product set (`masks_of`) of connected ranks; `None`
                 keeps the committed active ranks.
         """
-        self._stage(num_active_sms=num_active_sms, active_ranks=active_ranks)
+        self._ensure_open()
+        active = (
+            tuple(sorted(set(active_ranks)))
+            if active_ranks is not None
+            else self._active
+        )
+        self.masks_of(active)
+        if self.world_rank in active and (
+            not set(active).issubset(self._connected | {self.world_rank})
+        ):
+            raise ValueError(
+                "Connect the requested peers before staging an active topology"
+            )
+        auto_sm_config = self._auto_sm_config if num_active_sms == 0 else None
+        sms = num_active_sms or (2 if auto_sm_config is not None else self._sms)
+        self._validate_sms(sms)
+        self._pending = (active, sms, auto_sm_config)
 
     def commit_topology(self) -> None:
         """
         Make the staged topology descriptor (`EPTopology`) live: one stream-ordered device write on the current stream
         (a device synchronisation first when peers were connected or disconnected).
         """
-        has_staged_topology = self.runtime.has_staged_topology()
-        self.runtime.commit_topology()
-        if has_staged_topology:
-            self._auto_sm_config = self._staged_auto_sm_config
-        self._staged_auto_sm_config = None
+        self._ensure_open()
+        if self._pending is None and (not self._peers_changed):
+            raise ValueError(
+                "Nothing staged: stage topology or connect/disconnect peers first"
+            )
+        if self._pending is not None:
+            (self._active, self._sms, self._auto_sm_config) = self._pending
+        (self._pending, self._peers_changed) = (None, False)
+        self._pending_disconnects.clear()
 
     def set_active_ranks(
         self, active_ranks: Sequence[int], num_active_sms: int = 0
     ) -> None:
         """`stage_topology(active_ranks=...)` + `commit_topology()` in one step; the mode follows the new world."""
-        self.stage_topology(num_active_sms=num_active_sms, active_ranks=active_ranks)
+        self.stage_topology(active_ranks=active_ranks, num_active_sms=num_active_sms)
         self.commit_topology()
 
     def get_topology_masks(self) -> Tuple[int, int]:
         """Committed `(scaleout_mask, scaleup_mask)`: bit d / bit k denotes an active domain / position."""
-        scaleout_mask, words = self.runtime.get_topology_masks()
-        return scaleout_mask, sum(int(w) << (64 * i) for i, w in enumerate(words))
+        self._ensure_open()
+        return self.masks_of(self._active)
 
     def get_active_ranks(self) -> List[int]:
         """The world ranks of the committed active ranks, sorted."""
-        scaleout_mask, scaleup_mask = self.get_topology_masks()
-        domains = [
-            d for d in range(self.max_num_scaleout_ranks) if (scaleout_mask >> d) & 1
-        ]
-        positions = [
-            k for k in range(self.max_num_scaleup_ranks) if (scaleup_mask >> k) & 1
-        ]
-        return sorted(self.world_rank_of(d, k) for d in domains for k in positions)
+        self._ensure_open()
+        return list(self._active)
 
     def get_topology_extent(self) -> Tuple[int, int]:
         """Committed extents: highest active domain index + 1 and highest active position + 1."""
-        scaleout_mask, scaleup_mask = self.get_topology_masks()
-        return scaleout_mask.bit_length(), scaleup_mask.bit_length()
+        (domains, positions) = self.get_topology_masks()
+        return (domains.bit_length(), positions.bit_length())
 
     @property
     def is_active(self) -> bool:
         """Whether this rank belongs to the committed world, including singleton bootstrap worlds."""
-        return self.runtime.is_active()
+        self._ensure_open()
+        return self.world_rank in self._active
 
     def set_num_active_sms(self, num_active_sms: int) -> None:
         """
@@ -1001,44 +646,19 @@ class ElasticBuffer:
         and mode are untouched. Pins manual mode until a successful `dispatch(num_sms=0)`.
         Refused while a staged world awaits `commit_topology`: commit it first, or stage after this call.
         """
-        self._set_num_active_sms(num_active_sms)
-
-    def _set_num_active_sms(
-        self, num_active_sms: int, *, preserve_auto: bool = False
-    ) -> None:
-        assert (
-            num_active_sms
-        ), 'set_num_active_sms needs the count (0 is not "keep the current value" here)'
-        assert (
-            not self.runtime.has_staged_topology()
-        ), "A staged world awaits commit_topology(): commit it before changing the active SM count, or stage after it"
-        mode, _ = self.get_topology()
-        self._stage(mode=mode, num_active_sms=num_active_sms)
-        if preserve_auto:
-            self._staged_auto_sm_config = self._auto_sm_config
+        self._ensure_open()
+        if self._pending is not None:
+            raise ValueError(
+                "Commit the staged topology before changing the active SM count"
+            )
+        self._validate_sms(num_active_sms)
+        self._pending = (self._active, num_active_sms, None)
         self.commit_topology()
 
     def get_topology(self) -> Tuple[str, int]:
         """The committed `(mode, num_active_sms)`."""
-        mode, num_active_sms = self.runtime.get_topology()
-        return _MODE_NAMES[mode], num_active_sms
-
-    def _clamp_active_sms(self, num_sms: int) -> int:
-        return max(2, min(align(num_sms, 2), self.num_launch_sms))
-
-    def _adaptive_active_sms(self, num_sms: int) -> int:
-        # The grid of the adaptive kernels is fixed, so `num_sms` only decides how many blocks do work: clamp it to
-        # the launch grid (even, at least 2) and update the topology descriptor (`EPTopology`, its `num_active_sms`) if it changed
-        num_active_sms = self._clamp_active_sms(num_sms)
-        _, current = self.get_topology()
-        if current != num_active_sms:
-            assert (
-                not torch.cuda.is_current_stream_capturing()
-            ), f"`dispatch(num_sms={num_sms})` would change the committed active SM count ({current}) inside a CUDA-graph capture: warm up eagerly with the same `num_sms`"
-            self._set_num_active_sms(
-                num_active_sms, preserve_auto=True
-            )  # a failed dispatch keeps the previous policy
-        return num_active_sms
+        (domains, _) = self.get_topology_masks()
+        return (self.mode_of(domains), self._sms)
 
     def dispatch(
         self,
@@ -1119,129 +739,65 @@ class ElasticBuffer:
             handle: the returned communication handle.
             event: the event after executing the kernel (valid only if `async_with_compute_stream` is set).
         """
-        check_torch_deterministic()
-        assert (
-            self.num_experts_per_rank > 0
-        ), "Set num_experts_per_rank when constructing an EP buffer"
-
-        # Automatic decide SM count
+        self._ensure_dispatchable()
+        if expert_alignment <= 0:
+            raise ValueError("expert_alignment must be positive")
         num_topk = topk_idx.shape[1]
         auto_sm_config = (num_topk,) if num_sms == 0 else None
-        assert (
-            auto_sm_config == self._auto_sm_config
-            or not self.runtime.has_staged_topology()
-        ), "A staged world awaits commit_topology(): commit it before changing the automatic/manual SM policy"
-        num_sms = self.get_theoretical_num_sms(num_topk) if num_sms == 0 else num_sms
-        # Fixed grid: `num_sms` becomes the active block count of the topology descriptor
-        num_sms = self._adaptive_active_sms(num_sms)
-
-        # Unpack SF
-        x, sf = x if isinstance(x, tuple) else (x, None)
-
-        # NVFP4 scale bytes share storage with the int32 packs copied by the kernels.
-        nvfp4 = sf is not None and x.dtype == torch.uint8
-        if nvfp4:
-            assert (
-                x.ndim == 2
-                and sf.dtype in (torch.float8_e4m3fn, torch.uint8)
-                and x.shape[1] % 32 == 0
-                and sf.shape == (x.shape[0], x.shape[1] // 8)
-                and sf.is_contiguous()
-            ), "NVFP4 requires codes [tokens, hidden / 2] uint8 and contiguous scales [tokens, hidden / 16] float8_e4m3fn or uint8, hidden divisible by 64"
-            sf = sf.view(torch.int32)
-
-        if num_max_tokens_per_rank is None:
-            num_max_tokens_per_rank = self.num_max_tokens_per_rank
-
-        (
-            recv_x,
-            recv_sf,
-            recv_topk_idx,
-            recv_topk_weights,
-            cloned_topk_idx,
-            num_recv_tokens,
-            num_recv_tokens_per_expert_list,
-            psum_num_recv_tokens_per_scaleup_rank,
-            psum_num_recv_tokens_per_expert,
-            num_unaligned_recv_tokens_per_expert,
-            recv_src_metadata,
-            token_metadata_at_forward,
-            channel_linked_list,
-            event,
-        ) = self.runtime.dispatch(
-            x,
-            sf,
-            topk_idx,
-            topk_weights,
-            cumulative_local_expert_recv_stats,
-            num_max_tokens_per_rank,
-            expert_alignment,
-            previous_event,
-            previous_event_before_epilogue,
-            async_with_compute_stream,
-            allocate_on_comm_stream,
-            do_handle_copy,
-            do_cpu_sync,
-            do_expand,
-            do_zero_padding,
-            use_tma_aligned_col_major_sf,
+        sms = (
+            2
+            if auto_sm_config is not None
+            else max(2, min((num_sms + 1) // 2 * 2, self.num_launch_sms))
         )
-
+        if self._pending is not None and (
+            sms != self._sms or auto_sm_config != self._auto_sm_config
+        ):
+            raise ValueError("Commit the staged topology before changing the SM policy")
+        (data, scales) = x if isinstance(x, tuple) else (x, None)
+        received = _empty((0, *data.shape[1:]), data.dtype)
+        if scales is not None:
+            scale_dtype = (
+                torch.float8_e4m3fn if data.dtype == torch.uint8 else scales.dtype
+            )
+            received = (received, _empty((0, *scales.shape[1:]), scale_dtype))
+        received_indices = None if do_expand else _empty((0, num_topk), topk_idx.dtype)
+        received_weights = (
+            None
+            if topk_weights is None
+            else _empty((0,) if do_expand else (0, num_topk), topk_weights.dtype)
+        )
+        capacity = (
+            self.num_max_tokens_per_rank
+            if num_max_tokens_per_rank is None
+            else num_max_tokens_per_rank
+        )
         handle = EPHandle(
             do_expand,
             expert_alignment,
-            num_max_tokens_per_rank,
-            num_sms,
-            cloned_topk_idx if do_handle_copy else topk_idx,
-            num_recv_tokens,
-            num_recv_tokens_per_expert_list,
-            psum_num_recv_tokens_per_scaleup_rank,
-            psum_num_recv_tokens_per_expert,
-            num_unaligned_recv_tokens_per_expert,
-            recv_src_metadata,
-            token_metadata_at_forward,
-            channel_linked_list,
+            capacity,
+            sms,
+            _empty(topk_idx.shape, topk_idx.dtype) if do_handle_copy else topk_idx,
+            0,
+            [0] * self.num_experts_per_rank if do_cpu_sync else [],
+            _empty((self.max_num_scaleup_ranks + 1,), torch.int32),
+            _empty((self.num_experts_per_rank,), torch.int32),
+            _empty((self.num_experts_per_rank,), torch.int32),
+            _empty((0, 2 + num_topk), torch.int32),
+            _empty((0,), torch.int32),
+            _empty((0,), torch.int32),
             do_cpu_sync,
         )
-
-        event_overlap = EventOverlap(event)
-
-        # Deterministic epilogue
-        # NOTES: when we change the metadata layout, the epilogue should also be changed
-        if self.deterministic:
-            epilogue = functools.partial(
-                handle.deterministic_sort,
-                recv_x,
-                recv_sf,
-                recv_topk_idx,
-                recv_topk_weights,
-            )
-            (
-                event_overlap.register_hook_after_wait(epilogue)
-                if async_with_compute_stream
-                else epilogue()
-            )
-
-        if nvfp4:
-            recv_sf = recv_sf.view(torch.float8_e4m3fn)
-        recv_x = (recv_x, recv_sf) if recv_sf is not None else recv_x
-
+        event = EventOverlap(EventHandle() if async_with_compute_stream else None)
+        if sms != self._sms:
+            self.set_num_active_sms(sms)
         self._auto_sm_config = auto_sm_config
-        return recv_x, recv_topk_idx, recv_topk_weights, handle, event_overlap
-
-    @staticmethod
-    def _unpack_bias(
-        bias: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
-        bias_0, bias_1 = None, None
-        if isinstance(bias, torch.Tensor):
-            bias_0 = bias
-        elif isinstance(bias, tuple):
-            assert len(bias) == 2
-            bias_0, bias_1 = bias
-        elif bias is not None:
-            raise TypeError("bias must be a Tensor, a pair of Tensors, or None")
-        return bias_0, bias_1
+        return (
+            received,
+            received_indices,
+            received_weights,
+            handle,
+            event,
+        )
 
     def combine(
         self,
@@ -1277,25 +833,29 @@ class ElasticBuffer:
             combined_x: the reduced token tensor, with shape `[num_combined_tokens, hidden]` and type `torch.bfloat16`.
             event: the event after executing the kernel (valid only if `async_with_compute_stream` is set).
         """
-        check_torch_deterministic()
-
-        bias_0, bias_1 = ElasticBuffer._unpack_bias(bias)
-        combined_x, event = self.runtime.combine(
-            x,
-            bias_0,
-            bias_1,
-            handle.recv_src_metadata,
-            handle.topk_idx,
-            handle.psum_num_recv_tokens_per_scaleup_rank,
-            handle.token_metadata_at_forward,
-            handle.channel_linked_list,
-            handle.recv_count_is_exact,
-            handle.num_max_tokens_per_rank,
-            handle.num_sms,
-            previous_event,
-            previous_event_before_epilogue,
-            async_with_compute_stream,
-            allocate_on_comm_stream,
-            handle.do_expand,
+        self._ensure_dispatchable()
+        if handle.num_sms != self._sms:
+            raise ValueError("The handle SM count differs from the committed topology")
+        return (
+            _empty((handle.topk_idx.shape[0], x.shape[1]), torch.bfloat16),
+            EventOverlap(EventHandle() if async_with_compute_stream else None),
         )
-        return combined_x, EventOverlap(event)
+
+    def _ensure_open(self):
+        if self._destroyed:
+            raise RuntimeError("This API-shell buffer has been destroyed")
+
+    def _ensure_dispatchable(self):
+        self._ensure_open()
+        if self.num_experts_per_rank <= 0:
+            raise ValueError("Set num_experts_per_rank when constructing an EP buffer")
+        if len(self._active) < 2 or not self.is_active:
+            raise ValueError(
+                "Dispatch/combine require this rank in a world with at least two active ranks"
+            )
+
+    def _validate_sms(self, count):
+        if not 2 <= count <= self.num_launch_sms or count % 2:
+            raise ValueError(
+                "Active SM count must be even and between 2 and num_launch_sms"
+            )
