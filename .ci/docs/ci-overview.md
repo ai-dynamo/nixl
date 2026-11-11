@@ -289,7 +289,7 @@ added later as a YAML block here plus a line in the dispatcher's job table.
 
 | Component | Covers | Why |
 |---|---|---|
-| `docs` | `docs/**`, `fern/**`, and `*.md` anywhere a more specific entry does not claim it, i.e. the root-level `ATTRIBUTIONS-*.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md` | a docs-only PR runs no Jenkins job; Markdown inside `src/`, `examples/` etc. stays with `all` because those entries are more specific |
+| `docs` | `docs/**`, `fern/**`, `.ci/docs/**` (this file), and `*.md` anywhere a more specific entry does not claim it, i.e. the root-level `ATTRIBUTIONS-*.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md` | a docs-only PR runs no Jenkins job; Markdown inside `src/`, `examples/` etc. stays with `all` because those entries are more specific |
 | `all` | one entry per top-level directory and root file, plus `/README.md` | runs every job; the root README is pulled back out of `docs` because `pyproject.toml` embeds it in the wheel, so renaming or deleting it must build on main |
 
 `CODEOWNERS` routes `.ci/path-filters.yaml` to `@ai-dynamo/nixl-devops` on
