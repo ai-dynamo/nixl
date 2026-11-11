@@ -63,7 +63,8 @@ enum class Record : std::uint8_t {
     NotifReceived,
     RemoteObserved,
     Phase,
-    WireInflight,
+    WireInflightWrite,
+    WireInflightRead,
     Span,
 };
 
@@ -120,8 +121,10 @@ toStringView(Record record) noexcept {
         return "nixl::remote.observed";
     case Record::Phase:
         return "nixl::phase";
-    case Record::WireInflight:
-        return "nixl::wire.inflight";
+    case Record::WireInflightWrite:
+        return "nixl::wire.inflight.write";
+    case Record::WireInflightRead:
+        return "nixl::wire.inflight.read";
     case Record::Span:
         return "nixl::span";
     }
@@ -137,9 +140,11 @@ kindOf(Record record) noexcept {
         return Kind::MemoryR;
     case Record::PostXferReqWrite:
     case Record::NotifSent:
+    case Record::WireInflightWrite:
         return Kind::CommSend;
     case Record::PostXferReqRead:
     case Record::NotifReceived:
+    case Record::WireInflightRead:
         return Kind::CommRecv;
     case Record::XferComplete:
     case Record::XferError:
@@ -160,7 +165,6 @@ kindOf(Record record) noexcept {
     case Record::ReleaseXferReq:
     case Record::XferReq:
     case Record::ReleaseMemView:
-    case Record::WireInflight:
     case Record::Span:
         return Kind::Generic;
     }

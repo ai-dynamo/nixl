@@ -261,7 +261,7 @@ TEST(NvtxSpan, TracerSpansAndEventsAllocateNothing) {
         span.addAttribute("nixl.xfer_request_id", std::int64_t{0x7edcba9876543210});
         tracer.emitEvent("nixl::submit", nixl::trace::Kind::Metadata, *context, 42, 1, attrs);
         tracer.emitSpan(
-            "nixl::wire.inflight", nixl::trace::Kind::CommSend, *context, 42, 1, 2, attrs);
+            "nixl::wire.inflight.write", nixl::trace::Kind::CommSend, *context, 42, 1, 2, attrs);
     };
     record();
 

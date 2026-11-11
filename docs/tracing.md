@@ -405,9 +405,12 @@ operation:
 A backend records an interval with `recordSpan`, from its own closed vocabulary,
 `nixl_trace_span_t`, with the transfer's direction, a start and an end time on
 the same clock, and the same context, request id, execution number and
-attributes as a phase. Core records it as a span from the start to the end,
-`CommSend` for a write and `CommRecv` for a read, and counts a span that fails
-to record in `agent_trace_phases_dropped_total`, as it counts a phase. The span
+attributes as a phase. Core records it as a span from the start to the end under
+its record's name and kind: `nixl::wire.inflight.write` is `CommSend`,
+`nixl::wire.inflight.read` is `CommRecv` and an unlabeled `nixl::span` is `Generic`,
+while a span the plugin names with a label is `CommSend` for a write and `CommRecv`
+for a read. It counts a span that fails to record in
+`agent_trace_phases_dropped_total`, as it counts a phase. The span
 carries a phase's attributes, except that its label is `nixl.span.label` and
 there is no `nixl.phase.timestamp_us`: the start and end the plugin passes
 become the span's start and end times (in NVTX, `nixl.start_us` and
@@ -415,13 +418,14 @@ become the span's start and end times (in NVTX, `nixl.start_us` and
 
 | Span | `nixl_trace_span_t` | Interval |
 | ---- | ------------------- | -------- |
-| `nixl::wire.inflight` | `WIRE_INFLIGHT` | the transfer in flight, from `submit` to `wire.completed` |
+| `nixl::wire.inflight.write`, `nixl::wire.inflight.read` | `WIRE_INFLIGHT` | the transfer in flight, from `submit` to `wire.completed`, named for its direction |
 | `nixl::span` | `OTHER` | escape hatch; the plugin's label becomes the span name |
 
 The sink interface is internal (`src/core/tracing/api/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. UCX emits
 `nixl::submit`, `nixl::wire.submitted`, `nixl::wire.completed`, `nixl::notif.sent`
-and `nixl::notif.received`, and the span `nixl::wire.inflight`, described below;
+and `nixl::notif.received`, and the span `nixl::wire.inflight.write` or `.read`,
+described below;
 libfabric's phases come in later PRs.
 
 Recording a phase never fails the transfer: if the trace backend throws, the
@@ -501,7 +505,8 @@ notification go out, before `postXfer` records `nixl::wire.submitted`, so
 `nixl::notif.sent`'s stamp can precede them; under NVTX, which times records itself,
 they appear in order. `nixl::wire.completed` marks the data's completion only,
 so a post whose notification fails afterwards keeps it. With each
-`nixl::wire.completed`, UCX records the span `nixl::wire.inflight` from that post's
+`nixl::wire.completed`, UCX records the span `nixl::wire.inflight.write` or `.read`,
+by the post's direction, from that post's
 `nixl::submit` to its `nixl::wire.completed`, at their times. A span's times are its
 payload, so when every backend times its own records, as NVTX does, UCX still reads
 the clock at submit and at completion for a post that records the span.
@@ -590,7 +595,7 @@ check the phases. Transfers to the agent itself, on the default and the thread-p
 engine, record `nixl::submit` and `nixl::wire.submitted` once per post and
 `nixl::notif.sent` once per notifying post. A transfer split across the thread-pool
 engine's dedicated workers also records one `nixl::wire.completed` and one
-`nixl::wire.inflight` per post, before a late status check, and none when released
+`nixl::wire.inflight.write` per post, before a late status check, and none when released
 in flight. Without the progress thread, an unsplit one and one on the default engine
 record none; while it runs, both record one of each per post, the default engine's
 before a late status check and none when released in flight. A transfer to a second
@@ -647,6 +652,6 @@ In NIXL tracing, "correlation" can mean two different things:
 - **Backend phase emission** — UCX records `nixl::submit`, `nixl::wire.submitted`,
   `nixl::notif.sent` and `nixl::notif.received` through the sink described under
   "Backend phases". UCX records `nixl::wire.completed`, and with it the span
-  `nixl::wire.inflight`, for every post while the progress thread runs, and
-  otherwise only for the thread-pool engine's split posts (see "Backend phases");
-  the other backends record no phases yet.
+  `nixl::wire.inflight.write` or `.read`, for every post while the progress thread
+  runs, and otherwise only for the thread-pool engine's split posts (see "Backend
+  phases"); the other backends record no phases yet.

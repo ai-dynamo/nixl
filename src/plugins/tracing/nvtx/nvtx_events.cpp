@@ -86,7 +86,7 @@ namespace {
     }
 
     constexpr std::size_t kWordSize = sizeof(std::uint64_t);
-    constexpr std::size_t kMaxRegisteredName = 3 * kWordSize;
+    constexpr std::size_t kMaxRegisteredName = 4 * kWordSize;
 
     [[nodiscard]] constexpr std::uint64_t
     wordAt(const std::string_view name, const std::size_t offset) noexcept {
@@ -107,7 +107,8 @@ namespace {
 
     struct NameWords {
         std::uint64_t head;
-        std::uint64_t middle;
+        std::uint64_t second;
+        std::uint64_t third;
         std::uint64_t tail;
         std::size_t size;
 
@@ -120,6 +121,7 @@ namespace {
         const std::size_t tail = name.size() - kWordSize;
         return {wordAt(name, 0),
                 wordAt(name, std::min(kWordSize, tail)),
+                wordAt(name, std::min(2 * kWordSize, tail)),
                 wordAt(name, tail),
                 name.size()};
     }

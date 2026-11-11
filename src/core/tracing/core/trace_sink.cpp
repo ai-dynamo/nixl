@@ -120,14 +120,15 @@ TracerPhaseSink::recordSpan(nixl_trace_span_t span,
                             std::span<const nixlBackendTraceAttr> attrs,
                             std::string_view label) noexcept {
     const bool named = (span == nixl_trace_span_t::OTHER) && !label.empty();
+    const Record span_record = toRecord(span, operation);
     record("nixl.span.label",
            label,
            std::nullopt,
            identity,
            attrs,
            [&](std::span<const Attribute> span_attrs) {
-               tracer_.emitSpan(named ? Name(label) : Name(toRecord(span)),
-                                operationKind(operation),
+               tracer_.emitSpan(named ? Name(label) : Name(span_record),
+                                named ? operationKind(operation) : kindOf(span_record),
                                 identity.context,
                                 identity.requestId,
                                 start,

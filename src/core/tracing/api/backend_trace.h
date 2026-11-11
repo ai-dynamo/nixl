@@ -131,10 +131,11 @@ enum class nixl_trace_span_t : std::uint8_t {
 };
 
 [[nodiscard]] constexpr nixl::trace::Record
-toRecord(nixl_trace_span_t span) noexcept {
+toRecord(nixl_trace_span_t span, nixl_xfer_op_t operation) noexcept {
     switch (span) {
     case nixl_trace_span_t::WIRE_INFLIGHT:
-        return nixl::trace::Record::WireInflight;
+        return (operation == NIXL_READ) ? nixl::trace::Record::WireInflightRead :
+                                          nixl::trace::Record::WireInflightWrite;
     case nixl_trace_span_t::OTHER:
         return nixl::trace::Record::Span;
     }
@@ -142,8 +143,8 @@ toRecord(nixl_trace_span_t span) noexcept {
 }
 
 [[nodiscard]] constexpr std::string_view
-toStringView(nixl_trace_span_t span) noexcept {
-    return nixl::trace::toStringView(toRecord(span));
+toStringView(nixl_trace_span_t span, nixl_xfer_op_t operation) noexcept {
+    return nixl::trace::toStringView(toRecord(span, operation));
 }
 
 /**
