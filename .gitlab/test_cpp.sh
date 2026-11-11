@@ -26,6 +26,7 @@ TEXT_CLEAR="\033[0m"
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
+WORKSPACE_DIR=$(pwd)
 PREVDIR=$(dirname "$(readlink -f "$0")")
 
 if [ -z "$INSTALL_DIR" ]; then
@@ -131,6 +132,16 @@ env -u UCX_NET_DEVICES gtest-parallel --workers=1 --serialize_test_cases ./bin/g
 
 # Redis unit tests
 ./bin/unit --gtest_filter='redis*:redisPool*'
+
+# WQS plugin unit tests (injected client; need neither hugepages nor a WQS service). The test
+# binary is not installed, so run it from the build tree; libwqs_store.so (wqs_mock) is
+# resolved through ${INSTALL_DIR}/lib. Skipped when the WQS plugin was not built.
+wqs_unit="${WORKSPACE_DIR}/${NIXL_BUILD_DIR:-nixl_build}/test/gtest/unit/plugins/wqs/wqs_unit"
+if [ -x "${wqs_unit}" ]; then
+    "${wqs_unit}"
+else
+    echo "WQS unit tests not built (${wqs_unit}); skipping"
+fi
 
 # DOCA telemetry exporter tests: present only when built with the DOCA SDK
 # (TELEMETRY_DOCA). Self-contained - each binds a free loopback port via
