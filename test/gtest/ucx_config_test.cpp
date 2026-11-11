@@ -198,7 +198,7 @@ TEST_F(UcxConfigTest, ModifyAlwaysOverridesEnvValue) {
 }
 
 TEST_F(UcxConfigTest, ModifyEqualSetsDefaultValue) {
-    if (getValue(nixl::ucx::config(), "MAX_RMA_RAILS") != "1") {
+    if (getDumpLine(nixl::ucx::config(), "MAX_RMA_RAILS") != "# UCX_MAX_RMA_RAILS=1") {
         GTEST_SKIP() << "UCX_MAX_RMA_RAILS is set in a UCX configuration file";
     }
 
