@@ -79,6 +79,16 @@ public:
     friend class nixlAgent;
 
 private:
+    void
+    setStatus(nixl_status_t new_status) {
+        status = new_status;
+        if (status == NIXL_SUCCESS) {
+            traceable_.trace(nixl::trace::Record::XferComplete);
+        } else if (status < 0) {
+            traceable_.trace(nixl::trace::Record::XferError, {"nixl.status", status});
+        }
+    }
+
     nixlBackendEngine *engine = nullptr;
     nixlBackendReqH *backendHandle = nullptr;
 

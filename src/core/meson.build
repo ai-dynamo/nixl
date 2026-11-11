@@ -83,6 +83,7 @@ nixl_lib_sources = [
     'telemetry/buffer_exporter.cpp',
     'telemetry/buffer_plugin.cpp',
     'telemetry/nop_plugin.cpp',
+    'tracing/core/agent_trace.cpp',
     'tracing/core/trace_sink.cpp',
     'tracing/core/tracer.cpp',
     'tracing/core/tracing.cpp',

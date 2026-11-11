@@ -21,7 +21,7 @@
 #include "nixl_md_manager.h"
 #include "nixl_metadata_context.h"
 #include "telemetry.h"
-#include "tracing/api/tracing.h"
+#include "tracing/api/agent_trace.h"
 #include "sync.h"
 
 #include <atomic>
@@ -65,8 +65,7 @@ class nixlAgentData final : public nixlMetadataContext {
         // Composite tracer (fans out to every enabled backend); null when no
         // backend is active.
         const nixl::trace::TracerPtr tracer_;
-        std::unordered_map<nixl_backend_t, nixl::trace::BackendTraceSinkPtr> traceSinks_;
-        std::unordered_map<nixl_backend_t, std::atomic<bool>> traceContextUnsupported_;
+        nixl::trace::BackendTraces backendTraces_;
         // Bookkeeping for local connection metadata and user handles per backend
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
@@ -107,9 +106,10 @@ class nixlAgentData final : public nixlMetadataContext {
                     nixl_mem_t mem_type);
         void
         warnAboutEfaHardwareMismatch();
-        void
-        warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
-                                      const nixl::trace::TraceContext &context) noexcept;
+        [[nodiscard]] nixl::trace::Tracer *
+        tracer() const noexcept {
+            return tracer_.get();
+        }
 
         template<class dlist_t>
         nixl_status_t
