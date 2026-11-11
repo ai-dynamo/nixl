@@ -37,7 +37,8 @@ if get_option('buildtype') != 'release'
         '-Wl,--wrap=numa_num_configured_nodes',
         '-Wl,--wrap=numa_distance',
         '-Wl,--wrap=get_mempolicy',
-        '-Wl,--wrap=fi_fabric' ]
+        '-Wl,--wrap=fi_fabric',
+        '-Wl,--wrap=nixlCudaAccelCoherence' ]
 
     libfabric_topology_test_bin = executable('libfabric_topology_test',
                'libfabric_topology_test.cpp',

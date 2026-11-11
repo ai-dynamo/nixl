@@ -19,9 +19,13 @@
 #define NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_TOPOLOGY_H
 
 #include "libfabric_common.h"
+#include "libfabric_cuda_caps.h"
 #include "nixl.h"
 #include <hwloc.h>
+#include <set>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 /**
  * @brief Topology discovery and management for AWS instances with EFA devices
@@ -65,6 +69,13 @@ private:
     std::vector<size_t> numa_speed_map;
     size_t avg_numa_speed; // average (per NUMA node) PCIe capacity
 
+    // False when NIXL_LIBFABRIC_NIC_SELECTION=all: keep every discovered device.
+    bool nic_selection_auto_;
+
+    // Coherence of the host's GPUs with the CPU, resolved once.
+    nixlAccelCoherence host_coherence_;
+    bool host_coherence_resolved_;
+
     // Helper methods
     nixl_status_t
     discoverProviderWithDevices();
@@ -86,6 +97,26 @@ private:
     buildAccelToEfaMapping();
     void
     buildNicInfoMap();
+
+    // Reads NIXL_LIBFABRIC_NIC_SELECTION into nic_selection_auto_.
+    void
+    readNicSelectionPolicy();
+
+    // Whether the host's NVIDIA GPUs are coherent with the CPU: the answer of the first GPU the
+    // query can reach, UNKNOWN when none answers (no CUDA driver, ROCm build, no NVIDIA GPU).
+    nixlAccelCoherence
+    getHostAccelCoherence();
+
+    // Where no NIC shares a PCIe switch with an accelerator and the accelerators are coherent
+    // with the CPU, removes the NICs not at the accelerators' bridge depth below their CPU
+    // package (front-end NICs) from the device list, before NIC info and rails are built.
+    // Keeps every NIC when the topology is incomplete or ambiguous.
+    void
+    excludeNicsOffAccelTier();
+
+    // Removes devices from all_devices and the PCIe <-> libfabric maps.
+    void
+    removeDevices(const std::set<std::string> &devices);
     void
     cleanupHwlocTopology();
 
@@ -228,6 +259,19 @@ public:
     // between them.
     static bool
     isPcieSwitch(hwloc_obj_t obj);
+
+    // Finds the CPU package above a PCI device and counts the bridges between them (actual
+    // bridge parents, not hwloc's type-based depth). False when no package is above it.
+    static bool
+    getPackageBridgeDepth(hwloc_obj_t node, hwloc_obj_t &package, unsigned int &bridge_depth);
+
+    // From the bridge depths of the accelerators and NICs below one CPU package: true, with
+    // nic_depth set, when the accelerators share one depth, the NICs sit at several depths and
+    // one of them is the accelerators'. False otherwise.
+    static bool
+    getAccelTierBridgeDepth(const std::vector<unsigned int> &accel_depths,
+                            const std::vector<unsigned int> &nic_depths,
+                            unsigned int &nic_depth);
 
     // True when this EFA device and the accelerator paired with it sit under a common
     // PCIe switch, so the device reaches GPU memory over PCIe.

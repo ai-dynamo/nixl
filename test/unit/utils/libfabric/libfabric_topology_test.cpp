@@ -317,6 +317,9 @@ struct DmabufMappingInfo {
     // carrying both routes the rows below also state that an accelerator reaches its NICs on
     // both -- the ones under its PCIe switch and the ones it meets at the CPU.
     std::vector<std::pair<std::string, std::vector<std::string>>> accel_efa_devices;
+    // Coherence the (mocked) coherence query reports for the accelerators. UNKNOWN, the
+    // default, is what a host whose coherence cannot be read reports.
+    nixlAccelCoherence coherence = nixlAccelCoherence::UNKNOWN;
 };
 
 static const DmabufMappingInfo dmabuf_mapping_topologies[] = {
@@ -408,6 +411,31 @@ static const DmabufMappingInfo dmabuf_mapping_topologies[] = {
                            {"0000:b2:00.0",
                             {"rdmap176s0", "rdmap177s0", "rdmap191s0", "rdmap192s0"}}}},
 
+    // The same capture with its GPUs reported coherent with the CPU: unchanged, every GPU
+    // keeps the two NICs it meets at its Grace Package.
+    {.enable = true,
+     .instance_type = "p6e-gb200.36xl (coherent)",
+     .topo_file = "p6e-gb200.36xl-topo.xml",
+     .nic_count = 16,
+     .nic_line_speed = 400,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {"rdmap54s0",
+                                    "rdmap55s0",
+                                    "rdmap76s0",
+                                    "rdmap77s0",
+                                    "rdmap169s0",
+                                    "rdmap170s0",
+                                    "rdmap191s0",
+                                    "rdmap192s0"},
+     .expect_grouping_skipped = false,
+     .accel_efa_devices = {{"0000:29:00.0", {"rdmap39s0", "rdmap40s0", "rdmap54s0", "rdmap55s0"}},
+                           {"0000:3f:00.0", {"rdmap61s0", "rdmap62s0", "rdmap76s0", "rdmap77s0"}},
+                           {"0000:9c:00.0",
+                            {"rdmap154s0", "rdmap155s0", "rdmap169s0", "rdmap170s0"}},
+                           {"0000:b2:00.0",
+                            {"rdmap176s0", "rdmap177s0", "rdmap191s0", "rdmap192s0"}}},
+     .coherence = nixlAccelCoherence::COHERENT},
+
     // end of list
 };
 static const size_t dmabuf_mapping_topology_count =
@@ -494,6 +522,9 @@ testNeuronTopology(const char *instance_type);
 static int
 testDmabufMappingShapes();
 
+int
+testNicTierHelpers();
+
 // test the dmabuf mapping decision on every enabled captured topology
 static int
 testDmabufMappingTopologies();
@@ -549,6 +580,12 @@ main(int argc, char *argv[]) {
     // test the CUDA dmabuf mapping decision: ancestor classification first (needs no
     // XML), then the end-to-end decision on every captured topology
     res = testDmabufMappingShapes();
+    if (res != 0) {
+        return res;
+    }
+
+    // PCIe tier helpers behind the front-end NIC rule (no XML)
+    res = testNicTierHelpers();
     if (res != 0) {
         return res;
     }
@@ -730,6 +767,21 @@ setTesting() {
 inline void
 clearTesting() {
     unsetenv(NIXL_LIBFABRIC_TESTING_ENV_VAR);
+}
+
+// coherence every accelerator reports while testing
+static nixlAccelCoherence curr_coherence = nixlAccelCoherence::UNKNOWN;
+
+extern "C" nixlAccelCoherence
+__real_nixlCudaAccelCoherence(const char *pci_bus_id);
+
+// mock the coherence query: the XML topologies name accelerators this host does not have
+extern "C" nixlAccelCoherence
+__wrap_nixlCudaAccelCoherence(const char *pci_bus_id) {
+    if (!isTesting()) {
+        return __real_nixlCudaAccelCoherence(pci_bus_id);
+    }
+    return curr_coherence;
 }
 
 // we need to declare to prototype for the original function wrappers
@@ -1699,6 +1751,7 @@ testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
                           .test_scenarios = {},
                           .rail_partition = {}};
     curr_topology = &dummy;
+    curr_coherence = mapping_info.coherence;
     NIXL_TRACE << "Testing dmabuf mapping decision on " << mapping_info.instance_type;
 
     setTesting();
@@ -1711,6 +1764,7 @@ testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
             clearTesting();
             unsetenv("HWLOC_XMLFILE");
             curr_topology = nullptr;
+            curr_coherence = nixlAccelCoherence::UNKNOWN;
         }
     } env_guard;
 
@@ -1819,6 +1873,55 @@ testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
                   << " dmabuf mapping, " << exception_count << " the other one";
     }
     return rc;
+}
+
+int
+testNicTierHelpers() {
+    NIXL_INFO << "=== Testing PCIe tier helpers ===";
+
+    // Machine > Package > host bridge > root port > switch (up > down) > {shallow, bridge > deep};
+    // orphan under Machine
+    hwloc_obj machine{}, package{}, host{}, port{}, up{}, down{}, sw{}, shallow{}, deep{}, orphan{};
+    auto link = [](hwloc_obj &o, hwloc_obj_type_t type, hwloc_obj *parent) {
+        o.type = type;
+        o.parent = parent;
+    };
+    link(machine, HWLOC_OBJ_MACHINE, nullptr);
+    link(package, HWLOC_OBJ_PACKAGE, &machine);
+    link(host, HWLOC_OBJ_BRIDGE, &package);
+    link(port, HWLOC_OBJ_BRIDGE, &host);
+    link(up, HWLOC_OBJ_BRIDGE, &port);
+    link(down, HWLOC_OBJ_BRIDGE, &up);
+    link(sw, HWLOC_OBJ_BRIDGE, &down);
+    link(shallow, HWLOC_OBJ_PCI_DEVICE, &down);
+    link(deep, HWLOC_OBJ_PCI_DEVICE, &sw);
+    link(orphan, HWLOC_OBJ_PCI_DEVICE, &machine);
+
+    hwloc_obj_t found = nullptr;
+    unsigned int depth = 0;
+    const bool depths_ok = nixlLibfabricTopology::getPackageBridgeDepth(&shallow, found, depth) &&
+        found == &package && depth == 4 &&
+        nixlLibfabricTopology::getPackageBridgeDepth(&deep, found, depth) && depth == 5 &&
+        !nixlLibfabricTopology::getPackageBridgeDepth(&orphan, found, depth) && found == nullptr;
+    unsigned int nic_depth = 0;
+    const bool tier_ok =
+        nixlLibfabricTopology::getAccelTierBridgeDepth({4, 4}, {4, 4, 5}, nic_depth) &&
+        nic_depth == 4;
+    // uniform NIC depth, GPUs at several depths, no NIC at the GPUs' depth, no GPU, no NIC
+    const std::vector<std::pair<std::vector<unsigned int>, std::vector<unsigned int>>> open = {
+        {{4, 4}, {4, 4}}, {{4, 5}, {4, 4, 5}}, {{4, 4}, {5, 6}}, {{}, {4, 5}}, {{4}, {}}};
+    bool fails_open = true;
+    for (const auto &c : open) {
+        fails_open = fails_open &&
+            !nixlLibfabricTopology::getAccelTierBridgeDepth(c.first, c.second, nic_depth);
+    }
+    if (!depths_ok || !tier_ok || !fails_open) {
+        NIXL_ERROR << "PCIe tier helpers: depths " << depths_ok << ", tier " << tier_ok
+                   << ", fail open " << fails_open;
+        return 1;
+    }
+    NIXL_INFO << "   SUCCESS: PCIe tier helpers";
+    return 0;
 }
 
 int

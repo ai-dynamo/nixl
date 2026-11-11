@@ -24,7 +24,9 @@
 #include <sstream>
 #include <algorithm>
 #include <set>
+#include <map>
 #include <cmath>
+#include <cctype>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
@@ -46,6 +48,9 @@ nixlLibfabricTopology::nixlLibfabricTopology()
       topology_discovered(false),
       hwloc_topology(nullptr),
       avg_numa_speed(0),
+      nic_selection_auto_(true),
+      host_coherence_(nixlAccelCoherence::UNKNOWN),
+      host_coherence_resolved_(false),
       avg_nic_speed(0),
       avg_nic_upstream_speed(0),
       has_pcie_devices_(false) {
@@ -70,6 +75,7 @@ nixlLibfabricTopology::~nixlLibfabricTopology() {
 nixl_status_t
 nixlLibfabricTopology::discoverTopology() {
     NIXL_TRACE << "Starting hwloc-based topology discovery";
+    readNicSelectionPolicy();
     // Initialize hwloc topology
     nixl_status_t status = initHwlocTopology();
     if (status != NIXL_SUCCESS) {
@@ -112,6 +118,12 @@ nixlLibfabricTopology::discoverTopology() {
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to discover hwloc topology";
             return status;
+        }
+
+        // A NIC off the accelerators' PCIe tier leaves the device list before NIC info,
+        // NUMA capacity and rails are derived from it.
+        if (num_nvidia_accel > 0 || num_amd_accel > 0) {
+            excludeNicsOffAccelTier();
         }
 
         // build nic info map regardless of accelerator to EFA / CXI mapping
@@ -1330,6 +1342,227 @@ nixlLibfabricTopology::calcAvgNicUpstreamBandwidth() {
         NIXL_WARN << "NIC upstream link bandwidth is non-uniform across all PCIe devices with "
                      "average bandwidth: "
                   << avg_nic_upstream_speed << " Gbps, rail selection policy may be sub-optimal";
+    }
+}
+
+void
+nixlLibfabricTopology::readNicSelectionPolicy() {
+    // NOTE: environment only (NIXL_LIBFABRIC_NIC_SELECTION): the topology is discovered before
+    // backend parameters reach the rail manager.
+    std::string nic_selection = "auto";
+    LibfabricUtils::getCustomStringParam(nixl_b_params_t(), "nic_selection", nic_selection);
+    std::transform(nic_selection.begin(),
+                   nic_selection.end(),
+                   nic_selection.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    if (nic_selection != "auto" && nic_selection != "all") {
+        NIXL_WARN << "Unknown nic_selection value \"" << nic_selection
+                  << "\"; expected auto|all. Falling back to auto.";
+    }
+    nic_selection_auto_ = nic_selection != "all";
+}
+
+nixlAccelCoherence
+nixlLibfabricTopology::getHostAccelCoherence() {
+    if (host_coherence_resolved_ || hwloc_topology == nullptr) {
+        return host_coherence_;
+    }
+    host_coherence_resolved_ = true;
+    // Coherence is a property of how the host attaches its GPUs. A process usually sees only
+    // some of them (CUDA_VISIBLE_DEVICES) and the query fails for the rest, so the first GPU
+    // that answers decides.
+    hwloc_obj_t obj = nullptr;
+    while ((obj = hwloc_get_next_pcidev(hwloc_topology, obj)) != nullptr) {
+        if (!isNvidiaAccel(obj)) {
+            continue;
+        }
+        char pci_bus_id[32];
+        snprintf(pci_bus_id,
+                 sizeof(pci_bus_id),
+                 "%04x:%02x:%02x.%x",
+                 obj->attr->pcidev.domain,
+                 obj->attr->pcidev.bus,
+                 obj->attr->pcidev.dev,
+                 obj->attr->pcidev.func);
+        host_coherence_ = nixlCudaAccelCoherence(pci_bus_id);
+        if (host_coherence_ != nixlAccelCoherence::UNKNOWN) {
+            break;
+        }
+    }
+    return host_coherence_;
+}
+
+bool
+nixlLibfabricTopology::getPackageBridgeDepth(hwloc_obj_t node,
+                                             hwloc_obj_t &package,
+                                             unsigned int &bridge_depth) {
+    package = nullptr;
+    bridge_depth = 0;
+    if (node == nullptr) {
+        return false;
+    }
+    for (hwloc_obj_t parent = node->parent; parent != nullptr; parent = parent->parent) {
+        if (parent->type == HWLOC_OBJ_PACKAGE) {
+            package = parent;
+            return true;
+        }
+        if (parent->type == HWLOC_OBJ_BRIDGE) {
+            ++bridge_depth;
+        }
+    }
+    bridge_depth = 0;
+    return false;
+}
+
+bool
+nixlLibfabricTopology::getAccelTierBridgeDepth(const std::vector<unsigned int> &accel_depths,
+                                               const std::vector<unsigned int> &nic_depths,
+                                               unsigned int &nic_depth) {
+    if (accel_depths.empty() || nic_depths.empty()) {
+        return false;
+    }
+    const std::set<unsigned int> unique_accel(accel_depths.begin(), accel_depths.end());
+    const std::set<unsigned int> unique_nic(nic_depths.begin(), nic_depths.end());
+    if (unique_accel.size() != 1 || unique_nic.size() < 2) {
+        return false;
+    }
+    const unsigned int accel_depth = *unique_accel.begin();
+    if (unique_nic.count(accel_depth) == 0) {
+        return false;
+    }
+    nic_depth = accel_depth;
+    return true;
+}
+
+void
+nixlLibfabricTopology::excludeNicsOffAccelTier() {
+    if (!nic_selection_auto_ || hwloc_topology == nullptr) {
+        return;
+    }
+
+    std::vector<hwloc_obj_t> accels;
+    hwloc_obj_t obj = nullptr;
+    while ((obj = hwloc_get_next_pcidev(hwloc_topology, obj)) != nullptr) {
+        if (isNvidiaAccel(obj) || isAmdAccel(obj)) {
+            accels.push_back(obj);
+        }
+    }
+
+    // Every device must be placed in the tree, or the tiers cannot be compared.
+    std::vector<std::pair<std::string, hwloc_obj_t>> nics;
+    for (const auto &device : std::set<std::string>(all_devices.begin(), all_devices.end())) {
+        auto itr = libfabric_to_pcie_map.find(device);
+        hwloc_obj_t node = itr == libfabric_to_pcie_map.end() ?
+            nullptr :
+            hwloc_get_pcidev_by_busidstring(hwloc_topology, itr->second.c_str());
+        if (node == nullptr) {
+            return;
+        }
+        nics.emplace_back(device, node);
+    }
+    if (accels.empty() || nics.size() < 2) {
+        return;
+    }
+
+    // The tier tells data NICs from front-end NICs only where the NICs reach accelerator
+    // memory through a coherent CPU.
+    if (getHostAccelCoherence() != nixlAccelCoherence::COHERENT) {
+        return;
+    }
+
+    // A NIC under a PCIe switch with an accelerator means grouping pairs by PCIe locality.
+    std::set<hwloc_obj_t> accel_switches;
+    for (hwloc_obj_t accel : accels) {
+        for (hwloc_obj_t parent = accel->parent; parent != nullptr; parent = parent->parent) {
+            if (isPcieSwitch(parent)) {
+                accel_switches.insert(parent);
+            }
+        }
+    }
+    for (const auto &nic : nics) {
+        for (hwloc_obj_t parent = nic.second->parent; parent != nullptr; parent = parent->parent) {
+            if (accel_switches.count(parent) != 0) {
+                return;
+            }
+        }
+    }
+
+    struct PackageDepths {
+        std::vector<unsigned int> accel;
+        std::vector<unsigned int> nic;
+    };
+
+    std::map<hwloc_obj_t, PackageDepths> packages;
+    for (hwloc_obj_t accel : accels) {
+        hwloc_obj_t package = nullptr;
+        unsigned int depth = 0;
+        if (!getPackageBridgeDepth(accel, package, depth)) {
+            return;
+        }
+        packages[package].accel.push_back(depth);
+    }
+    std::vector<std::pair<hwloc_obj_t, unsigned int>> nic_places;
+    for (const auto &nic : nics) {
+        hwloc_obj_t package = nullptr;
+        unsigned int depth = 0;
+        if (!getPackageBridgeDepth(nic.second, package, depth)) {
+            return;
+        }
+        packages[package].nic.push_back(depth);
+        nic_places.emplace_back(package, depth);
+    }
+
+    std::map<hwloc_obj_t, unsigned int> tier;
+    for (const auto &entry : packages) {
+        if (entry.second.nic.empty()) {
+            continue;
+        }
+        unsigned int depth = 0;
+        if (!getAccelTierBridgeDepth(entry.second.accel, entry.second.nic, depth)) {
+            NIXL_DEBUG << "NIC PCIe tiers are uniform or ambiguous on a CPU package; keeping "
+                       << "every NIC";
+            return;
+        }
+        tier[entry.first] = depth;
+    }
+
+    std::set<std::string> off_tier;
+    for (size_t i = 0; i < nics.size(); ++i) {
+        if (nic_places[i].second != tier.at(nic_places[i].first)) {
+            off_tier.insert(nics[i].first);
+        }
+    }
+    if (off_tier.empty() || off_tier.size() == nics.size()) {
+        return;
+    }
+    for (size_t i = 0; i < nics.size(); ++i) {
+        if (off_tier.count(nics[i].first) != 0) {
+            NIXL_INFO << "Leaving out front-end EFA device " << nics[i].first << ": "
+                      << nic_places[i].second << " PCIe bridges below its CPU package, "
+                      << "accelerators " << tier.at(nic_places[i].first)
+                      << " (NIXL_LIBFABRIC_NIC_SELECTION=all keeps it)";
+        }
+    }
+    removeDevices(off_tier);
+}
+
+void
+nixlLibfabricTopology::removeDevices(const std::set<std::string> &devices) {
+    all_devices.erase(std::remove_if(all_devices.begin(),
+                                     all_devices.end(),
+                                     [&devices](const std::string &device) {
+                                         return devices.count(device) != 0;
+                                     }),
+                      all_devices.end());
+    num_devices = static_cast<int>(all_devices.size());
+    for (const auto &device : devices) {
+        auto itr = libfabric_to_pcie_map.find(device);
+        if (itr == libfabric_to_pcie_map.end()) {
+            continue;
+        }
+        pcie_to_libfabric_map.erase(itr->second);
+        nic_speed_map.erase(itr->second);
+        libfabric_to_pcie_map.erase(itr);
     }
 }
 

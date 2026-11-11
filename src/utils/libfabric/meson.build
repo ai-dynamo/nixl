@@ -32,9 +32,10 @@ endif
 libfabric_utils_sources = [
     libfabric_rail_src,
     'libfabric_common.cpp',
-    # Kept out of the hipify step below: it calls the CUDA driver API directly and
-    # compiles to stubs unless NIXL_HAVE_CUDA_DRIVER_API is set.
+    # Kept out of the hipify step below: these call the CUDA driver API directly and
+    # compile to stubs unless NIXL_HAVE_CUDA_DRIVER_API is set.
     'libfabric_cuda_dmabuf.cpp',
+    'libfabric_cuda_caps.cpp',
     libfabric_topology_src,
     libfabric_rail_manager_src,
 ]
@@ -45,6 +46,7 @@ libfabric_utils_headers = files(
     'libfabric_rail_manager.h',
     'libfabric_common.h',
     'libfabric_cuda_dmabuf.h',
+    'libfabric_cuda_caps.h',
     'libfabric_topology.h',
 )
 
@@ -85,8 +87,8 @@ if rocm_dep.found()
 elif cuda_dep.found()
     libfabric_utils_deps += [cuda_dep]
     libfabric_utils_cpp_args += ['-DHAVE_CUDA']
-    # Both arms define HAVE_CUDA, and this marks a CUDA build for the translation unit
-    # that calls the CUDA driver API (libfabric_cuda_dmabuf.cpp).
+    # Both arms define HAVE_CUDA, and this marks a CUDA build for the translation units
+    # that call the CUDA driver API (libfabric_cuda_dmabuf.cpp, libfabric_cuda_caps.cpp).
     libfabric_utils_cpp_args += ['-DNIXL_HAVE_CUDA_DRIVER_API']
 
     # CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE is an enum member, so the build probes
