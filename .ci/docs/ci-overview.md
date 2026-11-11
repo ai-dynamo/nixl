@@ -340,8 +340,14 @@ the jobs that build or test EP code today (`nixl-ci-dl-gpu-ep`,
 
 The changed-file list comes from the GitHub API (`pulls/<n>/files`, a
 merge-base diff, old and new names of renames both counted) and the YAML is
-read from the same merge commit the dispatcher itself runs from. The PR label
-`ci:full` forces a full run.
+read through the GitHub contents API at the ref the dispatcher itself was
+checked out from (`sha1`: the PR merge ref on webhook runs, whatever was
+passed on a manual run). Both use plain `URL.openConnection` under the
+existing GitHub token; the job runs in the Groovy sandbox, so the first runs
+after a deploy need the JDK signatures approved once in *Manage Jenkins →
+In-process Script Approval* (until then every PR runs everything and the
+console names the rejected signature). The PR label `ci:full` forces a full
+run.
 
 | PR touches | Component set | Runs | Statuses |
 |---|---|---|---|
@@ -359,10 +365,12 @@ why in the console:
 | Failure | Behaviour |
 |---|---|
 | GitHub API error or rate limit while listing files | full run, console says why |
-| PR over 3000 changed files (GitHub's listing cap) | full run |
+| PR with 3000 or more changed files (GitHub's listing cap) | full run |
 | PR with an empty file list | full run |
-| YAML missing on the PR's merge commit | full run |
+| YAML missing at the dispatcher's own ref (`sha1`) | full run |
 | YAML present but malformed | full run, console shows the reason |
+| Sandbox rejects a signature the filter uses (first runs after a deploy) | full run, console names the signature; approve it once |
+| Any other error inside the filter | full run, reason `path filter error: …` |
 | Unknown component name in a job's `components` | job runs only on `all`; no error |
 | New file committed with `--no-verify`, unregistered | `pre-commit` check fails on the PR; dispatcher treats the path as `all` |
 | Status post for a skipped job fails | logged, run continues; the PR then shows that context as missing rather than falsely green |
@@ -377,8 +385,11 @@ Path filter: run = [branch, ...]; skip = [branch, ...]
 ```
 
 or, when a reason applies, `Path filter: <reason>; running all jobs` followed by
-the `run = ...; skip = []` line. The build description also carries
-`| components: a, b`.
+the `run = ...; skip = []` line. The reason also reaches the PR: the final
+`blossom-ci` status reads `NIXL CI ended: ran <k>/8 jobs (<components>[; <reason>])`
+(truncated to 140 characters) and the build description carries
+`| components: <components>[; <reason>]`, so a silent fallback is visible
+without opening the console.
 
 ## Slurm job naming
 
