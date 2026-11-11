@@ -1873,6 +1873,31 @@ namespace agent {
         EXPECT_THAT(info, testing::FieldsAre(1u, 2u, "untouched"));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
+
+    TEST(tracingCompiledOut, AgentWarnsOnlyWhenTracingIsRequested) {
+        const auto warnings = [](const std::optional<std::string> &backends, bool under_nsys) {
+            ScopedEnv env;
+            if (backends) {
+                env.addVar("NIXL_TRACE_BACKENDS", *backends);
+            } else {
+                env.unsetVar("NIXL_TRACE_BACKENDS");
+            }
+            if (under_nsys) {
+                env.addVar("NVTX_INJECTION64_PATH", "/nonexistent/libInjectionNvtx64.so");
+            } else {
+                env.unsetVar("NVTX_INJECTION64_PATH");
+            }
+            const LogMessageCounter counter("-Dwith_trace=false");
+            const nixlAgent agent(local_agent_name, nixlAgentConfig{});
+            return counter.count();
+        };
+
+        EXPECT_EQ(warnings("nvtx", false), 1u);
+        EXPECT_EQ(warnings(std::nullopt, true), 1u);
+        EXPECT_EQ(warnings("", true), 0u);
+        EXPECT_EQ(warnings(" , ", false), 0u);
+        EXPECT_EQ(warnings(std::nullopt, false), 0u);
+    }
 #endif
 
     TEST_F(singleAgentSessionFixture, GetNonExistingBackendParamsTest) {

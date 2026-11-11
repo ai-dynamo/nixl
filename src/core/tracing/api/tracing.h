@@ -186,10 +186,8 @@ struct BackendTraceSinkPtr {
     }
 };
 
-[[nodiscard]] inline TracerPtr
-makeAgentTracer(const std::string &) noexcept {
-    return {};
-}
+[[nodiscard]] TracerPtr
+makeAgentTracer(const std::string &name);
 
 class Traceable {
 public:

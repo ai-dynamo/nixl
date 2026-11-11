@@ -95,9 +95,10 @@ runtime**.
 - With `-Dwith_trace=false` no tracing is compiled: the facade's sources leave `libnixl` and
   `libnixl_build`, and every hook the agent and the data plugins call is an empty inline
   stub, so a request holds no trace state and UCX records no phase. The API stays and does
-  nothing: `NIXL_TRACE_BACKENDS` has no effect, `getXferTraceInfo()` returns
-  `NIXL_ERR_NOT_FOUND`, and a supplied `traceContext` is ignored, though a post given only
-  one still keeps its notification. UCX notifications go out in the older format, and a
+  nothing: `getXferTraceInfo()` returns `NIXL_ERR_NOT_FOUND`, and a supplied `traceContext`
+  is ignored, though a post given only one still keeps its notification. An agent asked to
+  trace, by `NIXL_TRACE_BACKENDS` naming a backend or by running under Nsight Systems, logs
+  one warning that nothing is traced. UCX notifications go out in the older format, and a
   peer's trace tags are skipped.
 - Each requested backend builds a `libtrace_backend_<name>.so` under
   `src/plugins/tracing/<name>/`, installed alongside the other NIXL plugins. A
@@ -620,7 +621,8 @@ With `-Dwith_trace=false` none of these tests is built. `tracingCompiledOut.*` i
 and `UcxTraceCompiledOut.*` in `gtest` check instead that the hooks are empty types; that
 an agent given trace backends, a sampling ratio of 1 and a supplied context hands its
 backend neither a sink nor an identity, reports no trace info and keeps a context-only
-post's notification; and that UCX notifications stay readable both ways.
+post's notification; that an agent warns once when asked to trace, and not when
+`NIXL_TRACE_BACKENDS` is empty; and that UCX notifications stay readable both ways.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
 test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically

@@ -92,6 +92,8 @@ if nixl_trace_enabled
         'tracing/core/tracer.cpp',
         'tracing/core/tracing.cpp',
     ]
+else
+    nixl_lib_sources += ['tracing/core/compiled_out.cpp']
 endif
 
 nixl_lib = library('nixl',
