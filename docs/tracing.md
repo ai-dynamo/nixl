@@ -496,7 +496,10 @@ is seen to complete only when the application checks its status, so a stamp
 would time the poll rather than the transport. A transfer can complete, and its
 notification go out, before `postXfer` records `nixl::wire.submitted`, so
 `nixl::wire.completed` and `nixl::notif.sent` can come first; all three follow
-`nixl::submit`. `nixl::wire.completed` marks the data's completion only,
+`nixl::submit`. For a post that completes at once, `nixl::wire.submitted` and
+`nixl::wire.completed` carry the time `postXfer` reads after posting, so
+`nixl::notif.sent`'s stamp can precede them; under NVTX, which times records itself,
+they appear in order. `nixl::wire.completed` marks the data's completion only,
 so a post whose notification fails afterwards keeps it. With each
 `nixl::wire.completed`, UCX records the span `nixl::wire.inflight` from that post's
 `nixl::submit` to its `nixl::wire.completed`, at their times. A span's times are its
