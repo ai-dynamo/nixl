@@ -62,11 +62,6 @@ public:
     void
     validateTlsCudaSupport() const;
 
-    // Whether the UCX in use dumps a value from a UCX configuration file as set: UCX dumps it as a
-    // default one before 1.23.3
-    [[nodiscard]] static bool
-    dumpsConfigFileValues() noexcept;
-
 private:
     struct dumpedValue {
         std::string value;
