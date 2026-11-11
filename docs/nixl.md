@@ -208,3 +208,5 @@ Unsigned integers can also be specified in hexadecimal with leading `0x`.
 
 For Booleans the following strings are all recognized as **true**, `y`, `yes`, `on`, `1`, `true`, `enable`, and for **false** there are `n`, `no`, `off`, `0`, `false`, `disable`.
 Matching is case insensitve, e.g. `false`, `FALSE` and `FaLSe` are all accepted.
+
+This paragraph only exercises the docs-only CI path filter (PR #2635) and is not meant to be merged.
