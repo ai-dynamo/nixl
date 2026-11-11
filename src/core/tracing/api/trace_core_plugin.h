@@ -25,6 +25,13 @@
 #include "tracing/api/trace_plugin.h"
 #include "tracing/api/tracer.h"
 
+// V1 covers this descriptor, nixlTraceCoreConfig and every type the core shares
+// with libnixl, data plugins and trace backends: the Tracer and
+// nixlBackendTraceSink interfaces, Span (returned by value), TraceBackend and
+// SpanBackend, and the values they pass (TraceContext, TraceIdentity, Name,
+// Attribute and the record list). Bump it when any of them changes. A change to
+// TraceBackend or SpanBackend also bumps nixl_trace_plugin_api_version, and a
+// change to nixlBackendTraceSink also bumps NIXL_PLUGIN_API_VERSION.
 enum class nixl_trace_core_api_version : unsigned int {
     V1 = 1,
 };
