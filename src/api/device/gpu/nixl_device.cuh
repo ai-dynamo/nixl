@@ -81,6 +81,18 @@ put(const memViewElem &src,
     return impl::put<level, mode>(src, dst, size, channel_id, flags, xfer_status);
 }
 
+/** Post a GPU GET from a remote view to a local view. The registered scratch
+ * byte must be disjoint from the destination and kept alive until completion. */
+template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+get(const memViewElem &src,
+    const memViewElem &dst,
+    const memViewElem &scratch,
+    size_t size,
+    xferStatusH *status) {
+    return impl::get<level, mode>(src, dst, scratch, size, status);
+}
+
 /**
  * @brief Atomic add to remote GPU memory.
  *

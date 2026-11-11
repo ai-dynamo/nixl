@@ -19,6 +19,7 @@
 #define GPUNETIO_BACKEND_H
 
 #include "gpunetio_backend_aux.h"
+#include "gpunetio_device_memview.h"
 
 class nixlDocaEngine : public nixlBackendEngine {
 public:
@@ -53,6 +54,16 @@ public:
     volatile uint32_t *pthrStop;
     nixlDocaEngine(const nixlBackendInitParams *init_params);
     ~nixlDocaEngine();
+
+    nixl_status_t
+    prepMemView(const nixl_meta_dlist_t &,
+                nixlMemViewH &,
+                const nixl_opt_b_args_t *) const override;
+    nixl_status_t
+    prepMemView(const nixl_remote_meta_dlist_t &,
+                nixlMemViewH &,
+                const nixl_opt_b_args_t *) const override;
+    void releaseMemView(nixlMemViewH) const override;
 
     bool
     supportsProgTh() const {
@@ -131,6 +142,14 @@ public:
     recvRemoteAgentName(int oob_sock_client, std::string &remote_agent);
 
 private:
+    bool nativeMode_ = false;
+    mutable std::unique_ptr<nixlGpunetioNativeState> nativeState_;
+    void
+    initializeNativeState();
+    nixl_status_t
+    prepareNativeView(const nixl_meta_dlist_t *,
+                      const nixl_remote_meta_dlist_t *,
+                      nixlMemViewH &) const;
     struct doca_log_backend *sdk_log;
     std::string msg_tag_start = "DOCAS";
     std::string msg_tag_end = "DOCAE";

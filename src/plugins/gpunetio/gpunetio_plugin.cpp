@@ -62,6 +62,7 @@ get_backend_options() {
     params["data_qp_count"] = "";
     params["write_stripe"] = "slots";
     params["write_stripe_min_bytes"] = "4194304";
+    params["native_device_api"] = "false";
     return params;
 }
 
