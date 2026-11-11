@@ -144,6 +144,7 @@ List<String> fetchPrFiles(String repo, String prNumber, Closure getPage) {
             if (batch.size() < 100) return collectPrPaths(files)
         }
     } catch (Exception e) {
+        if (e instanceof InterruptedException) throw e
         return null
     }
     return null
@@ -188,6 +189,7 @@ Map decideComponents(String prNumber, String payload, String ref) {
         try {
             cfg = readYaml(text: httpGet("${api}/contents/.ci/path-filters.yaml?ref=${ref}", 'application/vnd.github.raw+json', env.GIT_PASSWORD))
         } catch (Exception e) {
+            if (e instanceof InterruptedException) throw e
             readError = e.message
         }
     }
@@ -313,6 +315,7 @@ try {
         try {
             githubHelper.updateCommitStatus(pipelineOverviewUrl, statusText("Skipped by path filter: PR touches ${components.join(', ')}"), GitHubCommitState.SUCCESS, leaf.job)
         } catch (Exception e) {
+            if (e instanceof InterruptedException) throw e
             echo "Could not post skipped status for ${leaf.job}: ${e.message}"
         }
     }
