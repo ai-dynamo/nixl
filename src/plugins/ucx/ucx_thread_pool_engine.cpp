@@ -201,7 +201,7 @@ nixlUcxChunkBackendReqH::status() {
 
     if (last) {
         setNotif(std::exchange(sharedState_->notif, {}));
-        posted();
+        sendNotif();
     }
 
     return NIXL_IN_PROG;
