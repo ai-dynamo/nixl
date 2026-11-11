@@ -467,9 +467,12 @@ trace"). When the
 notification arrives at an agent with tracing on, UCX records `nixl::notif.received`
 under the sender's context, with `nixl.remote_agent` naming the sender and, from
 `treq`, the sender's `nixl.xfer_request_id` and `nixl.xfer_execution`; a missing or
-malformed `treq` costs the event only the pair. An agent with tracing off skips
-both tags without reading them. The event's context thus holds the request's trace
-id and the span id of the sender's `nixl::postXferReq.write` or `.read` span, the
+malformed `treq` costs the event only the pair. UCX records it inside the active-message
+callback that receives the notification, rather than deferring it as it does
+`nixl::wire.completed` and `nixl::notif.sent`, so that it precedes the notification's
+delivery through `getNotifs`; recording there allocates nothing. An agent with tracing
+off skips both tags without reading them. The event's context thus holds the request's
+trace id and the span id of the sender's `nixl::postXferReq.write` or `.read` span, the
 event's remote parent, and the event carries the same request id and execution
 number as the sender's records of that post, so its correlation id is that span's.
 Writes and reads without a notification give the receiver nothing to observe, so
