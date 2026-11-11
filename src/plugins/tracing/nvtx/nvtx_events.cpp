@@ -200,8 +200,10 @@ eventForName(NvtxEvent &event,
     setEventBase(event.attributes, kind);
     const std::string_view name = record_name.view();
     const auto record = record_name.record();
-    if (const auto index = record ? std::optional<std::size_t>(static_cast<std::size_t>(*record)) :
-                                    registeredIndex(name)) {
+    const auto index = record ? std::optional<std::size_t>(static_cast<std::size_t>(*record)) :
+                                registeredIndex(name);
+    if (index && (*index < std::size(kRegisteredSpanNames)) &&
+        (*index < registered_handles.size())) {
         if (registered_handles[*index] != nullptr) {
             setRegistered(event.attributes, registered_handles[*index]);
         } else {

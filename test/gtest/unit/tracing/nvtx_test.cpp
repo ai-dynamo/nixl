@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <bit>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -105,6 +106,27 @@ TEST(NvtxEvents, FixedNameGivenAsTextFindsItsRecordsHandle) {
         EXPECT_EQ(by_text.attributes.message.registered, by_record.attributes.message.registered)
             << name;
     }
+}
+
+TEST(NvtxEvents, RecordFromANewerCoreIsNamedByItsText) {
+    struct NameLayout {
+        const char *data;
+        std::uint32_t size;
+        std::uint8_t record;
+    };
+
+    static_assert(sizeof(NameLayout) == sizeof(nixl::trace::Name));
+    constexpr std::string_view text = "nixl::laterRecord";
+    const auto newer = std::bit_cast<nixl::trace::Name>(
+        NameLayout{text.data(),
+                   static_cast<std::uint32_t>(text.size()),
+                   static_cast<std::uint8_t>(nixl::trace::recordCount)});
+    ASSERT_TRUE(newer.record().has_value());
+
+    nvtx::NvtxEvent event;
+    nvtx::eventForName(event, newer, nixl::trace::Kind::Generic, nullptr, registeredHandles());
+    EXPECT_EQ(event.attributes.messageType, NVTX_MESSAGE_TYPE_ASCII);
+    EXPECT_EQ(std::string_view(event.attributes.message.ascii), text);
 }
 
 TEST(NvtxEvents, OtherNameIsCopiedIntoTheEvent) {

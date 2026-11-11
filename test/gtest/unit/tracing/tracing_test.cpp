@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -499,6 +500,14 @@ TEST(Tracing, AttributeKeyNamesItsTableEntry) {
     EXPECT_EQ(key.c_str(), nixl::trace::attributeKeys[key.index()].data());
     EXPECT_EQ(key.view(), "nixl.backend");
     EXPECT_EQ(std::string_view(key.c_str()), "nixl.backend");
+}
+
+TEST(Tracing, AttributeKeyPastTheListIsNamedGenerically) {
+    const auto unknown = std::bit_cast<nixl::trace::AttributeKey>(
+        static_cast<std::uint16_t>(nixl::trace::attributeKeys.size()));
+
+    EXPECT_EQ(unknown.view(), "nixl.attribute");
+    EXPECT_EQ(std::string_view(unknown.c_str()), "nixl.attribute");
 }
 
 // A single beginSpan() must fan out to every enabled backend, and the Span's

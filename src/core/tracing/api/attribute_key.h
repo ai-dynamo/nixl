@@ -42,6 +42,8 @@ inline constexpr std::array<std::string_view, 14> attributeKeys{
     "remote_agent",
 };
 
+inline constexpr std::string_view unknownAttributeKey = "nixl.attribute";
+
 void
 attributeKeyIsNotInAttributeKeys();
 
@@ -52,12 +54,12 @@ public:
 
     [[nodiscard]] constexpr const char *
     c_str() const noexcept {
-        return attributeKeys[index_].data();
+        return view().data();
     }
 
     [[nodiscard]] constexpr std::string_view
     view() const noexcept {
-        return attributeKeys[index_];
+        return (index_ < attributeKeys.size()) ? attributeKeys[index_] : unknownAttributeKey;
     }
 
     [[nodiscard]] constexpr std::size_t
