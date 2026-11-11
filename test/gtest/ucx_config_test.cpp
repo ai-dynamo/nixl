@@ -81,8 +81,7 @@ getValue(const nixl::ucx::config &config, std::string_view key) {
     return line.substr(line.find('=') + 1);
 }
 
-// MAX_RMA_RAILS after setting it as the UCX context does with UCX before 1.23.3, with the UCX
-// config read now
+// MAX_RMA_RAILS after setting it as the UCX context does, with the UCX config read now
 [[nodiscard]] std::string
 modifyMaxRmaRails() {
     const nixl::ucx::config config;

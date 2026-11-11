@@ -26,7 +26,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <tuple>
 
 extern "C" {
 #include <ucs/config/global_opts.h>
@@ -118,13 +117,6 @@ config::validateTlsCudaSupport() const {
         "basic GPU support, or cuda to also include NVLink support.";
     NIXL_ERROR << error;
     throw std::runtime_error(error);
-}
-
-bool
-config::dumpsConfigFileValues() noexcept {
-    unsigned major_version, minor_version, release_number;
-    ucp_get_version(&major_version, &minor_version, &release_number);
-    return std::tuple(major_version, minor_version, release_number) >= std::tuple(1U, 23U, 3U);
 }
 
 ucp_config_t *

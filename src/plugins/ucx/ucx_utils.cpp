@@ -562,14 +562,9 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
 
     config.modify("RNDV_THRESH", "inf");
 
-    // Keep the number of RMA rails which the user or the UCX configuration file sets. Older UCX
-    // dumps a configuration file value as a default one, so there also check that the value is
-    // still 1, the UCX default.
-    if (nixl::ucx::config::dumpsConfigFileValues()) {
-        config.modify("MAX_RMA_RAILS", "2");
-    } else {
-        config.modifyIfEqual("MAX_RMA_RAILS", "1", "2");
-    }
+    // Some UCX versions dump a configuration file value as a default one, so keep any number
+    // of RMA rails other than 1, the UCX default
+    config.modifyIfEqual("MAX_RMA_RAILS", "1", "2");
 
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
     config.modify("CUDA_IPC_ENABLE_GET_ZCOPY", "on");
