@@ -327,7 +327,8 @@ namespace agent {
     TEST_F(sampledTracingAgentFixture, SupportingBackendSeesTheSampledContextUnchanged) {
         LogMessageCounter untraced(untraced_log);
         const auto &engine = agent_helper_->getGMockEngine();
-        ON_CALL(engine, supportsTraceContext()).WillByDefault(testing::Return(true));
+        ON_CALL(engine, capabilities())
+            .WillByDefault(testing::Return(nixl_backend_capability_t::TRACE_CONTEXT));
         selfXferSetup setup;
         agent_helper_->setupSelfXfer(setup);
         nixlAgent *agent = agent_helper_->getAgent();
@@ -390,8 +391,8 @@ namespace agent {
             env_.addVar("NIXL_TEST_TRACE_FILE", trace_file_.string());
             agent_helper_ =
                 std::make_unique<agentHelper>(local_agent_name, "recorder", sampleRatio());
-            ON_CALL(agent_helper_->getGMockEngine(), supportsTraceContext())
-                .WillByDefault(testing::Return(true));
+            ON_CALL(agent_helper_->getGMockEngine(), capabilities())
+                .WillByDefault(testing::Return(nixl_backend_capability_t::TRACE_CONTEXT));
             agent_helper_->setupSelfXfer(setup_);
         }
 
