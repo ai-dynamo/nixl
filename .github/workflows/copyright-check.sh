@@ -10,6 +10,7 @@ failures=()
 AUTHORS=(
   "NVIDIA CORPORATION & AFFILIATES"
   "Advanced Micro Devices, Inc"
+  "Google LLC"
 )
 
 # Base defaults to the PR merge ref's first parent; locally pass e.g. upstream/main.
@@ -32,7 +33,7 @@ while IFS= read -r -d '' f; do
 
   # Skip ignored top-level paths
   case "$f" in
-    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|*.md|*.svg|*.woff|*.woff2|*.ttf|*.otf|*.wrap|*.in|*.json|*.template|*.patch|*.gitignore|*.python-version|*py.typed)
+    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|*.md|*.svg|*.woff|*.woff2|*.ttf|*.otf|*.wrap|*.in|*.json|*.csv|*.tsv|*.template|*.patch|*.gitignore|*.python-version|*py.typed)
       continue
       ;;
     CODEOWNERS|*LICENSE*|Doxyfile|.clang-format|.clang-tidy|.codespellrc|.coderabbit.yaml)

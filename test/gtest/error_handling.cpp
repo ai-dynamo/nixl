@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 #include <nixl_types.h>
 #include "common.h"
+#include "common/hw_info.h"
 #include "nixl.h"
 #ifdef HAVE_UCX_BACKEND
 #include "ucx_utils.h"
@@ -158,6 +159,8 @@ protected:
     testStaleXferHandle();
     void
     testMetadataReloadKeepsHandlesValid();
+    void
+    excludeEfaTransports();
 
 private:
     template<TestType test_type>
@@ -314,6 +317,21 @@ TestErrorHandling::TestErrorHandling()
     m_env.addVar("UCX_RC_RETRY_COUNT", "4");
     m_env.addVar("UCX_UD_TIMEOUT", "3s");
     m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
+}
+
+void
+TestErrorHandling::excludeEfaTransports() {
+    if (::nixl::hwInfo::instance().numEfaDevices > 0) {
+        // TODO: Remove once upgraded to UCX v1.24 (plus any follow-up fixes):
+        // - EFA SRD peer-failure reporting (https://github.com/openucx/ucx/pull/12224):
+        //   uct_srd does not report peer failure when a CTL_REQ or AM completes
+        //   with error (send_op->ep is NULL).
+        // - Wireup reconnect fix (https://github.com/openucx/ucx/pull/12227):
+        //   remote_ep_id mismatch on a wireup reply after reconnect.
+        // - ud_verbs on EFA detects peer failure only after UCX_UD_TIMEOUT and
+        //   lacks CQ notifications as aux wireup.
+        m_env.addVar("UCX_TLS", "^srd,ud_v,ud_v:aux");
+    }
 }
 
 template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
@@ -480,18 +498,21 @@ TEST_P(TestErrorHandling, BasicXfer) {
 
 TEST_P(TestErrorHandling, LoadRemoteThenFail) {
     const LogIgnoreGuard lig(expected_log);
+    excludeEfaTransports();
     testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_WRITE>();
     testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_READ>();
 }
 
 TEST_P(TestErrorHandling, XferThenFail) {
     const LogIgnoreGuard lig(expected_log);
+    excludeEfaTransports();
     testXfer<TestType::XFER_THEN_FAIL, NIXL_WRITE>();
     testXfer<TestType::XFER_THEN_FAIL, NIXL_READ>();
 }
 
 TEST_P(TestErrorHandling, XferFailRestore) {
     const LogIgnoreGuard lig(expected_log);
+    excludeEfaTransports();
     testXfer<TestType::XFER_FAIL_RESTORE, NIXL_WRITE>();
     testXfer<TestType::XFER_FAIL_RESTORE, NIXL_READ>();
 }
@@ -506,6 +527,7 @@ TEST_P(TestErrorHandling, StalePreppedDlistRejectedAfterReregistration) {
 }
 
 TEST_P(TestErrorHandling, StaleXferHandleRejectedAfterReregistration) {
+    excludeEfaTransports();
     testStaleXferHandle();
 }
 
