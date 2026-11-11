@@ -231,12 +231,15 @@ writeToSelf(const std::string &name,
 }
 
 [[nodiscard]] std::size_t
-allocationsPerNotifications(const std::string &name,
-                            size_t warmup,
-                            size_t measured,
-                            const nixl_blob_t &trace_parent) {
+allocationsPerNotifications(
+    const std::string &name,
+    size_t warmup,
+    size_t measured,
+    const nixl_blob_t &trace_parent,
+    const nixlAgentConfig &config = idleConfig(),
+    gtest::AllocationCounter::scope counted = gtest::AllocationCounter::scope::thread) {
     const gtest::LogIgnoreGuard efa(efa_warning);
-    nixlAgent agent(name, idleConfig());
+    nixlAgent agent(name, config);
     nixlBackendH *backend = nullptr;
     EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
     nixl_opt_args_t params;
@@ -256,7 +259,7 @@ allocationsPerNotifications(const std::string &name,
         }
     };
     run(warmup);
-    const gtest::AllocationCounter allocations;
+    const gtest::AllocationCounter allocations(counted);
     run(measured);
     return allocations.count();
 }
@@ -273,25 +276,32 @@ addNvtxPluginDirectory() {
 }
 
 [[nodiscard]] std::size_t
-allocationsPerRequests(const std::string &name,
-                       size_t warmup,
-                       size_t measured,
-                       bool notify,
-                       const nixl_blob_t &trace_parent) {
+allocationsPerRequests(
+    const std::string &name,
+    size_t warmup,
+    size_t measured,
+    bool notify,
+    const nixl_blob_t &trace_parent,
+    const nixlAgentConfig &config = idleConfig(),
+    const nixl_b_params_t &backend_params = {},
+    size_t desc_count = 1,
+    gtest::AllocationCounter::scope counted = gtest::AllocationCounter::scope::thread) {
     const gtest::LogIgnoreGuard efa(efa_warning);
-    nixlAgent agent(name, idleConfig());
+    nixlAgent agent(name, config);
     nixlBackendH *backend = nullptr;
-    EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
-    const std::vector<char> src_buffer(buffer_size, 'x');
-    const std::vector<char> dst_buffer(buffer_size);
+    EXPECT_EQ(agent.createBackend("UCX", backend_params, backend), NIXL_SUCCESS);
+    const std::vector<char> src_buffer(desc_count * buffer_size, 'x');
+    const std::vector<char> dst_buffer(desc_count * buffer_size);
     nixl_reg_dlist_t regs(DRAM_SEG);
     regs.addDesc(nixlBlobDesc(address(src_buffer), src_buffer.size(), 0));
     regs.addDesc(nixlBlobDesc(address(dst_buffer), dst_buffer.size(), 0));
     EXPECT_EQ(agent.registerMem(regs), NIXL_SUCCESS);
     nixl_xfer_dlist_t src(DRAM_SEG);
     nixl_xfer_dlist_t dst(DRAM_SEG);
-    src.addDesc(nixlBasicDesc(address(src_buffer), buffer_size, 0));
-    dst.addDesc(nixlBasicDesc(address(dst_buffer), buffer_size, 0));
+    for (size_t i = 0; i < desc_count; ++i) {
+        src.addDesc(nixlBasicDesc(address(src_buffer) + i * buffer_size, buffer_size, 0));
+        dst.addDesc(nixlBasicDesc(address(dst_buffer) + i * buffer_size, buffer_size, 0));
+    }
 
     nixl_opt_args_t creation;
     creation.traceContext = trace_parent;
@@ -320,7 +330,7 @@ allocationsPerRequests(const std::string &name,
         }
     };
     run(warmup);
-    const gtest::AllocationCounter allocations;
+    const gtest::AllocationCounter allocations(counted);
     run(measured);
     const std::size_t count = allocations.count();
     EXPECT_EQ(agent.deregisterMem(regs), NIXL_SUCCESS);
@@ -1295,6 +1305,88 @@ TEST_F(ucxTraceContextPropagation, SampledNotificationAllocatesNoMoreThanAnUntra
         EXPECT_GT(untraced, 0u) << "parent '" << parent << "'";
         EXPECT_EQ(traced, untraced) << "parent '" << parent << "'";
     }
+    env.popVar();
+}
+
+TEST_F(ucxTraceContextPropagation, SampledRequestAllocatesNoMoreThanAnUntracedOneOnEveryThread) {
+    if (!addNvtxPluginDirectory()) {
+        GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+    }
+    constexpr size_t warmup = 50;
+    constexpr size_t measured = 200;
+    constexpr auto every_thread = gtest::AllocationCounter::scope::process;
+
+    struct engineSetup {
+        const char *name;
+        nixlAgentConfig config;
+        nixl_b_params_t params;
+        size_t descCount;
+    };
+
+    const engineSetup engines[] = {
+        {"progress thread", agentConfig(), {}, 1},
+        {"thread pool", idleConfig(), threadPoolParams(), split_desc_count},
+        {"thread pool under a progress thread",
+         agentConfig(),
+         threadPoolParams(),
+         split_desc_count},
+    };
+
+    env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+    for (const engineSetup &engine : engines) {
+        for (const bool notify : {false, true}) {
+            env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
+            const std::size_t traced = allocationsPerRequests(sender_name,
+                                                              warmup,
+                                                              measured,
+                                                              notify,
+                                                              {},
+                                                              engine.config,
+                                                              engine.params,
+                                                              engine.descCount,
+                                                              every_thread);
+            env.popVar();
+            env.addVar("NIXL_TRACE_BACKENDS", "");
+            const std::size_t untraced = allocationsPerRequests(untraced_name,
+                                                                warmup,
+                                                                measured,
+                                                                notify,
+                                                                {},
+                                                                engine.config,
+                                                                engine.params,
+                                                                engine.descCount,
+                                                                every_thread);
+            env.popVar();
+
+            EXPECT_GT(untraced, 0u) << engine.name << ", notify " << notify;
+            EXPECT_EQ(traced, untraced) << engine.name << ", notify " << notify;
+        }
+    }
+    env.popVar();
+}
+
+TEST_F(ucxTraceContextPropagation,
+       SampledNotificationAllocatesNoMoreThanAnUntracedOneOnEveryThread) {
+    if (!addNvtxPluginDirectory()) {
+        GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+    }
+    constexpr size_t warmup = 50;
+    constexpr size_t measured = 200;
+    constexpr auto every_thread = gtest::AllocationCounter::scope::process;
+    const nixl_blob_t application = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+
+    env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+    env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
+    const std::size_t traced = allocationsPerNotifications(
+        sender_name, warmup, measured, application, agentConfig(), every_thread);
+    env.popVar();
+    env.addVar("NIXL_TRACE_BACKENDS", "");
+    const std::size_t untraced = allocationsPerNotifications(
+        untraced_name, warmup, measured, application, agentConfig(), every_thread);
+    env.popVar();
+
+    EXPECT_GT(untraced, 0u);
+    EXPECT_EQ(traced, untraced);
     env.popVar();
 }
 
