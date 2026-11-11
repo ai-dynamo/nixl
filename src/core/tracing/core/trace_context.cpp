@@ -35,7 +35,6 @@
 
 namespace {
 constexpr std::uint8_t supported_trace_flags = 0x03;
-constexpr std::uint8_t sampled_trace_flag = 0x01;
 constexpr std::size_t wire_flags_offset = 1;
 constexpr std::size_t wire_trace_id_offset = 2;
 constexpr std::size_t wire_span_id_offset = 18;
@@ -140,7 +139,7 @@ void
 setFlags(nixl::trace::TraceContext &context, double sample_ratio) noexcept {
     context.flags = 0x02;
     if (nixl::trace::sampledByRatio(context, sample_ratio)) {
-        context.flags |= sampled_trace_flag;
+        context.flags |= nixl::trace::sampledTraceFlag;
     }
 }
 
@@ -223,7 +222,7 @@ nixl::trace::TraceparentText::TraceparentText(const nixl::trace::TraceContext &c
 }
 
 void
-nixl::trace::Tracer::reportContextFailure(std::string_view reason) const noexcept {
+nixl::trace::CompositeTracer::reportContextFailure(std::string_view reason) const noexcept {
     logOnce(contextFailureLogged_, [reason] {
         NIXL_ERROR << "nixl::trace: could not generate a trace context (" << reason
                    << "); the request or post continues without it and further failures "
@@ -232,22 +231,12 @@ nixl::trace::Tracer::reportContextFailure(std::string_view reason) const noexcep
 }
 
 void
-nixl::trace::Tracer::reportUnparsableParent(std::size_t size) const noexcept {
+nixl::trace::CompositeTracer::reportUnparsableParent(std::size_t size) const noexcept {
     logOnce(unparsableParentLogged_, [size] {
         NIXL_WARN << "nixl::trace: ignoring a supplied trace context of " << size
                   << " bytes that is neither a traceparent nor a trace context record; the "
                      "request draws its own, and further ones are not logged";
     });
-}
-
-bool
-nixl::trace::TraceContext::valid() const noexcept {
-    return !isAllZero(traceId) && !isAllZero(spanId);
-}
-
-bool
-nixl::trace::TraceContext::sampled() const noexcept {
-    return (flags & sampled_trace_flag) != 0;
 }
 
 std::optional<nixl::trace::TraceContext>
@@ -366,13 +355,13 @@ nixl::trace::resolveTraceSampleRatio() {
 }
 
 std::optional<nixl::trace::TraceContext>
-nixl::trace::parseParentContext(const nixl::trace::Tracer *tracer, const nixl_blob_t &value) {
-    if (value.empty() || (tracer == nullptr)) {
+nixl::trace::CompositeTracer::parseParentContext(const nixl_blob_t &value) const {
+    if (value.empty()) {
         return std::nullopt;
     }
     std::optional<nixl::trace::TraceContext> context = parseParent(value);
     if (!context) {
-        tracer->reportUnparsableParent(value.size());
+        reportUnparsableParent(value.size());
         return std::nullopt;
     }
     context->flags &= supported_trace_flags;
@@ -380,18 +369,14 @@ nixl::trace::parseParentContext(const nixl::trace::Tracer *tracer, const nixl_bl
 }
 
 nixl::trace::TraceIdentity
-nixl::trace::generateRequestIdentity(const nixl::trace::Tracer *tracer, const nixl_blob_t &parent) {
-    if (tracer == nullptr) {
-        return {};
-    }
-    const std::optional<nixl::trace::TraceContext> parent_context =
-        parseParentContext(tracer, parent);
+nixl::trace::CompositeTracer::generateRequestIdentity(const nixl_blob_t &parent) const {
+    const std::optional<nixl::trace::TraceContext> parent_context = parseParentContext(parent);
     nixl::trace::TraceIdentity identity;
     try {
-        drawRequestIdentity(identity, tracer->sampleRatio(), tracer->randomBytes());
+        drawRequestIdentity(identity, sampleRatio(), randomBytes());
     }
     catch (const std::exception &e) {
-        tracer->reportContextFailure(e.what());
+        reportContextFailure(e.what());
         return {};
     }
     if (parent_context) {
@@ -403,12 +388,8 @@ nixl::trace::generateRequestIdentity(const nixl::trace::Tracer *tracer, const ni
 }
 
 nixl::trace::TraceContext
-nixl::trace::generatePostContext(const nixl::trace::TraceContext &request,
-                                 const nixl::trace::Tracer *tracer) {
-    if (tracer == nullptr) {
-        return request;
-    }
-    const auto fill = randomSource(tracer->randomBytes());
+nixl::trace::CompositeTracer::generatePostContext(const nixl::trace::TraceContext &request) const {
+    const auto fill = randomSource(randomBytes());
     nixl::trace::TraceContext context = request;
     try {
         do {
@@ -416,9 +397,9 @@ nixl::trace::generatePostContext(const nixl::trace::TraceContext &request,
         } while (isAllZero(context.spanId));
     }
     catch (const std::exception &e) {
-        tracer->reportContextFailure(e.what());
+        reportContextFailure(e.what());
         nixl::trace::TraceContext unsampled = request;
-        unsampled.flags &= static_cast<std::uint8_t>(~sampled_trace_flag);
+        unsampled.flags &= static_cast<std::uint8_t>(~nixl::trace::sampledTraceFlag);
         return unsampled;
     }
     context.parentSpanId = request.spanId;

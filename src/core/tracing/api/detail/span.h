@@ -24,6 +24,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include "tracing/api/attribute.h"
 #include "tracing/api/attribute_key.h"
@@ -89,6 +90,10 @@ inline constexpr std::size_t maxTraceBackends = 4;
 class Span {
 public:
     Span() = default;
+
+    explicit Span(std::array<std::unique_ptr<SpanBackend>, maxTraceBackends> backends) noexcept
+        : backends_(std::move(backends)) {}
+
     Span(Span &&) noexcept = default;
     Span &
     operator=(Span &&) noexcept = default;
@@ -104,38 +109,62 @@ public:
     }
 
     void
-    addAttribute(AttributeKey key, std::string_view value);
-    void
-    addAttribute(AttributeKey key, std::int64_t value);
-    void
-    addAttribute(AttributeKey key, double value);
+    addAttribute(AttributeKey key, std::string_view value) {
+        forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
+    }
 
     void
-    addAttributes(std::span<const Attribute> attrs);
+    addAttribute(AttributeKey key, std::int64_t value) {
+        forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
+    }
 
     void
-    addCtrlDep(SpanId parent);
+    addAttribute(AttributeKey key, double value) {
+        forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
+    }
+
     void
-    addDataDep(SpanId parent);
+    addAttributes(std::span<const Attribute> attrs) {
+        forEachBackend([&](SpanBackend &backend) { backend.addAttributes(attrs); });
+    }
+
+    void
+    addCtrlDep(SpanId parent) {
+        forEachBackend([&](SpanBackend &backend) { backend.addCtrlDep(parent); });
+    }
+
+    void
+    addDataDep(SpanId parent) {
+        forEachBackend([&](SpanBackend &backend) { backend.addDataDep(parent); });
+    }
 
     /** @brief Id of the first backend that provides a non-zero id, or {0}
      *         when none do (e.g. NVTX-only). Order-independent across backends. */
     [[nodiscard]] SpanId
-    id() const noexcept;
+    id() const noexcept {
+        for (const auto &backend : backends_) {
+            if (backend == nullptr) {
+                break;
+            }
+            const SpanId backend_id = backend->id();
+            if (backend_id.value != 0) {
+                return backend_id;
+            }
+        }
+        return SpanId{};
+    }
 
 private:
-    friend Span
-    detail::beginSpan(Tracer &tracer, Name name, Kind kind);
-    friend Span
-    detail::beginContextSpan(Tracer &tracer,
-                             Name name,
-                             Kind kind,
-                             const TraceContext &context,
-                             std::uint64_t request_id);
-
     template<typename Call>
     void
-    forEachBackend(const Call &call) const;
+    forEachBackend(const Call &call) const {
+        for (const auto &backend : backends_) {
+            if (backend == nullptr) {
+                return;
+            }
+            call(*backend);
+        }
+    }
 
     std::array<std::unique_ptr<SpanBackend>, maxTraceBackends> backends_;
 };

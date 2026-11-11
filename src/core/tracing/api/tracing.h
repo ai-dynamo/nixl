@@ -24,15 +24,15 @@
  * runtime (NVTX today; Chakra and others later). This is an internal core API
  * (compiled into libnixl, not installed as a public header). It is kept
  * deliberately self-contained -- depending only on standard headers and on
- * attribute.h, attribute_key.h, log_once.h, record.h, trace_identity.h and the
- * tracing/api/detail/ headers -- so it stays easy to reason about and could be
- * promoted to a public header later without churn if an external consumer
- * appears.
+ * attribute.h, attribute_key.h, log_once.h, record.h, trace_identity.h,
+ * tracer.h and the tracing/api/detail/ headers -- so it stays easy to reason
+ * about and could be promoted to a public header later without churn if an
+ * external consumer appears.
  *
  * A module uses only the NIXL_TRACE_* macros, Traceable and Scope, with Record,
  * Attribute and AttributeKey as their arguments; logOnce(); what
- * trace_identity.h declares; and the tracer and the backends' trace sinks as
- * opaque handles from makeAgentTracer() and makeBackendTraceSink().
+ * trace_identity.h declares; and the tracer from makeAgentTracer(), the Tracer
+ * interface of tracer.h, whose makeSink() gives a backend its trace sink.
  * tracing/api/detail/ holds only what the macros and Traceable expand into.
  */
 
@@ -49,6 +49,7 @@
 
 #if defined(NIXL_TRACE_ENABLED)
 #include "tracing/api/detail/span.h"
+#include "tracing/api/tracer.h"
 #endif
 
 class nixlBackendTraceSink;
@@ -58,25 +59,8 @@ namespace nixl::trace {
 
 #if defined(NIXL_TRACE_ENABLED)
 
-struct TracerDeleter {
-    void
-    operator()(Tracer *tracer) const noexcept;
-};
-
-using TracerPtr = std::unique_ptr<Tracer, TracerDeleter>;
-
-struct BackendTraceSinkDeleter {
-    void
-    operator()(nixlBackendTraceSink *sink) const noexcept;
-};
-
-using BackendTraceSinkPtr = std::unique_ptr<nixlBackendTraceSink, BackendTraceSinkDeleter>;
-
 [[nodiscard]] TracerPtr
 makeAgentTracer(const std::string &name);
-
-[[nodiscard]] BackendTraceSinkPtr
-makeBackendTraceSink(Tracer &tracer, std::string backend, nixlTelemetry *telemetry);
 
 /**
  * @brief A traced object's trace state: the context and request id it was

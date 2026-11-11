@@ -17,11 +17,9 @@
 #ifndef NIXL_SRC_CORE_TRACING_API_TRACE_IDENTITY_H
 #define NIXL_SRC_CORE_TRACING_API_TRACE_IDENTITY_H
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
-#include <optional>
-#include <string>
-#include <string_view>
 
 #include "nixl_types.h"
 
@@ -31,17 +29,24 @@ class Tracer;
 
 inline constinit const nixl_blob_t noSuppliedContext{};
 
+inline constexpr std::uint8_t sampledTraceFlag = 0x01;
+
 struct TraceContext {
     std::array<std::uint8_t, 16> traceId{};
     std::array<std::uint8_t, 8> spanId{};
     std::uint8_t flags{};
     std::array<std::uint8_t, 8> parentSpanId{};
 
-    [[nodiscard]] bool
-    valid() const noexcept;
+    [[nodiscard]] constexpr bool
+    valid() const noexcept {
+        const auto nonzero = [](std::uint8_t byte) { return byte != 0; };
+        return std::ranges::any_of(traceId, nonzero) && std::ranges::any_of(spanId, nonzero);
+    }
 
-    [[nodiscard]] bool
-    sampled() const noexcept;
+    [[nodiscard]] constexpr bool
+    sampled() const noexcept {
+        return (flags & sampledTraceFlag) != 0;
+    }
 
     [[nodiscard]] bool
     operator==(const TraceContext &) const noexcept = default;
@@ -53,37 +58,7 @@ struct TraceIdentity {
     std::uint64_t execution = 0;
 };
 
-#if defined(NIXL_TRACE_ENABLED)
-
-[[nodiscard]] std::optional<TraceContext>
-parseTraceparent(std::string_view value);
-
-[[nodiscard]] std::string
-formatTraceparent(const TraceContext &context);
-
-/**
- * @brief The context an application supplied as @p value, a `traceparent` or a
- *        trace context record, with only the flags this version defines;
- *        std::nullopt when @p value is empty, @p tracer is null, or @p value is
- *        neither form, which @p tracer reports once.
- */
-[[nodiscard]] std::optional<TraceContext>
-parseParentContext(const Tracer *tracer, const nixl_blob_t &value);
-
-[[nodiscard]] TraceIdentity
-generateRequestIdentity(const Tracer *tracer, const nixl_blob_t &parent = noSuppliedContext);
-
-/**
- * @brief Draw a context for one post of @p request: its trace id and flags with
- *        a span id from @p tracer's random source, again while it is zero, and
- *        its span id as the parent; @p request itself when @p tracer is null, and
- *        @p request unsampled when its source fails, so the post records nothing
- *        rather than reuse a span id.
- */
-[[nodiscard]] TraceContext
-generatePostContext(const TraceContext &request, const Tracer *tracer);
-
-#else
+#if !defined(NIXL_TRACE_ENABLED)
 
 [[nodiscard]] inline TraceIdentity
 generateRequestIdentity(const Tracer *, const nixl_blob_t & = noSuppliedContext) noexcept {

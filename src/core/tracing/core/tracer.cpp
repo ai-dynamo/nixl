@@ -23,6 +23,7 @@
 #include "common/nixl_log.h"
 #include "plugin_manager.h"
 #include "tracing/api/trace_plugin.h"
+#include "tracing/core/trace_sink.h"
 
 namespace {
 
@@ -71,70 +72,9 @@ capBackends(std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends) no
 
 namespace nixl::trace {
 
-/*** Span ***/
-
-template<typename Call>
-void
-Span::forEachBackend(const Call &call) const {
-    for (const auto &backend : backends_) {
-        if (backend == nullptr) {
-            return;
-        }
-        call(*backend);
-    }
-}
-
-void
-Span::addAttribute(AttributeKey key, std::string_view value) {
-    forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
-}
-
-void
-Span::addAttribute(AttributeKey key, std::int64_t value) {
-    forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
-}
-
-void
-Span::addAttribute(AttributeKey key, double value) {
-    forEachBackend([&](SpanBackend &backend) { backend.addAttribute(key, value); });
-}
-
-void
-Span::addAttributes(std::span<const Attribute> attrs) {
-    forEachBackend([&](SpanBackend &backend) { backend.addAttributes(attrs); });
-}
-
-void
-Span::addCtrlDep(SpanId parent) {
-    forEachBackend([&](SpanBackend &backend) { backend.addCtrlDep(parent); });
-}
-
-void
-Span::addDataDep(SpanId parent) {
-    forEachBackend([&](SpanBackend &backend) { backend.addDataDep(parent); });
-}
-
-SpanId
-Span::id() const noexcept {
-    // Return the first non-zero backend id so the SpanId stays meaningful
-    // regardless of backend ordering (NVTX has no id and returns {0}).
-    for (const auto &backend : backends_) {
-        if (backend == nullptr) {
-            break;
-        }
-        const SpanId backend_id = backend->id();
-        if (backend_id.value != 0) {
-            return backend_id;
-        }
-    }
-    return SpanId{};
-}
-
-/*** Tracer ***/
-
-Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
-               double sample_ratio,
-               random_bytes_fn_t random_bytes) noexcept
+CompositeTracer::CompositeTracer(std::vector<std::unique_ptr<TraceBackend>> backends,
+                                 double sample_ratio,
+                                 random_bytes_fn_t random_bytes) noexcept
     : backends_(capBackends(std::move(backends))),
       sampleRatio_(sample_ratio),
       randomBytes_(random_bytes),
@@ -142,130 +82,124 @@ Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
           return !backend->ownsTimestamps();
       })) {}
 
-Tracer::~Tracer() = default;
-
-void
-Tracer::emitSpan(Name name,
-                 Kind kind,
-                 const TraceContext &context,
-                 std::uint64_t request_id,
-                 nixlTime::us_t start,
-                 nixlTime::us_t end,
-                 std::span<const Attribute> attrs) {
-    emitSpanTo(backends_, name, kind, context, request_id, start, end, attrs);
-}
-
-void
-Tracer::emitEvent(Name name,
-                  Kind kind,
-                  const TraceContext &context,
-                  std::uint64_t request_id,
-                  nixlTime::us_t at,
-                  std::span<const Attribute> attrs) {
-    emitEventTo(backends_, name, kind, context, request_id, at, attrs);
-}
-
-void
-Tracer::emitContextSpan(Name name,
-                        Kind kind,
-                        const TraceContext &context,
-                        std::uint64_t request_id,
-                        nixlTime::us_t start,
-                        nixlTime::us_t end,
-                        std::span<const Attribute> attrs) {
-    for (const auto &backend : backends_) {
-        backend->emitContextSpan(name, kind, context, request_id, start, end, attrs);
-    }
-}
-
-/*** Call sites ***/
+CompositeTracer::~CompositeTracer() = default;
 
 Span
-detail::beginSpan(Tracer &tracer, Name name, Kind kind) {
-    Span span;
+CompositeTracer::beginSpan(Name name, Kind kind) {
+    std::array<std::unique_ptr<SpanBackend>, maxTraceBackends> spans;
     std::size_t count = 0;
-    for (const auto &backend : tracer.backends()) {
+    for (const auto &backend : backends_) {
         // Drop null backend spans so an all-null Span is not reported active()
         // (which would null-deref in addAttribute()/id()).
-        if (count == span.backends_.size()) {
+        if (count == spans.size()) {
             break;
         }
         if (auto backend_span = backend->beginSpan(name, kind)) {
-            span.backends_[count++] = std::move(backend_span);
+            spans[count++] = std::move(backend_span);
         }
     }
-    return span;
+    return Span(std::move(spans));
 }
 
 Span
-detail::beginContextSpan(Tracer &tracer,
-                         Name name,
-                         Kind kind,
-                         const TraceContext &context,
-                         std::uint64_t request_id) {
-    Span span;
+CompositeTracer::beginContextSpan(Name name,
+                                  Kind kind,
+                                  const TraceContext &context,
+                                  std::uint64_t request_id) {
+    std::array<std::unique_ptr<SpanBackend>, maxTraceBackends> spans;
     std::size_t count = 0;
-    for (const auto &backend : tracer.backends()) {
-        if (count == span.backends_.size()) {
+    for (const auto &backend : backends_) {
+        if (count == spans.size()) {
             break;
         }
         if (auto backend_span = backend->beginContextSpan(name, kind, context, request_id)) {
-            span.backends_[count++] = std::move(backend_span);
+            spans[count++] = std::move(backend_span);
         }
     }
-    return span;
+    return Span(std::move(spans));
 }
 
 void
-detail::pushContext(Tracer &tracer, const TraceContext &context, std::uint64_t request_id) {
-    for (const auto &backend : tracer.backends()) {
+CompositeTracer::pushContext(const TraceContext &context, std::uint64_t request_id) {
+    for (const auto &backend : backends_) {
         backend->pushContext(context, request_id);
     }
 }
 
 void
-detail::popContext(Tracer &tracer) {
-    for (const auto &backend : tracer.backends()) {
+CompositeTracer::popContext() {
+    for (const auto &backend : backends_) {
         backend->popContext();
     }
 }
 
 void
-detail::emitEvent(Tracer &tracer,
-                  Name name,
-                  Kind kind,
-                  const TraceContext &context,
-                  std::uint64_t request_id,
-                  std::span<const Attribute> attrs) {
-    emitEventTo(tracer.backends(),
+CompositeTracer::emitSpan(Name name, Kind kind, nixlTime::us_t start) {
+    emitSpanTo(backends_, name, kind, TraceContext{}, 0, start, nixlTime::getUs(), {});
+}
+
+void
+CompositeTracer::emitSpan(Name name,
+                          Kind kind,
+                          const TraceContext &context,
+                          std::uint64_t request_id,
+                          nixlTime::us_t start,
+                          nixlTime::us_t end,
+                          std::span<const Attribute> attrs) {
+    emitSpanTo(backends_, name, kind, context, request_id, start, end, attrs);
+}
+
+void
+CompositeTracer::emitEvent(Name name,
+                           Kind kind,
+                           const TraceContext &context,
+                           std::uint64_t request_id,
+                           std::span<const Attribute> attrs) {
+    emitEventTo(backends_,
                 name,
                 kind,
                 context,
                 request_id,
-                tracer.needsTimestamps() ? nixlTime::getUs() : nixlTime::us_t{0},
+                needsTimestamps_ ? nixlTime::getUs() : nixlTime::us_t{0},
                 attrs);
 }
 
 void
-detail::emitContextSpan(Tracer &tracer,
-                        Name name,
-                        Kind kind,
-                        const TraceContext &context,
-                        std::uint64_t request_id,
-                        nixlTime::us_t start,
-                        nixlTime::us_t end,
-                        std::span<const Attribute> attrs) {
-    tracer.emitContextSpan(name, kind, context, request_id, start, end, attrs);
+CompositeTracer::emitEvent(Name name,
+                           Kind kind,
+                           const TraceContext &context,
+                           std::uint64_t request_id,
+                           nixlTime::us_t at,
+                           std::span<const Attribute> attrs) {
+    emitEventTo(backends_, name, kind, context, request_id, at, attrs);
 }
 
 void
-detail::emitSpan(Tracer &tracer, Name name, Kind kind, nixlTime::us_t start) {
-    emitSpanTo(tracer.backends(), name, kind, TraceContext{}, 0, start, nixlTime::getUs(), {});
+CompositeTracer::emitContextSpan(Name name,
+                                 Kind kind,
+                                 const TraceContext &context,
+                                 std::uint64_t request_id,
+                                 nixlTime::us_t start,
+                                 nixlTime::us_t end,
+                                 std::span<const Attribute> attrs) {
+    for (const auto &backend : backends_) {
+        backend->emitContextSpan(name, kind, context, request_id, start, end, attrs);
+    }
+}
+
+std::string
+CompositeTracer::traceparent(const TraceContext &context) const {
+    return formatTraceparent(context);
+}
+
+std::unique_ptr<nixlBackendTraceSink>
+CompositeTracer::makeSink(std::string backend, std::function<void(std::uint64_t)> on_dropped) {
+    return std::make_unique<TracerPhaseSink>(*this, std::move(backend), std::move(on_dropped));
 }
 
 /*** Factory ***/
 
-std::unique_ptr<Tracer>
+std::unique_ptr<CompositeTracer>
 makeTracer(const TracerConfig &config) {
     std::vector<std::unique_ptr<TraceBackend>> backends;
     std::unordered_set<std::string> seen;
@@ -314,7 +248,7 @@ makeTracer(const TracerConfig &config) {
     if (backends.empty()) {
         return nullptr;
     }
-    return std::make_unique<Tracer>(std::move(backends), config.sampleRatio);
+    return std::make_unique<CompositeTracer>(std::move(backends), config.sampleRatio);
 }
 
 } // namespace nixl::trace

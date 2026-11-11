@@ -179,7 +179,7 @@ TEST(NvtxEvents, BackendRecordsOnlyUnderAProfilerUnlessAsked) {
 TEST(NvtxEvents, BackendOwnsItsTimestamps) {
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     backends.push_back(std::make_unique<nvtx::NvtxTraceBackend>("nixl-unit"));
-    const nixl::trace::Tracer tracer(std::move(backends), 1.0);
+    const nixl::trace::CompositeTracer tracer(std::move(backends), 1.0);
 
     EXPECT_FALSE(tracer.needsTimestamps());
 }
@@ -242,7 +242,7 @@ TEST(NvtxSpan, AttributesThatDoNotFitGoToTheHeap) {
 TEST(NvtxSpan, TracerSpansAndEventsAllocateNothing) {
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     backends.push_back(std::make_unique<nvtx::NvtxTraceBackend>("nixl-unit"));
-    nixl::trace::Tracer tracer(std::move(backends), 1.0);
+    nixl::trace::CompositeTracer tracer(std::move(backends), 1.0);
     const auto context =
         nixl::trace::parseTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
     ASSERT_TRUE(context.has_value());

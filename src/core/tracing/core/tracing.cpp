@@ -27,7 +27,6 @@
 #include "common/str_util.h"
 #include "tracing/core/trace.h"
 #include "tracing/core/trace_context.h"
-#include "tracing/core/trace_sink.h"
 
 namespace nixl::trace {
 
@@ -62,16 +61,6 @@ resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under
     return {backends.begin(), backends.end()};
 }
 
-void
-TracerDeleter::operator()(Tracer *tracer) const noexcept {
-    delete tracer;
-}
-
-void
-BackendTraceSinkDeleter::operator()(nixlBackendTraceSink *sink) const noexcept {
-    delete sink;
-}
-
 // Build the agent's composite tracer. Backend selection follows
 // nixl::trace::resolveTraceBackends (explicit NIXL_TRACE_BACKENDS wins; unset +
 // running under nsys auto-enables NVTX). Returns null when nothing resolves, so
@@ -85,13 +74,7 @@ makeAgentTracer(const std::string &name) {
     if (requested_backends.empty()) {
         return nullptr;
     }
-    return TracerPtr(
-        makeTracer(TracerConfig{name, std::move(requested_backends), sample_ratio}).release());
-}
-
-BackendTraceSinkPtr
-makeBackendTraceSink(Tracer &tracer, std::string backend, nixlTelemetry *telemetry) {
-    return BackendTraceSinkPtr(new TracerPhaseSink(tracer, std::move(backend), telemetry));
+    return makeTracer(TracerConfig{name, std::move(requested_backends), sample_ratio});
 }
 
 Scope::Scope(Tracer *tracer, const TraceIdentity &identity, nixlBackendTraceSink *sink)
@@ -101,7 +84,7 @@ Scope::Scope(Tracer *tracer, const TraceIdentity &identity, nixlBackendTraceSink
       sink_(sink),
       pushed_((tracer != nullptr) && identity.context.valid() && identity.context.sampled()) {
     if (pushed_) {
-        detail::pushContext(*tracer_, identity_.context, identity_.requestId);
+        tracer_->pushContext(identity_.context, identity_.requestId);
     }
     makeCurrent(this);
 }
@@ -109,7 +92,7 @@ Scope::Scope(Tracer *tracer, const TraceIdentity &identity, nixlBackendTraceSink
 Scope::~Scope() {
     makeCurrent(previous_);
     if (pushed_) {
-        detail::popContext(*tracer_);
+        tracer_->popContext();
     }
 }
 

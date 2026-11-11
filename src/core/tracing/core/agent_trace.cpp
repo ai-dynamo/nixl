@@ -16,14 +16,27 @@
  */
 #include "tracing/api/agent_trace.h"
 
+#include <cstdint>
+#include <functional>
+
 #include "backend/backend_engine.h"
 #include "common/nixl_log.h"
+#include "telemetry.h"
 
 namespace nixl::trace {
 
 BackendTraceSinkPtr
 BackendTraces::makeSink(Tracer *tracer, const nixl_backend_t &type, nixlTelemetry *telemetry) {
-    return (tracer != nullptr) ? makeBackendTraceSink(*tracer, type, telemetry) : nullptr;
+    if (tracer == nullptr) {
+        return nullptr;
+    }
+    std::function<void(std::uint64_t)> on_dropped;
+    if (telemetry != nullptr) {
+        on_dropped = [telemetry](std::uint64_t dropped) {
+            telemetry->updateTracePhasesDropped(dropped);
+        };
+    }
+    return tracer->makeSink(type, std::move(on_dropped));
 }
 
 void
@@ -64,7 +77,7 @@ traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info) {
     }
     info.requestId = identity.requestId;
     info.execution = identity.execution;
-    info.traceparent = formatTraceparent(identity.context);
+    info.traceparent = traceable.tracer()->traceparent(identity.context);
     return NIXL_SUCCESS;
 }
 

@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "tracing/api/trace_plugin.h"
+#include "tracing/core/trace_context.h"
 
 #include <fcntl.h>
 #include <unistd.h>

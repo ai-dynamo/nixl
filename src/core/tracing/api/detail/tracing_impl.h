@@ -26,6 +26,7 @@
 #include "tracing/api/detail/trace_impl.h"
 #include "tracing/api/record.h"
 #include "tracing/api/trace_identity.h"
+#include "tracing/api/tracer.h"
 
 namespace nixl::trace {
 
@@ -42,14 +43,13 @@ inline Traceable::~Traceable() {
         try {
             const Attribute attrs[] = {{"nixl.xfer_request_id", postIdentity_.requestId},
                                        {"nixl.xfer_execution", postIdentity_.execution}};
-            detail::emitContextSpan(*tracer_,
-                                    Record::XferReq,
-                                    kindOf(Record::XferReq),
-                                    requestContext_,
-                                    postIdentity_.requestId,
-                                    createdAt_,
-                                    nixlTime::getUs(),
-                                    attrs);
+            tracer_->emitContextSpan(Record::XferReq,
+                                     kindOf(Record::XferReq),
+                                     requestContext_,
+                                     postIdentity_.requestId,
+                                     createdAt_,
+                                     nixlTime::getUs(),
+                                     attrs);
         }
         catch (...) {
         }
@@ -88,12 +88,8 @@ Traceable::trace(Record record) const {
     if ((tracer_ != nullptr) && postIdentity_.context.sampled()) {
         const Attribute attrs[] = {{"nixl.xfer_request_id", postIdentity_.requestId},
                                    {"nixl.xfer_execution", postIdentity_.execution}};
-        detail::emitEvent(*tracer_,
-                          record,
-                          kindOf(record),
-                          postIdentity_.context,
-                          postIdentity_.requestId,
-                          attrs);
+        tracer_->emitEvent(
+            record, kindOf(record), postIdentity_.context, postIdentity_.requestId, attrs);
     }
 }
 
@@ -103,12 +99,8 @@ Traceable::trace(Record record, const Attribute &attr) const {
         const Attribute attrs[] = {{"nixl.xfer_request_id", postIdentity_.requestId},
                                    {"nixl.xfer_execution", postIdentity_.execution},
                                    attr};
-        detail::emitEvent(*tracer_,
-                          record,
-                          kindOf(record),
-                          postIdentity_.context,
-                          postIdentity_.requestId,
-                          attrs);
+        tracer_->emitEvent(
+            record, kindOf(record), postIdentity_.context, postIdentity_.requestId, attrs);
     }
 }
 
@@ -183,54 +175,52 @@ end(Span &span, Status status) {
     }                                                                          \
     return nixl_trace_span_
 
-#define NIXL_TRACE_DETAIL_SCOPE(span, tracer_ptr, trace_record, ...)                            \
-    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                   \
-        auto *nixl_trace_tracer_ = (tracer_ptr);                                                \
-        if (nixl_trace_tracer_ == nullptr) {                                                    \
-            return ::nixl::trace::Span{};                                                       \
-        }                                                                                       \
-        const ::nixl::trace::Record nixl_trace_record_ = (trace_record);                        \
-        NIXL_TRACE_DETAIL_ANNOTATED_(::nixl::trace::detail::beginSpan(                          \
-            *nixl_trace_tracer_, nixl_trace_record_, ::nixl::trace::kindOf(nixl_trace_record_)) \
-                                         __VA_OPT__(, ) __VA_ARGS__);                           \
+#define NIXL_TRACE_DETAIL_SCOPE(span, tracer_ptr, trace_record, ...)                      \
+    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                             \
+        auto *nixl_trace_tracer_ = (tracer_ptr);                                          \
+        if (nixl_trace_tracer_ == nullptr) {                                              \
+            return ::nixl::trace::Span{};                                                 \
+        }                                                                                 \
+        const ::nixl::trace::Record nixl_trace_record_ = (trace_record);                  \
+        NIXL_TRACE_DETAIL_ANNOTATED_(nixl_trace_tracer_->beginSpan(                       \
+            nixl_trace_record_, ::nixl::trace::kindOf(nixl_trace_record_)) __VA_OPT__(, ) \
+                                         __VA_ARGS__);                                    \
     }()
 
-#define NIXL_TRACE_DETAIL_SCOPE_UNDER(span, tracer_ptr, parent, trace_record, ...)             \
-    ::nixl::trace::Tracer *const span##_tracer = (tracer_ptr);                                 \
-    NIXL_TRACE_DETAIL_SUPPLIED_SCOPE_(span, span##_tracer, parent)                             \
-    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                  \
-        auto *nixl_trace_tracer_ = span##_tracer;                                              \
-        if (nixl_trace_tracer_ == nullptr) {                                                   \
-            return ::nixl::trace::Span{};                                                      \
-        }                                                                                      \
-        const ::nixl::trace::Record nixl_trace_record_ = (trace_record);                       \
-        if (!span##_scope || !span##_scope->identity().context.valid()) {                      \
-            NIXL_TRACE_DETAIL_ANNOTATED_(::nixl::trace::detail::beginSpan(                     \
-                *nixl_trace_tracer_,                                                           \
-                nixl_trace_record_,                                                            \
-                ::nixl::trace::kindOf(nixl_trace_record_)) __VA_OPT__(, ) __VA_ARGS__);        \
-        }                                                                                      \
-        if (!span##_scope->identity().context.sampled()) {                                     \
-            return ::nixl::trace::Span{};                                                      \
-        }                                                                                      \
-        NIXL_TRACE_DETAIL_ANNOTATED_(                                                          \
-            ::nixl::trace::detail::beginContextSpan(*nixl_trace_tracer_,                       \
-                                                    nixl_trace_record_,                        \
-                                                    ::nixl::trace::kindOf(nixl_trace_record_), \
-                                                    span##_scope->identity().context,          \
-                                                    0) __VA_OPT__(, ) __VA_ARGS__);            \
+#define NIXL_TRACE_DETAIL_SCOPE_UNDER(span, tracer_ptr, parent, trace_record, ...)            \
+    ::nixl::trace::Tracer *const span##_tracer = (tracer_ptr);                                \
+    NIXL_TRACE_DETAIL_SUPPLIED_SCOPE_(span, span##_tracer, parent)                            \
+    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                 \
+        auto *nixl_trace_tracer_ = span##_tracer;                                             \
+        if (nixl_trace_tracer_ == nullptr) {                                                  \
+            return ::nixl::trace::Span{};                                                     \
+        }                                                                                     \
+        const ::nixl::trace::Record nixl_trace_record_ = (trace_record);                      \
+        if (!span##_scope || !span##_scope->identity().context.valid()) {                     \
+            NIXL_TRACE_DETAIL_ANNOTATED_(nixl_trace_tracer_->beginSpan(                       \
+                nixl_trace_record_, ::nixl::trace::kindOf(nixl_trace_record_)) __VA_OPT__(, ) \
+                                             __VA_ARGS__);                                    \
+        }                                                                                     \
+        if (!span##_scope->identity().context.sampled()) {                                    \
+            return ::nixl::trace::Span{};                                                     \
+        }                                                                                     \
+        NIXL_TRACE_DETAIL_ANNOTATED_(                                                         \
+            nixl_trace_tracer_->beginContextSpan(nixl_trace_record_,                          \
+                                                 ::nixl::trace::kindOf(nixl_trace_record_),   \
+                                                 span##_scope->identity().context,            \
+                                                 0) __VA_OPT__(, ) __VA_ARGS__);              \
     }()
 
-#define NIXL_TRACE_DETAIL_SAMPLED_SCOPE(span, tracer_ptr, trace_record, context, ...)           \
-    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                   \
-        auto *nixl_trace_tracer_ = (tracer_ptr);                                                \
-        if ((nixl_trace_tracer_ == nullptr) || !(context).sampled()) {                          \
-            return ::nixl::trace::Span{};                                                       \
-        }                                                                                       \
-        const ::nixl::trace::Record nixl_trace_record_ = (trace_record);                        \
-        NIXL_TRACE_DETAIL_ANNOTATED_(::nixl::trace::detail::beginSpan(                          \
-            *nixl_trace_tracer_, nixl_trace_record_, ::nixl::trace::kindOf(nixl_trace_record_)) \
-                                         __VA_OPT__(, ) __VA_ARGS__);                           \
+#define NIXL_TRACE_DETAIL_SAMPLED_SCOPE(span, tracer_ptr, trace_record, context, ...)     \
+    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                             \
+        auto *nixl_trace_tracer_ = (tracer_ptr);                                          \
+        if ((nixl_trace_tracer_ == nullptr) || !(context).sampled()) {                    \
+            return ::nixl::trace::Span{};                                                 \
+        }                                                                                 \
+        const ::nixl::trace::Record nixl_trace_record_ = (trace_record);                  \
+        NIXL_TRACE_DETAIL_ANNOTATED_(nixl_trace_tracer_->beginSpan(                       \
+            nixl_trace_record_, ::nixl::trace::kindOf(nixl_trace_record_)) __VA_OPT__(, ) \
+                                         __VA_ARGS__);                                    \
     }()
 
 // For a sampled `context`, begins the span that `context` identifies, with `request_id` as
@@ -244,11 +234,10 @@ end(Span &span, Status status) {
         }                                                                                        \
         const ::nixl::trace::Record nixl_trace_record_ = (trace_record);                         \
         NIXL_TRACE_DETAIL_ANNOTATED_(                                                            \
-            ::nixl::trace::detail::beginContextSpan(*nixl_trace_tracer_,                         \
-                                                    nixl_trace_record_,                          \
-                                                    ::nixl::trace::kindOf(nixl_trace_record_),   \
-                                                    nixl_trace_context_,                         \
-                                                    (request_id)) __VA_OPT__(, ) __VA_ARGS__);   \
+            nixl_trace_tracer_->beginContextSpan(nixl_trace_record_,                             \
+                                                 ::nixl::trace::kindOf(nixl_trace_record_),      \
+                                                 nixl_trace_context_,                            \
+                                                 (request_id)) __VA_OPT__(, ) __VA_ARGS__);      \
     }()
 
 #define NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record, ...)                      \
@@ -279,15 +268,13 @@ end(Span &span, Status status) {
 
 #define NIXL_TRACE_DETAIL_NOW(tracer_ptr) ((tracer_ptr) ? ::nixlTime::getUs() : ::nixlTime::us_t{0})
 
-#define NIXL_TRACE_DETAIL_EMIT_SPAN(tracer_ptr, trace_record, start_us)                \
-    do {                                                                               \
-        if (auto *nixl_trace_tracer_ = (tracer_ptr)) {                                 \
-            const ::nixl::trace::Record nixl_trace_record_ = (trace_record);           \
-            ::nixl::trace::detail::emitSpan(*nixl_trace_tracer_,                       \
-                                            nixl_trace_record_,                        \
-                                            ::nixl::trace::kindOf(nixl_trace_record_), \
-                                            (start_us));                               \
-        }                                                                              \
+#define NIXL_TRACE_DETAIL_EMIT_SPAN(tracer_ptr, trace_record, start_us)                     \
+    do {                                                                                    \
+        if (auto *nixl_trace_tracer_ = (tracer_ptr)) {                                      \
+            const ::nixl::trace::Record nixl_trace_record_ = (trace_record);                \
+            nixl_trace_tracer_->emitSpan(                                                   \
+                nixl_trace_record_, ::nixl::trace::kindOf(nixl_trace_record_), (start_us)); \
+        }                                                                                   \
     } while (0)
 
 #define NIXL_TRACE_DETAIL_ATTR(span, attr_key, attr_value)                              \

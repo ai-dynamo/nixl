@@ -90,8 +90,8 @@ constexpr std::string_view tagged_request_bytes =
 
 [[nodiscard]] nixl::trace::TraceContext
 drawContext(double sample_ratio) {
-    const nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{},
-                                     sample_ratio};
+    const nixl::trace::CompositeTracer tracer{
+        std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}, sample_ratio};
     return nixl::trace::generateRequestIdentity(&tracer).context;
 }
 

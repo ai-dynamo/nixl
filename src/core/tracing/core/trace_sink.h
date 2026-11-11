@@ -18,6 +18,8 @@
 #define NIXL_SRC_CORE_TRACING_CORE_TRACE_SINK_H
 
 #include <atomic>
+#include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -26,18 +28,16 @@
 #include "tracing/api/backend_trace.h"
 #include "tracing/core/trace.h"
 
-class nixlTelemetry;
-
 namespace nixl::trace {
 
 class TracerPhaseSink final : public nixlBackendTraceSink {
 public:
-    TracerPhaseSink(Tracer &tracer,
+    TracerPhaseSink(CompositeTracer &tracer,
                     std::string backend,
-                    nixlTelemetry *telemetry = nullptr) noexcept
+                    std::function<void(std::uint64_t)> on_dropped = {}) noexcept
         : tracer_(tracer),
           backend_(std::move(backend)),
-          telemetry_(telemetry) {}
+          onDropped_(std::move(on_dropped)) {}
 
     using nixlBackendTraceSink::recordPhase;
 
@@ -72,9 +72,9 @@ private:
            std::span<const nixlBackendTraceAttr> attrs,
            const Emit &emit) noexcept;
 
-    Tracer &tracer_;
+    CompositeTracer &tracer_;
     const std::string backend_;
-    nixlTelemetry *const telemetry_;
+    const std::function<void(std::uint64_t)> onDropped_;
     std::atomic_flag dropWarned_;
 };
 

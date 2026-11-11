@@ -930,8 +930,10 @@ TEST_F(telemetryTest, TracePhaseDropsAreCounted) {
         nixlTelemetry telemetry(testFile_, "BUFFER");
         std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
         backends.push_back(std::make_unique<throwingTraceBackend>());
-        nixl::trace::Tracer tracer(std::move(backends), 0.0);
-        nixl::trace::TracerPhaseSink sink{tracer, "UCX", &telemetry};
+        nixl::trace::CompositeTracer tracer(std::move(backends), 0.0);
+        nixl::trace::TracerPhaseSink sink{tracer, "UCX", [&telemetry](std::uint64_t dropped) {
+                                              telemetry.updateTracePhasesDropped(dropped);
+                                          }};
         for (uint64_t i = 0; i < kDrops; ++i) {
             sink.recordPhase(nixl_trace_phase_t::SUBMIT, i, {}, {}, {});
         }
@@ -963,8 +965,10 @@ TEST_F(telemetryTest, TraceSpanDropsAreCounted) {
         nixlTelemetry telemetry(testFile_, "BUFFER");
         std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
         backends.push_back(std::make_unique<throwingTraceBackend>());
-        nixl::trace::Tracer tracer(std::move(backends), 0.0);
-        nixl::trace::TracerPhaseSink sink{tracer, "UCX", &telemetry};
+        nixl::trace::CompositeTracer tracer(std::move(backends), 0.0);
+        nixl::trace::TracerPhaseSink sink{tracer, "UCX", [&telemetry](std::uint64_t dropped) {
+                                              telemetry.updateTracePhasesDropped(dropped);
+                                          }};
         for (uint64_t i = 0; i < kDrops; ++i) {
             sink.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, NIXL_WRITE, i, i + 1, {}, {}, {});
         }

@@ -29,6 +29,7 @@
 #include "common/nixl_time.h"
 #include "tracing/api/attribute_key.h"
 #include "tracing/api/trace_backend.h"
+#include "tracing/api/tracer.h"
 #include "tracing/core/trace_context.h"
 #include "tracing/api/tracing.h"
 
@@ -46,15 +47,15 @@ using random_bytes_fn_t = void (*)(std::span<std::uint8_t>);
  *        beginContextSpan(), emitSpan(), emitContextSpan() or emitEvent() call
  *        fans out to every enabled backend. No singleton; injected explicitly.
  */
-class Tracer {
+class CompositeTracer final : public Tracer {
 public:
-    explicit Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
-                    double sample_ratio,
-                    random_bytes_fn_t random_bytes = nullptr) noexcept;
-    ~Tracer();
-    Tracer(const Tracer &) = delete;
-    Tracer &
-    operator=(const Tracer &) = delete;
+    explicit CompositeTracer(std::vector<std::unique_ptr<TraceBackend>> backends,
+                             double sample_ratio,
+                             random_bytes_fn_t random_bytes = nullptr) noexcept;
+    ~CompositeTracer() override;
+    CompositeTracer(const CompositeTracer &) = delete;
+    CompositeTracer &
+    operator=(const CompositeTracer &) = delete;
 
     /** @brief True when no backend is active. */
     [[nodiscard]] bool
@@ -100,24 +101,22 @@ public:
     }
 
     [[nodiscard]] Span
-    beginSpan(Name name, Kind kind = Kind::Generic) {
-        return detail::beginSpan(*this, name, kind);
-    }
+    beginSpan(Name name, Kind kind = Kind::Generic) override;
 
     [[nodiscard]] Span
-    beginContextSpan(Name name, Kind kind, const TraceContext &context, std::uint64_t request_id) {
-        return detail::beginContextSpan(*this, name, kind, context, request_id);
-    }
+    beginContextSpan(Name name,
+                     Kind kind,
+                     const TraceContext &context,
+                     std::uint64_t request_id) override;
 
     void
-    pushContext(const TraceContext &context, std::uint64_t request_id) {
-        detail::pushContext(*this, context, request_id);
-    }
+    pushContext(const TraceContext &context, std::uint64_t request_id) override;
 
     void
-    popContext() {
-        detail::popContext(*this);
-    }
+    popContext() override;
+
+    void
+    emitSpan(Name name, Kind kind, nixlTime::us_t start) override;
 
     void
     emitSpan(Name name,
@@ -127,6 +126,14 @@ public:
              nixlTime::us_t start,
              nixlTime::us_t end,
              std::span<const Attribute> attrs);
+
+    void
+    emitEvent(Name name,
+              Kind kind,
+              const TraceContext &context,
+              std::uint64_t request_id,
+              std::span<const Attribute> attrs) override;
+
     void
     emitEvent(Name name,
               Kind kind,
@@ -134,6 +141,7 @@ public:
               std::uint64_t request_id,
               nixlTime::us_t at,
               std::span<const Attribute> attrs);
+
     void
     emitContextSpan(Name name,
                     Kind kind,
@@ -141,7 +149,22 @@ public:
                     std::uint64_t request_id,
                     nixlTime::us_t start,
                     nixlTime::us_t end,
-                    std::span<const Attribute> attrs);
+                    std::span<const Attribute> attrs) override;
+
+    [[nodiscard]] TraceIdentity
+    generateRequestIdentity(const nixl_blob_t &parent) const override;
+
+    [[nodiscard]] TraceContext
+    generatePostContext(const TraceContext &request) const override;
+
+    [[nodiscard]] std::optional<TraceContext>
+    parseParentContext(const nixl_blob_t &value) const override;
+
+    [[nodiscard]] std::string
+    traceparent(const TraceContext &context) const override;
+
+    [[nodiscard]] std::unique_ptr<nixlBackendTraceSink>
+    makeSink(std::string backend, std::function<void(std::uint64_t)> on_dropped) override;
 
 private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;
@@ -167,7 +190,7 @@ struct TracerConfig {
  *        compiled in). Returns nullptr when the result is empty, so callers can
  *        cheaply null-check before tracing.
  */
-[[nodiscard]] std::unique_ptr<Tracer>
+[[nodiscard]] std::unique_ptr<CompositeTracer>
 makeTracer(const TracerConfig &config);
 
 } // namespace nixl::trace

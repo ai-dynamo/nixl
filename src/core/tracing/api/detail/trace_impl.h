@@ -71,48 +71,11 @@ public:
 
 namespace nixl::trace::detail {
 
-[[nodiscard]] Span
-beginSpan(Tracer &tracer, Name name, Kind kind);
-
-[[nodiscard]] Span
-beginContextSpan(Tracer &tracer,
-                 Name name,
-                 Kind kind,
-                 const TraceContext &context,
-                 std::uint64_t request_id);
-
-void
-pushContext(Tracer &tracer, const TraceContext &context, std::uint64_t request_id);
-
-void
-popContext(Tracer &tracer);
-
 [[nodiscard]] inline nixlTime::us_t
 requestStart(const Tracer *tracer, const TraceContext &context) noexcept;
 
 [[nodiscard]] inline TraceIdentity
 suppliedIdentity(const Tracer *tracer, const nixl_blob_t &parent);
-
-void
-emitEvent(Tracer &tracer,
-          Name name,
-          Kind kind,
-          const TraceContext &context,
-          std::uint64_t request_id,
-          std::span<const Attribute> attrs);
-
-void
-emitSpan(Tracer &tracer, Name name, Kind kind, nixlTime::us_t start);
-
-void
-emitContextSpan(Tracer &tracer,
-                Name name,
-                Kind kind,
-                const TraceContext &context,
-                std::uint64_t request_id,
-                nixlTime::us_t start,
-                nixlTime::us_t end,
-                std::span<const Attribute> attrs);
 
 inline void
 addAttributes(Span &span, std::initializer_list<Attribute> attributes);

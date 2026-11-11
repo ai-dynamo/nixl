@@ -22,7 +22,6 @@
 
 #include "absl/container/inlined_vector.h"
 #include "common/nixl_log.h"
-#include "telemetry.h"
 #include "tracing/core/trace_context.h"
 
 namespace nixl::trace {
@@ -75,8 +74,8 @@ TracerPhaseSink::record(AttributeKey label_key,
         emit(std::span<const Attribute>(record_attrs.data(), record_attrs.size()));
     }
     catch (...) {
-        if (telemetry_ != nullptr) {
-            telemetry_->updateTracePhasesDropped(1);
+        if (onDropped_) {
+            onDropped_(1);
         }
         if (!dropWarned_.test_and_set(std::memory_order_relaxed)) {
             try {

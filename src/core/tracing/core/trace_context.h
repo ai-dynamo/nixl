@@ -118,6 +118,12 @@ sampledByRatio(const TraceContext &context, double ratio) noexcept;
 [[nodiscard]] double
 resolveTraceSampleRatio();
 
+[[nodiscard]] std::optional<TraceContext>
+parseTraceparent(std::string_view value);
+
+[[nodiscard]] std::string
+formatTraceparent(const TraceContext &context);
+
 class TraceparentText {
 public:
     explicit TraceparentText(const TraceContext &context) noexcept;
