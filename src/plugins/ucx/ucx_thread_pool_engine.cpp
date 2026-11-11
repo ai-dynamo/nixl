@@ -158,9 +158,7 @@ struct nixlUcxBackendSharedState {
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
     std::vector<nixlUcxChunkBackendReqH> chunks;
-    nixlBackendPostTrace trace;
-    nixlTime::us_t inflightSince = 0;
-    nixl_xfer_op_t operation = NIXL_WRITE;
+    nixl::ucx::PostTrace trace;
 
     explicit nixlUcxBackendSharedState(size_t num_chunks)
         : status(NIXL_SUCCESS),
@@ -187,10 +185,7 @@ nixlUcxBackendSharedState::completeTracedChunk() noexcept {
         return;
     }
     if (status.load() == NIXL_SUCCESS) {
-        const nixlTime::us_t phase_at = trace.now();
-        const nixlTime::us_t completed_at = (phase_at != 0) ? phase_at : nixlTime::getUs();
-        trace.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, phase_at);
-        trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, operation, inflightSince, completed_at);
+        trace.completed();
     }
     pendingReqs.store(0);
 }
@@ -244,8 +239,6 @@ public:
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
         sharedState_->trace = trace;
-        sharedState_->inflightSince = inflightSince;
-        sharedState_->operation = operation;
         sharedState_->pendingReqs.store(getNumChunks());
     }
 

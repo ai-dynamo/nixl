@@ -20,7 +20,7 @@
 #include "ucx_thread_engine.h"
 #include "ucx_thread_pool_engine.h"
 #include "ucx_backend_req.h"
-#include "ucx_deferred_trace.h"
+#include "ucx_trace.h"
 #include "ucx_sgl.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
@@ -379,62 +379,13 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const n
     }
 }
 
-namespace {
-
-struct DeferredPhaseQueue {
-    std::array<nixl::ucx::DeferredPhase, 64> entries;
-    std::size_t count = 0;
-};
-
-thread_local DeferredPhaseQueue deferred_phases;
-
-void
-recordPhase(const nixl::ucx::DeferredPhase &deferred) noexcept {
-    deferred.trace.recordAt(deferred.phase, deferred.phaseAt);
-    if (deferred.phase == nixl_trace_phase_t::WIRE_COMPLETED) {
-        deferred.trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT,
-                                  deferred.operation,
-                                  deferred.inflightSince,
-                                  deferred.completedAt);
-    }
-}
-
-} // namespace
-
-void
-nixl::ucx::deferPhase(const DeferredPhase &deferred) noexcept {
-    DeferredPhaseQueue &queue = deferred_phases;
-    if (queue.count == queue.entries.size()) {
-        recordPhase(deferred);
-        return;
-    }
-    queue.entries[queue.count++] = deferred;
-}
-
-void
-nixl::ucx::recordDeferredTraces() noexcept {
-    DeferredPhaseQueue &queue = deferred_phases;
-    for (std::size_t i = 0; i < queue.count; ++i) {
-        recordPhase(queue.entries[i]);
-    }
-    queue.count = 0;
-}
-
 void
 nixlUcxBackendReqH::flushCb(void *, ucs_status_t status, void *user_data) {
     if (status != UCS_OK) {
         return;
     }
     auto *const handle = static_cast<nixlUcxBackendReqH *>(user_data);
-    if (handle->wireCompletedOnFlush) {
-        const nixlTime::us_t phase_at = handle->trace.now();
-        nixl::ucx::deferPhase({.trace = handle->trace,
-                               .phase = nixl_trace_phase_t::WIRE_COMPLETED,
-                               .operation = handle->operation,
-                               .inflightSince = handle->inflightSince,
-                               .phaseAt = phase_at,
-                               .completedAt = (phase_at != 0) ? phase_at : nixlTime::getUs()});
-    }
+    handle->trace.flushCompleted();
     handle->flushed();
 }
 
@@ -648,17 +599,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    int_handle->trace = nixlBackendPostTrace{traceSink_};
-    int_handle->wireCompletedOnFlush =
-        int_handle->trace.active() && hasProgressThread() && !int_handle->isComposite();
-    int_handle->wireCompletedAtOnce = false;
-    int_handle->operation = operation;
-    const nixlTime::us_t submit_at = int_handle->trace.now();
-    const bool records_inflight = int_handle->wireCompletedOnFlush ||
-        (int_handle->trace.active() && int_handle->isComposite());
-    int_handle->inflightSince =
-        (records_inflight && (submit_at == 0)) ? nixlTime::getUs() : submit_at;
-    int_handle->trace.recordAt(nixl_trace_phase_t::SUBMIT, submit_at);
+    int_handle->trace.begin(traceSink_, operation, hasProgressThread(), int_handle->isComposite());
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
@@ -666,7 +607,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     // Revisit with the serdes optimization and UCX memory pool for notifications.
     std::string notif;
     if (opt_args && opt_args->hasNotif) {
-        notif = buildNotif(opt_args->notifMsg, int_handle->trace);
+        notif = buildNotif(opt_args->notifMsg, int_handle->trace.post());
     }
     int_handle->setNotif(std::move(notif));
 
@@ -675,15 +616,9 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return ret;
     }
 
-    const nixlTime::us_t submitted_at = int_handle->trace.now();
-    int_handle->trace.recordAt(nixl_trace_phase_t::WIRE_SUBMITTED, submitted_at);
-    if (int_handle->wireCompletedAtOnce) {
-        int_handle->recordWireCompleted(submitted_at);
-    }
+    int_handle->trace.submitted();
     ret = int_handle->hasPendingRequests() ? NIXL_IN_PROG : int_handle->status();
-    if (int_handle->trace.active()) {
-        nixl::ucx::recordDeferredTraces();
-    }
+    int_handle->trace.drain();
     return ret;
 }
 
@@ -691,9 +626,7 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     const nixl_status_t status = int_handle->status();
-    if (int_handle->trace.active()) {
-        nixl::ucx::recordDeferredTraces();
-    }
+    int_handle->trace.drain();
     return status;
 }
 
@@ -801,8 +734,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
     nixl::ucx::notifMessage notif = nixl::ucx::deserializeNotif(ser_str, engine->traceSink_);
-    const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", notif.agent}};
-    notif.trace.record(nixl_trace_phase_t::NOTIF_RECEIVED, attrs);
+    nixl::ucx::traceReceived(notif.trace, notif.agent);
 
     engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
     return UCS_OK;

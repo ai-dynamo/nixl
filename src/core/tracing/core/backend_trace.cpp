@@ -34,7 +34,44 @@ struct requestTag {
     std::uint64_t execution;
 };
 
+struct DeferredPhaseQueue {
+    std::array<nixl::trace::DeferredPhase, 64> entries;
+    std::size_t count = 0;
+};
+
+thread_local DeferredPhaseQueue deferred_phases;
+
+void
+recordPhase(const nixl::trace::DeferredPhase &deferred) noexcept {
+    deferred.trace.recordAt(deferred.phase, deferred.phaseAt);
+    if (deferred.phase == nixl_trace_phase_t::WIRE_COMPLETED) {
+        deferred.trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT,
+                                  deferred.operation,
+                                  deferred.inflightSince,
+                                  deferred.completedAt);
+    }
+}
+
 } // namespace
+
+void
+nixl::trace::deferPhase(const DeferredPhase &deferred) noexcept {
+    DeferredPhaseQueue &queue = deferred_phases;
+    if (queue.count == queue.entries.size()) {
+        recordPhase(deferred);
+        return;
+    }
+    queue.entries[queue.count++] = deferred;
+}
+
+void
+nixl::trace::recordDeferredPhases() noexcept {
+    DeferredPhaseQueue &queue = deferred_phases;
+    for (std::size_t i = 0; i < queue.count; ++i) {
+        recordPhase(queue.entries[i]);
+    }
+    queue.count = 0;
+}
 
 nixlBackendTraceSink *
 nixl::trace::currentSink() noexcept {

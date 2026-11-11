@@ -338,6 +338,21 @@ addTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity);
 [[nodiscard]] std::optional<TraceIdentity>
 getTraceTags(nixlSerDes &ser_des);
 
+struct DeferredPhase {
+    nixlBackendPostTrace trace;
+    nixl_trace_phase_t phase = nixl_trace_phase_t::WIRE_COMPLETED;
+    nixl_xfer_op_t operation = NIXL_WRITE;
+    nixlTime::us_t inflightSince = 0;
+    nixlTime::us_t phaseAt = 0;
+    nixlTime::us_t completedAt = 0;
+};
+
+void
+deferPhase(const DeferredPhase &deferred) noexcept;
+
+void
+recordDeferredPhases() noexcept;
+
 } // namespace nixl::trace
 
 #endif // NIXL_SRC_CORE_TRACING_API_BACKEND_TRACE_H

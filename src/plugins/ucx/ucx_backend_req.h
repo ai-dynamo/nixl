@@ -30,17 +30,13 @@
 #include "common/nixl_log.h"
 
 #include "ucx_backend.h"
-#include "ucx_deferred_trace.h"
+#include "ucx_trace.h"
 #include "ucx_sgl.h"
 #include "ucx_utils.h"
 
 class nixlUcxBackendReqH : public nixlBackendReqH {
 public:
-    nixlBackendPostTrace trace;
-    nixlTime::us_t inflightSince = 0;
-    nixl_xfer_op_t operation = NIXL_WRITE;
-    bool wireCompletedOnFlush = false;
-    bool wireCompletedAtOnce = false;
+    nixl::ucx::PostTrace trace;
 
 #ifdef HAVE_UCX_SGL_API
     std::optional<nixl::ucx::sglXfer> sgl;
@@ -85,9 +81,9 @@ public:
     [[nodiscard]] nixl_status_t
     flush() {
         nixlUcxReq req = nullptr;
-        const bool callback = !notif_.empty() || wireCompletedOnFlush;
+        const bool callback = !notif_.empty() || trace.completesOnFlush();
         const nixl_status_t status = ep_->flushEp(req, callback ? flushCb : nullptr, this);
-        wireCompletedAtOnce = (status == NIXL_SUCCESS) && wireCompletedOnFlush;
+        trace.flushIssued(status == NIXL_SUCCESS);
         const nixl_status_t ret = append(status, req);
         if (ret == NIXL_SUCCESS) {
             if (status == NIXL_SUCCESS) {
@@ -97,13 +93,6 @@ public:
         }
 
         return ret;
-    }
-
-    void
-    recordWireCompleted(nixlTime::us_t phase_at) const noexcept {
-        const nixlTime::us_t completed_at = (phase_at != 0) ? phase_at : nixlTime::getUs();
-        trace.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, phase_at);
-        trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT, operation, inflightSince, completed_at);
     }
 
     void
@@ -233,10 +222,7 @@ private:
         const nixl_status_t status = getEp().sendAm(
             nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(notif_), UCP_AM_SEND_FLAG_EAGER, &req);
         notif_.clear();
-        if (trace.active() && ((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG))) {
-            nixl::ucx::deferPhase(
-                {.trace = trace, .phase = nixl_trace_phase_t::NOTIF_SENT, .phaseAt = trace.now()});
-        }
+        trace.notifSent(status);
         notifState_ = notif_state_t::SENT;
         if (status == NIXL_IN_PROG) {
             notifReq_ = req;

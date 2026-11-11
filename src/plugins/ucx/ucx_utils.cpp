@@ -16,7 +16,7 @@
  */
 
 #include "ucx_utils.h"
-#include "ucx_deferred_trace.h"
+#include "tracing/api/backend_trace.h"
 
 #include <algorithm>
 #include <array>
@@ -919,7 +919,7 @@ unsigned
 nixlUcxWorker::progress() {
     const unsigned progressed = ucp_worker_progress(worker.get());
     if (recordsDeferredTraces_) {
-        nixl::ucx::recordDeferredTraces();
+        nixl::trace::recordDeferredPhases();
     }
     return progressed;
 }
