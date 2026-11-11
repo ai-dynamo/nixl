@@ -73,7 +73,7 @@ All files below live in `.github/workflows/`.
 
 ### Run Pre-Commit Hooks (`pre-commit.yml`)
 - **Trigger:** `push`, `pull_request`.
-- **What it does:** Runs the repo's configured `pre-commit` hooks against files modified in the PR/push.
+- **What it does:** Runs the repo's configured `pre-commit` hooks against files modified in the PR/push. The hook list includes `yamllint` on `.ci/path-filters.yaml` and `check-path-filters`, which fails when a modified file is registered in no component (see [Path filtering](#path-filtering)).
 - **Automatic on every PR:** Yes.
 
 ### Claude Code Review (`claude-review.yml`)
