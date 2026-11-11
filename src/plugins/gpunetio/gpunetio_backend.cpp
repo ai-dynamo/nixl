@@ -353,7 +353,6 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
-    dataQpCount_ = parseDataQpCount((*custom_params)["data_qp_count"]);
     const auto stripe = custom_params->find("write_stripe");
     if (stripe != custom_params->end() && !stripe->second.empty()) {
         if (stripe->second != "slots" && stripe->second != "bytes") {
@@ -366,15 +365,22 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         (!parseUnsigned(min_bytes->second, writeStripeMinBytes_) || writeStripeMinBytes_ == 0)) {
         throw std::invalid_argument("write_stripe_min_bytes must be a positive integer");
     }
-    if (nativeMode_ && dataQpCount_ != 1) {
-        throw std::invalid_argument("native_device_api requires data_qp_count=1");
+    const auto write_qps = parseDataQpCount((*custom_params)["data_qp_count"]);
+    const auto native_qps = nixl::gpunetio::parseNativeQps((*custom_params)["native_qp_count"]);
+    if (!nativeMode_ && native_qps != 1) {
+        throw std::invalid_argument("native_qp_count requires native_device_api");
     }
-    if (dataQpCount_ > 1 &&
+    if (nativeMode_ && write_qps != 1) {
+        throw std::invalid_argument("native mode uses native_qp_count, not data_qp_count");
+    }
+    dataQpCount_ = nativeMode_ ? native_qps : write_qps;
+    if (!nativeMode_ && dataQpCount_ > 1 &&
         (nstreams < static_cast<int>(dataQpCount_) ||
          nstreams > static_cast<int>(DOCA_POST_STREAM_NUM))) {
         throw std::invalid_argument("striped WRITE requires data_qp_count <= cuda_streams <= 4");
     }
-    NIXL_INFO << "WRITE data QPs per peer: " << dataQpCount_;
+    NIXL_INFO << (nativeMode_ ? "Native READ pool QPs per peer: " : "WRITE data QPs per peer: ")
+              << dataQpCount_;
     NIXL_INFO << "OOB listen port: " << local_port;
 
     // Reject an unusable explicit interface before acquiring RDMA/GPU resources.
@@ -1036,6 +1042,7 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
                 rdma_qp->qp_write.push_back(std::move(qp));
             }
             rdma_qp->writeProgrammed.resize(dataQpCount_, false);
+
         }
     }
     catch (const nixl::doca::verbs::teardown_error &e) {

@@ -15,6 +15,12 @@
 
 gpunetio_test_compile_flags = []
 
+native_pool_options_test = executable('nixl_gpunetio_native_pool_options_test',
+    'native_pool_options_test.cpp',
+    dependencies: [nixl_infra, cuda_dep, plugin_gpunetio_deps, absl_log_dep],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, include_directories('../../../../src/plugins/gpunetio')])
+test('nixl_gpunetio_native_pool_options_test', native_pool_options_test)
+
 if cuda_dep.found()
         gpunetio_test_compile_flags += '-DHAVE_CUDA'
         nvtx_dep = nvcc.find_library('nvToolsExt', dirs: '/usr/local/cuda/lib64', required: false)
