@@ -49,22 +49,22 @@ globalTimerNs() {
 }
 
 [[nodiscard]] bool
-isIbPortActive(const std::filesystem::directory_entry &port) {
-    std::ifstream state_file(port.path() / "state");
-    std::string state;
-    return std::getline(state_file, state) && (state == "4: ACTIVE");
-}
-
-[[nodiscard]] bool
 hasActiveIbPort() {
     namespace fs = std::filesystem;
+    const auto is_port_active = [](const fs::directory_entry &port) {
+        std::ifstream state_file(port.path() / "state");
+        std::string state;
+        return std::getline(state_file, state) && (state == "4: ACTIVE");
+    };
+    const auto has_active_port = [&](const fs::directory_entry &dev) {
+        std::error_code ec;
+        const fs::directory_iterator ports(dev.path() / "ports", ec);
+        return std::any_of(begin(ports), end(ports), is_port_active);
+    };
+
     std::error_code ec;
     const fs::directory_iterator devs("/sys/class/infiniband", ec);
-    return std::any_of(begin(devs), end(devs), [](const fs::directory_entry &dev) {
-        std::error_code ports_ec;
-        const fs::directory_iterator ports(dev.path() / "ports", ports_ec);
-        return std::any_of(begin(ports), end(ports), isIbPortActive);
-    });
+    return std::any_of(begin(devs), end(devs), has_active_port);
 }
 } // namespace
 
