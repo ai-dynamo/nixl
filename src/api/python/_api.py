@@ -747,6 +747,8 @@ class nixl_agent:
         nixl.xfer_request_id), the integer execution number of the latest accepted post
         (0 before any), and that post's W3C traceparent string (the request's before any post).
 
+        It must not run while another thread posts or releases the same handle.
+
         Args:
             handle: Handle to the transfer operation, from make_prepped_xfer or initialize_xfer.
 
