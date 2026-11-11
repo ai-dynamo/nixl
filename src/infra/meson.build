@@ -15,11 +15,7 @@
 
 nixl_build_sources = ['nixl_descriptors.cpp', 'nixl_memory_section.cpp']
 if nixl_trace_enabled
-    nixl_build_sources += [
-        '../core/tracing/core/backend_trace.cpp',
-        '../core/tracing/core/scope.cpp',
-        '../core/tracing/core/trace_context.cpp',
-    ]
+    nixl_build_sources += ['../core/tracing/core/trace_context.cpp']
 endif
 
 nixl_build_lib = library('nixl_build',

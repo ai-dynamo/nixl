@@ -27,6 +27,8 @@
 
 #include "tracing/api/trace_identity.h"
 
+class nixlSerDes;
+
 namespace nixl::trace {
 
 /**
@@ -123,6 +125,12 @@ parseTraceparent(std::string_view value);
 
 [[nodiscard]] std::string
 formatTraceparent(const TraceContext &context);
+
+void
+encodeTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity);
+
+[[nodiscard]] std::optional<TraceIdentity>
+decodeTraceTags(nixlSerDes &ser_des);
 
 class TraceparentText {
 public:

@@ -97,7 +97,9 @@ GMockBackendEngine::observeTraceSink(const nixlBackendTraceSink *sink) {
 void
 GMockBackendEngine::observeTraceContext(const nixl_opt_b_args_t *opt_args) {
     const std::lock_guard lock(observedMutex_);
-    const nixl::trace::TraceIdentity *identity = nixl::trace::currentIdentity();
+    const nixlBackendTraceSink *sink = observedTraceSink_.value_or(nullptr);
+    const nixl::trace::TraceIdentity *identity =
+        (sink != nullptr) ? sink->currentIdentity() : nullptr;
     if (opt_args != nullptr && identity != nullptr) {
         observedTraceContext_ = identity->context;
     } else {

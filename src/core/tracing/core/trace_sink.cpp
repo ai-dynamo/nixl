@@ -16,6 +16,7 @@
  */
 #include "tracing/core/trace_sink.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -28,6 +29,24 @@ namespace nixl::trace {
 namespace {
 
     constexpr std::size_t inline_record_attrs = 12;
+
+    struct DeferredPhaseQueue {
+        std::array<DeferredPhase, deferredPhaseCapacity> entries;
+        std::size_t count = 0;
+    };
+
+    thread_local DeferredPhaseQueue deferred_phases;
+
+    void
+    recordDeferred(const DeferredPhase &deferred) noexcept {
+        deferred.trace.recordAt(deferred.phase, deferred.phaseAt);
+        if (deferred.phase == nixl_trace_phase_t::WIRE_COMPLETED) {
+            deferred.trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT,
+                                      deferred.operation,
+                                      deferred.inflightSince,
+                                      deferred.completedAt);
+        }
+    }
 
     [[nodiscard]] constexpr Kind
     operationKind(nixl_xfer_op_t operation) noexcept {
@@ -134,6 +153,35 @@ TracerPhaseSink::recordSpan(nixl_trace_span_t span,
                                 end,
                                 span_attrs);
            });
+}
+
+void
+TracerPhaseSink::writeTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity) const {
+    encodeTraceTags(ser_des, identity);
+}
+
+std::optional<TraceIdentity>
+TracerPhaseSink::readTraceTags(nixlSerDes &ser_des) const {
+    return decodeTraceTags(ser_des);
+}
+
+void
+TracerPhaseSink::deferPhase(const DeferredPhase &deferred) noexcept {
+    DeferredPhaseQueue &queue = deferred_phases;
+    if (queue.count == queue.entries.size()) {
+        recordDeferred(deferred);
+        return;
+    }
+    queue.entries[queue.count++] = deferred;
+}
+
+void
+TracerPhaseSink::recordDeferredPhases() noexcept {
+    DeferredPhaseQueue &queue = deferred_phases;
+    for (std::size_t i = 0; i < queue.count; ++i) {
+        recordDeferred(queue.entries[i]);
+    }
+    queue.count = 0;
 }
 
 } // namespace nixl::trace

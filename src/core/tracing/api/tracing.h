@@ -106,27 +106,20 @@ private:
 };
 
 /**
- * @brief Makes @p identity and the tracer that records it current on the
- *        calling thread until it ends, so a backend called meanwhile reads the
- *        identity through currentIdentity(). Scopes nest. A scope
- *        whose context is valid and sampled also pushes it to the tracer's
- *        backends for its lifetime, to correlate records across threads.
- *        @p sink, when given, is the trace sink a backend constructed meanwhile
- *        takes as its own.
+ * @brief Makes @p identity current on the calling thread until it ends, so a
+ *        backend called meanwhile reads it through its sink's currentIdentity().
+ *        Scopes nest; a scope without a tracer does nothing. A scope whose
+ *        context is valid and sampled also pushes it to the tracer's backends
+ *        for its lifetime, to correlate records across threads.
  */
 class Scope {
 public:
-    [[nodiscard]] Scope(Tracer *tracer,
-                        const TraceIdentity &identity,
-                        nixlBackendTraceSink *sink = nullptr);
+    [[nodiscard]] Scope(Tracer *tracer, const TraceIdentity &identity);
     ~Scope();
 
     Scope(const Scope &) = delete;
     Scope &
     operator=(const Scope &) = delete;
-
-    [[nodiscard]] static const Scope *
-    current() noexcept;
 
     [[nodiscard]] Tracer *
     tracer() const noexcept {
@@ -138,19 +131,10 @@ public:
         return identity_;
     }
 
-    [[nodiscard]] nixlBackendTraceSink *
-    sink() const noexcept {
-        return sink_;
-    }
-
 private:
-    static void
-    makeCurrent(const Scope *scope) noexcept;
-
-    const Scope *const previous_;
     Tracer *const tracer_;
     const TraceIdentity identity_;
-    nixlBackendTraceSink *const sink_;
+    const TraceIdentity *const previous_;
     const bool pushed_;
 };
 

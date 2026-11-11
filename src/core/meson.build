@@ -88,6 +88,7 @@ nixl_lib_sources = [
 if nixl_trace_enabled
     nixl_lib_sources += [
         'tracing/core/agent_trace.cpp',
+        'tracing/core/scope.cpp',
         'tracing/core/trace_sink.cpp',
         'tracing/core/tracer.cpp',
         'tracing/core/tracing.cpp',

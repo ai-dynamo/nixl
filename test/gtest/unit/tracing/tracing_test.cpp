@@ -287,6 +287,25 @@ public:
         return true;
     }
 
+    [[nodiscard]] const nixl::trace::TraceIdentity *
+    currentIdentity() const noexcept override {
+        return nullptr;
+    }
+
+    void
+    writeTraceTags(nixlSerDes &, const nixl::trace::TraceIdentity &) const override {}
+
+    [[nodiscard]] std::optional<nixl::trace::TraceIdentity>
+    readTraceTags(nixlSerDes &) const override {
+        return std::nullopt;
+    }
+
+    void
+    deferPhase(const nixl::trace::DeferredPhase &) noexcept override {}
+
+    void
+    recordDeferredPhases() noexcept override {}
+
     mutable int questions = 0;
     std::vector<nixlTime::us_t> timestamps;
 };
@@ -471,6 +490,11 @@ makeThrowingTracer() {
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     backends.push_back(std::make_unique<ThrowingBackend>());
     return std::make_unique<nixl::trace::CompositeTracer>(std::move(backends), 0.0);
+}
+
+[[nodiscard]] const nixl::trace::TraceIdentity *
+currentIdentity(nixl::trace::Tracer &tracer) {
+    return tracer.makeSink("test", {})->currentIdentity();
 }
 
 [[nodiscard]] nixl::trace::TraceContext
@@ -710,7 +734,7 @@ TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
                 release, *traced, nixl::trace::Record::ReleaseXferReq, {"bytes", ++evaluations});
             EXPECT_FALSE(post.active());
             EXPECT_FALSE(release.active());
-            EXPECT_EQ(nixl::trace::Scope::current() != nullptr, traced == &unsampled);
+            EXPECT_EQ(currentIdentity(*tracer) != nullptr, traced == &unsampled);
         }
     }
 
@@ -792,7 +816,7 @@ TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
                 EXPECT_EQ(log->activeContexts, std::vector<nixl::trace::TraceContext>{request});
             }
         }
-        EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
+        EXPECT_EQ(currentIdentity(*tracer), nullptr);
     }
 
     for (const CallLog *log : {&a, &b}) {
@@ -829,12 +853,12 @@ TEST(Tracing, ScopeUnderMacroRecordsTheSuppliedContextsChild) {
         NIXL_TRACE_SCOPE_UNDER(
             notif, tracer.get(), supplied, nixl::trace::Record::GenNotif, {"bytes", 1});
         EXPECT_TRUE(notif.active());
-        ASSERT_NE(nixl::trace::Scope::current(), nullptr);
-        EXPECT_EQ(nixl::trace::Scope::current()->identity().context, child);
-        EXPECT_EQ(nixl::trace::Scope::current()->identity().requestId, 0u);
+        ASSERT_NE(currentIdentity(*tracer), nullptr);
+        EXPECT_EQ(currentIdentity(*tracer)->context, child);
+        EXPECT_EQ(currentIdentity(*tracer)->requestId, 0u);
     }
 
-    EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
+    EXPECT_EQ(currentIdentity(*tracer), nullptr);
     for (const CallLog *log : {&a, &b}) {
         EXPECT_EQ(log->pushedContexts, std::vector<nixl::trace::TraceContext>{child});
         EXPECT_EQ(log->spansBegun, 0);
@@ -861,7 +885,7 @@ TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
                                nixl::trace::Record::GenNotif,
                                {"bytes", 1});
         EXPECT_TRUE(plain.active());
-        EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
+        EXPECT_EQ(currentIdentity(*tracer), nullptr);
     }
     {
         NIXL_TRACE_SCOPE_UNDER(
@@ -914,7 +938,7 @@ TEST(Tracing, ScopeUnderMacroEvaluatesItsTracerAndParentOnce) {
     {
         NIXL_TRACE_SCOPE_UNDER(
             traced, tracerOf(tracer.get()), parentOf(), nixl::trace::Record::GenNotif);
-        EXPECT_NE(nixl::trace::Scope::current(), nullptr);
+        EXPECT_NE(currentIdentity(*tracer), nullptr);
         EXPECT_TRUE(traced.active());
     }
     EXPECT_EQ(tracers, 1);
@@ -923,7 +947,7 @@ TEST(Tracing, ScopeUnderMacroEvaluatesItsTracerAndParentOnce) {
     {
         NIXL_TRACE_SCOPE_UNDER(
             untraced, tracerOf(nullptr), parentOf(), nixl::trace::Record::GenNotif);
-        EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
+        EXPECT_EQ(currentIdentity(*tracer), nullptr);
     }
     EXPECT_EQ(tracers, 2);
     EXPECT_EQ(parents, 1);
@@ -1280,23 +1304,28 @@ TEST(Tracing, ScopeIsCurrentUntilItEnds) {
     const nixl::trace::TraceIdentity outer{testContext(0x19), 0x1919, 1};
     const nixl::trace::TraceIdentity inner{testContext(0x1a), 0x1a1a, 2};
 
-    EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
+    const auto sink = tracer->makeSink("test", {});
+
+    EXPECT_EQ(sink->currentIdentity(), nullptr);
     {
         const nixl::trace::Scope outer_scope(tracer.get(), outer);
-        EXPECT_EQ(nixl::trace::Scope::current(), &outer_scope);
+        ASSERT_NE(sink->currentIdentity(), nullptr);
+        EXPECT_EQ(sink->currentIdentity()->requestId, 0x1919u);
         {
-            const nixl::trace::Scope inner_scope(nullptr, inner);
-            EXPECT_EQ(nixl::trace::Scope::current(), &inner_scope);
-            EXPECT_EQ(nixl::trace::Scope::current()->tracer(), nullptr);
-            EXPECT_EQ(nixl::trace::Scope::current()->identity().requestId, 0x1a1au);
-            EXPECT_EQ(nixl::trace::Scope::current()->identity().execution, 2u);
+            const nixl::trace::Scope inner_scope(tracer.get(), inner);
+            ASSERT_NE(sink->currentIdentity(), nullptr);
+            EXPECT_EQ(sink->currentIdentity()->requestId, 0x1a1au);
+            EXPECT_EQ(sink->currentIdentity()->execution, 2u);
+            {
+                const nixl::trace::Scope untraced(nullptr, outer);
+                EXPECT_EQ(sink->currentIdentity()->requestId, 0x1a1au);
+            }
         }
-        EXPECT_EQ(nixl::trace::Scope::current(), &outer_scope);
-        EXPECT_EQ(nixl::trace::Scope::current()->tracer(), tracer.get());
-        EXPECT_EQ(nixl::trace::Scope::current()->identity().context, outer.context);
-        std::thread([] { EXPECT_EQ(nixl::trace::Scope::current(), nullptr); }).join();
+        ASSERT_NE(sink->currentIdentity(), nullptr);
+        EXPECT_EQ(sink->currentIdentity()->context, outer.context);
+        std::thread([&sink] { EXPECT_EQ(sink->currentIdentity(), nullptr); }).join();
     }
-    EXPECT_EQ(nixl::trace::Scope::current(), nullptr);
+    EXPECT_EQ(sink->currentIdentity(), nullptr);
 }
 
 TEST(Tracing, RequestDrawsItsIdentityFromItsTracer) {
@@ -2148,10 +2177,6 @@ TEST(TracePhaseSink, PostTraceRecordsOnlyWithASinkAndASampledPost) {
     }
     {
         const nixl::trace::Scope scope(tracer.get(), unsampled);
-        inactive.push_back(nixlBackendPostTrace{&sink});
-    }
-    {
-        const nixl::trace::Scope scope(nullptr, {}, &sink);
         inactive.push_back(nixlBackendPostTrace{&sink});
     }
     for (const auto &trace : inactive) {

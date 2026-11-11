@@ -57,7 +57,8 @@ TEST(UcxTraceCompiledOut, SampledPostSendsTheOlderNotification) {
     sampled.requestId = 7;
     sampled.execution = 1;
 
-    EXPECT_EQ(nixl::ucx::serializeNotif(sender_name, "msg", sampled), notification({}));
+    EXPECT_EQ(nixl::ucx::serializeNotif(sender_name, "msg", nixlBackendPostTrace{nullptr, sampled}),
+              notification({}));
 }
 
 TEST(UcxTraceCompiledOut, TracingSendersNotificationKeepsItsMessage) {

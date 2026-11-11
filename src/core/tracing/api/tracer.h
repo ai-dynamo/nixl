@@ -86,6 +86,9 @@ public:
 
     [[nodiscard]] virtual std::unique_ptr<nixlBackendTraceSink>
     makeSink(std::string backend, std::function<void(std::uint64_t)> on_dropped) = 0;
+
+    virtual const TraceIdentity *
+    swapCurrentIdentity(const TraceIdentity *identity) noexcept = 0;
 };
 
 using TracerPtr = std::unique_ptr<Tracer>;

@@ -77,20 +77,20 @@ makeAgentTracer(const std::string &name) {
     return makeTracer(TracerConfig{name, std::move(requested_backends), sample_ratio});
 }
 
-Scope::Scope(Tracer *tracer, const TraceIdentity &identity, nixlBackendTraceSink *sink)
-    : previous_(current()),
-      tracer_(tracer),
+Scope::Scope(Tracer *tracer, const TraceIdentity &identity)
+    : tracer_(tracer),
       identity_(identity),
-      sink_(sink),
+      previous_((tracer != nullptr) ? tracer->swapCurrentIdentity(&identity_) : nullptr),
       pushed_((tracer != nullptr) && identity.context.valid() && identity.context.sampled()) {
     if (pushed_) {
         tracer_->pushContext(identity_.context, identity_.requestId);
     }
-    makeCurrent(this);
 }
 
 Scope::~Scope() {
-    makeCurrent(previous_);
+    if (tracer_ != nullptr) {
+        tracer_->swapCurrentIdentity(previous_);
+    }
     if (pushed_) {
         tracer_->popContext();
     }

@@ -62,6 +62,21 @@ public:
         return tracer_.needsTimestamps();
     }
 
+    [[nodiscard]] const TraceIdentity *
+    currentIdentity() const noexcept override;
+
+    void
+    writeTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity) const override;
+
+    [[nodiscard]] std::optional<TraceIdentity>
+    readTraceTags(nixlSerDes &ser_des) const override;
+
+    void
+    deferPhase(const DeferredPhase &deferred) noexcept override;
+
+    void
+    recordDeferredPhases() noexcept override;
+
 private:
     template<typename Emit>
     void

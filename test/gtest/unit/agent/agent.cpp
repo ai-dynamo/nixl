@@ -411,6 +411,11 @@ namespace agent {
             std::filesystem::remove(trace_file_);
         }
 
+        [[nodiscard]] const nixlBackendTraceSink *
+        traceSink() const {
+            return agent_helper_->getGMockEngine().observedTraceSink().value_or(nullptr);
+        }
+
         [[nodiscard]] std::vector<std::vector<std::string>>
         records(std::string_view name) const {
             std::vector<std::vector<std::string>> records;
@@ -1303,10 +1308,12 @@ namespace agent {
         const auto application = applicationContext("01");
         nixl_opt_args_t with_context;
         with_context.traceContext = nixl::trace::formatTraceparent(application);
+        const nixlBackendTraceSink *sink = traceSink();
+        ASSERT_NE(sink, nullptr);
         std::optional<nixl::trace::TraceIdentity> sent;
         EXPECT_CALL(engine, genNotif)
-            .WillOnce(testing::Invoke([&sent](const std::string &, const std::string &) {
-                if (const nixl::trace::TraceIdentity *identity = nixl::trace::currentIdentity()) {
+            .WillOnce(testing::Invoke([&sent, sink](const std::string &, const std::string &) {
+                if (const nixl::trace::TraceIdentity *identity = sink->currentIdentity()) {
                     sent = *identity;
                 }
                 return NIXL_SUCCESS;
@@ -1330,10 +1337,12 @@ namespace agent {
         const auto &engine = agent_helper_->getGMockEngine();
         nixl_opt_args_t with_context;
         with_context.traceContext = nixl::trace::formatTraceparent(applicationContext("00"));
+        const nixlBackendTraceSink *sink = traceSink();
+        ASSERT_NE(sink, nullptr);
         bool sampled = true;
         EXPECT_CALL(engine, genNotif)
-            .WillOnce(testing::Invoke([&sampled](const std::string &, const std::string &) {
-                const nixl::trace::TraceIdentity *identity = nixl::trace::currentIdentity();
+            .WillOnce(testing::Invoke([&sampled, sink](const std::string &, const std::string &) {
+                const nixl::trace::TraceIdentity *identity = sink->currentIdentity();
                 sampled = (identity != nullptr) && identity->context.sampled();
                 return NIXL_SUCCESS;
             }));
@@ -1346,10 +1355,12 @@ namespace agent {
     TEST_F(sampledRecorderTracingAgentFixture, NotificationWithoutAContextIsAPlainSpan) {
         nixlAgent *agent = agent_helper_->getAgent();
         const auto &engine = agent_helper_->getGMockEngine();
+        const nixlBackendTraceSink *sink = traceSink();
+        ASSERT_NE(sink, nullptr);
         bool scoped = true;
         EXPECT_CALL(engine, genNotif)
-            .WillOnce(testing::Invoke([&scoped](const std::string &, const std::string &) {
-                scoped = nixl::trace::currentIdentity() != nullptr;
+            .WillOnce(testing::Invoke([&scoped, sink](const std::string &, const std::string &) {
+                scoped = sink->currentIdentity() != nullptr;
                 return NIXL_SUCCESS;
             }));
 

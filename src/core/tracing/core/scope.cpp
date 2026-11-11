@@ -15,20 +15,23 @@
  * limitations under the License.
  */
 
-#include "tracing/api/tracing.h"
+#include <utility>
+
+#include "tracing/core/trace.h"
+#include "tracing/core/trace_sink.h"
 
 namespace {
 
-thread_local const nixl::trace::Scope *current_scope = nullptr;
+thread_local const nixl::trace::TraceIdentity *current_identity = nullptr;
 
 } // namespace
 
-const nixl::trace::Scope *
-nixl::trace::Scope::current() noexcept {
-    return current_scope;
+const nixl::trace::TraceIdentity *
+nixl::trace::CompositeTracer::swapCurrentIdentity(const TraceIdentity *identity) noexcept {
+    return std::exchange(current_identity, identity);
 }
 
-void
-nixl::trace::Scope::makeCurrent(const Scope *scope) noexcept {
-    current_scope = scope;
+const nixl::trace::TraceIdentity *
+nixl::trace::TracerPhaseSink::currentIdentity() const noexcept {
+    return current_identity;
 }

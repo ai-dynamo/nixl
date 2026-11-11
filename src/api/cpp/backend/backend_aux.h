@@ -39,6 +39,7 @@ struct nixlBackendOptionalArgs {
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
 
+class nixlBackendTraceSink;
 
 // A base class to point to backend initialization data
 // User doesn't know about fields such as local_agent but can access it
@@ -55,6 +56,7 @@ class nixlBackendInitParams {
         nixlTime::us_t pthrDelay = 0;
         nixl_thread_sync_t syncMode;
         bool enableTelemetry_ = false;
+        nixlBackendTraceSink *traceSink = nullptr;
 };
 
 // Pure virtual class to have a common pointer type

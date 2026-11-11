@@ -99,7 +99,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
-      traceSink_(nixl::trace::currentSink()) {
+      traceSink_(init_params.traceSink) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -664,14 +664,14 @@ nixlUcxEngine::progressLoop() {
 std::string
 nixl::ucx::serializeNotif(const std::string &agent,
                           const std::string &msg,
-                          const nixl::trace::TraceIdentity &identity) {
+                          const nixlBackendPostTrace &trace) {
     constexpr size_t notif_overhead = 128;
     nixlSerDes ser_des;
 
     ser_des.reserve(agent.size() + msg.size() + notif_overhead);
     ser_des.addStr("name", agent);
     ser_des.addStr("msg", msg);
-    nixl::trace::addTraceTags(ser_des, identity);
+    nixl::trace::addTraceTags(ser_des, trace);
     return std::move(ser_des).exportMoveStr();
 }
 
@@ -683,10 +683,8 @@ nixl::ucx::deserializeNotif(const std::string &buffer, nixlBackendTraceSink *sin
     notifMessage notif;
     notif.agent = ser_des.getStr("name");
     notif.msg = ser_des.getStr("msg");
-    if (sink != nullptr) {
-        if (const auto identity = nixl::trace::getTraceTags(ser_des)) {
-            notif.trace = nixlBackendPostTrace{sink, *identity};
-        }
+    if (const auto identity = nixl::trace::getTraceTags(ser_des, sink)) {
+        notif.trace = nixlBackendPostTrace{sink, *identity};
     }
     return notif;
 }
@@ -694,7 +692,7 @@ nixl::ucx::deserializeNotif(const std::string &buffer, nixlBackendTraceSink *sin
 std::string
 nixlUcxEngine::buildNotif(const std::string &msg, const nixlBackendPostTrace &trace) const {
     // TODO: replace with mpool for performance
-    return nixl::ucx::serializeNotif(localAgent, msg, trace.identity());
+    return nixl::ucx::serializeNotif(localAgent, msg, trace);
 }
 
 nixl_status_t

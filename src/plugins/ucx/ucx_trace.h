@@ -98,9 +98,7 @@ public:
 
     void
     drain() const noexcept {
-        if (trace_.active()) {
-            nixl::trace::recordDeferredPhases();
-        }
+        nixl::trace::recordDeferredPhases(trace_.sink());
     }
 
     void

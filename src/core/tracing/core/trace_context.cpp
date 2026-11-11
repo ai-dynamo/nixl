@@ -28,6 +28,7 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/uuid_v4.h"
+#include "serdes/serdes.h"
 #include "tracing/api/log_once.h"
 #include "tracing/core/random_generator.h"
 #include "tracing/core/trace.h"
@@ -42,6 +43,13 @@ constexpr std::size_t trace_id_randomness_bytes = 7;
 constexpr double two_pow_56 = 0x1p56;
 constexpr double min_sample_ratio = 0x1p-56;
 constexpr std::uint64_t max_request_id = std::numeric_limits<std::int64_t>::max();
+
+static_assert(std::endian::native == std::endian::little);
+
+struct requestTag {
+    std::uint64_t requestId;
+    std::uint64_t execution;
+};
 
 template<std::size_t Size>
 [[nodiscard]] bool
@@ -257,6 +265,41 @@ nixl::trace::parseTraceparent(std::string_view value) {
 std::string
 nixl::trace::formatTraceparent(const nixl::trace::TraceContext &context) {
     return std::string(nixl::trace::TraceparentText(context).view());
+}
+
+void
+nixl::trace::encodeTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity) {
+    if (!identity.context.sampled()) {
+        return;
+    }
+    std::array<std::uint8_t, traceContextWireSize> record;
+    const auto size = encodeTraceContext(identity.context, record);
+    if (!size) {
+        return;
+    }
+    ser_des.addBuf("tctx", record.data(), *size);
+    if (identity.requestId != 0) {
+        const requestTag tag{identity.requestId, identity.execution};
+        ser_des.addBuf("treq", &tag, sizeof(tag));
+    }
+}
+
+std::optional<nixl::trace::TraceIdentity>
+nixl::trace::decodeTraceTags(nixlSerDes &ser_des) {
+    std::array<std::uint8_t, traceContextWireSize> record;
+    TraceIdentity identity;
+    if ((ser_des.peekBufLen("tctx") != record.size()) ||
+        (ser_des.getBuf("tctx", record.data(), record.size()) != NIXL_SUCCESS) ||
+        (decodeTraceContext(record, identity.context) != WireDecodeResult::Ok)) {
+        return std::nullopt;
+    }
+    requestTag tag;
+    if ((ser_des.peekBufLen("treq") == sizeof(tag)) &&
+        (ser_des.getBuf("treq", &tag, sizeof(tag)) == NIXL_SUCCESS) && (tag.requestId != 0)) {
+        identity.requestId = tag.requestId;
+        identity.execution = tag.execution;
+    }
+    return identity;
 }
 
 std::optional<std::size_t>

@@ -457,6 +457,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
 
     auto trace_sink = data->backendTraces_.makeSink(data->tracer(), type, data->telemetry_.get());
+    init_params.traceSink = trace_sink.get();
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
@@ -468,8 +469,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     }
 
     // Plugin found, use it to create the backend
-    backend_ptr_t backend(nixl::trace::constructUnder(
-        trace_sink.get(), [&] { return plugin_handle->createEngine(&init_params); }));
+    backend_ptr_t backend(plugin_handle->createEngine(&init_params));
 
     if (!backend) {
         NIXL_ERROR_FUNC << "backend creation failed for '" << type << "'";

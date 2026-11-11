@@ -138,7 +138,34 @@ public:
                const nixl::trace::TraceIdentity &,
                std::span<const nixlBackendTraceAttr>,
                std::string_view) noexcept override {}
+
+    [[nodiscard]] const nixl::trace::TraceIdentity *
+    currentIdentity() const noexcept override {
+        return nullptr;
+    }
+
+    void
+    writeTraceTags(nixlSerDes &ser_des, const nixl::trace::TraceIdentity &identity) const override {
+        nixl::trace::encodeTraceTags(ser_des, identity);
+    }
+
+    [[nodiscard]] std::optional<nixl::trace::TraceIdentity>
+    readTraceTags(nixlSerDes &ser_des) const override {
+        return nixl::trace::decodeTraceTags(ser_des);
+    }
+
+    void
+    deferPhase(const nixl::trace::DeferredPhase &) noexcept override {}
+
+    void
+    recordDeferredPhases() noexcept override {}
 };
+
+[[nodiscard]] std::string
+tracedNotif(const nixl::trace::TraceIdentity &identity) {
+    discardingSink sink;
+    return nixl::ucx::serializeNotif(sender_name, "msg", nixlBackendPostTrace{&sink, identity});
+}
 
 [[nodiscard]] bool
 awaitBytes(int fd, void *data, size_t size) {
@@ -729,8 +756,7 @@ TEST(SerDesProbe, PeekBufLenReportsEmptyValuesAndRejectsTruncatedOnes) {
 TEST(UcxTraceContextWire, OlderReceiverStillReadsTheMessage) {
     const auto context = drawContext(1.0);
     nixlSerDes older_receiver;
-    ASSERT_EQ(older_receiver.importStr(nixl::ucx::serializeNotif(
-                  sender_name, "msg", {context, tagged_request_id, tagged_execution})),
+    ASSERT_EQ(older_receiver.importStr(tracedNotif({context, tagged_request_id, tagged_execution})),
               NIXL_SUCCESS);
 
     EXPECT_EQ(older_receiver.getStr("name"), sender_name);
@@ -741,21 +767,17 @@ TEST(UcxTraceContextWire, UnsampledRequestWritesNoContextBytes) {
     const auto unsampled = drawContext(0.0);
     ASSERT_TRUE(unsampled.valid());
 
-    EXPECT_EQ(nixl::ucx::serializeNotif(
-                  sender_name, "msg", {unsampled, tagged_request_id, tagged_execution}),
+    EXPECT_EQ(tracedNotif({unsampled, tagged_request_id, tagged_execution}),
               olderSenderNotif(sender_name, "msg"));
-    EXPECT_EQ(
-        nixl::ucx::serializeNotif(sender_name, "msg", {{}, tagged_request_id, tagged_execution}),
-        olderSenderNotif(sender_name, "msg"));
+    EXPECT_EQ(tracedNotif({{}, tagged_request_id, tagged_execution}),
+              olderSenderNotif(sender_name, "msg"));
 }
 
 TEST(UcxTraceContextWire, SampledContextRoundTrips) {
     const auto context = drawContext(1.0);
     discardingSink sink;
     const auto notif = nixl::ucx::deserializeNotif(
-        nixl::ucx::serializeNotif(
-            sender_name, "msg", {context, tagged_request_id, tagged_execution}),
-        &sink);
+        tracedNotif({context, tagged_request_id, tagged_execution}), &sink);
 
     EXPECT_EQ(notif.agent, sender_name);
     EXPECT_EQ(notif.msg, "msg");
@@ -768,8 +790,7 @@ TEST(UcxTraceContextWire, SampledContextRoundTrips) {
 TEST(UcxTraceContextWire, RequestTagHoldsTheIdThenTheExecutionLittleEndian) {
     const auto context = drawContext(1.0);
 
-    EXPECT_EQ(nixl::ucx::serializeNotif(
-                  sender_name, "msg", {context, tagged_request_id, tagged_execution}),
+    EXPECT_EQ(tracedNotif({context, tagged_request_id, tagged_execution}),
               handBuiltNotif(
                   {{"tctx", encodedRecord(context)}, {"treq", std::string(tagged_request_bytes)}}));
 }
@@ -777,9 +798,7 @@ TEST(UcxTraceContextWire, RequestTagHoldsTheIdThenTheExecutionLittleEndian) {
 TEST(UcxTraceContextWire, ReceiverWithoutTracingIgnoresTheContext) {
     const auto context = drawContext(1.0);
     const auto notif = nixl::ucx::deserializeNotif(
-        nixl::ucx::serializeNotif(
-            sender_name, "msg", {context, tagged_request_id, tagged_execution}),
-        nullptr);
+        tracedNotif({context, tagged_request_id, tagged_execution}), nullptr);
 
     EXPECT_EQ(notif.agent, sender_name);
     EXPECT_EQ(notif.msg, "msg");
@@ -801,7 +820,7 @@ TEST(UcxTraceContextWire, UndecodableContextKeepsTheMessage) {
         notifications.push_back(sender.exportStr());
     }
     const auto context = drawContext(1.0);
-    const std::string sampled = nixl::ucx::serializeNotif(sender_name, "msg", {context});
+    const std::string sampled = tracedNotif({context});
     notifications.push_back(sampled.substr(0, sampled.size() - 2));
     discardingSink sink;
 
@@ -833,8 +852,7 @@ TEST(UcxTraceContextWire, OlderSenderNotificationParsesWithoutLogging) {
 TEST(UcxTraceContextWire, SenderWithoutRequestTagGivesTheContextAlone) {
     const auto context = drawContext(1.0);
     const std::string context_only = handBuiltNotif({{"tctx", encodedRecord(context)}});
-    EXPECT_EQ(nixl::ucx::serializeNotif(sender_name, "msg", {context, 0, tagged_execution}),
-              context_only);
+    EXPECT_EQ(tracedNotif({context, 0, tagged_execution}), context_only);
     const size_t problems = gtest::LogProblemCounter::getProblemCount();
     discardingSink sink;
 
@@ -859,8 +877,7 @@ TEST(UcxTraceContextWire, MalformedRequestTagKeepsTheContext) {
           std::string(sizeof(std::uint64_t), '\0') + request.substr(sizeof(std::uint64_t))}) {
         notifications.push_back(handBuiltNotif({{"tctx", record}, {"treq", value}}));
     }
-    const std::string sampled = nixl::ucx::serializeNotif(
-        sender_name, "msg", {context, tagged_request_id, tagged_execution});
+    const std::string sampled = tracedNotif({context, tagged_request_id, tagged_execution});
     notifications.push_back(sampled.substr(0, sampled.size() - 2));
     discardingSink sink;
 

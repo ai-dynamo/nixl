@@ -23,7 +23,7 @@ MockBackendEngine::MockBackendEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       gmock_backend_engine(GMockBackendEngine::GetFromParams(init_params->customParams)),
       sharedState(1) {
-    gmock_backend_engine->observeTraceSink(nixl::trace::currentSink());
+    gmock_backend_engine->observeTraceSink(init_params->traceSink);
 }
 
 nixl_status_t

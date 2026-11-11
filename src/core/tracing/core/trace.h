@@ -166,6 +166,9 @@ public:
     [[nodiscard]] std::unique_ptr<nixlBackendTraceSink>
     makeSink(std::string backend, std::function<void(std::uint64_t)> on_dropped) override;
 
+    const TraceIdentity *
+    swapCurrentIdentity(const TraceIdentity *identity) noexcept override;
+
 private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;
     const double sampleRatio_;

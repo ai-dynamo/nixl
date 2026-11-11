@@ -19,7 +19,6 @@
 
 #include <atomic>
 #include <unordered_map>
-#include <utility>
 
 #include "nixl_types.h"
 #include "tracing/api/tracing.h"
@@ -46,13 +45,6 @@ private:
     std::unordered_map<nixl_backend_t, std::atomic<bool>> contextUnsupported_;
 };
 
-template<typename Make>
-[[nodiscard]] auto
-constructUnder(nixlBackendTraceSink *sink, Make &&make) {
-    const Scope scope(nullptr, {}, sink);
-    return std::forward<Make>(make)();
-}
-
 [[nodiscard]] nixl_status_t
 traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info);
 
@@ -71,12 +63,6 @@ public:
     void
     warnIfContextUnsupported(const nixlBackendEngine &, const Traceable &) noexcept {}
 };
-
-template<typename Make>
-[[nodiscard]] auto
-constructUnder(nixlBackendTraceSink *, Make &&make) {
-    return std::forward<Make>(make)();
-}
 
 [[nodiscard]] inline nixl_status_t
 traceInfo(const Traceable &, nixl_xfer_trace_info_t &) noexcept {

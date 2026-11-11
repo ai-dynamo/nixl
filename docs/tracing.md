@@ -70,9 +70,9 @@ under `tracing/api/`, and the implementation under `tracing/core/`. Core code th
 traces includes `tracing/api/tracing.h`, which holds only the call-site macros, the
 record vocabulary (`Record` and `Kind`, from `tracing/api/record.h`, which plugins
 share), a request's trace state (`Traceable`, which also holds the tracer), `Scope`, and
-the tracer and the backends' sinks as opaque handles that `makeAgentTracer()` and
-`makeBackendTraceSink()` return; what they expand into, `Span` included, is under
-`tracing/api/detail/`. Data plugins include `tracing/api/backend_trace.h` (see
+the tracer from `makeAgentTracer()`, the `Tracer` interface of `tracing/api/tracer.h`,
+whose `makeSink()` gives a backend its sink; what they expand into, `Span` included, is
+under `tracing/api/detail/`. Data plugins include `tracing/api/backend_trace.h` (see
 [Backend phases](#backend-phases)), and trace backends `tracing/api/trace_backend.h`,
 the `TraceBackend` interface, and the plugin contract, `tracing/api/trace_plugin.h`. The
 tracer itself (`tracing/core/trace.h`), the sink and the wire codec are seen only by
@@ -358,28 +358,25 @@ with the one they carry or with none, for that post and every later one.
 
 ### Where a backend's trace state comes from
 
-The agent passes no tracing through the plugin API. It opens a
-`nixl::trace::Scope`, a thread-local value, around the calls that carry
-tracing, and a backend reads it from there:
+The agent hands each backend its trace sink once, as `nixlBackendInitParams::traceSink`
+when `createBackend` constructs the engine, null while no tracer is active. Around the
+calls that carry tracing it opens a `nixl::trace::Scope`, which makes the call's
+identity current on that thread, and a backend reads it from its sink:
 
-- `nixl::trace::currentSink()` returns the backend's sink only while `createBackend`
-  constructs the engine, on that thread, so a backend keeps it from its constructor.
-- `nixl::trace::currentIdentity()` returns the identity of the call only while
+- The sink's `currentIdentity()` returns the identity of the call only while
   `prepXfer`, `postXfer`, or a `genNotif` given a context, runs on the calling thread,
   so a backend that needs it later, at completion or on another thread, copies it
   during the call.
-- Outside those calls, on any other thread, or while no tracer is active, both return
-  null. Reading them at the wrong time is not an error, so a mistake shows only as a
-  call that is not traced.
-- The thread-local slot lives in `libnixl_build`, which libnixl and every plugin link,
-  so a plugin sees the agent's scope only through the one shared copy of that library.
-  In a build with `-Ddefault_library=static`, each plugin loaded at run time holds a
-  copy of its own and traces nothing, while the agent's own spans are unaffected.
+- Outside those calls or on any other thread it returns null. Reading it at the wrong
+  time is not an error, so a mistake shows only as a call that is not traced.
+- The current identity lives with the tracer, and the notification's trace tags and
+  the deferred phases also go through the sink, so a plugin holds no tracing state of
+  its own and traces in a build with `-Ddefault_library=static` too.
 
 ### Backend phases
 
 A backend plugin can record a phase of its own work through its
-`nixlBackendTraceSink`, which it takes from `nixl::trace::currentSink()` while
+`nixlBackendTraceSink`, which it takes from `nixlBackendInitParams::traceSink` when
 `createBackend` constructs it. Core records
 each phase as a point event through `emitEvent()`, at the plugin's timestamp and
 under the context the plugin passed, so the event keeps its time whichever thread
@@ -441,8 +438,8 @@ enabled, drops are also exported as `agent_trace_phases_dropped_total`, subject
 to the same per-metric filter as every other metric (see
 [telemetry](telemetry.md)).
 
-A backend also sees the trace identity of the request it is executing, from
-`nixl::trace::currentIdentity()` while `prepXfer` and `postXfer` run (see "Where a
+A backend also sees the trace identity of the request it is executing, from its
+sink's `currentIdentity()` while `prepXfer` and `postXfer` run (see "Where a
 backend's trace state comes from"): the agent opens a `nixl::trace::Scope` around both
 while a tracer is active, and the pointer is null outside one, as in `prepMemView`,
 which has no request, or when an engine is called directly. It is one internal

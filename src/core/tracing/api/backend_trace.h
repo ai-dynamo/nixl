@@ -41,40 +41,7 @@ class nixlSerDes;
 class nixlBackendTraceSink;
 
 namespace nixl::trace {
-
-#if defined(NIXL_TRACE_ENABLED)
-
-/**
- * @brief The sink of the backend being constructed: non-null only on the
- * thread that runs createBackend, while it constructs the engine, and only
- * when tracing is active. A backend keeps it from its constructor.
- */
-[[nodiscard]] nixlBackendTraceSink *
-currentSink() noexcept;
-
-/**
- * @brief The trace identity of the agent's call into this backend: non-null
- * only on the calling thread, while prepXfer, postXfer or a genNotif given a
- * context runs, and only when tracing is active. It is valid for that call; a
- * backend that needs it later copies it.
- */
-[[nodiscard]] const TraceIdentity *
-currentIdentity() noexcept;
-
-#else
-
-[[nodiscard]] inline nixlBackendTraceSink *
-currentSink() noexcept {
-    return nullptr;
-}
-
-[[nodiscard]] inline const TraceIdentity *
-currentIdentity() noexcept {
-    return nullptr;
-}
-
-#endif
-
+struct DeferredPhase;
 } // namespace nixl::trace
 
 /**
@@ -181,8 +148,8 @@ struct nixlBackendTraceAttr {
  * @brief Sink a backend uses to record a phase or a span of its own work.
  *
  * Implemented by core, never by a plugin. A backend takes its own from
- * nixl::trace::currentSink() while it is constructed; it is null when tracing
- * is off -- so every call site must null-check. When non-null the sink
+ * nixlBackendInitParams::traceSink when it is constructed; it is null when
+ * tracing is off -- so every call site must null-check. When non-null the sink
  * outlives the backend engine that holds it.
  */
 class nixlBackendTraceSink {
@@ -273,6 +240,27 @@ public:
     needsTimestamps() const noexcept {
         return true;
     }
+
+    /**
+     * @brief The trace identity of the agent's call into this backend: non-null
+     * only on the calling thread, while prepXfer, postXfer or a genNotif given a
+     * context runs, and only when tracing is active. It is valid for that call; a
+     * backend that needs it later copies it.
+     */
+    [[nodiscard]] virtual const nixl::trace::TraceIdentity *
+    currentIdentity() const noexcept = 0;
+
+    virtual void
+    writeTraceTags(nixlSerDes &ser_des, const nixl::trace::TraceIdentity &identity) const = 0;
+
+    [[nodiscard]] virtual std::optional<nixl::trace::TraceIdentity>
+    readTraceTags(nixlSerDes &ser_des) const = 0;
+
+    virtual void
+    deferPhase(const nixl::trace::DeferredPhase &deferred) noexcept = 0;
+
+    virtual void
+    recordDeferredPhases() noexcept = 0;
 };
 
 #if defined(NIXL_TRACE_ENABLED)
@@ -290,7 +278,7 @@ public:
         if (sink == nullptr) {
             return;
         }
-        if (const nixl::trace::TraceIdentity *identity = nixl::trace::currentIdentity()) {
+        if (const nixl::trace::TraceIdentity *identity = sink->currentIdentity()) {
             *this = nixlBackendPostTrace(sink, *identity);
         }
     }
@@ -304,6 +292,11 @@ public:
     [[nodiscard]] bool
     active() const noexcept {
         return sink_ != nullptr;
+    }
+
+    [[nodiscard]] nixlBackendTraceSink *
+    sink() const noexcept {
+        return sink_;
     }
 
     [[nodiscard]] const nixl::trace::TraceIdentity &
@@ -410,11 +403,17 @@ struct DeferredPhase {
 
 #if defined(NIXL_TRACE_ENABLED)
 
-void
-addTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity);
+inline void
+addTraceTags(nixlSerDes &ser_des, const nixlBackendPostTrace &trace) {
+    if (trace.active()) {
+        trace.sink()->writeTraceTags(ser_des, trace.identity());
+    }
+}
 
-[[nodiscard]] std::optional<TraceIdentity>
-getTraceTags(nixlSerDes &ser_des);
+[[nodiscard]] inline std::optional<TraceIdentity>
+getTraceTags(nixlSerDes &ser_des, const nixlBackendTraceSink *sink) {
+    return (sink != nullptr) ? sink->readTraceTags(ser_des) : std::nullopt;
+}
 
 /**
  * @brief Queues @p deferred on the calling thread, or records it at once when
@@ -422,20 +421,28 @@ getTraceTags(nixlSerDes &ser_des);
  *        keeps the post's sink, so the same thread must call
  *        recordDeferredPhases() before that sink is destroyed.
  */
-void
-deferPhase(const DeferredPhase &deferred) noexcept;
+inline void
+deferPhase(const DeferredPhase &deferred) noexcept {
+    if (deferred.trace.active()) {
+        deferred.trace.sink()->deferPhase(deferred);
+    }
+}
 
 /** @brief Records the phases the calling thread deferred, in order, and empties its queue. */
-void
-recordDeferredPhases() noexcept;
+inline void
+recordDeferredPhases(nixlBackendTraceSink *sink) noexcept {
+    if (sink != nullptr) {
+        sink->recordDeferredPhases();
+    }
+}
 
 #else
 
 inline void
-addTraceTags(nixlSerDes &, const TraceIdentity &) noexcept {}
+addTraceTags(nixlSerDes &, const nixlBackendPostTrace &) noexcept {}
 
 [[nodiscard]] inline std::optional<TraceIdentity>
-getTraceTags(nixlSerDes &) noexcept {
+getTraceTags(nixlSerDes &, const nixlBackendTraceSink *) noexcept {
     return std::nullopt;
 }
 
@@ -443,7 +450,7 @@ inline void
 deferPhase(const DeferredPhase &) noexcept {}
 
 inline void
-recordDeferredPhases() noexcept {}
+recordDeferredPhases(nixlBackendTraceSink *) noexcept {}
 
 #endif
 

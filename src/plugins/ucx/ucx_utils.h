@@ -49,6 +49,7 @@ inline constexpr unsigned ucp_version_mem_type_rdma = UCP_VERSION(1, 22);
 
 using nixlUcxReq = void *;
 
+class nixlBackendTraceSink;
 class nixlUcxMem;
 
 class nixlUcxEp {
@@ -225,7 +226,7 @@ public:
         const nixlUcxContext &,
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
         size_t id = 0,
-        bool records_deferred_traces = false);
+        nixlBackendTraceSink *trace_sink = nullptr);
 
     virtual ~nixlUcxWorker() = default;
 
@@ -294,7 +295,7 @@ private:
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     const ucp_err_handling_mode_t err_handling_mode_;
     const size_t id_;
-    const bool recordsDeferredTraces_;
+    nixlBackendTraceSink *const traceSink_;
 };
 
 std::ostream &
