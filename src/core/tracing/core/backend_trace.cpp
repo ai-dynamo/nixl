@@ -35,7 +35,7 @@ struct requestTag {
 };
 
 struct DeferredPhaseQueue {
-    std::array<nixl::trace::DeferredPhase, 64> entries;
+    std::array<nixl::trace::DeferredPhase, nixl::trace::deferredPhaseCapacity> entries;
     std::size_t count = 0;
 };
 

@@ -25,6 +25,7 @@
  * `NIXL_PLUGIN_API_VERSION` does not cover it.
  */
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -338,6 +339,15 @@ addTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity);
 [[nodiscard]] std::optional<TraceIdentity>
 getTraceTags(nixlSerDes &ser_des);
 
+inline constexpr std::size_t deferredPhaseCapacity = 64;
+
+/**
+ * @brief A phase deferred with deferPhase(). Deferring
+ *        @ref nixl_trace_phase_t::WIRE_COMPLETED also records
+ *        @ref nixl_trace_span_t::WIRE_INFLIGHT for `operation`, from
+ *        `inflightSince` to `completedAt`, so a backend sets all three; left at
+ *        their defaults, the span runs from 0 to 0.
+ */
 struct DeferredPhase {
     nixlBackendPostTrace trace;
     nixl_trace_phase_t phase = nixl_trace_phase_t::WIRE_COMPLETED;
@@ -347,9 +357,16 @@ struct DeferredPhase {
     nixlTime::us_t completedAt = 0;
 };
 
+/**
+ * @brief Queues @p deferred on the calling thread, or records it at once when
+ *        `deferredPhaseCapacity` phases are already queued there. The entry
+ *        keeps the post's sink, so the same thread must call
+ *        recordDeferredPhases() before that sink is destroyed.
+ */
 void
 deferPhase(const DeferredPhase &deferred) noexcept;
 
+/** @brief Records the phases the calling thread deferred, in order, and empties its queue. */
 void
 recordDeferredPhases() noexcept;
 
