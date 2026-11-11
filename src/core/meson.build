@@ -86,7 +86,11 @@ nixl_lib_sources = [
 # libnixl; the tracing core and each backend ship as separate .so plugins under
 # src/plugins/tracing, loaded on demand by nixlPluginManager.
 if nixl_trace_enabled
-    nixl_lib_sources += ['tracing/core/agent_trace.cpp', 'tracing/core/tracing.cpp']
+    nixl_lib_sources += [
+        'tracing/core/agent_trace.cpp',
+        'tracing/core/trace_plugin_loader.cpp',
+        'tracing/core/tracing.cpp',
+    ]
 else
     nixl_lib_sources += ['tracing/core/compiled_out.cpp']
 endif

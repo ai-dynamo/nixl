@@ -55,10 +55,10 @@ execution-trace tools.
   implementation provides them.
 - **Backend plugins** — each backend is a `libtrace_backend_<name>.so` that exports
   `nixl_trace_plugin_init()` returning a `nixlTracePlugin` (a `create_backend`
-  factory + api version). `nixlPluginManager::loadTracePlugin()` discovers and
-  `dlopen`s them on demand by the `libtrace_backend_` prefix — the same machinery used
-  for data backends and telemetry exporters. The plugin contract lives in
-  `src/core/tracing/api/trace_plugin.h`.
+  factory + api version). `nixl::trace::loadTracePlugin()` `dlopen`s them on demand by
+  the `libtrace_backend_` prefix through `nixlPluginManager::loadPlugin()`, from the same
+  plugin directories as data backends and telemetry exporters. The plugin contract lives
+  in `src/core/tracing/api/trace_plugin.h`.
 - **`Kind`** — the operation kind attached to a span or event. It selects an NVTX
   color and maps 1:1 onto the Chakra `NodeType` vocabulary:
   `Generic`, `Compute`, `MemoryR`, `MemoryW`, `CommSend`, `CommRecv`, `CommColl`,

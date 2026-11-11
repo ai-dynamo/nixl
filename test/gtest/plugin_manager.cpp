@@ -21,6 +21,9 @@
 #include "common.h"
 #include "nixl.h"
 #include "plugin_manager.h"
+#if defined(NIXL_TRACE_ENABLED)
+#include "tracing/core/trace_plugin_loader.h"
+#endif
 
 namespace gtest {
 namespace plugin_manager {
@@ -208,25 +211,25 @@ TEST_F(LoadedPluginTestFixture, StaleTelemetryPluginApiVersionIsRejected) {
 TEST_F(LoadedPluginTestFixture, StaleTracePluginApiVersionIsRejected) {
     const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
 
-    EXPECT_EQ(plugin_manager_.loadTracePlugin("mock_stale"), nullptr);
+    EXPECT_EQ(nixl::trace::loadTracePlugin("mock_stale"), nullptr);
     EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
 }
 
 TEST_F(LoadedPluginTestFixture, StaleTraceCorePluginApiVersionIsRejected) {
     const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
 
-    EXPECT_EQ(plugin_manager_.loadTraceCorePlugin("core_mock_stale"), nullptr);
+    EXPECT_EQ(nixl::trace::loadTraceCorePlugin("core_mock_stale"), nullptr);
     EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
 }
 
 TEST_F(LoadedPluginTestFixture, AbsentTraceCorePluginIsNotLoaded) {
-    EXPECT_EQ(plugin_manager_.loadTraceCorePlugin("core_absent"), nullptr);
+    EXPECT_EQ(nixl::trace::loadTraceCorePlugin("core_absent"), nullptr);
 }
 
 TEST_F(LoadedPluginTestFixture, TraceCorePluginIsLoadedOnce) {
-    const auto core = plugin_manager_.loadTraceCorePlugin();
+    const auto core = nixl::trace::loadTraceCorePlugin();
     ASSERT_NE(core, nullptr);
-    EXPECT_EQ(plugin_manager_.loadTraceCorePlugin(), core);
+    EXPECT_EQ(nixl::trace::loadTraceCorePlugin(), core);
 }
 #endif
 

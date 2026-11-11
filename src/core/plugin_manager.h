@@ -25,6 +25,7 @@
 #include <memory>
 #include <vector>
 #include <mutex>
+#include <utility>
 
 #include "backend/backend_plugin.h"
 #include "nixl_types.h"
@@ -100,50 +101,6 @@ private:
     nixlTelemetryPlugin *plugin_;
 };
 
-#if defined(NIXL_TRACE_ENABLED)
-class nixlTracePlugin;
-struct nixlTraceBackendInitParams;
-struct nixlTraceCorePlugin;
-struct nixlTraceCoreConfig;
-
-namespace nixl::trace {
-class TraceBackend;
-class Tracer;
-} // namespace nixl::trace
-
-class nixlTracePluginHandle : public nixlPluginHandle {
-public:
-    nixlTracePluginHandle(void *handle, nixlTracePlugin *plugin);
-    ~nixlTracePluginHandle();
-
-    std::unique_ptr<nixl::trace::TraceBackend>
-    createBackend(const nixlTraceBackendInitParams &init_params) const;
-    const char *
-    getName() const override;
-    const char *
-    getVersion() const override;
-
-private:
-    nixlTracePlugin *plugin_;
-};
-
-class nixlTraceCorePluginHandle : public nixlPluginHandle {
-public:
-    nixlTraceCorePluginHandle(void *handle, nixlTraceCorePlugin *plugin);
-    ~nixlTraceCorePluginHandle();
-
-    std::unique_ptr<nixl::trace::Tracer>
-    createTracer(nixlTraceCoreConfig config) const;
-    const char *
-    getName() const override;
-    const char *
-    getVersion() const override;
-
-private:
-    nixlTraceCorePlugin *plugin_;
-};
-#endif
-
 typedef std::shared_ptr<const nixlPluginHandle> (
     *nixlPluginLoaderFunc)(void *handle, const std::string &plugin_path);
 
@@ -167,14 +124,10 @@ public:
     std::shared_ptr<const nixlTelemetryPluginHandle>
     loadTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_name);
 
-#if defined(NIXL_TRACE_ENABLED)
-    // Load a specific trace-backend plugin
-    std::shared_ptr<const nixlTracePluginHandle>
-    loadTracePlugin(const std::string &plugin_name);
-
-    std::shared_ptr<const nixlTraceCorePluginHandle>
-    loadTraceCorePlugin(const std::string &plugin_name = "core");
-#endif
+    [[nodiscard]] std::shared_ptr<const nixlPluginHandle>
+    loadPlugin(const std::string &plugin_prefix,
+               const std::string &plugin_name,
+               nixlPluginLoaderFunc loader);
 
     // Unload backend plugin
     void
@@ -221,11 +174,8 @@ private:
         loaded_backend_plugins_;
     std::map<nixl_telemetry_plugin_t, std::shared_ptr<const nixlTelemetryPluginHandle>>
         loaded_telemetry_plugins_;
-#if defined(NIXL_TRACE_ENABLED)
-    std::map<std::string, std::shared_ptr<const nixlTracePluginHandle>> loaded_trace_plugins_;
-    std::map<std::string, std::shared_ptr<const nixlTraceCorePluginHandle>>
-        loaded_trace_core_plugins_;
-#endif
+    std::map<std::pair<std::string, std::string>, std::shared_ptr<const nixlPluginHandle>>
+        loaded_plugins_;
     // Plugins discovered on disk but not yet dlopen'd
     std::set<nixl_backend_t> discovered_backend_plugins_;
     // Explicit paths from the plugin list file (name -> .so path)
@@ -256,11 +206,6 @@ private:
 
     void
     discoverTelemetryPlugin(const std::string &filename);
-
-#if defined(NIXL_TRACE_ENABLED)
-    void
-    discoverTracePlugin(const std::string &filename);
-#endif
 
     [[nodiscard]] static std::shared_ptr<const nixlPluginHandle>
     loadPluginFromPath(const std::string &plugin_path,

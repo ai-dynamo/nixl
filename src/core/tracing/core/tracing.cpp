@@ -31,10 +31,10 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/str_util.h"
-#include "plugin_manager.h"
 #include "tracing/api/trace_core_plugin.h"
 #include "tracing/api/trace_plugin.h"
 #include "tracing/core/trace_config.h"
+#include "tracing/core/trace_plugin_loader.h"
 
 namespace {
 
@@ -123,7 +123,6 @@ loadTraceBackends(const std::vector<std::string> &names, std::string_view agent_
     std::vector<std::unique_ptr<TraceBackend>> backends;
     std::unordered_set<std::string> seen;
 
-    auto &plugin_manager = nixlPluginManager::getInstance();
     const nixlTraceBackendInitParams init_params{agent_name};
 
     for (const auto &requested : names) {
@@ -140,7 +139,7 @@ loadTraceBackends(const std::vector<std::string> &names, std::string_view agent_
 
         // Each backend is an on-demand .so plugin (libtrace_backend_<name>.so).
         // A missing plugin is not fatal: warn and skip so the rest still apply.
-        auto handle = plugin_manager.loadTracePlugin(requested);
+        auto handle = loadTracePlugin(requested);
         if (!handle) {
             NIXL_WARN << "nixl::trace: backend '" << requested
                       << "' requested but plugin libtrace_backend_" << requested
@@ -179,7 +178,7 @@ makeAgentTracer(const std::string &name) {
     if (requested_backends.empty()) {
         return nullptr;
     }
-    const auto core = nixlPluginManager::getInstance().loadTraceCorePlugin();
+    const auto core = loadTraceCorePlugin();
     if (core == nullptr) {
         NIXL_WARN << "nixl::trace: tracing is requested, but the tracing core plugin "
                      "libtrace_core.so was not found or is stale; tracing is off";
