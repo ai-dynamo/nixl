@@ -385,7 +385,6 @@ TEST_P(GdsBackend, VramInteriorPointerRoundTrip) {
         ADD_FAILURE() << "failed to open " << cleanup.file_path;
         return;
     }
-    ASSERT_EQ(ftruncate(cleanup.file_fd, static_cast<off_t>(kVramPayloadSize)), 0);
 
     int device = -1;
     ASSERT_EQ(cudaGetDevice(&device), cudaSuccess);

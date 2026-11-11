@@ -361,7 +361,7 @@ nixlGdsBatchEngine::finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH
             while (remaining_size > 0) {
                 const size_t request_size = std::min(remaining_size, max_request_size);
 
-                gdsXferReq chunk;
+                gdsXferReq chunk{};
                 chunk.addr = (char *)req.addr + current_offset;
                 chunk.size = request_size;
                 chunk.file_offset = req.file_offset + current_offset;
