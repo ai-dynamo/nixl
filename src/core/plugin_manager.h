@@ -109,7 +109,7 @@ struct nixlTraceCoreConfig;
 namespace nixl::trace {
 class TraceBackend;
 class Tracer;
-}
+} // namespace nixl::trace
 
 class nixlTracePluginHandle : public nixlPluginHandle {
 public:
