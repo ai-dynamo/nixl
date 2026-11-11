@@ -46,9 +46,10 @@ Please look at the [DOCA GPUNetIO](https://docs.nvidia.com/doca/sdk/doca+gpuneti
 
 The following instructions assume DOCA libraries and NIXL libraries are set in LD_LIBRARY_PATH environment variable.
 
-For the native GET test, `NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR=1` injects a bad
-key between two valid READs and checks sticky FIFO error handling. Run this only
-in a disposable process; the failed lane and registrations are retained until
+For the native GET test, add `NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR=1` together
+with `NIXL_GPUNETIO_TEST_RETENTION=1` and `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to
+inject a bad key between two valid READs and check sticky FIFO error handling.
+Run this only in a disposable process; failed resources are retained until
 process exit. Define `NIXL_GPUNETIO_PUBLIC_FIFO_ONLY=1` consistently when
 compiling a consumer that uses only the public FIFO completion path.
 
