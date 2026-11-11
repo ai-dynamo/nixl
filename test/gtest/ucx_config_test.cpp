@@ -37,6 +37,8 @@ extern "C" {
 
 namespace {
 
+using condition_t = nixl::ucx::config::condition_t;
+
 // The UCX config dump, after a newline. UCX comments out the keys that have their default values,
 // and dumps the modified UCT keys without the UCX_ prefix.
 [[nodiscard]] std::string
@@ -85,7 +87,7 @@ getValue(const nixl::ucx::config &config, std::string_view key) {
 [[nodiscard]] std::string
 modifyMaxRmaRails() {
     const nixl::ucx::config config;
-    config.modifyIfEqual("MAX_RMA_RAILS", "1", "2");
+    config.modify("MAX_RMA_RAILS", "2", condition_t::EQUAL, "1");
     return getValue(config, "MAX_RMA_RAILS");
 }
 
@@ -167,20 +169,20 @@ TEST_F(UcxConfigTest, ModifyKeepsUctEnvValue) {
     EXPECT_EQ(getDump(config).find("\nSELF_SEG_SIZE="), std::string::npos);
 }
 
-TEST_F(UcxConfigTest, ModifyUnlessInEnvKeepsEnvValue) {
+TEST_F(UcxConfigTest, ModifyNotInEnvKeepsEnvValue) {
     envHelper_.addVar("UCX_MAX_EAGER_RAILS", "3");
     const nixl::ucx::config config;
-    config.modifyUnlessInEnv("MAX_EAGER_RAILS", "2");
+    config.modify("MAX_EAGER_RAILS", "2", condition_t::NOT_IN_ENV);
     EXPECT_EQ(getValue(config, "MAX_EAGER_RAILS"), "3");
 }
 
-TEST_F(UcxConfigDeathTest, ModifyUnlessInEnvOverridesConfigFileValue) {
+TEST_F(UcxConfigDeathTest, ModifyNotInEnvOverridesConfigFileValue) {
     // As the engine config of the UCX backend does
     EXPECT_EXIT(
         {
             addConfigFileLine("UCX_MAX_EAGER_RAILS=3");
             const nixl::ucx::config config;
-            config.modifyUnlessInEnv("MAX_EAGER_RAILS", "2");
+            config.modify("MAX_EAGER_RAILS", "2", condition_t::NOT_IN_ENV);
             std::cerr << "MAX_EAGER_RAILS=" << getValue(config, "MAX_EAGER_RAILS") << std::endl;
             std::_Exit(0);
         },
@@ -188,7 +190,14 @@ TEST_F(UcxConfigDeathTest, ModifyUnlessInEnvOverridesConfigFileValue) {
         "MAX_EAGER_RAILS=2");
 }
 
-TEST_F(UcxConfigTest, ModifyIfEqualSetsDefaultValue) {
+TEST_F(UcxConfigTest, ModifyAlwaysOverridesEnvValue) {
+    envHelper_.addVar("UCX_MAX_EAGER_RAILS", "3");
+    const nixl::ucx::config config;
+    config.modify("MAX_EAGER_RAILS", "2", condition_t::ALWAYS);
+    EXPECT_EQ(getValue(config, "MAX_EAGER_RAILS"), "2");
+}
+
+TEST_F(UcxConfigTest, ModifyEqualSetsDefaultValue) {
     if (getValue(nixl::ucx::config(), "MAX_RMA_RAILS") != "1") {
         GTEST_SKIP() << "UCX_MAX_RMA_RAILS is set in a UCX configuration file";
     }
@@ -196,7 +205,7 @@ TEST_F(UcxConfigTest, ModifyIfEqualSetsDefaultValue) {
     EXPECT_EQ(modifyMaxRmaRails(), "2");
 }
 
-TEST_F(UcxConfigTest, ModifyIfEqualKeepsEnvValue) {
+TEST_F(UcxConfigTest, ModifyEqualKeepsEnvValue) {
     for (const std::string value : {"1", "4"}) {
         envHelper_.addVar("UCX_MAX_RMA_RAILS", value);
         EXPECT_EQ(modifyMaxRmaRails(), value);
@@ -204,12 +213,12 @@ TEST_F(UcxConfigTest, ModifyIfEqualKeepsEnvValue) {
     }
 }
 
-TEST_F(UcxConfigTest, ModifyIfEqualKeepsAliasValue) {
+TEST_F(UcxConfigTest, ModifyEqualKeepsAliasValue) {
     envHelper_.addVar("UCX_MAX_RMA_LANES", "4");
     EXPECT_EQ(modifyMaxRmaRails(), "4");
 }
 
-TEST_F(UcxConfigDeathTest, ModifyIfEqualKeepsConfigFileValue) {
+TEST_F(UcxConfigDeathTest, ModifyEqualKeepsConfigFileValue) {
     // As a platform section of ucx.conf sets 4 rails
     EXPECT_EXIT(
         {

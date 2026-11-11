@@ -56,31 +56,15 @@ tlsEnablesCudaSupport(std::string_view tls) {
 namespace nixl::ucx {
 
 void
-config::modify(std::string_view key, std::string_view value) const {
-    const auto it = initialValues_.find(std::string(key));
-    if (it == initialValues_.end()) {
-        modifyUnlessInEnv(key, value);
-    } else if (!it->second.isDefault) {
-        NIXL_DEBUG << "UCX config already set: UCX_" << key << "=" << it->second.value;
-    } else {
-        modifyAlways(key, value);
+config::modify(std::string_view key,
+               std::string_view value,
+               condition_t condition,
+               std::string_view expected) const {
+    if (const auto kept_value = keptValue(key, condition, expected)) {
+        NIXL_DEBUG << "UCX config already set: UCX_" << key << "=" << *kept_value;
+        return;
     }
-}
 
-void
-config::modifyUnlessInEnv(std::string_view key, std::string_view value) const {
-    const auto ucx_key = "UCX_" + std::string(key);
-    const auto env_val = nixl::config::internal::getenvOptional(ucx_key);
-
-    if (env_val) {
-        NIXL_DEBUG << "UCX env var already set: " << ucx_key << "=" << *env_val;
-    } else {
-        modifyAlways(key, value);
-    }
-}
-
-void
-config::modifyAlways(std::string_view key, std::string_view value) const {
     std::string key_str(key);
     std::string value_str(value);
     const auto status = ucp_config_modify(config_.get(), key_str.c_str(), value_str.c_str());
@@ -92,16 +76,30 @@ config::modifyAlways(std::string_view key, std::string_view value) const {
     }
 }
 
-void
-config::modifyIfEqual(std::string_view key,
-                      std::string_view expected,
-                      std::string_view value) const {
-    const auto it = initialValues_.find(std::string(key));
-    if ((it != initialValues_.end()) && (it->second.value != expected)) {
-        NIXL_DEBUG << "UCX config already set: UCX_" << key << "=" << it->second.value;
-    } else {
-        modify(key, value);
+std::optional<std::string>
+config::keptValue(std::string_view key, condition_t condition, std::string_view expected) const {
+    switch (condition) {
+    case condition_t::ALWAYS:
+        return std::nullopt;
+    case condition_t::NOT_IN_ENV:
+        return nixl::config::internal::getenvOptional("UCX_" + std::string(key));
+    case condition_t::DEFAULT:
+    case condition_t::EQUAL:
+        break;
     }
+
+    // The UCX config dump has only the UCP keys
+    const auto it = initialValues_.find(std::string(key));
+    if (it == initialValues_.end()) {
+        return keptValue(key, condition_t::NOT_IN_ENV, expected);
+    }
+
+    const auto &[initial_value, is_default] = it->second;
+    if (!is_default || ((condition == condition_t::EQUAL) && (initial_value != expected))) {
+        return initial_value;
+    }
+
+    return std::nullopt;
 }
 
 void
@@ -144,7 +142,7 @@ config::readUcpConfig() {
 }
 
 config::dumped_values_t
-config::dumpValues(const ucp_config_t *config) {
+config::dumpValues(const ucp_config_t &config) {
     char *buf = nullptr;
     size_t size = 0;
     FILE *stream = open_memstream(&buf, &size);
@@ -153,7 +151,7 @@ config::dumpValues(const ucp_config_t *config) {
         return {};
     }
 
-    ucp_config_print(config,
+    ucp_config_print(&config,
                      stream,
                      nullptr,
                      static_cast<ucs_config_print_flags_t>(UCS_CONFIG_PRINT_CONFIG |

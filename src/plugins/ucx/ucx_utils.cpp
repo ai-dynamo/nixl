@@ -557,14 +557,14 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
             devs_str += dev + ":1,";
         }
         devs_str.pop_back(); // to remove odd comma after the last device
-        config.modifyAlways("NET_DEVICES", devs_str.c_str());
+        config.modify("NET_DEVICES", devs_str.c_str(), nixl::ucx::config::condition_t::ALWAYS);
     }
 
     config.modify("RNDV_THRESH", "inf");
 
     // Some UCX versions dump a configuration file value as a default one, so keep any number
     // of RMA rails other than 1, the UCX default
-    config.modifyIfEqual("MAX_RMA_RAILS", "1", "2");
+    config.modify("MAX_RMA_RAILS", "2", nixl::ucx::config::condition_t::EQUAL, "1");
 
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
     config.modify("CUDA_IPC_ENABLE_GET_ZCOPY", "on");
@@ -608,8 +608,9 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         size_t pos = elem_view.find('=');
 
         if (pos != std::string::npos) {
-            // An explicit engine config overrides the UCX configuration file
-            config.modifyUnlessInEnv(elem_view.substr(0, pos), elem_view.substr(pos + 1));
+            config.modify(elem_view.substr(0, pos),
+                          elem_view.substr(pos + 1),
+                          nixl::ucx::config::condition_t::NOT_IN_ENV);
         }
     }
 
