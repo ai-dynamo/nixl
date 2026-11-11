@@ -368,6 +368,65 @@ fifoPipeline(nixlMemViewH local, nixlMemViewH remote, const uint8_t *destination
     }
     *result = error;
 }
+
+// Two blocks contend for one lane. The winner holds it until both have attempted.
+__global__ void
+contendFifoLane(nixlMemViewH local, nixlMemViewH remote, const uint8_t *destination, int *state) {
+    if (threadIdx.x) {
+        return;
+    }
+    nixl::gpu::readSession session;
+    if (session.bind(local, remote) != NIXL_SUCCESS) {
+        atomicAdd(state + 3, 1);
+        atomicAdd(state, 1);
+        return;
+    }
+    const auto rc = session.acquireFifo();
+    if (rc != NIXL_SUCCESS) {
+        atomicAdd(state + (rc == NIXL_ERR_NOT_ALLOWED ? 2 : 3), 1);
+        atomicAdd(state, 1);
+        return;
+    }
+    atomicAdd(state + 1, 1);
+    uint64_t first = 0;
+    bool ok = session.reserve(1, first) == NIXL_SUCCESS &&
+        session.prepare(first, 0, 512, 0, kBatchDst, kItemBytes) == NIXL_SUCCESS &&
+        session.publish(first, 1) == NIXL_IN_PROG;
+    atomicAdd(state, 1);
+    const uint64_t deadline = globalTimerNs() + 5000000000ull;
+    while (atomicAdd(state, 0) < 2 && globalTimerNs() < deadline) {}
+    if (atomicAdd(state, 0) != 2) {
+        ok = false;
+    }
+    auto wait = [&](uint64_t ticket) {
+        nixl_status_t status;
+        do {
+            status = session.pollFifo(ticket);
+        } while (status == NIXL_IN_PROG && globalTimerNs() < deadline);
+        return status == NIXL_SUCCESS && session.retire(ticket, 1) == NIXL_SUCCESS;
+    };
+    if (ok) {
+        ok = wait(first);
+    }
+    if (ok && session.needsConsistency()) {
+        uint64_t dump;
+        ok = session.postConsistency(0, kScratch, dump) == NIXL_IN_PROG && wait(dump);
+    }
+    if (ok) {
+        ok = session.finish() == NIXL_SUCCESS;
+    }
+    if (!ok) {
+        session.fail();
+        atomicAdd(state + 3, 1);
+        return;
+    }
+    for (size_t i = 0; i < kItemBytes; ++i) {
+        if (destination[kBatchDst + i] != uint8_t(((512 + i) * 13 + 7) % 251)) {
+            atomicAdd(state + 3, 1);
+            break;
+        }
+    }
+}
 } // namespace
 
 int
@@ -619,6 +678,38 @@ main(int argc, char **argv) {
                 }
             }
         }
+        // Capture competing CTAs and replay after resetting status in the graph.
+        int *contention = nullptr;
+        cudaStream_t contention_stream;
+        cudaGraph_t contention_graph;
+        cudaGraphExec_t contention_exec;
+        check(cudaMalloc(&contention, 4 * sizeof(int)), "allocate contention state");
+        check(cudaStreamCreateWithFlags(&contention_stream, cudaStreamNonBlocking),
+              "create contention stream");
+        check(cudaStreamBeginCapture(contention_stream, cudaStreamCaptureModeGlobal),
+              "begin contention capture");
+        check(cudaMemsetAsync(contention, 0, 4 * sizeof(int), contention_stream),
+              "reset contention state");
+        contendFifoLane<<<2, 1, 0, contention_stream>>>(
+            locals[0], remotes[0], destination, contention);
+        check(cudaGetLastError(), "launch competing CTA GET");
+        check(cudaStreamEndCapture(contention_stream, &contention_graph), "end contention capture");
+        check(cudaGraphInstantiate(&contention_exec, contention_graph, 0),
+              "instantiate contention graph");
+        for (unsigned replay = 0; replay < 10; ++replay) {
+            check(cudaGraphLaunch(contention_exec, contention_stream), "launch contention graph");
+            check(cudaStreamSynchronize(contention_stream), "synchronize contention graph");
+            int counts[4];
+            check(cudaMemcpy(counts, contention, sizeof(counts), cudaMemcpyDeviceToHost),
+                  "read contention state");
+            if (counts[0] != 2 || counts[1] != 1 || counts[2] != 1 || counts[3] != 0) {
+                throw std::runtime_error("concurrent FIFO lane ownership failed");
+            }
+        }
+        check(cudaGraphExecDestroy(contention_exec), "destroy contention executable");
+        check(cudaGraphDestroy(contention_graph), "destroy contention graph");
+        check(cudaStreamDestroy(contention_stream), "destroy contention stream");
+        check(cudaFree(contention), "free contention state");
         if (std::getenv("NIXL_GPUNETIO_TEST_RETENTION")) {
             if (qps < 2) {
                 throw std::runtime_error("retention test needs multiple channels");

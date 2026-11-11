@@ -48,6 +48,8 @@ The following instructions assume DOCA libraries and NIXL libraries are set in L
 
 The native GET test also exercises FIFO pipelining and partial retirement over
 90 rounds per channel; it skips this part when MCST consistency is required.
+A captured two-CTA contention check verifies that only one session owns a lane,
+that the other is rejected, and that the lane can be reused across replays.
 
 For the native GET test, add `NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR=1` together
 with `NIXL_GPUNETIO_TEST_RETENTION=1` and `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to
