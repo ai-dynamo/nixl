@@ -623,9 +623,6 @@ TEST(Tracing, AttributeHoldsItsValueAsARecordDoes) {
 }
 
 TEST(Tracing, AttrMacroPassesPlainValues) {
-#if !defined(NIXL_TRACE_ENABLED)
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     const std::string peer = "agent_1";
@@ -658,7 +655,6 @@ TEST(Tracing, AttrMacroPassesPlainValues) {
 }
 
 TEST(Tracing, SpanMacroRecordsItsInlineAttributes) {
-#if defined(NIXL_TRACE_ENABLED)
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     const std::string peer = "agent_1";
@@ -688,13 +684,9 @@ TEST(Tracing, SpanMacroRecordsItsInlineAttributes) {
         EXPECT_EQ(log->dblAttrs[0].first, "nixl.start_us");
         EXPECT_DOUBLE_EQ(log->dblAttrs[0].second, 0.5);
     }
-#else
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
 }
 
 TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
-#if defined(NIXL_TRACE_ENABLED)
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     int evaluations = 0;
@@ -727,13 +719,9 @@ TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
         EXPECT_TRUE(log->contextSpans.empty());
         EXPECT_TRUE(log->pushedContexts.empty());
     }
-#else
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
 }
 
 TEST(Tracing, FinishMacroRecordsTheStatusAndReturnsIt) {
-#if defined(NIXL_TRACE_ENABLED)
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
 
@@ -749,13 +737,9 @@ TEST(Tracing, FinishMacroRecordsTheStatusAndReturnsIt) {
     for (const CallLog *log : {&a, &b}) {
         EXPECT_EQ(log->intAttrs, status);
     }
-#else
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
 }
 
 TEST(Tracing, EndMacroRecordsTheStatusAndEndsTheSpanAtOnce) {
-#if defined(NIXL_TRACE_ENABLED)
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
 
@@ -774,13 +758,9 @@ TEST(Tracing, EndMacroRecordsTheStatusAndEndsTheSpanAtOnce) {
         EXPECT_EQ(log->spansEnded, 1);
         EXPECT_EQ(log->intAttrs, status);
     }
-#else
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
 }
 
 TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
-#if defined(NIXL_TRACE_ENABLED)
     CallLog a, b;
     auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
@@ -832,13 +812,9 @@ TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
                                                                      {"nixl.xfer_request_id", 0x42},
                                                                      {"nixl.xfer_execution", 1}}));
     }
-#else
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
 }
 
 TEST(Tracing, ScopeUnderMacroRecordsTheSuppliedContextsChild) {
-#if defined(NIXL_TRACE_ENABLED)
     CallLog a, b;
     auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
@@ -867,13 +843,9 @@ TEST(Tracing, ScopeUnderMacroRecordsTheSuppliedContextsChild) {
         EXPECT_EQ(log->contextSpans[0].requestId, 0u);
         EXPECT_EQ(log->intAttrs, (std::vector<std::pair<std::string, std::int64_t>>{{"bytes", 1}}));
     }
-#else
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
 }
 
 TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
-#if defined(NIXL_TRACE_ENABLED)
     gtest::LogMessageCounter ignored("ignoring a supplied trace context");
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
@@ -921,9 +893,6 @@ TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
         EXPECT_EQ(log->intAttrs,
                   (std::vector<std::pair<std::string, std::int64_t>>{{"bytes", 1}, {"bytes", 2}}));
     }
-#else
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
 }
 
 TEST(Tracing, ScopeUnderMacroEvaluatesItsTracerAndParentOnce) {
@@ -945,9 +914,7 @@ TEST(Tracing, ScopeUnderMacroEvaluatesItsTracerAndParentOnce) {
         NIXL_TRACE_SCOPE_UNDER(
             traced, tracerOf(tracer.get()), parentOf(), nixl::trace::Record::GenNotif);
         EXPECT_NE(nixl::trace::Scope::current(), nullptr);
-#if defined(NIXL_TRACE_ENABLED)
         EXPECT_TRUE(traced.active());
-#endif
     }
     EXPECT_EQ(tracers, 1);
     EXPECT_EQ(parents, 1);
@@ -962,9 +929,6 @@ TEST(Tracing, ScopeUnderMacroEvaluatesItsTracerAndParentOnce) {
 }
 
 TEST(Tracing, AttrMacroSkipsItsValueOnAnInactiveSpan) {
-#if !defined(NIXL_TRACE_ENABLED)
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
     int evaluations = 0;
     nixl::trace::Span span;
 
@@ -1526,7 +1490,6 @@ TEST(Tracing, TraceablePostIsUntracedWhenItsSpanIdCannotBeDrawn) {
     EXPECT_EQ(traced.post(nixl::trace::formatTraceparent(application)).context,
               unsampled_application);
     EXPECT_EQ(failures.count(), 1u);
-#if defined(NIXL_TRACE_ENABLED)
     {
         NIXL_TRACE_POST_SPAN(
             post, traced, nixl::trace::noSuppliedContext, nixl::trace::Record::PostXferReqWrite);
@@ -1536,7 +1499,6 @@ TEST(Tracing, TraceablePostIsUntracedWhenItsSpanIdCannotBeDrawn) {
         EXPECT_TRUE(log->contextSpans.empty());
         EXPECT_TRUE(log->pushedContexts.empty());
     }
-#endif
 }
 
 TEST(Tracing, RequestIdFitsAnInt64) {
@@ -1773,9 +1735,6 @@ TEST(Tracing, EveryRecordHasItsOwnName) {
 }
 
 TEST(Tracing, TraceableRecordsItsEventsInItsLatestPost) {
-#if !defined(NIXL_TRACE_ENABLED)
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
     nixl::trace::Traceable traced{tracer.get(), {testContext(0x37), 0x37}};
@@ -1802,9 +1761,6 @@ TEST(Tracing, TraceableRecordsItsEventsInItsLatestPost) {
 }
 
 TEST(Tracing, TraceableRecordsItsRequestSpanWhenItEnds) {
-#if !defined(NIXL_TRACE_ENABLED)
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
     const auto request = testContext(0x3b);
@@ -2156,9 +2112,6 @@ TEST(TracePhaseSink, BackendsThatOwnTimestampsGetNoClockReading) {
 }
 
 TEST(Tracing, RecordReadsNoClockForBackendsThatOwnTimestamps) {
-#if !defined(NIXL_TRACE_ENABLED)
-    GTEST_SKIP() << "the trace macros are compiled out";
-#endif
     CallLog a, b;
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     backends.push_back(std::make_unique<SelfTimedBackend>("a", &a, 0));

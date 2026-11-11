@@ -125,10 +125,13 @@ gtest_sources = [
     'blocking_queue_test.cpp',
     'nixl_log_file_test.cpp',
     'configuration.cpp',
-    'trace_recorder_test.cpp',
     # Hidden in libnixl_common, so the oversized-record test links its own copy.
     '../../src/utils/common/nixl_log_file_sink.cpp',
     ]
+
+if nixl_trace_enabled
+    gtest_sources += 'trace_recorder_test.cpp'
+endif
 
 if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
     # The UCX device API tests also run the proxy mode, which needs only CUDA and the UCX backend.
@@ -148,7 +151,11 @@ endif
 
 if ucx_dep.found() and is_variable('ucx_backend_interface')
     gtest_sources += 'hw_warning_test.cpp'
-    gtest_sources += 'ucx_trace_context_test.cpp'
+    if nixl_trace_enabled
+        gtest_sources += 'ucx_trace_context_test.cpp'
+    else
+        gtest_sources += 'ucx_trace_compiled_out_test.cpp'
+    endif
     cpp_flags += '-DHAVE_UCX_BACKEND'
     ucx_hw_warning_dep = [ucx_backend_interface, ucx_dep]
 else
@@ -184,8 +191,11 @@ test_exe = executable('gtest',
     install : true
 )
 
-gtest_depends = [trace_recorder_plugin]
-if ucx_dep.found() and is_variable('ucx_backend_interface')
+gtest_depends = []
+if nixl_trace_enabled
+    gtest_depends += [trace_recorder_plugin]
+endif
+if nixl_trace_enabled and ucx_dep.found() and is_variable('ucx_backend_interface')
     ucx_trace_receiver = executable('ucx_trace_receiver',
         sources : ['main.cpp', 'common.cpp', 'ucx_trace_receiver.cpp'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],

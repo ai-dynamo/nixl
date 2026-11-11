@@ -42,6 +42,8 @@ class nixlBackendTraceSink;
 
 namespace nixl::trace {
 
+#if defined(NIXL_TRACE_ENABLED)
+
 /**
  * @brief The sink of the backend being constructed: non-null only on the
  * thread that runs createBackend, while it constructs the engine, and only
@@ -58,6 +60,20 @@ currentSink() noexcept;
  */
 [[nodiscard]] const TraceIdentity *
 currentIdentity() noexcept;
+
+#else
+
+[[nodiscard]] inline nixlBackendTraceSink *
+currentSink() noexcept {
+    return nullptr;
+}
+
+[[nodiscard]] inline const TraceIdentity *
+currentIdentity() noexcept {
+    return nullptr;
+}
+
+#endif
 
 } // namespace nixl::trace
 
@@ -259,6 +275,8 @@ public:
     }
 };
 
+#if defined(NIXL_TRACE_ENABLED)
+
 /**
  * @brief A post's trace for a backend's phases: the sink and the post's identity.
  *        It records only with a sink and a sampled identity; record() reads the
@@ -331,13 +349,46 @@ private:
     bool needsTimestamps_ = false;
 };
 
+#else
+
+class nixlBackendPostTrace {
+public:
+    nixlBackendPostTrace() = default;
+
+    explicit nixlBackendPostTrace(nixlBackendTraceSink *) noexcept {}
+
+    nixlBackendPostTrace(nixlBackendTraceSink *, const nixl::trace::TraceIdentity &) noexcept {}
+
+    [[nodiscard]] constexpr bool
+    active() const noexcept {
+        return false;
+    }
+
+    [[nodiscard]] nixl::trace::TraceIdentity
+    identity() const noexcept {
+        return {};
+    }
+
+    [[nodiscard]] constexpr nixlTime::us_t
+    now() const noexcept {
+        return 0;
+    }
+
+    void
+    record(nixl_trace_phase_t, std::span<const nixlBackendTraceAttr> = {}) const noexcept {}
+
+    void
+    recordAt(nixl_trace_phase_t,
+             nixlTime::us_t,
+             std::span<const nixlBackendTraceAttr> = {}) const noexcept {}
+
+    void
+    recordSpan(nixl_trace_span_t, nixl_xfer_op_t, nixlTime::us_t, nixlTime::us_t) const noexcept {}
+};
+
+#endif
+
 namespace nixl::trace {
-
-void
-addTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity);
-
-[[nodiscard]] std::optional<TraceIdentity>
-getTraceTags(nixlSerDes &ser_des);
 
 inline constexpr std::size_t deferredPhaseCapacity = 64;
 
@@ -357,6 +408,14 @@ struct DeferredPhase {
     nixlTime::us_t completedAt = 0;
 };
 
+#if defined(NIXL_TRACE_ENABLED)
+
+void
+addTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity);
+
+[[nodiscard]] std::optional<TraceIdentity>
+getTraceTags(nixlSerDes &ser_des);
+
 /**
  * @brief Queues @p deferred on the calling thread, or records it at once when
  *        `deferredPhaseCapacity` phases are already queued there. The entry
@@ -369,6 +428,24 @@ deferPhase(const DeferredPhase &deferred) noexcept;
 /** @brief Records the phases the calling thread deferred, in order, and empties its queue. */
 void
 recordDeferredPhases() noexcept;
+
+#else
+
+inline void
+addTraceTags(nixlSerDes &, const TraceIdentity &) noexcept {}
+
+[[nodiscard]] inline std::optional<TraceIdentity>
+getTraceTags(nixlSerDes &) noexcept {
+    return std::nullopt;
+}
+
+inline void
+deferPhase(const DeferredPhase &) noexcept {}
+
+inline void
+recordDeferredPhases() noexcept {}
+
+#endif
 
 } // namespace nixl::trace
 

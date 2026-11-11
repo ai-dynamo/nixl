@@ -65,9 +65,6 @@ if libtransfer_engine.found() and not disable_mooncake_backend and 'MOONCAKE' in
     nixl_lib_deps += [ mooncake_backend_interface ]
 endif
 
-# Tracing (nixl::trace). Only the facade (tracer.cpp) and the plugin loader are
-# compiled into libnixl; each backend ships as a separate .so plugin under
-# src/plugins/tracing, loaded on demand by nixlPluginManager.
 nixl_lib_sources = [
     'nixl_agent.cpp',
     'nixl_enum_strings.cpp',
@@ -83,11 +80,19 @@ nixl_lib_sources = [
     'telemetry/buffer_exporter.cpp',
     'telemetry/buffer_plugin.cpp',
     'telemetry/nop_plugin.cpp',
-    'tracing/core/agent_trace.cpp',
-    'tracing/core/trace_sink.cpp',
-    'tracing/core/tracer.cpp',
-    'tracing/core/tracing.cpp',
 ]
+
+# Tracing (nixl::trace), only with with_trace. The facade is compiled into
+# libnixl; each backend ships as a separate .so plugin under src/plugins/tracing,
+# loaded on demand by nixlPluginManager.
+if nixl_trace_enabled
+    nixl_lib_sources += [
+        'tracing/core/agent_trace.cpp',
+        'tracing/core/trace_sink.cpp',
+        'tracing/core/tracer.cpp',
+        'tracing/core/tracing.cpp',
+    ]
+endif
 
 nixl_lib = library('nixl',
                    nixl_lib_sources,

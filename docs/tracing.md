@@ -92,7 +92,13 @@ runtime**.
 | `with_trace` | Build the tracing facade (defines `NIXL_TRACE_ENABLED`) | `true` |
 | `trace_backends` | Comma-separated backend plugins to build, e.g. `nvtx` | `nvtx` |
 
-- With `-Dwith_trace=false`, the call-site macros expand to `do {} while (0)` — zero overhead.
+- With `-Dwith_trace=false` no tracing is compiled: the facade's sources leave `libnixl` and
+  `libnixl_build`, and every hook the agent and the data plugins call is an empty inline
+  stub, so a request holds no trace state and UCX records no phase. The API stays and does
+  nothing: `NIXL_TRACE_BACKENDS` has no effect, `getXferTraceInfo()` returns
+  `NIXL_ERR_NOT_FOUND`, and a supplied `traceContext` is ignored, though a post given only
+  one still keeps its notification. UCX notifications go out in the older format, and a
+  peer's trace tags are skipped.
 - Each requested backend builds a `libtrace_backend_<name>.so` under
   `src/plugins/tracing/<name>/`, installed alongside the other NIXL plugins. A
   backend with an unmet dependency (e.g. NVTX without the CUDA-toolkit `nvtx3`
@@ -591,10 +597,8 @@ ninja -C build test/gtest/unit/unit test/gtest/gtest test/gtest/ucx_trace_receiv
 
 The two-process test starts its receiver agent as a separate executable,
 `ucx_trace_receiver`, which is built and installed next to `gtest`, and checks the
-spans both agents record against the sender's request; with `-Dwith_trace=false`,
-which compiles the sender's `postXferReq` span out, it checks only the phases, which
-go through the sink either way. Thirteen single-process tests in the same suite
-check the phases. Transfers to the agent itself, on the default and the thread-pool
+spans both agents record against the sender's request. Thirteen single-process tests
+in the same suite check the phases. Transfers to the agent itself, on the default and the thread-pool
 engine, record `nixl::submit` and `nixl::wire.submitted` once per post and
 `nixl::notif.sent` once per notifying post. A transfer split across the thread-pool
 engine's dedicated workers also records one `nixl::wire.completed` and one
@@ -611,6 +615,12 @@ through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in the m
 directory) that appends one line per finished or emitted span and per emitted event
 to the file named by `NIXL_TEST_TRACE_FILE`; the tests set both variables
 themselves.
+
+With `-Dwith_trace=false` none of these tests is built. `tracingCompiledOut.*` in `unit`
+and `UcxTraceCompiledOut.*` in `gtest` check instead that the hooks are empty types; that
+an agent given trace backends, a sampling ratio of 1 and a supplied context hands its
+backend neither a sink nor an identity, reports no trace info and keeps a context-only
+post's notification; and that UCX notifications stay readable both ways.
 
 When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
 test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically

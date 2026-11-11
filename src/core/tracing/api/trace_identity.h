@@ -53,6 +53,8 @@ struct TraceIdentity {
     std::uint64_t execution = 0;
 };
 
+#if defined(NIXL_TRACE_ENABLED)
+
 [[nodiscard]] std::optional<TraceContext>
 parseTraceparent(std::string_view value);
 
@@ -80,6 +82,15 @@ generateRequestIdentity(const Tracer *tracer, const nixl_blob_t &parent = noSupp
  */
 [[nodiscard]] TraceContext
 generatePostContext(const TraceContext &request, const Tracer *tracer);
+
+#else
+
+[[nodiscard]] inline TraceIdentity
+generateRequestIdentity(const Tracer *, const nixl_blob_t & = noSuppliedContext) noexcept {
+    return {};
+}
+
+#endif
 
 } // namespace nixl::trace
 

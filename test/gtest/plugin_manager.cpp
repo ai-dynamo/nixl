@@ -204,12 +204,14 @@ TEST_F(LoadedPluginTestFixture, StaleTelemetryPluginApiVersionIsRejected) {
     EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
 }
 
+#if defined(NIXL_TRACE_ENABLED)
 TEST_F(LoadedPluginTestFixture, StaleTracePluginApiVersionIsRejected) {
     const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
 
     EXPECT_EQ(plugin_manager_.loadTracePlugin("mock_stale"), nullptr);
     EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
 }
+#endif
 
 TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {
     const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");

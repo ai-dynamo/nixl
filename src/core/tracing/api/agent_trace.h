@@ -28,6 +28,8 @@ class nixlBackendEngine;
 
 namespace nixl::trace {
 
+#if defined(NIXL_TRACE_ENABLED)
+
 class BackendTraces {
 public:
     [[nodiscard]] static BackendTraceSinkPtr
@@ -51,6 +53,38 @@ constructUnder(nixlBackendTraceSink *sink, Make &&make) {
     return std::forward<Make>(make)();
 }
 
+[[nodiscard]] nixl_status_t
+traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info);
+
+#else
+
+class BackendTraces {
+public:
+    [[nodiscard]] static BackendTraceSinkPtr
+    makeSink(Tracer *, const nixl_backend_t &, nixlTelemetry *) noexcept {
+        return {};
+    }
+
+    void
+    adopt(const nixl_backend_t &, BackendTraceSinkPtr, const nixlBackendEngine &) noexcept {}
+
+    void
+    warnIfContextUnsupported(const nixlBackendEngine &, const Traceable &) noexcept {}
+};
+
+template<typename Make>
+[[nodiscard]] auto
+constructUnder(nixlBackendTraceSink *, Make &&make) {
+    return std::forward<Make>(make)();
+}
+
+[[nodiscard]] inline nixl_status_t
+traceInfo(const Traceable &, nixl_xfer_trace_info_t &) noexcept {
+    return NIXL_ERR_NOT_FOUND;
+}
+
+#endif
+
 [[nodiscard]] inline const nixl_blob_t &
 suppliedContext(const nixl_opt_args_t *extra_params) noexcept {
     return (extra_params != nullptr) ? extra_params->traceContext : noSuppliedContext;
@@ -61,9 +95,6 @@ carriesOnlyContext(const nixl_opt_args_t &extra_params) noexcept {
     return !extra_params.notif && !extra_params.hasNotif && extra_params.customParam.empty() &&
         !extra_params.traceContext.empty();
 }
-
-[[nodiscard]] nixl_status_t
-traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info);
 
 } // namespace nixl::trace
 

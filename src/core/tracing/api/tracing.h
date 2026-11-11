@@ -40,17 +40,23 @@
 #include <memory>
 #include <string>
 
+#include "common/nixl_time.h"
 #include "tracing/api/attribute.h"
 #include "tracing/api/attribute_key.h"
-#include "tracing/api/detail/span.h"
 #include "tracing/api/log_once.h"
 #include "tracing/api/record.h"
 #include "tracing/api/trace_identity.h"
+
+#if defined(NIXL_TRACE_ENABLED)
+#include "tracing/api/detail/span.h"
+#endif
 
 class nixlBackendTraceSink;
 class nixlTelemetry;
 
 namespace nixl::trace {
+
+#if defined(NIXL_TRACE_ENABLED)
 
 struct TracerDeleter {
     void
@@ -164,18 +170,60 @@ private:
     const bool pushed_;
 };
 
+#else
+
+struct TracerPtr {
+    [[nodiscard]] constexpr Tracer *
+    get() const noexcept {
+        return nullptr;
+    }
+};
+
+struct BackendTraceSinkPtr {
+    [[nodiscard]] constexpr nixlBackendTraceSink *
+    get() const noexcept {
+        return nullptr;
+    }
+};
+
+[[nodiscard]] inline TracerPtr
+makeAgentTracer(const std::string &) noexcept {
+    return {};
+}
+
+class Traceable {
+public:
+    Traceable(Tracer *, const TraceIdentity &) noexcept {}
+
+    [[nodiscard]] TraceIdentity
+    postIdentity() const noexcept {
+        return {};
+    }
+
+    [[nodiscard]] TraceIdentity
+    requestIdentity() const noexcept {
+        return {};
+    }
+
+    void
+    trace(Record) const noexcept {}
+
+    void
+    trace(Record, const Attribute &) const noexcept {}
+};
+
+#endif
+
 } // namespace nixl::trace
 
 /*
  * One-line call-site macros for nixl::trace.
  *
  * When tracing is compiled out (NIXL_TRACE_ENABLED undefined) every macro
- * expands to nothing, and NIXL_TRACE_FINISH to its status, so call sites cost
- * nothing. The request macros and NIXL_TRACE_SCOPE_UNDER are the exception: they
- * still open their scope while a tracer is active, and NIXL_TRACE_POST_SPAN still
- * begins the post, since the backend carries the context either way. When compiled
- * in, the span macros declare a caller-named RAII Span and take a predictable
- * null-check branch on the tracer.
+ * expands to nothing, NIXL_TRACE_FINISH and NIXL_TRACE_END to their status and
+ * NIXL_TRACE_NOW to 0, so call sites cost nothing. When compiled in, the span
+ * macros declare a caller-named RAII Span and take a predictable null-check
+ * branch on the tracer.
  *
  * Usage: NIXL_TRACE_SCOPE(span, tracer, record, {key, value}...) declares
  * the local `span` with its attributes; NIXL_TRACE_ATTR(span, key, value) adds
@@ -219,6 +267,34 @@ private:
 #define NIXL_TRACE_EMIT_SPAN(tracer_ptr, trace_record, start_us) \
     NIXL_TRACE_DETAIL_EMIT_SPAN(tracer_ptr, trace_record, start_us)
 
+#if defined(NIXL_TRACE_ENABLED)
+
 #include "tracing/api/detail/tracing_impl.h"
+
+#else
+
+#define NIXL_TRACE_DETAIL_SCOPE(span, tracer_ptr, trace_record, ...) \
+    do {                                                             \
+    } while (0)
+#define NIXL_TRACE_DETAIL_SCOPE_UNDER(span, tracer_ptr, parent, trace_record, ...) \
+    do {                                                                           \
+    } while (0)
+#define NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record, ...) \
+    do {                                                                   \
+    } while (0)
+#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, parent, trace_record, ...) \
+    do {                                                                        \
+    } while (0)
+#define NIXL_TRACE_DETAIL_FINISH(span, status) (status)
+#define NIXL_TRACE_DETAIL_END(span, status) (status)
+#define NIXL_TRACE_DETAIL_ATTR(span, attr_key, attr_value) \
+    do {                                                   \
+    } while (0)
+#define NIXL_TRACE_DETAIL_NOW(tracer_ptr) (::nixlTime::us_t{0})
+#define NIXL_TRACE_DETAIL_EMIT_SPAN(tracer_ptr, trace_record, start_us) \
+    do {                                                                \
+    } while (0)
+
+#endif
 
 #endif // NIXL_SRC_CORE_TRACING_API_TRACING_H

@@ -38,7 +38,6 @@ inline Traceable::Traceable(Tracer *tracer, const TraceIdentity &identity) noexc
       createdAt_(detail::requestStart(tracer, identity.context)) {}
 
 inline Traceable::~Traceable() {
-#if defined(NIXL_TRACE_ENABLED)
     if ((tracer_ != nullptr) && requestContext_.sampled()) {
         try {
             const Attribute attrs[] = {{"nixl.xfer_request_id", postIdentity_.requestId},
@@ -55,7 +54,6 @@ inline Traceable::~Traceable() {
         catch (...) {
         }
     }
-#endif
 }
 
 inline Tracer *
@@ -86,8 +84,7 @@ Traceable::post(const nixl_blob_t &parent) {
 }
 
 inline void
-Traceable::trace([[maybe_unused]] Record record) const {
-#if defined(NIXL_TRACE_ENABLED)
+Traceable::trace(Record record) const {
     if ((tracer_ != nullptr) && postIdentity_.context.sampled()) {
         const Attribute attrs[] = {{"nixl.xfer_request_id", postIdentity_.requestId},
                                    {"nixl.xfer_execution", postIdentity_.execution}};
@@ -98,12 +95,10 @@ Traceable::trace([[maybe_unused]] Record record) const {
                           postIdentity_.requestId,
                           attrs);
     }
-#endif
 }
 
 inline void
-Traceable::trace([[maybe_unused]] Record record, [[maybe_unused]] const Attribute &attr) const {
-#if defined(NIXL_TRACE_ENABLED)
+Traceable::trace(Record record, const Attribute &attr) const {
     if ((tracer_ != nullptr) && postIdentity_.context.sampled()) {
         const Attribute attrs[] = {{"nixl.xfer_request_id", postIdentity_.requestId},
                                    {"nixl.xfer_execution", postIdentity_.execution},
@@ -115,7 +110,6 @@ Traceable::trace([[maybe_unused]] Record record, [[maybe_unused]] const Attribut
                           postIdentity_.requestId,
                           attrs);
     }
-#endif
 }
 
 inline TraceIdentity
@@ -128,13 +122,10 @@ detail::suppliedIdentity(const Tracer *tracer, const nixl_blob_t &parent) {
 }
 
 inline nixlTime::us_t
-detail::requestStart([[maybe_unused]] const Tracer *tracer,
-                     [[maybe_unused]] const TraceContext &context) noexcept {
-#if defined(NIXL_TRACE_ENABLED)
+detail::requestStart(const Tracer *tracer, const TraceContext &context) noexcept {
     if ((tracer != nullptr) && context.sampled()) {
         return nixlTime::getUs();
     }
-#endif
     return 0;
 }
 
@@ -156,8 +147,6 @@ detail::requestStart([[maybe_unused]] const Tracer *tracer,
                                      nixl_trace_scope_tracer_, nixl_trace_scope_parent_)); \
         }                                                                                  \
     }
-
-#if defined(NIXL_TRACE_ENABLED)
 
 namespace nixl::trace::detail {
 
@@ -307,34 +296,5 @@ end(Span &span, Status status) {
             (span).addAttribute((attr_key), ::nixl::trace::attributeValue(attr_value)); \
         }                                                                               \
     } while (0)
-
-#else // !NIXL_TRACE_ENABLED
-
-#define NIXL_TRACE_DETAIL_SCOPE(span, tracer_ptr, trace_record, ...) \
-    do {                                                             \
-    } while (0)
-#define NIXL_TRACE_DETAIL_SCOPE_UNDER(span, tracer_ptr, parent, trace_record, ...) \
-    NIXL_TRACE_DETAIL_SUPPLIED_SCOPE_(span, tracer_ptr, parent)                    \
-    do {                                                                           \
-    } while (0)
-#define NIXL_TRACE_DETAIL_SAMPLED_SCOPE(span, tracer_ptr, trace_record, context, ...) \
-    do {                                                                              \
-    } while (0)
-#define NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record, ...) \
-    NIXL_TRACE_DETAIL_REQUEST_SCOPE_(span, (traceable).tracer(), (traceable).requestIdentity())
-#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, parent, trace_record, ...)     \
-    const ::nixl::trace::TraceIdentity &span##_identity = (traceable).post(parent); \
-    NIXL_TRACE_DETAIL_REQUEST_SCOPE_(span, (traceable).tracer(), span##_identity)
-#define NIXL_TRACE_DETAIL_FINISH(span, status) (status)
-#define NIXL_TRACE_DETAIL_END(span, status) (status)
-#define NIXL_TRACE_DETAIL_ATTR(span, attr_key, attr_value) \
-    do {                                                   \
-    } while (0)
-#define NIXL_TRACE_DETAIL_NOW(tracer_ptr) (::nixlTime::us_t{0})
-#define NIXL_TRACE_DETAIL_EMIT_SPAN(tracer_ptr, trace_record, start_us) \
-    do {                                                                \
-    } while (0)
-
-#endif // NIXL_TRACE_ENABLED
 
 #endif

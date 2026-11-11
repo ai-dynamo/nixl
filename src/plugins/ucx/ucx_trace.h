@@ -25,6 +25,8 @@
 
 namespace nixl::ucx {
 
+#if defined(NIXL_TRACE_ENABLED)
+
 class PostTrace {
 public:
     void
@@ -127,6 +129,52 @@ traceReceived(const nixlBackendPostTrace &trace, std::string_view remote_agent) 
     const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", remote_agent}};
     trace.record(nixl_trace_phase_t::NOTIF_RECEIVED, attrs);
 }
+
+#else
+
+class PostTrace {
+public:
+    void
+    begin(nixlBackendTraceSink *, nixl_xfer_op_t, bool, bool) noexcept {}
+
+    [[nodiscard]] constexpr bool
+    active() const noexcept {
+        return false;
+    }
+
+    [[nodiscard]] nixlBackendPostTrace
+    post() const noexcept {
+        return {};
+    }
+
+    [[nodiscard]] constexpr bool
+    completesOnFlush() const noexcept {
+        return false;
+    }
+
+    void
+    flushIssued(bool) noexcept {}
+
+    void
+    submitted() const noexcept {}
+
+    void
+    flushCompleted() const noexcept {}
+
+    void
+    notifSent(nixl_status_t) const noexcept {}
+
+    void
+    drain() const noexcept {}
+
+    void
+    completed() const noexcept {}
+};
+
+inline void
+traceReceived(const nixlBackendPostTrace &, std::string_view) noexcept {}
+
+#endif
 
 } // namespace nixl::ucx
 

@@ -27,11 +27,13 @@
 #include <numeric>
 #include <random>
 #include <sstream>
+#include <type_traits>
 
 #include "common.h"
 #include "nixl.h"
 #include "plugin_manager.h"
 #include "transfer_request.h"
+#include "tracing/api/agent_trace.h"
 #include "tracing/core/trace_context.h"
 #include "mocks/gmock_engine.h"
 
@@ -40,7 +42,6 @@ namespace agent {
     static constexpr const char *local_agent_name = "LocalAgent";
     static constexpr const char *remote_agent_name = "RemoteAgent";
     static constexpr const char *nonexisting_plugin = "NonExistingPlugin";
-    static constexpr const char *untraced_log = "cannot carry trace contexts";
 
     /* Generates a random number in [0,255] (byte range). */
     unsigned char
@@ -159,6 +160,9 @@ namespace agent {
                 op, setup.xferDlist, setup.xferDlist, name_, req, &setup.extraParams);
         }
     };
+
+#if defined(NIXL_TRACE_ENABLED)
+    static constexpr const char *untraced_log = "cannot carry trace contexts";
 
     class tracingEnabledAgentFixture : public testing::Test {
     protected:
@@ -392,9 +396,6 @@ namespace agent {
 
         void
         SetUp() override {
-#if !defined(NIXL_TRACE_ENABLED)
-            GTEST_SKIP() << "the agent's trace call sites are compiled out";
-#endif
             std::filesystem::remove(trace_file_);
             env_.addVar("NIXL_TEST_TRACE_FILE", trace_file_.string());
             agent_helper_ =
@@ -1605,6 +1606,7 @@ namespace agent {
         EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);
         EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
     }
+#endif
 
     class singleAgentSessionFixture : public testing::Test {
     protected:
@@ -1821,6 +1823,57 @@ namespace agent {
         nixl_xfer_trace_info_t info{};
         EXPECT_EQ(agent_->getXferTraceInfo(nullptr, info), NIXL_ERR_INVALID_PARAM);
     }
+
+#if !defined(NIXL_TRACE_ENABLED)
+    TEST(tracingCompiledOut, AgentHooksAreEmpty) {
+        static_assert(std::is_empty_v<nixl::trace::TracerPtr>);
+        static_assert(std::is_empty_v<nixl::trace::BackendTraceSinkPtr>);
+        static_assert(std::is_empty_v<nixl::trace::BackendTraces>);
+        static_assert(std::is_empty_v<nixl::trace::Traceable>);
+        static_assert(std::is_empty_v<nixlBackendPostTrace>);
+    }
+
+    TEST(tracingCompiledOut, AgentIgnoresTraceBackendsAndSuppliedContexts) {
+        agentHelper helper(local_agent_name, "nvtx,recorder", "1");
+        nixlAgent *agent = helper.getAgent();
+        selfXferSetup setup;
+        helper.setupSelfXfer(setup);
+        const auto &engine = helper.getGMockEngine();
+        const auto sink = engine.observedTraceSink();
+        ASSERT_TRUE(sink.has_value());
+        EXPECT_EQ(*sink, nullptr);
+        ON_CALL(engine, supportsNotif()).WillByDefault(testing::Return(true));
+        std::vector<std::string> sent;
+        EXPECT_CALL(engine, postXfer)
+            .WillOnce([&sent](const nixl_xfer_op_t &,
+                              const nixl_meta_dlist_t &,
+                              const nixl_meta_dlist_t &,
+                              const std::string &,
+                              nixlBackendReqH *&,
+                              const nixl_opt_b_args_t *extra_args) {
+                sent.push_back(extra_args->hasNotif ? extra_args->notifMsg : "none");
+                return NIXL_SUCCESS;
+            });
+
+        const std::string context = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+        setup.extraParams.notif = "created";
+        setup.extraParams.traceContext = context;
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(helper.createSelfXferReq(setup, req), NIXL_SUCCESS);
+        nixl_opt_args_t context_only;
+        context_only.traceContext = context;
+        EXPECT_EQ(agent->postXferReq(req, &context_only), NIXL_SUCCESS);
+
+        EXPECT_THAT(sent, testing::ElementsAre("created"));
+        EXPECT_FALSE(engine.observedTraceContext().has_value());
+        EXPECT_THAT(engine.observedTraceRequests(),
+                    testing::ElementsAre(testing::Pair(0u, 0u), testing::Pair(0u, 0u)));
+        nixl_xfer_trace_info_t info{1, 2, "untouched"};
+        EXPECT_EQ(agent->getXferTraceInfo(req, info), NIXL_ERR_NOT_FOUND);
+        EXPECT_THAT(info, testing::FieldsAre(1u, 2u, "untouched"));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+#endif
 
     TEST_F(singleAgentSessionFixture, GetNonExistingBackendParamsTest) {
         nixl_mem_list_t mem;

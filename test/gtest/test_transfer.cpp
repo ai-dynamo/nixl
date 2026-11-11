@@ -839,6 +839,7 @@ NIXL_INSTANTIATE_TEST(ucx_telemetry_threadpool_no_pt,
                       4,
                       "");
 
+#if defined(NIXL_TRACE_ENABLED)
 // End-to-end test with real agents and the NVTX trace backend active. It passes
 // standalone (NVTX ranges are no-op stubs with no profiler attached) and is also
 // the binary profiled under nsys to capture the NVTX timeline as an artifact.
@@ -1097,5 +1098,6 @@ TEST_P(TestTransferTracingSampled, NotifyingWritePostedTwice) {
 }
 
 NIXL_INSTANTIATE_TEST(ucx_tracing_sampled, TestTransferTracingSampled, "UCX", true, 2, 0, "");
+#endif
 
 } // namespace gtest

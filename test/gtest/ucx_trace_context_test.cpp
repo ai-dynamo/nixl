@@ -423,7 +423,6 @@ recordIndex(const std::vector<span_record_t> &spans, std::string_view name, size
     return (it == spans.end()) ? -1 : std::distance(spans.begin(), it);
 }
 
-#if defined(NIXL_TRACE_ENABLED)
 [[nodiscard]] std::string
 parentField(const nixl::trace::TraceContext &parent) {
     static constexpr char digits[] = "0123456789abcdef";
@@ -434,7 +433,6 @@ parentField(const nixl::trace::TraceContext &parent) {
     }
     return field;
 }
-#endif
 
 [[nodiscard]] std::vector<span_record_t>
 recordedSpans(const std::filesystem::path &path, std::string_view agent, std::string_view name) {
@@ -660,12 +658,10 @@ protected:
                                            std::string("nixl.xfer_execution=1")}));
         EXPECT_GE(eventTime(completed[0]), progressed_at);
         EXPECT_EQ(recordedSpans(traceFile, sender_name, "nixl::wire.inflight.write").size(), 1u);
-#if defined(NIXL_TRACE_ENABLED)
         const auto observed = recordedSpans(traceFile, sender_name, "nixl::xfer.complete");
         ASSERT_EQ(observed.size(), 1u);
         EXPECT_GE(eventTime(observed[0]),
                   eventTime(completed[0]) + std::chrono::microseconds(late_poll).count());
-#endif
     }
 
     void
@@ -977,7 +973,6 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
 
     const std::string correlation = "correlation=" + std::to_string(request_id);
     const std::string traceparent = nixl::trace::formatTraceparent(post);
-#if defined(NIXL_TRACE_ENABLED)
     const auto posted = recordedSpans(traceFile, sender_name, "nixl::postXferReq.write");
     ASSERT_EQ(posted.size(), 1u);
     EXPECT_THAT(posted[0],
@@ -992,7 +987,6 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
                                        "span=" + nixl::trace::formatTraceparent(context),
                                        parentField(application),
                                        std::string("nixl.xfer_execution=1")}));
-#endif
     const auto received = recordedSpans(traceFile, receiver_name, "nixl::notif.received");
     ASSERT_EQ(received.size(), 2u);
     const bool transfer_first = std::ranges::find(received[0], correlation) != received[0].end();
@@ -1018,13 +1012,11 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     ASSERT_TRUE(standalone.has_value());
     EXPECT_EQ(standalone->traceId, application.traceId);
     EXPECT_NE(standalone->spanId, application.spanId);
-#if defined(NIXL_TRACE_ENABLED)
     const auto notified = recordedSpans(traceFile, sender_name, "nixl::genNotif");
     ASSERT_EQ(notified.size(), 1u);
     EXPECT_THAT(
         notified[0],
         testing::IsSupersetOf({"span=" + standalone_traceparent, parentField(application)}));
-#endif
     expectSenderPhases(sender_name, {post}, request_id, {1}, {1});
 }
 
@@ -1045,14 +1037,12 @@ TEST_F(ucxTraceContextPropagation, ReceiverRecordsEachNotifyingPostsExecution) {
     EXPECT_EQ(contexts[1].traceId, contexts[0].traceId);
     ASSERT_NE(contexts[1].spanId, contexts[0].spanId);
     expectSenderPhases(sender_name, contexts, request_id, {1, 2}, {1, 2});
-#if defined(NIXL_TRACE_ENABLED)
     const auto posted = recordedSpans(traceFile, sender_name, "nixl::postXferReq.write");
     ASSERT_EQ(posted.size(), contexts.size());
     for (size_t i = 0; i < posted.size(); ++i) {
         EXPECT_THAT(posted[i],
                     testing::Contains("span=" + nixl::trace::formatTraceparent(contexts[i])));
     }
-#endif
 
     const auto received = recordedSpans(traceFile, sender_name, "nixl::notif.received");
     ASSERT_EQ(received.size(), 2u);
@@ -1107,11 +1097,9 @@ TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsWireCompletedBeforeItsComple
     for (size_t execution = 1; execution <= posts; ++execution) {
         const auto completed = recordIndex(spans, "nixl::wire.completed", execution);
         ASSERT_GE(completed, 0) << "post " << execution;
-#if defined(NIXL_TRACE_ENABLED)
         const auto seen = recordIndex(spans, "nixl::xfer.complete", execution);
         ASSERT_GE(seen, 0) << "post " << execution;
         EXPECT_LT(completed, seen) << "post " << execution;
-#endif
     }
 }
 

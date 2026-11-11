@@ -37,8 +37,10 @@
 #include "nixl.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
+#if defined(NIXL_TRACE_ENABLED)
 #include "tracing/core/trace.h"
 #include "tracing/core/trace_sink.h"
+#endif
 #include "nixl_types.h"
 #include "common/cyclic_buffer.h"
 #include "common.h"
@@ -854,6 +856,7 @@ TEST_F(telemetryTest, DroppedEventsAppearInBufferStream) {
     envHelper_.popVar();
 }
 
+#if defined(NIXL_TRACE_ENABLED)
 namespace {
 
 class throwingTraceBackend final : public nixl::trace::TraceBackend {
@@ -983,6 +986,7 @@ TEST_F(telemetryTest, TraceSpanDropsAreCounted) {
 
     envHelper_.popVar();
 }
+#endif
 
 class telemetryXferTest : public telemetryTest {
 protected:
