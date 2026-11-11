@@ -21,8 +21,10 @@
  * Plugin-facing trace phase sink.
  *
  * This header is internal: it is NOT installed, so only in-tree plugins can
- * record phases, and nothing here carries an ABI guarantee --
- * `NIXL_PLUGIN_API_VERSION` does not cover it.
+ * record phases. Data plugins get the sink through
+ * nixlBackendInitParams::traceSink, and the tracing core implements it, so a
+ * change to the sink or to the types its methods take bumps both
+ * `NIXL_PLUGIN_API_VERSION` and `nixl_trace_core_api_version`.
  */
 
 #include <cstddef>
