@@ -189,12 +189,15 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
   # get_next_tcp_port() until the servers are running; re-allocating here ensures the
   # router gets a port that doesn't collide with any of those.
   PROXY_PORT="$(get_next_tcp_port)"
+  # The router always binds a Prometheus listener (default 29000, cannot be disabled).
+  ROUTER_METRICS_PORT="$(get_next_tcp_port)"
 
   # sglang-router fronts the prefill/decode pair (replaces the removed in-core mini_lb).
   # Installed into the sglang weights-base image (contrib/Dockerfile.sglang-base).
   setsid python3 -m sglang_router.launch_router --pd-disaggregation \
     --prefill "http://localhost:${PREFILL_PORT}" \
     --decode "http://localhost:${DECODE_PORT}" \
+    --prometheus-host 127.0.0.1 --prometheus-port "$ROUTER_METRICS_PORT" \
     --host 0.0.0.0 --port "$PROXY_PORT" &
   pids+=($!)
   names+=(router)

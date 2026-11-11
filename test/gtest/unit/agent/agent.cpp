@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <numeric>
 #include <random>
 #include <sstream>
 
@@ -1437,6 +1438,34 @@ namespace agent {
                              << timed1_ns << " ns2=" << timed2_ns << " ratio=" << ratio << ")";
     }
 
+    TEST_F(singleAgentSessionFixture, PrepStrideDlistRejectsOverflowingSpan) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        const nixlBlobDesc desc = setup.localBlob.getDesc();
+
+        nixl_stride_dlist_t valid(DRAM_SEG);
+        valid.addDesc(nixlStrideDesc(desc.addr, 1, desc.devId, 2, desc.len / 2));
+        nixlDlistH *dlist_hndl = nullptr;
+        ASSERT_EQ(agent_->prepXferDlist(valid, dlist_hndl, &setup.extraParams), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(dlist_hndl), NIXL_SUCCESS);
+
+        // (3 - 1) * 2^63 + 1 wraps to 1 in size_t.
+        nixl_stride_dlist_t overflow(DRAM_SEG);
+        overflow.addDesc(nixlStrideDesc(desc.addr, 1, desc.devId, size_t{1} << 63, 3));
+        dlist_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(overflow, dlist_hndl, &setup.extraParams),
+                  NIXL_ERR_NOT_FOUND);
+        EXPECT_EQ(dlist_hndl, nullptr);
+
+        // addr + (2 - 1) * stride + 1 wraps to 0x1001 in uintptr_t.
+        nixl_stride_dlist_t end_wrap(DRAM_SEG);
+        end_wrap.addDesc(nixlStrideDesc(desc.addr, 1, desc.devId, 0 - desc.addr + 0x1000, 2));
+        dlist_hndl = nullptr;
+        EXPECT_EQ(agent_->prepXferDlist(end_wrap, dlist_hndl, &setup.extraParams),
+                  NIXL_ERR_NOT_FOUND);
+        EXPECT_EQ(dlist_hndl, nullptr);
+    }
+
     INSTANTIATE_TEST_SUITE_P(DramRegisterMemoryInstantiation,
                              singleAgentWithMemParamFixture,
                              testing::Values(DRAM_SEG));
@@ -1823,6 +1852,88 @@ namespace agent {
 
         EXPECT_EQ(local_agent_->makeConnection(remote_agent_name_out), NIXL_SUCCESS);
         EXPECT_EQ(remote_agent_->makeConnection(local_agent_name_out), NIXL_SUCCESS);
+    }
+
+    TEST(agentMakeXferReq, MergeIndices) {
+        constexpr size_t block = 64;
+        constexpr size_t blocks = 20000;
+        agentHelper helper(local_agent_name);
+        nixlAgent *agent = helper.getAgent();
+        nixlBackendH *backend = nullptr;
+        nixl_b_params_t params;
+        ASSERT_EQ(helper.createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        std::vector<char> memory(block * blocks);
+        const auto base = reinterpret_cast<uintptr_t>(memory.data());
+        nixl_reg_dlist_t reg_dlist(DRAM_SEG);
+        reg_dlist.addDesc(nixlBlobDesc(base, memory.size(), 0));
+        nixl_opt_args_t extra_params;
+        extra_params.backends.push_back(backend);
+        ASSERT_EQ(agent->registerMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+
+        nixl_stride_dlist_t strides(DRAM_SEG);
+        strides.emplace(base, block, 0, block, blocks);
+        nixlDlistH *local_side = nullptr;
+        nixlDlistH *remote_side = nullptr;
+        ASSERT_EQ(agent->prepXferDlist(strides, local_side, &extra_params), NIXL_SUCCESS);
+        ASSERT_EQ(agent->prepXferDlist(local_agent_name, strides, remote_side, &extra_params),
+                  NIXL_SUCCESS);
+
+        struct piece {
+            int local, remote, count;
+        };
+
+        struct testCase {
+            std::vector<int> local, remote;
+            std::vector<piece> pieces;
+            bool skipMerge = false;
+        };
+
+        std::vector<int> all(blocks);
+        std::iota(all.begin(), all.end(), 0);
+        const std::vector<testCase> cases = {
+            {{0, 1, 2, 3}, {4, 5, 6, 7}, {{0, 4, 4}}},
+            {{0, 1, 5, 6, 7}, {0, 1, 2, 3, 4}, {{0, 0, 2}, {5, 2, 3}}},
+            {{0, 1, 2}, {0, 1, 7}, {{0, 0, 2}, {2, 7, 1}}},
+            {{0, 1, 2}, {0, 1, 2}, {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}}, true},
+            {all, all, {{0, 0, static_cast<int>(blocks)}}},
+        };
+        for (const auto &c : cases) {
+            nixl_meta_dlist_t src(DRAM_SEG), dst(DRAM_SEG);
+            EXPECT_CALL(helper.getGMockEngine(), prepXfer)
+                .WillOnce(testing::DoAll(testing::SaveArg<1>(&src),
+                                         testing::SaveArg<2>(&dst),
+                                         testing::Return(NIXL_SUCCESS)));
+            extra_params.skipDescMerge = c.skipMerge;
+            nixlXferReqH *req = nullptr;
+            ASSERT_EQ(
+                agent->makeXferReq(
+                    NIXL_WRITE, *local_side, c.local, *remote_side, c.remote, req, &extra_params),
+                NIXL_SUCCESS);
+            ASSERT_EQ(static_cast<size_t>(src.descCount()), c.pieces.size());
+            ASSERT_EQ(dst.descCount(), src.descCount());
+            for (size_t i = 0; i < c.pieces.size(); ++i) {
+                EXPECT_EQ(src[i].addr, base + c.pieces[i].local * block);
+                EXPECT_EQ(dst[i].addr, base + c.pieces[i].remote * block);
+                EXPECT_EQ(src[i].len, c.pieces[i].count * block);
+                EXPECT_EQ(dst[i].len, c.pieces[i].count * block);
+            }
+            EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        }
+
+        extra_params.skipDescMerge = false;
+        const std::vector<int> valid{0}, invalid{static_cast<int>(blocks)};
+        nixlXferReqH *req = nullptr;
+        EXPECT_EQ(agent->makeXferReq(
+                      NIXL_WRITE, *local_side, invalid, *remote_side, valid, req, &extra_params),
+                  NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(agent->makeXferReq(
+                      NIXL_WRITE, *local_side, valid, *remote_side, invalid, req, &extra_params),
+                  NIXL_ERR_INVALID_PARAM);
+
+        EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
+        EXPECT_EQ(agent->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
     }
 
 } // namespace agent

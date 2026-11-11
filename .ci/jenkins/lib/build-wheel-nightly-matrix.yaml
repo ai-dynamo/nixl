@@ -21,10 +21,7 @@ registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
-  # IL: wheel_base (CI image). artifactory.nvidia.com: wheel publishing.
-  - credentialsId: 'svc-nixl-il-artifactory-token'
-    usernameVariable: 'ARTIFACTORY_USER'
-    passwordVariable: 'ARTIFACTORY_TOKEN'
+  # artifactory.nvidia.com: wheel publishing.
   - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
@@ -124,11 +121,10 @@ steps:
   - name: Prepare
     containerSelector: "{name: 'manylinux'}"
     credentialsId:
-      - 'svc-nixl-il-artifactory-token'
       - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
-      # Set up podman and log in to Artifactory (base image pull)
+      # Set up podman
       rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
       podman system reset -f || true
       ln -sfT $(type -p podman) /usr/bin/docker
@@ -136,7 +132,6 @@ steps:
       # agent-side clones below.
       . .ci/scripts/common.sh
       write_github_gitconfig /tmp/ghconfig
-      echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
 
   - name: Checkout Source
     containerSelector: "{name: 'manylinux'}"
@@ -249,7 +244,6 @@ steps:
       if [ -f build_options.env ]; then
         . ./build_options.env
         [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
-        [ -n "${UCX_SHA:-}" ] && PROPERTIES+=";UCX_SHA=${UCX_SHA}"
         [ -n "${CUDA_VERSION:-}" ] && PROPERTIES+=";CUDA_VERSION=${CUDA_VERSION}"
         [ "${BUILD_UCX_SPCX_PLUGIN:-}" = "true" ] && [ -n "${UCX_SPCX_PLUGIN_REF:-}" ] \
           && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
@@ -260,11 +254,16 @@ steps:
         true
       fi
 
+      # The UCX the image compiled. build_options.env's UCX_SHA is only UCX_REF
+      # as ls-remote resolved it, which need not be what wheel_base built.
+      UCX_SHA="$(docker run --rm "${WHEEL_IMAGE_TAG}" git -C /usr/local/src/ucx rev-parse HEAD | cut -c1-8)"
+      [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot read the UCX commit from ${WHEEL_IMAGE_TAG}"; exit 1; }
+      PROPERTIES+=";UCX_SHA=${UCX_SHA}"
+
       # verification/ keeps its g<nixl-sha>.ucx<ucx-sha> schema (consumed by the
       # build-llm-container verification pipeline) and is shared between builds;
       # release/<ver> gets one folder per build.
       if [ "${PUBLISH_DIR}" = "verification" ]; then
-        [ -n "${UCX_SHA:-}" ] || { echo "ERROR: verification publish needs UCX_SHA from build_options.env"; exit 1; }
         FOLDER="g${NIXL_SHA}.ucx${UCX_SHA}"
       else
         FOLDER="${BUILD_NUMBER}"
