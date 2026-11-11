@@ -92,7 +92,6 @@ ENV CMAKE_INSTALL_ALWAYS=1
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
-ARG BUILD_NIXL_EP="true"
 ARG ABSL_TAG="20260526.0"
 ARG GRPC_TAG="v1.85.0"
 ARG HIREDIS_VERSION="1.4.0"
@@ -400,7 +399,7 @@ RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click s
 # Install the default PyTorch used by the outer NIXL build. Per-version NIXL EP
 # extensions are built later in isolated environments by build-wheel.sh.
 # NIXL EP needs torch >= 2.14, which is only on the cu13 (cu132) index. Empty selects 2.14 for
-# CUDA 13 and 2.13 for CUDA 12 (CUDA 12 builds must set BUILD_NIXL_EP=false).
+# CUDA 13 and 2.13 for CUDA 12 (NIXL EP is auto-disabled there).
 ARG DEFAULT_TORCH_VERSION=""
 RUN if [ -z "$TORCH_CUDA_INDEX" ]; then \
         if [ "${CUDA_VERSION%%.*}" = "13" ]; then TORCH_CUDA_INDEX="cu132"; \
@@ -474,7 +473,7 @@ ENV TORCH_CUDA_INDEX=${TORCH_CUDA_INDEX}
 
 ARG ARCH="x86_64"
 ARG BUILD_TYPE="release"
-ARG BUILD_NIXL_EP="true"
+ARG BUILD_NIXL_EP=""
 ARG UCX_SONAME_SUFFIX=""
 ARG NPROC=1
 ARG UCX_SPCX_PLUGIN_VERSION=""
@@ -555,8 +554,9 @@ RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
 # meson setup clones the taskflow and prometheus-cpp [wrap-git] subprojects from github.com.
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     mkdir build && \
-    if [ "$BUILD_NIXL_EP" = "true" ]; then \
-        echo "=== BUILD_NIXL_EP=true: Building NIXL with NIXL EP support ===" && \
+    BUILD_NIXL_EP_RESOLVED="$(./contrib/resolve-nixl-ep.sh)" && \
+    if [ "$BUILD_NIXL_EP_RESOLVED" = "true" ]; then \
+        echo "=== NIXL EP enabled: Building NIXL with NIXL EP support ===" && \
         NIXL_EP_FLAG="-Dbuild_nixl_ep=true -Dbuild_examples=true"; \
     else \
         NIXL_EP_FLAG=""; \
@@ -585,12 +585,13 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
-# NIXL EP needs torch >= 2.14, which is only on the cu13 index. CUDA 12 builds must set
-# BUILD_NIXL_EP=false. build-wheel.sh skips the versions it cannot resolve.
-ARG WHL_TORCH_VERSIONS="2.14,2.15"
+# NIXL EP needs torch >= 2.14, which is only on the cu13 index.
+# build-wheel.sh skips the versions it cannot resolve.
+ARG WHL_TORCH_VERSIONS="2.14,2.15,2.16"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
-    if [ "$BUILD_NIXL_EP" = "true" ]; then \
+    BUILD_NIXL_EP_RESOLVED="$(./contrib/resolve-nixl-ep.sh)" && \
+    if [ "$BUILD_NIXL_EP_RESOLVED" = "true" ]; then \
         EP_BUILD_FLAGS="--build-nixl-ep --torch-versions $WHL_TORCH_VERSIONS"; \
     else \
         EP_BUILD_FLAGS=""; \
