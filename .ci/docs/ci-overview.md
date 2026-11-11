@@ -378,7 +378,7 @@ why in the console:
 The console block to grep for in a dispatcher log:
 
 ```
-Path filter: <n> changed path(s)
+Path filter: PR #<n>, <n> changed path(s)
   <path> -> <component>[, <component>]       or    <path> -> (unmatched -> all)
 Path filter: components = [a, b]
 Path filter: run = [branch, ...]; skip = [branch, ...]

@@ -133,20 +133,20 @@ String statusText(String text) {
 
 // getPage(page) returns the parsed list for one page of GET /pulls/<n>/files.
 // null means "cannot filter, run everything": a failed request, or a PR past
-// GitHub's 3000-file listing cap.
+// GitHub's 3000-file listing cap. The loop bound is explicit: CPS runs a
+// for-loop with an empty condition zero times.
 List<String> fetchPrFiles(String repo, String prNumber, Closure getPage) {
     List files = []
     try {
-        for (int page = 1; ; page++) {
-            if (page > 30) return null
+        for (int page = 1; page <= 30; page++) {
             List batch = getPage(page)
             files.addAll(batch)
-            if (batch.size() < 100) break
+            if (batch.size() < 100) return collectPrPaths(files)
         }
     } catch (Exception e) {
         return null
     }
-    return collectPrPaths(files)
+    return null
 }
 // --- path filter: end ---
 
@@ -198,7 +198,7 @@ Map decideComponents(String prNumber, String payload, String ref) {
     if (invalid != null) return full("invalid .ci/path-filters.yaml: ${invalid}")
 
     Set<String> components = [] as Set
-    echo "Path filter: ${paths.size()} changed path(s)"
+    echo "Path filter: PR #${prNumber}, ${paths.size()} changed path(s)"
     for (String p in paths) {
         Set<String> c = componentsFor(p, cfg.components)
         echo(c ? "  ${p} -> ${c.sort().join(', ')}" : "  ${p} -> (unmatched -> all)")
