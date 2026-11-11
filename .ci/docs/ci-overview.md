@@ -275,6 +275,22 @@ union over its changed paths; for a renamed file both the old and the new path
 count. A path that matches nothing counts as `all`. `all` is reserved and
 always means "run every job".
 
+### Components
+
+Step one defines a single filtered component, agreed with the developers so
+the skip path is proven on docs-only PRs before any product component is
+wired in. `nixl_ep` and, when it lands, `nixl_store` (which brings its own
+GitHub Actions workflow and should skip most or all Jenkins jobs) are each
+added later as a YAML block here plus a line in the dispatcher's job table.
+
+| Component | Covers | Why |
+|---|---|---|
+| `docs` | `docs/**`, `fern/**`, and `*.md` anywhere a more specific entry does not claim it, i.e. the root-level `ATTRIBUTIONS-*.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md` | a docs-only PR runs no Jenkins job; Markdown inside `src/`, `examples/` etc. stays with `all` because those entries are more specific |
+| `all` | one entry per top-level directory and root file, plus `/README.md` | runs every job; the root README is pulled back out of `docs` because `pyproject.toml` embeds it in the wheel, so renaming or deleting it must build on main |
+
+`CODEOWNERS` routes `.ci/path-filters.yaml` to `@ai-dynamo/nixl-devops` on
+purpose: maintainers author the entries and DevOps approve them.
+
 ### Registering a path
 
 Every file in the repository must match an entry. New paths go into the

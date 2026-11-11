@@ -1,0 +1,41 @@
+# Registers repository paths into CI components. The Jenkins dispatcher runs
+# only the jobs mapped to the components a PR touches. The most specific
+# matching entry wins. Every file must match an entry: pre-commit rejects new
+# files that match nothing, and the dispatcher treats such a file as `all`.
+# See .ci/docs/ci-overview.md, "Path filtering", for the rules and job mapping.
+components:
+  docs:
+    - docs/**
+    - fern/**
+    - "*.md"
+  # Everything else. One entry per top-level path so a new top-level directory
+  # has to be classified here explicitly.
+  all:
+    - /README.md   # pyproject.toml embeds it in the wheel
+    - .agents/**
+    - .ci/**
+    - .github/**
+    - .gitlab/**
+    - benchmark/**
+    - contrib/**
+    - examples/**
+    - licenses/**
+    - src/**
+    - subprojects/**
+    - test/**
+    - /.clang-format
+    - /.clang-tidy
+    - /.coderabbit.yaml
+    - /.codespellrc
+    - /.gitignore
+    - /.pre-commit-config.yaml
+    - /CODEOWNERS
+    - /Cargo.lock
+    - /Cargo.toml
+    - /Doxyfile
+    - /LICENSE
+    - /meson.build
+    - /meson_options.txt
+    - /nixl.pc.in
+    - /pyproject.toml
+    - /requirements.txt
