@@ -99,7 +99,7 @@ fi
 AUDITWHEEL_EXCLUDES="--exclude libcuda* --exclude libcufile* --exclude libcuobjclient* --exclude libssl* --exclude libcrypto* --exclude libefa* --exclude libhwloc* --exclude libfabric* --exclude libtorch* --exclude libc10* --exclude libdoca* --exclude libred_client* --exclude libred_async* --exclude liblz4*"
 
 PKG_NAME="nixl-cu13"
-# torch wheel index, pinned in Dockerfile.manylinux; PyTorch has no stable cu134 wheels.
+# torch wheel index, pinned in Dockerfile.manylinux.
 CU_TAG="${TORCH_CUDA_INDEX:-cu132}"
 case "$CU_TAG" in
     cu13[0-9]*) ;;

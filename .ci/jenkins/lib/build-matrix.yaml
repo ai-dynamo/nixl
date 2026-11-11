@@ -6,7 +6,7 @@
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
 # - Docker Images: Specifies the container images used for different build stages
-#   - Build/test images: cuda-dl-base 26.08-cuda13.4 (Ubuntu 24.04), the PyTorch
+#   - Build/test images: cuda-dl-base (Ubuntu 24.04), the PyTorch
 #     NGC container pinned in Dockerfile.base (Ubuntu 24.04), and nvidia/cuda 13.4.2
 #     (Ubuntu 22.04). Only the 13.4.2 devel image ships the cuObject dev package, so
 #     it is the build that compiles the OBJ plugin's S3 accelerated engines.

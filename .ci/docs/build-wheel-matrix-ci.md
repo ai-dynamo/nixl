@@ -125,7 +125,7 @@ This builds both stages from scratch without the `--wheel-base-image` override.
 
 #### Standalone Build
 
-The standalone job (`nixl-build-wheel`) builds its own `wheel_base` images per run and passes the full `--torch-versions` list for the cu13 index.
+The standalone job (`nixl-build-wheel`) builds its own `wheel_base` images per run and leaves `--torch-versions` to the Dockerfile default.
 
 #### Optional: UCX spcx external plugin
 `build-container.sh --build-ucx-spcx-plugin` opt-in flag fetches the internal `ucx-spcx-plugin` source on the host into the build context, compiles it against the just-built UCX inside the Dockerfile, and installs it into the UCX plugins dir. It works with `contrib/Dockerfile.manylinux` (the wheel build, where `wheel_add_ucx_plugins.py` then bundles the plugin into the wheel like any other UCX module) and with the default `contrib/Dockerfile` (the container build, where the plugin is only installed into the image). It requires two environment variables — neither is hardcoded so the repo location and token stay out of the source and image layers:

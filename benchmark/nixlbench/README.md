@@ -245,7 +245,7 @@ sudo apt-get reinstall -y --no-install-recommends \
 
 #### CUDA Toolkit Installation
 ```bash
-# Install the CUDA 13 toolkit
+# Install the CUDA toolkit
 # Follow https://developer.nvidia.com/cuda-downloads for your distribution
 
 # Set environment variables
