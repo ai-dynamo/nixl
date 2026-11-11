@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <set>
 #include <cmath>
+#include <cctype>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
@@ -1457,6 +1458,34 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
             }
         }
     }
+
+    // Accelerators that reach NICs under their own PCIe switch. NICs that meet accelerators
+    // only above PCIe and are fewer than them (step 4 below would give each of them to every
+    // accelerator there) are not added to these accelerators' rails: each already stripes over
+    // its own NICs, and with even striping a NIC shared by all of them paces every one. Such a
+    // NIC keeps carrying host-memory traffic. nic_selection=all shares such NICs as before.
+    // NOTE: environment only (NIXL_LIBFABRIC_NIC_SELECTION): the topology is discovered before
+    // backend parameters reach the rail manager.
+    std::string nic_selection = "auto";
+    LibfabricUtils::getCustomStringParam(nixl_b_params_t(), "nic_selection", nic_selection);
+    std::transform(nic_selection.begin(),
+                   nic_selection.end(),
+                   nic_selection.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    if (nic_selection != "auto" && nic_selection != "all") {
+        NIXL_WARN << "Unknown nic_selection value \"" << nic_selection
+                  << "\"; expected auto|all. Falling back to auto.";
+    }
+    const bool keep_shared = nic_selection == "all";
+    std::set<hwloc_obj_t> accel_with_switch_nics;
+    for (const auto &pair : ancestor_nics) {
+        if (!keep_shared && isPcieSwitch(pair.first) && !pair.second.empty()) {
+            for (const auto &a : node_accel[pair.first]) {
+                accel_with_switch_nics.insert(a.hwloc_node);
+            }
+        }
+    }
+
     // Step 4: Split NICs among accelerators for each ancestor node
     for (const auto &pair : ancestor_nics) {
         hwloc_obj_t ancestor = pair.first;
@@ -1477,6 +1506,10 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
             const int nics_per_group = nics.size() / num_groups;
             const int extra_nics = nics.size() % num_groups;
 
+            const bool shared_above_pcie =
+                nics.size() < (size_t)num_groups && !isPcieSwitch(ancestor);
+            bool shared_taken = false;
+
             size_t nic_idx = 0;
             for (int group_idx = 0; group_idx < num_groups && group_idx < (int)accel.size();
                  ++group_idx) {
@@ -1484,6 +1517,13 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
                 group.has_accel = true;
                 group.closest_accel = accel[group_idx];
                 group.common_ancestor = ancestor;
+
+                if (shared_above_pcie &&
+                    accel_with_switch_nics.count(accel[group_idx].hwloc_node) != 0) {
+                    // Already served by NICs under its own PCIe switch (see above).
+                    continue;
+                }
+                shared_taken = shared_taken || shared_above_pcie;
 
                 if (nics.size() < (size_t)num_groups) {
                     // Give all NICs to this accelerator
@@ -1500,6 +1540,21 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
                 }
 
                 if (!group.nics.empty()) {
+                    nic_groups.push_back(group);
+                }
+            }
+
+            if (shared_above_pcie && !shared_taken) {
+                for (const auto &nic : nics) {
+                    NIXL_INFO << "Leaving EFA device " << nic.libfabric_name
+                              << " out of accelerator rails: it would be shared by every "
+                              << "accelerator under its " << hwloc_obj_type_string(ancestor->type)
+                              << ", and each of them has NICs under its own PCIe switch";
+                    NicGroup group;
+                    group.nics.push_back(nic);
+                    group.has_accel = false;
+                    group.closest_accel.hwloc_node = nullptr;
+                    group.common_ancestor = nic.hwloc_node;
                     nic_groups.push_back(group);
                 }
             }
