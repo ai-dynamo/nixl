@@ -5,6 +5,9 @@
  * This is the entry point triggered by the GitHub webhook (via the
  * nixl-ci-dispatcher job). It aborts stale runs for the same PR, updates the
  * commit status, and fans out to the leaf jobs (non-gpu, gpu, dl-gpu, ...).
+ * On PR runs it fans out only to the jobs selected by .ci/path-filters.yaml
+ * for the PR's changed paths, and posts a green "skipped" status for the rest
+ * (see .ci/docs/ci-overview.md, "Path filtering").
  *
  * This file is checked out from the PR merge ref (refs/pull/<n>/merge, see the
  * sha1 webhook parameter in proj-jjb.yaml) - the PR merged into its base branch.
@@ -23,6 +26,185 @@
 
 @Library('blossom-github-lib@master')  // Use custom GitHub library
 import ipp.blossom.*
+import com.cloudbees.groovy.cps.NonCPS
+
+// --- path filter: pure functions ---
+// Mirror of .ci/scripts/check_path_filters.py; keep the two in step.
+
+// [regex, specificity] for one entry, or null when the entry is invalid.
+@NonCPS
+Map compileEntry(String entry) {
+    if (!entry || entry.find(/[?\[\]!\\\s]/)) return null
+    boolean anchored = entry.startsWith('/')
+    String text = anchored ? entry.substring(1) : entry
+    if (text.endsWith('/')) text = text.substring(0, text.length() - 1)
+    if (!text) return null
+    List<String> segments = text.split('/', -1) as List
+    for (int i = 0; i < segments.size(); i++) {
+        String seg = segments[i]
+        if (!seg) return null
+        if (seg.contains('**') && (seg != '**' || i != segments.size() - 1)) return null
+    }
+    String body = segments.collect { String seg ->
+        seg == '**' ? '.*' : seg.split(/\*/, -1).collect { java.util.regex.Pattern.quote(it) }.join('[^/]*')
+    }.join('/')
+    if (segments.size() == 1 && !anchored) {
+        return [regex: "(?:.*/)?${body}(?:/.*)?".toString(), specificity: 0]
+    }
+    if (!text.contains('*')) body += '(?:/.*)?'
+    int star = text.indexOf('*')
+    return [regex: body, specificity: star < 0 ? text.length() : star]
+}
+
+// null when cfg is valid, otherwise the reason.
+@NonCPS
+String validateComponents(Object cfg) {
+    if (!(cfg instanceof Map)) return "top-level must be a mapping with the single key 'components'"
+    def extra = cfg.keySet().find { it != 'components' }
+    if (extra != null) return "unexpected top-level key '${extra}'; only 'components' is allowed"
+    def components = cfg.get('components')
+    if (!(components instanceof Map)) return "'components' must be a mapping of component name to list of entries"
+    for (e in components.entrySet()) {
+        def name = e.key
+        def entries = e.value
+        if (!(name instanceof String) || !(name ==~ /[A-Za-z0-9_]+/)) return "invalid component name '${name}'"
+        if (!(entries instanceof List)) return "component '${name}' must be a list of path entries"
+        for (entry in entries) {
+            if (!(entry instanceof String)) return "component '${name}': entry '${entry}' is not a string"
+            if (compileEntry(entry) == null) return "component '${name}': invalid entry '${entry}'"
+        }
+    }
+    if (!components.containsKey('all')) return "component 'all' is missing"
+    return null
+}
+
+// Components of the most specific entries matching path; empty when none.
+@NonCPS
+Set<String> componentsFor(String path, Map<String, List<String>> components) {
+    int best = -1
+    Set<String> result = [] as Set
+    components.each { String name, List<String> entries ->
+        entries.each { String entry ->
+            Map c = compileEntry(entry)
+            if (c == null || c.specificity < best || !path.matches(c.regex)) return
+            if (c.specificity > best) {
+                best = c.specificity
+                result = [] as Set
+            }
+            result.add(name)
+        }
+    }
+    return result
+}
+
+// repo and PR labels from the webhook payload; never throws.
+@NonCPS
+Map payloadInfo(String json) {
+    try {
+        def p = json ? new groovy.json.JsonSlurperClassic().parseText(json) : null
+        // issue.labels: /build comment payload; pull_request.labels: PR push payload
+        def labels = (p?.issue?.labels ?: p?.pull_request?.labels ?: []).collect { it?.name?.toString() }.findAll { it }
+        return [repo: p?.repository?.full_name?.toString(), labels: labels]
+    } catch (Exception e) {
+        return [repo: null, labels: []]
+    }
+}
+
+@NonCPS
+List parseJsonList(String json) {
+    return new groovy.json.JsonSlurperClassic().parseText(json) as List
+}
+
+// Old and new names of a renamed file both count.
+@NonCPS
+List<String> collectPrPaths(List<Map> files) {
+    List<String> paths = []
+    files.each { Map f ->
+        [f.filename, f.previous_filename].each { if (it && !paths.contains(it.toString())) paths.add(it.toString()) }
+    }
+    return paths
+}
+
+// GitHub caps status descriptions at 140 characters.
+@NonCPS
+String statusText(String text) {
+    return text.length() > 140 ? text.substring(0, 140) : text
+}
+
+// getPage(page) returns the parsed list for one page of GET /pulls/<n>/files.
+// null means "cannot filter, run everything": a failed request, or a PR past
+// GitHub's 3000-file listing cap.
+List<String> fetchPrFiles(String repo, String prNumber, Closure getPage) {
+    List files = []
+    try {
+        for (int page = 1; ; page++) {
+            if (page > 30) return null
+            List batch = getPage(page)
+            files.addAll(batch)
+            if (batch.size() < 100) break
+        }
+    } catch (Exception e) {
+        return null
+    }
+    return collectPrPaths(files)
+}
+// --- path filter: end ---
+
+@NonCPS
+String httpGet(String url, String accept, String token) {
+    def conn = new URL(url).openConnection()
+    conn.setRequestProperty('Authorization', "token ${token}")
+    conn.setRequestProperty('Accept', accept)
+    conn.setConnectTimeout(15000)
+    conn.setReadTimeout(60000)
+    int code = conn.responseCode
+    if (code != 200) throw new IllegalStateException("HTTP ${code} from ${url}")
+    return conn.inputStream.getText('UTF-8')
+}
+
+// [components: Set, reason: String or null, paths: List]. Whenever the decision
+// cannot be made, components is [all] and reason says why.
+Map decideComponents(String prNumber, String payload, String sha) {
+    def full = { String reason -> [components: ['all'] as Set, reason: reason, paths: []] }
+    if (!prNumber) return full('manual run (no PR number)')
+    Map info = payloadInfo(payload)
+    if (info.labels.contains('ci:full')) return full('label ci:full')
+
+    List<String> paths = null
+    def cfg = null
+    String readError = null
+    withCredentials([usernamePassword(credentialsId: 'svc-nixl-github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+        String api = "https://api.github.com/repos/${info.repo}"
+        paths = fetchPrFiles(info.repo, prNumber) { int page ->
+            try {
+                return parseJsonList(httpGet("${api}/pulls/${prNumber}/files?per_page=100&page=${page}", 'application/vnd.github+json', env.GIT_PASSWORD))
+            } catch (Exception e) {
+                echo "Path filter: GitHub API request failed: ${e.message}"
+                throw e
+            }
+        }
+        // The YAML is read from the same merge commit this script runs from.
+        try {
+            cfg = readYaml(text: httpGet("${api}/contents/.ci/path-filters.yaml?ref=${sha}", 'application/vnd.github.raw+json', env.GIT_PASSWORD))
+        } catch (Exception e) {
+            readError = e.message
+        }
+    }
+    if (paths == null) return full('GitHub API error or 3000+ changed files')
+    if (paths.isEmpty()) return full('no changed files')
+    if (readError != null) return full("cannot read .ci/path-filters.yaml: ${readError}")
+    String invalid = validateComponents(cfg)
+    if (invalid != null) return full("invalid .ci/path-filters.yaml: ${invalid}")
+
+    Set<String> components = [] as Set
+    echo "Path filter: ${paths.size()} changed path(s)"
+    for (String p in paths) {
+        Set<String> c = componentsFor(p, cfg.components)
+        echo(c ? "  ${p} -> ${c.sort().join(', ')}" : "  ${p} -> (unmatched -> all)")
+        components.addAll(c ?: ['all'])
+    }
+    return [components: components, reason: null, paths: paths]
+}
 
 // Authenticate with GitHub using stored credentials
 withCredentials([usernamePassword(credentialsId: 'svc-nixl-github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
@@ -87,38 +269,64 @@ def pipelineOverviewUrl = "${env.BUILD_URL}/pipeline-overview/"
 githubHelper.updateCommitStatus(pipelineOverviewUrl, "NIXL CI started", GitHubCommitState.PENDING)
 currentBuild.description = githubHelper.getBuildDescription()
 
-// Leaf jobs to dispatch, keyed by parallel-branch name
+// Leaf jobs to dispatch, keyed by parallel-branch name. A job runs when the
+// PR's component set contains 'all' or any of the job's components; [] means
+// it runs only on 'all'.
 def leafJobs = [
-    'non-gpu':         'nixl-ci-non-gpu',
-    'gpu':             'nixl-ci-gpu',
-    'dl-gpu':          'nixl-ci-dl-gpu',
-    'dl-gpu-ep':       'nixl-ci-dl-gpu-ep',
-    'gpu-vr':          'nixl-ci-gpu-vr',
-    'wheel':           'nixl-ci-build-wheel',
-    'sanitizers':      'nixl-ci-test-sanitizers',
-    'build-container': 'nixl-ci-build-container-pr',
+    'non-gpu':         [job: 'nixl-ci-non-gpu',            components: []],
+    'gpu':             [job: 'nixl-ci-gpu',                components: []],
+    'dl-gpu':          [job: 'nixl-ci-dl-gpu',             components: []],
+    'dl-gpu-ep':       [job: 'nixl-ci-dl-gpu-ep',          components: []],
+    'gpu-vr':          [job: 'nixl-ci-gpu-vr',             components: []],
+    'wheel':           [job: 'nixl-ci-build-wheel',        components: []],
+    'sanitizers':      [job: 'nixl-ci-test-sanitizers',    components: []],
+    'build-container': [job: 'nixl-ci-build-container-pr', components: []],
 ]
 
 try {
     // Compute the merged SHA once so all leaf jobs test the same commit
     def mergedSHA = githubHelper.getMergedSHA()
 
+    Map decision = decideComponents(currentPrNumber, VARIABLE_FROM_POST, mergedSHA)
+    List<String> components = decision.components.sort()
+    if (decision.reason) {
+        echo "Path filter: ${decision.reason}; running all jobs"
+    } else {
+        echo "Path filter: components = [${components.join(', ')}]"
+    }
+    def run = leafJobs.findAll { decision.components.contains('all') || it.value.components.any { c -> decision.components.contains(c) } }
+    def skip = leafJobs.findAll { !run.containsKey(it.key) }
+    echo "Path filter: run = [${run.keySet().join(', ')}]; skip = [${skip.keySet().join(', ')}]"
+
+    // Skipped jobs still get a green status under their own context, so the
+    // required checks are satisfied and the PR shows why nothing ran.
+    skip.each { branchName, leaf ->
+        try {
+            githubHelper.updateCommitStatus(pipelineOverviewUrl, statusText("Skipped by path filter: PR touches ${components.join(', ')}"), GitHubCommitState.SUCCESS, leaf.job)
+        } catch (Exception e) {
+            echo "Could not post skipped status for ${leaf.job}: ${e.message}"
+        }
+    }
+    currentBuild.description = "${currentBuild.description} | components: ${components.join(', ')}"
+
     // Leaf jobs report their own GitHub statuses; the dispatcher build stays
     // SUCCESS unless dispatching itself fails. catchError paints a failed
     // leaf's branch red without failing the build, and all branches run to
     // completion regardless of sibling failures.
-    parallel(leafJobs.collectEntries { branchName, jobName ->
-        [(branchName): {
-            catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                build job: jobName, parameters: [
-                    string(name: 'sha1', value: mergedSHA),
-                    string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ], wait: true
-            }
-        }]
-    })
+    if (run) {
+        parallel(run.collectEntries { branchName, leaf ->
+            [(branchName): {
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    build job: leaf.job, parameters: [
+                        string(name: 'sha1', value: mergedSHA),
+                        string(name: 'githubData', value: VARIABLE_FROM_POST)
+                    ], wait: true
+                }
+            }]
+        })
+    }
 
-    githubHelper.updateCommitStatus(pipelineOverviewUrl, "NIXL CI ended", GitHubCommitState.SUCCESS)
+    githubHelper.updateCommitStatus(pipelineOverviewUrl, statusText("NIXL CI ended: ran ${run.size()}/${leafJobs.size()} jobs (${components.join(', ')})"), GitHubCommitState.SUCCESS)
 } catch(Exception ex) {
     println ex
     githubHelper.updateCommitStatus(pipelineOverviewUrl, "NIXL CI ended", GitHubCommitState.FAILURE)

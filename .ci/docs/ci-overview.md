@@ -115,7 +115,8 @@ sequenceDiagram
         Scan->>Scan: checkout PR code, run Black Duck scan
         Scan->>Trigger: proceed to Job-trigger
         Trigger->>Jenkins: START-CI-JOB (trigger dispatcher)
-        Jenkins->>Children: fan out in parallel, wait for all
+        Jenkins->>Children: fan out to the jobs selected by the path filter, wait for all
+        Jenkins-->>GH: green "skipped" status for each job not selected
         Children-->>GH: each job posts its own check status
         Jenkins-->>GH: dispatcher posts overall commit status
     end
@@ -132,9 +133,12 @@ Step by step, matching the jobs in `blossom-ci.yml`:
    Duck-based vulnerability scan via the `NVIDIA/blossom-action`.
 5. **Job-trigger** calls `blossom-ci` with `OPERATION: START-CI-JOB`, which
    triggers the Jenkins `nixl-ci-dispatcher` job.
-6. `nixl-ci-dispatcher` fans out in parallel to its eight child jobs
-   (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `build-wheel`,
-   `test-sanitizers`, `build-container-pr` — see [Jenkins jobs](#jenkins-jobs) below).
+6. `nixl-ci-dispatcher` fans out in parallel to the child jobs selected by the
+   path filter from its eight (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`,
+   `gpu-vr`, `build-wheel`, `test-sanitizers`, `build-container-pr` — see
+   [Jenkins jobs](#jenkins-jobs) below). Every job runs unless
+   `.ci/path-filters.yaml` narrows the set for the PR's changed paths; jobs
+   not selected get a green "skipped" status (see [Path filtering](#path-filtering)).
 7. Each child job reports its own status back as an individual GitHub PR
    check, so the PR shows per-job pass/fail rather than one aggregate check.
 
@@ -167,7 +171,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
 
 - **Trigger:** GitHub webhook payload forwarded by Blossom-CI's `Job-trigger` step (`OPERATION: START-CI-JOB`). Not a raw GitHub Actions event.
-- **What it does:** Fans out in parallel to eight downstream Jenkins jobs, waiting on all of them:
+- **What it does:** Fans out in parallel to eight downstream Jenkins jobs, waiting on all of them. On PR runs only the jobs selected by the [path filter](#path-filtering) for the PR's changed paths are started; the rest get a green "skipped" status under their own context. Manual runs (no PR number) always run all eight:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node)
@@ -307,6 +311,74 @@ tools/new.sh: not registered in .ci/path-filters.yaml; add it to a component or 
 
 It also rejects an invalid config (unknown top-level key, missing `all`,
 duplicate component key, unsupported glob) with exit code 2 and the reason.
+
+### Job table
+
+The dispatcher's `leafJobs` map carries the components each job cares about.
+A job runs when the PR's component set contains `all` or any of the job's
+components; `[]` means a core job that runs only on `all`. In step one every
+job is core, so `docs` maps to nothing:
+
+| Branch | Job | Components |
+|---|---|---|
+| `non-gpu` | `nixl-ci-non-gpu` | `[]` |
+| `gpu` | `nixl-ci-gpu` | `[]` |
+| `dl-gpu` | `nixl-ci-dl-gpu` | `[]` |
+| `dl-gpu-ep` | `nixl-ci-dl-gpu-ep` | `[]` |
+| `gpu-vr` | `nixl-ci-gpu-vr` | `[]` |
+| `wheel` | `nixl-ci-build-wheel` | `[]` |
+| `sanitizers` | `nixl-ci-test-sanitizers` | `[]` |
+| `build-container` | `nixl-ci-build-container-pr` | `[]` |
+
+This rule is firm: every job runs unless the YAML says the PR only touches
+specific components. There is no way to express "run this job only when its
+component is touched, even on a core change". When `nixl_ep` is registered,
+the jobs that build or test EP code today (`nixl-ci-dl-gpu-ep`,
+`nixl-ci-build-wheel`, `nixl-ci-build-container-pr`) get `['nixl_ep']`.
+
+### What a PR sees
+
+The changed-file list comes from the GitHub API (`pulls/<n>/files`, a
+merge-base diff, old and new names of renames both counted) and the YAML is
+read from the same merge commit the dispatcher itself runs from. The PR label
+`ci:full` forces a full run.
+
+| PR touches | Component set | Runs | Statuses |
+|---|---|---|---|
+| `docs/...` or `CONTRIBUTING.md` only | `docs` | nothing | 8 green "Skipped by path filter: PR touches docs", `blossom-ci` green `NIXL CI ended: ran 0/8 jobs (docs)` |
+| root `README.md` only | `all` (`/README.md`) | all 8 | as before |
+| `docs/...` + `src/core/...` | `docs`, `all` | all 8 | as before |
+| `.ci/path-filters.yaml` only | `all` (`.ci/**`) | all 8 | as before |
+| adds `tools/new.sh` without registering it | `pre-commit` fails on the PR; if merged anyway, `all` (unmatched) | all 8 | as before |
+| any PR with label `ci:full` | `all` | all 8 | as before |
+| manual run, no PR | `all` | all 8 | as before |
+
+Whenever the decision cannot be made, the dispatcher runs everything and says
+why in the console:
+
+| Failure | Behaviour |
+|---|---|
+| GitHub API error or rate limit while listing files | full run, console says why |
+| PR over 3000 changed files (GitHub's listing cap) | full run |
+| PR with an empty file list | full run |
+| YAML missing on the PR's merge commit | full run |
+| YAML present but malformed | full run, console shows the reason |
+| Unknown component name in a job's `components` | job runs only on `all`; no error |
+| New file committed with `--no-verify`, unregistered | `pre-commit` check fails on the PR; dispatcher treats the path as `all` |
+| Status post for a skipped job fails | logged, run continues; the PR then shows that context as missing rather than falsely green |
+
+The console block to grep for in a dispatcher log:
+
+```
+Path filter: <n> changed path(s)
+  <path> -> <component>[, <component>]       or    <path> -> (unmatched -> all)
+Path filter: components = [a, b]
+Path filter: run = [branch, ...]; skip = [branch, ...]
+```
+
+or, when a reason applies, `Path filter: <reason>; running all jobs` followed by
+the `run = ...; skip = []` line. The build description also carries
+`| components: a, b`.
 
 ## Slurm job naming
 
