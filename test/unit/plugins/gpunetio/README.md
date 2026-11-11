@@ -46,6 +46,9 @@ Please look at the [DOCA GPUNetIO](https://docs.nvidia.com/doca/sdk/doca+gpuneti
 
 The following instructions assume DOCA libraries and NIXL libraries are set in LD_LIBRARY_PATH environment variable.
 
+The native GET test also exercises FIFO pipelining and partial retirement over
+90 rounds per channel; it skips this part when MCST consistency is required.
+
 For the native GET test, add `NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR=1` together
 with `NIXL_GPUNETIO_TEST_RETENTION=1` and `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to
 inject a bad key between two valid READs and check sticky FIFO error handling.

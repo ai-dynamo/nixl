@@ -303,6 +303,71 @@ batchGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *res
         }
     }
 }
+
+// Exercise the FIFO cursor while a second batch is outstanding and a third is posted.
+__global__ void
+fifoPipeline(nixlMemViewH local, nixlMemViewH remote, const uint8_t *destination, int *result) {
+    if (threadIdx.x) {
+        return;
+    }
+    nixl::gpu::readSession session;
+    uint64_t base[3]{};
+    int error = 0;
+    if (session.bind(local, remote) != NIXL_SUCCESS || session.acquireFifo() != NIXL_SUCCESS) {
+        *result = 31;
+        return;
+    }
+    if (session.needsConsistency()) {
+        *result = session.finish() == NIXL_SUCCESS ? 30 : 31;
+        return;
+    }
+    auto post = [&](unsigned batch) {
+        if (session.reserve(8, base[batch]) != NIXL_SUCCESS) {
+            return false;
+        }
+        for (unsigned i = 0; i < 8; ++i) {
+            size_t offset = (batch * 8 + i) * kItemBytes;
+            if (session.prepare(
+                    base[batch] + i, 0, 512 + offset, 0, kBatchDst + offset, kItemBytes) !=
+                NIXL_SUCCESS) {
+                return false;
+            }
+        }
+        return session.publish(base[batch], 8) == NIXL_IN_PROG;
+    };
+    auto poll = [&](uint64_t first, unsigned count) {
+        for (unsigned i = 0; i < count; ++i) {
+            nixl_status_t rc;
+            const uint64_t deadline = globalTimerNs() + 5000000000ull;
+            do {
+                rc = session.pollFifo(first + i);
+            } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
+            if (rc != NIXL_SUCCESS) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!post(0) || !post(1) || base[1] != base[0] + 8 || !poll(base[0], 4) ||
+        session.retire(base[0], 4) != NIXL_SUCCESS || !post(2) || base[2] != base[1] + 8 ||
+        !poll(base[0] + 4, 4) || session.retire(base[0] + 4, 4) != NIXL_SUCCESS ||
+        !poll(base[1], 8) || session.retire(base[1], 8) != NIXL_SUCCESS || !poll(base[2], 8) ||
+        session.retire(base[2], 8) != NIXL_SUCCESS || session.finish() != NIXL_SUCCESS) {
+        error = 32;
+    }
+    if (error) {
+        session.fail();
+    }
+    if (!error) {
+        for (size_t i = 0; i < 24 * kItemBytes; ++i) {
+            if (destination[kBatchDst + i] != uint8_t(((512 + i) * 13 + 7) % 251)) {
+                error = 33;
+                break;
+            }
+        }
+    }
+    *result = error;
+}
 } // namespace
 
 int
@@ -532,6 +597,26 @@ main(int argc, char **argv) {
             }
             if (i != kScratch && received[i] != expected) {
                 throw std::runtime_error("data/guard mismatch at " + std::to_string(i));
+            }
+        }
+        for (unsigned channel = 0; channel < qps; ++channel) {
+            int result = 0;
+            for (unsigned round = 0; round < 90; ++round) {
+                check(cudaMemset(destination + kBatchDst, 0xa5, 24 * kItemBytes),
+                      "poison pipeline destination");
+                fifoPipeline<<<1, 1>>>(
+                    locals[channel], remotes[channel], destination, device_result);
+                check(cudaGetLastError(), "launch FIFO pipeline");
+                check(cudaDeviceSynchronize(), "complete FIFO pipeline");
+                check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
+                      "read pipeline status");
+                if (result == 30) {
+                    std::cout << "SKIP FIFO pipeline: MCST consistency required\n";
+                    break;
+                }
+                if (result) {
+                    throw std::runtime_error("FIFO pipeline failed: " + std::to_string(result));
+                }
             }
         }
         if (std::getenv("NIXL_GPUNETIO_TEST_RETENTION")) {
