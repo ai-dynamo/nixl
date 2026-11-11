@@ -600,6 +600,11 @@ nixlDocaEngine::~nixlDocaEngine() {
 
     *reinterpret_cast<volatile uint32_t *>(&gpu_state_cpu->control) =
         DOCA_GPU_EXIT | DOCA_GPU_ABORT;
+    if (qpRollbackFailed_) {
+        NIXL_ERROR << "GPUNETIO QP construction rollback failed; retaining dependent resources";
+        retainedQp_.release();
+        return;
+    }
     nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
     if (cuda_device.status() != cudaSuccess) {
         NIXL_ERROR << "Cannot select GPUNETIO engine device; retaining device resources";
@@ -632,7 +637,7 @@ nixlDocaEngine::~nixlDocaEngine() {
         qps_closed = retained_closed && qps_closed;
     }
     if (!qps_closed) {
-        NIXL_ERROR << "GPUNETIO QP unexport failed; retaining dependent resources";
+        NIXL_ERROR << "GPUNETIO QP teardown failed; retaining dependent resources";
         if (!retained_closed) {
             retainedQp_.release();
         }
@@ -933,7 +938,7 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     if (qpMap.find(remote_agent) != qpMap.end()) {
         return NIXL_IN_PROG;
     }
-    if (retainedQp_ != nullptr) {
+    if (retainedQp_ != nullptr || qpRollbackFailed_) {
         return NIXL_ERR_BACKEND;
     }
 
@@ -979,6 +984,12 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
             rdma_qp->writeProgrammed.resize(dataQpCount_, false);
         }
     }
+    catch (const nixl::doca::verbs::teardown_error &e) {
+        NIXL_ERROR << e.what();
+        qpRollbackFailed_ = true;
+        retainedQp_ = std::move(rdma_qp);
+        return NIXL_ERR_BACKEND;
+    }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
         if (!rdma_qp->closeDataQps()) {
@@ -999,6 +1010,12 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
                                                     RDMA_SEND_QUEUE_SIZE,
                                                     RDMA_RECV_QUEUE_SIZE,
                                                     DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB);
+    }
+    catch (const nixl::doca::verbs::teardown_error &e) {
+        NIXL_ERROR << e.what();
+        qpRollbackFailed_ = true;
+        retainedQp_ = std::move(rdma_qp);
+        return NIXL_ERR_BACKEND;
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
