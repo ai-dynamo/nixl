@@ -52,11 +52,8 @@ export NIXL_DEBUG_LOGGING=yes
 # Load the source dispatcher and the backend installed in the shared venv.
 export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta${PYTHONPATH:+:$PYTHONPATH}"
 
-# The --disable-ll-nvlink elastic tests need real GPU RDMA fabric: UCX must pair
-# each of the four ranks' GPUs with its own NIC over rc_gda (GPU-initiated RDMA).
-# Counting distinct rc_gda NICs is NIC-name agnostic, so it is correct on every
-# partition -- one CX-7 per GPU on GB200/GB300 passes (>=4 NICs), while a shared
-# front-end NIC or down fabric ports collapse to fewer NICs and skip.
+# Run the --disable-ll-nvlink (RDMA) elastic tests only when UCX pairs each of the
+# four ranks' GPUs with its own rc_gda NIC (NIC-name agnostic, correct on every partition).
 rdma_supported() {
     local ucx_info="${INSTALL_DIR}/bin/ucx_info" nics
     if [ ! -x "$ucx_info" ]; then
