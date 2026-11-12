@@ -14,6 +14,7 @@
 # limitations under the License.
 
 dl_dep = dependency('dl', required: true)
+absl_cleanup_dep = dependency('absl_cleanup')
 
 ucx_backend_includes = include_directories('.')
 
@@ -25,7 +26,6 @@ ucx_backend_sources = ['config.cpp',
                        'ucx_thread_pool_engine.cpp',
                        'ucx_sgl.cpp',
                        'ucx_enums.cpp',
-                       'ucx_plugin.cpp',
                        'ucx_proxy_engine.cpp',
                        'ucx_utils.cpp']
 
@@ -35,6 +35,7 @@ ucx_backend_dependencies = [nixl_common_dep,
                             nixl_infra,
                             serdes_interface,
                             dl_dep,
+                            absl_cleanup_dep,
                             thread_dep,
                             ucx_dep,
                             device_utils_interface,
@@ -43,16 +44,30 @@ ucx_backend_dependencies = [nixl_common_dep,
 ucx_backend_include_directories = [nixl_inc_dirs,
                                    utils_inc_dirs]
 
-if 'UCX' in static_plugins
-    ucx_backend_lib = static_library('UCX',
+ucx_impl_lib = static_library('ucx_impl',
                ucx_backend_sources,
+               dependencies: ucx_backend_dependencies,
+               include_directories: ucx_backend_include_directories,
+               pic: true,
+               install: false)
+
+ucx_impl_interface = declare_dependency(
+    link_with: ucx_impl_lib,
+    dependencies: ucx_backend_dependencies,
+    include_directories: ucx_backend_includes)
+
+if enabled_plugins.get('UCX') and 'UCX' in static_plugins
+    ucx_backend_lib = static_library('UCX',
+               'ucx_plugin.cpp',
+               link_whole: ucx_impl_lib,
                dependencies: ucx_backend_dependencies,
                include_directories: ucx_backend_include_directories,
                install: false,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
-else
+elif enabled_plugins.get('UCX')
     ucx_backend_lib = shared_library('UCX',
-               ucx_backend_sources,
+               'ucx_plugin.cpp',
+               link_whole: ucx_impl_lib,
                dependencies: ucx_backend_dependencies,
                include_directories: ucx_backend_include_directories,
                install: true,
@@ -70,4 +85,6 @@ else
     endif
 endif
 
-ucx_backend_interface = declare_dependency(link_with: ucx_backend_lib, include_directories: ucx_backend_includes)
+if enabled_plugins.get('UCX')
+    ucx_backend_interface = declare_dependency(link_with: ucx_backend_lib, include_directories: ucx_backend_includes)
+endif
