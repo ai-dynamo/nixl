@@ -86,7 +86,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS wheel_base
 FROM $wheel_base AS wheel
 ARG ARCH="x86_64"
 ARG BUILD_TYPE="release"
-ARG BUILD_NIXL_EP="true"
+ARG BUILD_NIXL_EP=""
 ARG UCX_SONAME_SUFFIX=""
 # ... builds NIXL and generates wheels
 ```
@@ -124,7 +124,7 @@ Users can build the complete image locally without specifying a target:
 This builds both stages from scratch without the `--wheel-base-image` override.
 
 #### Nightly Build
-The nightly job (`nixl-ci-build-wheel-nightly`) omits `--wheel-base-image`, so it runs the full two-stage build. It selects `--torch-versions` from its `CUDA_MAJOR` parameter (`13` default or `12`), since torch package availability differs between the two.
+The nightly job (`nixl-ci-build-wheel-nightly`) reuses a per-CUDA `wheel_base` image built by ci-demo (`--wheel-base-image`), so each cell runs only the `wheel` stage. It passes no `--torch-versions` or EP flag; `contrib/resolve-nixl-ep.sh` decides from the CUDA version.
 
 #### Optional: UCX spcx external plugin
 `build-container.sh --build-ucx-spcx-plugin` opt-in flag fetches the internal `ucx-spcx-plugin` source on the host into the build context, compiles it against the just-built UCX inside the Dockerfile, and installs it into the UCX plugins dir. It works with `contrib/Dockerfile.manylinux` (the wheel build, where `wheel_add_ucx_plugins.py` then bundles the plugin into the wheel like any other UCX module) and with the default `contrib/Dockerfile` (the container build, where the plugin is only installed into the image). It requires two environment variables — neither is hardcoded so the repo location and token stay out of the source and image layers:

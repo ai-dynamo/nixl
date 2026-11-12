@@ -329,7 +329,7 @@ show_build_options() {
     if [ "$BUILD_NIXL_EP" = "true" ]; then
         echo "NIXL EP: Enabled"
     elif [ -z "$BUILD_NIXL_EP" ]; then
-        echo "NIXL EP: CUDA 13 - Enabled, CUDA 12 - Disabled"
+        echo "NIXL EP: Dockerfile default (Dockerfile.manylinux: CUDA 13 - Enabled, CUDA 12 - Disabled)"
     else
         echo "NIXL EP: Disabled"
     fi
