@@ -38,8 +38,7 @@ enum nixl_telemetry_stat_status_t {
 
 class nixlRemoteSection;
 
-// Weak ref to the owning remote section: expires when that registration generation is
-// invalidated or replaced, which is the staleness signal for handles created against it.
+// Prepared descriptor lists do not own their remote registration.
 using nixl_remote_section_weak_t = std::weak_ptr<nixlRemoteSection>;
 
 // Contains pointers to corresponding backend engine and its handler, and populated
@@ -51,7 +50,7 @@ public:
                  const nixl_mem_t local_type,
                  const nixl_mem_t remote_type,
                  const size_t desc_count,
-                 const nixl_remote_section_weak_t &remote_section_ref,
+                 const std::shared_ptr<nixlRemoteSection> &remote_section_ref,
                  const nixl::trace::TraceContext &trace_context,
                  const std::uint64_t trace_request_id);
 
@@ -104,7 +103,8 @@ private:
     nixl_meta_dlist_t targetDescs;
 
     const std::string remoteAgent;
-    const nixl_remote_section_weak_t remoteSection;
+    // Backend handles may use the metadata until releaseReqH completes.
+    const std::shared_ptr<nixlRemoteSection> remoteSection;
     const nixl::trace::TraceContext traceContext_;
     nixl::trace::TraceContext tracePostContext_;
     bool traceRequestSpanIdUsed_ = false;
