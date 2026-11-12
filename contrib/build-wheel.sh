@@ -264,6 +264,9 @@ build_wheel() {
 
     echo "=== Provisioning ${VENV_PATH} (python ${PYTHON_VERSION}${VER:+, torch ${VER} [${CHANNEL}]}) ==="
     uv pip install --python "$VENV_PATH/bin/python" "${BUILD_DEPS[@]}"
+    # Toolchain evidence for the CI build manifest; never fatal.
+    mkdir -p build-info && uv pip list --python "$VENV_PATH/bin/python" --format json \
+        > "build-info/pip-py${PYTHON_VERSION}-torch${VER:-base}.json" || true
 
     # Activate so meson's `find_installation('python3')` resolves to this
     # venv's interpreter (which has the right torch).
