@@ -211,7 +211,7 @@ public:
 private:
     struct RemoteAgent {
         nixlTcpxoConnection info;
-        std::unique_ptr<HostConnection> conn{nullptr};
+        std::shared_ptr<HostConnection> conn{nullptr};
     };
 
     static std::vector<DxsOpParams>
@@ -316,7 +316,7 @@ private:
     HandleHostConnectionTask(HostConnectionTask task);
 
     void
-    HandleDxsConnectionEstablishTask(const std::string &remote_name);
+    HandleDxsConnectionEstablishTask(const DxsConnectionEstablishTask &task);
 
     Worker &
     GetLeastBusyWorker();
@@ -385,7 +385,7 @@ nixlTcpxoEngine::EnsureHostConnectionAndRun(const std::string &remote_agent, Fun
     }
 
     if (it->second.conn) {
-        return func(*it->second.conn);
+        return func(it->second.conn);
     }
 
     // Store EndpointConnection info in HostConnection
@@ -404,18 +404,22 @@ nixlTcpxoEngine::EnsureHostConnectionAndRun(const std::string &remote_agent, Fun
                                 .Connect(addr, localAgent, *std::move(endpoint_listen_infos));
     ASSIGN_OR_RETURN_NIXL(auto handle, handle_or_status);
     NIXL_DEBUG << "Connected to agent: " << remote_agent << " within " << __func__;
-    it->second.conn = std::make_unique<HostConnection>(
+    auto weak_holder = std::make_shared<std::weak_ptr<HostConnection>>();
+    auto conn = std::make_shared<HostConnection>(
         remote_agent,
         handle,
         const_cast<ControlChannel &>(control_channel_),
         std::move(connection_map),
         params_,
         const_cast<MPMCQueue<std::pair<std::string, std::string>> &>(pending_notifs_),
-        absl::bind_front(&nixlTcpxoEngine::HandleHostConnectionTask,
-                         const_cast<nixlTcpxoEngine *>(this),
-                         HostConnectionTask{DxsConnectionEstablishTask{remote_agent}}));
+        [engine = const_cast<nixlTcpxoEngine *>(this), remote_agent, weak_holder]() {
+            engine->HandleHostConnectionTask(
+                HostConnectionTask{DxsConnectionEstablishTask{remote_agent, *weak_holder}});
+        });
+    *weak_holder = conn;
+    it->second.conn = std::move(conn);
 
-    return func(*it->second.conn);
+    return func(it->second.conn);
 }
 
 } // namespace tcpxo

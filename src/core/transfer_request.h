@@ -50,7 +50,7 @@ public:
                  const nixl_mem_t local_type,
                  const nixl_mem_t remote_type,
                  const size_t desc_count,
-                 const std::shared_ptr<nixlRemoteSection> &remote_section_ref,
+                 std::shared_ptr<nixlRemoteSection> remote_section_ref,
                  const nixl::trace::TraceContext &trace_context,
                  const std::uint64_t trace_request_id);
 
@@ -63,7 +63,8 @@ public:
     operator=(const nixlXferReqH &) = delete;
 
     ~nixlXferReqH() {
-        if ((backendHandle != nullptr) && (engine != nullptr)) {
+        if ((backendHandle != nullptr) && (engine != nullptr) &&
+            (!remoteSection || remoteSection->enginesAlive())) {
             engine->releaseReqH(backendHandle);
         }
     }
@@ -99,12 +100,12 @@ private:
     nixlBackendEngine *engine = nullptr;
     nixlBackendReqH *backendHandle = nullptr;
 
-    nixl_meta_dlist_t initiatorDescs;
-    nixl_meta_dlist_t targetDescs;
-
     const std::string remoteAgent;
     // Backend handles may use the metadata until releaseReqH completes.
     const std::shared_ptr<nixlRemoteSection> remoteSection;
+
+    nixl_meta_dlist_t initiatorDescs;
+    nixl_meta_dlist_t targetDescs;
     const nixl::trace::TraceContext traceContext_;
     nixl::trace::TraceContext tracePostContext_;
     bool traceRequestSpanIdUsed_ = false;

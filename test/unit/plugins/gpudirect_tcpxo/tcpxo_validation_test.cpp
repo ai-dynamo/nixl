@@ -99,7 +99,7 @@ protected:
         engine_->remote_agents_[remote_agent].info = conn_info;
         fake_channel_ = test::MakeControlChannel();
         engine_->remote_agents_[remote_agent].conn =
-            std::make_unique<HostConnection>(remote_agent,
+            std::make_shared<HostConnection>(remote_agent,
                                              static_cast<PeerHandle>(1),
                                              *fake_channel_,
                                              std::move(fake_connection_map_),
@@ -266,6 +266,38 @@ TEST_F(TcpxoValidationTest, PrepXferCalculatesCorrectParams) {
               expected_op_params.endpoint_pair.remote_fastrak_idx);
 
     engine_->releaseReqH(handle);
+}
+
+TEST_F(TcpxoValidationTest, DisconnectRetainsHandleAndConnectionUntilRelease) {
+    ConnectFakeAgent("RemoteAgent");
+
+    nixlMetaDesc local_desc(0x1000, 100, 0);
+    nixlMetaDesc remote_desc(0x2000, 100, 0);
+    InjectFakeMemoryRegion(local_desc, 1);
+    auto remote_mem_md =
+        std::make_unique<nixlTcpxoMemoryMetadata>(2, reinterpret_cast<void *>(0x2000), 100, -1, 0);
+    remote_desc.metadataP = remote_mem_md.get();
+
+    nixl_meta_dlist_t local_dlist(VRAM_SEG);
+    nixl_meta_dlist_t remote_dlist(VRAM_SEG);
+    local_dlist.addDesc(local_desc);
+    remote_dlist.addDesc(remote_desc);
+
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(engine_->prepXfer(NIXL_READ, local_dlist, remote_dlist, "RemoteAgent", handle),
+              NIXL_SUCCESS);
+    ASSERT_NE(handle, nullptr);
+    ASSERT_EQ(engine_->postXfer(NIXL_READ, local_dlist, remote_dlist, "RemoteAgent", handle),
+              NIXL_IN_PROG);
+    ASSERT_EQ(engine_->disconnect("RemoteAgent"), NIXL_SUCCESS);
+
+    // Reconnect a new HostConnection under the same remote agent name while the old handle lives.
+    ConnectFakeAgent("RemoteAgent");
+
+    EXPECT_EQ(engine_->checkXfer(handle), NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_EQ(engine_->postXfer(NIXL_READ, local_dlist, remote_dlist, "RemoteAgent", handle),
+              NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
 }
 
 } // namespace tcpxo

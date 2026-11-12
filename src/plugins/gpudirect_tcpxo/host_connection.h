@@ -336,7 +336,8 @@ public:
     nixlTcpxoInitiatorReqH(const nixl_xfer_op_t op_type,
                            HostConnection &connection,
                            std::vector<DxsOpParams> dxs_op_params_list,
-                           std::optional<std::string> notification = std::nullopt);
+                           std::optional<std::string> notification = std::nullopt,
+                           std::shared_ptr<HostConnection> conn_owner = nullptr);
 
     ~nixlTcpxoInitiatorReqH() override = default;
 
@@ -357,6 +358,7 @@ public:
     }
 
 private:
+    std::shared_ptr<HostConnection> conn_owner_;
     bool xfer_msg_sent_{false};
 };
 
@@ -416,14 +418,23 @@ public:
     absl::Status
     PrepXfer(const nixl_xfer_op_t &operation,
              std::vector<DxsOpParams> xfer_ops,
-             nixlTcpxoInitiatorReqH *&handle,
-             std::optional<std::string> notification = std::nullopt);
+             std::unique_ptr<nixlTcpxoInitiatorReqH> &handle,
+             std::optional<std::string> notification = std::nullopt,
+             std::shared_ptr<HostConnection> self_owner = nullptr);
     absl::Status
     PostXfer(nixlTcpxoInitiatorReqH &handle);
     nixl_status_t
     CheckXfer(nixlTcpxoInitiatorReqH &handle);
     nixl_status_t
     ReleaseReqH(nixlTcpxoInitiatorReqH &handle);
+
+    void
+    MarkDisconnected();
+
+    [[nodiscard]] bool
+    IsDisconnected() const noexcept {
+        return disconnected_.load(std::memory_order_acquire);
+    }
 
     absl::Status
     HandleRemoteXferOps(nixl_xfer_op_t op_type,
@@ -572,9 +583,10 @@ private:
      * If no endpoints are present, then there's no in-progress connection attempt.
      */
     DxsConnectionState dxs_state_;
+    std::atomic<bool> disconnected_{false};
 
     absl::Mutex request_map_mutex_;
-    absl::flat_hash_map<RequestId, std::unique_ptr<nixlTcpxoInitiatorReqH>>
+    absl::flat_hash_map<RequestId, nixlTcpxoInitiatorReqH *>
         request_map_ ABSL_GUARDED_BY(request_map_mutex_);
     std::vector<nixlTcpxoInitiatorReqH * absl_nonnull> pending_xfers_;
     std::vector<std::unique_ptr<nixlTcpxoTargetReqH>> pending_remote_xfers_;

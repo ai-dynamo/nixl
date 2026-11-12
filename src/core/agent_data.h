@@ -55,9 +55,6 @@ class nixlAgentData final : public nixlMetadataContext {
         backend_list_t                         notifEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
-        // Bookkeeping from memory view handles to backend engines
-        std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
-
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
             remoteBackends_;
 
@@ -72,17 +69,18 @@ class nixlAgentData final : public nixlMetadataContext {
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
         backend_map_t backendEngines_;
-        // Discoverable registrations; transfer requests can retain retired generations.
+        // Discoverable registrations; transfer requests and remote memory views can retain
+        // retired generations, tracked weakly in retiredRemoteSections_ so ~nixlAgentData
+        // unloads backend metadata before backendEngines_ is destroyed.
         std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
+        std::vector<std::weak_ptr<nixlRemoteSection>> retiredRemoteSections_;
+        struct memViewEntry {
+            nixlBackendEngine &engine;
+            std::vector<std::shared_ptr<nixlRemoteSection>> remoteSections;
+        };
+        // Bookkeeping from memory view handles to backend engines and retained sections
+        std::unordered_map<nixlMemViewH, memViewEntry> mvhToEngine;
         nixlLocalSection localSection_;
-
-        // Caller holds lock. Lifetime alone does not make a registration current.
-        [[nodiscard]] bool
-        isRemoteSectionValid(const std::string &remote_agent,
-                             const std::shared_ptr<nixlRemoteSection> &section) const {
-            const auto it = remoteSections_.find(remote_agent);
-            return it != remoteSections_.end() && it->second == section;
-        }
 
         // nixlMetadataContext impl; private as before (backends call via the interface).
         [[nodiscard]] nixl_status_t

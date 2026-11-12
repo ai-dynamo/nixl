@@ -1585,14 +1585,15 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     // TODO: connection setup should move to connect
     nixlDocaConnection conn;
     auto md = std::make_unique<nixlDocaPublicMetadata>();
-    auto search = remoteConnMap.find(remote_agent);
-
-    if (search == remoteConnMap.end()) {
-        NIXL_ERROR << "err: remote connection not found remote_agent " << remote_agent;
-        return NIXL_ERR_NOT_FOUND;
+    {
+        std::lock_guard<std::mutex> lock(remoteConnLock);
+        auto search = remoteConnMap.find(remote_agent);
+        if (search == remoteConnMap.end()) {
+            NIXL_ERROR << "err: remote connection not found remote_agent " << remote_agent;
+            return NIXL_ERR_NOT_FOUND;
+        }
+        conn = (nixlDocaConnection)search->second;
     }
-
-    conn = (nixlDocaConnection)search->second;
 
     // directly copy underlying conn struct
     md->conn = conn;

@@ -100,17 +100,8 @@ nixlUcclEngine::~nixlUcclEngine() {
     }
     {
         std::lock_guard<std::mutex> lock(conn_mutex_);
-        std::set<std::string> destroyed_agents;
-        for (auto &[agent_name, conn_id] : connected_agents_) {
-            if (destroyed_agents.find(agent_name) == destroyed_agents.end()) {
-                uccl_conn_t *conn = reinterpret_cast<uccl_conn_t *>(conn_id);
-                if (conn) {
-                    uccl_engine_conn_destroy(conn);
-                    destroyed_agents.insert(agent_name);
-                }
-            }
-        }
         connected_agents_.clear();
+        accepted_conns_.clear();
     }
 
     if (engine_) {
@@ -142,7 +133,7 @@ nixlUcclEngine::startListener() {
         NIXL_DEBUG << "Connected to remote agent: " << ip_buf;
         {
             std::lock_guard<std::mutex> lock(conn_mutex_);
-            connected_agents_[ip_buf] = reinterpret_cast<uint64_t>(conn);
+            accepted_conns_.emplace_back(conn, uccl_engine_conn_destroy);
         }
     }
 }
@@ -231,7 +222,7 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
     // Start the listener thread for notifications
     uccl_engine_start_listener(conn);
 
-    connected_agents_[remote_agent] = reinterpret_cast<uint64_t>(conn);
+    connected_agents_[remote_agent] = uccl_connection_ptr_t(conn, uccl_engine_conn_destroy);
 
     return NIXL_SUCCESS;
 }
@@ -290,7 +281,7 @@ nixlUcclEngine::prepareLocalConn() const {
     {
         std::lock_guard<std::mutex> lock(conn_mutex_);
         NIXL_DEBUG << "Same-process local connection established for agent " << agent_name;
-        connected_agents_[agent_name] = reinterpret_cast<uint64_t>(conn);
+        connected_agents_[agent_name] = uccl_connection_ptr_t(conn, uccl_engine_conn_destroy);
         pending_local_agent_.clear();
     }
     return NIXL_SUCCESS;
@@ -304,17 +295,14 @@ nixlUcclEngine::disconnect(const std::string &remote_agent) {
         NIXL_ERROR << "No connection found for remote agent: " << remote_agent;
         return NIXL_ERR_BACKEND;
     }
-    uccl_conn_t *conn = reinterpret_cast<uccl_conn_t *>(conn_iter->second);
-    if (!conn) {
+    if (!conn_iter->second) {
         NIXL_ERROR << "Invalid connection for remote agent: " << remote_agent;
         return NIXL_ERR_BACKEND;
     }
 
-    if (conn) {
-        NIXL_DEBUG << "Disconnecting from agent: " << remote_agent;
-        uccl_engine_conn_destroy(conn);
-        connected_agents_.erase(remote_agent);
-    }
+    NIXL_DEBUG << "Disconnecting from agent: " << remote_agent;
+    // Existing transfer handles retain their connection until released.
+    connected_agents_.erase(conn_iter);
 
     return NIXL_SUCCESS;
 }
@@ -493,7 +481,7 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     NIXL_DEBUG << "UCCL PrepXfer: " << operation << " remote_agent: " << remote_agent;
 
-    uccl_conn_t *conn = nullptr;
+    uccl_connection_ptr_t conn;
     {
         std::lock_guard<std::mutex> lock(conn_mutex_);
         // Get the connection for this remote agent
@@ -502,7 +490,7 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
             NIXL_ERROR << "No connection found for remote agent: " << remote_agent;
             return NIXL_ERR_BACKEND;
         }
-        conn = reinterpret_cast<uccl_conn_t *>(conn_iter->second);
+        conn = conn_iter->second;
         if (!conn) {
             NIXL_ERROR << "Invalid connection for remote agent: " << remote_agent;
             return NIXL_ERR_BACKEND;
@@ -517,13 +505,12 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    handle = new nixlUcclReqH(conn);
-    nixlUcclReqH *uccl_handle = static_cast<nixlUcclReqH *>(handle);
+    auto uccl_handle = std::make_unique<nixlUcclReqH>(std::move(conn));
 
     uccl_handle->fifo_items.resize(lcnt);
 
     // Check if this is a local connection (same-process or cross-process on same node)
-    bool is_local_conn = uccl_engine_conn_is_local(conn);
+    bool is_local_conn = uccl_engine_conn_is_local(uccl_handle->conn.get());
     bool is_same_process = (remote_agent == local_agent_name_);
 
     if (is_local_conn) {
@@ -566,6 +553,7 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         }
     }
 
+    handle = uccl_handle.release();
     return NIXL_SUCCESS;
 }
 
@@ -581,22 +569,29 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
 
     NIXL_DEBUG << "UCCL PostXfer: " << operation << " remote_agent: " << remote_agent;
 
-    uccl_conn_t *conn = nullptr;
+    if (!handle) {
+        NIXL_ERROR << "Transfer handle is null in postXfer";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    uccl_handle = static_cast<nixlUcclReqH *>(handle);
+
+    uccl_connection_ptr_t conn_owner;
     {
         std::lock_guard<std::mutex> lock(conn_mutex_);
-        // Get the connection for this remote agent
+        // Verify the remote agent is still connected to this handle's connection
         auto conn_iter = connected_agents_.find(remote_agent);
-        if (conn_iter == connected_agents_.end()) {
+        if (conn_iter == connected_agents_.end() || !conn_iter->second) {
             NIXL_ERROR << "No connection found for remote agent: " << remote_agent;
-            return NIXL_ERR_BACKEND;
+            return NIXL_ERR_REMOTE_DISCONNECT;
         }
-
-        conn = reinterpret_cast<uccl_conn_t *>(conn_iter->second);
-        if (!conn) {
-            NIXL_ERROR << "Invalid connection for remote agent: " << remote_agent;
-            return NIXL_ERR_BACKEND;
+        if (conn_iter->second != uccl_handle->conn) {
+            NIXL_ERROR << "Connection for remote agent " << remote_agent
+                       << " changed since handle preparation";
+            return NIXL_ERR_REMOTE_DISCONNECT;
         }
+        conn_owner = conn_iter->second;
     }
+    uccl_conn_t *conn = conn_owner.get();
 
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
@@ -640,7 +635,6 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     // Perform a vector read/write operation
     int result = 0;
     uint64_t transfer_id = 0;
-    uccl_handle = static_cast<nixlUcclReqH *>(handle);
 
     // Build optional IPC info pointers for cross-process local transfers
     std::vector<char *> ipc_ptrs;
@@ -673,10 +667,8 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    if (!handle) {
-        handle = new nixlUcclReqH(conn);
-    }
     uccl_handle->transfer_id = transfer_id;
+    uccl_handle->in_progress = true;
 
     NIXL_DEBUG << "Successfully posted vector " << (operation == NIXL_READ ? "READ" : "WRITE")
                << " operation with " << lcnt << " iovecs, transfer_id: " << transfer_id;
@@ -703,7 +695,7 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    uccl_conn_t *conn = uccl_handle->conn;
+    uccl_conn_t *conn = uccl_handle->conn.get();
     if (!conn) {
         NIXL_ERROR << "No connection found in handle";
         return NIXL_ERR_BACKEND;
@@ -711,6 +703,7 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
 
     bool is_done = uccl_engine_xfer_status(conn, uccl_handle->transfer_id);
     if (is_done) {
+        uccl_handle->in_progress = false;
         if (!uccl_handle->notif_msg) {
             return NIXL_SUCCESS;
         }
@@ -728,6 +721,7 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
             return NIXL_ERR_BACKEND;
         }
         NIXL_DEBUG << "Transfer complete, sent notification: " << *uccl_handle->notif_msg;
+        uccl_handle->notif_msg.reset();
         return NIXL_SUCCESS;
     }
 
@@ -741,9 +735,18 @@ nixlUcclEngine::releaseReqH(nixlBackendReqH *handle) const {
     }
 
     nixlUcclReqH *uccl_handle = dynamic_cast<nixlUcclReqH *>(handle);
-    if (uccl_handle) {
-        delete uccl_handle;
+    if (!uccl_handle) {
+        return NIXL_ERR_INVALID_PARAM;
     }
+
+    if (uccl_handle->in_progress && uccl_handle->conn) {
+        if (!uccl_engine_xfer_status(uccl_handle->conn.get(), uccl_handle->transfer_id)) {
+            return NIXL_ERR_REPOST_ACTIVE;
+        }
+        uccl_handle->in_progress = false;
+    }
+
+    delete uccl_handle;
 
     return NIXL_SUCCESS;
 }
@@ -775,7 +778,7 @@ nixlUcclEngine::genNotif(const std::string &remote_agent, const std::string &msg
         return NIXL_ERR_BACKEND;
     }
 
-    uccl_conn_t *conn = reinterpret_cast<uccl_conn_t *>(conn_iter->second);
+    uccl_conn_t *conn = conn_iter->second.get();
     if (!conn) {
         NIXL_ERROR << "Invalid connection for remote agent: " << remote_agent;
         return NIXL_ERR_BACKEND;

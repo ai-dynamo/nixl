@@ -39,12 +39,18 @@ struct nixlLibfabricConnection : public nixlBackendConnMD {
     nixl_status_t
     disconnect();
 
+    [[nodiscard]] bool
+    isRetired() const noexcept {
+        return retired_.load(std::memory_order_acquire);
+    }
+
     size_t agent_index_; // Unique agent identifier in agent_names vector
     std::string remoteAgent_; // Remote agent name
     std::unordered_map<size_t, std::vector<fi_addr_t>>
         rail_remote_addr_list_; // Rail libfabric addresses. key=rail id.
     std::vector<char *> src_ep_names_; // Rail endpoint names
     std::atomic<ConnectionState> overall_state_; // Current connection state
+    std::atomic<bool> retired_{false}; // Set permanently by disconnect()
 
     // Set once the peer holds our endpoints in its AV, so it can attribute our traffic.
     // establishConnection() blocks on handshake_cv_ until this or handshake_rejected_ is set.

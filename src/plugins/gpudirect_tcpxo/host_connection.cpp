@@ -119,8 +119,10 @@ nixlTcpxoBackendReqH::nixlTcpxoBackendReqH(const nixl_xfer_op_t op_type,
 nixlTcpxoInitiatorReqH::nixlTcpxoInitiatorReqH(const nixl_xfer_op_t op_type,
                                                HostConnection &connection,
                                                std::vector<DxsOpParams> dxs_op_params_list,
-                                               std::optional<std::string> notification)
-    : nixlTcpxoBackendReqH(op_type, connection, {}, std::move(notification)) {
+                                               std::optional<std::string> notification,
+                                               std::shared_ptr<HostConnection> conn_owner)
+    : nixlTcpxoBackendReqH(op_type, connection, {}, std::move(notification)),
+      conn_owner_(std::move(conn_owner)) {
     ops_.reserve(dxs_op_params_list.size());
     for (auto &op : dxs_op_params_list) {
         ops_.emplace_back(op_type, nullptr, std::move(op), 0);
@@ -231,9 +233,19 @@ nixlTcpxoBackendReqH::checkXfer() {
 }
 
 HostConnection::~HostConnection() {
-
     absl::MutexLock lock(request_map_mutex_);
+    pending_xfers_.clear();
     request_map_.clear();
+}
+
+void
+HostConnection::MarkDisconnected() {
+    absl::MutexLock lock(request_map_mutex_);
+    disconnected_.store(true, std::memory_order_release);
+    for (auto *handle : pending_xfers_) {
+        handle->MarkXferInactive(NIXL_ERR_REMOTE_DISCONNECT);
+    }
+    pending_xfers_.clear();
 }
 
 absl::Status
@@ -247,13 +259,19 @@ HostConnection::SendNotification(const std::string &msg) {
 absl::Status
 HostConnection::PrepXfer(const nixl_xfer_op_t &operation,
                          std::vector<DxsOpParams> dxs_op_params_list,
-                         nixlTcpxoInitiatorReqH *&handle,
-                         std::optional<std::string> notification) {
-    auto request_handle = std::make_unique<nixlTcpxoInitiatorReqH>(
-        operation, *this, std::move(dxs_op_params_list), std::move(notification));
-    handle = request_handle.get();
-    absl::MutexLock lock(request_map_mutex_);
-    request_map_.emplace(handle->id(), std::move(request_handle));
+                         std::unique_ptr<nixlTcpxoInitiatorReqH> &handle,
+                         std::optional<std::string> notification,
+                         std::shared_ptr<HostConnection> self_owner) {
+    auto request_handle = std::make_unique<nixlTcpxoInitiatorReqH>(operation,
+                                                                   *this,
+                                                                   std::move(dxs_op_params_list),
+                                                                   std::move(notification),
+                                                                   std::move(self_owner));
+    {
+        absl::MutexLock lock(request_map_mutex_);
+        request_map_.emplace(request_handle->id(), request_handle.get());
+    }
+    handle = std::move(request_handle);
     return absl::OkStatus();
 }
 
@@ -315,6 +333,9 @@ HostConnection::PostXfer(nixlTcpxoInitiatorReqH &handle) {
     NIXL_DEBUG << "HostConnection::PostXfer called for handle " << handle.id() << " to remote "
                << remote_name_;
     absl::MutexLock lock(request_map_mutex_);
+    if (disconnected_.load(std::memory_order_acquire)) {
+        return absl::UnavailableError("Host connection is disconnected");
+    }
     if (request_map_.find(handle.id()) == request_map_.end()) {
         return absl::NotFoundError("postXfer requested with unknown handle");
     }
@@ -372,12 +393,26 @@ HostConnection::CheckXfer(nixlTcpxoInitiatorReqH &handle) {
     if (request_map_.find(handle.id()) == request_map_.end()) {
         return NIXL_ERR_BACKEND;
     }
-    return handle.checkXfer();
+    const nixl_status_t status = handle.checkXfer();
+    if (status == NIXL_IN_PROG && disconnected_.load(std::memory_order_acquire)) {
+        handle.MarkXferInactive(NIXL_ERR_REMOTE_DISCONNECT);
+        return NIXL_ERR_REMOTE_DISCONNECT;
+    }
+    return status;
 }
 
 nixl_status_t
 HostConnection::ReleaseReqH(nixlTcpxoInitiatorReqH &handle) {
     absl::MutexLock lock(request_map_mutex_);
+    if (handle.post_active()) {
+        const nixl_status_t status = handle.checkXfer();
+        if (status == NIXL_IN_PROG && !disconnected_.load(std::memory_order_acquire)) {
+            return NIXL_ERR_REPOST_ACTIVE;
+        }
+        if (status == NIXL_IN_PROG) {
+            handle.MarkXferInactive(NIXL_ERR_REMOTE_DISCONNECT);
+        }
+    }
     std::erase(pending_xfers_, &handle);
     request_map_.erase(handle.id());
     return NIXL_SUCCESS;
@@ -689,7 +724,7 @@ HostConnection::ProgressDxsConnectionState(absl::Duration dxs_connect_timeout_ms
 
     NIXL_DEBUG << "Progressing DXS Connection State...";
 
-    while (dxs_state_.endpoints_to_connect.size() > 0) {
+    while (!IsDisconnected() && dxs_state_.endpoints_to_connect.size() > 0) {
 
         NIXL_DEBUG << "Dxs Endpoints to Connect/Accept: " << dxs_state_.endpoints_to_connect.size();
 

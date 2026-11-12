@@ -267,8 +267,8 @@ nixlTcpxoEngine::LoadRemoteConnInfoUnlocked(const std::string &remote_agent,
 
 nixl_status_t
 nixlTcpxoEngine::connect(const std::string &remote_agent) {
-    return EnsureHostConnectionAndRun(remote_agent,
-                                      [](HostConnection &conn) { return NIXL_SUCCESS; });
+    return EnsureHostConnectionAndRun(
+        remote_agent, [](const std::shared_ptr<HostConnection> &) { return NIXL_SUCCESS; });
 }
 
 nixl_status_t
@@ -276,18 +276,21 @@ nixlTcpxoEngine::disconnect(const std::string &remote_agent) {
     absl::MutexLock lock(remote_agents_mutex_);
 
     auto it = remote_agents_.find(remote_agent);
-    if (it == remote_agents_.end() || !it->second.conn) {
+    if (it == remote_agents_.end()) {
         return NIXL_SUCCESS;
     }
 
-    if (const auto status = control_channel_.Disconnect(it->second.conn->remote_handle());
-        !status.ok()) {
-        NIXL_WARN << "Failed to disconnect from peer: "
-                  << it->second.info.peer_control_channel_addr_ << ". Cause: " << status;
+    if (it->second.conn) {
+        if (const auto status = control_channel_.Disconnect(it->second.conn->remote_handle());
+            !status.ok()) {
+            NIXL_WARN << "Failed to disconnect from peer: "
+                      << it->second.info.peer_control_channel_addr_ << ". Cause: " << status;
+        }
+        it->second.conn->MarkDisconnected();
+        it->second.conn.reset();
     }
 
-    it->second.conn.reset();
-
+    remote_agents_.erase(it);
     return NIXL_SUCCESS;
 }
 
@@ -522,13 +525,13 @@ nixlTcpxoEngine::prepXfer(const nixl_xfer_op_t &operation,
         notification = opt_args->notifMsg;
     }
 
-    nixlTcpxoInitiatorReqH *request_handle = nullptr;
+    std::unique_ptr<nixlTcpxoInitiatorReqH> request_handle;
     nixl_status_t connection_status = EnsureHostConnectionAndRun(
         remote_agent,
         [operation, &dxs_op_params_list, &request_handle, &notification](
-            HostConnection &connection) {
-            auto status = connection.PrepXfer(
-                operation, std::move(dxs_op_params_list), request_handle, notification);
+            const std::shared_ptr<HostConnection> &connection) {
+            auto status = connection->PrepXfer(
+                operation, std::move(dxs_op_params_list), request_handle, notification, connection);
             return status.ok() ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
         });
 
@@ -536,7 +539,7 @@ nixlTcpxoEngine::prepXfer(const nixl_xfer_op_t &operation,
         return connection_status;
     }
 
-    handle = static_cast<nixlBackendReqH *>(request_handle);
+    handle = static_cast<nixlBackendReqH *>(request_handle.release());
     return NIXL_SUCCESS;
 }
 
@@ -562,30 +565,38 @@ nixlTcpxoEngine::postXfer(const nixl_xfer_op_t &operation,
     }
     absl::MutexLock lock(remote_agents_mutex_);
     ASSIGN_OR_RETURN_NIXL(HostConnection * connection, LookupHostConnectionUnlocked(remote_agent));
+    if (connection != &request_handle->connection()) {
+        return NIXL_ERR_REMOTE_DISCONNECT;
+    }
     RETURN_IF_ERROR_NIXL(connection->PostXfer(*request_handle));
     return NIXL_IN_PROG;
 }
 
 nixl_status_t
 nixlTcpxoEngine::checkXfer(nixlBackendReqH *handle) const {
+    if (!handle) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     auto *request_handle = static_cast<nixlTcpxoInitiatorReqH *>(handle);
-    HostConnection &connection_cache = request_handle->connection();
     absl::MutexLock lock(remote_agents_mutex_);
-    ASSIGN_OR_RETURN_NIXL(HostConnection * connection,
-                          LookupHostConnectionUnlocked(connection_cache.remote_name()));
-
-    return connection->CheckXfer(*request_handle);
+    return request_handle->connection().CheckXfer(*request_handle);
 }
 
 nixl_status_t
 nixlTcpxoEngine::releaseReqH(nixlBackendReqH *handle) const {
+    if (!handle) {
+        return NIXL_SUCCESS;
+    }
     auto *request_handle = static_cast<nixlTcpxoInitiatorReqH *>(handle);
-    HostConnection &connection_cache = request_handle->connection();
-    absl::MutexLock lock(remote_agents_mutex_);
-    ASSIGN_OR_RETURN_NIXL(HostConnection * connection,
-                          LookupHostConnectionUnlocked(connection_cache.remote_name()));
-
-    return connection->ReleaseReqH(*request_handle);
+    {
+        absl::MutexLock lock(remote_agents_mutex_);
+        const nixl_status_t status = request_handle->connection().ReleaseReqH(*request_handle);
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
+    }
+    delete request_handle;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -604,10 +615,11 @@ nixl_status_t
 nixlTcpxoEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
     NIXL_DEBUG << "Sending notification to: " << remote_agent;
 
-    return EnsureHostConnectionAndRun(remote_agent, [&msg](HostConnection &conn) {
-        RETURN_IF_ERROR_NIXL(conn.SendNotification(msg));
-        return NIXL_SUCCESS;
-    });
+    return EnsureHostConnectionAndRun(remote_agent,
+                                      [&msg](const std::shared_ptr<HostConnection> &conn) {
+                                          RETURN_IF_ERROR_NIXL(conn->SendNotification(msg));
+                                          return NIXL_SUCCESS;
+                                      });
 }
 
 void
@@ -666,16 +678,20 @@ nixlTcpxoEngine::HandleConnectionEventUnlocked(
         NIXL_DEBUG << "Sent DXS address exchange to agent: " << remote_agent << " within "
                    << __func__;
 
-        state.conn = std::make_unique<HostConnection>(
+        auto weak_holder = std::make_shared<std::weak_ptr<HostConnection>>();
+        auto conn = std::make_shared<HostConnection>(
             remote_agent,
             handle,
             control_channel_,
             std::move(connection_map),
             params_,
             pending_notifs_,
-            absl::bind_front(&nixlTcpxoEngine::HandleHostConnectionTask,
-                             this,
-                             HostConnectionTask{DxsConnectionEstablishTask{remote_agent}}));
+            [this, remote_agent, weak_holder]() {
+                HandleHostConnectionTask(
+                    HostConnectionTask{DxsConnectionEstablishTask{remote_agent, *weak_holder}});
+            });
+        *weak_holder = conn;
+        state.conn = std::move(conn);
 
         const auto status = state.conn->ParseRemoteListenMap(dxs_addr_exchange_msg);
         if (!status.ok()) {
@@ -716,6 +732,7 @@ nixlTcpxoEngine::HandleDisconnectionEvent(PeerHandle handle,
             if (state.conn && state.conn->remote_handle() == handle) {
                 NIXL_DEBUG << "Remote " << service_addr << " with handle " << handle
                            << " disconnected";
+                state.conn->MarkDisconnected();
                 state.conn.reset();
                 return;
             }
@@ -851,11 +868,12 @@ nixlTcpxoEngine::HandleHostConnectionTask(HostConnectionTask task) {
 }
 
 void
-nixlTcpxoEngine::HandleDxsConnectionEstablishTask(const std::string &remote_name) {
+nixlTcpxoEngine::HandleDxsConnectionEstablishTask(const DxsConnectionEstablishTask &task) {
     absl::MutexLock lock(remote_agents_mutex_);
-    auto it = remote_agents_.find(remote_name);
-    if (it != remote_agents_.end() && it->second.conn) {
-        it->second.conn->ProgressDxsConnectionState(
+    auto conn = task.conn.lock();
+    auto it = remote_agents_.find(task.remote_name);
+    if (conn && !conn->IsDisconnected() && it != remote_agents_.end() && it->second.conn == conn) {
+        conn->ProgressDxsConnectionState(
             absl::Milliseconds(params_.fastrak_plugin_connect_timeout_ms.value),
             absl::Milliseconds(params_.fastrak_plugin_accept_timeout_ms.value));
     }

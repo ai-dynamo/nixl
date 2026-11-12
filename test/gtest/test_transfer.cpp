@@ -752,6 +752,80 @@ TEST_P(TestTransfer, SelfNotification) {
             getAgent(0), getAgentName(0), getAgent(0), getAgentName(0), repeat, num_threads);
 }
 
+TEST_P(TestTransfer, DrainAfterInvalidation) {
+    constexpr size_t size = 64 * 1024;
+    constexpr size_t count = 32;
+    constexpr nixl_mem_t mem_type = DRAM_SEG;
+    constexpr uint32_t seed = 0x5a3c;
+
+    std::vector<MemBuffer> local_buffers, remote_buffers;
+    createRegisteredMem(getAgent(0), size, count, mem_type, local_buffers);
+    createRegisteredMem(getAgent(1), size, count, mem_type, remote_buffers);
+    fillPayloads(remote_buffers, seed);
+    fillPayloads(local_buffers, 0);
+    exchangeMD(0, 1);
+
+    nixlXferReqH *req = nullptr;
+    ASSERT_EQ(NIXL_SUCCESS,
+              getAgent(0).createXferReq(NIXL_READ,
+                                        makeDescList<nixlBasicDesc>(local_buffers, mem_type),
+                                        makeDescList<nixlBasicDesc>(remote_buffers, mem_type),
+                                        getAgentName(1),
+                                        req));
+    nixl_status_t status = getAgent(0).postXferReq(req);
+    ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+
+    ASSERT_EQ(NIXL_SUCCESS, getAgent(0).invalidateRemoteMD(getAgentName(1)));
+    ASSERT_TRUE(wait_until_true([&]() {
+        if (status == NIXL_IN_PROG) {
+            status = getAgent(0).getXferStatus(req);
+            if (!isProgressThreadEnabled()) {
+                nixl_notifs_t notifs;
+                getAgent(1).getNotifs(notifs);
+            }
+        }
+        return status != NIXL_IN_PROG;
+    }));
+    ASSERT_EQ(NIXL_SUCCESS, status);
+    checkPayloads(local_buffers, seed);
+
+    // Reloading the peer must not allow reposting the stale request handle.
+    exchangeMD(0, 1);
+    {
+        const LogIgnoreGuard lig("invalidated or re-registered after");
+        EXPECT_EQ(NIXL_ERR_NOT_FOUND, getAgent(0).postXferReq(req));
+    }
+    EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
+
+    // A fresh request against the reloaded registration succeeds.
+    fillPayloads(local_buffers, 0);
+    ASSERT_EQ(NIXL_SUCCESS,
+              getAgent(0).createXferReq(NIXL_READ,
+                                        makeDescList<nixlBasicDesc>(local_buffers, mem_type),
+                                        makeDescList<nixlBasicDesc>(remote_buffers, mem_type),
+                                        getAgentName(1),
+                                        req));
+    status = getAgent(0).postXferReq(req);
+    ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+    ASSERT_TRUE(wait_until_true([&]() {
+        if (status == NIXL_IN_PROG) {
+            status = getAgent(0).getXferStatus(req);
+            if (!isProgressThreadEnabled()) {
+                nixl_notifs_t notifs;
+                getAgent(1).getNotifs(notifs);
+            }
+        }
+        return status != NIXL_IN_PROG;
+    }));
+    ASSERT_EQ(NIXL_SUCCESS, status);
+    checkPayloads(local_buffers, seed);
+    EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
+
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), local_buffers, mem_type);
+    deregisterMem(getAgent(1), remote_buffers, mem_type);
+}
+
 TEST_P(TestTransfer, EmptyNotificationPayload) {
     constexpr size_t repeat = 16;
     constexpr size_t num_threads = 2;
