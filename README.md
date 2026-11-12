@@ -45,6 +45,11 @@ Install with:
 pip install nixl
 ```
 
+To use the CUDA 13 backend without PyTorch, install `nixl-cu13` directly and
+import `nixl_cu13`. To use the bundled `nixl_ep_cu13` package, install the
+`ep` extra (`pip install 'nixl-cu13[ep]'`). The `nixl` meta package continues
+to install PyTorch for EP support.
+
 ## Prerequisites for source build (Linux)
 
 NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
