@@ -31,10 +31,14 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -175,17 +179,30 @@ resolveMultiprocDir() {
     return path;
 }
 
+[[nodiscard]] std::filesystem::path
+canonicalDir(const std::filesystem::path &dir) {
+    std::error_code ec;
+    std::filesystem::path canonical = std::filesystem::canonical(dir, ec);
+    return ec ? dir : canonical;
+}
+
 // Per-process instance counter so multiple agents in one process get distinct
 // store files.
 std::atomic<uint64_t> s_instanceSeq{0};
+
+std::mutex s_endpointsMutex;
+std::map<std::tuple<std::filesystem::path, std::string, std::chrono::nanoseconds>,
+         std::weak_ptr<scrapeEndpoint>>
+    s_endpoints;
 
 } // namespace
 
 nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
-      dir_(resolveMultiprocDir()),
-      endpoint_(dir_, resolveBindAddress(), resolveStaleTtl()) {
+      dir_(resolveMultiprocDir()) {
+    const std::string bind_address = resolveBindAddress();
+    const std::chrono::nanoseconds stale_ttl = resolveStaleTtl();
     const int64_t pid = static_cast<int64_t>(::getpid());
     const uint64_t instance = s_instanceSeq.fetch_add(1, std::memory_order_relaxed);
     const std::filesystem::path store_path =
@@ -206,8 +223,20 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
         throwDefaultDirUnusable(e.what());
     }
 
-    const std::string &bind_address = endpoint_.bindAddress();
-    const auto claimed = endpoint_.claim();
+    const std::filesystem::path endpoint_dir = canonicalDir(dir_);
+    const std::lock_guard lock(s_endpointsMutex);
+    std::erase_if(s_endpoints, [](const auto &entry) { return entry.second.expired(); });
+    auto &shared = s_endpoints[{endpoint_dir, bind_address, stale_ttl}];
+    endpoint_ = shared.lock();
+    if (endpoint_) {
+        NIXL_INFO << "prometheus_mp exporter (" << (endpoint_->serving() ? "owner" : "writer")
+                  << "): agent '" << init_params.agentName << "' shares this process's endpoint on "
+                  << bind_address << ", writing to " << store_path.string();
+        return;
+    }
+    endpoint_ = std::make_shared<scrapeEndpoint>(dir_, bind_address, stale_ttl);
+    const auto claimed = endpoint_->claim();
+    shared = endpoint_;
     // Elections are per address, so ranks that disagree about the port each own
     // one instead of contending. Reported from whichever side notices, since the
     // ranks start in no particular order.
@@ -248,7 +277,10 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
               << store_path.string();
 }
 
-nixlTelemetryPrometheusMpExporter::~nixlTelemetryPrometheusMpExporter() = default;
+nixlTelemetryPrometheusMpExporter::~nixlTelemetryPrometheusMpExporter() {
+    const std::lock_guard lock(s_endpointsMutex);
+    endpoint_.reset();
+}
 
 nixl_status_t
 nixlTelemetryPrometheusMpExporter::exportEvent(const nixlTelemetryEvent &event) {
@@ -268,8 +300,8 @@ nixlTelemetryPrometheusMpExporter::exportEvent(const nixlTelemetryEvent &event) 
     // Once per event, not once per slot updated: a duration event touches three
     // slots, and the clock read costs several times the atomics it would follow.
     const uint64_t now = store_->refreshHeartbeat();
-    if (!endpoint_.serving()) {
-        endpoint_.reclaim(std::chrono::nanoseconds(now));
+    if (!endpoint_->serving()) {
+        endpoint_->reclaim(std::chrono::nanoseconds(now));
     }
     return NIXL_SUCCESS;
 }

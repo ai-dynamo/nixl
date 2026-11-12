@@ -27,7 +27,7 @@ constexpr char TELEMETRY_BUFFER_SIZE_VAR[] = "NIXL_TELEMETRY_BUFFER_SIZE";
 constexpr char TELEMETRY_RUN_INTERVAL_VAR[] = "NIXL_TELEMETRY_RUN_INTERVAL";
 constexpr char TELEMETRY_ENABLED_METRICS_VAR[] = "NIXL_TELEMETRY_ENABLED_METRICS";
 
-constexpr inline int TELEMETRY_VERSION = 5;
+constexpr inline int TELEMETRY_VERSION = 6;
 
 /**
  * @enum nixl_telemetry_event_type_t
@@ -210,7 +210,7 @@ telemetryErrorStatusLabel(const nixl_telemetry_event_type_t type) noexcept {
 /**
  * @brief Exporter-side Prometheus series descriptor for a telemetry event.
  *
- * The native Prometheus, multi-process Prometheus and DOCA/CollectX exporters
+ * The Prometheus and DOCA/CollectX exporters
  * derive their series from this single mapping, so they emit the same metric
  * definitions. A null @c counterName, @c gaugeName, or @c histogramName means the
  * event has no cumulative counter, no last-operation gauge, or no distribution

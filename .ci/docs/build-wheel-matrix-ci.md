@@ -91,7 +91,7 @@ ARG UCX_SONAME_SUFFIX=""
 # ... builds NIXL and generates wheels
 ```
 
-**Base Image**: `artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09`
+**Base Image**: `il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09`
 
 ### Stage Usage Patterns
 
@@ -100,7 +100,7 @@ In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` 
 
 ```bash
 ./contrib/build-container.sh \
-  --base-image 'artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda' \
+  --base-image 'il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda' \
   --base-image-tag '13.0-devel-manylinux--25.09' \
   --wheel-base "manylinux_2_28" \
   --python-versions "${python_version}" \
@@ -163,7 +163,7 @@ ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:/usr/local/openssl3/lib:$LD_LIBRA
 - etcd-cpp-apiv3
 
 #### Rust Toolchain
-- Rust 1.86.0 for native dependencies
+- Rust 1.95.0 for native dependencies
 - Architecture-specific toolchain setup
 
 #### UCX (Unified Communication X)

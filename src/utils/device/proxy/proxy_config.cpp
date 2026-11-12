@@ -126,11 +126,12 @@ parseProxyConfig(const nixlBackendInitParams &init_params, proxyConfig &config) 
         return NIXL_ERR_NOT_ALLOWED;
     }
 
-    if (parsed.thread_count > parsed.channel_count) {
-        NIXL_INFO << "Device proxy " << kProxyThreadCountParam << "=" << parsed.thread_count
-                  << " exceeds " << kProxyChannelCountParam << "=" << parsed.channel_count
-                  << "; only " << parsed.effectiveThreadCount()
-                  << " thread(s) will be started (channels are striped across threads)";
+    if (!parsed.evenThreadSplit()) {
+        NIXL_ERROR << "Device proxy " << kProxyThreadCountParam << "=" << parsed.thread_count
+                   << " must divide " << kProxyChannelCountParam << "=" << parsed.channel_count
+                   << ", or be a multiple of it that divides the " << parsed.ringCount()
+                   << " ring(s) (" << kProxyMaxPeersParam << "=" << parsed.max_peers << ")";
+        return NIXL_ERR_INVALID_PARAM;
     }
 
     config = parsed;

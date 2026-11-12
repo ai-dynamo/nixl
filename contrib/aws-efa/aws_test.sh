@@ -31,7 +31,7 @@ usage() {
     echo ""
     echo "Optional environment variables:"
     echo "  GITHUB_SHA        - Commit SHA to test, takes precedence over GITHUB_REF (set by GitHub Actions)"
-    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04)"
+    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda:13.4.2-devel-ubuntu24.04)"
     echo "  TEST_TIMEOUT      - Timeout for test execution in minutes"
     exit 1
 }
@@ -42,7 +42,7 @@ if [ -z "$GITHUB_REF" ] || [ -z "$GITHUB_SERVER_URL" ] || [ -z "$GITHUB_REPOSITO
     usage
 fi
 
-export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04"}
+export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda:13.4.2-devel-ubuntu24.04"}
 
 # Pin the commit: pull-request/<N> branches can be deleted or moved before the pod clones.
 checkout_ref="${GITHUB_SHA:-$GITHUB_REF}"

@@ -45,8 +45,11 @@ runs_on_dockers:
   - { name: "poller", url: "quay.io/podman/stable:v5.7.1", arch: "x86_64" }
 
 env:
-  # Releases older than this are not built. Anything newer is picked up automatically.
-  MIN_RELEASE: "1.4.0"
+  # Releases older than this are not built. Anything newer is picked up
+  # automatically. 1.6.0 is the first branch carrying the install-path plugin
+  # build and the IL registries (#2231, #2342); release runs execute their own
+  # .ci/, so nothing older is buildable.
+  MIN_RELEASE: "1.6.0"
   # Newest N commits to check per release branch.
   MAX_COMMITS: "10"
   NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
@@ -76,9 +79,12 @@ steps:
     run: |
       def triggers = fileExists('triggers.txt') ? readFile('triggers.txt').trim() : ''
       if (triggers) {
-          // Forward our CI ref so a pre-merge test poller run drives builds
-          // with the same pipeline + config revision.
-          def ciRefspec = params.ci_refspec ?: 'main'
+          // Each spawned build runs its pipeline, matrix, wheel_base Dockerfile
+          // and contrib/ from the commit it builds (ci_refspec = NIXL_VERSION),
+          // so a release ships only what its branch declares. A test run of
+          // this poller (ci_refspec=refs/pull/N/head) drives the poller from
+          // the PR, not the spawned builds - test nightly changes by running
+          // the nightly manually.
           def spawned = []
           def failed = []
           for (line in triggers.split('\n')) {
@@ -91,7 +97,7 @@ steps:
                         parameters: [
                             string(name: 'NIXL_VERSION', value: parts[0]),
                             string(name: 'PUBLISH_DIR', value: "release/${parts[1]}"),
-                            string(name: 'ci_refspec', value: ciRefspec),
+                            string(name: 'ci_refspec', value: parts[0]),
                         ],
                         wait: false,
                         propagate: false)

@@ -84,6 +84,10 @@
 // CUDA warp size, to derive Device API group number from block_threads
 #define XFERBENCH_DEVICE_WARP_SIZE 32
 
+// Device API execution modes
+#define XFERBENCH_DEVICE_MODE_DIRECT "direct"
+#define XFERBENCH_DEVICE_MODE_PROXY "proxy"
+
 // Runtime types
 #define XFERBENCH_RT_ETCD "ETCD"
 #define XFERBENCH_RT_ASIO "ASIO"
@@ -95,7 +99,7 @@
 #define XFERBENCH_BACKEND_GDS_MT "GDS_MT"
 #define XFERBENCH_BACKEND_POSIX "POSIX"
 #define XFERBENCH_BACKEND_GPUNETIO "GPUNETIO"
-#define XFERBENCH_BACKEND_MOONCAKE "Mooncake"
+#define XFERBENCH_BACKEND_MOONCAKE "MOONCAKE"
 #define XFERBENCH_BACKEND_HF3FS "HF3FS"
 #define XFERBENCH_BACKEND_OBJ "OBJ"
 #define XFERBENCH_BACKEND_REDIS "REDIS"
@@ -103,6 +107,7 @@
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 #define XFERBENCH_BACKEND_INFINIA "INFINIA"
+#define XFERBENCH_BACKEND_DOCA_MEMOS "DOCA_MEMOS"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -132,6 +137,7 @@
 // Operation types
 #define XFERBENCH_OP_READ "READ"
 #define XFERBENCH_OP_WRITE "WRITE"
+#define XFERBENCH_OP_QUERY "QUERY"
 
 // Mode types
 #define XFERBENCH_MODE_SG "SG"
@@ -214,6 +220,7 @@ public:
     static std::string gpunetio_oob_list;
     static std::string gpunetio_gid_index;
     static std::string gpunetio_oob_port;
+    static int gpunetio_data_qp_count;
     static long page_size;
     static std::string obj_access_key;
     static std::string obj_secret_key;
@@ -243,6 +250,8 @@ public:
     static bool use_device_api;
     static int block_threads;
     static int device_channel_num;
+    static std::string device_mode;
+    static uint32_t device_proxy_threads;
 
     /* Number of independent groups Device API kernel runs with. */
     static int
@@ -251,6 +260,9 @@ public:
     /* Parallel workers split iterations across both CPU and Device API. */
     static int
     workerNum();
+    static std::string doca_memos_device_name;
+    static int doca_memos_num_tasks;
+    static std::string doca_memos_nguid;
 
     // Cached set of memory segment types reported by the selected backend.
     // Populated pre-instantiation in loadParams via getPluginParams, then refreshed

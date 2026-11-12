@@ -15,8 +15,8 @@
 #       --secret id=gcs-key,src=/path/to/service-account.json \
 #       --build-arg INFINIA_VERSION=v2.5.0-rcx.1 \
 #       -f .ci/dockerfiles/Dockerfile.infinia-libs \
-#       -t harbor.mellanox.com/nixl/infinia-libs:v2.5.0-rcx.1 .
-#   docker push harbor.mellanox.com/nixl/infinia-libs:v2.5.0-rcx.1
+#       -t il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/static/infinia-libs:v2.5.0-rcx.1 .
+#   docker push il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/static/infinia-libs:v2.5.0-rcx.1
 #
 # To roll Infinia versions: rebuild with a new INFINIA_VERSION and matching
 # tag, then bump INFINIA_LIBS_IMAGE in Dockerfile.base.

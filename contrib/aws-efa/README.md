@@ -103,7 +103,9 @@ The AWS test script:
 
 ## Container Image
 
-The script uses the container image: `nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04`
+The script uses the container image: `nvcr.io/nvidia/cuda:13.4.2-devel-ubuntu24.04`
+CUDA 13.1.1+ devel images ship the cuObject client dev package, which the OBJ
+plugin needs to build its S3 accelerated engines; CUDA 13.0 has none.
 You can override this by setting the `CONTAINER_IMAGE` environment variable:
 
 ```bash

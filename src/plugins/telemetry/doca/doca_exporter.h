@@ -44,6 +44,12 @@ public:
     [[nodiscard]] nixl_status_t
     flush();
 
+    [[nodiscard]] const std::string &
+    sourceId() const noexcept;
+
+    [[nodiscard]] const std::string &
+    sourceTag() const noexcept;
+
 private:
     const std::string agent_name_;
     std::shared_ptr<DocaSharedContext> ctx_;

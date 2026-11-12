@@ -74,6 +74,12 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     }
 
     constexpr size_t kRailId = 0;
+    auto rail_it = conn.rail_remote_addr_list_.find(kRailId);
+    if (rail_it == conn.rail_remote_addr_list_.end() || rail_it->second.empty()) {
+        NIXL_WARN << "No remote rail addresses on record for '" << conn.remoteAgent_
+                  << "'; cannot send handshake";
+        return NIXL_ERR_BACKEND;
+    }
     nixlLibfabricReq *req = rail_manager_.getRail(kRailId).allocateControlRequest(
         payload.size(), LibfabricUtils::getNextXferId());
     if (!req) {
@@ -88,9 +94,8 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     NIXL_DEBUG << "Sending handshake to '" << conn.remoteAgent_ << "' proto_ver=" << proto_ver
                << " (my agent_name='" << my_name
                << "', piggybacked_conn_info_len=" << piggybacked_conn_info.size() << ")";
-    return rail_manager_.postControlMessage(nixlLibfabricRailManager::ControlMessageType::HANDSHAKE,
-                                            req,
-                                            conn.rail_remote_addr_list_.at(kRailId)[0]);
+    return rail_manager_.postControlMessage(
+        nixlLibfabricRailManager::ControlMessageType::HANDSHAKE, req, rail_it->second[0]);
 }
 
 void
@@ -220,5 +225,90 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
         NIXL_INFO << "Handshake stored: peer='" << peer_agent_name
                   << "' — it has our endpoints in its address vectors, so it can attribute "
                      "our transfers and we may start sending";
+
+        if (has_conn) {
+            // The sender has not received our handshake yet (see sendHandshakeTo), so it
+            // is establishing fresh: rebuilt its side, or both sides race first-time
+            // setup. The has_conn=0 reply cannot loop and goes to the addresses on record.
+            if (peer_agent_name == localAgent) {
+                return; // we never handshake ourselves (mirrors loadRemoteConnInfo)
+            }
+            auto rail_it = conn->rail_remote_addr_list_.find(0);
+            if (rail_it == conn->rail_remote_addr_list_.end() || rail_it->second.empty()) {
+                NIXL_WARN << "Cannot reply to re-establishment handshake from '" << peer_agent_name
+                          << "': no remote rail addresses on record";
+                return;
+            }
+            NIXL_INFO << "Peer '" << peer_agent_name
+                      << "' re-established its side; replying so its handshake wait completes";
+            if (progress_thread_enabled_) {
+                // handleHandshake runs on the progress thread here, and postSend()
+                // retries FI_EAGAIN without draining its own completions when the
+                // progress thread owns them — an inline reply could wedge the only
+                // thread that can make progress. Hand the reply to the CM thread.
+                queueHandshakeReply(conn);
+            } else {
+                nixl_status_t status = sendHandshakeTo(*conn);
+                if (status != NIXL_SUCCESS) {
+                    NIXL_WARN << "Replying to re-establishment handshake from '" << peer_agent_name
+                              << "' failed (non-fatal; re-triggers on the peer's next re-add): "
+                                 "status="
+                              << status;
+                }
+            }
+        }
+    }
+}
+
+void
+nixlLibfabricEngine::queueHandshakeReply(std::shared_ptr<nixlLibfabricConnection> conn) {
+    {
+        const std::lock_guard<std::mutex> lock(cm_mutex_);
+        if (cm_thread_stop_) {
+            return; // engine teardown; the peer's next re-add re-triggers the reply
+        }
+        pending_replies_.push_back(std::move(conn));
+        if (!cm_thread_.joinable()) {
+            cm_thread_ = std::thread(&nixlLibfabricEngine::cmThread, this);
+        }
+    }
+    cm_cv_.notify_one();
+}
+
+void
+nixlLibfabricEngine::cmThread() {
+    while (true) {
+        std::shared_ptr<nixlLibfabricConnection> conn;
+        {
+            std::unique_lock<std::mutex> lock(cm_mutex_);
+            cm_cv_.wait(lock, [this]() { return cm_thread_stop_ || !pending_replies_.empty(); });
+            if (cm_thread_stop_) {
+                return; // pending replies are dropped: teardown makes them moot
+            }
+            conn = std::move(pending_replies_.front());
+            pending_replies_.pop_front();
+        }
+        if (cm_thread_stop_) {
+            continue; // teardown started: drop the popped reply
+        }
+        // DISCONNECTED is also the pre-connect state of a live registration, so the
+        // state cannot decide this: only a registration that is gone (disconnect()
+        // removes it) means no reply. An unconnected holder still owes one — nothing
+        // else completes the re-establishing peer's wait.
+        {
+            std::lock_guard<std::mutex> lock(connection_state_mutex_);
+            auto it = connections_.find(conn->remoteAgent_);
+            if (it == connections_.end() || it->second != conn) {
+                NIXL_DEBUG << "Skipping re-establishment reply to '" << conn->remoteAgent_
+                           << "': connection no longer registered";
+                continue;
+            }
+        }
+        nixl_status_t status = sendHandshakeTo(*conn);
+        if (status != NIXL_SUCCESS) {
+            NIXL_WARN << "Replying to re-establishment handshake from '" << conn->remoteAgent_
+                      << "' failed (non-fatal; re-triggers on the peer's next re-add): status="
+                      << status;
+        }
     }
 }

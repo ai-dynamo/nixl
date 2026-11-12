@@ -4,7 +4,7 @@
 nixlbench_kernels_dep = []
 nixlbench_kernels_lib = []
 
-if ucx_gpu_device_api_available
+if nixl_device_api_available
   nixlbench_kernels_lib = static_library(
     'nixlbench_kernels',
     'nixlbench_device_launch.cu',

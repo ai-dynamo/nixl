@@ -17,6 +17,14 @@ limitations under the License.
 
 # NIXL Benchmark
 
+GPUNetIO supports optional WRITE striping with `--gpunetio_data_qp_count=N` (1–4)
+(default 1). Use the same value on both endpoints. Compare counts with identical
+bytes, descriptors, pipeline depth and consistency checking; one GPU per worker
+avoids single-GPU scheduling time-slicing. The flag does not enable peer-MR or
+change SGE construction. Multi-QP mode allocates the selected WRITE QPs plus a
+dedicated READ QP. A striped request uses one kernel launch with one block per
+WRITE QP on a shared internal posting stream.
+
 A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) that supports multiple coordination backends. NIXLBench provides performance testing across multiple communication backends and storage systems, making it ideal for evaluating high-performance data transfer scenarios in distributed computing environments.
 
 **Coordination Options:**
@@ -547,7 +555,7 @@ wait
 --config_file PATH         # Configuration file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD, ASIO] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 ```
 
@@ -557,7 +565,7 @@ wait
 --target_seg_type TYPE     # Memory segment type for target [DRAM, VRAM] (default: DRAM)
 --scheme NAME              # Communication scheme [pairwise, manytoone, onetomany, tp] (default: pairwise)
 --mode MODE                # Process mode [SG (Single GPU per proc), MG (Multi GPU per proc)] (default: SG)
---op_type TYPE             # Operation type [READ, WRITE] (default: WRITE)
+--op_type TYPE             # Operation type [READ, WRITE, QUERY] (default: WRITE)
 --check_consistency        # Enable consistency checking
 --total_buffer_size SIZE   # Total buffer size across devices per process (default: 8GiB)
 --start_block_size SIZE    # Starting block size (default: 4KiB)
@@ -814,10 +822,29 @@ For pairwise UCX runs, `--device_list` must match the configured initiator and t
   --backend GPUNETIO --gpunetio_device_list 0,1
 ```
 
+**Note**: If two local GPUNETIO workers share one physical GPU, their persistent
+kernels may be time-sliced, causing high latency and low bandwidth. Use one GPU
+per worker, or [CUDA MPS](https://docs.nvidia.com/deploy/mps/index.html) if only
+one GPU is available.
+
 ### Storage Backends
 
 The examples below write their files into `/mnt/storage/testdir`. Create it on
 the device you want to measure first: `mkdir -p /mnt/storage/testdir`.
+
+**DOCA_MEMOS object keys:**
+
+DOCA_MEMOS uses a fresh random 128-bit object key for each registered thread/device/batch
+entry. Keys are supplied through `metaInfo` as 32 hexadecimal characters, which the backend
+decodes into 16 binary bytes. The descriptor `dev_id` remains a local numeric identifier;
+it is not used as the object key. This avoids small-integer keys with mostly constant bytes
+and gives independent clients independent object sets, with negligible collision probability.
+
+Keys are generated from OS entropy during registration, independently of
+`randomize_location_mode_seed`. The same registered keys are reused for READ prepopulation,
+verification, and timed iterations; separate runs generate new keys. This does not add a
+hash-library dependency or change the DOCA_MEMOS backend. Confirm placement with per-target
+counters when measuring a distributed deployment; random keys alone do not verify routing.
 
 **GDS (GPU Direct Storage):**
 ```bash

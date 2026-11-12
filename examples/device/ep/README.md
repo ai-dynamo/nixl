@@ -9,6 +9,12 @@ NIXL EP is a complete example implementation of expert-parallel communication fo
 - **RDMA and NVLink support**: Utilizes NIXL's abstractions to support both RDMA and NVLink transports for optimal performance
 - **Elastic Scaling**: Dynamically add or remove ranks during runtime
 
+## GPU Device API path
+
+- `NIXL_EP_DEVICE_MODE`: `direct` (default) or `proxy`. There is no fallback: if the selected path is unavailable, EP fails.
+- `NIXL_EP_NUM_CHANNELS`: the number of channels (default 4).
+- `NIXL_EP_PROXY_THREADS`: the number of proxy threads (default: the number of channels).
+
 ## Buffer Initialization
 
 NIXL EP provides a flexible buffer initialization pattern that supports dynamic rank management:

@@ -92,6 +92,9 @@ histogramSeriesLines(const nixl::metrics_test::timeSeries &metrics, const std::s
         line << id.name << '{';
         bool first = true;
         for (const auto &[label, value] : id.labels) {
+            if (label == "local_rank") {
+                continue;
+            }
             if (!first) {
                 line << ',';
             }

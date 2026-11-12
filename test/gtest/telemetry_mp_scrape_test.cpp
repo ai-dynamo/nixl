@@ -53,7 +53,7 @@ constexpr char PLUGIN_PROBE_WARNING[] = "Plugin file does not exist";
 [[nodiscard]] std::unique_ptr<nixlTelemetryExporter>
 createExporter(const std::string &agent_name) {
     const gtest::LogIgnoreGuard lig(PLUGIN_PROBE_WARNING);
-    const auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus_mp");
+    const auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
     return handle == nullptr ? nullptr : handle->createExporter(initParams(agent_name));
 }
 
@@ -190,7 +190,7 @@ TEST_F(MpExporterTest, HistogramBucketsEnvOverride) {
 
 TEST_F(MpExporterTest, BindCollisionCreateIsNonFatalWarn) {
     prometheus::Exposer blocker("127.0.0.1:" + std::to_string(port_));
-    env_.addVar(telemetryExporterVar, "prometheus_mp");
+    env_.addVar(telemetryExporterVar, "prometheus");
 
     const gtest::LogIgnoreGuard probe(PLUGIN_PROBE_WARNING);
     const gtest::LogIgnoreGuard lig("is held by a process outside this run");

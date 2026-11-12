@@ -36,9 +36,6 @@ inline constexpr std::chrono::seconds proxy_drain_warning_interval{10};
 /** State every worker shares; owned by the runtime and immutable while workers exist. */
 struct proxyWorkerContext {
     proxyTransport &transport;
-    /** Channel-major; a worker owns channels[i] for i = index, index + worker_count, ... */
-    std::span<proxyChannel> channels;
-    uint32_t worker_count;
     /** Bumped by an application thread per drain; each worker acknowledges it. */
     const std::atomic<uint64_t> &drain_requested;
     /** Set before the shutdown drain. */
@@ -49,7 +46,11 @@ struct proxyWorkerContext {
 
 class proxyWorker {
 public:
-    proxyWorker(const proxyWorkerContext &ctx, uint32_t worker_index) noexcept;
+    /** Serves `peers` of each of `channels`. */
+    proxyWorker(const proxyWorkerContext &ctx,
+                uint32_t worker_index,
+                std::span<proxyChannel> channels,
+                proxyPeerSlice peers) noexcept;
     ~proxyWorker();
 
     /** @return NIXL_ERR_BACKEND, having started nothing, if the thread cannot be created. */
@@ -73,7 +74,6 @@ private:
     void
     runOnce();
 
-    /** Visit the channels striped to this worker: index, index + worker_count, ... */
     template<typename Fn>
     void
     forEachOwnedChannel(Fn &&fn);
@@ -98,6 +98,8 @@ private:
 
     const proxyWorkerContext &ctx_;
     const uint32_t index_;
+    const std::span<proxyChannel> channels_;
+    const proxyPeerSlice peers_;
     alignas(64) std::atomic<uint64_t> drain_acked_{0};
     std::jthread thread_;
 };

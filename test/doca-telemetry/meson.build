@@ -72,36 +72,16 @@ if build_doca_tests
     test('doca_nixl_test', doca_nixl_test_exe, is_parallel: false, timeout: 180)
     message('Building standalone DOCA telemetry exporter tests')
 
-    cmake = import('cmake')
-    cmake_opts = cmake.subproject_options()
-    cmake_opts.add_cmake_defines({
-        'ENABLE_PULL': 'ON',
-        'ENABLE_PUSH': 'OFF',
-        'ENABLE_COMPRESSION': 'OFF',
-        'ENABLE_TESTING': 'OFF',
-        'USE_THIRDPARTY_LIBRARIES': 'ON',
-        'BUILD_SHARED_LIBS': 'ON',
-        'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
-        'CMAKE_LINK_DEPENDS_USE_LINKER': 'OFF',
-        'CMAKE_C_FLAGS': '-Wno-unused-but-set-variable',
-        'CMAKE_CXX_FLAGS': '-Wno-unused-but-set-variable'
-    })
-    prometheus_sub = cmake.subproject('prometheus-cpp', required: false, options: cmake_opts)
-    if prometheus_sub.found()
-        prometheus_core_dep = prometheus_sub.dependency('core')
-        prometheus_pull_dep = prometheus_sub.dependency('pull')
-        prometheus_exporter_dir = '../../src/plugins/telemetry/prometheus'
+    if is_variable('nixl_telemetry_mp_exporter_dep')
         histogram_parity_test_exe = executable('histogram_parity_test',
             sources: [
                 'telemetry_histogram_parity_test.cpp',
                 doca_exporter_dir / 'doca_exporter.cpp',
-                prometheus_exporter_dir / 'prometheus_exporter.cpp',
             ],
             include_directories: [
                 nixl_inc_dirs,
                 utils_inc_dirs,
                 include_directories(doca_exporter_dir),
-                include_directories(prometheus_exporter_dir),
                 include_directories('../metrics'),
                 include_directories('../../src/plugins/telemetry/common'),
             ],
@@ -112,8 +92,7 @@ if build_doca_tests
                 nixl_infra,
                 nixl_common_dep,
                 absl_log_dep,
-                prometheus_core_dep,
-                prometheus_pull_dep,
+                nixl_telemetry_mp_exporter_dep,
             ],
             cpp_args: ['-Wno-deprecated-declarations'],
             install: true,

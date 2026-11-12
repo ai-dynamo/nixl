@@ -270,6 +270,12 @@ export NIXL_TELEMETRY_PROMETHEUS_LOCAL=false    # Bind to all interfaces
 | `NIXL_TELEMETRY_PROMETHEUS_PORT` | `9090` | HTTP listen port for the metrics endpoint |
 | `NIXL_TELEMETRY_PROMETHEUS_LOCAL` | `false` | When `true`, binds to `127.0.0.1` only; when `false`, binds to `0.0.0.0` |
 
+### Multiple Processes
+
+All processes of one user that use the same `NIXL_TELEMETRY_PROMETHEUS_PORT` on a host, such as the tensor-parallel workers of one container or pod, are exported behind that one endpoint: they elect one process to serve it. They share state in `NIXL_TELEMETRY_MULTIPROC_DIR`, which defaults to `/dev/shm/nixl-telemetry-<euid>-<port>`, or to the same name under the system temp directory when `/dev/shm` is not writable; set it explicitly when the processes do not share that directory, such as containers with separate `/dev/shm` mounts or ranks given different `TMPDIR`s. `NIXL_TELEMETRY_EXPORTER=prometheus_mp` selects the same exporter.
+
+Series are labeled by `hostname` and `agent_name`, plus `local_rank` when the variable named by `NIXL_TELEMETRY_RANK_ENV` (default `LOCAL_RANK`) is set. Only when two live agents share a name and `local_rank` do their series also carry `pid` and `agent_instance`.
+
 ### Scraping Metrics
 
 Once the exporter is running, configure your Prometheus instance to scrape the NIXL metrics endpoint:

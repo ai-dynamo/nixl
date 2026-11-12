@@ -17,6 +17,7 @@
 
 #include "scrape_util.h"
 
+#include "common/hostname.h"
 #include "doca_exporter.h"
 #include "telemetry_event.h"
 
@@ -42,6 +43,8 @@ constexpr char docaPrometheusPortVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_PORT";
 constexpr char docaPrometheusLocalVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_LOCAL";
 constexpr char docaBackendsVar[] = "NIXL_TELEMETRY_DOCA_BACKENDS";
 constexpr char docaIpcSocketsDirVar[] = "NIXL_TELEMETRY_DOCA_IPC_SOCKETS_DIR";
+constexpr char docaSourceIdVar[] = "NIXL_TELEMETRY_DOCA_SOURCE_ID";
+constexpr char docaSourceTagVar[] = "NIXL_TELEMETRY_DOCA_SOURCE_TAG";
 constexpr char absentDtsSocketsDir[] = "/tmp/nixl_dts_absent_sockets";
 
 } // namespace
@@ -57,6 +60,8 @@ protected:
         // loopback on the just-allocated port so the test is self-contained.
         ASSERT_EQ(::setenv(docaPrometheusLocalVar, "y", 1), 0);
         ASSERT_EQ(::setenv(docaPrometheusPortVar, std::to_string(port_).c_str(), 1), 0);
+        ASSERT_EQ(::unsetenv(docaSourceIdVar), 0);
+        ASSERT_EQ(::unsetenv(docaSourceTagVar), 0);
     }
 
     void
@@ -66,6 +71,8 @@ protected:
         ::unsetenv(docaPrometheusPortVar);
         ::unsetenv(docaBackendsVar);
         ::unsetenv(docaIpcSocketsDirVar);
+        ::unsetenv(docaSourceIdVar);
+        ::unsetenv(docaSourceTagVar);
     }
 
     uint16_t port_ = 0;
@@ -477,6 +484,88 @@ TEST_F(docaNixlExporterTest, MultipleBackendsScrapeServesWhenIpcHasNoDts) {
     const auto metrics = scrapeUntilValue(port_, metric, 909.0, std::chrono::seconds(12), labels);
     EXPECT_EQ(metrics.latestValue(metric, labels), std::optional<double>(909.0))
         << "scrape must still serve metrics when ipc is also enabled but has no DTS";
+}
+
+TEST_F(docaNixlExporterTest, SourceIdentityDefaultsToHostNameAndNixl) {
+    const nixlTelemetryExporterInitParams params{"nixl_doca_source_default_test", 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    EXPECT_EQ(exporter.sourceId(), nixl::getHostname().value_or("unknown"));
+    EXPECT_EQ(exporter.sourceTag(), "nixl");
+}
+
+TEST_F(docaNixlExporterTest, SourceIdentityReadsEnvironment) {
+    ASSERT_EQ(::setenv(docaSourceIdVar, "node-7.cluster_a-rank3", 1), 0);
+    ASSERT_EQ(::setenv(docaSourceTagVar, "nixl_custom", 1), 0);
+
+    constexpr char agentName[] = "nixl_doca_source_env_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    EXPECT_EQ(exporter.sourceId(), "node-7.cluster_a-rank3");
+    EXPECT_EQ(exporter.sourceTag(), "nixl_custom");
+
+    const std::string metric =
+        nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES)
+            .counterName;
+    const nixl::metrics_test::labelSet labels{
+        {"agent_name", agentName}, {"hostname", nixl::getHostname().value_or("unknown")}};
+
+    ASSERT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 321}),
+              NIXL_SUCCESS);
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const auto metrics = scrapeUntilValue(port_, metric, 321.0, std::chrono::seconds(12), labels);
+    EXPECT_EQ(metrics.latestValue(metric, labels), std::optional<double>(321.0));
+}
+
+TEST_F(docaNixlExporterTest, SourceIdentityKeepsEmptyValues) {
+    ASSERT_EQ(::setenv(docaSourceIdVar, "", 1), 0);
+    ASSERT_EQ(::setenv(docaSourceTagVar, "", 1), 0);
+
+    const nixlTelemetryExporterInitParams params{"nixl_doca_source_empty_test", 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    EXPECT_EQ(exporter.sourceId(), "");
+    EXPECT_EQ(exporter.sourceTag(), "");
+}
+
+TEST_F(docaNixlExporterTest, SourceIdentityRejectsSlash) {
+    const nixlTelemetryExporterInitParams params{"nixl_doca_source_slash_test", 4096};
+
+    ASSERT_EQ(::setenv(docaSourceIdVar, "rack1/node7", 1), 0);
+    EXPECT_THROW(nixlTelemetryDocaExporter exporter(params), std::runtime_error);
+
+    ASSERT_EQ(::unsetenv(docaSourceIdVar), 0);
+    ASSERT_EQ(::setenv(docaSourceTagVar, "nixl/custom", 1), 0);
+    EXPECT_THROW(nixlTelemetryDocaExporter exporter(params), std::runtime_error);
+}
+
+TEST_F(docaNixlExporterTest, SourceIdentityAcceptsLongId) {
+    const std::string longId(253, 'n');
+    ASSERT_EQ(::setenv(docaSourceIdVar, longId.c_str(), 1), 0);
+
+    const nixlTelemetryExporterInitParams params{"nixl_doca_source_long_test", 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    EXPECT_EQ(exporter.sourceId(), longId);
+}
+
+TEST_F(docaNixlExporterTest, SourceIdentityFirstAgentWins) {
+    ASSERT_EQ(::setenv(docaSourceIdVar, "first_source", 1), 0);
+    ASSERT_EQ(::setenv(docaSourceTagVar, "first_tag", 1), 0);
+    nixlTelemetryDocaExporter first(
+        nixlTelemetryExporterInitParams{"nixl_doca_source_first", 4096});
+
+    ASSERT_EQ(::setenv(docaSourceIdVar, "second_source", 1), 0);
+    ASSERT_EQ(::setenv(docaSourceTagVar, "second_tag", 1), 0);
+    nixlTelemetryDocaExporter second(
+        nixlTelemetryExporterInitParams{"nixl_doca_source_second", 4096});
+
+    EXPECT_EQ(first.sourceId(), "first_source");
+    EXPECT_EQ(first.sourceTag(), "first_tag");
+    EXPECT_EQ(second.sourceId(), "first_source");
+    EXPECT_EQ(second.sourceTag(), "first_tag");
 }
 
 // Opt-in end-to-end against a LIVE DTS (NIX-1599/NIX-1600). DISABLED_ so it never
