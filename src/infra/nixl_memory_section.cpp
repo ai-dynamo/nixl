@@ -539,10 +539,14 @@ nixl_status_t nixlRemoteSection::addDescList (
     nixlSectionDesc out;
     nixlBasicDesc *p = &out;
     nixl_status_t ret;
-    for (int i=0; i<mem_elms.descCount(); ++i) {
-        // TODO: Can add overlap checks (erroneous)
+    for (int i = 0; i < mem_elms.descCount(); ++i) {
         int idx = target.getIndex(mem_elms[i]);
         if (idx < 0) {
+            if (target.hasOverlappingDesc(mem_elms[i])) {
+                NIXL_ERROR_FUNC << "remote descriptor overlaps existing descriptor for agent '"
+                                << agentName << "'";
+                return NIXL_ERR_NOT_ALLOWED;
+            }
             ret = backend->loadRemoteMD(mem_elms[i], nixl_mem, agentName, out.metadataP);
             // In case of errors, no need to remove the previous entries
             // Agent will delete the full object.

@@ -524,6 +524,19 @@ nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {
     return -1;
 }
 
+bool
+nixlSecDescList::hasOverlappingDesc(const nixlBasicDesc &query) const {
+    const nixlBasicDesc adjusted_query = normalizeQuery(query);
+    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), adjusted_query);
+    if (itr != this->descs.end() && itr->overlaps(adjusted_query)) {
+        return true;
+    }
+    if (itr != this->descs.begin() && std::prev(itr)->overlaps(adjusted_query)) {
+        return true;
+    }
+    return false;
+}
+
 void
 nixlSecDescList::resize(const size_t &count) {
     if (count > this->descs.size())
