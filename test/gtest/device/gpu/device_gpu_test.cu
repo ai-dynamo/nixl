@@ -24,7 +24,12 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <system_error>
 #include <thread>
 
 namespace {
@@ -41,6 +46,25 @@ globalTimerNs() {
     uint64_t ns;
     asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(ns));
     return ns;
+}
+
+[[nodiscard]] bool
+hasActiveIbPort() {
+    namespace fs = std::filesystem;
+    const auto is_port_active = [](const fs::directory_entry &port) {
+        std::ifstream state_file(port.path() / "state");
+        std::string state;
+        return std::getline(state_file, state) && (state == "4: ACTIVE");
+    };
+    const auto has_active_port = [&](const fs::directory_entry &dev) {
+        std::error_code ec;
+        const fs::directory_iterator ports(dev.path() / "ports", ec);
+        return std::any_of(begin(ports), end(ports), is_port_active);
+    };
+
+    std::error_code ec;
+    const fs::directory_iterator devs("/sys/class/infiniband", ec);
+    return std::any_of(begin(devs), end(devs), has_active_port);
 }
 } // namespace
 
@@ -115,6 +139,9 @@ protected:
             GTEST_SKIP() << "UCX direct GPU API is unavailable";
         }
 #endif
+        if (!hasActiveIbPort()) {
+            GTEST_SKIP() << "No active IB port";
+        }
         int count;
         if ((cudaGetDeviceCount(&count) != cudaSuccess) || (count < 1)) {
             GTEST_SKIP() << "No CUDA-capable GPU is available";
