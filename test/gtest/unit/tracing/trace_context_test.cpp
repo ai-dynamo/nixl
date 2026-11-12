@@ -28,6 +28,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -36,9 +37,10 @@
 #include <unistd.h>
 
 #include "common.h"
-#include "tracing/random_buffer.h"
-#include "tracing/trace.h"
-#include "tracing/trace_context.h"
+#include "tracing/core/random_generator.h"
+#include "tracing/core/trace.h"
+#include "tracing/core/trace_config.h"
+#include "tracing/core/trace_context.h"
 
 constexpr char kCanonicalTraceparent[] = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 
@@ -78,7 +80,12 @@ contextWithRandomnessValue(std::uint64_t randomness) {
     return context;
 }
 
-constexpr std::array<std::uint8_t, 8> kBlockStart{0, 1, 2, 3, 4, 5, 6, 7};
+[[nodiscard]] nixl::trace::TraceContext
+drawContext(double sample_ratio) {
+    const nixl::trace::CompositeTracer tracer{
+        std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}, sample_ratio};
+    return nixl::trace::generateRequestIdentity(&tracer).context;
+}
 
 std::size_t refill_count = 0;
 bool fail_next_refill = false;
@@ -93,11 +100,11 @@ countingRefill(std::span<std::uint8_t> bytes) {
     std::iota(bytes.begin(), bytes.end(), std::uint8_t{0});
 }
 
-[[nodiscard]] nixl::trace::RandomBuffer
-countingBuffer() {
+[[nodiscard]] nixl::trace::RandomGenerator
+countingGenerator() {
     refill_count = 0;
     fail_next_refill = false;
-    return nixl::trace::RandomBuffer{countingRefill};
+    return nixl::trace::RandomGenerator{countingRefill};
 }
 
 } // namespace
@@ -228,18 +235,12 @@ TEST(TraceContext, InvalidContextHasNoTextRepresentation) {
     EXPECT_TRUE(nixl::trace::formatTraceparent({}).empty());
 }
 
-TEST(TraceContext, NullTracerYieldsInertContext) {
-    const nixl::trace::TraceContext context{nullptr};
-
-    EXPECT_FALSE(context.valid());
-}
-
 TEST(TraceContext, GeneratesDistinctValidContexts) {
     std::set<std::string> generated;
     constexpr std::size_t count = 64;
 
     for (std::size_t index = 0; index < count; ++index) {
-        const auto context = nixl::trace::generateTraceContext();
+        const auto context = drawContext(0.0);
         EXPECT_TRUE(context.valid());
         EXPECT_EQ(context.flags, 0x02);
         EXPECT_FALSE(context.sampled());
@@ -300,8 +301,7 @@ TEST(TraceContext, RoundTripsThroughWireRecord) {
     maximal.spanId.fill(0xff);
     maximal.flags = 0x01;
 
-    for (const auto &expected :
-         {canonicalContext(), nixl::trace::generateTraceContext(), minimal, maximal}) {
+    for (const auto &expected : {canonicalContext(), drawContext(0.0), minimal, maximal}) {
         std::array<std::uint8_t, nixl::trace::traceContextWireSize> buffer{};
         ASSERT_TRUE(nixl::trace::encodeTraceContext(expected, buffer).has_value());
 
@@ -315,7 +315,7 @@ TEST(TraceContext, RoundTripsThroughWireRecord) {
 }
 
 TEST(TraceContext, WireAndTextFormsAgree) {
-    auto expected = nixl::trace::generateTraceContext();
+    auto expected = drawContext(0.0);
     expected.flags |= 0x01;
 
     std::array<std::uint8_t, nixl::trace::traceContextWireSize> buffer{};
@@ -338,7 +338,7 @@ TEST(TraceContext, SkipsUnknownVersionWithoutTouchingContext) {
     auto buffer = kCanonicalWireRecord;
     buffer[0] = nixl::trace::traceContextWireVersion + 1;
 
-    auto context = nixl::trace::generateTraceContext();
+    auto context = drawContext(0.0);
     const auto untouched = context;
 
     EXPECT_EQ(nixl::trace::decodeTraceContext(buffer, context),
@@ -409,7 +409,7 @@ TEST(TraceContext, NormalizesReservedFlagBitsFromRawRecord) {
 
 TEST(TraceContext, SampleRatioBoundsDecideEverythingOrNothing) {
     for (std::size_t index = 0; index < 32; ++index) {
-        const auto context = nixl::trace::generateTraceContext();
+        const auto context = drawContext(0.0);
         EXPECT_FALSE(nixl::trace::sampledByRatio(context, 0.0));
         EXPECT_TRUE(nixl::trace::sampledByRatio(context, 1.0));
         // Configuration rejects these, but the function takes any double, and
@@ -463,7 +463,7 @@ TEST(TraceContext, RatioScalesToNearestNotTowardZero) {
 // second stage thin an already-sampled stream instead of emptying it.
 TEST(TraceContext, LowerRatioKeepsSubsetOfHigherRatio) {
     for (std::size_t index = 0; index < 256; ++index) {
-        const auto context = nixl::trace::generateTraceContext();
+        const auto context = drawContext(0.0);
         if (!nixl::trace::sampledByRatio(context, 0.25)) {
             continue;
         }
@@ -490,7 +490,7 @@ TEST(TraceContext, FractionalRatioProducesBothOutcomes) {
     bool unsampled_seen = false;
 
     for (std::size_t index = 0; index < 512 && !(sampled_seen && unsampled_seen); ++index) {
-        if (nixl::trace::generateTraceContext(0.5).sampled()) {
+        if (drawContext(0.5).sampled()) {
             sampled_seen = true;
         } else {
             unsampled_seen = true;
@@ -517,21 +517,23 @@ TEST(TraceContext, InvalidContextIsNeverSampled) {
 }
 
 TEST(TraceContext, GeneratedContextCarriesSampledFlag) {
-    const auto sampled = nixl::trace::generateTraceContext(1.0);
+    const auto sampled = drawContext(1.0);
     EXPECT_EQ(sampled.flags, 0x03);
     EXPECT_TRUE(sampled.sampled());
 
-    const auto unsampled = nixl::trace::generateTraceContext();
+    const auto unsampled = drawContext(0.0);
     EXPECT_EQ(unsampled.flags, 0x02);
     EXPECT_FALSE(unsampled.sampled());
 }
 
-TEST(TraceContext, SampleRatioIsOffWhenUnset) {
+TEST(TraceContext, SampleRatioIsOnWhenUnset) {
     gtest::ScopedEnv env;
     env.unsetVar(std::string(nixl::trace::traceSampleRatioVar));
     env.unsetVar(std::string(nixl::trace::otelTracesSampleRatioVar));
+    EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 1.0);
 
-    EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 0.0);
+    env.addVar(std::string(nixl::trace::otelTracesSampleRatioVar), "");
+    EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 1.0);
 }
 
 TEST(TraceContext, SampleRatioParsesOwnVariable) {
@@ -596,61 +598,70 @@ TEST(TraceContext, InvalidOtelVariableIsIgnoredNotFatal) {
     env.unsetVar(std::string(nixl::trace::traceSampleRatioVar));
 
     env.addVar(std::string(nixl::trace::otelTracesSampleRatioVar), "not-a-ratio");
-    EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 0.0);
+    EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 1.0);
 }
 
-TEST(TraceContext, RandomBufferRefillsOncePerBlock) {
-    auto buffer = countingBuffer();
+TEST(TraceContext, RandomGeneratorSeedsOnce) {
+    auto generator = countingGenerator();
     std::array<std::uint8_t, 32> bytes{};
 
-    for (int draw = 0; draw < 8; ++draw) {
-        buffer.fill(bytes);
+    for (int draw = 0; draw < 100000; ++draw) {
+        generator.fill(bytes);
     }
     EXPECT_EQ(refill_count, 1u);
-
-    buffer.fill(bytes);
-    EXPECT_EQ(refill_count, 2u);
 }
 
-TEST(TraceContext, RandomBufferServesBytesInOrderAcrossBlocks) {
-    auto buffer = countingBuffer();
-    std::vector<std::uint8_t> served;
+TEST(TraceContext, RandomGeneratorDrawsTheSameBytesFromTheSameSeed) {
+    std::array<std::uint8_t, 24> first{};
+    std::array<std::uint8_t, 24> second{};
+    auto generator = countingGenerator();
+    generator.fill(first);
+    countingGenerator().fill(second);
+    EXPECT_EQ(first, second);
 
-    for (int draw = 0; draw < 22; ++draw) {
-        std::array<std::uint8_t, 24> bytes{};
-        buffer.fill(bytes);
-        served.insert(served.end(), bytes.begin(), bytes.end());
-    }
+    std::array<std::uint8_t, 24> seed_bytes{};
+    std::iota(seed_bytes.begin(), seed_bytes.end(), std::uint8_t{0});
+    EXPECT_NE(first, seed_bytes);
 
-    std::vector<std::uint8_t> expected(served.size());
-    std::iota(expected.begin(), expected.end(), std::uint8_t{0});
-    EXPECT_EQ(served, expected);
-    EXPECT_EQ(refill_count, 3u);
+    std::array<std::uint8_t, 24> next{};
+    generator.fill(next);
+    EXPECT_NE(next, first);
 }
 
-TEST(TraceContext, RandomBufferClearDiscardsTheRest) {
-    auto buffer = countingBuffer();
+TEST(TraceContext, RandomGeneratorFillsAPartialWordFromTheNextWord) {
+    std::array<std::uint8_t, 16> whole{};
+    countingGenerator().fill(whole);
+    std::array<std::uint8_t, 13> partial{};
+    countingGenerator().fill(partial);
+
+    EXPECT_TRUE(std::equal(partial.begin(), partial.end(), whole.begin()));
+}
+
+TEST(TraceContext, RandomGeneratorClearSeedsAgain) {
+    auto generator = countingGenerator();
     std::array<std::uint8_t, 8> first{};
     std::array<std::uint8_t, 8> second{};
 
-    buffer.fill(first);
-    buffer.clear();
-    buffer.fill(second);
+    generator.fill(first);
+    generator.clear();
+    generator.fill(second);
 
     EXPECT_EQ(refill_count, 2u);
-    EXPECT_EQ(second, kBlockStart);
+    EXPECT_EQ(second, first);
 }
 
-TEST(TraceContext, RandomBufferRetriesAfterAFailedRefill) {
-    auto buffer = countingBuffer();
+TEST(TraceContext, RandomGeneratorRetriesAfterAFailedSeed) {
+    std::array<std::uint8_t, 8> expected{};
+    countingGenerator().fill(expected);
+
+    auto generator = countingGenerator();
     std::array<std::uint8_t, 8> bytes{};
-
     fail_next_refill = true;
-    EXPECT_THROW(buffer.fill(bytes), std::runtime_error);
+    EXPECT_THROW(generator.fill(bytes), std::runtime_error);
 
-    buffer.fill(bytes);
+    generator.fill(bytes);
     EXPECT_EQ(refill_count, 2u);
-    EXPECT_EQ(bytes, kBlockStart);
+    EXPECT_EQ(bytes, expected);
 }
 
 TEST(TraceContext, ForkedChildDrawsItsOwnIds) {
@@ -660,15 +671,15 @@ TEST(TraceContext, ForkedChildDrawsItsOwnIds) {
     pid_t child = -1;
     nixl::trace::TraceContext parent_context;
     std::thread([&] {
-        static_cast<void>(nixl::trace::generateTraceContext());
+        static_cast<void>(drawContext(0.0));
         child = ::fork();
         if (child == 0) {
-            const auto context = nixl::trace::generateTraceContext();
+            const auto context = drawContext(0.0);
             const auto written =
                 ::write(pipe_fds[1], context.traceId.data(), context.traceId.size());
             ::_exit(written == static_cast<ssize_t>(context.traceId.size()) ? 0 : 1);
         }
-        parent_context = nixl::trace::generateTraceContext();
+        parent_context = drawContext(0.0);
     }).join();
     ::close(pipe_fds[1]);
 
@@ -686,14 +697,26 @@ TEST(TraceContext, ForkedChildDrawsItsOwnIds) {
 }
 
 TEST(TraceContext, DefaultSourceIdsAreDistinct) {
-    const nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}};
+    const nixl::trace::CompositeTracer tracer{
+        std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}, 0.0};
     constexpr std::size_t count = 10000;
     std::set<std::uint64_t> ids;
 
     for (std::size_t index = 0; index < count; ++index) {
-        ids.insert(nixl::trace::generateRequestId(&tracer));
+        ids.insert(nixl::trace::generateRequestIdentity(&tracer).requestId);
     }
 
     EXPECT_EQ(ids.size(), count);
     EXPECT_FALSE(ids.contains(0));
+}
+
+TEST(TraceContext, TraceparentTextMatchesTheFormattedTraceparent) {
+    constexpr std::string_view traceparent =
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    const auto context = nixl::trace::parseTraceparent(traceparent);
+    ASSERT_TRUE(context.has_value());
+    EXPECT_EQ(nixl::trace::TraceparentText(*context).view(), traceparent);
+    EXPECT_EQ(nixl::trace::formatTraceparent(*context), traceparent);
+    EXPECT_TRUE(nixl::trace::TraceparentText(nixl::trace::TraceContext{}).view().empty());
+    EXPECT_TRUE(nixl::trace::formatTraceparent(nixl::trace::TraceContext{}).empty());
 }

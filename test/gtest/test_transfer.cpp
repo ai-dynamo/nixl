@@ -466,7 +466,7 @@ protected:
                                        &extra_params);
                 ASSERT_EQ(status, NIXL_SUCCESS);
                 EXPECT_NE(xfer_req, nullptr);
-                const auto trace_request_id = xfer_req->traceRequestId();
+                const auto trace_request_id = xfer_req->traceable().requestIdentity().requestId;
                 if (expect_trace_context) {
                     EXPECT_NE(trace_request_id, 0u);
                 }
@@ -476,12 +476,12 @@ protected:
                 for (size_t i = 0; i < repeat; i++) {
                     status = from.postXferReq(xfer_req);
                     ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
-                    EXPECT_EQ(xfer_req->traceRequestId(), trace_request_id);
+                    EXPECT_EQ(xfer_req->traceable().postIdentity().requestId, trace_request_id);
 
                     for (int i = 0; i < retry_count; i++) {
                         status = from.getXferStatus(xfer_req);
                         EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
-                        EXPECT_EQ(xfer_req->traceRequestId(), trace_request_id);
+                        EXPECT_EQ(xfer_req->traceable().postIdentity().requestId, trace_request_id);
                         if (status == NIXL_SUCCESS) {
                             break;
                         }
@@ -839,6 +839,7 @@ NIXL_INSTANTIATE_TEST(ucx_telemetry_threadpool_no_pt,
                       4,
                       "");
 
+#if defined(NIXL_TRACE_ENABLED)
 // End-to-end test with real agents and the NVTX trace backend active. It passes
 // standalone (NVTX ranges are no-op stubs with no profiler attached) and is also
 // the binary profiled under nsys to capture the NVTX timeline as an artifact.
@@ -879,6 +880,9 @@ protected:
         // reads NIXL_TRACE_BACKENDS). Keep telemetry off.
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
         env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
+        if (std::getenv("NVTX_INJECTION64_PATH") == nullptr) {
+            env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+        }
         for (size_t i = 0; i < 2; i++) {
             addAgent(i);
         }
@@ -1027,6 +1031,7 @@ protected:
         // no-op ranges when injection is absent.
         if (std::getenv("NVTX_INJECTION64_PATH") == nullptr) {
             env.addVar("NVTX_INJECTION64_PATH", "/nonexistent/libInjectionNvtx64.so");
+            env.addVar("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
         }
         for (size_t i = 0; i < 2; i++) {
             addAgent(i);
@@ -1069,9 +1074,10 @@ TEST_P(TestTransferTracingSampled, NotifyingWritePostedTwice) {
                                         xfer_req,
                                         &extra_params),
               NIXL_SUCCESS);
-    ASSERT_TRUE(xfer_req->traceContext().sampled());
-    ASSERT_NE(xfer_req->traceRequestId(), 0u);
-    RecordProperty("xfer_request_id", std::to_string(xfer_req->traceRequestId()));
+    ASSERT_TRUE(xfer_req->traceable().requestIdentity().context.sampled());
+    ASSERT_NE(xfer_req->traceable().requestIdentity().requestId, 0u);
+    RecordProperty("xfer_request_id",
+                   std::to_string(xfer_req->traceable().requestIdentity().requestId));
 
     for (size_t post = 0; post < posts; ++post) {
         nixl_status_t status = getAgent(0).postXferReq(xfer_req);
@@ -1092,5 +1098,6 @@ TEST_P(TestTransferTracingSampled, NotifyingWritePostedTwice) {
 }
 
 NIXL_INSTANTIATE_TEST(ucx_tracing_sampled, TestTransferTracingSampled, "UCX", true, 2, 0, "");
+#endif
 
 } // namespace gtest

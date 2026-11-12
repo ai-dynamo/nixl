@@ -30,14 +30,13 @@
 #include "common/nixl_log.h"
 
 #include "ucx_backend.h"
+#include "ucx_trace.h"
 #include "ucx_sgl.h"
 #include "ucx_utils.h"
 
 class nixlUcxBackendReqH : public nixlBackendReqH {
 public:
-    std::optional<nixl::trace::TraceContext> traceContext;
-    std::uint64_t traceRequestId = 0;
-    std::uint64_t traceExecution = 0;
+    nixl::ucx::PostTrace trace;
 
 #ifdef HAVE_UCX_SGL_API
     std::optional<nixl::ucx::sglXfer> sgl;
@@ -82,7 +81,9 @@ public:
     [[nodiscard]] nixl_status_t
     flush() {
         nixlUcxReq req = nullptr;
-        const nixl_status_t status = ep_->flushEp(req, notif_.empty() ? nullptr : flushCb, this);
+        const bool callback = !notif_.empty() || trace.completesOnFlush();
+        const nixl_status_t status = ep_->flushEp(req, callback ? flushCb : nullptr, this);
+        trace.flushIssued(status == NIXL_SUCCESS);
         const nixl_status_t ret = append(status, req);
         if (ret == NIXL_SUCCESS) {
             if (status == NIXL_SUCCESS) {
@@ -206,11 +207,7 @@ private:
     static constexpr size_t max_requests = 2;
 
     static void
-    flushCb(void *, ucs_status_t status, void *user_data) {
-        if (status == UCS_OK) {
-            static_cast<nixlUcxBackendReqH *>(user_data)->flushed();
-        }
-    }
+    flushCb(void *request, ucs_status_t status, void *user_data);
 
     void
     flushed() {
@@ -225,6 +222,7 @@ private:
         const nixl_status_t status = getEp().sendAm(
             nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(notif_), UCP_AM_SEND_FLAG_EAGER, &req);
         notif_.clear();
+        trace.notifSent(status);
         notifState_ = notif_state_t::SENT;
         if (status == NIXL_IN_PROG) {
             notifReq_ = req;

@@ -23,7 +23,9 @@ namespace gtest {
 
 class AllocationCounter {
 public:
-    AllocationCounter() noexcept;
+    enum class scope { thread, process };
+
+    explicit AllocationCounter(scope counted = scope::thread) noexcept;
     ~AllocationCounter();
 
     AllocationCounter(const AllocationCounter &) = delete;
@@ -34,6 +36,7 @@ public:
     count() const noexcept;
 
 private:
+    const scope scope_;
     const std::size_t start_;
     const bool wasCounting_;
 };

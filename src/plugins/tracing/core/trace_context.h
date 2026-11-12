@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_TRACE_CONTEXT_H
-#define NIXL_SRC_CORE_TRACING_TRACE_CONTEXT_H
+#ifndef NIXL_SRC_PLUGINS_TRACING_CORE_TRACE_CONTEXT_H
+#define NIXL_SRC_PLUGINS_TRACING_CORE_TRACE_CONTEXT_H
 
 #include <array>
 #include <cstddef>
@@ -25,9 +25,11 @@
 #include <string>
 #include <string_view>
 
-namespace nixl::trace {
+#include "tracing/api/trace_identity.h"
 
-class Tracer;
+class nixlSerDes;
+
+namespace nixl::trace {
 
 /**
  * @brief Wire encoding of a trace context, fixed at 26 bytes:
@@ -41,9 +43,6 @@ class Tracer;
 inline constexpr std::uint8_t traceContextWireVersion = 0x01;
 inline constexpr std::size_t traceContextWireSize = 26;
 
-inline constexpr std::string_view traceSampleRatioVar = "NIXL_TRACE_SAMPLE_RATIO";
-inline constexpr std::string_view otelTracesSampleRatioVar = "OTEL_TRACES_SAMPLE_RATIO";
-
 /**
  * @brief Outcome of decoding a wire record. UnknownVersion is a record written
  *        by a peer speaking a later version and must be ignored rather than
@@ -55,30 +54,6 @@ enum class WireDecodeResult : std::uint8_t {
     UnknownVersion,
     Malformed,
 };
-
-struct TraceContext {
-    TraceContext() = default;
-    explicit TraceContext(const Tracer *tracer);
-
-    std::array<std::uint8_t, 16> traceId{};
-    std::array<std::uint8_t, 8> spanId{};
-    std::uint8_t flags{};
-
-    [[nodiscard]] bool
-    valid() const noexcept;
-
-    [[nodiscard]] bool
-    sampled() const noexcept;
-
-    [[nodiscard]] bool
-    operator==(const TraceContext &) const noexcept = default;
-};
-
-[[nodiscard]] std::optional<TraceContext>
-parseTraceparent(std::string_view value);
-
-[[nodiscard]] std::string
-formatTraceparent(const TraceContext &context);
 
 /**
  * @brief Encode @p context into the first traceContextWireSize bytes of
@@ -120,48 +95,31 @@ decodeTraceContext(std::span<const std::uint8_t> buffer, TraceContext &context);
 [[nodiscard]] bool
 sampledByRatio(const TraceContext &context, double ratio) noexcept;
 
-/**
- * @brief Resolve the sampling ratio: traceSampleRatioVar when set, else
- *        otelTracesSampleRatioVar, which is Dynamo's convention rather than an
- *        OpenTelemetry one (the SDK spec defines OTEL_TRACES_SAMPLER and
- *        OTEL_TRACES_SAMPLER_ARG) but carries the same head-sampling meaning,
- *        so a NIXL running inside Dynamo inherits it. Unset diverges:
- *        Dynamo samples everything, NIXL samples nothing. Setting
- *        traceSampleRatioVar empty is an explicit "off" that beats the
- *        fallback, matching how NIXL_TRACE_BACKENDS is treated.
- * @return The resolved ratio, or 0 (sample nothing) when neither is usable.
- * @throws std::invalid_argument when traceSampleRatioVar holds anything other
- *         than 0 or a number in [2^-56, 1] — OpenTelemetry's range, 2^-56 being
- *         one trace in every value 56 bits can express — so a caller who asked
- *         for sampling is not silently given none. A bad value in the shared
- *         OpenTelemetry variable only warns: NIXL does not own it and must not
- *         fail construction on it.
- */
-[[nodiscard]] double
-resolveTraceSampleRatio();
+[[nodiscard]] std::optional<TraceContext>
+parseTraceparent(std::string_view value);
 
-/**
- * @brief Generate a context with fresh random ids, marked sampled when
- *        @p sample_ratio selects it by the rule sampledByRatio documents.
- * @param sample_ratio Probability in [0, 1]; the default samples nothing.
- */
-[[nodiscard]] TraceContext
-generateTraceContext(double sample_ratio = 0.0);
+[[nodiscard]] std::string
+formatTraceparent(const TraceContext &context);
 
-/**
- * @brief Draw a request id from @p tracer's random source, again while it is
- *        zero; 0, which means none, when @p tracer is null or its source fails.
- */
-[[nodiscard]] std::uint64_t
-generateRequestId(const Tracer *tracer);
+void
+encodeTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity);
 
-/**
- * @brief Draw a context for one post of @p request: its trace id and flags with
- *        a span id from @p tracer's random source, again while it is zero;
- *        @p request itself when @p tracer is null or its source fails.
- */
-[[nodiscard]] TraceContext
-generatePostContext(const TraceContext &request, const Tracer *tracer);
+[[nodiscard]] std::optional<TraceIdentity>
+decodeTraceTags(nixlSerDes &ser_des);
+
+class TraceparentText {
+public:
+    explicit TraceparentText(const TraceContext &context) noexcept;
+
+    [[nodiscard]] std::string_view
+    view() const noexcept {
+        return {text_.data(), size_};
+    }
+
+private:
+    std::array<char, 55> text_;
+    std::uint8_t size_;
+};
 
 } // namespace nixl::trace
 

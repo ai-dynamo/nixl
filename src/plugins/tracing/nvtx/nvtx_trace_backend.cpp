@@ -66,18 +66,20 @@ namespace {
 
 } // namespace
 
-NvtxTraceBackend::NvtxTraceBackend(const std::string_view domain)
+NvtxTraceBackend::NvtxTraceBackend(const std::string_view domain,
+                                   const bool record_without_profiler)
     : domainName_(domain),
       domain_(nvtxDomainCreateA(domainName_.c_str())),
       schemaIds_(registerPayloadSchemas(domain_)),
-      registeredHandles_(registerSpanNames(domain_)) {}
+      registeredHandles_(registerSpanNames(domain_)),
+      recordWithoutProfiler_(record_without_profiler) {}
 
 NvtxTraceBackend::~NvtxTraceBackend() {
     nvtxDomainDestroy(domain_);
 }
 
 std::unique_ptr<SpanBackend>
-NvtxTraceBackend::beginSpan(const std::string_view name, const Kind kind) {
+NvtxTraceBackend::beginSpan(const Name name, const Kind kind) {
     NvtxEvent ev;
     eventForName(ev, name, kind, domain_, registeredHandles_);
     applyCorrelation(ev.attributes);
@@ -87,7 +89,7 @@ NvtxTraceBackend::beginSpan(const std::string_view name, const Kind kind) {
 }
 
 std::unique_ptr<SpanBackend>
-NvtxTraceBackend::beginContextSpan(const std::string_view name,
+NvtxTraceBackend::beginContextSpan(const Name name,
                                    const Kind kind,
                                    const TraceContext &,
                                    const std::uint64_t request_id) {
@@ -100,15 +102,7 @@ NvtxTraceBackend::beginContextSpan(const std::string_view name,
 }
 
 void
-NvtxTraceBackend::mark(const std::string_view name, const Kind kind) {
-    NvtxEvent ev;
-    eventForName(ev, name, kind, domain_, registeredHandles_);
-    applyCorrelation(ev.attributes);
-    nvtxDomainMarkEx(domain_, &ev.attributes);
-}
-
-void
-NvtxTraceBackend::emitSpan(const std::string_view name,
+NvtxTraceBackend::emitSpan(const Name name,
                            const Kind kind,
                            const TraceContext &,
                            const std::uint64_t request_id,
@@ -126,7 +120,18 @@ NvtxTraceBackend::emitSpan(const std::string_view name,
 }
 
 void
-NvtxTraceBackend::emitEvent(const std::string_view name,
+NvtxTraceBackend::emitContextSpan(const Name name,
+                                  const Kind kind,
+                                  const TraceContext &context,
+                                  const std::uint64_t request_id,
+                                  const nixlTime::us_t start,
+                                  const nixlTime::us_t end,
+                                  const std::span<const Attribute> attrs) {
+    emitSpan(name, kind, context, request_id, start, end, attrs);
+}
+
+void
+NvtxTraceBackend::emitEvent(const Name name,
                             const Kind kind,
                             const TraceContext &,
                             const std::uint64_t request_id,

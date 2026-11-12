@@ -70,6 +70,12 @@ struct nixl_capi_xfer_telemetry_s {
     uint64_t desc_count; // Number of descriptors
 };
 
+struct nixl_capi_xfer_trace_info_s {
+    uint64_t request_id;
+    uint64_t execution;
+    char traceparent[56];
+};
+
 // Opaque handle types for C++ objects
 typedef struct nixl_capi_agent_s* nixl_capi_agent_t;
 typedef struct nixl_capi_params_s* nixl_capi_params_t;
@@ -219,6 +225,35 @@ nixl_capi_opt_args_set_custom_param(nixl_capi_opt_args_t args, const void *data,
  */
 nixl_capi_status_t
 nixl_capi_opt_args_get_custom_param(nixl_capi_opt_args_t args, void **data, size_t *len);
+
+/**
+ * @brief Set the trace context of the caller's span, a W3C traceparent or NIXL's 26-byte trace
+ * context record.
+ *
+ * Copies @a len bytes out of @a data, which may be freed once this returns. @a data
+ * may be NULL only when @a len is 0.
+ *
+ * @param  args  [in]  Optional arguments
+ * @param  data  [in]  Context bytes
+ * @param  len   [in]  Byte count
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_opt_args_set_trace_context(nixl_capi_opt_args_t args, const void *data, size_t len);
+
+/**
+ * @brief Get the trace context.
+ *
+ * On success the caller owns @a data and must release it with free(). An unset
+ * context yields NULL and a length of 0.
+ *
+ * @param  args  [in]  Optional arguments
+ * @param  data  [out] Newly allocated copy of the context bytes
+ * @param  len   [out] Byte count
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_opt_args_get_trace_context(nixl_capi_opt_args_t args, void **data, size_t *len);
 
 nixl_capi_status_t nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif);
 nixl_capi_status_t nixl_capi_opt_args_get_has_notif(nixl_capi_opt_args_t args, bool* has_notif);
@@ -476,11 +511,18 @@ nixl_capi_release_mem_view(nixl_capi_agent_t agent, nixl_capi_mem_view_t mvh);
 // Telemetry structure for transfer requests
 typedef struct nixl_capi_xfer_telemetry_s *nixl_capi_xfer_telemetry_t;
 
+typedef struct nixl_capi_xfer_trace_info_s *nixl_capi_xfer_trace_info_t;
+
 // Get transfer telemetry data
 nixl_capi_status_t
 nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
                              nixl_capi_xfer_telemetry_t telemetry);
+
+nixl_capi_status_t
+nixl_capi_get_xfer_trace_info(nixl_capi_agent_t agent,
+                              nixl_capi_xfer_req_t req_hndl,
+                              nixl_capi_xfer_trace_info_t info);
 
 bool
 nixl_capi_is_stub();

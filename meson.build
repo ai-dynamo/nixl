@@ -541,8 +541,8 @@ endif
 # ---- Tracing (nixl::trace) -------------------------------------------------
 # Two gates: build/packaging (which backend plugins are built, as separate .so
 # modules under src/plugins/tracing) and runtime (which built plugins the caller
-# activates via NIXL_TRACE_BACKENDS / nsys auto-load). The facade itself is
-# always compiled into libnixl.
+# activates via NIXL_TRACE_BACKENDS / nsys auto-load). With with_trace=false the
+# facade is not compiled at all.
 nixl_trace_enabled = get_option('with_trace')
 nixl_trace_nvtx_enabled = false
 

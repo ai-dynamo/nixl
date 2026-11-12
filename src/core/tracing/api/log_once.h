@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_LOG_ONCE_H
-#define NIXL_SRC_CORE_TRACING_LOG_ONCE_H
+#ifndef NIXL_SRC_CORE_TRACING_API_LOG_ONCE_H
+#define NIXL_SRC_CORE_TRACING_API_LOG_ONCE_H
 
 #include <atomic>
 
@@ -37,4 +37,4 @@ logOnce(std::atomic<bool> &logged, logFn &&log) noexcept {
 
 } // namespace nixl::trace
 
-#endif // NIXL_SRC_CORE_TRACING_LOG_ONCE_H
+#endif // NIXL_SRC_CORE_TRACING_API_LOG_ONCE_H

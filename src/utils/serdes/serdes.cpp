@@ -40,7 +40,7 @@ nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str)
 
     workingStr.reserve(workingStr.size() + tag.size() + sizeof(len) + len + 1);
     workingStr.append(tag);
-    workingStr.append(_bytesToString(&len, sizeof(size_t)));
+    workingStr.append(reinterpret_cast<const char *>(&len), sizeof(len));
     workingStr.append(str);
     workingStr.append("|");
 
@@ -100,8 +100,8 @@ nixlSerDes::peekBufLen(std::string_view tag) const noexcept {
 nixl_status_t nixlSerDes::addBuf(const std::string &tag, const void* buf, ssize_t len){
 
     workingStr.append(tag);
-    workingStr.append(_bytesToString(&len, sizeof(ssize_t)));
-    workingStr.append(_bytesToString(buf, len));
+    workingStr.append(reinterpret_cast<const char *>(&len), sizeof(len));
+    workingStr.append(static_cast<const char *>(buf), len);
     workingStr.append("|");
 
     return NIXL_SUCCESS;
@@ -167,6 +167,11 @@ nixl_status_t nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len)
 }
 
 // Buffer management serialization
+void
+nixlSerDes::reserve(size_t size) {
+    workingStr.reserve(size);
+}
+
 std::string nixlSerDes::exportStr() const {
     return workingStr;
 }

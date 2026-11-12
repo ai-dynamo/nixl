@@ -15,10 +15,11 @@
  * limitations under the License.
  */
 #include "common.h"
-#include "tracing/backend_trace.h"
-#include "tracing/trace.h"
-#include "tracing/trace_context.h"
-#include "tracing/trace_sink.h"
+#include "tracing/api/backend_trace.h"
+#include "tracing/core/trace.h"
+#include "tracing/core/trace_config.h"
+#include "tracing/core/trace_context.h"
+#include "tracing/core/trace_sink.h"
 
 #include <gtest/gtest.h>
 
@@ -29,6 +30,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -39,7 +41,24 @@ namespace {
 using record_t = std::vector<std::string>;
 
 constexpr const char *recorder_agent = "recorder_agent";
-constexpr std::uint64_t recorded_request_id = 0x8090a0b0c0d0e0f0ULL;
+constexpr std::uint64_t recorded_request_id = 0x7090a0b0c0d0e0f0ULL;
+
+[[nodiscard]] nixl::trace::TraceContext
+drawContext(double sample_ratio) {
+    const nixl::trace::CompositeTracer tracer{
+        std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}, sample_ratio};
+    return nixl::trace::generateRequestIdentity(&tracer).context;
+}
+
+[[nodiscard]] std::unique_ptr<nixl::trace::CompositeTracer>
+makeRecorderTracer() {
+    auto backends = nixl::trace::loadTraceBackends({"recorder"}, recorder_agent);
+    if (backends.empty()) {
+        return nullptr;
+    }
+    return std::make_unique<nixl::trace::CompositeTracer>(std::move(backends),
+                                                          nixl::trace::defaultSampleRatio);
+}
 
 class traceRecorder : public testing::Test {
 protected:
@@ -75,12 +94,12 @@ protected:
 } // namespace
 
 TEST_F(traceRecorder, EmittedSpanRecordsItsTimesAndContext) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     {
-        const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
+        const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         const std::array attrs{
-            nixl::trace::Attribute{"nixl.bytes", std::int64_t{4096}},
+            nixl::trace::Attribute{"bytes", std::int64_t{4096}},
             nixl::trace::Attribute{"nixl.remote_agent", std::string_view{"peer"}}};
         tracer->emitSpan("nixl::test.span",
                          nixl::trace::Kind::CommSend,
@@ -106,20 +125,20 @@ TEST_F(traceRecorder, EmittedSpanRecordsItsTimesAndContext) {
                                 "context=" + nixl::trace::formatTraceparent(context),
                                 "start_us=100",
                                 "end_us=250",
-                                "nixl.bytes=4096",
+                                "bytes=4096",
                                 "nixl.remote_agent=peer"},
                                {recorder_agent, "nixl::test.untraced", "start_us=7", "end_us=9"}}));
 }
 
 TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     {
-        const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
+        const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
         const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", "sender"}};
         sink.recordPhase(
-            nixl_trace_phase_t::NOTIF_RECEIVED, {}, 1234, attrs, &context, recorded_request_id, 1);
+            nixl_trace_phase_t::NOTIF_RECEIVED, 1234, {context, recorded_request_id, 1}, attrs, {});
     }
 
     const std::string traceparent = nixl::trace::formatTraceparent(context);
@@ -132,20 +151,18 @@ TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
                                       "at_us=1234",
                                       "nixl.backend=UCX",
                                       "nixl.phase.timestamp_us=1234",
-                                      "nixl.traceparent=" + traceparent,
                                       "nixl.xfer_request_id=" + request_id,
                                       "nixl.xfer_execution=1",
                                       "nixl.remote_agent=sender"}}));
 }
 
 TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
-    const auto context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
     {
-        const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
+        const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         {
-            const nixl::trace::CorrelationScope scope(
-                tracer.get(), nixl::trace::TraceContext{}, recorded_request_id);
+            const nixl::trace::Scope scope(tracer.get(), {context, recorded_request_id});
             const auto span = tracer->beginSpan("nixl::test.scoped");
         }
         tracer->emitEvent("nixl::test.event", nixl::trace::Kind::Metadata, context, 0, 5, {});
@@ -154,7 +171,8 @@ TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
     EXPECT_EQ(records(),
               (std::vector<record_t>{{recorder_agent,
                                       "nixl::test.scoped",
-                                      "correlation=" + std::to_string(recorded_request_id)},
+                                      "correlation=" + std::to_string(recorded_request_id),
+                                      "context=" + nixl::trace::formatTraceparent(context)},
                                      {recorder_agent,
                                       "nixl::test.event",
                                       "context=" + nixl::trace::formatTraceparent(context),
@@ -163,16 +181,16 @@ TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
 
 TEST_F(traceRecorder, ContextSpanRecordsItsOwnContextAndId) {
     constexpr std::uint64_t other_request_id = 0x0102030405060708ULL;
-    const auto context = nixl::trace::generateTraceContext(1.0);
-    const auto other_context = nixl::trace::generateTraceContext(1.0);
+    const auto context = drawContext(1.0);
+    const auto other_context = drawContext(1.0);
     {
-        const auto tracer = nixl::trace::makeTracer({recorder_agent, {"recorder"}});
+        const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         {
-            const nixl::trace::CorrelationScope scope(tracer.get(), context, recorded_request_id);
+            const nixl::trace::Scope scope(tracer.get(), {context, recorded_request_id});
             auto span = tracer->beginContextSpan(
                 "nixl::test.post", nixl::trace::Kind::CommSend, context, recorded_request_id);
-            span.addAttribute("nixl.bytes", std::int64_t{4096});
+            span.addAttribute("bytes", std::int64_t{4096});
             const auto child = tracer->beginSpan("nixl::test.child");
             const auto other = tracer->beginContextSpan(
                 "nixl::test.other", nixl::trace::Kind::Generic, other_context, other_request_id);
@@ -183,17 +201,14 @@ TEST_F(traceRecorder, ContextSpanRecordsItsOwnContextAndId) {
 
     const std::string correlation = "correlation=" + std::to_string(recorded_request_id);
     const std::string traceparent = nixl::trace::formatTraceparent(context);
-    EXPECT_EQ(records(),
-              (std::vector<record_t>{
-                  {recorder_agent,
-                   "nixl::test.other",
-                   "correlation=" + std::to_string(other_request_id),
-                   "span=" + nixl::trace::formatTraceparent(other_context)},
-                  {recorder_agent, "nixl::test.child", correlation, "context=" + traceparent},
-                  {recorder_agent,
-                   "nixl::test.post",
-                   correlation,
-                   "span=" + traceparent,
-                   "nixl.bytes=4096"},
-                  {recorder_agent, "nixl::test.unscoped", correlation, "span=" + traceparent}}));
+    EXPECT_EQ(
+        records(),
+        (std::vector<record_t>{
+            {recorder_agent,
+             "nixl::test.other",
+             "correlation=" + std::to_string(other_request_id),
+             "span=" + nixl::trace::formatTraceparent(other_context)},
+            {recorder_agent, "nixl::test.child", correlation, "context=" + traceparent},
+            {recorder_agent, "nixl::test.post", correlation, "span=" + traceparent, "bytes=4096"},
+            {recorder_agent, "nixl::test.unscoped", correlation, "span=" + traceparent}}));
 }

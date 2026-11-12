@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "tracing/trace_plugin.h"
+#include "tracing/api/trace_plugin.h"
 
 extern "C" NIXL_TRACE_PLUGIN_EXPORT nixlTracePlugin *
 nixl_trace_plugin_init() {

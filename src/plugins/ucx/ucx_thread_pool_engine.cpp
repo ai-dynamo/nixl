@@ -21,9 +21,12 @@
 #include "common/backend.h"
 #include "common/blocking_queue.h"
 #include "common/nixl_log.h"
+#include "common/nixl_time.h"
+#include "tracing/api/backend_trace.h"
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <exception>
 #include <latch>
 #include <ostream>
@@ -155,11 +158,15 @@ struct nixlUcxBackendSharedState {
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
     std::vector<nixlUcxChunkBackendReqH> chunks;
+    nixl::ucx::PostTrace trace;
 
     explicit nixlUcxBackendSharedState(size_t num_chunks)
         : status(NIXL_SUCCESS),
           pendingReqs(0),
           chunks(num_chunks) {}
+
+    void
+    completeTracedChunk() noexcept;
 
     friend std::ostream &
     operator<<(std::ostream &os, const nixlUcxBackendSharedState &state) {
@@ -169,13 +176,32 @@ struct nixlUcxBackendSharedState {
 };
 
 void
+nixlUcxBackendSharedState::completeTracedChunk() noexcept {
+    // Read the status before pendingReqs reaches zero, after which a repost may rewrite it.
+    size_t pending = pendingReqs.load();
+    while ((pending > 1) && !pendingReqs.compare_exchange_weak(pending, pending - 1))
+        ;
+    if (pending != 1) {
+        return;
+    }
+    if (status.load() == NIXL_SUCCESS) {
+        trace.completed();
+    }
+    pendingReqs.store(0);
+}
+
+void
 nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
     NIXL_ASSERT(sharedState_.get() != nullptr);
     if (status != NIXL_SUCCESS) {
         nixlUcxBackendReqH::release();
         sharedState_->status.store(status);
     }
-    sharedState_->pendingReqs.fetch_sub(1);
+    if (!sharedState_->trace.active()) [[likely]] {
+        sharedState_->pendingReqs.fetch_sub(1);
+    } else {
+        sharedState_->completeTracedChunk();
+    }
     NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
     setWorker(nullptr);
     sharedState_.reset();
@@ -212,6 +238,7 @@ public:
     startXfer() {
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
+        sharedState_->trace = trace;
         sharedState_->pendingReqs.store(getNumChunks());
     }
 
@@ -357,8 +384,9 @@ public:
     nixlUcxDedicatedWorker(const nixlUcxContext &context,
                            ucp_err_handling_mode_t err_handling_mode,
                            size_t id,
+                           nixlBackendTraceSink *trace_sink,
                            nixlUcxEngine *engine)
-        : nixlUcxWorker(context, err_handling_mode, id),
+        : nixlUcxWorker(context, err_handling_mode, id, trace_sink),
           thread_(std::in_place, engine, *this) {}
 
     void

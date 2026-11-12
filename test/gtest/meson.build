@@ -114,6 +114,7 @@ gtest_sources = [
     'md_manager.cpp',
     'metadata_worker.cpp',
     'common.cpp',
+    'unit/allocation_counter.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
     'telemetry_mp_store_test.cpp',
@@ -124,10 +125,15 @@ gtest_sources = [
     'blocking_queue_test.cpp',
     'nixl_log_file_test.cpp',
     'configuration.cpp',
-    'trace_recorder_test.cpp',
     # Hidden in libnixl_common, so the oversized-record test links its own copy.
     '../../src/utils/common/nixl_log_file_sink.cpp',
     ]
+
+gtest_trace_deps = []
+if nixl_trace_enabled
+    gtest_sources += 'trace_recorder_test.cpp'
+    gtest_trace_deps += [trace_core_dep]
+endif
 
 if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
     # The UCX device API tests also run the proxy mode, which needs only CUDA and the UCX backend.
@@ -147,7 +153,11 @@ endif
 
 if ucx_dep.found() and is_variable('ucx_backend_interface')
     gtest_sources += 'hw_warning_test.cpp'
-    gtest_sources += 'ucx_trace_context_test.cpp'
+    if nixl_trace_enabled
+        gtest_sources += 'ucx_trace_context_test.cpp'
+    else
+        gtest_sources += 'ucx_trace_compiled_out_test.cpp'
+    endif
     cpp_flags += '-DHAVE_UCX_BACKEND'
     ucx_hw_warning_dep = [ucx_backend_interface, ucx_dep]
 else
@@ -178,13 +188,16 @@ test_exe = executable('gtest',
     sources : gtest_sources,
     include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../metrics'), include_directories('../../src/plugins/telemetry/common')],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, nixl_common_dep, serdes_interface, gpu_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface, nixl_telemetry_mp_store_dep, telemetry_mp_collector_dep, telemetry_mp_exporter_dep],
+    dependencies : [nixl_dep, nixl_common_dep, serdes_interface, gpu_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface, nixl_telemetry_mp_store_dep, telemetry_mp_collector_dep, telemetry_mp_exporter_dep, gtest_trace_deps],
     link_with: [nixl_build_lib],
     install : true
 )
 
-gtest_depends = [trace_recorder_plugin]
-if ucx_dep.found() and is_variable('ucx_backend_interface')
+gtest_depends = []
+if nixl_trace_enabled
+    gtest_depends += [trace_recorder_plugin, trace_core_test_plugin]
+endif
+if nixl_trace_enabled and ucx_dep.found() and is_variable('ucx_backend_interface')
     ucx_trace_receiver = executable('ucx_trace_receiver',
         sources : ['main.cpp', 'common.cpp', 'ucx_trace_receiver.cpp'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],

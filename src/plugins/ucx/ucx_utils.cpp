@@ -16,6 +16,7 @@
  */
 
 #include "ucx_utils.h"
+#include "tracing/api/backend_trace.h"
 
 #include <algorithm>
 #include <array>
@@ -738,11 +739,13 @@ operator<<(std::ostream &os, const nixlUcxWorker &worker) {
 
 nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
                              ucp_err_handling_mode_t err_handling_mode,
-                             size_t id)
+                             size_t id,
+                             nixlBackendTraceSink *trace_sink)
     : name_(ctx.getName() + ":" + std::to_string(id)),
       worker(createUcpWorker(ctx), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode),
-      id_(id) {
+      id_(id),
+      traceSink_(trace_sink) {
     NIXL_DEBUG << *this << ": created ucp worker " << worker.get();
 }
 
@@ -914,7 +917,9 @@ nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_
 
 unsigned
 nixlUcxWorker::progress() {
-    return ucp_worker_progress(worker.get());
+    const unsigned progressed = ucp_worker_progress(worker.get());
+    nixl::trace::recordDeferredPhases(traceSink_);
+    return progressed;
 }
 
 void
@@ -928,7 +933,7 @@ nixlUcxWorker::test(nixlUcxReq req) {
     if (req == nullptr) {
         return NIXL_SUCCESS;
     }
-    ucp_worker_progress(worker.get());
+    progress();
     return nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
 }
 

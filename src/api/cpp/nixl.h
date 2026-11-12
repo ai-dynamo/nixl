@@ -367,6 +367,7 @@ class nixlAgent {
 
         /**
          * @brief  Get the trace identity of `req_hndl`, as its trace records carry it.
+         *         It must not run while another thread posts or releases `req_hndl`.
          *
          * @param  req_hndl      Transfer request handle obtained from makeXferReq/createXferReq
          * @param  info [out]    Output trace identity, set only on success

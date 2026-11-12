@@ -690,6 +690,35 @@ nixl_capi_opt_args_get_custom_param(nixl_capi_opt_args_t args, void **data, size
 }
 
 nixl_capi_status_t
+nixl_capi_opt_args_set_trace_context(nixl_capi_opt_args_t args, const void *data, size_t len) {
+    if (!args || (!data && len > 0)) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        args->args.traceContext.assign((const char *)data, len);
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_opt_args_get_trace_context(nixl_capi_opt_args_t args, void **data, size_t *len) {
+    if (!args || !data || !len) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        return nixl_capi_blob_to_buffer(args->args.traceContext, data, len);
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
 nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif)
 {
   if (!args) {
@@ -2119,6 +2148,34 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
         }
 
         return nixl_capi_status_from_nixl_status(ret);
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_get_xfer_trace_info(nixl_capi_agent_t agent,
+                              nixl_capi_xfer_req_t req_hndl,
+                              nixl_capi_xfer_trace_info_t info) {
+    if (!agent || !req_hndl || !info) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        nixl_xfer_trace_info_t cpp_info;
+        const nixl_status_t ret = agent->inner->getXferTraceInfo(req_hndl->req, cpp_info);
+        if (ret != NIXL_SUCCESS) {
+            return nixl_capi_status_from_nixl_status(ret);
+        }
+        if (cpp_info.traceparent.size() >= sizeof(info->traceparent)) {
+            return NIXL_CAPI_ERROR_BACKEND;
+        }
+        info->request_id = cpp_info.requestId;
+        info->execution = cpp_info.execution;
+        std::memcpy(
+            info->traceparent, cpp_info.traceparent.c_str(), cpp_info.traceparent.size() + 1);
+        return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;

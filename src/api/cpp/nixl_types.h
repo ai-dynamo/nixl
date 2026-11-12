@@ -178,6 +178,8 @@ struct nixlAgentOptionalArgs {
      * @var notif Optional notification message used in createXferReq / makeXferReq / postXferReq.
      *            If set, notification is enabled even for empty-string messages.
      *            This is the preferred field for new API users.
+     *            Options given to postXferReq replace the request's notification, for that
+     *            post and every later one, unless they carry only a trace context.
      */
     std::optional<nixl_blob_t> notif;
 
@@ -239,6 +241,17 @@ struct nixlAgentOptionalArgs {
      *      stages, and any state retained in its prepared request.
      */
     nixl_blob_t customParam;
+
+    /**
+     * @var traceContext The trace context of the application's span, as a W3C
+     *      `traceparent` or NIXL's 26-byte trace context record. createXferReq and
+     *      makeXferReq make the request's span a child of that span, in its trace,
+     *      postXferReq does the same for that post's span alone, and genNotif for
+     *      the notification's span; its sampled flag decides whether each is
+     *      traced. A value that is neither is ignored, and logged once per agent.
+     *      Given to postXferReq alone, it keeps the request's notification.
+     */
+    nixl_blob_t traceContext;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs
