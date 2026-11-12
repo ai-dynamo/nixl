@@ -8,6 +8,12 @@
 
 #include <gpu/impl/gpunetio/device_gpunetio_types.h>
 
+// The supported SDK FIFO path is the default. Private CQ inspection is an
+// explicit, unsupported SDK-profile opt-in and must agree across consumers.
+#ifndef NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
+#define NIXL_GPUNETIO_PUBLIC_FIFO_ONLY 1
+#endif
+
 // The direct device API is enabled explicitly and limited to the tested SDK.
 #if defined(NIXL_ENABLE_GPUNETIO_DEVICE_API) && NIXL_ENABLE_GPUNETIO_DEVICE_API
 #define NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE 1

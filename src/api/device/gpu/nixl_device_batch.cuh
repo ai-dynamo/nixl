@@ -187,7 +187,14 @@ public:
         return NIXL_SUCCESS;
     }
 
-    /** Prepare one read in a previously reserved slot; CTA threads may call in parallel. */
+    /**
+     * Prepare one read in a reserved slot. CTA threads may prepare distinct
+     * tickets in parallel. The caller must prepare every reserved ticket exactly
+     * once successfully and check every return value before publishing; this
+     * session does not track which slots were initialized. If preparation cannot
+     * be completed, synchronize the CTA and fail the session rather than publish
+     * a partially prepared range.
+     */
     __device__ nixl_status_t
     prepare(uint64_t ticket,
             size_t remote_index,
@@ -221,7 +228,10 @@ public:
         return NIXL_SUCCESS;
     }
 
-    /** Caller must synchronize all WQE builders before publishing. */
+    /**
+     * Publish only after every reserved ticket was prepared successfully and
+     * all WQE builders have synchronized. Returns NIXL_IN_PROG when submitted.
+     */
     __device__ nixl_status_t
     publish(uint64_t first, uint32_t count) {
         if (!acquired_ || !reserved_ || first != reserved_first_ || count != reserved_count_) {
@@ -275,6 +285,10 @@ public:
 
     /**
      * Check one CQE without advancing the CQ; CTA threads may poll in parallel.
+     * This experimental path uses a DOCA SDK internal helper and has no SDK
+     * compatibility guarantee. The default public-only profile returns
+     * NIXL_ERR_NOT_SUPPORTED; use acquireFifo() and pollFifo() instead.
+     * Define the macro consistently in every CUDA translation unit using this API.
      * Success here does not by itself make the destination ready for consumption.
      * After all pollers synchronize, retire the successful FIFO range. If
      * needsConsistency() is true, retire all outstanding reads, then post,
@@ -305,8 +319,10 @@ public:
     /**
      * Poll the next published ticket using the public SDK helper. One thread
      * owns this operation and must check every ticket in FIFO order. A later
-     * ticket is rejected even if its CQE is already available. Success does
-     * not replace retire() or a required consistency operation.
+     * ticket is rejected even if its CQE is already available. Checking only a
+     * later completion can hide errors in earlier CQEs after the SDK advances
+     * its consumer index. Success does not replace retire() or a required
+     * consistency operation.
      */
     __device__ nixl_status_t
     pollFifo(uint64_t ticket) {

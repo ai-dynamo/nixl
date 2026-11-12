@@ -57,8 +57,9 @@ For the native GET test, add `NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR=1` together
 with `NIXL_GPUNETIO_TEST_RETENTION=1` and `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to
 inject a bad key between two valid READs and check sticky FIFO error handling.
 Run this only in a disposable process; failed resources are retained until
-process exit. Define `NIXL_GPUNETIO_PUBLIC_FIFO_ONLY=1` consistently when
-compiling a consumer that uses only the public FIFO completion path.
+process exit. The public FIFO completion path is the default. Define
+`NIXL_GPUNETIO_PUBLIC_FIFO_ONLY=0` consistently across CUDA consumers only
+when testing the unsupported private parallel CQ helper.
 
 With `build_tests=true`, a non-release build, and `gpunetio_device_api=enabled`,
 `nixl_gpunetio_device_get_test` exercises GPU-initiated GET from registered

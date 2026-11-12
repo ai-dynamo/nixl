@@ -70,6 +70,18 @@ rejectMixed(nixlMemViewH local, nixlMemViewH remote, int *result) {
     }
 }
 
+#if NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
+__global__ void
+publicDefaultAdmission(nixlMemViewH local, nixlMemViewH remote, int *result) {
+    nixl::gpu::readSession session;
+    *result = session.bind(local, remote) == NIXL_SUCCESS && session.acquire() == NIXL_SUCCESS &&
+            session.finish() == NIXL_SUCCESS && session.acquireFifo() == NIXL_SUCCESS &&
+            session.finish() == NIXL_SUCCESS ?
+        0 :
+        1;
+}
+#endif
+
 __global__ void
 scalarGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *result) {
     if (threadIdx.x) {
@@ -651,6 +663,17 @@ main(int argc, char **argv) {
                 !qp_addresses.insert(identity[2]).second) {
                 throw std::runtime_error("pool channels alias the same lane or QP");
             }
+#if NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
+            publicDefaultAdmission<<<1, 1>>>(local_view, remote_view, device_result);
+            check(cudaGetLastError(), "launch public default admission");
+            check(cudaDeviceSynchronize(), "complete public default admission");
+            int admission = 0;
+            check(cudaMemcpy(&admission, device_result, sizeof(admission), cudaMemcpyDeviceToHost),
+                  "read public default admission");
+            if (admission) {
+                throw std::runtime_error("public default lane admission failed");
+            }
+#endif
             scalarGet<<<1, 1>>>(local_view, remote_view, destination, device_result);
             check(cudaGetLastError(), "launch scalar GET");
             check(cudaDeviceSynchronize(), "complete scalar GET");
