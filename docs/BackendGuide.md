@@ -177,8 +177,9 @@ overridden before passing it to `createBackend` in C++ or `create_backend` in Py
 | ---------- | ------- | ----------- |
 | `ucx_error_handling_mode` | `peer` | UCX endpoint error handling policy. `peer` requests peer failure reporting; `none` disables it. |
 | `ucx_vram_memtype_hint` | `auto` | Controls how NIXL hints the UCX memory type during VRAM registration. Supported values are exactly: `auto`, `none`, `cuda`, `cuda-managed`, `rocm`, `ze-device`. |
+| `ucx_supports_local` | `true` | Whether the backend serves transfers and notifications within its own agent. `false` skips the endpoint the agent opens to itself. |
 
-The two options are independent; you do not need to set one to use the other.
+The options are independent; you do not need to set one to use another.
 
 `ucx_error_handling_mode` affects UCP transport lane selection, not only error reporting.
 NIXL creates endpoints with `err_mode` set from this option, and UCP only selects lanes whose
