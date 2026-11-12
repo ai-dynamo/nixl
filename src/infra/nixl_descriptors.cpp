@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <iostream>
 
@@ -62,12 +63,23 @@ bool operator!=(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) {
     return !(lhs==rhs);
 }
 
-bool nixlBasicDesc::overlaps (const nixlBasicDesc &query) const {
-    if (devId != query.devId)
+namespace {
+bool
+precedes(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) noexcept {
+    if (lhs.len == 0) {
+        return rhs.len == 0 ? lhs.addr != rhs.addr : lhs.addr < rhs.addr;
+    }
+    constexpr uintptr_t max_addr = std::numeric_limits<uintptr_t>::max();
+    return lhs.len != SIZE_MAX && lhs.len <= max_addr - lhs.addr && lhs.addr + lhs.len <= rhs.addr;
+}
+} // namespace
+
+bool
+nixlBasicDesc::overlaps(const nixlBasicDesc &query) const noexcept {
+    if (devId != query.devId) {
         return false;
-    if ((addr + len <= query.addr) || (query.addr + query.len <= addr))
-        return false;
-    return true;
+    }
+    return !precedes(*this, query) && !precedes(query, *this);
 }
 
 nixl_blob_t nixlBasicDesc::serialize() const {

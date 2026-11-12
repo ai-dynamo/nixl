@@ -137,7 +137,7 @@ public:
      * @param query   nixlBasicDesc Object
      */
     bool
-    overlaps(const nixlBasicDesc &query) const;
+    overlaps(const nixlBasicDesc &query) const noexcept;
     /**
      * @brief Serialize descriptor into a blob
      */
