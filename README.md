@@ -47,6 +47,13 @@ pip install nixl
 
 This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
+For a single CUDA backend without PyTorch, install `nixl-cu12` or `nixl-cu13`
+directly and import `nixl_cu12` or `nixl_cu13`, respectively. To use the
+bundled `nixl_ep_cu12` or `nixl_ep_cu13` package, install the corresponding
+wheel with its `ep` extra (for example, `pip install 'nixl-cu12[ep]'`). The
+`nixl` meta package continues to install PyTorch for automatic backend
+selection and EP support.
+
 ## Prerequisites for source build (Linux)
 
 NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
