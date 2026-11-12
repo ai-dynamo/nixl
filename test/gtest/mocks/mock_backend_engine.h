@@ -74,6 +74,11 @@ public:
   releaseReqH(nixlBackendReqH *handle) const override;
 
   nixl_status_t
+  cancelXfer(nixlBackendReqH *handle) const override {
+      return gmock_backend_engine->cancelXfer(handle);
+  }
+
+  nixl_status_t
   prepMemView(const nixl_remote_meta_dlist_t &dlist,
               nixlMemViewH &mvh,
               const nixl_opt_b_args_t *opt_args) const override {

@@ -880,8 +880,8 @@ setup_release_test_buffers(const std::string &test_files_dir_path_abs_path,
     return 0;
 }
 
-// Regression test: releasing a NIXL_IN_PROG transfer must be refused, not free the request
-// while queue entries still hold it as their completion callback context.
+// Regression test: releasing a NIXL_IN_PROG transfer must not crash or leave queue entries
+// holding a dangling completion callback context.
 // Determinism: no progress thread, and 256 descriptors against the 64-entry poll cap keep
 // the transfer active across the release.
 int
@@ -947,22 +947,24 @@ test_posix_release_active(const std::string &test_files_dir_path_abs_path, bool 
         return 1;
     }
 
-    // The backend refuses to free a request with outstanding I/O; treq stays valid.
+    // Only one release call is allowed: treq is invalid afterwards, whatever the status.
+    // The agent logs a client error; the POSIX backend reports the outstanding I/O.
     status = agent.releaseXferReq(treq);
     if (status != NIXL_ERR_REPOST_ACTIVE) {
-        std::cerr << "Expected release of an active transfer to be refused, got: "
+        std::cerr << "Expected release of an active transfer to return REPOST_ACTIVE, got: "
                   << nixlEnumStrings::statusStr(status) << std::endl;
         return 1;
     }
-    std::cout << "Release of active transfer refused, request stays valid" << std::endl;
+    std::cout << "Released active transfer, status: " << nixlEnumStrings::statusStr(status)
+              << std::endl;
 
-    print_segment_title(phase_title("Draining the refused transfer with a second write"));
+    print_segment_title(phase_title("Draining the released transfer with a second write"));
 
-    // A second write polls the shared queue, reaping the refused transfer's completions and
-    // cancellations (ASAN reports the old delete-on-release here as heap-use-after-free in
-    // ioDoneClb()). The refused release requested cancellation, so part of the first write
-    // may be aborted; the drain write covers every descriptor with identical bytes, keeping
-    // the final file contents deterministic.
+    // A second write polls the shared queue, reaping the released transfer's leftover
+    // completions (ASAN reports a use-after-free in ioDoneClb() if they dangle). The release
+    // requested cancellation, so part of the first write may be aborted; the drain write
+    // covers every descriptor with identical bytes, keeping the final file contents
+    // deterministic.
     nixlXferReqH *treq_drain = nullptr;
     status = agent.createXferReq(NIXL_WRITE,
                                  bufs.dram_for_posix_xfer,
@@ -999,27 +1001,7 @@ test_posix_release_active(const std::string &test_files_dir_path_abs_path, bool 
                   << nixlEnumStrings::statusStr(status) << std::endl;
         return 1;
     }
-    std::cout << "Second write completed; refused transfer drained" << std::endl;
-
-    print_segment_title(phase_title("Releasing the drained transfer"));
-
-    // Poll the refused transfer to completion. As long as the agent reports the stored
-    // release error without polling the backend, this loop exits on the first call; the
-    // drain's polls above reap the completions instead. If the agent polls the backend for
-    // real, a partly canceled transfer ends with NIXL_ERR_BACKEND, so the loop only
-    // requires the status to leave NIXL_IN_PROG.
-    do {
-        status = agent.getXferStatus(treq);
-    } while (status == NIXL_IN_PROG);
-
-    // All I/Os of the first transfer have completed, so the release now succeeds.
-    status = agent.releaseXferReq(treq);
-    if (status != NIXL_SUCCESS) {
-        std::cerr << "Failed to release the drained request - status: "
-                  << nixlEnumStrings::statusStr(status) << std::endl;
-        return 1;
-    }
-    std::cout << "Release after completion: OK" << std::endl;
+    std::cout << "Second write completed; released transfer drained" << std::endl;
 
     print_segment_title(phase_title("Read-back validation"));
 

@@ -1652,6 +1652,20 @@ nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req)
 }
 
 nixl_capi_status_t
+nixl_capi_cancel_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req) {
+    if (!agent || !req || !req->req) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        return nixl_capi_status_from_nixl_status(agent->inner->cancelXferReq(req->req));
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
 nixl_capi_release_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req)
 {
   if (!agent || !req || !req->req) {
@@ -1660,9 +1674,7 @@ nixl_capi_release_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req)
 
   try {
     nixl_status_t ret = agent->inner->releaseXferReq(req->req);
-    if (ret == NIXL_SUCCESS) {
-      req->req = nullptr;  // Prevent double-free in destroy
-    }
+    req->req = nullptr; // The agent freed the request. Prevent double-free in destroy
     return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {

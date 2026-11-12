@@ -120,6 +120,7 @@ unsafe impl Send for XferRequest {}
 // SAFETY: XferRequest can be shared between threads safely
 unsafe impl Sync for XferRequest {}
 
+// Dropping a request in progress logs an error and still releases it. See `Agent::cancel_xfer_req`.
 impl Drop for XferRequest {
     fn drop(&mut self) {
         unsafe {

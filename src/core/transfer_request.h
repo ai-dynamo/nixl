@@ -28,6 +28,7 @@
 #include "backend_engine.h"
 #include "telemetry.h"
 #include "common/nixl_duration.h"
+#include "common/nixl_log.h"
 #include "tracing/trace_context.h"
 
 enum nixl_telemetry_stat_status_t {
@@ -63,10 +64,42 @@ public:
     void
     operator=(const nixlXferReqH &) = delete;
 
-    ~nixlXferReqH() {
-        if ((backendHandle != nullptr) && (engine != nullptr)) {
-            engine->releaseReqH(backendHandle);
+    // Submitted: status is NIXL_IN_PROG (see nixl.h for the request states).
+    [[nodiscard]] bool
+    isSubmitted() const noexcept {
+        return status == NIXL_IN_PROG;
+    }
+
+    // Calls the backend releaseReqH() once, also if the request is still submitted (client
+    // error, logged). Never throws, polls or blocks. Returns the status of the backend.
+    nixl_status_t
+    releaseBackendHandle() noexcept {
+        if (engine == nullptr || backendHandle == nullptr) {
+            return NIXL_SUCCESS;
         }
+        if (isSubmitted()) {
+            NIXL_ERROR
+                << "\n"
+                   "################################################################\n"
+                   "# NIXL CLIENT ERROR: transfer request released while still in progress.\n"
+                   "# The transfer may still access the user buffers. Call cancelXferReq()\n"
+                   "# and poll getXferStatus() to a terminal status, then release.\n"
+                   "################################################################";
+        }
+        nixlBackendReqH *handle = backendHandle;
+        backendHandle = nullptr;
+        try {
+            return engine->releaseReqH(handle);
+        }
+        catch (...) {
+            NIXL_ERROR << "backend '" << engine->getType()
+                       << "' threw while releasing a transfer request handle";
+            return NIXL_ERR_BACKEND;
+        }
+    }
+
+    ~nixlXferReqH() {
+        releaseBackendHandle();
     }
 
     void
@@ -115,6 +148,8 @@ private:
 
     const nixl_xfer_op_t backendOp;
     nixl_status_t status = NIXL_ERR_NOT_POSTED;
+    // True after cancelXferReq() succeeded for the current submission. Every post resets it.
+    bool cancelRequested = false;
 
     nixl_xfer_telem_t telemetry;
     nixlTime::nixlDuration timer;

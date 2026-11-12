@@ -54,6 +54,7 @@ The key/value parameters are a map of strings to byte arrays that are passed fro
 * getSupportedMems(): Indicates memory types supported by the backend
 * supportsCapability(): Indicates if the backend has a capability from `nixl_backend_capability_t`. A backend passes its capabilities, combined with `|`, to the `nixlBackendEngine` constructor; none are set by default
   * `LOCAL`, `REMOTE`, `NOTIF`: the values that supportsLocal(), supportsRemote() and supportsNotif() return by default, so a backend does not need to override these methods
+  * `XFER_CANCEL`: the backend implements cancelXfer()
   * `TRACE_CONTEXT`: the backend carries a request's trace context to its peer. Only in-tree plugins can implement it, since the trace context type is internal
 
 Based on the first 3 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend must have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional.
@@ -98,13 +99,33 @@ getPublicData and loadRemoteMD are required if backend supportsRemote, and loadL
 * estimateXferCost: Given the same info as prepXfer, as well as the transfer request output from prepXfer, the backend can estimate the time of transfer, with noise margin and method of estimation. This is optional.
 * postXfer(): Posts a transfer request, meaning the backend should start the transfer. This call is asynchronous, meaning it should not wait to finish the transfer. If the transfer is really small, it’s fine to return DONE right after this call.
 * checkXfer(): Checks the status of a transfer request.
-* releaseReqH(): Releases a transfer request handle, which should be an extension of the nixlBackendReqH. Note that the NIXL agent may release that handle at a number of error cases, expecting this function to handle proper cancellation of requests in addition to freeing resources.
+* releaseReqH(): Frees a transfer request handle (an extension of nixlBackendReqH). It is synchronous and O(1): no polling, waiting or cancelling. The agent calls it exactly once per handle, and the call need not be idempotent. The agent can call it while the transfer is still in flight (a client error, which the agent logs). Then the backend must check for outstanding work itself and stay consistent: no use-after-free of its internal state when late completions arrive. It can free what is safe and keep or leak the rest (for example with reference counting). The agent frees its own request object whatever releaseReqH() returns, so a backend that cannot free its handle yet must keep or leak it itself. After releaseReqH() returns, the backend must not access the agent-side descriptor lists of the request.
+
+Sketch (no polling, waiting, cancelling or logging; the agent logs the client error):
+```cpp
+nixl_status_t MyEngine::releaseReqH(nixlBackendReqH *handle) const {
+    auto *req = static_cast<MyReqH *>(handle);
+    NIXL_LOCK_GUARD(lock_); // engine-wide, also held by the completion path
+    if (req->outstanding == 0) {
+        delete req; // nothing in flight
+    } else {
+        // I/O still in flight (client error, the agent logged it). Free now all state
+        // that the in-flight I/O does not use. Only state that it still uses may stay:
+        // hand it to the completion path (as here, or with a refcount) or leak it.
+        req->orphaned = true; // the last completion deletes req
+    }
+    return NIXL_SUCCESS; // do not touch the agent dlists after this
+}
+// Completion path, under lock_: if (--req->outstanding == 0 && req->orphaned) delete req;
+```
+* cancelXfer(): Optional. A backend that can cancel reports the `XFER_CANCEL` capability and overrides cancelXfer(). cancelXfer() only initiates the cancellation. It does not block, poll or free the handle. It returns NIXL_SUCCESS, or NIXL_IN_PROG if the cancellation was already requested. The handle stays in use until checkXfer() returns a terminal status. Cancellation does not change the meaning of the checkXfer() return codes. It only makes NIXL_ERR_CANCELED more likely: the transfer can still finish with NIXL_SUCCESS or another error. The default returns NIXL_ERR_NOT_SUPPORTED. The agent calls cancelXfer() only if the backend reports `XFER_CANCEL`.
 
 Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not set supportsNotifications, no such notification will be asked.
 
 Note that any transfer request will be prepped only once, but can be posted multiple times, as long as it gets to DONE state before getting reposted. There is no ordering guarantee across transfer requests, and no locking mechanism for any specific memory region; the user is in charge of not corrupting the memory by having two simultaneous transfers to the same location.
 
-Finally, note that a call to releaseXferReq should not block and be asynchronous, especially important to remember when aborting a transfer. This function can return error, meaning it was not successful in aborting the request. If a backend can abort a transfer quickly without a stall, then releaseXferReq can return success right away. Otherwise, one option would be to wait for the transfer to complete. In the meantime, checkXferReq should return error if there was a call to abort which was not successful, while calls to releaseXferReq would return error until the transfer is completed and it returns success. If there is a scenario that a blocking call can abort the transfer before it is completed, then that blocking call can start in a separate thread (or within the progress thread of the backend). In other words, use a blocking call under the hood but provide non-blocking APIs to the user.
+Cancellation and release are separate. cancelXferReq() asks the backend to abort an in-flight transfer. The transfer stays submitted until getXferStatus() returns a terminal status. releaseXferReq() never polls, waits or cancels. It always calls releaseReqH(), and logs an error first if the request is still submitted. If cancellation needs a blocking call, run it in a separate thread or in the backend progress thread.
+
 ### Notification Handling:
 
 * getNotifs(): Gets notifications received from remote agents (or local in case of loopback). The output is a map from remote agent name to a list (vector) of notifications, in the form of byte array.
@@ -248,7 +269,7 @@ In addition to finding the best backend, this API does several checks, such as t
 
 ### Post transfer request:
 
-A post transfer is called on a prepared transfer handle. Already the transfer backend is determined, and all the required metadata keys (pointers) are attached to the request. So a single call to **postXferReq** in SB API for the corresponding backend is the main goal of this function. This call will result in a backend engine specific transfer handle, which later the agent can use to ask for the transfer status. Note that this method can be called on the same agent transfer handle after the transfer is done, and it is up to the backend to create a new transfer handle each time a new transfer is started, or reuse the old one. Also if there is a transfer in progress, and a post is submitted for that, it will cause an error and potentially abort the transfer.
+A post transfer is called on a prepared transfer handle. Already the transfer backend is determined, and all the required metadata keys (pointers) are attached to the request. So a single call to **postXferReq** in SB API for the corresponding backend is the main goal of this function. This call will result in a backend engine specific transfer handle, which later the agent can use to ask for the transfer status. Note that this method can be called on the same agent transfer handle after the transfer is done, and it is up to the backend to create a new transfer handle each time a new transfer is started, or reuse the old one. Also if there is a transfer in progress, and a post is submitted for that, it will cause an error.
 
 Note that inside a transfer, a backend might provide methods for network resiliency or optimizations, such as load balancing different transfers, within the same descriptor list of a single transfer, or across different transfers. This is handled and implemented by the backend plugin.
 
@@ -258,7 +279,7 @@ The agent will call the backend specific transfer handle that is stored within t
 
 ### Invalidate transfer request:
 
-The agent will call the **releaseReqH** from the SB API on the backend specific transfer handle to release it, and potentially abort the transfer if in progress and the backend has the capability. Then the agent will release the other resources within the agent level transfer handle to fully release it.
+The agent will call the **releaseReqH** from the SB API on the backend specific transfer handle to release it (see the releaseReqH bullet above). Then the agent releases the other resources within the agent level transfer handle.
 
 ### Get notifications:
 

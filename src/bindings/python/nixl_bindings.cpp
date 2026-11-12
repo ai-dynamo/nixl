@@ -931,6 +931,15 @@ PYBIND11_MODULE(_bindings, m) {
             },
             py::call_guard<py::gil_scoped_release>())
         .def(
+            "cancelXferReq",
+            [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
+                nixl_status_t ret = agent.cancelXferReq((nixlXferReqH *)reqh);
+                throw_nixl_exception(ret);
+                return ret;
+            },
+            py::arg("reqh"),
+            py::call_guard<py::gil_scoped_release>())
+        .def(
             "releaseXferReq",
             [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                 nixl_status_t ret = agent.releaseXferReq((nixlXferReqH *)reqh);

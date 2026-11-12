@@ -912,29 +912,46 @@ def test_xfer_trace_info_released_handle_skips_the_binding(one_empty_agent):
     assert one_empty_agent.get_xfer_trace_info(handle) is None
 
 
-def test_leaked_xfer_handle_is_queued_on_the_agent(one_empty_agent, monkeypatch):
-    """A release that fails in the finalizer defers to the nixl_agent's leak list.
-
-    The handle comes from initialize_xfer, so it holds whatever the agent passes
-    it. That used to be the pybind agent, which has no leak list, and the handle
-    was dropped without a trace.
-    """
+def test_failed_release_is_not_retried(one_empty_agent, monkeypatch):
+    """The native release frees the request even on error, so it must not be repeated."""
 
     class FailingNative:
+        released = []
+
         def createXferReq(self, *args):
             return 0xDEAD
 
         def releaseXferReq(self, handle):
+            self.released.append(handle)
             raise RuntimeError("release refused")
 
-    monkeypatch.setattr(one_empty_agent, "agent", FailingNative())
-    try:
-        handle = one_empty_agent.initialize_xfer("WRITE", None, None, "peer")
-        del handle
-        gc.collect()
+    native = FailingNative()
+    monkeypatch.setattr(one_empty_agent, "agent", native)
+    handle = one_empty_agent.initialize_xfer("WRITE", None, None, "peer")
+    with pytest.raises(RuntimeError):
+        one_empty_agent.release_xfer_handle(handle)
+    one_empty_agent.release_xfer_handle(handle)
+    del handle
+    gc.collect()
+    assert native.released == [0xDEAD]
 
-        assert one_empty_agent._leaked_xfer_handles == [0xDEAD]
-    finally:
-        # 0xDEAD is not a real request, so the agent's destructor must not
-        # hand it to the native release once the real agent is back.
-        one_empty_agent._leaked_xfer_handles.clear()
+
+def test_cancel_xfer_handle_reports_whether_cancellation_was_initiated(
+    one_empty_agent, monkeypatch
+):
+    class CancelNative:
+        statuses = [bindings.NIXL_SUCCESS, bindings.NIXL_IN_PROG]
+
+        def createXferReq(self, *args):
+            return 0xCAFE
+
+        def cancelXferReq(self, handle):
+            return self.statuses.pop(0)
+
+        def releaseXferReq(self, handle):
+            pass
+
+    monkeypatch.setattr(one_empty_agent, "agent", CancelNative())
+    handle = one_empty_agent.initialize_xfer("WRITE", None, None, "peer")
+    assert one_empty_agent.cancel_xfer_handle(handle) is True
+    assert one_empty_agent.cancel_xfer_handle(handle) is False

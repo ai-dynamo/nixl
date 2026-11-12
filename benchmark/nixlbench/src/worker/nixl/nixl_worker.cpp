@@ -1900,6 +1900,17 @@ static void
 cleanupSlots(nixlAgent *agent, nixlBackendH *backend_engine, std::vector<slotState> &slots) {
     for (auto &slot : slots) {
         if (slot.req) {
+            if (slot.in_flight) {
+                // Releasing a request in progress is a client error. Cancel it and wait (bounded)
+                // first.
+                (void)agent->cancelXferReq(slot.req);
+                const nixlTime::us_t deadline = nixlTime::getUs() + 1000000;
+                while (agent->getXferStatus(slot.req) == NIXL_IN_PROG &&
+                       nixlTime::getUs() < deadline) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(100));
+                }
+                slot.in_flight = false;
+            }
             agent->releaseXferReq(slot.req);
             slot.req = nullptr;
         }

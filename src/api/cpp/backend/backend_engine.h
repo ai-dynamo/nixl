@@ -34,6 +34,7 @@ enum class nixl_backend_capability_t : uint64_t {
     LOCAL = 1ULL << 1,
     NOTIF = 1ULL << 2,
     TRACE_CONTEXT = 1ULL << 3,
+    XFER_CANCEL = 1ULL << 4,
 };
 
 [[nodiscard]] constexpr nixl_backend_capability_t
@@ -184,7 +185,8 @@ class nixlBackendEngine {
         // Use a handle to progress backend engine and see if a transfer is completed or not
         virtual nixl_status_t checkXfer(nixlBackendReqH* handle) const = 0;
 
-        //Backend aborts the transfer if necessary, and destructs the relevant objects
+        // Frees the handle. No polling, waiting or cancelling. The agent calls it exactly once per
+        // handle, also while the transfer is in flight (client error, logged by the agent).
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
         // Prepare a memory view for remote buffers
@@ -278,6 +280,16 @@ class nixlBackendEngine {
                          std::chrono::microseconds &err_margin,
                          nixl_cost_t &method,
                          const nixl_opt_args_t *extra_params = nullptr) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        // Starts the cancellation of an in-progress transfer. It must not block or free the
+        // handle. The checkXfer() return codes keep their meaning. A requested cancellation only
+        // makes NIXL_ERR_CANCELED more likely. The transfer can still end with any status.
+        // Returns NIXL_SUCCESS if started, NIXL_IN_PROG if already requested. The agent calls it
+        // only if capabilities() has XFER_CANCEL. Keep it the last virtual: append new hooks only.
+        virtual nixl_status_t
+        cancelXfer(nixlBackendReqH *handle) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 };

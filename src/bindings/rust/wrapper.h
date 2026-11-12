@@ -315,6 +315,20 @@ nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
                              nixl_capi_backend_t *backend);
 
+/**
+ * Ask the backend to cancel a submitted transfer request. This frees nothing. Poll
+ * nixl_capi_get_xfer_status() until it is not NIXL_CAPI_IN_PROG.
+ * Returns NIXL_CAPI_SUCCESS (started), NIXL_CAPI_IN_PROG (already requested) or an error
+ * (NIXL_CAPI_ERROR_BACKEND if the request is not submitted or the backend cannot cancel).
+ */
+nixl_capi_status_t
+nixl_capi_cancel_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req);
+
+/**
+ * Frees the request. Call it only on a request that was not posted or that reached a terminal
+ * status. If the request is in progress, NIXL logs an error and still releases it. The transfer
+ * may still access the user buffers.
+ */
 nixl_capi_status_t nixl_capi_release_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req);
 
 nixl_capi_status_t nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req);
