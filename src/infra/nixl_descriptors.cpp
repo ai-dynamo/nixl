@@ -486,8 +486,8 @@ nixlSecDescList::remDescs(std::vector<size_t> indices, order ord) {
     }
 
     size_t ri = 0;
-    size_t write = 0;
-    for (size_t read = 0; read < descs.size(); ++read) {
+    size_t write = std::min(indices.front(), descs.size());
+    for (size_t read = write; read < descs.size(); ++read) {
         if (ri < indices.size() && read == indices[ri]) {
             ++ri;
         } else {
