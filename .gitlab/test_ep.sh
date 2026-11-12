@@ -181,11 +181,6 @@ echo "==== free-after-disconnect test done ===="
 
 echo "==== Running vLLM Elastic EP test ===="
 (
-    if [ "${NIXL_EP_SKIP_VLLM_TEST:-false}" = true ]; then
-        echo "Skipping vLLM Elastic EP test on $(hostname): NIXL_EP_SKIP_VLLM_TEST=true"
-        exit 0
-    fi
-
     # Avoid SPCx loading HPC-X UCX 1.21; NIXL EP requires UCX >=1.22.
     unset NCCL_NET_PLUGIN
     unset UCX_NET_DEVICES
