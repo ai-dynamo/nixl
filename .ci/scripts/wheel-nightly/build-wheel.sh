@@ -30,7 +30,7 @@ case "${cuda}" in
     ;;
   13)
     BASE_IMAGE_FLAGS=""
-    TORCH_VERSIONS="$(dockerfile_arg_default WHL_TORCH_VERSIONS)"
+    TORCH_VERSIONS="2.14,2.15,2.16"
     ;;
   *)
     echo "ERROR: cuda is '${cuda:-<unset>}', expected 12 or 13"
