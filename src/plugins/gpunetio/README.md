@@ -101,8 +101,9 @@ The experimental split-phase session also offers `acquireFifo()` and
 poll helper. `pollFifo` rejects out-of-order tickets and `retire` rejects a
 range that has not been checked. Do not mix this mode with parallel `poll` in
 one session. The default public-only profile does not reference the SDK
-internal CQ helper; parallel `poll()` returns `NIXL_ERR_NOT_SUPPORTED`. To
-experiment with the unsupported private helper, define
+internal CQ helper; a non-FIFO session cannot reserve READs, and parallel
+`poll()` returns `NIXL_ERR_NOT_SUPPORTED`. A non-FIFO `acquire()` can still be
+used for lane qualification and then finished without reserving. To experiment with the unsupported private helper, define
 `NIXL_GPUNETIO_PUBLIC_FIFO_ONLY=0` consistently in every CUDA consumer.
 Applications must still retire successful reads, perform any required
 consistency operation and keep all graph resources alive. The public FIFO mode has workload-dependent cost.

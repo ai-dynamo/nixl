@@ -74,7 +74,9 @@ rejectMixed(nixlMemViewH local, nixlMemViewH remote, int *result) {
 __global__ void
 publicDefaultAdmission(nixlMemViewH local, nixlMemViewH remote, int *result) {
     nixl::gpu::readSession session;
+    uint64_t ticket = 0;
     *result = session.bind(local, remote) == NIXL_SUCCESS && session.acquire() == NIXL_SUCCESS &&
+            session.reserve(1, ticket) == NIXL_ERR_NOT_SUPPORTED &&
             session.finish() == NIXL_SUCCESS && session.acquireFifo() == NIXL_SUCCESS &&
             session.finish() == NIXL_SUCCESS ?
         0 :

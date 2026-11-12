@@ -168,9 +168,16 @@ public:
         return rc;
     }
 
-    /** Reserve at most capacity-1 entries. No concurrent reservation in this session. */
+    /** Reserve at most capacity-1 entries. No concurrent reservation in this session.
+     * In the public-only profile, a non-FIFO session cannot reserve READs.
+     */
     __device__ nixl_status_t
     reserve(uint32_t count, uint64_t &first) {
+#if NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
+        if (acquired_ && !fifo_mode_) {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+#endif
         if (!acquired_ || reserved_ || dump_pending_ || !count || count >= capacity_ ||
             (needsConsistency() && outstanding_) || outstanding_ >= capacity_ - count) {
             return NIXL_ERR_INVALID_PARAM;
