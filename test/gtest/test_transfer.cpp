@@ -752,6 +752,42 @@ TEST_P(TestTransfer, SelfNotification) {
             getAgent(0), getAgentName(0), getAgent(0), getAgentName(0), repeat, num_threads);
 }
 
+TEST_P(TestTransfer, NoLocalSupport) {
+    // An agent whose UCX backend does not serve its own agent
+    const std::string name = "agent_no_local";
+    const std::string msg = "notification";
+    nixl_b_params_t params = getBackendParams();
+    params["ucx_supports_local"] = "false";
+    nixlAgent agent(name, getConfig(0, false));
+    nixlBackendH *backend = nullptr;
+    ASSERT_EQ(agent.createBackend(getBackendName(), params, backend), NIXL_SUCCESS);
+
+    // A notification to itself is refused
+    {
+        const LogIgnoreGuard lig("no specified or potential backend can send intra-agent");
+        EXPECT_EQ(agent.genNotif(name, msg), NIXL_ERR_NOT_FOUND);
+        EXPECT_EQ(lig.getIgnoredCount(), 1);
+    }
+
+    // A notification to another agent still works
+    nixl_blob_t md;
+    std::string md_name;
+    ASSERT_EQ(agent.getLocalMD(md), NIXL_SUCCESS);
+    ASSERT_EQ(getAgent(1).loadRemoteMD(md, md_name), NIXL_SUCCESS);
+    ASSERT_EQ(getAgent(1).getLocalMD(md), NIXL_SUCCESS);
+    ASSERT_EQ(agent.loadRemoteMD(md, md_name), NIXL_SUCCESS);
+    ASSERT_EQ(agent.genNotif(getAgentName(1), msg), NIXL_SUCCESS);
+
+    nixl_notifs_t notifs;
+    EXPECT_TRUE(wait_until_true([&]() {
+        nixl_notifs_t unused;
+        agent.getNotifs(unused);
+        getAgent(1).getNotifs(notifs);
+        return notifs[name].size() == 1;
+    }));
+    EXPECT_EQ(notifs[name].front(), msg);
+}
+
 TEST_P(TestTransfer, EmptyNotificationPayload) {
     constexpr size_t repeat = 16;
     constexpr size_t num_threads = 2;

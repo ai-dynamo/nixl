@@ -98,6 +98,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
+      supportsLocal_(
+          nixl::getBackendParamDefaulted(init_params.customParams, "ucx_supports_local", true)),
       traceSink_(init_params.traceSink) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;

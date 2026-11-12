@@ -122,7 +122,7 @@ public:
 
     bool
     supportsLocal() const override {
-        return true;
+        return supportsLocal_;
     }
 
     bool
@@ -343,6 +343,7 @@ private:
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
     const bool sglEnabled_;
+    const bool supportsLocal_;
     nixlBackendTraceSink *const traceSink_;
 
     // Map of agent name to saved nixlUcxConnection info
