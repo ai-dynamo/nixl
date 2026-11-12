@@ -134,6 +134,8 @@ Notes:
 DRAM_SEG memory type, a subset of rails is selected, such that the bandwidth limit is enforced
 - The subset of rails being selected is made sure not to saturate any topmost PCIe switch of the NUMA node
 - The subset of rails being selected is limited to the NUMA node of the origin buffer
+- Only the EFA devices nearest to the NUMA node's memory are candidates, counting the PCIe bridges
+and CPU packages on the path; a device behind more bridges than another on the same node is left out
 - The subset of rails being selected each time uses different rails to ensure optimal resource utilization
 - Rail selection is thread-safe
 - If user override exceeds total topmost PCIe switch capacity, then additional rails are chosen from
