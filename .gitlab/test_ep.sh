@@ -52,12 +52,82 @@ export NIXL_DEBUG_LOGGING=yes
 # Load the source dispatcher and the backend installed in the shared venv.
 export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta${PYTHONPATH:+:$PYTHONPATH}"
 
+NUM_RANKS=4
+NIXL_EP_RDMA_HCAS=${NIXL_EP_RDMA_HCAS:-"mlx5_0 mlx5_1 mlx5_2 mlx5_3"}
+
+# GPU-initiated RDMA needs every configured NIC to be active and UCX to offer
+# rc_gda on all ranks. Print the discovered connectivity and the reason for a
+# negative decision so new GPU partitions can be diagnosed from the CI log.
+rdma_supported() {
+    local hca info states link ucx_out ucx_rc=0 gda gda_devs gda_failed gda_gpus
+    local why=""
+    local ucx_info="${INSTALL_DIR}/bin/ucx_info"
+    local -a hcas
+
+    echo "==== RDMA check on $(hostname) ===="
+    read -r -a hcas <<<"${NIXL_EP_RDMA_HCAS}"
+    for hca in "${hcas[@]}"; do
+        info=$(ibv_devinfo -d "$hca" 2>/dev/null) || true
+        states=$(awk '$1 == "state:" { printf "%s%s", sep, $2; sep = "," }' <<<"$info")
+        link=$(awk '$1 == "link_layer:" { print $2; exit }' <<<"$info")
+        echo "${hca}: ${states:-not found}${link:+ (${link})}"
+        [[ "$states" == *PORT_ACTIVE* ]] ||
+            why+="${why:+; }${hca} is ${states:-not found}"
+    done
+
+    if [ ! -x "$ucx_info" ]; then
+        why+="${why:+; }${ucx_info} not found; UCX rc_gda capability is unverified"
+    else
+        "$ucx_info" -v | head -n 4 || true
+        # A fresh process has no active CUDA context, and UCX then hides rc_gda.
+        # Debug logging explains why UCX leaves a NIC or GPU out.
+        ucx_out=$(env -u UCX_TLS -u UCX_NET_DEVICES \
+            UCX_IB_GDA_RETAIN_INACTIVE_CTX=yes UCX_LOG_LEVEL=debug \
+            timeout 120 "$ucx_info" -d 2>&1) || ucx_rc=$?
+        sed -nE 's/.*gdaki\.c:[0-9]+ +UCX +[A-Z]+ +/UCX: /p' <<<"$ucx_out" |
+            sort -u | head -n 20 || true
+        if [ "$ucx_rc" -ne 0 ]; then
+            why+="${why:+; }ucx_info -d failed (exit ${ucx_rc}); UCX rc_gda capability is unverified"
+        else
+            # ucx_info lists a device before opening it and marks a device it
+            # cannot open with "< failed to open interface >".
+            gda=$(awk '
+                function flush() { if (dev != "") print state, dev; dev = "" }
+                /^# +Transport:/ { flush(); transport = $NF }
+                /^# +Device:/ && transport == "rc_gda" { dev = $NF; state = "ok" }
+                /^# +< failed to open interface >/ { state = "failed" }
+                END { flush() }
+            ' <<<"$ucx_out" | sort -u)
+            gda_devs=$(awk '$1 == "ok" { print $2 }' <<<"$gda" | paste -sd' ')
+            gda_failed=$(awk '$1 == "failed" { print $2 }' <<<"$gda" | paste -sd' ')
+            gda_gpus=$(tr ' ' '\n' <<<"$gda_devs" |
+                sed -n 's/-.*//p' | sort -u | wc -l)
+            echo "UCX rc_gda devices (GPU-NIC): ${gda_devs:-none}"
+            [ -z "$gda_failed" ] ||
+                echo "UCX rc_gda devices that failed to open: ${gda_failed}"
+            [ "$gda_gpus" -ge "$NUM_RANKS" ] ||
+                why+="${why:+; }UCX offers rc_gda on ${gda_gpus} of ${NUM_RANKS} GPUs"
+        fi
+    fi
+
+    if [ -n "$why" ]; then
+        echo "RDMA check: not supported: ${why}"
+        return 1
+    fi
+    echo "RDMA check: supported"
+}
+
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
+if (set +x; rdma_supported); then
+    RDMA_SUPPORTED=true
+else
+    RDMA_SUPPORTED=false
+fi
 
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
@@ -90,24 +160,12 @@ run_elastic_test() {
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
 
-# Only run the --disable-ll-nvlink (RDMA) elastic tests when all four CX-7
-# NICs (mlx5_0..mlx5_3) report PORT_ACTIVE.
-all_rdma_nics_active() {
-    local hca
-    for hca in mlx5_0 mlx5_1 mlx5_2 mlx5_3; do
-        if ! ibv_devinfo -d "$hca" 2>/dev/null | grep -q "state:.*PORT_ACTIVE"; then
-            return 1
-        fi
-    done
-    return 0
-}
-
-# RDMA (--disable-ll-nvlink)
-if all_rdma_nics_active; then
+# RDMA (--disable-ll-nvlink), only when the capability check above passed.
+if [ "$RDMA_SUPPORTED" = true ]; then
     run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json" "--disable-ll-nvlink"
     run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
 else
-    echo "Skipping RDMA elastic tests: not all of mlx5_0..mlx5_3 are PORT_ACTIVE on $(hostname)"
+    echo "Skipping RDMA elastic tests on $(hostname): see the RDMA check above"
 fi
 
 echo "==== nixl_ep elastic tests done ===="
@@ -123,6 +181,11 @@ echo "==== free-after-disconnect test done ===="
 
 echo "==== Running vLLM Elastic EP test ===="
 (
+    if [ "${NIXL_EP_SKIP_VLLM_TEST:-false}" = true ]; then
+        echo "Skipping vLLM Elastic EP test on $(hostname): NIXL_EP_SKIP_VLLM_TEST=true"
+        exit 0
+    fi
+
     # Avoid SPCx loading HPC-X UCX 1.21; NIXL EP requires UCX >=1.22.
     unset NCCL_NET_PLUGIN
     unset UCX_NET_DEVICES
