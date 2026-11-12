@@ -389,9 +389,7 @@ nixlLibfabricEngine::vramApplyCtxEx(bool &use_cuda_addr_wa) const {
  * Request Management
  *****************************************/
 
-nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op,
-                                             const std::string &remote_agent,
-                                             std::shared_ptr<nixlLibfabricConnection> conn)
+nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op, const std::string &remote_agent)
     : completed_requests_(0),
       submitted_requests_(0),
       error_status_(NIXL_SUCCESS),
@@ -399,8 +397,6 @@ nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op,
       xfer_error_sent_(false),
       operation_(op),
       remote_agent_(remote_agent),
-      conn_(std::move(conn)),
-      has_notif(false),
       total_notif_msg_len(0) {
     // Initialize BinaryNotification vector
     binary_notifs.clear();
@@ -1264,7 +1260,6 @@ nixlLibfabricEngine::prepXfer(const nixl_xfer_op_t &operation,
                               const nixl_opt_b_args_t *opt_args) const {
     NIXL_DEBUG << "Preparing transfer for remote_agent: " << remote_agent;
 
-    std::shared_ptr<nixlLibfabricConnection> conn;
     {
         std::lock_guard<std::mutex> lock(connection_state_mutex_);
         auto conn_it = connections_.find(remote_agent);
@@ -1272,10 +1267,9 @@ nixlLibfabricEngine::prepXfer(const nixl_xfer_op_t &operation,
             NIXL_ERROR << "No valid connection found for agent: " << remote_agent;
             return NIXL_ERR_NOT_FOUND;
         }
-        conn = conn_it->second;
     }
 
-    auto backend_handle = new nixlLibfabricBackendH(operation, remote_agent, std::move(conn));
+    auto backend_handle = new nixlLibfabricBackendH(operation, remote_agent);
     if (!backend_handle) {
         NIXL_ERROR << "Failed to allocate nixlLibfabricBackendH";
         return NIXL_ERR_BACKEND;
@@ -1503,10 +1497,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         NIXL_ERROR << "Failed to cast handle to nixlLibfabricBackendH";
         return NIXL_ERR_INVALID_PARAM;
     }
-    if (backend_handle->conn_ != conn) {
-        NIXL_ERROR << "Connection mismatch for handle to " << remote_agent;
-        return NIXL_ERR_REMOTE_DISCONNECT;
-    }
 
     // Update notification from opt_args on repost
     if (opt_args && opt_args->hasNotif) {
@@ -1561,19 +1551,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     const bool use_post_pool = post_thread_pool_ && post_thread_count_ > 0 && desc_count > 0 &&
         static_cast<size_t>(desc_count) >= post_split_batch_size_;
 
-    auto abort_partial_submission = [&](size_t submitted,
-                                        nixl_status_t err_status) -> nixl_status_t {
-        if (submitted == 0) {
-            backend_handle->adjust_total_submitted_requests(0);
-            return err_status;
-        }
-        // In-flight CQ callbacks capture raw backend_handle; track the exact submitted count plus
-        // one synthetic failed slot so status becomes terminal only after all callbacks complete.
-        backend_handle->adjust_total_submitted_requests(submitted + 1);
-        backend_handle->complete_request(err_status);
-        return NIXL_IN_PROG;
-    };
-
     if (!use_post_pool) {
         nixl_status_t status = postXferDescriptors(op_type,
                                                    local,
@@ -1586,7 +1563,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                                                    /*allow_fi_more=*/true,
                                                    total_submitted);
         if (status != NIXL_SUCCESS) {
-            return abort_partial_submission(total_submitted, status);
+            return status;
         }
     } else {
         const size_t num_chunks = std::min(post_thread_count_, static_cast<size_t>(desc_count));
@@ -1630,9 +1607,10 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                         status = NIXL_ERR_BACKEND;
                     }
 
-                    parallel_total_submitted.fetch_add(chunk_submitted);
                     if (status != NIXL_SUCCESS) {
                         storeFirstError(first_status, status);
+                    } else {
+                        parallel_total_submitted.fetch_add(chunk_submitted);
                     }
 
                     {
@@ -1652,7 +1630,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             done_cv.wait(lock, [&remaining, num_chunks, submitted_chunks]() {
                 return remaining == num_chunks - submitted_chunks;
             });
-            return abort_partial_submission(parallel_total_submitted.load(), NIXL_ERR_BACKEND);
+            return NIXL_ERR_BACKEND;
         }
 
         {
@@ -1662,7 +1640,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
         nixl_status_t status = static_cast<nixl_status_t>(first_status.load());
         if (status != NIXL_SUCCESS) {
-            return abort_partial_submission(parallel_total_submitted.load(), status);
+            return status;
         }
 
         total_submitted = parallel_total_submitted.load();
@@ -1682,19 +1660,13 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // Send notification immediately after successful request submission
     if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_WRITE) {
-        nixl_status_t notif_status = notifSendPriv(conn,
+        nixl_status_t notif_status = notifSendPriv(remote_agent,
                                                    backend_handle->binary_notifs,
                                                    backend_handle->total_notif_msg_len,
                                                    backend_handle->post_xfer_id,
-                                                   backend_handle->get_submitted_requests_count(),
-                                                   /*establish_if_disconnected=*/true);
+                                                   backend_handle->get_submitted_requests_count());
         if (notif_status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to send notification";
-            if (!backend_handle->is_completed()) {
-                backend_handle->adjust_total_submitted_requests(total_submitted + 1);
-                backend_handle->complete_request(notif_status);
-                return NIXL_IN_PROG;
-            }
             return notif_status;
         }
         NIXL_DEBUG << "Notification sent immediately with XFER_ID=" << backend_handle->post_xfer_id
@@ -1706,11 +1678,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         nixl_status_t progress_status = rail_manager_.progressActiveRails();
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in postXfer";
-            if (!backend_handle->is_completed()) {
-                backend_handle->adjust_total_submitted_requests(total_submitted + 1);
-                backend_handle->complete_request(progress_status);
-                return NIXL_IN_PROG;
-            }
             return progress_status;
         }
     }
@@ -1718,12 +1685,11 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     // For very small transfers we can check for local completions immediately.
     if (backend_handle->is_completed()) {
         if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ) {
-            nixl_status_t notif_status = notifSendPriv(conn,
+            nixl_status_t notif_status = notifSendPriv(remote_agent,
                                                        backend_handle->binary_notifs,
                                                        backend_handle->total_notif_msg_len,
                                                        backend_handle->post_xfer_id,
-                                                       0,
-                                                       /*establish_if_disconnected=*/true);
+                                                       0);
             if (notif_status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed to send notification";
                 return notif_status;
@@ -1759,12 +1725,11 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
 
         NIXL_DEBUG << "Data transfer completed successfully";
         if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ) {
-            nixl_status_t notif_status = notifSendPriv(backend_handle->conn_,
+            nixl_status_t notif_status = notifSendPriv(backend_handle->remote_agent_,
                                                        backend_handle->binary_notifs,
                                                        backend_handle->total_notif_msg_len,
                                                        backend_handle->post_xfer_id,
-                                                       0,
-                                                       /*establish_if_disconnected=*/false);
+                                                       0);
             if (notif_status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed to send notification";
                 return notif_status;
@@ -1781,15 +1746,7 @@ nixlLibfabricEngine::releaseReqH(nixlBackendReqH *handle) const {
         return NIXL_SUCCESS;
     }
 
-    auto *backend_handle = static_cast<nixlLibfabricBackendH *>(handle);
-    if (!backend_handle->is_completed() && !progress_thread_enabled_) {
-        rail_manager_.progressActiveRails();
-    }
-    if (!backend_handle->is_completed()) {
-        return NIXL_ERR_REPOST_ACTIVE;
-    }
-
-    delete backend_handle;
+    delete static_cast<nixlLibfabricBackendH *>(handle);
     NIXL_DEBUG << "releaseReqH completed successfully";
     return NIXL_SUCCESS;
 }
@@ -1898,41 +1855,11 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
         connection = it->second;
     }
 
-    return notifSendPriv(connection,
-                         binary_notifications,
-                         total_message_length,
-                         notif_xfer_id,
-                         expected_completions,
-                         /*establish_if_disconnected=*/true);
-}
-
-nixl_status_t
-nixlLibfabricEngine::notifSendPriv(const std::shared_ptr<nixlLibfabricConnection> &connection,
-                                   std::vector<BinaryNotification> &binary_notifications,
-                                   uint32_t total_message_length,
-                                   uint16_t notif_xfer_id,
-                                   uint32_t expected_completions,
-                                   bool establish_if_disconnected) const {
-    if (!connection) {
-        NIXL_ERROR << "Invalid connection for notification";
-        return NIXL_ERR_NOT_FOUND;
-    }
-
-    if (connection->isRetired()) {
-        NIXL_ERROR << "Connection to " << connection->remoteAgent_
-                   << " was disconnected before notification could be sent";
-        return NIXL_ERR_REMOTE_DISCONNECT;
-    }
-
     if (connection->overall_state_.load(std::memory_order_acquire) ==
         ConnectionState::DISCONNECTED) {
-        if (!establish_if_disconnected) {
-            return NIXL_ERR_REMOTE_DISCONNECT;
-        }
-        nixl_status_t status = establishConnection(connection->remoteAgent_);
+        nixl_status_t status = establishConnection(remote_agent);
         if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "notifSendPriv: failed to establish connection with "
-                       << connection->remoteAgent_;
+            NIXL_ERROR << "notifSendPriv: failed to establish connection with " << remote_agent;
             return status;
         }
     }
@@ -2003,15 +1930,20 @@ nixlLibfabricEngine::notifSendPriv(const std::shared_ptr<nixlLibfabricConnection
 }
 
 nixl_status_t
-nixlLibfabricEngine::notifXferErrorPriv(const std::shared_ptr<nixlLibfabricConnection> &connection,
+nixlLibfabricEngine::notifXferErrorPriv(const std::string &remote_agent,
                                         uint16_t notif_xfer_id,
                                         uint32_t final_completions) const {
-    if (!connection || connection->isRetired() ||
-        connection->overall_state_.load(std::memory_order_acquire) ==
-            ConnectionState::DISCONNECTED) {
-        return NIXL_ERR_REMOTE_DISCONNECT;
+    std::shared_ptr<nixlLibfabricConnection> connection;
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
+        auto it = connections_.find(remote_agent);
+        if (it == connections_.end()) {
+            NIXL_ERROR << "No connection found for agent: " << remote_agent
+                       << ", cannot report transfer error for XFER_ID=" << notif_xfer_id;
+            return NIXL_ERR_NOT_FOUND;
+        }
+        connection = it->second;
     }
-    const std::string &remote_agent = connection->remoteAgent_;
 
     const size_t rail_id = 0; // Control messages always travel on rail 0
     nixlLibfabricReq *control_request = rail_manager_.getRail(rail_id).allocateControlRequest(
@@ -2088,8 +2020,8 @@ nixlLibfabricEngine::notifXferFailure(nixlLibfabricBackendH *backend_handle,
                << backend_handle->get_submitted_requests_count()
                << " writes completed; notifying target so it does not wait for the rest";
 
-    nixl_status_t status =
-        notifXferErrorPriv(backend_handle->conn_, backend_handle->post_xfer_id, final_completions);
+    nixl_status_t status = notifXferErrorPriv(
+        backend_handle->remote_agent_, backend_handle->post_xfer_id, final_completions);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Could not notify " << backend_handle->remote_agent_
                    << " of the transfer error for XFER_ID=" << backend_handle->post_xfer_id

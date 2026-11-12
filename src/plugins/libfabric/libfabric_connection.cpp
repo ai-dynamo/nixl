@@ -47,7 +47,6 @@ nixlLibfabricConnection::establish() {
 
 nixl_status_t
 nixlLibfabricConnection::disconnect() {
-    retired_.store(true, std::memory_order_release);
     if (overall_state_.load(std::memory_order_acquire) == ConnectionState::DISCONNECTED) {
         NIXL_DEBUG << "Connection already disconnected for " << remoteAgent_;
         return NIXL_SUCCESS;

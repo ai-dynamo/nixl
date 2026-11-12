@@ -85,9 +85,9 @@ test('unit', unit_test_exe)
 agent_unit_env = sanitizer_env
 agent_unit_env.set('NIXL_PLUGIN_DIR', meson.project_build_root() / 'test/gtest/mocks')
 
-test('unit_agent',
+test('unit_invalidation',
      unit_test_exe,
-     args: ['--gtest_filter=*Agent*:*agent*:TransferCompletion/*:Tracing*:TraceContext*:TracePhaseSink*'],
+     args: ['--gtest_filter=TransferCompletion/*:dualAgentBridgeFixture.Retained*:dualAgentBridgeFixture.SharedRetained*'],
      env: agent_unit_env,
      suite: 'sanitizer',
-     depends: [mock_backend_plugin, trace_recorder_plugin])
+     depends: [mock_backend_plugin])

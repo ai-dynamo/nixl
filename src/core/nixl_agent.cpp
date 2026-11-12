@@ -247,10 +247,10 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            std::shared_ptr<nixlRemoteSection> remote_section_ref,
                            const nixl::trace::TraceContext &trace_context,
                            const std::uint64_t trace_request_id)
-    : remoteAgent(remote_agent),
-      remoteSection(std::move(remote_section_ref)),
-      initiatorDescs(local_type),
+    : initiatorDescs(local_type),
       targetDescs(remote_type),
+      remoteAgent(remote_agent),
+      remoteSection(std::move(remote_section_ref)),
       traceContext_(trace_context),
       tracePostContext_(trace_context),
       traceRequestId_(trace_request_id),
@@ -441,26 +441,6 @@ nixlAgentData::~nixlAgentData() {
     // Runs before any member is destroyed, so no metadata backend thread can
     // still be in the caches below.
     md_.stop();
-
-    for (auto &[mvh, entry] : mvhToEngine) {
-        entry.engine.releaseMemView(mvh);
-    }
-    mvhToEngine.clear();
-
-    // Unload backend metadata from both active and retired sections while
-    // backendEngines_ are still alive, so handles outliving the agent never
-    // invoke unloadMD or releaseReqH on destroyed engines.
-    for (auto &[name, sec] : remoteSections_) {
-        if (sec) {
-            sec->unload();
-        }
-    }
-    for (const auto &weak_sec : retiredRemoteSections_) {
-        if (const auto sec = weak_sec.lock()) {
-            sec->unload();
-        }
-    }
-    retiredRemoteSections_.clear();
 }
 
 /*** nixlAgent implementation ***/
@@ -1616,7 +1596,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
             const nixl_status_t release_status =
                 req_hndl->engine->releaseReqH(req_hndl->backendHandle);
 
-            if (release_status != NIXL_SUCCESS) {
+            if (release_status < 0) {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
                                 << "' could not release transfer request and returned error status "
                                 << release_status;
@@ -2054,8 +2034,6 @@ nixlAgentData::invalidateRemoteMDLocked(const std::string &remote_agent) {
         ret = NIXL_ERR_NOT_FOUND;
     } else {
         sec_it->second->invalidate();
-        std::erase_if(retiredRemoteSections_, [](const auto &w) { return w.expired(); });
-        retiredRemoteSections_.push_back(sec_it->second);
         remoteSections_.erase(sec_it);
     }
 
@@ -2232,7 +2210,6 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
     }
 
     const std::lock_guard lock_guard(data->lock);
-    std::vector<std::shared_ptr<nixlRemoteSection>> retained_sections;
     for (size_t i = 0; i < desc_count; ++i) {
         const auto &desc = dlist[i];
         if (desc.remoteAgent == nixl_null_agent) {
@@ -2244,10 +2221,6 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
         if (it == data->remoteSections_.end()) {
             NIXL_ERROR_FUNC << "Metadata for remote agent '" << desc.remoteAgent << "' not found";
             return NIXL_ERR_NOT_FOUND;
-        }
-        if (std::find(retained_sections.begin(), retained_sections.end(), it->second) ==
-            retained_sections.end()) {
-            retained_sections.push_back(it->second);
         }
 
         if (engine) {
@@ -2286,8 +2259,7 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
 
     const auto status = engine->prepMemView(remote_meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
-        data->mvhToEngine.emplace(
-            mvh, nixlAgentData::memViewEntry{*engine, std::move(retained_sections)});
+        data->mvhToEngine.emplace(mvh, *engine);
     }
 
     return status;
@@ -2329,7 +2301,7 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
 
     const auto status = engine->prepMemView(meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
-        data->mvhToEngine.emplace(mvh, nixlAgentData::memViewEntry{*engine, {}});
+        data->mvhToEngine.emplace(mvh, *engine);
     }
 
     return status;
@@ -2347,6 +2319,6 @@ nixlAgent::releaseMemView(nixlMemViewH mvh) const {
         return;
     }
 
-    it->second.engine.releaseMemView(mvh);
+    it->second.releaseMemView(mvh);
     data->mvhToEngine.erase(it);
 }

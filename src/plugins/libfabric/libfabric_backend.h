@@ -131,15 +131,12 @@ public:
     uint16_t post_xfer_id;
     const nixl_xfer_op_t operation_;
     const std::string remote_agent_;
-    std::shared_ptr<nixlLibfabricConnection> conn_;
     bool has_notif;
     uint32_t total_notif_msg_len; // Total length of notification message across all fragments
 
     std::vector<BinaryNotification> binary_notifs; // Vector of BinaryNotification for fragmentation
 
-    nixlLibfabricBackendH(nixl_xfer_op_t op,
-                          const std::string &remote_agent,
-                          std::shared_ptr<nixlLibfabricConnection> conn);
+    nixlLibfabricBackendH(nixl_xfer_op_t op, const std::string &remote_agent);
     ~nixlLibfabricBackendH();
 
     /** Check if all requests in this transfer have completed */
@@ -302,18 +299,11 @@ private:
                   uint32_t total_message_length,
                   uint16_t notif_xfer_id,
                   uint32_t expected_completions) const;
-    nixl_status_t
-    notifSendPriv(const std::shared_ptr<nixlLibfabricConnection> &connection,
-                  std::vector<BinaryNotification> &binary_notifications,
-                  uint32_t total_message_length,
-                  uint16_t notif_xfer_id,
-                  uint32_t expected_completions,
-                  bool establish_if_disconnected) const;
 
     // Tell the target that notif_xfer_id failed on this side and that only final_completions of
     // its writes will arrive, so it stops waiting for the rest.
     nixl_status_t
-    notifXferErrorPriv(const std::shared_ptr<nixlLibfabricConnection> &connection,
+    notifXferErrorPriv(const std::string &remote_agent,
                        uint16_t notif_xfer_id,
                        uint32_t final_completions) const;
 

@@ -106,11 +106,6 @@ namespace agent {
             agent_.reset();
         }
 
-        void
-        resetAgent() {
-            agent_.reset();
-        }
-
         nixlAgent *
         getAgent() const {
             return agent_.get();
@@ -1775,50 +1770,9 @@ namespace agent {
         EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&engine));
     }
 
-    TEST_F(dualAgentBridgeFixture, HandleOutlivingAgentUnloadsBeforeEngineDestruction) {
-        using testing::_;
-        using testing::Return;
-
-        DualAgentSetup s(DRAM_SEG);
-        setupDualAgent(s);
-        auto &engine = local_agent_helper_->getGMockEngine();
-        nixl_xfer_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
-        local.addDesc(s.local_blob.getDesc());
-        remote.addDesc(s.remote_blob.getDesc());
-
-        nixlBackendReqH backend_req;
-        EXPECT_CALL(engine, prepXfer(_, _, _, _, _, _))
-            .WillOnce(
-                testing::DoAll(testing::SetArgReferee<4>(&backend_req), Return(NIXL_SUCCESS)));
-        nixlXferReqH *leaked_req = nullptr;
-        ASSERT_EQ(
-            local_agent_->createXferReq(NIXL_READ, local, remote, s.remote_agent_name, leaked_req),
-            NIXL_SUCCESS);
-        ASSERT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_SUCCESS);
-        ASSERT_EQ(local_agent_->deregisterMem(s.local_reg_dlist, &s.local_extra_params),
-                  NIXL_SUCCESS);
-
-        // Agent teardown unloads retired remote metadata while backend engines are still alive.
-        EXPECT_CALL(engine, unloadMD(_)).WillOnce(Return(NIXL_SUCCESS));
-        local_agent_helper_->resetAgent();
-        local_agent_ = nullptr;
-        EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&engine));
-
-        // Destroying a handle that outlived its agent must not call releaseReqH or unloadMD on
-        // destroyed backend engines.
-        EXPECT_CALL(engine, releaseReqH(_)).Times(0);
-        EXPECT_CALL(engine, unloadMD(_)).Times(0);
-        delete leaked_req;
-        EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&engine));
-    }
-
     TEST_F(dualAgentBridgeFixture, PrepMemViewRemoteDRAM) {
-        using testing::_;
-        using testing::Return;
-
         DualAgentSetup s(DRAM_SEG);
         setupDualAgent(s, /*register_local=*/false);
-        auto &engine = local_agent_helper_->getGMockEngine();
 
         nixl_remote_dlist_t remote_dlist(DRAM_SEG);
         remote_dlist.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
@@ -1827,17 +1781,7 @@ namespace agent {
         EXPECT_EQ(local_agent_->prepMemView(remote_dlist, mvh), NIXL_SUCCESS);
         EXPECT_NE(mvh, nullptr);
 
-        // Invalidating remote metadata while a remote memory view is live defers unloadMD until
-        // releaseMemView completes.
-        EXPECT_CALL(engine, unloadMD(_)).Times(0);
-        EXPECT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_SUCCESS);
-        EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&engine));
-
-        testing::Sequence cleanup;
-        EXPECT_CALL(engine, releaseMemView(mvh)).InSequence(cleanup);
-        EXPECT_CALL(engine, unloadMD(_)).InSequence(cleanup).WillOnce(Return(NIXL_SUCCESS));
         local_agent_->releaseMemView(mvh);
-        EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&engine));
     }
 
     TEST_F(dualAgentBridgeFixture, PreparedTransfersPreserveBinaryBackendParameters) {

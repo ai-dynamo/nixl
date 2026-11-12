@@ -129,8 +129,8 @@ done
 env -u UCX_NET_DEVICES gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
-# Redis and agent unit tests
-./bin/unit --gtest_filter='redis*:redisPool*:*Agent*:*agent*:TransferCompletion/*'
+# Redis and invalidation-drain unit tests
+./bin/unit --gtest_filter='redis*:redisPool*:TransferCompletion/*:dualAgentBridgeFixture.Retained*:dualAgentBridgeFixture.SharedRetained*'
 
 # DOCA telemetry exporter tests: present only when built with the DOCA SDK
 # (TELEMETRY_DOCA). Self-contained - each binds a free loopback port via

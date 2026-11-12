@@ -395,15 +395,12 @@ using DxsAddressExchangeCallback =
 using XferCallback =
     absl::AnyInvocable<void(PeerHandle, const AgentAddress &, const XferMessage &)>;
 
-class HostConnection;
-
 struct DxsConnectionEstablishTask {
     std::string remote_name;
-    std::weak_ptr<HostConnection> conn;
 };
 
 using HostConnectionTask = std::variant<DxsConnectionEstablishTask>;
-using DxsConnectionEstablishCallback = absl::AnyInvocable<void(const DxsConnectionEstablishTask &)>;
+using DxsConnectionEstablishCallback = absl::AnyInvocable<void(const std::string &)>;
 
 using WorkerTask = std::variant<PeerEvent, HostConnectionTask>;
 

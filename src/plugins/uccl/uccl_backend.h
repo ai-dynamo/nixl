@@ -19,7 +19,6 @@
 
 #include <vector>
 #include <array>
-#include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -38,8 +37,6 @@
 
 class nixlUcclBackendMD;
 class nixlUcclReqH;
-
-using uccl_connection_ptr_t = std::shared_ptr<uccl_conn_t>;
 
 class nixlUcclEngine : public nixlBackendEngine {
 public:
@@ -137,8 +134,7 @@ private:
     std::string local_agent_name_;
     mutable std::string pending_local_agent_; // deferred local connect
     std::unordered_map<uint64_t, nixlUcclBackendMD *> mem_reg_info_;
-    mutable std::unordered_map<std::string, uccl_connection_ptr_t> connected_agents_;
-    std::vector<uccl_connection_ptr_t> accepted_conns_;
+    mutable std::unordered_map<std::string, uint64_t> connected_agents_; // agent name -> conn_id
     std::thread listener_thread_;
     std::atomic<bool> stop_listener_;
 };
@@ -165,17 +161,16 @@ public:
 // UCCL Backend Request Handle
 class nixlUcclReqH : public nixlBackendReqH {
 public:
-    explicit nixlUcclReqH(uccl_connection_ptr_t conn) : conn(std::move(conn)), transfer_id(0) {}
+    nixlUcclReqH(uccl_conn_t *conn) : conn(conn) {}
 
     virtual ~nixlUcclReqH() {}
 
-    uccl_connection_ptr_t conn;
+    uccl_conn_t *conn;
     uint64_t transfer_id;
     std::optional<nixl_blob_t> notif_msg;
     std::vector<FifoItem> fifo_items;
     std::vector<std::vector<char>> ipc_infos;
     bool use_ipc = false;
-    bool in_progress = false;
 };
 
 #endif

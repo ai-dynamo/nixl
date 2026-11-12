@@ -642,23 +642,11 @@ nixlRemoteSection::removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackend
     }
 }
 
-void
-nixlRemoteSection::unload() noexcept {
-    if (unloaded_.exchange(true, std::memory_order_acq_rel)) {
-        return;
-    }
+nixlRemoteSection::~nixlRemoteSection() {
     for (auto &[sec_key, dlist] : sectionMap) {
-        nixlBackendEngine *eng = sec_key.second;
+        nixlBackendEngine* eng = sec_key.second;
         for (auto &elm : dlist) {
             eng->unloadMD(elm.metadataP);
         }
     }
-    sectionMap.clear();
-    for (auto &backends : memToBackend) {
-        backends.clear();
-    }
-}
-
-nixlRemoteSection::~nixlRemoteSection() {
-    unload();
 }

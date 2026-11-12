@@ -312,7 +312,7 @@ Worker::ProcessEventLoop() {
                         [this](auto &&event) {
                             using T = std::decay_t<decltype(event)>;
                             if constexpr (std::is_same_v<T, DxsConnectionEstablishTask>) {
-                                dxs_connection_establish_callback_(event);
+                                dxs_connection_establish_callback_(event.remote_name);
                             }
                         },
                         task_variant);

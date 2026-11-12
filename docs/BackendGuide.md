@@ -232,7 +232,7 @@ Note that after this step, if there was at least one backend in common between t
 
 ### Invalidate remote agent metadata
 
-Agent will determine which backends were common during the time of loading remote metadata of that specific agent, and call **disconnect** in SB API to that agent for such backends. Also, for each of the remote identifiers stored for that remote agent for the corresponding common backends, it will call the **unloadMD** in SB API to release the resources.
+Agent will determine which backends were common during the time of loading remote metadata of that specific agent, and call **disconnect** in SB API to that agent for such backends. Also, for each of the remote identifiers stored for that remote agent for the corresponding common backends, it will call the **unloadMD** in SB API to release the resources. If transfer requests created against that metadata are still alive, **unloadMD** is deferred until the last of them is released, so it can run after **disconnect** and after the same remote agent's metadata has been loaded again. Until then the agent keeps calling **checkXfer** and **releaseReqH** on those requests, so a backend must keep whatever they use valid across **disconnect**.
 
 Note that after this step, the local agent cannot initiate transfers to the remote agent anymore, until its metadata is reloaded again. Through these two methods the dynamicity requirement of NIXL agents are achieved.
 

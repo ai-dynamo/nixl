@@ -63,8 +63,7 @@ public:
     operator=(const nixlXferReqH &) = delete;
 
     ~nixlXferReqH() {
-        if ((backendHandle != nullptr) && (engine != nullptr) &&
-            (!remoteSection || remoteSection->enginesAlive())) {
+        if ((backendHandle != nullptr) && (engine != nullptr)) {
             engine->releaseReqH(backendHandle);
         }
     }
@@ -100,12 +99,12 @@ private:
     nixlBackendEngine *engine = nullptr;
     nixlBackendReqH *backendHandle = nullptr;
 
-    const std::string remoteAgent;
-    // Backend handles may use the metadata until releaseReqH completes.
-    const std::shared_ptr<nixlRemoteSection> remoteSection;
-
     nixl_meta_dlist_t initiatorDescs;
     nixl_meta_dlist_t targetDescs;
+
+    const std::string remoteAgent;
+    // Owns the remote registration so backend metadata outlives the backend handle.
+    const std::shared_ptr<nixlRemoteSection> remoteSection;
     const nixl::trace::TraceContext traceContext_;
     nixl::trace::TraceContext tracePostContext_;
     bool traceRequestSpanIdUsed_ = false;
