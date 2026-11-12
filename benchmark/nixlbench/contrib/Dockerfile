@@ -191,6 +191,7 @@ ARG NPROC
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
 ARG HIREDIS_VERSION="1.4.0"
+ARG WQS_MOCK_REF="3dc51f00e4c2f359fbd3752fc8cd785b95f1a1e3"
 
 WORKDIR /workspace
 
@@ -284,6 +285,23 @@ RUN wget -q ${WGET_RETRY_OPTS} "https://github.com/redis/hiredis/archive/refs/ta
     ldconfig && \
     PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --atleast-version=1.0.1 hiredis && \
     rm -rf "/tmp/hiredis-${HIREDIS_VERSION}" "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz"
+
+# Build the WQS mock SDK (in-process libwqs_store.so + shared_client.h) so the WQS plugin builds and its
+# tests run without a WQS cluster. Installed to /usr/local, where meson finds it without extra options.
+RUN wget -q ${WGET_RETRY_OPTS} "https://github.com/expontech/wqs_mock/archive/${WQS_MOCK_REF}.tar.gz" \
+        -O "/tmp/wqs_mock-${WQS_MOCK_REF}.tar.gz" && \
+    tar -xzf "/tmp/wqs_mock-${WQS_MOCK_REF}.tar.gz" -C /tmp && \
+    cd "/tmp/wqs_mock-${WQS_MOCK_REF}" && \
+    cmake -S . -B build \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DWQS_MOCK_BUILD_LEGACY=OFF && \
+    cmake --build build -j"${NPROC:-$(nproc)}" && \
+    ctest --test-dir build --output-on-failure && \
+    cmake --install build && \
+    ldconfig && \
+    rm -rf "/tmp/wqs_mock-${WQS_MOCK_REF}" "/tmp/wqs_mock-${WQS_MOCK_REF}.tar.gz"
 
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
