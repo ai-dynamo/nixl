@@ -735,8 +735,14 @@ TEST(Tracing, RequestStoresFixedCorrelationContext) {
     context.spanId = {0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7};
     context.flags = 0x03;
 
-    const nixlXferReqH request(
-        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr, context, 0x0123456789abcdefULL);
+    const nixlXferReqH request("remote",
+                               NIXL_WRITE,
+                               DRAM_SEG,
+                               DRAM_SEG,
+                               0,
+                               nixl_remote_section_weak_t{},
+                               context,
+                               0x0123456789abcdefULL);
 
     EXPECT_EQ(request.traceContext(), context);
     EXPECT_EQ(request.traceRequestId(), 0x0123456789abcdefULL);
@@ -749,7 +755,7 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
                              DRAM_SEG,
                              DRAM_SEG,
                              0,
-                             nullptr,
+                             nixl_remote_section_weak_t{},
                              nixl::trace::generateTraceContext(),
                              0);
     const nixlXferReqH second("remote",
@@ -757,7 +763,7 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
                               DRAM_SEG,
                               DRAM_SEG,
                               0,
-                              nullptr,
+                              nixl_remote_section_weak_t{},
                               nixl::trace::generateTraceContext(),
                               0);
     const auto first_context = first.traceContext();
@@ -767,8 +773,14 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
 }
 
 TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
-    const nixlXferReqH request(
-        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr, nixl::trace::TraceContext{}, 0);
+    const nixlXferReqH request("remote",
+                               NIXL_WRITE,
+                               DRAM_SEG,
+                               DRAM_SEG,
+                               0,
+                               nixl_remote_section_weak_t{},
+                               nixl::trace::TraceContext{},
+                               0);
 
     EXPECT_FALSE(request.traceContext().valid());
 }

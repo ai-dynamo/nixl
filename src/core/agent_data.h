@@ -72,8 +72,8 @@ class nixlAgentData final : public nixlMetadataContext {
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
         backend_map_t backendEngines_;
-        // Owning shared_ptr per registration generation. Transfer handles share ownership
-        // so an invalidated registration stays loaded until its last handle is released.
+        // Owning shared_ptr per registration generation; weak refs in handles expire on
+        // invalidation or re-registration.
         std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
         nixlLocalSection localSection_;
 

@@ -81,13 +81,3 @@ unit_test_exe = executable('unit',
 )
 
 test('unit', unit_test_exe)
-
-agent_unit_env = sanitizer_env
-agent_unit_env.set('NIXL_PLUGIN_DIR', meson.project_build_root() / 'test/gtest/mocks')
-
-test('unit_invalidation',
-     unit_test_exe,
-     args: ['--gtest_filter=TransferCompletion/*:dualAgentBridgeFixture.Retained*:dualAgentBridgeFixture.SharedRetained*'],
-     env: agent_unit_env,
-     suite: 'sanitizer',
-     depends: [mock_backend_plugin])

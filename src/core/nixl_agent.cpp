@@ -259,6 +259,23 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
     targetDescs.reserve(desc_count);
 }
 
+nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
+                           const nixl_xfer_op_t backend_op,
+                           const nixl_mem_t local_type,
+                           const nixl_mem_t remote_type,
+                           const size_t desc_count,
+                           const nixl_remote_section_weak_t &remote_section_ref,
+                           const nixl::trace::TraceContext &trace_context,
+                           const std::uint64_t trace_request_id)
+    : nixlXferReqH(remote_agent,
+                   backend_op,
+                   local_type,
+                   remote_type,
+                   desc_count,
+                   remote_section_ref.lock(),
+                   trace_context,
+                   trace_request_id) {}
+
 void
 nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
                                  nixl_telemetry_stat_status_t stat_status) {
@@ -1347,6 +1364,16 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     std::shared_lock<nixlLock> read_lock(data->lock);
     req_hndl->traceRequestSpanIdUsed_ = true;
+    // The request was created against a specific remote registration generation: refuse to
+    // post if that generation was invalidated or replaced by a re-registration meanwhile.
+    if (!req_hndl->remoteSection || req_hndl->remoteSection->isInvalidated()) {
+        NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
+                        << "' was invalidated or re-registered after transfer request creation; "
+                           "not posting stale handle";
+        data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
+        NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_NOT_FOUND));
+        return NIXL_ERR_NOT_FOUND;
+    }
 
     // We can't repost while a request is in progress
     if (req_hndl->status == NIXL_IN_PROG) {
@@ -1378,16 +1405,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                 trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_REMOTE_DISCONNECT));
             return NIXL_ERR_REMOTE_DISCONNECT;
         }
-    }
-
-    // A retained registration can finish an existing transfer, but cannot start a new one.
-    if (!req_hndl->remoteSection || req_hndl->remoteSection->isInvalidated()) {
-        NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
-                        << "' was invalidated or re-registered after transfer request creation; "
-                           "not posting stale handle";
-        data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
-        NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_NOT_FOUND));
-        return NIXL_ERR_NOT_FOUND;
     }
 
     // Carrying over notification from xfer handle creation time
@@ -1568,9 +1585,6 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
     NIXL_TRACE_ATTR(
         trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(req_hndl->traceExecution()));
 
-    // Fast path holds a shared lock: while remoteSection is valid, remoteSections_ owns a
-    // reference that cannot be erased without an exclusive lock, so deleting req_hndl cannot
-    // invoke unloadMD. Upgrade to an exclusive lock only when releasing retired metadata.
     std::shared_lock<nixlLock> read_lock(data->lock);
     std::unique_lock<nixlLock> write_lock(data->lock, std::defer_lock);
     if (req_hndl->remoteSection && req_hndl->remoteSection->isInvalidated()) [[unlikely]] {
@@ -2099,9 +2113,9 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
 nixl_status_t
 nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
     // Reloads merge into the existing section so that partial metadata updates
-    // accumulate. Prepared descriptor lists and transfer handles bound to the
-    // registration stay valid across refreshes; they retire only when the
-    // registration is explicitly invalidated and this entry is erased.
+    // accumulate. The handles weakly bound to the registration stay valid across
+    // refreshes; handles retire only when the registration is explicitly
+    // invalidated and this entry is erased.
     const auto [it, inserted] =
         remoteSections_.try_emplace(remote_name, std::make_shared<nixlRemoteSection>(remote_name));
     const nixl_status_t ret = it->second->loadRemoteData(&sd, backendEngines_);
