@@ -105,6 +105,10 @@ if enabled_plugins.get('OBJ')
     endif
 endif
 
+if enabled_plugins.get('LIBBLKIO') and has_libblkio_plugin
+    subdir('libblkio')
+endif
+
 # DOCA_MEMOS tests mock the DOCA functions (doca_memos_mocks.cpp) but compile
 # against the real DOCA KV API headers, so they require doca-kv/doca-common to be
 # present. They also compile backend sources directly, so link dependencies used

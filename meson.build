@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA', 'DOCA_MEMOS']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA', 'DOCA_MEMOS', 'LIBBLKIO']
 
 enabled_plugins = {}
 
@@ -474,6 +474,21 @@ if libfabric_path != ''
 else
   libfabric_dep = dependency('libfabric', required: false)
 endif
+
+# Check for libblkio
+libblkio_dep = dependency('blkio', required: false)
+if not libblkio_dep.found()
+  # Try alternate pkg-config name
+  libblkio_dep = dependency('libblkio', required: false)
+endif
+if not libblkio_dep.found()
+  # Try to find libblkio in common locations
+  libblkio_lib = cpp.find_library('blkio', dirs: ['/usr/local/lib/x86_64-linux-gnu', '/usr/local/lib', '/usr/lib/x86_64-linux-gnu', '/usr/lib'], required: false)
+  if libblkio_lib.found() and cpp.has_header('blkio.h')
+    libblkio_dep = declare_dependency(dependencies: libblkio_lib)
+  endif
+endif
+has_libblkio_plugin = libblkio_dep.found()
 
 # DOCA KV (used by the DOCA_MEMOS plugin). These pkg-config files live in
 # /opt/mellanox/doca/lib64/pkgconfig, which is normally added to PKG_CONFIG_PATH

@@ -124,6 +124,14 @@ if enabled_plugins.get('GPUNETIO')
     endif
 endif
 
+if enabled_plugins.get('LIBBLKIO')
+    if not has_libblkio_plugin and is_explicit_enable
+        error('LIBBLKIO plugin requested but libblkio dependency not found')
+    elif has_libblkio_plugin
+        subdir('libblkio')
+    endif
+endif
+
 if enabled_plugins.get('DOCA_MEMOS')
     # Always entered so doca_memos_backend_sources is defined for the unit
     # tests; the plugin meson.build short-circuits internally when the DOCA
