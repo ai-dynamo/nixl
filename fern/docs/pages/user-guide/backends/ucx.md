@@ -50,6 +50,32 @@ Replace `<cuda install>` with the path to your CUDA installation (e.g., `/usr/lo
 
 See [Configuration](#configuration) for build options.
 
+## Affine SGL WRITE requests
+
+When `NIXL_UCX_SGL_ENABLE=1` and NIXL is built with UCX SGL support, a WRITE
+request can describe regular rows without constructing one NIXL descriptor per
+row. Set `nixl_opt_args_t::customParam` when calling `createXferReq`:
+
+```cpp
+nixl_opt_args_t options;
+options.customParam = "ucx_affine_write_v1=27,64,576,2304,576";
+```
+
+The five values are `run_count,rows_per_run,row_bytes,local_stride_bytes,remote_stride_bytes`.
+The first `run_count` local and remote descriptors each name the first row of a
+run and have logical length `rows_per_run * row_bytes`. Descriptors after those
+runs, such as a ready marker, are transferred normally. The example describes
+27 runs of 64 rows, with a 576-byte row every 2304 bytes locally and every
+576 bytes remotely. The same geometry applies to every run in one request.
+Both strides must be at least `row_bytes`.
+
+The backend checks the full expanded span of each run against its registered
+local and remote memory regions before posting. Keep the registration and
+remote metadata valid until the request completes. UCX still builds its SGL
+and retains its flush, completion, and notification behavior. The option is
+valid only for WRITE with UCX SGL enabled; requests without it use the ordinary
+path. An optional `;worker_id=N` suffix selects a UCX shared worker.
+
 ## Configuration
 
 ### Environment Variables
