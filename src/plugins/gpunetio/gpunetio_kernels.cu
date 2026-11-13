@@ -317,7 +317,10 @@ kernel_write_striped(struct docaSlotDesc *xferReqRing,
     __shared__ bool final_owner;
     const uint32_t final_pos = launch.positions[launch.count - 1];
 
-    for (uint32_t ordinal = blockIdx.x; ordinal + 1 < launch.count; ordinal += gridDim.x) {
+    for (uint32_t ordinal = 0; ordinal + 1 < launch.count; ++ordinal) {
+        if (launch.owners[ordinal] != blockIdx.x) {
+            continue;
+        }
         const uint32_t pos = launch.positions[ordinal];
         nixl_gpunetio_dev_write_chunk(
             xferReqRing[pos].qp_data, xferReqRing, gpu_state, host_state, pos);
