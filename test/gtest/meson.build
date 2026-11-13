@@ -52,11 +52,6 @@ endif
 subdir('mocks')
 subdir('plugins')
 
-# The UCX device API tests also run the proxy mode, which needs only CUDA and the UCX backend.
-if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
-    subdir('device_api')
-endif
-
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
 # ROCm detection (mutually exclusive with CUDA; default off)
@@ -92,6 +87,16 @@ if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     cpp_flags += '-DHAVE_LIBFABRIC'
 endif
 
+# Set only when src/plugins/mooncake was built, and not under TSAN: the
+# Transfer Engine's TCP transport (v0.3.10.post1) locks a session mutex on the
+# submitting thread and unlocks it on its own thread, so a post with more than 64
+# descriptors overflows TSAN's per-thread lock tracking.
+# TODO: drop this exclusion once CI uses Mooncake >= v0.3.12 (kvcache-ai/Mooncake#2850).
+if (is_variable('mooncake_backend_interface') and not sanitizer_opts.contains('thread')
+        and not get_option('b_sanitize').split(',').contains('thread'))
+    cpp_flags += '-DHAVE_MOONCAKE'
+endif
+
 if get_option('test_all_plugins')
   cpp_flags+='-DTEST_ALL_PLUGINS'
 endif
@@ -125,8 +130,12 @@ gtest_sources = [
     ]
 
 if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
-    gtest_sources += device_api_test_sources
-    device_api_inc = nixl_device_api_inc_dirs + [include_directories('device_api')]
+    # The UCX device API tests also run the proxy mode, which needs only CUDA and the UCX backend.
+    gtest_sources += [
+        'device/gpu/device_gpu_agent.cpp',
+        'device/gpu/device_gpu_test.cu',
+    ]
+    device_api_inc = nixl_device_api_inc_dirs
     device_api_dep = [ucx_dep]
     if ucx_gpu_device_api_available
         device_api_dep += [doca_gpunetio_dep]

@@ -67,7 +67,7 @@ libfabric_utils_cpp_args = []
 # Detect optional libfabric features at compile time to enable/disable
 # functionality based on the installed libfabric version
 if libfabric_dep.found()
-    # Check for FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV (libfabric >= 2.3)
+    # Check for FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV (libfabric >= 2.5).
     if cpp.has_header_symbol('rdma/fi_ext.h',
                              'FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV',
                              dependencies: libfabric_dep)

@@ -14,15 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-compile_flags = []
 if cuda_dep.found()
-    compile_flags = [ '-DHAVE_CUDA' ]
+    infinia_test_compile_flags = [ '-DHAVE_CUDA' ]
 else
-    compile_flags = [ '-UHAVE_CUDA' ]
+    infinia_test_compile_flags = [ '-UHAVE_CUDA' ]
 endif
 
 infinia_nixl_app = executable('infinia_nixl_test', 'infinia_nixl_test.cpp',
                           dependencies: [nixl_dep, nixl_infra, cuda_dep, nixl_common_dep],
-                          cpp_args : compile_flags,
+                          cpp_args : infinia_test_compile_flags,
                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
                           install: true)
