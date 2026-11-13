@@ -58,21 +58,6 @@ public:
     nixlGdsEngine &
     operator=(const nixlGdsEngine &) = delete;
 
-    bool
-    supportsNotif() const override {
-        return false;
-    }
-
-    bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const override {
         return {DRAM_SEG, VRAM_SEG, FILE_SEG};
