@@ -413,6 +413,8 @@ nixlP2PMetadataBackend::readIncoming() {
             }
         }
         catch (const peerDisconnected &) {
+            NIXL_INFO << "Peer " << socket_iter->first.first << ":" << socket_iter->first.second
+                      << " disconnected, closing its metadata socket";
             socket_iter = remoteSockets_.erase(socket_iter);
             continue;
         }

@@ -448,36 +448,38 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketClosesOnPeerEOF) {
-    sockaddr_in address{};
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    address.sin_port = htons(agents_[0].port);
+    initAgentsDefault();
 
-    for (int generation = 0; generation < 3; ++generation) {
-        SCOPED_TRACE(generation);
-        nixl::scopedFd fd(socket(AF_INET, SOCK_STREAM, 0));
-        ASSERT_TRUE(fd.valid());
-        ASSERT_EQ(connect(fd.get(), reinterpret_cast<sockaddr *>(&address), sizeof(address)), 0);
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
 
-        // An idle peer stays connected until it sends EOF.
-        char byte;
-        ASSERT_EQ(recv(fd.get(), &byte, sizeof(byte), MSG_DONTWAIT), -1);
-        ASSERT_TRUE(errno == EAGAIN || errno == EWOULDBLOCK);
-        ASSERT_EQ(shutdown(fd.get(), SHUT_WR), 0);
-
+    const auto wait_for = [](const auto &done) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-        ssize_t received;
-        do {
-            received = recv(fd.get(), &byte, sizeof(byte), MSG_DONTWAIT);
-            if (received >= 0) {
-                break;
-            }
-            ASSERT_TRUE(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR);
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        } while (std::chrono::steady_clock::now() < deadline);
+        while (!done() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return done();
+    };
 
-        ASSERT_EQ(received, 0) << "The listener did not close the disconnected peer's socket";
-    }
+    const LogMessageCounter disconnects("disconnected, closing its metadata socket");
+
+    // Fetching leaves dst connected to src's listener.
+    nixl_opt_args_t fetch_args;
+    fetch_args.ipAddr = src.ip;
+    fetch_args.port = src.port;
+
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &fetch_args), NIXL_SUCCESS);
+    ASSERT_TRUE(
+        wait_for([&] { return dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) == NIXL_SUCCESS; }));
+
+    // An idle peer stays connected until it sends EOF.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    ASSERT_EQ(disconnects.count(), 0u);
+
+    // Destroying the peer agent closes its end; src must drop the socket.
+    dst.agent.reset();
+    EXPECT_TRUE(wait_for([&] { return disconnects.count() == 1; }))
+        << "The listener did not close the disconnected peer's socket";
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
