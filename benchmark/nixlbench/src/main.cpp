@@ -31,6 +31,7 @@
 #include <unistd.h>
 #include <memory>
 #include <csignal>
+#include <exception>
 
 static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int num_threads) {
     int initiator_device, target_device;
@@ -239,8 +240,9 @@ runBenchmark() {
     return worker_ptr->signaled() ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
+namespace {
 int
-main(int argc, char *argv[]) {
+run(int argc, char *argv[]) {
 #if HAVE_RAW_CLI
     if (nixlbench::isRawCommand(argc, argv)) {
         const auto result = nixlbench::prepareRawCommand(argc, argv, std::cout, std::cerr);
@@ -256,4 +258,21 @@ main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     return runBenchmark();
+}
+} // namespace
+
+int
+main(int argc, char *argv[]) {
+    // The ASIO runtime throws on errors such as a receive timeout instead of returning a status.
+    // Report them and exit non-zero instead of aborting; unwinding still frees the worker.
+    try {
+        return run(argc, argv);
+    }
+    catch (const std::exception &e) {
+        std::cerr << "nixlbench: fatal error: " << e.what() << std::endl;
+    }
+    catch (...) {
+        std::cerr << "nixlbench: fatal error: unknown exception" << std::endl;
+    }
+    return EXIT_FAILURE;
 }
