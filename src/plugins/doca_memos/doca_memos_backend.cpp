@@ -314,7 +314,7 @@ nixlDocaMemosEngine::createProgressEngine(const nixlBackendInitParams *init_para
 }
 
 nixlDocaMemosEngine::nixlDocaMemosEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL) {
 
     NIXL_INFO << "Initializing DOCA KV backend";
 
