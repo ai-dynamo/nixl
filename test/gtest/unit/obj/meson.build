@@ -27,6 +27,6 @@ obj_unit_test_dep = declare_dependency(
     ],
     dependencies: [
         obj_backend_interface,
-        dependency('asio', required: true),
+        dependency('asio', version: '>=1.38.2', required: true, fallback: ['asio']),
     ],
 )

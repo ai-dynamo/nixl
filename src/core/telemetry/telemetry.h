@@ -29,24 +29,15 @@
 #include <functional>
 #include <atomic>
 
-#include <asio.hpp>
 
-struct periodicTask {
-    asio::steady_timer timer_;
-    std::function<bool()> callback_;
-    std::chrono::milliseconds interval_;
-    std::atomic<bool> enabled_;
+// Forward declarations.
+struct periodicTask;
 
-    periodicTask(const asio::any_io_executor &executor,
-                 std::chrono::milliseconds interval,
-                 bool enabled = false)
-        : timer_(executor),
-          callback_(nullptr),
-          interval_(interval),
-          enabled_(enabled) {}
-};
+namespace asio {
+class thread_pool;
+} // namespace asio
 
-class nixlTelemetry {
+class __attribute__((visibility("default"))) nixlTelemetry {
 public:
     /**
      * @brief Creates a telemetry instance that records transfer events.
@@ -134,6 +125,7 @@ private:
     isMetricEnabled(nixl_telemetry_event_type_t event_type) const noexcept {
         return metricEnabled_[static_cast<size_t>(event_type)];
     }
+
     bool
     flushPendingEvents();
     // Emits the staging-queue drops accumulated since the last flush as a
@@ -165,8 +157,8 @@ private:
     // Trace-phase drops since the last flush. Outside the staging queue, so a
     // failing trace backend can neither crowd out other events nor lose its own.
     std::atomic<uint64_t> tracePhasesDropped_{0};
-    asio::thread_pool pool_;
-    periodicTask writeTask_;
+    std::unique_ptr<asio::thread_pool> pool_;
+    std::unique_ptr<periodicTask> writeTask_;
 };
 
 #endif

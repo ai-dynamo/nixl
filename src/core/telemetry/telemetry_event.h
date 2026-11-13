@@ -64,7 +64,7 @@ inline constexpr std::size_t nixl_telemetry_event_type_count =
 // Per-event-type flag mask indexed by nixl_telemetry_event_type_t.
 using nixl_telemetry_metric_mask_t = std::array<bool, nixl_telemetry_event_type_count>;
 
-[[nodiscard]] nixl_telemetry_event_type_t
+[[nodiscard]] nixl_telemetry_event_type_t __attribute__((visibility("default")))
 nixlTelemetryEventTypeForStatus(nixl_status_t s);
 
 inline constexpr std::array telemetry_error_event_types = {
