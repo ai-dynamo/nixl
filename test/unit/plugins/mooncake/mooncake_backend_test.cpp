@@ -498,7 +498,7 @@ test_intra_agent_transfer(bool p_thread, nixlBackendEngine *mooncake, nixl_mem_t
 
     int iter = 10;
 
-    assert(mooncake->supportsLocal());
+    assert(mooncake->supportsCapability(nixl_backend_capability_t::LOCAL));
 
     // connection info is still a string
     std::string conn_info1;
