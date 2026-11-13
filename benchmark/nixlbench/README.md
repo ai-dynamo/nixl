@@ -709,6 +709,99 @@ RED_* environment variables or NIXL's common TOML configuration (NIXL_CONFIG_FIL
 See src/plugins/infinia/infinia_example.conf for a complete example.
 ```
 
+### Understanding the Output
+
+Each initiator process prints one row per block size and batch size (with `pairwise`
+SG, only rank 0 prints). Targets print nothing. This section describes the default NIXL worker. The NVSHMEM worker
+(`--worker_type nvshmem`) has its own timing loop and fills only the Tx columns.
+
+Each row comes from one timed run of `--num_iter` iterations. A separate run of
+`--warmup_iter` iterations happens first, and its samples are discarded. When the
+block size is larger than 1 MiB, both counts are divided by `--large_blk_iter_ftr`.
+The iterations are split evenly over the workers: `--num_threads` threads, or the
+Device API thread groups with `--use_device_api`. Both counts are rounded up so that
+this split is exact.
+
+In the NIXL worker's host API path, one iteration is one transfer request. The
+request holds Batch Size descriptors of Block Size bytes for each local device. With
+`onetomany` and `tp`, it can also span several target devices. The worker posts it
+with `postXferReq` and then polls `getXferStatus` until it returns `NIXL_SUCCESS`.
+Each worker keeps `--pipeline_depth` requests in flight (default 1). Without
+`--recreate_xfer`, the worker creates each request once and posts the same handle
+for every iteration.
+
+| Column | Meaning |
+|--------|---------|
+| Block Size (B) | Bytes per descriptor. |
+| Batch Size | Descriptors per transfer request, for each local device. |
+| B/W (GB/Sec) | Block Size x Batch Size x iterations, divided by the timed run's wall-clock time, in 10^9 bytes/s. The byte count is multiplied by `--num_initiator_dev` for `--mode MG` with `pairwise` or `manytoone`, and for single-process `pairwise` SG runs with several initiator devices. |
+| Aggregate B/W (GB/Sec) | Only for `pairwise` SG with more than two processes: the sum of B/W over all initiator processes. |
+| Network Util (%) | Only shown with Aggregate B/W. It is Aggregate B/W / (number of initiator-target pairs x 50 GB/s). The 50 GB/s is a fixed constant, not the measured link speed. |
+| Avg Lat. (us) | The run's wall-clock time divided by (iterations per worker x Batch Size), and by `--num_initiator_dev` in the cases where B/W is multiplied by it. It is time per block per worker, not the latency of one request. See the relations below. |
+| Avg / P99 Prep (us) | Time to set up a request before it is posted. By default this is building the descriptor lists plus `createXferReq`. With `--prepared_xfer` it is two `prepXferDlist` calls (local and remote) plus `makeXferReq`. With `--reregister_mem` it also includes `registerMem`. |
+| Avg / P99 Post (us) | The `postXferReq` call only. |
+| Avg / P99 Tx (us) | From the return of `postXferReq` until the `getXferStatus` call that returns `NIXL_SUCCESS` for that request. Post time is not included. |
+
+How the samples are collected:
+
+- **Prep without `--recreate_xfer`:** each request is created once per run, so a
+  worker records only `--pipeline_depth` Prep samples (one by default). Avg Prep is
+  then a one-time setup cost, and P99 Prep is effectively the maximum.
+- **Prep with `--recreate_xfer`:** the request is released and created again before
+  each iteration, so Prep has one sample per iteration. `--reregister_mem` turns
+  this mode on, and so does the GUSLI backend. With `--prepared_xfer`, the prepared
+  descriptor lists are released too, so every Prep sample includes both
+  `prepXferDlist` calls. The release time (`releaseXferReq`, plus `deregisterMem`
+  with `--reregister_mem`) is not in any column. It only adds to the run's
+  wall-clock time.
+- **Post and Tx:** one sample per iteration.
+- **Backends that do the work inside `postXferReq`:** that time shows up in Post,
+  and Tx stays close to zero.
+- **`--pipeline_depth` greater than 1:** a worker checks its in-flight requests in
+  turn. It reposts each request (or recreates it, with `--recreate_xfer`) as soon as
+  it completes. A completion can therefore be noticed only after the other requests
+  have been handled, and Tx includes that delay.
+- **Percentiles:** samples from all workers of the process are pooled. P99 is the
+  sorted sample at index floor(0.99 x n), which is the maximum when n is 100 or less.
+- **Timer resolution:** host timestamps are whole microseconds from a steady clock,
+  so each host sample is an integer number of microseconds. Fractional values come
+  from averaging.
+- **Pairwise SG with more than two processes:** only rank 0 prints. Every column
+  except Aggregate B/W and Network Util is rank 0's own measurement.
+- **A value of 0.0** means nothing was recorded for that column:
+  - With `--use_device_api`, Post and Tx are measured on the GPU (nanosecond timer)
+    per thread group and per iteration on the master rank only, and Prep is not
+    measured.
+  - With `--op_type QUERY`, Post is not measured. Each Tx sample covers building
+    the descriptor list and one `queryMem` call. Prep holds one near-zero sample
+    per worker.
+
+Relations between the columns:
+
+- B/W and Avg Lat. come from the same wall-clock time. Before rounding,
+  B/W (GB/s) = Block Size x workers / (Avg Lat. x 1000).
+- Avg Lat. is not Avg Prep + Avg Post + Avg Tx. With one worker, one device,
+  `--pipeline_depth 1` and no `--recreate_xfer`, Avg Lat. x Batch Size is close to
+  Avg Post + Avg Tx. The one-time Prep and release are spread over the iterations.
+
+#### Mapping to a KV-cache transfer
+
+In NIXL API terms, a block of KV cache is one descriptor (Block Size). The set of
+blocks moved by one call is one transfer request (Batch Size). How the columns map
+depends on how the application uses its requests:
+
+- **Creates a new request per transfer:** each transfer pays Prep. Run with
+  `--recreate_xfer` to measure it. Add `--prepared_xfer` if the application uses
+  `prepXferDlist` and `makeXferReq`. In that mode each Prep sample also includes
+  the two `prepXferDlist` calls. No nixlbench mode measures `makeXferReq` alone on
+  descriptor lists that were prepared once.
+- **Keeps a request and posts it again:** this is the default mode, where each
+  transfer costs Post + Tx.
+
+As seen by the initiator, a transfer's time to completion is Post + Tx, so P99 Tx is
+the tail of the completion part. The B/W column is the throughput with
+`--num_threads` x `--pipeline_depth` requests in flight.
+
 ### Configuration File
 
 The name of a config file can be specified using the `--config_file` command line parameter. The config file is in TOML format.
