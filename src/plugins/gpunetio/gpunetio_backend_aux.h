@@ -159,6 +159,7 @@ struct docaSlotDesc {
 struct docaStripedWriteLaunch {
     uint32_t count;
     uint32_t positions[DOCA_XFER_REQ_MAX];
+    uint32_t owners[DOCA_XFER_REQ_MAX];
 };
 
 enum docaSlotState : uint32_t {
