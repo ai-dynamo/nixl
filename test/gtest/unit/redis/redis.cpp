@@ -360,9 +360,9 @@ protected:
 };
 
 TEST_F(redisEngineTest, ReportsRedisBackendCapabilities) {
-    EXPECT_FALSE(engine_->supportsRemote());
-    EXPECT_TRUE(engine_->supportsLocal());
-    EXPECT_FALSE(engine_->supportsNotif());
+    EXPECT_FALSE(engine_->supportsCapability(nixl_backend_capability_t::REMOTE));
+    EXPECT_TRUE(engine_->supportsCapability(nixl_backend_capability_t::LOCAL));
+    EXPECT_FALSE(engine_->supportsCapability(nixl_backend_capability_t::NOTIF));
     EXPECT_EQ(engine_->getSupportedMems(), (nixl_mem_list_t{OBJ_SEG, DRAM_SEG}));
 
     nixlBackendMD *output = reinterpret_cast<nixlBackendMD *>(1);
