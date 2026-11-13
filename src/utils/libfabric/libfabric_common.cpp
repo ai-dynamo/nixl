@@ -78,6 +78,12 @@ getAvailableNetworkDevices() {
             std::string device_name = cur->domain_attr->name;
             std::string provider_name = cur->fabric_attr->prov_name;
 
+            // The EFA provider lists each device once per fabric. Keep only the "efa"
+            // fabric, which the rails request, so that each device is listed once.
+            if (provider_name == "efa" && strcmp(cur->fabric_attr->name, "efa") != 0) {
+                continue;
+            }
+
             NIXL_TRACE << "Found device - domain: " << device_name << ", provider=" << provider_name
                        << ", ep_type=" << cur->ep_attr->type << ", caps=" << std::hex << cur->caps
                        << std::dec;

@@ -473,6 +473,12 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     }
     hints->domain_attr->name = strdup(device_name.c_str());
     hints->domain_attr->threading = FI_THREAD_COMPLETION;
+    // The EFA provider lists each device under two fabrics, "efa-direct" first and then
+    // "efa". Ask for "efa" by name: NIXL relies on its RDM protocol, and efa-direct must
+    // never be chosen just because it is first in the list.
+    if (provider == "efa") {
+        hints->fabric_attr->name = strdup("efa");
+    }
 
     // The EFA provider accepts FI_MR_DMABUF from libfabric API 1.20 on, so request 1.20
     // where the library provides it and 1.18 elsewhere. The fabric carries the requested
@@ -625,8 +631,10 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                             &use_unsolicited_write_recv,
                             sizeof(use_unsolicited_write_recv));
             if (ret && ret != -FI_ENOSYS && ret != -FI_ENOPROTOOPT) {
-                NIXL_WARN << "fi_setopt FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV failed for rail "
-                          << rail_id << ": " << fi_strerror(-ret) << " - continuing anyway";
+                NIXL_ERROR << "fi_setopt FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV failed for rail "
+                           << rail_id << " (fabric " << info->fabric_attr->name
+                           << "): " << fi_strerror(-ret)
+                           << "; remote write completions can be lost under load";
             } else if (ret == 0) {
                 NIXL_INFO << "Successfully disabled unsolicited write recv for rail " << rail_id;
             } else if (ret == -FI_ENOSYS || ret == -FI_ENOPROTOOPT) {
