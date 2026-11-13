@@ -273,6 +273,42 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
  * Data transfer
  * =========================================== */
 
+namespace {
+
+[[nodiscard]] nixl_status_t
+completeRequest(const ucs_status_ptr_t request, nixlUcxReq &req) noexcept {
+    if (UCS_PTR_IS_PTR(request)) {
+        req = static_cast<nixlUcxReq>(request);
+        return NIXL_IN_PROG;
+    }
+
+    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+}
+
+[[nodiscard]] ucp_request_param_t
+makeContigParam(const ucp_mem_h memh) noexcept {
+    return {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND,
+        .memh = memh,
+    };
+}
+
+#ifdef HAVE_UCX_SGL_API
+[[nodiscard]] ucp_request_param_t
+makeSglParam(const ucp_dt_remote_sgl_t &remote, const size_t count) noexcept {
+    return {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_REMOTE_DATATYPE |
+            UCP_OP_ATTR_FIELD_REMOTE | UCP_OP_ATTR_FIELD_REMOTE_COUNT,
+        .datatype = ucp_dt_make_sgl(),
+        .remote_datatype = ucp_dt_make_sgl(),
+        .remote = &remote,
+        .remote_count = count,
+    };
+}
+#endif
+
+} // namespace
+
 nixl_status_t
 nixlUcxEp::read(uint64_t raddr,
                 const nixl::ucx::rkey &rkey,
@@ -280,22 +316,13 @@ nixlUcxEp::read(uint64_t raddr,
                 nixlUcxMem &mem,
                 size_t size,
                 nixlUcxReq &req) {
-    nixl_status_t status = checkTxState();
+    const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) [[unlikely]] {
         return status;
     }
 
-    ucp_request_param_t param;
-    param.op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND;
-    param.memh = mem.memh;
-
-    const ucs_status_ptr_t request = ucp_get_nbx(eph_, laddr, size, raddr, rkey.get(), &param);
-    if (UCS_PTR_IS_PTR(request)) {
-        req = static_cast<nixlUcxReq>(request);
-        return NIXL_IN_PROG;
-    }
-
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    const ucp_request_param_t param = makeContigParam(mem.memh);
+    return completeRequest(ucp_get_nbx(eph_, laddr, size, raddr, rkey.get(), &param), req);
 }
 
 nixl_status_t
@@ -305,22 +332,13 @@ nixlUcxEp::write(void *laddr,
                  const nixl::ucx::rkey &rkey,
                  size_t size,
                  nixlUcxReq &req) {
-    nixl_status_t status = checkTxState();
+    const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) [[unlikely]] {
         return status;
     }
 
-    ucp_request_param_t param;
-    param.op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND;
-    param.memh = mem.memh;
-
-    const ucs_status_ptr_t request = ucp_put_nbx(eph_, laddr, size, raddr, rkey.get(), &param);
-    if (UCS_PTR_IS_PTR(request)) {
-        req = static_cast<nixlUcxReq>(request);
-        return NIXL_IN_PROG;
-    }
-
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    const ucp_request_param_t param = makeContigParam(mem.memh);
+    return completeRequest(ucp_put_nbx(eph_, laddr, size, raddr, rkey.get(), &param), req);
 }
 
 nixl_status_t
@@ -338,14 +356,8 @@ nixlUcxEp::atomicAdd(uint64_t value,
         .datatype = ucp_dt_make_contig(sizeof(uint64_t)),
     };
 
-    const ucs_status_ptr_t request =
-        ucp_atomic_op_nbx(eph_, UCP_ATOMIC_OP_ADD, &value, 1, raddr, rkey.get(), &param);
-    if (UCS_PTR_IS_PTR(request)) {
-        req = static_cast<nixlUcxReq>(request);
-        return NIXL_IN_PROG;
-    }
-
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return completeRequest(
+        ucp_atomic_op_nbx(eph_, UCP_ATOMIC_OP_ADD, &value, 1, raddr, rkey.get(), &param), req);
 }
 
 nixl_status_t
@@ -379,7 +391,6 @@ nixlUcxEp::estimateCost(size_t size,
 nixl_status_t
 nixlUcxEp::flushEp(nixlUcxReq &req, ucp_send_nbx_callback_t cb, void *user_data) const noexcept {
     ucp_request_param_t param;
-    ucs_status_ptr_t request;
 
     param.op_attr_mask = 0;
     if (cb != nullptr) {
@@ -387,45 +398,49 @@ nixlUcxEp::flushEp(nixlUcxReq &req, ucp_send_nbx_callback_t cb, void *user_data)
         param.cb.send = cb;
         param.user_data = user_data;
     }
-    request = ucp_ep_flush_nbx(eph_, &param);
 
-    if (UCS_PTR_IS_PTR(request)) {
-        req = static_cast<nixlUcxReq>(request);
-        return NIXL_IN_PROG;
-    }
-
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return completeRequest(ucp_ep_flush_nbx(eph_, &param), req);
 }
 
 #ifdef HAVE_UCX_SGL_API
 nixl_status_t
-nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
+nixlUcxEp::readSgl(const ucp_dt_local_sgl_t &local,
                    const ucp_dt_remote_sgl_t &remote,
-                   size_t count,
+                   const size_t count,
                    nixlUcxReq &req) {
+    req = nullptr;
+
     const nixl_status_t status = checkTxState();
-    if (status != NIXL_SUCCESS) {
+    if (status != NIXL_SUCCESS) [[unlikely]] {
         return status;
     }
 
-    const ucp_request_param_t param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_REMOTE_DATATYPE |
-            UCP_OP_ATTR_FIELD_REMOTE | UCP_OP_ATTR_FIELD_REMOTE_COUNT,
-        .datatype = ucp_dt_make_sgl(),
-        .remote_datatype = ucp_dt_make_sgl(),
-        .remote = &remote,
-        .remote_count = count,
-    };
+    const ucp_request_param_t param = makeSglParam(remote, count);
+    // ucp_get_nbx() takes a non-const buffer pointer, but never modifies the SGL descriptor.
+    return completeRequest(ucp_get_nbx(eph_,
+                                       const_cast<ucp_dt_local_sgl_t *>(&local),
+                                       count,
+                                       UCP_REMOTE_ADDR_INVALID,
+                                       UCP_RKEY_INVALID,
+                                       &param),
+                           req);
+}
 
-    const ucs_status_ptr_t request =
-        ucp_put_nbx(eph_, &local, count, UCP_REMOTE_ADDR_INVALID, UCP_RKEY_INVALID, &param);
-    if (UCS_PTR_IS_PTR(request)) {
-        req = static_cast<nixlUcxReq>(request);
-        return NIXL_IN_PROG;
+nixl_status_t
+nixlUcxEp::writeSgl(const ucp_dt_local_sgl_t &local,
+                    const ucp_dt_remote_sgl_t &remote,
+                    const size_t count,
+                    nixlUcxReq &req) {
+    req = nullptr;
+
+    const nixl_status_t status = checkTxState();
+    if (status != NIXL_SUCCESS) [[unlikely]] {
+        return status;
     }
 
-    req = nullptr;
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    const ucp_request_param_t param = makeSglParam(remote, count);
+    return completeRequest(
+        ucp_put_nbx(eph_, &local, count, UCP_REMOTE_ADDR_INVALID, UCP_RKEY_INVALID, &param), req);
 }
 #endif
 
