@@ -34,6 +34,9 @@ namespace nixl {
     constexpr const char* ucx_err_handling_mode_key  = "ucx_error_handling_mode";
     constexpr const char* ucx_err_handling_mode_peer = "peer";
 
+    /**
+     * @brief Create a UCX backend, optionally overriding the error-handling mode
+     */
     static nixlBackendH *
     createUcxBackend(nixlAgent &agent,
                      const std::string &backend_name,
@@ -160,6 +163,9 @@ protected:
     };
 
     TestErrorHandling();
+    /**
+     * @brief Run one transfer pattern, optionally forcing an error-handling mode
+     */
     template<TestType test_type, enum nixl_xfer_op_t op>
     void
     testXfer(const std::string &err_handling_mode = "");
@@ -350,6 +356,9 @@ TestErrorHandling::excludeEfaTransports() {
     }
 }
 
+/**
+ * @brief Run one transfer pattern, optionally forcing an error-handling mode
+ */
 template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
 void
 TestErrorHandling::testXfer(const std::string &err_handling_mode) {

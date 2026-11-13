@@ -306,7 +306,9 @@ operator<<(std::ostream &os, const nixlUcxWorker &worker);
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options();
 
-// peer, or failover when this UCX has the enumerator and is new enough.
+/**
+ * @brief Failover on UCX 1.24 and newer, otherwise peer
+ */
 [[nodiscard]] ucp_err_handling_mode_t
 defaultErrHandlingMode() noexcept;
 

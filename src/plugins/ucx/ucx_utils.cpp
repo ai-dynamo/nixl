@@ -44,6 +44,9 @@ ucpVersion() noexcept {
 
 } // namespace
 
+/**
+ * @brief Failover on UCX 1.24 and newer, otherwise peer
+ */
 ucp_err_handling_mode_t
 defaultErrHandlingMode() noexcept {
 #ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
@@ -472,6 +475,9 @@ nixlUcxMtLevelIsSupported(const nixl::ucx::mt_mode_t mt_type) noexcept {
 
 namespace {
 
+/**
+ * @brief Loaded UCX major.minor, packed with UCP_VERSION
+ */
 [[nodiscard]] unsigned
 makeUcpVersion() noexcept {
     const unsigned version = ucpVersion();
@@ -548,6 +554,9 @@ ucx_policy_to_mem_type(const nixl_ucx_vram_memtype_hint_t policy) {
 
 } // namespace
 
+/**
+ * @brief Create the UCX context and apply NIXL transport settings
+ */
 nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                bool prog_thread,
                                unsigned long num_workers,
