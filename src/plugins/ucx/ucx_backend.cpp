@@ -54,11 +54,14 @@ sglEnabledFromConfig() {
 #endif
 }
 
+/**
+ * @brief Error-handling mode from backend params, or the version default when unset
+ */
 [[nodiscard]] ucp_err_handling_mode_t
 errHandlingModeFromParams(const nixl_b_params_t *custom_params) {
     const auto opt = nixl::getBackendParamOptional<std::string>(
         custom_params, std::string(nixl_ucx_err_handling_param_name));
-    return opt ? ucx_err_mode_from_string(*opt) : UCP_ERR_HANDLING_MODE_PEER;
+    return opt ? ucx_err_mode_from_string(*opt) : defaultErrHandlingMode();
 }
 } // namespace
 

@@ -457,6 +457,17 @@ else
   ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'], required: false)
 endif
 
+have_ucx_err_handling_failover = false
+if ucx_dep.found()
+  have_ucx_err_handling_failover = cpp.has_header_symbol(
+    'ucp/api/ucp.h', 'UCP_ERR_HANDLING_MODE_FAILOVER',
+    dependencies: ucx_dep)
+  if have_ucx_err_handling_failover
+    add_project_arguments('-DHAVE_UCX_ERR_HANDLING_FAILOVER', language: 'cpp')
+  endif
+endif
+message('UCX error-handling failover:', have_ucx_err_handling_failover)
+
 libfabric_path = get_option('libfabric_path')
 if libfabric_path != ''
   libfabric_lib_path = libfabric_path + '/lib'
