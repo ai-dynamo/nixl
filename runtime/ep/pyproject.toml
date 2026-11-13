@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nixl-ep-v2-api-shell"
+version = "0.1.0"
+description = "NIXL EPv2 API-only shell for interface review"
+readme = "README.md"
+license = "MIT AND Apache-2.0"
+license-files = ["LICENSE-DeepEP", "LICENSE-fmt", "LICENSE-Apache"]
+requires-python = ">=3.10"
+dependencies = ["torch"]
+
+[tool.setuptools]
+# Namespace parents allow public API review without importing NIXL core.
+packages = ["nixl.runtime.ep", "nixl.runtime.ep.buffers", "nixl.runtime.ep.utils"]
+include-package-data = false
+
+[tool.setuptools.package-dir]
+"nixl.runtime.ep" = "nixl_ep_v2"

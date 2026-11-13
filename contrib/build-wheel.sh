@@ -59,7 +59,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --output-dir: Directory to output the wheel to (default: $OUTPUT_DIR)"
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
-            echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires a CUDA sm_90 or newer target environment)"
+            echo "  --build-nixl-ep: Include NIXL EP v1 (sm_90 or newer) and the v2 API shell"
             echo "  --torch-versions: Comma-separated list of torch versions to build the wheel for (default: $TORCH_VERSIONS)"
             echo "  --torch-cuda-index: torch wheel index, e.g. cu132 (default: cu132 for CUDA 13, cu<major><minor> of the nvcc toolkit for CUDA 12)"
             echo "  --help: Show this help message"
@@ -348,7 +348,7 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
 
     for ((i=1; i<${#TORCH_ARRAY[@]}; i++)); do
         TORCH="${TORCH_ARRAY[$i]}"
-        echo "=== Building nixl_ep .so for torch ${TORCH} ==="
+        echo "=== Building EP extensions for torch ${TORCH} ==="
 
         EP_TMP=$(mktemp -d)
         build_wheel "$EP_TMP" "$TORCH"

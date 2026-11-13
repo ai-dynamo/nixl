@@ -1,0 +1,229 @@
+{
+  "source_commit": "6b11b2cb804801b9781bb0e5480460d2e58d27ce",
+  "native_event_source": "runtime/ep/csrc/elastic/buffer.hpp:1067; runtime/ep/csrc/utils/event.hpp",
+  "exports": [
+    "ElasticBuffer",
+    "EPHandle",
+    "EventHandle",
+    "EventOverlap",
+    "topk_idx_t",
+    "get_logical_domain_size"
+  ],
+  "callables": {
+    "init_jit": {
+      "parameters": "",
+      "returns": null,
+      "decorators": []
+    },
+    "EPHandle.__init__": {
+      "parameters": "self, do_expand: bool, expert_alignment: int, num_max_tokens_per_rank: int, num_sms: int, topk_idx: torch.Tensor, num_recv_tokens: int, num_recv_tokens_per_expert_list: list, psum_num_recv_tokens_per_scaleup_rank: torch.Tensor, psum_num_recv_tokens_per_expert: torch.Tensor, num_unaligned_recv_tokens_per_expert: torch.Tensor, recv_src_metadata: torch.Tensor, token_metadata_at_forward: torch.Tensor, channel_linked_list: torch.Tensor, recv_count_is_exact: bool",
+      "returns": null,
+      "decorators": []
+    },
+    "EPHandle.num_recv_tokens_device": {
+      "parameters": "self",
+      "returns": "torch.Tensor",
+      "decorators": [
+        "property"
+      ]
+    },
+    "EPHandle.deterministic_sort": {
+      "parameters": "self, recv_x: torch.Tensor, recv_sf: Optional[torch.Tensor], recv_topk_idx: torch.Tensor, recv_topk_weights: torch.Tensor",
+      "returns": null,
+      "decorators": []
+    },
+    "ElasticBuffer.__init__": {
+      "parameters": "self, group: Optional[dist.ProcessGroup]=None, num_bytes: Optional[int]=None, num_max_tokens_per_rank: int=0, hidden: int=0, num_topk: int=0, use_fp8_dispatch: bool=False, deterministic: bool=False, allow_multiple_reduction: bool=True, prefer_overlap_with_compute: bool=True, max_num_scaleout_ranks: int=0, max_num_scaleup_ranks: int=0, num_nixl_channels: int=0, scaleout_rank_idx: Optional[int]=None, scaleup_rank_idx: Optional[int]=None, store: Optional[dist.Store]=None, rank_idx: Optional[int]=None, num_ranks: Optional[int]=None, num_group_scaleup_ranks: Optional[int]=None, bootstrap_id: Optional[str]=None, store_timeout_secs: int=300, num_cpu_timeout_secs: int=300, num_gpu_timeout_secs: int=100, explicitly_destroy: bool=False, *, num_experts_per_rank: int=0",
+      "returns": null,
+      "decorators": []
+    },
+    "ElasticBuffer.destroy": {
+      "parameters": "self",
+      "returns": "None",
+      "decorators": []
+    },
+    "ElasticBuffer.get_buffer_size_hint": {
+      "parameters": "group: dist.ProcessGroup, num_max_tokens_per_rank: int, hidden: int, num_topk: int=0, use_fp8_dispatch: bool=False, allow_multiple_reduction: bool=True, max_num_scaleout_ranks: int=0, max_num_scaleup_ranks: int=0, num_group_scaleup_ranks: Optional[int]=None, store: Optional[dist.Store]=None, bootstrap_id: Optional[str]=None, store_timeout_secs: int=300",
+      "returns": "int",
+      "decorators": [
+        "staticmethod"
+      ]
+    },
+    "ElasticBuffer.read_profile": {
+      "parameters": "self",
+      "returns": "Dict[str, torch.Tensor]",
+      "decorators": []
+    },
+    "ElasticBuffer.barrier": {
+      "parameters": "self, use_comm_stream: bool=True, with_cpu_sync: bool=False",
+      "returns": "None",
+      "decorators": []
+    },
+    "ElasticBuffer.capture": {
+      "parameters": "",
+      "returns": "EventHandle",
+      "decorators": [
+        "staticmethod"
+      ]
+    },
+    "ElasticBuffer.get_comm_stream": {
+      "parameters": "self",
+      "returns": "torch.Stream",
+      "decorators": []
+    },
+    "ElasticBuffer.get_theoretical_num_sms": {
+      "parameters": "self, num_topk: int, rdma_gbs: float=0, nvlink_gbs: float=0, sm_read_gbs: float=_DEFAULT_SM_READ_GBS, sm_write_gbs: float=_DEFAULT_SM_WRITE_GBS",
+      "returns": "int",
+      "decorators": []
+    },
+    "ElasticBuffer.get_local_metadata": {
+      "parameters": "self",
+      "returns": "bytes",
+      "decorators": []
+    },
+    "ElasticBuffer.get_local_peer_info": {
+      "parameters": "self",
+      "returns": "Tuple[int, int, int, int]",
+      "decorators": []
+    },
+    "ElasticBuffer.publish": {
+      "parameters": "self, store: Optional[dist.Store]=None, key_prefix: str='EP_NIXL'",
+      "returns": "None",
+      "decorators": []
+    },
+    "ElasticBuffer.connect_ranks": {
+      "parameters": "self, world_ranks: List[int], remote_mds: Optional[List[bytes]]=None, peer_infos: Optional[List[Tuple[int, int, int, int]]]=None, store: Optional[dist.Store]=None, key_prefix: str='EP_NIXL', timeout_secs: float=120.0",
+      "returns": "None",
+      "decorators": []
+    },
+    "ElasticBuffer.disconnect_ranks": {
+      "parameters": "self, world_ranks: List[int]",
+      "returns": "None",
+      "decorators": []
+    },
+    "ElasticBuffer.get_connected_ranks": {
+      "parameters": "self",
+      "returns": "List[int]",
+      "decorators": []
+    },
+    "ElasticBuffer.world_rank_of": {
+      "parameters": "self, scaleout_rank_idx: int, scaleup_rank_idx: int",
+      "returns": "int",
+      "decorators": []
+    },
+    "ElasticBuffer.masks_of": {
+      "parameters": "self, active_ranks: Sequence[int]",
+      "returns": "Tuple[int, int]",
+      "decorators": []
+    },
+    "ElasticBuffer.mode_of": {
+      "parameters": "scaleout_mask: int",
+      "returns": "str",
+      "decorators": [
+        "staticmethod"
+      ]
+    },
+    "ElasticBuffer.stage_topology": {
+      "parameters": "self, *, num_active_sms: int=0, active_ranks: Optional[Sequence[int]]=None",
+      "returns": "None",
+      "decorators": []
+    },
+    "ElasticBuffer.commit_topology": {
+      "parameters": "self",
+      "returns": "None",
+      "decorators": []
+    },
+    "ElasticBuffer.set_active_ranks": {
+      "parameters": "self, active_ranks: Sequence[int], num_active_sms: int=0",
+      "returns": "None",
+      "decorators": []
+    },
+    "ElasticBuffer.get_topology_masks": {
+      "parameters": "self",
+      "returns": "Tuple[int, int]",
+      "decorators": []
+    },
+    "ElasticBuffer.get_active_ranks": {
+      "parameters": "self",
+      "returns": "List[int]",
+      "decorators": []
+    },
+    "ElasticBuffer.get_topology_extent": {
+      "parameters": "self",
+      "returns": "Tuple[int, int]",
+      "decorators": []
+    },
+    "ElasticBuffer.is_active": {
+      "parameters": "self",
+      "returns": "bool",
+      "decorators": [
+        "property"
+      ]
+    },
+    "ElasticBuffer.set_num_active_sms": {
+      "parameters": "self, num_active_sms: int",
+      "returns": "None",
+      "decorators": []
+    },
+    "ElasticBuffer.get_topology": {
+      "parameters": "self",
+      "returns": "Tuple[str, int]",
+      "decorators": []
+    },
+    "ElasticBuffer.dispatch": {
+      "parameters": "self, x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], topk_idx: torch.Tensor, topk_weights: Optional[torch.Tensor]=None, cumulative_local_expert_recv_stats: Optional[torch.Tensor]=None, num_max_tokens_per_rank: Optional[int]=None, expert_alignment: int=1, num_sms: int=0, previous_event: Optional[EventHandle]=None, previous_event_before_epilogue: Optional[EventHandle]=None, async_with_compute_stream: bool=False, allocate_on_comm_stream: bool=False, do_handle_copy: bool=True, do_cpu_sync: bool=True, do_expand: bool=False, do_zero_padding: bool=False, use_tma_aligned_col_major_sf: bool=False",
+      "returns": "Tuple[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor], EPHandle, EventOverlap]",
+      "decorators": []
+    },
+    "ElasticBuffer.combine": {
+      "parameters": "self, x: torch.Tensor, handle: EPHandle, bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]=None, previous_event: EventHandle=None, previous_event_before_epilogue: Optional[EventHandle]=None, async_with_compute_stream: bool=False, allocate_on_comm_stream: bool=False",
+      "returns": "Tuple[torch.Tensor, EventOverlap]",
+      "decorators": []
+    },
+    "EventOverlap.__init__": {
+      "parameters": "self, event: Optional[EventHandle]=None, extra_tensors: Optional[Tuple[torch.Tensor]]=None",
+      "returns": "None",
+      "decorators": []
+    },
+    "EventOverlap.current_stream_wait": {
+      "parameters": "self, release_handle: bool=False",
+      "returns": "None",
+      "decorators": []
+    },
+    "EventOverlap.register_hook_after_wait": {
+      "parameters": "self, hook_after_wait: Callable",
+      "returns": "None",
+      "decorators": []
+    },
+    "EventOverlap.__call__": {
+      "parameters": "self, release_handle: bool=False",
+      "returns": "'EventOverlap'",
+      "decorators": []
+    },
+    "EventOverlap.__enter__": {
+      "parameters": "self",
+      "returns": "Any",
+      "decorators": []
+    },
+    "EventOverlap.__exit__": {
+      "parameters": "self, exc_type: Any, exc_val: Any, exc_tb: Any",
+      "returns": "None",
+      "decorators": []
+    },
+    "get_logical_domain_size": {
+      "parameters": "group: dist.ProcessGroup, *, num_scaleup_ranks: Optional[int]=None, store: Optional[dist.Store]=None, bootstrap_id: Optional[str]=None, store_timeout_secs: int=300",
+      "returns": "Tuple[int, int]",
+      "decorators": []
+    },
+    "EventHandle.__init__": {
+      "parameters": "self",
+      "returns": null,
+      "decorators": []
+    },
+    "EventHandle.current_stream_wait": {
+      "parameters": "self",
+      "returns": null,
+      "decorators": []
+    }
+  }
+}

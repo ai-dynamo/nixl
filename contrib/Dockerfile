@@ -482,5 +482,5 @@ RUN cd src/bindings/rust && cargo build --release --locked
 # Redistributable wheels are produced by the wheel CI pipelines, not here.
 RUN CUDA_MAJOR=$(echo "${CUDA_VERSION}" | cut -d. -f1) && \
     ./contrib/tomlutil.py --wheel-name "nixl-cu${CUDA_MAJOR}" pyproject.toml && \
-    uv pip install --system --no-build-isolation . && \
+    uv pip install --system --no-build-isolation -Csetup-args=-Dbuild_nixl_ep="$BUILD_NIXL_EP" . && \
     uv pip install --system build/src/bindings/python/nixl-meta/nixl-*.whl
