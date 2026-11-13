@@ -105,7 +105,8 @@ namespace {
 
 // nixlTcpxoEngine
 nixlTcpxoEngine::nixlTcpxoEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params,
+                        nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::NOTIF),
       page_size_(static_cast<size_t>(sysconf(_SC_PAGESIZE))),
       params_(InitializeParams()),
       progress_thread_delay_(
