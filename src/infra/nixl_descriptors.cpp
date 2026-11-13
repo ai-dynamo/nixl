@@ -203,8 +203,23 @@ nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
     }
 }
 
+namespace {
+// Zero length is valid for FILE/BLK/OBJ segments (the name in metaInfo identifies the target),
+// so only warn for memory segments, where a zero-length buffer is most likely a bug.
+void
+warnIfZeroLength(nixl_mem_t type, const nixlBasicDesc &desc) {
+    if (desc.len != 0 || (type != DRAM_SEG && type != VRAM_SEG)) {
+        return;
+    }
+    NIXL_WARN << "addDesc: zero-length descriptor detected"
+              << " (addr=0x" << std::hex << desc.addr << std::dec << ", devId=" << desc.devId
+              << ")";
+}
+} // namespace
+
 template <class T>
 void nixlDescList<T>::addDesc (const T &desc) {
+    warnIfZeroLength(type, desc);
     descs.push_back(desc);
 }
 
@@ -377,6 +392,7 @@ operator== <nixlRemoteMetaDesc>(const nixlDescList<nixlRemoteMetaDesc> &lhs,
 // nixlSecDescList keeps the elements sorted
 void
 nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
+    warnIfZeroLength(type, desc);
     nixlSectionDesc normalized = desc;
     normalizeSecDesc(normalized);
     auto &vec = this->descs;
@@ -386,6 +402,7 @@ nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
 
 void
 nixlSecDescList::addDesc(nixlSectionDesc &&desc) {
+    warnIfZeroLength(type, desc);
     normalizeSecDesc(desc);
     auto &vec = this->descs;
     auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
