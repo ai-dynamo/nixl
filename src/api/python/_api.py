@@ -521,7 +521,9 @@ class nixl_agent:
         elements in the descriptor list.
 
         Args:
-            agent_name: Name of the agent. It can be "NIXL_INIT_AGENT", local agent name, or remote agent name
+            agent_name: Name of the agent. It can be "NIXL_INIT_AGENT", local agent name,
+                remote agent name, or "" (empty string, treated as loopback — equivalent
+                to the local agent's own name).
             xfer_list: List of transfer descriptors, can be list of memory region tuples, tensors,
                 Nx3 numpy array, or nixlXferDList. See get_xfer_descs for more details on the structure.
                 Nx5 numpy array is taken as a compressed (strided) list, where `count` blocks of `len`
@@ -539,9 +541,12 @@ class nixl_agent:
             and xfer_list.shape[1] == 5
         )
 
-        is_local = agent_name == "NIXL_INIT_AGENT" or agent_name == ""
+        is_local = agent_name == "NIXL_INIT_AGENT"
         if is_local:
             agent_name = nixlBind.NIXL_INIT_AGENT
+        elif agent_name == "":
+            # Empty string means loopback, same as passing the local agent's name
+            agent_name = self.name
 
         handle_list = []
         for backend_string in backends:
