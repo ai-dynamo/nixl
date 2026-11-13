@@ -27,6 +27,7 @@
 #include <exception>
 #include <latch>
 #include <ostream>
+#include <utility>
 
 #include "absl/container/inlined_vector.h"
 
@@ -154,9 +155,13 @@ private:
 struct nixlUcxBackendSharedState {
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
+    std::string notif;
     std::vector<nixlUcxChunkBackendReqH> chunks;
 
-    nixlUcxBackendSharedState() : status(NIXL_SUCCESS), pendingReqs(0) {}
+    explicit nixlUcxBackendSharedState(size_t num_chunks)
+        : status(NIXL_SUCCESS),
+          pendingReqs(0),
+          chunks(num_chunks) {}
 
     friend std::ostream &
     operator<<(std::ostream &os, const nixlUcxBackendSharedState &state) {
@@ -180,12 +185,26 @@ nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
 
 nixl_status_t
 nixlUcxChunkBackendReqH::status() {
+    // Read before the shared status: a failed chunk stores its status before it decrements
+    const bool last = sharedState_->pendingReqs.load() == 1;
     // First check if entire request was cancelled or failed
     const nixl_status_t status = sharedState_->status.load();
     if (status != NIXL_SUCCESS) {
         return status;
     }
-    return nixlUcxBackendReqH::status();
+
+    const nixl_status_t ret = nixlUcxBackendReqH::status();
+    if ((ret != NIXL_SUCCESS) || (this != &sharedState_->chunks.front()) ||
+        sharedState_->notif.empty()) {
+        return ret;
+    }
+
+    if (last) {
+        setNotif(std::exchange(sharedState_->notif, {}));
+        sendNotif();
+    }
+
+    return NIXL_IN_PROG;
 }
 
 /*
@@ -198,9 +217,7 @@ class nixlUcxCompositeBackendReqH : public nixlUcxBackendReqH {
 public:
     nixlUcxCompositeBackendReqH(nixlUcxWorker *worker, size_t num_chunks)
         : nixlUcxBackendReqH(worker),
-          sharedState_(std::make_shared<nixlUcxBackendSharedState>()) {
-        sharedState_->chunks.resize(num_chunks);
-    }
+          sharedState_(std::make_shared<nixlUcxBackendSharedState>(num_chunks)) {}
 
     [[nodiscard]] size_t
     getNumChunks() const noexcept {
@@ -228,6 +245,11 @@ public:
     }
 
     void
+    setNotif(std::string &&notif) override {
+        sharedState_->notif = std::move(notif);
+    }
+
+    void
     release() override {
         NIXL_TRACE << *this << " releasing";
         nixlUcxBackendReqH::release();
@@ -246,11 +268,6 @@ public:
 
         if (sharedState_->pendingReqs.load()) {
             return NIXL_IN_PROG;
-        }
-
-        const nixl_status_t status = nixlUcxBackendReqH::status();
-        if (status != NIXL_SUCCESS) {
-            return status;
         }
 
         return sharedState_->status.load();
