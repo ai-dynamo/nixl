@@ -185,7 +185,18 @@ azureBlobClient::getBlobAsync(std::string_view blob_name,
             range.Offset = static_cast<int64_t>(offset);
             range.Length = static_cast<int64_t>(data_len);
             options.Range = range;
-            blobClient.DownloadTo(reinterpret_cast<uint8_t *>(data_ptr), data_len, options);
+            auto response =
+                blobClient.DownloadTo(reinterpret_cast<uint8_t *>(data_ptr), data_len, options);
+            // DownloadTo clamps the range to the blob size and reports the bytes it wrote in
+            // ContentRange.Length; a READ past the end of the blob must not report success.
+            const int64_t read_len = response.Value.ContentRange.Length.ValueOr(-1);
+            if (read_len != static_cast<int64_t>(data_len)) {
+                NIXL_ERROR << "getBlobAsync: short read of blob '" << blob_name_str
+                           << "': requested " << data_len << " bytes at offset " << offset
+                           << ", got " << read_len;
+                callback(false);
+                return;
+            }
             callback(true);
         }
         catch (const std::exception &e) {

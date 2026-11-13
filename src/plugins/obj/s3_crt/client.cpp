@@ -153,14 +153,27 @@ awsS3CrtClient::getObjectAsync(std::string_view key,
     s3CrtClient_->GetObjectAsync(
         *request,
         // Log READ failures and report the result while retaining SDK request state.
-        [callback, stream_factory, request](
+        [callback, stream_factory, request, data_len, offset](
             const Aws::S3Crt::S3CrtClient *,
             const Aws::S3Crt::Model::GetObjectRequest &,
             const Aws::S3Crt::Model::GetObjectOutcome &outcome,
             const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
-            if (!outcome.IsSuccess())
+            if (!outcome.IsSuccess()) {
                 NIXL_ERROR << "getObjectAsync (CRT) error: " << outcome.GetError().GetMessage();
-            callback(outcome.IsSuccess());
+                callback(false);
+                return;
+            }
+            // CRT clamps the range to the object size and reports the clamped length in
+            // Content-Length; a READ past the end of the object must not report success.
+            const long long read_len = outcome.GetResult().GetContentLength();
+            if (read_len != static_cast<long long>(data_len)) {
+                NIXL_ERROR << "getObjectAsync (CRT): short read of object '" << request->GetKey()
+                           << "': requested " << data_len << " bytes at offset " << offset
+                           << ", got " << read_len;
+                callback(false);
+                return;
+            }
+            callback(true);
         },
         nullptr);
 }

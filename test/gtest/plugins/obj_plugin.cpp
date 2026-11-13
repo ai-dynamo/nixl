@@ -129,6 +129,12 @@ TEST_P(setupObjTestFixture, queryMemTest) {
     EXPECT_EQ(resp[2].has_value(), false);
 }
 
+TEST_P(setupObjTestFixture, ReadPastEndOfObjectFails) {
+    // 4 KiB object: an 8 KiB READ must fail, a 2 KiB READ at offset 1 KiB must succeed.
+    testReadPastEnd(
+        *localBackendEngine_, local_agent_name, "test-obj-key-short-read", 4096, 1024, 2048);
+}
+
 INSTANTIATE_TEST_SUITE_P(ObjTests, setupObjTestFixture, testing::Values(obj_test_params));
 
 // Separate test suite for S3 CRT client with crtMinLimit enabled
@@ -204,6 +210,17 @@ TEST_P(setupObjCrtTestFixture, CrtQueryMemTest) {
     EXPECT_EQ(resp[0].has_value(), true);
     EXPECT_EQ(resp[1].has_value(), true);
     EXPECT_EQ(resp[2].has_value(), false);
+}
+
+TEST_P(setupObjCrtTestFixture, CrtReadPastEndOfObjectFails) {
+    // 6 MiB object; every READ is at least the 5 MiB CRT threshold, so all go through CRT.
+    constexpr size_t MiB = 1024 * 1024;
+    testReadPastEnd(*localBackendEngine_,
+                    crt_agent_name,
+                    "test-obj-key-crt-short-read",
+                    6 * MiB,
+                    MiB / 2,
+                    5 * MiB);
 }
 
 INSTANTIATE_TEST_SUITE_P(ObjCrtTests, setupObjCrtTestFixture, testing::Values(obj_crt_test_params));
