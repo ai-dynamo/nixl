@@ -33,6 +33,10 @@ if enabled_plugins.get('REDIS')
     subdir('redis')
 endif
 
+if enabled_plugins.get('VALKEY')
+    subdir('valkey')
+endif
+
 if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')
 endif
