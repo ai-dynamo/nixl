@@ -86,7 +86,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS wheel_base
 FROM $wheel_base AS wheel
 ARG ARCH="x86_64"
 ARG BUILD_TYPE="release"
-ARG BUILD_NIXL_EP="true"
+ARG BUILD_NIXL_EP=""
 ARG UCX_SONAME_SUFFIX=""
 # ... builds NIXL and generates wheels
 ```
@@ -105,14 +105,14 @@ In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` 
   --wheel-base "manylinux_2_28" \
   --python-versions "${python_version}" \
   --arch ${arch} \
-  --torch-versions "2.13" \
+  --torch-versions ${torch_version} \
   --dockerfile contrib/Dockerfile.manylinux \
   --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}"
 ```
 
 `--wheel-base-image` causes the script to pass `--build-arg wheel_base=<url> --target wheel`, so only the `wheel` stage runs and the pre-built deps are pulled from Artifactory rather than recompiled.
 
-`--torch-versions "2.13"` limits PR builds to a single torch version. The nightly job builds the full per-CUDA-major matrix.
+`--torch-versions` limits PR builds to a single torch version. The nightly job builds the full per-CUDA-major matrix.
 
 #### User Usage (Full Build)
 Users can build the complete image locally without specifying a target:
@@ -124,7 +124,7 @@ Users can build the complete image locally without specifying a target:
 This builds both stages from scratch without the `--wheel-base-image` override.
 
 #### Nightly Build
-The nightly job (`nixl-ci-build-wheel-nightly`) omits `--wheel-base-image`, so it runs the full two-stage build. It selects `--torch-versions` from its `CUDA_MAJOR` parameter (`13` default or `12`), since torch package availability differs between the two.
+The nightly job (`nixl-ci-build-wheel-nightly`) reuses a per-CUDA `wheel_base` image built by ci-demo (`--wheel-base-image`), so each cell runs only the `wheel` stage. It passes no `--torch-versions` or EP flag; `contrib/resolve-nixl-ep.sh` decides from the CUDA version.
 
 #### Optional: UCX spcx external plugin
 `build-container.sh --build-ucx-spcx-plugin` opt-in flag fetches the internal `ucx-spcx-plugin` source on the host into the build context, compiles it against the just-built UCX inside the Dockerfile, and installs it into the UCX plugins dir. It works with `contrib/Dockerfile.manylinux` (the wheel build, where `wheel_add_ucx_plugins.py` then bundles the plugin into the wheel like any other UCX module) and with the default `contrib/Dockerfile` (the container build, where the plugin is only installed into the image). It requires two environment variables — neither is hardcoded so the repo location and token stay out of the source and image layers:
@@ -285,7 +285,7 @@ Sets up the podman container runtime and authenticates with Artifactory:
 
 Builds only the `wheel` stage of `Dockerfile.manylinux` by pulling the pre-built `wheel_base` from Artifactory:
 
-- Calls `contrib/build-container.sh` with `--wheel-base-image <artifactory-url>` and `--torch-versions "2.13"`
+- Calls `contrib/build-container.sh` with `--wheel-base-image <artifactory-url>` and `--torch-versions <torch-versions>`
 - The script invokes `docker build --target wheel --build-arg wheel_base=<url>` (podman), which:
   - Pulls the pre-built `nixl-wheel-base-manylinux_2_28:${CI_IMAGE_TAG}` image (all deps already compiled)
   - Builds NIXL from source with meson/ninja

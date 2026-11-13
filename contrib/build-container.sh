@@ -45,7 +45,7 @@ UCX_REPO=${UCX_REPO:-https://github.com/openucx/ucx.git}
 UCX_REF=${UCX_REF:-v1.23.x}
 UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-}
 PRIVATE_UCX_SONAME_SUFFIX="nixl"
-BUILD_NIXL_EP="true"
+BUILD_NIXL_EP=""
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
@@ -328,6 +328,8 @@ show_build_options() {
     fi
     if [ "$BUILD_NIXL_EP" = "true" ]; then
         echo "NIXL EP: Enabled"
+    elif [ -z "$BUILD_NIXL_EP" ]; then
+        echo "NIXL EP: Dockerfile default (Dockerfile.manylinux: CUDA 13 - Enabled, CUDA 12 - Disabled)"
     else
         echo "NIXL EP: Disabled"
     fi
@@ -453,7 +455,7 @@ BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
 BUILD_ARGS+=" --build-arg UCX_SONAME_SUFFIX=$UCX_SONAME_SUFFIX"
-BUILD_ARGS+=" --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP"
+BUILD_ARGS+="${BUILD_NIXL_EP:+ --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP}"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
