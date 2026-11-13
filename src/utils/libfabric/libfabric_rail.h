@@ -551,6 +551,36 @@ public:
         return progress_thread_enabled_;
     }
 
+    /** No VRAM has been registered on this rail */
+    static constexpr int VRAM_DEVICE_NONE = -1;
+    /** VRAM from more than one CUDA device has been registered on this rail */
+    static constexpr int VRAM_DEVICE_MIXED = -2;
+
+    /**
+     * @brief Record the CUDA device of a VRAM buffer registered on this rail.
+     *
+     * Remote peers target this rail's endpoint for RMA into the buffers registered on it. With
+     * the shm peer provider, CUDA IPC copies for that RMA run in this process, inside CQ progress,
+     * on the CUDA device that is current on the calling thread.
+     */
+    void
+    noteVramDevice(int device_id);
+
+    /** CUDA device of the VRAM registered on this rail, or VRAM_DEVICE_NONE / _MIXED */
+    int
+    getVramDevice() const {
+        return vram_device_id_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Make the CUDA device of this rail's VRAM current on the calling thread.
+     *
+     * No-op if the rail has no VRAM or VRAM from several devices. Intended for the progress
+     * thread, which owns no CUDA device of its own.
+     */
+    void
+    applyVramDeviceForProgress() const;
+
     /**
      * @brief Initializes the post transfer queue (lokc-free ring buffer) for deferring requests
      * when the progress thread is enabled.
@@ -626,6 +656,9 @@ private:
 
     // Whether a progress thread is handling CQ draining
     bool progress_thread_enabled_ = false;
+
+    // CUDA device of VRAM registered on this rail (see noteVramDevice())
+    std::atomic<int> vram_device_id_{VRAM_DEVICE_NONE};
 
     // Callback functions. Receive completions carry the sender's index in OUR table,
     // resolved from the completion's source address (see resolveSourceAddress()).

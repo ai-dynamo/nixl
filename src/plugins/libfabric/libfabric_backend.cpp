@@ -955,7 +955,8 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
                 if (handshake_done()) {
                     break;
                 }
-                nixl_status_t progress_status = rail_manager_.progressActiveRails();
+                nixl_status_t progress_status = rail_manager_.progressActiveRails(
+                    nixlLibfabricRailManager::ProgressCudaDevice::SetAndRestore);
                 if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
                     NIXL_ERROR << "Failed to progress rails when waiting for handshake.";
                     return progress_status;
@@ -1675,7 +1676,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // Progress rails to kick off transfers
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager_.progressActiveRails();
+        nixl_status_t progress_status = rail_manager_.progressActiveRails(
+            nixlLibfabricRailManager::ProgressCudaDevice::SetAndRestore);
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in postXfer";
             return progress_status;
@@ -1706,7 +1708,8 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
     auto backend_handle = static_cast<nixlLibfabricBackendH *>(handle);
 
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager_.progressActiveRails();
+        nixl_status_t progress_status = rail_manager_.progressActiveRails(
+            nixlLibfabricRailManager::ProgressCudaDevice::SetAndRestore);
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in checkXfer";
             return progress_status;
@@ -2046,7 +2049,8 @@ nixlLibfabricEngine::genNotif(const std::string &remote_agent, const std::string
 nixl_status_t
 nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager_.progressActiveRails();
+        nixl_status_t progress_status = rail_manager_.progressActiveRails(
+            nixlLibfabricRailManager::ProgressCudaDevice::SetAndRestore);
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in getNotifs";
             return progress_status;
@@ -2087,7 +2091,9 @@ nixlLibfabricEngine::progressThread() {
     while (!progress_thread_stop_.load()) {
         // Process completions only on rails (non-blocking)
         bool any_completions = false;
-        nixl_status_t status = rail_manager_.progressActiveRails();
+        // Target-side shm CUDA IPC copies run here and need the device of the targeted VRAM
+        nixl_status_t status =
+            rail_manager_.progressActiveRails(nixlLibfabricRailManager::ProgressCudaDevice::Set);
         if (status == NIXL_SUCCESS) {
             any_completions = true;
             NIXL_DEBUG << "PT: Processed completions on rails";

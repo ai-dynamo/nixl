@@ -803,6 +803,40 @@ nixlLibfabricRail::setProgressThreadEnabled(bool enabled) {
     progress_thread_enabled_ = enabled;
 }
 
+void
+nixlLibfabricRail::noteVramDevice(int device_id) {
+    if (device_id < 0) {
+        return;
+    }
+    int expected = VRAM_DEVICE_NONE;
+    if (vram_device_id_.compare_exchange_strong(expected, device_id) || expected == device_id ||
+        expected == VRAM_DEVICE_MIXED) {
+        return;
+    }
+    vram_device_id_.store(VRAM_DEVICE_MIXED);
+    NIXL_INFO << "Rail " << rail_id << " has VRAM from CUDA devices " << expected << " and "
+              << device_id << ". The progress thread will not select a CUDA device for it";
+}
+
+void
+nixlLibfabricRail::applyVramDeviceForProgress() const {
+#ifdef HAVE_CUDA
+    const int device_id = vram_device_id_.load(std::memory_order_relaxed);
+    if (device_id < 0) {
+        return;
+    }
+    int current_device = -1;
+    if (cudaGetDevice(&current_device) == cudaSuccess && current_device == device_id) {
+        return;
+    }
+    const cudaError_t cuda_ret = cudaSetDevice(device_id);
+    if (cuda_ret != cudaSuccess) {
+        NIXL_WARN << "Failed to set CUDA device " << device_id << " for progress on rail "
+                  << rail_id << ": " << cudaGetErrorString(cuda_ret);
+    }
+#endif
+}
+
 bool
 nixlLibfabricRail::initPostQueue(size_t post_queue_size) {
     return post_ring_.initialize(post_queue_size);
