@@ -29,7 +29,7 @@ private:
     typedef enum { SERIALIZE, DESERIALIZE } ser_mode_t;
 
     std::string workingStr;
-    ssize_t des_offset;
+    size_t des_offset;
     ser_mode_t mode;
 
 public:
@@ -37,10 +37,12 @@ public:
 
     /* Ser/Des for Strings */
     nixl_status_t addStr(const std::string &tag, const std::string &str);
+    // Failed reads leave the cursor unchanged.
     std::string getStr(const std::string &tag);
 
     /* Ser/Des for Byte buffers */
     nixl_status_t addBuf(const std::string &tag, const void* buf, ssize_t len);
+    // Returns -1 for an invalid/incomplete field or a length not representable as ssize_t.
     ssize_t getBufLen(const std::string &tag) const;
 
     /**
@@ -51,6 +53,7 @@ public:
     [[nodiscard]] std::optional<size_t>
     peekBufLen(std::string_view tag) const noexcept;
 
+    // Failed reads leave the cursor and output buffer unchanged.
     nixl_status_t getBuf(const std::string &tag, void *buf, ssize_t len);
 
     /* Ser/Des buffer management */

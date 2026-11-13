@@ -115,6 +115,7 @@ gtest_sources = [
     'metadata_worker.cpp',
     'common.cpp',
     'query_mem.cpp',
+    'serdes_test.cpp',
     'telemetry_test.cpp',
     'telemetry_mp_store_test.cpp',
     'telemetry_histogram_test.cpp',
