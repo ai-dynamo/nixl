@@ -393,6 +393,24 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
         NIXL_ERROR << "Failed to create rails: " << e.what();
         return NIXL_ERR_BACKEND;
     }
+
+    // The libfabric loaded at run time, not the headers NIXL was built against, decides
+    const uint32_t libfabric_version = fi_version();
+    efa_bounds_gdrcopy_from_hmem_ = LibfabricUtils::efaBoundsGdrcopyFromHmem(libfabric_version);
+    const size_t host_copy_rails =
+        std::count_if(rails_.begin(), rails_.end(), [](const auto &rail) {
+            return rail->copiesCudaThroughHost();
+        });
+    if (host_copy_rails > 0) {
+        NIXL_INFO << host_copy_rails << " of " << rails_.size()
+                  << " rail(s) copy CUDA memory through host bounce buffers; libfabric "
+                  << FI_MAJOR(libfabric_version) << "." << FI_MINOR(libfabric_version) << " "
+                  << (efa_bounds_gdrcopy_from_hmem_ ? "bounds" : "does not bound")
+                  << " GDRCopy copies out of device memory (2.8 and later do), so Auto "
+                  << (efa_bounds_gdrcopy_from_hmem_ ?
+                          "registers their CUDA memory by virtual address" :
+                          "keeps the dmabuf choice the topology makes");
+    }
     return NIXL_SUCCESS;
 }
 
@@ -903,9 +921,16 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         // Export a dmabuf when this rail registers with one, which carries the mapping type
         // into the registration; rails sharing a mapping type share one export, so a
         // registration holds at most two
+        // In Auto, a rail that copies CUDA memory through host bounce buffers registers by
+        // virtual address where the provider bounds GDRCopy reads, keeping GDRCopy for copies
+        // into GPU memory (see cudaAutoRegistersByVirtualAddress)
         const LibfabricUtils::CudaDmabufExport *dmabuf = nullptr;
         if (dmabuf_mapping_mode_ != DmabufMappingMode::Off &&
             rails_[rail_idx]->canRegisterWithDmabuf(mem_type, iface) &&
+            !LibfabricUtils::cudaAutoRegistersByVirtualAddress(
+                dmabuf_mapping_mode_ == DmabufMappingMode::Auto,
+                rails_[rail_idx]->copiesCudaThroughHost(),
+                efa_bounds_gdrcopy_from_hmem_) &&
             LibfabricUtils::cudaDmabufExportSupported(device_id)) {
             bool want_pcie_mapping = false;
             switch (dmabuf_mapping_mode_) {

@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -148,12 +149,28 @@ fi_cq_open_stub(struct fid_domain *domain,
 
 // --- EP stubs ---
 
+// The FI_OPT_FI_HMEM_P2P value the endpoint stub reports; unset, the default, reports the option
+// as unsupported
+static std::optional<int> mock_hmem_p2p_opt;
+
+static int
+fi_ep_getopt_stub(fid_t fid, int level, int optname, void *optval, size_t *optlen) {
+    if (level != FI_OPT_ENDPOINT || optname != FI_OPT_FI_HMEM_P2P || !mock_hmem_p2p_opt ||
+        optval == nullptr || optlen == nullptr || *optlen < sizeof(int)) {
+        return -FI_ENOPROTOOPT;
+    }
+    *static_cast<int *>(optval) = *mock_hmem_p2p_opt;
+    *optlen = sizeof(int);
+    return 0;
+}
+
 static int
 fi_ep_setopt_stub(fid_t fid, int level, int optname, const void *optval, size_t optlen) {
     return 0;
 }
 
 static fi_ops_ep fi_ep_ops_stub = {
+    .getopt = fi_ep_getopt_stub,
     .setopt = fi_ep_setopt_stub,
 };
 

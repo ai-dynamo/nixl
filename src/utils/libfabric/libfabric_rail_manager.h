@@ -392,6 +392,9 @@ private:
      * by virtual address. init() sets the mode from the dmabuf_mapping parameter. */
     enum class DmabufMappingMode { Auto, ForcePcie, ForceDefault, Off };
     DmabufMappingMode dmabuf_mapping_mode_ = DmabufMappingMode::Auto;
+    // Whether the loaded libfabric's EFA provider bounds GDRCopy copies out of device memory by
+    // message size (libfabric 2.8 and later)
+    bool efa_bounds_gdrcopy_from_hmem_ = false;
 
     // System runtime type (determined once at initialization)
     fi_hmem_iface runtime_;

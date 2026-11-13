@@ -647,6 +647,21 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             } else {
                 NIXL_INFO << "Set RNR retry to infinite (7) for rail " << rail_id;
             }
+
+            // The EFA provider defaults the endpoint's P2P option to FI_HMEM_P2P_DISABLED when
+            // its device cannot reach CUDA memory, and then copies every CUDA transfer through
+            // host bounce buffers
+            if (provider_supports_hmem_ && runtime_ == FI_HMEM_CUDA) {
+                int p2p_opt = 0;
+                size_t p2p_optlen = sizeof(p2p_opt);
+                ret = fi_getopt(
+                    &endpoint->fid, FI_OPT_ENDPOINT, FI_OPT_FI_HMEM_P2P, &p2p_opt, &p2p_optlen);
+                cuda_copies_through_host_ = ret == 0 && p2p_opt == FI_HMEM_P2P_DISABLED;
+                NIXL_DEBUG << "Rail " << rail_id << " copies CUDA memory through host bounce "
+                           << "buffers: " << (cuda_copies_through_host_ ? "yes" : "no")
+                           << " (fi_getopt FI_OPT_FI_HMEM_P2P: "
+                           << (ret ? fi_strerror(-ret) : std::to_string(p2p_opt)) << ")";
+            }
         }
 
         // Enable endpoint for this rail

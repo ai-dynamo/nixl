@@ -331,6 +331,25 @@ getMaxNumaNode(int &node_id);
 /** @brief Retrieves the number of configured NUMA nodes. */
 extern bool
 getNumConfiguredNumaNodes(int &node_count);
+
+/** @brief The first libfabric API version whose EFA provider bounds GDRCopy copies out of device
+ * memory by message size and copies larger messages with cudaMemcpy (ofiwg/libfabric#13074). */
+inline constexpr uint32_t efa_gdrcopy_from_hmem_bound_version = FI_VERSION(2, 8);
+
+/**
+ * @brief Decides whether a libfabric API version's EFA provider bounds GDRCopy copies out of
+ * device memory.
+ * @note GDRCopy reads device memory through uncached PCIe reads, which are fast for small
+ * messages and slow in bulk. From efa_gdrcopy_from_hmem_bound_version on, the EFA provider copies
+ * larger messages with cudaMemcpy instead. fi_version() carries no revision, so a backport to an
+ * earlier release is not detected.
+ * @param version The libfabric API version, as fi_version() returns it.
+ * @return True if the version bounds GDRCopy copies out of device memory.
+ */
+[[nodiscard]] inline bool
+efaBoundsGdrcopyFromHmem(uint32_t version) {
+    return FI_VERSION_GE(version, efa_gdrcopy_from_hmem_bound_version);
+}
 } // namespace LibfabricUtils
 
 // Configuration helper functions

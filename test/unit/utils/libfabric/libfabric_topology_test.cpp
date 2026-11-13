@@ -502,6 +502,11 @@ testDmabufMappingTopologies();
 static int
 testDmabufMappingTopology(const DmabufMappingInfo &mapping_info);
 
+// test that rails detect a provider copying CUDA memory through host bounce buffers from the
+// endpoint's FI_OPT_FI_HMEM_P2P answer
+static int
+testCudaHostCopyDetection();
+
 int
 main(int argc, char *argv[]) {
     if (argc > 1) {
@@ -553,7 +558,12 @@ main(int argc, char *argv[]) {
         return res;
     }
 
-    return testDmabufMappingTopologies();
+    res = testDmabufMappingTopologies();
+    if (res != 0) {
+        return res;
+    }
+
+    return testCudaHostCopyDetection();
 }
 
 int
@@ -1840,4 +1850,63 @@ testDmabufMappingTopologies() {
 
     NIXL_INFO << "=== Test completed successfully! ===";
     return 0;
+}
+
+int
+testCudaHostCopyDetection() {
+    NIXL_INFO << "=== Testing detection of rails that copy CUDA memory through host ===";
+    // g6 carries NVIDIA GPUs, so its rails take the CUDA path that queries the endpoint
+    const TopologyInfo *g6 = nullptr;
+    for (size_t i = 0; i < topology_count; ++i) {
+        if (strcmp(topologies[i].instance_type, "g6.48xl") == 0) {
+            g6 = &topologies[i];
+        }
+    }
+    if (g6 == nullptr) {
+        NIXL_ERROR << "No g6.48xl topology to test on";
+        return 1;
+    }
+
+    struct HostCopyCase {
+        const char *name;
+        std::optional<int> p2p_opt;
+        bool expected;
+    };
+
+    const HostCopyCase cases[] = {
+        {"FI_HMEM_P2P_DISABLED", FI_HMEM_P2P_DISABLED, true},
+        {"FI_HMEM_P2P_PREFERRED", FI_HMEM_P2P_PREFERRED, false},
+        {"option unsupported", std::nullopt, false},
+    };
+
+    int rc = 0;
+    curr_topology = g6;
+    setTesting();
+    setenv("HWLOC_XMLFILE", g6->topo_file, 1);
+    for (const auto &test_case : cases) {
+        mock_hmem_p2p_opt = test_case.p2p_opt;
+        nixlLibfabricRailManager rail_manager(0);
+        if (rail_manager.init(nixl_b_params_t()) != NIXL_SUCCESS ||
+            rail_manager.getNumRails() == 0) {
+            NIXL_ERROR << test_case.name << ": failed to create rails";
+            rc = 1;
+            continue;
+        }
+        for (size_t i = 0; i < rail_manager.getNumRails(); ++i) {
+            if (rail_manager.getRail(i).copiesCudaThroughHost() != test_case.expected) {
+                NIXL_ERROR << test_case.name << ": rail " << i << " should "
+                           << (test_case.expected ? "" : "not ") << "copy CUDA memory through host";
+                rc = 1;
+            }
+        }
+    }
+    mock_hmem_p2p_opt.reset();
+    clearTesting();
+    unsetenv("HWLOC_XMLFILE");
+
+    if (rc == 0) {
+        NIXL_INFO << "   SUCCESS: rails copy CUDA memory through host exactly when the endpoint "
+                     "reports FI_HMEM_P2P_DISABLED";
+    }
+    return rc;
 }
