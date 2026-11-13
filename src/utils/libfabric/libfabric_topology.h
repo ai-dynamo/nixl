@@ -112,9 +112,12 @@ private:
         uint16_t parent_switch_domain;
         uint8_t parent_switch_bus_id;
         size_t parent_switch_link_speed; // Gbps (decimal, as multiple of 10^9, not 2^30)
-        // True when this NIC and the accelerator paired with it sit under a common PCIe
-        // switch. buildTopologyAwareGrouping() sets it from NicGroup::common_ancestor.
+        // True when this NIC meets every accelerator paired with it below a PCIe switch.
+        // buildTopologyAwareGrouping() sets it.
         bool accel_via_pcie_switch;
+        // False when another NIC on the same NUMA node is nearer to its memory by pathDistance().
+        // markNumaNearestNics() sets it.
+        bool numa_nearest;
     };
 
     struct AccelInfo {
@@ -128,7 +131,6 @@ private:
     struct NicGroup {
         std::vector<NicInfo> nics;
         AccelInfo closest_accel;
-        hwloc_obj_t common_ancestor;
         bool has_accel;
     };
 
@@ -149,15 +151,14 @@ private:
                        const std::vector<AccelInfo> &discovered_accel,
                        std::vector<NicGroup> &nic_groups);
 
-    // The node where a NIC sharing no PCIe switch with any accelerator meets the
-    // accelerators it reaches through the CPU, or nullptr when its own socket holds none.
-    //
-    // The search stops at the NIC's Package: every accelerator on the host appears under
-    // the Machine object, so a climb that accepted it would pair a NIC with accelerators
-    // on another socket, which it reaches only across the inter-socket link.
-    static hwloc_obj_t
-    findHostRouteNode(hwloc_obj_t nic_node,
-                      const std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> &subtree_accel);
+    // Clears NicInfo::numa_nearest of the NICs farther from their NUMA node than another.
+    void
+    markNumaNearestNics();
+
+    // Moves the devices that no accelerator or NUMA node selects to the end of all_devices,
+    // so that rail 0, which carries notifications and handshakes, carries data as well.
+    void
+    orderUnusedDevicesLast();
 
     // hwloc helper methods
     std::string
@@ -228,6 +229,18 @@ public:
     // between them.
     static bool
     isPcieSwitch(hwloc_obj_t obj);
+
+    /**
+     * @brief Distance between two topology objects: the PCIe bridges on the path between them,
+     * plus every Package, Group or Die it crosses, not counting the object where the two paths
+     * meet.
+     * @param from The first object.
+     * @param to The second object.
+     * @param[out] meeting When not null, set to the object where the two paths meet.
+     * @return The distance, or -1 when either object is null or they share no ancestor.
+     */
+    static int
+    pathDistance(hwloc_obj_t from, hwloc_obj_t to, hwloc_obj_t *meeting = nullptr);
 
     // True when this EFA device and the accelerator paired with it sit under a common
     // PCIe switch, so the device reaches GPU memory over PCIe.
@@ -329,6 +342,14 @@ public:
                    uint16_t &parent_switch_domain,
                    uint8_t &parent_switch_bus_id,
                    size_t &parent_switch_link_speed) const;
+
+    /**
+     * @brief Queries whether an EFA device is among the devices nearest to its NUMA node's
+     * memory by pathDistance(). Only those carry NUMA-aware DRAM_SEG rails. An unknown device, or
+     * one not associated with a NUMA node, answers true.
+     */
+    bool
+    isNumaNearestDevice(const std::string &efa_device) const;
 
     /**
      * @brief Retrieves the average bandwidth limit per NUMA node. This bandwidth limit of a single

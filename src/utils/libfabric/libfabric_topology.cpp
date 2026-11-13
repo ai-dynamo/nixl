@@ -24,6 +24,7 @@
 #include <sstream>
 #include <algorithm>
 #include <set>
+#include <map>
 #include <cmath>
 
 #include <rdma/fabric.h>
@@ -126,6 +127,7 @@ nixlLibfabricTopology::discoverTopology() {
                 NIXL_ERROR << "Failed to build accelerator to EFA / CXI mapping";
                 return status;
             }
+            orderUnusedDevicesLast();
         }
     } else {
         // For TCP/sockets devices, bypass complex topology discovery
@@ -723,20 +725,25 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
         return status;
     }
     // Step 4: Convert groups to Accelerator→EFA mapping
+    std::set<std::string> judged_nics;
     for (size_t group_idx = 0; group_idx < nic_groups.size(); ++group_idx) {
         const auto &group = nic_groups[group_idx];
         if (group.has_accel) {
             std::vector<std::string> accel_efa_devices;
             for (const auto &nic : group.nics) {
                 accel_efa_devices.push_back(nic.libfabric_name);
-                // group.common_ancestor is the lowest common ancestor of this NIC and
-                // the group's accelerator: step 2 walks each accelerator up to the node
-                // where it enters the NIC subtree, and step 3 walks these NICs to that
-                // same node. The groups hold copies of the NicInfo values, so the answer
-                // goes on the map entry.
+                // The verdict follows where this NIC and the group's accelerator meet, and a
+                // NIC shared by several accelerators keeps true only when every pairing does.
+                // The groups hold copies of the NicInfo values, so the answer goes on the map
+                // entry.
                 auto nic_itr = nic_info_map.find(nic.libfabric_name);
                 if (nic_itr != nic_info_map.end()) {
-                    nic_itr->second.accel_via_pcie_switch = isPcieSwitch(group.common_ancestor);
+                    hwloc_obj_t meeting = nullptr;
+                    pathDistance(group.closest_accel.hwloc_node, nic.hwloc_node, &meeting);
+                    const bool via_switch = isPcieSwitch(meeting);
+                    bool &verdict = nic_itr->second.accel_via_pcie_switch;
+                    verdict = judged_nics.insert(nic.libfabric_name).second ? via_switch :
+                                                                              verdict && via_switch;
                 }
             }
             // Find accelerator index in our discovered accelerators list
@@ -753,15 +760,9 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
             }
 
             if (accel_index >= 0) {
-                // Store mapping using PCI bus ID as key. Appended, not assigned: an accelerator
-                // reached by NICs on more than one route holds a group per route -- on GB200 one
-                // for the NICs under its PCIe switch and one for the NICs it meets at the Grace
-                // Package -- and it should be able to use all of them.
+                // Store mapping using PCI bus ID as key
                 std::string pci_bus_id = getPcieAddressFromHwlocObj(group.closest_accel.hwloc_node);
-                auto &efa_devices_for_accel = pci_to_efa_devices[pci_bus_id];
-                efa_devices_for_accel.insert(efa_devices_for_accel.end(),
-                                             accel_efa_devices.begin(),
-                                             accel_efa_devices.end());
+                pci_to_efa_devices[pci_bus_id] = accel_efa_devices;
 
                 NIXL_TRACE << "PCI " << pci_bus_id << " (Accelerator " << accel_index << ") → "
                            << accel_efa_devices.size() << " EFA devices: [";
@@ -854,6 +855,7 @@ nixlLibfabricTopology::buildNicInfoMap() {
     }
 
     // now compute the capacity limit of each NUMA node and some other topology metrics
+    markNumaNearestNics();
     buildNumaSpeedMap();
     calcAvgNumaNodeBandwidth();
     calcAvgNicBandwidth();
@@ -1081,6 +1083,8 @@ nixlLibfabricTopology::collectNicInfo(NicInfo &nic,
     nic.function_id = function_id;
     // Filled in by buildTopologyAwareGrouping() once NIC/accelerator grouping runs.
     nic.accel_via_pcie_switch = false;
+    // Cleared by markNumaNearestNics() once NUMA node distances are known.
+    nic.numa_nearest = true;
     if (!getPcieDevParentSwitchData(hwloc_node,
                                     pcie_addr,
                                     nic.parent_switch_domain,
@@ -1122,6 +1126,12 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
             NIXL_TRACE << "NIC " << nic_info.libfabric_name
                        << " is not associated with a NUMA node and therefore will not be taken "
                           "into consideration for DRAM_SEG NUMA-aware rail selection";
+            continue;
+        }
+        if (!nic_info.numa_nearest) {
+            NIXL_TRACE << "NIC " << nic_info.libfabric_name << " is farther from NUMA node "
+                       << nic_info.numa_node_id << " than another NIC and adds nothing to its "
+                       << "DRAM_SEG capacity";
             continue;
         }
         max_node_id = std::max(max_node_id, nic_info.numa_node_id);
@@ -1307,7 +1317,13 @@ nixlLibfabricTopology::calcAvgNicUpstreamBandwidth() {
     size_t speed = 0;
     bool speed_valid = false;
     size_t total_speed = 0;
+    // count only the NICs that make up NUMA node capacity (at least one is always kept)
+    size_t nic_count = 0;
     for (const auto &entry : nic_info_map) {
+        if (!entry.second.numa_nearest) {
+            continue;
+        }
+        ++nic_count;
         size_t curr_speed = entry.second.upstream_link_speed;
         if (!speed_valid) {
             speed = curr_speed;
@@ -1326,30 +1342,112 @@ nixlLibfabricTopology::calcAvgNicUpstreamBandwidth() {
             << "NIC upstream link bandwidth is uniform across all PCIe devices with bandwidth: "
             << avg_nic_upstream_speed << " Gbps";
     } else {
-        avg_nic_upstream_speed = total_speed / nic_info_map.size();
+        avg_nic_upstream_speed = total_speed / nic_count;
         NIXL_WARN << "NIC upstream link bandwidth is non-uniform across all PCIe devices with "
                      "average bandwidth: "
                   << avg_nic_upstream_speed << " Gbps, rail selection policy may be sub-optimal";
     }
 }
 
-hwloc_obj_t
-nixlLibfabricTopology::findHostRouteNode(
-    hwloc_obj_t nic_node,
-    const std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> &subtree_accel) {
-    for (hwloc_obj_t node = nic_node; node; node = node->parent) {
-        if (node->type == HWLOC_OBJ_MACHINE) {
-            return nullptr;
+namespace {
+// An object that adds to a path's distance when the path crosses it: a PCIe bridge, or a
+// CPU package, group or die.
+bool
+countsTowardDistance(hwloc_obj_t obj) {
+    switch (obj->type) {
+    case HWLOC_OBJ_BRIDGE:
+    case HWLOC_OBJ_PACKAGE:
+    case HWLOC_OBJ_GROUP:
+    case HWLOC_OBJ_DIE:
+        return true;
+    default:
+        return false;
+    }
+}
+} // namespace
+
+int
+nixlLibfabricTopology::pathDistance(hwloc_obj_t from, hwloc_obj_t to, hwloc_obj_t *meeting) {
+    if (from == nullptr || to == nullptr) {
+        return -1;
+    }
+    std::vector<hwloc_obj_t> from_path;
+    for (hwloc_obj_t obj = from; obj != nullptr; obj = obj->parent) {
+        from_path.push_back(obj);
+    }
+    int to_distance = 0;
+    for (hwloc_obj_t obj = to; obj != nullptr; obj = obj->parent) {
+        const auto meet = std::find(from_path.begin(), from_path.end(), obj);
+        if (meet != from_path.end()) {
+            if (meeting != nullptr) {
+                *meeting = obj;
+            }
+            const auto from_distance = meet == from_path.begin() ?
+                0 :
+                std::count_if(from_path.begin() + 1, meet, countsTowardDistance);
+            return static_cast<int>(from_distance) + to_distance;
         }
-        if (subtree_accel.find(node) != subtree_accel.end()) {
-            return node;
-        }
-        if (node->type == HWLOC_OBJ_PACKAGE) {
-            // The NIC's own socket holds no accelerator.
-            return nullptr;
+        if (obj != to && countsTowardDistance(obj)) {
+            ++to_distance;
         }
     }
-    return nullptr;
+    return -1;
+}
+
+void
+nixlLibfabricTopology::markNumaNearestNics() {
+    std::unordered_map<uint16_t, int> shortest;
+    std::vector<std::pair<NicInfo *, int>> distances;
+    for (auto &entry : nic_info_map) {
+        NicInfo &nic = entry.second;
+        if (nic.numa_node_id == INVALID_NUMA_NODE_ID) {
+            continue;
+        }
+        const int distance = pathDistance(
+            hwloc_get_numanode_obj_by_os_index(hwloc_topology, nic.numa_node_id), nic.hwloc_node);
+        if (distance < 0) {
+            continue;
+        }
+        distances.emplace_back(&nic, distance);
+        auto itr = shortest.emplace(nic.numa_node_id, distance).first;
+        itr->second = std::min(itr->second, distance);
+    }
+    for (const auto &[nic, distance] : distances) {
+        const int nearest = shortest[nic->numa_node_id];
+        if (distance > nearest) {
+            nic->numa_nearest = false;
+            NIXL_INFO << "EFA device " << nic->libfabric_name << " is at distance " << distance
+                      << " from NUMA node " << nic->numa_node_id << ", farther than its nearest "
+                      << "device(s) at distance " << nearest << ", and carries no NUMA-aware "
+                      << "DRAM_SEG rails";
+        }
+    }
+}
+
+bool
+nixlLibfabricTopology::isNumaNearestDevice(const std::string &efa_device) const {
+    const auto itr = nic_info_map.find(efa_device);
+    return itr == nic_info_map.end() || itr->second.numa_nearest;
+}
+
+void
+nixlLibfabricTopology::orderUnusedDevicesLast() {
+    // grouping fell back to every device, so every device carries data
+    if (pci_to_efa_devices.empty()) {
+        return;
+    }
+    std::set<std::string> accel_devices;
+    for (const auto &entry : pci_to_efa_devices) {
+        accel_devices.insert(entry.second.begin(), entry.second.end());
+    }
+    const auto first_unused =
+        std::stable_partition(all_devices.begin(), all_devices.end(), [&](const std::string &dev) {
+            return accel_devices.count(dev) != 0 || isNumaNearestDevice(dev);
+        });
+    for (auto itr = first_unused; itr != all_devices.end(); ++itr) {
+        NIXL_INFO << "EFA device " << *itr << " is nearest to no accelerator or NUMA node, and "
+                  << "moves to rail " << (itr - all_devices.begin());
+    }
 }
 
 nixl_status_t
@@ -1358,151 +1456,73 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
                                           std::vector<NicGroup> &nic_groups) {
     nic_groups.clear();
 
-    // Implement NIXL's topology-aware NIC grouping algorithm
-
-    // Step 1: Mark topology nodes that have NICs in their subtree
-    std::unordered_map<hwloc_obj_t, int> node_group_counts;
-    std::unordered_map<hwloc_obj_t, std::vector<NicInfo>> node_nics;
-    std::set<hwloc_obj_t> nic_subtree_nodes;
-    // Mark all nodes that have NICs in their subtree and collect NICs per node
-    for (const auto &nic : discovered_nics) {
-        hwloc_obj_t node = nic.hwloc_node;
-        node_nics[node].push_back(nic);
-        while (node) {
-            nic_subtree_nodes.insert(node);
-            node = node->parent;
+    // Sort NICs by bus ID for consistent assignment
+    std::vector<NicInfo> nics = discovered_nics;
+    std::sort(nics.begin(), nics.end(), [](const NicInfo &a, const NicInfo &b) {
+        if (a.bus_id != b.bus_id) {
+            return a.bus_id < b.bus_id;
         }
-    }
+        return a.device_id < b.device_id;
+    });
 
-    // Step 2: For each accelerator, walk up until finding a NIC subtree node and increment its
-    // count
-    std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> node_accel;
-
-    // Every accelerator under a node, for every ancestor of every accelerator. Step 2 stops an
-    // accelerator at the first node holding a NIC, which on a platform where some NICs share no
-    // PCIe switch with any accelerator is that accelerator's own switch -- so no higher node is
-    // ever marked and those NICs reach step 3 with nothing to join. This map lets step 3 pair
-    // them with the accelerators they do share an ancestor with, typically a Package.
-    std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> subtree_accel;
-
-    for (const auto &accel : discovered_accel) {
-        hwloc_obj_t node = accel.hwloc_node;
-        bool marked = false;
-
-        while (node) {
-            if (!marked && nic_subtree_nodes.find(node) != nic_subtree_nodes.end()) {
-                node_group_counts[node]++;
-                node_accel[node].push_back(accel);
-                marked = true;
-            }
-            subtree_accel[node].push_back(accel);
-            node = node->parent;
-        }
-    }
-
-    // Step 3: Collect all NICs that need to be grouped and assign them to ancestor nodes
-    std::unordered_map<hwloc_obj_t, std::vector<NicInfo>> ancestor_nics;
-
-    for (const auto &pair : node_nics) {
-        hwloc_obj_t nic_node = pair.first;
-        const std::vector<NicInfo> &nics = pair.second;
-
-        // Find the ancestor with group count > 0
-        hwloc_obj_t target_node = nic_node;
-        while (target_node) {
-            if (node_group_counts[target_node] > 0) {
-                // Add these NICs to this ancestor
-                ancestor_nics[target_node].insert(
-                    ancestor_nics[target_node].end(), nics.begin(), nics.end());
-                break;
-            }
-            target_node = target_node->parent;
-        }
-        // These NICs share no PCIe switch with an accelerator. Pair them with the accelerators
-        // they do meet further up -- on GB200 that is the Grace Package holding both, and the
-        // NIC reaches HBM through the CPU rather than over PCIe. Leaving them unpaired is what
-        // kept half a GB200 node's EFA devices out of every VRAM registration.
-        //
-        // The meeting node is not a PCIe switch, so isPcieSwitch(common_ancestor) reports false
-        // for these NICs and their dmabuf exports take the platform default mapping, which is
-        // the window a CPU-attached NIC can address.
-        if (!target_node) {
-            hwloc_obj_t host_node = findHostRouteNode(nic_node, subtree_accel);
-
-            if (host_node) {
-                // Seed the node so step 4 splits these NICs across its accelerators, rather
-                // than duplicating that logic here. A node an accelerator already stopped at
-                // keeps its own count, and these NICs join that split.
-                if (node_group_counts[host_node] == 0) {
-                    node_accel[host_node] = subtree_accel[host_node];
-                    node_group_counts[host_node] = static_cast<int>(node_accel[host_node].size());
-                }
-                ancestor_nics[host_node].insert(
-                    ancestor_nics[host_node].end(), nics.begin(), nics.end());
-                NIXL_DEBUG << "Paired " << nics.size()
-                           << " NIC(s) sharing no PCIe switch with an accelerator to a common "
-                           << "ancestor of type " << hwloc_obj_type_string(host_node->type)
-                           << " holding " << node_accel[host_node].size() << " accelerator(s)";
+    // Step 1: Find the nearest NICs of each accelerator by pathDistance(), keyed by NIC index so
+    // that accelerators with the same nearest NICs share an entry
+    std::map<std::vector<size_t>, std::vector<size_t>> accel_by_nearest;
+    for (size_t accel_idx = 0; accel_idx < discovered_accel.size(); ++accel_idx) {
+        int shortest = -1;
+        std::vector<size_t> nearest;
+        for (size_t nic_idx = 0; nic_idx < nics.size(); ++nic_idx) {
+            const int distance =
+                pathDistance(discovered_accel[accel_idx].hwloc_node, nics[nic_idx].hwloc_node);
+            if (distance < 0 || (shortest >= 0 && distance > shortest)) {
                 continue;
             }
-
-            // No accelerator anywhere above this NIC, so it stays in a group of its own.
-            for (const auto &nic : nics) {
-                NicGroup group;
-                group.nics.push_back(nic);
-                group.has_accel = false;
-                group.closest_accel.hwloc_node = nullptr;
-                group.common_ancestor = nic.hwloc_node;
-                nic_groups.push_back(group);
+            if (distance != shortest) {
+                shortest = distance;
+                nearest.clear();
             }
+            nearest.push_back(nic_idx);
+        }
+        if (!nearest.empty()) {
+            accel_by_nearest[nearest].push_back(accel_idx);
         }
     }
-    // Step 4: Split NICs among accelerators for each ancestor node
-    for (const auto &pair : ancestor_nics) {
-        hwloc_obj_t ancestor = pair.first;
-        std::vector<NicInfo> nics = pair.second;
-        int num_groups = node_group_counts[ancestor];
-        const std::vector<AccelInfo> &accel = node_accel[ancestor];
 
-        if (num_groups > 0 && !accel.empty()) {
-            // Sort NICs by bus ID for consistent assignment
-            std::sort(nics.begin(), nics.end(), [](const NicInfo &a, const NicInfo &b) {
-                if (a.bus_id != b.bus_id) {
-                    return a.bus_id < b.bus_id;
-                }
-                return a.device_id < b.device_id;
-            });
-
-            // Split NICs among accelerators
-            const int nics_per_group = nics.size() / num_groups;
-            const int extra_nics = nics.size() % num_groups;
-
-            size_t nic_idx = 0;
-            for (int group_idx = 0; group_idx < num_groups && group_idx < (int)accel.size();
-                 ++group_idx) {
-                NicGroup group;
-                group.has_accel = true;
-                group.closest_accel = accel[group_idx];
-                group.common_ancestor = ancestor;
-
-                if (nics.size() < (size_t)num_groups) {
-                    // Give all NICs to this accelerator
-                    NIXL_DEBUG << "Fewer NICs (" << nics.size() << ") than accelerators ("
-                               << num_groups
-                               << ") at ancestor - sharing all NICs with each accelerator";
-                    group.nics = nics;
-                } else {
-                    // Assign NICs to this group via partitioning
-                    int group_size = nics_per_group + (group_idx < extra_nics ? 1 : 0);
-                    for (int i = 0; i < group_size && nic_idx < nics.size(); ++i, ++nic_idx) {
-                        group.nics.push_back(nics[nic_idx]);
-                    }
-                }
-
-                if (!group.nics.empty()) {
-                    nic_groups.push_back(group);
-                }
+    // Step 2: Split each set of nearest NICs among its accelerators in bus order, or share it
+    // when there are fewer NICs than accelerators
+    std::vector<bool> paired(nics.size(), false);
+    for (const auto &[nearest, accels] : accel_by_nearest) {
+        const bool share = nearest.size() < accels.size();
+        if (share) {
+            NIXL_DEBUG << "Fewer NICs (" << nearest.size() << ") than accelerators ("
+                       << accels.size() << ") nearest to them - sharing all NICs with each "
+                       << "accelerator";
+        }
+        const size_t per_accel = nearest.size() / accels.size();
+        const size_t extra = nearest.size() % accels.size();
+        size_t next = 0;
+        for (size_t i = 0; i < accels.size(); ++i) {
+            NicGroup group{};
+            group.has_accel = true;
+            group.closest_accel = discovered_accel[accels[i]];
+            const size_t first = share ? 0 : next;
+            const size_t count = share ? nearest.size() : per_accel + (i < extra ? 1 : 0);
+            for (size_t k = first; k < first + count; ++k) {
+                group.nics.push_back(nics[nearest[k]]);
+                paired[nearest[k]] = true;
             }
+            next = first + count;
+            nic_groups.push_back(group);
+        }
+    }
+
+    // A NIC nearest to no accelerator stays in a group of its own
+    for (size_t nic_idx = 0; nic_idx < nics.size(); ++nic_idx) {
+        if (!paired[nic_idx]) {
+            NicGroup group{};
+            group.nics.push_back(nics[nic_idx]);
+            group.has_accel = false;
+            nic_groups.push_back(group);
         }
     }
 
