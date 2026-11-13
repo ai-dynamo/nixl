@@ -71,6 +71,21 @@ done
 
 kill -9 $REDIS_PID 2>/dev/null || true
 
+# WQS storage backend against the wqs_mock SDK (process-local store, single process, no service).
+# The plugin's staging pool needs 2 MiB hugepages; skip loudly when they cannot be provided.
+if [ -f "${NIXL_PLUGIN_DIR}/libplugin_WQS.so" ]; then
+    if ensure_wqs_hugepages 16; then
+        for op_type in READ WRITE; do
+            run_nixlbench_one_worker --backend WQS --op_type $op_type --check_consistency \
+                --wqs_unix_path /unused/wqs_mock --wqs_staging_pool_bytes 8388608
+        done
+    else
+        echo "WARNING: WQS nixlbench tests SKIPPED: no free 2 MiB hugepages and cannot reserve them"
+    fi
+else
+    echo "WQS plugin not built; skipping WQS nixlbench tests"
+fi
+
 if $HAS_GPU ; then
     seg_types="VRAM DRAM"
 else
