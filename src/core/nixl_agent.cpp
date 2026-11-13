@@ -244,13 +244,13 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
                            const size_t desc_count,
-                           const nixl_remote_section_weak_t &remote_section_ref,
+                           std::shared_ptr<nixlRemoteSection> remote_section_ref,
                            const nixl::trace::TraceContext &trace_context,
                            const std::uint64_t trace_request_id)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
-      remoteSection(remote_section_ref),
+      remoteSection(std::move(remote_section_ref)),
       traceContext_(trace_context),
       tracePostContext_(trace_context),
       traceRequestId_(trace_request_id),
@@ -258,6 +258,23 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
 }
+
+nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
+                           const nixl_xfer_op_t backend_op,
+                           const nixl_mem_t local_type,
+                           const nixl_mem_t remote_type,
+                           const size_t desc_count,
+                           const nixl_remote_section_weak_t &remote_section_ref,
+                           const nixl::trace::TraceContext &trace_context,
+                           const std::uint64_t trace_request_id)
+    : nixlXferReqH(remote_agent,
+                   backend_op,
+                   local_type,
+                   remote_type,
+                   desc_count,
+                   remote_section_ref.lock(),
+                   trace_context,
+                   trace_request_id) {}
 
 void
 nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
@@ -1042,8 +1059,8 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // The prepped remote dlist snapshot is only valid for the remote registration generation
     // it was prepared from: reject if that generation was invalidated or replaced since.
-    const auto remote_sec_ref = remote_side.remoteSectionRef.lock();
-    if (!remote_sec_ref) {
+    auto remote_sec_ref = remote_side.remoteSectionRef.lock();
+    if (!remote_sec_ref || remote_sec_ref->isInvalidated()) {
         NIXL_ERROR_FUNC << "remote agent '" << remote_side.remoteAgent
                         << "' was invalidated or re-registered after prepped xfer request "
                            "creation; prepped descriptor lists must be re-created";
@@ -1062,7 +1079,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                                        local_descs.getType(),
                                        remote_descs.getType(),
                                        desc_count,
-                                       remote_side.remoteSectionRef,
+                                       std::move(remote_sec_ref),
                                        nixl::trace::TraceContext{data->tracer_.get()},
                                        nixl::trace::generateRequestId(data->tracer_.get()));
     NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", std::to_string(handle->traceRequestId()));
@@ -1278,7 +1295,8 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
 
     // Check if the remote agent connection info is still valid
     // (assuming cost estimation requires connection info like transfers)
-    if (!req_hndl->remoteAgent.empty() && req_hndl->remoteSection.expired()) {
+    if (!req_hndl->remoteAgent.empty() &&
+        (!req_hndl->remoteSection || req_hndl->remoteSection->isInvalidated())) {
         NIXL_ERROR_FUNC << "invalid request handle, remote agent was invalidated or "
                            "re-registered after transfer request creation";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
@@ -1349,7 +1367,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     req_hndl->traceRequestSpanIdUsed_ = true;
     // The request was created against a specific remote registration generation: refuse to
     // post if that generation was invalidated or replaced by a re-registration meanwhile.
-    if (req_hndl->remoteSection.expired()) {
+    if (!req_hndl->remoteSection || req_hndl->remoteSection->isInvalidated()) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated or re-registered after transfer request creation; "
                            "not posting stale handle";
@@ -1489,13 +1507,6 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
     // If the status is done, no need to recheck and no state changes.
     // Same for users incorrectly recalling this method in error/done.
     if (req_hndl->status == NIXL_IN_PROG) {
-        // Check if the remote was invalidated before completion
-        if (req_hndl->remoteSection.expired()) {
-            NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
-                            << "' was invalidated or re-registered during transfer";
-            return NIXL_ERR_NOT_FOUND;
-        }
-
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
         if (req_hndl->status < 0) {
             traceXferError(data->tracer_.get(), *req_hndl, req_hndl->status);
@@ -1575,7 +1586,12 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
     NIXL_TRACE_ATTR(
         trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(req_hndl->traceExecution()));
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
+    std::shared_lock<nixlLock> read_lock(data->lock);
+    std::unique_lock<nixlLock> write_lock(data->lock, std::defer_lock);
+    if (req_hndl->remoteSection && req_hndl->remoteSection->isInvalidated()) [[unlikely]] {
+        read_lock.unlock();
+        write_lock.lock();
+    }
     //attempt to cancel request
     if(req_hndl->status == NIXL_IN_PROG) {
         req_hndl->status = req_hndl->engine->checkXfer(
@@ -2026,10 +2042,14 @@ nixlAgentData::invalidateRemoteMD(const std::string &remote_agent) {
 nixl_status_t
 nixlAgentData::invalidateRemoteMDLocked(const std::string &remote_agent) {
     nixl_status_t ret = NIXL_SUCCESS;
-    if (remoteSections_.erase(remote_agent) == 0) {
+    const auto sec_it = remoteSections_.find(remote_agent);
+    if (sec_it == remoteSections_.end()) {
         NIXL_INFO << __FUNCTION__ << ": remote metadata for agent '" << remote_agent
                   << "' not found.";
         ret = NIXL_ERR_NOT_FOUND;
+    } else {
+        sec_it->second->invalidate();
+        remoteSections_.erase(sec_it);
     }
 
     const auto rb_it = remoteBackends_.find(remote_agent);

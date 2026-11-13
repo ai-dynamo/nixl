@@ -39,6 +39,7 @@
 #include <mutex>
 
 #include "gpu_utils.h"
+#include "mocks/gmock_engine.h"
 
 constexpr auto min_chrono_time = std::chrono::steady_clock::time_point::min();
 
@@ -745,6 +746,80 @@ TEST_P(TestTransfer, SelfNotification) {
             getAgent(0), getAgentName(0), getAgent(0), getAgentName(0), repeat, num_threads);
 }
 
+TEST_P(TestTransfer, DrainAfterInvalidation) {
+    constexpr size_t size = 64 * 1024;
+    constexpr size_t count = 32;
+    constexpr nixl_mem_t mem_type = DRAM_SEG;
+    constexpr uint32_t seed = 0x5a3c;
+
+    std::vector<MemBuffer> local_buffers, remote_buffers;
+    createRegisteredMem(getAgent(0), size, count, mem_type, local_buffers);
+    createRegisteredMem(getAgent(1), size, count, mem_type, remote_buffers);
+    fillPayloads(remote_buffers, seed);
+    fillPayloads(local_buffers, 0);
+    exchangeMD(0, 1);
+
+    nixlXferReqH *req = nullptr;
+    ASSERT_EQ(NIXL_SUCCESS,
+              getAgent(0).createXferReq(NIXL_READ,
+                                        makeDescList<nixlBasicDesc>(local_buffers, mem_type),
+                                        makeDescList<nixlBasicDesc>(remote_buffers, mem_type),
+                                        getAgentName(1),
+                                        req));
+    nixl_status_t status = getAgent(0).postXferReq(req);
+    ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+
+    ASSERT_EQ(NIXL_SUCCESS, getAgent(0).invalidateRemoteMD(getAgentName(1)));
+    ASSERT_TRUE(wait_until_true([&]() {
+        if (status == NIXL_IN_PROG) {
+            status = getAgent(0).getXferStatus(req);
+            if (!isProgressThreadEnabled()) {
+                nixl_notifs_t notifs;
+                getAgent(1).getNotifs(notifs);
+            }
+        }
+        return status != NIXL_IN_PROG;
+    }));
+    ASSERT_EQ(NIXL_SUCCESS, status);
+    checkPayloads(local_buffers, seed);
+
+    // Reloading the peer must not allow reposting the stale request handle.
+    exchangeMD(0, 1);
+    {
+        const LogIgnoreGuard lig("invalidated or re-registered after");
+        EXPECT_EQ(NIXL_ERR_NOT_FOUND, getAgent(0).postXferReq(req));
+    }
+    EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
+
+    // A fresh request against the reloaded registration succeeds.
+    fillPayloads(local_buffers, 0);
+    ASSERT_EQ(NIXL_SUCCESS,
+              getAgent(0).createXferReq(NIXL_READ,
+                                        makeDescList<nixlBasicDesc>(local_buffers, mem_type),
+                                        makeDescList<nixlBasicDesc>(remote_buffers, mem_type),
+                                        getAgentName(1),
+                                        req));
+    status = getAgent(0).postXferReq(req);
+    ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+    ASSERT_TRUE(wait_until_true([&]() {
+        if (status == NIXL_IN_PROG) {
+            status = getAgent(0).getXferStatus(req);
+            if (!isProgressThreadEnabled()) {
+                nixl_notifs_t notifs;
+                getAgent(1).getNotifs(notifs);
+            }
+        }
+        return status != NIXL_IN_PROG;
+    }));
+    ASSERT_EQ(NIXL_SUCCESS, status);
+    checkPayloads(local_buffers, seed);
+    EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
+
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), local_buffers, mem_type);
+    deregisterMem(getAgent(1), remote_buffers, mem_type);
+}
+
 TEST_P(TestTransfer, EmptyNotificationPayload) {
     constexpr size_t repeat = 16;
     constexpr size_t num_threads = 2;
@@ -1085,5 +1160,101 @@ TEST_P(TestTransferTracingSampled, NotifyingWritePostedTwice) {
 }
 
 NIXL_INSTANTIATE_TEST(ucx_tracing_sampled, TestTransferTracingSampled, "UCX", true, 2, 0, "");
+
+TEST(InvalidatedTransferMock, KeepsMetadataUntilRelease) {
+    using testing::_;
+    using testing::Return;
+
+    testing::NiceMock<mocks::GMockBackendEngine> local_engine, remote_engine;
+    nixlAgentConfig cfg;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+    auto local_agent = std::make_unique<nixlAgent>("local_agent", cfg);
+    auto remote_agent = std::make_unique<nixlAgent>("remote_agent", cfg);
+
+    nixl_b_params_t local_params, remote_params;
+    local_engine.SetToParams(local_params);
+    remote_engine.SetToParams(remote_params);
+    nixlBackendH *local_backend = nullptr, *remote_backend = nullptr;
+    ASSERT_EQ(local_agent->createBackend(GetMockBackendName(), local_params, local_backend),
+              NIXL_SUCCESS);
+    ASSERT_EQ(remote_agent->createBackend(GetMockBackendName(), remote_params, remote_backend),
+              NIXL_SUCCESS);
+
+    std::vector<char> local_buf(1024), remote_buf(1024);
+    const nixlBasicDesc local_desc(
+        reinterpret_cast<uintptr_t>(local_buf.data()), local_buf.size(), 0);
+    const nixlBasicDesc remote_desc(
+        reinterpret_cast<uintptr_t>(remote_buf.data()), remote_buf.size(), 0);
+    nixl_reg_dlist_t local_reg(DRAM_SEG), remote_reg(DRAM_SEG);
+    local_reg.addDesc(nixlBlobDesc(local_desc, ""));
+    remote_reg.addDesc(nixlBlobDesc(remote_desc, ""));
+    nixl_opt_args_t local_opt, remote_opt;
+    local_opt.backends.push_back(local_backend);
+    remote_opt.backends.push_back(remote_backend);
+    ASSERT_EQ(local_agent->registerMem(local_reg, &local_opt), NIXL_SUCCESS);
+    ASSERT_EQ(remote_agent->registerMem(remote_reg, &remote_opt), NIXL_SUCCESS);
+
+    nixl_blob_t remote_md;
+    std::string remote_name;
+    ASSERT_EQ(remote_agent->getLocalMD(remote_md), NIXL_SUCCESS);
+    ASSERT_EQ(local_agent->loadRemoteMD(remote_md, remote_name), NIXL_SUCCESS);
+
+    nixl_xfer_dlist_t local_xfer(DRAM_SEG), remote_xfer(DRAM_SEG);
+    local_xfer.addDesc(local_desc);
+    remote_xfer.addDesc(remote_desc);
+    nixlDlistH *local_dlist = nullptr, *remote_dlist = nullptr;
+    ASSERT_EQ(local_agent->prepXferDlist(local_xfer, local_dlist), NIXL_SUCCESS);
+    ASSERT_EQ(local_agent->prepXferDlist(remote_name, remote_xfer, remote_dlist), NIXL_SUCCESS);
+    const std::vector<int> indices{0};
+
+    nixlBackendReqH backend_req;
+    EXPECT_CALL(local_engine, prepXfer(_, _, _, _, _, _))
+        .WillOnce(testing::DoAll(testing::SetArgReferee<4>(&backend_req), Return(NIXL_SUCCESS)));
+    nixlXferReqH *req = nullptr;
+    ASSERT_EQ(
+        local_agent->makeXferReq(NIXL_READ, *local_dlist, indices, *remote_dlist, indices, req),
+        NIXL_SUCCESS);
+    EXPECT_CALL(local_engine, postXfer(_, _, _, _, _, _)).WillOnce(Return(NIXL_IN_PROG));
+    ASSERT_EQ(local_agent->postXferReq(req), NIXL_IN_PROG);
+
+    EXPECT_CALL(local_engine, unloadMD(_)).Times(0);
+    ASSERT_EQ(local_agent->invalidateRemoteMD(remote_name), NIXL_SUCCESS);
+
+    EXPECT_CALL(local_engine, checkXfer(&backend_req))
+        .WillOnce(Return(NIXL_IN_PROG))
+        .WillOnce(Return(NIXL_IN_PROG))
+        .WillOnce(Return(NIXL_SUCCESS));
+    EXPECT_EQ(local_agent->getXferStatus(req), NIXL_IN_PROG);
+    EXPECT_CALL(local_engine, releaseReqH(&backend_req)).WillOnce(Return(NIXL_ERR_REPOST_ACTIVE));
+    {
+        const LogIgnoreGuard lig("could not release transfer request");
+        EXPECT_EQ(local_agent->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+    }
+    EXPECT_EQ(local_agent->getXferStatus(req), NIXL_SUCCESS);
+    {
+        const LogIgnoreGuard lig("invalidated or re-registered after");
+        EXPECT_EQ(local_agent->postXferReq(req), NIXL_ERR_NOT_FOUND);
+        nixlXferReqH *stale = nullptr;
+        EXPECT_EQ(local_agent->makeXferReq(
+                      NIXL_READ, *local_dlist, indices, *remote_dlist, indices, stale),
+                  NIXL_ERR_NOT_FOUND);
+    }
+    EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&local_engine));
+
+    testing::Sequence cleanup;
+    EXPECT_CALL(local_engine, releaseReqH(&backend_req))
+        .InSequence(cleanup)
+        .WillOnce(Return(NIXL_SUCCESS));
+    EXPECT_CALL(local_engine, unloadMD(_)).InSequence(cleanup).WillOnce(Return(NIXL_SUCCESS));
+    EXPECT_EQ(local_agent->releaseXferReq(req), NIXL_SUCCESS);
+    EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&local_engine));
+
+    EXPECT_EQ(local_agent->releasedDlistH(local_dlist), NIXL_SUCCESS);
+    EXPECT_EQ(local_agent->releasedDlistH(remote_dlist), NIXL_SUCCESS);
+    EXPECT_EQ(local_agent->deregisterMem(local_reg, &local_opt), NIXL_SUCCESS);
+    EXPECT_EQ(remote_agent->deregisterMem(remote_reg, &remote_opt), NIXL_SUCCESS);
+    local_agent.reset();
+    remote_agent.reset();
+}
 
 } // namespace gtest

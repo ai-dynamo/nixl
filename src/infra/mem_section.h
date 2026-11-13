@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_INFRA_MEM_SECTION_H
 #define NIXL_SRC_INFRA_MEM_SECTION_H
 
+#include <atomic>
 #include <vector>
 #include <unordered_map>
 #include <map>
@@ -221,6 +222,7 @@ class nixlLocalSection : public nixlMemSection {
 class nixlRemoteSection : public nixlMemSection {
     private:
         std::string agentName;
+        std::atomic<bool> invalidated_{false};
 
         nixl_status_t addDescList (
                            const nixl_reg_dlist_t &mem_elms,
@@ -236,6 +238,17 @@ class nixlRemoteSection : public nixlMemSection {
         loadLocalData(nixlSecDescList mem_elms, nixlBackendEngine *backend);
         void
         removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine &backend);
+
+        void
+        invalidate() noexcept {
+            invalidated_.store(true, std::memory_order_release);
+        }
+
+        [[nodiscard]] bool
+        isInvalidated() const noexcept {
+            return invalidated_.load(std::memory_order_acquire);
+        }
+
         ~nixlRemoteSection();
 };
 
