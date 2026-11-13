@@ -120,21 +120,6 @@ public:
 
     // Backend capability methods
     [[nodiscard]] bool
-    supportsRemote() const noexcept override {
-        return false;
-    }
-
-    [[nodiscard]] bool
-    supportsLocal() const noexcept override {
-        return true; // Infinia supports local operations
-    }
-
-    [[nodiscard]] bool
-    supportsNotif() const noexcept override {
-        return false; // Notifications not implemented yet
-    }
-
-    [[nodiscard]] bool
     supportsProgTh() const noexcept {
         return false; // Progress thread not implemented yet
     }
