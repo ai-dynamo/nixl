@@ -61,37 +61,27 @@ cat /sys/devices/virtual/dmi/id/product_name || true
 
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
+EP_ELASTIC_TEST_DIR="${EP_SRC_DIR}/tests/elastic"
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 
 run_elastic_test() {
-    local plan_file=$1
-    local extra_flags=${2:-}
-    echo "---- elastic: plan=$(basename "$plan_file") flags=[$extra_flags] ----"
+    local test_name=$1
+    local plan_file=$2
+    shift 2
     (
         unset NIXL_ETCD_ENDPOINTS NIXL_ETCD_PEER_URLS NIXL_ETCD_NAMESPACE
-        unset UCX_NET_DEVICES  # let UCX auto-select GPU-capable transport
-        # Force NVLink-only transports.
-        if [[ "$extra_flags" != *--disable-ll-nvlink* ]]; then
-            export UCX_TLS=^rc_gda
-        fi
-        PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
-        timeout 300 "${VLLM_PYTHON}" ${EP_SRC_DIR}/tests/elastic/elastic.py \
+        unset UCX_NET_DEVICES UCX_TLS
+        echo "---- elastic: $test_name, plan=$(basename "$plan_file"), args=[$*] ----"
+        PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_ELASTIC_TEST_DIR}${PYTHONPATH:+:$PYTHONPATH}" \
+        timeout 300 "${VLLM_PYTHON}" "${EP_ELASTIC_TEST_DIR}/elastic.py" \
             --plan "$plan_file" \
-            --num-processes 4 \
-            --num-experts-per-rank 32 \
-            --num-topk 8 \
-            --num-tokens 256 \
-            --timeout-ms 10000 \
-            --validate-phase-failures $extra_flags
+            --validate-phase-failures \
+            --kineto \
+            "$@"
     )
 }
 
-# NVLink (default)
-run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json"
-run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
-
-# Only run the --disable-ll-nvlink (RDMA) elastic tests when all four CX-7
-# NICs (mlx5_0..mlx5_3) report PORT_ACTIVE.
+# Require all four CX-7 NICs for RDMA coverage.
 all_rdma_nics_active() {
     local hca
     for hca in mlx5_0 mlx5_1 mlx5_2 mlx5_3; do
@@ -102,13 +92,67 @@ all_rdma_nics_active() {
     return 0
 }
 
-# RDMA (--disable-ll-nvlink)
+RDMA_AVAILABLE=false
 if all_rdma_nics_active; then
-    run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json" "--disable-ll-nvlink"
-    run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
+    RDMA_AVAILABLE=true
 else
     echo "Skipping RDMA elastic tests: not all of mlx5_0..mlx5_3 are PORT_ACTIVE on $(hostname)"
 fi
+
+run_test_on_both_available_transports() {
+    local test_name=$1
+    local plan_file=$2
+    shift 2
+    run_elastic_test "$test_name" "$plan_file" "$@"
+    if [[ "$RDMA_AVAILABLE" == true ]]; then
+        run_elastic_test "$test_name" "$plan_file" "$@" --disable-ll-nvlink
+    fi
+}
+
+run_test_on_both_available_transports "Baseline" \
+    "${EP_ELASTIC_TEST_DIR}/no_expansion.json" \
+    --num-processes 4 \
+    --num-experts-per-rank 32 \
+    --num-topk 8 \
+    --num-tokens 128 \
+    --hidden-dim 8192 \
+    --timeout-ms 20000
+
+run_test_on_both_available_transports "Elastic fault" \
+    "${EP_ELASTIC_TEST_DIR}/expansion_fault_contraction.json" \
+    --num-processes 4 \
+    --num-experts-per-rank 36 \
+    --num-topk 8 \
+    --num-tokens 256 \
+    --hidden-dim 7168 \
+    --timeout-ms 10000
+
+run_elastic_test "Small-scale fault and simultaneous clean removal + rank failure" \
+    "${EP_ELASTIC_TEST_DIR}/simultaneous_fault_contraction.json" \
+    --num-processes 4 \
+    --num-experts-per-rank 2 \
+    --num-topk 2 \
+    --num-tokens 128 \
+    --hidden-dim 8192 \
+    --timeout-ms 30000
+
+run_elastic_test "Multi-step scaling" \
+    "${EP_ELASTIC_TEST_DIR}/multi_step_scaling.json" \
+    --num-processes 4 \
+    --num-experts-per-rank 4 \
+    --num-topk 4 \
+    --num-tokens 64 \
+    --hidden-dim 4096 \
+    --timeout-ms 10000
+
+run_elastic_test "Static max routing" \
+    "${EP_ELASTIC_TEST_DIR}/no_expansion.json" \
+    --num-processes 4 \
+    --num-experts-per-rank 8 \
+    --num-topk 16 \
+    --num-tokens 128 \
+    --hidden-dim 3584 \
+    --timeout-ms 10000
 
 echo "==== nixl_ep elastic tests done ===="
 
