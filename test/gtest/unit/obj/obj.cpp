@@ -46,9 +46,9 @@ static const ObjTestConfig dellConfig = {"Dell",
 TEST_P(objParamTestFixture, EngineInitialization) {
     ASSERT_NE(objEngine_, nullptr);
     EXPECT_EQ(objEngine_->getType(), "OBJ");
-    EXPECT_TRUE(objEngine_->supportsLocal());
-    EXPECT_FALSE(objEngine_->supportsRemote());
-    EXPECT_FALSE(objEngine_->supportsNotif());
+    EXPECT_TRUE(objEngine_->supportsCapability(nixl_backend_capability_t::LOCAL));
+    EXPECT_FALSE(objEngine_->supportsCapability(nixl_backend_capability_t::REMOTE));
+    EXPECT_FALSE(objEngine_->supportsCapability(nixl_backend_capability_t::NOTIF));
     EXPECT_TRUE(mockS3Client_->hasExecutor());
 }
 

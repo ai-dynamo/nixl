@@ -76,13 +76,13 @@ createObjEngineImpl(const nixlBackendInitParams *init_params,
 }
 
 nixlObjEngine::nixlObjEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       impl_(createObjEngineImpl(init_params)) {}
 
 nixlObjEngine::nixlObjEngine(const nixlBackendInitParams *init_params,
                              std::shared_ptr<iS3Client> s3_client,
                              std::shared_ptr<iS3Client> s3_client_crt)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       impl_(createObjEngineImpl(init_params, s3_client, s3_client_crt)) {}
 
 nixlObjEngine::~nixlObjEngine() = default;
