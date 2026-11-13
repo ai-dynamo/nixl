@@ -19,7 +19,10 @@
 #define NIXL_SRC_UTILS_UCX_CONFIG_H
 
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 
 extern "C" {
 #include <ucp/api/ucp.h>
@@ -28,6 +31,8 @@ extern "C" {
 namespace nixl::ucx {
 class config {
 public:
+    enum class condition_t { DEFAULT, NOT_IN_ENV, EQUAL, ALWAYS };
+
     config() = default;
 
     [[nodiscard]] ucp_config_t *
@@ -35,23 +40,40 @@ public:
         return config_.get();
     }
 
-    // Modify the config if it is not already set via environment variable
+    // Modify the config if the condition holds, by default if it is not already set via
+    // environment variable or UCX configuration file
     void
-    modify(std::string_view key, std::string_view value) const;
-
-    // Modify the config always
-    void
-    modifyAlways(std::string_view key, std::string_view value) const;
+    modify(std::string_view key,
+           std::string_view value,
+           condition_t condition = condition_t::DEFAULT,
+           std::string_view expected = {}) const;
 
     void
     validateTlsCudaSupport() const;
 
 private:
+    struct dumpedValue {
+        std::string value;
+        bool isDefault;
+    };
+
+    // By UCX key without the UCX_ prefix
+    using dumped_values_t = std::unordered_map<std::string, dumpedValue>;
+
     [[nodiscard]] static ucp_config_t *
     readUcpConfig();
 
+    [[nodiscard]] static dumped_values_t
+    dumpValues(const ucp_config_t &config);
+
+    // The value that modify() keeps under the condition, if any
+    [[nodiscard]] std::optional<std::string>
+    keptValue(std::string_view key, condition_t condition, std::string_view expected) const;
+
     const std::unique_ptr<ucp_config_t, void (*)(ucp_config_t *)> config_{readUcpConfig(),
                                                                           &ucp_config_release};
+    // The values of config_ as read, before any modification: initialized after config_
+    const dumped_values_t initialValues_{dumpValues(*config_)};
 };
 } // namespace nixl::ucx
 
