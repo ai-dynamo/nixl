@@ -391,7 +391,8 @@ TEST_F(MetadataExchangeTestFixture, LoadRemoteAfterSectionError) {
     invalid_md[pos] = 'X';
 
     const auto loadInvalidMD = [&]() {
-        const LogIgnoreGuard lig1("Deserialization of tag nixlSecElms failed for tag mismatch");
+        const LogIgnoreGuard lig1(
+            "Deserialization of tag nixlSecElms failed for invalid field or data length mismatch");
         const LogIgnoreGuard lig2("loadRemoteMD: error loading remote metadata for agent 'agent_0' "
                                   "with status NIXL_ERR_MISMATCH");
 
