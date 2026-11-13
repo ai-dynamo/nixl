@@ -215,6 +215,16 @@ def nixl_bench_args(func):
         help="Number of threads used by GDS MT plugin (default: 1)",
     )(func)
     func = click.option(
+        "--gds_mt_vector_io",
+        type=str,
+        help="GDS MT vector I/O mode [auto, off, on] (default: auto)",
+    )(func)
+    func = click.option(
+        "--gds_mt_vector_max_entries",
+        type=int,
+        help="Maximum entries per GDS MT vector I/O call (default: 32)",
+    )(func)
+    func = click.option(
         "--gpunetio_device_list",
         type=str,
         help="Comma-separated GPU CUDA device id to use for communication (only used with GPUNETIO backend)",
