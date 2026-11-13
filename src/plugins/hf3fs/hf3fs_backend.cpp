@@ -592,14 +592,27 @@ nixlHf3fsDramZCMetadata::nixlHf3fsDramZCMetadata(uint8_t *addr, size_t len, hf3f
      * without the pwrite here the memory will be all 0s after mmap.
      *
      * TODO: Is it a valid operation to write to the shared memory fd?
+     *
+     * Linux moves at most 0x7ffff000 bytes per write call, so a single pwrite
+     * cannot copy a region of 2 GiB or more. Loop until the whole region is copied.
      */
-    ssize_t written = pwrite(shm_fd, addr, len, 0);
-    if (written < 0 || written != (ssize_t)len) {
-        NIXL_PERROR << "Failed to write to shared memory";
-        close(shm_fd);
-        shm_unlink(shm_name.c_str());
-        throw nixlHf3fsShmException("Failed to write to shared memory: " +
-                                    std::string(strerror(errno)));
+    size_t written = 0;
+    while (written < len) {
+        ssize_t ret = pwrite(shm_fd, addr + written, len - written, static_cast<off_t>(written));
+        if (ret < 0 && errno == EINTR) {
+            continue;
+        }
+        if (ret <= 0) {
+            if (ret == 0) {
+                errno = EIO;
+            }
+            NIXL_PERROR << "Failed to write to shared memory";
+            close(shm_fd);
+            shm_unlink(shm_name.c_str());
+            throw nixlHf3fsShmException("Failed to write to shared memory: " +
+                                        std::string(strerror(errno)));
+        }
+        written += static_cast<size_t>(ret);
     }
 
     mapped_addr = mmap(addr, len, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, shm_fd, 0);
