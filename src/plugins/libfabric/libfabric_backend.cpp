@@ -1613,10 +1613,10 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                         parallel_total_submitted.fetch_add(chunk_submitted);
                     }
 
-                    {
-                        const std::lock_guard<std::mutex> lock(done_mutex);
-                        remaining--;
-                    }
+                    // Notify under the lock: done_cv lives on the poster's stack and is
+                    // destroyed as soon as the poster sees remaining == 0.
+                    const std::lock_guard<std::mutex> lock(done_mutex);
+                    remaining--;
                     done_cv.notify_one();
                 })) {
                 NIXL_ERROR << "Failed to submit libfabric descriptor post task";
