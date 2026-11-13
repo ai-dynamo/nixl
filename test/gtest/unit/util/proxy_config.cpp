@@ -41,11 +41,11 @@ TEST(ProxyConfigTest, AcceptsParameters) {
 
     ASSERT_EQ(parse({{"device_proxy", "true"}}, config), NIXL_SUCCESS);
     EXPECT_TRUE(config.enabled);
-    EXPECT_EQ(config.channel_count, nixl::kDefaultProxyChannelCount);
-    EXPECT_EQ(config.thread_count, nixl::kDefaultProxyChannelCount);
-    EXPECT_EQ(config.max_peers, nixl::kDefaultProxyMaxPeers);
-    EXPECT_EQ(config.ring_depth, nixl::kDefaultProxyRingDepth);
-    EXPECT_EQ(config.drain_timeout_ms, nixl::kDefaultProxyDrainTimeoutMs);
+    EXPECT_EQ(config.channelCount, nixl::kDefaultProxyChannelCount);
+    EXPECT_EQ(config.threadCount, nixl::kDefaultProxyChannelCount);
+    EXPECT_EQ(config.maxPeers, nixl::kDefaultProxyMaxPeers);
+    EXPECT_EQ(config.ringDepth, nixl::kDefaultProxyRingDepth);
+    EXPECT_EQ(config.drainTimeoutMs, nixl::kDefaultProxyDrainTimeoutMs);
 
     ASSERT_EQ(parse({{"device_proxy", "true"},
                      {"proxy_channel_count", "3"},
@@ -55,11 +55,11 @@ TEST(ProxyConfigTest, AcceptsParameters) {
                      {"proxy_drain_timeout_ms", "0"}},
                     config),
               NIXL_SUCCESS);
-    EXPECT_EQ(config.channel_count, 3u);
-    EXPECT_EQ(config.thread_count, 15u);
-    EXPECT_EQ(config.max_peers, 5u);
-    EXPECT_EQ(config.ring_depth, 512u);
-    EXPECT_EQ(config.drain_timeout_ms, 0u);
+    EXPECT_EQ(config.channelCount, 3u);
+    EXPECT_EQ(config.threadCount, 15u);
+    EXPECT_EQ(config.maxPeers, 5u);
+    EXPECT_EQ(config.ringDepth, 512u);
+    EXPECT_EQ(config.drainTimeoutMs, 0u);
     EXPECT_EQ(config.ringCount(), 15u);
 }
 
@@ -107,19 +107,19 @@ TEST(ProxyConfigTest, RejectsParameters) {
     };
     for (const auto &row : rows) {
         nixl::proxyConfig config;
-        config.channel_count = 7;
+        config.channelCount = 7;
         EXPECT_EQ(parse(row.params, config, row.enable_prog_th), row.expected) << row.name;
-        EXPECT_EQ(config.channel_count, 7u) << row.name << ": config written on failure";
+        EXPECT_EQ(config.channelCount, 7u) << row.name << ": config written on failure";
     }
 }
 
 TEST(ProxyConfigTest, EvenThreadSplits) {
     nixl::proxyConfig config;
-    config.channel_count = 4;
-    config.max_peers = 8;
+    config.channelCount = 4;
+    config.maxPeers = 8;
     std::vector<uint32_t> accepted;
     for (uint32_t threads = 1; threads <= 64; ++threads) {
-        config.thread_count = threads;
+        config.threadCount = threads;
         if (config.evenThreadSplit()) {
             accepted.push_back(threads);
         }
@@ -132,19 +132,19 @@ TEST(ProxyConfigTest, ThreadShares) {
         for (uint32_t peers : {1u, 2u, 3u, 4u, 8u}) {
             for (uint32_t threads = 1; threads <= channels * peers; ++threads) {
                 nixl::proxyConfig config;
-                config.channel_count = channels;
-                config.max_peers = peers;
-                config.thread_count = threads;
+                config.channelCount = channels;
+                config.maxPeers = peers;
+                config.threadCount = threads;
                 if (!config.evenThreadSplit()) {
                     continue;
                 }
                 std::vector<uint32_t> owners(config.ringCount(), 0);
                 for (uint32_t thread = 0; thread < threads; ++thread) {
                     const nixl::proxyThreadShare share = config.threadShare(thread);
-                    ASSERT_LE(share.first_channel + share.channel_count, channels);
+                    ASSERT_LE(share.firstChannel + share.channelCount, channels);
                     size_t owned = 0;
-                    for (uint32_t channel = share.first_channel;
-                         channel < share.first_channel + share.channel_count;
+                    for (uint32_t channel = share.firstChannel;
+                         channel < share.firstChannel + share.channelCount;
                          ++channel) {
                         for (uint32_t peer = share.peers.first; peer < peers;
                              peer += share.peers.stride) {

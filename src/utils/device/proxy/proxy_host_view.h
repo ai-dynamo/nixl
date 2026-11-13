@@ -43,8 +43,8 @@ struct proxyHostView {
         bool usable = true;
     };
 
-    proxy_view_handle_t proxy_memview = nullptr;
-    deviceMem proxy_memview_mem;
+    proxy_view_handle_t proxyMemView = nullptr;
+    deviceMem proxyMemViewMem;
     bool remote = false;
     std::vector<storedDesc> descs;
 };

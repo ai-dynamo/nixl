@@ -67,7 +67,7 @@ public:
      * Take the next published command, if the ring has room in flight for it.
      * @param[out] slot The ring slot the command occupied, for recordInflight().
      */
-    [[nodiscard]] std::optional<nixlProxyCommand>
+    [[nodiscard]] std::optional<proxyCommand>
     tryDequeue(uint32_t &slot) noexcept {
         const uint64_t consumer_idx = consumer_idx_shadow_;
         const uint64_t submit_idx = submit_idx_;
@@ -82,7 +82,7 @@ public:
             return std::nullopt;
         }
 
-        nixlProxyCommand submission = commandsHost()[slot];
+        proxyCommand submission = commandsHost()[slot];
         submission.op_idx = op_idx;
 
         __atomic_store_n(&commandsHost()[slot].op_idx, 0, __ATOMIC_RELAXED);
@@ -129,7 +129,7 @@ public:
     [[nodiscard]] nixl_status_t
     rearm() noexcept;
 
-    [[nodiscard]] const nixlProxyRingDesc &
+    [[nodiscard]] const proxyRingDesc &
     deviceView() const noexcept {
         return device_view_;
     }
@@ -154,14 +154,14 @@ private:
     [[nodiscard]] nixl_status_t
     publishConsumerIdx(uint64_t value) noexcept;
 
-    nixlProxyCommand *
+    proxyCommand *
     commandsHost() const noexcept {
-        return records_mem_.hostPointer<nixlProxyCommand>();
+        return records_mem_.hostPointer<proxyCommand>();
     }
 
-    nixlProxyCompletionSlot *
+    proxyCompletionSlot *
     completionSlotHost() const noexcept {
-        return completion_slot_mem_.hostPointer<nixlProxyCompletionSlot>();
+        return completion_slot_mem_.hostPointer<proxyCompletionSlot>();
     }
 
     /** Host-only submit frontier; consumer_idx_shadow_ remains the completion frontier. */
@@ -188,9 +188,9 @@ private:
     /** Remembered from allocate() so rearm() needs no arguments. */
     deviceOps *ops_ = nullptr;
     int device_id_ = 0;
-    /** Host-side ring depth for the CPU worker; nixlProxyWorkRing itself is device-only. */
+    /** Host-side ring depth for the CPU worker; proxyWorkRing itself is device-only. */
     uint32_t depth_ = 0;
-    nixlProxyRingDesc device_view_{};
+    proxyRingDesc device_view_{};
 };
 
 } // namespace nixl

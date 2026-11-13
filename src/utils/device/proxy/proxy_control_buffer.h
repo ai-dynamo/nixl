@@ -60,7 +60,7 @@ public:
     operator=(const proxyControlBuffer &) = delete;
 
     [[nodiscard]] nixl_status_t
-    publishShutdown(nixl_proxy_control_state_t state) noexcept;
+    publishShutdown(proxy_control_state_t state) noexcept;
 
     [[nodiscard]] nixl_status_t
     publishConsumerIdx(size_t ring_index, uint64_t value) noexcept;
