@@ -26,21 +26,6 @@ public:
                       std::shared_ptr<iRedisClient> redis_client);
     ~nixlRedisKVEngine() override = default;
 
-    bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
-
-    bool
-    supportsNotif() const override {
-        return false;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const override {
         return {OBJ_SEG, DRAM_SEG};
