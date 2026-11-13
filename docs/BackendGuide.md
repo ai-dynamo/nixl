@@ -96,7 +96,7 @@ getPublicData and loadRemoteMD are required if backend supportsRemote, and loadL
 * estimateXferCost: Given the same info as prepXfer, as well as the transfer request output from prepXfer, the backend can estimate the time of transfer, with noise margin and method of estimation. This is optional.
 * postXfer(): Posts a transfer request, meaning the backend should start the transfer. This call is asynchronous, meaning it should not wait to finish the transfer. If the transfer is really small, it’s fine to return DONE right after this call.
 * checkXfer(): Checks the status of a transfer request.
-* releaseReqH(): Releases a transfer request handle, which should be an extension of the nixlBackendReqH. Note that the NIXL agent may release that handle at a number of error cases, expecting this function to handle proper cancellation of requests in addition to freeing resources.
+* releaseReqH(): Releases a transfer request handle, which should be an extension of the nixlBackendReqH. Core calls this for an active transfer only when the plugin advertises `supports_xfer_cancel=true` (see below). A non-success return keeps the handle owned by the caller. Error-state cleanup remains the backend's responsibility; an error status alone does not prove that its operations have stopped.
 
 Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not set supportsNotifications, no such notification will be asked.
 
@@ -269,3 +269,11 @@ If a backend is provided by the user, the agent will call **genNotif** from the 
 ### Destructor:
 
 When an agent is getting destroyed at the end of the application, it will deregister all the remaining memories that were not deregistered by the application (bad practice, but agent takes care of it). Then for each of the backends it will call their **destructor** from the SB API, and finally do the rest of internal clean up.
+
+### Transfer cancellation capability
+
+A plugin may return `supports_xfer_cancel=true` in its existing `get_backend_options()` map to allow core to call `releaseReqH()` on an in-progress transfer. Core reads this plugin-wide capability once when creating the backend; caller-supplied initialization parameters cannot override it. Missing entries and values other than the exact string `true` mean unsupported. No production backend opts in currently.
+
+Opting in guarantees that successful cancellation stops all access to transfer buffers, any non-success result preserves the handle for polling and retry, and release does not block waiting for completion. The guarantee must hold for every engine configuration the plugin creates. Without this capability, core retains pending requests and returns `NIXL_ERR_REPOST_ACTIVE`. Completed and never-posted requests still follow the existing release path.
+
+This optional metadata entry uses the existing plugin interface: no virtual method or plugin layout change, and plugin API version remains 3. Existing binary plugins can load without rebuilding and default to cancellation unsupported; their pending-release behavior is consequently more conservative.

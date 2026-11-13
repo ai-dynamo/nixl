@@ -151,7 +151,8 @@ class nixlBackendEngine {
         // Use a handle to progress backend engine and see if a transfer is completed or not
         virtual nixl_status_t checkXfer(nixlBackendReqH* handle) const = 0;
 
-        //Backend aborts the transfer if necessary, and destructs the relevant objects
+        // Release the request; a non-success result must preserve the handle.
+        // Active transfers reach this only with plugin supports_xfer_cancel=true.
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
         // Prepare a memory view for remote buffers

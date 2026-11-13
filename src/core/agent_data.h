@@ -145,8 +145,11 @@ class nixlBackendEngine;
 class nixlBackendH {
     private:
         nixlBackendEngine* engine;
+        const bool supportsXferCancel_;
 
-        explicit nixlBackendH(nixlBackendEngine *engine) noexcept : engine(engine) {}
+        nixlBackendH(nixlBackendEngine *engine, bool supports_xfer_cancel) noexcept
+            : engine(engine),
+              supportsXferCancel_(supports_xfer_cancel) {}
 
     public:
         ~nixlBackendH() = default;
