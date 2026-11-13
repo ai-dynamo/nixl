@@ -122,6 +122,92 @@ fn create_dlist<'a>(storage_list: &'a mut Vec<SystemStorage>) -> Result<XferDesc
     Ok(dlist)
 }
 
+fn nvtx_plugin_missing(test_name: &str) -> bool {
+    let staged = env::var("NIXL_PLUGIN_DIR")
+        .is_ok_and(|dir| std::path::Path::new(&dir).join("libtrace_backend_nvtx.so").is_file());
+    if !staged {
+        eprintln!("skipping {test_name}: libtrace_backend_nvtx.so is not in NIXL_PLUGIN_DIR");
+    }
+    !staged
+}
+
+fn with_write_request(prepped: bool, test: impl FnOnce(&Agent, &XferRequest, &OptArgs)) {
+    let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
+
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 1);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 1);
+
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create descriptor list");
+
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+
+        if prepped {
+            let local_handle = agent1.prepare_xfer_dlist("", &local_dlist, Some(&opt_args))
+                .expect("Failed to prepare local descriptor list");
+            let remote_handle = agent1.prepare_xfer_dlist("agent2", &remote_dlist, Some(&opt_args))
+                .expect("Failed to prepare remote descriptor list");
+            let xfer_req = agent1.make_xfer_req(
+                XferOp::Write,
+                &local_handle,
+                &[0],
+                &remote_handle,
+                &[0],
+                Some(&opt_args)
+            ).expect("Failed to make transfer request");
+            test(&agent1, &xfer_req, &opt_args);
+        } else {
+            let xfer_req = agent1.create_xfer_req(
+                XferOp::Write,
+                &local_dlist,
+                &remote_dlist,
+                "agent2",
+                None
+            ).expect("Failed to create transfer request");
+            test(&agent1, &xfer_req, &opt_args);
+        }
+    }
+}
+
+fn post_to_completion(agent: &Agent, xfer_req: &XferRequest, opt_args: &OptArgs) {
+    let result = agent.post_xfer_req(xfer_req, Some(opt_args));
+    assert!(result.is_ok(), "post_xfer_req failed with error: {:?}", result.err());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match agent.get_xfer_status(xfer_req) {
+            Ok(XferStatus::Success) => break,
+            Ok(XferStatus::InProgress) => {
+                assert!(Instant::now() < deadline, "Timed out waiting for the transfer to complete");
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => panic!("Failed to get transfer status: {:?}", e),
+        }
+    }
+}
+
+fn trace_info(xfer_req: &XferRequest) -> XferTraceInfo {
+    xfer_req
+        .get_trace_info()
+        .expect("get_trace_info failed")
+        .expect("Transfer request has no trace identity")
+}
+
+fn split_traceparent(traceparent: &str) -> (&str, &str, &str) {
+    let is_hex = |field: &str, len: usize| {
+        field.len() == len && field.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    };
+    match traceparent.split('-').collect::<Vec<_>>()[..] {
+        ["00", trace_id, span_id, flags]
+            if is_hex(trace_id, 32) && is_hex(span_id, 16) && is_hex(flags, 2) =>
+        {
+            (trace_id, span_id, flags)
+        }
+        _ => panic!("Malformed traceparent: {traceparent:?}"),
+    }
+}
+
 
 /// Helper function to create and initialize a POSIX backend with optional arguments
 /// Returns (backend, opt_args) if POSIX is available, or None if not available
@@ -1719,6 +1805,82 @@ fn test_get_xfer_telemetry_before_posting() {
 
         println!("Successfully tested telemetry before posting - got expected error");
     }
+}
+
+#[test]
+fn test_get_xfer_trace_info_without_tracing() {
+    let env_guard = EnvGuard::new(["NIXL_TRACE_BACKENDS"]);
+    env_guard.set("NIXL_TRACE_BACKENDS", "");
+
+    with_write_request(false, |agent, xfer_req, opt_args| {
+        assert_eq!(xfer_req.get_trace_info().expect("get_trace_info failed"), None);
+        post_to_completion(agent, xfer_req, opt_args);
+        assert_eq!(xfer_req.get_trace_info().expect("get_trace_info failed"), None);
+    });
+}
+
+#[test]
+fn test_get_xfer_trace_info_counts_posts() {
+    if nvtx_plugin_missing("test_get_xfer_trace_info_counts_posts") {
+        return;
+    }
+    let env_guard = EnvGuard::new(["NIXL_TRACE_BACKENDS", "NIXL_TRACE_SAMPLE_RATIO"]);
+    env_guard.set("NIXL_TRACE_BACKENDS", "nvtx");
+    env_guard.set("NIXL_TRACE_SAMPLE_RATIO", "0");
+
+    with_write_request(false, |agent, xfer_req, opt_args| {
+        let before = trace_info(xfer_req);
+        assert_ne!(before.request_id, 0);
+        assert_eq!(before.execution, 0);
+        assert_eq!(split_traceparent(&before.traceparent).2, "02");
+
+        for execution in 1..=2 {
+            post_to_completion(agent, xfer_req, opt_args);
+            assert_eq!(trace_info(xfer_req), XferTraceInfo { execution, ..before.clone() });
+        }
+    });
+}
+
+#[test]
+fn test_get_xfer_trace_info_prepped_request() {
+    if nvtx_plugin_missing("test_get_xfer_trace_info_prepped_request") {
+        return;
+    }
+    let env_guard = EnvGuard::new(["NIXL_TRACE_BACKENDS"]);
+    env_guard.set("NIXL_TRACE_BACKENDS", "nvtx");
+
+    with_write_request(true, |agent, xfer_req, opt_args| {
+        let before = trace_info(xfer_req);
+        assert_ne!(before.request_id, 0);
+        assert_eq!(before.execution, 0);
+
+        post_to_completion(agent, xfer_req, opt_args);
+        let after = trace_info(xfer_req);
+        assert_eq!((after.request_id, after.execution), (before.request_id, 1));
+    });
+}
+
+#[test]
+fn test_get_xfer_trace_info_sampled_posts_differ() {
+    if nvtx_plugin_missing("test_get_xfer_trace_info_sampled_posts_differ") {
+        return;
+    }
+    let env_guard = EnvGuard::new(["NIXL_TRACE_BACKENDS", "NIXL_TRACE_SAMPLE_RATIO"]);
+    env_guard.set("NIXL_TRACE_BACKENDS", "nvtx");
+    env_guard.set("NIXL_TRACE_SAMPLE_RATIO", "1");
+
+    with_write_request(false, |agent, xfer_req, opt_args| {
+        post_to_completion(agent, xfer_req, opt_args);
+        let first = trace_info(xfer_req);
+        post_to_completion(agent, xfer_req, opt_args);
+        let second = trace_info(xfer_req);
+
+        let (first_trace_id, first_span_id, first_flags) = split_traceparent(&first.traceparent);
+        let (second_trace_id, second_span_id, second_flags) = split_traceparent(&second.traceparent);
+        assert_eq!((first_flags, second_flags), ("03", "03"));
+        assert_eq!(first_trace_id, second_trace_id);
+        assert_ne!(first_span_id, second_span_id);
+    });
 }
 
 // Tests for equality operators on RegDescList and XferDescList

@@ -2125,6 +2125,34 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
     }
 }
 
+nixl_capi_status_t
+nixl_capi_get_xfer_trace_info(nixl_capi_agent_t agent,
+                              nixl_capi_xfer_req_t req_hndl,
+                              nixl_capi_xfer_trace_info_t info) {
+    if (!agent || !req_hndl || !info) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        nixl_xfer_trace_info_t cpp_info;
+        const nixl_status_t ret = agent->inner->getXferTraceInfo(req_hndl->req, cpp_info);
+        if (ret != NIXL_SUCCESS) {
+            return nixl_capi_status_from_nixl_status(ret);
+        }
+        if (cpp_info.traceparent.size() >= sizeof(info->traceparent)) {
+            return NIXL_CAPI_ERROR_BACKEND;
+        }
+        info->request_id = cpp_info.requestId;
+        info->execution = cpp_info.execution;
+        std::memcpy(
+            info->traceparent, cpp_info.traceparent.c_str(), cpp_info.traceparent.size() + 1);
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
 bool
 nixl_capi_is_stub() {
     return false;
