@@ -8,6 +8,10 @@
 
 #include "s3/engine_impl.h"
 
+namespace nixl_obj_rdma {
+class SharedCuObjClient;
+}
+
 /**
  * Generic, protocol-compliant S3-over-RDMA engine (selected by `accelerated=true`
  * with no `type` / `type=s3`; registered under "s3").
@@ -34,6 +38,9 @@ public:
 protected:
     iS3Client *
     getClient() const override;
+
+    virtual nixl_obj_rdma::SharedCuObjClient *
+    rdmaClient() const;
 
 private:
     // True iff the current client is an accelerated client whose generic
