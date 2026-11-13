@@ -65,6 +65,12 @@ public:
 
 } // namespace
 
+gdsResolvedBuffer
+gdsResolveRegisteredBuffer(void *registered_base, uintptr_t descriptor_addr) noexcept {
+    const uintptr_t base_addr = reinterpret_cast<uintptr_t>(registered_base);
+    return {registered_base, static_cast<size_t>(descriptor_addr - base_addr)};
+}
+
 nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params) {
     try {
@@ -200,9 +206,28 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
         const nixlMetaDesc &mem_desc = is_local_file ? remote[i] : local[i];
         const nixlMetaDesc &file_desc = is_local_file ? local[i] : remote[i];
 
-        void *base_addr = (void *)mem_desc.addr;
-        if (!base_addr) {
+        const auto *mem_md = static_cast<const nixlGdsMetadata *>(mem_desc.metadataP);
+        if (!mem_md) {
+            NIXL_ERROR << "GDS: missing memory metadata at xfer time";
+            return NIXL_ERR_NOT_FOUND;
+        }
+
+        const auto *mem_data = std::get_if<memSegData>(&mem_md->data_);
+        if (!mem_data) {
+            NIXL_ERROR << "GDS: memory metadata is not a memory variant";
+            return NIXL_ERR_NOT_FOUND;
+        }
+
+        if (mem_desc.addr == 0) {
+            NIXL_ERROR << "GDS: null memory descriptor address";
             return NIXL_ERR_INVALID_PARAM;
+        }
+
+        gdsResolvedBuffer resolved{};
+        if (mem_data->buf.isRegistered()) {
+            resolved = gdsResolveRegisteredBuffer(mem_data->buf.base(), mem_desc.addr);
+        } else {
+            resolved = {reinterpret_cast<void *>(mem_desc.addr), 0};
         }
 
         const auto *md = static_cast<const nixlGdsMetadata *>(file_desc.metadataP);
@@ -216,7 +241,9 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
             return NIXL_ERR_NOT_FOUND;
         }
 
-        reqs.push_back(gdsXferReq{base_addr,
+        reqs.push_back(gdsXferReq{reinterpret_cast<void *>(mem_desc.addr),
+                                  resolved.dev_ptr_base,
+                                  resolved.dev_ptr_offset,
                                   mem_desc.len,
                                   (size_t)file_desc.addr,
                                   file_data->handle->cu_fhandle,

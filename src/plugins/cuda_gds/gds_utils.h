@@ -60,6 +60,16 @@ public:
     gdsMemBuf(void *ptr, size_t sz, int flags = 0);
     ~gdsMemBuf();
 
+    bool
+    isRegistered() const noexcept {
+        return registered_;
+    }
+
+    void *
+    base() const noexcept {
+        return base_;
+    }
+
     gdsMemBuf(const gdsMemBuf &) = delete;
     gdsMemBuf &
     operator=(const gdsMemBuf &) = delete;
