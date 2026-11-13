@@ -155,8 +155,8 @@ createMemList(const nixl_remote_meta_dlist_t &dlist, nixlUcxWorker &worker) {
 
     ucp_device_remote_mem_list_h handle{nullptr};
     ucs_status_t status;
-    const auto timeout_warning =
-        nixl::config::getValueDefaulted("NIXL_UCX_WARNING_TIMEOUT", 5'000ms);
+    const auto timeout_warning = nixl::config::getValueDefaulted(
+        "NIXL_PLUGIN_UCX_WARNING_TIMEOUT", "NIXL_UCX_WARNING_TIMEOUT", 5'000ms);
     auto next_warning = timeout_warning;
 
     const auto start = std::chrono::steady_clock::now();

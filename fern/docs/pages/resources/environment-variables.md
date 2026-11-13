@@ -76,6 +76,10 @@ These variables apply when using the UCX transport backend.
 
 <Markdown src="/snippets/env-vars-ucx.mdx" />
 
+<Tip>
+Set UCX tuning variables as `NIXL_UCX_<X>` (for example `NIXL_UCX_TLS`) rather than `UCX_<X>`. The UCX backend reads both, with `NIXL_UCX_<X>` taking precedence, but only the prefixed form leaves other UCX users in the same process (MPI, UCC, etc.) unaffected. See [UCX Tuning](/nixl/user-guide/backend-selection/ucx#ucx-tuning).
+</Tip>
+
 ### Libfabric
 
 <Note>

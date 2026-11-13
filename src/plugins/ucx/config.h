@@ -35,7 +35,7 @@ public:
         return config_.get();
     }
 
-    // Modify the config if it is not already set via environment variable
+    // Modify the config if neither NIXL_UCX_<key> nor UCX_<key> is set in the environment
     void
     modify(std::string_view key, std::string_view value) const;
 

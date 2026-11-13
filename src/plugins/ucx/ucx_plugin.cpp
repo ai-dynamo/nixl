@@ -31,7 +31,8 @@ extern "C" {
 using ucx_plugin_t = nixlBackendPluginCreator<nixlUcxEngine>;
 
 namespace {
-constexpr const char *kExpectedUcxSonameVar = "NIXL_UCX_EXPECTED_SONAME";
+constexpr const char *expected_ucx_soname_var = "NIXL_PLUGIN_UCX_EXPECTED_SONAME";
+constexpr const char *deprecated_expected_ucx_soname_var = "NIXL_UCX_EXPECTED_SONAME";
 
 std::string
 getUcxSymbolPath() {
@@ -51,7 +52,8 @@ validateUcxBinding() {
     NIXL_INFO << "NIXL UCX backend bound to UCX " << ucp_get_version_string() << " at "
               << symbol_path;
 
-    const auto expected_soname = nixl::config::getValueOptional<std::string>(kExpectedUcxSonameVar);
+    const auto expected_soname = nixl::config::getValueOptional<std::string>(
+        expected_ucx_soname_var, deprecated_expected_ucx_soname_var);
     if (!expected_soname || expected_soname->empty()) {
         return true;
     }
@@ -60,7 +62,7 @@ validateUcxBinding() {
         return true;
     }
 
-    NIXL_ERROR << kExpectedUcxSonameVar << "=" << *expected_soname
+    NIXL_ERROR << expected_ucx_soname_var << "=" << *expected_soname
                << " but NIXL UCX backend bound to " << symbol_path;
     return false;
 }

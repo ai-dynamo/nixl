@@ -184,7 +184,7 @@ See [Backend Selection](/nixl/user-guide/backend-selection) for backend requirem
 **Memory registration warning after 5s:** If UCX logs a warning about slow memory registration, you can adjust the timeout:
 
 ```bash
-export NIXL_UCX_WARNING_TIMEOUT=10000  # milliseconds
+export NIXL_PLUGIN_UCX_WARNING_TIMEOUT=10000  # milliseconds
 ```
 
 Alternatively, verify that the device supports the memory type being registered.

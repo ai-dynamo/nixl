@@ -58,6 +58,10 @@ namespace internal {
     void
     warnIgnoreToml(const std::string &path);
 
+    // Logs once per deprecated name.
+    void
+    warnDeprecated(const std::string &deprecated, const std::string &replacement);
+
     template<typename T> struct convertTraits {
         [[nodiscard]] static decltype(auto)
         convert(const std::string &value) {
@@ -132,10 +136,31 @@ getValueOptional(const std::string &env) {
     return std::nullopt;
 }
 
+// Falls back to a deprecated name for the same setting when env is not set.
+template<typename type, template<typename...> class traits = internal::convertTraits>
+[[nodiscard]] std::optional<type>
+getValueOptional(const std::string &env, const std::string &deprecated_env) {
+    if (auto result = getValueOptional<type, traits>(env)) {
+        return result;
+    }
+
+    auto result = getValueOptional<type, traits>(deprecated_env);
+    if (result) {
+        internal::warnDeprecated(deprecated_env, env);
+    }
+    return result;
+}
+
 template<typename type, template<typename...> class traits = internal::convertTraits>
 [[nodiscard]] type
 getValueDefaulted(const std::string &env, const type &fallback) {
     return getValueOptional<type, traits>(env).value_or(fallback);
+}
+
+template<typename type, template<typename...> class traits = internal::convertTraits>
+[[nodiscard]] type
+getValueDefaulted(const std::string &env, const std::string &deprecated_env, const type &fallback) {
+    return getValueOptional<type, traits>(env, deprecated_env).value_or(fallback);
 }
 
 [[nodiscard]] inline std::string
