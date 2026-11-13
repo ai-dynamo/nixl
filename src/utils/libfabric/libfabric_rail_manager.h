@@ -26,6 +26,7 @@
 #include <mutex>
 #include <atomic>
 #include "libfabric_rail.h"
+#include "libfabric_cuda_ipc.h"
 
 #ifdef HAVE_CUDA
 #ifdef __HIP_PLATFORM_AMD__
@@ -336,13 +337,15 @@ public:
      * @param num_keys Number of keys
      * @param keys_out Remote access keys for all rails
      * @param remote_addr_out Remote buffer address
+     * @param cuda_ipc_out CUDA IPC handle of the remote buffer, if the peer sent one
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
     deserializeMemoryKeys(const std::string &serialized_data,
                           const size_t num_keys,
                           std::vector<uint64_t> &keys_out,
-                          uint64_t &remote_addr_out) const;
+                          uint64_t &remote_addr_out,
+                          LibfabricUtils::CudaIpcExport &cuda_ipc_out) const;
     // SerDes-based Connection Info Serialization
     /** Serialize connection information for all rails
      * @param user_prefix Prefix for serialization keys (e.g., "src" or "dest")

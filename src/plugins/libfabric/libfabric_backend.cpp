@@ -17,9 +17,11 @@
  */
 
 #include "libfabric_backend.h"
+#include "libfabric_proxy_engine.h"
 #include "serdes/serdes.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "device/proxy/proxy_config.h"
 
 #include <cstdint>
 #include <dlfcn.h>
@@ -628,6 +630,19 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     }
 }
 
+std::unique_ptr<nixlLibfabricEngine>
+nixlLibfabricEngine::create(const nixlBackendInitParams &init_params) {
+    nixl::proxyConfig proxy_config;
+    if (nixl::parseProxyConfig(init_params, proxy_config) != NIXL_SUCCESS) {
+        nixl::throwRuntimeError("invalid device proxy configuration");
+    }
+
+    if (!proxy_config.enabled) {
+        return std::make_unique<nixlLibfabricEngine>(&init_params);
+    }
+    return std::make_unique<nixl::libfabric::proxyEngine>(init_params, proxy_config);
+}
+
 void
 nixlLibfabricEngine::initPostThreadPool() {
     LibfabricUtils::getCustomIntParam(
@@ -1214,14 +1229,23 @@ nixlLibfabricEngine::loadRemoteMD(const nixlBlobDesc &input,
     // Delegate to Rail Manager for SerDes operations (returns raw data)
     std::vector<uint64_t> remote_keys;
     uint64_t remote_addr;
-    nixl_status_t status = rail_manager_.deserializeMemoryKeys(
-        input.metaInfo, conn->rail_remote_addr_list_.at(0).size(), remote_keys, remote_addr);
+    LibfabricUtils::CudaIpcExport cuda_ipc;
+    nixl_status_t status =
+        rail_manager_.deserializeMemoryKeys(input.metaInfo,
+                                            conn->rail_remote_addr_list_.at(0).size(),
+                                            remote_keys,
+                                            remote_addr,
+                                            cuda_ipc);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager deserializeMemoryKeys failed with status: " << status;
         return status;
     }
 
-    return loadMetadataHelper(remote_keys, reinterpret_cast<void *>(remote_addr), conn, output);
+    status = loadMetadataHelper(remote_keys, reinterpret_cast<void *>(remote_addr), conn, output);
+    if (status == NIXL_SUCCESS) {
+        static_cast<nixlLibfabricPublicMetadata *>(output)->cuda_ipc_ = cuda_ipc;
+    }
+    return status;
 }
 
 nixl_status_t
