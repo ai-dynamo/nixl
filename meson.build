@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.6.0',
+project('nixl', 'CPP', 'C', version: '1.6.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA', 'DOCA_MEMOS']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'SPDK', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA', 'DOCA_MEMOS']
 
 enabled_plugins = {}
 
@@ -487,6 +487,59 @@ doca_common_dep = dependency('doca-common', required: false)
 libb2_dep = dependency('libb2', required: false)
 if not libb2_dep.found()
     libb2_dep = cpp.find_library('b2', required: false)
+endif
+
+# The pkg-config components the SPDK plugin links; src/plugins/spdk/meson.build
+# resolves this same list to build its link line. Detection and linking must
+# agree: a component missing here but required there turns a clean "plugin
+# skipped" into a hard configure failure. Note spdk_env_dpdk is deliberately
+# absent — the plugin supplies its own implementation of SPDK's env interface.
+spdk_pc_components = ['spdk_event_bdev', 'spdk_event_accel', 'spdk_init',
+                      'spdk_bdev_malloc']
+# spdk_syslibs is queried separately rather than as part of the closure above:
+# it names the system and ISA-L libraries the SPDK archives depend on, which
+# must land outside the --whole-archive group. It is still required, so it
+# belongs in this gate.
+spdk_gate_components = spdk_pc_components + ['spdk_syslibs']
+
+# Where the SPDK .pc files live. An SPDK outside a default prefix is reachable
+# only through spdk_library_path, so this gate has to search the same
+# PKG_CONFIG_PATH that src/plugins/spdk/meson.build resolves the link line
+# against; that subdir reads this variable instead of recomputing it.
+# dependency() takes no env, so query pkg-config directly.
+spdk_pc_env = {}
+if get_option('spdk_library_path') != ''
+    spdk_pc_env = {'PKG_CONFIG_PATH': get_option('spdk_library_path') / 'pkgconfig'}
+endif
+
+pkgconfig_prog = find_program('pkg-config', required: false)
+spdk_dep_found = pkgconfig_prog.found()
+foreach spdk_pc_component : spdk_gate_components
+    if spdk_dep_found
+        spdk_pc_probe = run_command(pkgconfig_prog, '--exists', spdk_pc_component,
+                                    env: spdk_pc_env, check: false)
+        spdk_dep_found = spdk_pc_probe.returncode() == 0
+    endif
+endforeach
+
+# The .pc files carry per-library SO versions, not the SPDK release, so check
+# the release from the headers. The plugin needs v26.05 for the NVMe KV
+# opcodes and spdk_bdev_get_nvme_csi().
+if spdk_dep_found
+    spdk_version_args = []
+    if get_option('spdk_include_path') != ''
+        spdk_version_args += '-I' + get_option('spdk_include_path')
+    else
+        spdk_pc_cflags = run_command(pkgconfig_prog, '--cflags-only-I', spdk_pc_components,
+                                     env: spdk_pc_env, check: true)
+        spdk_version_args += spdk_pc_cflags.stdout().split()
+    endif
+    spdk_dep_found = cpp.compiles('''
+        #include <spdk/version.h>
+        #if SPDK_VERSION_MAJOR < 26 || (SPDK_VERSION_MAJOR == 26 && SPDK_VERSION_MINOR < 5)
+        #error "SPDK v26.05 or later is required"
+        #endif
+        ''', args: spdk_version_args, name: 'SPDK >= v26.05')
 endif
 
 # UCX GPU device API detection

@@ -144,7 +144,7 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, "
-              "REDIS, GUSLI, AZURE_BLOB, DOCA_MEMOS] (only used with nixl worker)");
+              "REDIS, GUSLI, SPDK, AZURE_BLOB, DOCA_MEMOS] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -360,6 +360,15 @@ NB_ARG_UINT32(device_proxy_threads,
 NB_ARG_STRING(doca_memos_device_name, "/dev/nvme0n1", "DOCA_MEMOS device name");
 NB_ARG_INT32(doca_memos_num_tasks, 8192, "DOCA_MEMOS number of tasks");
 NB_ARG_STRING(doca_memos_nguid, "", "DOCA_MEMOS namespace GUID (32 hex chars, optional)");
+// SPDK options - only used when backend is SPDK
+NB_ARG_STRING(spdk_json_config_file, "", "SPDK JSON config file for bdev setup");
+NB_ARG_STRING(spdk_bdev_name, "", "SPDK bdev name used for block or KV operations");
+NB_ARG_STRING(spdk_mode, "block", "SPDK command mode [block, kv]");
+NB_ARG_UINT64(spdk_key_namespace,
+              0,
+              "KV key namespace; choose distinct values for concurrent processes");
+NB_ARG_UINT64(spdk_bdev_offset, 0, "Starting byte offset for SPDK bdev operations");
+NB_ARG_UINT64(spdk_msg_mempool_size, 0, "SPDK thread message mempool size; 0 uses SPDK default");
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT32
@@ -597,6 +606,12 @@ discoverPluginMems(const std::string &backend) {
 std::string xferBenchConfig::doca_memos_device_name = "/dev/nvme0n1";
 int xferBenchConfig::doca_memos_num_tasks = 8192;
 std::string xferBenchConfig::doca_memos_nguid = "";
+std::string xferBenchConfig::spdk_json_config_file = "";
+std::string xferBenchConfig::spdk_bdev_name = "";
+std::string xferBenchConfig::spdk_mode = "block";
+uint64_t xferBenchConfig::spdk_key_namespace = 0;
+size_t xferBenchConfig::spdk_bdev_offset = 0;
+size_t xferBenchConfig::spdk_msg_mempool_size = 0;
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -766,6 +781,15 @@ xferBenchConfig::loadParams(void) {
                 std::cerr << "DOCA_MEMOS backend does not support --check_consistency" << std::endl;
                 return -1;
             }
+        }
+
+        if (backend == XFERBENCH_BACKEND_SPDK) {
+            spdk_json_config_file = NB_ARG(spdk_json_config_file);
+            spdk_bdev_name = NB_ARG(spdk_bdev_name);
+            spdk_mode = NB_ARG(spdk_mode);
+            spdk_key_namespace = NB_ARG(spdk_key_namespace);
+            spdk_bdev_offset = NB_ARG(spdk_bdev_offset);
+            spdk_msg_mempool_size = NB_ARG(spdk_msg_mempool_size);
         }
 
         // Load OBJ-specific configurations if backend is OBJ
@@ -987,6 +1011,49 @@ xferBenchConfig::loadParams(void) {
         return -1;
     }
 
+    if (backend == XFERBENCH_BACKEND_SPDK) {
+        if (spdk_mode != "block" && spdk_mode != "kv") {
+            std::cerr << "Error: --spdk_mode must be block or kv" << std::endl;
+            return -1;
+        }
+        if (spdk_json_config_file.empty()) {
+            std::cerr << "Error: SPDK backend requires --spdk_json_config_file" << std::endl;
+            return -1;
+        }
+        if (spdk_bdev_name.empty()) {
+            std::cerr << "Error: SPDK backend requires --spdk_bdev_name" << std::endl;
+            return -1;
+        }
+        if (check_consistency && !isSpdkKv()) {
+            std::cerr << "Error: Consistency check is not supported for SPDK backend" << std::endl;
+            return -1;
+        }
+        if (isSpdkKv()) {
+            if (!use_hugepages || initiator_seg_type != XFERBENCH_SEG_TYPE_DRAM ||
+                spdk_bdev_offset != 0 ||
+                randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE ||
+                scheme != XFERBENCH_SCHEME_PAIRWISE || start_block_size == 0 ||
+                max_block_size == 0 || start_block_size % 4096 || max_block_size % 4096 ||
+                num_threads <= 0 || num_initiator_dev <= 0 || max_batch_size == 0) {
+                std::cerr
+                    << "SPDK KV requires shared hugepage DRAM, pairwise mode, zero bdev offset, "
+                       "no offset randomization and 4 KiB-multiple value sizes"
+                    << std::endl;
+                return -1;
+            }
+            const uint64_t per_buffer = total_buffer_size / num_threads / num_initiator_dev;
+            if (max_batch_size > per_buffer / max_block_size / pipeline_depth ||
+                max_batch_size >
+                    UINT32_MAX / static_cast<uint64_t>(pipeline_depth) / num_initiator_dev) {
+                std::cerr
+                    << "SPDK KV requires distinct payload storage for every batch/pipeline entry; "
+                       "increase --total_buffer_size"
+                    << std::endl;
+                return -1;
+            }
+        }
+    }
+
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&
               (XFERBENCH_SEG_TYPE_VRAM == target_seg_type) && (1 == num_threads) &&
@@ -1099,10 +1166,9 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption(
-            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,MOONCAKE,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB,"
-            "DOCA_MEMOS])",
-            backend);
+        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,MOONCAKE,HF3FS,OBJ,REDIS,GUSLI,SPDK,"
+                    "AZURE_BLOB,DOCA_MEMOS])",
+                    backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
@@ -1190,6 +1256,19 @@ xferBenchConfig::printConfig() {
                 printOption("Randomize location mode seed (--randomize_location_mode_seed=N)",
                             std::to_string(randomize_location_mode_seed));
             }
+        }
+
+        if (backend == XFERBENCH_BACKEND_SPDK) {
+            printOption("SPDK JSON config file (--spdk_json_config_file=path)",
+                        spdk_json_config_file);
+            printOption("SPDK bdev name (--spdk_bdev_name=name)", spdk_bdev_name);
+            printOption("SPDK mode (--spdk_mode=block|kv)", spdk_mode);
+            printOption("SPDK KV key namespace (--spdk_key_namespace=N)",
+                        std::to_string(spdk_key_namespace));
+            printOption("SPDK bdev offset (--spdk_bdev_offset=N)",
+                        std::to_string(spdk_bdev_offset));
+            printOption("SPDK message mempool size (--spdk_msg_mempool_size=N)",
+                        std::to_string(spdk_msg_mempool_size));
         }
 
         // Print DOCA GPUNetIO options if backend is DOCA GPUNetIO
@@ -1292,12 +1371,20 @@ xferBenchConfig::isStorageBackend() {
 
 bool
 xferBenchConfig::isObjStorageBackend() {
+    // SPDK reports both BLK_SEG and OBJ_SEG. Its KV mode is selected through
+    // isSpdkKv(), which must stay out of the S3/Azure object paths.
+    if (backend == XFERBENCH_BACKEND_SPDK) {
+        return false;
+    }
     return std::any_of(
         backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) { return m == OBJ_SEG; });
 }
 
 bool
 xferBenchConfig::isBlkStorageBackend() {
+    if (backend == XFERBENCH_BACKEND_SPDK) {
+        return !isSpdkKv();
+    }
     return std::any_of(
         backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) { return m == BLK_SEG; });
 }
@@ -1607,6 +1694,11 @@ xferBenchUtils::validateTransfer(bool is_initiator,
                                  std::vector<std::vector<xferBenchIOV>> &local_lists,
                                  std::vector<std::vector<xferBenchIOV>> &remote_lists) {
     if (!xferBenchConfig::check_consistency) {
+        return true;
+    }
+    if (xferBenchConfig::isSpdkKv()) {
+        // The NIXL worker retrieves and checks KV values through the backend,
+        // rather than treating object keys as filesystem paths.
         return true;
     }
 

@@ -27,6 +27,9 @@
 #include "kernels/nixlbench_device_launch.cuh"
 #include <limits>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
+#include <linux/memfd.h>
 #include <numeric>
 #include <sstream>
 #include "utils/neuron.h"
@@ -388,6 +391,19 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         if (!xferBenchConfig::doca_memos_nguid.empty()) {
             std::cout << "  Namespace GUID: " << xferBenchConfig::doca_memos_nguid << std::endl;
         }
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_SPDK)) {
+        backend_params["json_config_file"] = xferBenchConfig::spdk_json_config_file;
+        backend_params["bdev_name"] = xferBenchConfig::spdk_bdev_name;
+        if (xferBenchConfig::spdk_msg_mempool_size > 0) {
+            backend_params["msg_mempool_size"] =
+                std::to_string(xferBenchConfig::spdk_msg_mempool_size);
+        }
+        std::cout << "SPDK backend initialized:" << std::endl;
+        std::cout << "  JSON config file: " << xferBenchConfig::spdk_json_config_file << std::endl;
+        std::cout << "  bdev name: " << xferBenchConfig::spdk_bdev_name << std::endl;
+        std::cout << "  bdev offset: " << xferBenchConfig::spdk_bdev_offset << std::endl;
+        std::cout << "  message mempool size: " << xferBenchConfig::spdk_msg_mempool_size
+                  << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
         std::cout << "UCCL backend" << std::endl;
         backend_params["in_python"] = "0";
@@ -520,6 +536,11 @@ public:
     }
 };
 
+// IOVs retain only an address across release()/adopt(). Keep backing FDs alive
+// across that handoff, including repeated deregistration/registration cycles.
+static std::mutex hugepageFdsMutex;
+static std::unordered_map<void *, int> hugepageFds;
+
 class nixlHugepagesAlloc final : public nixlAlloc {
 public:
     nixlHugepagesAlloc(void *addr, size_t size) : nixlAlloc(addr, size) {}
@@ -528,36 +549,74 @@ public:
         if (!addr_) {
             return;
         }
+        int fd = -1;
+        {
+            std::lock_guard lock(hugepageFdsMutex);
+            auto it = hugepageFds.find(addr_);
+            if (it != hugepageFds.end()) {
+                fd = it->second;
+                hugepageFds.erase(it);
+            }
+        }
         const size_t aligned = ROUND_UP(size_, HUGEPAGE_SIZE);
         if (munmap(addr_, aligned) != 0) {
             std::cerr << "Warning: Failed to unmap hugepage memory: " << strerror(errno)
                       << std::endl;
+        }
+        if (fd >= 0) {
+            close(fd);
         }
     }
 };
 
 static std::unique_ptr<nixlAlloc>
 makeHugepagesAlloc(size_t size) {
+    if (size > static_cast<size_t>(std::numeric_limits<off_t>::max()) - (HUGEPAGE_SIZE - 1)) {
+        std::cerr << "Hugepage buffer size is too large" << std::endl;
+        return nullptr;
+    }
     const size_t aligned = ROUND_UP(size, HUGEPAGE_SIZE);
-    void *addr = mmap(nullptr,
-                      aligned,
-                      PROT_READ | PROT_WRITE,
+    const bool shared = xferBenchConfig::backend == XFERBENCH_BACKEND_SPDK;
+    int fd = -1;
+    if (shared) {
+        fd = memfd_create("nixlbench-spdk", MFD_CLOEXEC | MFD_HUGETLB | MFD_HUGE_2MB);
+        if (fd < 0) {
+            std::cerr << "Shared hugepage memfd creation failed: " << strerror(errno) << std::endl;
+            return nullptr;
+        }
+        if (ftruncate(fd, aligned) != 0) {
+            std::cerr << "Shared hugepage memfd sizing failed: " << strerror(errno) << std::endl;
+            close(fd);
+            return nullptr;
+        }
+    }
+    void *addr =
+        mmap(nullptr,
+             aligned,
+             PROT_READ | PROT_WRITE,
+             shared ? MAP_SHARED | MAP_POPULATE :
                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_HUGE_2MB | MAP_POPULATE,
-                      -1,
-                      0);
+             fd,
+             0);
     if (addr == MAP_FAILED) {
         std::cerr << "Error: Hugepage allocation failed (" << strerror(errno) << ")" << std::endl;
+        if (fd >= 0) {
+            close(fd);
+        }
         std::cerr << "Hugepages may not be available. Check /proc/sys/vm/nr_hugepages and "
-                  << "ensure sufficient hugepages are configured, or run without "
-                  << "--use_hugepages" << std::endl;
+                  << "ensure sufficient hugepages are configured" << std::endl;
         return nullptr;
     }
 
     assert(reinterpret_cast<uintptr_t>(addr) % HUGEPAGE_SIZE == 0);
+    if (shared) {
+        std::lock_guard lock(hugepageFdsMutex);
+        hugepageFds.emplace(addr, fd);
+    }
 
-    std::cout << "Allocated hugepage buffer: addr=0x" << std::hex
-              << reinterpret_cast<uintptr_t>(addr) << std::dec << ", requested_size=" << size
-              << ", allocated_size=" << aligned << std::endl;
+    std::cout << "Allocated " << (shared ? "shared FD-backed " : "") << "hugepage buffer: addr=0x"
+              << std::hex << reinterpret_cast<uintptr_t>(addr) << std::dec
+              << ", requested_size=" << size << ", allocated_size=" << aligned << std::endl;
 
     return std::make_unique<nixlHugepagesAlloc>(addr, size);
 }
@@ -1008,7 +1067,9 @@ cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov) {
         cleanupBasicDescVram(iov);
         break;
     case OBJ_SEG:
-        cleanupBasicDescObj(iov);
+        if (!xferBenchConfig::isSpdkKv()) {
+            cleanupBasicDescObj(iov);
+        }
         break;
     default:
         break;
@@ -1023,6 +1084,12 @@ xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t
     // The device ID corresponds to the block device UUID (e.g., 11 for local file, 14 for
     // /dev/zero)
     return std::optional<xferBenchIOV>(std::in_place, dev_offset, buffer_size, mem_dev_id);
+}
+
+static std::optional<xferBenchIOV>
+initBasicDescSpdk(size_t buffer_size, int mem_dev_id, size_t dev_offset) {
+    return std::optional<xferBenchIOV>(
+        std::in_place, dev_offset, buffer_size, mem_dev_id, xferBenchConfig::spdk_bdev_name);
 }
 
 bool
@@ -1122,10 +1189,13 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
     opt_args.backends.push_back(backend_engine);
 
-    // REDIS stays an independent backend (putRedis seeding), but remote values
-    // use OBJ_SEG addressing semantics. Handle it before isObjStorageBackend()
-    // so REDIS does not enter the S3/Azure putObj registration path.
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+    if (xferBenchConfig::isSpdkKv()) {
+        // KV object registrations depend on the current value/batch sizes and
+        // are created by exchangeIOV, not from the backing buffer dimensions.
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+        // REDIS stays an independent backend (putRedis seeding), but remote values
+        // use OBJ_SEG addressing semantics. Handle it before isObjStorageBackend()
+        // so REDIS does not enter the S3/Azure putObj registration path.
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -1247,6 +1317,20 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
         }
+    } else if (XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                auto basic_desc = initBasicDescSpdk(
+                    buffer_size, list_idx * num_devices + i, xferBenchConfig::spdk_bdev_offset);
+                if (basic_desc) {
+                    iov_list.push_back(basic_desc.value());
+                }
+            }
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, BLK_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+            remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
+        }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
         int num_files = xferBenchConfig::num_files;
@@ -1312,6 +1396,11 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                                   !gusli_devices.empty()) ?
                     gusli_devices[i].device_id :
                     i;
+                // Threads may use the same bdev offsets, but their independent
+                // registrations must not alias the same NIXL descriptor key.
+                if (xferBenchConfig::backend == XFERBENCH_BACKEND_SPDK) {
+                    mem_dev_id = list_idx * num_devices + i;
+                }
                 basic_desc = initBasicDescDram(buffer_size, mem_dev_id);
                 break;
             }
@@ -1367,6 +1456,16 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                          "registerMem failed for completion counter");
     }
 
+
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_SPDK && xferBenchConfig::reregister_mem) {
+        // Setup owns the buffers, but iteration slots must be the sole owners
+        // of their registrations. SPDK cannot register overlapping DMA ranges.
+        for (auto &region : local_regs_) {
+            region.deregister();
+        }
+        // BLK descriptors identify open devices, not DMA buffers. Keep their
+        // setup registration: multiple requests may name the same block range.
+    }
     return iov_lists;
 }
 
@@ -1492,6 +1591,38 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
 
+    if (xferBenchConfig::isSpdkKv()) {
+        remote_regs_.clear();
+        nixl_opt_args_t params;
+        params.backends.push_back(backend_engine);
+        uint64_t object_id = 0;
+        for (size_t thread = 0; thread < local_iovs.size(); ++thread) {
+            std::vector<xferBenchIOV> objects;
+            for (size_t entry = 0; entry < local_iovs[thread].size(); ++entry) {
+                // Stable 16-byte key: namespace (64), thread (32), entry (32),
+                // all big-endian. Key identity does not depend on addresses.
+                std::string key(16, '\0');
+                for (unsigned byte = 0; byte < 8; ++byte) {
+                    key[byte] =
+                        static_cast<char>(xferBenchConfig::spdk_key_namespace >> (56 - 8 * byte));
+                }
+                for (unsigned byte = 0; byte < 4; ++byte) {
+                    key[8 + byte] = static_cast<char>(thread >> (24 - 8 * byte));
+                    key[12 + byte] = static_cast<char>(entry >> (24 - 8 * byte));
+                }
+                objects.emplace_back(0, block_size, object_id++, key);
+            }
+            auto descs = iovListToNixlRegDlist(objects, OBJ_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(descs, &params), "register SPDK KV objects failed");
+            res.push_back(objects);
+            remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(objects));
+        }
+        std::cout << "SPDK KV: registered " << object_id << " keys, value size " << block_size
+                  << std::endl;
+        synchronize();
+        return res;
+    }
+
     if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
@@ -1544,6 +1675,13 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
+                } else if (XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
+                    xferBenchIOV iov_remote(iov);
+                    iov_remote.addr = xferBenchConfig::spdk_bdev_offset + file_offset;
+                    iov_remote.len = block_size;
+                    iov_remote.devId = iov.devId;
+                    iov_remote.metaInfo = xferBenchConfig::spdk_bdev_name;
+                    remote_iov_list.push_back(iov_remote);
                 } else {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
@@ -1566,7 +1704,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             }
 
             res.push_back(remote_iov_list);
-            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+                XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
                 const size_t max_offset_in_blocks = local_iovs.size() - 1;
                 file_offset = getFileOffset(file_offset, max_offset_in_blocks, block_size);
             }
@@ -1695,7 +1834,7 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
                            const std::vector<xferBenchIOV> &local_iov,
                            const std::vector<xferBenchIOV> &remote_iov) {
     // Pick the remote descriptor mem type from the storage taxonomy of the active backend.
-    if (xferBenchConfig::isObjStorageBackend()) {
+    if (xferBenchConfig::isObjStorageBackend() || xferBenchConfig::isSpdkKv()) {
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (xferBenchConfig::isBlkStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
@@ -1709,7 +1848,7 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
 
 static nixl_mem_t
 getRemoteSegType() {
-    if (xferBenchConfig::isObjStorageBackend()) {
+    if (xferBenchConfig::isObjStorageBackend() || xferBenchConfig::isSpdkKv()) {
         return OBJ_SEG;
     } else if (xferBenchConfig::isBlkStorageBackend()) {
         return BLK_SEG;
@@ -1734,10 +1873,12 @@ registerIterationMem(nixlAgent *agent,
         return rc;
     }
 
-    if (xferBenchConfig::isStorageBackend()) {
+    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::backend != XFERBENCH_BACKEND_SPDK) {
         nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
         rc = agent->registerMem(remote_reg, &reg_args);
         if (rc != NIXL_SUCCESS) {
+            CHECK_NIXL_ERROR(agent->deregisterMem(local_reg, &reg_args),
+                             "rollback local iteration registration failed");
             return rc;
         }
     }
@@ -1760,7 +1901,7 @@ deregisterIterationMem(nixlAgent *agent,
         return rc;
     }
 
-    if (xferBenchConfig::isStorageBackend()) {
+    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::backend != XFERBENCH_BACKEND_SPDK) {
         nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
         rc = agent->deregisterMem(remote_reg, &reg_args);
         if (rc != NIXL_SUCCESS) {
@@ -2348,6 +2489,49 @@ execQuery(nixlAgent *agent,
     return ret;
 }
 
+// Distinct per-key and per-offset bytes catch routing errors, stale values and
+// partial transfers. Untimed verification deliberately reuses registered DMA
+// buffers, so it exercises the same path as benchmark I/O.
+static bool
+kvPattern(const std::vector<std::vector<xferBenchIOV>> &local,
+          const std::vector<std::vector<xferBenchIOV>> &remote,
+          unsigned generation,
+          bool verify) {
+    for (size_t thread = 0; thread < local.size(); ++thread) {
+        for (size_t entry = 0; entry < local[thread].size(); ++entry) {
+            uint64_t state = 14695981039346656037ULL ^ generation;
+            for (unsigned char c : remote[thread][entry].metaInfo) {
+                state = (state ^ c) * 1099511628211ULL;
+            }
+            auto *bytes = reinterpret_cast<uint8_t *>(local[thread][entry].addr);
+            for (size_t offset = 0; offset < local[thread][entry].len; ++offset) {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                uint8_t expected = static_cast<uint8_t>(state);
+                if (verify && bytes[offset] != expected) {
+                    std::cerr << "SPDK KV mismatch: thread " << thread << ", entry " << entry
+                              << ", byte " << offset << std::endl;
+                    return false;
+                }
+                if (!verify) {
+                    bytes[offset] = expected;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+static void
+clearKvBuffers(const std::vector<std::vector<xferBenchIOV>> &local) {
+    for (const auto &thread : local) {
+        for (const auto &iov : thread) {
+            memset(reinterpret_cast<void *>(iov.addr), 0, iov.len);
+        }
+    }
+}
+
 std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
@@ -2474,6 +2658,44 @@ xferBenchNixlWorker::transfer(size_t block_size,
                   << std::endl;
     }
 
+    auto kvOnce = [&](nixl_xfer_op_t op) {
+        xferBenchStats ignored;
+        return execTransfer(agent,
+                            backend_engine,
+                            local_iovs,
+                            remote_iovs,
+                            op,
+                            xferBenchConfig::pipeline_depth,
+                            xferBenchConfig::num_threads,
+                            ignored,
+                            &terminate);
+    };
+    const unsigned generation = xferBenchConfig::check_consistency ? 1 : 0;
+    if (xferBenchConfig::isSpdkKv()) {
+        // Reads must never depend on stale keys from a previous benchmark.
+        // Two generations also exercise overwrite semantics when checking.
+        for (unsigned gen = 0; gen <= generation; ++gen) {
+            kvPattern(local_iovs, remote_iovs, gen, false);
+            if (kvOnce(NIXL_WRITE) < 0) {
+                return -1;
+            }
+            if (xferBenchConfig::check_consistency) {
+                clearKvBuffers(local_iovs);
+                if (kvOnce(NIXL_READ) < 0 || !kvPattern(local_iovs, remote_iovs, gen, true)) {
+                    return -1;
+                }
+            }
+        }
+        std::cout << "SPDK KV: keys prepopulated"
+                  << (xferBenchConfig::check_consistency ?
+                          "; initial and overwrite verification passed" :
+                          "")
+                  << std::endl;
+        if (xfer_op == NIXL_READ) {
+            clearKvBuffers(local_iovs);
+        }
+    }
+
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
         skip /= xferBenchConfig::large_blk_iter_ftr;
@@ -2540,6 +2762,17 @@ xferBenchNixlWorker::transfer(size_t block_size,
     // Synchronize to ensure all processes have completed the warmup (iter and polling)
     synchronize();
 
+    const unsigned timed_generation = generation + (xfer_op == NIXL_WRITE ? 1 : 0);
+    if (xferBenchConfig::isSpdkKv() && xferBenchConfig::check_consistency) {
+        // Warmup must not mask a missing timed transfer: poison read buffers
+        // and use a new write generation only after warmup is complete.
+        if (xfer_op == NIXL_READ) {
+            clearKvBuffers(local_iovs);
+        } else {
+            kvPattern(local_iovs, remote_iovs, timed_generation, false);
+        }
+    }
+
     if (xferBenchConfig::use_device_api) {
         ret = execDeviceTransfer(local_mvh,
                                  remote_mvh,
@@ -2565,6 +2798,18 @@ xferBenchNixlWorker::transfer(size_t block_size,
         return std::variant<xferBenchStats, int>(ret);
     }
 
+    if (xferBenchConfig::isSpdkKv() && xferBenchConfig::check_consistency) {
+        if (xfer_op == NIXL_WRITE) {
+            clearKvBuffers(local_iovs);
+            if (kvOnce(NIXL_READ) < 0) {
+                return -1;
+            }
+        }
+        if (!kvPattern(local_iovs, remote_iovs, timed_generation, true)) {
+            return -1;
+        }
+        std::cout << "SPDK KV: timed I/O byte verification passed" << std::endl;
+    }
     synchronize();
     return std::variant<xferBenchStats, int>(stats);
 }

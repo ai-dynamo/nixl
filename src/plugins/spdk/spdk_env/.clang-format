@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# These sources implement SPDK's env interface and are derived from SPDK, so
+# they follow SPDK's coding style rather than NIXL's. Leave them alone so diffs
+# against upstream SPDK stay readable.
+DisableFormat: true
+SortIncludes: Never

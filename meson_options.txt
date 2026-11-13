@@ -15,6 +15,8 @@
 
 option('ucx_path', type: 'string', value: '', description: 'Path to UCX install')
 option('libfabric_path', type: 'string', value: '', description: 'Path to LIBFABRIC install')
+option('spdk_include_path', type: 'string', value: '', description: 'Path to SPDK headers when pkg-config cflags are incomplete')
+option('spdk_library_path', type: 'string', value: '', description: 'Path to SPDK libraries when pkg-config libdirs are incomplete')
 option('etcd_inc_path', type: 'string', value: '', description: 'Path to ETCD Headers')
 option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD Libraries')
 option('disable_gds_backend', type : 'boolean', value : false, description : 'disable gds backend')
