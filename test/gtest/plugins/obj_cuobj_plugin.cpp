@@ -910,8 +910,8 @@ TEST_P(setupObjDellTestFixture, DellQueryMemTest) {
 #ifdef HAVE_CUDA
 // GPU memory (VRAM_SEG) transfer test for Dell ObjectScale RDMA engine.
 // Exercises the VRAM-specific code paths: cuMemObjGetDescriptor/PutDescriptor for
-// RDMA descriptor registration, and putObjectRdmaAsync/getObjectRdmaAsync for
-// GPU-direct RDMA transfers.
+// RDMA buffer registration, and per-transfer token minting via putObjectAsync/
+// getObjectAsync for GPU-direct RDMA transfers.
 TEST_P(setupObjDellTestFixture, DellVramXferTest) {
     int device_count = 0;
     cudaError_t err = cudaGetDeviceCount(&device_count);
