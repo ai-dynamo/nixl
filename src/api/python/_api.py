@@ -943,15 +943,25 @@ class nixl_agent:
         agent_name = self.agent.loadRemoteMD(metadata)
         return agent_name
 
-    def remove_remote_agent(self, agent: str):
+    def remove_remote_agent(self, agent: str) -> bool:
         """Remove a remote agent. After this call, current agent cannot initiate
         transfers towards the remote agent specified in the call anymore.
         This call will also result in a disconnect between the two agents.
 
         Args:
             agent: Name of the remote agent.
+
+        Returns:
+            True if the remote agent was removed, False if no metadata was loaded
+            for it, for example because it was already removed or the peer
+            invalidated it.
+
+        Raises:
+            nixlInvalidParamError: If agent is this agent's own name.
+            nixlBackendError: If a backend fails to disconnect from the agent. Other
+                backend failures raise their matching nixl error.
         """
-        self.agent.invalidateRemoteMD(agent)
+        return self.agent.invalidateRemoteMD(agent) == nixlBind.NIXL_SUCCESS
 
     def send_local_metadata(self, ip_addr: str = "", port: int = DEFAULT_COMM_PORT):
         """Send all of your metadata to a peer or central metadata server.

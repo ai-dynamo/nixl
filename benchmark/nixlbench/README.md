@@ -575,7 +575,7 @@ boundaries, large blocks with multiple workers, and phase warning behavior.
 --target_seg_type TYPE     # Memory segment type for target [DRAM, VRAM] (default: DRAM)
 --scheme NAME              # Communication scheme [pairwise, manytoone, onetomany, tp] (default: pairwise)
 --mode MODE                # Process mode [SG (Single GPU per proc), MG (Multi GPU per proc)] (default: SG)
---op_type TYPE             # Operation type [READ, WRITE] (default: WRITE)
+--op_type TYPE             # Operation type [READ, WRITE, QUERY] (default: WRITE)
 --check_consistency        # Enable consistency checking
 --total_buffer_size SIZE   # Total buffer size across devices per process (default: 8GiB)
 --start_block_size SIZE    # Starting block size (default: 4KiB)
@@ -658,6 +658,9 @@ devices can differ between the initiator and target processes.
 --gpunetio_oob_list IFACE   # OOB interface name for the control path
 --gpunetio_gid_index N      # RoCE GID table index (default: 0)
 --gpunetio_oob_port PORT    # OOB TCP port (default: 6544)
+--gpunetio_data_qp_count N  # GPUNetIO WRITE QPs per peer [1-4] (default: 1)
+--gpunetio_write_stripe MODE # GPUNETIO WRITE distribution: slots (default) or bytes
+--gpunetio_write_stripe_min_bytes N # Minimum bytes per WRITE QP in bytes mode (default: 4194304)
 ```
 
 **OBJ (S3) Backend:**
@@ -841,6 +844,20 @@ one GPU is available.
 
 The examples below write their files into `/mnt/storage/testdir`. Create it on
 the device you want to measure first: `mkdir -p /mnt/storage/testdir`.
+
+**DOCA_MEMOS object keys:**
+
+DOCA_MEMOS uses a fresh random 128-bit object key for each registered thread/device/batch
+entry. Keys are supplied through `metaInfo` as 32 hexadecimal characters, which the backend
+decodes into 16 binary bytes. The descriptor `dev_id` remains a local numeric identifier;
+it is not used as the object key. This avoids small-integer keys with mostly constant bytes
+and gives independent clients independent object sets, with negligible collision probability.
+
+Keys are generated from OS entropy during registration, independently of
+`randomize_location_mode_seed`. The same registered keys are reused for READ prepopulation,
+verification, and timed iterations; separate runs generate new keys. This does not add a
+hash-library dependency or change the DOCA_MEMOS backend. Confirm placement with per-target
+counters when measuring a distributed deployment; random keys alone do not verify routing.
 
 **GDS (GPU Direct Storage):**
 ```bash

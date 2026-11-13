@@ -443,6 +443,7 @@ else
                 link_with: [nixlbench_runtimes, utils_lib, worker_libs],
                 dependencies: deps,
                 link_args: args,
+                link_language: 'cpp', # Let users pass -Wl,... in LDFLAGS (nvcc rejects it)
                 install: true,
                 install_dir: get_option('bindir'))
 endif

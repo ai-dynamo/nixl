@@ -27,7 +27,7 @@ NIXL provides a unified interface for registering and transferring data across f
 | VRAM (HBM) | `VRAM_SEG` | `"VRAM"` or `"cuda"` | GPU high-bandwidth memory |
 | DRAM | `DRAM_SEG` | `"DRAM"` or `"cpu"` | Standard host memory |
 | File | `FILE_SEG` | `"FILE"` | Local and remote file systems |
-| Object Storage | `OBJ_SEG` | `"OBJ"` | Distributed object stores (S3, Azure Blob, DDN INFINIA) |
+| Object Storage | `OBJ_SEG` | `"OBJ"` | Distributed object stores (S3, Azure Blob, DDN INFINIA, DOCA_MEMOS KV) |
 | Block Storage | `BLK_SEG` | `"BLOCK"` | Block-level storage devices |
 
 For more on how memory types fit into the NIXL architecture, see the [Overview](/nixl/getting-started/overview).
@@ -99,6 +99,11 @@ NIXL loads each backend as a plug-in, and each plug-in supports specific memory 
       <td style="border-left: 1px solid var(--border, var(--grayscale-a5)); border-top: 1px solid var(--border, var(--grayscale-a5));">DDN INFINIA Client and Async libraries</td>
     </tr>
     <tr>
+      <td><a href="/nixl/user-guide/backend-selection/doca-memos">DOCA_MEMOS</a></td>
+      <td style="border-left: 1px solid var(--border, var(--grayscale-a5)); border-top: 1px solid var(--border, var(--grayscale-a5));">DRAM ↔ Object</td>
+      <td style="border-left: 1px solid var(--border, var(--grayscale-a5)); border-top: 1px solid var(--border, var(--grayscale-a5));">DOCA KV over NVMe KV</td>
+    </tr>
+    <tr>
       <td><a href="/nixl/user-guide/backend-selection/gusli">GUSLI</a></td>
       <td style="border-left: 1px solid var(--border, var(--grayscale-a5)); border-top: 1px solid var(--border, var(--grayscale-a5));">DRAM ↔ Block</td>
       <td style="border-left: 1px solid var(--border, var(--grayscale-a5));">Block I/O</td>
@@ -122,6 +127,7 @@ The table below maps common scenarios to recommended backends. NIXL selects the 
 | Block storage I/O | Block Storage | DRAM | GUSLI | Block-level I/O operations |
 | CPU-to-Azure Blob | DRAM | Object Storage | Azure Blob | Azure Blob REST API |
 | CPU/GPU to DDN INFINIA | DRAM / VRAM | Object Storage | INFINIA | Asynchronous object I/O from registered host or GPU memory |
+| CPU to DOCA_MEMOS KV store | DRAM | Object Storage | DOCA_MEMOS | Key-value store and retrieve on BlueField NVMe KV devices |
 | File I/O (3FS) | File | DRAM | HF3FS | 3FS fuse-based filesystem |
 
 <Note>
