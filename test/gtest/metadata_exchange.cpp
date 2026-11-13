@@ -498,6 +498,41 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
     ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 }
 
+TEST_F(MetadataExchangeTestFixture, SocketClosesOnPeerEOF) {
+    initAgentsDefault();
+
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    const auto wait_for = [](const auto &done) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (!done() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return done();
+    };
+
+    const LogMessageCounter disconnects("disconnected, closing its metadata socket");
+
+    // Fetching leaves dst connected to src's listener.
+    nixl_opt_args_t fetch_args;
+    fetch_args.ipAddr = src.ip;
+    fetch_args.port = src.port;
+
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &fetch_args), NIXL_SUCCESS);
+    ASSERT_TRUE(
+        wait_for([&] { return dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) == NIXL_SUCCESS; }));
+
+    // An idle peer stays connected until it sends EOF.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    ASSERT_EQ(disconnects.count(), 0u);
+
+    // Destroying the peer agent closes its end; src must drop the socket.
+    dst.agent.reset();
+    EXPECT_TRUE(wait_for([&] { return disconnects.count() == 1; }))
+        << "The listener did not close the disconnected peer's socket";
+}
+
 TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
     nixl::scopedFd fd(socket(AF_INET6, SOCK_STREAM, 0));
     if (!fd.valid() &&
