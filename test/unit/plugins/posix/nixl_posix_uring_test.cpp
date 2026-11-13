@@ -38,12 +38,15 @@ enum class submit_mode_t {
     PARTIAL_READ,
     PARTIAL_WRITE,
     PARTIAL_CANCEL,
+    LARGE_IO,
     PASS_THROUGH
 };
 submit_mode_t submit_mode = submit_mode_t::PASS_THROUGH;
 int submit_calls = 0, transient_submit_errors = 0, cancel_completions = 0;
 unsigned first_ready = 0, first_submitted = 0;
 int partial_io_submissions = 0;
+int large_io_submissions = 0;
+unsigned large_io_first_len = 0;
 struct io_uring *last_submitted_ring = nullptr;
 std::array<unsigned, 3> partial_io_lengths{};
 std::array<size_t, 3> partial_io_offsets{};
@@ -77,6 +80,8 @@ struct uringTest {
         submit_calls = transient_submit_errors = cancel_completions = first_ready =
             first_submitted = 0;
         partial_io_submissions = 0;
+        large_io_submissions = 0;
+        large_io_first_len = 0;
         last_submitted_ring = nullptr;
         char path[] = "/tmp/nixl_uring_test_XXXXXX";
         if ((fd = mkstemp(path)) < 0) {
@@ -192,6 +197,18 @@ io_uring_submit(struct io_uring *ring) LIBURING_NOEXCEPT {
         partial_io_submissions++;
         return real_submit(ring);
     }
+    if (submit_mode == submit_mode_t::LARGE_IO && ready > 0) {
+        struct io_uring_sqe *const sqe = &ring->sq.sqes[ring->sq.sqe_head & *ring->sq.kring_mask];
+        if (large_io_submissions++ == 0) {
+            // Record the length the queue asked for, then let the kernel touch one real block.
+            large_io_first_len = sqe->len;
+            sqe->len = block_size;
+        } else {
+            // Fail the resubmitted remainder so the oversized buffer is never accessed.
+            sqe->fd = -1;
+        }
+        return real_submit(ring);
+    }
     if (ready > 0 &&
         (submit_mode == submit_mode_t::PARTIAL_READ ||
          submit_mode == submit_mode_t::PARTIAL_WRITE)) {
@@ -304,6 +321,24 @@ main() {
         URING_CHECK(waitFor(read) == NIXL_ERR_BACKEND && submit_calls == (file_size ? 2 : 1));
         URING_CHECK(!file_size ||
                     std::memcmp(test.buffers[0].data(), expected.data(), file_size) == 0);
+    }
+    {
+        // An I/O of 4 GiB or more must not have its length truncated to the SQE's 32 bits:
+        // 4 GiB + 2 blocks used to be submitted as a 2-block I/O.
+        uringTest test(submit_mode_t::LARGE_IO);
+        completionState state;
+        URING_CHECK(test.queue->enqueue(test.fd,
+                                        test.buffers[0].data(),
+                                        (size_t{1} << 32) + 2 * block_size,
+                                        0,
+                                        false,
+                                        completionCallback,
+                                        &state) == NIXL_SUCCESS);
+        URING_CHECK(test.queue->post() == NIXL_IN_PROG);
+        test.drain();
+        URING_CHECK(large_io_submissions == 2);
+        URING_CHECK(large_io_first_len > 2 * block_size && large_io_first_len % block_size == 0);
+        URING_CHECK(state.count == 1 && state.errors == 1);
     }
     for (const bool read : {true, false}) {
         uringTest test(submit_mode_t::PARTIAL_CANCEL);
