@@ -16,6 +16,9 @@ PUBLISH_DIR="${PUBLISH_DIR:-verification}"
 . ./wheel_build_ids.env
 . ./cell.env
 CELL_SPCX_REF="${UCX_SPCX_PLUGIN_REF}"
+# Read from the image by Extract Build Info; an older ref's
+# build_options.env may still set its own.
+CELL_CUDA_VERSION="${CUDA_VERSION}"
 
 # Outside the build_options.env guard below: the release folder no longer
 # carries the sha, so NIXL_SHA must be set even for a ref that predates
@@ -33,7 +36,6 @@ if [ -f build_options.env ]; then
   # The plugin job's provenance beats the built ref's own default.
   [ -z "${CELL_SPCX_REF}" ] || UCX_SPCX_PLUGIN_REF="${CELL_SPCX_REF}"
   [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
-  [ -n "${CUDA_VERSION:-}" ] && PROPERTIES+=";CUDA_VERSION=${CUDA_VERSION}"
   [ "${BUILD_UCX_SPCX_PLUGIN:-}" = "true" ] && [ -n "${UCX_SPCX_PLUGIN_REF:-}" ] \
     && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
   [ "${BUILD_INFINIA:-}" = "true" ] && [ -n "${INFINIA_LIBS_IMAGE:-}" ] \
@@ -52,6 +54,7 @@ fi
 UCX_SHA="$(docker run --rm "${WHEEL_IMAGE_TAG}" git -C /usr/local/src/ucx rev-parse HEAD | cut -c1-8)"
 [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot read the UCX commit from ${WHEEL_IMAGE_TAG}"; exit 1; }
 PROPERTIES+=";UCX_SHA=${UCX_SHA}"
+PROPERTIES+=";CUDA_VERSION=${CELL_CUDA_VERSION}"
 
 # verification/ keeps its g<nixl-sha>.ucx<ucx-sha> schema (consumed by the
 # build-llm-container verification pipeline) and is shared between builds;

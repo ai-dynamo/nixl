@@ -46,7 +46,7 @@ done
 
 # --- nixl-ci-build-wheel-nightly -------------------------------------------
 # The nightly builds its wheel_base images through runs_on_dockers so the deps
-# compile once per arch and CUDA major instead of once per matrix cell. Those
+# compile once per arch instead of once per matrix cell. Those
 # images are built before any step runs, so their tag cannot be set by a step -
 # and it has to be unique per run, both because the nightly rebuilds them every
 # time and so they cannot collide with the CI_IMAGE_TAG-keyed image that per-PR
