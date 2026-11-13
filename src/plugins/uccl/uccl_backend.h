@@ -44,21 +44,6 @@ public:
     ~nixlUcclEngine();
 
     bool
-    supportsRemote() const {
-        return true;
-    }
-
-    bool
-    supportsLocal() const {
-        return true;
-    }
-
-    bool
-    supportsNotif() const {
-        return true;
-    }
-
-    bool
     supportsProgTh() const {
         return false;
     }
