@@ -19,14 +19,17 @@ if cuobj_dep.found()
     obj_test_sources += ['mock_dell_s3_client.cpp', 'obj_cuobj.cpp']
 endif
 
+obj_test_deps = [obj_backend_interface, dependency('asio', required: true)]
+
+if have_scality_ai_connector
+    subdir('scality_ai_connector')
+endif
+
 obj_unit_test_dep = declare_dependency(
     sources: obj_test_sources,
     include_directories: [
         nixl_inc_dirs, utils_inc_dirs,
         '../../../../src/plugins/obj',
     ],
-    dependencies: [
-        obj_backend_interface,
-        dependency('asio', required: true),
-    ],
+    dependencies: obj_test_deps,
 )
