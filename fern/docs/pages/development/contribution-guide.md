@@ -415,7 +415,7 @@ For significant new functionality, open a GitHub issue first to discuss the desi
 - User-visible features require documentation.
 
 <Note>
-Contributions to the code under `./examples/device/ep` (derived from DeepEP, licensed under MIT) must be licensed under Apache 2.0.
+Contributions to the code under `./examples/device/ep` and `./runtime/ep` (derived from DeepEP, licensed under MIT) must be licensed under Apache 2.0.
 </Note>
 
 ### Review Process Expectations
