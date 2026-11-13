@@ -17,7 +17,6 @@
 
 #include "gpunetio_backend.h"
 #include "gpunetio_cuda_device_guard.h"
-#include "gpunetio_completion_status.h"
 #include "serdes/serdes.h"
 #include <algorithm>
 #include <arpa/inet.h>
@@ -35,6 +34,11 @@
 const char info_delimiter = '-';
 
 namespace {
+nixl_status_t
+completionStatus(const volatile uint32_t *error_flag) {
+    return *error_flag == 0 ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
+}
+
 template<typename unsignedType>
 inline bool
 parseUnsigned(std::string_view field, unsignedType &value) {
@@ -677,8 +681,7 @@ nixlDocaEngine::~nixlDocaEngine() {
 
 nixl_status_t
 nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev, doca_gpu *gpu) {
-    const nixl_status_t completion_status =
-        nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
+    const nixl_status_t completion_status = completionStatus(&host_state_cpu_->failed);
     if (completion_status != NIXL_SUCCESS) {
         return completion_status;
     }
@@ -761,8 +764,7 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     std::atomic_thread_fence(std::memory_order_seq_cst);
     ((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu = notif_qp_gpu;
     while (((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu != nullptr) {
-        const nixl_status_t wait_status =
-            nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
+        const nixl_status_t wait_status = completionStatus(&host_state_cpu_->failed);
         if (wait_status != NIXL_SUCCESS) {
             return wait_status;
         }
@@ -1953,10 +1955,12 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     if (cuda_device.status() != cudaSuccess) {
         return NIXL_ERR_BACKEND;
     }
-    const nixl_status_t completion_status =
-        nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
+    const nixl_status_t completion_status = completionStatus(&host_state_cpu_->failed);
     if (completion_status != NIXL_SUCCESS) {
         return completion_status;
+    }
+    if (handle == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
     }
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
 
@@ -1964,6 +1968,11 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    if (treq->postedCount > 0 &&
+        treq->completionState.load(std::memory_order_acquire) !=
+            nixlDocaBckndReq::completion_state::COMPLETE) {
+        return NIXL_ERR_REPOST_ACTIVE;
+    }
     if (treq->postStatus != NIXL_SUCCESS) {
         return treq->postStatus;
     }
@@ -2063,6 +2072,9 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
 
 nixl_status_t
 nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
+    if (handle == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
     auto state = treq->completionState.load(std::memory_order_acquire);
     if (state == nixlDocaBckndReq::completion_state::COMPLETE) {
@@ -2087,14 +2099,13 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
         }
     }
 
-    if (request_error || treq->postStatus != NIXL_SUCCESS ||
-        nixl::gpunetio::completionStatus(&host_state_cpu_->failed) != NIXL_SUCCESS) {
+    if (request_error || completionStatus(&host_state_cpu_->failed) != NIXL_SUCCESS) {
         treq->postStatus = NIXL_ERR_BACKEND;
         return NIXL_ERR_BACKEND;
     }
 
     retireRequest(treq);
-    return NIXL_SUCCESS;
+    return treq->postStatus;
 }
 
 void
@@ -2132,37 +2143,22 @@ nixlDocaEngine::retireRequest(nixlDocaBckndReq *request) const {
 
 nixl_status_t
 nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
+    if (handle == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     auto *treq = static_cast<nixlDocaBckndReq *>(handle);
-    if (dataQpCount_ > 1 && treq->postedCount > 0 &&
-        nixl::gpunetio::completionStatus(&host_state_cpu_->failed) != NIXL_SUCCESS) {
-        nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
-        if (cuda_device.status() != cudaSuccess) {
-            return NIXL_ERR_BACKEND;
-        }
-        for (int stream = 0; stream < nstreams; ++stream) {
-            if (cudaStreamSynchronize(post_stream[stream]) != cudaSuccess) {
-                return NIXL_ERR_BACKEND;
-            }
-        }
-    }
-    if (treq->postedCount == 0) {
-        for (uint32_t idx : treq->positions) {
-            xferReqReserved_[idx].store(false, std::memory_order_release);
-        }
-        delete treq;
-        return NIXL_SUCCESS;
-    }
-
-    if (treq->completionState.load(std::memory_order_acquire) !=
-        nixlDocaBckndReq::completion_state::COMPLETE) {
-        nixl_status_t status = checkXfer(handle);
-        if (status == NIXL_IN_PROG) {
+    // GPU posting can finish while the NIC still owns the payload and notification.
+    if (treq->postedCount > 0 &&
+        treq->completionState.load(std::memory_order_acquire) !=
+            nixlDocaBckndReq::completion_state::COMPLETE) {
+        (void)checkXfer(handle);
+        if (treq->completionState.load(std::memory_order_acquire) !=
+            nixlDocaBckndReq::completion_state::COMPLETE) {
             return NIXL_ERR_BACKEND;
         }
     }
-
-    for (uint32_t idx : treq->positions) {
-        xferReqReserved_[idx].store(false, std::memory_order_release);
+    for (uint32_t pos : treq->positions) {
+        xferReqReserved_[pos].store(false, std::memory_order_release);
     }
     delete treq;
     return NIXL_SUCCESS;
@@ -2170,8 +2166,7 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
-    const nixl_status_t completion_status =
-        nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
+    const nixl_status_t completion_status = completionStatus(&host_state_cpu_->failed);
     if (completion_status != NIXL_SUCCESS) {
         return completion_status;
     }
@@ -2183,8 +2178,7 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
     // while getNotifs is running
     std::lock_guard<std::mutex> lock(notifLock);
     for (auto &notif : notifMap) {
-        const nixl_status_t preflight_status =
-            nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
+        const nixl_status_t preflight_status = completionStatus(&host_state_cpu_->failed);
         if (preflight_status != NIXL_SUCCESS) {
             return preflight_status;
         }
@@ -2200,14 +2194,12 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
         ((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu = notif_qp_gpu;
         std::atomic_thread_fence(std::memory_order_seq_cst);
         while (((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu != nullptr) {
-            const nixl_status_t wait_status =
-                nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
+            const nixl_status_t wait_status = completionStatus(&host_state_cpu_->failed);
             if (wait_status != NIXL_SUCCESS) {
                 return wait_status;
             }
         }
-        const nixl_status_t progress_status =
-            nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
+        const nixl_status_t progress_status = completionStatus(&host_state_cpu_->failed);
         if (progress_status != NIXL_SUCCESS) {
             return progress_status;
         }
@@ -2239,8 +2231,7 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
 
 nixl_status_t
 nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
-    const nixl_status_t completion_status =
-        nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
+    const nixl_status_t completion_status = completionStatus(&host_state_cpu_->failed);
     if (completion_status != NIXL_SUCCESS) {
         return completion_status;
     }
@@ -2279,6 +2270,11 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     }
 
     std::string newMsg = msg_tag_start + std::to_string((int)msg.size()) + msg_tag_end + msg;
+    const std::lock_guard lock(notifSendLock);
+    const nixl_status_t locked_status = completionStatus(&host_state_cpu_->failed);
+    if (locked_status != NIXL_SUCCESS) {
+        return locked_status;
+    }
     if (!notif->acquireSendSlot(slot)) {
         NIXL_ERROR << "genNotif: all notification buffers for " << remote_agent << " are in use";
         return NIXL_ERR_BACKEND;
@@ -2289,15 +2285,13 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     NIXL_DEBUG << "genNotif to " << remote_agent << " msg size " << std::to_string((int)msg.size())
                << " msg " << newMsg << " at " << slot << " msg_buf " << msg_buf << "\n";
 
-    std::lock_guard<std::mutex> lock(notifSendLock);
     ((volatile struct docaNotif *)notif_send_cpu)->msg_buf = msg_buf;
     ((volatile struct docaNotif *)notif_send_cpu)->msg_lkey = notif->send_mr->get_lkey();
     ((volatile struct docaNotif *)notif_send_cpu)->msg_size = newMsg.size();
     std::atomic_thread_fence(std::memory_order_seq_cst);
     ((volatile struct docaNotif *)notif_send_cpu)->qp_gpu = notif_qp_gpu;
     while (((volatile struct docaNotif *)notif_send_cpu)->qp_gpu != nullptr) {
-        const nixl_status_t wait_status =
-            nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
+        const nixl_status_t wait_status = completionStatus(&host_state_cpu_->failed);
         if (wait_status != NIXL_SUCCESS) {
             // The SEND may still read the buffer, so it stays owned.
             return wait_status;
@@ -2305,5 +2299,5 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     }
     notif->releaseSendSlot(slot);
 
-    return nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
+    return completionStatus(&host_state_cpu_->failed);
 }
