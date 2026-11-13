@@ -1,7 +1,8 @@
 # Source Precedence
 
-Use this file when the user asks for copy-paste NIXL Python code, when the
-installed version is unknown, or when an API detail may be version-specific.
+Use this file when the user asks for readiness-dependent NIXL Python API
+examples or edits, when the installed version is unknown, or when an API detail
+may be version-specific.
 
 ## Source Order
 
