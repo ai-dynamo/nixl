@@ -104,21 +104,6 @@ public:
     friend class TcpxoBackendTest;
 
     // Feature select subsystem
-    bool
-    supportsRemote() const override {
-        return true;
-    }
-
-    bool
-    supportsLocal() const override {
-        return false;
-    }
-
-    bool
-    supportsNotif() const override {
-        return true;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const override {
         return {
