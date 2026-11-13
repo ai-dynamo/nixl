@@ -36,7 +36,7 @@ libfabric_plugin_deps = [
     dependency('dl', required: true)
 ]
 
-compile_flags = ['-DHAVE_LIBFABRIC']
+libfabric_compile_flags = ['-DHAVE_LIBFABRIC']
 libfabric_gpu_abi_deps = []
 
 # Add GPU support: HIP/ROCm when rocm_path is set, CUDA otherwise. The GPU code
@@ -44,11 +44,11 @@ libfabric_gpu_abi_deps = []
 # paths against HIP via rocm_dep.
 if rocm_dep.found()
     libfabric_plugin_deps += [rocm_dep]
-    compile_flags += ['-DHAVE_CUDA']
+    libfabric_compile_flags += ['-DHAVE_CUDA']
     libfabric_gpu_abi_deps += [rocm_dep]
 elif cuda_dep.found()
     libfabric_plugin_deps += [cuda_dep]
-    compile_flags += ['-DHAVE_CUDA']
+    libfabric_compile_flags += ['-DHAVE_CUDA']
     libfabric_gpu_abi_deps += [cuda_dep]
 endif
 
@@ -65,7 +65,7 @@ if 'LIBFABRIC' in static_plugins
         dependencies: libfabric_plugin_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
-        cpp_args: compile_flags,
+        cpp_args: libfabric_compile_flags,
         name_prefix: 'libplugin_',
     )
 else
@@ -80,7 +80,7 @@ else
         dependencies: libfabric_plugin_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
-        cpp_args: compile_flags + ['-fPIC'],
+        cpp_args: libfabric_compile_flags + ['-fPIC'],
         name_prefix: 'libplugin_',
         install_dir: plugin_install_dir,
     )
@@ -102,5 +102,5 @@ endif
 # a smaller object and the plugin's constructor writes past the allocation.
 libfabric_backend_interface = declare_dependency(link_with: libfabric_backend_lib,
     include_directories: include_directories('.'),
-    compile_args: compile_flags,
+    compile_args: libfabric_compile_flags,
     dependencies: libfabric_gpu_abi_deps)
