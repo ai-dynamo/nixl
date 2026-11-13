@@ -101,9 +101,7 @@ enum class check_response_t : std::uint8_t { READY = 0, NOT_READY = 1 };
 // Base class for all TCPStore requests.
 class nixlTcpStoreClientAsync::Request {
 public:
-    Request(nixlTcpStoreClientAsync &client, deadline_t deadline)
-        : client_(client),
-          deadline_(deadline) {}
+    Request(nixlTcpStoreClientAsync &client) : client_(client) {}
 
     virtual ~Request() = default;
 
@@ -120,9 +118,7 @@ public:
     virtual void
     onComplete(asio::error_code error, nixl::fixedCapacityBuffer response) = 0;
 
-
     nixlTcpStoreClientAsync &client_;
-    deadline_t deadline_;
     std::int32_t connectionGeneration_ = -1;
 };
 
@@ -400,11 +396,10 @@ nixlTcpStoreClientAsync::set(const std::string &key,
     class setRequest : public Request {
     public:
         setRequest(nixlTcpStoreClientAsync &client,
-                   deadline_t deadline,
                    const std::string &key,
                    std::string value,
                    std::function<void(asio::error_code)> on_complete)
-            : Request(client, deadline),
+            : Request(client),
               key_(key),
               value_(std::move(value)),
               onComplete_(on_complete) {}
@@ -440,8 +435,7 @@ nixlTcpStoreClientAsync::set(const std::string &key,
         std::function<void(asio::error_code)> onComplete_;
     };
 
-    scheduleRequest(std::make_unique<setRequest>(
-        *this, std::chrono::steady_clock::now() + opTimeout_, key, std::move(value), on_complete));
+    scheduleRequest(std::make_unique<setRequest>(*this, key, std::move(value), on_complete));
 }
 
 void
@@ -452,10 +446,9 @@ nixlTcpStoreClientAsync::get(
     class getRequest : public Request {
     public:
         getRequest(nixlTcpStoreClientAsync &client,
-                   deadline_t deadline,
                    const std::string &key,
                    std::function<void(asio::error_code, std::optional<std::string>)> on_complete)
-            : Request(client, deadline),
+            : Request(client),
               key_(key),
               onComplete_(on_complete) {}
 
@@ -497,10 +490,9 @@ nixlTcpStoreClientAsync::get(
     class checkRequest : public Request {
     public:
         checkRequest(nixlTcpStoreClientAsync &client,
-                     deadline_t deadline,
                      const std::string &key,
                      std::function<void(asio::error_code, std::optional<std::string>)> on_complete)
-            : Request(client, deadline),
+            : Request(client),
               key_(key),
               onComplete_(on_complete) {}
 
@@ -533,8 +525,7 @@ nixlTcpStoreClientAsync::get(
             tcpstore::check_response_t response;
             memcpy(&response, buf.data(), sizeof(tcpstore::check_response_t));
             if (response == tcpstore::check_response_t::READY) {
-                client_.scheduleRequest(
-                    std::make_unique<getRequest>(client_, deadline_, key_, onComplete_));
+                client_.scheduleRequest(std::make_unique<getRequest>(client_, key_, onComplete_));
             } else {
                 onComplete_(asio::error_code(), std::nullopt);
             }
@@ -545,8 +536,7 @@ nixlTcpStoreClientAsync::get(
         std::function<void(asio::error_code, std::optional<std::string>)> onComplete_;
     };
 
-    scheduleRequest(std::make_unique<checkRequest>(
-        *this, std::chrono::steady_clock::now() + opTimeout_, key, on_complete));
+    scheduleRequest(std::make_unique<checkRequest>(*this, key, on_complete));
 }
 
 void
@@ -556,10 +546,9 @@ nixlTcpStoreClientAsync::deleteKey(const std::string &key,
     class deleteKeyRequest : public Request {
     public:
         deleteKeyRequest(nixlTcpStoreClientAsync &client,
-                         deadline_t deadline,
                          const std::string &key,
                          std::function<void(asio::error_code, bool)> on_complete)
-            : Request(client, deadline),
+            : Request(client),
               key_(key),
               onComplete_(on_complete) {}
 
@@ -597,8 +586,7 @@ nixlTcpStoreClientAsync::deleteKey(const std::string &key,
         std::function<void(asio::error_code, bool)> onComplete_;
     };
 
-    scheduleRequest(std::make_unique<deleteKeyRequest>(
-        *this, std::chrono::steady_clock::now() + opTimeout_, key, on_complete));
+    scheduleRequest(std::make_unique<deleteKeyRequest>(*this, key, on_complete));
 }
 
 // This function is thread-safe and can be called from any thread.
@@ -665,15 +653,6 @@ nixlTcpStoreClientAsync::processSendQueue() {
                 return;
             }
 
-            if (std::chrono::steady_clock::now() >= request->deadline_) {
-                // Fail expired requests without initiating any I/O operations.
-                // Otherwise, the I/O operation will timeout immediately and
-                // trigger error handling which close the connection unnecessarily.
-                request->onComplete(asio::error::timed_out, nixl::fixedCapacityBuffer(0));
-                asio::post(ioContext_, [this]() { processSendQueue(); });
-                return;
-            }
-
             hasInflightSend_ = true;
 
             request->connectionGeneration_ = generation_;
@@ -699,7 +678,7 @@ nixlTcpStoreClientAsync::processSendQueue() {
 
             initiateAsyncWrite(request_ptr->requestMessage(),
                                request_ptr->name(),
-                               request_ptr->deadline_,
+                               std::chrono::steady_clock::now() + opTimeout_,
                                send_complete);
         }
         break;
@@ -759,14 +738,14 @@ nixlTcpStoreClientAsync::processRecvQueue() {
                 nixl::fixedCapacityBuffer response(response_size);
                 initiateAsyncRead(std::move(response),
                                   request_ptr->name(),
-                                  request_ptr->deadline_,
+                                  std::chrono::steady_clock::now() + opTimeout_,
                                   recv_complete);
             } else {
                 nixl::fixedCapacityBuffer msg_size_buf(sizeof(std::uint64_t));
                 initiateAsyncRead(
                     std::move(msg_size_buf),
                     request_ptr->name(),
-                    request_ptr->deadline_,
+                    std::chrono::steady_clock::now() + opTimeout_,
                     [this, request_ptr, recv_complete = std::move(recv_complete)](
                         nixl::fixedCapacityBuffer msg_size_buf,
                         asio::error_code error,
@@ -790,7 +769,7 @@ nixlTcpStoreClientAsync::processRecvQueue() {
                                 nixl::fixedCapacityBuffer response(msg_size);
                                 initiateAsyncRead(std::move(response),
                                                   request_ptr->name(),
-                                                  request_ptr->deadline_,
+                                                  std::chrono::steady_clock::now() + opTimeout_,
                                                   recv_complete);
                             }
                         } else {
@@ -832,28 +811,6 @@ nixlTcpStoreClientAsync::drainSendQueue() {
         r->onComplete(asio::error::connection_reset, nixl::fixedCapacityBuffer(0));
     }
     requests.clear();
-}
-
-// This function must be called from the I/O context.
-void
-nixlTcpStoreClientAsync::expireTimedOutRequests() {
-    std::deque<std::unique_ptr<Request>> expired_requests;
-    {
-        const std::lock_guard lock(sendQueueMutex_);
-        for (auto it = sendQueue_.begin(); it != sendQueue_.end();) {
-            if ((*it)->deadline_ < std::chrono::steady_clock::now()) {
-                expired_requests.push_back(std::move(*it));
-                it = sendQueue_.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    }
-
-    for (auto &r : expired_requests) {
-        r->onComplete(asio::error::operation_aborted, nixl::fixedCapacityBuffer(0));
-    }
-    expired_requests.clear();
 }
 
 // This function must be called from the I/O context.
@@ -904,9 +861,6 @@ nixlTcpStoreClientAsync::onError(std::string what,
         if (connectionState_ == connection_state_t::CONNECTING ||
             connectionState_ == connection_state_t::CONNECTED) {
             connectionState_ = connection_state_t::CLOSED;
-            if (connectionRetryCount_ > 0) {
-                expireTimedOutRequests();
-            }
             if (connectionRetryCount_ < max_connection_retry_count) {
                 connectionRetryTimer_.expires_after(connection_retry_interval);
                 connectionRetryTimer_.async_wait([this](asio::error_code error) {

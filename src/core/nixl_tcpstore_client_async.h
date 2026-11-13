@@ -165,10 +165,6 @@ private:
     void
     drainRecvQueue();
 
-    // Expire timed out requests.
-    void
-    expireTimedOutRequests();
-
     // Handle I/O error.
     void
     onError(std::string what, asio::error_code error, bool is_timeout, std::int32_t op_generation);

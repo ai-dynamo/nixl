@@ -239,29 +239,32 @@ nixlTcpStoreMetadataBackend::initiateFetch(const std::string &remote_name, const
                          nixl_status_t ret = NIXL_SUCCESS;
                          try {
                              ret = ctx_.loadRemoteMD(*blob, loaded_name);
+                             if (ret < 0) {
+                                 NIXL_ERROR << "[" << ctx_.agentName()
+                                            << "] failed to load metadata fetched for " << remote
+                                            << " with status " << ret;
+                                 return;
+                             }
+                             if (loaded_name != remote) {
+                                 // A corrupted or mis-keyed store value could carry another agent's
+                                 // metadata; reject it rather than accept it under the wrong name.
+                                 NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore metadata for "
+                                            << remote << " embeds mismatched agent name "
+                                            << loaded_name;
+                                 ctx_.invalidateRemoteMD(loaded_name);
+                                 return;
+                             }
+                             NIXL_DEBUG << "[" << ctx_.agentName()
+                                        << "] TCPStore fetched metadata for " << remote
+                                        << ", size: " << blob->size();
+                             return;
                          }
                          catch (const std::exception &e) {
                              NIXL_ERROR << "[" << ctx_.agentName()
                                         << "] failed to load metadata fetched for " << remote
                                         << ": " << e.what();
-                         }
-                         if (ret < 0) {
-                             NIXL_ERROR << "[" << ctx_.agentName()
-                                        << "] failed to load metadata fetched for " << remote
-                                        << " with status " << ret;
                              return;
                          }
-                         if (loaded_name != remote) {
-                             // A corrupted or mis-keyed store value could carry another agent's
-                             // metadata; reject it rather than accept it under the wrong name.
-                             NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore metadata for "
-                                        << remote << " embeds mismatched agent name "
-                                        << loaded_name;
-                             ctx_.invalidateRemoteMD(loaded_name);
-                             return;
-                         }
-                         NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore fetched metadata for "
-                                    << remote << ", size: " << blob->size();
                      } else {
                          if (!error) {
                              NIXL_DEBUG << "[" << ctx_.agentName()
