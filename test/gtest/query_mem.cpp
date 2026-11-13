@@ -186,6 +186,45 @@ TEST_F(QueryMemTest, QueryMemWithEmptyFilenames) {
     EXPECT_FALSE(resp[1].has_value());
 }
 
+TEST_F(QueryMemTest, QueryMemWithPathModeMetaInfo) {
+    nixlAgentConfig cfg;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+    nixlAgent agent("test_agent", cfg);
+
+    nixlBackendH *backend_handle = nullptr;
+    nixl_b_params_t params;
+    auto status = agent.createBackend("POSIX", params, backend_handle);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+    ASSERT_NE(backend_handle, nullptr);
+
+    // registerMem accepts "<modes>:<path>" in metaInfo; queryMem must stat <path>.
+    const std::string not_created = dir_path + "/test_query_mem_not_created.txt";
+    std::filesystem::remove(not_created);
+
+    nixlDescList<nixlBlobDesc> descs(FILE_SEG);
+    descs.addDesc(nixlBlobDesc(0, 0, 0, "ro:" + test_file1));
+    descs.addDesc(nixlBlobDesc(0, 0, 0, "rw,direct:" + test_file2));
+    descs.addDesc(nixlBlobDesc(0, 0, 0, test_file1));
+    descs.addDesc(nixlBlobDesc(0, 0, 0, "rw,create:" + not_created));
+
+    nixl_opt_args_t extra_params;
+    extra_params.backends = {backend_handle};
+
+    std::vector<nixl_query_resp_t> resp;
+    status = agent.queryMem(descs, resp, &extra_params);
+    EXPECT_EQ(status, NIXL_SUCCESS);
+    ASSERT_EQ(resp.size(), 4);
+    ASSERT_TRUE(resp[0].has_value());
+    EXPECT_EQ(resp[0].value().at("size"), "24");
+    ASSERT_TRUE(resp[1].has_value());
+    EXPECT_EQ(resp[1].value().at("size"), "24");
+    ASSERT_TRUE(resp[2].has_value());
+    EXPECT_EQ(resp[2].value().at("size"), "24");
+    EXPECT_FALSE(resp[3].has_value());
+    // queryMem only stats; it must not create the file.
+    EXPECT_FALSE(std::filesystem::exists(not_created));
+}
+
 TEST_F(QueryMemTest, QueryMemDirectTest) {
     // Test the queryMem functionality directly using the file utilities
     // This bypasses the agent/backend complexity

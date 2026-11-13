@@ -2,7 +2,7 @@
 
 This directory contains shared C++ utilities for NIXL file-aware backends:
 
-- `file_utils.{h,cpp}`: `nixl::queryFileInfo()` / `queryFileInfoList()` helpers
+- `file_utils.{h,cpp}`: `nixl::queryFileInfo()` / `queryFileInfoFromDescList()` helpers
   for the QueryMem API (file existence + stat).
 - `file_path_mode.{h,cpp}`: `nixl::parsePathMeta()` parser and `nixlFilePathMD`
   owned-fd RAII base for path-mode FILE_SEG registration; see
@@ -23,7 +23,8 @@ The QueryMem API has been implemented for these file backends:
 The backend passes a single filename or the entire input descriptors (`nixl_reg_dlist_t`) to
 `queryFileInfo()` or `queryFileInfoFromDescList()`, respectively. The result consists of an
 optional hash-map from string to string, currently the result fields are `size`, `mode` and
-`mtime`.
+`mtime`. A path-mode `metaInfo` (see below) is queried by its path, so `ro:/data/x.bin` reports
+the same result as `/data/x.bin`.
 
 ## Building
 
@@ -33,8 +34,8 @@ The file utils are built as a shared library (`libfile_utils.so`) and linked wit
 ## Testing
 
 Test files are provided:
-- `test/unit/utils/file/test_file_utils.cpp`: Tests the file utils functions
-- `test/python/test_query_mem.py`: Python tests for QueryMem API functionality
+- `test/gtest/query_mem.cpp`: Tests the file utils functions and QueryMem through the POSIX backend
+- `test/python/test_nixl_bindings.py` (`test_query_mem`): Python tests for QueryMem API functionality
 
 ## Dependencies
 
