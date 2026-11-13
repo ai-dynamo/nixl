@@ -45,7 +45,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 ## Features
 
 - **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
-- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA for storage operations
+- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA, WQS for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
@@ -555,7 +555,7 @@ wait
 --config_file PATH         # Configuration file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD, ASIO] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA, WQS] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 ```
 
@@ -986,6 +986,63 @@ EOF
 ```bash
 # NVSHMEM (GPU-only, VRAM required)
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --worker_type nvshmem --initiator_seg_type VRAM --target_seg_type VRAM
+```
+
+### WQS storage backend
+
+WQS transfers complete objects between DRAM and a local wqsd. Build NIXL with
+WQS enabled, then build nixlbench against that NIXL installation. The benchmark
+uses NIXL APIs for object preparation and verification; it does not link directly
+against the WQS SDK or use an external storage CLI. See the
+[WQS backend prerequisites and mock SDK instructions](../../src/plugins/wqs/README.md).
+
+```bash
+# WRITE with read-back verification, sweeping object and batch sizes
+./nixlbench --backend WQS --op_type WRITE --check_consistency \
+  --wqs_unix_path /var/run/wds/wqs \
+  --wqs_staging_pool_bytes 536870912 \
+  --total_buffer_size 16777216 \
+  --start_block_size 4096 --max_block_size 1048576 \
+  --start_batch_size 1 --max_batch_size 8
+
+# READ; objects are populated before timing starts
+./nixlbench --backend WQS --op_type READ --check_consistency \
+  --wqs_unix_path /var/run/wds/wqs \
+  --wqs_staging_pool_bytes 536870912 \
+  --total_buffer_size 16777216 \
+  --start_block_size 4096 --max_block_size 1048576 \
+  --start_batch_size 1 --max_batch_size 8 --enable_pt
+```
+
+| Option | Default | WQS backend parameter |
+| --- | --- | --- |
+| `--wqs_unix_path` | `/var/run/wds/wqs` | `unix_path` |
+| `--wqs_staging_pool_bytes` | `1073741824` | `staging_pool_bytes` |
+| `--wqs_max_inflight` | `64` | `max_inflight` |
+| `--wqs_max_batch_entries` | `64` | `max_batch_entries` |
+| `--wqs_payload_bytes` | `8192` | `payload_bytes` |
+| `--wqs_key_prefix` | empty | `key_prefix` |
+
+The same option names can be set in the TOML configuration file. Parameters are
+passed through NIXL's standard backend parameter map. No ETCD service is needed
+for a standalone storage run. Use DRAM initiator buffers; VRAM and byte-aligned
+partial-object randomization are unsupported. Block-aligned randomization,
+multiple threads, pipelining, and prepared transfer lists are supported.
+
+Each sweep entry gets fresh keys and exact object lengths. READ setup writes the
+target pattern and resets the caller buffers before measurement. With
+`--check_consistency`, WRITE results are read back after measurement. Object
+preparation and verification are excluded from reported transfer timings.
+Objects remain in WQS for storage eviction after their NIXL registrations are
+released; use a benchmark-specific key prefix and account for this storage use.
+The public mock SDK validates correctness only and does not measure WQS storage
+performance.
+
+The opt-in WQS integration tests require that mock SDK and at least 2 MiB of
+available hugepages. With a debug benchmark build and tests enabled, run:
+
+```bash
+NIXLBENCH_WQS_MOCK_TEST=1 meson test -C build-bench --suite nixlbench --print-errorlogs
 ```
 
 ### S3 Object Storage Backend

@@ -144,7 +144,7 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, "
-              "REDIS, GUSLI, AZURE_BLOB, DOCA_MEMOS] (only used with nixl worker)");
+              "REDIS, WQS, GUSLI, AZURE_BLOB, DOCA_MEMOS] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -302,6 +302,13 @@ NB_ARG_STRING(obj_accelerated_type,
               "S3 Accelerated client vendor type to use. "
               "Only used when obj_accelerated_enable=true");
 
+NB_ARG_STRING(wqs_unix_path, "/var/run/wds/wqs", "Local wqsd Unix socket path");
+NB_ARG_UINT64(wqs_staging_pool_bytes, 1073741824, "WQS staging pool size in bytes");
+NB_ARG_UINT64(wqs_max_inflight, 64, "Maximum outstanding WQS transfers");
+NB_ARG_UINT64(wqs_max_batch_entries, 64, "Maximum objects per WQS data call");
+NB_ARG_UINT64(wqs_payload_bytes, 8192, "WQS request/response metadata limit in bytes");
+NB_ARG_STRING(wqs_key_prefix, "", "Prefix prepended to WQS benchmark object keys");
+
 // AZURE BLOB options - only used when backend is AZURE_BLOB
 NB_ARG_STRING(azure_blob_account_url, "", "Account URL for Azure Blob backend");
 NB_ARG_STRING(azure_blob_container_name, "", "Container name for Azure Blob backend");
@@ -436,6 +443,12 @@ std::string xferBenchConfig::obj_ca_bundle = "";
 size_t xferBenchConfig::obj_crt_min_limit = 0;
 bool xferBenchConfig::obj_accelerated_enable = false;
 std::string xferBenchConfig::obj_accelerated_type = "";
+std::string xferBenchConfig::wqs_unix_path = "";
+uint64_t xferBenchConfig::wqs_staging_pool_bytes = 0;
+uint64_t xferBenchConfig::wqs_max_inflight = 0;
+uint64_t xferBenchConfig::wqs_max_batch_entries = 0;
+uint64_t xferBenchConfig::wqs_payload_bytes = 0;
+std::string xferBenchConfig::wqs_key_prefix = "";
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 std::string xferBenchConfig::azure_blob_connection_string = "";
@@ -800,6 +813,15 @@ xferBenchConfig::loadParams(void) {
             }
         }
 
+        if (backend == XFERBENCH_BACKEND_WQS) {
+            wqs_unix_path = NB_ARG(wqs_unix_path);
+            wqs_staging_pool_bytes = NB_ARG(wqs_staging_pool_bytes);
+            wqs_max_inflight = NB_ARG(wqs_max_inflight);
+            wqs_max_batch_entries = NB_ARG(wqs_max_batch_entries);
+            wqs_payload_bytes = NB_ARG(wqs_payload_bytes);
+            wqs_key_prefix = NB_ARG(wqs_key_prefix);
+        }
+
         // Load AZURE_BLOB-specific configurations if backend is AZURE_BLOB
         if (backend == XFERBENCH_BACKEND_AZURE_BLOB) {
             azure_blob_account_url = NB_ARG(azure_blob_account_url);
@@ -918,6 +940,13 @@ xferBenchConfig::loadParams(void) {
         std::cerr << "prepared_xfer is incompatible with reregister_mem: the prepared "
                      "descriptor list handles pin the registration."
                   << std::endl;
+        return -1;
+    }
+
+    if (backend == XFERBENCH_BACKEND_WQS &&
+        (initiator_seg_type != XFERBENCH_SEG_TYPE_DRAM ||
+         randomize_location_mode == XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED)) {
+        std::cerr << "WQS requires DRAM initiator buffers and whole-object transfers" << std::endl;
         return -1;
     }
 
@@ -1099,10 +1128,9 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption(
-            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,MOONCAKE,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB,"
-            "DOCA_MEMOS])",
-            backend);
+        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,MOONCAKE,HF3FS,OBJ,REDIS,WQS,GUSLI,"
+                    "AZURE_BLOB,DOCA_MEMOS])",
+                    backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
@@ -1854,6 +1882,10 @@ xferBenchUtils::rmObj(const std::string &name) {
     // REDIS uses OBJ_SEG for remote addressing, but cleanup is not S3/Azure CLI-based.
     // Bench keys are ephemeral; skip explicit delete (same as prior DRAM_SEG teardown).
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+        return true;
+    }
+    // WQS exposes no NIXL delete operation; benchmark keys remain for storage eviction.
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_WQS) {
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {

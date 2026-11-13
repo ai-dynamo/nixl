@@ -321,6 +321,19 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         } else {
             std::cout << "OBJ backend with standard S3 enabled" << std::endl;
         }
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_WQS) {
+        backend_params["unix_path"] = xferBenchConfig::wqs_unix_path;
+        backend_params["staging_pool_bytes"] =
+            std::to_string(xferBenchConfig::wqs_staging_pool_bytes);
+        backend_params["max_inflight"] = std::to_string(xferBenchConfig::wqs_max_inflight);
+        backend_params["max_batch_entries"] =
+            std::to_string(xferBenchConfig::wqs_max_batch_entries);
+        backend_params["payload_bytes"] = std::to_string(xferBenchConfig::wqs_payload_bytes);
+        backend_params["key_prefix"] = xferBenchConfig::wqs_key_prefix;
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        wqs_run_prefix_ = "nixlbench/" + name + "/" + std::to_string(getpid()) + "/" +
+            std::to_string(tv.tv_sec * 1000000ULL + tv.tv_usec) + "/";
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_REDIS)) {
         // getPluginParams() pre-fills the plugin's advertised defaults, which take
         // precedence over REDIS_* env vars in fromBackendParams. Clear them so
@@ -1125,7 +1138,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
     // REDIS stays an independent backend (putRedis seeding), but remote values
     // use OBJ_SEG addressing semantics. Handle it before isObjStorageBackend()
     // so REDIS does not enter the S3/Azure putObj registration path.
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_WQS) {
+        std::cout << "WQS objects will be registered for each block size and batch" << std::endl;
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -1377,7 +1392,12 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
         for (const auto &region : remote_regs_) {
             num_objs += region.iovs().size();
         }
-        std::cout << "Removing " << num_objs << " objects" << std::endl;
+        if (xferBenchConfig::backend == XFERBENCH_BACKEND_WQS) {
+            std::cout << "Releasing " << num_objs
+                      << " WQS registrations; objects remain for storage eviction" << std::endl;
+        } else {
+            std::cout << "Removing " << num_objs << " objects" << std::endl;
+        }
     }
     // Ordering: deregister remote regions before local ones
     // (remote registrations may reference local buffers).
@@ -1491,6 +1511,51 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                                  size_t block_size) {
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
+
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_WQS) {
+        remote_regs_.clear();
+        nixl_opt_args_t options;
+        options.backends.push_back(backend_engine);
+        for (const auto &local : local_iovs) {
+            std::vector<xferBenchIOV> objects;
+            objects.reserve(local.size());
+            for (const auto &iov : local) {
+                if (next_wqs_object_ > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+                    std::cerr << "WQS benchmark object IDs exhausted" << std::endl;
+                    std::exit(EXIT_FAILURE);
+                }
+                const int id = static_cast<int>(next_wqs_object_++);
+                objects.emplace_back(0, iov.len, id, wqs_run_prefix_ + std::to_string(id));
+            }
+            const auto descriptors = iovListToNixlRegDlist(objects, OBJ_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(descriptors, &options), "register WQS objects");
+            remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, objects);
+            if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+                for (const auto &iov : local) {
+                    std::memset(reinterpret_cast<void *>(iov.addr),
+                                XFERBENCH_TARGET_BUFFER_ELEMENT,
+                                iov.len);
+                }
+                CHECK_NIXL_ERROR(transferObjects(NIXL_WRITE, local, objects),
+                                 "seed WQS READ objects");
+                for (const auto &iov : local) {
+                    std::memset(reinterpret_cast<void *>(iov.addr),
+                                XFERBENCH_INITIATOR_BUFFER_ELEMENT,
+                                iov.len);
+                }
+            }
+            if (xferBenchConfig::randomize_location_mode ==
+                XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED) {
+                std::shuffle(objects.begin(), objects.end(), default_rng_);
+            }
+            res.push_back(std::move(objects));
+        }
+        if (xferBenchConfig::reregister_mem) {
+            // Per-iteration registration must own the object IDs without a base registration.
+            remote_regs_.clear();
+        }
+        return res;
+    }
 
     if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
@@ -1686,6 +1751,70 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     // Ensure all processes have completed the exchange with a barrier/sync
     synchronize();
     return res;
+}
+
+nixl_status_t
+xferBenchNixlWorker::transferObjects(nixl_xfer_op_t operation,
+                                     const std::vector<xferBenchIOV> &local,
+                                     const std::vector<xferBenchIOV> &remote) {
+    nixl_xfer_dlist_t local_desc(DRAM_SEG), remote_desc(OBJ_SEG);
+    iovListToNixlXferDlist(local, local_desc);
+    iovListToNixlXferDlist(remote, remote_desc);
+    nixl_opt_args_t options;
+    options.backends.push_back(backend_engine);
+    nixlXferReqH *request = nullptr;
+    auto status = agent->createXferReq(operation, local_desc, remote_desc, name, request, &options);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+    status = agent->postXferReq(request, &options);
+    while (status == NIXL_IN_PROG && !signaled()) {
+        std::this_thread::yield();
+        status = agent->getXferStatus(request);
+    }
+    const auto released = agent->releaseXferReq(request);
+    if (status == NIXL_IN_PROG) {
+        return NIXL_ERR_CANCELED;
+    }
+    return status == NIXL_SUCCESS ? released : status;
+}
+
+bool
+xferBenchNixlWorker::validateTransfer(bool is_initiator,
+                                      std::vector<std::vector<xferBenchIOV>> &local,
+                                      std::vector<std::vector<xferBenchIOV>> &remote) {
+    if (xferBenchConfig::backend != XFERBENCH_BACKEND_WQS || !xferBenchConfig::check_consistency ||
+        !is_initiator || xferBenchConfig::op_type != XFERBENCH_OP_WRITE) {
+        return xferBenchWorker::validateTransfer(is_initiator, local, remote);
+    }
+    for (size_t i = 0; i < local.size(); ++i) {
+        std::optional<NixlMemRegion> registration;
+        if (xferBenchConfig::reregister_mem) {
+            nixl_opt_args_t options;
+            options.backends.push_back(backend_engine);
+            const auto descriptors = iovListToNixlRegDlist(remote[i], OBJ_SEG);
+            if (agent->registerMem(descriptors, &options) != NIXL_SUCCESS) {
+                return false;
+            }
+            registration.emplace(*agent, backend_engine, OBJ_SEG, remote[i]);
+        }
+        for (const auto &iov : local[i]) {
+            std::memset(reinterpret_cast<void *>(iov.addr), 0, iov.len);
+        }
+        if (transferObjects(NIXL_READ, local[i], remote[i]) != NIXL_SUCCESS) {
+            return false;
+        }
+        for (const auto &iov : local[i]) {
+            const auto *bytes = reinterpret_cast<const uint8_t *>(iov.addr);
+            if (!std::all_of(bytes, bytes + iov.len, [](uint8_t value) {
+                    return value == XFERBENCH_INITIATOR_BUFFER_ELEMENT;
+                })) {
+                std::cerr << "WQS write consistency check failed" << std::endl;
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 // Helper to prepare transfer descriptors based on backend type

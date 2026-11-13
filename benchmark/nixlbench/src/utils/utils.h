@@ -103,6 +103,7 @@
 #define XFERBENCH_BACKEND_HF3FS "HF3FS"
 #define XFERBENCH_BACKEND_OBJ "OBJ"
 #define XFERBENCH_BACKEND_REDIS "REDIS"
+#define XFERBENCH_BACKEND_WQS "WQS"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
@@ -237,6 +238,12 @@ public:
     static size_t obj_crt_min_limit;
     static bool obj_accelerated_enable;
     static std::string obj_accelerated_type;
+    static std::string wqs_unix_path;
+    static uint64_t wqs_staging_pool_bytes;
+    static uint64_t wqs_max_inflight;
+    static uint64_t wqs_max_batch_entries;
+    static uint64_t wqs_payload_bytes;
+    static std::string wqs_key_prefix;
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
