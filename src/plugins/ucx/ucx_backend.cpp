@@ -54,6 +54,9 @@ sglEnabledFromConfig() {
 #endif
 }
 
+/**
+ * @brief Error-handling mode from backend params, or the version default when unset
+ */
 [[nodiscard]] ucp_err_handling_mode_t
 errHandlingModeFromParams(const nixl_b_params_t *custom_params) {
     const auto opt = nixl::getBackendParamOptional<std::string>(
