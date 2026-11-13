@@ -399,14 +399,14 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
 
     virtual ~nixlMooncakeBackendReqH() {}
 
-    struct Batch {
+    struct xferBatch {
         uint64_t id = INVALID_BATCH;
         size_t request_count = 0;
     };
 
     // Batches of the last transfer: one, or one per chunk when postXfer split
     // it. Only allocated ids are kept, since the engine dereferences them.
-    std::vector<Batch> batches;
+    std::vector<xferBatch> batches;
     // A split transfer has no single batch to carry its notification, so
     // checkXfer sends it to {agent, message} once every batch completed.
     std::optional<std::pair<std::string, std::string>> pending_notif;
