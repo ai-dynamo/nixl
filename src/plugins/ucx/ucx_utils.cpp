@@ -33,14 +33,21 @@
 #include "config.h"
 #include "serdes/serdes.h"
 
+namespace {
+
+[[nodiscard]] unsigned
+ucpVersion() noexcept {
+    unsigned major_version, minor_version, release_number;
+    ucp_get_version(&major_version, &minor_version, &release_number);
+    return UCP_VERSION(major_version, minor_version);
+}
+
+} // namespace
+
 ucp_err_handling_mode_t
 defaultErrHandlingMode() noexcept {
 #ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
-    unsigned major_version = 0;
-    unsigned minor_version = 0;
-    unsigned release_number = 0;
-    ucp_get_version(&major_version, &minor_version, &release_number);
-    if (UCP_VERSION(major_version, minor_version) >= ucp_version_err_handling_failover) {
+    if (ucpVersion() >= ucp_version_err_handling_failover) {
         return UCP_ERR_HANDLING_MODE_FAILOVER;
     }
 #endif
@@ -467,11 +474,11 @@ namespace {
 
 [[nodiscard]] unsigned
 makeUcpVersion() noexcept {
-    unsigned major_version, minor_version, release_number;
-    ucp_get_version(&major_version, &minor_version, &release_number);
-    const unsigned version = UCP_VERSION(major_version, minor_version);
+    const unsigned version = ucpVersion();
 
     if (version < UCP_VERSION(1, 19)) {
+        unsigned major_version, minor_version, release_number;
+        ucp_get_version(&major_version, &minor_version, &release_number);
         NIXL_WARN << "UCX version is " << major_version << '.' << minor_version << '.'
                   << release_number
                   << " which is less than 1.19, CUDA support is limited, including"
