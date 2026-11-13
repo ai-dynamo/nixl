@@ -94,7 +94,9 @@ freeBatch(transfer_engine_t engine, uint64_t batch_id) {
 } // namespace
 
 nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params,
+                        nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::LOCAL |
+                            nixl_backend_capability_t::NOTIF),
       local_agent_name_(init_params->localAgent) {
     const std::string segment_name = chooseIpAddress();
     engine_ = createTransferEngine("P2PHANDSHAKE", segment_name.c_str(), "", 0, true);

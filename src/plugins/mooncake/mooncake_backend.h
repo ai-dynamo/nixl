@@ -37,21 +37,6 @@ public:
     nixlMooncakeEngine(const nixlBackendInitParams *init_params);
     ~nixlMooncakeEngine();
 
-    bool
-    supportsRemote() const {
-        return true;
-    }
-
-    bool
-    supportsLocal() const {
-        return true;
-    }
-
-    bool
-    supportsNotif() const {
-        return true;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const;
 
