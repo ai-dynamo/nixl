@@ -45,7 +45,7 @@ public:
     }
 
     [[nodiscard]] nixl_status_t
-    post(nixlUcxEp &ep, nixlUcxReq &req) const;
+    post(nixl_xfer_op_t operation, nixlUcxEp &ep, nixlUcxReq &req) const;
 
 private:
     [[nodiscard]] ucp_dt_local_sgl_t
