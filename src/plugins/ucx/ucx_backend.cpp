@@ -423,7 +423,7 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
     handle = new nixlUcxBackendReqH(getSharedWorker(worker_id).get());
 
 #ifdef HAVE_UCX_SGL_API
-    if (sglEnabled_ && operation == NIXL_WRITE) {
+    if (sglEnabled_) {
         return prepXferSgl(local, remote, handle);
     }
 #endif
@@ -501,7 +501,7 @@ nixlUcxEngine::prepXferSgl(const nixl_meta_dlist_t &local,
 }
 
 nixl_status_t
-nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
+nixlUcxEngine::sendXferSgl(nixl_xfer_op_t operation, nixlBackendReqH *handle) const {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     NIXL_ASSERT(int_handle->sgl);
     auto &sgl = *int_handle->sgl;
@@ -512,7 +512,7 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
     int_handle->init(conn, *ep);
 
     nixlUcxReq req;
-    const nixl_status_t post_ret = sgl.post(*ep, req);
+    const nixl_status_t post_ret = sgl.post(operation, *ep, req);
     if (int_handle->append(post_ret, req) != NIXL_SUCCESS) {
         return post_ret;
     }
@@ -537,11 +537,11 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
     }
 
 #ifdef HAVE_UCX_SGL_API
-    if (sglEnabled_ && operation == NIXL_WRITE) {
+    if (sglEnabled_) {
         if (!int_handle->sgl) {
             int_handle->sgl.emplace(local, remote, worker_id, start_idx, end_idx);
         }
-        return sendXferSgl(handle);
+        return sendXferSgl(operation, handle);
     }
 #endif
 
