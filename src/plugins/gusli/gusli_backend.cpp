@@ -121,7 +121,7 @@ nixlGusliEngine::parseInitParams(const nixlBackendInitParams *nixl_init,
 }
 
 nixlGusliEngine::nixlGusliEngine(const nixlBackendInitParams *nixl_init)
-    : nixlBackendEngine(nixl_init) {
+    : nixlBackendEngine(nixl_init, nixl_backend_capability_t::LOCAL) {
     gusli::global_clnt_context::init_params gusli_params;
     parseInitParams(nixl_init, gusli_params);
     lib_ = std::make_unique<gusli::global_clnt_context>(gusli_params);
