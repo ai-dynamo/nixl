@@ -34,8 +34,11 @@
 
 long nixlHf3fsEngine::page_size = sysconf(_SC_PAGESIZE);
 
+// File operations - target is the distributed FS
+// So no requirements to connect to target.
+// Just treat it locally.
 nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       mem_config(NIXL_HF3FS_MEM_CONFIG_AUTO),
       iopool_size(HF3FS_DEFAULT_IOPOOL_SIZE) {
     hf3fs_utils = new hf3fsUtil();
