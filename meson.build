@@ -457,17 +457,11 @@ else
   ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'], required: false)
 endif
 
-# UCX 1.19 has peer error handling and no failover enumerator.
 have_ucx_err_handling_failover = false
 if ucx_dep.found()
-  have_ucx_err_handling_failover = cpp.compiles('''
-      #include <ucp/api/ucp.h>
-      int main() {
-          ucp_err_handling_mode_t mode = UCP_ERR_HANDLING_MODE_FAILOVER;
-          (void)mode;
-          return 0;
-      }
-    ''', dependencies: ucx_dep)
+  have_ucx_err_handling_failover = cpp.has_header_symbol(
+    'ucp/api/ucp.h', 'UCP_ERR_HANDLING_MODE_FAILOVER',
+    dependencies: ucx_dep)
   if have_ucx_err_handling_failover
     add_project_arguments('-DHAVE_UCX_ERR_HANDLING_FAILOVER', language: 'cpp')
   endif
