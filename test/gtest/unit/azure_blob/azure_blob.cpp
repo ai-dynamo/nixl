@@ -461,9 +461,9 @@ protected:
 TEST_F(azureBlobTestFixture, EngineInitialization) {
     ASSERT_NE(blobEngine_, nullptr);
     EXPECT_EQ(blobEngine_->getType(), "AZURE_BLOB");
-    EXPECT_TRUE(blobEngine_->supportsLocal());
-    EXPECT_FALSE(blobEngine_->supportsRemote());
-    EXPECT_FALSE(blobEngine_->supportsNotif());
+    EXPECT_TRUE(blobEngine_->supportsCapability(nixl_backend_capability_t::LOCAL));
+    EXPECT_FALSE(blobEngine_->supportsCapability(nixl_backend_capability_t::REMOTE));
+    EXPECT_FALSE(blobEngine_->supportsCapability(nixl_backend_capability_t::NOTIF));
 
     // Verify that the executor was properly set on the mock azure blob client by the engine
     // constructor
