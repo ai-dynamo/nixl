@@ -1,5 +1,5 @@
 #!/bin/bash -eE
-# pipeline_stop of build-wheel-nightly-matrix.yaml: merges this build's
+# pipeline_stop of build-wheel-publish-matrix.yaml: merges this build's
 # manifest fragments from the PVC into build-manifest.json and uploads it
 # next to the wheels (the merge itself is .ci/scripts/merge_build_manifest.py, run
 # in a plain Python image). Exit 0 means published; otherwise the reason is

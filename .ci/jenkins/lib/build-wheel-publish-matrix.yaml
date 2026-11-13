@@ -1,15 +1,16 @@
-# Nightly NIXL wheel verification build. Pipeline and this config run from
+# NIXL wheel verification build. Pipeline and this config run from
 # main; the source ref (NIXL_VERSION) is cloned into nixl-src, so built refs
 # carry no CI config. Wheels publish to
-# WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default) or
-# WHEEL_REPO_URL/<PUBLISH_DIR>/<build-number> for release runs.
+# WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default), or
+# WHEEL_REPO_URL/staging/g<nixl-sha>.ucx<ucx-sha> for manual staging runs, or
+# WHEEL_REPO_URL/<PUBLISH_DIR>/<build-number> for manual release runs.
 #
 # One run builds every CUDA major, so a release folder holds a complete wheel
 # set and is owned by this build alone - which is what lets pipeline_stop delete
 # it on failure and mark it, only on SUCCESS, for the release poller.
 
 ---
-job: nixl-ci-build-wheel-nightly
+job: nixl-build-wheel
 
 failFast: false
 timeout_minutes: 180
@@ -224,8 +225,8 @@ pipeline_start:
 # that goes wrong), then settles the release folder - mark on
 # SUCCESS, delete otherwise - and mails the unattended nightly when the result
 # is not SUCCESS. A partial wheel set has to be rebuilt anyway, so publishing
-# it would only mislead the poller. verification/ folders are shared between
-# builds and are left alone either way.
+# it would only mislead the poller. verification/ and staging/ folders are
+# shared between builds and are left alone either way.
 pipeline_stop:
   shell: action
   module: groovy

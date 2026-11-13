@@ -2,7 +2,7 @@
 """Merge the nightly wheel build's per-cell fragments into build-manifest.json.
 
 Run by .ci/scripts/wheel-nightly/publish-manifest.sh in a plain Python image
-at the end of nixl-ci-build-wheel-nightly. Reads the fragment directories the
+at the end of nixl-build-wheel. Reads the fragment directories the
 cells deposited (cell.env, wheel_build_ids.env, build_options.env and the
 wheel's build-info sidecar from extract_build_info.py), cross-checks them against each other and against
 the Artifactory folder listing, writes the manifest and uploads it next to
@@ -38,7 +38,7 @@ CELL_KEY = re.compile(r"^[A-Za-z0-9._-]+$")
 FILE_NAME = re.compile(r"^[A-Za-z0-9._+-]+$")
 # Publish's allowlist plus the folder component.
 FOLDER = re.compile(
-    r"^(verification/g[0-9a-f]{8}\.ucx[0-9a-f]{8}|release/[A-Za-z0-9][A-Za-z0-9._-]*/[0-9]+)$"
+    r"^((verification|staging)/g[0-9a-f]{8}\.ucx[0-9a-f]{8}|release/[A-Za-z0-9][A-Za-z0-9._-]*/[0-9]+)$"
 )
 MANIFEST_NAME = "build-manifest.json"
 HTTP_ATTEMPTS = 3
