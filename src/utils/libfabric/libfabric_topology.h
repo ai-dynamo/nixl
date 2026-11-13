@@ -63,6 +63,9 @@ private:
 
     // bandwidth of each NUMA node (i.e. capacity limited by PCIe switch)
     std::vector<size_t> numa_speed_map;
+    // per NUMA node in numa_speed_map: true when the node has NICs and all of them are
+    // host-DMA-starved, so the node has no capacity of its own
+    std::vector<bool> numa_node_starved;
     size_t avg_numa_speed; // average (per NUMA node) PCIe capacity
 
     // Helper methods
@@ -112,6 +115,12 @@ private:
         uint16_t parent_switch_domain;
         uint8_t parent_switch_bus_id;
         size_t parent_switch_link_speed; // Gbps (decimal, as multiple of 10^9, not 2^30)
+        // True when the topmost PCIe bridge/switch above this NIC has a slower uplink than what
+        // the NIC can put on the network (its line rate, or its own link when no rate is known),
+        // so host memory DMA through this NIC is throttled by that uplink (e.g. NICs that share
+        // a PCIe switch with a GPU behind a narrow uplink). Such NICs are left out of DRAM_SEG
+        // rail selection and NUMA capacity.
+        bool host_dma_starved;
         // True when this NIC and the accelerator paired with it sit under a common PCIe
         // switch. buildTopologyAwareGrouping() sets it from NicGroup::common_ancestor.
         bool accel_via_pcie_switch;
@@ -320,6 +329,8 @@ public:
      * the EFA device.
      * @param[out] parent_switch_link_speed The link speed (in Gbps) of the parent PCI
      * switch/bridge.
+     * @param[out] host_dma_starved True when the parent PCI switch/bridge uplink cannot carry the
+     * host memory traffic of the EFA device (see NicInfo::host_dma_starved).
      * @return True if succeeded, otherwise (EFA device not found) false.
      */
     bool
@@ -328,7 +339,8 @@ public:
                    size_t &device_link_speed,
                    uint16_t &parent_switch_domain,
                    uint8_t &parent_switch_bus_id,
-                   size_t &parent_switch_link_speed) const;
+                   size_t &parent_switch_link_speed,
+                   bool &host_dma_starved) const;
 
     /**
      * @brief Retrieves the average bandwidth limit per NUMA node. This bandwidth limit of a single
@@ -367,6 +379,13 @@ public:
     getTotalNicCount() const {
         return nic_info_map.size();
     }
+
+    /**
+     * @brief Retrieves the number of NICs, as correlated from hwloc, that can carry host memory
+     * traffic, i.e. that do not sit behind a host-starved PCIe uplink.
+     */
+    [[nodiscard]] size_t
+    getUsableNicCount() const;
 
     /**
      * @brief Retrieves the average number of rails per NUMA node.
