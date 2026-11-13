@@ -42,20 +42,16 @@ if not hiredis_async_dep.found() or not libevent_dep.found() or not libevent_pth
     subdir_done()
 endif
 
-compile_defs_redis = ['-DHAVE_HIREDIS_ASYNC']
+redis_compile_flags = ['-DHAVE_HIREDIS_ASYNC']
 
 redis_plugin_deps = [nixl_infra, nixl_common_dep, hiredis_async_dep, libevent_dep, libevent_pthreads_dep]
-
-if not is_variable('compile_flags')
-    compile_flags = []
-endif
 
 if 'REDIS' in static_plugins
     redis_backend_lib = static_library(
         'REDIS',
         redis_sources,
         dependencies: redis_plugin_deps,
-        cpp_args: compile_defs_redis + compile_flags,
+        cpp_args: redis_compile_flags,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
         name_prefix: 'libplugin_')
@@ -64,7 +60,7 @@ else
         'REDIS',
         redis_sources,
         dependencies: redis_plugin_deps,
-        cpp_args: compile_defs_redis + compile_flags + ['-fPIC'],
+        cpp_args: redis_compile_flags + ['-fPIC'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
         name_prefix: 'libplugin_',

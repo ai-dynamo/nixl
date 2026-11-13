@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -29,11 +30,13 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "../allocation_counter.h"
 #include "common.h"
 #include "nixl.h"
 #include "transfer_request.h"
@@ -83,6 +86,7 @@ struct CallLog {
     std::vector<nixl::trace::TraceContext> poppedContexts;
     std::vector<EmittedRecord> emittedSpans;
     std::vector<EmittedRecord> emittedEvents;
+    std::vector<EmittedRecord> contextSpans;
 };
 
 [[nodiscard]] EmittedRecord
@@ -166,6 +170,18 @@ public:
         return std::make_unique<MockSpan>(log_, spanId_);
     }
 
+    [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
+    beginContextSpan(std::string_view name,
+                     nixl::trace::Kind kind,
+                     const nixl::trace::TraceContext &context,
+                     std::uint64_t request_id) override {
+        log_->contextSpans.push_back(makeRecord(name, kind, context, request_id, {}, {}));
+        if (nullSpans_) {
+            return nullptr;
+        }
+        return std::make_unique<MockSpan>(log_, spanId_);
+    }
+
     void
     mark(std::string_view, nixl::trace::Kind) override {
         ++log_->marks;
@@ -226,6 +242,14 @@ public:
         throw std::runtime_error("beginSpan failed");
     }
 
+    [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
+    beginContextSpan(std::string_view,
+                     nixl::trace::Kind,
+                     const nixl::trace::TraceContext &,
+                     std::uint64_t) override {
+        throw std::runtime_error("beginContextSpan failed");
+    }
+
     void
     mark(std::string_view, nixl::trace::Kind) override {}
 
@@ -263,15 +287,15 @@ public:
 };
 
 void
-failRandomBytes(std::uint8_t *, std::size_t) {
+failRandomBytes(std::span<std::uint8_t>) {
     throw std::system_error(ENOSYS, std::generic_category(), "getentropy failed");
 }
 
 int zero_draws_left = 0;
 
 void
-zeroFirstRandomBytes(std::uint8_t *bytes, std::size_t size) {
-    std::fill_n(bytes, size, (zero_draws_left-- > 0) ? 0 : 0x5a);
+zeroFirstRandomBytes(std::span<std::uint8_t> bytes) {
+    std::ranges::fill(bytes, (zero_draws_left-- > 0) ? 0 : 0x5a);
 }
 
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
@@ -329,6 +353,31 @@ TEST(Tracing, FanOutToAllBackends) {
     EXPECT_EQ(a.strAttrs[0].second, "val");
     EXPECT_EQ(b.strAttrs[0].first, "key");
     EXPECT_EQ(b.strAttrs[0].second, "val");
+}
+
+TEST(Tracing, ContextSpanFansOutToAllBackends) {
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+    const auto context = testContext(0x24);
+
+    {
+        auto span = tracer->beginContextSpan("op", nixl::trace::Kind::CommSend, context, 0x2424);
+        EXPECT_TRUE(span.active());
+        span.addAttribute("key", std::string_view{"val"});
+    }
+
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->spansBegun, 0);
+        ASSERT_EQ(log->contextSpans.size(), 1u);
+        EXPECT_EQ(log->contextSpans[0].name, "op");
+        EXPECT_EQ(log->contextSpans[0].kind, nixl::trace::Kind::CommSend);
+        EXPECT_EQ(log->contextSpans[0].context, context);
+        EXPECT_EQ(log->contextSpans[0].requestId, 0x2424u);
+        EXPECT_EQ(log->spansEnded, 1);
+        ASSERT_EQ(log->strAttrs.size(), 1u);
+        EXPECT_EQ(log->strAttrs[0].first, "key");
+        EXPECT_EQ(log->strAttrs[0].second, "val");
+    }
 }
 
 // Typed attribute overloads must reach every backend with the correct type.
@@ -424,6 +473,9 @@ TEST(Tracing, EmptyTracerIsInert) {
     tracer.mark("m"); // no crash
     tracer.emitSpan("s", nixl::trace::Kind::Generic, testContext(0x23), 0x2323, 1, 2, {});
     tracer.emitEvent("e", nixl::trace::Kind::Metadata, testContext(0x23), 0x2323, 3, {});
+    const auto context_span =
+        tracer.beginContextSpan("c", nixl::trace::Kind::CommSend, testContext(0x23), 0x2323);
+    EXPECT_FALSE(context_span.active());
 }
 
 // A default-constructed Span (what the macros bind when the tracer is null) is
@@ -796,6 +848,30 @@ TEST(Tracing, RequestIdIsNoneWithoutTracerOrSource) {
     EXPECT_EQ(failures.count(), 1u);
 }
 
+TEST(Tracing, PostContextDrawsOnlyItsSpanIdAgainWhileZero) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);
+    zero_draws_left = 1;
+    const auto request = testContext(0x21, 0x03);
+    auto expected = request;
+    expected.spanId.fill(0x5a);
+
+    EXPECT_EQ(nixl::trace::generatePostContext(request, tracer.get()), expected);
+}
+
+TEST(Tracing, PostContextIsTheRequestsWithoutTracerOrSource) {
+    gtest::LogMessageCounter failures("could not generate a trace context");
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, failRandomBytes);
+    const auto request = testContext(0x22, 0x03);
+
+    EXPECT_EQ(nixl::trace::generatePostContext(request, nullptr), request);
+    for (int i = 0; i < 2; ++i) {
+        EXPECT_EQ(nixl::trace::generatePostContext(request, tracer.get()), request);
+    }
+    EXPECT_EQ(failures.count(), 1u);
+}
+
 // A phase recorded through the plugin-facing sink reaches every enabled trace
 // backend, tagged with the recording backend and the plugin's timestamp.
 TEST(TracePhaseSink, RecordedPhaseReachesEveryBackend) {
@@ -991,13 +1067,19 @@ TEST(Tracing, InactiveSpanRecordsNothing) {
     backends.push_back(std::make_unique<MockBackend>("a", &a, 0, /*null_spans=*/true));
     nixl::trace::Tracer tracer{std::move(backends)};
     auto span = tracer.beginSpan("op");
+    auto context_span =
+        tracer.beginContextSpan("op", nixl::trace::Kind::Generic, testContext(0x25), 0x2525);
 
     span.addAttribute("rail", std::string_view{"0"});
     span.addAttribute("bytes", std::int64_t{1});
+    context_span.addAttribute("rail", std::string_view{"0"});
+    context_span.addAttribute("bytes", std::int64_t{1});
 
     EXPECT_FALSE(tracer.empty());
     EXPECT_FALSE(span.active());
+    EXPECT_FALSE(context_span.active());
     EXPECT_EQ(a.spansBegun, 1);
+    EXPECT_EQ(a.contextSpans.size(), 1u);
     EXPECT_EQ(a.spansEnded, 0);
     EXPECT_TRUE(a.strAttrs.empty());
     EXPECT_TRUE(a.intAttrs.empty());
@@ -1014,4 +1096,36 @@ TEST(TracePhaseSink, ThrowingBackendIsReportedOnce) {
     EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 2, {}, nullptr, 0, 0));
 
     EXPECT_EQ(drops.count(), 1u);
+}
+
+TEST(Tracing, AllocationCounterCountsOnlyItsOwnThread) {
+    const gtest::AllocationCounter allocations;
+    void *const value = ::operator new(sizeof(std::uint64_t));
+    EXPECT_EQ(allocations.count(), 1u);
+
+    std::atomic<bool> start = false;
+    std::size_t worker_count = 0;
+    std::size_t worker_total = 0;
+    std::thread worker([&start, &worker_count, &worker_total] {
+        while (!start) {
+            std::this_thread::yield();
+        }
+        const gtest::AllocationCounter worker_allocations;
+        {
+            const gtest::AllocationCounter nested_allocations;
+            void *const other = ::operator new(sizeof(std::uint64_t));
+            worker_count = nested_allocations.count();
+            ::operator delete(other);
+        }
+        void *const after = ::operator new(sizeof(std::uint64_t));
+        worker_total = worker_allocations.count();
+        ::operator delete(after);
+    });
+    const std::size_t with_thread = allocations.count();
+    start = true;
+    worker.join();
+    EXPECT_EQ(allocations.count(), with_thread);
+    EXPECT_EQ(worker_count, 1u);
+    EXPECT_EQ(worker_total, 2u);
+    ::operator delete(value);
 }

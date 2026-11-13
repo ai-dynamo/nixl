@@ -31,7 +31,6 @@ Mooncake transfer engine is a high-performance, zero-copy data transfer library.
 ## Known Issues
 1. The `ProgTh[read]` features are not supported.
 2. The current version of Mooncake Transfer Engine manages metadata exchange by itself, which is different from NIXL.
-3. The sum of the number of release requests for each handle allocated by `prepXfer()` should be less than `kMaxRequestCount(1024)`.
 
 > [!IMPORTANT]
 > We are working for refactoring Mooncake Transfer Engine to make it more adaptful and useful.

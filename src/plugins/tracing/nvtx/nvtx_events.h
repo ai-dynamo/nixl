@@ -17,7 +17,7 @@
 #ifndef NIXL_SRC_PLUGINS_TRACING_NVTX_NVTX_EVENTS_H
 #define NIXL_SRC_PLUGINS_TRACING_NVTX_NVTX_EVENTS_H
 
-#include <string>
+#include <array>
 #include <string_view>
 #include <vector>
 
@@ -27,15 +27,27 @@
 
 namespace nixl::trace::nvtx_internal {
 
+struct NvtxEvent {
+    NvtxEvent() = default;
+    NvtxEvent(const NvtxEvent &) = delete;
+    NvtxEvent &
+    operator=(const NvtxEvent &) = delete;
+
+    nvtxEventAttributes_t attributes;
+    std::array<char, 64> message;
+};
+
 /** @brief Register fixed `nixl::*` span/mark names on @p domain (hot-path labels). */
 [[nodiscard]] std::vector<nvtxStringHandle_t>
 registerSpanNames(nvtxDomainHandle_t domain);
 
-/** @brief Build NVTX event attributes for a span/mark name and operation kind.
- *         Uses a pre-registered string handle; an unknown name is registered on
- *         @p domain on demand, so the event always carries a registered label. */
-[[nodiscard]] nvtxEventAttributes_t
-eventForName(std::string_view name,
+/** @brief Fill @p event's NVTX attributes for a span/mark name and operation kind.
+ *         A fixed name uses its registered handle, or its own text when none was
+ *         registered; any other name is copied into @p event's message, or
+ *         registered on @p domain when it does not fit. */
+void
+eventForName(NvtxEvent &event,
+             std::string_view name,
              Kind kind,
              nvtxDomainHandle_t domain,
              const std::vector<nvtxStringHandle_t> &registered_handles);
