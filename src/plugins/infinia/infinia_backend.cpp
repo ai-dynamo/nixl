@@ -144,7 +144,7 @@ applyConfigOverride(const char *key,
 // -----------------------------------------------------------------------------
 
 infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       infinia_cluster_(INFINIA_DEFAULT_CLUSTER),
       infinia_tenant_(INFINIA_DEFAULT_TENANT),
       infinia_subtenant_(INFINIA_DEFAULT_SUBTENANT),
