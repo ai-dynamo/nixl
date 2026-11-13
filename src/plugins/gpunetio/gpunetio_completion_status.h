@@ -20,8 +20,6 @@
 
 #include "nixl_types.h"
 
-#include <atomic>
-#include <cstddef>
 #include <cstdint>
 
 namespace nixl::gpunetio {
@@ -29,16 +27,6 @@ namespace nixl::gpunetio {
 inline nixl_status_t
 completionStatus(const volatile uint32_t *error_flag) {
     return *error_flag == 0 ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
-}
-
-inline uint8_t *
-reserveNotificationSlot(std::atomic<uint32_t> &send_pi,
-                        uint32_t elems_num,
-                        uint8_t *send_addr,
-                        size_t elems_size,
-                        uint32_t &notification_slot) {
-    notification_slot = send_pi.fetch_add(1) & (elems_num - 1);
-    return send_addr + (notification_slot * elems_size);
 }
 
 } // namespace nixl::gpunetio

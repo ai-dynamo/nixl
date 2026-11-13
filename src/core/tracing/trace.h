@@ -212,7 +212,7 @@ private:
  *        std::exception. An all-zero id is drawn again; null selects the default
  *        getentropy-backed source.
  */
-using random_bytes_fn_t = void (*)(std::uint8_t *, std::size_t);
+using random_bytes_fn_t = void (*)(std::span<std::uint8_t>);
 
 /**
  * @brief Composite tracer owned by the Agent. A single beginSpan(),

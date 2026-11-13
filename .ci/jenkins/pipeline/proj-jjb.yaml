@@ -38,13 +38,15 @@
             - type: JSONPath
               key: VARIABLE_FROM_POST
               value: $
-            # Full PR merge ref (refs/pull/<n>/merge) built from the PR number in the
-            # /build comment payload via the Jayway JSONPath concat function, so the
-            # dispatcher runs the PR merged into its base branch (release branches stay
-            # frozen) while manual runs can pass any branch/commit in sha1.
+            # Full PR merge ref (refs/pull/<n>/merge) built from the PR number via the
+            # Jayway JSONPath concat function, so the dispatcher runs the PR merged into
+            # its base branch (release branches stay frozen) while manual runs can pass
+            # any branch/commit in sha1. The number comes from the object whose html_url
+            # is the PR page: issue in /build comment payloads, pull_request in PR push
+            # payloads. An unresolved path silently falls back to the sha1 default.
             - type: JSONPath
               key: sha1
-              value: '$.concat("refs/pull/", $.issue.number, "/merge")'
+              value: '$.concat("refs/pull/", $..[?(@.html_url =~ /.*\/pull\/[0-9]+/)].number, "/merge")'
     description: Do NOT edit this job through the Web GUI !  # Manual edits will be overwritten
     concurrent: true    # Allow multiple builds to run simultaneously
     sandbox: false

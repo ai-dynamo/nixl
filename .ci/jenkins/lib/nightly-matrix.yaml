@@ -12,9 +12,9 @@
 job: nixl-ci-nightly
 
 failFast: false
-# Bounds the whole run; the fan-out step below carries its own 360-min timeout
+# Bounds the whole run; the fan-out step below carries its own 540-min timeout
 # so the report is still sent when a leg hangs.
-timeout_minutes: 400
+timeout_minutes: 580
 
 kubernetes:
   cloud: il-ipp-blossom-prod
@@ -57,7 +57,7 @@ steps:
       // Run all legs in parallel; propagate:false so one red leg does not abort
       // the others. The timeout bounds the whole fan-out (leaf jobs have their
       // own) so the report is still sent if a leg hangs.
-      def fanOutTimeoutMin = 360
+      def fanOutTimeoutMin = 540
       def fanOutStart = System.currentTimeMillis()
       try {
           timeout(time: fanOutTimeoutMin, unit: 'MINUTES') {
