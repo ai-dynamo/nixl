@@ -37,15 +37,15 @@ namespace {
 
 // ucp_config_read() appends "_UCX_" to the prefix, so UCX reads NIXL_UCX_<X>
 // and falls back to UCX_<X>.
-constexpr const char *ucxEnvPrefix = "NIXL";
+constexpr const char *ucx_env_prefix = "NIXL";
 
 // Same precedence as UCX: the prefixed variable first, then the global one.
-constexpr std::array<std::string_view, 2> ucxEnvVarPrefixes = {"NIXL_UCX_", "UCX_"};
+constexpr std::array<std::string_view, 2> ucx_env_var_prefixes = {"NIXL_UCX_", "UCX_"};
 
 // Only the environment is checked: UCX does not read the NIXL config file.
 [[nodiscard]] std::optional<std::pair<std::string, std::string>>
 findUcxEnvVar(std::string_view key) {
-    for (const auto prefix : ucxEnvVarPrefixes) {
+    for (const auto prefix : ucx_env_var_prefixes) {
         auto name = std::string(prefix) + std::string(key);
         if (auto value = nixl::config::internal::getenvOptional(name)) {
             return std::make_pair(std::move(name), std::move(*value));
@@ -125,7 +125,7 @@ config::readUcpConfig() {
     });
 
     ucp_config_t *config = nullptr;
-    const auto status = ucp_config_read(ucxEnvPrefix, nullptr, &config);
+    const auto status = ucp_config_read(ucx_env_prefix, nullptr, &config);
     if (status != UCS_OK) {
         throw std::runtime_error("Failed to create UCX config: " +
                                  std::string(ucs_status_string(status)));

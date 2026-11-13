@@ -58,7 +58,7 @@ See [Configuration](#configuration) for build options.
 
 ### UCX Tuning
 
-The UCX backend reads UCX settings from `NIXL_UCX_<X>` environment variables, falling back to the global `UCX_<X>` ones. For each setting, `NIXL_UCX_<X>` takes precedence over `UCX_<X>`, which takes precedence over the `ucx.conf` file and the UCX defaults. This applies to every UCX setting, including transport-level ones such as `NIXL_UCX_IB_PCI_RELAXED_ORDERING`.
+The UCX backend reads UCX settings from `NIXL_UCX_<X>` environment variables, falling back to the global `UCX_<X>` ones. For each setting, `NIXL_UCX_<X>` takes precedence over `UCX_<X>`, which takes precedence over the `ucx.conf` file and the UCX defaults. This applies to protocol and transport-level settings, such as `NIXL_UCX_IB_PCI_RELAXED_ORDERING`, but not to process-wide UCX options such as `UCX_LOG_LEVEL`: those are shared by all UCX users and are read only from `UCX_<X>`.
 
 Prefer the `NIXL_UCX_<X>` form. `UCX_<X>` variables are also read by every other UCX user in the same process, such as MPI or UCC, while `NIXL_UCX_<X>` only affects NIXL:
 
@@ -69,8 +69,6 @@ export NIXL_UCX_NET_DEVICES=mlx5_0:1
 ```
 
 NIXL applies its own UCX defaults (for example `RNDV_THRESH=inf` and `MAX_RMA_RAILS=2`) only when neither `NIXL_UCX_<X>` nor `UCX_<X>` is set in the environment, so either form overrides them.
-
-Process-wide UCX options, such as `UCX_LOG_LEVEL`, are shared by all UCX users and are read only from `UCX_<X>`.
 
 ### Build Options
 

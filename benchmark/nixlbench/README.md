@@ -1204,9 +1204,9 @@ ip link show  # For Ethernet devices
 # Test UCX
 ucx_info -d  # List UCX devices
 
-export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging
+export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging (process-wide, no NIXL_UCX_ form)
 
-export UCX_PROTO_INFO=y # See transport used by UCX
+export NIXL_UCX_PROTO_INFO=y # See transport used by UCX
 
 export NIXL_UCX_TLS=rc,cuda_copy # Restrict NIXL's UCX transports without affecting MPI/UCC
 ```
