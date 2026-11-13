@@ -41,6 +41,9 @@ unit_test_deps += [descriptors_unit_test_dep]
 subdir('device_ops')
 unit_test_deps += [device_ops_unit_test_dep]
 
+subdir('cute')
+unit_test_deps += [cute_unit_test_dep]
+
 subdir('util')
 unit_test_deps += [util_unit_test_dep]
 
