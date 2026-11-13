@@ -126,8 +126,8 @@ RequestPool::release(nixlLibfabricReq *req) const {
 
 nixlLibfabricReq *
 RequestPool::findByContext(void *context) const {
-    std::lock_guard<std::mutex> lock(pool_mutex_);
-
+    // No pool_mutex_: this is a cast, it reads no pool state. Taking the lock here cost a
+    // locked instruction per completion on the drain path.
     if (!context) {
         return nullptr;
     }
@@ -1550,6 +1550,78 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
 
     NIXL_ERROR << "fi_writemsg failed on rail " << rail_id << ": " << fi_strerror(-ret);
     return NIXL_ERR_BACKEND;
+}
+
+nixl_status_t
+nixlLibfabricRail::postWriteBatch(const nixlLibfabricPostRequest *writes,
+                                  size_t count,
+                                  size_t &posted_out) {
+    posted_out = 0;
+    int attempt = 0;
+    std::unique_lock<std::mutex> ep_lock(ep_mutex_);
+
+    while (posted_out < count) {
+        const nixlLibfabricPostRequest &write = writes[posted_out];
+        if (!write.req) {
+            NIXL_ERROR << "Invalid request for batched write on rail " << rail_id;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
+        struct iovec iov{};
+        iov.iov_base = write.local_addr;
+        iov.iov_len = write.length;
+
+        struct fi_rma_iov rma_iov{};
+        rma_iov.addr = write.remote_addr;
+        rma_iov.len = write.length;
+        rma_iov.key = write.remote_key;
+
+        void *local_desc = write.local_desc;
+        struct fi_msg_rma msg = {};
+        msg.msg_iov = &iov;
+        msg.desc = &local_desc;
+        msg.iov_count = 1;
+        msg.addr = write.dest_addr;
+        msg.rma_iov = &rma_iov;
+        msg.rma_iov_count = 1;
+        msg.context = &write.req->ctx;
+        msg.data = write.immediate_data;
+
+        const int ret = fi_writemsg(endpoint, &msg, write.fi_flags | FI_REMOTE_CQ_DATA);
+        if (ret == 0) {
+            NIXL_TRACE << "RDMA write " << posted_out << "/" << count << " posted on rail "
+                       << rail_id
+                       << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
+                                         "");
+            ++posted_out;
+            attempt = 0;
+            continue;
+        }
+
+        if (ret != -FI_EAGAIN) {
+            NIXL_ERROR << "fi_writemsg failed on rail " << rail_id << ": " << fi_strerror(-ret);
+            return NIXL_ERR_BACKEND;
+        }
+
+        // SQ full - progress the CQ to free slots, then retry the same write
+        attempt++;
+        if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
+            NIXL_DEBUG << "fi_writemsg still retrying EAGAIN on rail " << rail_id << " after "
+                       << attempt << " attempts";
+        }
+        if (!progress_thread_enabled_) {
+            ep_lock.unlock();
+            const nixl_status_t progress_status = progressCompletionQueue();
+            ep_lock.lock();
+            if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
+                NIXL_ERROR << "progressCompletionQueue failed on rail " << rail_id
+                           << " during batched fi_writemsg retry";
+                return progress_status;
+            }
+        }
+    }
+
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t

@@ -500,6 +500,25 @@ public:
               nixlLibfabricReq *req,
               uint64_t fi_flags = 0);
 
+    /** Post a group of RDMA writes with immediate data, holding the endpoint lock once.
+     *
+     * Each fi_writemsg copies its WQE to the device's write-combined BAR, and the next locked
+     * instruction on this core stalls until that copy has drained over PCIe. Releasing ep_mutex_
+     * after every write therefore puts one drain on the critical path of every post; holding it
+     * across the group puts one there per group. On -FI_EAGAIN the lock is dropped while the
+     * completion queue is progressed, as postWrite() does, so completion handlers that post
+     * (receive reposts, notifications) can take it.
+     *
+     * Only for the progress-thread-off path, where the caller's thread posts directly.
+     *
+     * @param writes     WRITE requests, all for this rail
+     * @param count      Number of entries in @p writes
+     * @param posted_out Number of leading entries that were posted. On failure the remaining
+     *                   entries were not posted and their requests are still owned by the caller.
+     */
+    nixl_status_t
+    postWriteBatch(const nixlLibfabricPostRequest *writes, size_t count, size_t &posted_out);
+
     /** Post RDMA read operation */
     nixl_status_t
     postRead(void *local_buffer,
