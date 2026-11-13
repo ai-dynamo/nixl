@@ -68,10 +68,14 @@ private:
     CUfileBatchHandle_t batch_handle = nullptr;
     std::unique_ptr<CUfileIOEvents_t[]> io_batch_events;
     std::unique_ptr<CUfileIOParams_t[]> io_batch_params;
+    // Keep the submitted parameters intact until every entry has reported.
+    std::unique_ptr<CUfileIOParams_t[]> io_batch_tail_params;
     CUfileError_t init_err{};
     unsigned int max_reqs = 0;
     unsigned int batch_size = 0;
     unsigned int entries_completed = 0;
+    unsigned int tail_count = 0;
+    int submit_flags = 0;
     bool active = false;
     // A poll on the context failed, so the batch can neither be trusted nor
     // waited for. The context is recreated before the batch is reused

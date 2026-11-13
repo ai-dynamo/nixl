@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <algorithm>
+#include <cstdint>
 #include <exception>
 #include <limits>
 #include <stdexcept>
@@ -41,6 +42,7 @@ ceilDiv(size_t value, size_t divisor) {
 nixlGdsIOBatch::nixlGdsIOBatch(unsigned int size)
     : io_batch_events(std::make_unique<CUfileIOEvents_t[]>(size)),
       io_batch_params(std::make_unique<CUfileIOParams_t[]>(size)),
+      io_batch_tail_params(std::make_unique<CUfileIOParams_t[]>(size)),
       max_reqs(size) {
 
     const CUfileError_t err = cuFileBatchIOSetUp(&batch_handle, size);
@@ -116,6 +118,7 @@ nixlGdsIOBatch::submitBatch(int flags) {
         return NIXL_ERR_BACKEND;
     }
     active = true;
+    submit_flags = flags;
     current_status = NIXL_IN_PROG;
     return NIXL_SUCCESS;
 }
@@ -168,11 +171,29 @@ nixlGdsIOBatch::checkStatus() {
             continue;
         }
 
-        const auto *params = static_cast<const CUfileIOParams_t *>(event.cookie);
-        if (event.ret != params->u.batch.size) {
+        const auto cookie = reinterpret_cast<std::uintptr_t>(event.cookie);
+        const auto params_begin = reinterpret_cast<std::uintptr_t>(io_batch_params.get());
+        if (cookie < params_begin ||
+            cookie - params_begin >= batch_size * sizeof(CUfileIOParams_t) ||
+            (cookie - params_begin) % sizeof(CUfileIOParams_t) != 0) {
+            NIXL_ERROR << "GDS batch entry returned an unknown completion cookie";
+            failure = NIXL_ERR_BACKEND;
+            continue;
+        }
+        const auto *params = &io_batch_params[(cookie - params_begin) / sizeof(CUfileIOParams_t)];
+        const size_t done = static_cast<size_t>(event.ret);
+        if (done == 0 || done > params->u.batch.size) {
             NIXL_ERROR << "GDS batch entry completed " << event.ret << " of "
                        << params->u.batch.size << " bytes";
             failure = NIXL_ERR_BACKEND;
+            continue;
+        }
+        if (done < params->u.batch.size) {
+            auto &tail = io_batch_tail_params[tail_count++];
+            tail = *params;
+            tail.u.batch.file_offset += done;
+            tail.u.batch.devPtr_offset += done;
+            tail.u.batch.size -= done;
         }
     }
 
@@ -181,6 +202,19 @@ nixlGdsIOBatch::checkStatus() {
     }
     if (failure != NIXL_SUCCESS) {
         current_status = failure;
+    } else if (!active && tail_count != 0) {
+        // Every entry of the current submission is terminal. Reuse its context
+        // for the unfinished tails without changing any live parameters.
+        std::swap(io_batch_params, io_batch_tail_params);
+        batch_size = tail_count;
+        entries_completed = 0;
+        tail_count = 0;
+        for (unsigned int i = 0; i < batch_size; ++i) {
+            io_batch_params[i].cookie = &io_batch_params[i];
+        }
+        if (submitBatch(submit_flags) != NIXL_SUCCESS) {
+            return current_status;
+        }
     } else {
         current_status = active ? NIXL_IN_PROG : NIXL_SUCCESS;
     }
@@ -257,6 +291,8 @@ nixlGdsIOBatch::reset() {
     }
     entries_completed = 0;
     batch_size = 0;
+    tail_count = 0;
+    submit_flags = 0;
     poll_broken = false;
     current_status = NIXL_ERR_NOT_POSTED;
 }
