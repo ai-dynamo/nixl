@@ -55,21 +55,6 @@ public:
     ~nixlDocaEngine();
 
     bool
-    supportsRemote() const {
-        return true;
-    }
-
-    bool
-    supportsLocal() const {
-        return false;
-    }
-
-    bool
-    supportsNotif() const {
-        return true;
-    }
-
-    bool
     supportsProgTh() const {
         return false;
     }

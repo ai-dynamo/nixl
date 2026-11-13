@@ -239,7 +239,8 @@ recvDataQps(int fd, uint32_t &data_qpn, std::vector<uint32_t> &write_qpns, uint3
  *****************************************/
 
 nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
+    : nixlBackendEngine(init_params,
+                        nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::NOTIF) {
     std::vector<std::string> ndevs, tmp_gdevs; /* Empty vector */
     doca_error_t result;
     nixl_b_params_t *custom_params = init_params->customParams;
