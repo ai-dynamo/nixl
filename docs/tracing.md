@@ -302,6 +302,15 @@ is 0 at prep, and both are 0 when tracing is off. They are plain integers that a
 plugin can read; a plugin that records phases later copies them with the context
 and passes them back to `recordPhase`.
 
+Next to them, `traceIdentity` points to the same three values as one internal
+`nixl::trace::TraceIdentity` (`context`, `requestId` and `execution`), valid only
+for the call and null in `prepMemView`, like `traceContext`. A plugin that records
+phases keeps a `nixlBackendPostTrace`, built at each post from its sink and these
+arguments: it records only with a sink and a sampled post, `record(phase)` stamps
+the phase with `nixlTime::getUs()` itself, and `recordAt(phase, timestamp)`
+records a time the plugin took earlier with `now()`, which reads the clock only when
+the post trace records.
+
 UCX is the first such carrier. For a sampled request it appends the 26-byte
 record as a `tctx` tag after the notification's `name` and `msg`, then, when the
 request has an id, a 16-byte `treq` tag: the request id and the post's execution

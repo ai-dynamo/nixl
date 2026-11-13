@@ -30,11 +30,9 @@
 #include <span>
 #include <string_view>
 
+#include "backend/backend_aux.h"
 #include "common/nixl_time.h"
-
-namespace nixl::trace {
-struct TraceContext;
-}
+#include "tracing/trace_context.h"
 
 /**
  * @brief Fixed set of backend phases.
@@ -111,24 +109,22 @@ public:
      * @brief Record that @p phase happened at @p timestamp.
      *
      * @param phase     Which phase; see @ref nixl_trace_phase_t.
-     * @param label     Name for a @ref nixl_trace_phase_t::OTHER phase. Recorded
-     *                  as an attribute for every phase, and additionally used as
-     *                  the event name for `OTHER`. May be empty.
      * @param timestamp Microsecond reading of the monotonic `nixlTime` clock
      *                  (`nixlTime::getUs()`, backed by `std::chrono::steady_clock`),
      *                  not a wall clock. Recorded verbatim as the event's time and
      *                  as `nixl.phase.timestamp_us`.
+     * @param identity  Trace identity the phase belongs to: the post's own for a
+     *                  local phase, the sender's for a phase observed on receipt.
+     *                  Valid for the call only. Its context is recorded as
+     *                  `nixl.traceparent` when valid, its request id as
+     *                  `nixl.xfer_request_id` when non-zero (the event is
+     *                  correlated on it), and its execution number as
+     *                  `nixl.xfer_execution` when non-zero.
      * @param attrs     Extra attributes; see @ref nixlBackendTraceAttr for the
      *                  lifetime rule, which applies to @p label as well.
-     * @param context   Trace context the phase belongs to, or null: the request's
-     *                  own for a local phase, the sender's for a phase observed on
-     *                  receipt. Valid for the call only; recorded as
-     *                  `nixl.traceparent`.
-     * @param request_id Request id of the phase's transfer request, or 0 for none;
-     *                   recorded as `nixl.xfer_request_id` when non-zero, and the
-     *                   event is correlated on it.
-     * @param execution Execution number of the post the phase belongs to, or 0 for
-     *                  none; recorded as `nixl.xfer_execution` when non-zero.
+     * @param label     Name for a @ref nixl_trace_phase_t::OTHER phase. Recorded
+     *                  as an attribute for every phase, and additionally used as
+     *                  the event name for `OTHER`. May be empty.
      *
      * Safe to call concurrently from any thread, including a progress thread;
      * each call records one point event, whichever thread makes it. `noexcept`
@@ -138,12 +134,96 @@ public:
      */
     virtual void
     recordPhase(nixl_trace_phase_t phase,
+                nixlTime::us_t timestamp,
+                const nixl::trace::TraceIdentity &identity,
+                std::span<const nixlBackendTraceAttr> attrs = {},
+                std::string_view label = {}) noexcept = 0;
+
+    /** @brief Record that @p phase happened now, at nixlTime::getUs(). */
+    void
+    recordPhase(nixl_trace_phase_t phase,
+                const nixl::trace::TraceIdentity &identity,
+                std::span<const nixlBackendTraceAttr> attrs = {},
+                std::string_view label = {}) noexcept {
+        recordPhase(phase, nixlTime::getUs(), identity, attrs, label);
+    }
+
+    /** @brief Record @p phase at @p timestamp under the identity of @p context (none when
+     *         null), @p request_id and @p execution. */
+    void
+    recordPhase(nixl_trace_phase_t phase,
                 std::string_view label,
                 nixlTime::us_t timestamp,
                 std::span<const nixlBackendTraceAttr> attrs = {},
                 const nixl::trace::TraceContext *context = nullptr,
                 std::uint64_t request_id = 0,
-                std::uint64_t execution = 0) noexcept = 0;
+                std::uint64_t execution = 0) noexcept {
+        recordPhase(
+            phase,
+            timestamp,
+            {(context != nullptr) ? *context : nixl::trace::TraceContext{}, request_id, execution},
+            attrs,
+            label);
+    }
+};
+
+/**
+ * @brief A post's trace for a backend's phases: the sink and the post's identity.
+ *        It records only with a sink and a sampled identity; record() reads the
+ *        clock, recordAt() takes a time stamped earlier.
+ */
+class nixlBackendPostTrace {
+public:
+    nixlBackendPostTrace() = default;
+
+    nixlBackendPostTrace(nixlBackendTraceSink *sink, const nixl_opt_b_args_t *opt_args) noexcept {
+        if ((opt_args != nullptr) && (opt_args->traceIdentity != nullptr)) {
+            *this = nixlBackendPostTrace(sink, *opt_args->traceIdentity);
+        }
+    }
+
+    nixlBackendPostTrace(nixlBackendTraceSink *sink,
+                         const nixl::trace::TraceIdentity &identity) noexcept
+        : sink_(identity.context.sampled() ? sink : nullptr),
+          identity_(identity) {}
+
+    [[nodiscard]] bool
+    active() const noexcept {
+        return sink_ != nullptr;
+    }
+
+    [[nodiscard]] const nixl::trace::TraceIdentity &
+    identity() const noexcept {
+        return identity_;
+    }
+
+    /** @brief nixlTime::getUs() if this trace records, 0 otherwise: the time a later
+     *         recordAt() takes. */
+    [[nodiscard]] nixlTime::us_t
+    now() const noexcept {
+        return (sink_ != nullptr) ? nixlTime::getUs() : 0;
+    }
+
+    void
+    record(nixl_trace_phase_t phase,
+           std::span<const nixlBackendTraceAttr> attrs = {}) const noexcept {
+        if (sink_ != nullptr) {
+            sink_->recordPhase(phase, identity_, attrs);
+        }
+    }
+
+    void
+    recordAt(nixl_trace_phase_t phase,
+             nixlTime::us_t timestamp,
+             std::span<const nixlBackendTraceAttr> attrs = {}) const noexcept {
+        if (sink_ != nullptr) {
+            sink_->recordPhase(phase, timestamp, identity_, attrs);
+        }
+    }
+
+private:
+    nixlBackendTraceSink *sink_ = nullptr;
+    nixl::trace::TraceIdentity identity_;
 };
 
 #endif // NIXL_SRC_CORE_TRACING_BACKEND_TRACE_H
