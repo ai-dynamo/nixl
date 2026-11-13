@@ -16,3 +16,30 @@ reviews:
       instructions: "Follow docs/CodeStyle.md. C++20."
     - path: "src/**/*.h"
       instructions: "Follow docs/CodeStyle.md. C++20."
+    - path: "skills/nixl-docs/SKILL.md"
+      instructions: |
+        Check every index entry for these 3 rules:
+        1. Format is `- [Title](path): description`.
+        2. The path is relative to `skills/nixl-docs/`, starts with `../../`, and exists.
+        3. If the target file has a frontmatter `description`, the entry copies it verbatim; otherwise, the description accurately states what the file covers and is at most 15 words.
+  pre_merge_checks:
+    custom_checks:
+      - name: "nixl-docs skill index in sync"
+        mode: "warning"
+        instructions: |
+          Indexed set: git-tracked files of these 3 kinds:
+          1. `.md` or `.mdx` outside `skills/`, `.agents/`, and `.claude/`, including dot directories such as `.ci/` and `.github/`.
+          2. `.h` under `src/api/cpp/`.
+          3. `.py` under `src/api/python/`.
+
+          Index: `skills/nixl-docs/SKILL.md`, one `- [Title](path): description` entry per file.
+
+          Judge only this PR's changes. Fail if any of these 5 cases is true:
+          1. A file in the set is added and has no index entry.
+          2. A file in the set is deleted and its index entry remains.
+          3. A file in the set is moved or renamed and its index entry still uses the old path.
+          4. A file in the set is modified and its index description is clearly no longer accurate. Ignore minor edits such as typos, wording, formatting, or small additions. If the file's frontmatter `description` changed, its index description must match the new one verbatim.
+          5. An index entry change does not match exactly one file change: an added entry must match a file added to the set; a removed entry must match a file deleted from or moved out of the set; and a target-path change must match that same file moving or being renamed within the set. One file change cannot justify two entry changes.
+
+          For case 5, title or description edits, moving or reordering an entry without changing its target path, and edits outside index entries are allowed.
+          Pass otherwise, including when no file in the set changed.
