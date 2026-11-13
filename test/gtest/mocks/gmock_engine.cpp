@@ -50,6 +50,7 @@ GMockBackendEngine::setDefaults() {
     ON_CALL(*this, postXfer(_, _, _, _, _, _)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, checkXfer(_)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, releaseReqH(_)).WillByDefault(Return(NIXL_SUCCESS));
+    ON_CALL(*this, cancelXfer(_)).WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
     ON_CALL(*this, prepMemView(A<const nixl_remote_meta_dlist_t &>(), _, _))
         .WillByDefault(
             [](const nixl_remote_meta_dlist_t &, nixlMemViewH &mvh, const nixl_opt_b_args_t *) {

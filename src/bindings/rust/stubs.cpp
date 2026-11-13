@@ -799,6 +799,13 @@ nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req) {
 }
 
 nixl_capi_status_t
+nixl_capi_cancel_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t);
+    static fn_t real = (fn_t)resolve("nixl_capi_cancel_xfer_req");
+    return real(agent, req);
+}
+
+nixl_capi_status_t
 nixl_capi_release_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req) {
     using fn_t = nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t);
     static fn_t real = (fn_t)resolve("nixl_capi_release_xfer_req");

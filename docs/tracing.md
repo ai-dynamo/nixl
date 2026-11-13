@@ -185,7 +185,7 @@ backends/PRs):
 Spans cover the synchronous call only; the `nixl::xfer.complete` event is emitted
 once per completed post, by the first call that sees the transfer complete:
 `postXferReq` when the backend completes it at once, and otherwise `getXferStatus`,
-a repost of the same request, or `releaseXferReq`. How a backend renders attributes and
+or a repost of the same request. How a backend renders attributes and
 dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each
 backend (e.g. NVTX attaches attributes as typed payloads on the range via
 `nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
@@ -193,14 +193,13 @@ record them).
 
 A post that fails records one `nixl::xfer.error` event instead, by the first call
 that sees the failure: `postXferReq` when the backend fails it at once, and
-otherwise `getXferStatus`, a repost of the same request, or `releaseXferReq`. A
-release that cancels a post it still sees in flight records one with
-`NIXL_ERR_CANCELED`. Once its end is seen, each post that took an execution
+otherwise `getXferStatus` or a repost of the same request. `releaseXferReq` does not
+poll, so it records neither. Once its end is seen, each post that took an execution
 number has exactly one of the two. `nixl.status` is the native `nixl_status_t`:
 on a `postXferReq` span the call's return, refused calls included; on
 `nixl::xfer.error` the failure; on `nixl::releaseXferReq` the call's return. Each
-release attempt is a span of its own, inside its latest post's context, so a
-release refused with `NIXL_ERR_REPOST_ACTIVE` and its retry are two records.
+release attempt is a span of its own, inside its latest post's context. A release of
+a request still in progress logs an error and still releases the request.
 
 For a sampled request, each `postXferReq` span is the span that its call's trace
 context identifies (see "Backend phases"), so the post's `nixl::xfer.complete` and

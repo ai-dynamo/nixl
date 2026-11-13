@@ -1100,6 +1100,35 @@ impl Agent {
         }
     }
 
+    /// Asks the backend to cancel a posted (in progress) transfer request.
+    ///
+    /// The call frees nothing, and the transfer keeps the buffers. Poll
+    /// [`Agent::get_xfer_status`] until it no longer reports `InProgress`. An error means the
+    /// cancellation took effect. Success means the transfer finished first. If you drop an
+    /// `XferRequest` that is still in progress, NIXL logs an error and still releases it. The
+    /// transfer may still access the user buffers.
+    ///
+    /// Returns `Ok(true)` if the cancellation started and `Ok(false)` if it was already
+    /// requested.
+    ///
+    /// # Errors
+    /// * `BackendError` - The request is not in progress, or the backend cannot cancel it
+    pub fn cancel_xfer_req(&self, req: &XferRequest) -> Result<bool, NixlError> {
+        let status = unsafe {
+            bindings::nixl_capi_cancel_xfer_req(
+                self.inner.write().unwrap().handle.as_ptr(),
+                req.handle(),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(true),
+            NIXL_CAPI_IN_PROG => Ok(false),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
     /// Queries the backend for a transfer request
     ///
     /// # Arguments
