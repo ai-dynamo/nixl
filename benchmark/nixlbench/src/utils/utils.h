@@ -167,6 +167,12 @@
     (XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme && \
      XFERBENCH_MODE_MG == xferBenchConfig::mode)
 
+struct xferBenchIterationPlan {
+    int warmup_iter;
+    int num_iter;
+    int descriptor_depth;
+};
+
 class xferBenchConfig {
 public:
     static std::string runtime_type;
@@ -266,6 +272,9 @@ public:
     static int doca_memos_num_tasks;
     static std::string doca_memos_nguid;
 
+    /* Per-worker iterations and descriptor slots needed by either execution phase. */
+    static xferBenchIterationPlan
+    iterationPlan(size_t block_size);
     // Cached set of memory segment types reported by the selected backend.
     // Populated pre-instantiation in loadParams via getPluginParams, then refreshed
     // post-instantiation by the worker via getBackendParams (so LIBFABRIC's runtime-added
