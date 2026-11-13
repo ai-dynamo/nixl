@@ -45,6 +45,14 @@ if 'REDIS' in static_plugins
     nixl_lib_deps += [ redis_backend_interface ]
 endif
 
+disable_odm_backend = get_option('disable_odm_backend')
+if not disable_odm_backend and 'MARVELL_ODM' in static_plugins
+    if not is_variable('odm_backend_interface')
+        error('static_plugins has MARVELL_ODM but plugin not built (CUDA not found?)')
+    endif
+    nixl_lib_deps += [ odm_backend_interface ]
+endif
+
 if is_variable('doca_memos_backend_interface') and 'DOCA_MEMOS' in static_plugins
     nixl_lib_deps += [ doca_memos_backend_interface ]
 endif

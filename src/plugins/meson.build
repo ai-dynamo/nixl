@@ -124,6 +124,19 @@ if enabled_plugins.get('GPUNETIO')
     endif
 endif
 
+disable_odm_backend = get_option('disable_odm_backend')
+if enabled_plugins.get('MARVELL_ODM')
+    if (disable_odm_backend or not cuda_dep.found()) and is_explicit_enable
+        if disable_odm_backend
+            error('ODM plugin requested but ODM backend is disabled')
+        else
+            error('ODM plugin requested but CUDA dependency not found')
+        endif
+    elif not disable_odm_backend and cuda_dep.found()
+        subdir('marvell_odm')
+    endif
+endif
+
 if enabled_plugins.get('DOCA_MEMOS')
     # Always entered so doca_memos_backend_sources is defined for the unit
     # tests; the plugin meson.build short-circuits internally when the DOCA
