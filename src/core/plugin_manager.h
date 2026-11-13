@@ -29,11 +29,16 @@
 #include "backend/backend_plugin.h"
 #include "nixl_types.h"
 #include "telemetry/telemetry_plugin.h"
-#include "tracing/trace_plugin.h"
 
 // Forward declarations
 class nixlBackendEngine;
 struct nixlBackendInitParams;
+struct nixlTraceBackendInitParams;
+class nixlTracePlugin;
+
+namespace nixl::trace {
+class TraceBackend;
+}
 
 class nixlPluginHandle {
 public:
