@@ -410,7 +410,7 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
     // A split transfer has no single batch to carry its notification, so
     // checkXfer sends it to {agent, message} once every batch completed.
     std::optional<std::pair<std::string, std::string>> pending_notif;
-    // Set when a failed submit left requests that may still be in flight.
+    // Set when a submit failed; checkXfer reports it once no batch is in flight.
     bool failed = false;
 };
 
@@ -422,6 +422,7 @@ releaseBatches(transfer_engine_t engine, nixlMooncakeBackendReqH *priv) {
     }
     priv->batches.clear();
     priv->pending_notif.reset();
+    priv->failed = false;
 }
 
 // checkXfer leaves finished batches allocated so that the poll observing
@@ -438,17 +439,21 @@ recycleBatches(transfer_engine_t engine, nixlMooncakeBackendReqH *priv) {
     return NIXL_SUCCESS;
 }
 
-// A failed submit can leave requests that a transport already started, so the
-// handle can be reposted only if the batch is freed at once. A deferred batch
-// belongs to the engine from here on; a busy one stays for releaseReqH to retry.
-// Returns whether the batch id is gone.
+// A failed submit can leave requests that a transport already started, which
+// use the caller's buffers until they finish. Engines with
+// getBatchTransferStatus() also have kvcache-ai/Mooncake#3198, which gives every
+// request of a failed submit a final status, so the batch stays on the handle
+// for checkXfer to wait for. Older engines can leave such requests waiting
+// forever, so the batch is freed at once, or leaked if it is busy.
+// Returns whether the batch stays on the handle.
 bool
-dropFailedBatch(transfer_engine_t engine, nixlMooncakeBackendReqH *priv, uint64_t batch_id) {
-    const int rc = freeBatch(engine, batch_id);
-    if (rc != 0) {
-        priv->failed = true;
-    }
-    return rc == 0 || rc == kBatchCleanupDeferred;
+keepFailedBatch([[maybe_unused]] transfer_engine_t engine, [[maybe_unused]] uint64_t batch_id) {
+#ifdef HAVE_MOONCAKE_BATCH_STATUS
+    return true;
+#else
+    freeBatch(engine, batch_id);
+    return false;
+#endif
 }
 } // namespace
 
@@ -471,10 +476,6 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
-    if (priv->failed) {
-        NIXL_ERROR << "Mooncake request failed to submit earlier; release it and create a new one";
-        return NIXL_ERR_BACKEND;
-    }
     int segment_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -505,7 +506,7 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
     if (submit_pool_ && request_count >= split_batch_size_ &&
         (operation == NIXL_READ || kSplitWrites)) {
         const size_t threads = submit_pool_->size();
-        chunk_size = std::max((request_count + threads - 1) / threads, split_batch_size_);
+        chunk_size = (request_count + threads - 1) / threads;
         num_chunks = (request_count + chunk_size - 1) / chunk_size;
     }
     if (num_chunks > 1) {
@@ -524,11 +525,8 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                 if (batch->id == INVALID_BATCH) {
                     return -1;
                 }
-                const int rc = submitTransfer(engine, batch->id, entries, count);
-                if (rc == 0) {
-                    batch->request_count = count;
-                }
-                return rc;
+                batch->request_count = count;
+                return submitTransfer(engine, batch->id, entries, count);
             }));
         }
         std::vector<int> rcs;
@@ -543,14 +541,15 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                 continue;
             }
             failed = true;
-            if (batch.id != INVALID_BATCH && dropFailedBatch(engine_, priv, batch.id)) {
+            if (batch.id != INVALID_BATCH && !keepFailedBatch(engine_, batch.id)) {
                 batch.id = INVALID_BATCH;
             }
         }
-        // Batches that completed their submit stay, so a repost waits for them.
         std::erase_if(priv->batches, [](const auto &batch) { return batch.id == INVALID_BATCH; });
         if (failed) {
-            return NIXL_ERR_BACKEND;
+            // The other chunks may still use the caller's buffers.
+            priv->failed = true;
+            return checkXfer(handle);
         }
         if (has_notif) {
             priv->pending_notif.emplace(remote_agent, opt_args->notifMsg);
@@ -564,7 +563,7 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
     if (batch_id == INVALID_BATCH) {
         return NIXL_ERR_BACKEND;
     }
-    priv->batches.push_back({batch_id});
+    priv->batches.push_back({batch_id, request_count});
     int rc = 0;
     if (has_notif) {
         notify_msg_t notify_msg;
@@ -575,23 +574,20 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         rc = submitTransfer(engine_, batch_id, request.data(), request_count);
     }
     if (rc) {
-        if (dropFailedBatch(engine_, priv, batch_id)) {
+        if (!keepFailedBatch(engine_, batch_id)) {
             priv->batches.pop_back();
         }
-        return NIXL_ERR_BACKEND;
+        priv->failed = true;
+        return checkXfer(handle);
     }
-    priv->batches.back().request_count = request_count;
     return NIXL_IN_PROG;
 }
 
 nixl_status_t
 nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
-    if (priv->failed) {
-        return NIXL_ERR_BACKEND;
-    }
-    // A failed batch is reported once no other batch is still in flight.
-    nixl_status_t status = NIXL_SUCCESS;
+    // A failure is reported once no batch is still in flight.
+    nixl_status_t status = priv->failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
     for (const auto &batch : priv->batches) {
         const nixl_status_t batch_status = queryBatchStatus(engine_, batch.id, batch.request_count);
         if (batch_status == NIXL_IN_PROG) {
