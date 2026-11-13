@@ -265,7 +265,7 @@ else
 
     wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init -O ${BUILD_TMP}/rustup-init
     chmod +x ${BUILD_TMP}/rustup-init
-    ${BUILD_TMP}/rustup-init -y --default-toolchain 1.86.0
+    ${BUILD_TMP}/rustup-init -y --default-toolchain 1.95.0
 
     wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O ${BUILD_TMP}/install_uv.sh
     chmod +x ${BUILD_TMP}/install_uv.sh

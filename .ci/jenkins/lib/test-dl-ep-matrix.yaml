@@ -53,7 +53,7 @@ env:
   NIXL_EP_PYTHON: /home/svc-nixl/vllm/.venv/bin/python
   NIXL_BUILD_DIR: nixl_build
   SLURM_NODES: 1
-  SLURM_PARTITION: gb200nvl72_cx8
+  SLURM_PARTITION: gb300nvl72_xdr
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
   SLURM_ACCOUNT: 'blackwell'
@@ -92,7 +92,7 @@ runs_on_dockers:
      name: 'nixl-ci-dl-gpu-ep-base',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg BUILD_VLLM_ELASTIC_TEST=true --build-arg VLLM_REF=v0.30.0 --build-arg ARCH=${arch} --pull --no-cache --secret id=ghconfig,src=/tmp/ghconfig',
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg BUILD_VLLM_ELASTIC_TEST=true --build-arg VLLM_REF=v0.33.0 --build-arg ARCH=${arch} --pull --no-cache --secret id=ghconfig,src=/tmp/ghconfig',
      credentialsId: 'svc-nixl-github-read-only-token'
     }
 
