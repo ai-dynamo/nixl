@@ -34,24 +34,24 @@ namespace nixl::gpu::impl::ucx {
 inline constexpr bool available = false;
 
 template<level_t level>
-__device__ nixl_status_t
+[[nodiscard]] __device__ nixl_status_t
 getXferStatus(xferStatusH &) {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
 template<level_t level>
-__device__ nixl_status_t
+[[nodiscard]] __device__ nixl_status_t
 put(const memViewElem &, const memViewElem &, size_t, unsigned, uint64_t, xferStatusH *) {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
 template<level_t level>
-__device__ nixl_status_t
+[[nodiscard]] __device__ nixl_status_t
 atomicAdd(uint64_t, const memViewElem &, unsigned, uint64_t, xferStatusH *) {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
-__device__ inline void *
+[[nodiscard]] __device__ inline void *
 getPtr(nixlMemViewH, size_t) {
     return nullptr;
 }
@@ -59,77 +59,74 @@ getPtr(nixlMemViewH, size_t) {
 } // namespace nixl::gpu::impl::ucx
 #endif
 
-// The proxy implementation needs only CUDA, so unlike the UCX arm it is always
-// present and needs no capability gate.
 #include "proxy/device_proxy.cuh"
 
 namespace nixl::gpu::impl {
 
 namespace detail {
 
-    __device__ __forceinline__ const memViewWrapper *
+    [[nodiscard]] __device__ __forceinline__ const memViewWrapper *
     asDeviceMemView(nixlMemViewH handle) {
         return static_cast<const memViewWrapper *>(handle);
     }
 
     template<exec_mode_t mode>
-    inline constexpr bool buildable = mode != exec_mode_t::UCX_DIRECT || ucx::available;
+    inline constexpr bool buildable = (mode != exec_mode_t::UCX_DIRECT) || ucx::available;
 
+    /** The view's tag must match a fixed mode, or name a backend; asserted in debug builds. */
     template<exec_mode_t mode>
-    __device__ __forceinline__ exec_mode_t
-    executionMode(const memViewWrapper &view) {
+    __device__ __forceinline__ void
+    checkMode(const memViewWrapper &view) {
         static_assert(buildable<mode>, "UCX_DIRECT needs UCX's GPU device API");
         if constexpr (mode == exec_mode_t::DYNAMIC) {
-            return view.execution_mode;
+            assert((view.execution_mode == exec_mode_t::UCX_DIRECT) ||
+                   (view.execution_mode == exec_mode_t::PROXY));
         } else {
             assert(view.execution_mode == mode);
-            return mode;
         }
     }
 
     template<exec_mode_t mode>
-    __device__ __forceinline__ exec_mode_t
-    executionMode(const xferStatusH &status) {
+    __device__ __forceinline__ void
+    checkMode([[maybe_unused]] const xferStatusH &status) {
         static_assert(buildable<mode>, "UCX_DIRECT needs UCX's GPU device API");
         if constexpr (mode == exec_mode_t::DYNAMIC) {
-            return status.mode;
-        } else {
-            return mode;
+            assert((status.mode == exec_mode_t::UCX_DIRECT) || (status.mode == exec_mode_t::PROXY));
         }
     }
 
     /** Tag accepted (NIXL_IN_PROG) submissions for a DYNAMIC getXferStatus. */
-    template<level_t level, exec_mode_t mode>
+    template<level_t level>
     __device__ __forceinline__ void
     writeExecutionMode(xferStatusH *status,
                        nixl_status_t submission_status,
                        exec_mode_t execution_mode) {
-        if constexpr (mode == exec_mode_t::DYNAMIC) {
-            if (status != nullptr && submission_status >= 0 && isLeader<level>()) {
-                status->mode = execution_mode;
-            }
-            // Collective pollers share the leader's tag.
-            sync<level>();
+        if ((status != nullptr) && (submission_status >= 0) && isLeader<level>()) {
+            status->mode = execution_mode;
         }
+        // Collective pollers share the leader's tag.
+        sync<level>();
     }
 
 } // namespace detail
 
 template<level_t level, exec_mode_t mode>
-__device__ nixl_status_t
+[[nodiscard]] __device__ nixl_status_t
 getXferStatus(xferStatusH &xfer_status) {
-    switch (detail::executionMode<mode>(xfer_status)) {
-    case exec_mode_t::UCX_DIRECT:
+    detail::checkMode<mode>(xfer_status);
+    if constexpr (mode == exec_mode_t::UCX_DIRECT) {
         return ucx::getXferStatus<level>(xfer_status);
-    case exec_mode_t::PROXY:
+    } else if constexpr (mode == exec_mode_t::PROXY) {
         return proxy::getXferStatus<level>(xfer_status);
-    default:
-        return NIXL_ERR_INVALID_PARAM;
+    } else {
+        return (xfer_status.mode == exec_mode_t::UCX_DIRECT) ?
+            ucx::getXferStatus<level>(xfer_status) :
+            proxy::getXferStatus<level>(xfer_status);
     }
 }
 
 template<level_t level, exec_mode_t mode>
-__device__ nixl_status_t
+[[nodiscard]] __device__ nixl_status_t
 put(const memViewElem &src,
     const memViewElem &dst,
     size_t size,
@@ -142,21 +139,23 @@ put(const memViewElem &src,
     const memViewElem backend_dst{dst_view->backend_memview, dst.index, dst.offset};
 
     // The destination decides: it is the view that names the peer.
-    const exec_mode_t execution_mode = detail::executionMode<mode>(*dst_view);
-    nixl_status_t status;
-    if (execution_mode == exec_mode_t::UCX_DIRECT) {
-        status = ucx::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
-    } else if (execution_mode == exec_mode_t::PROXY) {
-        status = proxy::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
+    detail::checkMode<mode>(*dst_view);
+    if constexpr (mode == exec_mode_t::UCX_DIRECT) {
+        return ucx::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
+    } else if constexpr (mode == exec_mode_t::PROXY) {
+        return proxy::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
     } else {
-        status = NIXL_ERR_INVALID_PARAM;
+        const exec_mode_t execution_mode = dst_view->execution_mode;
+        const nixl_status_t status = (execution_mode == exec_mode_t::UCX_DIRECT) ?
+            ucx::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status) :
+            proxy::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
+        detail::writeExecutionMode<level>(xfer_status, status, execution_mode);
+        return status;
     }
-    detail::writeExecutionMode<level, mode>(xfer_status, status, execution_mode);
-    return status;
 }
 
 template<level_t level, exec_mode_t mode>
-__device__ nixl_status_t
+[[nodiscard]] __device__ nixl_status_t
 atomicAdd(uint64_t value,
           const memViewElem &counter,
           unsigned channel_id,
@@ -165,30 +164,34 @@ atomicAdd(uint64_t value,
     const auto *view = detail::asDeviceMemView(counter.mvh);
     const memViewElem backend_counter{view->backend_memview, counter.index, counter.offset};
 
-    const exec_mode_t execution_mode = detail::executionMode<mode>(*view);
-    nixl_status_t status;
-    if (execution_mode == exec_mode_t::UCX_DIRECT) {
-        status = ucx::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
-    } else if (execution_mode == exec_mode_t::PROXY) {
-        status = proxy::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
+    detail::checkMode<mode>(*view);
+    if constexpr (mode == exec_mode_t::UCX_DIRECT) {
+        return ucx::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
+    } else if constexpr (mode == exec_mode_t::PROXY) {
+        return proxy::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
     } else {
-        status = NIXL_ERR_INVALID_PARAM;
+        const exec_mode_t execution_mode = view->execution_mode;
+        const nixl_status_t status = (execution_mode == exec_mode_t::UCX_DIRECT) ?
+            ucx::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status) :
+            proxy::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
+        detail::writeExecutionMode<level>(xfer_status, status, execution_mode);
+        return status;
     }
-    detail::writeExecutionMode<level, mode>(xfer_status, status, execution_mode);
-    return status;
 }
 
 template<exec_mode_t mode>
-__device__ inline void *
+[[nodiscard]] __device__ inline void *
 getPtr(nixlMemViewH mvh, size_t index) {
     const auto *view = detail::asDeviceMemView(mvh);
-    switch (detail::executionMode<mode>(*view)) {
-    case exec_mode_t::UCX_DIRECT:
+    detail::checkMode<mode>(*view);
+    if constexpr (mode == exec_mode_t::UCX_DIRECT) {
         return ucx::getPtr(view->backend_memview, index);
-    case exec_mode_t::PROXY:
+    } else if constexpr (mode == exec_mode_t::PROXY) {
         return proxy::getPtr(view->backend_memview, index);
-    default:
-        return nullptr;
+    } else {
+        return (view->execution_mode == exec_mode_t::UCX_DIRECT) ?
+            ucx::getPtr(view->backend_memview, index) :
+            proxy::getPtr(view->backend_memview, index);
     }
 }
 
