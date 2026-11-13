@@ -52,12 +52,35 @@ export NIXL_DEBUG_LOGGING=yes
 # Load the source dispatcher and the backend installed in the shared venv.
 export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta${PYTHONPATH:+:$PYTHONPATH}"
 
+# Run the --disable-ll-nvlink (RDMA) elastic tests only when UCX pairs each of the
+# four ranks' GPUs with its own rc_gda NIC (NIC-name agnostic, correct on every partition).
+rdma_supported() {
+    local ucx_info="${INSTALL_DIR}/bin/ucx_info" nics
+    if [ ! -x "$ucx_info" ]; then
+        echo "RDMA check on $(hostname): ${ucx_info} not found"
+        return 1
+    fi
+    # A fresh process has no active CUDA context, and UCX then hides rc_gda.
+    nics=$(env -u UCX_TLS -u UCX_NET_DEVICES UCX_IB_GDA_RETAIN_INACTIVE_CTX=yes \
+        timeout 120 "$ucx_info" -d 2>/dev/null | awk '
+            /^# +Transport:/    { rc = ($NF == "rc_gda") }
+            rc && /^# +Device:/ { sub(/^[^-]*-/, "", $NF); print $NF }
+        ' | sort -u | wc -l)
+    echo "RDMA check on $(hostname): ${nics} distinct rc_gda NIC(s), need 4"
+    [ "$nics" -ge 4 ]
+}
+
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
+if (set +x; rdma_supported); then
+    RDMA_SUPPORTED=true
+else
+    RDMA_SUPPORTED=false
+fi
 
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
@@ -90,24 +113,12 @@ run_elastic_test() {
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
 
-# Only run the --disable-ll-nvlink (RDMA) elastic tests when all four CX-7
-# NICs (mlx5_0..mlx5_3) report PORT_ACTIVE.
-all_rdma_nics_active() {
-    local hca
-    for hca in mlx5_0 mlx5_1 mlx5_2 mlx5_3; do
-        if ! ibv_devinfo -d "$hca" 2>/dev/null | grep -q "state:.*PORT_ACTIVE"; then
-            return 1
-        fi
-    done
-    return 0
-}
-
-# RDMA (--disable-ll-nvlink)
-if all_rdma_nics_active; then
+# RDMA (--disable-ll-nvlink), only when the capability check above passed.
+if [ "$RDMA_SUPPORTED" = true ]; then
     run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json" "--disable-ll-nvlink"
     run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
 else
-    echo "Skipping RDMA elastic tests: not all of mlx5_0..mlx5_3 are PORT_ACTIVE on $(hostname)"
+    echo "Skipping RDMA elastic tests on $(hostname): see the RDMA check above"
 fi
 
 echo "==== nixl_ep elastic tests done ===="

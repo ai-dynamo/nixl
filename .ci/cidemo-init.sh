@@ -22,6 +22,7 @@ YAML_FILES=(
     ".ci/jenkins/lib/test-dl-matrix.yaml"
     ".ci/jenkins/lib/test-vr-matrix.yaml"
     ".ci/jenkins/lib/test-dl-ep-matrix.yaml"
+    ".ci/jenkins/lib/test-vr-ep-matrix.yaml"
     ".ci/jenkins/lib/test-sanitizer-matrix.yaml"
     ".ci/jenkins/lib/build-wheel-matrix.yaml"
 )
