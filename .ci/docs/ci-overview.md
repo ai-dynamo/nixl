@@ -73,7 +73,7 @@ All files below live in `.github/workflows/`.
 
 ### Run Pre-Commit Hooks (`pre-commit.yml`)
 - **Trigger:** `push`, `pull_request`.
-- **What it does:** Runs the repo's configured `pre-commit` hooks against files modified in the PR/push.
+- **What it does:** Runs the repo's configured `pre-commit` hooks against files modified in the PR/push. The hook list includes `yamllint` on `.ci/path-filters.yaml` and `check-path-filters`, which fails when a modified file is registered in no component (see [Path filtering](#path-filtering)).
 - **Automatic on every PR:** Yes.
 
 ### Claude Code Review (`claude-review.yml`)
@@ -115,7 +115,8 @@ sequenceDiagram
         Scan->>Scan: checkout PR code, run Black Duck scan
         Scan->>Trigger: proceed to Job-trigger
         Trigger->>Jenkins: START-CI-JOB (trigger dispatcher)
-        Jenkins->>Children: fan out in parallel, wait for all
+        Jenkins->>Children: fan out to the jobs selected by the path filter, wait for all
+        Jenkins-->>GH: green "skipped" status for each job not selected
         Children-->>GH: each job posts its own check status
         Jenkins-->>GH: dispatcher posts overall commit status
     end
@@ -132,9 +133,12 @@ Step by step, matching the jobs in `blossom-ci.yml`:
    Duck-based vulnerability scan via the `NVIDIA/blossom-action`.
 5. **Job-trigger** calls `blossom-ci` with `OPERATION: START-CI-JOB`, which
    triggers the Jenkins `nixl-ci-dispatcher` job.
-6. `nixl-ci-dispatcher` fans out in parallel to its eight child jobs
-   (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `build-wheel`,
-   `test-sanitizers`, `build-container-pr` — see [Jenkins jobs](#jenkins-jobs) below).
+6. `nixl-ci-dispatcher` fans out in parallel to the child jobs selected by the
+   path filter from its eight (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`,
+   `gpu-vr`, `build-wheel`, `test-sanitizers`, `build-container-pr` — see
+   [Jenkins jobs](#jenkins-jobs) below). Every job runs unless
+   `.ci/path-filters.yaml` narrows the set for the PR's changed paths; jobs
+   not selected get a green "skipped" status (see [Path filtering](#path-filtering)).
 7. Each child job reports its own status back as an individual GitHub PR
    check, so the PR shows per-job pass/fail rather than one aggregate check.
 
@@ -167,7 +171,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
 
 - **Trigger:** GitHub webhook payload forwarded by Blossom-CI's `Job-trigger` step (`OPERATION: START-CI-JOB`). Not a raw GitHub Actions event.
-- **What it does:** Fans out in parallel to eight downstream Jenkins jobs, waiting on all of them:
+- **What it does:** Fans out in parallel to eight downstream Jenkins jobs, waiting on all of them. On PR runs only the jobs selected by the [path filter](#path-filtering) for the PR's changed paths are started; the rest get a green "skipped" status under their own context. Manual runs (no PR number) always run all eight:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node)
@@ -239,6 +243,156 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 - **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr` with `UCX_VER=${UCX_REF}` (default `master`), waits for all four, and emails one consolidated report to `MAIL_TO` (default `nixl-ci-alerts@exchange.nvidia.com`) **only when a leg fails** — a green night is silent. This is the single place nightly UCX-`master` results are collected and sent from; per-PR runs of the GPU jobs cover only the release UCX version.
 - **Matrix:** `.ci/jenkins/lib/nightly-matrix.yaml` — a lightweight ci-demo orchestrator (one groovy step: fan out, wait, mail), no GPU of its own.
 - **Automatic on every PR:** No — standalone/scheduled + manual only.
+
+## Path filtering
+
+On PR runs, `nixl-ci-dispatcher` fans out only to the leaf jobs whose
+components the PR touches, and posts a green "skipped" status for the rest so
+the required checks stay satisfied. Which repository paths belong to which
+component is declared in `.ci/path-filters.yaml`, maintained by the repo
+maintainers and reviewed by DevOps (`CODEOWNERS` routes `.ci/` to
+`@ai-dynamo/nixl-devops`). Which jobs run for which component is the job table
+in `Jenkinsfile.dispatcher`, owned by DevOps. Manual and nightly runs are not
+filtered.
+
+Match rules follow gitignore conventions, applied to the repo-relative path
+exactly as the GitHub API returns it:
+
+| Entry | Meaning | Example |
+|---|---|---|
+| contains `/` and a wildcard | `**` spans directories, `*` stays within one segment | `examples/device/ep/**` is the whole subtree; `src/plugins/*/meson.build` is one level |
+| contains `/`, no wildcard | that exact file, or anything beneath a directory of that path | `.gitlab/test_ep.sh`; `examples/device/ep` and `examples/device/ep/` both mean the subtree |
+| no `/` | matched against any single path component, at any depth; a directory name matches its subtree, as in gitignore | `*.md`, `Cargo.lock` |
+| leading `/` | anchored at the repository root, as in gitignore | `/README.md` is the root README only |
+
+`**` is the form to write for a directory; the bare and trailing-slash forms
+are accepted so a forgotten slash never turns a subtree into a dead entry.
+`dir/*` means direct children only, as in gitignore. `**` is accepted only as
+the last path segment. Entries starting with `*` must be quoted in YAML. No
+other glob syntax is supported (`?`, `[...]`, `!` and `\` are rejected).
+
+**Most specific entry wins.** A path takes the component of the matching entry
+with the longest literal prefix (the text before the first wildcard, or the
+whole entry when it has none). An entry without `/` can match at any depth,
+so it always has specificity 0, below every path-bearing entry. Entries that
+tie contribute together. This is what lets `/README.md` under `all` beat
+`*.md` under `docs`, and what lets `all` keep `examples/**` while a more
+specific component claims `examples/device/ep/**`. A PR's component set is the
+union over its changed paths; for a renamed file both the old and the new path
+count. A path that matches nothing counts as `all`. `all` is reserved and
+always means "run every job".
+
+### Components
+
+Step one defines a single filtered component, agreed with the developers so
+the skip path is proven on docs-only PRs before any product component is
+wired in. `nixl_ep` and, when it lands, `nixl_store` (which brings its own
+GitHub Actions workflow and should skip most or all Jenkins jobs) are each
+added later as a YAML block here plus a line in the dispatcher's job table.
+
+| Component | Covers | Why |
+|---|---|---|
+| `docs` | `docs/**`, `fern/**`, `.ci/docs/**` (this file), and `*.md` anywhere a more specific entry does not claim it, i.e. the root-level `ATTRIBUTIONS-*.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md` | a docs-only PR runs no Jenkins job; Markdown inside `src/`, `examples/` etc. stays with `all` because those entries are more specific |
+| `all` | one entry per top-level directory and root file, plus `/README.md` | runs every job; the root README is pulled back out of `docs` because `pyproject.toml` embeds it in the wheel, so renaming or deleting it must build on main |
+
+`CODEOWNERS` routes `.ci/path-filters.yaml` to `@ai-dynamo/nixl-devops` on
+purpose: maintainers author the entries and DevOps approve them.
+
+### Registering a path
+
+Every file in the repository must match an entry. New paths go into the
+component they belong to, or into `all` when they should keep running the full
+CI; every top-level directory and root file is listed explicitly under `all`,
+so adding a top-level path means adding a line. The `check-path-filters`
+pre-commit hook (`.ci/scripts/check_path_filters.py`, the reference
+implementation of the rules above) fails on any staged or PR-modified file
+that matches nothing:
+
+```
+tools/new.sh: not registered in .ci/path-filters.yaml; add it to a component or to 'all'
+```
+
+It also rejects an invalid config (unknown top-level key, missing `all`,
+duplicate component key, unsupported glob) with exit code 2 and the reason.
+
+### Job table
+
+The dispatcher's `leafJobs` map carries the components each job cares about.
+A job runs when the PR's component set contains `all` or any of the job's
+components; `[]` means a core job that runs only on `all`. In step one every
+job is core, so `docs` maps to nothing:
+
+| Branch | Job | Components |
+|---|---|---|
+| `non-gpu` | `nixl-ci-non-gpu` | `[]` |
+| `gpu` | `nixl-ci-gpu` | `[]` |
+| `dl-gpu` | `nixl-ci-dl-gpu` | `[]` |
+| `dl-gpu-ep` | `nixl-ci-dl-gpu-ep` | `[]` |
+| `gpu-vr` | `nixl-ci-gpu-vr` | `[]` |
+| `wheel` | `nixl-ci-build-wheel` | `[]` |
+| `sanitizers` | `nixl-ci-test-sanitizers` | `[]` |
+| `build-container` | `nixl-ci-build-container-pr` | `[]` |
+
+This rule is firm: every job runs unless the YAML says the PR only touches
+specific components. There is no way to express "run this job only when its
+component is touched, even on a core change". When `nixl_ep` is registered,
+the jobs that build or test EP code today (`nixl-ci-dl-gpu-ep`,
+`nixl-ci-build-wheel`, `nixl-ci-build-container-pr`) get `['nixl_ep']`.
+
+### What a PR sees
+
+The changed-file list comes from the GitHub API (`pulls/<n>/files`, a
+merge-base diff, old and new names of renames both counted) and the YAML is
+read through the GitHub contents API at the ref the dispatcher itself was
+checked out from (`sha1`: the PR merge ref on webhook runs, whatever was
+passed on a manual run). Both use plain `URL.openConnection` under the
+existing GitHub token; the job runs in the Groovy sandbox, so the first runs
+after a deploy need the JDK signatures approved once in *Manage Jenkins →
+In-process Script Approval* (until then every PR runs everything and the
+console names the rejected signature). The PR label `ci:full` forces a full
+run.
+
+| PR touches | Component set | Runs | Statuses |
+|---|---|---|---|
+| `docs/...` or `CONTRIBUTING.md` only | `docs` | nothing | 8 green "Skipped by path filter: PR touches docs", `blossom-ci` green `NIXL CI ended: ran 0/8 jobs (docs)` |
+| root `README.md` only | `all` (`/README.md`) | all 8 | as before |
+| `docs/...` + `src/core/...` | `docs`, `all` | all 8 | as before |
+| `.ci/path-filters.yaml` only | `all` (`.ci/**`) | all 8 | as before |
+| adds `tools/new.sh` without registering it | `pre-commit` fails on the PR; if merged anyway, `all` (unmatched) | all 8 | as before |
+| any PR with label `ci:full` | `all` | all 8 | as before |
+| manual run, no PR | `all` | all 8 | as before |
+
+Whenever the decision cannot be made, the dispatcher runs everything and says
+why in the console:
+
+| Failure | Behaviour |
+|---|---|
+| GitHub API error or rate limit while listing files | full run, console says why |
+| PR with 3000 or more changed files (GitHub's listing cap) | full run |
+| PR with an empty file list | full run |
+| YAML missing at the dispatcher's own ref (`sha1`) | full run |
+| YAML present but malformed | full run, console shows the reason |
+| Sandbox rejects a signature the filter uses (first runs after a deploy) | full run, console names the signature; approve it once |
+| Any other error inside the filter | full run, reason `path filter error: …` |
+| Unknown component name in a job's `components` | job runs only on `all`; no error |
+| New file committed with `--no-verify`, unregistered | `pre-commit` check fails on the PR; dispatcher treats the path as `all` |
+| Status post for a skipped job fails | logged, run continues; the PR then shows that context as missing rather than falsely green |
+
+The console block to grep for in a dispatcher log:
+
+```
+Path filter: PR #<n>, <n> changed path(s)
+  <path> -> <component>[, <component>]       or    <path> -> (unmatched -> all)
+Path filter: components = [a, b]
+Path filter: run = [branch, ...]; skip = [branch, ...]
+```
+
+or, when a reason applies, `Path filter: <reason>; running all jobs` followed by
+the `run = ...; skip = []` line. The reason also reaches the PR: the final
+`blossom-ci` status reads `NIXL CI ended: ran <k>/8 jobs (<components>[; <reason>])`
+(truncated to 140 characters) and the build description carries
+`| components: <components>[; <reason>]`, so a silent fallback is visible
+without opening the console.
 
 ## Slurm job naming
 
