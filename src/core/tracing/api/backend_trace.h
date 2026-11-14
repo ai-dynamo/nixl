@@ -150,7 +150,6 @@ enum class nixl_trace_completion_t : std::uint8_t {
 /**
  * @brief One key/value attribute on a recorded phase or span.
  *
- * The key is one of nixl::trace::attributeKeys, written as its string literal.
  * The value must stay valid only for the
  * duration of the @ref nixlBackendTraceSink::recordPhase or
  * @ref nixlBackendTraceSink::recordSpan call; the sink copies what it retains.
@@ -454,7 +453,7 @@ recordDeferredPhases(nixlBackendTraceSink *sink) noexcept {
 
 inline void
 recordNotifReceived(const nixlBackendPostTrace &trace, std::string_view remote_agent) noexcept {
-    const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", remote_agent}};
+    const std::array attrs{nixlBackendTraceAttr{AttributeKey::NixlRemoteAgent, remote_agent}};
     trace.record(nixl_trace_phase_t::NOTIF_RECEIVED, attrs);
 }
 

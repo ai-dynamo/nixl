@@ -114,8 +114,8 @@ NvtxTraceBackend::emitSpan(const Name name,
     setCorrelation(ev.attributes, request_id);
     NvtxSpan range(domain_, schemaIds_);
     nvtxDomainRangePushEx(domain_, &ev.attributes);
-    range.addAttribute("nixl.start_us", static_cast<std::int64_t>(start));
-    range.addAttribute("nixl.end_us", static_cast<std::int64_t>(end));
+    range.addAttribute(AttributeKey::NixlStartUs, static_cast<std::int64_t>(start));
+    range.addAttribute(AttributeKey::NixlEndUs, static_cast<std::int64_t>(end));
     addAttributes(range, attrs);
 }
 

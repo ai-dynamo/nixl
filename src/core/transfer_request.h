@@ -83,7 +83,8 @@ private:
         if (status == NIXL_SUCCESS) {
             traceable_.trace(nixl::trace::Record::XferComplete);
         } else if (status < 0) {
-            traceable_.trace(nixl::trace::Record::XferError, {"nixl.status", status});
+            traceable_.trace(nixl::trace::Record::XferError,
+                             {nixl::trace::AttributeKey::NixlStatus, status});
         }
     }
 

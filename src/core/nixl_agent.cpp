@@ -39,6 +39,7 @@
 #include "telemetry_event.h"
 #include "tracing/api/agent_trace.h"
 
+using nixl::trace::AttributeKey;
 using nixl::trace::Record;
 
 namespace {
@@ -549,7 +550,8 @@ nixlAgent::queryMem(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
                        const nixl_opt_args_t* extra_params) {
-    NIXL_TRACE_SCOPE(span, data->tracer(), Record::RegisterMem, {"mem_type", descs.getType()});
+    NIXL_TRACE_SCOPE(
+        span, data->tracer(), Record::RegisterMem, {AttributeKey::MemType, descs.getType()});
 
     backend_list_t* backend_list;
     unsigned int    count = 0;
@@ -616,7 +618,8 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
                          const nixl_opt_args_t* extra_params) {
-    NIXL_TRACE_SCOPE(span, data->tracer(), Record::DeregisterMem, {"mem_type", descs.getType()});
+    NIXL_TRACE_SCOPE(
+        span, data->tracer(), Record::DeregisterMem, {AttributeKey::MemType, descs.getType()});
 
     backend_set_t backend_set;
     nixl_status_t bad_ret = NIXL_SUCCESS;
@@ -667,7 +670,8 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::makeConnection(const std::string &remote_agent,
                           const nixl_opt_args_t* extra_params) {
-    NIXL_TRACE_SCOPE(span, data->tracer(), Record::MakeConnection, {"remote_agent", remote_agent});
+    NIXL_TRACE_SCOPE(
+        span, data->tracer(), Record::MakeConnection, {AttributeKey::RemoteAgent, remote_agent});
 
     std::set<nixl_backend_t> backend_set;
     int count = 0;
@@ -943,8 +947,10 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                                                  remote_descs.getType(),
                                                  desc_count,
                                                  remote_side.remoteSectionRef);
-    NIXL_TRACE_REQUEST_SPAN(
-        span, handle->traceable(), Record::MakeXferReq, {"desc_count", local_indices.size()});
+    NIXL_TRACE_REQUEST_SPAN(span,
+                            handle->traceable(),
+                            Record::MakeXferReq,
+                            {AttributeKey::DescCount, local_indices.size()});
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -1067,8 +1073,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     NIXL_TRACE_REQUEST_SPAN(span,
                             handle->traceable(),
                             Record::CreateXferReq,
-                            {"remote_agent", remote_agent},
-                            {"desc_count", local_descs.descCount()});
+                            {AttributeKey::RemoteAgent, remote_agent},
+                            {AttributeKey::DescCount, local_descs.descCount()});
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -1272,8 +1278,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                          nixl::trace::suppliedContext(extra_params),
                          req_hndl->backendOp == NIXL_WRITE ? Record::PostXferReqWrite :
                                                              Record::PostXferReqRead,
-                         {"remote_agent", req_hndl->remoteAgent},
-                         {"bytes", req_hndl->telemetry.totalBytes});
+                         {AttributeKey::RemoteAgent, req_hndl->remoteAgent},
+                         {AttributeKey::Bytes, req_hndl->telemetry.totalBytes});
 
     if (timer) {
         req_hndl->telemetry.startTime = start_time;
@@ -1416,7 +1422,8 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
                 data->addErrorTelemetry(NIXL_ERR_REPOST_ACTIVE);
                 return NIXL_TRACE_FINISH(span, NIXL_ERR_REPOST_ACTIVE); // Might need renaming
             }
-            req_hndl->traceable().trace(Record::XferError, {"nixl.status", NIXL_ERR_CANCELED});
+            req_hndl->traceable().trace(Record::XferError,
+                                        {AttributeKey::NixlStatus, NIXL_ERR_CANCELED});
             req_hndl->status = release_status;
             // just in case the backend doesn't set to NULL on success
             // this will prevent calling releaseReqH again in destructor
@@ -1512,7 +1519,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
                            data->tracer(),
                            nixl::trace::suppliedContext(extra_params),
                            Record::GenNotif,
-                           {"remote_agent", remote_agent});
+                           {AttributeKey::RemoteAgent, remote_agent});
 
     backend_list_t backend_list_value;
     backend_list_t *backend_list;
@@ -1825,7 +1832,7 @@ nixlAgent::loadRemoteMD(const nixl_blob_t &remote_metadata, std::string &agent_n
     // context the manager also uses); this public entry point delegates to it.
     const nixl_status_t ret = data->loadRemoteMD(remote_metadata, agent_name);
     if (ret == NIXL_SUCCESS) {
-        NIXL_TRACE_ATTR(span, "remote_agent", std::string_view{agent_name});
+        NIXL_TRACE_ATTR(span, AttributeKey::RemoteAgent, std::string_view{agent_name});
     }
     return ret;
 }
@@ -1952,7 +1959,8 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::fetchRemoteMD (const std::string remote_name,
                           const nixl_opt_args_t* extra_params) {
-    NIXL_TRACE_SCOPE(span, data->tracer(), Record::FetchRemoteMd, {"remote_agent", remote_name});
+    NIXL_TRACE_SCOPE(
+        span, data->tracer(), Record::FetchRemoteMd, {AttributeKey::RemoteAgent, remote_name});
 
     return data->md_.fetchRemoteMD(remote_name, extra_params);
 }
@@ -2015,8 +2023,8 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
     NIXL_TRACE_SCOPE(span,
                      data->tracer(),
                      Record::PrepMemView,
-                     {"mem_type", mem_type},
-                     {"desc_count", desc_count});
+                     {AttributeKey::MemType, mem_type},
+                     {AttributeKey::DescCount, desc_count});
 
     nixl_remote_meta_dlist_t remote_meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
@@ -2089,8 +2097,8 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
     NIXL_TRACE_SCOPE(span,
                      data->tracer(),
                      Record::PrepMemView,
-                     {"mem_type", mem_type},
-                     {"desc_count", dlist.descCount()});
+                     {AttributeKey::MemType, mem_type},
+                     {AttributeKey::DescCount, dlist.descCount()});
 
     nixl_meta_dlist_t meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};

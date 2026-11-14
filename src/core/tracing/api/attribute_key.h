@@ -17,73 +17,68 @@
 #ifndef NIXL_SRC_CORE_TRACING_API_ATTRIBUTE_KEY_H
 #define NIXL_SRC_CORE_TRACING_API_ATTRIBUTE_KEY_H
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <string_view>
 
 namespace nixl::trace {
 
-inline constexpr std::array<std::string_view, 14> attributeKeys{
-    "bytes",
-    "desc_count",
-    "mem_type",
-    "nixl.backend",
-    "nixl.end_us",
-    "nixl.phase.label",
-    "nixl.phase.timestamp_us",
-    "nixl.remote_agent",
-    "nixl.span.label",
-    "nixl.start_us",
-    "nixl.status",
-    "nixl.xfer_execution",
-    "nixl.xfer_request_id",
-    "remote_agent",
+enum class AttributeKey : std::uint16_t {
+    Bytes,
+    DescCount,
+    MemType,
+    NixlBackend,
+    NixlEndUs,
+    NixlPhaseLabel,
+    NixlPhaseTimestampUs,
+    NixlRemoteAgent,
+    NixlSpanLabel,
+    NixlStartUs,
+    NixlStatus,
+    NixlXferExecution,
+    NixlXferRequestId,
+    RemoteAgent,
 };
 
-inline constexpr std::string_view unknownAttributeKey = "nixl.attribute";
+inline constexpr std::size_t attributeKeyCount =
+    static_cast<std::size_t>(AttributeKey::RemoteAgent) + 1;
 
-void
-attributeKeyIsNotInAttributeKeys();
-
-class AttributeKey {
-public:
-    template<std::size_t Size>
-    consteval AttributeKey(const char (&key)[Size]) noexcept : index_(indexOf({key, Size - 1})) {}
-
-    [[nodiscard]] constexpr const char *
-    c_str() const noexcept {
-        return view().data();
+[[nodiscard]] constexpr std::string_view
+toStringView(AttributeKey key) noexcept {
+    switch (key) {
+    case AttributeKey::Bytes:
+        return "bytes";
+    case AttributeKey::DescCount:
+        return "desc_count";
+    case AttributeKey::MemType:
+        return "mem_type";
+    case AttributeKey::NixlBackend:
+        return "nixl.backend";
+    case AttributeKey::NixlEndUs:
+        return "nixl.end_us";
+    case AttributeKey::NixlPhaseLabel:
+        return "nixl.phase.label";
+    case AttributeKey::NixlPhaseTimestampUs:
+        return "nixl.phase.timestamp_us";
+    case AttributeKey::NixlRemoteAgent:
+        return "nixl.remote_agent";
+    case AttributeKey::NixlSpanLabel:
+        return "nixl.span.label";
+    case AttributeKey::NixlStartUs:
+        return "nixl.start_us";
+    case AttributeKey::NixlStatus:
+        return "nixl.status";
+    case AttributeKey::NixlXferExecution:
+        return "nixl.xfer_execution";
+    case AttributeKey::NixlXferRequestId:
+        return "nixl.xfer_request_id";
+    case AttributeKey::RemoteAgent:
+        return "remote_agent";
     }
+    return "nixl.attribute";
+}
 
-    [[nodiscard]] constexpr std::string_view
-    view() const noexcept {
-        return (index_ < attributeKeys.size()) ? attributeKeys[index_] : unknownAttributeKey;
-    }
-
-    [[nodiscard]] constexpr std::size_t
-    index() const noexcept {
-        return index_;
-    }
-
-private:
-    using index_t = std::uint16_t;
-    static_assert(attributeKeys.size() <= std::size_t{std::numeric_limits<index_t>::max()} + 1);
-
-    [[nodiscard]] static consteval index_t
-    indexOf(std::string_view key) noexcept {
-        for (std::size_t i = 0; i < attributeKeys.size(); ++i) {
-            if (attributeKeys[i] == key) {
-                return static_cast<index_t>(i);
-            }
-        }
-        attributeKeyIsNotInAttributeKeys();
-        return 0;
-    }
-
-    index_t index_;
-};
+static_assert(toStringView(static_cast<AttributeKey>(attributeKeyCount)) == "nixl.attribute");
 
 } // namespace nixl::trace
 

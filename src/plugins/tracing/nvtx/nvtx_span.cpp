@@ -143,7 +143,7 @@ NvtxSpan::fitsInline(const std::size_t value_size) const noexcept {
 NvtxSpan::InlinePayload &
 NvtxSpan::nextInline(const AttributeKey key, const std::uint64_t schema_id) noexcept {
     InlinePayload &payload = inline_[inlineCount_];
-    payload.record.key = key.c_str();
+    payload.record.key = toStringView(key).data();
     inlineRefs_[inlineCount_] = {schema_id, sizeof(AttrPayload), &payload.record};
     ++inlineCount_;
     return payload;
@@ -152,7 +152,7 @@ NvtxSpan::nextInline(const AttributeKey key, const std::uint64_t schema_id) noex
 NvtxSpan::StoredPayload &
 NvtxSpan::nextStored(const AttributeKey key, const std::uint64_t schema_id) {
     StoredPayload &stored = overflow_.emplace_back();
-    stored.record.key = key.c_str();
+    stored.record.key = toStringView(key).data();
     stored.data = {schema_id, sizeof(AttrPayload), &stored.record};
     return stored;
 }

@@ -99,8 +99,9 @@ TEST_F(traceRecorder, EmittedSpanRecordsItsTimesAndContext) {
         const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         const std::array attrs{
-            nixl::trace::Attribute{"bytes", std::int64_t{4096}},
-            nixl::trace::Attribute{"nixl.remote_agent", std::string_view{"peer"}}};
+            nixl::trace::Attribute{nixl::trace::AttributeKey::Bytes, std::int64_t{4096}},
+            nixl::trace::Attribute{nixl::trace::AttributeKey::NixlRemoteAgent,
+                                   std::string_view{"peer"}}};
         tracer->emitSpan("nixl::test.span",
                          nixl::trace::Kind::CommSend,
                          context,
@@ -136,7 +137,8 @@ TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
         const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
-        const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", "sender"}};
+        const std::array attrs{
+            nixlBackendTraceAttr{nixl::trace::AttributeKey::NixlRemoteAgent, "sender"}};
         sink.recordPhase(
             nixl_trace_phase_t::NOTIF_RECEIVED, 1234, {context, recorded_request_id, 1}, attrs, {});
     }
@@ -190,7 +192,7 @@ TEST_F(traceRecorder, ContextSpanRecordsItsOwnContextAndId) {
             const nixl::trace::Scope scope(tracer.get(), {context, recorded_request_id});
             auto span = tracer->beginContextSpan(
                 "nixl::test.post", nixl::trace::Kind::CommSend, context, recorded_request_id);
-            span.addAttribute("bytes", std::int64_t{4096});
+            span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{4096});
             const auto child = tracer->beginSpan("nixl::test.child");
             const auto other = tracer->beginContextSpan(
                 "nixl::test.other", nixl::trace::Kind::Generic, other_context, other_request_id);

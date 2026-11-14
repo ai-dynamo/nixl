@@ -74,7 +74,7 @@ public:
 
     void
     addAttribute(nixl::trace::AttributeKey key, std::string_view value) override {
-        line_.append(" ").append(key.view()).append("=").append(value);
+        line_.append(" ").append(nixl::trace::toStringView(key)).append("=").append(value);
     }
 
     void

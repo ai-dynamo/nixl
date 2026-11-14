@@ -71,17 +71,18 @@ TracerPhaseSink::record(AttributeKey label_key,
                         const Emit &emit) noexcept {
     try {
         absl::InlinedVector<Attribute, inline_record_attrs> record_attrs;
-        record_attrs.push_back({"nixl.backend", backend_});
+        record_attrs.push_back({AttributeKey::NixlBackend, backend_});
         if (timestamp.has_value()) {
             record_attrs.push_back(
-                {"nixl.phase.timestamp_us", static_cast<std::int64_t>(*timestamp)});
+                {AttributeKey::NixlPhaseTimestampUs, static_cast<std::int64_t>(*timestamp)});
         }
         if (identity.requestId != 0) {
-            record_attrs.push_back({"nixl.xfer_request_id", attributeValue(identity.requestId)});
+            record_attrs.push_back(
+                {AttributeKey::NixlXferRequestId, attributeValue(identity.requestId)});
         }
         if (identity.execution != 0) {
             record_attrs.push_back(
-                {"nixl.xfer_execution", static_cast<std::int64_t>(identity.execution)});
+                {AttributeKey::NixlXferExecution, static_cast<std::int64_t>(identity.execution)});
         }
         if (!label.empty()) {
             record_attrs.push_back({label_key, label});
@@ -114,7 +115,7 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
                              std::span<const nixlBackendTraceAttr> attrs,
                              std::string_view label) noexcept {
     const bool named = (phase == nixl_trace_phase_t::OTHER) && !label.empty();
-    record("nixl.phase.label",
+    record(AttributeKey::NixlPhaseLabel,
            label,
            (timestamp != 0) ? std::optional<nixlTime::us_t>{timestamp} : std::nullopt,
            identity,
@@ -139,7 +140,7 @@ TracerPhaseSink::recordSpan(nixl_trace_span_t span,
                             std::string_view label) noexcept {
     const bool named = (span == nixl_trace_span_t::OTHER) && !label.empty();
     const Record span_record = toRecord(span, operation);
-    record("nixl.span.label",
+    record(AttributeKey::NixlSpanLabel,
            label,
            std::nullopt,
            identity,

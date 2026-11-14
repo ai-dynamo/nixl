@@ -19,7 +19,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <bit>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -107,7 +106,7 @@ makeRecord(std::string_view name,
     EmittedRecord record{std::string(name), kind, context, request_id, std::move(times), {}};
     for (const auto &attr : attrs) {
         record.attrs.emplace_back(
-            std::string(attr.key.view()),
+            std::string(nixl::trace::toStringView(attr.key)),
             std::visit(
                 [](const auto value) -> attr_value_t {
                     if constexpr (std::is_same_v<decltype(value), const std::string_view>) {
@@ -131,17 +130,18 @@ public:
 
     void
     addAttribute(nixl::trace::AttributeKey key, std::string_view value) override {
-        log_->strAttrs.emplace_back(std::string(key.view()), std::string(value));
+        log_->strAttrs.emplace_back(std::string(nixl::trace::toStringView(key)),
+                                    std::string(value));
     }
 
     void
     addAttribute(nixl::trace::AttributeKey key, std::int64_t value) override {
-        log_->intAttrs.emplace_back(std::string(key.view()), value);
+        log_->intAttrs.emplace_back(std::string(nixl::trace::toStringView(key)), value);
     }
 
     void
     addAttribute(nixl::trace::AttributeKey key, double value) override {
-        log_->dblAttrs.emplace_back(std::string(key.view()), value);
+        log_->dblAttrs.emplace_back(std::string(nixl::trace::toStringView(key)), value);
     }
 
     void
@@ -514,27 +514,23 @@ concept hasAttributeValue = requires(const T &value) { nixl::trace::attributeVal
 static_assert(hasAttributeValue<float>);
 static_assert(!hasAttributeValue<std::atomic<std::uint64_t>>);
 
-static_assert(std::is_constructible_v<nixl::trace::AttributeKey, const char (&)[13]>);
-static_assert(!std::is_constructible_v<nixl::trace::AttributeKey, const char *>);
-static_assert(!std::is_constructible_v<nixl::trace::AttributeKey, std::string_view>);
-static_assert(!std::is_constructible_v<nixl::trace::AttributeKey, const std::string &>);
-
 } // namespace
 
-TEST(Tracing, AttributeKeyNamesItsTableEntry) {
-    constexpr nixl::trace::AttributeKey key = "nixl.backend";
-
-    EXPECT_EQ(key.c_str(), nixl::trace::attributeKeys[key.index()].data());
-    EXPECT_EQ(key.view(), "nixl.backend");
-    EXPECT_EQ(std::string_view(key.c_str()), "nixl.backend");
+TEST(Tracing, AttributeKeysHaveDistinctTerminatedNames) {
+    std::set<std::string_view> names;
+    for (std::size_t i = 0; i < nixl::trace::attributeKeyCount; ++i) {
+        const auto name = nixl::trace::toStringView(static_cast<nixl::trace::AttributeKey>(i));
+        EXPECT_NE(name, "nixl.attribute");
+        EXPECT_EQ(std::string_view(name.data()), name);
+        EXPECT_TRUE(names.insert(name).second) << name;
+    }
 }
 
 TEST(Tracing, AttributeKeyPastTheListIsNamedGenerically) {
-    const auto unknown = std::bit_cast<nixl::trace::AttributeKey>(
-        static_cast<std::uint16_t>(nixl::trace::attributeKeys.size()));
+    const auto unknown = static_cast<nixl::trace::AttributeKey>(nixl::trace::attributeKeyCount);
 
-    EXPECT_EQ(unknown.view(), "nixl.attribute");
-    EXPECT_EQ(std::string_view(unknown.c_str()), "nixl.attribute");
+    EXPECT_EQ(nixl::trace::toStringView(unknown), "nixl.attribute");
+    EXPECT_EQ(std::string_view(nixl::trace::toStringView(unknown).data()), "nixl.attribute");
 }
 
 // A single beginSpan() must fan out to every enabled backend, and the Span's
@@ -547,7 +543,7 @@ TEST(Tracing, FanOutToAllBackends) {
     {
         auto span = tracer->beginSpan("op", nixl::trace::Kind::CommSend);
         EXPECT_TRUE(span.active());
-        span.addAttribute("remote_agent", std::string_view{"val"});
+        span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"val"});
     } // span ends here
 
     EXPECT_EQ(a.spansBegun, 1);
@@ -571,7 +567,7 @@ TEST(Tracing, ContextSpanFansOutToAllBackends) {
     {
         auto span = tracer->beginContextSpan("op", nixl::trace::Kind::CommSend, context, 0x2424);
         EXPECT_TRUE(span.active());
-        span.addAttribute("remote_agent", std::string_view{"val"});
+        span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"val"});
     }
 
     for (const CallLog *log : {&a, &b}) {
@@ -595,9 +591,9 @@ TEST(Tracing, TypedAttributesPropagate) {
 
     {
         auto span = tracer->beginSpan("op");
-        span.addAttribute("bytes", std::int64_t{4096});
-        span.addAttribute("nixl.start_us", 0.5);
-        span.addAttribute("remote_agent", std::string_view{"agent_1"});
+        span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{4096});
+        span.addAttribute(nixl::trace::AttributeKey::NixlStartUs, 0.5);
+        span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"agent_1"});
     }
 
     for (const CallLog *log : {&a, &b}) {
@@ -616,10 +612,10 @@ TEST(Tracing, AttributeListReachesEveryBackendInOrder) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     const nixl::trace::Attribute attrs[] = {
-        {"bytes", 4096},
-        {"nixl.start_us", 0.5},
-        {"remote_agent", std::string_view{"agent_1"}},
-        {"desc_count", 8},
+        {nixl::trace::AttributeKey::Bytes, 4096},
+        {nixl::trace::AttributeKey::NixlStartUs, 0.5},
+        {nixl::trace::AttributeKey::RemoteAgent, std::string_view{"agent_1"}},
+        {nixl::trace::AttributeKey::DescCount, 8},
     };
 
     {
@@ -639,10 +635,10 @@ TEST(Tracing, AttributeListReachesEveryBackendInOrder) {
 }
 
 TEST(Tracing, AttributeHoldsItsValueAsARecordDoes) {
-    const nixl::trace::Attribute count{"desc_count", 8};
-    const nixl::trace::Attribute ratio{"nixl.start_us", 0.5f};
+    const nixl::trace::Attribute count{nixl::trace::AttributeKey::DescCount, 8};
+    const nixl::trace::Attribute ratio{nixl::trace::AttributeKey::NixlStartUs, 0.5f};
     const std::string agent = "agent_1";
-    const nixl::trace::Attribute peer{"remote_agent", agent};
+    const nixl::trace::Attribute peer{nixl::trace::AttributeKey::RemoteAgent, agent};
 
     EXPECT_EQ(std::get<std::int64_t>(count.value), 8);
     EXPECT_DOUBLE_EQ(std::get<double>(ratio.value), 0.5);
@@ -656,13 +652,13 @@ TEST(Tracing, AttrMacroPassesPlainValues) {
 
     {
         auto span = tracer->beginSpan("op");
-        NIXL_TRACE_ATTR(span, "nixl.status", NIXL_ERR_BACKEND);
-        NIXL_TRACE_ATTR(span, "bytes", std::size_t{4096});
-        NIXL_TRACE_ATTR(span, "nixl.xfer_execution", std::uint64_t{1} << 40);
-        NIXL_TRACE_ATTR(span, "desc_count", true);
-        NIXL_TRACE_ATTR(span, "remote_agent", peer);
-        NIXL_TRACE_ATTR(span, "nixl.remote_agent", "write");
-        NIXL_TRACE_ATTR(span, "nixl.start_us", 0.5);
+        NIXL_TRACE_ATTR(span, nixl::trace::AttributeKey::NixlStatus, NIXL_ERR_BACKEND);
+        NIXL_TRACE_ATTR(span, nixl::trace::AttributeKey::Bytes, std::size_t{4096});
+        NIXL_TRACE_ATTR(span, nixl::trace::AttributeKey::NixlXferExecution, std::uint64_t{1} << 40);
+        NIXL_TRACE_ATTR(span, nixl::trace::AttributeKey::DescCount, true);
+        NIXL_TRACE_ATTR(span, nixl::trace::AttributeKey::RemoteAgent, peer);
+        NIXL_TRACE_ATTR(span, nixl::trace::AttributeKey::NixlRemoteAgent, "write");
+        NIXL_TRACE_ATTR(span, nixl::trace::AttributeKey::NixlStartUs, 0.5);
     }
 
     const std::vector<std::pair<std::string, std::int64_t>> ints{
@@ -690,12 +686,12 @@ TEST(Tracing, SpanMacroRecordsItsInlineAttributes) {
         NIXL_TRACE_SCOPE(span,
                          tracer.get(),
                          nixl::trace::Record::RegisterMem,
-                         {"nixl.status", NIXL_ERR_BACKEND},
-                         {"bytes", std::size_t{4096}},
-                         {"desc_count", true},
-                         {"remote_agent", peer},
-                         {"nixl.remote_agent", "write"},
-                         {"nixl.start_us", 0.5});
+                         {nixl::trace::AttributeKey::NixlStatus, NIXL_ERR_BACKEND},
+                         {nixl::trace::AttributeKey::Bytes, std::size_t{4096}},
+                         {nixl::trace::AttributeKey::DescCount, true},
+                         {nixl::trace::AttributeKey::RemoteAgent, peer},
+                         {nixl::trace::AttributeKey::NixlRemoteAgent, "write"},
+                         {nixl::trace::AttributeKey::NixlStartUs, 0.5});
         EXPECT_TRUE(span.active());
     }
 
@@ -722,7 +718,7 @@ TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
         NIXL_TRACE_SCOPE(none,
                          static_cast<nixl::trace::Tracer *>(nullptr),
                          nixl::trace::Record::RegisterMem,
-                         {"bytes", ++evaluations});
+                         {nixl::trace::AttributeKey::Bytes, ++evaluations});
         EXPECT_FALSE(none.active());
         nixl::trace::Traceable unsampled{tracer.get(), {testContext(0x41, 0x00), 0x41}};
         nixl::trace::Traceable untraced{nullptr, {testContext(0x43), 0x43}};
@@ -731,9 +727,11 @@ TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
                                  *traced,
                                  nixl::trace::noSuppliedContext,
                                  nixl::trace::Record::PostXferReqWrite,
-                                 {"bytes", ++evaluations});
-            NIXL_TRACE_REQUEST_SPAN(
-                release, *traced, nixl::trace::Record::ReleaseXferReq, {"bytes", ++evaluations});
+                                 {nixl::trace::AttributeKey::Bytes, ++evaluations});
+            NIXL_TRACE_REQUEST_SPAN(release,
+                                    *traced,
+                                    nixl::trace::Record::ReleaseXferReq,
+                                    {nixl::trace::AttributeKey::Bytes, ++evaluations});
             EXPECT_FALSE(post.active());
             EXPECT_FALSE(release.active());
             EXPECT_EQ(currentIdentity(*tracer) != nullptr, traced == &unsampled);
@@ -803,7 +801,7 @@ TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
                                  traced,
                                  nixl::trace::noSuppliedContext,
                                  nixl::trace::Record::PostXferReqWrite,
-                                 {"bytes", 8});
+                                 {nixl::trace::AttributeKey::Bytes, 8});
             EXPECT_TRUE(post.active());
             EXPECT_EQ(traced.postIdentity().context, post_context);
             for (const CallLog *log : {&a, &b}) {
@@ -852,8 +850,11 @@ TEST(Tracing, ScopeUnderMacroRecordsTheSuppliedContextsChild) {
     child.parentSpanId = application.spanId;
 
     {
-        NIXL_TRACE_SCOPE_UNDER(
-            notif, tracer.get(), supplied, nixl::trace::Record::GenNotif, {"bytes", 1});
+        NIXL_TRACE_SCOPE_UNDER(notif,
+                               tracer.get(),
+                               supplied,
+                               nixl::trace::Record::GenNotif,
+                               {nixl::trace::AttributeKey::Bytes, 1});
         EXPECT_TRUE(notif.active());
         ASSERT_NE(currentIdentity(*tracer), nullptr);
         EXPECT_EQ(currentIdentity(*tracer)->context, child);
@@ -885,13 +886,16 @@ TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
                                tracer.get(),
                                nixl::trace::noSuppliedContext,
                                nixl::trace::Record::GenNotif,
-                               {"bytes", 1});
+                               {nixl::trace::AttributeKey::Bytes, 1});
         EXPECT_TRUE(plain.active());
         EXPECT_EQ(currentIdentity(*tracer), nullptr);
     }
     {
-        NIXL_TRACE_SCOPE_UNDER(
-            unparsed, tracer.get(), neither, nixl::trace::Record::GenNotif, {"bytes", 2});
+        NIXL_TRACE_SCOPE_UNDER(unparsed,
+                               tracer.get(),
+                               neither,
+                               nixl::trace::Record::GenNotif,
+                               {nixl::trace::AttributeKey::Bytes, 2});
         EXPECT_TRUE(unparsed.active());
     }
     {
@@ -899,7 +903,7 @@ TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
                                tracer.get(),
                                unsampled,
                                nixl::trace::Record::GenNotif,
-                               {"bytes", ++evaluations});
+                               {nixl::trace::AttributeKey::Bytes, ++evaluations});
         EXPECT_FALSE(skipped.active());
     }
     {
@@ -907,7 +911,7 @@ TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
                                static_cast<nixl::trace::Tracer *>(nullptr),
                                unsampled,
                                nixl::trace::Record::GenNotif,
-                               {"bytes", ++evaluations});
+                               {nixl::trace::AttributeKey::Bytes, ++evaluations});
         EXPECT_FALSE(untraced.active());
     }
 
@@ -959,7 +963,7 @@ TEST(Tracing, AttrMacroSkipsItsValueOnAnInactiveSpan) {
     int evaluations = 0;
     nixl::trace::Span span;
 
-    NIXL_TRACE_ATTR(span, "bytes", ++evaluations);
+    NIXL_TRACE_ATTR(span, nixl::trace::AttributeKey::Bytes, ++evaluations);
 
     EXPECT_FALSE(span.active());
     EXPECT_EQ(evaluations, 0);
@@ -969,9 +973,10 @@ TEST(Tracing, EmittedRecordsFanOutToAllBackends) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
     const auto context = testContext(0x21, 0x02);
-    const nixl::trace::Attribute attrs[] = {{"remote_agent", std::string_view{"agent_1"}},
-                                            {"bytes", std::int64_t{4096}},
-                                            {"nixl.start_us", 0.5}};
+    const nixl::trace::Attribute attrs[] = {
+        {nixl::trace::AttributeKey::RemoteAgent, std::string_view{"agent_1"}},
+        {nixl::trace::AttributeKey::Bytes, std::int64_t{4096}},
+        {nixl::trace::AttributeKey::NixlStartUs, 0.5}};
     const attr_list_t expected{{"remote_agent", std::string("agent_1")},
                                {"bytes", std::int64_t{4096}},
                                {"nixl.start_us", 0.5}};
@@ -1039,8 +1044,8 @@ TEST(Tracing, EmptyTracerIsInert) {
 
     auto span = tracer.beginSpan("op", nixl::trace::Kind::CommRecv);
     EXPECT_FALSE(span.active());
-    span.addAttribute("remote_agent", std::string_view{"v"});
-    span.addAttribute("bytes", std::int64_t{1});
+    span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"v"});
+    span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{1});
     span.addCtrlDep(nixl::trace::SpanId{7});
     EXPECT_EQ(span.id().value, 0u);
     tracer.emitSpan("s", nixl::trace::Kind::Generic, testContext(0x23), 0x2323, 1, 2, {});
@@ -1055,7 +1060,7 @@ TEST(Tracing, EmptyTracerIsInert) {
 TEST(Tracing, DefaultSpanIsInert) {
     nixl::trace::Span span;
     EXPECT_FALSE(span.active());
-    span.addAttribute("remote_agent", std::string_view{"v"});
+    span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"v"});
     EXPECT_EQ(span.id().value, 0u);
 }
 
@@ -1170,8 +1175,8 @@ TEST(Tracing, RequestedBackendWithoutPluginIsInert) {
     // What every traced call site binds to when the tracer is null.
     nixl::trace::Span span;
     EXPECT_FALSE(span.active());
-    span.addAttribute("bytes", std::int64_t{1024});
-    span.addAttribute("remote_agent", std::string_view{"peer_agent"});
+    span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{1024});
+    span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"peer_agent"});
     EXPECT_EQ(span.id().value, 0u);
 }
 
@@ -1789,9 +1794,8 @@ TEST(Tracing, TraceablePostIgnoresAnUnparsableContext) {
 
 static_assert(sizeof(nixl::trace::AttributeKey) == 2);
 static_assert(sizeof(nixl::trace::Attribute) == 32);
-static_assert(nixl::trace::AttributeKey("remote_agent").view() == "remote_agent");
-static_assert(nixl::trace::attributeKeys[nixl::trace::AttributeKey("nixl.status").index()] ==
-              "nixl.status");
+static_assert(nixl::trace::toStringView(nixl::trace::AttributeKey::RemoteAgent) == "remote_agent");
+static_assert(nixl::trace::toStringView(nixl::trace::AttributeKey::NixlStatus) == "nixl.status");
 static_assert(sizeof(nixl::trace::Name) == 16);
 static_assert(nixl::trace::Name(nixl::trace::Record::Submit).record() ==
               nixl::trace::Record::Submit);
@@ -1823,7 +1827,8 @@ TEST(Tracing, TraceableRecordsItsEventsInItsLatestPost) {
     const auto post = traced.post().context;
 
     traced.trace(nixl::trace::Record::XferComplete);
-    traced.trace(nixl::trace::Record::XferError, {"nixl.status", NIXL_ERR_BACKEND});
+    traced.trace(nixl::trace::Record::XferError,
+                 {nixl::trace::AttributeKey::NixlStatus, NIXL_ERR_BACKEND});
 
     for (const CallLog *log : {&a, &b}) {
         ASSERT_EQ(log->emittedEvents.size(), 2u);
@@ -1883,7 +1888,8 @@ TEST(Tracing, TraceableRecordsNothingUnsampledOrWithoutATracer) {
         const nixl::trace::Traceable untraced{nullptr, {testContext(0x3a), 0x3a}};
 
         unsampled.trace(nixl::trace::Record::XferComplete);
-        untraced.trace(nixl::trace::Record::XferError, {"nixl.status", NIXL_ERR_BACKEND});
+        untraced.trace(nixl::trace::Record::XferError,
+                       {nixl::trace::AttributeKey::NixlStatus, NIXL_ERR_BACKEND});
     }
 
     for (const CallLog *log : {&a, &b}) {
@@ -2021,7 +2027,8 @@ TEST(TracePhaseSink, PluginAttributesAreForwarded) {
     const auto tracer = makeMockTracer(a, b);
     nixl::trace::TracerPhaseSink sink{*tracer, "LIBFABRIC"};
 
-    const nixlBackendTraceAttr attrs[] = {{"remote_agent", "0"}, {"nixl.remote_agent", "write"}};
+    const nixlBackendTraceAttr attrs[] = {{nixl::trace::AttributeKey::RemoteAgent, "0"},
+                                          {nixl::trace::AttributeKey::NixlRemoteAgent, "write"}};
     sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, 7, {}, attrs, {});
 
     ASSERT_EQ(a.emittedEvents.size(), 1u);
@@ -2097,7 +2104,7 @@ TEST(TracePhaseSink, PhaseUnderAnIdentityRecordsItsFields) {
     const auto context = nixl::trace::parseTraceparent(traceparent);
     ASSERT_TRUE(context.has_value());
     constexpr std::uint64_t request_id = 0x7edcba9876543210ULL;
-    const nixlBackendTraceAttr attrs[] = {{"nixl.remote_agent", "peer"}};
+    const nixlBackendTraceAttr attrs[] = {{nixl::trace::AttributeKey::NixlRemoteAgent, "peer"}};
 
     sink.recordPhase(
         nixl_trace_phase_t::NOTIF_RECEIVED, 7, {*context, request_id, 2}, attrs, "rail0");
@@ -2128,7 +2135,7 @@ TEST(TracePhaseSink, PhaseWithoutATimeIsStampedWhenRecorded) {
     const auto tracer = makeMockTracer(a, b);
     nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
     const nixl::trace::TraceIdentity identity{testContext(0x38), 0x38, 1};
-    const nixlBackendTraceAttr attrs[] = {{"remote_agent", "0"}};
+    const nixlBackendTraceAttr attrs[] = {{nixl::trace::AttributeKey::RemoteAgent, "0"}};
 
     const nixlTime::us_t before = nixlTime::getUs();
     sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, identity, attrs, "rail0");
@@ -2272,8 +2279,8 @@ TEST(TracePhaseSink, PostTraceRecordsItsPostsIdentity) {
         return nixlBackendPostTrace{&sink};
     }();
     const nixlBackendPostTrace received{&sink, identity};
-    const nixlBackendTraceAttr rail[] = {{"remote_agent", "0"}};
-    const nixlBackendTraceAttr peer[] = {{"nixl.remote_agent", "peer"}};
+    const nixlBackendTraceAttr rail[] = {{nixl::trace::AttributeKey::RemoteAgent, "0"}};
+    const nixlBackendTraceAttr peer[] = {{nixl::trace::AttributeKey::NixlRemoteAgent, "peer"}};
 
     const nixlTime::us_t before = nixlTime::getUs();
     posted.record(nixl_trace_phase_t::SUBMIT, rail);
@@ -2327,10 +2334,10 @@ TEST(Tracing, InactiveSpanRecordsNothing) {
     auto context_span =
         tracer.beginContextSpan("op", nixl::trace::Kind::Generic, testContext(0x25), 0x2525);
 
-    span.addAttribute("remote_agent", std::string_view{"0"});
-    span.addAttribute("bytes", std::int64_t{1});
-    context_span.addAttribute("remote_agent", std::string_view{"0"});
-    context_span.addAttribute("bytes", std::int64_t{1});
+    span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"0"});
+    span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{1});
+    context_span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"0"});
+    context_span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{1});
 
     EXPECT_FALSE(tracer.empty());
     EXPECT_FALSE(span.active());
@@ -2367,7 +2374,7 @@ TEST(TracePhaseSink, RecordedSpanReachesEveryBackend) {
     const auto context = nixl::trace::parseTraceparent(traceparent);
     ASSERT_TRUE(context.has_value());
     constexpr std::uint64_t request_id = 0x7edcba9876543210ULL;
-    const nixlBackendTraceAttr attrs[] = {{"remote_agent", "0"}};
+    const nixlBackendTraceAttr attrs[] = {{nixl::trace::AttributeKey::RemoteAgent, "0"}};
 
     sink.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT,
                     NIXL_WRITE,
@@ -2526,7 +2533,7 @@ TEST(TracePhaseSink, RecordingAllocatesNothing) {
     const auto tracer = makeDiscardingTracer(attrs_seen);
     nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
     const nixl::trace::TraceIdentity identity{testContext(0x11), 0xfedcba9876543210ULL, 3};
-    const nixlBackendTraceAttr attrs[] = {{"remote_agent", "0"}};
+    const nixlBackendTraceAttr attrs[] = {{nixl::trace::AttributeKey::RemoteAgent, "0"}};
 
     const gtest::AllocationCounter allocations;
     sink.recordPhase(nixl_trace_phase_t::SUBMIT, 1, identity, attrs, {});
@@ -2558,7 +2565,7 @@ TEST(Tracing, MovedSpanKeepsItsBackendSpans) {
         nixl::trace::Span second = std::move(first);
         EXPECT_FALSE(first.active());
         ASSERT_TRUE(second.active());
-        second.addAttribute("desc_count", std::int64_t{8});
+        second.addAttribute(nixl::trace::AttributeKey::DescCount, std::int64_t{8});
         EXPECT_EQ(a.spansEnded, 0);
     }
     for (const CallLog *log : {&a, &b}) {

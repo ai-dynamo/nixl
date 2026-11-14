@@ -192,23 +192,25 @@ TEST(NvtxSpan, AttributesThatFitAllocateNothing) {
     {
         const auto span = std::make_unique<nvtx::NvtxSpan>(nullptr, schema_ids);
         span->addAttribute(
-            "nixl.remote_agent",
+            nixl::trace::AttributeKey::NixlRemoteAgent,
             std::string_view("agent-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7"));
-        span->addAttribute("nixl.xfer_request_id", std::int64_t{0x7edcba9876543210});
-        span->addAttribute("nixl.xfer_execution", std::int64_t{3});
-        span->addAttribute("nixl.start_us", 0.5);
+        span->addAttribute(nixl::trace::AttributeKey::NixlXferRequestId,
+                           std::int64_t{0x7edcba9876543210});
+        span->addAttribute(nixl::trace::AttributeKey::NixlXferExecution, std::int64_t{3});
+        span->addAttribute(nixl::trace::AttributeKey::NixlStartUs, 0.5);
     }
     {
         nvtx::NvtxSpan range(nullptr, schema_ids);
         for (std::size_t i = 0; i < nvtx::NvtxSpan::inlineAttributes; ++i) {
-            range.addAttribute("nixl.start_us", static_cast<std::int64_t>(i));
+            range.addAttribute(nixl::trace::AttributeKey::NixlStartUs,
+                               static_cast<std::int64_t>(i));
         }
     }
     {
         const nixl::trace::Attribute attrs[] = {
-            {"remote_agent", std::string_view("target")},
-            {"bytes", 32768},
-            {"nixl.start_us", 0.5},
+            {nixl::trace::AttributeKey::RemoteAgent, std::string_view("target")},
+            {nixl::trace::AttributeKey::Bytes, 32768},
+            {nixl::trace::AttributeKey::NixlStartUs, 0.5},
         };
         nvtx::NvtxSpan range(nullptr, schema_ids);
         range.addAttributes(attrs);
@@ -222,9 +224,9 @@ TEST(NvtxSpan, AttributesThatDoNotFitGoToTheHeap) {
         const gtest::AllocationCounter allocations;
         {
             nvtx::NvtxSpan span(nullptr, {});
-            span.addAttribute("bytes", std::int64_t{0});
-            span.addAttribute("remote_agent", std::string_view(long_value));
-            span.addAttribute("desc_count", std::int64_t{2});
+            span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{0});
+            span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view(long_value));
+            span.addAttribute(nixl::trace::AttributeKey::DescCount, std::int64_t{2});
         }
         EXPECT_GT(allocations.count(), 0u);
     }
@@ -233,7 +235,7 @@ TEST(NvtxSpan, AttributesThatDoNotFitGoToTheHeap) {
     {
         nvtx::NvtxSpan span(nullptr, {});
         for (std::size_t i = 0; i <= nvtx::NvtxSpan::inlineAttributes; ++i) {
-            span.addAttribute("nixl.start_us", static_cast<std::int64_t>(i));
+            span.addAttribute(nixl::trace::AttributeKey::NixlStartUs, static_cast<std::int64_t>(i));
         }
     }
     EXPECT_GT(allocations.count(), 0u);
@@ -247,18 +249,19 @@ TEST(NvtxSpan, TracerSpansAndEventsAllocateNothing) {
         nixl::trace::parseTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
     ASSERT_TRUE(context.has_value());
     const nixl::trace::Attribute attrs[] = {
-        {"nixl.backend", std::string_view("UCX")},
-        {"nixl.phase.timestamp_us", std::int64_t{7}},
-        {"nixl.xfer_request_id", std::int64_t{0x7edcba9876543210}},
-        {"nixl.xfer_execution", std::int64_t{1}},
+        {nixl::trace::AttributeKey::NixlBackend, std::string_view("UCX")},
+        {nixl::trace::AttributeKey::NixlPhaseTimestampUs, std::int64_t{7}},
+        {nixl::trace::AttributeKey::NixlXferRequestId, std::int64_t{0x7edcba9876543210}},
+        {nixl::trace::AttributeKey::NixlXferExecution, std::int64_t{1}},
     };
     const auto record = [&] {
         const nixl::trace::Scope scope(&tracer, {*context, 42});
         nixl::trace::Span span = tracer.beginContextSpan(
             "nixl::postXferReq.write", nixl::trace::Kind::CommSend, *context, 42);
-        span.addAttribute("remote_agent", std::string_view("target"));
-        span.addAttribute("bytes", std::int64_t{32768});
-        span.addAttribute("nixl.xfer_request_id", std::int64_t{0x7edcba9876543210});
+        span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view("target"));
+        span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{32768});
+        span.addAttribute(nixl::trace::AttributeKey::NixlXferRequestId,
+                          std::int64_t{0x7edcba9876543210});
         tracer.emitEvent("nixl::submit", nixl::trace::Kind::Metadata, *context, 42, 1, attrs);
         tracer.emitSpan(
             "nixl::wire.inflight.write", nixl::trace::Kind::CommSend, *context, 42, 1, 2, attrs);

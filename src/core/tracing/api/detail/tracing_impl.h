@@ -48,8 +48,8 @@ inline Traceable::Traceable(Tracer *tracer, const TraceIdentity &identity) noexc
 inline Traceable::~Traceable() {
     if ((tracer_ != nullptr) && requestContext_.sampled()) {
         try {
-            const Attribute attrs[] = {{"nixl.xfer_request_id", postIdentity_.requestId},
-                                       {"nixl.xfer_execution", postIdentity_.execution}};
+            const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
+                                       {AttributeKey::NixlXferExecution, postIdentity_.execution}};
             tracer_->emitContextSpan(Record::XferReq,
                                      kindOf(Record::XferReq),
                                      requestContext_,
@@ -93,8 +93,8 @@ Traceable::post(const nixl_blob_t &parent) {
 inline void
 Traceable::trace(Record record) const {
     if ((tracer_ != nullptr) && postIdentity_.context.sampled()) {
-        const Attribute attrs[] = {{"nixl.xfer_request_id", postIdentity_.requestId},
-                                   {"nixl.xfer_execution", postIdentity_.execution}};
+        const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
+                                   {AttributeKey::NixlXferExecution, postIdentity_.execution}};
         tracer_->emitEvent(
             record, kindOf(record), postIdentity_.context, postIdentity_.requestId, attrs);
     }
@@ -103,8 +103,8 @@ Traceable::trace(Record record) const {
 inline void
 Traceable::trace(Record record, const Attribute &attr) const {
     if ((tracer_ != nullptr) && postIdentity_.context.sampled()) {
-        const Attribute attrs[] = {{"nixl.xfer_request_id", postIdentity_.requestId},
-                                   {"nixl.xfer_execution", postIdentity_.execution},
+        const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
+                                   {AttributeKey::NixlXferExecution, postIdentity_.execution},
                                    attr};
         tracer_->emitEvent(
             record, kindOf(record), postIdentity_.context, postIdentity_.requestId, attrs);
@@ -170,7 +170,7 @@ template<typename Status>
 [[nodiscard]] Status
 finish(Span &span, Status status) {
     if (span.active()) {
-        span.addAttribute("nixl.status", attributeValue(status));
+        span.addAttribute(AttributeKey::NixlStatus, attributeValue(status));
     }
     return status;
 }
@@ -264,20 +264,22 @@ end(Span &span, Status status) {
         (traceable).tracer(),                                                                   \
         trace_record,                                                                           \
         span##_scope->identity().context,                                                       \
-        __VA_ARGS__ __VA_OPT__(, ){"nixl.xfer_request_id", span##_scope->identity().requestId}, \
-        {"nixl.xfer_execution", span##_scope->identity().execution})
+        __VA_ARGS__ __VA_OPT__(, ){::nixl::trace::AttributeKey::NixlXferRequestId,              \
+                                   span##_scope->identity().requestId},                         \
+        {::nixl::trace::AttributeKey::NixlXferExecution, span##_scope->identity().execution})
 
-#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, parent, trace_record, ...)        \
-    const ::nixl::trace::TraceIdentity &span##_identity = (traceable).post(parent);    \
-    NIXL_TRACE_DETAIL_REQUEST_SCOPE_(span, (traceable).tracer(), span##_identity)      \
-    NIXL_TRACE_DETAIL_CONTEXT_SPAN(                                                    \
-        span,                                                                          \
-        (traceable).tracer(),                                                          \
-        trace_record,                                                                  \
-        span##_identity.context,                                                       \
-        span##_identity.requestId,                                                     \
-        __VA_ARGS__ __VA_OPT__(, ){"nixl.xfer_request_id", span##_identity.requestId}, \
-        {"nixl.xfer_execution", span##_identity.execution})
+#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, parent, trace_record, ...)     \
+    const ::nixl::trace::TraceIdentity &span##_identity = (traceable).post(parent); \
+    NIXL_TRACE_DETAIL_REQUEST_SCOPE_(span, (traceable).tracer(), span##_identity)   \
+    NIXL_TRACE_DETAIL_CONTEXT_SPAN(                                                 \
+        span,                                                                       \
+        (traceable).tracer(),                                                       \
+        trace_record,                                                               \
+        span##_identity.context,                                                    \
+        span##_identity.requestId,                                                  \
+        __VA_ARGS__ __VA_OPT__(, ){::nixl::trace::AttributeKey::NixlXferRequestId,  \
+                                   span##_identity.requestId},                      \
+        {::nixl::trace::AttributeKey::NixlXferExecution, span##_identity.execution})
 
 #define NIXL_TRACE_DETAIL_FINISH(span, status) (::nixl::trace::detail::finish((span), (status)))
 
