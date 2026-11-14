@@ -127,15 +127,26 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
         println!("cargo:warning=pkg-config not available, using manual library paths");
     }
 
+    // Detect the *target* OS from Cargo's environment (not `cfg!`, which describes
+    // the build host and is wrong under cross-compilation).
+    let is_macos = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() == "macos";
+
     // Verify that nixl shared libraries actually exist before proceeding.
     // Without this check, wrapper.cpp may compile (headers found in source tree)
-    // but linking will fail later when the .so files are missing.
-    let nixl_so_found = lib_search_paths.iter().any(|dir| {
-        std::path::Path::new(&format!("{}/libnixl.so", dir)).exists()
-    });
+    // but linking will fail later when the shared library files are missing.
+    // Meson builds `libnixl.dylib` on macOS and `libnixl.so` elsewhere.
+    let nixl_lib_name = if is_macos {
+        "libnixl.dylib"
+    } else {
+        "libnixl.so"
+    };
+    let nixl_so_found = lib_search_paths
+        .iter()
+        .any(|dir| std::path::Path::new(&format!("{}/{}", dir, nixl_lib_name)).exists());
     if !nixl_so_found {
         return Err(anyhow::anyhow!(
-            "libnixl.so not found in any search path {:?}; nixl libraries are not installed",
+            "{} not found in any search path {:?}; nixl libraries are not installed",
+            nixl_lib_name,
             lib_search_paths
         ));
     }
@@ -178,8 +189,14 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
         }
     }
 
-    // Link against required libraries
-    println!("cargo:rustc-link-lib=stdc++");
+    // Link against the C++ standard library. On macOS this is libc++ (linked as
+    // `c++`); on Linux it is libstdc++ (`stdc++`). `is_macos` reflects the *target*
+    // OS (see above), so cross-compilation selects the correct flags.
+    if is_macos {
+        println!("cargo:rustc-link-lib=c++");
+    } else {
+        println!("cargo:rustc-link-lib=stdc++");
+    }
 
     // Add NIXL libraries
     println!("cargo:rustc-link-lib=dylib=nixl");
@@ -207,13 +224,23 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
 fn build_stubs(cc_builder: &mut cc::Build) {
     println!("cargo:warning=Building with stub API - NIXL functions will be resolved at runtime via dlopen");
 
+    // Target OS detection (see `build_real_nixl` for why `CARGO_CFG_TARGET_OS`
+    // rather than `cfg!` is used).
+    let is_macos = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() == "macos";
+
     cc_builder.file("stubs.cpp");
 
     cc_builder.compile("nixl_stubs");
 
-    // Link against C++ standard library and libdl (for dlopen/dlsym)
-    println!("cargo:rustc-link-lib=dylib=stdc++");
-    println!("cargo:rustc-link-lib=dylib=dl");
+    // Link against C++ standard library and libdl (for dlopen/dlsym).
+    // On macOS the C++ runtime is libc++ (linked as `c++`) and dlopen/dlsym
+    // live in libSystem, so neither `stdc++` nor `dl` is required there.
+    if is_macos {
+        println!("cargo:rustc-link-lib=dylib=c++");
+    } else {
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+        println!("cargo:rustc-link-lib=dylib=dl");
+    }
 
     // Tell cargo to invalidate the built crate whenever the stubs change
     println!("cargo:rerun-if-changed=stubs.cpp");
