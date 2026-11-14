@@ -429,4 +429,53 @@ TEST_F(secDescListTest, AddDescsDoesNotNormalizeDramSeg) {
     EXPECT_EQ(list[1].len, 0);
 }
 
+TEST_F(secDescListTest, OverlapsHandlesUnboundedAndOverflowingRanges) {
+    constexpr uintptr_t max_addr = std::numeric_limits<uintptr_t>::max();
+
+    EXPECT_FALSE(nixlBasicDesc(100, 50, 0).overlaps(nixlBasicDesc(150, 50, 0)));
+    EXPECT_TRUE(nixlBasicDesc(100, 51, 0).overlaps(nixlBasicDesc(150, 50, 0)));
+    EXPECT_FALSE(nixlBasicDesc(100, 50, 0).overlaps(nixlBasicDesc(100, 50, 1)));
+    EXPECT_FALSE(nixlBasicDesc(100, 0, 0).overlaps(nixlBasicDesc(100, 50, 0)));
+    EXPECT_TRUE(nixlBasicDesc(150, 0, 0).overlaps(nixlBasicDesc(100, 100, 0)));
+
+    EXPECT_TRUE(nixlBasicDesc(4096, SIZE_MAX, 0).overlaps(nixlBasicDesc(8192, 64, 0)));
+    EXPECT_TRUE(nixlBasicDesc(8192, 64, 0).overlaps(nixlBasicDesc(4096, SIZE_MAX, 0)));
+    EXPECT_FALSE(nixlBasicDesc(4096, SIZE_MAX, 0).overlaps(nixlBasicDesc(0, 4096, 0)));
+
+    EXPECT_TRUE(nixlBasicDesc(max_addr - 64, 128, 0).overlaps(nixlBasicDesc(max_addr - 16, 8, 0)));
+    EXPECT_FALSE(nixlBasicDesc(max_addr - 64, 128, 0).overlaps(nixlBasicDesc(0, 16, 0)));
+}
+
+TEST_F(secDescListTest, FindIndexOrInsertPosDetectsMatchesAndOverlaps) {
+    nixlSecDescList list(DRAM_SEG);
+    size_t pos = 0;
+
+    ASSERT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(200, 64, 0), pos), NIXL_ERR_NOT_FOUND);
+    EXPECT_EQ(pos, 0u);
+    list.insertDescAt(pos, nixlSectionDesc(200, 64, 0));
+
+    ASSERT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(100, 64, 0), pos), NIXL_ERR_NOT_FOUND);
+    EXPECT_EQ(pos, 0u);
+    list.insertDescAt(pos, nixlSectionDesc(100, 64, 0));
+
+    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(100, 64, 0), pos), 0);
+    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(200, 64, 0), pos), 1);
+
+    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(100, 32, 0), pos), NIXL_ERR_NOT_ALLOWED);
+    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(100, 128, 0), pos), NIXL_ERR_NOT_ALLOWED);
+    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(150, 60, 0), pos), NIXL_ERR_NOT_ALLOWED);
+    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(232, 64, 0), pos), NIXL_ERR_NOT_ALLOWED);
+
+    ASSERT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(164, 36, 0), pos), NIXL_ERR_NOT_FOUND);
+    EXPECT_EQ(pos, 1u);
+
+    nixlSecDescList file_list(FILE_SEG);
+    ASSERT_EQ(file_list.findIndexOrInsertPos(nixlBasicDesc(4096, 0, 1), pos), NIXL_ERR_NOT_FOUND);
+    file_list.insertDescAt(pos, nixlSectionDesc(4096, 0, 1));
+    EXPECT_EQ(file_list.findIndexOrInsertPos(nixlBasicDesc(4096, 0, 1), pos), 0);
+    EXPECT_EQ(file_list.findIndexOrInsertPos(nixlBasicDesc(8192, 64, 1), pos),
+              NIXL_ERR_NOT_ALLOWED);
+    EXPECT_EQ(file_list.findIndexOrInsertPos(nixlBasicDesc(0, 4096, 1), pos), NIXL_ERR_NOT_FOUND);
+}
+
 } // namespace descriptors

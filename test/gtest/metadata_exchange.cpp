@@ -424,6 +424,61 @@ TEST_F(MetadataExchangeTestFixture, LoadRemoteAfterSectionError) {
     ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
 }
 
+TEST_F(MetadataExchangeTestFixture, RejectOverlappingRemoteDescriptor) {
+    initAgentsDefault();
+
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    constexpr size_t half_size = 1 << 16;
+    std::vector<uint8_t> buffer(2 * half_size, 0x5a);
+    const auto base_addr = reinterpret_cast<uintptr_t>(buffer.data());
+
+    nixl_opt_args_t partial_args;
+    partial_args.includeConnInfo = true;
+
+    nixl_reg_dlist_t reg_half(DRAM_SEG);
+    reg_half.addDesc(nixlBlobDesc(base_addr, half_size, 0));
+    ASSERT_EQ(src.agent->registerMem(reg_half), NIXL_SUCCESS);
+
+    nixl_blob_t md_half;
+    ASSERT_EQ(src.agent->getLocalPartialMD(reg_half, md_half, &partial_args), NIXL_SUCCESS);
+
+    std::string remote_name;
+    ASSERT_EQ(dst.agent->loadRemoteMD(md_half, remote_name), NIXL_SUCCESS);
+    ASSERT_EQ(remote_name, src.name);
+
+    ASSERT_EQ(src.agent->deregisterMem(reg_half), NIXL_SUCCESS);
+
+    nixl_reg_dlist_t reg_full(DRAM_SEG);
+    reg_full.addDesc(nixlBlobDesc(base_addr, 2 * half_size, 0));
+    ASSERT_EQ(src.agent->registerMem(reg_full), NIXL_SUCCESS);
+
+    nixl_blob_t md_full;
+    ASSERT_EQ(src.agent->getLocalPartialMD(reg_full, md_full, &partial_args), NIXL_SUCCESS);
+
+    {
+        const LogIgnoreGuard lig1("remote descriptor overlaps existing descriptor");
+        const LogIgnoreGuard lig2("loadRemoteMD: error loading remote metadata for agent 'agent_0' "
+                                  "with status NIXL_ERR_NOT_ALLOWED");
+
+        ASSERT_EQ(dst.agent->loadRemoteMD(md_full, remote_name), NIXL_ERR_NOT_ALLOWED);
+        EXPECT_EQ(lig1.getIgnoredCount(), 1);
+        EXPECT_EQ(lig2.getIgnoredCount(), 1);
+    }
+
+    // After the rejected overlapping load, reloading the new registration succeeds.
+    ASSERT_EQ(dst.agent->loadRemoteMD(md_full, remote_name), NIXL_SUCCESS);
+    ASSERT_EQ(remote_name, src.name);
+
+    nixl_xfer_dlist_t check_full(DRAM_SEG);
+    check_full.addDesc(nixlBasicDesc(base_addr, 2 * half_size, 0));
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, check_full), NIXL_SUCCESS);
+
+    ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
+    ASSERT_EQ(src.agent->deregisterMem(reg_full), NIXL_SUCCESS);
+}
+
 TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     initAgentsDefault();
 
