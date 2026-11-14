@@ -46,7 +46,8 @@ BackendTraces::adopt(const nixl_backend_t &type,
     if (sink == nullptr) {
         return;
     }
-    if (backend.supportsRemote() && !backend.supportsTraceContext()) {
+    if (backend.supportsRemote() &&
+        !backend.supportsCapability(nixl_backend_capability_t::TRACE_CONTEXT)) {
         contextUnsupported_.try_emplace(type);
     }
     sinks_.insert_or_assign(type, std::move(sink));

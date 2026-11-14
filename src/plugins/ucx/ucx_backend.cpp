@@ -95,7 +95,10 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 }
 
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
-    : nixlBackendEngine(&init_params),
+    : nixlBackendEngine(&init_params,
+                        nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::LOCAL |
+                            nixl_backend_capability_t::NOTIF |
+                            nixl_backend_capability_t::TRACE_CONTEXT),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
@@ -377,16 +380,6 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const n
         NIXL_WARN << "Failed to parse worker_id from customParam: " << e.what();
         return std::nullopt;
     }
-}
-
-void
-nixlUcxBackendReqH::flushCb(void *, ucs_status_t status, void *user_data) {
-    if (status != UCS_OK) {
-        return;
-    }
-    auto *const handle = static_cast<nixlUcxBackendReqH *>(user_data);
-    handle->trace.flushCompleted();
-    handle->flushed();
 }
 
 nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,

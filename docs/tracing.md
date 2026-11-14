@@ -524,9 +524,10 @@ by the post's direction, from that post's
 payload, so when every backend times its own records, as NVTX does, UCX still reads
 the clock at submit and at completion for a post that records the span.
 
-A backend that carries the context to its peer says so by overriding
-`supportsTraceContext()`, which defaults to `false`; core reads it once, when
-the backend is created. Tracing never fails a transfer over it. A sampled
+A backend that carries the context to its peer says so by passing the
+`TRACE_CONTEXT` capability to the `nixlBackendEngine` constructor; it is not
+set by default, and core reads it once, when the backend is created. Tracing
+never fails a transfer over it. A sampled
 request on a backend that supports remote transfers but not trace contexts runs
 as usual, its trace just does not reach the remote agent, and core logs a
 warning once per backend in each agent; backends without remote transfers are
