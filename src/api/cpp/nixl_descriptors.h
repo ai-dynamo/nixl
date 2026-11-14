@@ -137,7 +137,19 @@ public:
      * @param query   nixlBasicDesc Object
      */
     bool
-    overlaps(const nixlBasicDesc &query) const noexcept;
+    overlaps(const nixlBasicDesc &query) const noexcept {
+        if (devId != query.devId) {
+            return false;
+        }
+        if (addr < query.addr) {
+            return query.addr - addr < len;
+        }
+        if (query.addr < addr) {
+            return addr - query.addr < query.len;
+        }
+        return len > 0 && query.len > 0;
+    }
+
     /**
      * @brief Serialize descriptor into a blob
      */

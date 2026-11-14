@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <iterator>
-#include <limits>
 #include <stdexcept>
 #include <iostream>
 
@@ -61,25 +60,6 @@ bool operator==(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) {
 
 bool operator!=(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) {
     return !(lhs==rhs);
-}
-
-namespace {
-bool
-precedes(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) noexcept {
-    if (lhs.len == 0) {
-        return rhs.len == 0 ? lhs.addr != rhs.addr : lhs.addr < rhs.addr;
-    }
-    constexpr uintptr_t max_addr = std::numeric_limits<uintptr_t>::max();
-    return lhs.len != SIZE_MAX && lhs.len <= max_addr - lhs.addr && lhs.addr + lhs.len <= rhs.addr;
-}
-} // namespace
-
-bool
-nixlBasicDesc::overlaps(const nixlBasicDesc &query) const noexcept {
-    if (devId != query.devId) {
-        return false;
-    }
-    return !precedes(*this, query) && !precedes(query, *this);
 }
 
 nixl_blob_t nixlBasicDesc::serialize() const {
@@ -536,17 +516,34 @@ nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {
     return -1;
 }
 
-bool
-nixlSecDescList::hasOverlappingDesc(const nixlBasicDesc &query) const {
+int
+nixlSecDescList::findIndexOrInsertPos(const nixlBasicDesc &query,
+                                      size_t &insert_idx) const noexcept {
     const nixlBasicDesc adjusted_query = normalizeQuery(query);
-    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), adjusted_query);
-    if (itr != this->descs.end() && itr->overlaps(adjusted_query)) {
-        return true;
+    const auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), adjusted_query);
+    if (itr != this->descs.end()) {
+        if (static_cast<const nixlBasicDesc &>(*itr) == adjusted_query) {
+            return static_cast<int>(itr - this->descs.begin());
+        }
+        if (itr->overlaps(adjusted_query)) {
+            return NIXL_ERR_NOT_ALLOWED;
+        }
     }
     if (itr != this->descs.begin() && std::prev(itr)->overlaps(adjusted_query)) {
-        return true;
+        return NIXL_ERR_NOT_ALLOWED;
     }
-    return false;
+    insert_idx = static_cast<size_t>(itr - this->descs.begin());
+    return NIXL_ERR_NOT_FOUND;
+}
+
+void
+nixlSecDescList::insertDescAt(size_t insert_idx, nixlSectionDesc &&desc) {
+    normalizeSecDesc(desc);
+    auto &vec = this->descs;
+    NIXL_ASSERT(insert_idx <= vec.size());
+    NIXL_ASSERT(insert_idx == 0 || !(desc < vec[insert_idx - 1]));
+    NIXL_ASSERT(insert_idx == vec.size() || !(vec[insert_idx] < desc));
+    vec.insert(vec.begin() + static_cast<std::ptrdiff_t>(insert_idx), std::move(desc));
 }
 
 void
