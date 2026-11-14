@@ -616,6 +616,12 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
             FI_MR_PROV_KEY | FI_MR_ENDPOINT;
     }
     hints->fabric_attr->prov_name = strdup(provider_name.c_str());
+    // Ask for "efa" explicitly, so this mapping sees the same fabric the rails open.
+    if (provider_name == NIXL_LIBFABRIC_EFA_PROVIDER && !LibfabricUtils::setEfaFabricHint(hints)) {
+        NIXL_ERROR << "Failed to set the EFA fabric hint for the PCIe mapping";
+        fi_freeinfo(hints);
+        return NIXL_ERR_BACKEND;
+    }
 
     int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
     if (ret) {
