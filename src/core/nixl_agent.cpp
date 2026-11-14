@@ -242,14 +242,11 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
                            const size_t desc_count,
-                           const nixl_remote_section_weak_t &remote_section_ref,
-                           nixl::trace::Tracer *tracer,
-                           const nixl_blob_t &trace_context)
+                           const nixl_remote_section_weak_t &remote_section_ref)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
       remoteSection(remote_section_ref),
-      traceable_(tracer, nixl::trace::generateRequestIdentity(tracer, trace_context)),
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
@@ -939,14 +936,13 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
+    const nixl::trace::CallScope call(data->tracer(), nixl::trace::suppliedContext(extra_params));
     auto handle = std::make_unique<nixlXferReqH>(remote_side.remoteAgent,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
                                                  desc_count,
-                                                 remote_side.remoteSectionRef,
-                                                 data->tracer(),
-                                                 nixl::trace::suppliedContext(extra_params));
+                                                 remote_side.remoteSectionRef);
     NIXL_TRACE_REQUEST_SPAN(
         span, handle->traceable(), Record::MakeXferReq, {"desc_count", local_indices.size()});
 
@@ -1061,14 +1057,13 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO: merge descriptors back to back in memory (like makeXferReq).
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
+    const nixl::trace::CallScope call(data->tracer(), nixl::trace::suppliedContext(extra_params));
     auto handle = std::make_unique<nixlXferReqH>(remote_agent,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
                                                  local_descs.descCount(),
-                                                 rem_sec_it->second,
-                                                 data->tracer(),
-                                                 nixl::trace::suppliedContext(extra_params));
+                                                 rem_sec_it->second);
     NIXL_TRACE_REQUEST_SPAN(span,
                             handle->traceable(),
                             Record::CreateXferReq,

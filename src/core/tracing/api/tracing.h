@@ -70,7 +70,7 @@ makeAgentTracer(const std::string &name);
  */
 class Traceable {
 public:
-    explicit Traceable(Tracer *tracer);
+    Traceable();
 
     Traceable(Tracer *tracer, const TraceIdentity &identity) noexcept;
 
@@ -99,6 +99,8 @@ public:
     trace(Record record, const Attribute &attr) const;
 
 private:
+    explicit Traceable(const detail::Call &call);
+
     Tracer *const tracer_;
     const TraceContext requestContext_;
     TraceIdentity postIdentity_;
@@ -138,6 +140,25 @@ private:
     const bool pushed_;
 };
 
+/**
+ * @brief Makes @p tracer and the application's @p context current on the calling
+ *        thread until it ends, so a Traceable built meanwhile takes them. Call
+ *        scopes nest; one without a tracer does nothing.
+ */
+class CallScope {
+public:
+    [[nodiscard]] CallScope(Tracer *tracer, const nixl_blob_t &context) noexcept;
+    ~CallScope();
+
+    CallScope(const CallScope &) = delete;
+    CallScope &
+    operator=(const CallScope &) = delete;
+
+private:
+    const bool active_;
+    const detail::Call previous_;
+};
+
 #else
 
 struct TracerPtr {
@@ -159,6 +180,8 @@ makeAgentTracer(const std::string &name);
 
 class Traceable {
 public:
+    Traceable() noexcept = default;
+
     Traceable(Tracer *, const TraceIdentity &) noexcept {}
 
     [[nodiscard]] TraceIdentity
@@ -176,6 +199,11 @@ public:
 
     void
     trace(Record, const Attribute &) const noexcept {}
+};
+
+class CallScope {
+public:
+    CallScope(Tracer *, const nixl_blob_t &) noexcept {}
 };
 
 #endif

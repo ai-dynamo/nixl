@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_CORE_TRACING_API_DETAIL_TRACING_IMPL_H
 #define NIXL_SRC_CORE_TRACING_API_DETAIL_TRACING_IMPL_H
 
+#include <atomic>
 #include <cstdint>
 #include <initializer_list>
 
@@ -30,7 +31,13 @@
 
 namespace nixl::trace {
 
-inline Traceable::Traceable(Tracer *tracer) : Traceable(tracer, generateRequestIdentity(tracer)) {}
+inline Traceable::Traceable() : Traceable(detail::currentCall()) {}
+
+inline Traceable::Traceable(const detail::Call &call)
+    : Traceable(
+          call.tracer,
+          generateRequestIdentity(call.tracer,
+                                  (call.context != nullptr) ? *call.context : noSuppliedContext)) {}
 
 inline Traceable::Traceable(Tracer *tracer, const TraceIdentity &identity) noexcept
     : tracer_(tracer),
@@ -141,6 +148,16 @@ detail::requestStart(const Tracer *tracer, const TraceContext &context) noexcept
     }
 
 namespace nixl::trace::detail {
+
+extern std::atomic<bool> callScopeOpened;
+
+[[nodiscard]] Call
+currentCallOnThread() noexcept;
+
+inline Call
+currentCall() noexcept {
+    return callScopeOpened.load(std::memory_order_relaxed) ? currentCallOnThread() : Call{};
+}
 
 inline void
 addAttributes(Span &span, std::initializer_list<Attribute> attributes) {

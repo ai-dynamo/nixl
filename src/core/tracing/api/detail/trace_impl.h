@@ -71,6 +71,14 @@ public:
 
 namespace nixl::trace::detail {
 
+struct Call {
+    Tracer *tracer = nullptr;
+    const nixl_blob_t *context = nullptr;
+};
+
+[[nodiscard]] inline Call
+currentCall() noexcept;
+
 [[nodiscard]] inline nixlTime::us_t
 requestStart(const Tracer *tracer, const TraceContext &context) noexcept;
 

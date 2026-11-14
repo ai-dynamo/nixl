@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <atomic>
 #include <cmath>
 #include <optional>
 #include <set>
@@ -39,6 +40,8 @@
 namespace {
 
 constexpr double min_sample_ratio = 0x1p-56;
+
+thread_local nixl::trace::detail::Call current_call;
 
 [[nodiscard]] std::optional<double>
 parseSampleRatio(const std::string &value) {
@@ -189,6 +192,27 @@ makeAgentTracer(const std::string &name) {
         return nullptr;
     }
     return core->createTracer({name, std::move(backends), sample_ratio});
+}
+
+std::atomic<bool> detail::callScopeOpened{false};
+
+detail::Call
+detail::currentCallOnThread() noexcept {
+    return current_call;
+}
+
+CallScope::CallScope(Tracer *tracer, const nixl_blob_t &context) noexcept
+    : active_(tracer != nullptr),
+      previous_(active_ ? std::exchange(current_call, {tracer, &context}) : detail::Call{}) {
+    if (active_) {
+        detail::callScopeOpened.store(true, std::memory_order_relaxed);
+    }
+}
+
+CallScope::~CallScope() {
+    if (active_) {
+        current_call = previous_;
+    }
 }
 
 Scope::Scope(Tracer *tracer, const TraceIdentity &identity)
