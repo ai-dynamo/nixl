@@ -167,9 +167,6 @@ struct nixlUcxBackendSharedState {
           pendingReqs(0),
           chunks(num_chunks) {}
 
-    void
-    completeTracedChunk() noexcept;
-
     friend std::ostream &
     operator<<(std::ostream &os, const nixlUcxBackendSharedState &state) {
         return os << "state " << &state << "{status: " << state.status.load()
@@ -178,32 +175,13 @@ struct nixlUcxBackendSharedState {
 };
 
 void
-nixlUcxBackendSharedState::completeTracedChunk() noexcept {
-    // Read the status before pendingReqs reaches zero, after which a repost may rewrite it.
-    size_t pending = pendingReqs.load();
-    while ((pending > 1) && !pendingReqs.compare_exchange_weak(pending, pending - 1))
-        ;
-    if (pending != 1) {
-        return;
-    }
-    if (status.load() == NIXL_SUCCESS) {
-        trace.completed();
-    }
-    pendingReqs.store(0);
-}
-
-void
 nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
     NIXL_ASSERT(sharedState_.get() != nullptr);
     if (status != NIXL_SUCCESS) {
         nixlUcxBackendReqH::release();
         sharedState_->status.store(status);
     }
-    if (!sharedState_->trace.active()) [[likely]] {
-        sharedState_->pendingReqs.fetch_sub(1);
-    } else {
-        sharedState_->completeTracedChunk();
-    }
+    sharedState_->pendingReqs.fetch_sub(1);
     NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
     setWorker(nullptr);
     sharedState_.reset();
@@ -221,16 +199,24 @@ nixlUcxChunkBackendReqH::status() {
 
     const nixl_status_t ret = nixlUcxBackendReqH::status();
     if ((ret != NIXL_SUCCESS) || (this != &sharedState_->chunks.front()) ||
-        sharedState_->notif.empty()) {
+        (sharedState_->notif.empty() && !sharedState_->trace.active())) {
         return ret;
     }
 
-    if (last) {
-        trace = sharedState_->trace;
-        setNotif(std::exchange(sharedState_->notif, {}));
-        sendNotif();
+    if (!last) {
+        return NIXL_IN_PROG;
     }
 
+    trace = std::exchange(sharedState_->trace, {});
+    if (trace.active()) {
+        trace.completed();
+    }
+    if (sharedState_->notif.empty()) {
+        return NIXL_SUCCESS;
+    }
+
+    setNotif(std::exchange(sharedState_->notif, {}));
+    sendNotif();
     return NIXL_IN_PROG;
 }
 
