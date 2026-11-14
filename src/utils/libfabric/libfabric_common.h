@@ -311,11 +311,37 @@ void
 resetSeqId();
 } // namespace LibfabricUtils
 
+// The EFA provider exposes two RDM fabrics: "efa", which implements its wire protocols, and
+// "efa-direct", a thin path to the device. Both report prov_name "efa" and the same domain
+// names. The backend depends on the "efa" fabric.
+constexpr const char *NIXL_LIBFABRIC_EFA_PROVIDER = "efa";
+constexpr const char *NIXL_LIBFABRIC_EFA_FABRIC = "efa";
+
 // Utility functions
 namespace LibfabricUtils {
 // Device discovery with fallback to sockets
 std::pair<std::string, std::vector<std::string>>
 getAvailableNetworkDevices();
+
+/**
+ * @brief Restricts fi_getinfo hints to NIXL_LIBFABRIC_EFA_FABRIC.
+ *
+ * Only call this for the EFA provider: naming a fabric filters out every provider whose
+ * fabric is called something else.
+ *
+ * @return false if the fabric name could not be allocated.
+ */
+bool
+setEfaFabricHint(struct fi_info *hints);
+
+/**
+ * @brief Whether an EFA fi_getinfo result is on NIXL_LIBFABRIC_EFA_FABRIC, i.e. not efa-direct.
+ *
+ * Only meaningful for results from the EFA provider.
+ */
+bool
+isEfaFabric(const struct fi_info *info);
+
 // String utilities
 std::string
 hexdump(const void *data, size_t size);

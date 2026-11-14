@@ -473,6 +473,13 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     }
     hints->domain_attr->name = strdup(device_name.c_str());
     hints->domain_attr->threading = FI_THREAD_COMPLETION;
+    // Ask for "efa" explicitly, so the rail cannot land on another fabric like efa-direct.
+    if (provider == NIXL_LIBFABRIC_EFA_PROVIDER && !LibfabricUtils::setEfaFabricHint(hints)) {
+        NIXL_ERROR << "Failed to set the EFA fabric hint for rail " << rail_id;
+        fi_freeinfo(hints);
+        throw std::runtime_error("Failed to set the EFA fabric hint for rail " +
+                                 std::to_string(rail_id));
+    }
 
     // The EFA provider accepts FI_MR_DMABUF from libfabric API 1.20 on, so request 1.20
     // where the library provides it and 1.18 elsewhere. The fabric carries the requested
