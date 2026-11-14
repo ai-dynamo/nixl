@@ -27,6 +27,7 @@
  * `NIXL_PLUGIN_API_VERSION` and `nixl_trace_core_api_version`.
  */
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -132,6 +133,19 @@ toRecord(nixl_trace_span_t span, nixl_xfer_op_t operation) noexcept {
 toStringView(nixl_trace_span_t span, nixl_xfer_op_t operation) noexcept {
     return nixl::trace::toStringView(toRecord(span, operation));
 }
+
+/**
+ * @brief Where a backend sees a post's data movement complete, which decides
+ *        whether and where @ref nixl_trace_phase_t::WIRE_COMPLETED is recorded.
+ */
+enum class nixl_trace_completion_t : std::uint8_t {
+    /** @brief Only when the application polls, so no WIRE_COMPLETED is recorded. */
+    POLLED,
+    /** @brief In a completion callback, on a thread the application does not drive. */
+    CALLBACK,
+    /** @brief When the last part of a post split across threads completes. */
+    LAST_PART,
+};
 
 /**
  * @brief One key/value attribute on a recorded phase or span.
@@ -438,6 +452,12 @@ recordDeferredPhases(nixlBackendTraceSink *sink) noexcept {
     }
 }
 
+inline void
+recordNotifReceived(const nixlBackendPostTrace &trace, std::string_view remote_agent) noexcept {
+    const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", remote_agent}};
+    trace.record(nixl_trace_phase_t::NOTIF_RECEIVED, attrs);
+}
+
 #else
 
 inline void
@@ -454,8 +474,156 @@ deferPhase(const DeferredPhase &) noexcept {}
 inline void
 recordDeferredPhases(nixlBackendTraceSink *) noexcept {}
 
+inline void
+recordNotifReceived(const nixlBackendPostTrace &, std::string_view) noexcept {}
+
 #endif
 
 } // namespace nixl::trace
+
+#if defined(NIXL_TRACE_ENABLED)
+
+/**
+ * @brief The phases of one post, for a backend to record where it sees them:
+ *        SUBMIT and WIRE_SUBMITTED when it posts, WIRE_COMPLETED with the
+ *        in-flight span as its completion says, and NOTIF_SENT.
+ */
+class nixlBackendPostPhases {
+public:
+    void
+    begin(nixlBackendTraceSink *sink,
+          nixl_xfer_op_t operation,
+          nixl_trace_completion_t completion) noexcept {
+        trace_ = nixlBackendPostTrace{sink};
+        operation_ = operation;
+        completesOnCallback_ = trace_.active() && (completion == nixl_trace_completion_t::CALLBACK);
+        completedAtOnce_ = false;
+        const nixlTime::us_t submit_at = trace_.now();
+        const bool records_inflight =
+            trace_.active() && (completion != nixl_trace_completion_t::POLLED);
+        inflightSince_ = (records_inflight && (submit_at == 0)) ? nixlTime::getUs() : submit_at;
+        trace_.recordAt(nixl_trace_phase_t::SUBMIT, submit_at);
+    }
+
+    [[nodiscard]] bool
+    active() const noexcept {
+        return trace_.active();
+    }
+
+    [[nodiscard]] const nixlBackendPostTrace &
+    post() const noexcept {
+        return trace_;
+    }
+
+    [[nodiscard]] bool
+    completesOnCallback() const noexcept {
+        return completesOnCallback_;
+    }
+
+    void
+    callbackRequested(bool completed_at_once) noexcept {
+        completedAtOnce_ = completed_at_once && completesOnCallback_;
+    }
+
+    void
+    submitted() const noexcept {
+        const nixlTime::us_t submitted_at = trace_.now();
+        trace_.recordAt(nixl_trace_phase_t::WIRE_SUBMITTED, submitted_at);
+        if (completedAtOnce_) {
+            recordCompleted(submitted_at);
+        }
+    }
+
+    void
+    callbackCompleted() const noexcept {
+        if (!completesOnCallback_) {
+            return;
+        }
+        const nixlTime::us_t phase_at = trace_.now();
+        nixl::trace::deferPhase({.trace = trace_,
+                                 .phase = nixl_trace_phase_t::WIRE_COMPLETED,
+                                 .operation = operation_,
+                                 .inflightSince = inflightSince_,
+                                 .phaseAt = phase_at,
+                                 .completedAt = (phase_at != 0) ? phase_at : nixlTime::getUs()});
+    }
+
+    void
+    notifSent(nixl_status_t status) const noexcept {
+        if (trace_.active() && ((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG))) {
+            nixl::trace::deferPhase({.trace = trace_,
+                                     .phase = nixl_trace_phase_t::NOTIF_SENT,
+                                     .phaseAt = trace_.now()});
+        }
+    }
+
+    void
+    drain() const noexcept {
+        nixl::trace::recordDeferredPhases(trace_.sink());
+    }
+
+    void
+    completed() const noexcept {
+        recordCompleted(trace_.now());
+    }
+
+private:
+    void
+    recordCompleted(nixlTime::us_t phase_at) const noexcept {
+        const nixlTime::us_t completed_at = (phase_at != 0) ? phase_at : nixlTime::getUs();
+        trace_.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, phase_at);
+        trace_.recordSpan(
+            nixl_trace_span_t::WIRE_INFLIGHT, operation_, inflightSince_, completed_at);
+    }
+
+    nixlBackendPostTrace trace_;
+    nixl_xfer_op_t operation_ = NIXL_WRITE;
+    nixlTime::us_t inflightSince_ = 0;
+    bool completesOnCallback_ = false;
+    bool completedAtOnce_ = false;
+};
+
+#else
+
+class nixlBackendPostPhases {
+public:
+    void
+    begin(nixlBackendTraceSink *, nixl_xfer_op_t, nixl_trace_completion_t) noexcept {}
+
+    [[nodiscard]] constexpr bool
+    active() const noexcept {
+        return false;
+    }
+
+    [[nodiscard]] nixlBackendPostTrace
+    post() const noexcept {
+        return {};
+    }
+
+    [[nodiscard]] constexpr bool
+    completesOnCallback() const noexcept {
+        return false;
+    }
+
+    void
+    callbackRequested(bool) noexcept {}
+
+    void
+    submitted() const noexcept {}
+
+    void
+    callbackCompleted() const noexcept {}
+
+    void
+    notifSent(nixl_status_t) const noexcept {}
+
+    void
+    drain() const noexcept {}
+
+    void
+    completed() const noexcept {}
+};
+
+#endif
 
 #endif // NIXL_SRC_CORE_TRACING_API_BACKEND_TRACE_H

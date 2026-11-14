@@ -16,8 +16,8 @@
  */
 
 #include "serdes/serdes.h"
+#include "tracing/api/backend_trace.h"
 #include "ucx_backend.h"
-#include "ucx_trace.h"
 
 #include <gtest/gtest.h>
 
@@ -46,8 +46,8 @@ notification(const std::vector<std::pair<std::string, std::string>> &tags) {
 
 } // namespace
 
-TEST(UcxTraceCompiledOut, PostTraceIsEmpty) {
-    static_assert(std::is_empty_v<nixl::ucx::PostTrace>);
+TEST(UcxTraceCompiledOut, PostPhasesAreEmpty) {
+    static_assert(std::is_empty_v<nixlBackendPostPhases>);
 }
 
 TEST(UcxTraceCompiledOut, SampledPostSendsTheOlderNotification) {

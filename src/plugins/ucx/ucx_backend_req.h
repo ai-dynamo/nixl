@@ -30,13 +30,12 @@
 #include "common/nixl_log.h"
 
 #include "ucx_backend.h"
-#include "ucx_trace.h"
 #include "ucx_sgl.h"
 #include "ucx_utils.h"
 
 class nixlUcxBackendReqH : public nixlBackendReqH {
 public:
-    nixl::ucx::PostTrace trace;
+    nixlBackendPostPhases trace;
 
 #ifdef HAVE_UCX_SGL_API
     std::optional<nixl::ucx::sglXfer> sgl;
@@ -82,9 +81,9 @@ public:
         nixlUcxReq req = nullptr;
         const bool has_notif = !notif_.empty();
         NIXL_ASSERT(has_notif == (notifStatus_ == NIXL_IN_PROG));
-        const bool callback = has_notif || trace.completesOnFlush();
+        const bool callback = has_notif || trace.completesOnCallback();
         const nixl_status_t status = ep_->flushEp(req, callback ? flushCb : nullptr, this);
-        trace.flushIssued(status == NIXL_SUCCESS);
+        trace.callbackRequested(status == NIXL_SUCCESS);
         if (has_notif && (status == NIXL_SUCCESS)) {
             sendNotif();
         }
@@ -212,7 +211,7 @@ private:
             return;
         }
         auto *const handle = static_cast<nixlUcxBackendReqH *>(user_data);
-        handle->trace.flushCompleted();
+        handle->trace.callbackCompleted();
         if (!handle->notif_.empty()) {
             handle->sendNotif();
         }

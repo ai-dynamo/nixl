@@ -20,7 +20,6 @@
 #include "ucx_thread_engine.h"
 #include "ucx_thread_pool_engine.h"
 #include "ucx_backend_req.h"
-#include "ucx_trace.h"
 #include "ucx_sgl.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
@@ -592,7 +591,11 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    int_handle->trace.begin(traceSink_, operation, hasProgressThread(), int_handle->isComposite());
+    int_handle->trace.begin(traceSink_,
+                            operation,
+                            int_handle->isComposite() ? nixl_trace_completion_t::LAST_PART :
+                                hasProgressThread()   ? nixl_trace_completion_t::CALLBACK :
+                                                        nixl_trace_completion_t::POLLED);
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
@@ -725,7 +728,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
     nixl::ucx::notifMessage notif = nixl::ucx::deserializeNotif(ser_str, engine->traceSink_);
-    nixl::ucx::traceReceived(notif.trace, notif.agent);
+    nixl::trace::recordNotifReceived(notif.trace, notif.agent);
 
     engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
     return UCS_OK;

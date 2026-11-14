@@ -160,7 +160,7 @@ struct nixlUcxBackendSharedState {
     std::atomic<size_t> pendingReqs;
     std::string notif;
     std::vector<nixlUcxChunkBackendReqH> chunks;
-    nixl::ucx::PostTrace trace;
+    nixlBackendPostPhases trace;
 
     explicit nixlUcxBackendSharedState(size_t num_chunks)
         : status(NIXL_SUCCESS),
