@@ -24,6 +24,9 @@
 #include <set>
 #include <span>
 
+#include <dlfcn.h>
+#include <mutex>
+
 #include "nixl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
@@ -778,6 +781,43 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     return bad_ret;
 }
 
+
+/*
+ * Optional authorization plugin for connection creation.
+ *
+ * When NIXL_AUTH_PLUGIN names a shared library, it is dlopen'd once
+ * and its nixl_auth_check_connect() symbol is called before every
+ * makeConnection() dispatch.  Returns 0 to allow, non-zero to deny.
+ *
+ * When the variable is unset, the overhead is one std::call_once and
+ * a null pointer check per makeConnection() call.
+ */
+typedef int (*nixl_auth_check_fn)(const char *local_agent,
+                                  const char *remote_agent);
+
+static nixl_auth_check_fn nixl_auth_check;
+static std::once_flag nixl_auth_once;
+
+static void nixl_auth_init()
+{
+    const char *plugin_path = getenv("NIXL_AUTH_PLUGIN");
+    if (!plugin_path || !*plugin_path)
+        return;
+
+    void *handle = dlopen(plugin_path, RTLD_NOW | RTLD_LOCAL);
+    if (!handle) {
+        NIXL_ERROR << "NIXL_AUTH_PLUGIN: cannot load " << plugin_path
+                   << ": " << dlerror();
+        return;
+    }
+
+    nixl_auth_check = (nixl_auth_check_fn)dlsym(handle,
+                                                  "nixl_auth_check_connect");
+    if (!nixl_auth_check)
+        NIXL_ERROR << "NIXL_AUTH_PLUGIN: " << plugin_path
+                   << " missing nixl_auth_check_connect symbol";
+}
+
 nixl_status_t
 nixlAgent::makeConnection(const std::string &remote_agent,
                           const nixl_opt_args_t* extra_params) {
@@ -789,6 +829,19 @@ nixlAgent::makeConnection(const std::string &remote_agent,
     int count = 0;
 
     NIXL_LOCK_GUARD(data->lock);
+
+    std::call_once(nixl_auth_once, nixl_auth_init);
+
+    if (nixl_auth_check) {
+        int rc = nixl_auth_check(data->name_.c_str(), remote_agent.c_str());
+        if (rc) {
+            NIXL_ERROR_FUNC << "connection to " << remote_agent << " denied by auth plugin";
+
+
+            return NIXL_ERR_NOT_ALLOWED;
+        }
+    }
+
     if (data->remoteBackends_.count(remote_agent) == 0) {
         NIXL_ERROR_FUNC << "metadata for remote agent '" << remote_agent << "' not found";
         return NIXL_ERR_NOT_FOUND;
