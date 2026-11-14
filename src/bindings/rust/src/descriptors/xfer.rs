@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,9 +17,10 @@ use super::*;
 use super::sync_manager::{BackendSyncable, SyncManager};
 use std::ops::{Index, IndexMut};
 use serde::{Serialize, Deserialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Public transfer descriptor used for indexing and comparisons
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct XferDescriptor {
     pub addr: usize,
     pub len: usize,
@@ -27,7 +28,7 @@ pub struct XferDescriptor {
 }
 
 /// Internal data structure for transfer descriptors
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 struct XferDescData {
     mem_type: MemType,
     descriptors: Vec<XferDescriptor>,
@@ -210,15 +211,15 @@ impl<'a> XferDescList<'a> {
         self.sync_mgr.backend().map(|b| b.as_ptr()).unwrap_or(ptr::null_mut())
     }
 
-    /// Serializes the descriptor list to a byte vector using bincode
+    /// Serializes the descriptor list to a byte vector
     pub fn serialize(&self) -> Result<Vec<u8>, NixlError> {
         // Serialize the XferDescData directly (contains mem_type + descriptors)
-        bincode::serialize(self.sync_mgr.data()).map_err(|_| NixlError::BackendError)
+        crate::codec::serialize(self.sync_mgr.data()).map_err(|_| NixlError::BackendError)
     }
 
-    /// Deserializes a descriptor list from a byte slice using bincode
+    /// Deserializes a descriptor list from a byte slice
     pub fn deserialize(bytes: &[u8]) -> Result<Self, NixlError> {
-        let data: XferDescData = bincode::deserialize(bytes)
+        let data: XferDescData = crate::codec::deserialize(bytes)
             .map_err(|_| NixlError::FailedToCreateXferDlistHandle)?;
 
         let mut list = XferDescList::new(data.mem_type)?;

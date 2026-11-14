@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use super::*;
+use wincode::{SchemaRead, SchemaWrite};
 
 mod query;
 mod reg;
@@ -30,7 +31,7 @@ pub use xfer::{XferDescList, XferDescriptor};
 pub use xfer_dlist_handle::XferDlistHandle;
 
 /// Memory types supported by NIXL
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub enum MemType {
     Dram,
     Vram,

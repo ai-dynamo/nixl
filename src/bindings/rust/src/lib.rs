@@ -85,6 +85,7 @@ pub use bindings::{
 };
 
 mod agent;
+mod codec;
 mod descriptors;
 mod notify;
 mod utils;

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,9 +17,10 @@ use super::*;
 use super::sync_manager::{BackendSyncable, SyncManager};
 use std::ops::{Index, IndexMut};
 use serde::{Serialize, Deserialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Public registration descriptor used for indexing and comparisons
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct RegDescriptor {
     pub addr: usize,
     pub len: usize,
@@ -28,7 +29,7 @@ pub struct RegDescriptor {
 }
 
 /// Internal data structure for registration descriptors
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 struct RegDescData {
     mem_type: MemType,
     descriptors: Vec<RegDescriptor>,
@@ -234,15 +235,15 @@ impl<'a> RegDescList<'a> {
         self.sync_mgr.backend().map(|b| b.as_ptr()).unwrap_or(ptr::null_mut())
     }
 
-    /// Serializes the descriptor list to a byte vector using bincode
+    /// Serializes the descriptor list to a byte vector
     pub fn serialize(&self) -> Result<Vec<u8>, NixlError> {
         // Serialize the RegDescData directly (contains mem_type + descriptors)
-        bincode::serialize(self.sync_mgr.data()).map_err(|_| NixlError::BackendError)
+        crate::codec::serialize(self.sync_mgr.data()).map_err(|_| NixlError::BackendError)
     }
 
-    /// Deserializes a descriptor list from a byte slice using bincode
+    /// Deserializes a descriptor list from a byte slice
     pub fn deserialize(bytes: &[u8]) -> Result<Self, NixlError> {
-        let data: RegDescData = bincode::deserialize(bytes)
+        let data: RegDescData = crate::codec::deserialize(bytes)
             .map_err(|_| NixlError::RegDescListCreationFailed)?;
 
         let mut list = RegDescList::new(data.mem_type)?;
@@ -309,5 +310,78 @@ impl Drop for RegDescList<'_> {
             }
         }
         tracing::trace!("Registration descriptor list dropped");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Asserts the exact wire bytes produced for a single-VRAM-descriptor
+    /// `RegDescData`, so a future encoder change cannot silently break
+    /// compatibility with buffers written by earlier releases.
+    #[test]
+    fn reg_desc_data_wire_format_is_stable() {
+        let data = RegDescData {
+            mem_type: MemType::Vram,
+            descriptors: vec![RegDescriptor {
+                addr: 0x1000,
+                len: 64,
+                dev_id: 2,
+                metadata: vec![0xaa, 0xbb],
+            }],
+        };
+
+        let bytes = crate::codec::serialize(&data).expect("serialize RegDescData");
+
+        // Layout (little endian): u32 enum tag (Vram = 1), u64 descriptors length
+        // (1), then RegDescriptor { addr: u64, len: u64, dev_id: u64, metadata:
+        // Vec<u8> }.
+        let expected: Vec<u8> = vec![
+            0x01, 0x00, 0x00, 0x00, // MemType::Vram
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // descriptors length = 1
+            0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // addr = 0x1000
+            0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // len = 64
+            0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // dev_id = 2
+            0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // metadata length = 2
+            0xaa, 0xbb, // metadata
+        ];
+        assert_eq!(bytes, expected);
+        assert_eq!(bytes.len(), 46);
+
+        // Round-trip and verify each field.
+        let restored: RegDescData =
+            crate::codec::deserialize(&bytes).expect("deserialize RegDescData");
+        assert_eq!(restored.mem_type, MemType::Vram);
+        assert_eq!(restored.descriptors.len(), 1);
+        let desc = &restored.descriptors[0];
+        assert_eq!(desc.addr, 0x1000);
+        assert_eq!(desc.len, 64);
+        assert_eq!(desc.dev_id, 2);
+        assert_eq!(desc.metadata, vec![0xaa, 0xbb]);
+    }
+
+    /// A `u64::MAX` descriptor count (e.g. from a truncated or forged buffer) must
+    /// be rejected as an error, never a `capacity overflow` panic. `RegDescriptor`
+    /// carries a `Vec<u8>` field, so its encoded size is dynamic and `wincode`
+    /// guards the count via the finite preallocation limit in [`crate::codec`].
+    #[test]
+    fn oversized_descriptor_count_is_rejected() {
+        // Start from a valid empty Dram list and flip the `descriptors` length
+        // prefix (the u64 at byte offset 4, after the 4-byte `MemType` tag) to
+        // `u64::MAX`.
+        let mut bytes = crate::codec::serialize(&RegDescData {
+            mem_type: MemType::Dram,
+            descriptors: vec![],
+        })
+        .expect("serialize empty RegDescData");
+
+        bytes[4..12].copy_from_slice(&u64::MAX.to_le_bytes());
+
+        let result = crate::codec::deserialize::<RegDescData>(&bytes);
+        assert!(
+            result.is_err(),
+            "u64::MAX descriptor count must be rejected, not panic"
+        );
     }
 }
