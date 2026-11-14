@@ -967,12 +967,16 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         // Mark rail as active for progress tracking optimization
         incRailActive(rail_idx);
 
-        if (mem_type == VRAM_SEG && iface == FI_HMEM_CUDA) {
-            rails_[rail_idx]->noteVramDevice(device_id);
-        }
-
         NIXL_DEBUG << "Registered memory on rail " << rail_idx
                    << " (mr=" << static_cast<const void *>(mr) << ", key=" << key << ")";
+    }
+
+    // Counted only once every rail registered, so the failure paths above have nothing to undo.
+    // deregisterMemory() removes it again.
+    if (tracksVramDevice(mem_type, device_id)) {
+        for (size_t rail_idx : selected_rails) {
+            rails_[rail_idx]->addVramDevice(device_id);
+        }
     }
 
     NIXL_INFO << "Registered memory on " << selected_rails.size() << " rails, mem_type=" << mem_type
@@ -981,15 +985,25 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
     return NIXL_SUCCESS;
 }
 
+bool
+nixlLibfabricRailManager::tracksVramDevice(nixl_mem_t mem_type, int device_id) const {
+    // CUDA VRAM only: the shm IPC copies that need the right device current are CUDA copies
+    return mem_type == VRAM_SEG && device_id >= 0 &&
+        topology->getMrAttrIface(device_id) == FI_HMEM_CUDA;
+}
+
 nixl_status_t
 nixlLibfabricRailManager::deregisterMemory(const std::vector<size_t> &selected_rails,
-                                           const std::vector<struct fid_mr *> &mr_list) {
+                                           const std::vector<struct fid_mr *> &mr_list,
+                                           nixl_mem_t mem_type,
+                                           int device_id) {
     if (selected_rails.empty() || mr_list.size() != rails_.size()) {
         NIXL_ERROR << "Invalid parameters";
         return NIXL_ERR_INVALID_PARAM;
     }
 
     nixl_status_t overall_status = NIXL_SUCCESS;
+    const bool vram_device = tracksVramDevice(mem_type, device_id);
 
     for (size_t i = 0; i < selected_rails.size(); ++i) {
         size_t rail_idx = selected_rails[i];
@@ -1003,6 +1017,10 @@ nixlLibfabricRailManager::deregisterMemory(const std::vector<size_t> &selected_r
             nixl_status_t status = rails_[rail_idx]->deregisterMemory(mr_list[rail_idx]);
             if (status == NIXL_SUCCESS) {
                 decRailActive(rail_idx);
+                // Like the active refcount: a registration that failed to deregister stays counted
+                if (vram_device) {
+                    rails_[rail_idx]->removeVramDevice(device_id);
+                }
             } else {
                 NIXL_ERROR << "Failed to deregister memory on rail " << rail_idx;
                 overall_status = status;
@@ -1179,28 +1197,26 @@ nixlLibfabricRailManager::progressActiveRails(ProgressCudaDevice cuda_device) {
         }
     } ctx_restorer;
 #endif
-    if (cuda_device != ProgressCudaDevice::Keep) {
-        for (size_t rail_id : rails_to_process) {
-            if (rail_id < rails_.size() && rails_[rail_id]->getVramDevice() >= 0) {
-                per_rail_cuda_device = true;
-                break;
-            }
+    for (size_t rail_id : rails_to_process) {
+        if (rail_id < rails_.size() && rails_[rail_id]->getVramDevice() >= 0) {
+            per_rail_cuda_device = true;
+            break;
         }
+    }
 #ifdef HAVE_CUDA
-        if (per_rail_cuda_device && cuda_device == ProgressCudaDevice::SetAndRestore) {
-            ctx_restorer.active = (cuCtxGetCurrent(&ctx_restorer.saved) == CUDA_SUCCESS);
-            if (!ctx_restorer.active) {
-                per_rail_cuda_device = false; // cannot restore, so do not touch the context
-            }
+    if (per_rail_cuda_device && cuda_device == ProgressCudaDevice::SetAndRestore) {
+        ctx_restorer.active = (cuCtxGetCurrent(&ctx_restorer.saved) == CUDA_SUCCESS);
+        if (!ctx_restorer.active) {
+            per_rail_cuda_device = false; // cannot restore, so do not touch the context
         }
+    }
 #endif
-        if (per_rail_cuda_device) {
-            // With the CUDA address workaround the engine tracks the single context that owns
-            // all registered VRAM. Prefer it over the device's primary context.
-            bool use_cuda_addr_wa = false;
-            if (LibfabricUtils::cudaSetCtx(use_cuda_addr_wa) == NIXL_SUCCESS && use_cuda_addr_wa) {
-                per_rail_cuda_device = false;
-            }
+    if (per_rail_cuda_device) {
+        // With the CUDA address workaround the engine tracks the single context that owns
+        // all registered VRAM. Prefer it over the device's primary context.
+        bool use_cuda_addr_wa = false;
+        if (LibfabricUtils::cudaSetCtx(use_cuda_addr_wa) == NIXL_SUCCESS && use_cuda_addr_wa) {
+            per_rail_cuda_device = false;
         }
     }
 

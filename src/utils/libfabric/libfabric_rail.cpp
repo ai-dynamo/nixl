@@ -804,18 +804,51 @@ nixlLibfabricRail::setProgressThreadEnabled(bool enabled) {
 }
 
 void
-nixlLibfabricRail::noteVramDevice(int device_id) {
+nixlLibfabricRail::addVramDevice(int device_id) {
     if (device_id < 0) {
         return;
     }
-    int expected = VRAM_DEVICE_NONE;
-    if (vram_device_id_.compare_exchange_strong(expected, device_id) || expected == device_id ||
-        expected == VRAM_DEVICE_MIXED) {
+    const std::lock_guard<std::mutex> lock(vram_devices_mutex_);
+    ++vram_device_refs_[device_id];
+    updateVramDeviceLocked();
+}
+
+void
+nixlLibfabricRail::removeVramDevice(int device_id) {
+    const std::lock_guard<std::mutex> lock(vram_devices_mutex_);
+    auto it = vram_device_refs_.find(device_id);
+    if (it == vram_device_refs_.end()) {
         return;
     }
-    vram_device_id_.store(VRAM_DEVICE_MIXED);
-    NIXL_INFO << "Rail " << rail_id << " has VRAM from CUDA devices " << expected << " and "
-              << device_id << ". The progress thread will not select a CUDA device for it";
+    if (--it->second == 0) {
+        vram_device_refs_.erase(it);
+    }
+    updateVramDeviceLocked();
+}
+
+void
+nixlLibfabricRail::updateVramDeviceLocked() {
+    // Most live registrations wins. std::map iterates in device order, so a tie keeps the lower id.
+    int selected = VRAM_DEVICE_NONE;
+    size_t selected_refs = 0;
+    for (const auto &[device_id, refs] : vram_device_refs_) {
+        if (refs > selected_refs) {
+            selected = device_id;
+            selected_refs = refs;
+        }
+    }
+    vram_device_id_.store(selected, std::memory_order_relaxed);
+
+    if (vram_device_refs_.size() > 1 && !vram_shared_warned_) {
+        vram_shared_warned_ = true;
+        std::string devices;
+        for (const auto &[device_id, refs] : vram_device_refs_) {
+            devices += (devices.empty() ? "" : ", ") + std::to_string(device_id);
+        }
+        NIXL_WARN << "Rail " << rail_id << " has VRAM from CUDA devices " << devices
+                  << ". Progress uses device " << selected
+                  << ", so same-host (shm) RMA into the other devices' buffers may be slower";
+    }
 }
 
 void

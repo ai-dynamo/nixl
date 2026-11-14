@@ -1030,6 +1030,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     priv->buffer_ = (void *)mem.addr;
     priv->length_ = mem.len;
     priv->device_id_ = mem.devId; // Store device ID
+    priv->mem_type_ = nixl_mem;
 
     std::string pci_bus_id = "";
 
@@ -1145,8 +1146,8 @@ nixl_status_t
 nixlLibfabricEngine::deregisterMem(nixlBackendMD *meta) {
     auto *priv = static_cast<nixlLibfabricPrivateMetadata *>(meta);
     // Use Rail Manager for centralized memory deregistration
-    nixl_status_t status =
-        rail_manager_.deregisterMemory(priv->selected_rails_, priv->rail_mr_list_);
+    nixl_status_t status = rail_manager_.deregisterMemory(
+        priv->selected_rails_, priv->rail_mr_list_, priv->mem_type_, priv->device_id_);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager deregisterMemory failed";
         // Continue with cleanup even if deregistration failed
