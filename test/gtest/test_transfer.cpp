@@ -855,6 +855,7 @@ protected:
         }
         const std::string nvtx_plugin_dir = std::string(BUILD_DIR) + "/src/plugins/tracing/nvtx";
         if (std::filesystem::exists(nvtx_plugin_dir)) {
+            const LogIgnoreGuard registered("Plugin directory already registered");
             nixlPluginManager::getInstance().addPluginDirectory(nvtx_plugin_dir);
             added = true;
             nvtxPluginAvailable_ = true;
