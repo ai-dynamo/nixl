@@ -45,6 +45,7 @@ from nixl import nixl_agent, nixl_agent_config
 # backends=[] leaves backend creation to the caller. The default config
 # initializes UCX, and a backend can only be created once per agent.
 agent = nixl_agent("example_agent", nixl_agent_config(backends=[]))
+plugins = agent.get_plugin_list()                # e.g. ["UCX", "POSIX", "GDS"]
 
 params = agent.get_plugin_params("UCX")
 params["ucx_error_handling_mode"] = "peer"   # or "none"
