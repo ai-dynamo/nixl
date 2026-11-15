@@ -292,8 +292,8 @@ std::optional<nixl::trace::TraceIdentity>
 nixl::trace::decodeTraceTags(nixlSerDes &ser_des) {
     std::array<std::uint8_t, traceContextWireSize> record;
     TraceIdentity identity;
-    if ((ser_des.peekBufLen("tctx") != record.size()) ||
-        (ser_des.getBuf("tctx", record.data(), record.size()) != NIXL_SUCCESS) ||
+    if ((ser_des.peekBufLen("tctx") != traceContextWireSize) ||
+        (ser_des.getBuf("tctx", record.data(), traceContextWireSize) != NIXL_SUCCESS) ||
         (decodeTraceContext(record, identity.context) != WireDecodeResult::Ok)) {
         return std::nullopt;
     }
