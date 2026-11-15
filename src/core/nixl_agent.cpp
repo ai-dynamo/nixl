@@ -463,7 +463,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
 
-    auto trace_sink = data->backendTraces_.makeSink(data->tracer(), type, data->telemetry_.get());
+    auto trace_sink =
+        data->backendTraceSinks_.makeSink(data->tracer(), type, data->telemetry_.get());
     init_params.traceSink = trace_sink.get();
 
     // First, try to load the backend as a plugin
@@ -532,7 +533,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     NIXL_ASSERT(inserted);
     bknd_hndl = it->second.get();
 
-    data->backendTraces_.adopt(type, std::move(trace_sink), *backend);
+    data->backendTraceSinks_.adopt(type, std::move(trace_sink), *backend);
     data->backendEngines_.try_emplace(type, std::move(backend));
 
     // TODO: Check if backend supports ProgThread
@@ -1002,7 +1003,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
         return ret;
     }
 
-    data->backendTraces_.warnIfContextUnsupported(*backend, handle->traceable());
+    data->backendTraceSinks_.warnIfContextUnsupported(*backend, handle->traceable());
     req_hndl = handle.release();
     return NIXL_SUCCESS;
 }
@@ -1150,7 +1151,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return ret1;
     }
 
-    data->backendTraces_.warnIfContextUnsupported(*handle->engine, handle->traceable());
+    data->backendTraceSinks_.warnIfContextUnsupported(*handle->engine, handle->traceable());
     req_hndl = handle.release();
     return NIXL_SUCCESS;
 }

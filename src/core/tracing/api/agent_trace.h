@@ -29,7 +29,7 @@ namespace nixl::trace {
 
 #if defined(NIXL_TRACE_ENABLED)
 
-class BackendTraces {
+class BackendTraceSinks {
 public:
     [[nodiscard]] static BackendTraceSinkPtr
     makeSink(Tracer *tracer, const nixl_backend_t &type, nixlTelemetry *telemetry);
@@ -50,7 +50,7 @@ traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info);
 
 #else
 
-class BackendTraces {
+class BackendTraceSinks {
 public:
     [[nodiscard]] static BackendTraceSinkPtr
     makeSink(Tracer *, const nixl_backend_t &, nixlTelemetry *) noexcept {

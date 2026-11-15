@@ -65,7 +65,7 @@ class nixlAgentData final : public nixlMetadataContext {
         // Composite tracer (fans out to every enabled backend); null when no
         // backend is active.
         const nixl::trace::TracerPtr tracer_;
-        nixl::trace::BackendTraces backendTraces_;
+        nixl::trace::BackendTraceSinks backendTraceSinks_;
         // Bookkeeping for local connection metadata and user handles per backend
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;

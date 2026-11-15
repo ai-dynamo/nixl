@@ -1863,7 +1863,7 @@ namespace agent {
     TEST(tracingCompiledOut, AgentHooksAreEmpty) {
         static_assert(std::is_empty_v<nixl::trace::TracerPtr>);
         static_assert(std::is_empty_v<nixl::trace::BackendTraceSinkPtr>);
-        static_assert(std::is_empty_v<nixl::trace::BackendTraces>);
+        static_assert(std::is_empty_v<nixl::trace::BackendTraceSinks>);
         static_assert(std::is_empty_v<nixl::trace::Traceable>);
         static_assert(std::is_empty_v<nixl::trace::CallScope>);
         static_assert(

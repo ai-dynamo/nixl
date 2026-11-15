@@ -26,7 +26,7 @@
 namespace nixl::trace {
 
 BackendTraceSinkPtr
-BackendTraces::makeSink(Tracer *tracer, const nixl_backend_t &type, nixlTelemetry *telemetry) {
+BackendTraceSinks::makeSink(Tracer *tracer, const nixl_backend_t &type, nixlTelemetry *telemetry) {
     if (tracer == nullptr) {
         return nullptr;
     }
@@ -40,9 +40,9 @@ BackendTraces::makeSink(Tracer *tracer, const nixl_backend_t &type, nixlTelemetr
 }
 
 void
-BackendTraces::adopt(const nixl_backend_t &type,
-                     BackendTraceSinkPtr sink,
-                     const nixlBackendEngine &backend) {
+BackendTraceSinks::adopt(const nixl_backend_t &type,
+                         BackendTraceSinkPtr sink,
+                         const nixlBackendEngine &backend) {
     if (sink == nullptr) {
         return;
     }
@@ -54,8 +54,8 @@ BackendTraces::adopt(const nixl_backend_t &type,
 }
 
 void
-BackendTraces::warnIfContextUnsupported(const nixlBackendEngine &backend,
-                                        const Traceable &traceable) noexcept {
+BackendTraceSinks::warnIfContextUnsupported(const nixlBackendEngine &backend,
+                                            const Traceable &traceable) noexcept {
     if (!traceable.requestIdentity().context.sampled()) {
         return;
     }
