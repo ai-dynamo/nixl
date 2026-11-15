@@ -25,6 +25,7 @@
 #include <iterator>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <type_traits>
@@ -271,6 +272,24 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
         EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);
         EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
+    }
+
+    TEST_F(tracingEnabledAgentFixture, RequestBuiltWhileTheBackendPrepsIsUntraced) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        std::optional<bool> nested_traced;
+        EXPECT_CALL(agent_helper_->getGMockEngine(), prepXfer).WillOnce([&](auto &&...) {
+            const nixlXferReqH nested(
+                "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
+            nested_traced = nested.traceable().requestIdentity().context.valid();
+            return NIXL_SUCCESS;
+        });
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, req), NIXL_SUCCESS);
+        EXPECT_TRUE(req->traceable().requestIdentity().context.valid());
+        EXPECT_THAT(nested_traced, testing::Optional(false));
+        EXPECT_EQ(agent_helper_->getAgent()->releaseXferReq(req), NIXL_SUCCESS);
     }
 
     TEST_F(tracingEnabledAgentFixture, UnsampledRequestsAreNotReportedUntraced) {
