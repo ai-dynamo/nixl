@@ -497,15 +497,17 @@ for the posts named below, `nixl::wire.completed` when the transfer completes.
 If handing a validated post to UCX fails, at a put, a get or the flush, for
 example because the peer disconnected, only `nixl::submit` is recorded.
 The notification goes out once the transfer completes: from `postXfer` if it
-completes at once, from the flush callback while the progress thread runs, and
+completes at once, from the flush callback while the progress thread runs, for a
+post split across the thread-pool engine's dedicated workers from its first chunk's
+status check on that chunk's dedicated thread once the other chunks are done, and
 otherwise from the first status check that finds it complete. Its `notif.sent` is
 recorded at the end of that call, or right after the progress call that ran the
 callback, once per notifying post, with that post's execution number.
 UCX records `nixl::wire.completed` only where a thread other
 than the application's sees a transfer complete: on the thread-pool engine, for
 a post split across its dedicated workers (at least `split_batch_size`
-descriptors, and at least `num_threads`), from the dedicated thread whose chunk
-completes it last; and, while the progress thread runs (`useProgThread`), for
+descriptors, and at least `num_threads`), from its first chunk's dedicated thread
+once the other chunks are done; and, while the progress thread runs (`useProgThread`), for
 every other post, when the flush behind its puts or gets completes, or in
 `postXfer` if that flush completes at once. It records none for a post whose data
 transfer fails or that is released in flight, and none without the progress
@@ -603,13 +605,14 @@ ninja -C build test/gtest/unit/unit test/gtest/gtest test/gtest/ucx_trace_receiv
 
 The two-process test starts its receiver agent as a separate executable,
 `ucx_trace_receiver`, which is built and installed next to `gtest`, and checks the
-spans both agents record against the sender's request. Thirteen single-process tests
+spans both agents record against the sender's request. Fifteen single-process tests
 in the same suite check the phases. Transfers to the agent itself, on the default and the thread-pool
 engine, record `nixl::submit` and `nixl::wire.submitted` once per post and
 `nixl::notif.sent` once per notifying post. A transfer split across the thread-pool
 engine's dedicated workers also records one `nixl::wire.completed` and one
 `nixl::wire.inflight.write` per post, before a late status check, and none when released
-in flight. Without the progress thread, an unsplit one and one on the default engine
+in flight; both its `nixl::wire.completed` and its `nixl::notif.sent` precede the post's
+`nixl::xfer.complete`. Without the progress thread, an unsplit one and one on the default engine
 record none; while it runs, both record one of each per post, the default engine's
 before a late status check and none when released in flight. A transfer to a second
 agent that only the test progresses cannot finish inside `postXfer`; the sender's
