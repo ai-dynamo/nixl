@@ -23,6 +23,7 @@
 
 namespace nixl::trace {
 
+/** @brief Values cross the trace plugin interface: add new keys at the end. */
 enum class AttributeKey : std::uint16_t {
     Bytes,
     DescCount,

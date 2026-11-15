@@ -38,6 +38,7 @@ enum class Kind : std::uint8_t {
     Metadata,
 };
 
+/** @brief Values cross the trace plugin interface: add new records at the end. */
 enum class Record : std::uint8_t {
     RegisterMem,
     DeregisterMem,
