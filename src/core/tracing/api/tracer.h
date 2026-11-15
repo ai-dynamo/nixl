@@ -23,6 +23,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 
 #include "common/nixl_time.h"
 #include "nixl_types.h"
@@ -81,6 +82,9 @@ public:
     [[nodiscard]] virtual std::optional<TraceContext>
     parseParentContext(const nixl_blob_t &value) const = 0;
 
+    [[nodiscard]] virtual std::string_view
+    parseBaggage(const nixl_blob_t &value) const = 0;
+
     [[nodiscard]] virtual std::string
     traceparent(const TraceContext &context) const = 0;
 
@@ -89,6 +93,9 @@ public:
 
     virtual const TraceIdentity *
     swapCurrentIdentity(const TraceIdentity *identity) noexcept = 0;
+
+    virtual std::string_view
+    swapCurrentBaggage(std::string_view baggage) noexcept = 0;
 };
 
 using TracerPtr = std::unique_ptr<Tracer>;
@@ -124,6 +131,14 @@ parseParentContext(const Tracer *tracer, const nixl_blob_t &value) {
         return std::nullopt;
     }
     return tracer->parseParentContext(value);
+}
+
+[[nodiscard]] inline std::string_view
+parseBaggage(const Tracer *tracer, const nixl_blob_t &value) {
+    if ((tracer == nullptr) || value.empty()) {
+        return {};
+    }
+    return tracer->parseBaggage(value);
 }
 
 } // namespace nixl::trace

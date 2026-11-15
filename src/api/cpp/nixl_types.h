@@ -247,6 +247,11 @@ struct nixlAgentOptionalArgs {
      *      `traceparent` or NIXL's 26-byte trace context record.
      */
     nixl_blob_t traceContext;
+
+    /**
+     * @var traceBaggage The application's W3C `baggage`, recorded with its trace.
+     */
+    nixl_blob_t traceBaggage;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs

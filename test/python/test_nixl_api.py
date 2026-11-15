@@ -788,7 +788,7 @@ requires_nvtx_plugin = pytest.mark.skipif(
 
 
 @contextlib.contextmanager
-def _xfer_handle(backend_name, prepped=False, trace_context=""):
+def _xfer_handle(backend_name, prepped=False, trace_context="", trace_baggage=""):
     agent, target = (
         nixl_agent(
             str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
@@ -804,7 +804,13 @@ def _xfer_handle(backend_name, prepped=False, trace_context=""):
         local = agent.prep_xfer_dlist("NIXL_INIT_AGENT", src)
         remote = agent.prep_xfer_dlist(target.name, dst)
         handle = agent.make_prepped_xfer(
-            "WRITE", local, [0], remote, [0], trace_context=trace_context
+            "WRITE",
+            local,
+            [0],
+            remote,
+            [0],
+            trace_context=trace_context,
+            trace_baggage=trace_baggage,
         )
     else:
         handle = agent.initialize_xfer(
@@ -813,6 +819,7 @@ def _xfer_handle(backend_name, prepped=False, trace_context=""):
             agent.get_xfer_descs(dst),
             target.name,
             trace_context=trace_context,
+            trace_baggage=trace_baggage,
         )
     try:
         yield agent, handle
@@ -821,8 +828,10 @@ def _xfer_handle(backend_name, prepped=False, trace_context=""):
         agent.remove_remote_agent(target.name)
 
 
-def _post_to_done(agent, handle, trace_context=""):
-    state = agent.transfer(handle, trace_context=trace_context)
+def _post_to_done(agent, handle, trace_context="", trace_baggage=""):
+    state = agent.transfer(
+        handle, trace_context=trace_context, trace_baggage=trace_baggage
+    )
     deadline = time.monotonic() + 5
     while state == "PROC" and time.monotonic() < deadline:
         state = agent.check_xfer_state(handle)
@@ -971,12 +980,28 @@ def test_send_notif_takes_a_trace_context(monkeypatch, backend_name):
     agent.add_remote_agent(target.get_agent_metadata())
     target.add_remote_agent(agent.get_agent_metadata())
     try:
-        agent.send_notif(target.name, b"traced", trace_context=_APPLICATION)
+        agent.send_notif(
+            target.name, b"traced", trace_context=_APPLICATION, trace_baggage="tenant=a"
+        )
         while not target.check_remote_xfer_done(agent.name, b"traced"):
             pass
     finally:
         agent.remove_remote_agent(target.name)
         target.remove_remote_agent(agent.name)
+
+
+@requires_nvtx_plugin
+@pytest.mark.parametrize("prepped", [False, True])
+def test_xfer_takes_a_trace_baggage(monkeypatch, backend_name, prepped):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1")
+    monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "1")
+    with _xfer_handle(backend_name, prepped, trace_baggage="tenant=a") as (
+        agent,
+        handle,
+    ):
+        _post_to_done(agent, handle)
+        _post_to_done(agent, handle, trace_baggage="step=2")
 
 
 def test_xfer_trace_info_binding_rejects_a_null_handle(one_empty_agent):

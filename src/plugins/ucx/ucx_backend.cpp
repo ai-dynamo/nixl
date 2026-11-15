@@ -664,7 +664,7 @@ nixl::ucx::serializeNotif(const std::string &agent,
     constexpr size_t notif_overhead = 128;
     nixlSerDes ser_des;
 
-    ser_des.reserve(agent.size() + msg.size() + notif_overhead);
+    ser_des.reserve(agent.size() + msg.size() + trace.baggage().size() + notif_overhead);
     ser_des.addStr("name", agent);
     ser_des.addStr("msg", msg);
     nixl::trace::addTraceTags(ser_des, trace);
@@ -681,6 +681,7 @@ nixl::ucx::deserializeNotif(const std::string &buffer, nixlBackendTraceSink *sin
     notif.msg = ser_des.getStr("msg");
     if (const auto identity = nixl::trace::getTraceTags(ser_des, sink)) {
         notif.trace = nixlBackendPostTrace{sink, *identity};
+        notif.baggage = nixl::trace::getTraceBaggage(ser_des, sink);
     }
     return notif;
 }
@@ -728,7 +729,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
     nixl::ucx::notifMessage notif = nixl::ucx::deserializeNotif(ser_str, engine->traceSink_);
-    nixl::trace::recordNotifReceived(notif.trace, notif.agent);
+    nixl::trace::recordNotifReceived(notif.trace, notif.agent, notif.baggage);
 
     engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
     return UCS_OK;

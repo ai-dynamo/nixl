@@ -55,7 +55,8 @@ use bindings::{
     nixl_capi_notif_map_get_notifs_size, nixl_capi_notif_map_size, nixl_capi_opt_args_add_backend,
     nixl_capi_opt_args_get_custom_param, nixl_capi_opt_args_get_has_notif,
     nixl_capi_opt_args_get_notif_msg, nixl_capi_opt_args_get_skip_desc_merge,
-    nixl_capi_opt_args_get_trace_context, nixl_capi_opt_args_set_custom_param,
+    nixl_capi_opt_args_get_trace_baggage, nixl_capi_opt_args_get_trace_context,
+    nixl_capi_opt_args_set_custom_param, nixl_capi_opt_args_set_trace_baggage,
     nixl_capi_opt_args_set_has_notif, nixl_capi_opt_args_set_notif_msg,
     nixl_capi_opt_args_set_skip_desc_merge, nixl_capi_opt_args_set_trace_context,
     nixl_capi_params_create_iterator, nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty,
@@ -431,6 +432,31 @@ impl OptArgs {
         let mut len = 0;
         let status = unsafe {
             nixl_capi_opt_args_get_trace_context(self.inner.as_ptr(), &mut data, &mut len)
+        };
+        take_capi_blob(status, data, len)
+    }
+
+    /// W3C baggage of the caller, recorded with the trace of the request, post or notification these options go with and carried to the peer.
+    pub fn set_trace_baggage(&mut self, baggage: &[u8]) -> Result<(), NixlError> {
+        let status = unsafe {
+            nixl_capi_opt_args_set_trace_baggage(
+                self.inner.as_ptr(),
+                baggage.as_ptr() as *const _,
+                baggage.len(),
+            )
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    pub fn get_trace_baggage(&self) -> Result<Vec<u8>, NixlError> {
+        let mut data = ptr::null_mut();
+        let mut len = 0;
+        let status = unsafe {
+            nixl_capi_opt_args_get_trace_baggage(self.inner.as_ptr(), &mut data, &mut len)
         };
         take_capi_blob(status, data, len)
     }

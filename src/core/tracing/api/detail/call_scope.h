@@ -29,7 +29,7 @@ namespace nixl::trace::detail {
 
 struct Call {
     Tracer *tracer = nullptr;
-    const nixl_blob_t *context = nullptr;
+    const nixl_opt_args_t *options = nullptr;
 };
 
 } // namespace nixl::trace::detail

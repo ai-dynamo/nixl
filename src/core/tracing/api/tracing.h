@@ -39,6 +39,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "common/nixl_time.h"
 #include "nixl_types.h"
@@ -68,7 +69,7 @@ makeAgentTracer(const std::string &name);
  * @brief A traced object's trace state: the context and request id it was
  *        created with, and the context and execution number of its latest post,
  *        whose parent is the span supplied to that post or else the request's
- *        span.
+ *        span, each with the application's baggage when sampled.
  */
 class Traceable {
 public:
@@ -91,8 +92,15 @@ public:
     [[nodiscard]] TraceIdentity
     requestIdentity() const noexcept;
 
+    [[nodiscard]] std::string_view
+    requestBaggage() const noexcept;
+
+    [[nodiscard]] std::string_view
+    postBaggage() const noexcept;
+
     [[nodiscard]] const TraceIdentity &
-    post(const nixl_blob_t &parent = noSuppliedContext);
+    post(const nixl_blob_t &parent = noSuppliedContext,
+         const nixl_blob_t &baggage = noSuppliedBaggage);
 
     void
     trace(Record record) const;
@@ -107,18 +115,23 @@ private:
     const TraceContext requestContext_;
     TraceIdentity postIdentity_;
     const nixlTime::us_t createdAt_;
+    std::string requestBaggage_;
+    std::string postBaggage_;
 };
 
 /**
- * @brief Makes @p identity current on the calling thread until it ends, so a
- *        backend called meanwhile reads it through its sink's currentIdentity().
+ * @brief Makes @p identity and @p baggage current on the calling thread until it
+ *        ends, so a backend called meanwhile reads them through its sink's
+ *        currentIdentity() and currentBaggage().
  *        Scopes nest; a scope without a tracer does nothing. A scope whose
  *        context is valid and sampled also pushes it to the tracer's backends
  *        for its lifetime, to correlate records across threads.
  */
 class Scope {
 public:
-    [[nodiscard]] Scope(Tracer *tracer, const TraceIdentity &identity);
+    [[nodiscard]] Scope(Tracer *tracer,
+                        const TraceIdentity &identity,
+                        std::string_view baggage = {});
     ~Scope();
 
     Scope(const Scope &) = delete;
@@ -139,18 +152,18 @@ private:
     Tracer *const tracer_;
     const TraceIdentity identity_;
     const TraceIdentity *const previous_;
+    const std::string_view previousBaggage_;
     const bool pushed_;
 };
 
 /**
- * @brief Makes @p tracer and the application's @p context current on the calling
- *        thread until it ends, so a Traceable built meanwhile takes them. Call
- *        scopes nest; one without a tracer does nothing.
+ * @brief Makes @p tracer and the trace context and baggage in @p options current
+ *        on the calling thread until it ends, so a Traceable built meanwhile
+ *        takes them. Call scopes nest; one without a tracer does nothing.
  */
 class CallScope {
 public:
-    [[nodiscard]] CallScope(Tracer *tracer, const nixl_blob_t &context) noexcept;
-    CallScope(Tracer *tracer, const nixl_blob_t &&context) = delete;
+    [[nodiscard]] CallScope(Tracer *tracer, const nixl_opt_args_t *options) noexcept;
     ~CallScope();
 
     CallScope(const CallScope &) = delete;
@@ -209,9 +222,7 @@ public:
 
 class CallScope {
 public:
-    CallScope(Tracer *, const nixl_blob_t &) noexcept {}
-
-    CallScope(Tracer *, const nixl_blob_t &&) = delete;
+    CallScope(Tracer *, const nixl_opt_args_t *) noexcept {}
 };
 
 [[nodiscard]] inline nixl_status_t
@@ -226,10 +237,15 @@ suppliedContext(const nixl_opt_args_t *extra_params) noexcept {
     return (extra_params != nullptr) ? extra_params->traceContext : noSuppliedContext;
 }
 
+[[nodiscard]] inline const nixl_blob_t &
+suppliedBaggage(const nixl_opt_args_t *extra_params) noexcept {
+    return (extra_params != nullptr) ? extra_params->traceBaggage : noSuppliedBaggage;
+}
+
 [[nodiscard]] inline bool
-carriesOnlyContext(const nixl_opt_args_t &extra_params) noexcept {
+carriesOnlyTraceOptions(const nixl_opt_args_t &extra_params) noexcept {
     return !extra_params.notif && !extra_params.hasNotif && extra_params.customParam.empty() &&
-        !extra_params.traceContext.empty();
+        (!extra_params.traceContext.empty() || !extra_params.traceBaggage.empty());
 }
 
 } // namespace nixl::trace
@@ -248,12 +264,13 @@ carriesOnlyContext(const nixl_opt_args_t &extra_params) noexcept {
  * one known later, and `return NIXL_TRACE_FINISH(span, status);` records the
  * call's status as it returns it. NIXL_TRACE_REQUEST_SPAN(span, traceable,
  * record, {key, value}...) does the same for a call on a request, inside the
- * request's scope, and NIXL_TRACE_POST_SPAN(span, traceable, parent, record, ...)
- * for a post, inside the scope of the post it begins under `parent`, the context
- * the application supplied, if any; both add the request id and execution number.
- * NIXL_TRACE_SCOPE_UNDER(span, tracer, parent, record, ...) is NIXL_TRACE_SCOPE for
- * a call the application may give a context: under a sampled `parent` its span is
- * a child of it, inside a scope of its own; under an unsampled one there is no span.
+ * request's scope, and NIXL_TRACE_POST_SPAN(span, traceable, options, record, ...)
+ * for a post, inside the scope of the post it begins under the context the call's
+ * `options` supply, if any; both add the request id and execution number, and the
+ * baggage when sampled. NIXL_TRACE_SCOPE_UNDER(span, tracer, options, record, ...)
+ * is NIXL_TRACE_SCOPE for a call the application may give a context: under a sampled
+ * one its span is a child of it, inside a scope of its own, with the baggage the
+ * `options` supply; under an unsampled one there is no span.
  * NIXL_TRACE_END(span, status) records the status as NIXL_TRACE_FINISH does and
  * ends the span at once, for a call whose last step must follow its span.
  * The explicit name avoids any hidden coupling/shadowing and allows more than
@@ -264,14 +281,15 @@ carriesOnlyContext(const nixl_opt_args_t &extra_params) noexcept {
 #define NIXL_TRACE_SCOPE(span, tracer_ptr, trace_record, ...) \
     NIXL_TRACE_DETAIL_SCOPE(span, tracer_ptr, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
-#define NIXL_TRACE_SCOPE_UNDER(span, tracer_ptr, parent, trace_record, ...) \
-    NIXL_TRACE_DETAIL_SCOPE_UNDER(span, tracer_ptr, parent, trace_record __VA_OPT__(, ) __VA_ARGS__)
+#define NIXL_TRACE_SCOPE_UNDER(span, tracer_ptr, options, trace_record, ...) \
+    NIXL_TRACE_DETAIL_SCOPE_UNDER(                                           \
+        span, tracer_ptr, options, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
 #define NIXL_TRACE_REQUEST_SPAN(span, traceable, trace_record, ...) \
     NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
-#define NIXL_TRACE_POST_SPAN(span, traceable, parent, trace_record, ...) \
-    NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, parent, trace_record __VA_OPT__(, ) __VA_ARGS__)
+#define NIXL_TRACE_POST_SPAN(span, traceable, options, trace_record, ...) \
+    NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, options, trace_record __VA_OPT__(, ) __VA_ARGS__)
 
 #define NIXL_TRACE_ATTR(span, attr_key, attr_value) \
     NIXL_TRACE_DETAIL_ATTR(span, attr_key, attr_value)
@@ -294,14 +312,14 @@ carriesOnlyContext(const nixl_opt_args_t &extra_params) noexcept {
 #define NIXL_TRACE_DETAIL_SCOPE(span, tracer_ptr, trace_record, ...) \
     do {                                                             \
     } while (0)
-#define NIXL_TRACE_DETAIL_SCOPE_UNDER(span, tracer_ptr, parent, trace_record, ...) \
-    do {                                                                           \
+#define NIXL_TRACE_DETAIL_SCOPE_UNDER(span, tracer_ptr, options, trace_record, ...) \
+    do {                                                                            \
     } while (0)
 #define NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record, ...) \
     do {                                                                   \
     } while (0)
-#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, parent, trace_record, ...) \
-    do {                                                                        \
+#define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, options, trace_record, ...) \
+    do {                                                                         \
     } while (0)
 #define NIXL_TRACE_DETAIL_FINISH(span, status) (status)
 #define NIXL_TRACE_DETAIL_END(span, status) (status)

@@ -255,6 +255,34 @@ nixl_capi_opt_args_set_trace_context(nixl_capi_opt_args_t args, const void *data
 nixl_capi_status_t
 nixl_capi_opt_args_get_trace_context(nixl_capi_opt_args_t args, void **data, size_t *len);
 
+/**
+ * @brief Set the caller's W3C baggage.
+ *
+ * Copies @a len bytes out of @a data, which may be freed once this returns. @a data
+ * may be NULL only when @a len is 0.
+ *
+ * @param  args  [in]  Optional arguments
+ * @param  data  [in]  Baggage bytes
+ * @param  len   [in]  Byte count
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_opt_args_set_trace_baggage(nixl_capi_opt_args_t args, const void *data, size_t len);
+
+/**
+ * @brief Get the baggage.
+ *
+ * On success the caller owns @a data and must release it with free(). An unset
+ * baggage yields NULL and a length of 0.
+ *
+ * @param  args  [in]  Optional arguments
+ * @param  data  [out] Newly allocated copy of the baggage bytes
+ * @param  len   [out] Byte count
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_opt_args_get_trace_baggage(nixl_capi_opt_args_t args, void **data, size_t *len);
+
 nixl_capi_status_t nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif);
 nixl_capi_status_t nixl_capi_opt_args_get_has_notif(nixl_capi_opt_args_t args, bool* has_notif);
 nixl_capi_status_t nixl_capi_opt_args_set_skip_desc_merge(nixl_capi_opt_args_t args, bool skip_merge);

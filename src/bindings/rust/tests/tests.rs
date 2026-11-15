@@ -1916,6 +1916,14 @@ fn test_opt_args_trace_context_round_trips() {
 }
 
 #[test]
+fn test_opt_args_trace_baggage_round_trips() {
+    let mut opt_args = OptArgs::new().expect("Failed to create OptArgs");
+    assert!(opt_args.get_trace_baggage().expect("get_trace_baggage failed").is_empty());
+    opt_args.set_trace_baggage(b"tenant=a,job=7").expect("set_trace_baggage failed");
+    assert_eq!(opt_args.get_trace_baggage().expect("get_trace_baggage failed"), b"tenant=a,job=7");
+}
+
+#[test]
 fn test_supplied_trace_context_is_the_requests_parent() {
     if nvtx_plugin_missing("test_supplied_trace_context_is_the_requests_parent") {
         return;

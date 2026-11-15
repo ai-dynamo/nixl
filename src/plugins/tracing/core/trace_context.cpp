@@ -231,6 +231,15 @@ nixl::trace::CompositeTracer::reportUnparsableParent(std::size_t size) const noe
     });
 }
 
+void
+nixl::trace::CompositeTracer::reportUnparsableBaggage(std::size_t size) const noexcept {
+    logOnce(unparsableBaggageLogged_, [size] {
+        NIXL_WARN << "nixl::trace: ignoring a supplied baggage of " << size
+                  << " bytes that is longer than " << maxBaggageSize
+                  << " bytes or not printable ASCII; further ones are not logged";
+    });
+}
+
 std::optional<nixl::trace::TraceContext>
 nixl::trace::parseTraceparent(std::string_view value) {
     if (value.size() != 55 || value[0] != '0' || value[1] != '0' || value[2] != '-' ||
@@ -251,8 +260,16 @@ nixl::trace::formatTraceparent(const nixl::trace::TraceContext &context) {
     return std::string(nixl::trace::TraceparentText(context).view());
 }
 
+bool
+nixl::trace::isBaggage(std::string_view value) noexcept {
+    return !value.empty() && (value.size() <= maxBaggageSize) &&
+        std::ranges::all_of(value, [](char c) { return (c >= 0x20) && (c <= 0x7e); });
+}
+
 void
-nixl::trace::encodeTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity) {
+nixl::trace::encodeTraceTags(nixlSerDes &ser_des,
+                             const TraceIdentity &identity,
+                             std::string_view baggage) {
     if (!identity.context.sampled()) {
         return;
     }
@@ -265,6 +282,9 @@ nixl::trace::encodeTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity)
     if (identity.requestId != 0) {
         const requestTag tag{identity.requestId, identity.execution};
         ser_des.addBuf("treq", &tag, sizeof(tag));
+    }
+    if (!baggage.empty()) {
+        ser_des.addBuf("tbag", baggage.data(), static_cast<ssize_t>(baggage.size()));
     }
 }
 
@@ -284,6 +304,21 @@ nixl::trace::decodeTraceTags(nixlSerDes &ser_des) {
         identity.execution = tag.execution;
     }
     return identity;
+}
+
+std::string
+nixl::trace::decodeTraceBaggage(nixlSerDes &ser_des) {
+    const std::optional<std::size_t> size = ser_des.peekBufLen("tbag");
+    if (!size || (*size == 0) || (*size > maxBaggageSize)) {
+        return {};
+    }
+    std::string baggage(*size, '\0');
+    if ((ser_des.getBuf("tbag", baggage.data(), static_cast<ssize_t>(baggage.size())) !=
+         NIXL_SUCCESS) ||
+        !isBaggage(baggage)) {
+        return {};
+    }
+    return baggage;
 }
 
 std::optional<std::size_t>
@@ -361,6 +396,18 @@ nixl::trace::CompositeTracer::parseParentContext(const nixl_blob_t &value) const
     }
     context->flags &= supported_trace_flags;
     return context;
+}
+
+std::string_view
+nixl::trace::CompositeTracer::parseBaggage(const nixl_blob_t &value) const {
+    if (value.empty()) {
+        return {};
+    }
+    if (!isBaggage(value)) {
+        reportUnparsableBaggage(value.size());
+        return {};
+    }
+    return value;
 }
 
 nixl::trace::TraceIdentity

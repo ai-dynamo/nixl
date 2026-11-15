@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 #include "common/nixl_time.h"
@@ -265,11 +266,23 @@ public:
     [[nodiscard]] virtual const nixl::trace::TraceIdentity *
     currentIdentity() const noexcept = 0;
 
+    /**
+     * @brief The baggage the application gave the agent's call into this backend,
+     * under the same rules as currentIdentity(); empty when it gave none.
+     */
+    [[nodiscard]] virtual std::string_view
+    currentBaggage() const noexcept = 0;
+
     virtual void
-    writeTraceTags(nixlSerDes &ser_des, const nixl::trace::TraceIdentity &identity) const = 0;
+    writeTraceTags(nixlSerDes &ser_des,
+                   const nixl::trace::TraceIdentity &identity,
+                   std::string_view baggage) const = 0;
 
     [[nodiscard]] virtual std::optional<nixl::trace::TraceIdentity>
     readTraceTags(nixlSerDes &ser_des) const = 0;
+
+    [[nodiscard]] virtual std::string
+    readTraceBaggage(nixlSerDes &ser_des) const = 0;
 
     virtual void
     deferPhase(const nixl::trace::DeferredPhase &deferred) noexcept = 0;
@@ -294,14 +307,16 @@ public:
             return;
         }
         if (const nixl::trace::TraceIdentity *identity = sink->currentIdentity()) {
-            *this = nixlBackendPostTrace(sink, *identity);
+            *this = nixlBackendPostTrace(sink, *identity, sink->currentBaggage());
         }
     }
 
     nixlBackendPostTrace(nixlBackendTraceSink *sink,
-                         const nixl::trace::TraceIdentity &identity) noexcept
+                         const nixl::trace::TraceIdentity &identity,
+                         std::string_view baggage = {}) noexcept
         : sink_(identity.context.sampled() ? sink : nullptr),
           identity_(identity),
+          baggage_((sink_ != nullptr) ? baggage : std::string_view{}),
           needsTimestamps_((sink_ != nullptr) && sink_->needsTimestamps()) {}
 
     [[nodiscard]] bool
@@ -317,6 +332,11 @@ public:
     [[nodiscard]] const nixl::trace::TraceIdentity &
     identity() const noexcept {
         return identity_;
+    }
+
+    [[nodiscard]] std::string_view
+    baggage() const noexcept {
+        return baggage_;
     }
 
     [[nodiscard]] nixlTime::us_t
@@ -354,6 +374,7 @@ public:
 private:
     nixlBackendTraceSink *sink_ = nullptr;
     nixl::trace::TraceIdentity identity_;
+    std::string_view baggage_;
     bool needsTimestamps_ = false;
 };
 
@@ -365,7 +386,9 @@ public:
 
     explicit nixlBackendPostTrace(nixlBackendTraceSink *) noexcept {}
 
-    nixlBackendPostTrace(nixlBackendTraceSink *, const nixl::trace::TraceIdentity &) noexcept {}
+    nixlBackendPostTrace(nixlBackendTraceSink *,
+                         const nixl::trace::TraceIdentity &,
+                         std::string_view = {}) noexcept {}
 
     [[nodiscard]] constexpr bool
     active() const noexcept {
@@ -374,6 +397,11 @@ public:
 
     [[nodiscard]] nixl::trace::TraceIdentity
     identity() const noexcept {
+        return {};
+    }
+
+    [[nodiscard]] constexpr std::string_view
+    baggage() const noexcept {
         return {};
     }
 
@@ -421,13 +449,18 @@ struct DeferredPhase {
 inline void
 addTraceTags(nixlSerDes &ser_des, const nixlBackendPostTrace &trace) {
     if (trace.active()) {
-        trace.sink()->writeTraceTags(ser_des, trace.identity());
+        trace.sink()->writeTraceTags(ser_des, trace.identity(), trace.baggage());
     }
 }
 
 [[nodiscard]] inline std::optional<TraceIdentity>
 getTraceTags(nixlSerDes &ser_des, const nixlBackendTraceSink *sink) {
     return (sink != nullptr) ? sink->readTraceTags(ser_des) : std::nullopt;
+}
+
+[[nodiscard]] inline std::string
+getTraceBaggage(nixlSerDes &ser_des, const nixlBackendTraceSink *sink) {
+    return (sink != nullptr) ? sink->readTraceBaggage(ser_des) : std::string{};
 }
 
 /**
@@ -452,9 +485,13 @@ recordDeferredPhases(nixlBackendTraceSink *sink) noexcept {
 }
 
 inline void
-recordNotifReceived(const nixlBackendPostTrace &trace, std::string_view remote_agent) noexcept {
-    const std::array attrs{nixlBackendTraceAttr{AttributeKey::NixlRemoteAgent, remote_agent}};
-    trace.record(nixl_trace_phase_t::NOTIF_RECEIVED, attrs);
+recordNotifReceived(const nixlBackendPostTrace &trace,
+                    std::string_view remote_agent,
+                    std::string_view baggage = {}) noexcept {
+    const std::array attrs{nixlBackendTraceAttr{AttributeKey::NixlRemoteAgent, remote_agent},
+                           nixlBackendTraceAttr{AttributeKey::NixlBaggage, baggage}};
+    trace.record(nixl_trace_phase_t::NOTIF_RECEIVED,
+                 std::span(attrs).first(baggage.empty() ? 1 : attrs.size()));
 }
 
 #else
@@ -467,6 +504,11 @@ getTraceTags(nixlSerDes &, const nixlBackendTraceSink *) noexcept {
     return std::nullopt;
 }
 
+[[nodiscard]] inline std::string
+getTraceBaggage(nixlSerDes &, const nixlBackendTraceSink *) noexcept {
+    return {};
+}
+
 inline void
 deferPhase(const DeferredPhase &) noexcept {}
 
@@ -474,7 +516,9 @@ inline void
 recordDeferredPhases(nixlBackendTraceSink *) noexcept {}
 
 inline void
-recordNotifReceived(const nixlBackendPostTrace &, std::string_view) noexcept {}
+recordNotifReceived(const nixlBackendPostTrace &,
+                    std::string_view,
+                    std::string_view = {}) noexcept {}
 
 #endif
 

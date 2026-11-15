@@ -293,12 +293,24 @@ public:
         return nullptr;
     }
 
+    [[nodiscard]] std::string_view
+    currentBaggage() const noexcept override {
+        return {};
+    }
+
     void
-    writeTraceTags(nixlSerDes &, const nixl::trace::TraceIdentity &) const override {}
+    writeTraceTags(nixlSerDes &,
+                   const nixl::trace::TraceIdentity &,
+                   std::string_view) const override {}
 
     [[nodiscard]] std::optional<nixl::trace::TraceIdentity>
     readTraceTags(nixlSerDes &) const override {
         return std::nullopt;
+    }
+
+    [[nodiscard]] std::string
+    readTraceBaggage(nixlSerDes &) const override {
+        return {};
     }
 
     void
@@ -724,7 +736,7 @@ TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
         for (nixl::trace::Traceable *traced : {&unsampled, &untraced}) {
             NIXL_TRACE_POST_SPAN(post,
                                  *traced,
-                                 nixl::trace::noSuppliedContext,
+                                 nullptr,
                                  nixl::trace::Record::PostXferReqWrite,
                                  {nixl::trace::AttributeKey::Bytes, ++evaluations});
             NIXL_TRACE_REQUEST_SPAN(release,
@@ -798,7 +810,7 @@ TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
         {
             NIXL_TRACE_POST_SPAN(post,
                                  traced,
-                                 nixl::trace::noSuppliedContext,
+                                 nullptr,
                                  nixl::trace::Record::PostXferReqWrite,
                                  {nixl::trace::AttributeKey::Bytes, 8});
             EXPECT_TRUE(post.active());
@@ -849,9 +861,11 @@ TEST(Tracing, ScopeUnderMacroRecordsTheSuppliedContextsChild) {
     child.parentSpanId = application.spanId;
 
     {
+        nixl_opt_args_t options;
+        options.traceContext = supplied;
         NIXL_TRACE_SCOPE_UNDER(notif,
                                tracer.get(),
-                               supplied,
+                               &options,
                                nixl::trace::Record::GenNotif,
                                {nixl::trace::AttributeKey::Bytes, 1});
         EXPECT_TRUE(notif.active());
@@ -876,14 +890,16 @@ TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
     gtest::LogMessageCounter ignored("ignoring a supplied trace context");
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
-    const nixl_blob_t unsampled = nixl::trace::formatTraceparent(testContext(0x62, 0x00));
-    const nixl_blob_t neither = "neither";
+    nixl_opt_args_t unsampled;
+    unsampled.traceContext = nixl::trace::formatTraceparent(testContext(0x62, 0x00));
+    nixl_opt_args_t neither;
+    neither.traceContext = "neither";
     int evaluations = 0;
 
     {
         NIXL_TRACE_SCOPE_UNDER(plain,
                                tracer.get(),
-                               nixl::trace::noSuppliedContext,
+                               nullptr,
                                nixl::trace::Record::GenNotif,
                                {nixl::trace::AttributeKey::Bytes, 1});
         EXPECT_TRUE(plain.active());
@@ -892,7 +908,7 @@ TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
     {
         NIXL_TRACE_SCOPE_UNDER(unparsed,
                                tracer.get(),
-                               neither,
+                               &neither,
                                nixl::trace::Record::GenNotif,
                                {nixl::trace::AttributeKey::Bytes, 2});
         EXPECT_TRUE(unparsed.active());
@@ -900,7 +916,7 @@ TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
     {
         NIXL_TRACE_SCOPE_UNDER(skipped,
                                tracer.get(),
-                               unsampled,
+                               &unsampled,
                                nixl::trace::Record::GenNotif,
                                {nixl::trace::AttributeKey::Bytes, ++evaluations});
         EXPECT_FALSE(skipped.active());
@@ -908,7 +924,7 @@ TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
     {
         NIXL_TRACE_SCOPE_UNDER(untraced,
                                static_cast<nixl::trace::Tracer *>(nullptr),
-                               unsampled,
+                               &unsampled,
                                nixl::trace::Record::GenNotif,
                                {nixl::trace::AttributeKey::Bytes, ++evaluations});
         EXPECT_FALSE(untraced.active());
@@ -925,37 +941,38 @@ TEST(Tracing, ScopeUnderMacroIsAPlainSpanWithoutAUsableContext) {
     }
 }
 
-TEST(Tracing, ScopeUnderMacroEvaluatesItsTracerAndParentOnce) {
+TEST(Tracing, ScopeUnderMacroEvaluatesItsTracerAndOptionsOnce) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b);
-    const nixl_blob_t sampled = nixl::trace::formatTraceparent(testContext(0x63));
+    nixl_opt_args_t sampled;
+    sampled.traceContext = nixl::trace::formatTraceparent(testContext(0x63));
     int tracers = 0;
-    int parents = 0;
+    int options = 0;
     const auto tracerOf = [&tracers](nixl::trace::Tracer *chosen) {
         ++tracers;
         return chosen;
     };
-    const auto parentOf = [&parents, &sampled]() -> const nixl_blob_t & {
-        ++parents;
-        return sampled;
+    const auto optionsOf = [&options, &sampled]() -> const nixl_opt_args_t * {
+        ++options;
+        return &sampled;
     };
 
     {
         NIXL_TRACE_SCOPE_UNDER(
-            traced, tracerOf(tracer.get()), parentOf(), nixl::trace::Record::GenNotif);
+            traced, tracerOf(tracer.get()), optionsOf(), nixl::trace::Record::GenNotif);
         EXPECT_NE(currentIdentity(*tracer), nullptr);
         EXPECT_TRUE(traced.active());
     }
     EXPECT_EQ(tracers, 1);
-    EXPECT_EQ(parents, 1);
+    EXPECT_EQ(options, 1);
 
     {
         NIXL_TRACE_SCOPE_UNDER(
-            untraced, tracerOf(nullptr), parentOf(), nixl::trace::Record::GenNotif);
+            untraced, tracerOf(nullptr), optionsOf(), nixl::trace::Record::GenNotif);
         EXPECT_EQ(currentIdentity(*tracer), nullptr);
     }
     EXPECT_EQ(tracers, 2);
-    EXPECT_EQ(parents, 1);
+    EXPECT_EQ(options, 1);
 }
 
 TEST(Tracing, AttrMacroSkipsItsValueOnAnInactiveSpan) {
@@ -1335,7 +1352,7 @@ TEST(Tracing, RequestDrawsItsIdentityFromItsTracer) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
 
-    const nixl::trace::CallScope call(tracer.get(), nixl::trace::noSuppliedContext);
+    const nixl::trace::CallScope call(tracer.get(), nullptr);
     const nixlXferReqH request(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
 
@@ -1349,7 +1366,7 @@ TEST(Tracing, RequestDrawsItsIdentityFromItsTracer) {
 TEST(Tracing, RequestContextsAreDistinctAndStable) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
-    const nixl::trace::CallScope call(tracer.get(), nixl::trace::noSuppliedContext);
+    const nixl::trace::CallScope call(tracer.get(), nullptr);
     const nixlXferReqH first(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
     const nixlXferReqH second(
@@ -1367,15 +1384,16 @@ TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
     EXPECT_FALSE(request.traceable().requestIdentity().context.valid());
 }
 
-static_assert(
-    std::is_constructible_v<nixl::trace::CallScope, nixl::trace::Tracer *, const nixl_blob_t &>);
+static_assert(std::is_constructible_v<nixl::trace::CallScope,
+                                      nixl::trace::Tracer *,
+                                      const nixl_opt_args_t *>);
 static_assert(!std::is_constructible_v<nixl::trace::CallScope, nixl::trace::Tracer *, nixl_blob_t>);
 
 TEST(Tracing, RequestOutsideACallScopeIsUntraced) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
     {
-        const nixl::trace::CallScope call(tracer.get(), nixl::trace::noSuppliedContext);
+        const nixl::trace::CallScope call(tracer.get(), nullptr);
         const nixlXferReqH inside(
             "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
         EXPECT_EQ(inside.traceable().tracer(), tracer.get());
@@ -1392,10 +1410,10 @@ TEST(Tracing, CallScopesNest) {
     CallLog a, b, c, d;
     const auto outer_tracer = makeMockTracer(a, b, 0, 0, 1.0);
     const auto inner_tracer = makeMockTracer(c, d, 0, 0, 1.0);
-    const nixl::trace::CallScope outer(outer_tracer.get(), nixl::trace::noSuppliedContext);
+    const nixl::trace::CallScope outer(outer_tracer.get(), nullptr);
     {
-        const nixl::trace::CallScope inner(inner_tracer.get(), nixl::trace::noSuppliedContext);
-        const nixl::trace::CallScope untraced(nullptr, nixl::trace::noSuppliedContext);
+        const nixl::trace::CallScope inner(inner_tracer.get(), nullptr);
+        const nixl::trace::CallScope untraced(nullptr, nullptr);
         const nixlXferReqH request(
             "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
         EXPECT_EQ(request.traceable().tracer(), inner_tracer.get());
@@ -1410,15 +1428,116 @@ TEST(Tracing, RequestJoinsTheCallScopesContext) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 0, 0, 0.0);
     const auto parent = testContext(0x3f, 0x01);
-    const nixl_blob_t traceparent = nixl::trace::formatTraceparent(parent);
+    nixl_opt_args_t options;
+    options.traceContext = nixl::trace::formatTraceparent(parent);
 
-    const nixl::trace::CallScope call(tracer.get(), traceparent);
+    const nixl::trace::CallScope call(tracer.get(), &options);
     const nixlXferReqH request(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
 
     const auto identity = request.traceable().requestIdentity();
     EXPECT_EQ(identity.context.traceId, parent.traceId);
     EXPECT_TRUE(identity.context.sampled());
+}
+
+TEST(Tracing, SampledRequestTakesTheCallsBaggageAndItsPostsInheritIt) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    nixl_opt_args_t options;
+    options.traceBaggage = "tenant=a,job=7";
+    const nixl::trace::CallScope call(tracer.get(), &options);
+    nixl::trace::Traceable traced;
+
+    EXPECT_EQ(traced.requestBaggage(), "tenant=a,job=7");
+    static_cast<void>(traced.post());
+    EXPECT_EQ(traced.postBaggage(), "tenant=a,job=7");
+    static_cast<void>(traced.post(nixl::trace::noSuppliedContext, "step=2"));
+    EXPECT_EQ(traced.postBaggage(), "step=2");
+    static_cast<void>(traced.post());
+    EXPECT_EQ(traced.postBaggage(), "tenant=a,job=7");
+}
+
+TEST(Tracing, UnsampledRequestKeepsNoBaggage) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0);
+    nixl_opt_args_t options;
+    options.traceBaggage = "tenant=a";
+    const nixl::trace::CallScope call(tracer.get(), &options);
+    nixl::trace::Traceable traced;
+
+    EXPECT_TRUE(traced.requestBaggage().empty());
+    static_cast<void>(traced.post(nixl::trace::noSuppliedContext, "step=2"));
+    EXPECT_TRUE(traced.postBaggage().empty());
+}
+
+TEST(Tracing, BaggageNixlCannotCarryIsIgnoredOnce) {
+    gtest::LogMessageCounter ignored("ignoring a supplied baggage");
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    nixl_opt_args_t options;
+    options.traceBaggage = std::string(nixl::trace::maxBaggageSize + 1, 'k');
+    const nixl::trace::CallScope call(tracer.get(), &options);
+    nixl::trace::Traceable traced;
+
+    EXPECT_TRUE(traced.requestBaggage().empty());
+    static_cast<void>(traced.post(nixl::trace::noSuppliedContext, "tab\there"));
+    EXPECT_TRUE(traced.postBaggage().empty());
+    const std::string largest(nixl::trace::maxBaggageSize, 'k');
+    static_cast<void>(traced.post(nixl::trace::noSuppliedContext, largest));
+    EXPECT_EQ(traced.postBaggage(), largest);
+    EXPECT_EQ(ignored.count(), 1u);
+}
+
+TEST(Tracing, RequestPostAndNotificationSpansRecordTheirBaggage) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    nixl_opt_args_t options;
+    options.traceBaggage = "tenant=a";
+    const nixl::trace::CallScope call(tracer.get(), &options);
+    nixl::trace::Traceable traced;
+    nixl_opt_args_t post_args;
+    post_args.traceBaggage = "step=2";
+    nixl_opt_args_t notif_options;
+    notif_options.traceContext = nixl::trace::formatTraceparent(testContext(0x64));
+    notif_options.traceBaggage = "notif=1";
+
+    {
+        NIXL_TRACE_REQUEST_SPAN(request, traced, nixl::trace::Record::CreateXferReq);
+        EXPECT_TRUE(request.active());
+    }
+    {
+        NIXL_TRACE_POST_SPAN(post, traced, &post_args, nixl::trace::Record::PostXferReqWrite);
+        EXPECT_TRUE(post.active());
+    }
+    {
+        NIXL_TRACE_SCOPE_UNDER(notif, tracer.get(), &notif_options, nixl::trace::Record::GenNotif);
+        EXPECT_TRUE(notif.active());
+    }
+
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->strAttrs,
+                  (std::vector<std::pair<std::string, std::string>>{{"nixl.baggage", "tenant=a"},
+                                                                    {"nixl.baggage", "step=2"},
+                                                                    {"nixl.baggage", "notif=1"}}));
+    }
+}
+
+TEST(Tracing, ScopesMakeTheirBaggageCurrentForTheBackend) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    const auto sink = tracer->makeSink("test", {});
+    nixl_opt_args_t options;
+    options.traceBaggage = "tenant=a";
+    const nixl::trace::CallScope call(tracer.get(), &options);
+    nixl::trace::Traceable traced;
+
+    {
+        NIXL_TRACE_POST_SPAN(post, traced, nullptr, nixl::trace::Record::PostXferReqWrite);
+        EXPECT_EQ(sink->currentBaggage(), "tenant=a");
+        EXPECT_EQ(nixlBackendPostTrace{sink.get()}.baggage(), "tenant=a");
+    }
+    EXPECT_TRUE(sink->currentBaggage().empty());
+    EXPECT_TRUE(nixlBackendPostTrace{sink.get()}.baggage().empty());
 }
 
 TEST(Tracing, ActiveTracerGeneratesValidDistinctContexts) {
@@ -1581,8 +1700,7 @@ TEST(Tracing, TraceablePostIsUntracedWhenItsSpanIdCannotBeDrawn) {
               unsampled_application);
     EXPECT_EQ(failures.count(), 1u);
     {
-        NIXL_TRACE_POST_SPAN(
-            post, traced, nixl::trace::noSuppliedContext, nixl::trace::Record::PostXferReqWrite);
+        NIXL_TRACE_POST_SPAN(post, traced, nullptr, nixl::trace::Record::PostXferReqWrite);
         EXPECT_FALSE(post.active());
     }
     for (const CallLog *log : {&a, &b}) {

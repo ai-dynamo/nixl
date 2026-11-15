@@ -39,10 +39,11 @@ enum class AttributeKey : std::uint16_t {
     NixlXferExecution,
     NixlXferRequestId,
     RemoteAgent,
+    NixlBaggage,
 };
 
 inline constexpr std::size_t attributeKeyCount =
-    static_cast<std::size_t>(AttributeKey::RemoteAgent) + 1;
+    static_cast<std::size_t>(AttributeKey::NixlBaggage) + 1;
 
 [[nodiscard]] constexpr std::string_view
 toStringView(AttributeKey key) noexcept {
@@ -75,6 +76,8 @@ toStringView(AttributeKey key) noexcept {
         return "nixl.xfer_request_id";
     case AttributeKey::RemoteAgent:
         return "remote_agent";
+    case AttributeKey::NixlBaggage:
+        return "nixl.baggage";
     }
     return "nixl.attribute";
 }

@@ -157,13 +157,20 @@ TracerPhaseSink::recordSpan(nixl_trace_span_t span,
 }
 
 void
-TracerPhaseSink::writeTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity) const {
-    encodeTraceTags(ser_des, identity);
+TracerPhaseSink::writeTraceTags(nixlSerDes &ser_des,
+                                const TraceIdentity &identity,
+                                std::string_view baggage) const {
+    encodeTraceTags(ser_des, identity, baggage);
 }
 
 std::optional<TraceIdentity>
 TracerPhaseSink::readTraceTags(nixlSerDes &ser_des) const {
     return decodeTraceTags(ser_des);
+}
+
+std::string
+TracerPhaseSink::readTraceBaggage(nixlSerDes &ser_des) const {
+    return decodeTraceBaggage(ser_des);
 }
 
 void

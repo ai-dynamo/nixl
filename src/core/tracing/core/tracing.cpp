@@ -201,9 +201,9 @@ detail::currentCallOnThread() noexcept {
     return current_call;
 }
 
-CallScope::CallScope(Tracer *tracer, const nixl_blob_t &context) noexcept
+CallScope::CallScope(Tracer *tracer, const nixl_opt_args_t *options) noexcept
     : active_(tracer != nullptr),
-      previous_(active_ ? std::exchange(current_call, {tracer, &context}) : detail::Call{}) {
+      previous_(active_ ? std::exchange(current_call, {tracer, options}) : detail::Call{}) {
     if (active_) {
         detail::callScopeOpened.store(true, std::memory_order_relaxed);
     }
@@ -227,10 +227,12 @@ traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info) {
     return NIXL_SUCCESS;
 }
 
-Scope::Scope(Tracer *tracer, const TraceIdentity &identity)
+Scope::Scope(Tracer *tracer, const TraceIdentity &identity, std::string_view baggage)
     : tracer_(tracer),
       identity_(identity),
       previous_((tracer != nullptr) ? tracer->swapCurrentIdentity(&identity_) : nullptr),
+      previousBaggage_((tracer != nullptr) ? tracer->swapCurrentBaggage(baggage) :
+                                             std::string_view{}),
       pushed_((tracer != nullptr) && identity.context.valid() && identity.context.sampled()) {
     if (pushed_) {
         tracer_->pushContext(identity_.context, identity_.requestId);
@@ -240,6 +242,7 @@ Scope::Scope(Tracer *tracer, const TraceIdentity &identity)
 Scope::~Scope() {
     if (tracer_ != nullptr) {
         tracer_->swapCurrentIdentity(previous_);
+        tracer_->swapCurrentBaggage(previousBaggage_);
     }
     if (pushed_) {
         tracer_->popContext();

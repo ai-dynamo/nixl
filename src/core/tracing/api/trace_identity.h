@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 #include "nixl_types.h"
@@ -28,6 +29,10 @@ namespace nixl::trace {
 class Tracer;
 
 inline constinit const nixl_blob_t noSuppliedContext{};
+
+inline constinit const nixl_blob_t noSuppliedBaggage{};
+
+inline constexpr std::size_t maxBaggageSize = 1024;
 
 inline constexpr std::uint8_t sampledTraceFlag = 0x01;
 

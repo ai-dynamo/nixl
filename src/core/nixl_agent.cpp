@@ -322,7 +322,7 @@ makeMDConfig(const nixlAgentConfig &config) {
 template<typename... Args>
 [[nodiscard]] std::unique_ptr<nixlXferReqH>
 makeRequest(nixl::trace::Tracer *tracer, const nixl_opt_args_t *extra_params, Args &&...args) {
-    const nixl::trace::CallScope call(tracer, nixl::trace::suppliedContext(extra_params));
+    const nixl::trace::CallScope call(tracer, extra_params);
     return std::make_unique<nixlXferReqH>(std::forward<Args>(args)...);
 }
 
@@ -1260,7 +1260,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     // Updating the notification based on opt_args
-    if ((extra_params != nullptr) && !nixl::trace::carriesOnlyContext(*extra_params)) {
+    if ((extra_params != nullptr) && !nixl::trace::carriesOnlyTraceOptions(*extra_params)) {
         opt_args.customParam = extra_params->customParam;
         if (extra_params->notif) {
             req_hndl->notifMsg = *extra_params->notif;
@@ -1287,7 +1287,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     NIXL_TRACE_POST_SPAN(span,
                          req_hndl->traceable_,
-                         nixl::trace::suppliedContext(extra_params),
+                         extra_params,
                          req_hndl->backendOp == NIXL_WRITE ? Record::PostXferReqWrite :
                                                              Record::PostXferReqRead,
                          {AttributeKey::RemoteAgent, req_hndl->remoteAgent},
@@ -1529,7 +1529,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
                     const nixl_opt_args_t *extra_params) const {
     NIXL_TRACE_SCOPE_UNDER(span,
                            data->tracer(),
-                           nixl::trace::suppliedContext(extra_params),
+                           extra_params,
                            Record::GenNotif,
                            {AttributeKey::RemoteAgent, remote_agent});
 

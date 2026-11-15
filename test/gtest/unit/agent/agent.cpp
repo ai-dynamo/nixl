@@ -1269,6 +1269,24 @@ namespace agent {
         EXPECT_THAT(records("nixl::createXferReq"), testing::ElementsAre(carries(request)));
     }
 
+    TEST_F(sampledRecorderTracingAgentFixture, SuppliedBaggageIsRecordedOnTheRequestAndItsPosts) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        setup_.extraParams.traceBaggage = "tenant=a";
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        nixl_opt_args_t own;
+        own.traceBaggage = "step=2";
+        EXPECT_EQ(agent->postXferReq(req, &own), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+
+        EXPECT_THAT(records("nixl::createXferReq"),
+                    testing::ElementsAre(testing::Contains("nixl.baggage=tenant=a")));
+        EXPECT_THAT(records("nixl::postXferReq.write"),
+                    testing::ElementsAre(testing::Contains("nixl.baggage=tenant=a"),
+                                         testing::Contains("nixl.baggage=step=2")));
+    }
+
     TEST_F(sampledRecorderTracingAgentFixture, SuppliedContextIsTheRequestsParent) {
         nixlAgent *agent = agent_helper_->getAgent();
         const auto application = applicationContext("01");
@@ -1786,14 +1804,14 @@ namespace agent {
         EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
     }
 
-    TEST_F(singleAgentSessionFixture, PostGivenOnlyATraceContextKeepsTheRequestsNotification) {
+    TEST_F(singleAgentSessionFixture, PostGivenOnlyTraceOptionsKeepsTheRequestsNotification) {
         selfXferSetup setup;
         agent_helper_->setupSelfXfer(setup);
         const auto &engine = agent_helper_->getGMockEngine();
         ON_CALL(engine, supportsNotif()).WillByDefault(testing::Return(true));
         std::vector<std::string> sent;
         EXPECT_CALL(engine, postXfer)
-            .Times(4)
+            .Times(5)
             .WillRepeatedly([&sent](const nixl_xfer_op_t &,
                                     const nixl_meta_dlist_t &,
                                     const nixl_meta_dlist_t &,
@@ -1810,13 +1828,16 @@ namespace agent {
         nixl_opt_args_t context_only;
         context_only.traceContext = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
         EXPECT_EQ(agent_->postXferReq(req, &context_only), NIXL_SUCCESS);
+        nixl_opt_args_t baggage_only;
+        baggage_only.traceBaggage = "tenant=a";
+        EXPECT_EQ(agent_->postXferReq(req, &baggage_only), NIXL_SUCCESS);
         EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
         nixl_opt_args_t context_and_param = context_only;
         context_and_param.customParam = "param";
         EXPECT_EQ(agent_->postXferReq(req, &context_and_param), NIXL_SUCCESS);
         EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
 
-        EXPECT_THAT(sent, testing::ElementsAre("created", "created", "none", "none"));
+        EXPECT_THAT(sent, testing::ElementsAre("created", "created", "created", "none", "none"));
         EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
     }
 
@@ -1866,8 +1887,9 @@ namespace agent {
         static_assert(std::is_empty_v<nixl::trace::BackendTraceSinks>);
         static_assert(std::is_empty_v<nixl::trace::Traceable>);
         static_assert(std::is_empty_v<nixl::trace::CallScope>);
-        static_assert(
-            !std::is_constructible_v<nixl::trace::CallScope, nixl::trace::Tracer *, nixl_blob_t>);
+        static_assert(std::is_constructible_v<nixl::trace::CallScope,
+                                              nixl::trace::Tracer *,
+                                              const nixl_opt_args_t *>);
         static_assert(std::is_empty_v<nixlBackendPostTrace>);
     }
 

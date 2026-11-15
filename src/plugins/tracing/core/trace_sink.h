@@ -65,11 +65,19 @@ public:
     [[nodiscard]] const TraceIdentity *
     currentIdentity() const noexcept override;
 
+    [[nodiscard]] std::string_view
+    currentBaggage() const noexcept override;
+
     void
-    writeTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity) const override;
+    writeTraceTags(nixlSerDes &ser_des,
+                   const TraceIdentity &identity,
+                   std::string_view baggage) const override;
 
     [[nodiscard]] std::optional<TraceIdentity>
     readTraceTags(nixlSerDes &ser_des) const override;
+
+    [[nodiscard]] std::string
+    readTraceBaggage(nixlSerDes &ser_des) const override;
 
     void
     deferPhase(const DeferredPhase &deferred) noexcept override;

@@ -95,6 +95,12 @@ public:
     void
     reportUnparsableParent(std::size_t size) const noexcept;
 
+    /** @brief Logs this tracer's first supplied baggage that is longer than
+     *         maxBaggageSize or not printable ASCII at WARN; later ones are not
+     *         logged. */
+    void
+    reportUnparsableBaggage(std::size_t size) const noexcept;
+
     [[nodiscard]] std::span<const std::unique_ptr<TraceBackend>>
     backends() const noexcept {
         return backends_;
@@ -160,6 +166,9 @@ public:
     [[nodiscard]] std::optional<TraceContext>
     parseParentContext(const nixl_blob_t &value) const override;
 
+    [[nodiscard]] std::string_view
+    parseBaggage(const nixl_blob_t &value) const override;
+
     [[nodiscard]] std::string
     traceparent(const TraceContext &context) const override;
 
@@ -169,6 +178,9 @@ public:
     const TraceIdentity *
     swapCurrentIdentity(const TraceIdentity *identity) noexcept override;
 
+    std::string_view
+    swapCurrentBaggage(std::string_view baggage) noexcept override;
+
 private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;
     const double sampleRatio_;
@@ -176,6 +188,7 @@ private:
     const bool needsTimestamps_;
     mutable std::atomic<bool> contextFailureLogged_ = false;
     mutable std::atomic<bool> unparsableParentLogged_ = false;
+    mutable std::atomic<bool> unparsableBaggageLogged_ = false;
 };
 
 } // namespace nixl::trace

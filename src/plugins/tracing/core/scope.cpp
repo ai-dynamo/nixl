@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <string_view>
 #include <utility>
 
 #include "tracing/core/trace.h"
@@ -23,6 +24,8 @@
 namespace {
 
 thread_local const nixl::trace::TraceIdentity *current_identity = nullptr;
+
+thread_local std::string_view current_baggage;
 
 } // namespace
 
@@ -34,4 +37,14 @@ nixl::trace::CompositeTracer::swapCurrentIdentity(const TraceIdentity *identity)
 const nixl::trace::TraceIdentity *
 nixl::trace::TracerPhaseSink::currentIdentity() const noexcept {
     return current_identity;
+}
+
+std::string_view
+nixl::trace::CompositeTracer::swapCurrentBaggage(std::string_view baggage) noexcept {
+    return std::exchange(current_baggage, baggage);
+}
+
+std::string_view
+nixl::trace::TracerPhaseSink::currentBaggage() const noexcept {
+    return current_baggage;
 }

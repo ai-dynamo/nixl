@@ -98,14 +98,20 @@ sampledByRatio(const TraceContext &context, double ratio) noexcept;
 [[nodiscard]] std::optional<TraceContext>
 parseTraceparent(std::string_view value);
 
+[[nodiscard]] bool
+isBaggage(std::string_view value) noexcept;
+
 [[nodiscard]] std::string
 formatTraceparent(const TraceContext &context);
 
 void
-encodeTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity);
+encodeTraceTags(nixlSerDes &ser_des, const TraceIdentity &identity, std::string_view baggage = {});
 
 [[nodiscard]] std::optional<TraceIdentity>
 decodeTraceTags(nixlSerDes &ser_des);
+
+[[nodiscard]] std::string
+decodeTraceBaggage(nixlSerDes &ser_des);
 
 class TraceparentText {
 public:

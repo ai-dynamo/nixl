@@ -361,8 +361,22 @@ carries no context.
 From Python, `initialize_xfer`, `make_prepped_xfer`, `transfer` and `send_notif` take it
 as `trace_context`, a `traceparent` string or the record as bytes; from Rust,
 `OptArgs::set_trace_context` sets it for any of the four calls. A post whose options
-carry only a context keeps the request's notification; any other options replace it,
-with the one they carry or with none, for that post and every later one.
+carry only a context or baggage keeps the request's notification; any other options
+replace it, with the one they carry or with none, for that post and every later one.
+
+### An application's baggage
+
+An application can pass its W3C `baggage`, the key/value pairs it propagates with its
+trace, in `nixl_opt_args_t::traceBaggage` to the same four calls. NIXL records it
+verbatim as the `nixl.baggage` attribute of the request's spans, of each post's
+`nixl::postXferReq.write` or `.read` and of `nixl::genNotif`; a post without baggage of
+its own takes the request's. UCX sends a post's or notification's baggage in a `tbag`
+tag (see "Backend phases"), and the receiver records it on `nixl::notif.received`.
+Only a sampled request, post or notification records or sends it, and `genNotif` only
+under a sampled context of its own. NIXL accepts up to 1024 bytes of printable ASCII;
+anything else is ignored, and the agent logs the first such value at WARN. From Python
+the four calls take it as `trace_baggage`; from Rust, `OptArgs::set_trace_baggage` sets
+it.
 
 ### Where a backend's trace state comes from
 
@@ -472,18 +486,20 @@ plugin took earlier, and `now()` reads the clock under the same condition.
 UCX is the first such carrier. For a sampled request `addTraceTags()` appends the
 26-byte record as a `tctx` tag after the notification's `name` and `msg`, then, when the
 request has an id, a 16-byte `treq` tag: the request id and the post's execution
-number, each 8 bytes little-endian. An older receiver stops reading after the tags it
+number, each 8 bytes little-endian, and, when the post or notification carries baggage,
+a `tbag` tag with it. An older receiver stops reading after the tags it
 knows, so it is unaffected; unsampled requests add nothing, and `genNotif` adds only
 `tctx`, for a sampled context the application supplied (see "Joining an application's
 trace"). When the
 notification arrives at an agent with tracing on, UCX records `nixl::notif.received`
-under the sender's context, with `nixl.remote_agent` naming the sender and, from
-`treq`, the sender's `nixl.xfer_request_id` and `nixl.xfer_execution`; a missing or
-malformed `treq` costs the event only the pair. UCX records it inside the active-message
+under the sender's context, with `nixl.remote_agent` naming the sender, from `treq` the
+sender's `nixl.xfer_request_id` and `nixl.xfer_execution`, and from `tbag` its
+`nixl.baggage`; a missing or malformed `treq` costs the event only the pair, and a
+`tbag` NIXL would not accept only the baggage. UCX records it inside the active-message
 callback that receives the notification, rather than deferring it as it does
 `nixl::wire.completed` and `nixl::notif.sent`, so that it precedes the notification's
 delivery through `getNotifs`; recording there allocates nothing. An agent with tracing
-off skips both tags without reading them. The event's context thus holds the request's
+off skips the tags without reading them. The event's context thus holds the request's
 trace id and the span id of the sender's `nixl::postXferReq.write` or `.read` span, the
 event's remote parent, and the event carries the same request id and execution
 number as the sender's records of that post, so its correlation id is that span's.
@@ -606,7 +622,7 @@ ninja -C build test/gtest/unit/unit test/gtest/gtest test/gtest/ucx_trace_receiv
 
 The two-process test starts its receiver agent as a separate executable,
 `ucx_trace_receiver`, which is built and installed next to `gtest`, and checks the
-spans both agents record against the sender's request. Fifteen single-process tests
+spans both agents record against the sender's request. Sixteen single-process tests
 in the same suite check the phases. Transfers to the agent itself, on the default and the thread-pool
 engine, record `nixl::submit` and `nixl::wire.submitted` once per post and
 `nixl::notif.sent` once per notifying post. A transfer split across the thread-pool
@@ -620,7 +636,8 @@ agent that only the test progresses cannot finish inside `postXfer`; the sender'
 progress thread then sends its notification and records `notif.sent` without a
 status check. An unsampled request, or an agent with tracing off,
 records none of them. An agent that sends itself two notifications records
-`nixl::notif.received` for each, with that post's execution number. The agents trace
+`nixl::notif.received` for each, with that post's execution number, and a post with
+baggage, on the default and the thread-pool engine, records it on both sides. The agents trace
 through `recorder`, a test-only backend (`libtrace_backend_recorder.so` in the mocks
 directory) that appends one line per finished or emitted span and per emitted event
 to the file named by `NIXL_TEST_TRACE_FILE`; the tests set both variables

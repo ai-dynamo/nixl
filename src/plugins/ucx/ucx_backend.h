@@ -40,6 +40,7 @@ struct notifMessage {
     std::string agent;
     std::string msg;
     nixlBackendPostTrace trace;
+    std::string baggage;
 };
 
 [[nodiscard]] std::string

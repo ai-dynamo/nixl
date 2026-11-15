@@ -144,14 +144,26 @@ public:
         return nullptr;
     }
 
+    [[nodiscard]] std::string_view
+    currentBaggage() const noexcept override {
+        return {};
+    }
+
     void
-    writeTraceTags(nixlSerDes &ser_des, const nixl::trace::TraceIdentity &identity) const override {
-        nixl::trace::encodeTraceTags(ser_des, identity);
+    writeTraceTags(nixlSerDes &ser_des,
+                   const nixl::trace::TraceIdentity &identity,
+                   std::string_view baggage) const override {
+        nixl::trace::encodeTraceTags(ser_des, identity, baggage);
     }
 
     [[nodiscard]] std::optional<nixl::trace::TraceIdentity>
     readTraceTags(nixlSerDes &ser_des) const override {
         return nixl::trace::decodeTraceTags(ser_des);
+    }
+
+    [[nodiscard]] std::string
+    readTraceBaggage(nixlSerDes &ser_des) const override {
+        return nixl::trace::decodeTraceBaggage(ser_des);
     }
 
     void
@@ -162,9 +174,10 @@ public:
 };
 
 [[nodiscard]] std::string
-tracedNotif(const nixl::trace::TraceIdentity &identity) {
+tracedNotif(const nixl::trace::TraceIdentity &identity, std::string_view baggage = {}) {
     discardingSink sink;
-    return nixl::ucx::serializeNotif(sender_name, "msg", nixlBackendPostTrace{&sink, identity});
+    return nixl::ucx::serializeNotif(
+        sender_name, "msg", nixlBackendPostTrace{&sink, identity, baggage});
 }
 
 [[nodiscard]] bool
@@ -216,7 +229,8 @@ writeToSelf(const std::string &name,
             std::vector<nixl::trace::TraceContext> &contexts,
             std::uint64_t &request_id,
             const nixlAgentConfig &config = agentConfig(),
-            completionPoll poll = completionPoll::sleeping) {
+            completionPoll poll = completionPoll::sleeping,
+            const nixl_blob_t &baggage = {}) {
     const gtest::LogIgnoreGuard efa(efa_warning);
     nixlAgent agent(name, config);
     nixlBackendH *backend = nullptr;
@@ -240,6 +254,7 @@ writeToSelf(const std::string &name,
     for (const auto &notif : post_notifs) {
         nixl_opt_args_t params;
         params.notif = notif;
+        params.traceBaggage = baggage;
         ASSERT_EQ(awaitCompletion(agent, req, agent.postXferReq(req, &params), poll), NIXL_SUCCESS);
         contexts.push_back(req->traceable().postIdentity().context);
     }
@@ -787,6 +802,47 @@ TEST(UcxTraceContextWire, SampledContextRoundTrips) {
     EXPECT_EQ(notif.trace.identity().execution, tagged_execution);
 }
 
+TEST(UcxTraceContextWire, SampledBaggageRoundTrips) {
+    const auto context = drawContext(1.0);
+    discardingSink sink;
+    const auto notif = nixl::ucx::deserializeNotif(
+        tracedNotif({context, tagged_request_id, tagged_execution}, "tenant=a,job=7"), &sink);
+
+    EXPECT_EQ(notif.msg, "msg");
+    EXPECT_TRUE(notif.trace.active());
+    EXPECT_EQ(notif.baggage, "tenant=a,job=7");
+}
+
+TEST(UcxTraceContextWire, UnsampledRequestWritesNoBaggage) {
+    const auto unsampled = drawContext(0.0);
+
+    EXPECT_EQ(tracedNotif({unsampled, tagged_request_id, tagged_execution}, "tenant=a"),
+              olderSenderNotif(sender_name, "msg"));
+}
+
+TEST(UcxTraceContextWire, BaggageNixlCannotCarryIsDropped) {
+    const std::string record = encodedRecord(drawContext(1.0));
+    discardingSink sink;
+    for (const std::string &baggage :
+         {std::string(nixl::trace::maxBaggageSize + 1, 'k'), std::string("tab\there")}) {
+        const auto notif = nixl::ucx::deserializeNotif(
+            handBuiltNotif({{"tctx", record}, {"tbag", baggage}}), &sink);
+        EXPECT_EQ(notif.msg, "msg");
+        EXPECT_TRUE(notif.trace.active());
+        EXPECT_TRUE(notif.baggage.empty());
+    }
+}
+
+TEST(UcxTraceContextWire, OlderReceiverStillReadsABaggagedMessage) {
+    nixlSerDes older_receiver;
+    ASSERT_EQ(older_receiver.importStr(
+                  tracedNotif({drawContext(1.0), tagged_request_id, tagged_execution}, "tenant=a")),
+              NIXL_SUCCESS);
+
+    EXPECT_EQ(older_receiver.getStr("name"), sender_name);
+    EXPECT_EQ(older_receiver.getStr("msg"), "msg");
+}
+
 TEST(UcxTraceContextWire, RequestTagHoldsTheIdThenTheExecutionLittleEndian) {
     const auto context = drawContext(1.0);
 
@@ -1071,6 +1127,31 @@ TEST_F(ucxTraceContextPropagation, ReceiverRecordsEachNotifyingPostsExecution) {
                                            "nixl.xfer_request_id=" + std::to_string(request_id),
                                            "nixl.xfer_execution=" + std::to_string(i + 1),
                                            std::string("nixl.remote_agent=") + sender_name}));
+    }
+}
+
+TEST_F(ucxTraceContextPropagation, ReceiverRecordsTheSendersBaggage) {
+    for (const auto &[name, params, desc_count] :
+         {std::tuple{std::string(sender_name), nixl_b_params_t{}, size_t{1}},
+          std::tuple{std::string(sender_name) + "-split", threadPoolParams(), split_desc_count}}) {
+        std::vector<nixl::trace::TraceContext> contexts;
+        std::uint64_t request_id = 0;
+        ASSERT_NO_FATAL_FAILURE(writeToSelf(name,
+                                            params,
+                                            desc_count,
+                                            {tagged_msg},
+                                            contexts,
+                                            request_id,
+                                            agentConfig(),
+                                            completionPoll::sleeping,
+                                            "tenant=a"));
+
+        const auto posted = recordedSpans(traceFile, name, "nixl::postXferReq.write");
+        ASSERT_EQ(posted.size(), 1u) << name;
+        EXPECT_THAT(posted[0], testing::Contains("nixl.baggage=tenant=a")) << name;
+        const auto received = recordedSpans(traceFile, name, "nixl::notif.received");
+        ASSERT_EQ(received.size(), 1u) << name;
+        EXPECT_THAT(received[0], testing::Contains("nixl.baggage=tenant=a")) << name;
     }
 }
 
