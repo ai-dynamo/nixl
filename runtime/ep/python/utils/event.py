@@ -1,4 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
@@ -43,13 +42,14 @@ class EventOverlap:
 
         With ``NIXL_EP_AVOID_RECORD_STREAM=1``, keep the event or tensors alive
         until their last GPU use completes, unless otherwise protected.
-        ``release_handle=True`` drops retained references without waiting for consumers.
+        ``release_handle=True`` drops the event and ``extra_tensors`` references without waiting for consumers.
         """
         if self.event is None:
             raise ValueError("No event to wait on")
         self.hook_after_wait = None
         if release_handle:
             self.event = None
+            self.extra_tensors = None
 
     def register_hook_after_wait(self, hook_after_wait: Callable) -> None:
         """Register a one-shot hook after the stream wait."""

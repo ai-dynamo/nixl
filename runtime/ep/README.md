@@ -1,13 +1,9 @@
-# NIXL EPv2 API shell
-
-This branch exposes the API from `polished/dev-branch` at `6b11b2c` for interface
-review and CPU-only integration tests. It contains no EPv2 kernels, native
-extension, JIT compiler, transport implementation or hardware discovery.
-The production implementation remains on `polished/dev-branch`.
+# NIXL EP API shell
 
 The public exports, method signatures, defaults and argument annotations are
-preserved. Method docstrings retain the production contracts for review; they
-are not claims that this shell executes those operations.
+preserved, except that `combine` annotates `bias` and `previous_event` as optional
+to match their `None` defaults. Method docstrings retain the production contracts
+for review; they are not claims that this shell executes those operations.
 
 ## Install and exercise the public API
 
@@ -21,7 +17,7 @@ python -m pip install ./runtime/ep
 
 An installed NIXL core package owns the same `nixl` namespace and may load its
 native backend first. Keep the shell in its own environment. For source-only
-review, `PYTHONPATH=runtime/ep` also exposes the same API as `nixl_ep_v2`.
+review, run the tests below without installing the package.
 
 ```python
 import torch
@@ -51,14 +47,18 @@ buffer.destroy()
 - Dispatch returns the five-item API result; combine returns its two-item
   result. Receive tensors always have zero rows. Combine's placeholder has the
   original input token count and the supplied combine input's hidden width.
-- Tensor results and handle metadata use the `meta` device. They have no values
-  or data storage. BF16 and quantized input forms, optional weights and expanded
+- Tensors created by the shell use the `meta` device and have no values or data
+  storage. With `do_handle_copy=False`, `handle.topk_idx` retains the original
+  input tensor, including its device and storage.
+  BF16 and quantized input forms, optional weights and expanded
   return structure can be exercised; routing, reductions, alignment, layout
   strides and numerical correctness are not simulated. Input tensors and
   cumulative counters are never read or modified.
 - Events are inert. Waiting performs no synchronization. Registered hooks are
   discarded when a wait is requested, without invoking caller code. The
   communication stream is an opaque placeholder, not a usable CUDA stream.
+  Explicit event release also clears `extra_tensors`, extending the production
+  baseline's event-only release behavior.
 - `get_buffer_size_hint()` returns `0`, `get_theoretical_num_sms()` returns `2`,
   and `read_profile()` returns an empty mapping. These are placeholders, not
   sizing, tuning or performance results. The shell's launch limit is `24`.
@@ -69,7 +69,7 @@ buffer.destroy()
 
 The shell does not validate execution-dependent constraints, CUDA graph or
 stream behavior, memory ownership, timeouts, transport completion or GPU
-correctness. The existing core NIXL and EPv1 sources remain in this repository;
+correctness. The existing core NIXL and EP example sources remain in this repository;
 none is loaded by the standalone shell.
 
 ## Test

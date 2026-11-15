@@ -1,10 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
 """Host-only API shell. Method docstrings retain the production contract for review.
 
-Only lightweight topology/lifecycle state is modeled. Tensor results are meta
+Only lightweight topology/lifecycle state is modeled. Tensors created here are meta
 placeholders, never communicated or computed; see the API-shell README.
 """
 from typing import Dict, List, Optional, Sequence, Tuple, Union
@@ -260,7 +259,9 @@ class ElasticBuffer:
             )
         if type(num_experts_per_rank) is not int or num_experts_per_rank < 0:
             raise ValueError("num_experts_per_rank must be a nonnegative integer")
-        positions = num_group_scaleup_ranks or num_ranks
+        positions = (
+            num_ranks if num_group_scaleup_ranks is None else num_group_scaleup_ranks
+        )
         if positions <= 0 or num_ranks % positions:
             raise ValueError("num_group_scaleup_ranks must divide num_ranks")
         (self.rank_idx, self.num_ranks) = (rank_idx, num_ranks)
@@ -302,6 +303,7 @@ class ElasticBuffer:
         self.runtime = None
         self._destroyed = False
         self._auto_sm_config: Optional[Tuple[int]] = None
+        self._pending: Optional[Tuple[Tuple[int, ...], int, Optional[Tuple[int]]]]
         (self._sms, self._pending, self._peers_changed) = (24, None, False)
         self._stream = _StreamPlaceholder()
         self._active = tuple(
@@ -314,7 +316,7 @@ class ElasticBuffer:
         )
         self.masks_of(self._active)
         self._connected = set(self._active) - {self.world_rank}
-        self._pending_disconnects = set()
+        self._pending_disconnects: set[int] = set()
 
     def destroy(self) -> None:
         """Destroy the runtime; requires `explicitly_destroy=True` at construction."""
@@ -484,8 +486,10 @@ class ElasticBuffer:
             raise ValueError(
                 "remote_mds and peer_infos are given together (the peers' metadata and peer info), or neither (Store discovery)"
             )
-        if remote_mds is not None and not (
-            len(remote_mds) == len(peer_infos) == len(world_ranks)
+        if (
+            remote_mds is not None
+            and peer_infos is not None
+            and not (len(remote_mds) == len(peer_infos) == len(world_ranks))
         ):
             raise ValueError("Metadata lists must match the length of world_ranks")
         peers = set(world_ranks)
@@ -803,8 +807,8 @@ class ElasticBuffer:
         self,
         x: torch.Tensor,
         handle: EPHandle,
-        bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]] = None,
-        previous_event: EventHandle = None,
+        bias: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]] = None,
+        previous_event: Optional[EventHandle] = None,
         previous_event_before_epilogue: Optional[EventHandle] = None,
         async_with_compute_stream: bool = False,
         allocate_on_comm_stream: bool = False,

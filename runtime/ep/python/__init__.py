@@ -1,8 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
-"""NIXL EPv2 API shell: meta placeholders and local state, with no native runtime."""
+"""NIXL EP API shell: meta placeholders and local state, with no native runtime."""
 import torch
 
 from .buffers.elastic import ElasticBuffer, EPHandle

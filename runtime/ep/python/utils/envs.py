@@ -1,4 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
@@ -37,7 +36,7 @@ def get_logical_domain_size(
         num_scaleup_ranks: the number of logical scaleup ranks.
     """
     count = group.size()
-    positions = num_scaleup_ranks or count
+    positions = count if num_scaleup_ranks is None else num_scaleup_ranks
     if positions <= 0 or count % positions:
         raise ValueError("num_scaleup_ranks must divide the group size")
     return (count // positions, positions)

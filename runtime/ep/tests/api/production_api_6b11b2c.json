@@ -1,5 +1,6 @@
 {
   "source_commit": "6b11b2cb804801b9781bb0e5480460d2e58d27ce",
+  "annotation_corrections": "ElasticBuffer.combine: bias and previous_event are Optional to match their None defaults.",
   "native_event_source": "runtime/ep/csrc/elastic/buffer.hpp:1067; runtime/ep/csrc/utils/event.hpp",
   "exports": [
     "ElasticBuffer",
@@ -176,7 +177,7 @@
       "decorators": []
     },
     "ElasticBuffer.combine": {
-      "parameters": "self, x: torch.Tensor, handle: EPHandle, bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]=None, previous_event: EventHandle=None, previous_event_before_epilogue: Optional[EventHandle]=None, async_with_compute_stream: bool=False, allocate_on_comm_stream: bool=False",
+      "parameters": "self, x: torch.Tensor, handle: EPHandle, bias: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]=None, previous_event: Optional[EventHandle]=None, previous_event_before_epilogue: Optional[EventHandle]=None, async_with_compute_stream: bool=False, allocate_on_comm_stream: bool=False",
       "returns": "Tuple[torch.Tensor, EventOverlap]",
       "decorators": []
     },

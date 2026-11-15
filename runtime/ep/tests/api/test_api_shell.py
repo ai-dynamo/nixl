@@ -5,8 +5,8 @@
 
 Run with ``python -m unittest discover -s runtime/ep/tests/api -v``. Set
 ``NIXL_EP_API_MODULE=nixl.runtime.ep`` to exercise the installed public package.
-The checked-in signature snapshot comes from production commit 6b11b2c;
-it is deliberately independent of the shell implementation under test.
+The checked-in signature snapshot comes from production commit 6b11b2c, with
+documented annotation corrections; it is independent of the shell under test.
 """
 
 import ast
@@ -113,8 +113,8 @@ def source_contract(path, classes=(), functions=()):
 class ApiShellTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.module_name = os.environ.get("NIXL_EP_API_MODULE", "nixl_ep_v2")
-        if cls.module_name == "nixl_ep_v2":
+        cls.module_name = os.environ.get("NIXL_EP_API_MODULE", "python")
+        if cls.module_name == "python":
             sys.path.insert(0, str(EP_ROOT))
             cls.addClassCleanup(sys.path.remove, str(EP_ROOT))
         with no_execution():
@@ -220,6 +220,13 @@ class ApiShellTests(unittest.TestCase):
             self.ep.get_logical_domain_size(group, num_scaleup_ranks=2, store=store),
             (2, 2),
         )
+        self.assertEqual(
+            self.buffer(num_group_scaleup_ranks=None).get_topology_masks(), (1, 3)
+        )
+        with self.assertRaisesRegex(ValueError, "num_group_scaleup_ranks must divide"):
+            self.buffer(num_group_scaleup_ranks=0)
+        with self.assertRaisesRegex(ValueError, "num_scaleup_ranks must divide"):
+            self.ep.get_logical_domain_size(group, num_scaleup_ranks=0, store=store)
         self.assertEqual(buffer.get_buffer_size_hint(group, 8, 256, store=store), 0)
         self.assertIsInstance(buffer.get_local_metadata(), bytes)
         peer = buffer.get_local_peer_info()
@@ -585,11 +592,13 @@ class ApiShellTests(unittest.TestCase):
         hook.assert_not_called()
         self.assertIsNone(overlap.hook_after_wait)
         self.assertIs(overlap.event, event)
+        self.assertIs(overlap.extra_tensors, extra)
         overlap.register_hook_after_wait(hook)
         with overlap(release_handle=True):
             pass
         hook.assert_not_called()
         self.assertIsNone(overlap.event)
+        self.assertIsNone(overlap.extra_tensors)
         with self.ep.EventOverlap() as empty:
             self.assertIsNone(empty.event)
         with self.assertRaisesRegex(RuntimeError, "body failure"):
