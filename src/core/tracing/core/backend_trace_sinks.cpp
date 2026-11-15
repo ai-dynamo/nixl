@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "tracing/api/agent_trace.h"
+#include "tracing/api/backend_trace_sinks.h"
 
 #include <cstdint>
 #include <functional>
@@ -68,18 +68,6 @@ BackendTraceSinks::warnIfContextUnsupported(const nixlBackendEngine &backend,
                   << "' cannot carry trace contexts, so sampled transfers through it reach "
                      "remote agents untraced; logged once per backend and agent";
     });
-}
-
-nixl_status_t
-traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info) {
-    const TraceIdentity identity = traceable.postIdentity();
-    if ((identity.requestId == 0) || (traceable.tracer() == nullptr)) {
-        return NIXL_ERR_NOT_FOUND;
-    }
-    info.requestId = identity.requestId;
-    info.execution = identity.execution;
-    info.traceparent = traceable.tracer()->traceparent(identity.context);
-    return NIXL_SUCCESS;
 }
 
 } // namespace nixl::trace

@@ -215,6 +215,18 @@ CallScope::~CallScope() {
     }
 }
 
+nixl_status_t
+traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info) {
+    const TraceIdentity identity = traceable.postIdentity();
+    if ((identity.requestId == 0) || (traceable.tracer() == nullptr)) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+    info.requestId = identity.requestId;
+    info.execution = identity.execution;
+    info.traceparent = traceable.tracer()->traceparent(identity.context);
+    return NIXL_SUCCESS;
+}
+
 Scope::Scope(Tracer *tracer, const TraceIdentity &identity)
     : tracer_(tracer),
       identity_(identity),

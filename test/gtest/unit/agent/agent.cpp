@@ -34,7 +34,7 @@
 #include "nixl.h"
 #include "plugin_manager.h"
 #include "transfer_request.h"
-#include "tracing/api/agent_trace.h"
+#include "tracing/api/backend_trace_sinks.h"
 #if defined(NIXL_TRACE_ENABLED)
 #include "tracing/core/trace_context.h"
 #endif

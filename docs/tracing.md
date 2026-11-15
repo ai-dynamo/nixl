@@ -71,7 +71,8 @@ implementation is the tracing core plugin, built from `src/plugins/tracing/core/
 code that traces includes `tracing/api/tracing.h`, which holds only the call-site macros, the
 record vocabulary (`Record` and `Kind`, from `tracing/api/record.h`, which plugins
 share), a request's trace state (`Traceable`, which also holds the tracer, and `CallScope`,
-through which an API call hands it the tracer and the application's context), `Scope`, and
+through which an API call hands it the tracer and the application's context), the helpers
+that read a call's trace options and a request's trace info, `Scope`, and
 the tracer from `makeAgentTracer()`, the `Tracer` interface of `tracing/api/tracer.h`,
 whose `makeSink()` gives a backend its sink; what they expand into, `Span` included, is
 under `tracing/api/detail/`. Data plugins include `tracing/api/backend_trace.h` (see

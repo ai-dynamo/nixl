@@ -39,7 +39,7 @@
 #include "common/hw_info.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
-#include "tracing/api/agent_trace.h"
+#include "tracing/api/backend_trace_sinks.h"
 
 using nixl::trace::AttributeKey;
 using nixl::trace::Record;

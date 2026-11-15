@@ -41,6 +41,7 @@
 #include <string>
 
 #include "common/nixl_time.h"
+#include "nixl_types.h"
 #include "tracing/api/attribute.h"
 #include "tracing/api/attribute_key.h"
 #include "tracing/api/log_once.h"
@@ -160,6 +161,9 @@ private:
     const detail::Call previous_;
 };
 
+[[nodiscard]] nixl_status_t
+traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info);
+
 #else
 
 struct TracerPtr {
@@ -209,7 +213,23 @@ public:
     CallScope(Tracer *, const nixl_blob_t &&) = delete;
 };
 
+[[nodiscard]] inline nixl_status_t
+traceInfo(const Traceable &, nixl_xfer_trace_info_t &) noexcept {
+    return NIXL_ERR_NOT_FOUND;
+}
+
 #endif
+
+[[nodiscard]] inline const nixl_blob_t &
+suppliedContext(const nixl_opt_args_t *extra_params) noexcept {
+    return (extra_params != nullptr) ? extra_params->traceContext : noSuppliedContext;
+}
+
+[[nodiscard]] inline bool
+carriesOnlyContext(const nixl_opt_args_t &extra_params) noexcept {
+    return !extra_params.notif && !extra_params.hasNotif && extra_params.customParam.empty() &&
+        !extra_params.traceContext.empty();
+}
 
 } // namespace nixl::trace
 

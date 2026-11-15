@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_API_AGENT_TRACE_H
-#define NIXL_SRC_CORE_TRACING_API_AGENT_TRACE_H
+#ifndef NIXL_SRC_CORE_TRACING_API_BACKEND_TRACE_SINKS_H
+#define NIXL_SRC_CORE_TRACING_API_BACKEND_TRACE_SINKS_H
 
 #include <atomic>
 #include <unordered_map>
@@ -45,9 +45,6 @@ private:
     std::unordered_map<nixl_backend_t, std::atomic<bool>> contextUnsupported_;
 };
 
-[[nodiscard]] nixl_status_t
-traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info);
-
 #else
 
 class BackendTraceSinks {
@@ -64,23 +61,7 @@ public:
     warnIfContextUnsupported(const nixlBackendEngine &, const Traceable &) noexcept {}
 };
 
-[[nodiscard]] inline nixl_status_t
-traceInfo(const Traceable &, nixl_xfer_trace_info_t &) noexcept {
-    return NIXL_ERR_NOT_FOUND;
-}
-
 #endif
-
-[[nodiscard]] inline const nixl_blob_t &
-suppliedContext(const nixl_opt_args_t *extra_params) noexcept {
-    return (extra_params != nullptr) ? extra_params->traceContext : noSuppliedContext;
-}
-
-[[nodiscard]] inline bool
-carriesOnlyContext(const nixl_opt_args_t &extra_params) noexcept {
-    return !extra_params.notif && !extra_params.hasNotif && extra_params.customParam.empty() &&
-        !extra_params.traceContext.empty();
-}
 
 } // namespace nixl::trace
 

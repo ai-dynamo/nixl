@@ -21,7 +21,7 @@
 #include "nixl_md_manager.h"
 #include "nixl_metadata_context.h"
 #include "telemetry.h"
-#include "tracing/api/agent_trace.h"
+#include "tracing/api/backend_trace_sinks.h"
 #include "sync.h"
 
 #include <atomic>

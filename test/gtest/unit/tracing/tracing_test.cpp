@@ -47,7 +47,6 @@
 #include "tracing/core/trace.h"
 #include "tracing/core/trace_config.h"
 #include "tracing/core/trace_context.h"
-#include "tracing/api/agent_trace.h"
 #include "tracing/api/tracing.h"
 #include "tracing/core/trace_sink.h"
 
