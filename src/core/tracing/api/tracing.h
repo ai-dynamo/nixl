@@ -148,6 +148,7 @@ private:
 class CallScope {
 public:
     [[nodiscard]] CallScope(Tracer *tracer, const nixl_blob_t &context) noexcept;
+    CallScope(Tracer *tracer, const nixl_blob_t &&context) = delete;
     ~CallScope();
 
     CallScope(const CallScope &) = delete;
@@ -204,6 +205,8 @@ public:
 class CallScope {
 public:
     CallScope(Tracer *, const nixl_blob_t &) noexcept {}
+
+    CallScope(Tracer *, const nixl_blob_t &&) = delete;
 };
 
 #endif

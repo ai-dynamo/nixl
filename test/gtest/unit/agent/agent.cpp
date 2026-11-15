@@ -1865,6 +1865,9 @@ namespace agent {
         static_assert(std::is_empty_v<nixl::trace::BackendTraceSinkPtr>);
         static_assert(std::is_empty_v<nixl::trace::BackendTraces>);
         static_assert(std::is_empty_v<nixl::trace::Traceable>);
+        static_assert(std::is_empty_v<nixl::trace::CallScope>);
+        static_assert(
+            !std::is_constructible_v<nixl::trace::CallScope, nixl::trace::Tracer *, nixl_blob_t>);
         static_assert(std::is_empty_v<nixlBackendPostTrace>);
     }
 

@@ -1368,6 +1368,10 @@ TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
     EXPECT_FALSE(request.traceable().requestIdentity().context.valid());
 }
 
+static_assert(
+    std::is_constructible_v<nixl::trace::CallScope, nixl::trace::Tracer *, const nixl_blob_t &>);
+static_assert(!std::is_constructible_v<nixl::trace::CallScope, nixl::trace::Tracer *, nixl_blob_t>);
+
 TEST(Tracing, RequestOutsideACallScopeIsUntraced) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
