@@ -45,13 +45,12 @@ from nixl import nixl_agent, nixl_agent_config
 # backends=[] leaves backend creation to the caller. The default config
 # initializes UCX, and a backend can only be created once per agent.
 agent = nixl_agent("example_agent", nixl_agent_config(backends=[]))
-print(agent.get_plugin_list())               # plugins available on this system
 
 params = agent.get_plugin_params("UCX")
 params["ucx_error_handling_mode"] = "peer"   # or "none"
 params["ucx_vram_memtype_hint"] = "auto"     # recommended default
 agent.create_backend("UCX", params)
-print(agent.get_backend_mem_types("UCX"))    # e.g. ["DRAM", "VRAM"]
+mem_types = agent.get_backend_mem_types("UCX")   # e.g. ["DRAM", "VRAM"]
 ```
 
 `get_plugin_list()` reports plugins that can be loaded; `get_backend_mem_types()` reports what an
