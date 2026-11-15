@@ -373,7 +373,7 @@ verbatim as the `nixl.baggage` attribute of the request's spans, of each post's
 its own takes the request's. UCX sends a post's or notification's baggage in a `tbag`
 tag (see "Backend phases"), and the receiver records it on `nixl::notif.received`.
 Only a sampled request, post or notification records or sends it, and `genNotif` only
-under a sampled context of its own. NIXL accepts up to 1024 bytes of printable ASCII;
+under a sampled context of its own. NIXL accepts up to 8192 bytes of printable ASCII;
 anything else is ignored, and the agent logs the first such value at WARN. From Python
 the four calls take it as `trace_baggage`; from Rust, `OptArgs::set_trace_baggage` sets
 it.

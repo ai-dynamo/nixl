@@ -605,7 +605,7 @@ class nixl_agent:
             skip_desc_merge: Deprecated: Whether to skip descriptor merging optimization.
             trace_context: Optional trace context of the caller's span, a W3C traceparent str or NIXL's 26-byte trace context record as bytes.
                 The request's span becomes its child, in its trace, and its sampled flag decides whether the request is traced.
-            trace_baggage: Optional W3C baggage of the caller, up to 1024 printable ASCII characters, recorded with the request's trace and carried to the peer.
+            trace_baggage: Optional W3C baggage of the caller, up to 8192 printable ASCII characters, recorded with the request's trace and carried to the peer.
 
         Returns:
             Opaque handle for posting/checking transfer.
@@ -658,7 +658,7 @@ class nixl_agent:
             backends: Optional list of backend names to limit which backends NIXL can use.
             trace_context: Optional trace context of the caller's span, a W3C traceparent str or NIXL's 26-byte trace context record as bytes.
                 The request's span becomes its child, in its trace, and its sampled flag decides whether the request is traced.
-            trace_baggage: Optional W3C baggage of the caller, up to 1024 printable ASCII characters, recorded with the request's trace and carried to the peer.
+            trace_baggage: Optional W3C baggage of the caller, up to 8192 printable ASCII characters, recorded with the request's trace and carried to the peer.
 
         Returns:
             Opaque handle for posting/checking transfer.

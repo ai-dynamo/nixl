@@ -32,7 +32,7 @@ inline constinit const nixl_blob_t noSuppliedContext{};
 
 inline constinit const nixl_blob_t noSuppliedBaggage{};
 
-inline constexpr std::size_t maxBaggageSize = 1024;
+inline constexpr std::size_t maxBaggageSize = 8192;
 
 inline constexpr std::uint8_t sampledTraceFlag = 0x01;
 

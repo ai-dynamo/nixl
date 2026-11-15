@@ -249,7 +249,7 @@ struct nixlAgentOptionalArgs {
     nixl_blob_t traceContext;
 
     /**
-     * @var traceBaggage The application's W3C `baggage`, up to 1024 bytes of printable
+     * @var traceBaggage The application's W3C `baggage`, up to 8192 bytes of printable
      *      ASCII, recorded with its trace.
      */
     nixl_blob_t traceBaggage;

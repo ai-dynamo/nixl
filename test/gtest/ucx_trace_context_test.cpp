@@ -1131,6 +1131,9 @@ TEST_F(ucxTraceContextPropagation, ReceiverRecordsEachNotifyingPostsExecution) {
 }
 
 TEST_F(ucxTraceContextPropagation, ReceiverRecordsTheSendersBaggage) {
+    std::string baggage = "tenant=";
+    baggage.resize(nixl::trace::maxBaggageSize, 'a');
+    const std::string recorded = "nixl.baggage=" + baggage;
     for (const auto &[name, params, desc_count] :
          {std::tuple{std::string(sender_name), nixl_b_params_t{}, size_t{1}},
           std::tuple{std::string(sender_name) + "-split", threadPoolParams(), split_desc_count}}) {
@@ -1144,14 +1147,14 @@ TEST_F(ucxTraceContextPropagation, ReceiverRecordsTheSendersBaggage) {
                                             request_id,
                                             agentConfig(),
                                             completionPoll::sleeping,
-                                            "tenant=a"));
+                                            baggage));
 
         const auto posted = recordedSpans(traceFile, name, "nixl::postXferReq.write");
         ASSERT_EQ(posted.size(), 1u) << name;
-        EXPECT_THAT(posted[0], testing::Contains("nixl.baggage=tenant=a")) << name;
+        EXPECT_THAT(posted[0], testing::Contains(recorded)) << name;
         const auto received = recordedSpans(traceFile, name, "nixl::notif.received");
         ASSERT_EQ(received.size(), 1u) << name;
-        EXPECT_THAT(received[0], testing::Contains("nixl.baggage=tenant=a")) << name;
+        EXPECT_THAT(received[0], testing::Contains(recorded)) << name;
     }
 }
 
