@@ -28,9 +28,9 @@ namespace nixl::trace {
 
 class Tracer;
 
-inline constinit const nixl_blob_t noSuppliedContext{};
+inline const nixl_blob_t noSuppliedContext{};
 
-inline constinit const nixl_blob_t noSuppliedBaggage{};
+inline const nixl_blob_t noSuppliedBaggage{};
 
 inline constexpr std::size_t maxBaggageSize = 8192;
 
