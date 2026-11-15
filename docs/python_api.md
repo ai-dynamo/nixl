@@ -79,7 +79,8 @@ For `ucx_vram_memtype_hint`:
   `register_memory()` raises.
 - Raw tuples differ by purpose: registration uses `[(addr, len, dev_id, meta), ...]`, transfer uses
   `[(addr, len, dev_id), ...]`, both with `mem_type` (for example `"DRAM"`). A single tuple, or a list
-  without `mem_type`, returns `None`. For `FILE`, `OBJ` and `BLK` fields, see
+  without `mem_type`, makes `get_reg_descs()` and `get_xfer_descs()` return `None`, and
+  `register_memory()` raise. For `FILE`, `OBJ` and `BLK` fields, see
   [Descriptor List Abstraction](BackendGuide.md#descriptor-list-abstraction).
 - `prep_xfer_dlist("", ...)` (or `"NIXL_INIT_AGENT"`) prepares the local side.
 
