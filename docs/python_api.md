@@ -2,8 +2,7 @@
 
 The Python API can be found at `src/api/python/_api.py`. These are the pythonic APIs for NIXL, if more direct access to C++ style methods are desired,
 the exact header implementation of `src/api/cpp` is done through pybind11 that can be found in `src/bindings/python`.
-
-> NIXL does not authenticate peers. Read [Trust boundaries](#trust-boundaries) before exchanging metadata or descriptors between processes.
+NIXL does not authenticate peers, so read [Trust boundaries](#trust-boundaries) before exchanging metadata or descriptors between processes.
 
 ## Python API Features
 
@@ -45,13 +44,13 @@ from nixl import nixl_agent, nixl_agent_config
 # backends=[] leaves backend creation to the caller. The default config
 # initializes UCX, and a backend can only be created once per agent.
 agent = nixl_agent("example_agent", nixl_agent_config(backends=[]))
-plugins = agent.get_plugin_list()                # e.g. ["UCX", "POSIX", "GDS"]
+plugins = agent.get_plugin_list()            # e.g. ["UCX", "POSIX", "GDS"]
 
 params = agent.get_plugin_params("UCX")
 params["ucx_error_handling_mode"] = "peer"   # or "none"
 params["ucx_vram_memtype_hint"] = "auto"     # recommended default
 agent.create_backend("UCX", params)
-mem_types = agent.get_backend_mem_types("UCX")   # e.g. ["DRAM", "VRAM"]
+mem_types = agent.get_backend_mem_types("UCX")  # e.g. ["DRAM", "VRAM"]
 ```
 
 `get_plugin_list()` reports plugins that can be loaded; `get_backend_mem_types()` reports what an
