@@ -71,14 +71,15 @@ For `ucx_vram_memtype_hint`:
 
 ## Memory descriptors
 
-`register_memory()`, `get_reg_descs()` and `get_xfer_descs()` accept a tensor, a list of tensors, or raw tuples.
+`register_memory()`, `get_reg_descs()` and `get_xfer_descs()` accept a tensor, a list of tensors, or a list of raw tuples with a `mem_type`.
 
 - Tensor memory type is inferred: CPU tensors are `DRAM`, CUDA tensors are `VRAM`.
 - Tensors must be contiguous, and all tensors in a list must be on the same device. Otherwise
   `get_reg_descs()` and `get_xfer_descs()` return `None` (a mixed-device list logs nothing), and
   `register_memory()` raises.
-- Raw tuples differ by purpose: registration uses `(addr, len, dev_id, meta)`, transfer uses
-  `(addr, len, dev_id)`. For `FILE`, `OBJ` and `BLK` fields, see
+- Raw tuples differ by purpose: registration uses `[(addr, len, dev_id, meta), ...]`, transfer uses
+  `[(addr, len, dev_id), ...]`, both with `mem_type` (for example `"DRAM"`). A single tuple, or a list
+  without `mem_type`, returns `None`. For `FILE`, `OBJ` and `BLK` fields, see
   [Descriptor List Abstraction](BackendGuide.md#descriptor-list-abstraction).
 - `prep_xfer_dlist("", ...)` (or `"NIXL_INIT_AGENT"`) prepares the local side.
 
@@ -89,9 +90,12 @@ Register memory before publishing metadata so the registered regions are include
 To exchange metadata over your own side channel:
 
 ```python
-md = agent.get_agent_metadata()                  # bytes, send to the peer
-remote_name = agent.add_remote_agent(peer_md)    # bytes received from the peer
+md = agent.get_agent_metadata()                         # bytes, send to the peer
+remote_name = agent.add_remote_agent(peer_md).decode()  # peer_md: bytes from the peer
 ```
+
+`add_remote_agent()` returns the peer name as `bytes`. Decode it before passing it to
+`check_remote_xfer_done()`, whose notification map uses `str` keys.
 
 To use the built-in listener, enable it on both agents with
 `nixl_agent_config(enable_listen_thread=True, listen_port=...)`. The target needs a fixed, reachable
@@ -132,13 +136,17 @@ def wait_for(check, timeout_s=10.0):
             return True
         time.sleep(0.001)
     return False
+
+done = wait_for(lambda: agent.check_xfer_state(handle) == "DONE")
 ```
 
 Release everything you created; the examples use different orders:
 
 - `release_xfer_handle()` for transfer handles. On an active transfer it tries to cancel, and raises if it cannot.
 - `release_dlist_handle()` for prepared descriptor lists.
-- `remove_remote_agent()` for loaded peers, and `invalidate_local_metadata()` if you published metadata.
+- `remove_remote_agent()` for peers you loaded, including peers added through your own side channel.
+- `invalidate_local_metadata(ip, port)` if you sent metadata to a peer's listener. Without arguments
+  it targets the central metadata server, and raises if none is configured.
 - `deregister_memory()` for your own registrations. A process cannot deregister another process's memory.
 
 ## Trust boundaries
