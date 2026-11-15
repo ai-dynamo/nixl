@@ -1120,6 +1120,33 @@ TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsWireCompletedBeforeItsComple
     }
 }
 
+TEST_F(ucxTraceContextPropagation, ThreadPoolRecordsNotifSentBeforeItsCompletionIsSeen) {
+    constexpr size_t agents = 8;
+    constexpr size_t posts = 4;
+    for (size_t round = 0; round < agents; ++round) {
+        const std::string name = std::string(sender_name) + std::to_string(round);
+        std::vector<nixl::trace::TraceContext> contexts;
+        std::uint64_t request_id = 0;
+        ASSERT_NO_FATAL_FAILURE(
+            writeToSelf(name,
+                        threadPoolParams(),
+                        split_desc_count,
+                        std::vector<std::optional<std::string>>(posts, tagged_msg),
+                        contexts,
+                        request_id,
+                        agentConfig(),
+                        completionPoll::spinning));
+        const auto spans = recordedSpans(traceFile, name);
+        for (size_t execution = 1; execution <= posts; ++execution) {
+            const auto sent = recordIndex(spans, "nixl::notif.sent", execution);
+            ASSERT_GE(sent, 0) << name << " post " << execution;
+            const auto seen = recordIndex(spans, "nixl::xfer.complete", execution);
+            ASSERT_GE(seen, 0) << name << " post " << execution;
+            EXPECT_LT(sent, seen) << name << " post " << execution;
+        }
+    }
+}
+
 TEST_F(ucxTraceContextPropagation, ThreadPoolWireCompletedPrecedesALatePoll) {
     expectWireCompletedPrecedesALatePoll(threadPoolParams(), split_desc_count);
 }
