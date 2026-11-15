@@ -334,6 +334,9 @@ public:
         return identity_;
     }
 
+    /** @brief The post's baggage, a view: for a post, of the request's own copy, which
+     *         stays unchanged until the post completes; for a genNotif, of the call's
+     *         options, for that call only. */
     [[nodiscard]] std::string_view
     baggage() const noexcept {
         return baggage_;
