@@ -869,16 +869,14 @@ public:
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
     beginContextSpan(nixl::trace::Name,
                      nixl::trace::Kind,
-                     const nixl::trace::TraceContext &,
-                     std::uint64_t) override {
+                     const nixl::trace::TraceIdentity &) override {
         throw std::runtime_error("beginContextSpan failed");
     }
 
     void
     emitSpan(nixl::trace::Name,
              nixl::trace::Kind,
-             const nixl::trace::TraceContext &,
-             std::uint64_t,
+             const nixl::trace::TraceIdentity &,
              nixlTime::us_t,
              nixlTime::us_t,
              std::span<const nixl::trace::Attribute>) override {
@@ -888,8 +886,7 @@ public:
     void
     emitContextSpan(nixl::trace::Name,
                     nixl::trace::Kind,
-                    const nixl::trace::TraceContext &,
-                    std::uint64_t,
+                    const nixl::trace::TraceIdentity &,
                     nixlTime::us_t,
                     nixlTime::us_t,
                     std::span<const nixl::trace::Attribute>) override {
@@ -899,15 +896,14 @@ public:
     void
     emitEvent(nixl::trace::Name,
               nixl::trace::Kind,
-              const nixl::trace::TraceContext &,
-              std::uint64_t,
+              const nixl::trace::TraceIdentity &,
               nixlTime::us_t,
               std::span<const nixl::trace::Attribute>) override {
         throw std::runtime_error("emitEvent failed");
     }
 
     void
-    pushContext(const nixl::trace::TraceContext &, std::uint64_t) override {}
+    pushContext(const nixl::trace::TraceIdentity &) override {}
 
     void
     popContext() override {}

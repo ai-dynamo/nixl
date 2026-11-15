@@ -235,7 +235,7 @@ Scope::Scope(Tracer *tracer, const TraceIdentity &identity, std::string_view bag
                                              std::string_view{}),
       pushed_((tracer != nullptr) && identity.context.valid() && identity.context.sampled()) {
     if (pushed_) {
-        tracer_->pushContext(identity_.context, identity_.requestId);
+        tracer_->pushContext(identity_);
     }
 }
 

@@ -40,16 +40,12 @@ public:
     beginSpan(Name name, Kind kind) override;
 
     [[nodiscard]] std::unique_ptr<SpanBackend>
-    beginContextSpan(Name name,
-                     Kind kind,
-                     const TraceContext &context,
-                     std::uint64_t request_id) override;
+    beginContextSpan(Name name, Kind kind, const TraceIdentity &identity) override;
 
     void
     emitSpan(Name name,
              Kind kind,
-             const TraceContext &context,
-             std::uint64_t request_id,
+             const TraceIdentity &identity,
              nixlTime::us_t start,
              nixlTime::us_t end,
              std::span<const Attribute> attrs) override;
@@ -57,8 +53,7 @@ public:
     void
     emitContextSpan(Name name,
                     Kind kind,
-                    const TraceContext &context,
-                    std::uint64_t request_id,
+                    const TraceIdentity &identity,
                     nixlTime::us_t start,
                     nixlTime::us_t end,
                     std::span<const Attribute> attrs) override;
@@ -66,13 +61,12 @@ public:
     void
     emitEvent(Name name,
               Kind kind,
-              const TraceContext &context,
-              std::uint64_t request_id,
+              const TraceIdentity &identity,
               nixlTime::us_t at,
               std::span<const Attribute> attrs) override;
 
     void
-    pushContext(const TraceContext &context, std::uint64_t request_id) override;
+    pushContext(const TraceIdentity &identity) override;
 
     void
     popContext() override;

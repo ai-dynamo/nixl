@@ -33,7 +33,7 @@ execution-trace tools.
   **ends them all on destruction** (RAII), so a span covers the scope in which it is
   declared.
 - **`emitSpan()` / `emitEvent()`** — record a span or a point event after the fact,
-  with its times, trace context, kind and typed attributes passed explicitly instead
+  with its times, trace identity, kind and typed attributes passed explicitly instead
   of taken from the clock and the active correlation scope. They are for records
   timed elsewhere or reported from another thread, such as the backend phases below.
   Times are `nixlTime` microseconds on `std::chrono::steady_clock`
@@ -43,8 +43,8 @@ execution-trace tools.
   `nixl.start_us` and `nixl.end_us` attributes.
 - **`beginContextSpan()` / `emitContextSpan()`** — begin, or record after the fact, the
   span that a trace context identifies, rather than a span inside the active correlation
-  scope's context as `beginSpan()` does; like `emitSpan()`, they take the context and the
-  request id explicitly, and the span's parent is the context's `parentSpanId`, when
+  scope's context as `beginSpan()` does; like `emitSpan()`, they take the trace identity,
+  its context and request id, explicitly, and the span's parent is the context's `parentSpanId`, when
   set. Every other span and event names its context's span id as its parent.
 - **`nixl::trace::Scope`** — an RAII guard the agent opens around a request's
   creation, each of its posts and its release, while a tracer is active. It makes the

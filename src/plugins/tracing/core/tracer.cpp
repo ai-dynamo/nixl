@@ -28,13 +28,12 @@ void
 emitSpanTo(std::span<const std::unique_ptr<nixl::trace::TraceBackend>> backends,
            nixl::trace::Name name,
            nixl::trace::Kind kind,
-           const nixl::trace::TraceContext &context,
-           std::uint64_t request_id,
+           const nixl::trace::TraceIdentity &identity,
            nixlTime::us_t start,
            nixlTime::us_t end,
            std::span<const nixl::trace::Attribute> attrs) {
     for (const auto &backend : backends) {
-        backend->emitSpan(name, kind, context, request_id, start, end, attrs);
+        backend->emitSpan(name, kind, identity, start, end, attrs);
     }
 }
 
@@ -42,12 +41,11 @@ void
 emitEventTo(std::span<const std::unique_ptr<nixl::trace::TraceBackend>> backends,
             nixl::trace::Name name,
             nixl::trace::Kind kind,
-            const nixl::trace::TraceContext &context,
-            std::uint64_t request_id,
+            const nixl::trace::TraceIdentity &identity,
             nixlTime::us_t at,
             std::span<const nixl::trace::Attribute> attrs) {
     for (const auto &backend : backends) {
-        backend->emitEvent(name, kind, context, request_id, at, attrs);
+        backend->emitEvent(name, kind, identity, at, attrs);
     }
 }
 
@@ -99,17 +97,14 @@ CompositeTracer::beginSpan(Name name, Kind kind) {
 }
 
 Span
-CompositeTracer::beginContextSpan(Name name,
-                                  Kind kind,
-                                  const TraceContext &context,
-                                  std::uint64_t request_id) {
+CompositeTracer::beginContextSpan(Name name, Kind kind, const TraceIdentity &identity) {
     std::array<std::unique_ptr<SpanBackend>, maxTraceBackends> spans;
     std::size_t count = 0;
     for (const auto &backend : backends_) {
         if (count == spans.size()) {
             break;
         }
-        if (auto backend_span = backend->beginContextSpan(name, kind, context, request_id)) {
+        if (auto backend_span = backend->beginContextSpan(name, kind, identity)) {
             spans[count++] = std::move(backend_span);
         }
     }
@@ -117,9 +112,9 @@ CompositeTracer::beginContextSpan(Name name,
 }
 
 void
-CompositeTracer::pushContext(const TraceContext &context, std::uint64_t request_id) {
+CompositeTracer::pushContext(const TraceIdentity &identity) {
     for (const auto &backend : backends_) {
-        backend->pushContext(context, request_id);
+        backend->pushContext(identity);
     }
 }
 
@@ -132,31 +127,28 @@ CompositeTracer::popContext() {
 
 void
 CompositeTracer::emitSpan(Name name, Kind kind, nixlTime::us_t start) {
-    emitSpanTo(backends_, name, kind, TraceContext{}, 0, start, nixlTime::getUs(), {});
+    emitSpanTo(backends_, name, kind, TraceIdentity{}, start, nixlTime::getUs(), {});
 }
 
 void
 CompositeTracer::emitSpan(Name name,
                           Kind kind,
-                          const TraceContext &context,
-                          std::uint64_t request_id,
+                          const TraceIdentity &identity,
                           nixlTime::us_t start,
                           nixlTime::us_t end,
                           std::span<const Attribute> attrs) {
-    emitSpanTo(backends_, name, kind, context, request_id, start, end, attrs);
+    emitSpanTo(backends_, name, kind, identity, start, end, attrs);
 }
 
 void
 CompositeTracer::emitEvent(Name name,
                            Kind kind,
-                           const TraceContext &context,
-                           std::uint64_t request_id,
+                           const TraceIdentity &identity,
                            std::span<const Attribute> attrs) {
     emitEventTo(backends_,
                 name,
                 kind,
-                context,
-                request_id,
+                identity,
                 needsTimestamps_ ? nixlTime::getUs() : nixlTime::us_t{0},
                 attrs);
 }
@@ -164,23 +156,21 @@ CompositeTracer::emitEvent(Name name,
 void
 CompositeTracer::emitEvent(Name name,
                            Kind kind,
-                           const TraceContext &context,
-                           std::uint64_t request_id,
+                           const TraceIdentity &identity,
                            nixlTime::us_t at,
                            std::span<const Attribute> attrs) {
-    emitEventTo(backends_, name, kind, context, request_id, at, attrs);
+    emitEventTo(backends_, name, kind, identity, at, attrs);
 }
 
 void
 CompositeTracer::emitContextSpan(Name name,
                                  Kind kind,
-                                 const TraceContext &context,
-                                 std::uint64_t request_id,
+                                 const TraceIdentity &identity,
                                  nixlTime::us_t start,
                                  nixlTime::us_t end,
                                  std::span<const Attribute> attrs) {
     for (const auto &backend : backends_) {
-        backend->emitContextSpan(name, kind, context, request_id, start, end, attrs);
+        backend->emitContextSpan(name, kind, identity, start, end, attrs);
     }
 }
 

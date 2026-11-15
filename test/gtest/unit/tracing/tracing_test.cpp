@@ -180,9 +180,9 @@ public:
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
     beginContextSpan(nixl::trace::Name name,
                      nixl::trace::Kind kind,
-                     const nixl::trace::TraceContext &context,
-                     std::uint64_t request_id) override {
-        log_->contextSpans.push_back(makeRecord(name.view(), kind, context, request_id, {}, {}));
+                     const nixl::trace::TraceIdentity &identity) override {
+        log_->contextSpans.push_back(
+            makeRecord(name.view(), kind, identity.context, identity.requestId, {}, {}));
         if (nullSpans_) {
             return nullptr;
         }
@@ -192,43 +192,40 @@ public:
     void
     emitSpan(nixl::trace::Name name,
              nixl::trace::Kind kind,
-             const nixl::trace::TraceContext &context,
-             std::uint64_t request_id,
+             const nixl::trace::TraceIdentity &identity,
              nixlTime::us_t start,
              nixlTime::us_t end,
              std::span<const nixl::trace::Attribute> attrs) override {
-        log_->emittedSpans.push_back(
-            makeRecord(name.view(), kind, context, request_id, {start, end}, attrs));
+        log_->emittedSpans.push_back(makeRecord(
+            name.view(), kind, identity.context, identity.requestId, {start, end}, attrs));
     }
 
     void
     emitEvent(nixl::trace::Name name,
               nixl::trace::Kind kind,
-              const nixl::trace::TraceContext &context,
-              std::uint64_t request_id,
+              const nixl::trace::TraceIdentity &identity,
               nixlTime::us_t at,
               std::span<const nixl::trace::Attribute> attrs) override {
         log_->emittedEvents.push_back(
-            makeRecord(name.view(), kind, context, request_id, {at}, attrs));
+            makeRecord(name.view(), kind, identity.context, identity.requestId, {at}, attrs));
     }
 
     void
     emitContextSpan(nixl::trace::Name name,
                     nixl::trace::Kind kind,
-                    const nixl::trace::TraceContext &context,
-                    std::uint64_t request_id,
+                    const nixl::trace::TraceIdentity &identity,
                     nixlTime::us_t start,
                     nixlTime::us_t end,
                     std::span<const nixl::trace::Attribute> attrs) override {
-        log_->emittedContextSpans.push_back(
-            makeRecord(name.view(), kind, context, request_id, {start, end}, attrs));
+        log_->emittedContextSpans.push_back(makeRecord(
+            name.view(), kind, identity.context, identity.requestId, {start, end}, attrs));
     }
 
     void
-    pushContext(const nixl::trace::TraceContext &context, std::uint64_t request_id) override {
-        log_->pushedContexts.push_back(context);
-        log_->pushedRequestIds.push_back(request_id);
-        log_->activeContexts.push_back(context);
+    pushContext(const nixl::trace::TraceIdentity &identity) override {
+        log_->pushedContexts.push_back(identity.context);
+        log_->pushedRequestIds.push_back(identity.requestId);
+        log_->activeContexts.push_back(identity.context);
     }
 
     void
@@ -333,16 +330,14 @@ public:
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
     beginContextSpan(nixl::trace::Name,
                      nixl::trace::Kind,
-                     const nixl::trace::TraceContext &,
-                     std::uint64_t) override {
+                     const nixl::trace::TraceIdentity &) override {
         throw std::runtime_error("beginContextSpan failed");
     }
 
     void
     emitSpan(nixl::trace::Name,
              nixl::trace::Kind,
-             const nixl::trace::TraceContext &,
-             std::uint64_t,
+             const nixl::trace::TraceIdentity &,
              nixlTime::us_t,
              nixlTime::us_t,
              std::span<const nixl::trace::Attribute>) override {
@@ -352,8 +347,7 @@ public:
     void
     emitEvent(nixl::trace::Name,
               nixl::trace::Kind,
-              const nixl::trace::TraceContext &,
-              std::uint64_t,
+              const nixl::trace::TraceIdentity &,
               nixlTime::us_t,
               std::span<const nixl::trace::Attribute>) override {
         throw std::runtime_error("emitEvent failed");
@@ -362,8 +356,7 @@ public:
     void
     emitContextSpan(nixl::trace::Name,
                     nixl::trace::Kind,
-                    const nixl::trace::TraceContext &,
-                    std::uint64_t,
+                    const nixl::trace::TraceIdentity &,
                     nixlTime::us_t,
                     nixlTime::us_t,
                     std::span<const nixl::trace::Attribute>) override {
@@ -371,7 +364,7 @@ public:
     }
 
     void
-    pushContext(const nixl::trace::TraceContext &, std::uint64_t) override {}
+    pushContext(const nixl::trace::TraceIdentity &) override {}
 
     void
     popContext() override {}
@@ -394,16 +387,14 @@ public:
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
     beginContextSpan(nixl::trace::Name,
                      nixl::trace::Kind,
-                     const nixl::trace::TraceContext &,
-                     std::uint64_t) override {
+                     const nixl::trace::TraceIdentity &) override {
         return nullptr;
     }
 
     void
     emitSpan(nixl::trace::Name,
              nixl::trace::Kind,
-             const nixl::trace::TraceContext &,
-             std::uint64_t,
+             const nixl::trace::TraceIdentity &,
              nixlTime::us_t,
              nixlTime::us_t,
              std::span<const nixl::trace::Attribute> attrs) override {
@@ -413,8 +404,7 @@ public:
     void
     emitEvent(nixl::trace::Name,
               nixl::trace::Kind,
-              const nixl::trace::TraceContext &,
-              std::uint64_t,
+              const nixl::trace::TraceIdentity &,
               nixlTime::us_t,
               std::span<const nixl::trace::Attribute> attrs) override {
         attrsSeen_ += attrs.size();
@@ -423,8 +413,7 @@ public:
     void
     emitContextSpan(nixl::trace::Name,
                     nixl::trace::Kind,
-                    const nixl::trace::TraceContext &,
-                    std::uint64_t,
+                    const nixl::trace::TraceIdentity &,
                     nixlTime::us_t,
                     nixlTime::us_t,
                     std::span<const nixl::trace::Attribute> attrs) override {
@@ -432,7 +421,7 @@ public:
     }
 
     void
-    pushContext(const nixl::trace::TraceContext &, std::uint64_t) override {}
+    pushContext(const nixl::trace::TraceIdentity &) override {}
 
     void
     popContext() override {}
@@ -576,7 +565,7 @@ TEST(Tracing, ContextSpanFansOutToAllBackends) {
     const auto context = testContext(0x24);
 
     {
-        auto span = tracer->beginContextSpan("op", nixl::trace::Kind::CommSend, context, 0x2424);
+        auto span = tracer->beginContextSpan("op", nixl::trace::Kind::CommSend, {context, 0x2424});
         EXPECT_TRUE(span.active());
         span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"val"});
     }
@@ -997,8 +986,8 @@ TEST(Tracing, EmittedRecordsFanOutToAllBackends) {
                                {"bytes", std::int64_t{4096}},
                                {"nixl.start_us", 0.5}};
 
-    tracer->emitSpan("span", nixl::trace::Kind::CommSend, context, 0x2121, 10, 25, attrs);
-    tracer->emitEvent("event", nixl::trace::Kind::CommRecv, context, 0x2222, 42, attrs);
+    tracer->emitSpan("span", nixl::trace::Kind::CommSend, {context, 0x2121}, 10, 25, attrs);
+    tracer->emitEvent("event", nixl::trace::Kind::CommRecv, {context, 0x2222}, 42, attrs);
 
     for (const CallLog *log : {&a, &b}) {
         ASSERT_EQ(log->emittedSpans.size(), 1u);
@@ -1028,7 +1017,7 @@ TEST(Tracing, TracerKeepsAtMostMaxTraceBackends) {
 
     EXPECT_EQ(tracer.backends().size(), nixl::trace::maxTraceBackends);
     { auto span = tracer.beginSpan("op", nixl::trace::Kind::CommSend); }
-    tracer.emitEvent("event", nixl::trace::Kind::CommRecv, testContext(0x21), 0x2121, 42, {});
+    tracer.emitEvent("event", nixl::trace::Kind::CommRecv, {testContext(0x21), 0x2121}, 42, {});
 
     for (std::size_t i = 0; i < logs.size(); ++i) {
         const std::size_t expected = i < nixl::trace::maxTraceBackends ? 1 : 0;
@@ -1064,10 +1053,10 @@ TEST(Tracing, EmptyTracerIsInert) {
     span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{1});
     span.addCtrlDep(nixl::trace::SpanId{7});
     EXPECT_EQ(span.id().value, 0u);
-    tracer.emitSpan("s", nixl::trace::Kind::Generic, testContext(0x23), 0x2323, 1, 2, {});
-    tracer.emitEvent("e", nixl::trace::Kind::Metadata, testContext(0x23), 0x2323, 3, {});
+    tracer.emitSpan("s", nixl::trace::Kind::Generic, {testContext(0x23), 0x2323}, 1, 2, {});
+    tracer.emitEvent("e", nixl::trace::Kind::Metadata, {testContext(0x23), 0x2323}, 3, {});
     const auto context_span =
-        tracer.beginContextSpan("c", nixl::trace::Kind::CommSend, testContext(0x23), 0x2323);
+        tracer.beginContextSpan("c", nixl::trace::Kind::CommSend, {testContext(0x23), 0x2323});
     EXPECT_FALSE(context_span.active());
 }
 
@@ -1203,7 +1192,7 @@ TEST(Tracing, ContextFansOutToAllBackends) {
     auto tracer = makeMockTracer(a, b);
     const auto context = testContext(0x11);
 
-    tracer->pushContext(context, 0x1111);
+    tracer->pushContext({context, 0x1111});
     tracer->popContext();
 
     for (const CallLog *log : {&a, &b}) {
@@ -2453,7 +2442,7 @@ TEST(Tracing, InactiveSpanRecordsNothing) {
     nixl::trace::CompositeTracer tracer{std::move(backends), 0.0};
     auto span = tracer.beginSpan("op");
     auto context_span =
-        tracer.beginContextSpan("op", nixl::trace::Kind::Generic, testContext(0x25), 0x2525);
+        tracer.beginContextSpan("op", nixl::trace::Kind::Generic, {testContext(0x25), 0x2525});
 
     span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"0"});
     span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{1});
@@ -2672,7 +2661,7 @@ TEST(Tracing, SpanWithoutBackendSpansAllocatesNothing) {
         const nixl::trace::Span span = tracer->beginSpan("nixl::createXferReq");
         EXPECT_FALSE(span.active());
         const nixl::trace::Span context_span = tracer->beginContextSpan(
-            "nixl::postXferReq.write", nixl::trace::Kind::CommSend, testContext(0x22), 7);
+            "nixl::postXferReq.write", nixl::trace::Kind::CommSend, {testContext(0x22), 7});
         EXPECT_FALSE(context_span.active());
     }
     EXPECT_EQ(allocations.count(), 0u);

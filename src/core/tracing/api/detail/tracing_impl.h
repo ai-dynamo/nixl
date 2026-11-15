@@ -81,8 +81,7 @@ inline Traceable::~Traceable() {
                                        {AttributeKey::NixlXferExecution, postIdentity_.execution}};
             tracer_->emitContextSpan(Record::XferReq,
                                      kindOf(Record::XferReq),
-                                     requestContext_,
-                                     postIdentity_.requestId,
+                                     requestIdentity(),
                                      createdAt_,
                                      nixlTime::getUs(),
                                      attrs);
@@ -140,8 +139,7 @@ Traceable::trace(Record record) const {
     if ((tracer_ != nullptr) && postIdentity_.context.sampled()) {
         const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
                                    {AttributeKey::NixlXferExecution, postIdentity_.execution}};
-        tracer_->emitEvent(
-            record, kindOf(record), postIdentity_.context, postIdentity_.requestId, attrs);
+        tracer_->emitEvent(record, kindOf(record), postIdentity_, attrs);
     }
 }
 
@@ -151,8 +149,7 @@ Traceable::trace(Record record, const Attribute &attr) const {
         const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
                                    {AttributeKey::NixlXferExecution, postIdentity_.execution},
                                    attr};
-        tracer_->emitEvent(
-            record, kindOf(record), postIdentity_.context, postIdentity_.requestId, attrs);
+        tracer_->emitEvent(record, kindOf(record), postIdentity_, attrs);
     }
 }
 
@@ -283,11 +280,10 @@ end(Span &span, Status status) {
         if (!span##_scope->identity().context.sampled()) {                                    \
             return ::nixl::trace::Span{};                                                     \
         }                                                                                     \
-        NIXL_TRACE_DETAIL_ANNOTATED_(                                                         \
-            nixl_trace_tracer_->beginContextSpan(nixl_trace_record_,                          \
-                                                 ::nixl::trace::kindOf(nixl_trace_record_),   \
-                                                 span##_scope->identity().context,            \
-                                                 0) __VA_OPT__(, ) __VA_ARGS__);              \
+        NIXL_TRACE_DETAIL_ANNOTATED_(nixl_trace_tracer_->beginContextSpan(                    \
+            nixl_trace_record_,                                                               \
+            ::nixl::trace::kindOf(nixl_trace_record_),                                        \
+            span##_scope->identity()) __VA_OPT__(, ) __VA_ARGS__);                            \
     }();                                                                                      \
     ::nixl::trace::detail::addBaggage(span, span##_baggage)
 
@@ -303,21 +299,19 @@ end(Span &span, Status status) {
                                          __VA_ARGS__);                                    \
     }()
 
-// For a sampled `context`, begins the span that `context` identifies, with `request_id` as
+// For a sampled `identity`, begins the span its context identifies, with its request id as
 // its own; otherwise no span.
-#define NIXL_TRACE_DETAIL_CONTEXT_SPAN(span, tracer_ptr, trace_record, context, request_id, ...) \
+#define NIXL_TRACE_DETAIL_CONTEXT_SPAN(span, tracer_ptr, trace_record, identity, ...)            \
     ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                    \
         auto *nixl_trace_tracer_ = (tracer_ptr);                                                 \
-        const ::nixl::trace::TraceContext &nixl_trace_context_ = (context);                      \
-        if ((nixl_trace_tracer_ == nullptr) || !nixl_trace_context_.sampled()) {                 \
+        const ::nixl::trace::TraceIdentity &nixl_trace_identity_ = (identity);                   \
+        if ((nixl_trace_tracer_ == nullptr) || !nixl_trace_identity_.context.sampled()) {        \
             return ::nixl::trace::Span{};                                                        \
         }                                                                                        \
         const ::nixl::trace::Record nixl_trace_record_ = (trace_record);                         \
-        NIXL_TRACE_DETAIL_ANNOTATED_(                                                            \
-            nixl_trace_tracer_->beginContextSpan(nixl_trace_record_,                             \
-                                                 ::nixl::trace::kindOf(nixl_trace_record_),      \
-                                                 nixl_trace_context_,                            \
-                                                 (request_id)) __VA_OPT__(, ) __VA_ARGS__);      \
+        NIXL_TRACE_DETAIL_ANNOTATED_(nixl_trace_tracer_->beginContextSpan(                       \
+            nixl_trace_record_, ::nixl::trace::kindOf(nixl_trace_record_), nixl_trace_identity_) \
+                                         __VA_OPT__(, ) __VA_ARGS__);                            \
     }()
 
 #define NIXL_TRACE_DETAIL_REQUEST_SPAN(span, traceable, trace_record, ...)                       \
@@ -344,8 +338,7 @@ end(Span &span, Status status) {
         span,                                                                         \
         (traceable).tracer(),                                                         \
         trace_record,                                                                 \
-        span##_identity.context,                                                      \
-        span##_identity.requestId,                                                    \
+        span##_identity,                                                              \
         __VA_ARGS__ __VA_OPT__(, ){::nixl::trace::AttributeKey::NixlXferRequestId,    \
                                    span##_identity.requestId},                        \
         {::nixl::trace::AttributeKey::NixlXferExecution, span##_identity.execution}); \

@@ -104,15 +104,13 @@ TEST_F(traceRecorder, EmittedSpanRecordsItsTimesAndContext) {
                                    std::string_view{"peer"}}};
         tracer->emitSpan("nixl::test.span",
                          nixl::trace::Kind::CommSend,
-                         context,
-                         recorded_request_id,
+                         {context, recorded_request_id},
                          100,
                          250,
                          attrs);
         tracer->emitSpan("nixl::test.untraced",
                          nixl::trace::Kind::Generic,
-                         nixl::trace::TraceContext{},
-                         0,
+                         nixl::trace::TraceIdentity{},
                          7,
                          9,
                          {});
@@ -167,7 +165,7 @@ TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
             const nixl::trace::Scope scope(tracer.get(), {context, recorded_request_id});
             const auto span = tracer->beginSpan("nixl::test.scoped");
         }
-        tracer->emitEvent("nixl::test.event", nixl::trace::Kind::Metadata, context, 0, 5, {});
+        tracer->emitEvent("nixl::test.event", nixl::trace::Kind::Metadata, {context, 0}, 5, {});
     }
 
     EXPECT_EQ(records(),
@@ -191,14 +189,14 @@ TEST_F(traceRecorder, ContextSpanRecordsItsOwnContextAndId) {
         {
             const nixl::trace::Scope scope(tracer.get(), {context, recorded_request_id});
             auto span = tracer->beginContextSpan(
-                "nixl::test.post", nixl::trace::Kind::CommSend, context, recorded_request_id);
+                "nixl::test.post", nixl::trace::Kind::CommSend, {context, recorded_request_id});
             span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{4096});
             const auto child = tracer->beginSpan("nixl::test.child");
             const auto other = tracer->beginContextSpan(
-                "nixl::test.other", nixl::trace::Kind::Generic, other_context, other_request_id);
+                "nixl::test.other", nixl::trace::Kind::Generic, {other_context, other_request_id});
         }
         const auto unscoped = tracer->beginContextSpan(
-            "nixl::test.unscoped", nixl::trace::Kind::Generic, context, recorded_request_id);
+            "nixl::test.unscoped", nixl::trace::Kind::Generic, {context, recorded_request_id});
     }
 
     const std::string correlation = "correlation=" + std::to_string(recorded_request_id);

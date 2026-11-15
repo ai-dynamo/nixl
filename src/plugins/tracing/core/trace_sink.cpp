@@ -123,8 +123,7 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
            [&](std::span<const Attribute> event_attrs) {
                tracer_.emitEvent(named ? Name(label) : Name(toRecord(phase)),
                                  kindOf(toRecord(phase)),
-                                 identity.context,
-                                 identity.requestId,
+                                 identity,
                                  timestamp,
                                  event_attrs);
            });
@@ -148,8 +147,7 @@ TracerPhaseSink::recordSpan(nixl_trace_span_t span,
            [&](std::span<const Attribute> span_attrs) {
                tracer_.emitSpan(named ? Name(label) : Name(span_record),
                                 named ? operationKind(operation) : kindOf(span_record),
-                                identity.context,
-                                identity.requestId,
+                                identity,
                                 start,
                                 end,
                                 span_attrs);

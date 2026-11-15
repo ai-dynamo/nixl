@@ -43,13 +43,10 @@ public:
     beginSpan(Name name, Kind kind = Kind::Generic) = 0;
 
     [[nodiscard]] virtual Span
-    beginContextSpan(Name name,
-                     Kind kind,
-                     const TraceContext &context,
-                     std::uint64_t request_id) = 0;
+    beginContextSpan(Name name, Kind kind, const TraceIdentity &identity) = 0;
 
     virtual void
-    pushContext(const TraceContext &context, std::uint64_t request_id) = 0;
+    pushContext(const TraceIdentity &identity) = 0;
 
     virtual void
     popContext() = 0;
@@ -57,8 +54,7 @@ public:
     virtual void
     emitEvent(Name name,
               Kind kind,
-              const TraceContext &context,
-              std::uint64_t request_id,
+              const TraceIdentity &identity,
               std::span<const Attribute> attrs) = 0;
 
     virtual void
@@ -67,8 +63,7 @@ public:
     virtual void
     emitContextSpan(Name name,
                     Kind kind,
-                    const TraceContext &context,
-                    std::uint64_t request_id,
+                    const TraceIdentity &identity,
                     nixlTime::us_t start,
                     nixlTime::us_t end,
                     std::span<const Attribute> attrs) = 0;

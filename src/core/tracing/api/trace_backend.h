@@ -46,7 +46,7 @@ public:
     beginSpan(Name name, Kind kind) = 0;
 
     virtual void
-    pushContext(const TraceContext &context, std::uint64_t request_id) = 0;
+    pushContext(const TraceIdentity &identity) = 0;
     virtual void
     popContext() = 0;
 
@@ -66,47 +66,41 @@ public:
     /**
      * @brief Record a span from @p start to @p end, or an event at @p at, that
      *        already happened. Times are `nixlTime` microseconds on
-     *        `std::chrono::steady_clock`; @p context is the record's own, not
-     *        the pushed one, and an invalid context means none. @p request_id
-     *        is likewise the record's own, and 0 means none.
+     *        `std::chrono::steady_clock`; @p identity is the record's own, not
+     *        the pushed one: an invalid context means none, and a request id
+     *        of 0 means none.
      */
     virtual void
     emitSpan(Name name,
              Kind kind,
-             const TraceContext &context,
-             std::uint64_t request_id,
+             const TraceIdentity &identity,
              nixlTime::us_t start,
              nixlTime::us_t end,
              std::span<const Attribute> attrs) = 0;
     virtual void
     emitEvent(Name name,
               Kind kind,
-              const TraceContext &context,
-              std::uint64_t request_id,
+              const TraceIdentity &identity,
               nixlTime::us_t at,
               std::span<const Attribute> attrs) = 0;
 
     /**
-     * @brief Begin the span that @p context identifies, rather than a span
-     *        inside the pushed context. @p context and @p request_id are the
-     *        span's own, as in emitSpan().
+     * @brief Begin the span that @p identity's context identifies, rather than a
+     *        span inside the pushed context. @p identity is the span's own, as
+     *        in emitSpan().
      */
     [[nodiscard]] virtual std::unique_ptr<SpanBackend>
-    beginContextSpan(Name name,
-                     Kind kind,
-                     const TraceContext &context,
-                     std::uint64_t request_id) = 0;
+    beginContextSpan(Name name, Kind kind, const TraceIdentity &identity) = 0;
 
     /**
-     * @brief Record the span that @p context identifies, as beginContextSpan()
+     * @brief Record the span that @p identity's context identifies, as beginContextSpan()
      *        would begin it, from @p start to @p end, that already happened.
      *        Times are as in emitSpan().
      */
     virtual void
     emitContextSpan(Name name,
                     Kind kind,
-                    const TraceContext &context,
-                    std::uint64_t request_id,
+                    const TraceIdentity &identity,
                     nixlTime::us_t start,
                     nixlTime::us_t end,
                     std::span<const Attribute> attrs) = 0;
