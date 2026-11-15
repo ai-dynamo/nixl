@@ -25,7 +25,7 @@
 #include <string>
 #include <string_view>
 
-#include "tracing/api/backend_trace.h"
+#include "tracing/api/phase_sink.h"
 #include "tracing/core/trace.h"
 
 namespace nixl::trace {

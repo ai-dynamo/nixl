@@ -75,7 +75,7 @@ through which an API call hands it the tracer and the application's context), th
 that read a call's trace options and a request's trace info, `Scope`, and
 the tracer from `makeAgentTracer()`, the `Tracer` interface of `tracing/api/tracer.h`,
 whose `makeSink()` gives a backend its sink; what they expand into, `Span` included, is
-under `tracing/api/detail/`. Data plugins include `tracing/api/backend_trace.h` (see
+under `tracing/api/detail/`. Data plugins include `tracing/api/phase_sink.h` (see
 [Backend phases](#backend-phases)), and trace backends `tracing/api/trace_backend.h`,
 the `TraceBackend` interface, and the plugin contract, `tracing/api/trace_plugin.h`. The
 tracer itself (`tracing/core/trace.h`), the sink and the wire codec are seen only by
@@ -433,7 +433,7 @@ become the span's start and end times (in NVTX, `nixl.start_us` and
 | `nixl::wire.inflight.write`, `nixl::wire.inflight.read` | `WIRE_INFLIGHT` | the transfer in flight, from `submit` to `wire.completed`, named for its direction |
 | `nixl::span` | `OTHER` | escape hatch; the plugin's label becomes the span name |
 
-The sink interface is internal (`src/core/tracing/api/backend_trace.h`, not an
+The sink interface is internal (`src/core/tracing/api/phase_sink.h`, not an
 installed header), so only in-tree plugins can emit phases. UCX emits
 `nixl::submit`, `nixl::wire.submitted`, `nixl::wire.completed`, `nixl::notif.sent`
 and `nixl::notif.received`, and the span `nixl::wire.inflight.write` or `.read`,

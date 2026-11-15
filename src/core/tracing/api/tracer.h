@@ -27,7 +27,7 @@
 #include "common/nixl_time.h"
 #include "nixl_types.h"
 #include "tracing/api/attribute.h"
-#include "tracing/api/backend_trace.h"
+#include "tracing/api/phase_sink.h"
 #include "tracing/api/detail/span.h"
 #include "tracing/api/record.h"
 #include "tracing/api/trace_identity.h"

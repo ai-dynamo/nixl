@@ -29,7 +29,7 @@
 #include <vector>
 
 #include "backend/backend_engine.h"
-#include "tracing/api/backend_trace.h"
+#include "tracing/api/phase_sink.h"
 
 namespace mocks {
 

@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 #include "common.h"
-#include "tracing/api/backend_trace.h"
+#include "tracing/api/phase_sink.h"
 #include "tracing/core/trace.h"
 #include "tracing/core/trace_config.h"
 #include "tracing/core/trace_context.h"

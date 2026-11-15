@@ -26,7 +26,7 @@
 #include "common/backend.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
-#include "tracing/api/backend_trace.h"
+#include "tracing/api/phase_sink.h"
 
 #include <array>
 #include <cstddef>

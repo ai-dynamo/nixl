@@ -16,7 +16,7 @@
  */
 
 #include "serdes/serdes.h"
-#include "tracing/api/backend_trace.h"
+#include "tracing/api/phase_sink.h"
 #include "ucx_backend.h"
 
 #include <gtest/gtest.h>

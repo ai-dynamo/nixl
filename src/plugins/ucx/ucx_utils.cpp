@@ -16,7 +16,7 @@
  */
 
 #include "ucx_utils.h"
-#include "tracing/api/backend_trace.h"
+#include "tracing/api/phase_sink.h"
 
 #include <algorithm>
 #include <array>
