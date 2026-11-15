@@ -14,26 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_API_DETAIL_TRACE_IMPL_H
-#define NIXL_SRC_CORE_TRACING_API_DETAIL_TRACE_IMPL_H
+#ifndef NIXL_SRC_CORE_TRACING_API_DETAIL_SPAN_BACKEND_H
+#define NIXL_SRC_CORE_TRACING_API_DETAIL_SPAN_BACKEND_H
 
 #include <cstdint>
-#include <initializer_list>
 #include <span>
 #include <string_view>
 #include <variant>
 
-#include "common/nixl_time.h"
 #include "tracing/api/attribute.h"
 #include "tracing/api/attribute_key.h"
-#include "tracing/api/record.h"
-#include "tracing/api/trace_identity.h"
 
 namespace nixl::trace {
 
-class Name;
-class Span;
-class Tracer;
 struct SpanId;
 
 /**
@@ -68,35 +61,5 @@ public:
 };
 
 } // namespace nixl::trace
-
-namespace nixl::trace::detail {
-
-struct Call {
-    Tracer *tracer = nullptr;
-    const nixl_blob_t *context = nullptr;
-};
-
-[[nodiscard]] inline Call
-currentCall() noexcept;
-
-[[nodiscard]] inline nixlTime::us_t
-requestStart(const Tracer *tracer, const TraceContext &context) noexcept;
-
-[[nodiscard]] inline TraceIdentity
-suppliedIdentity(const Tracer *tracer, const nixl_blob_t &parent);
-
-inline void
-addAttributes(Span &span, std::initializer_list<Attribute> attributes);
-
-template<typename Status>
-[[nodiscard]] Status
-finish(Span &span, Status status);
-
-template<typename Status>
-[[nodiscard]] Status
-end(Span &span, Status status);
-
-
-} // namespace nixl::trace::detail
 
 #endif

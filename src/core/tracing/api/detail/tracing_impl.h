@@ -23,11 +23,35 @@
 
 #include "common/nixl_time.h"
 #include "tracing/api/attribute.h"
+#include "tracing/api/detail/call_scope.h"
 #include "tracing/api/detail/span.h"
-#include "tracing/api/detail/trace_impl.h"
 #include "tracing/api/record.h"
 #include "tracing/api/trace_identity.h"
 #include "tracing/api/tracer.h"
+
+namespace nixl::trace::detail {
+
+[[nodiscard]] inline Call
+currentCall() noexcept;
+
+[[nodiscard]] inline nixlTime::us_t
+requestStart(const Tracer *tracer, const TraceContext &context) noexcept;
+
+[[nodiscard]] inline TraceIdentity
+suppliedIdentity(const Tracer *tracer, const nixl_blob_t &parent);
+
+inline void
+addAttributes(Span &span, std::initializer_list<Attribute> attributes);
+
+template<typename Status>
+[[nodiscard]] Status
+finish(Span &span, Status status);
+
+template<typename Status>
+[[nodiscard]] Status
+end(Span &span, Status status);
+
+} // namespace nixl::trace::detail
 
 namespace nixl::trace {
 

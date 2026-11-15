@@ -49,6 +49,7 @@
 #include "tracing/api/trace_identity.h"
 
 #if defined(NIXL_TRACE_ENABLED)
+#include "tracing/api/detail/call_scope.h"
 #include "tracing/api/detail/span.h"
 #include "tracing/api/tracer.h"
 #endif

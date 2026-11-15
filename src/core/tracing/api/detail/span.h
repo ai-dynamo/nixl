@@ -28,7 +28,7 @@
 
 #include "tracing/api/attribute.h"
 #include "tracing/api/attribute_key.h"
-#include "tracing/api/detail/trace_impl.h"
+#include "tracing/api/detail/span_backend.h"
 #include "tracing/api/record.h"
 #include "tracing/api/trace_identity.h"
 
