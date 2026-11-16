@@ -105,7 +105,7 @@ public:
     getIndex(const nixlBasicDesc &query) const override;
 
     int
-    getCoveringIndex(const nixlBasicDesc &query) const;
+    getCoveringIndex(const nixlBasicDesc &query, int start_index = 0) const;
 
     void
     resize(const size_t &count) override;

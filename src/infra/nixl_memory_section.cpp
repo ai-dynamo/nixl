@@ -108,7 +108,7 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
     resp.emplace(query[0].addr, query[0].len, query[0].devId, covering->metadataP);
     uintptr_t covering_end = rangeEnd(*covering);
 
-    // Walk forward for non-decreasing elements; logN search on temporal disorder
+    // Try the current and next sections; bracket larger gaps before binary search.
     for (int i = 1; i < query.descCount(); ++i) {
         if (query[i] < query[i - 1]) [[unlikely]] {
             // Disorder in the list, resolve this element using logN search
@@ -123,15 +123,20 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
             // The current section covered the previous query. For an ordered
             // query on the same device, its start cannot precede the section.
             if (!coversFollowingWithEnd(*covering, covering_end, query[i])) {
-                do {
-                    ++s_index;
-                    if (s_index < size) {
+                ++s_index;
+                if (s_index < size) {
+                    covering = &base[s_index];
+                    covering_end = rangeEnd(*covering);
+                }
+                if (s_index < size && !coversWithEnd(*covering, covering_end, query[i])) {
+                    s_index = base.getCoveringIndex(query[i], s_index);
+                    if (s_index >= 0) {
                         covering = &base[s_index];
                         covering_end = rangeEnd(*covering);
                     }
-                } while (s_index < size && !coversWithEnd(*covering, covering_end, query[i]));
+                }
             }
-            if (s_index == size) [[unlikely]] {
+            if (s_index < 0 || s_index == size) [[unlikely]] {
                 resp.clear();
                 return NIXL_ERR_UNKNOWN;
             }
@@ -179,23 +184,17 @@ nixlMemSection::populate(const nixl_xfer_dlist_t &query,
         if (!coversWithEnd(base[s_index], covering_end, it)) [[unlikely]] {
             if (it < query[i - 1]) {
                 s_index = base.getCoveringIndex(it);
-                if (s_index < 0) {
-                    resp.clear();
-                    return NIXL_ERR_UNKNOWN;
-                }
-                covering_end = rangeEnd(base[s_index]);
             } else {
-                while (s_index < size && !coversWithEnd(base[s_index], covering_end, it)) {
-                    ++s_index;
-                    if (s_index < size) {
-                        covering_end = rangeEnd(base[s_index]);
-                    }
-                }
-                if (s_index == size) {
-                    resp.clear();
-                    return NIXL_ERR_UNKNOWN;
+                ++s_index;
+                if (s_index == size || !coversWithEnd(base[s_index], rangeEnd(base[s_index]), it)) {
+                    s_index = base.getCoveringIndex(it, s_index);
                 }
             }
+            if (s_index < 0) {
+                resp.clear();
+                return NIXL_ERR_UNKNOWN;
+            }
+            covering_end = rangeEnd(base[s_index]);
         }
 
         nixlBackendMD *const meta = base[s_index].metadataP;
