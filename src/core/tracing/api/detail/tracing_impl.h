@@ -38,7 +38,7 @@ currentCall() noexcept;
 [[nodiscard]] inline nixlTime::us_t
 requestStart(const Tracer *tracer, const TraceContext &context) noexcept;
 
-[[nodiscard]] inline TraceIdentity
+[[nodiscard]] TraceIdentity
 suppliedIdentity(const Tracer *tracer, const nixl_blob_t &parent);
 
 inline void
@@ -76,18 +76,7 @@ inline Traceable::Traceable(Tracer *tracer, const TraceIdentity &identity) noexc
 
 inline Traceable::~Traceable() {
     if ((tracer_ != nullptr) && requestContext_.sampled()) {
-        try {
-            const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
-                                       {AttributeKey::NixlXferExecution, postIdentity_.execution}};
-            tracer_->emitContextSpan(Record::XferReq,
-                                     kindOf(Record::XferReq),
-                                     requestIdentity(),
-                                     createdAt_,
-                                     nixlTime::getUs(),
-                                     attrs);
-        }
-        catch (...) {
-        }
+        emitRequestSpan();
     }
 }
 
@@ -119,17 +108,7 @@ Traceable::postBaggage() const noexcept {
 inline const TraceIdentity &
 Traceable::post(const nixl_blob_t &parent, const nixl_blob_t &baggage) {
     if (postIdentity_.requestId != 0) {
-        const std::optional<TraceContext> supplied =
-            parent.empty() ? std::nullopt : parseParentContext(tracer_, parent);
-        const TraceContext &under = supplied ? *supplied : requestContext_;
-        postIdentity_.context = under.sampled() ? generatePostContext(under, tracer_) : under;
-        ++postIdentity_.execution;
-        if (postIdentity_.context.sampled()) {
-            const std::string_view own = parseBaggage(tracer_, baggage);
-            postBaggage_.assign(own.empty() ? std::string_view{requestBaggage_} : own);
-        } else {
-            postBaggage_.clear();
-        }
+        advancePost(parent, baggage);
     }
     return postIdentity_;
 }
@@ -137,29 +116,15 @@ Traceable::post(const nixl_blob_t &parent, const nixl_blob_t &baggage) {
 inline void
 Traceable::trace(Record record) const {
     if ((tracer_ != nullptr) && postIdentity_.context.sampled()) {
-        const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
-                                   {AttributeKey::NixlXferExecution, postIdentity_.execution}};
-        tracer_->emitEvent(record, kindOf(record), postIdentity_, attrs);
+        emitEvent(record);
     }
 }
 
 inline void
 Traceable::trace(Record record, const Attribute &attr) const {
     if ((tracer_ != nullptr) && postIdentity_.context.sampled()) {
-        const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
-                                   {AttributeKey::NixlXferExecution, postIdentity_.execution},
-                                   attr};
-        tracer_->emitEvent(record, kindOf(record), postIdentity_, attrs);
+        emitEvent(record, attr);
     }
-}
-
-inline TraceIdentity
-detail::suppliedIdentity(const Tracer *tracer, const nixl_blob_t &parent) {
-    const std::optional<TraceContext> supplied = parseParentContext(tracer, parent);
-    if (!supplied) {
-        return {};
-    }
-    return {supplied->sampled() ? generatePostContext(*supplied, tracer) : *supplied, 0, 0};
 }
 
 inline nixlTime::us_t

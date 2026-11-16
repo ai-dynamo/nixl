@@ -215,6 +215,61 @@ CallScope::~CallScope() {
     }
 }
 
+void
+Traceable::emitRequestSpan() const noexcept {
+    try {
+        const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
+                                   {AttributeKey::NixlXferExecution, postIdentity_.execution}};
+        tracer_->emitContextSpan(Record::XferReq,
+                                 kindOf(Record::XferReq),
+                                 requestIdentity(),
+                                 createdAt_,
+                                 nixlTime::getUs(),
+                                 attrs);
+    }
+    catch (...) {
+    }
+}
+
+void
+Traceable::advancePost(const nixl_blob_t &parent, const nixl_blob_t &baggage) {
+    const std::optional<TraceContext> supplied =
+        parent.empty() ? std::nullopt : parseParentContext(tracer_, parent);
+    const TraceContext &under = supplied ? *supplied : requestContext_;
+    postIdentity_.context = under.sampled() ? generatePostContext(under, tracer_) : under;
+    ++postIdentity_.execution;
+    if (postIdentity_.context.sampled()) {
+        const std::string_view own = parseBaggage(tracer_, baggage);
+        postBaggage_.assign(own.empty() ? std::string_view{requestBaggage_} : own);
+    } else {
+        postBaggage_.clear();
+    }
+}
+
+void
+Traceable::emitEvent(Record record) const {
+    const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
+                               {AttributeKey::NixlXferExecution, postIdentity_.execution}};
+    tracer_->emitEvent(record, kindOf(record), postIdentity_, attrs);
+}
+
+void
+Traceable::emitEvent(Record record, const Attribute &attr) const {
+    const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
+                               {AttributeKey::NixlXferExecution, postIdentity_.execution},
+                               attr};
+    tracer_->emitEvent(record, kindOf(record), postIdentity_, attrs);
+}
+
+TraceIdentity
+detail::suppliedIdentity(const Tracer *tracer, const nixl_blob_t &parent) {
+    const std::optional<TraceContext> supplied = parseParentContext(tracer, parent);
+    if (!supplied) {
+        return {};
+    }
+    return {supplied->sampled() ? generatePostContext(*supplied, tracer) : *supplied, 0, 0};
+}
+
 nixl_status_t
 traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info) {
     const TraceIdentity identity = traceable.postIdentity();

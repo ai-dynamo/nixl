@@ -111,6 +111,18 @@ public:
 private:
     explicit Traceable(const detail::Call &call);
 
+    void
+    emitRequestSpan() const noexcept;
+
+    void
+    advancePost(const nixl_blob_t &parent, const nixl_blob_t &baggage);
+
+    void
+    emitEvent(Record record) const;
+
+    void
+    emitEvent(Record record, const Attribute &attr) const;
+
     Tracer *const tracer_;
     const TraceContext requestContext_;
     TraceIdentity postIdentity_;
