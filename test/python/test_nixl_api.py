@@ -236,6 +236,22 @@ def test_metadata_pass(two_agents):
     utils.free_passthru(addr)
 
 
+def test_remove_remote_agent_status(two_agents):
+    agent1, agent2 = two_agents
+
+    agent1.add_remote_agent(agent2.get_agent_metadata())
+    assert agent1.remove_remote_agent(agent2.name) is True
+    assert not agent1.check_remote_metadata(agent2.name)
+
+    # Removing an agent that isn't loaded is not an error, so teardown can repeat it
+    assert agent1.remove_remote_agent(agent2.name) is False
+    assert agent1.remove_remote_agent(str(uuid.uuid4())) is False
+
+    # Other failures raise
+    with pytest.raises(bindings.nixlInvalidParamError):
+        agent1.remove_remote_agent(agent1.name)
+
+
 @pytest.mark.timeout(5, func_only=True)
 def test_empty_notif_tag(two_connected_agents):
     agent1, agent2 = two_connected_agents

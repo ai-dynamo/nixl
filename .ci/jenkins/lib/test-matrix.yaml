@@ -120,7 +120,7 @@ steps:
       export PR_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}
       rm -rf /etc/containers/storage.conf && rm -f /usr/share/containers/storage.conf
       set +x -v
-      echo "$REPO_PASS" | podman login "https://${registry_host}" -u "$REPO_USER" --password-stdin
+      echo "$REPO_PASS" | .ci/scripts/registry-login.sh "https://${registry_host}" "$REPO_USER"
       set +v -x
       podman build --network host \
       ${UCX_ARG} \

@@ -17,8 +17,13 @@
 
 #include <gtest/gtest.h>
 #include <cstdlib>
+#include <dlfcn.h>
 #include <string>
 #include <vector>
+
+extern "C" {
+#include <ucs/config/global_opts.h>
+}
 
 #include "absl/strings/str_join.h"
 #include "common.h"
@@ -255,4 +260,50 @@ TEST_F(HardwareWarningTest, EfaHardwareMismatchNoWarning) {
         const nixl_reg_dlist_t descs(DRAM_SEG);
         agent.registerMem(descs);
     }
+}
+
+TEST(UcxEfaModuleTest, DefaultUcxModulesMatchesEfaHardwarePresence) {
+    if (std::getenv("UCX_MODULES") != nullptr) {
+        GTEST_SKIP() << "UCX_MODULES is set in environment";
+    }
+
+    const std::vector<std::string> devs;
+    const nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
+
+    char modules_buf[256] = {};
+    ASSERT_EQ(ucs_global_opts_get_value("MODULES", modules_buf, sizeof(modules_buf)), UCS_OK);
+
+    if (nixl::hwInfo::instance().numEfaDevices == 0) {
+        EXPECT_STREQ(modules_buf, "^efa");
+        void *handle = dlopen("libuct_ib_efa.so.0", RTLD_LAZY | RTLD_NOLOAD);
+        EXPECT_EQ(handle, nullptr);
+        if (handle != nullptr) {
+            dlclose(handle);
+        }
+    } else {
+        EXPECT_STRNE(modules_buf, "^efa");
+        void *handle = dlopen("libuct_ib_efa.so.0", RTLD_LAZY | RTLD_NOLOAD);
+        EXPECT_NE(handle, nullptr);
+        if (handle != nullptr) {
+            dlclose(handle);
+        }
+    }
+}
+
+TEST(UcxEfaModuleTest, RespectsExplicitUcxModulesEnv) {
+    char orig_buf[256] = {};
+    ASSERT_EQ(ucs_global_opts_get_value("MODULES", orig_buf, sizeof(orig_buf)), UCS_OK);
+
+    gtest::ScopedEnv env_helper;
+    env_helper.addVar("UCX_MODULES", "^cuda_ipc");
+    ASSERT_EQ(ucs_global_opts_set_value("MODULES", "^cuda_ipc"), UCS_OK);
+
+    const std::vector<std::string> devs;
+    const nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
+
+    char modules_buf[256] = {};
+    EXPECT_EQ(ucs_global_opts_get_value("MODULES", modules_buf, sizeof(modules_buf)), UCS_OK);
+    EXPECT_STREQ(modules_buf, "^cuda_ipc");
+
+    EXPECT_EQ(ucs_global_opts_set_value("MODULES", orig_buf), UCS_OK);
 }

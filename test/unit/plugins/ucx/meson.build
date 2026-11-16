@@ -33,12 +33,12 @@ ucx_test_dep = [ ucx_dep, nixl_common_dep, ucx_backend_interface]
 
 if rocm_dep.found()
     ucx_test_dep += [ rocm_dep ]
-    cpp_args = ['-DHAVE_GPU', '-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
+    ucx_test_cpp_args = ['-DHAVE_GPU', '-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
 elif cuda_dep.found()
     ucx_test_dep += [ cuda_dep ]
-    cpp_args = ['-DHAVE_GPU', '-DHAVE_CUDA']
+    ucx_test_cpp_args = ['-DHAVE_GPU', '-DHAVE_CUDA']
 else
-    cpp_args = ['-UHAVE_CUDA']
+    ucx_test_cpp_args = ['-UHAVE_CUDA']
 endif
 
 ucx_backend_test_dep = [nixl_dep, nixl_infra, thread_dep] + ucx_test_dep + nixl_test_utils_dep
@@ -48,14 +48,14 @@ ucx_backend_test = executable('ucx_backend_test',
         'ucx_backend_test.cpp',
         dependencies: ucx_backend_test_dep,
         include_directories: ucx_test_include_directories,
-        cpp_args : cpp_args,
+        cpp_args : ucx_test_cpp_args,
         install: true)
 
 ucx_backend_multi = executable('ucx_backend_multi',
            'ucx_backend_multi.cpp',
            dependencies: ucx_backend_test_dep,
            include_directories: ucx_test_include_directories,
-           cpp_args : cpp_args,
+           cpp_args : ucx_test_cpp_args,
            install: true)
 
 if get_option('buildtype') != 'release'
@@ -71,7 +71,7 @@ if get_option('buildtype') != 'release'
                        'ucx_worker_test.cpp',
                        dependencies: ucx_test_dep,
                        include_directories: ucx_test_include_directories,
-                       cpp_args : ['-DUSE_VRAM'] + cpp_args,
+                       cpp_args : ['-DUSE_VRAM'] + ucx_test_cpp_args,
                        install: true)
     endif
 
