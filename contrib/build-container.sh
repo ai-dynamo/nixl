@@ -310,7 +310,7 @@ get_options() {
         # The container image's default torch (cu134, 2.15) has no Python 3.10 wheels;
         # cu130 2.14 does. Only when neither is given, and only for contrib/Dockerfile:
         # Dockerfile.manylinux builds its own Python and picks its own index.
-        if [[ $(basename "$DOCKER_FILE") == Dockerfile && -z $TORCH_CUDA_INDEX && -z $DEFAULT_TORCH_VERSION ]]; then
+        if [[ $(readlink -f "$DOCKER_FILE") == "$SOURCE_DIR/Dockerfile" && -z $TORCH_CUDA_INDEX && -z $DEFAULT_TORCH_VERSION ]]; then
             TORCH_CUDA_INDEX=cu130
             DEFAULT_TORCH_VERSION=2.14
         fi
