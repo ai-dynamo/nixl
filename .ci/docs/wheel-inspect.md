@@ -16,7 +16,7 @@ workstation. Nothing from a wheel is executed or loaded.
 python3 .ci/scripts/wheel_inspect release-run \
     --candidate pypi:1.5.2 --reference pypi:1.5.1 --out-dir /tmp/inspect
 
-# A folder the nightly wheel build published, against the latest earlier PyPI release
+# A folder nixl-build-wheel published, against the latest earlier PyPI release
 ARTIFACTORY_USER=... ARTIFACTORY_TOKEN=... \
 python3 .ci/scripts/wheel_inspect release-run \
     --candidate artifactory:https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local/release/<ver>/<build> \
@@ -42,8 +42,8 @@ file comparison then runs on the shared ones and the rest is listed.
 
 ## The build manifest
 
-The nightly wheel build publishes `build-manifest.json` next to the wheels (see
-[`nixl-ci-build-wheel-nightly`](ci-overview.md#nixl-ci-build-wheel-nightly-standalone)). When a
+The wheel build publishes `build-manifest.json` next to the wheels (see
+[`nixl-build-wheel`](ci-overview.md#nixl-build-wheel-standalone)). When a
 side has one (found as `<dir>/build-manifest.json`, or passed with `--candidate-manifest` /
 `--reference-manifest`), the tool first confirms it describes exactly these files, by name and
 sha256, and that the build marked it complete. A manifest that fails this is not used: check 3

@@ -188,7 +188,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     release = sub.add_parser(
         "release-run",
-        help="fetch both sides, inspect, and publish the report (the nightly's step)",
+        help="fetch both sides, inspect, and publish the report",
     )
     release.add_argument(
         "--candidate",

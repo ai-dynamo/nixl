@@ -1,4 +1,4 @@
-"""build-manifest.json, the provenance record the nightly wheel build publishes next to a wheel set.
+"""build-manifest.json, the provenance record nixl-build-wheel publishes next to a wheel set.
 
 Written by ``.ci/scripts/merge_build_manifest.py``. Schema 1 keys ``base_image`` by CUDA major;
 schema 2 (one CUDA line) carries a single flat ``base_image``. Wheels are matched by file name,
