@@ -19,8 +19,8 @@
  * @brief GPU Device API for in-kernel memory transfers
  *
  * Include this header from CUDA device code. The namespaced nixl::gpu API is
- * the canonical interface; the nixlPut / nixlGpuGetXferStatus wrappers keep
- * the original C-style names.
+ * the canonical interface; the nixlPut / nixlGet / nixlGpuGetXferStatus
+ * wrappers keep the original C-style names.
  */
 
 #ifndef NIXL_SRC_API_DEVICE_GPU_NIXL_DEVICE_CUH
@@ -79,6 +79,35 @@ put(const memViewElem &src,
     uint64_t flags = 0,
     xferStatusH *xfer_status = nullptr) {
     return impl::put<level, mode>(src, dst, size, channel_id, flags, xfer_status);
+}
+
+/**
+ * @brief Post a single-region memory transfer from remote to local GPU.
+ *
+ * Not implemented yet; always returns NIXL_ERR_NOT_SUPPORTED.
+ *
+ * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
+ *                  time, a fixed mode must match the view.
+ *
+ * @param src         [in]  Source (remote) memory view element
+ * @param dst         [in]  Destination (local) memory view element
+ * @param size        [in]  Size in bytes to transfer
+ * @param channel_id  [in]  Channel ID to use for the transfer
+ * @param flags       [in]  Transfer flags
+ * @param xfer_status [in,out] Optional status handle
+ *                            (use @ref nixl::gpu::getXferStatus)
+ *
+ * @return NIXL_ERR_NOT_SUPPORTED Get is not supported yet.
+ */
+template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+get(const memViewElem &,
+    const memViewElem &,
+    size_t,
+    unsigned = 0,
+    uint64_t = 0,
+    xferStatusH * = nullptr) {
+    return NIXL_ERR_NOT_SUPPORTED;
 }
 
 /**
@@ -206,6 +235,36 @@ nixlPut(const nixlMemViewElem &src,
         uint64_t flags = 0,
         nixlGpuXferStatusH *xfer_status = nullptr) {
     return nixl::gpu::put<level, mode>(src, dst, size, channel_id, flags, xfer_status);
+}
+
+/**
+ * @brief Post a single-region memory transfer from remote to local GPU.
+ *
+ * Not implemented yet; always returns NIXL_ERR_NOT_SUPPORTED.
+ *
+ * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
+ *                  time, a fixed mode must match the view.
+ *
+ * @param src         [in]  Source (remote) memory view element
+ * @param dst         [in]  Destination (local) memory view element
+ * @param size        [in]  Size in bytes to transfer
+ * @param channel_id  [in]  Channel ID to use for the transfer
+ * @param flags       [in]  Transfer flags
+ * @param xfer_status [in,out] Optional status handle
+ *                            (use @ref nixlGpuGetXferStatus)
+ *
+ * @return NIXL_ERR_NOT_SUPPORTED Get is not supported yet.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD,
+         nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+nixlGet(const nixlMemViewElem &src,
+        const nixlMemViewElem &dst,
+        size_t size,
+        unsigned channel_id = 0,
+        uint64_t flags = 0,
+        nixlGpuXferStatusH *xfer_status = nullptr) {
+    return nixl::gpu::get<level, mode>(src, dst, size, channel_id, flags, xfer_status);
 }
 
 /**
