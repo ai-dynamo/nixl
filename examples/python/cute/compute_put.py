@@ -130,7 +130,11 @@ def main():
     args = parser.parse_args()
     if args.elements < 1:
         parser.error("--elements must be positive")
-    level, threads = {"thread": (0, 1), "warp": (1, 32), "block": (2, 128)}[args.level]
+    level, threads = {
+        "thread": (device.THREAD, 1),
+        "warp": (device.WARP, 32),
+        "block": (device.BLOCK, 128),
+    }[args.level]
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group("gloo", timeout=timedelta(seconds=120))
     if dist.get_world_size() != 2:
