@@ -412,11 +412,16 @@ performTransfer(nixlBackendEngine *mooncake1,
     ret3 = mooncake1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
     assert(ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
 
-    if (repost_in_flight && ret3 == NIXL_IN_PROG) {
-        // The 64 MiB transfer is still in flight, so the handle can't be reposted yet.
+    if (repost_in_flight && !use_notif && ret3 == NIXL_IN_PROG) {
+        // A repost is refused while the transfer is in flight. A fast host may
+        // finish it first; the repost is then a new transfer to wait for. Not
+        // done with a notification, which that repost would send a second time.
         const nixl_status_t ret4 =
             mooncake1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
-        assert(ret4 == NIXL_ERR_REPOST_ACTIVE);
+        assert(ret4 == NIXL_ERR_REPOST_ACTIVE || ret4 == NIXL_SUCCESS || ret4 == NIXL_IN_PROG);
+        if (ret4 != NIXL_ERR_REPOST_ACTIVE) {
+            ret3 = ret4;
+        }
     }
 
     if (ret3 == NIXL_SUCCESS) {
@@ -777,7 +782,8 @@ main(int argc, char **argv) {
 #endif
     }
 
-    // num_threads=4 and split_batch_size=16 split the 64 descriptors into 4 batches.
+    // num_threads=4 and split_batch_size=16 split the 64 descriptors into 4 batches
+    // on engines with getBatchTransferStatus(); older engines don't split.
     nixlBackendEngine *split[2] = {createEngine("Agent1", false, 4, 16),
                                    createEngine("Agent2", false, 4, 16)};
     test_inter_agent_transfer(false, false, split[0], DRAM_SEG, 0, split[1], DRAM_SEG, 0);

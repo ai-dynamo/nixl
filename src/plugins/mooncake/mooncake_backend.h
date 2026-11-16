@@ -122,7 +122,8 @@ private:
     transfer_engine_t engine_;
     const std::string local_agent_name_;
     // Splits a postXfer of at least split_batch_size_ requests into one batch
-    // per thread. Only created for more than one thread.
+    // per thread. Only created for more than one thread, and only on engines with
+    // getBatchTransferStatus().
     std::unique_ptr<nixlMooncakeThreadPool> submit_pool_;
     size_t split_batch_size_;
     // One thread that frees the batches of finished transfers, so that neither

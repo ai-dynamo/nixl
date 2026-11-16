@@ -169,6 +169,10 @@ protected:
             m_gpu_device = false;
         }
 
+        // MOONCAKE ignores num_threads, with a warning, on engines without
+        // getBatchTransferStatus().
+        const LogIgnoreGuard lig("ignoring num_threads=");
+
         // Create two agents
         for (size_t i = 0; i < 2; i++) {
             addAgent(i);

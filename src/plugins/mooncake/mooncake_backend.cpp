@@ -147,16 +147,6 @@ freeBatch(transfer_engine_t engine, uint64_t batch_id) {
 
 constexpr size_t kDefaultSplitBatchSize = 1024;
 
-#ifdef HAVE_MOONCAKE_BATCH_STATUS
-// Engines with getBatchTransferStatus() (kvcache-ai/Mooncake#4910) also report a
-// TCP WRITE complete only once the target applied it (kvcache-ai/Mooncake#2850).
-constexpr bool kSplitWrites = true;
-#else
-// Older engines can report a TCP WRITE complete before the target applied it, so
-// a split WRITE could notify before every chunk landed. Split only READs.
-constexpr bool kSplitWrites = false;
-#endif
-
 // A backend parameter takes precedence over its environment variable.
 [[nodiscard]] size_t
 getSizeParam(const nixl_b_params_t *params,
@@ -177,8 +167,15 @@ class nixlMooncakeThreadPool {
 public:
     explicit nixlMooncakeThreadPool(size_t num_threads) {
         threads_.reserve(num_threads);
-        for (size_t i = 0; i < num_threads; ++i) {
-            threads_.emplace_back([this] { worker(); });
+        try {
+            for (size_t i = 0; i < num_threads; ++i) {
+                threads_.emplace_back([this] { worker(); });
+            }
+        }
+        catch (...) {
+            // The destructor doesn't run, so join the threads that did start.
+            stop();
+            throw;
         }
     }
 
@@ -187,14 +184,7 @@ public:
     operator=(const nixlMooncakeThreadPool &) = delete;
 
     ~nixlMooncakeThreadPool() {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            stop_ = true;
-        }
-        cv_.notify_all();
-        for (auto &thread : threads_) {
-            thread.join();
-        }
+        stop();
     }
 
     [[nodiscard]] size_t
@@ -215,6 +205,18 @@ public:
     }
 
 private:
+    void
+    stop() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stop_ = true;
+        }
+        cv_.notify_all();
+        for (auto &thread : threads_) {
+            thread.join();
+        }
+    }
+
     void
     worker() {
         for (;;) {
@@ -252,7 +254,16 @@ nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
         split_batch_size_ = kDefaultSplitBatchSize;
     }
     if (num_threads > 1) {
+#ifdef HAVE_MOONCAKE_BATCH_STATUS
         submit_pool_ = std::make_unique<nixlMooncakeThreadPool>(num_threads);
+#else
+        // Released engines without it don't get the speedup and lack
+        // kvcache-ai/Mooncake#3198, so a failed submit may never finish. Before
+        // v0.3.12 they can also report a TCP WRITE complete too early
+        // (kvcache-ai/Mooncake#2850).
+        NIXL_WARN << "Mooncake Transfer Engine has no getBatchTransferStatus(), ignoring "
+                  << "num_threads=" << num_threads;
+#endif
     }
     free_pool_ = std::make_unique<nixlMooncakeThreadPool>(1);
     NIXL_INFO << "Mooncake submit threads=" << num_threads
@@ -533,8 +544,7 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
     const bool has_notif = opt_args && opt_args->hasNotif;
     size_t chunk_size = request_count;
     size_t num_chunks = 1;
-    if (submit_pool_ && request_count >= split_batch_size_ &&
-        (operation == NIXL_READ || kSplitWrites)) {
+    if (submit_pool_ && request_count >= split_batch_size_) {
         const size_t threads = submit_pool_->size();
         chunk_size = (request_count + threads - 1) / threads;
         num_chunks = (request_count + chunk_size - 1) / chunk_size;
