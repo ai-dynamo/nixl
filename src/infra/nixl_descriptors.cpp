@@ -392,16 +392,6 @@ nixlSecDescList::addDesc(nixlSectionDesc &&desc) {
     vec.insert(itr, std::move(desc));
 }
 
-namespace {
-void
-appendAll(std::vector<nixlSectionDesc> &dst, std::vector<nixlSectionDesc> &src) {
-    dst.reserve(dst.size() + src.size());
-    for (auto &d : src) {
-        dst.emplace_back(std::move(d));
-    }
-}
-} // namespace
-
 void
 nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
     auto &vec = this->descs;
@@ -410,16 +400,12 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
         return;
     }
 
-    // Check if the batch comes after the existing elements
-    if (!(batch.front() < vec.back())) {
-        appendAll(vec, batch);
-        return;
-    }
-
-    // Check if the batch comes before the existing elements
-    if (!(vec.front() < batch.back())) {
-        appendAll(batch, vec);
-        vec = std::move(batch);
+    // Batches at either end can reuse the section's allocation.
+    const bool append = !(batch.front() < vec.back());
+    if (append || !(vec.front() < batch.back())) {
+        vec.insert(append ? vec.end() : vec.begin(),
+                   std::make_move_iterator(batch.begin()),
+                   std::make_move_iterator(batch.end()));
         return;
     }
 

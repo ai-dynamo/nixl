@@ -115,26 +115,6 @@ public:
 
     ~nixlUcxEngine();
 
-    bool
-    supportsRemote() const override {
-        return true;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
-
-    bool
-    supportsNotif() const override {
-        return true;
-    }
-
-    [[nodiscard]] bool
-    supportsTraceContext() const noexcept override {
-        return true;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const override;
 
