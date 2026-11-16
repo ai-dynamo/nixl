@@ -388,6 +388,10 @@ nixlLibblkioEngine::registerMem(const nixlBlobDesc &mem,
 
 nixl_status_t
 nixlLibblkioEngine::deregisterMem(nixlBackendMD *meta) {
+    // The metadata object only records address/length/devId; it does not own
+    // the underlying BlkioDevice handle.  Device handles are engine-level
+    // resources (shared across registrations via devId) and are destroyed in
+    // the engine destructor (~nixlLibblkioEngine).
     delete meta;
     return NIXL_SUCCESS;
 }
@@ -766,7 +770,19 @@ nixlLibblkioEngine::drainReqCompletions(nixlLibblkioBackendReqH *req) const {
             struct timespec poll_timeout = {0, 10 * 1000 * 1000};
             struct blkio_completion comps[COMPLETION_BATCH_SIZE];
             int n = blkioq_do_io(q, comps, 1, COMPLETION_BATCH_SIZE, &poll_timeout);
-            if (n > 0) {
+            if (n < 0) {
+                NIXL_ERROR << absl::StrFormat(
+                    "libblkio: drainReqCompletions: blkioq_do_io failed: %s", strerror(-n));
+                // Queue fatally failed — mark all pending slots on this queue
+                // as completed with an error so we don't spin until timeout.
+                for (unsigned i = 0; i < req->desc_count_; i++) {
+                    if (req->queues_[i] == q && !req->io_slots_[i].completed) {
+                        req->io_slots_[i].completed = true;
+                        req->io_slots_[i].ret = n;
+                    }
+                }
+                req->had_error_ = true;
+            } else if (n > 0) {
                 for (int j = 0; j < n; j++) {
                     auto *slot = static_cast<nixlBlkioIoSlot *>(comps[j].user_data);
                     slot->completed = true;
