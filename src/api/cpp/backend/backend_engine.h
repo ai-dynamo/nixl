@@ -152,7 +152,7 @@ class nixlBackendEngine {
         virtual nixl_status_t checkXfer(nixlBackendReqH* handle) const = 0;
 
         // Release the request; a non-success result must preserve the handle.
-        // Active transfers reach this only with plugin supports_xfer_cancel=true.
+        // Core refuses release while checkXfer reports NIXL_IN_PROG; release does not cancel.
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
         // Prepare a memory view for remote buffers

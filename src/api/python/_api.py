@@ -732,13 +732,12 @@ class nixl_agent:
         )
 
     def release_xfer_handle(self, handle: nixl_xfer_handle):
-        """Release a transfer handle, attempting cancellation when supported.
+        """Release a transfer handle without canceling an active transfer.
 
         On refusal, the handle remains valid. Keep the agents, buffers, and memory
         registrations alive. Poll a pending transfer with check_xfer_state() and
         retry after completion. A transfer still reported in progress, including
-        an in-flight notification, can be released only if the backend supports
-        cancellation and successfully releases it. Backend failures may prevent release
+        an in-flight notification, cannot be released. Backend failures may prevent release
         indefinitely; agent destruction is not a completion barrier for
         outstanding handles.
 
@@ -746,8 +745,8 @@ class nixl_agent:
             handle: Handle to the transfer operation from initialize_xfer or make_xfer.
 
         Raises:
-            nixlRepostActiveError: The transfer is still active without
-                cancellation support, or the backend refused release. Only
+            nixlRepostActiveError: The transfer is still active, or the backend
+                refused release. Only
                 successful release invalidates the handle.
         """
         handle.release()

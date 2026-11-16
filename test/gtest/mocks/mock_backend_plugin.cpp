@@ -16,7 +16,6 @@
  */
 #include "mock_backend_engine.h"
 #include "common.h"
-#include <cstdlib>
 
 namespace mocks {
 namespace backend_plugin {
@@ -41,15 +40,9 @@ namespace backend_plugin {
         return "0.0.1";
     }
 
-    /** Advertise mock cancellation support; an empty test override models a legacy plugin. */
     static nixl_b_params_t
     get_backend_options() {
-        // Default to cancellation support for existing mock release/tracing tests.
-        const char *value = std::getenv("NIXL_TEST_MOCK_XFER_CANCEL");
-        if (value && *value == '\0') {
-            return {};
-        }
-        return {{"supports_xfer_cancel", value ? value : "true"}};
+        return nixl_b_params_t();
     }
 
     static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,

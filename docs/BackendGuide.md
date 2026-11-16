@@ -96,13 +96,13 @@ getPublicData and loadRemoteMD are required if backend supportsRemote, and loadL
 * estimateXferCost: Given the same info as prepXfer, as well as the transfer request output from prepXfer, the backend can estimate the time of transfer, with noise margin and method of estimation. This is optional.
 * postXfer(): Posts a transfer request, meaning the backend should start the transfer. This call is asynchronous, meaning it should not wait to finish the transfer. If the transfer is really small, it’s fine to return DONE right after this call.
 * checkXfer(): Checks the status of a transfer request.
-* releaseReqH(): Releases a transfer request handle, which should be an extension of the nixlBackendReqH. Core calls this for an active transfer only when the plugin advertises `supports_xfer_cancel=true` (see below). A non-success return keeps the handle owned by the caller. Error-state cleanup remains the backend's responsibility; an error status alone does not prove that its operations have stopped.
+* releaseReqH(): Releases a transfer request handle, which should be an extension of the nixlBackendReqH. Core refuses release while `checkXfer()` reports `NIXL_IN_PROG`; release does not cancel transfers. A non-success return keeps the handle owned by the caller. Error-state cleanup remains the backend's responsibility; an error status alone does not prove that its operations have stopped.
 
 Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not set supportsNotifications, no such notification will be asked.
 
 Note that any transfer request will be prepped only once, but can be posted multiple times, as long as it gets to DONE state before getting reposted. There is no ordering guarantee across transfer requests, and no locking mechanism for any specific memory region; the user is in charge of not corrupting the memory by having two simultaneous transfers to the same location.
 
-Finally, note that a call to releaseXferReq should not block and be asynchronous, especially important to remember when aborting a transfer. This function can return error, meaning it was not successful in aborting the request. If a backend can abort a transfer quickly without a stall, then releaseXferReq can return success right away. Otherwise, one option would be to wait for the transfer to complete. In the meantime, checkXferReq should return error if there was a call to abort which was not successful, while calls to releaseXferReq would return error until the transfer is completed and it returns success. If there is a scenario that a blocking call can abort the transfer before it is completed, then that blocking call can start in a separate thread (or within the progress thread of the backend). In other words, use a blocking call under the hood but provide non-blocking APIs to the user.
+Release does not cancel or wait for an active transfer. Core returns `NIXL_ERR_REPOST_ACTIVE` while it remains in progress, preserving the handle. The application must keep buffers and registrations alive, poll to completion, then retry release. Explicit cancellation is a separate future API, not part of release.
 ### Notification Handling:
 
 * getNotifs(): Gets notifications received from remote agents (or local in case of loopback). The output is a map from remote agent name to a list (vector) of notifications, in the form of byte array.
@@ -269,11 +269,3 @@ If a backend is provided by the user, the agent will call **genNotif** from the 
 ### Destructor:
 
 When an agent is getting destroyed at the end of the application, it will deregister all the remaining memories that were not deregistered by the application (bad practice, but agent takes care of it). Then for each of the backends it will call their **destructor** from the SB API, and finally do the rest of internal clean up.
-
-### Transfer cancellation capability
-
-A plugin may return `supports_xfer_cancel=true` in its existing `get_backend_options()` map to allow core to call `releaseReqH()` on an in-progress transfer. Core reads this plugin-wide capability once when creating the backend; caller-supplied initialization parameters cannot override it. Missing entries and values other than the exact string `true` mean unsupported. No production backend opts in currently.
-
-Opting in guarantees that successful cancellation stops all access to transfer buffers, any non-success result preserves the handle for polling and retry, and release does not block waiting for completion. The guarantee must hold for every engine configuration the plugin creates. Without this capability, core retains pending requests and returns `NIXL_ERR_REPOST_ACTIVE`. Completed and never-posted requests still follow the existing release path.
-
-This optional metadata entry uses the existing plugin interface: no virtual method or plugin layout change, and plugin API version remains 3. Existing binary plugins can load without rebuilding and default to cancellation unsupported; their pending-release behavior is consequently more conservative.

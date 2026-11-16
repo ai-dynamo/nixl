@@ -92,6 +92,8 @@ TEST_P(UcxRequestRelease, ActiveReadRemainsPollableAfterRefusedRelease) {
             }
             ASSERT_EQ(release_status, NIXL_ERR_REPOST_ACTIVE);
             saw_refusal = true;
+            const auto polled = initiator.getXferStatus(request);
+            ASSERT_TRUE(polled == NIXL_IN_PROG || polled == NIXL_SUCCESS);
         }
     }
 
