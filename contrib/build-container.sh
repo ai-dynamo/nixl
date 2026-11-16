@@ -301,6 +301,11 @@ get_options() {
         shift
     done
 
+    # A pre-built wheel base already has its torch; the wheel stage installs none.
+    if [[ -n $WHEEL_BASE_IMAGE && -n $DEFAULT_TORCH_VERSION ]]; then
+        error "ERROR:" "--default-torch-version has no effect with --wheel-base-image: torch comes from the pre-built base image"
+    fi
+
     if [[ $OS == "ubuntu22" ]]; then
         BASE_IMAGE=nvidia/cuda
         BASE_IMAGE_TAG=13.4.2-devel-ubuntu22.04
