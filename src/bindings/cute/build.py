@@ -41,7 +41,7 @@ def main():
     args = parser.parse_args()
     here = Path(__file__).resolve().parent
     root = here.parents[2]
-    output = args.output or here / "device.bc"
+    output = args.output or here / "libnixl_device.bc"
     dependencies = ["-MD", "-MF", args.depfile, "-MQ", output] if args.depfile else []
     if not (args.ucx / "include/ucp/api/device/ucp_device_impl.h").is_file():
         parser.error("UCX device development headers are required")

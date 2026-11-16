@@ -4,14 +4,20 @@
 
 Submission never adds a completion loop, fence, allocation, or kernel launch.
 Handles are from prep_mem_view(); request addresses refer to caller-owned GPU
-storage. Rebuild device.bc against the same NIXL/UCX used by the host process.
+storage. Bitcode is loaded from the CUDA backend selected by nixl.
 """
 
 from pathlib import Path
 
-import cutlass
-import cutlass.cute as cute
+try:
+    import cutlass
+    import cutlass.cute as cute
+except ModuleNotFoundError as exc:
+    if exc.name != "cutlass":
+        raise
+    raise ImportError("nixl.cute requires CuTe DSL; install nixl[cute]") from exc
 
+from nixl import _bindings
 from nixl._bindings import nixl_status_t
 
 THREAD, WARP, BLOCK = 0, 1, 2
@@ -19,7 +25,13 @@ SUCCESS = int(nixl_status_t.NIXL_SUCCESS)
 IN_PROGRESS = int(nixl_status_t.NIXL_IN_PROG)
 DEFER = 1
 REQUEST_BYTES = 64
-_bitcode = cute.BitCode(str(Path(__file__).with_name("device.bc")))
+_bitcode_path = Path(_bindings.__file__).parent / "lib" / "libnixl_device.bc"
+if not _bitcode_path.is_file():
+    raise ImportError(
+        f"NIXL CuTe bitcode is missing: {_bitcode_path}. "
+        "Rebuild this NIXL backend with -Dbuild_cute=true."
+    )
+_bitcode = cute.BitCode(str(_bitcode_path))
 
 
 @cute.extern(name="cute_nixl_put", source=_bitcode)

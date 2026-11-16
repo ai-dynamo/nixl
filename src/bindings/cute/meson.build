@@ -20,9 +20,9 @@ foreach tool : ['clang++', 'opt', 'llvm-as']
 endforeach
 
 # Keep the LLVM/libNVVM normalization in Python; Meson owns outputs and dependencies.
-custom_target('cute-device-bitcode',
+cute_bitcode = custom_target('cute-device-bitcode',
   input: 'device.cu',
-  output: 'device.bc',
+  output: 'libnixl_device.bc',
   depfile: 'device.d',
   command: [py, files('build.py'),
             '--ucx', ucx_path, '--cuda', cute_cuda_path,
@@ -30,5 +30,6 @@ custom_target('cute-device-bitcode',
             '--output', '@OUTPUT@', '--depfile', '@DEPFILE@'],
   depend_files: files('build.py'),
   build_by_default: true,
+  install: true,
+  install_dir: get_option('libdir'),
 )
-configure_file(input: 'nixl_cute.py', output: 'nixl_cute.py', copy: true)

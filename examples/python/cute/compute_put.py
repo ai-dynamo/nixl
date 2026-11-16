@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Two-rank compute -> NIXL PUT; a correctness example, not a KV-cache codec.
 
-The bindings live in src/bindings/cute. Everything here, including the progress
+The bindings are exposed by nixl.cute. Everything here, including the progress
 loop, counter protocol and Gloo bootstrap, belongs to the application example.
 """
 
@@ -16,11 +16,11 @@ from datetime import timedelta
 import cuda.bindings.driver as cuda
 import cutlass
 import cutlass.cute as cute
-import nixl_cute as device
 import torch
 import torch.distributed as dist
 from cutlass.cute.runtime import from_dlpack
 
+from nixl import cute as device
 from nixl import nixl_agent, nixl_agent_config, nixl_thread_sync_t
 
 

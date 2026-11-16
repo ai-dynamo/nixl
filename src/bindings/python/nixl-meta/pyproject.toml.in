@@ -34,6 +34,8 @@ dependencies = [@WHEEL_DEPS@]
 [project.optional-dependencies]
 cu12 = ["nixl-cu12==@VERSION@"]
 cu13 = ["nixl-cu13==@VERSION@"]
+# The cu13 extra adds CUDA 13 support alongside CuTe's default CUDA 12 runtime.
+cute = ["nvidia-cutlass-dsl[cu13]==4.5.1"]
 
 [tool.setuptools]
 packages = ["nixl", "nixl_ep"]

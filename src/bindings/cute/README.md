@@ -2,38 +2,65 @@
 
 Call NIXL from a CuTe compute kernel, for example to transfer produced KV-cache
 data. Host registration, connections and memory views remain ordinary NIXL calls.
-This is a source-only prototype; it is not installed by the NIXL package.
+The optional `nixl.cute` module loads bitcode from the selected CUDA backend.
+Ordinary `import nixl` does not import CuTe.
 
-- [nixl_cute.py](nixl_cute.py): Python device operations using `@cute.extern`.
+- [cute.py](../python/nixl-meta/nixl/cute.py): Python device operations using `@cute.extern`.
 - [device.cu](device.cu): thin calls to the native NIXL device API.
 - [compute_put.py](../../../examples/python/cute/compute_put.py): separate two-GPU
   correctness example, including computation, completion and notification.
 
-## Build and run
+## Install and run
 
-Requires an installed NIXL with UCX device support and UCX development headers
+Use a NIXL wheel built with `-Dbuild_cute=true`, then install its optional
+dependencies with `pip install 'nixl[cute]'`. Import the operations explicitly:
+
+```python
+from nixl import cute as device
+```
+
+The extra pins the tested CuTe DSL 4.5.1 and includes its CUDA 12 and CUDA 13
+runtimes. It does not enable a native build or add bitcode to an existing wheel.
+Missing bitcode produces an import error; another backend's bitcode is never used.
+
+The wheel example uses [upstream PyTorch](https://pytorch.org/get-started/previous-versions/)
+2.11 (CUDA 13). Keep UCX compatible across the process: NGC 26.06 PyTorch
+preloads UCX 1.21, which conflicts with this UCX 1.23 build.
+
+## Build from source
+
+Requires UCX device support and UCX development headers
 (`--enable-devel-headers`). Use the same NIXL/UCX sources for the host library and
 bitcode. The tested toolchain is LLVM 20, CUDA 13.3 and CuTe DSL 4.5.1; the example
 also uses PyTorch and cuda-python.
 
-From the repository root, add these options to your NIXL Meson configuration
+In an activated virtual environment, from the repository root
 (`CUDA_HOME` is the toolkit root; `UCX_PREFIX` is that UCX installation):
 
 ```sh
-meson setup build -Dbuild_cute=true -Dnixl_cuda_arch_list=100 \
+meson setup build --prefix="$VIRTUAL_ENV" --libdir=lib \
+  -Dbuild_cute=true -Dnixl_cuda_arch_list=100 \
   -Ducx_path="$UCX_PREFIX" -Dcudapath_inc="$CUDA_HOME/include" \
   -Dcudapath_lib="$CUDA_HOME/lib64"
-meson compile -C build cute-device-bitcode
-export PYTHONPATH="$PWD/build/src/bindings/cute:${PYTHONPATH:-}"
+meson compile -C build
+meson install -C build
+pip install --no-deps build/src/bindings/python/nixl-meta/nixl-*.whl
+pip install 'nvidia-cutlass-dsl[cu13]==4.5.1'
 timeout --signal=TERM --kill-after=10s 120s \
   torchrun --standalone --nproc-per-node=2 examples/python/cute/compute_put.py
 ```
 
+Use a Python environment that can import the installed CUDA backend; `uv` must
+be available at Meson setup to build the meta wheel. Meson installs
+`libnixl_device.bc` in both `libdir` and the backend's `nixl_cu12/lib` or
+`nixl_cu13/lib` directory. Python resolves the latter beside `nixl._bindings`.
+The source/UCX/GPU target must match the host build. The single GPU target
+restriction remains; this does not qualify a universal multi-architecture wheel.
+
 Meson uses `build.py` for LLVM/libNVVM normalization and tracks included headers.
 Set `-Dcute_llvm_path=...` if LLVM 20 is not in `/usr/lib/llvm-20/bin`.
-For an existing matching NIXL installation, `python src/bindings/cute/build.py
---ucx "$UCX_PREFIX" --arch sm_100` still works; use `src/bindings/cute` on
-`PYTHONPATH` in that case.
+For a backend wheel, pass the same setup options to `python -m build --wheel`
+using `-Csetup-args=-D...`; the bitcode is included in its installation manifest.
 
 Select `--level thread|warp|block`, `--defer` and `--elements N` as needed.
 The example's `--defer` then wait protocol is validated only for CUDA IPC;
@@ -74,7 +101,10 @@ meson compile -C build unit
 meson test -C build unit --test-args='--gtest_filter=CuteDeviceBinding.*'
 ```
 
-These CPU tests check shim forwarding and progress policy, not GPU transport or
+`pytest test/python/test_cute_packaging.py` checks lazy imports, CUDA backend
+selection and missing optional artifacts without requiring a GPU.
+
+The CPU shim tests check forwarding and progress policy, not GPU transport or
 ordering. Two-GPU CUDA IPC passes at THREAD/WARP/BLOCK; a GDA-enabled build and
 forced-GDA THREAD/WARP transfers also pass on the tested stack.
 
