@@ -21,9 +21,11 @@
 #include <array>
 #include <cstring>
 #include <exception>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <nixl_types.h>
@@ -41,6 +43,10 @@ get_ucx_backend_common_options() {
                    ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));
     params.emplace(nixl_ucx_vram_memtype_hint_param_name,
                    ucx_vram_memtype_hint_to_string(nixl_ucx_vram_memtype_hint_t::AUTO));
+    params.emplace(nixl_ucx_notif_drain_timeout_param_name,
+                   std::to_string(nixl_ucx_notif_drain_timeout.count()));
+    params.emplace(nixl_ucx_notif_warn_threshold_param_name,
+                   std::to_string(nixl_ucx_notif_warn_threshold));
     return params;
 }
 
@@ -131,6 +137,101 @@ ucx_vram_memtype_hint_from_string(std::string_view s) {
         enumNames(ucx_vram_memtype_hint_names));
 }
 
+// The worker owns all in-flight AM payloads. A callback removes its context;
+// if UCX suppresses the callback during worker destruction, the state releases
+// the remaining contexts after the worker and its transports are gone.
+struct nixlUcxAmSendState {
+    using clock = std::chrono::steady_clock;
+
+    struct context {
+        std::string payload;
+        nixlUcxAmSendState &owner;
+        std::shared_ptr<nixlUcxAmSendStats> epStats;
+        context *prev = nullptr;
+        context *next = nullptr;
+    };
+
+    ~nixlUcxAmSendState() {
+        while (head != nullptr) {
+            remove(head);
+        }
+    }
+
+    context *
+    add(std::string &&payload, const std::shared_ptr<nixlUcxAmSendStats> &ep_stats) {
+        auto ctx = std::make_unique<context>(context{std::move(payload), *this, ep_stats});
+        bool warn = false;
+        size_t pending;
+        {
+            const std::lock_guard lock(mutex);
+            ctx->next = head;
+            if (head != nullptr) {
+                head->prev = ctx.get();
+            }
+            head = ctx.get();
+            ep_stats->pending_.fetch_add(1, std::memory_order_release);
+            pending = stats->pending_.fetch_add(1, std::memory_order_release) + 1;
+            if ((warnThreshold != 0) && (pending >= warnThreshold) && !warned) {
+                warned = true;
+                warn = true;
+            }
+        }
+        if (warn) {
+            NIXL_WARN << "UCX AM pending sends reached warning threshold " << warnThreshold << " ("
+                      << pending << " pending sends, worker " << worker << ")";
+        }
+        return ctx.release();
+    }
+
+    void
+    remove(context *ctx) {
+        const std::unique_ptr<context> cleanup(ctx);
+        const std::lock_guard lock(mutex);
+        if (ctx->prev != nullptr) {
+            ctx->prev->next = ctx->next;
+        } else {
+            head = ctx->next;
+        }
+        if (ctx->next != nullptr) {
+            ctx->next->prev = ctx->prev;
+        }
+        ctx->epStats->pending_.fetch_sub(1, std::memory_order_release);
+        if (stats->pending_.fetch_sub(1, std::memory_order_release) == 1) {
+            // Warn at most once per nonempty episode, rather than flooding
+            // logs if the queue oscillates around the configured threshold.
+            warned = false;
+        }
+    }
+
+    [[nodiscard]] bool
+    drain(const nixlUcxAmSendStats &target, clock::time_point deadline, bool progress) const {
+        deadline = std::min(deadline, shutdownDeadline);
+        while (target.pending() != 0) {
+            if (clock::now() >= deadline) {
+                return false;
+            }
+            // progressLoop() can run indefinitely under sustained activity.
+            // Check the deadline between individual UCX progress calls instead.
+            if (!progress || (ucp_worker_progress(worker) == 0)) {
+                std::this_thread::yield();
+            }
+        }
+        return true;
+    }
+
+    // Registration precedes the UCX call, so it needs its own synchronization
+    // when another thread progresses a MULTI worker at the same time.
+    std::mutex mutex;
+    context *head = nullptr;
+    const std::shared_ptr<nixlUcxAmSendStats> stats = std::make_shared<nixlUcxAmSendStats>();
+    ucp_worker_h worker = nullptr;
+    // Set before use, or once progress threads have stopped during teardown.
+    std::chrono::milliseconds drainTimeout = nixl_ucx_notif_drain_timeout;
+    size_t warnThreshold = nixl_ucx_notif_warn_threshold;
+    bool warned = false;
+    clock::time_point shutdownDeadline = clock::time_point::max();
+};
+
 static void
 err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status) {
     auto ep = static_cast<nixlUcxEp *>(arg);
@@ -159,6 +260,10 @@ ucpEpClose(ucp_ep_h ep, uint32_t flags) {
 
 nixl_status_t
 nixlUcxEp::disconnect() {
+    if (checkTxState() == NIXL_SUCCESS && !drainAmSends(amSends_.drainTimeout)) {
+        NIXL_WARN << "UCX AM drain timed out with " << getPendingAmSends()
+                  << " pending sends on ep " << eph_;
+    }
     const nixl::ucx::ep_state_t current_state = state_;
 
     switch (current_state) {
@@ -189,8 +294,12 @@ nixlUcxEp::disconnect() {
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode)
-    : closeFlags_(err_handling_mode == UCP_ERR_HANDLING_MODE_PEER ? UCP_EP_CLOSE_FLAG_FORCE : 0) {
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
+                     void *addr,
+                     ucp_err_handling_mode_t err_handling_mode,
+                     nixlUcxAmSendState &am_sends)
+    : amSends_(am_sends),
+      closeFlags_(err_handling_mode == UCP_ERR_HANDLING_MODE_PEER ? UCP_EP_CLOSE_FLAG_FORCE : 0) {
     ucp_ep_params_t ep_params;
 
     ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS | UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
@@ -218,27 +327,22 @@ nixlUcxEp::~nixlUcxEp() {
  * Active message handling
  * =========================================== */
 
-// Payload of an in-flight AM send and whether to release the request on completion
-using nixl_ucx_am_send_ctx_t = std::pair<std::string, bool>;
 
 void
 nixlUcxEp::sendAmCallback(void *request, ucs_status_t status, void *user_data) {
-    if (status != UCS_OK) {
+    if (status == UCS_ERR_CANCELED) {
+        NIXL_DEBUG << "UCX AM send canceled";
+    } else if (status != UCS_OK) {
         NIXL_ERROR << "UCX AM send failed with status " << status << " ("
                    << ucs_status_string(status) << ")";
     }
-    const std::unique_ptr<nixl_ucx_am_send_ctx_t> ctx(
-        static_cast<nixl_ucx_am_send_ctx_t *>(user_data));
-    if (ctx->second) {
-        ucp_request_free(request);
-    }
+    auto ctx = static_cast<nixlUcxAmSendState::context *>(user_data);
+    ctx->owner.remove(ctx);
+    ucp_request_free(request);
 }
 
 nixl_status_t
-nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
-                  std::string &&payload,
-                  uint32_t flags,
-                  nixlUcxReq *req) const {
+nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id, std::string &&payload, uint32_t flags) const {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         // The endpoint is already in a failed state (e.g. the peer disconnected),
@@ -246,7 +350,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
         return status;
     }
 
-    auto ctx = std::make_unique<nixl_ucx_am_send_ctx_t>(std::move(payload), req == nullptr);
+    auto ctx = amSends_.add(std::move(payload), amStats_);
 
     ucp_request_param_t param;
     param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_MEMORY_TYPE |
@@ -254,19 +358,27 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
     param.flags = flags;
     param.memory_type = UCS_MEMORY_TYPE_HOST;
     param.cb.send = sendAmCallback;
-    param.user_data = ctx.get();
+    param.user_data = ctx;
 
     const ucs_status_ptr_t request = ucp_am_send_nbx(
-        eph_, unsigned(msg_id), nullptr, 0, ctx->first.data(), ctx->first.size(), &param);
+        eph_, unsigned(msg_id), nullptr, 0, ctx->payload.data(), ctx->payload.size(), &param);
     if (UCS_PTR_IS_PTR(request)) {
-        ctx.release();
-        if (req != nullptr) {
-            *req = static_cast<nixlUcxReq>(request);
-        }
         return NIXL_IN_PROG;
     }
 
+    amSends_.remove(ctx);
     return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+}
+
+bool
+nixlUcxEp::drainAmSends(std::chrono::milliseconds timeout, bool progress) const {
+    return amSends_.drain(
+        *amStats_, std::min(nixlUcxAmDrainDeadline(timeout), amShutdownDeadline_), progress);
+}
+
+void
+nixlUcxEp::beginAmShutdown(std::chrono::steady_clock::time_point deadline) noexcept {
+    amShutdownDeadline_ = std::min(amShutdownDeadline_, deadline);
 }
 
 /* ===========================================
@@ -740,10 +852,52 @@ nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
                              ucp_err_handling_mode_t err_handling_mode,
                              size_t id)
     : name_(ctx.getName() + ":" + std::to_string(id)),
+      amSends_(std::make_unique<nixlUcxAmSendState>()),
       worker(createUcpWorker(ctx), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode),
       id_(id) {
+    amSends_->worker = worker.get();
     NIXL_DEBUG << *this << ": created ucp worker " << worker.get();
+}
+
+nixlUcxWorker::~nixlUcxWorker() {
+    if (!drainAmSends(amSends_->drainTimeout)) {
+        NIXL_WARN << "UCX AM drain timed out with " << getPendingAmSends()
+                  << " pending sends on worker " << name_;
+    }
+}
+
+std::shared_ptr<const nixlUcxAmSendStats>
+nixlUcxWorker::getAmSendStats() const noexcept {
+    return amSends_->stats;
+}
+
+size_t
+nixlUcxWorker::getPendingAmSends() const noexcept {
+    return amSends_->stats->pending();
+}
+
+bool
+nixlUcxWorker::drainAmSends(std::chrono::milliseconds timeout) const {
+    return amSends_->drain(*amSends_->stats, nixlUcxAmDrainDeadline(timeout), true);
+}
+
+void
+nixlUcxWorker::setAmDrainTimeout(std::chrono::milliseconds timeout) {
+    if (timeout.count() < 0) {
+        throw std::invalid_argument("UCX notification drain timeout must be nonnegative");
+    }
+    amSends_->drainTimeout = timeout;
+}
+
+void
+nixlUcxWorker::setAmWarnThreshold(size_t threshold) {
+    amSends_->warnThreshold = threshold;
+}
+
+void
+nixlUcxWorker::beginAmShutdown(std::chrono::steady_clock::time_point deadline) noexcept {
+    amSends_->shutdownDeadline = std::min(amSends_->shutdownDeadline, deadline);
 }
 
 std::string
@@ -765,7 +919,7 @@ nixlUcxWorker::epAddr() {
 std::unique_ptr<nixlUcxEp>
 nixlUcxWorker::connect(void *addr) {
     try {
-        auto ep = std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_);
+        auto ep = std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_, *amSends_);
         NIXL_DEBUG << *this << ": created ep " << ep->getEp();
         return ep;
     }

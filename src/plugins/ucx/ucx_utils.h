@@ -18,6 +18,7 @@
 #define NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string_view>
 #include <type_traits>
@@ -42,6 +43,30 @@ enum class nixl_ucx_vram_memtype_hint_t {
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
 inline constexpr std::string_view nixl_ucx_vram_memtype_hint_param_name = "ucx_vram_memtype_hint";
+inline constexpr std::string_view nixl_ucx_notif_drain_timeout_param_name =
+    "ucx_notif_drain_timeout_ms";
+inline constexpr std::string_view nixl_ucx_notif_warn_threshold_param_name =
+    "ucx_notif_warn_threshold";
+inline constexpr std::chrono::milliseconds nixl_ucx_notif_drain_timeout{1000};
+inline constexpr size_t nixl_ucx_notif_warn_threshold = 1024;
+
+// Saturate before converting milliseconds to the steady clock's duration:
+// a valid milliseconds::rep can overflow that conversion or time-point addition.
+[[nodiscard]] inline std::chrono::steady_clock::time_point
+nixlUcxAmDrainDeadline(std::chrono::milliseconds timeout) noexcept {
+    using clock = std::chrono::steady_clock;
+    const auto now = clock::now();
+    if (timeout <= std::chrono::milliseconds::zero()) {
+        return now;
+    }
+    const auto max_timeout =
+        std::chrono::duration_cast<std::chrono::milliseconds>(clock::duration::max());
+    if (timeout >= max_timeout) {
+        return clock::time_point::max();
+    }
+    const auto delta = std::chrono::duration_cast<clock::duration>(timeout);
+    return (now >= clock::time_point::max() - delta) ? clock::time_point::max() : now + delta;
+}
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22
@@ -50,9 +75,28 @@ inline constexpr unsigned ucp_version_mem_type_rdma = UCP_VERSION(1, 22);
 using nixlUcxReq = void *;
 
 class nixlUcxMem;
+struct nixlUcxAmSendState;
+
+// An observer can outlive an endpoint or worker without retaining UCX resources
+// or notification payloads.
+class nixlUcxAmSendStats {
+public:
+    [[nodiscard]] size_t
+    pending() const noexcept {
+        return pending_.load(std::memory_order_acquire);
+    }
+
+private:
+    friend struct nixlUcxAmSendState;
+    std::atomic<size_t> pending_{0};
+};
 
 class nixlUcxEp {
 private:
+    nixlUcxAmSendState &amSends_;
+    const std::shared_ptr<nixlUcxAmSendStats> amStats_ = std::make_shared<nixlUcxAmSendStats>();
+    std::chrono::steady_clock::time_point amShutdownDeadline_ =
+        std::chrono::steady_clock::time_point::max();
     ucp_ep_h eph_{nullptr};
     std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::CONNECTED};
     const uint32_t closeFlags_;
@@ -72,7 +116,10 @@ public:
         return nixl::ucx::toNixlStatus(state_);
     }
 
-    nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
+    nixlUcxEp(ucp_worker_h worker,
+              void *addr,
+              ucp_err_handling_mode_t err_handling_mode,
+              nixlUcxAmSendState &am_sends);
     ~nixlUcxEp();
     nixlUcxEp(const nixlUcxEp &) = delete;
     nixlUcxEp &
@@ -81,14 +128,31 @@ public:
     /**
      * @brief Send an active message that owns its payload
      * @param payload Data released once the send completes
-     * @param req Receives the UCX request of an in-progress send; if null, the request is
-     *            released on completion
+     * The completion callback releases the request and the payload. The worker
+     * retains ownership of sends whose callbacks do not run before destruction.
      */
     nixl_status_t
-    sendAm(nixl::ucx::am_cb_op_t msg_id,
-           std::string &&payload,
-           uint32_t flags,
-           nixlUcxReq *req = nullptr) const;
+    sendAm(nixl::ucx::am_cb_op_t msg_id, std::string &&payload, uint32_t flags) const;
+
+    [[nodiscard]] std::shared_ptr<const nixlUcxAmSendStats>
+    getAmSendStats() const noexcept {
+        return amStats_;
+    }
+
+    [[nodiscard]] size_t
+    getPendingAmSends() const noexcept {
+        return amStats_->pending();
+    }
+
+    // Best effort: local completion releases payloads, not a delivery guarantee.
+    // The caller must obey the worker's normal threading/progress requirements.
+    // Without progress, only wait for the thread that progresses the worker.
+    [[nodiscard]] bool
+    drainAmSends(std::chrono::milliseconds timeout, bool progress = true) const;
+
+    // Share one teardown budget across all endpoints in a connection.
+    void
+    beginAmShutdown(std::chrono::steady_clock::time_point deadline) noexcept;
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -226,7 +290,7 @@ public:
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
         size_t id = 0);
 
-    virtual ~nixlUcxWorker() = default;
+    virtual ~nixlUcxWorker();
 
     nixlUcxWorker(nixlUcxWorker &&) = delete;
     nixlUcxWorker(const nixlUcxWorker &) = delete;
@@ -244,6 +308,21 @@ public:
     /* Active message handling */
     int
     regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg);
+
+    [[nodiscard]] std::shared_ptr<const nixlUcxAmSendStats>
+    getAmSendStats() const noexcept;
+    [[nodiscard]] size_t
+    getPendingAmSends() const noexcept;
+    [[nodiscard]] bool
+    drainAmSends(std::chrono::milliseconds timeout) const;
+    // Configure before posting sends or starting concurrent access.
+    void
+    setAmDrainTimeout(std::chrono::milliseconds timeout);
+    void
+    setAmWarnThreshold(size_t threshold);
+    // Share one teardown budget across all workers in an engine.
+    void
+    beginAmShutdown(std::chrono::steady_clock::time_point deadline) noexcept;
 
     /* Data access */
     unsigned
@@ -290,6 +369,9 @@ private:
     createUcpWorker(const nixlUcxContext &) const;
 
     const std::string name_;
+    // Destroy the UCX worker before releasing any AM payloads whose callbacks
+    // were suppressed by worker destruction.
+    const std::unique_ptr<nixlUcxAmSendState> amSends_;
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     const ucp_err_handling_mode_t err_handling_mode_;
     const size_t id_;

@@ -132,6 +132,15 @@ for n iterations:
 
 ```
 
+### UCX notification completion
+
+With the UCX backend, a transfer with a notification is complete once its data
+are, and its notification is posted; the notification is sent asynchronously.
+Without a progress thread, keep calling the initiating agent until the
+notification is sent. Disconnect and agent destruction wait for outstanding
+notifications up to the `ucx_notif_drain_timeout_ms` backend option (see
+[BackendGuide.md](BackendGuide.md)).
+
 ## Adding/removing agents (dynamic scaling)
 Adding a new agent to a service involves creating the agent and exchanging its metadata with the existing agents in the service. To remove an agent or handle a failure, you can use one of the metadata invalidate APIs. This triggers disconnections for backends connected to the agent and purges the cached metadata values.
 

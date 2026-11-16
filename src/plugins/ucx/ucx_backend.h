@@ -210,8 +210,11 @@ protected:
     template<typename workerType, typename... argTypes>
     void
     addWorker(argTypes &&...args) {
-        workers_.emplace_back(std::make_unique<workerType>(
-            *uc, errHandlingMode_, workers_.size(), std::forward<argTypes>(args)...));
+        auto worker = std::make_unique<workerType>(
+            *uc, errHandlingMode_, workers_.size(), std::forward<argTypes>(args)...);
+        worker->setAmDrainTimeout(notifDrainTimeout_);
+        worker->setAmWarnThreshold(notifWarnThreshold_);
+        workers_.emplace_back(std::move(worker));
     }
 
     [[nodiscard]] worker_span_t
@@ -292,8 +295,7 @@ private:
     nixl_status_t
     notifSendPriv(const std::string &remote_agent,
                   const std::string &msg,
-                  const nixlUcxEp &ep,
-                  nixlUcxReq *req = nullptr) const;
+                  const nixlUcxEp &ep) const;
 
     ucx_connection_ptr_t
     getConnection(const std::string &remote_agent) const;
@@ -320,6 +322,8 @@ private:
     std::vector<std::unique_ptr<nixlUcxWorker>> workers_;
     size_t numSharedWorkers_;
     const ucp_err_handling_mode_t errHandlingMode_;
+    const std::chrono::milliseconds notifDrainTimeout_;
+    const size_t notifWarnThreshold_;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
     const bool sglEnabled_;

@@ -321,6 +321,11 @@ protected:
             nixlUcxThreadTask *task;
             if (!requests_.empty()) {
                 task = queue_.tryPop();
+            } else if (getWorkers().front()->getPendingAmSends() != 0) {
+                // A completed transfer does not wait for its notification:
+                // keep progressing the worker until the send completes
+                getWorkers().front()->progressLoop();
+                task = queue_.tryPop();
             } else {
                 NIXL_TRACE << "dedicated " << *this << " waiting for requests";
                 // We need to progress idle worker to terminate closed connections
