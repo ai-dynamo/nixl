@@ -273,9 +273,7 @@ def check_infinia(cand: Side, ref: Side) -> Finding:
         needed.update(info.needed)
         if info.runpath or info.rpath:
             runpaths.add(info.runpath or info.rpath or "")
-        if not any(n.startswith("libred_client.so") for n in info.needed) or not any(
-            n.startswith("libred_async.so") for n in info.needed
-        ):
+        if not any(n.startswith("libred_") for n in info.needed):
             no_ddn.append(cell)
     bundled: dict[str, set[Cell]] = defaultdict(set)
     for cell in universe:
@@ -317,7 +315,7 @@ def check_infinia(cand: Side, ref: Side) -> Finding:
         )
     if no_ddn:
         problems.append(
-            f"{INFINIA_PLUGIN} does not link libred_client/libred_async in {details['not_linking_ddn']}"
+            f"{INFINIA_PLUGIN} does not link a DDN runtime library (libred_*) in {details['not_linking_ddn']}"
         )
     if bundled:
         problems.append("DDN runtime libraries bundled: " + ", ".join(sorted(bundled)))
