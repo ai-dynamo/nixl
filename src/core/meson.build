@@ -90,7 +90,9 @@ nixl_lib_sources = [
 nixl_lib = library('nixl',
                    nixl_lib_sources,
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ],
-                   link_args: ['-lstdc++fs'],
+                   link_args: ['-lstdc++fs',
+                               '-Wl,--version-script=' + meson.current_source_dir() / 'libnixl.map'],
+                   link_depends: 'libnixl.map',
                    dependencies: nixl_lib_deps,
                    install: true,
                    install_rpath: join_paths(get_option('prefix'), get_option('libdir')))
