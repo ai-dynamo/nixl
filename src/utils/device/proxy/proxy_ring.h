@@ -114,6 +114,10 @@ public:
     [[nodiscard]] bool
     drained() const noexcept;
 
+    /** At shutdown, retire the unpublished tickets at the head of a drained ring; whether any. */
+    [[nodiscard]] bool
+    skipAbandonedTickets() noexcept;
+
     /**
      * Whether every producer ticket has reached terminal completion, as reclamation requires.
      * The caller treats false as fatal.
@@ -135,7 +139,18 @@ public:
         return static_cast<bool>(work_ring_mem_);
     }
 
+    /** Make the device the ring was allocated on current for the calling thread. */
+    [[nodiscard]] nixl_status_t
+    selectDevice() const noexcept {
+        return ops_->setActiveDevice(device_id_);
+    }
+
 private:
+    [[nodiscard]] bool
+    published(uint64_t ticket) const noexcept {
+        return __atomic_load_n(&commandsHost()[ticket % depth_].op_idx, __ATOMIC_ACQUIRE) != 0;
+    }
+
     [[nodiscard]] nixl_status_t
     publishConsumerIdx(uint64_t value) noexcept;
 
@@ -172,6 +187,7 @@ private:
     size_t ring_index_ = 0;
     /** Remembered from allocate() so rearm() needs no arguments. */
     deviceOps *ops_ = nullptr;
+    int device_id_ = 0;
     /** Host-side ring depth for the CPU worker; nixlProxyWorkRing itself is device-only. */
     uint32_t depth_ = 0;
     nixlProxyRingDesc device_view_{};

@@ -7,7 +7,9 @@
 # - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
 # - Docker Images: Specifies the container images used for different build stages
 #   - Build/test images: cuda-dl-base 25.06-cuda12.9 (Ubuntu 24.04), the PyTorch
-#     NGC container 26.06-py3 (CUDA 13.3, Ubuntu 24.04), and nvidia/cuda 13.0.1 (Ubuntu 22.04)
+#     NGC container pinned in Dockerfile.base (Ubuntu 24.04), and nvidia/cuda 13.4.2
+#     (Ubuntu 22.04). Only the 13.4.2 devel image ships the cuObject dev package, so
+#     it is the build that compiles the OBJ plugin's S3 accelerated engines.
 #   - Podman image for container builds
 # - Matrix Axes: Defines build variations (currently x86_64 architecture)
 # - Build Steps: Sequential steps for building, testing, and container creation
@@ -23,8 +25,8 @@
 ---
 job: nixl-ci-non-gpu
 
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 # Fail job if one of the steps fails or continue
@@ -35,7 +37,6 @@ timeout_minutes: 240
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   limits: "{memory: 16Gi, cpu: 16000m}"
   requests: "{memory: 8Gi, cpu: 8000m}"
 
@@ -76,7 +77,7 @@ runs_on_dockers:
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-ci-non-gpu-base-ubuntu22", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/nvidia/cuda:13.0.1-devel-ubuntu22.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --secret id=ghconfig,src=/tmp/ghconfig',
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/nvidia/cuda:13.4.2-devel-ubuntu22.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --secret id=ghconfig,src=/tmp/ghconfig',
      credentialsId: 'svc-nixl-github-read-only-token'
     }
 
@@ -88,10 +89,15 @@ matrix:
 
 steps:
   - name: Build
+    credentialsId: 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       export PRE_INSTALLED_ENV="true"
       export PRE_INSTALLED_UCX_ENV="true"
+      # Authenticate meson's [wrap-git] subproject clones (taskflow, prometheus-cpp) with the
+      # github.com credential; git's environment config is inherited by every git it runs.
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
+      export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=/tmp/ghconfig
       .gitlab/build.sh ${NIXL_INSTALL_DIR}
 
   - name: Test CPP

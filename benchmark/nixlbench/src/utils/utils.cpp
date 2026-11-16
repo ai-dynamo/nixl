@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -142,8 +143,8 @@ NB_ARG_STRING(runtime_type,
 NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
-              "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
-              "REDIS, GUSLI, AZURE_BLOB] (only used with nixl worker)");
+              "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, "
+              "REDIS, GUSLI, AZURE_BLOB, DOCA_MEMOS] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -154,7 +155,7 @@ NB_ARG_STRING(target_seg_type,
               "remote type automatically.");
 NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, manytoone, onetomany, tp");
 NB_ARG_STRING(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc)");
-NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
+NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE, QUERY");
 NB_ARG_BOOL(check_consistency, false, "Enable Consistency Check");
 NB_ARG_UINT64(total_buffer_size,
               8LL * 1024 * (1 << 20),
@@ -194,7 +195,7 @@ NB_ARG_INT32(use_localized,
 NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
-NB_ARG_STRING(filepath, "", "File path for storage operations");
+NB_ARG_STRING(filepath, "", "Directory where storage backends create their benchmark files");
 NB_ARG_STRING(filenames, "", "Comma-separated filenames for storage operations");
 NB_ARG_INT32(num_files, 1, "Number of files used by benchmark");
 NB_ARG_BOOL(storage_enable_direct, false, "Enable direct I/O for storage operations");
@@ -265,6 +266,15 @@ NB_ARG_STRING(
     gpunetio_oob_list,
     "",
     "Comma-separated OOB network interface name for control path (only used with nixl worker)");
+NB_ARG_STRING(gpunetio_gid_index,
+              "0",
+              "RoCE GID table index for GPUNetIO (only used with nixl worker; default: 0)");
+NB_ARG_STRING(gpunetio_oob_port,
+              "",
+              "OOB TCP port for GPUNetIO (only used with nixl worker; default: 6544)");
+NB_ARG_INT32(gpunetio_data_qp_count, 1, "GPUNetIO WRITE QPs per peer [1,4]; default: 1");
+NB_ARG_STRING(gpunetio_write_stripe, "slots", "GPUNetIO WRITE distribution: slots or bytes");
+NB_ARG_UINT64(gpunetio_write_stripe_min_bytes, 4194304, "Minimum WRITE stripe size in bytes");
 
 // OBJ options - only used when backend is OBJ
 NB_ARG_STRING(obj_access_key, "", "Access key for S3 backend");
@@ -335,9 +345,21 @@ NB_ARG_BOOL(use_device_api,
             "multiple of 32), and the internal CPU thread count is forced to 1.");
 NB_ARG_INT32(device_channel_num,
              1,
-             "Number of logical UCX Device API channels, default to 1. "
+             "Number of logical Device API channels, default to 1. "
              "0 means one channel per execution group. "
              "Only used when --use_device_api is enabled.");
+NB_ARG_STRING(device_mode,
+              XFERBENCH_DEVICE_MODE_DIRECT,
+              "Device API execution mode: direct (UCX GPU-initiated) or proxy (CPU proxy). "
+              "Only used when --use_device_api is enabled.");
+NB_ARG_UINT32(device_proxy_threads,
+              0,
+              "Number of CPU proxy threads draining the device channels, 0 for one per channel. "
+              "Only used with --device_mode=proxy.");
+// DOCA_MEMOS options - only used when backend is DOCA_MEMOS
+NB_ARG_STRING(doca_memos_device_name, "/dev/nvme0n1", "DOCA_MEMOS device name");
+NB_ARG_INT32(doca_memos_num_tasks, 8192, "DOCA_MEMOS number of tasks");
+NB_ARG_STRING(doca_memos_nguid, "", "DOCA_MEMOS namespace GUID (32 hex chars, optional)");
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT32
@@ -384,6 +406,11 @@ int xferBenchConfig::gds_batch_limit = 0;
 int xferBenchConfig::gds_mt_num_threads = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
 std::string xferBenchConfig::gpunetio_oob_list = "";
+std::string xferBenchConfig::gpunetio_gid_index = "0";
+std::string xferBenchConfig::gpunetio_oob_port = "";
+int xferBenchConfig::gpunetio_data_qp_count = 1;
+std::string xferBenchConfig::gpunetio_write_stripe = "slots";
+uint64_t xferBenchConfig::gpunetio_write_stripe_min_bytes = 4194304;
 std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
@@ -423,6 +450,8 @@ std::optional<nixl_b_params_t> xferBenchConfig::plugin_parameters = std::nullopt
 bool xferBenchConfig::use_device_api = false;
 int xferBenchConfig::block_threads = 1;
 int xferBenchConfig::device_channel_num = 0;
+std::string xferBenchConfig::device_mode = XFERBENCH_DEVICE_MODE_DIRECT;
+uint32_t xferBenchConfig::device_proxy_threads = 0;
 
 static bool
 validateDeviceAPIConfig() {
@@ -430,7 +459,17 @@ validateDeviceAPIConfig() {
         std::cerr << "Invalid configuration for NIXL Device API: " << reason << std::endl;
         return false;
     };
-#ifdef HAVE_UCX_GPU_DEVICE_API
+#ifdef NIXLBENCH_DEVICE_API
+    const bool proxy = xferBenchConfig::device_mode == XFERBENCH_DEVICE_MODE_PROXY;
+    if (!proxy && xferBenchConfig::device_mode != XFERBENCH_DEVICE_MODE_DIRECT) {
+        return reject("device_mode must be direct or proxy");
+    }
+#ifndef HAVE_UCX_GPU_DEVICE_API
+    if (!proxy) {
+        return reject("device_mode=direct needs UCX GPU Device API support, which is not enabled "
+                      "in this build; set -Ducx_path=<path> with UCX GPU device headers available");
+    }
+#endif
     if (xferBenchConfig::worker_type != XFERBENCH_WORKER_NIXL) {
         return reject("worker_type must be nixl");
     }
@@ -444,7 +483,16 @@ validateDeviceAPIConfig() {
         xferBenchConfig::target_seg_type != XFERBENCH_SEG_TYPE_VRAM) {
         return reject("initiator_seg_type and target_seg_type must be VRAM");
     }
-    if (!xferBenchConfig::enable_pt) {
+    if (proxy) {
+        if (xferBenchConfig::progress_threads != 0) {
+            return reject("--progress_threads is not supported with device_mode=proxy");
+        }
+        if (xferBenchConfig::enable_pt) {
+            std::cout << "WARNING: Disabling --enable_pt; device_mode=proxy runs its own "
+                      << "progress threads" << std::endl;
+            xferBenchConfig::enable_pt = false;
+        }
+    } else if (!xferBenchConfig::enable_pt) {
         return reject("--enable_pt must be set");
     }
     if (xferBenchConfig::mode != XFERBENCH_MODE_SG) {
@@ -456,14 +504,13 @@ validateDeviceAPIConfig() {
     if (xferBenchConfig::pipeline_depth != 1) {
         return reject("pipeline_depth must be 1");
     }
-    if (std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr) {
+    if (!proxy && std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr) {
         return reject("UCX_RC_GDA_NUM_CHANNELS must not be set; "
                       "use --device_channel_num to configure Device API channels");
     }
     return true;
 #else
-    return reject("UCX GPU Device API support is not enabled in this build. "
-                  "Set -Ducx_path=<path> with UCX GPU device headers available");
+    return reject("NIXL Device API support is not enabled in this build");
 #endif
 }
 
@@ -502,6 +549,13 @@ setupDeviceAPIConfig() {
                   << group_num << std::endl;
         xferBenchConfig::device_channel_num = group_num;
     }
+    if ((group_num % xferBenchConfig::device_channel_num) != 0) {
+        std::cerr << "Invalid value for --device_channel_num: "
+                  << xferBenchConfig::device_channel_num
+                  << ". nixlbench requires Device API group number " << group_num
+                  << " to be a multiple of the channel number" << std::endl;
+        return false;
+    }
     if (xferBenchConfig::num_iter < group_num) {
         std::cerr << "Invalid value for --num_iter: " << xferBenchConfig::num_iter
                   << " , must not be smaller than Device API group number: " << group_num
@@ -539,6 +593,10 @@ discoverPluginMems(const std::string &backend) {
     return mems;
 }
 } // namespace
+
+std::string xferBenchConfig::doca_memos_device_name = "/dev/nvme0n1";
+int xferBenchConfig::doca_memos_num_tasks = 8192;
+std::string xferBenchConfig::doca_memos_nguid = "";
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -673,6 +731,11 @@ xferBenchConfig::loadParams(void) {
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             gpunetio_device_list = NB_ARG(gpunetio_device_list);
             gpunetio_oob_list = NB_ARG(gpunetio_oob_list);
+            gpunetio_gid_index = NB_ARG(gpunetio_gid_index);
+            gpunetio_oob_port = NB_ARG(gpunetio_oob_port);
+            gpunetio_data_qp_count = NB_ARG(gpunetio_data_qp_count);
+            gpunetio_write_stripe = NB_ARG(gpunetio_write_stripe);
+            gpunetio_write_stripe_min_bytes = NB_ARG(gpunetio_write_stripe_min_bytes);
         }
 
         // Load HD3FS-specific configurations if backend is HD3FS
@@ -688,6 +751,21 @@ xferBenchConfig::loadParams(void) {
             gusli_device_byte_offsets = NB_ARG(gusli_device_byte_offsets);
             gusli_device_security = NB_ARG(gusli_device_security);
             gusli_try_use_uring = NB_ARG(gusli_try_use_uring);
+        }
+
+        // Load DOCA_MEMOS-specific configurations if backend is DOCA_MEMOS
+        if (backend == XFERBENCH_BACKEND_DOCA_MEMOS) {
+            doca_memos_device_name = NB_ARG(doca_memos_device_name);
+            doca_memos_num_tasks = NB_ARG(doca_memos_num_tasks);
+            doca_memos_nguid = NB_ARG(doca_memos_nguid);
+
+            // The generic consistency check reads written data back through the
+            // S3/Azure object helpers, which DOCA_MEMOS does not implement. The
+            // plugin verifies retrieved data internally on READ instead.
+            if (NB_ARG(check_consistency)) {
+                std::cerr << "DOCA_MEMOS backend does not support --check_consistency" << std::endl;
+                return -1;
+            }
         }
 
         // Load OBJ-specific configurations if backend is OBJ
@@ -740,15 +818,34 @@ xferBenchConfig::loadParams(void) {
     scheme = NB_ARG(scheme);
     mode = NB_ARG(mode);
     op_type = NB_ARG(op_type);
-    if (op_type != XFERBENCH_OP_READ && op_type != XFERBENCH_OP_WRITE) {
-        std::cerr << "Invalid op type: " << op_type << ". Must be one of [READ, WRITE]"
+    if (op_type != XFERBENCH_OP_READ && op_type != XFERBENCH_OP_WRITE &&
+        op_type != XFERBENCH_OP_QUERY) {
+        std::cerr << "Invalid op type: " << op_type << ". Must be one of [READ, WRITE, QUERY]"
                   << std::endl;
+        return -1;
+    }
+    if (op_type == XFERBENCH_OP_QUERY && worker_type != XFERBENCH_WORKER_NIXL) {
+        std::cerr << "QUERY requires --worker_type nixl" << std::endl;
         return -1;
     }
     check_consistency = NB_ARG(check_consistency);
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
     num_target_dev = NB_ARG(num_target_dev);
+    // In pairwise SG mode, only the device of the rank gets a VRAM buffer, and a
+    // storage backend runs one initiator process.
+    if (IS_PAIRWISE_AND_SG() && isStorageBackend() &&
+        initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM && num_initiator_dev > 1) {
+        if (device_list != "all") {
+            std::cerr << "Only one initiator device transfers in pairwise SG mode with a "
+                      << "storage backend. Use --num_initiator_dev=1 with a single-entry "
+                      << "--device_list." << std::endl;
+            return -1;
+        }
+        std::cout << "WARNING: Only one initiator device transfers in pairwise SG mode with a "
+                  << "storage backend. Setting num_initiator_dev to 1." << std::endl;
+        num_initiator_dev = 1;
+    }
     start_block_size = NB_ARG(start_block_size);
     max_block_size = NB_ARG(max_block_size);
     start_batch_size = NB_ARG(start_batch_size);
@@ -766,8 +863,16 @@ xferBenchConfig::loadParams(void) {
         std::cerr << "pipeline_depth must be >= 1" << std::endl;
         return -1;
     }
+    // execQuery() issues the whole batch_size * pipeline_depth descriptor list
+    // as one synchronous queryMem() call, while the stats count batch_size.
+    if (op_type == XFERBENCH_OP_QUERY && pipeline_depth != 1) {
+        std::cerr << "QUERY requires pipeline_depth=1" << std::endl;
+        return -1;
+    }
     use_device_api = NB_ARG(use_device_api);
     device_channel_num = NB_ARG(device_channel_num);
+    device_mode = NB_ARG(device_mode);
+    device_proxy_threads = NB_ARG(device_proxy_threads);
     if (use_device_api && (!validateDeviceAPIConfig() || !setupDeviceAPIConfig())) {
         return -1;
     }
@@ -777,6 +882,14 @@ xferBenchConfig::loadParams(void) {
     randomize_location_mode = NB_ARG(randomize_location_mode);
     randomize_location_mode_seed = NB_ARG(randomize_location_mode_seed);
     filepath = NB_ARG(filepath);
+    if (!filepath.empty()) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(filepath, ec)) {
+            std::cerr << "Invalid filepath: " << filepath << " is not an existing directory"
+                      << std::endl;
+            return -1;
+        }
+    }
     filenames = NB_ARG(filenames);
     num_files = NB_ARG(num_files);
     posix_api_type = NB_ARG(posix_api_type);
@@ -987,7 +1100,8 @@ xferBenchConfig::printConfig() {
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         printOption(
-            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB])",
+            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,MOONCAKE,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB,"
+            "DOCA_MEMOS])",
             backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
@@ -1082,15 +1196,24 @@ xferBenchConfig::printConfig() {
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             printOption("GPU CUDA Device id list (--device_list=dev1,dev2,...)",
                         gpunetio_device_list);
-            printOption("OOB network interface name for control path (--oob_list=ifface)",
+            printOption("OOB network interface name for control path (--gpunetio_oob_list=IFACE)",
                         gpunetio_oob_list);
+            printOption("RoCE GID table index (--gpunetio_gid_index=N)", gpunetio_gid_index);
+            printOption("WRITE QPs per peer (--gpunetio_data_qp_count=N)",
+                        std::to_string(gpunetio_data_qp_count));
+            printOption("WRITE distribution (--gpunetio_write_stripe=slots|bytes)",
+                        gpunetio_write_stripe);
+            printOption("Minimum WRITE stripe bytes (--gpunetio_write_stripe_min_bytes=N)",
+                        std::to_string(gpunetio_write_stripe_min_bytes));
+            printOption("OOB TCP port (--gpunetio_oob_port=N)",
+                        gpunetio_oob_port.empty() ? "6544" : gpunetio_oob_port);
         }
     }
     printOption("Initiator seg type (--initiator_seg_type=[DRAM,VRAM])", initiator_seg_type);
     printOption("Target seg type (--target_seg_type=[DRAM,VRAM])", target_seg_type);
     printOption("Scheme (--scheme=[pairwise,manytoone,onetomany,tp])", scheme);
     printOption("Mode (--mode=[SG,MG])", mode);
-    printOption("Op type (--op_type=[READ,WRITE])", op_type);
+    printOption("Op type (--op_type=[READ,WRITE,QUERY])", op_type);
     printOption("Check consistency (--check_consistency=[0,1])", std::to_string(check_consistency));
     printOption("Total buffer size (--total_buffer_size=N)", std::to_string(total_buffer_size));
     printOption("Num initiator dev (--num_initiator_dev=N)", std::to_string(num_initiator_dev));
@@ -1110,6 +1233,11 @@ xferBenchConfig::printConfig() {
                     std::to_string(block_threads));
         printOption("Device API channels (--device_channel_num=N)",
                     std::to_string(device_channel_num));
+        printOption("Device API mode (--device_mode=[direct,proxy])", device_mode);
+        if (device_mode == XFERBENCH_DEVICE_MODE_PROXY) {
+            printOption("Device API proxy threads (--device_proxy_threads=N)",
+                        std::to_string(device_proxy_threads));
+        }
     }
     printSeparator('-');
     std::cout << std::endl;
@@ -1628,6 +1756,22 @@ xferBenchUtils::printStats(bool is_target,
     }
 }
 
+bool
+xferBenchUtils::debugEnabled() {
+    static const bool enabled = [] {
+        const char *env = std::getenv("NIXLBENCH_LOG_LEVEL");
+        if (env == nullptr) {
+            return false;
+        }
+        std::string level(env);
+        std::transform(level.begin(), level.end(), level.begin(), [](unsigned char c) {
+            return static_cast<char>(std::toupper(c));
+        });
+        return level == "DEBUG" || level == "TRACE";
+    }();
+    return enabled;
+}
+
 std::string
 xferBenchUtils::buildAwsCredentials() {
     std::string env_setup = "";
@@ -1744,9 +1888,14 @@ xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
             " --checksum-algorithm SHA256 --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
-              << " (size: " << buffer_size << " bytes)" << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
+                  << " (size: " << buffer_size << " bytes)" << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {
@@ -1772,8 +1921,13 @@ xferBenchUtils::getObjS3(const std::string &name) {
         aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {
@@ -1798,8 +1952,13 @@ xferBenchUtils::rmObjS3(const std::string &name) {
         aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
+    if (!debugEnabled()) {
+        aws_cmd += " --only-show-errors";
+    }
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Removing S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    if (debugEnabled()) {
+        std::cout << "Removing S3 object: " << name << " from bucket: " << bucket_name << std::endl;
+    }
 
     int result = system(full_cmd.c_str());
     if (result != 0) {

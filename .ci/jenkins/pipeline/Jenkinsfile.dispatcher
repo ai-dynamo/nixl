@@ -39,7 +39,9 @@ if (currentPrNumber) {
       def gd = b.getAction(hudson.model.ParametersAction)?.getParameters()?.find { it.name == 'VARIABLE_FROM_POST' }?.value
       // JsonSlurper is created per call: it is not Serializable, and holding it in
       // a local across the sleep below fails the pipeline state checkpoint.
-      def otherPr = gd ? new groovy.json.JsonSlurper().parseText(gd)?.issue?.number?.toString() : null
+      def payload = gd ? new groovy.json.JsonSlurper().parseText(gd) : null
+      // issue.number: /build comment payload; number: PR push payload
+      def otherPr = (payload?.issue?.number ?: payload?.number)?.toString()
       otherPr == currentPrNumber
     }
 

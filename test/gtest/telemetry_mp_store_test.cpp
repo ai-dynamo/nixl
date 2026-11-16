@@ -21,6 +21,8 @@
 
 #include <gtest/gtest.h>
 
+#include <fcntl.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 #include <chrono>
@@ -34,6 +36,7 @@
 
 namespace {
 
+using nixl::telemetry::mp::storeSetupError;
 using nixl::telemetry::mp::storeWriter;
 using nixl::telemetry::mp::storeWriterAlive;
 using nixl::telemetry::mp::processRunMarker;
@@ -177,6 +180,11 @@ TEST_F(MpStoreTest, TooManyBucketsRejected) {
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
+TEST_F(MpStoreTest, OsFailureThrowsStoreSetupError) {
+    const auto path = dir_ / "missing" / "agent-os-failure";
+    EXPECT_THROW({ storeWriter writer(path, "a", "host-1", "", 0, kBuckets); }, storeSetupError);
+}
+
 TEST_F(MpStoreTest, DestructorKeepsStoreFileWithFinalValues) {
     const auto path = storePath("agent-cleanup");
     {
@@ -201,6 +209,17 @@ TEST_F(MpStoreTest, LiveWriterHoldsItsStoreAndReleasesItOnDestruction) {
         // included, so the lock has to be visible to it too.
         EXPECT_TRUE(storeWriterAlive(path));
     }
+    EXPECT_FALSE(storeWriterAlive(path));
+}
+
+TEST_F(MpStoreTest, DepartedStoreReadsAsAbandonedWhileAnotherOwnerProbesIt) {
+    const auto path = storePath("agent-probed");
+    { const storeWriter writer(path, "agent-probed", "host-1", "", 0, kBuckets); }
+
+    const nixl::scopedFd second_owner_probe(::open(path.c_str(), O_RDONLY | O_CLOEXEC));
+    ASSERT_TRUE(second_owner_probe.valid());
+    ASSERT_EQ(::flock(second_owner_probe.get(), LOCK_SH | LOCK_NB), 0);
+
     EXPECT_FALSE(storeWriterAlive(path));
 }
 

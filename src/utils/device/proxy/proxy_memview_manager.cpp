@@ -35,6 +35,7 @@ template<typename DlistT>
 nixl_status_t
 proxyMemViewManager::createView(const DlistT &dlist,
                                 const std::vector<void *> &direct_ptrs,
+                                const std::vector<uint32_t> &peers,
                                 proxyHostView *&out) {
     out = nullptr;
 
@@ -43,14 +44,16 @@ proxyMemViewManager::createView(const DlistT &dlist,
     auto host_view = std::make_unique<proxyHostView>();
     host_view->remote = std::is_same_v<DlistT, nixl_remote_meta_dlist_t>;
     fillDescs(dlist, host_view->descs);
+
     const nixlProxyDeviceMemView memview_contents{
         static_cast<uint64_t>(reinterpret_cast<uintptr_t>(host_view.get())),
         device_context_,
-        static_cast<uint32_t>(direct_ptrs.size())};
+        static_cast<uint32_t>(direct_ptrs.size()),
+        static_cast<uint32_t>(peers.size())};
 
-    // GPU: allocate the device memview and copy the contents and direct pointers into it.
+    // GPU: allocate the device memview and copy the contents, direct pointers and peers into it.
     deviceMem device_memview_mem;
-    if (allocator_.allocDeviceMem(nixlProxyDeviceMemViewBytes(direct_ptrs.size()),
+    if (allocator_.allocDeviceMem(nixlProxyDeviceMemViewBytes(direct_ptrs.size(), peers.size()),
                                   device_memview_mem) != NIXL_SUCCESS) {
         NIXL_ERROR << "proxyMemViewManager: failed to allocate device memview";
         return NIXL_ERR_BACKEND;
@@ -65,6 +68,13 @@ proxyMemViewManager::createView(const DlistT &dlist,
                                       direct_ptrs.data(),
                                       direct_ptrs.size() * sizeof(void *),
                                       deviceOps::copyDirection::HostToDevice);
+    }
+    if (copy_status == NIXL_SUCCESS && !peers.empty()) {
+        copy_status =
+            allocator_.copy(nixlProxyDeviceMemViewDirectPtrs(device_memview) + direct_ptrs.size(),
+                            peers.data(),
+                            peers.size() * sizeof(peers[0]),
+                            deviceOps::copyDirection::HostToDevice);
     }
     if (copy_status != NIXL_SUCCESS) {
         NIXL_ERROR << "proxyMemViewManager: failed to initialize device memview";
@@ -82,7 +92,7 @@ proxyMemViewManager::createView(const DlistT &dlist,
 nixl_status_t
 proxyMemViewManager::prepLocal(const nixl_meta_dlist_t &dlist, proxy_view_handle_t &out) {
     proxyHostView *host_view = nullptr;
-    const nixl_status_t status = createView(dlist, {}, host_view);
+    const nixl_status_t status = createView(dlist, {}, {}, host_view);
     if (status != NIXL_SUCCESS) {
         return status;
     }
@@ -96,6 +106,7 @@ proxyMemViewManager::prepLocal(const nixl_meta_dlist_t &dlist, proxy_view_handle
 nixl_status_t
 proxyMemViewManager::prepRemote(const nixl_remote_meta_dlist_t &dlist,
                                 const std::vector<void *> &direct_ptrs,
+                                const std::vector<uint32_t> &peers,
                                 proxy_view_handle_t &out) {
     if (dlist.getType() != VRAM_SEG) {
         NIXL_ERROR << "proxyMemViewManager::prepRemote: unsupported mem type " << dlist.getType();
@@ -103,7 +114,7 @@ proxyMemViewManager::prepRemote(const nixl_remote_meta_dlist_t &dlist,
     }
 
     proxyHostView *host_view = nullptr;
-    const nixl_status_t status = createView(dlist, direct_ptrs, host_view);
+    const nixl_status_t status = createView(dlist, direct_ptrs, peers, host_view);
     if (status != NIXL_SUCCESS) {
         return status;
     }

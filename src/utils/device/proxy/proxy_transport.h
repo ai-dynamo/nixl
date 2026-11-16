@@ -23,7 +23,6 @@
 
 #include <nixl_types.h>
 #include "backend_aux.h"
-#include "proxy_config.h"
 #include "proxy_protocol.h"
 
 namespace nixl {
@@ -54,19 +53,18 @@ struct proxyBackendRequest {
 };
 
 /**
- * The transport a proxyRuntime drives. Internal to libnixl_device_proxy and the plugins; not
- * installed, not an ABI. Ownership, threading and request rules: README.md in this directory.
+ * The transport a proxyRuntime drives, ready to use once constructed. Internal to
+ * libnixl_device_proxy and the plugins; not installed, not an ABI. Ownership, threading and
+ * request rules: README.md in this directory.
  */
 class proxyTransport {
 public:
+    proxyTransport() = default;
     virtual ~proxyTransport() = default;
 
-    /**
-     * Called once by proxyRuntime::create() before any ring exists. On failure nothing else is
-     * called.
-     */
-    [[nodiscard]] virtual nixl_status_t
-    init(const proxyConfig &config) = 0;
+    proxyTransport(const proxyTransport &) = delete;
+    proxyTransport &
+    operator=(const proxyTransport &) = delete;
 
     /** NIXL_IN_PROG with a non-empty request, or a terminal status with an empty one; never a
      *  transient error (post from progress() instead). */
@@ -88,10 +86,6 @@ public:
      *  A failure is fatal to the process. */
     [[nodiscard]] virtual nixl_status_t
     quiesce(uint32_t channel, uint32_t peer) = 0;
-
-    /** Once, after a successful init(), with workers joined and every ring drained. */
-    [[nodiscard]] virtual nixl_status_t
-    shutdown() = 0;
 
     /**
      * Optional: leave direct_ptrs empty (no direct access) or fill one entry per descriptor,

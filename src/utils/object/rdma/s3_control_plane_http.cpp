@@ -25,6 +25,10 @@
 #include <aws/core/utils/DateTime.h>
 #include <aws/core/utils/HashingUtils.h>
 #include <aws/core/utils/StringUtils.h>
+#include <aws/s3/S3Client.h>
+#include <aws/s3/model/AbortMultipartUploadRequest.h>
+#include <aws/s3/model/CompleteMultipartUploadRequest.h>
+#include <aws/s3/model/CreateMultipartUploadRequest.h>
 
 #include "object/s3/utils.h"
 #include "object/s3/aws_sdk_init.h"
@@ -117,10 +121,9 @@ namespace {
                 StringUtils::URLEncode(kv.second.c_str());
         }
 
-        Aws::String canonical_uri = req.GetUri().GetURLEncodedPathRFC3986();
-        if (canonical_uri.empty()) {
-            canonical_uri = "/";
-        }
+        // Same encoding as the SDK's own SigV4 signer: every byte except the
+        // unreserved characters is escaped, unlike the path sent on the wire.
+        const Aws::String canonical_uri = req.GetUri().GetURLEncodedPath();
 
         const Aws::String method =
             Aws::Http::HttpMethodMapper::GetNameForHttpMethod(req.GetMethod());
@@ -174,6 +177,7 @@ struct S3RdmaControlPlane::Impl {
     Aws::String access_key;
     Aws::String secret_key;
     Aws::String session_token;
+    std::unique_ptr<Aws::S3::S3Client> s3;
 
     // Build the token-carrying control-plane request, apply the op-specific
     // headers, SigV4-sign it, and send it. The common prologue (rdma token +
@@ -271,8 +275,14 @@ S3RdmaControlPlane::S3RdmaControlPlane(const nixl_b_params_t *custom_params) : i
         config.connectTimeoutMs = rdma_connect_timeout_secs * 1000;
         config.requestTimeoutMs = rdma_timeout_secs * 1000;
         impl_->http = Aws::Http::CreateHttpClient(config);
+        impl_->s3 = std::make_unique<Aws::S3::S3Client>(
+            creds,
+            config,
+            Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::RequestDependent,
+            impl_->virtual_addressing);
 
-        valid_ = impl_->http != nullptr && !impl_->access_key.empty() && !impl_->secret_key.empty();
+        valid_ = impl_->http != nullptr && impl_->s3 != nullptr && !impl_->access_key.empty() &&
+            !impl_->secret_key.empty();
     }
     catch (const std::exception &e) {
         NIXL_WARN << "S3 RDMA control plane init failed: " << e.what();
@@ -379,8 +389,11 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
             "bytes=" + std::to_string(offset) + "-" + std::to_string(offset + size - 1);
 
         auto resp = impl_->sendRdmaRequest(
-            Aws::Http::HttpMethod::HTTP_GET, uri, token, [&range](Aws::Http::HttpRequest &req) {
+            Aws::Http::HttpMethod::HTTP_GET, uri, token, [&](Aws::Http::HttpRequest &req) {
                 req.SetHeaderValue("range", range.c_str());
+                if (!ctx.ifMatch.empty()) {
+                    req.SetHeaderValue("if-match", ("\"" + ctx.ifMatch + "\"").c_str());
+                }
             });
         if (!resp) {
             NIXL_ERROR << "rdmaGet: MakeRequest returned null for key=" << ctx.object;
@@ -412,6 +425,10 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
 
         const std::string etag =
             resp->HasHeader("etag") ? stripQuotes(resp->GetHeader("etag").c_str()) : "";
+        if (etag.empty()) {
+            NIXL_ERROR << "rdmaGet: response has no ETag for key=" << ctx.object;
+            return rdma_error;
+        }
 
         // The server reports the actual transferred byte count in
         // x-amz-rdma-bytes-transferred: it is authoritative and already clamped
@@ -441,6 +458,61 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
     catch (const std::exception &e) {
         NIXL_ERROR << "rdmaGet failed: " << e.what();
         return rdma_error;
+    }
+}
+
+std::string
+S3RdmaControlPlane::createMultipartUpload(const S3RdmaClientCtx &ctx) {
+    Aws::S3::Model::CreateMultipartUploadRequest req;
+    req.SetBucket(ctx.bucket.c_str());
+    req.SetKey(ctx.object.c_str());
+    auto outcome = impl_->s3->CreateMultipartUpload(req);
+    if (!outcome.IsSuccess()) {
+        NIXL_ERROR << "CreateMultipartUpload failed for key=" << ctx.object << ": "
+                   << outcome.GetError().GetMessage();
+        return "";
+    }
+    return outcome.GetResult().GetUploadId().c_str();
+}
+
+bool
+S3RdmaControlPlane::completeMultipartUpload(const S3RdmaClientCtx &ctx,
+                                            const std::vector<std::string> &etags) {
+    Aws::S3::Model::CompletedMultipartUpload upload;
+    for (size_t i = 0; i < etags.size(); ++i) {
+        upload.AddParts(Aws::S3::Model::CompletedPart()
+                            .WithPartNumber(static_cast<int>(i + 1))
+                            .WithETag(("\"" + etags[i] + "\"").c_str()));
+    }
+    Aws::S3::Model::CompleteMultipartUploadRequest req;
+    req.SetBucket(ctx.bucket.c_str());
+    req.SetKey(ctx.object.c_str());
+    req.SetUploadId(ctx.uploadId.c_str());
+    req.SetMultipartUpload(std::move(upload));
+    auto outcome = impl_->s3->CompleteMultipartUpload(req);
+    if (!outcome.IsSuccess()) {
+        NIXL_ERROR << "CompleteMultipartUpload failed for key=" << ctx.object << ": "
+                   << outcome.GetError().GetMessage();
+        return false;
+    }
+    return true;
+}
+
+void
+S3RdmaControlPlane::abortMultipartUpload(const S3RdmaClientCtx &ctx) noexcept {
+    try {
+        Aws::S3::Model::AbortMultipartUploadRequest req;
+        req.SetBucket(ctx.bucket.c_str());
+        req.SetKey(ctx.object.c_str());
+        req.SetUploadId(ctx.uploadId.c_str());
+        auto outcome = impl_->s3->AbortMultipartUpload(req);
+        if (!outcome.IsSuccess()) {
+            NIXL_WARN << "AbortMultipartUpload failed for key=" << ctx.object << ": "
+                      << outcome.GetError().GetMessage();
+        }
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "AbortMultipartUpload failed for key=" << ctx.object << ": " << e.what();
     }
 }
 

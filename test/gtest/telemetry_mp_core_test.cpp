@@ -17,8 +17,7 @@
 
 // The multi-process exporter driven through nixlTelemetry rather than by direct
 // exportEvent calls, so the staging queue, the drain task, per-metric gating and
-// the drop accounting are all in the path. Mirrors the single-process coverage
-// in telemetry_prometheus_test.cpp.
+// the drop accounting are all in the path.
 
 #include "mp_store.h"
 #include "mp_telemetry_fixture.h"
@@ -114,6 +113,30 @@ TEST_F(MpExporterTest, DroppedEventsCounterAccumulates) {
                                   labelSet{{"agent_name", agent_name}}),
               std::optional<double>(static_cast<double>(expected_total)))
         << "dropped-events counter must sum every emitted delta (7+5)";
+}
+
+TEST_F(MpExporterTest, TracePhasesDroppedCounterAccumulates) {
+    const gtest::LogIgnoreGuard lig(PLUGIN_PROBE_WARNING);
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus_mp");
+    ASSERT_NE(handle, nullptr);
+
+    const std::string agent_name = "mp_trace_phases_dropped_agent";
+    auto exporter = handle->createExporter(initParams(agent_name));
+    ASSERT_NE(exporter, nullptr);
+
+    constexpr uint64_t kDrops = 3;
+    for (uint64_t i = 0; i < kDrops; ++i) {
+        EXPECT_EQ(
+            exporter->exportEvent({nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED, 1}),
+            NIXL_SUCCESS);
+    }
+
+    const auto metrics = scrapeMetrics(port_);
+    ASSERT_FALSE(metrics.empty()) << "Got empty /metrics response on port " << port_;
+
+    EXPECT_EQ(metrics.latestValue("agent_trace_phases_dropped_total",
+                                  labelSet{{"agent_name", agent_name}}),
+              std::optional<double>(static_cast<double>(kDrops)));
 }
 
 TEST_F(MpExporterTest, CoreUpdateDataOverflowConservation) {

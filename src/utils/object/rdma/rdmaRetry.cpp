@@ -5,6 +5,10 @@
 
 #include "rdmaRetry.h"
 
+#include <algorithm>
+#include <string>
+#include <vector>
+
 #include "common/nixl_log.h"
 
 namespace nixl_obj_rdma {
@@ -66,6 +70,75 @@ rdmaGetWithRetry(SharedCuObjClient &rdma,
         }
     }
     return ret;
+}
+
+ssize_t
+rdmaPutObject(SharedCuObjClient &rdma,
+              S3RdmaControlPlane &cp,
+              S3RdmaClientCtx &ctx,
+              void *buf,
+              uint64_t size) {
+    if (size <= rdma_max_request_size) {
+        return rdmaPutWithRetry(rdma, cp, ctx, buf, size);
+    }
+    ctx.uploadId = cp.createMultipartUpload(ctx);
+    if (ctx.uploadId.empty()) {
+        return rdma_error;
+    }
+
+    struct abortUnlessCompleted {
+        S3RdmaControlPlane &cp;
+        const S3RdmaClientCtx &ctx;
+        bool completed = false;
+
+        ~abortUnlessCompleted() {
+            if (!completed) {
+                cp.abortMultipartUpload(ctx);
+            }
+        }
+    } upload{cp, ctx};
+
+    std::vector<std::string> etags;
+    for (uint64_t done = 0; done < size; done += rdma_max_request_size) {
+        const uint64_t len = std::min(rdma_max_request_size, size - done);
+        ctx.partNumber = static_cast<uint32_t>(etags.size() + 1);
+        const ssize_t r = rdmaPutWithRetry(rdma, cp, ctx, static_cast<char *>(buf) + done, len);
+        if (r != static_cast<ssize_t>(len)) {
+            NIXL_ERROR << "RDMA multipart upload part " << ctx.partNumber << " failed (" << r
+                       << " of " << len << ") for key=" << ctx.object;
+            return rdma_error;
+        }
+        etags.push_back(ctx.etag);
+    }
+    upload.completed = cp.completeMultipartUpload(ctx, etags);
+    return upload.completed ? static_cast<ssize_t>(size) : rdma_error;
+}
+
+ssize_t
+rdmaGetObject(SharedCuObjClient &rdma,
+              S3RdmaControlPlane &cp,
+              S3RdmaClientCtx &ctx,
+              void *buf,
+              uint64_t size,
+              uint64_t offset) {
+    if (size == 0) {
+        return rdmaGetWithRetry(rdma, cp, ctx, buf, size, offset);
+    }
+    uint64_t done = 0;
+    while (done < size) {
+        const uint64_t len = std::min(rdma_max_request_size, size - done);
+        const ssize_t r =
+            rdmaGetWithRetry(rdma, cp, ctx, static_cast<char *>(buf) + done, len, offset + done);
+        if (r < 0) {
+            return r;
+        }
+        done += static_cast<uint64_t>(r);
+        if (r != static_cast<ssize_t>(len)) {
+            break;
+        }
+        ctx.ifMatch = ctx.etag;
+    }
+    return static_cast<ssize_t>(done);
 }
 
 } // namespace nixl_obj_rdma
