@@ -53,21 +53,24 @@ export NIXL_DEBUG_LOGGING=yes
 export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta${PYTHONPATH:+:$PYTHONPATH}"
 
 # Run the --disable-ll-nvlink (RDMA) elastic tests only when UCX pairs each of the
-# four ranks' GPUs with its own rc_gda NIC (NIC-name agnostic, correct on every partition).
+# four GPUs with an rc_gda NIC, over at least four distinct NICs.
 rdma_supported() {
-    local ucx_info="${INSTALL_DIR}/bin/ucx_info" nics
-    if [ ! -x "$ucx_info" ]; then
-        echo "RDMA check on $(hostname): ${ucx_info} not found"
-        return 1
-    fi
+    local ucx_info="${INSTALL_DIR}/bin/ucx_info" out gpus nics
     # A fresh process has no active CUDA context, and UCX then hides rc_gda.
-    nics=$(env -u UCX_TLS -u UCX_NET_DEVICES UCX_IB_GDA_RETAIN_INACTIVE_CTX=yes \
-        timeout 120 "$ucx_info" -d 2>/dev/null | awk '
-            /^# +Transport:/    { rc = ($NF == "rc_gda") }
-            rc && /^# +Device:/ { sub(/^[^-]*-/, "", $NF); print $NF }
-        ' | sort -u | wc -l)
-    echo "RDMA check on $(hostname): ${nics} distinct rc_gda NIC(s), need 4"
-    [ "$nics" -ge 4 ]
+    if ! out=$(env -u UCX_TLS -u UCX_NET_DEVICES UCX_IB_GDA_RETAIN_INACTIVE_CTX=yes \
+            timeout 120 "$ucx_info" -d 2>/dev/null); then
+        echo "RDMA check on $(hostname): ${ucx_info} -d failed"
+        return 2
+    fi
+    read -r gpus nics < <(awk '
+        function flush() { if (dev != "") { split(dev, d, "-"); if (!g[d[1]]++) ng++; if (!n[d[2]]++) nn++ } dev = "" }
+        /^# +Transport:/               { flush(); rc = ($NF == "rc_gda") }
+        rc && /^# +Device:/            { flush(); dev = $NF }
+        /< failed to open interface >/ { dev = "" }
+        END                            { flush(); print ng + 0, nn + 0 }
+    ' <<<"$out")
+    echo "RDMA check on $(hostname): rc_gda on ${gpus} GPU(s) via ${nics} distinct NIC(s), need 4 and 4"
+    [ "$gpus" -ge 4 ] && [ "$nics" -ge 4 ]
 }
 
 echo "==== Show system info ===="
@@ -76,11 +79,13 @@ nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
-if (set +x; rdma_supported); then
-    RDMA_SUPPORTED=true
-else
-    RDMA_SUPPORTED=false
-fi
+rdma_rc=0
+(set +x; rdma_supported) || rdma_rc=$?
+case $rdma_rc in
+    0) RDMA_SUPPORTED=true ;;
+    1) RDMA_SUPPORTED=false ;;
+    *) exit 1 ;;
+esac
 
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
