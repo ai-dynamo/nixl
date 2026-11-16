@@ -256,7 +256,7 @@ The agent will call the backend specific transfer handle that is stored within t
 
 ### Invalidate transfer request:
 
-The agent will call the **releaseReqH** from the SB API on the backend specific transfer handle to release it, and potentially abort the transfer if in progress and the backend has the capability. Then the agent will release the other resources within the agent level transfer handle to fully release it.
+The agent refreshes the status of an in-progress transfer. If it remains `NIXL_IN_PROG`, **releaseXferReq** returns `NIXL_ERR_REPOST_ACTIVE` without calling **releaseReqH** or invalidating the handle. The application retains ownership and must keep buffers and registrations alive, poll the transfer to completion, then retry release. Release does not cancel the transfer. Otherwise, the agent calls **releaseReqH** for the backend handle, if present, and releases its own transfer-handle resources only after backend release succeeds. A backend refusal also preserves ownership for retry.
 
 ### Get notifications:
 
