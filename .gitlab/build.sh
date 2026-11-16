@@ -265,7 +265,7 @@ else
 
     wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init -O ${BUILD_TMP}/rustup-init
     chmod +x ${BUILD_TMP}/rustup-init
-    ${BUILD_TMP}/rustup-init -y --default-toolchain 1.86.0
+    ${BUILD_TMP}/rustup-init -y --default-toolchain 1.95.0
 
     wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O ${BUILD_TMP}/install_uv.sh
     chmod +x ${BUILD_TMP}/install_uv.sh
@@ -404,7 +404,7 @@ else
 
     ( \
       cd ${BUILD_TMP} && \
-      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}" && \
+      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.14}" && \
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
       git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
@@ -412,7 +412,7 @@ else
       sed -i 's/^\([[:space:]]*\)install_go$/\1true/' dependencies.sh && \
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
-      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
+      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -DWITH_STORE_RUST=OFF -G Ninja && \
       ninja -j"$NPROC" && \
       $SUDO ninja install && \
       $SUDO ldconfig && \

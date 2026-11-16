@@ -89,7 +89,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ "$BUILD_NIXL_EP" = "true" ] && [ -z "$TORCH_VERSIONS" ]; then
-    echo "ERROR: --build-nixl-ep requires --torch-versions (e.g. --torch-versions 2.11,2.12)" >&2
+    echo "ERROR: --build-nixl-ep requires --torch-versions" >&2
     exit 1
 fi
 
@@ -264,6 +264,9 @@ build_wheel() {
 
     echo "=== Provisioning ${VENV_PATH} (python ${PYTHON_VERSION}${VER:+, torch ${VER} [${CHANNEL}]}) ==="
     uv pip install --python "$VENV_PATH/bin/python" "${BUILD_DEPS[@]}"
+    # Toolchain evidence for the CI build manifest; never fatal.
+    mkdir -p build-info && uv pip list --python "$VENV_PATH/bin/python" --format json \
+        > "build-info/pip-py${PYTHON_VERSION}-torch${VER:-base}.json" || true
 
     # Activate so meson's `find_installation('python3')` resolves to this
     # venv's interpreter (which has the right torch).
