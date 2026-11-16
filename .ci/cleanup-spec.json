@@ -70,6 +70,19 @@
           ]
         }
       }
+    },
+    {
+      "//": "Staging PyPI wheels — older than 2 days",
+      "aql": {
+        "items.find": {
+          "$and": [
+            { "repo": "sw-nbu-swx-nixl-pypi-local" },
+            { "path": { "$match": "staging/**" } },
+            { "name": { "$match": "*.whl" } },
+            { "modified": { "$before": "2d" } }
+          ]
+        }
+      }
     }
   ]
 }
