@@ -18,13 +18,15 @@ except ModuleNotFoundError as exc:
     raise ImportError("nixl.cute requires CuTe DSL; install nixl[cute]") from exc
 
 from nixl import _bindings
-from nixl._bindings import nixl_status_t
+from nixl._bindings import nixl_gpu_level_t, nixl_status_t
 
-THREAD, WARP, BLOCK = 0, 1, 2
+THREAD = int(nixl_gpu_level_t.THREAD)
+WARP = int(nixl_gpu_level_t.WARP)
+BLOCK = int(nixl_gpu_level_t.BLOCK)
 SUCCESS = int(nixl_status_t.NIXL_SUCCESS)
 IN_PROGRESS = int(nixl_status_t.NIXL_IN_PROG)
-DEFER = 1
-REQUEST_BYTES = 64
+DEFER = _bindings.NIXL_GPU_DEFER
+REQUEST_BYTES = _bindings.NIXL_GPU_REQUEST_BYTES
 _bitcode_path = Path(_bindings.__file__).parent / "lib" / "libnixl_device.bc"
 if not _bitcode_path.is_file():
     raise ImportError(

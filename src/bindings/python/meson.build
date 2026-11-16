@@ -23,7 +23,7 @@ py.extension_module('_bindings',
            'nixl_bindings.cpp',
            subdir: (cuda_wheel_dir),
            dependencies: [nixl_dep, serdes_interface, pybind_dep],
-           include_directories: [nixl_inc_dirs, utils_inc_dirs],
+           include_directories: [nixl_inc_dirs, nixl_device_inc_dirs, utils_inc_dirs],
            install: true)
 
 py.extension_module('_utils',

@@ -20,7 +20,7 @@
 
 #include <gpu/nixl_device.cuh>
 
-// Source-matched private shims, not a stable ABI. Keep Python constants in sync.
+// Source-matched private shims, not a stable ABI.
 static_assert(sizeof(nixlGpuXferStatusH) == 64);
 static_assert(alignof(nixlGpuXferStatusH) == 16);
 static_assert(NIXL_SUCCESS == 0 && NIXL_IN_PROG == 1);

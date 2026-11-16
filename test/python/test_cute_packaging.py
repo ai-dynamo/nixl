@@ -34,8 +34,11 @@ def package_tree(tmp_path):
         backend = tmp_path / f"nixl_cu{major}"
         (backend / "lib").mkdir(parents=True)
         (backend / "lib/libnixl_device.bc").write_bytes(b"test bitcode")
+        # Distinct values catch hard-coded constants in the Python wrapper.
         (backend / "_bindings.py").write_text(
             "class nixl_status_t:\n    NIXL_SUCCESS = 0\n    NIXL_IN_PROG = 1\n"
+            "class nixl_gpu_level_t:\n    THREAD = 11\n    WARP = 22\n    BLOCK = 33\n"
+            "NIXL_GPU_DEFER = 8\nNIXL_GPU_REQUEST_BYTES = 128\n"
         )
         for name in ("__init__", "_api", "_utils", "logging"):
             (backend / f"{name}.py").touch()
@@ -73,6 +76,11 @@ def test_selected_backend_bitcode(package_tree, major):
         "from nixl import _bindings\n"
         "from pathlib import Path\n"
         "assert cute._bitcode == str(Path(_bindings.__file__).parent / 'lib/libnixl_device.bc')\n"
+        "assert cute.THREAD == int(_bindings.nixl_gpu_level_t.THREAD)\n"
+        "assert cute.WARP == int(_bindings.nixl_gpu_level_t.WARP)\n"
+        "assert cute.BLOCK == int(_bindings.nixl_gpu_level_t.BLOCK)\n"
+        "assert cute.DEFER == _bindings.NIXL_GPU_DEFER\n"
+        "assert cute.REQUEST_BYTES == _bindings.NIXL_GPU_REQUEST_BYTES\n"
         "import nixl.cute\n"
         "assert nixl.cute is cute\n",
         major,
