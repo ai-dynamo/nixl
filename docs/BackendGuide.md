@@ -52,7 +52,9 @@ The key/value parameters are a map of strings to byte arrays that are passed fro
 * supportsRemote(): Indicates if the backend supports transfers across nodes
 * supportsNotif(): Indicates if the backend supports notifications
 * getSupportedMems(): Indicates memory types supported by the backend
-* supportsTraceContext(): Indicates if the backend carries a request's trace context to its peer. Optional and `false` by default; only in-tree plugins can implement it, since the trace context type is internal
+* supportsCapability(): Indicates if the backend has a capability from `nixl_backend_capability_t`. A backend passes its capabilities, combined with `|`, to the `nixlBackendEngine` constructor; none are set by default
+  * `LOCAL`, `REMOTE`, `NOTIF`: the values that supportsLocal(), supportsRemote() and supportsNotif() return by default, so a backend does not need to override these methods
+  * `TRACE_CONTEXT`: the backend carries a request's trace context to its peer. Only in-tree plugins can implement it, since the trace context type is internal
 
 Based on the first 3 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend must have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional.
 

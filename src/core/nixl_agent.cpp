@@ -618,7 +618,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     if (backend->supportsRemote()) {
         data->notifEngines.push_back(backend.get());
         data->connMd_[type] = conn_info;
-        if ((data->tracer_ != nullptr) && !backend->supportsTraceContext()) {
+        if ((data->tracer_ != nullptr) &&
+            !backend->supportsCapability(nixl_backend_capability_t::TRACE_CONTEXT)) {
             data->traceContextUnsupported_.try_emplace(type);
         }
     }
