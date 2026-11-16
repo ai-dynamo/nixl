@@ -27,13 +27,22 @@ def tool_version() -> str:
             text=True,
             timeout=10,
         )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout.strip()
     except (OSError, subprocess.TimeoutExpired):
-        return "unknown"
-    return (
-        proc.stdout.strip()
-        if proc.returncode == 0 and proc.stdout.strip()
-        else "unknown"
-    )
+        pass
+    return _head_commit(repo) or "unknown"
+
+
+def _head_commit(repo: Path) -> str:
+    """HEAD read from .git itself, for an image without git."""
+    try:
+        head = (repo / ".git" / "HEAD").read_text(encoding="utf-8").strip()
+        if head.startswith("ref: "):
+            head = (repo / ".git" / head[5:]).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return head[:8] if len(head) >= 40 and head.isalnum() else ""
 
 
 def _manifest_status(side: Side) -> str:
