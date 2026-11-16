@@ -229,13 +229,22 @@ else
     fi
 
     # DOCA + RDMA build dependencies.
+    #  - AWS EFA environments (TEST_LIBFABRIC=true): install the distro RDMA
+    #    packages directly. The DOCA host repo's ibverbs-providers package only
+    #    ships mlx5.driver and strips /etc/libibverbs.d/efa.driver, hiding EFA
+    #    devices from ibv_devinfo, libfabric, and UCX.
     #  - Bases without DOCA (cuda-dl-base, nvidia/cuda, ubuntu22.04): add the pinned
     #    DOCA host repo (wget below), install the SDK + headers, then reinstall the
     #    RDMA packages to repair cuda-dl-base's broken libibverbs-dev.
     #  - Bases that already ship DOCA (nvcr.io/nvidia/pytorch bundles >=3.4): use that
     #    stack as-is. Adding a second DOCA repo would only downgrade/mismatch it, so
     #    skip the whole repo add + SDK install + RDMA reinstall.
-    if dpkg -s libdoca-sdk-gpunetio-dev >/dev/null 2>&1; then
+    if [ "${TEST_LIBFABRIC}" = "true" ]; then
+        echo "TEST_LIBFABRIC=true; installing distro RDMA packages (preserving efa.driver) and skipping DOCA repo"
+        $SUDO apt-get -qq -y install \
+            --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+            libnuma-dev librdmacm-dev ibverbs-providers
+    elif dpkg -s libdoca-sdk-gpunetio-dev >/dev/null 2>&1; then
         echo "DOCA $(dpkg-query -W -f='${Version}' libdoca-sdk-gpunetio-dev) provided by base image; skipping DOCA repo add, SDK install, and RDMA reinstall"
     else
         ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
@@ -256,7 +265,7 @@ else
 
     wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init -O ${BUILD_TMP}/rustup-init
     chmod +x ${BUILD_TMP}/rustup-init
-    ${BUILD_TMP}/rustup-init -y --default-toolchain 1.86.0
+    ${BUILD_TMP}/rustup-init -y --default-toolchain 1.95.0
 
     wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O ${BUILD_TMP}/install_uv.sh
     chmod +x ${BUILD_TMP}/install_uv.sh
@@ -269,7 +278,16 @@ else
     export NVM_DIR=${HOME}/.nvm
     [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
     nvm install --lts  # install nodejs
-    npm install -g azurite@${AZURITE_VER}
+    # npm's fetch-retries don't cover a connection dropped mid-download
+    for i in {1..3}; do
+        npm install -g "azurite@${AZURITE_VER}" && break
+        if [ "$i" = 3 ]; then
+            echo "ERROR: failed to install azurite@${AZURITE_VER}" >&2
+            exit 1
+        fi
+        echo "npm install azurite failed (attempt $i), retrying..." >&2
+        sleep $((10 * i))
+    done
 
     wget --tries=3 --waitretry=5 -O "${BUILD_TMP}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
     tar xjf "${BUILD_TMP}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -C ${BUILD_TMP}
@@ -386,7 +404,7 @@ else
 
     ( \
       cd ${BUILD_TMP} && \
-      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}" && \
+      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.14}" && \
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
       git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
@@ -394,7 +412,7 @@ else
       sed -i 's/^\([[:space:]]*\)install_go$/\1true/' dependencies.sh && \
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
-      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
+      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -DWITH_STORE_RUST=OFF -G Ninja && \
       ninja -j"$NPROC" && \
       $SUDO ninja install && \
       $SUDO ldconfig && \
@@ -463,6 +481,7 @@ else
             --with-verbs \
             --with-dm \
             --without-gdrcopy \
+            --with-efa \
             ${UCX_CUDA_BUILD_ARGS} && \
           make -j"$NPROC" && \
           make -j install-strip && \

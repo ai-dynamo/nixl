@@ -239,6 +239,9 @@ the request's own, whose span id a sampled request's first `postXferReq` call ta
 refused or not. A post refused by `postXferReq`'s checks changes none of the three.
 A request without an id, such as one created while no tracing backend is active,
 returns `NIXL_ERR_NOT_FOUND`; the getter never enables tracing.
+From Python, `nixl_agent.get_xfer_trace_info(handle)` returns the same three as a
+`nixlXferTraceInfo` (`requestId`, `execution`, `traceparent`), or `None` when the
+request has no identity or the handle has been released.
 
 ### Backend phases
 
@@ -330,9 +333,10 @@ application checks its status, even on the thread-pool engine, whose dedicated
 threads see each chunk finish, so the stamp would time the poll rather than the
 transport.
 
-A backend that carries the context to its peer says so by overriding
-`supportsTraceContext()`, which defaults to `false`; core reads it once, when
-the backend is created. Tracing never fails a transfer over it. A sampled
+A backend that carries the context to its peer says so by passing the
+`TRACE_CONTEXT` capability to the `nixlBackendEngine` constructor; it is not
+set by default, and core reads it once, when the backend is created. Tracing
+never fails a transfer over it. A sampled
 request on a backend that supports remote transfers but not trace contexts runs
 as usual, its trace just does not reach the remote agent, and core logs a
 warning once per backend in each agent; backends without remote transfers are
