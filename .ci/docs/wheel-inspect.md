@@ -40,6 +40,16 @@ exactly one meta wheel, all of one version. Anything else stops the run before a
 The two sides may cover different combinations (a new Python version, a dropped CUDA line); the
 file comparison then runs on the shared ones and the rest is listed.
 
+## In the release build
+
+On a release run (`PUBLISH_DIR=release/<ver>`) `nixl-build-wheel` runs `release-run` on the folder
+it has just published and marked, through `.ci/scripts/wheel-nightly/inspect-wheels.sh`. The
+report is uploaded next to the wheels, archived on the build and mailed to `MAIL_TO`. The
+reference is `INSPECT_REFERENCE` in `build-wheel-publish-matrix.yaml` (`auto`); to compare against
+another version, run the tool by hand. A `FAIL` check or a missing report marks the build UNSTABLE
+and leaves the wheels as published; see
+[`nixl-build-wheel`](ci-overview.md#nixl-build-wheel-standalone).
+
 ## The build manifest
 
 The wheel build publishes `build-manifest.json` next to the wheels (see
@@ -83,6 +93,8 @@ compares `cuobjdump --list-elf` output when `cuobjdump` is available (`--cuobjdu
 
 `wheel-inspection.json`, `.md` and `.html` in `--out-dir`, plus the results table on stdout. The
 JSON `summary` counts the states; the Markdown and HTML are rendered from the same document.
+`release-run --status-file <path>` also writes one line for a caller to read: the state counts
+(`PASS 6 FAIL 0 REVIEW 2 SKIPPED 0`), or the reason there is no report.
 
 | Exit code | Meaning |
 | --- | --- |

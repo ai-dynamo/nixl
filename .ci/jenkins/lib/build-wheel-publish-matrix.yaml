@@ -115,8 +115,11 @@ env:
   # refuses to publish a manifest assembled from fewer fragments.
   EXPECTED_WHEEL_CELLS: "20"
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
-  # Runs .ci/scripts/merge_build_manifest.py in pipeline_stop; the runner image has no Python.
+  # Runs .ci/scripts/merge_build_manifest.py and wheel_inspect in pipeline_stop; the runner image has no Python.
   CI_PYTHON_IMAGE: "docker.io/library/python:3.12-slim"
+  # What a release run's wheels are inspected against: "auto" is the highest
+  # PyPI release below the built version, or name one, e.g. "pypi:1.5.2".
+  INSPECT_REFERENCE: "auto"
   # SWX team's NIXL pypi repo (publish target).
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
   # Properties API (same repo, different endpoint) for tagging published wheels.
@@ -226,7 +229,8 @@ pipeline_start:
 # SUCCESS, delete otherwise - and mails the unattended nightly when the result
 # is not SUCCESS. A partial wheel set has to be rebuilt anyway, so publishing
 # it would only mislead the poller. verification/ and staging/ folders are
-# shared between builds and are left alone either way.
+# shared between builds and are left alone either way. A marked release folder
+# is then inspected against INSPECT_REFERENCE and the report mailed.
 pipeline_stop:
   shell: action
   module: groovy
@@ -245,6 +249,8 @@ pipeline_stop:
     def folderUrl = "${env.WHEEL_REPO_UI}/${folderPath}"
     def removedNote = ''
     def manifestNote = ''
+    def inspectNote = ''
+    def folderMarked = false
 
     // --- Build manifest: .ci/scripts/wheel-nightly/publish-manifest.sh merges
     // the fragments the cells deposited on the PVC and uploads
@@ -323,6 +329,7 @@ pipeline_stop:
                     """
                     currentBuild.description = "<a href='${folderUrl}'>${folderPath}</a>"
                     echo "Published wheel set: ${folderUrl} (NIXL_SHA=${sha})"
+                    folderMarked = true
                 } catch (err) {
                     // Unmarked, nothing purges release/, and the commit gets
                     // rebuilt anyway - so drop it rather than orphan it.
@@ -335,6 +342,44 @@ pipeline_stop:
                     ? "<p>Partial wheel set removed: <b>${folderPath}</b></p>"
                     : "<p>Partial wheel set at <b>${folderPath}</b> could NOT be removed - delete it manually</p>"
             }
+        }
+    }
+
+    // --- Wheel inspection: .ci/scripts/wheel-nightly/inspect-wheels.sh compares
+    // the marked release folder against INSPECT_REFERENCE and uploads the
+    // report next to the wheels; it is mailed to MAIL_TO. A FAIL check or a
+    // missing report marks the build UNSTABLE and never touches the wheels.
+    if (folderMarked) {
+        try {
+            withCredentials([usernamePassword(
+                    credentialsId: 'svc-nixl-new-artifactory-token',
+                    usernameVariable: 'ARTIFACTORY_USER',
+                    passwordVariable: 'ARTIFACTORY_TOKEN')]) {
+                def rc = sh(returnStatus: true, script: '.ci/scripts/wheel-nightly/inspect-wheels.sh')
+                def status = fileExists('wheel-inspection/status.txt') ? readFile('wheel-inspection/status.txt').trim() : ''
+                if (rc != 0) {
+                    throw new Exception(status ?: "inspect-wheels.sh exited ${rc}")
+                }
+                archiveArtifacts artifacts: 'wheel-inspection/wheel-inspection.*'
+                if (params.MAIL_TO) {
+                    mail(
+                        from: env.MAIL_FROM,
+                        to: params.MAIL_TO,
+                        subject: "NIXL wheel inspection ${folderPath} - ${status}",
+                        mimeType: 'text/html',
+                        body: readFile('wheel-inspection/wheel-inspection.html')
+                    )
+                }
+                // Anything but a clean line: a FAIL check, or the upload failed.
+                if (!(status ==~ /PASS \d+ FAIL 0 REVIEW \d+ SKIPPED \d+/)) {
+                    currentBuild.result = 'UNSTABLE'
+                    inspectNote = "<p>Wheel inspection: <b>${status}</b></p>"
+                }
+            }
+        } catch (e) {
+            echo "WARNING: wheel inspection not completed: ${e.message}"
+            currentBuild.result = 'UNSTABLE'
+            inspectNote = "<p>Wheel inspection NOT completed: <b>${e.message}</b></p>"
         }
     }
 
@@ -355,6 +400,7 @@ pipeline_stop:
                 <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
                 ${removedNote}
                 ${manifestNote}
+                ${inspectNote}
             """
         )
     }
