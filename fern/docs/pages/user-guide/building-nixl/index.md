@@ -21,7 +21,7 @@ Build NIXL from source using one of the following methods:
 | `ucx_path` | `""` | Path to UCX installation |
 | `libfabric_path` | `""` | Path to Libfabric installation |
 | `gds_path` | `/usr/local/cuda/` | Path to GDS CuFile installation |
-| `install_headers` | `true` | Install development headers |
+| `install_headers` | `true` (direct Meson builds) | Install development headers |
 | `disable_gds_backend` | `false` | Disable GDS backend |
 | `disable_mooncake_backend` | `false` | Disable Mooncake backend |
 | `cudapath_inc` | auto-detected | Custom CUDA include path |
@@ -34,6 +34,14 @@ Build NIXL from source using one of the following methods:
 | `disable_plugins` | `""` | Comma-separated plug-ins to exclude (cannot combine with `enable_plugins`) |
 | `rust` | `false` | Build Rust bindings |
 | `log_level` | `auto` | Log level: trace, debug, info, warning, error, fatal, auto |
+
+Python wheel builds override `install_headers` to `false` in
+[`pyproject.toml`](https://github.com/ai-dynamo/nixl/blob/main/pyproject.toml),
+so installing a wheel does not install the NIXL C++ development headers.
+For C++ development, follow [NIXL C++ (Meson)](/nixl/developer-guide/building-nixl-from-source/nixl-c-meson)
+with `install_headers` enabled. Headers are installed under `<prefix>/include`
+(`/opt/nvidia/nvda_nixl/include` by default); use Meson's `--prefix` option to
+choose a different installation prefix.
 
 Example with custom options:
 

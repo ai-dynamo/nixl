@@ -97,28 +97,8 @@ agent.createBackend("OBJ", params);
 
 ### CUObject Client Configuration
 
-The CUObject Client library requires the configuration of the RDMA device address list in the JSON configuration file.  Each client IP address associated with an RDMA device is specified in the "rdma_dev_addr_list" property.  The following is an example JSON file:
-
-```json
-{
-    "execution": {
-        "parallel_io" : false
-    },
-
-    "properties": {
-        "allow_compat_mode": true,
-        "use_pci_p2pdma": true,
-        "rdma_peer_type": "dmabuf",
-        "rdma_dev_addr_list": ["10.0.1.2", "10.0.2.2"]
-    }
-}
-```
-
-Export the location of the JSON file with the environment variable
-
-```bash
-export CUFILE_ENV_PATH_JSON=/path/to/cufile.json
-```
+See [CUObject Client Config for S3 Accelerated](../README.md) for RDMA configuration
+and the startup latency workaround.
 
 ## Supported Memory Types
 

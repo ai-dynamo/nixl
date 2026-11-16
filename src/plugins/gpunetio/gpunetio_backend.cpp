@@ -34,13 +34,6 @@
 
 const char info_delimiter = '-';
 
-void
-nixlDocaGpuCounterDeleter::operator()(uint64_t *counter) const {
-    if (doca_gpu_mem_free(gpu, counter) != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to free striped WRITE completion counter";
-    }
-}
-
 namespace {
 template<typename unsignedType>
 inline bool
@@ -122,6 +115,21 @@ parseGidIndex(const std::string &value) {
     }
 
     return parsed_value;
+}
+
+uint32_t
+parseCudaStreams(std::string_view value) {
+    if (value.empty()) {
+        return DOCA_POST_STREAM_NUM;
+    }
+    uint32_t count = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), count);
+    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || count < 1 ||
+        count > DOCA_POST_STREAM_NUM) {
+        throw std::invalid_argument("cuda_streams must be an integer in [1, " +
+                                    std::to_string(DOCA_POST_STREAM_NUM) + "]");
+    }
+    return count;
 }
 
 bool
@@ -304,18 +312,24 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
     NIXL_INFO << std::endl;
 
-    nstreams = 0;
-    if (custom_params->count("cuda_streams") != 0 && (*custom_params)["cuda_streams"] != "") {
-        nstreams = std::stoi((*custom_params)["cuda_streams"]);
-    }
-    if (nstreams == 0) {
-        nstreams = DOCA_POST_STREAM_NUM;
-    }
+    nstreams = static_cast<int>(parseCudaStreams((*custom_params)["cuda_streams"]));
 
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     dataQpCount_ = parseDataQpCount((*custom_params)["data_qp_count"]);
+    const auto stripe = custom_params->find("write_stripe");
+    if (stripe != custom_params->end() && !stripe->second.empty()) {
+        if (stripe->second != "slots" && stripe->second != "bytes") {
+            throw std::invalid_argument("write_stripe must be slots or bytes");
+        }
+        writeStripeBytes_ = stripe->second == "bytes";
+    }
+    const auto min_bytes = custom_params->find("write_stripe_min_bytes");
+    if (min_bytes != custom_params->end() && !min_bytes->second.empty() &&
+        (!parseUnsigned(min_bytes->second, writeStripeMinBytes_) || writeStripeMinBytes_ == 0)) {
+        throw std::invalid_argument("write_stripe_min_bytes must be a positive integer");
+    }
     if (dataQpCount_ > 1 &&
         (nstreams < static_cast<int>(dataQpCount_) ||
          nstreams > static_cast<int>(DOCA_POST_STREAM_NUM))) {
@@ -728,7 +742,10 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
         return NIXL_ERR_BACKEND;
     }
 
-    notif->send_pi = 0;
+    notif->send_free.reserve(notif->elems_num);
+    for (uint32_t slot = notif->elems_num; slot > 0; --slot) {
+        notif->send_free.push_back(slot - 1);
+    }
     notif->recv_pi = 0;
 
     // Ensure notif list is not added twice for the same peer
@@ -940,20 +957,6 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
                 rdma_qp->qp_write.push_back(std::move(qp));
             }
             rdma_qp->writeProgrammed.resize(dataQpCount_, false);
-            uint64_t *gpu_counter = nullptr;
-            const auto result =
-                doca_gpu_mem_alloc(gdevs[0].second,
-                                   sizeof(uint64_t),
-                                   64,
-                                   DOCA_GPU_MEM_TYPE_GPU_CPU,
-                                   reinterpret_cast<void **>(&gpu_counter),
-                                   reinterpret_cast<void **>(&rdma_qp->writeCompletedCpu));
-            if (result != DOCA_SUCCESS) {
-                throw std::runtime_error("Failed to allocate striped WRITE completion counter");
-            }
-            rdma_qp->writeCompletedGpu.get_deleter().gpu = gdevs[0].second;
-            rdma_qp->writeCompletedGpu.reset(gpu_counter);
-            *rdma_qp->writeCompletedCpu = 0;
         }
     }
     catch (const std::exception &e) {
@@ -1529,9 +1532,10 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
         return x.first == mem.devId;
     });
 
-    if (it == gdevs.end()) {
+    // A DRAM devId does not name a GPU; only VRAM must belong to a visible device.
+    if (nixl_mem == VRAM_SEG && it == gdevs.end()) {
         int device_count = 0;
-        if (nixl_mem != VRAM_SEG || cudaGetDeviceCount(&device_count) != cudaSuccess ||
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess ||
             mem.devId >= static_cast<uint64_t>(device_count)) {
             NIXL_ERROR << "Can't register memory for unknown device " << mem.devId;
             return NIXL_ERR_INVALID_PARAM;
@@ -1559,7 +1563,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_BACKEND;
     }
 
-    priv->devId = mem.devId;
+    priv->peerGpu = nixl_mem == VRAM_SEG && it == gdevs.end();
     ss << (uint32_t)priv->mr->get_rkey() << info_delimiter << ((uintptr_t)priv->mr->get_addr())
        << info_delimiter << ((size_t)priv->mr->get_tot_size());
     priv->remoteMrStr = ss.str();
@@ -1659,15 +1663,34 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     if (lcnt != rcnt || lcnt == 0) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    if ((lcnt + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE > DOCA_XFER_REQ_MAX) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
+    // Descriptors above the SDK transfer limit are split over several WQEs. The ring must hold
+    // the WQEs of the request even if no descriptor is merged or paired.
+    constexpr uint64_t max_wqes = uint64_t{DOCA_XFER_REQ_SIZE} * DOCA_XFER_REQ_MAX;
+    uint64_t wqe_count = 0;
+    const bool byte_striping = operation == NIXL_WRITE && dataQpCount_ > 1 && writeStripeBytes_;
+    size_t write_bytes = 0;
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         if (local[idx].len != remote[idx].len) {
             return NIXL_ERR_INVALID_PARAM;
         }
+        wqe_count += nixl::gpunetio::descriptorWqeCount(local[idx].len);
+        if (wqe_count > max_wqes) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        if (byte_striping) {
+            write_bytes += local[idx].len;
+        }
     }
+
+    const uint32_t qps_used = byte_striping ?
+        static_cast<uint32_t>(std::max<size_t>(
+            1, std::min<size_t>(write_bytes / writeStripeMinBytes_, dataQpCount_))) :
+        1;
+    uint32_t owner = 0;
+    auto owner_budget = [&](uint32_t qp) {
+        return write_bytes / qps_used + (qp < write_bytes % qps_used);
+    };
+    size_t owner_remaining = owner_budget(0);
 
     if (operation == NIXL_WRITE && dataQpCount_ > 1 && opt_args != nullptr &&
         !opt_args->customParam.empty()) {
@@ -1676,7 +1699,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         lmd = (nixlDocaPrivateMetadata *)local[idx].metadataP;
-        if (lmd->devId != gdevs[0].first && opt_args && !opt_args->customParam.empty()) {
+        if (lmd->peerGpu && opt_args && !opt_args->customParam.empty()) {
             NIXL_ERROR << "Attached CUDA streams are not supported for peer-GPU payloads";
             return NIXL_ERR_NOT_SUPPORTED;
         }
@@ -1701,7 +1724,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     };
 
     if (opt_args == nullptr || opt_args->customParam.empty()) {
-        stream_id = (xferStream.fetch_add(1) & (nstreams - 1));
+        stream_id = xferStream.fetch_add(1) % static_cast<uint32_t>(nstreams);
         treq->stream = post_stream[stream_id];
     } else {
         if (opt_args->customParam.size() != sizeof(cudaStream_t)) {
@@ -1727,21 +1750,34 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         return false;
     };
 
-    treq->positions.reserve((lcnt + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
+    treq->qpData = rdma_qp->qp_data->get_qp_gpu_dev();
+    treq->positions.reserve(byte_striping ?
+                                DOCA_XFER_REQ_MAX :
+                                (wqe_count + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
     if (!reserve_position()) {
         abandon_request();
         return NIXL_ERR_BACKEND;
     }
 
     uint32_t desc_offset = 0;
+    // Bytes of local[desc_offset] already staged in earlier WQEs, possibly in an earlier slot.
+    size_t split_offset = 0;
     do {
+        if (byte_striping) {
+            treq->qpOwners.push_back(owner);
+        }
         docaSlotDesc staged_req{};
         staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
 
         uint32_t chunk_desc_count = 0;
+        size_t chunk_bytes = 0;
         while (desc_offset < lcnt && staged_req.num < DOCA_XFER_REQ_SIZE &&
                (operation == NIXL_READ || chunk_desc_count < DOCA_XFER_REQ_SIZE)) {
             const uint32_t desc_idx = desc_offset;
+
+            if (byte_striping && staged_req.num > 0 && chunk_bytes >= owner_remaining) {
+                break;
+            }
 
             lmd = (nixlDocaPrivateMetadata *)local[desc_idx].metadataP;
             rmd = (nixlDocaPublicMetadata *)remote[desc_idx].metadataP;
@@ -1771,28 +1807,43 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             if (chunk_desc_count >= DOCA_XFER_REQ_SIZE && !mergeable) {
                 break;
             }
-            ++desc_offset;
             ++chunk_desc_count;
             if (mergeable) {
+                ++desc_offset;
                 continue;
             }
 
+            const size_t remaining = local[desc_idx].len - split_offset;
+            const size_t wqe_size = byte_striping ?
+                std::min({remaining,
+                          owner_remaining - chunk_bytes,
+                          size_t(DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE)}) :
+                std::min<size_t>(remaining, DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
+            const size_t piece_offset = split_offset;
             const uint32_t idx = staged_req.num;
-            staged_req.lbuf[idx] = local[desc_idx].addr;
+            staged_req.lbuf[idx] = local[desc_idx].addr + split_offset;
             staged_req.lkey[idx] = lmd->mr->get_lkey();
-            staged_req.rbuf[idx] = remote[desc_idx].addr;
+            staged_req.rbuf[idx] = remote[desc_idx].addr + split_offset;
             staged_req.rkey[idx] = rmd->mr->get_rkey();
-            staged_req.size[idx] = local[desc_idx].len;
+            staged_req.size[idx] = wqe_size;
             staged_req.num_sge[idx] = 1;
             staged_req.num++;
+            chunk_bytes += wqe_size;
+            if (wqe_size < remaining) {
+                split_offset += wqe_size;
+                continue;
+            }
+            split_offset = 0;
+            ++desc_offset;
 
-            if (operation == NIXL_WRITE && lcnt - desc_idx > 2) {
+            if (operation == NIXL_WRITE && lcnt - desc_idx > 2 &&
+                (!byte_striping || local[desc_offset].len <= owner_remaining - chunk_bytes)) {
                 auto *next_lmd =
                     static_cast<nixlDocaPrivateMetadata *>(local[desc_offset].metadataP);
                 auto *next_rmd =
                     static_cast<nixlDocaPublicMetadata *>(remote[desc_offset].metadataP);
-                if (nixl::gpunetio::canPairWrite(remote[desc_idx].addr,
-                                                 remote[desc_idx].len,
+                if (nixl::gpunetio::canPairWrite(remote[desc_idx].addr + piece_offset,
+                                                 wqe_size,
                                                  staged_req.rkey[idx],
                                                  remote[desc_offset].addr,
                                                  remote[desc_offset].len,
@@ -1804,18 +1855,26 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                     staged_req.size2[idx] = local[desc_offset].len;
                     staged_req.num_sge[idx] = 2;
                     staged_req.has_two_sge = 1;
+                    chunk_bytes += local[desc_offset].len;
                     ++desc_offset;
                 }
             }
         }
 
-        staged_req.qp_data = rdma_qp->qp_data->get_qp_gpu_dev();
+        staged_req.qp_data = treq->qpData;
         staged_req.qp_notif = rdma_qp->qp_notif->get_qp_gpu_dev();
         staged_req.qp_progress = rdma_qp->progress_gpu;
         const size_t publish_size =
             staged_req.has_two_sge ? sizeof(staged_req) : offsetof(docaSlotDesc, lbuf2);
         memcpy(&xferReqRingCpu[pos], &staged_req, publish_size);
 
+        if (byte_striping) {
+            owner_remaining -= chunk_bytes;
+            if (owner_remaining == 0 && owner + 1 < qps_used) {
+                ++owner;
+                owner_remaining = owner_budget(owner);
+            }
+        }
         if (desc_offset < lcnt && !reserve_position()) {
             abandon_request();
             return NIXL_ERR_BACKEND;
@@ -1846,21 +1905,27 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
         }
 
+        uint32_t slot = 0;
+        if (!notif->acquireSendSlot(slot)) {
+            NIXL_ERROR << "All notification buffers for " << remote_agent << " are in use";
+            abandon_request();
+            return NIXL_ERR_BACKEND;
+        }
+        // The request owns the buffer until it is released, so every repost sends this message.
+        treq->notif = notif;
+        treq->notifSlot = slot;
+        notif_addr = (uintptr_t)(notif->send_addr + size_t{slot} * notif->elems_size);
+
         auto &final_request = xferReqRingCpu[final_pos];
-        notif_addr =
-            (uintptr_t)nixl::gpunetio::reserveNotificationSlot(notif->send_pi,
-                                                               notif->elems_num,
-                                                               notif->send_addr,
-                                                               notif->elems_size,
-                                                               final_request.has_notif_msg_idx);
+        final_request.has_notif_msg_idx = slot;
         final_request.msg_sz = newMsg.size() + 1;
         final_request.lbuf_notif = notif_addr;
         final_request.lkey_notif = notif->send_mr->get_lkey();
 
-        memcpy((void *)notif_addr, newMsg.c_str(), final_request.msg_sz);
+        memcpy((void *)notif_addr, newMsg.c_str(), newMsg.size() + 1);
 
-        NIXL_INFO << "DOCA prepXfer with notif to " << remote_agent << " at "
-                  << final_request.has_notif_msg_idx << " msg " << newMsg << " to " << remote_agent;
+        NIXL_INFO << "DOCA prepXfer with notif to " << remote_agent << " at " << slot << " msg "
+                  << newMsg << " to " << remote_agent;
 
     } else {
         xferReqRingCpu[final_pos].has_notif_msg_idx = DOCA_NOTIF_NULL;
@@ -1918,18 +1983,14 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     for (uint32_t idx : treq->positions) {
         const doca_error_t result = operation == NIXL_READ ?
             doca_kernel_read(treq->stream,
-                             xferReqRingCpu[idx].qp_data,
+                             treq->qpData,
                              xferReqRingGpu,
                              gpu_state_gpu,
                              host_state_gpu_,
                              idx,
                              treq->attachedStream) :
-            doca_kernel_write(treq->stream,
-                              xferReqRingCpu[idx].qp_data,
-                              xferReqRingGpu,
-                              gpu_state_gpu,
-                              host_state_gpu_,
-                              idx);
+            doca_kernel_write(
+                treq->stream, treq->qpData, xferReqRingGpu, gpu_state_gpu, host_state_gpu_, idx);
         if (result != DOCA_SUCCESS) {
             treq->postStatus = NIXL_ERR_BACKEND;
             break;
@@ -1970,24 +2031,24 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
     launch.count = static_cast<uint32_t>(request->positions.size());
     for (size_t ordinal = 0; ordinal < request->positions.size(); ++ordinal) {
         launch.positions[ordinal] = request->positions[ordinal];
+        const uint32_t owner =
+            request->qpOwners.empty() ? ordinal % dataQpCount_ : request->qpOwners[ordinal];
+        launch.owners[ordinal] = owner;
         auto &entry = xferReqRingCpu[request->positions[ordinal]];
-        entry.qp_data = peer->qp_write[ordinal % dataQpCount_]->get_qp_gpu_dev();
-        entry.qp_progress = peer->progress_gpu + 1 + ordinal % dataQpCount_;
+        entry.qp_data = peer->qp_write[owner]->get_qp_gpu_dev();
+        entry.qp_progress = peer->progress_gpu + 1 + owner;
         entry.wait_completion_mask = 0;
-        entry.peer_write_completed = nullptr;
-        entry.write_ticket = 0;
     }
     auto &last = xferReqRingCpu[request->positions.back()];
     last.posting_ctas_done = 0;
-    last.peer_write_completed = peer->writeCompletedGpu.get();
-    last.write_ticket = ++peer->postedWriteTicket;
+    // Build the mask locally: |= on the slot would read it back through the GPU mapping.
+    uint32_t wait_completion_mask = 0;
     for (size_t ordinal = 0; ordinal + 1 < request->positions.size(); ++ordinal) {
-        last.wait_completion_mask |= 1U << request->positions[ordinal];
+        wait_completion_mask |= 1U << request->positions[ordinal];
     }
+    last.wait_completion_mask = wait_completion_mask;
     std::atomic_thread_fence(std::memory_order_release);
 
-    // One stream orders all grids, including the previous same-peer final post.
-    // This can reduce overlap between requests compared with per-QP streams.
     const auto result = doca_kernel_write_striped(
         post_stream[0], xferReqRingGpu, gpu_state_gpu, host_state_gpu_, launch, dataQpCount_);
     if (result != DOCA_SUCCESS) {
@@ -2184,7 +2245,7 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
         return completion_status;
     }
     struct nixlDocaNotif *notif;
-    uint32_t buf_idx;
+    uint32_t slot = 0;
     uintptr_t msg_buf;
 
     {
@@ -2218,12 +2279,15 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     }
 
     std::string newMsg = msg_tag_start + std::to_string((int)msg.size()) + msg_tag_end + msg;
-    buf_idx = (notif->send_pi.fetch_add(1) & (notif->elems_num - 1));
-    msg_buf = (uintptr_t)notif->send_addr + (buf_idx * notif->elems_size);
+    if (!notif->acquireSendSlot(slot)) {
+        NIXL_ERROR << "genNotif: all notification buffers for " << remote_agent << " are in use";
+        return NIXL_ERR_BACKEND;
+    }
+    msg_buf = (uintptr_t)notif->send_addr + (size_t{slot} * notif->elems_size);
     memcpy((void *)msg_buf, newMsg.c_str(), newMsg.size());
 
     NIXL_DEBUG << "genNotif to " << remote_agent << " msg size " << std::to_string((int)msg.size())
-               << " msg " << newMsg << " at " << buf_idx << " msg_buf " << msg_buf << "\n";
+               << " msg " << newMsg << " at " << slot << " msg_buf " << msg_buf << "\n";
 
     std::lock_guard<std::mutex> lock(notifSendLock);
     ((volatile struct docaNotif *)notif_send_cpu)->msg_buf = msg_buf;
@@ -2235,9 +2299,11 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
         const nixl_status_t wait_status =
             nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
         if (wait_status != NIXL_SUCCESS) {
+            // The SEND may still read the buffer, so it stays owned.
             return wait_status;
         }
     }
+    notif->releaseSendSlot(slot);
 
     return nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
 }

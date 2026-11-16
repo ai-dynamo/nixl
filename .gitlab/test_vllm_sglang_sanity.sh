@@ -24,14 +24,8 @@ MODEL="${NIXL_SANITY_MODEL_ID:?NIXL_SANITY_MODEL_ID not set (set by the base ima
 # Reuse the CI helper (from the workspace copied into the image) to hand out free TCP
 # ports that roll over. common.sh references unset env vars (CI_CONCURRENT_ID/
 # EXECUTOR_NUMBER) at source time, so disable nounset while sourcing, then restore it.
-#
-# Neither CI_CONCURRENT_ID nor EXECUTOR_NUMBER is set inside the enroot container, so
-# common.sh would fall back to a random concurrency id over its FULL port space (base
-# ports up to ~65500). SGLang derives internal ports from the server port (e.g.
-# SGLANG_GRPC_PORT = port + 10000), which overflows 65535 for base ports > 55535 and
-# kills the server on startup. Pin the id so every handed-out port stays <= 55500.
-CI_CONCURRENT_ID="${CI_CONCURRENT_ID:-$((RANDOM % 45))}"
-export CI_CONCURRENT_ID
+# CI passes a per-build CI_CONCURRENT_ID (see build-wheel-matrix.yaml); without it
+# common.sh picks a random port block.
 set +u
 # shellcheck disable=SC1091
 . /workspace/nixl/.ci/scripts/common.sh
@@ -195,12 +189,15 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
   # get_next_tcp_port() until the servers are running; re-allocating here ensures the
   # router gets a port that doesn't collide with any of those.
   PROXY_PORT="$(get_next_tcp_port)"
+  # The router always binds a Prometheus listener (default 29000, cannot be disabled).
+  ROUTER_METRICS_PORT="$(get_next_tcp_port)"
 
   # sglang-router fronts the prefill/decode pair (replaces the removed in-core mini_lb).
   # Installed into the sglang weights-base image (contrib/Dockerfile.sglang-base).
   setsid python3 -m sglang_router.launch_router --pd-disaggregation \
     --prefill "http://localhost:${PREFILL_PORT}" \
     --decode "http://localhost:${DECODE_PORT}" \
+    --prometheus-host 127.0.0.1 --prometheus-port "$ROUTER_METRICS_PORT" \
     --host 0.0.0.0 --port "$PROXY_PORT" &
   pids+=($!)
   names+=(router)

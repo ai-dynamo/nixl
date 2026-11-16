@@ -33,21 +33,6 @@ public:
                         std::shared_ptr<iBlobClient> blob_client);
     virtual ~nixlAzureBlobEngine();
 
-    bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
-
-    bool
-    supportsNotif() const override {
-        return false;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const override {
         return {OBJ_SEG, DRAM_SEG};
