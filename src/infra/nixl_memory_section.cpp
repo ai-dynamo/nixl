@@ -538,24 +538,22 @@ nixl_status_t nixlRemoteSection::addDescList (
     // Add entries to the target list.
     nixl_status_t ret;
     for (int i = 0; i < mem_elms.descCount(); ++i) {
-        size_t insert_idx = 0;
-        const int idx = target.findIndexOrInsertPos(mem_elms[i], insert_idx);
-        if (idx == NIXL_ERR_NOT_ALLOWED) {
-            NIXL_ERROR_FUNC << "remote descriptor overlaps existing descriptor for agent '"
-                            << agentName << "'";
-            return NIXL_ERR_NOT_ALLOWED;
-        }
+        int idx = target.getIndex(mem_elms[i]);
         if (idx < 0) {
-            nixlBackendMD *md = nullptr;
-            ret = backend->loadRemoteMD(mem_elms[i], nixl_mem, agentName, md);
+            if (target.overlapsAny(mem_elms[i])) {
+                NIXL_ERROR_FUNC << "remote descriptor overlaps existing descriptor for agent '"
+                                << agentName << "'";
+                return NIXL_ERR_NOT_ALLOWED;
+            }
+            nixlSectionDesc out(mem_elms[i].addr, mem_elms[i].len, mem_elms[i].devId, nullptr);
+            out.metaBlob = mem_elms[i].metaInfo;
+            ret = backend->loadRemoteMD(mem_elms[i], nixl_mem, agentName, out.metadataP);
             // In case of errors, no need to remove the previous entries
             // Agent will delete the full object.
             if (ret < 0) {
                 return ret;
             }
-            nixlSectionDesc out(mem_elms[i].addr, mem_elms[i].len, mem_elms[i].devId, md);
-            out.metaBlob = mem_elms[i].metaInfo;
-            target.insertDescAt(insert_idx, std::move(out));
+            target.addDesc(std::move(out));
         } else {
             const nixl_blob_t &prev_meta_info = target[idx].metaBlob;
             // TODO: Support metadata updates

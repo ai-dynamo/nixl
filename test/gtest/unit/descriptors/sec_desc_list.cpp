@@ -446,36 +446,29 @@ TEST_F(secDescListTest, OverlapsHandlesUnboundedAndOverflowingRanges) {
     EXPECT_FALSE(nixlBasicDesc(max_addr - 64, 128, 0).overlaps(nixlBasicDesc(0, 16, 0)));
 }
 
-TEST_F(secDescListTest, FindIndexOrInsertPosDetectsMatchesAndOverlaps) {
+TEST_F(secDescListTest, OverlapsAnyDetectsNeighborOverlaps) {
     nixlSecDescList list(DRAM_SEG);
-    size_t pos = 0;
+    EXPECT_FALSE(list.overlapsAny(nixlBasicDesc(100, 64, 0)));
 
-    ASSERT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(200, 64, 0), pos), NIXL_ERR_NOT_FOUND);
-    EXPECT_EQ(pos, 0u);
-    list.insertDescAt(pos, nixlSectionDesc(200, 64, 0));
+    list.addDesc(nixlSectionDesc(200, 64, 0));
+    list.addDesc(nixlSectionDesc(100, 64, 0));
 
-    ASSERT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(100, 64, 0), pos), NIXL_ERR_NOT_FOUND);
-    EXPECT_EQ(pos, 0u);
-    list.insertDescAt(pos, nixlSectionDesc(100, 64, 0));
+    EXPECT_TRUE(list.overlapsAny(nixlBasicDesc(100, 64, 0)));
+    EXPECT_TRUE(list.overlapsAny(nixlBasicDesc(100, 32, 0)));
+    EXPECT_TRUE(list.overlapsAny(nixlBasicDesc(100, 128, 0)));
+    EXPECT_TRUE(list.overlapsAny(nixlBasicDesc(150, 60, 0)));
+    EXPECT_TRUE(list.overlapsAny(nixlBasicDesc(232, 64, 0)));
 
-    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(100, 64, 0), pos), 0);
-    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(200, 64, 0), pos), 1);
-
-    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(100, 32, 0), pos), NIXL_ERR_NOT_ALLOWED);
-    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(100, 128, 0), pos), NIXL_ERR_NOT_ALLOWED);
-    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(150, 60, 0), pos), NIXL_ERR_NOT_ALLOWED);
-    EXPECT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(232, 64, 0), pos), NIXL_ERR_NOT_ALLOWED);
-
-    ASSERT_EQ(list.findIndexOrInsertPos(nixlBasicDesc(164, 36, 0), pos), NIXL_ERR_NOT_FOUND);
-    EXPECT_EQ(pos, 1u);
+    EXPECT_FALSE(list.overlapsAny(nixlBasicDesc(0, 100, 0)));
+    EXPECT_FALSE(list.overlapsAny(nixlBasicDesc(164, 36, 0)));
+    EXPECT_FALSE(list.overlapsAny(nixlBasicDesc(264, 64, 0)));
+    EXPECT_FALSE(list.overlapsAny(nixlBasicDesc(100, 64, 1)));
 
     nixlSecDescList file_list(FILE_SEG);
-    ASSERT_EQ(file_list.findIndexOrInsertPos(nixlBasicDesc(4096, 0, 1), pos), NIXL_ERR_NOT_FOUND);
-    file_list.insertDescAt(pos, nixlSectionDesc(4096, 0, 1));
-    EXPECT_EQ(file_list.findIndexOrInsertPos(nixlBasicDesc(4096, 0, 1), pos), 0);
-    EXPECT_EQ(file_list.findIndexOrInsertPos(nixlBasicDesc(8192, 64, 1), pos),
-              NIXL_ERR_NOT_ALLOWED);
-    EXPECT_EQ(file_list.findIndexOrInsertPos(nixlBasicDesc(0, 4096, 1), pos), NIXL_ERR_NOT_FOUND);
+    file_list.addDesc(nixlSectionDesc(4096, 0, 1));
+    EXPECT_TRUE(file_list.overlapsAny(nixlBasicDesc(4096, 0, 1)));
+    EXPECT_TRUE(file_list.overlapsAny(nixlBasicDesc(8192, 64, 1)));
+    EXPECT_FALSE(file_list.overlapsAny(nixlBasicDesc(0, 4096, 1)));
 }
 
 } // namespace descriptors

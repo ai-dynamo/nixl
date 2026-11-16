@@ -516,34 +516,12 @@ nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {
     return -1;
 }
 
-int
-nixlSecDescList::findIndexOrInsertPos(const nixlBasicDesc &query,
-                                      size_t &insert_idx) const noexcept {
-    const nixlBasicDesc adjusted_query = normalizeQuery(query);
-    const auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), adjusted_query);
-    if (itr != this->descs.end()) {
-        if (static_cast<const nixlBasicDesc &>(*itr) == adjusted_query) {
-            return static_cast<int>(itr - this->descs.begin());
-        }
-        if (itr->overlaps(adjusted_query)) {
-            return NIXL_ERR_NOT_ALLOWED;
-        }
-    }
-    if (itr != this->descs.begin() && std::prev(itr)->overlaps(adjusted_query)) {
-        return NIXL_ERR_NOT_ALLOWED;
-    }
-    insert_idx = static_cast<size_t>(itr - this->descs.begin());
-    return NIXL_ERR_NOT_FOUND;
-}
-
-void
-nixlSecDescList::insertDescAt(size_t insert_idx, nixlSectionDesc &&desc) {
-    normalizeSecDesc(desc);
-    auto &vec = this->descs;
-    NIXL_ASSERT(insert_idx <= vec.size());
-    NIXL_ASSERT(insert_idx == 0 || !(desc < vec[insert_idx - 1]));
-    NIXL_ASSERT(insert_idx == vec.size() || !(vec[insert_idx] < desc));
-    vec.insert(vec.begin() + static_cast<std::ptrdiff_t>(insert_idx), std::move(desc));
+bool
+nixlSecDescList::overlapsAny(const nixlBasicDesc &query) const noexcept {
+    const nixlBasicDesc adjusted = normalizeQuery(query);
+    const auto itr = std::lower_bound(descs.begin(), descs.end(), adjusted);
+    return (itr != descs.end() && itr->overlaps(adjusted)) ||
+        (itr != descs.begin() && std::prev(itr)->overlaps(adjusted));
 }
 
 void

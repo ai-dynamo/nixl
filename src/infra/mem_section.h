@@ -107,11 +107,8 @@ public:
     int
     getCoveringIndex(const nixlBasicDesc &query) const;
 
-    int
-    findIndexOrInsertPos(const nixlBasicDesc &query, size_t &insert_idx) const noexcept;
-
-    void
-    insertDescAt(size_t insert_idx, nixlSectionDesc &&desc);
+    bool
+    overlapsAny(const nixlBasicDesc &query) const noexcept;
 
     void
     resize(const size_t &count) override;
