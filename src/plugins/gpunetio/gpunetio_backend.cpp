@@ -318,6 +318,18 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     dataQpCount_ = parseDataQpCount((*custom_params)["data_qp_count"]);
+    const auto stripe = custom_params->find("write_stripe");
+    if (stripe != custom_params->end() && !stripe->second.empty()) {
+        if (stripe->second != "slots" && stripe->second != "bytes") {
+            throw std::invalid_argument("write_stripe must be slots or bytes");
+        }
+        writeStripeBytes_ = stripe->second == "bytes";
+    }
+    const auto min_bytes = custom_params->find("write_stripe_min_bytes");
+    if (min_bytes != custom_params->end() && !min_bytes->second.empty() &&
+        (!parseUnsigned(min_bytes->second, writeStripeMinBytes_) || writeStripeMinBytes_ == 0)) {
+        throw std::invalid_argument("write_stripe_min_bytes must be a positive integer");
+    }
     if (dataQpCount_ > 1 &&
         (nstreams < static_cast<int>(dataQpCount_) ||
          nstreams > static_cast<int>(DOCA_POST_STREAM_NUM))) {
@@ -1655,6 +1667,8 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     // the WQEs of the request even if no descriptor is merged or paired.
     constexpr uint64_t max_wqes = uint64_t{DOCA_XFER_REQ_SIZE} * DOCA_XFER_REQ_MAX;
     uint64_t wqe_count = 0;
+    const bool byte_striping = operation == NIXL_WRITE && dataQpCount_ > 1 && writeStripeBytes_;
+    size_t write_bytes = 0;
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         if (local[idx].len != remote[idx].len) {
             return NIXL_ERR_INVALID_PARAM;
@@ -1663,7 +1677,20 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         if (wqe_count > max_wqes) {
             return NIXL_ERR_INVALID_PARAM;
         }
+        if (byte_striping) {
+            write_bytes += local[idx].len;
+        }
     }
+
+    const uint32_t qps_used = byte_striping ?
+        static_cast<uint32_t>(std::max<size_t>(
+            1, std::min<size_t>(write_bytes / writeStripeMinBytes_, dataQpCount_))) :
+        1;
+    uint32_t owner = 0;
+    auto owner_budget = [&](uint32_t qp) {
+        return write_bytes / qps_used + (qp < write_bytes % qps_used);
+    };
+    size_t owner_remaining = owner_budget(0);
 
     if (operation == NIXL_WRITE && dataQpCount_ > 1 && opt_args != nullptr &&
         !opt_args->customParam.empty()) {
@@ -1724,7 +1751,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     };
 
     treq->qpData = rdma_qp->qp_data->get_qp_gpu_dev();
-    treq->positions.reserve((wqe_count + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
+    treq->positions.reserve(byte_striping ?
+                                DOCA_XFER_REQ_MAX :
+                                (wqe_count + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
     if (!reserve_position()) {
         abandon_request();
         return NIXL_ERR_BACKEND;
@@ -1734,13 +1763,21 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     // Bytes of local[desc_offset] already staged in earlier WQEs, possibly in an earlier slot.
     size_t split_offset = 0;
     do {
+        if (byte_striping) {
+            treq->qpOwners.push_back(owner);
+        }
         docaSlotDesc staged_req{};
         staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
 
         uint32_t chunk_desc_count = 0;
+        size_t chunk_bytes = 0;
         while (desc_offset < lcnt && staged_req.num < DOCA_XFER_REQ_SIZE &&
                (operation == NIXL_READ || chunk_desc_count < DOCA_XFER_REQ_SIZE)) {
             const uint32_t desc_idx = desc_offset;
+
+            if (byte_striping && staged_req.num > 0 && chunk_bytes >= owner_remaining) {
+                break;
+            }
 
             lmd = (nixlDocaPrivateMetadata *)local[desc_idx].metadataP;
             rmd = (nixlDocaPublicMetadata *)remote[desc_idx].metadataP;
@@ -1776,11 +1813,13 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                 continue;
             }
 
-            // A WQE carries at most the SDK transfer limit; the rest of the descriptor goes to the
-            // next WQEs. A descriptor that long is never merged or paired: both cap the total.
             const size_t remaining = local[desc_idx].len - split_offset;
-            const size_t wqe_size =
+            const size_t wqe_size = byte_striping ?
+                std::min({remaining,
+                          owner_remaining - chunk_bytes,
+                          size_t(DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE)}) :
                 std::min<size_t>(remaining, DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
+            const size_t piece_offset = split_offset;
             const uint32_t idx = staged_req.num;
             staged_req.lbuf[idx] = local[desc_idx].addr + split_offset;
             staged_req.lkey[idx] = lmd->mr->get_lkey();
@@ -1789,6 +1828,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             staged_req.size[idx] = wqe_size;
             staged_req.num_sge[idx] = 1;
             staged_req.num++;
+            chunk_bytes += wqe_size;
             if (wqe_size < remaining) {
                 split_offset += wqe_size;
                 continue;
@@ -1796,13 +1836,14 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             split_offset = 0;
             ++desc_offset;
 
-            if (operation == NIXL_WRITE && lcnt - desc_idx > 2) {
+            if (operation == NIXL_WRITE && lcnt - desc_idx > 2 &&
+                (!byte_striping || local[desc_offset].len <= owner_remaining - chunk_bytes)) {
                 auto *next_lmd =
                     static_cast<nixlDocaPrivateMetadata *>(local[desc_offset].metadataP);
                 auto *next_rmd =
                     static_cast<nixlDocaPublicMetadata *>(remote[desc_offset].metadataP);
-                if (nixl::gpunetio::canPairWrite(remote[desc_idx].addr,
-                                                 remote[desc_idx].len,
+                if (nixl::gpunetio::canPairWrite(remote[desc_idx].addr + piece_offset,
+                                                 wqe_size,
                                                  staged_req.rkey[idx],
                                                  remote[desc_offset].addr,
                                                  remote[desc_offset].len,
@@ -1814,6 +1855,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                     staged_req.size2[idx] = local[desc_offset].len;
                     staged_req.num_sge[idx] = 2;
                     staged_req.has_two_sge = 1;
+                    chunk_bytes += local[desc_offset].len;
                     ++desc_offset;
                 }
             }
@@ -1826,6 +1868,13 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             staged_req.has_two_sge ? sizeof(staged_req) : offsetof(docaSlotDesc, lbuf2);
         memcpy(&xferReqRingCpu[pos], &staged_req, publish_size);
 
+        if (byte_striping) {
+            owner_remaining -= chunk_bytes;
+            if (owner_remaining == 0 && owner + 1 < qps_used) {
+                ++owner;
+                owner_remaining = owner_budget(owner);
+            }
+        }
         if (desc_offset < lcnt && !reserve_position()) {
             abandon_request();
             return NIXL_ERR_BACKEND;
@@ -1982,9 +2031,12 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
     launch.count = static_cast<uint32_t>(request->positions.size());
     for (size_t ordinal = 0; ordinal < request->positions.size(); ++ordinal) {
         launch.positions[ordinal] = request->positions[ordinal];
+        const uint32_t owner =
+            request->qpOwners.empty() ? ordinal % dataQpCount_ : request->qpOwners[ordinal];
+        launch.owners[ordinal] = owner;
         auto &entry = xferReqRingCpu[request->positions[ordinal]];
-        entry.qp_data = peer->qp_write[ordinal % dataQpCount_]->get_qp_gpu_dev();
-        entry.qp_progress = peer->progress_gpu + 1 + ordinal % dataQpCount_;
+        entry.qp_data = peer->qp_write[owner]->get_qp_gpu_dev();
+        entry.qp_progress = peer->progress_gpu + 1 + owner;
         entry.wait_completion_mask = 0;
     }
     auto &last = xferReqRingCpu[request->positions.back()];
