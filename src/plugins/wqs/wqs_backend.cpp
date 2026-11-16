@@ -96,6 +96,12 @@ struct wqsEntry {
 };
 
 struct wqsWork {
+    explicit wqsWork(const nixlWqsConfig &config)
+        : maxBatchEntries(config.maxBatchEntries),
+          payloadBytes(config.payloadBytes) {}
+
+    const size_t maxBatchEntries;
+    const size_t payloadBytes;
     std::vector<wqsEntry> entries;
     std::vector<wqsLease> leases;
 };
@@ -145,7 +151,6 @@ covers(const wqsRegistration &registration, const nixlMetaDesc &desc) {
 nixl_status_t
 execute(nixlWqsSession &session, nixl_xfer_op_t operation, const wqsWork &work) {
     const std::lock_guard lock(session.transferMutex());
-    const auto &config = session.config();
     auto &pool = session.pool();
     size_t next = 0;
     while (next < work.entries.size()) {
@@ -155,10 +160,10 @@ execute(nixlWqsSession &session, nixl_xfer_op_t operation, const wqsWork &work) 
         std::vector<std::string> keys;
         std::vector<void *> buffers;
         std::vector<size_t> sizes;
-        while (next < work.entries.size() && keys.size() < config.maxBatchEntries) {
+        while (next < work.entries.size() && keys.size() < work.maxBatchEntries) {
             const auto &entry = work.entries[next];
             const size_t cost = wire_overhead + entry.key.size();
-            if (cost > config.payloadBytes - payload || !pool.canFit(entry.length)) {
+            if (cost > work.payloadBytes - payload || !pool.canFit(entry.length)) {
                 break;
             }
             size_t length = entry.length;
@@ -230,6 +235,11 @@ public:
           metadataMutex(params.syncMode) {
         if (!session || !config.sameSession(session->config())) {
             throw std::invalid_argument("WQS session configuration mismatch");
+        }
+        const auto capacity = session->client().payloadCapacity();
+        if (config.payloadBytes > capacity) {
+            throw std::invalid_argument("WQS payload_bytes exceeds SDK payload capacity (" +
+                                        std::to_string(capacity) + ")");
         }
     }
 
@@ -452,7 +462,7 @@ nixlWqsEngine::prepXfer(const nixl_xfer_op_t &operation,
     if (args && (args->hasNotif || !args->customParam.empty())) {
         return NIXL_ERR_NOT_SUPPORTED;
     }
-    wqsWork work;
+    wqsWork work(impl_->config);
     const auto status = impl_->prepare(operation, local, remote, false, work);
     if (status != NIXL_SUCCESS) {
         return status;
@@ -480,7 +490,7 @@ nixlWqsEngine::postXfer(const nixl_xfer_op_t &operation,
     if (state->active) {
         return NIXL_ERR_REPOST_ACTIVE;
     }
-    auto work = std::make_shared<wqsWork>();
+    auto work = std::make_shared<wqsWork>(impl_->config);
     const auto status = impl_->prepare(operation, local, remote, true, *work);
     if (status != NIXL_SUCCESS) {
         return status;

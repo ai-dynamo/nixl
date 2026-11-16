@@ -17,6 +17,7 @@ struct nixlWqsConfig {
     size_t maxInflight = 64;
     size_t maxBatchEntries = 64;
     size_t payloadBytes = 8192;
+    bool useHugepages = true;
     std::string keyPrefix;
 
     [[nodiscard]] static nixlWqsConfig
@@ -37,6 +38,8 @@ public:
     iWqsClient &
     operator=(iWqsClient &&) = delete;
 
+    [[nodiscard]] virtual size_t
+    payloadCapacity() const noexcept = 0;
     [[nodiscard]] virtual int64_t
     getSize(const std::string &key) = 0;
     [[nodiscard]] virtual std::vector<int>

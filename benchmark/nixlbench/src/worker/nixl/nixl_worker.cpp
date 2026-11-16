@@ -324,6 +324,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["max_batch_entries"] =
             std::to_string(xferBenchConfig::wqs_max_batch_entries);
         backend_params["payload_bytes"] = std::to_string(xferBenchConfig::wqs_payload_bytes);
+        backend_params["use_hugepages"] = xferBenchConfig::use_hugepages ? "true" : "false";
         backend_params["key_prefix"] = xferBenchConfig::wqs_key_prefix;
         struct timeval tv;
         gettimeofday(&tv, nullptr);

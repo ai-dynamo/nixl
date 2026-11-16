@@ -996,6 +996,7 @@ against the WQS SDK or use an external storage CLI. See the
 ```bash
 # WRITE with read-back verification, sweeping object and batch sizes
 ./nixlbench --backend WQS --op_type WRITE --check_consistency \
+  --use_hugepages \
   --wqs_unix_path /var/run/wds/wqs \
   --wqs_staging_pool_bytes 536870912 \
   --total_buffer_size 16777216 \
@@ -1004,6 +1005,7 @@ against the WQS SDK or use an external storage CLI. See the
 
 # READ; objects are populated before timing starts
 ./nixlbench --backend WQS --op_type READ --check_consistency \
+  --use_hugepages \
   --wqs_unix_path /var/run/wds/wqs \
   --wqs_staging_pool_bytes 536870912 \
   --total_buffer_size 16777216 \
@@ -1019,6 +1021,7 @@ against the WQS SDK or use an external storage CLI. See the
 | `--wqs_max_batch_entries` | `64` | `max_batch_entries` |
 | `--wqs_payload_bytes` | `8192` | `payload_bytes` |
 | `--wqs_key_prefix` | empty | `key_prefix` |
+| `--use_hugepages` | `false` | `use_hugepages`; production WQS requires `true` |
 
 The same option names can be set in the TOML configuration file. Parameters are
 passed through NIXL's standard backend parameter map. No ETCD service is needed
@@ -1035,8 +1038,9 @@ released; use a benchmark-specific key prefix and account for this storage use.
 The public mock SDK validates correctness only and does not measure WQS storage
 performance.
 
-The opt-in WQS integration tests require that mock SDK and at least 2 MiB of
-available hugepages. With a debug benchmark build and tests enabled, run:
+The opt-in WQS integration tests require that mock SDK. Ordinary-memory cases
+run without reserved hugepages; hugepage cases skip when the required pages are
+unavailable. With a debug benchmark build and tests enabled, run:
 
 ```bash
 NIXLBENCH_WQS_MOCK_TEST=1 meson test -C build-bench --suite nixlbench --print-errorlogs

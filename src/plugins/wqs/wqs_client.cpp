@@ -26,6 +26,11 @@ public:
         }
     }
 
+    size_t
+    payloadCapacity() const noexcept override {
+        return client_.get_payload_capacity();
+    }
+
     int64_t
     getSize(const std::string &key) override {
         return client_.getSize(key);
@@ -74,7 +79,8 @@ getWqsSession(const nixlWqsConfig &config) {
     if (process->attempted) {
         throw std::runtime_error("WQS initialization previously failed; restart the process");
     }
-    process->pool = std::make_shared<nixlWqsBufferPool>(config.stagingPoolBytes);
+    process->pool =
+        std::make_shared<nixlWqsBufferPool>(config.stagingPoolBytes, config.useHugepages);
     process->attempted = true;
     // Retain the SDK even if the wrapper's constructor fails after starting SPDK.
     process->sdkClient = std::make_unique<wqs::SharedClient>();

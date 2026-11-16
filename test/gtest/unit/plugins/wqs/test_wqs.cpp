@@ -21,11 +21,17 @@ paramsFor(const nixlWqsConfig &config) {
             {"max_inflight", std::to_string(config.maxInflight)},
             {"max_batch_entries", std::to_string(config.maxBatchEntries)},
             {"payload_bytes", std::to_string(config.payloadBytes)},
+            {"use_hugepages", config.useHugepages ? "true" : "false"},
             {"key_prefix", config.keyPrefix}};
 }
 
 class fakeWqsClient final : public iWqsClient {
 public:
+    size_t
+    payloadCapacity() const noexcept override {
+        return payloadBytes;
+    }
+
     int64_t
     getSize(const std::string &key) override {
         sizeThread = std::this_thread::get_id();
@@ -94,6 +100,7 @@ public:
     std::unordered_map<std::string, std::string> objects;
     std::vector<std::string> events;
     std::vector<size_t> readSizes;
+    size_t payloadBytes = 8192;
     size_t readBatches = 0;
     size_t writeBatches = 0;
     bool shortRead = false;
@@ -234,6 +241,27 @@ TEST(wqsConfigTest, RejectsInvalidAndUnknownParameters) {
                  std::invalid_argument);
     EXPECT_THROW((void)nixlWqsConfig::fromParams({{"payload_bytes", "16"}}), std::invalid_argument);
     EXPECT_THROW((void)nixlWqsConfig::fromParams({{"typo", "1"}}), std::invalid_argument);
+    EXPECT_TRUE(nixlWqsConfig::fromParams({}).useHugepages);
+    EXPECT_FALSE(nixlWqsConfig::fromParams({{"use_hugepages", "false"}}).useHugepages);
+}
+
+TEST_F(wqsEngineTest, ValidatesPayloadAgainstSdkCapacity) {
+    client->payloadBytes = 4096;
+    EXPECT_THROW((void)nixlWqsEngine(&init, session), std::invalid_argument);
+    params["payload_bytes"] = "4096";
+    EXPECT_NO_THROW((void)nixlWqsEngine(&init, session));
+    params["payload_bytes"] = "4097";
+    EXPECT_THROW((void)nixlWqsEngine(&init, session), std::invalid_argument);
+    client->payloadBytes = 16384;
+    params["payload_bytes"] = "16384";
+    EXPECT_NO_THROW((void)nixlWqsEngine(&init, session));
+    EXPECT_TRUE(client->events.empty());
+}
+
+TEST_F(wqsEngineTest, RejectsUnavailableSdkPayloadCapacity) {
+    client->payloadBytes = 0;
+    EXPECT_THROW((void)nixlWqsEngine(&init, session), std::invalid_argument);
+    EXPECT_TRUE(client->events.empty());
 }
 
 TEST(wqsBufferTest, AlignsAllocationsAndRejectsOverflow) {
@@ -414,6 +442,40 @@ TEST_F(wqsEngineTest, SplitsBatchesByWirePayload) {
     auto *handle = prepare(NIXL_WRITE);
     EXPECT_EQ(transfer(NIXL_WRITE, handle), NIXL_SUCCESS);
     EXPECT_EQ(client->writeBatches, 2);
+}
+
+TEST_F(wqsEngineTest, SharedSessionPreservesPerEngineEntryLimits) {
+    auto original = std::move(engine);
+    auto limits = config();
+    limits.maxInflight = 1;
+    limits.maxBatchEntries = 1;
+    params = paramsFor(limits);
+    engine = std::make_unique<nixlWqsEngine>(&init, session);
+    descriptors({"a", "b"});
+    auto *handle = prepare(NIXL_WRITE);
+    EXPECT_EQ(transfer(NIXL_WRITE, handle), NIXL_SUCCESS);
+    EXPECT_EQ(client->writeBatches, 2);
+    EXPECT_EQ(session->config().maxBatchEntries, 64);
+}
+
+TEST_F(wqsEngineTest, SharedSessionPreservesPerEnginePayloadLimits) {
+    auto original = std::move(engine);
+    auto limits = config();
+    limits.payloadBytes = 128;
+    params = paramsFor(limits);
+    engine = std::make_unique<nixlWqsEngine>(&init, session);
+    descriptors({std::string(48, 'a'), std::string(48, 'b')});
+    auto *handle = prepare(NIXL_WRITE);
+    EXPECT_EQ(transfer(NIXL_WRITE, handle), NIXL_SUCCESS);
+    EXPECT_EQ(client->writeBatches, 2);
+    EXPECT_EQ(session->config().payloadBytes, 8192);
+}
+
+TEST_F(wqsEngineTest, SharedSessionRejectsDifferentPoolSettings) {
+    auto limits = config();
+    limits.useHugepages = !limits.useHugepages;
+    params = paramsFor(limits);
+    EXPECT_THROW((void)nixlWqsEngine(&init, session), std::invalid_argument);
 }
 
 TEST_F(wqsEngineTest, AppliesKeyPrefixToReadsAndWrites) {

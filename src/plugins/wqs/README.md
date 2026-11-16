@@ -15,7 +15,7 @@ require another NIXL agent or NIXL metadata exchange.
 - Linux with `memfd_create` and 2 MiB hugepage support.
 - A WQS SDK providing `shared_client.h`, its transitive headers, and
   `libwqs_store.so`. The SDK must support `register_buffer_with_fd`, `getSize`,
-  `batch_get_into`, and `batch_put_from`.
+  `batch_get_into`, `batch_put_from`, and `get_payload_capacity`.
 - The matching SPDK/DPDK shared libraries required by that SDK.
 - A local wqsd connected to a WQS cluster, with memory registration acknowledged
   before it accepts client I/O.
@@ -66,7 +66,9 @@ hugepage memfd staging region. The production session is retained until process
 exit because the existing WQS API cannot unregister that region or safely
 reinitialize its SPDK runtime. Engine destruction drains its own queued work.
 An initialization failure after WQS startup requires restarting the process.
-WQS session settings must agree across engines; `key_prefix` may differ.
+The socket, staging pool size, and hugepage mode must agree across engines.
+Queue limits, batch limits, payload limits, and `key_prefix` are independent per
+engine.
 
 Each engine uses NIXL's standard `enableProgTh`, `pthrDelay`, and `syncMode`
 initialization parameters. With the progress thread disabled, `postXfer` runs
@@ -105,12 +107,16 @@ in Python. No separate plugin configuration channel is required.
 | `max_inflight` | `64` | Maximum queued plus executing transfers per engine; queries are independent |
 | `max_batch_entries` | `64` | Maximum objects in one WQS data call |
 | `payload_bytes` | `8192` | Request/response metadata limit; must not exceed the WQS client's configured payload buffer size |
+| `use_hugepages` | `true` | Use 2 MiB hugepages for the registered staging pool; `false` supports the mock SDK without reserved hugepages |
 | `key_prefix` | empty | Prefix prepended to every storage key |
 
-The pool uses 2 MiB hugepages. Reserve sufficient hugepages and provide memlock
-permissions for WQS/SPDK before creating the backend. WQS native options continue
-to use its existing `WQS_NATIVE_CONFIG_PATH`; the plugin does not change process
-environment variables. The payload limit describes metadata, not object bytes.
+Production WQS requires a hugepage-backed pool. Reserve sufficient hugepages and
+provide memlock permissions for WQS/SPDK before creating the backend.
+
+After SDK setup, the plugin queries `SharedClient::get_payload_capacity()` and
+rejects a backend whose `payload_bytes` exceeds that actual capacity. The payload
+limit describes metadata, not object bytes. The SDK also rejects oversized
+requests before serialization.
 
 ## Build
 

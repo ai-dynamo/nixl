@@ -23,6 +23,10 @@ def main():
     args = parser.parse_args()
     if not 0 < args.bytes < (1 << 31) - 1:
         parser.error("--bytes must be positive and smaller than INT_MAX")
+    if args.pool_bytes <= 0 or args.pool_bytes % (2 << 20) != 0:
+        parser.error("--pool-bytes must be a positive multiple of 2 MiB")
+    if args.bytes > args.pool_bytes:
+        parser.error("--bytes must not exceed --pool-bytes")
     key = args.key or f"nixl-wqs-smoke/{uuid.uuid4()}"
     pattern = (bytes(range(251)) * ((args.bytes + 250) // 251))[: args.bytes]
     source = ctypes.create_string_buffer(pattern, args.bytes)

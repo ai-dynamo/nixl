@@ -16,6 +16,7 @@ createPlugin() {
          {"max_inflight", std::to_string(defaults.maxInflight)},
          {"max_batch_entries", std::to_string(defaults.maxBatchEntries)},
          {"payload_bytes", std::to_string(defaults.payloadBytes)},
+         {"use_hugepages", defaults.useHugepages ? "true" : "false"},
          {"key_prefix", defaults.keyPrefix}},
         {DRAM_SEG, OBJ_SEG});
 }

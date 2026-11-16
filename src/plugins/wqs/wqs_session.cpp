@@ -37,6 +37,7 @@ nixlWqsConfig::fromParams(const nixl_b_params_t &params) {
                                                             "max_inflight",
                                                             "max_batch_entries",
                                                             "payload_bytes",
+                                                            "use_hugepages",
                                                             "key_prefix"};
     for (const auto &[name, value] : params) {
         if (!keys.contains(name)) {
@@ -52,6 +53,8 @@ nixlWqsConfig::fromParams(const nixl_b_params_t &params) {
     config.maxInflight = parseSize(params, "max_inflight", config.maxInflight);
     config.maxBatchEntries = parseSize(params, "max_batch_entries", config.maxBatchEntries);
     config.payloadBytes = parseSize(params, "payload_bytes", config.payloadBytes);
+    config.useHugepages =
+        nixl::getBackendParamDefaulted(params, "use_hugepages", config.useHugepages);
     if (config.unixPath.empty() || config.unixPath.front() != '/' ||
         config.unixPath.find('\0') != std::string::npos) {
         throw std::invalid_argument("WQS unix_path must be an absolute path without NUL bytes");
@@ -74,8 +77,7 @@ nixlWqsConfig::fromParams(const nixl_b_params_t &params) {
 bool
 nixlWqsConfig::sameSession(const nixlWqsConfig &other) const {
     return unixPath == other.unixPath && stagingPoolBytes == other.stagingPoolBytes &&
-        maxInflight == other.maxInflight && maxBatchEntries == other.maxBatchEntries &&
-        payloadBytes == other.payloadBytes;
+        useHugepages == other.useHugepages;
 }
 
 nixlWqsSession::nixlWqsSession(nixlWqsConfig config,
