@@ -217,9 +217,6 @@ get_options() {
         --build-nixl-ep)
             BUILD_NIXL_EP=true
             ;;
-        --no-build-nixl-ep)
-            BUILD_NIXL_EP=false
-            ;;
         --build-ucx-spcx-plugin)
             BUILD_UCX_SPCX_PLUGIN="true"
             ;;
@@ -407,7 +404,6 @@ show_help() {
     echo "  [--ucx-soname-suffix suffix to pass to UCX --with-soname-suffix]"
     echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
     echo "  [--build-nixl-ep build NIXL EP, including the experimental topology-aware API shell (requires UCX >= 1.21). The full topology-aware implementation requires CUDA 13; this API shell does not.]"
-    echo "  [--no-build-nixl-ep disable NIXL EP (enabled by default)]"
     echo "  [--build-ucx-spcx-plugin build the UCX spcx external plugin (requires NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL in the environment) (requires --dockerfile contrib/Dockerfile or contrib/Dockerfile.manylinux; bundled into the wheel only on the manylinux path)]"
     echo "  [--ucx-spcx-plugin-ref git ref of ucx-spcx-plugin to build (default: ${UCX_SPCX_PLUGIN_REF})]"
     echo "  [--ucx-spcx-plugin-install directory holding a pre-built plugin module to install instead of building one (implies --build-ucx-spcx-plugin; no gitlab credentials needed)]"
