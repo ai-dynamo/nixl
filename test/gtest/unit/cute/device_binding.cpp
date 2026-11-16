@@ -15,7 +15,7 @@ int last_level = -1, submits = 0, polls = 0;
 nixl_status_t next_status = NIXL_IN_PROG;
 } // namespace
 
-template<nixl_gpu_level_t level>
+template<nixl_gpu_level_t level, nixl_device_exec_mode_t mode>
 nixl_status_t
 nixlPut(const nixlMemViewElem &src,
         const nixlMemViewElem &dst,
@@ -23,6 +23,7 @@ nixlPut(const nixlMemViewElem &src,
         unsigned channel,
         uint64_t flags,
         nixlGpuXferStatusH *request) {
+    static_assert(mode == nixl_device_exec_mode_t::DYNAMIC);
     last_src = src;
     last_dst = dst;
     last_size = size;
@@ -34,20 +35,22 @@ nixlPut(const nixlMemViewElem &src,
     return next_status;
 }
 
-template<nixl_gpu_level_t level>
+template<nixl_gpu_level_t level, nixl_device_exec_mode_t mode>
 nixl_status_t
 nixlAtomicAdd(uint64_t value,
               const nixlMemViewElem &counter,
               unsigned channel,
               uint64_t flags,
               nixlGpuXferStatusH *request) {
+    static_assert(mode == nixl_device_exec_mode_t::DYNAMIC);
     last_value = value;
-    return nixlPut<level>({}, counter, 0, channel, flags, request);
+    return nixlPut<level, mode>({}, counter, 0, channel, flags, request);
 }
 
-template<nixl_gpu_level_t level>
+template<nixl_gpu_level_t level, nixl_device_exec_mode_t mode>
 nixl_status_t
 nixlGpuGetXferStatus(nixlGpuXferStatusH &request) {
+    static_assert(mode == nixl_device_exec_mode_t::DYNAMIC);
     last_request = &request;
     last_level = static_cast<int>(level);
     ++polls;

@@ -46,11 +46,14 @@ cute_nixl_put(uint64_t local,
     auto *status = reinterpret_cast<nixlGpuXferStatusH *>(request);
     switch (level) {
     case 0:
-        return nixlPut<nixl_gpu_level_t::THREAD>(src, dst, size, channel, flags, status);
+        return nixlPut<nixl_gpu_level_t::THREAD, nixl_device_exec_mode_t::DYNAMIC>(
+            src, dst, size, channel, flags, status);
     case 1:
-        return nixlPut<nixl_gpu_level_t::WARP>(src, dst, size, channel, flags, status);
+        return nixlPut<nixl_gpu_level_t::WARP, nixl_device_exec_mode_t::DYNAMIC>(
+            src, dst, size, channel, flags, status);
     case 2:
-        return nixlPut<nixl_gpu_level_t::BLOCK>(src, dst, size, channel, flags, status);
+        return nixlPut<nixl_gpu_level_t::BLOCK, nixl_device_exec_mode_t::DYNAMIC>(
+            src, dst, size, channel, flags, status);
     default:
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -69,11 +72,14 @@ cute_nixl_atomic_add(uint64_t value,
     auto *status = reinterpret_cast<nixlGpuXferStatusH *>(request);
     switch (level) {
     case 0:
-        return nixlAtomicAdd<nixl_gpu_level_t::THREAD>(value, counter, channel, flags, status);
+        return nixlAtomicAdd<nixl_gpu_level_t::THREAD, nixl_device_exec_mode_t::DYNAMIC>(
+            value, counter, channel, flags, status);
     case 1:
-        return nixlAtomicAdd<nixl_gpu_level_t::WARP>(value, counter, channel, flags, status);
+        return nixlAtomicAdd<nixl_gpu_level_t::WARP, nixl_device_exec_mode_t::DYNAMIC>(
+            value, counter, channel, flags, status);
     case 2:
-        return nixlAtomicAdd<nixl_gpu_level_t::BLOCK>(value, counter, channel, flags, status);
+        return nixlAtomicAdd<nixl_gpu_level_t::BLOCK, nixl_device_exec_mode_t::DYNAMIC>(
+            value, counter, channel, flags, status);
     default:
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -87,11 +93,14 @@ cute_nixl_get_xfer_status(uint64_t request, int level) {
     auto &status = *reinterpret_cast<nixlGpuXferStatusH *>(request);
     switch (level) {
     case 0:
-        return nixlGpuGetXferStatus<nixl_gpu_level_t::THREAD>(status);
+        return nixlGpuGetXferStatus<nixl_gpu_level_t::THREAD, nixl_device_exec_mode_t::DYNAMIC>(
+            status);
     case 1:
-        return nixlGpuGetXferStatus<nixl_gpu_level_t::WARP>(status);
+        return nixlGpuGetXferStatus<nixl_gpu_level_t::WARP, nixl_device_exec_mode_t::DYNAMIC>(
+            status);
     case 2:
-        return nixlGpuGetXferStatus<nixl_gpu_level_t::BLOCK>(status);
+        return nixlGpuGetXferStatus<nixl_gpu_level_t::BLOCK, nixl_device_exec_mode_t::DYNAMIC>(
+            status);
     default:
         return NIXL_ERR_INVALID_PARAM;
     }
