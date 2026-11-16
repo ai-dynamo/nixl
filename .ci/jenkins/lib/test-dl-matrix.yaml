@@ -160,7 +160,8 @@ steps:
         "--account=${SLURM_ACCOUNT}",
         "--gres=${SLURM_GRES}",
         "--mem=${SLURM_MEM}",
-        "--mincpus=${SLURM_MINCPUS}"
+        "--mincpus=${SLURM_MINCPUS}",
+        "--exclude=gb-nvl-053-compute05,gb-nvl-057-compute06,gb-nvl-059-compute03,gb-nvl-059-compute04"
       ]
 
   - name: Sync Container Image
@@ -175,6 +176,36 @@ steps:
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test:${BUILD_NUMBER}"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
+
+  - name: TEMP Debug deviceGpu HPCINFRA-5116
+    containerSelector: "{name: 'build_helper_dl'}"
+    timeout: 30
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: >-
+        cd ${NIXL_INSTALL_DIR};
+        export LD_LIBRARY_PATH=${NIXL_INSTALL_DIR}/lib:${NIXL_INSTALL_DIR}/lib/aarch64-linux-gnu:${NIXL_INSTALL_DIR}/lib/aarch64-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH;
+        export NIXL_PLUGIN_DIR=${NIXL_INSTALL_DIR}/lib/aarch64-linux-gnu/plugins;
+        unset UCX_NET_DEVICES;
+        hostname; echo CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES; nvidia-smi -L;
+        cat /proc/driver/nvidia/version;
+        grep -e RegistryDwords -e EnableStreamMemOPs /proc/driver/nvidia/params;
+        ls /sys/module | grep -e nvidia -e peermem;
+        for d in /sys/class/infiniband/*; do echo $d $(cat $d/fw_ver) $(cat $d/ports/1/state $d/ports/1/link_layer 2>/dev/null); done;
+        ./bin/ucx_info -v | grep -e version -e revision;
+        echo ===== rc_gda; UCX_IB_GDA_RETAIN_INACTIVE_CTX=y UCX_LOG_LEVEL=debug ./bin/ucx_info -d 2>&1 | grep -i -e gdaki -e "gda transport" -e "Transport: rc_gda" | head -n 40;
+        echo ===== gtest; UCX_LOG_LEVEL=debug ./bin/gtest --gtest_filter=deviceGpu/test.atomicAdd/UCX 2>&1 | grep -i -e gdaki -e "gda transport" -e "lane not found" -e OK -e FAILED | head -n 40;
+        echo ===== baseline; ./bin/gtest --gtest_filter=deviceGpu/test.*/UCX;
+        false
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test:${BUILD_NUMBER}"
