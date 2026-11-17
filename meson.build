@@ -235,8 +235,14 @@ taskflow_proj = dependency('taskflow', fallback: ['taskflow', 'taskflow_dep'])
 cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
+cuda_option = get_option('cuda')
+rocm_path = get_option('rocm_path')
+cuda_enabled = cuda_option.enabled() or (cuda_option.auto() and rocm_path == '')
 
-if cuda_lib_path == ''
+if not cuda_enabled
+    cuda_dep = dependency('', required: false)
+    message('CUDA support disabled')
+elif cuda_lib_path == ''
     cuda_dep = dependency('cuda', required : false, modules : [ 'cudart', 'cuda' ])
     if not cuda_dep.found()
         # Meson is not detecting CUDA reliably on ARM, fallback to default
@@ -264,6 +270,10 @@ else
     cuda_dep = declare_dependency(
     link_args : ['-L' + cuda_lib_path, '-L' + cuda_stub_path, '-lcuda', '-lcudart'],
     include_directories : include_directories(cuda_inc_path))
+endif
+
+if cuda_option.enabled() and not cuda_dep.found()
+    error('CUDA support is enabled but CUDA libraries were not found')
 endif
 
 if cuda_dep.found()
@@ -389,7 +399,6 @@ endif
 #
 # hipify-perl ships only with the ROCm/HIP toolchain, so it is required when
 # ROCm is requested and unused (absent) on CUDA-only builds.
-rocm_path = get_option('rocm_path')
 if rocm_path != ''
     if not fs.exists(rocm_path)
         error('rocm_path set but ROCm install root not found at ' + rocm_path +
