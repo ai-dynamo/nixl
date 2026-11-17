@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -71,7 +71,7 @@ export ROCM_PATH HIPFILE_STATS_LEVEL
 # Force hipFile to only use the fastpath for IO transfers.
 export HIPFILE_ALLOW_COMPAT_MODE=false
 export HIPFILE_FORCE_COMPAT_MODE=false
-export LD_LIBRARY_PATH="${NIXL_PREFIX}/lib:${NIXL_PREFIX}/lib/${libarch}:${NIXL_PREFIX}/lib/${libarch}/plugins:${ROCM_PATH}/lib:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${NIXL_PREFIX}/lib:${NIXL_PREFIX}/lib/${libarch}:${NIXL_PREFIX}/lib/${libarch}/plugins:${ROCM_PATH}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export NIXL_PLUGIN_DIR="${NIXL_PREFIX}/lib/${libarch}/plugins"
 
 # docker --user keeps the image's ENV HOME=/home/svc-nixl. NIXL then resolves
