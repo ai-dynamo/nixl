@@ -264,9 +264,14 @@ public:
     regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg);
 
     [[nodiscard]] std::shared_ptr<const nixl::ucx::amSendStats>
-    getAmSendStats() const noexcept;
+    getAmSendStats() const noexcept {
+        return amStats_;
+    }
+
     [[nodiscard]] size_t
-    getPendingAmSends() const noexcept;
+    getPendingAmSends() const noexcept {
+        return amStats_->pending();
+    }
 
     /* Data access */
     unsigned

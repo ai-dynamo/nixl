@@ -753,16 +753,6 @@ nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
     NIXL_DEBUG << *this << ": created ucp worker " << worker.get();
 }
 
-std::shared_ptr<const nixl::ucx::amSendStats>
-nixlUcxWorker::getAmSendStats() const noexcept {
-    return amStats_;
-}
-
-size_t
-nixlUcxWorker::getPendingAmSends() const noexcept {
-    return amStats_->pending();
-}
-
 std::string
 nixlUcxWorker::epAddr() {
     ucp_worker_attr_t wattr;

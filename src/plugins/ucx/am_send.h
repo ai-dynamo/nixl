@@ -27,8 +27,9 @@
 
 namespace nixl::ucx {
 
-// AM sends in flight whose requests their callbacks release. An observer can
-// outlive the endpoint or worker that counts the sends.
+// Number of AM sends in flight whose request the send callback frees. Each
+// send in flight and each reader keeps its own shared_ptr to it, so a late
+// callback or a test can still use it after the endpoint or worker is gone.
 class amSendStats {
 public:
     [[nodiscard]] size_t
