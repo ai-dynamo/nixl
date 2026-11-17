@@ -22,7 +22,7 @@ UCX_PLUGINS_DIR="/usr/lib64/ucx"
 NIXL_PLUGINS_DIR="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins"
 OUTPUT_DIR="dist"
 BUILD_NIXL_EP="false"
-TORCH_VERSIONS=""
+TORCH_VERSION=""
 TORCH_CUDA_INDEX=""
 
 while [[ $# -gt 0 ]]; do
@@ -60,7 +60,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
             echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires a CUDA sm_90 or newer target environment)"
-            echo "  --torch-versions: Comma-separated list of torch versions to build the wheel for (default: $TORCH_VERSIONS)"
+            echo "  --torch-version: Torch version to build the wheel for (default: $TORCH_VERSION)"
             echo "  --torch-cuda-index: torch wheel index, e.g. cu132 (default: cu132 for CUDA 13, cu<major><minor> of the nvcc toolkit for CUDA 12)"
             echo "  --help: Show this help message"
             echo ""
@@ -71,8 +71,8 @@ while [[ $# -gt 0 ]]; do
             BUILD_NIXL_EP="true"
             shift
             ;;
-        --torch-versions)
-            TORCH_VERSIONS=$2
+        --torch-version)
+            TORCH_VERSION=$2
             shift
             shift
             ;;
@@ -88,8 +88,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ "$BUILD_NIXL_EP" = "true" ] && [ -z "$TORCH_VERSIONS" ]; then
-    echo "ERROR: --build-nixl-ep requires --torch-versions" >&2
+if [ "$BUILD_NIXL_EP" = "true" ] && [ -z "$TORCH_VERSION" ]; then
+    echo "ERROR: --build-nixl-ep requires --torch-version" >&2
     exit 1
 fi
 
@@ -125,10 +125,9 @@ case "$CU_TAG" in
 esac
 ./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
 
-TORCH_STABLE_INDEX="https://download.pytorch.org/whl/${CU_TAG}"
-TORCH_NIGHTLY_INDEX="https://download.pytorch.org/whl/nightly/${CU_TAG}"
+TORCH_INDEX="https://download.pytorch.org/whl/${CU_TAG}"
 
-# Build deps for the per-iteration venv; torch is installed separately.
+# Build deps for the build venv; torch is installed separately.
 BUILD_DEPS=(
     "meson"
     "meson-python"
@@ -139,134 +138,37 @@ BUILD_DEPS=(
     "setuptools>=80.9.0"
 )
 
-# Slugify a dotted version (e.g. "2.13" -> "213", "3.10" -> "310") so it can
-# be used unambiguously as a path component.
-slug() { echo "${1//./}"; }
+# Build venv. Lives in /workspace, not /tmp, so it inherits the image's
+# UV_CACHE_DIR layout and is visible to debugging.
+VENV_PATH="/workspace/venv-py${PYTHON_VERSION//./}"
 
-# Cache torch channel per version for this script run. Populated by
-# ensure_torch_venv(); cleared when the venv is torn down after a build.
-declare -A TORCH_CHANNEL_CACHE
-
-# Path for a per-iteration build venv. One venv per (python, torch) tuple
-# so torch's transitive footprint (nvidia-*, triton, sympy, …) never bleeds
-# across torch versions. Lives in /workspace, not /tmp, so it inherits the
-# image's UV_CACHE_DIR layout and is visible to debugging.
-venv_path() {
-    local VER=${1:-}
-    if [ -n "$VER" ]; then
-        echo "/workspace/venv-torch$(slug "$VER")-py$(slug "$PYTHON_VERSION")"
-    else
-        echo "/workspace/venv-py$(slug "$PYTHON_VERSION")"
-    fi
-}
-
-torch_venv_ready() {
-    local VENV_PATH=$1
-    [ -x "$VENV_PATH/bin/python" ] && \
-        "$VENV_PATH/bin/python" -c 'import torch' >/dev/null 2>&1
-}
-
-# Install torch from the cu index, isolated from PyPI: with PyPI as a
-# fallback its plain `torch==X.Y.0` beats cu nightly's `X.Y.0.dev*+cuXX`
-# (PEP 440: final > pre-release).
-install_torch() {
-    local VENV_PATH=$1
-    local VER=$2
-    local CHANNEL=$3
-    local MAJOR="${VER%%.*}"
-    local MINOR="${VER##*.}"
-
-    if [ "$CHANNEL" = "nightly" ]; then
-        uv pip install \
-            --python "$VENV_PATH/bin/python" \
-            --index-url "$TORCH_NIGHTLY_INDEX" \
-            --pre \
-            "torch>=${MAJOR}.${MINOR}.0.dev0,<${MAJOR}.$((MINOR + 1))"
-    else
-        uv pip install \
-            --python "$VENV_PATH/bin/python" \
-            --index-url "$TORCH_STABLE_INDEX" \
-            "torch==${VER}.*"
-    fi
-}
-
-# Create or reuse a venv with torch installed. uv's --dry-run does not
-# always reject wheels with a mismatched platform tag, so we probe with a
-# real install once and reuse the venv for the wheel build.
-# Sets TORCH_CHANNEL_CACHE and returns 0 on success, 1 if unavailable.
-ensure_torch_venv() {
-    local VER=$1
-    local VENV_PATH
-    VENV_PATH=$(venv_path "$VER")
-    local CHANNEL="${TORCH_CHANNEL_CACHE[$VER]:-}"
-
-    if [ "$CHANNEL" = "unavailable" ]; then
-        return 1
-    fi
-    if [ -n "$CHANNEL" ] && torch_venv_ready "$VENV_PATH"; then
-        return 0
-    fi
-
-    rm -rf "$VENV_PATH"
-    if ! uv venv "$VENV_PATH" --python "$PYTHON_VERSION"; then
-        TORCH_CHANNEL_CACHE[$VER]="unavailable"
-        return 1
-    fi
-
-    if install_torch "$VENV_PATH" "$VER" "stable" 2>/dev/null; then
-        CHANNEL="stable"
-    elif install_torch "$VENV_PATH" "$VER" "nightly" 2>/dev/null; then
-        CHANNEL="nightly"
-    else
-        rm -rf "$VENV_PATH"
-        TORCH_CHANNEL_CACHE[$VER]="unavailable"
-        return 1
-    fi
-
-    TORCH_CHANNEL_CACHE[$VER]="$CHANNEL"
-    return 0
-}
-
-torch_channel() {
-    echo "${TORCH_CHANNEL_CACHE[$1]:-unavailable}"
-}
-
-destroy_torch_venv() {
-    local VER=${1:-}
-    local VENV_PATH
-    VENV_PATH=$(venv_path "$VER")
-    rm -rf "$VENV_PATH"
-    if [ -n "$VER" ]; then
-        unset "TORCH_CHANNEL_CACHE[$VER]"
-    fi
-}
-
-# Build the wheel for the current PYTHON_VERSION (and optional torch VER).
-# Each iteration uses a fresh venv so torch's dependencies
-# (nvidia-* wheels, triton, sympy, …) do not leak across iterations.
+# Build the wheel for the current PYTHON_VERSION in a fresh venv. torch
+# (TORCH_VERSION) is installed only when building NIXL EP.
 build_wheel() {
     local OUT_DIR=$1
-    local VER=${2:-}
-
-    local VENV_PATH
-    VENV_PATH=$(venv_path "$VER")
-    local CHANNEL="stable"
-    if [ -n "$VER" ]; then
-        ensure_torch_venv "$VER" || {
-            echo "ERROR: torch ${VER} is not installable for Python ${PYTHON_VERSION} + ${CU_TAG} on $(uname -m)" >&2
-            exit 1
-        }
-        CHANNEL=$(torch_channel "$VER")
-    else
-        rm -rf "$VENV_PATH"
-        uv venv "$VENV_PATH" --python "$PYTHON_VERSION"
+    local TORCH=""
+    if [ "$BUILD_NIXL_EP" = "true" ]; then
+        TORCH=$TORCH_VERSION
     fi
 
-    echo "=== Provisioning ${VENV_PATH} (python ${PYTHON_VERSION}${VER:+, torch ${VER} [${CHANNEL}]}) ==="
+    rm -rf "$VENV_PATH"
+    uv venv "$VENV_PATH" --python "$PYTHON_VERSION"
+    if [ -n "$TORCH" ]; then
+        # Install from the cu index only, so PyPI's torch cannot win.
+        uv pip install \
+            --python "$VENV_PATH/bin/python" \
+            --index-url "$TORCH_INDEX" \
+            "torch==${TORCH}.*" || {
+            echo "ERROR: torch ${TORCH} is not installable for Python ${PYTHON_VERSION} + ${CU_TAG} on $(uname -m)" >&2
+            exit 1
+        }
+    fi
+
+    echo "=== Provisioning ${VENV_PATH} (python ${PYTHON_VERSION}${TORCH:+, torch ${TORCH}}) ==="
     uv pip install --python "$VENV_PATH/bin/python" "${BUILD_DEPS[@]}"
     # Toolchain evidence for the CI build manifest; never fatal.
     mkdir -p build-info && uv pip list --python "$VENV_PATH/bin/python" --format json \
-        > "build-info/pip-py${PYTHON_VERSION}-torch${VER:-base}.json" || true
+        > "build-info/pip-py${PYTHON_VERSION}.json" || true
 
     # Activate so meson's `find_installation('python3')` resolves to this
     # venv's interpreter (which has the right torch).
@@ -289,9 +191,9 @@ build_wheel() {
     uv build "${BUILD_ARGS[@]}"
 
     deactivate
-    # torch + nvidia-* in each venv is several GB; tear down so the docker
-    # layer does not get too large across the (python, torch) matrix.
-    destroy_torch_venv "$VER"
+    # torch + nvidia-* in the venv is several GB; tear down so the docker
+    # layer does not get too large.
+    rm -rf "$VENV_PATH"
 }
 
 repair_wheel() {
@@ -315,66 +217,9 @@ get_wheel_path() {
     echo "${wheels[0]}"
 }
 
-if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
-    # Multi-torch: build the full wheel with the first torch, then merge
-    # the per-torch .so from the others into it.
-    IFS=',' read -ra TORCH_REQUESTED <<< "$TORCH_VERSIONS"
-
-    # Filter to torch versions actually resolvable for this (Python, CUDA) combo.
-    TORCH_ARRAY=()
-    SKIPPED=()
-    for TORCH in "${TORCH_REQUESTED[@]}"; do
-        if ensure_torch_venv "$TORCH"; then
-            TORCH_ARRAY+=("$TORCH")
-        else
-            SKIPPED+=("$TORCH")
-        fi
-    done
-
-    if [ ${#SKIPPED[@]} -gt 0 ]; then
-        echo "=== Skipping torch versions (no wheel on index for Python ${PYTHON_VERSION} + ${CU_TAG}): ${SKIPPED[*]} ==="
-    fi
-    if [ ${#TORCH_ARRAY[@]} -eq 0 ]; then
-        echo "ERROR: none of the requested torch versions (${TORCH_REQUESTED[*]}) are available for Python ${PYTHON_VERSION} + ${CU_TAG}"
-        exit 1
-    fi
-    echo "=== Building for torch versions: ${TORCH_ARRAY[*]} ==="
-
-    FIRST_TORCH="${TORCH_ARRAY[0]}"
-    echo "=== Building wheel with torch ${FIRST_TORCH} ==="
-    build_wheel "$TMP_DIR" "$FIRST_TORCH"
-    repair_wheel "$TMP_DIR" "$TMP_DIR/dist"
-    BASE_WHL=$(get_wheel_path "$TMP_DIR/dist")
-
-    for ((i=1; i<${#TORCH_ARRAY[@]}; i++)); do
-        TORCH="${TORCH_ARRAY[$i]}"
-        echo "=== Building nixl_ep .so for torch ${TORCH} ==="
-
-        EP_TMP=$(mktemp -d)
-        build_wheel "$EP_TMP" "$TORCH"
-        repair_wheel "$EP_TMP" "$EP_TMP/dist"
-
-        # Merge only the torch-versioned .so. Both wheels were built
-        # against the same outer C++ build, so its DT_NEEDED entries
-        # (libucp-<hash>.so etc.) match what auditwheel already bundled
-        # into $BASE_WHL.
-        TORCH_MM=$(echo "$TORCH" | tr -d '.')
-        EP_WHL=$(get_wheel_path "$EP_TMP/dist")
-        ./contrib/wheel_merge.py \
-            --base-wheel "$BASE_WHL" \
-            --source-wheel "$EP_WHL" \
-            --pattern "nixl_ep_cpp_torch${TORCH_MM}.*" \
-            --target-dir "nixl_ep_cu${CUDA_MAJOR}"
-
-        rm -rf "$EP_TMP"
-    done
-
-    cp "$BASE_WHL" "$OUTPUT_DIR"
-else
-    build_wheel "$TMP_DIR"
-    repair_wheel "$TMP_DIR" "$TMP_DIR/dist"
-    cp "$(get_wheel_path "$TMP_DIR/dist")" "$OUTPUT_DIR"
-fi
+build_wheel "$TMP_DIR"
+repair_wheel "$TMP_DIR" "$TMP_DIR/dist"
+cp "$(get_wheel_path "$TMP_DIR/dist")" "$OUTPUT_DIR"
 
 # Clean up
 rm -rf "$TMP_DIR"
