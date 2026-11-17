@@ -715,8 +715,8 @@ main(int argc, char **argv) {
                 q_start = 0;
                 q_end = 0;
             }
-            result += runAsyncPostPollAndReleaseTests(
-                agent, backend, q_end > q_start, use_io_uring);
+            result +=
+                runAsyncPostPollAndReleaseTests(agent, backend, q_end > q_start, use_io_uring);
         }
     }
 
