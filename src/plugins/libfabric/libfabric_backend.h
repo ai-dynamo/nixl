@@ -54,7 +54,10 @@ typedef hipDevice_t CUdevice;
 
 // Forward declarations
 class nixlLibfabricEngine;
-class nixlLibfabricPostThreadPool;
+
+namespace nixl {
+class threadPool;
+} // namespace nixl
 
 #ifdef HAVE_CUDA
 /** CUDA context management for libfabric backend */
@@ -202,7 +205,7 @@ private:
     // Descriptor-posting thread pool configuration
     size_t post_thread_count_;
     size_t post_split_batch_size_;
-    std::unique_ptr<nixlLibfabricPostThreadPool> post_thread_pool_;
+    std::unique_ptr<nixl::threadPool> post_thread_pool_;
 
     mutable size_t total_transfer_size_;
 
