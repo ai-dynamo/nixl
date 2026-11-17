@@ -198,7 +198,8 @@ meson setup build -Drocm_path=/custom/path/to/rocm
 
 **Platforms using ROCm / HIP (ROCm-only or CUDA + ROCm co-installed):**
 - `UCX` — primary transport for AMD GPU memory (requires UCX built with `--with-rocm`).
-- `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `MOONCAKE`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
+- `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
+- `MOONCAKE` — needs a Transfer Engine built with `-DUSE_HIP=ON` for AMD GPU memory.
 - `AIS` — AMD Infinity Storage (hipFile) plugin under `src/plugins/rocm_ais/`. HIP is detected independently of CUDA, so **AIS** can be built alongside CUDA plugins when ROCm and hipFile are present. Both are found under `rocm_path`, which must be set to enable ROCm. See `disable_rocm_ais_backend` in `meson_options.txt`.
 - `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — on a ROCm-only host they skip automatically when CUDA / cuFile / DOCA are not found.
 
