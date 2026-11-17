@@ -35,7 +35,7 @@ class EPHandle:
         num_max_tokens_per_rank: the maximum number of tokens per rank, all the ranks must hold the same value.
         num_sms: the active SM count recorded when the handle was created, checked by eager combine. A captured
             dispatch/combine graph reads the current count from the topology descriptor.
-        topk_idx: dispatch top-k expert indices, `[num_tokens, num_topk]`; cloned when `do_handle_copy=True`.
+        topk_idx: dispatch top-k stable expert IDs, `[num_tokens, num_topk]`; cloned when `do_handle_copy=True`.
         psum_num_recv_tokens_per_scaleup_rank: inclusive prefix sum of deduplicated received token counts
             per scaleup rank, shape `[max_num_scaleup_ranks + 1]`. A token is counted once per rank even if
             multiple of its top-k experts land on the same rank. The last element equals the total number
@@ -158,8 +158,8 @@ class ElasticBuffer:
     any peer departs. The update methods do not establish that completion boundary.
     Transport mutation/activation failures are fatal; invalid inputs and mapping refusals leave active views intact.
 
-    World ranks index the declared maximum world. The kernels' `rank_idx` indexes the committed extent:
-    `scaleout_rank_idx * num_scaleup_ranks + scaleup_rank_idx`.
+    World ranks and public expert IDs index the declared maximum world. Internal source metadata and the
+    kernels' `rank_idx` still index the committed extent: `scaleout_rank_idx * num_scaleup_ranks + scaleup_rank_idx`.
     """
 
     def __init__(
@@ -184,7 +184,6 @@ class ElasticBuffer:
         """
         Initialize this rank's buffer without accessing a Store or waiting for peers.
         The initial topology contains this rank alone. Call `connect_ranks`, then `set_active_ranks` to join a world.
-        To discover and validate an initial group's NVLink domains, call `get_logical_domain_size` before construction.
         Buffer capacity is calculated from the workload settings and declared maximum world.
 
         Arguments:
@@ -198,10 +197,11 @@ class ElasticBuffer:
             num_topk: the number of top-k experts per token.
             use_fp8_dispatch: reserve smaller dispatch arenas for FP8/NVFP4 inputs; False reserves BF16 capacity and also
                 accepts either quantized format. Must match across peers; it does not cast inputs.
-            num_experts_per_rank: fixed physical routing slots per GPU, shared by all peers, including joiners.
-                Positive for dispatch/combine; zero allocates a minimum-sized barrier-only buffer. This is not the model's
-                logical expert count. Slots may remain unused; the caller assigns weights and maps logical experts
-                to physical slots. The transport neither replicates experts nor creates weights.
+            num_experts_per_rank: fixed physical routing slot capacity per GPU, shared by all peers, including joiners.
+                Size it for the largest per-GPU expert placement across all intended topologies, not just the initial one.
+                The caller supplies this fixed value; slots may remain unused. It is not the model's logical expert count.
+                Positive for dispatch/combine; zero allocates a minimum-sized barrier-only buffer. The caller assigns
+                weights and maps logical experts to physical slots; the transport neither replicates experts nor creates weights.
             deterministic: whether to sort received tokens deterministically (eager execution only).
             allow_multiple_reduction: whether to allow multiple reductions in combine.
             prefer_overlap_with_compute: whether to prefer overlapping communication with compute.
@@ -260,36 +260,25 @@ class ElasticBuffer:
 
     @staticmethod
     def get_buffer_size_hint(
-        group: dist.ProcessGroup,
+        max_num_scaleout_ranks: int,
+        max_num_scaleup_ranks: int,
         num_max_tokens_per_rank: int,
         hidden: int,
         num_topk: int = 0,
         use_fp8_dispatch: bool = False,
         allow_multiple_reduction: bool = True,
-        max_num_scaleout_ranks: int = 0,
-        max_num_scaleup_ranks: int = 0,
-        num_group_scaleup_ranks: Optional[int] = None,
-        store: Optional[dist.Store] = None,
-        store_timeout_secs: int = 300,
     ) -> int:
         """
-        Query the communication buffer size (excluding workspace) for memory planning without constructing a buffer.
-        The returned value is aligned to 2 MB. A missing maximum is discovered from the group's domain count and size
-        (a Store exchange, collective over `group`). To reuse the discovered dimensions for construction, call
-        `nixl.runtime.ep.get_logical_domain_size` once and pass both maxima to this method and the constructor.
+        Query the communication buffer size (excluding workspace) for the declared maximum world, without constructing a buffer.
 
         Arguments:
-            group: the process group whose domain count and size fill in a missing maximum (`None` with both maxima given).
+            max_num_scaleout_ranks: the maximum number of NVLink domains.
+            max_num_scaleup_ranks: the maximum positions per domain.
             num_max_tokens_per_rank: the maximum number of tokens per rank.
             hidden: the hidden dimension of each token.
             num_topk: the number of top-k experts per token.
             use_fp8_dispatch: size dispatch arenas for FP8/NVFP4 inputs; pass the same value to the constructor.
             allow_multiple_reduction: whether to allow multiple reductions in combine.
-            max_num_scaleout_ranks: the declared maximum world to size for (0 = the group's domain count).
-            max_num_scaleup_ranks: likewise (0 = the group's domain size).
-            num_group_scaleup_ranks: the group's declared domain size, or None for discovery.
-            store: the Store used for discovery; otherwise a private TCPStore whose address is broadcast over the group.
-            store_timeout_secs: the Store timeout of the discovery.
 
         Returns:
             size: the communication buffer size in bytes (2 MB-aligned).
@@ -589,10 +578,11 @@ class ElasticBuffer:
                 to the consuming GEMM; a shared GEMM scale requires inputs quantized with that same global scale.
             topk_idx: `[num_tokens, num_topk]` with `nixl.runtime.ep.topk_idx_t` (typically `torch.int64`), the expert
                 physical slot indices selected by each token, `-1` means no selection. With S = `num_experts_per_rank`,
-                slot e belongs to extent rank e // S, whose physical coordinates are
-                `(rank // scaleup_extent, rank % scaleup_extent)`. The routing range is
-                `scaleout_extent * scaleup_extent * S`, including holes; inactive slots are not renumbered away.
-                The caller updates routing IDs when the scaleup extent changes, and supplies correct weights.
+                expert_id = world_rank * S + local_expert_idx, where `0 <= local_expert_idx < S`.
+                Valid IDs are in `[0, max_num_scaleout_ranks * max_num_scaleup_ranks * S)` and stay fixed across
+                membership and extent changes, including graph replay. Slot e belongs to world rank e // S,
+                with coordinates `divmod(e // S, max_num_scaleup_ranks)`. Selections of inactive ranks are dropped.
+                The caller owns logical expert placement and routing weights; extent changes alone require no renumbering.
             topk_weights: `[num_tokens, num_topk]` with `torch.float`, the expert weights of each token to dispatch.
             cumulative_local_expert_recv_stats: `[num_experts_per_rank]` with `torch.int`, cumulative physical-slot
                 receive counts. The local slot count and required allocation stay fixed across topology changes,

@@ -30,7 +30,6 @@ py.install_sources(
 )
 py.install_sources(
     'python/utils/__init__.py',
-    'python/utils/envs.py',
     'python/utils/event.py',
     subdir: join_paths(ep_install_dir, 'utils'),
     pure: false,

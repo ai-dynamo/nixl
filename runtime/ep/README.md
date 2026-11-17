@@ -9,8 +9,23 @@ overrides. Public metadata getters and `publish` are absent; `connect_ranks`
 takes a Store instead of manual metadata. Topology staging, commit, inspection
 and coordinate helpers are private; `set_active_ranks` activates membership and
 `disconnect_ranks` finishes peer retirement.
+`get_buffer_size_hint` requires both maximum-world dimensions and queries size
+locally without a process group or Store.
 Method docstrings describe the
 production contracts, not operations executed by this shell.
+
+`num_experts_per_rank` is the fixed physical slot capacity per GPU; slots may
+remain unused. Choose it for the largest per-GPU expert placement across all
+intended topologies, including shrink, rather than just the initial placement.
+Public expert IDs use `world_rank * num_experts_per_rank + local_expert_idx`,
+where `0 <= local_expert_idx < num_experts_per_rank`. The ID range covers the
+declared maximum world: `[0, max_num_scaleout_ranks * max_num_scaleup_ranks * num_experts_per_rank)`.
+IDs stay fixed across membership and extent changes, including graph replay.
+`-1` means no selection; production dispatch drops selections owned by inactive
+ranks. The caller owns logical expert placement and routing weights, without
+renumbering IDs solely because an extent changes. Internal source metadata
+continues to use committed-extent rank encoding. The shell does not read or
+route these IDs.
 
 ## Install and exercise the public API
 
@@ -55,9 +70,6 @@ buffer.destroy()
   Construction starts with only `world_rank` active and no connected peers.
   Connect peers explicitly, then activate the intended ranks with
   `set_active_ranks` before dispatch.
-- The separate `get_logical_domain_size` helper queries only `group.size()`.
-  With no declared domain size, it assumes one domain. It does not discover
-  hardware or access a Store.
 - Dispatch returns the five-item API result; combine returns its two-item
   result. Receive tensors always have zero rows. Combine's placeholder has the
   original input token count and the supplied combine input's hidden width.

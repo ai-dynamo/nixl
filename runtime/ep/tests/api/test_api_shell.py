@@ -21,7 +21,6 @@ import sys
 import unittest
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import torch
@@ -163,7 +162,6 @@ class ApiShellTests(unittest.TestCase):
             ("__init__.py", (), ("init_jit",)),
             ("buffers/elastic.py", ("ElasticBuffer", "EPHandle"), ()),
             ("utils/event.py", ("EventOverlap", "EventHandle"), ()),
-            ("utils/envs.py", (), ("get_logical_domain_size",)),
         ):
             actual.update(
                 source_contract(self.package_root / filename, classes, functions)
@@ -200,15 +198,12 @@ class ApiShellTests(unittest.TestCase):
         self.assertIs(self.ep.topk_idx_t, torch.int64)
         elastic = importlib.import_module(f"{self.module_name}.buffers.elastic")
         event = importlib.import_module(f"{self.module_name}.utils.event")
-        envs = importlib.import_module(f"{self.module_name}.utils.envs")
         self.assertIs(self.ep.ElasticBuffer, elastic.ElasticBuffer)
         self.assertIs(self.ep.EPHandle, elastic.EPHandle)
         self.assertIs(self.ep.EventHandle, event.EventHandle)
         self.assertIs(self.ep.EventOverlap, event.EventOverlap)
-        self.assertIs(self.ep.get_logical_domain_size, envs.get_logical_domain_size)
 
     def test_configuration_and_local_helpers_do_not_touch_store_or_hardware(self):
-        group = SimpleNamespace(rank=lambda: 1, size=lambda: 4)
         store = ForbiddenStore()
         buffer = self.buffer(world_rank=1, store=store)
         self.assertEqual(buffer.num_experts_per_rank, 3)
@@ -216,19 +211,12 @@ class ApiShellTests(unittest.TestCase):
         self.assertIs(buffer.store, store)
         self.assertIsNone(buffer.runtime)
         self.assertEqual(buffer.get_active_ranks(), [1])
-        self.assertEqual(self.ep.get_logical_domain_size(group, store=store), (1, 4))
-        self.assertEqual(
-            self.ep.get_logical_domain_size(group, num_scaleup_ranks=2, store=store),
-            (2, 2),
-        )
-        with self.assertRaisesRegex(ValueError, "num_scaleup_ranks must divide"):
-            self.ep.get_logical_domain_size(group, num_scaleup_ranks=0, store=store)
-        self.assertEqual(buffer.get_buffer_size_hint(group, 8, 256, store=store), 0)
+        self.assertEqual(buffer.get_buffer_size_hint(2, 2, 8, 256), 0)
         self.assertEqual(buffer.read_profile(), {})
         self.assertIs(buffer.get_comm_stream(), buffer.get_comm_stream())
         self.assertIsNone(buffer.barrier(with_cpu_sync=True))
 
-    def test_set_active_ranks_updates_topology_without_renumbering_slots(self):
+    def test_set_active_ranks_updates_topology_with_fixed_local_slot_count(self):
         buffer = self.two_rank_buffer()
         self.assertEqual(buffer._get_topology_masks(), (1, 3))
         self.assertEqual(buffer._get_topology()[0], "direct")
@@ -243,6 +231,11 @@ class ApiShellTests(unittest.TestCase):
         self.assertEqual(buffer._get_topology_extent(), (2, 2))
         with self.assertRaises(ValueError):
             buffer.disconnect_ranks([2])
+        buffer.set_active_ranks([0, 2])
+        self.assertEqual(buffer._get_topology_masks(), (3, 1))
+        self.assertEqual(buffer._get_topology_extent(), (2, 1))
+        self.assertEqual(buffer._world_rank_of(1, 0), 2)
+        self.assertEqual(buffer.num_experts_per_rank, 3)
         buffer.set_active_ranks([2, 3])
         self.assertEqual(buffer._get_topology(), ("direct", 8))
         self.assertEqual(buffer._get_topology_masks(), (2, 3))

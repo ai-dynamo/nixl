@@ -5,7 +5,6 @@
 import torch
 
 from .buffers.elastic import ElasticBuffer, EPHandle
-from .utils.envs import get_logical_domain_size
 from .utils.event import EventHandle, EventOverlap
 
 topk_idx_t = torch.int64
@@ -22,5 +21,4 @@ __all__ = [
     "EventHandle",
     "EventOverlap",
     "topk_idx_t",
-    "get_logical_domain_size",
 ]
