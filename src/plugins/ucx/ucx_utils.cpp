@@ -189,8 +189,12 @@ nixlUcxEp::disconnect() {
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode)
-    : closeFlags_(err_handling_mode == UCP_ERR_HANDLING_MODE_PEER ? UCP_EP_CLOSE_FLAG_FORCE : 0) {
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
+                     void *addr,
+                     ucp_err_handling_mode_t err_handling_mode,
+                     std::shared_ptr<nixl::ucx::amSendStats> worker_am_stats)
+    : workerAmStats_(std::move(worker_am_stats)),
+      closeFlags_(err_handling_mode == UCP_ERR_HANDLING_MODE_PEER ? UCP_EP_CLOSE_FLAG_FORCE : 0) {
     ucp_ep_params_t ep_params;
 
     ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS | UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
@@ -218,18 +222,17 @@ nixlUcxEp::~nixlUcxEp() {
  * Active message handling
  * =========================================== */
 
-// Payload of an in-flight AM send and whether to release the request on completion
-using nixl_ucx_am_send_ctx_t = std::pair<std::string, bool>;
-
 void
 nixlUcxEp::sendAmCallback(void *request, ucs_status_t status, void *user_data) {
-    if (status != UCS_OK) {
+    if (status == UCS_ERR_CANCELED) {
+        NIXL_DEBUG << "UCX AM send canceled";
+    } else if (status != UCS_OK) {
         NIXL_ERROR << "UCX AM send failed with status " << status << " ("
                    << ucs_status_string(status) << ")";
     }
-    const std::unique_ptr<nixl_ucx_am_send_ctx_t> ctx(
-        static_cast<nixl_ucx_am_send_ctx_t *>(user_data));
-    if (ctx->second) {
+    const std::unique_ptr<nixl::ucx::amSendCtx> ctx(static_cast<nixl::ucx::amSendCtx *>(user_data));
+    // The caller keeps and frees the request of a send that is not counted
+    if (ctx->counted()) {
         ucp_request_free(request);
     }
 }
@@ -246,7 +249,11 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
         return status;
     }
 
-    auto ctx = std::make_unique<nixl_ucx_am_send_ctx_t>(std::move(payload), req == nullptr);
+    // Count before posting: another thread can complete the send first. A send
+    // whose request the caller keeps is not counted.
+    const bool counted = (req == nullptr);
+    auto ctx = std::make_unique<nixl::ucx::amSendCtx>(
+        std::move(payload), counted ? epAmStats_ : nullptr, counted ? workerAmStats_ : nullptr);
 
     ucp_request_param_t param;
     param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_MEMORY_TYPE |
@@ -257,7 +264,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
     param.user_data = ctx.get();
 
     const ucs_status_ptr_t request = ucp_am_send_nbx(
-        eph_, unsigned(msg_id), nullptr, 0, ctx->first.data(), ctx->first.size(), &param);
+        eph_, unsigned(msg_id), nullptr, 0, ctx->payload.data(), ctx->payload.size(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         ctx.release();
         if (req != nullptr) {
@@ -746,6 +753,16 @@ nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
     NIXL_DEBUG << *this << ": created ucp worker " << worker.get();
 }
 
+std::shared_ptr<const nixl::ucx::amSendStats>
+nixlUcxWorker::getAmSendStats() const noexcept {
+    return amStats_;
+}
+
+size_t
+nixlUcxWorker::getPendingAmSends() const noexcept {
+    return amStats_->pending();
+}
+
 std::string
 nixlUcxWorker::epAddr() {
     ucp_worker_attr_t wattr;
@@ -765,7 +782,7 @@ nixlUcxWorker::epAddr() {
 std::unique_ptr<nixlUcxEp>
 nixlUcxWorker::connect(void *addr) {
     try {
-        auto ep = std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_);
+        auto ep = std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_, amStats_);
         NIXL_DEBUG << *this << ": created ep " << ep->getEp();
         return ep;
     }

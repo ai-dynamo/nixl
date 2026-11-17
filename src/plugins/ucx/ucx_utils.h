@@ -28,6 +28,7 @@ extern "C" {
 
 #include <nixl_types.h>
 
+#include "am_send.h"
 #include "rkey.h"
 #include "ucx_enums.h"
 
@@ -53,6 +54,10 @@ class nixlUcxMem;
 
 class nixlUcxEp {
 private:
+    // Sends of this endpoint and of its worker that their callbacks release
+    const std::shared_ptr<nixl::ucx::amSendStats> epAmStats_ =
+        std::make_shared<nixl::ucx::amSendStats>();
+    const std::shared_ptr<nixl::ucx::amSendStats> workerAmStats_;
     ucp_ep_h eph_{nullptr};
     std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::CONNECTED};
     const uint32_t closeFlags_;
@@ -72,7 +77,10 @@ public:
         return nixl::ucx::toNixlStatus(state_);
     }
 
-    nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
+    nixlUcxEp(ucp_worker_h worker,
+              void *addr,
+              ucp_err_handling_mode_t err_handling_mode,
+              std::shared_ptr<nixl::ucx::amSendStats> worker_am_stats);
     ~nixlUcxEp();
     nixlUcxEp(const nixlUcxEp &) = delete;
     nixlUcxEp &
@@ -82,13 +90,23 @@ public:
      * @brief Send an active message that owns its payload
      * @param payload Data released once the send completes
      * @param req Receives the UCX request of an in-progress send; if null, the request is
-     *            released on completion
+     *            released on completion, and the send is counted as pending until then
      */
     nixl_status_t
     sendAm(nixl::ucx::am_cb_op_t msg_id,
            std::string &&payload,
            uint32_t flags,
            nixlUcxReq *req = nullptr) const;
+
+    [[nodiscard]] std::shared_ptr<const nixl::ucx::amSendStats>
+    getAmSendStats() const noexcept {
+        return epAmStats_;
+    }
+
+    [[nodiscard]] size_t
+    getPendingAmSends() const noexcept {
+        return epAmStats_->pending();
+    }
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -245,6 +263,11 @@ public:
     int
     regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg);
 
+    [[nodiscard]] std::shared_ptr<const nixl::ucx::amSendStats>
+    getAmSendStats() const noexcept;
+    [[nodiscard]] size_t
+    getPendingAmSends() const noexcept;
+
     /* Data access */
     unsigned
     progress();
@@ -290,6 +313,9 @@ private:
     createUcpWorker(const nixlUcxContext &) const;
 
     const std::string name_;
+    // Sends of all endpoints of this worker that their callbacks release
+    const std::shared_ptr<nixl::ucx::amSendStats> amStats_ =
+        std::make_shared<nixl::ucx::amSendStats>();
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     const ucp_err_handling_mode_t err_handling_mode_;
     const size_t id_;
