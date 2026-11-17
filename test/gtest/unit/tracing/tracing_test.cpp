@@ -1970,6 +1970,38 @@ TEST(Tracing, TraceInfoWithoutATracerIsNotFound) {
     EXPECT_EQ(nixl::trace::traceInfo(traceable, info), NIXL_ERR_NOT_FOUND);
 }
 
+TEST(Tracing, TraceableRecordsAnEventWithSeveralAttributes) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 1.0);
+    const nixl::trace::Traceable traced(tracer.get(), {testContext(0x47), 0x4747});
+    const nixl::trace::Attribute attrs[] = {
+        {nixl::trace::AttributeKey::NixlStatus, NIXL_ERR_REMOTE_DISCONNECT},
+        {nixl::trace::AttributeKey::NixlBackendStatusCode, std::int64_t{-25}},
+        {nixl::trace::AttributeKey::NixlBackendStatusName, std::string_view{"reset"}}};
+
+    traced.trace(nixl::trace::Record::XferError, attrs);
+
+    for (const CallLog *log : {&a, &b}) {
+        ASSERT_EQ(log->emittedEvents.size(), 1u);
+        EXPECT_EQ(log->emittedEvents[0].name, "nixl::xfer.error");
+        EXPECT_EQ(log->emittedEvents[0].attrs,
+                  (attr_list_t{{"nixl.xfer_request_id", std::int64_t{0x4747}},
+                               {"nixl.xfer_execution", std::int64_t{0}},
+                               {"nixl.status", std::int64_t{NIXL_ERR_REMOTE_DISCONNECT}},
+                               {"nixl.backend_status_code", std::int64_t{-25}},
+                               {"nixl.backend_status_name", std::string("reset")}}));
+    }
+}
+
+TEST(Tracing, TraceableRecordsOnlyWhenSampledWithATracer) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 1.0);
+    EXPECT_TRUE(nixl::trace::Traceable(tracer.get(), {testContext(0x48), 0x4848}).recording());
+    EXPECT_FALSE(
+        nixl::trace::Traceable(tracer.get(), {testContext(0x49, 0x00), 0x4949}).recording());
+    EXPECT_FALSE(nixl::trace::Traceable(nullptr, {testContext(0x4a), 0x4a4a}).recording());
+}
+
 // A phase recorded through the plugin-facing sink reaches every enabled trace
 // backend, tagged with the recording backend and the plugin's timestamp.
 TEST(TracePhaseSink, RecordedPhaseReachesEveryBackend) {

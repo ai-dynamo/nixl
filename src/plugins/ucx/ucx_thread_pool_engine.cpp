@@ -158,6 +158,7 @@ private:
 struct nixlUcxBackendSharedState {
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
+    std::atomic<ucs_status_t> failure{UCS_OK};
     std::string notif;
     std::vector<nixlUcxChunkBackendReqH> chunks;
     nixlBackendPostPhases trace;
@@ -178,6 +179,9 @@ void
 nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
     NIXL_ASSERT(sharedState_.get() != nullptr);
     if (status != NIXL_SUCCESS) {
+        if (const ucs_status_t failure = takeFailure(); failure != UCS_OK) {
+            sharedState_->failure.store(failure, std::memory_order_relaxed);
+        }
         nixlUcxBackendReqH::release();
         sharedState_->status.store(status);
     }
@@ -242,6 +246,7 @@ public:
     startXfer() {
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
+        sharedState_->failure.store(UCS_OK, std::memory_order_relaxed);
         sharedState_->trace = trace;
         sharedState_->pendingReqs.store(getNumChunks());
     }
@@ -257,6 +262,11 @@ public:
     [[nodiscard]] bool
     isComposite() const noexcept override {
         return true;
+    }
+
+    [[nodiscard]] ucs_status_t
+    failure() const noexcept override {
+        return sharedState_ ? sharedState_->failure.load(std::memory_order_relaxed) : UCS_OK;
     }
 
     void

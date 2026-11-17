@@ -127,6 +127,18 @@ Traceable::trace(Record record, const Attribute &attr) const {
     }
 }
 
+inline bool
+Traceable::recording() const noexcept {
+    return (tracer_ != nullptr) && postIdentity_.context.sampled();
+}
+
+inline void
+Traceable::trace(Record record, std::span<const Attribute> attrs) const {
+    if (recording()) {
+        emitEvent(record, attrs);
+    }
+}
+
 inline nixlTime::us_t
 detail::requestStart(const Tracer *tracer, const TraceContext &context) noexcept {
     if ((tracer != nullptr) && context.sampled()) {

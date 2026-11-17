@@ -123,6 +123,10 @@ public:
                 (const, override));
     MOCK_METHOD(nixl_status_t, checkXfer, (nixlBackendReqH * req), (const, override));
     MOCK_METHOD(nixl_status_t, releaseReqH, (nixlBackendReqH * req), (const, override));
+    MOCK_METHOD(std::optional<nixlBackendNativeStatus>,
+                getNativeStatus,
+                (const nixlBackendReqH *req),
+                (const, override));
     MOCK_METHOD(nixl_status_t,
                 prepMemView,
                 (const nixl_remote_meta_dlist_t &dlist,

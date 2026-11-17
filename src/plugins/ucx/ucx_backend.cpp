@@ -637,6 +637,15 @@ nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
     return NIXL_SUCCESS;
 }
 
+std::optional<nixlBackendNativeStatus>
+nixlUcxEngine::getNativeStatus(const nixlBackendReqH *handle) const {
+    const ucs_status_t status = static_cast<const nixlUcxBackendReqH *>(handle)->failure();
+    if (status == UCS_OK) {
+        return std::nullopt;
+    }
+    return nixlBackendNativeStatus{status, ucs_status_string(status)};
+}
+
 unsigned
 nixlUcxEngine::progress() {
     // TODO: add listen for connection handling if necessary

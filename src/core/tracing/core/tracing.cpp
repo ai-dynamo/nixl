@@ -261,6 +261,14 @@ Traceable::emitEvent(Record record, const Attribute &attr) const {
     tracer_->emitEvent(record, kindOf(record), postIdentity_, attrs);
 }
 
+void
+Traceable::emitEvent(Record record, std::span<const Attribute> attrs) const {
+    std::vector<Attribute> event_attrs{{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
+                                       {AttributeKey::NixlXferExecution, postIdentity_.execution}};
+    event_attrs.insert(event_attrs.end(), attrs.begin(), attrs.end());
+    tracer_->emitEvent(record, kindOf(record), postIdentity_, event_attrs);
+}
+
 TraceIdentity
 detail::suppliedIdentity(const Tracer *tracer, const nixl_blob_t &parent) {
     const std::optional<TraceContext> supplied = parseParentContext(tracer, parent);

@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -186,6 +187,13 @@ class nixlBackendEngine {
 
         //Backend aborts the transfer if necessary, and destructs the relevant objects
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
+
+        // For a failed request, the backend's own status before it was mapped to nixl_status_t;
+        // none unless the backend reports one
+        virtual std::optional<nixlBackendNativeStatus>
+        getNativeStatus(const nixlBackendReqH *) const {
+            return std::nullopt;
+        }
 
         // Prepare a memory view for remote buffers
         virtual nixl_status_t

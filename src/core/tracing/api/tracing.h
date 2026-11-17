@@ -38,6 +38,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -102,11 +103,17 @@ public:
     post(const nixl_blob_t &parent = noSuppliedContext,
          const nixl_blob_t &baggage = noSuppliedBaggage);
 
+    [[nodiscard]] bool
+    recording() const noexcept;
+
     void
     trace(Record record) const;
 
     void
     trace(Record record, const Attribute &attr) const;
+
+    void
+    trace(Record record, std::span<const Attribute> attrs) const;
 
 private:
     explicit Traceable(const detail::Call &call);
@@ -122,6 +129,9 @@ private:
 
     void
     emitEvent(Record record, const Attribute &attr) const;
+
+    void
+    emitEvent(Record record, std::span<const Attribute> attrs) const;
 
     Tracer *const tracer_;
     const TraceContext requestContext_;
@@ -225,11 +235,19 @@ public:
         return {};
     }
 
+    [[nodiscard]] constexpr bool
+    recording() const noexcept {
+        return false;
+    }
+
     void
     trace(Record) const noexcept {}
 
     void
     trace(Record, const Attribute &) const noexcept {}
+
+    void
+    trace(Record, std::span<const Attribute>) const noexcept {}
 };
 
 class CallScope {

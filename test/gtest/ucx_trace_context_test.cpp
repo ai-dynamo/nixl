@@ -389,15 +389,15 @@ writeToIdleTarget(const nixl_b_params_t &sender_params,
     gtest::ScopedEnv tls;
     tls.addVar("UCX_TLS", idleTargetTls());
     const gtest::LogIgnoreGuard efa(efa_warning);
-    nixlAgent target(target_name, idleConfig());
+    std::optional<nixlAgent> target(std::in_place, target_name, idleConfig());
     nixlBackendH *target_backend = nullptr;
-    ASSERT_EQ(target.createBackend("UCX", {}, target_backend), NIXL_SUCCESS);
+    ASSERT_EQ(target->createBackend("UCX", {}, target_backend), NIXL_SUCCESS);
     const std::vector<char> dst_buffer(desc_count * buffer_size);
     nixl_reg_dlist_t target_regs(DRAM_SEG);
     target_regs.addDesc(nixlBlobDesc(address(dst_buffer), dst_buffer.size(), 0));
-    ASSERT_EQ(target.registerMem(target_regs), NIXL_SUCCESS);
+    ASSERT_EQ(target->registerMem(target_regs), NIXL_SUCCESS);
     std::string target_md;
-    ASSERT_EQ(target.getLocalMD(target_md), NIXL_SUCCESS);
+    ASSERT_EQ(target->getLocalMD(target_md), NIXL_SUCCESS);
 
     nixlAgent sender(sender_name, agentConfig());
     nixlBackendH *sender_backend = nullptr;
@@ -427,7 +427,9 @@ writeToIdleTarget(const nixl_b_params_t &sender_params,
     ASSERT_NO_FATAL_FAILURE(after_post(sender, target, req));
     ASSERT_EQ(sender.invalidateRemoteMD(target_name), NIXL_SUCCESS);
     ASSERT_EQ(sender.deregisterMem(sender_regs), NIXL_SUCCESS);
-    ASSERT_EQ(target.deregisterMem(target_regs), NIXL_SUCCESS);
+    if (target) {
+        ASSERT_EQ(target->deregisterMem(target_regs), NIXL_SUCCESS);
+    }
 }
 
 [[nodiscard]] std::optional<std::string>
@@ -677,13 +679,13 @@ protected:
             desc_count,
             context,
             request_id,
-            [&](nixlAgent &sender, nixlAgent &target, nixlXferReqH *req) {
+            [&](nixlAgent &sender, std::optional<nixlAgent> &target, nixlXferReqH *req) {
                 nixl_notifs_t notifs;
                 progressed_at = nixlTime::getUs();
                 const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
                 while (recordedSpans(traceFile, sender_name, "nixl::wire.completed").empty() &&
                        (std::chrono::steady_clock::now() < deadline)) {
-                    ASSERT_EQ(target.getNotifs(notifs), NIXL_SUCCESS);
+                    ASSERT_EQ(target->getNotifs(notifs), NIXL_SUCCESS);
                     std::this_thread::sleep_for(poll_interval);
                 }
                 ASSERT_EQ(recordedSpans(traceFile, sender_name, "nixl::wire.completed").size(), 1u);
@@ -718,7 +720,7 @@ protected:
                               desc_count,
                               context,
                               request_id,
-                              [](nixlAgent &sender, nixlAgent &, nixlXferReqH *req) {
+                              [](nixlAgent &sender, std::optional<nixlAgent> &, nixlXferReqH *req) {
                                   ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
                               }));
         expectSenderPhases(sender_name, {context}, request_id, {1}, {});
@@ -1288,6 +1290,42 @@ TEST_F(ucxTraceContextPropagation, ProgressThreadRecordsWireCompletedOncePerPost
 
 TEST_F(ucxTraceContextPropagation, ProgressThreadPostReleasedInFlightRecordsNoWireCompleted) {
     expectNoWireCompletedWhenReleasedInFlight({}, 1);
+}
+
+TEST_F(ucxTraceContextPropagation, FailedPostCarriesUcxsNativeStatus) {
+    for (const auto &[engine, params, desc_count] :
+         {std::tuple{"default", nixl_b_params_t{}, size_t{1}},
+          std::tuple{"thread pool", threadPoolParams(), split_desc_count}}) {
+        nixl::trace::TraceContext context;
+        std::uint64_t request_id = 0;
+        nixl_status_t status = NIXL_IN_PROG;
+        ASSERT_NO_FATAL_FAILURE(writeToIdleTarget(
+            params,
+            desc_count,
+            context,
+            request_id,
+            [&](nixlAgent &sender, std::optional<nixlAgent> &target, nixlXferReqH *req) {
+                target.reset();
+                const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
+                while (((status = sender.getXferStatus(req)) == NIXL_IN_PROG) &&
+                       (std::chrono::steady_clock::now() < deadline)) {
+                    std::this_thread::sleep_for(poll_interval);
+                }
+                ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
+            }))
+            << engine;
+        EXPECT_LT(status, 0) << engine;
+        const std::string request = "nixl.xfer_request_id=" + std::to_string(request_id);
+        const auto errors = recordedSpans(traceFile, sender_name, "nixl::xfer.error");
+        const auto error = std::ranges::find_if(errors, [&](const span_record_t &span) {
+            return std::ranges::find(span, request) != span.end();
+        });
+        ASSERT_NE(error, errors.end()) << engine;
+        EXPECT_THAT(*error, testing::Contains(testing::StartsWith("nixl.backend_status_code=-")))
+            << engine;
+        EXPECT_THAT(*error, testing::Contains(testing::StartsWith("nixl.backend_status_name=")))
+            << engine;
+    }
 }
 
 TEST_F(ucxTraceContextPropagation, ProgressThreadRecordsTheNotificationItSends) {

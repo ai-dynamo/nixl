@@ -39,6 +39,11 @@ struct nixlBackendOptionalArgs {
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
 
+struct nixlBackendNativeStatus {
+    std::int64_t code = 0;
+    std::string name;
+};
+
 class nixlBackendTraceSink;
 
 // A base class to point to backend initialization data

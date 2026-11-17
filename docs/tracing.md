@@ -226,7 +226,7 @@ backends/PRs):
 | `nixl::postXferReq.write` | `CommSend` | `remote_agent`, `bytes`, `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
 | `nixl::postXferReq.read` | `CommRecv` | `remote_agent`, `bytes`, `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
 | `nixl::xfer.complete` | `Metadata` (event) | `nixl.xfer_request_id`, `nixl.xfer_execution` |
-| `nixl::xfer.error` | `Metadata` (event) | `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
+| `nixl::xfer.error` | `Metadata` (event) | `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status`; `nixl.backend_status_code`, `nixl.backend_status_name` when the backend reports them |
 | `nixl::releaseXferReq` | `Generic` | `nixl.xfer_request_id`, `nixl.xfer_execution`, `nixl.status` |
 | `nixl::xferReq` | `Generic` | `nixl.xfer_request_id`, `nixl.xfer_execution` |
 | `nixl::makeConnection` | `Generic` | `remote_agent` |
@@ -270,10 +270,13 @@ sees the failure: `postXferReq` when the backend fails it at once, and otherwise
 cancels a post it still sees in flight records one with `NIXL_ERR_CANCELED`. Once its
 end is seen, each post that took an execution number has exactly one of the two.
 `nixl.status` is the native `nixl_status_t`: on a `postXferReq` span the call's return;
-on `nixl::xfer.error` the failure; on `nixl::releaseXferReq` the call's return. Each
-release attempt is a span of its own, inside the request's context and carrying its
-latest post's execution number, so a release refused with `NIXL_ERR_REPOST_ACTIVE` and
-its retry are two records.
+on `nixl::xfer.error` the failure; on `nixl::releaseXferReq` the call's return. When the
+backend reports its own status for the failure (`nixlBackendEngine::getNativeStatus()`;
+UCX does, with the `ucs_status_t` and its `ucs_status_string()`), `nixl::xfer.error` also
+carries it, as `nixl.backend_status_code` and `nixl.backend_status_name`; the agent asks
+only for a sampled post. Each release attempt is a span of its own, inside the request's
+context and carrying its latest post's execution number, so a release refused with
+`NIXL_ERR_REPOST_ACTIVE` and its retry are two records.
 
 A sampled request is itself a span, `nixl::xferReq`: the span its trace context
 identifies, from the request's creation until it is freed by a `releaseXferReq` that

@@ -52,6 +52,12 @@ public:
         conn_ = conn;
         ep_ = &ep;
         notifStatus_ = notif_.empty() ? NIXL_SUCCESS : NIXL_IN_PROG;
+        failure_ = UCS_OK;
+    }
+
+    [[nodiscard]] virtual ucs_status_t
+    failure() const noexcept {
+        return failure_;
     }
 
     [[nodiscard]] const nixlUcxEp &
@@ -134,7 +140,7 @@ public:
         /* If last request is incomplete, return NIXL_IN_PROG early without
          * checking other requests */
         nixlUcxReq req = requests_.back();
-        const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
+        const nixl_status_t ret = checkRequest(req);
         if (ret == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
         } else if (ret != NIXL_SUCCESS) {
@@ -146,7 +152,7 @@ public:
         size_t incomplete_reqs = 0;
         nixl_status_t out_ret = NIXL_SUCCESS;
         for (nixlUcxReq req : requests_) {
-            const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
+            const nixl_status_t ret = checkRequest(req);
             if (ret == NIXL_SUCCESS) [[likely]] {
                 worker_->reqRelease(req);
             } else if (ret == NIXL_IN_PROG) {
@@ -186,6 +192,11 @@ protected:
         worker_ = worker;
     }
 
+    [[nodiscard]] ucs_status_t
+    takeFailure() noexcept {
+        return std::exchange(failure_, UCS_OK);
+    }
+
     void
     sendNotif() {
         NIXL_ASSERT(!notif_.empty());
@@ -218,10 +229,19 @@ private:
     }
 
     [[nodiscard]] nixl_status_t
+    checkRequest(nixlUcxReq req) noexcept {
+        const ucs_status_t status = ucp_request_check_status(req);
+        if ((status < UCS_OK) && (failure_ == UCS_OK)) {
+            failure_ = status;
+        }
+        return nixl::ucx::ucsToNixlStatus(status);
+    }
+
+    [[nodiscard]] nixl_status_t
     notifStatus() {
         const nixlUcxReq req = notifReq_.load(std::memory_order_acquire);
         if (req != nullptr) {
-            const nixl_status_t status = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
+            const nixl_status_t status = checkRequest(req);
             if (status == NIXL_IN_PROG) {
                 return status;
             }
@@ -278,6 +298,7 @@ private:
     std::string notif_;
     std::atomic<nixlUcxReq> notifReq_{nullptr};
     std::atomic<nixl_status_t> notifStatus_{NIXL_SUCCESS};
+    ucs_status_t failure_ = UCS_OK;
 };
 
 #endif // NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H

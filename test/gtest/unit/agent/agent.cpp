@@ -833,6 +833,38 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
+    TEST_F(recorderTracingAgentFixture, FailureCarriesTheBackendsNativeStatus) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+        nixlBackendReqH backend_request;
+        EXPECT_CALL(engine, prepXfer)
+            .WillOnce([&](const auto &,
+                          const auto &,
+                          const auto &,
+                          const auto &,
+                          nixlBackendReqH *&request,
+                          const auto *) {
+                request = &backend_request;
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(engine, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+        EXPECT_CALL(engine, checkXfer).WillOnce(testing::Return(NIXL_ERR_REMOTE_DISCONNECT));
+        EXPECT_CALL(engine, getNativeStatus(&backend_request))
+            .WillOnce(testing::Return(nixlBackendNativeStatus{-25, "Connection reset"}));
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_IN_PROG);
+        EXPECT_EQ(agent->getXferStatus(req), NIXL_ERR_REMOTE_DISCONNECT);
+        EXPECT_THAT(records("nixl::xfer.error"),
+                    testing::ElementsAre(
+                        testing::AllOf(postedAs(req, 1),
+                                       withStatus(NIXL_ERR_REMOTE_DISCONNECT),
+                                       testing::Contains("nixl.backend_status_code=-25"),
+                                       testing::Contains("nixl.backend_status_name=Connection"))));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
     TEST_F(recorderTracingAgentFixture, FailureSeenByARepostIsTheEarlierPosts) {
         nixlAgent *agent = agent_helper_->getAgent();
         const auto &engine = agent_helper_->getGMockEngine();
@@ -1012,6 +1044,21 @@ namespace agent {
             return "0";
         }
     };
+
+    TEST_F(unsampledRecorderTracingAgentFixture, UnsampledFailureDoesNotAskForTheNativeStatus) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+        EXPECT_CALL(engine, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+        EXPECT_CALL(engine, checkXfer).WillOnce(testing::Return(NIXL_ERR_REMOTE_DISCONNECT));
+        EXPECT_CALL(engine, getNativeStatus).Times(0);
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_IN_PROG);
+        EXPECT_EQ(agent->getXferStatus(req), NIXL_ERR_REMOTE_DISCONNECT);
+        EXPECT_TRUE(records("nixl::xfer.error").empty());
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
 
     TEST_F(unsampledRecorderTracingAgentFixture, UnsampledRequestRecordsNothing) {
         nixlAgent *agent = agent_helper_->getAgent();
