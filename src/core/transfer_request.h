@@ -87,23 +87,8 @@ private:
         }
     }
 
-    void
-    traceFailure() const {
-        const nixl::trace::Attribute status_attr{nixl::trace::AttributeKey::NixlStatus, status};
-        const std::optional<nixlBackendNativeStatus> native =
-            (traceable_.recording() && (engine != nullptr) && (backendHandle != nullptr)) ?
-            engine->getNativeStatus(backendHandle) :
-            std::nullopt;
-        if (!native) {
-            traceable_.trace(nixl::trace::Record::XferError, status_attr);
-            return;
-        }
-        const nixl::trace::Attribute attrs[] = {
-            status_attr,
-            {nixl::trace::AttributeKey::NixlBackendStatusCode, native->code},
-            {nixl::trace::AttributeKey::NixlBackendStatusName, std::string_view(native->name)}};
-        traceable_.trace(nixl::trace::Record::XferError, attrs);
-    }
+    [[gnu::cold, gnu::noinline]] void
+    traceFailure() const;
 
     nixlBackendEngine *engine = nullptr;
     nixlBackendReqH *backendHandle = nullptr;

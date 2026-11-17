@@ -140,10 +140,11 @@ public:
         /* If last request is incomplete, return NIXL_IN_PROG early without
          * checking other requests */
         nixlUcxReq req = requests_.back();
-        const nixl_status_t ret = checkRequest(req);
+        const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
         if (ret == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
         } else if (ret != NIXL_SUCCESS) {
+            noteFailure(req);
             return checkConnection(ret);
         }
 
@@ -152,7 +153,7 @@ public:
         size_t incomplete_reqs = 0;
         nixl_status_t out_ret = NIXL_SUCCESS;
         for (nixlUcxReq req : requests_) {
-            const nixl_status_t ret = checkRequest(req);
+            const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
             if (ret == NIXL_SUCCESS) [[likely]] {
                 worker_->reqRelease(req);
             } else if (ret == NIXL_IN_PROG) {
@@ -162,6 +163,7 @@ public:
                 requests_[incomplete_reqs++] = req;
             } else {
                 // Any other ret value is ERR and will be returned
+                noteFailure(req);
                 out_ret = checkConnection(ret);
             }
         }
@@ -228,22 +230,23 @@ private:
         }
     }
 
-    [[nodiscard]] nixl_status_t
-    checkRequest(nixlUcxReq req) noexcept {
-        const ucs_status_t status = ucp_request_check_status(req);
-        if ((status < UCS_OK) && (failure_ == UCS_OK)) {
-            failure_ = status;
+    void
+    noteFailure(nixlUcxReq req) noexcept {
+        if (failure_ == UCS_OK) {
+            failure_ = ucp_request_check_status(req);
         }
-        return nixl::ucx::ucsToNixlStatus(status);
     }
 
     [[nodiscard]] nixl_status_t
     notifStatus() {
         const nixlUcxReq req = notifReq_.load(std::memory_order_acquire);
         if (req != nullptr) {
-            const nixl_status_t status = checkRequest(req);
+            const nixl_status_t status = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
             if (status == NIXL_IN_PROG) {
                 return status;
+            }
+            if (status != NIXL_SUCCESS) {
+                noteFailure(req);
             }
 
             worker_->reqRelease(req);

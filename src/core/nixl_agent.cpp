@@ -282,6 +282,24 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
                << duration.count() << "us.";
 }
 
+void
+nixlXferReqH::traceFailure() const {
+    const nixl::trace::Attribute status_attr{nixl::trace::AttributeKey::NixlStatus, status};
+    const std::optional<nixlBackendNativeStatus> native =
+        (traceable_.recording() && (engine != nullptr) && (backendHandle != nullptr)) ?
+        engine->getNativeStatus(backendHandle) :
+        std::nullopt;
+    if (!native) {
+        traceable_.trace(nixl::trace::Record::XferError, status_attr);
+        return;
+    }
+    const nixl::trace::Attribute attrs[] = {
+        status_attr,
+        {nixl::trace::AttributeKey::NixlBackendStatusCode, native->code},
+        {nixl::trace::AttributeKey::NixlBackendStatusName, std::string_view(native->name)}};
+    traceable_.trace(nixl::trace::Record::XferError, attrs);
+}
+
 nixlDlistH::nixlDlistH(const std::string &remote_agent,
                        descs_t &&descs,
                        const nixl_remote_section_weak_t &remote_section_ref)
