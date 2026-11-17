@@ -33,6 +33,7 @@
 #include <regex>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <nixl_ep_v2/common/exception.cuh>
@@ -101,6 +102,7 @@ public:
 
     std::string signature, flags;
     std::filesystem::path cache_dir_path;
+    mutable std::unordered_map<std::string, std::shared_ptr<KernelRuntime>> build_memo;
 
     Compiler() {
         EP_HOST_ASSERT(not library_root_path.empty());
@@ -173,7 +175,16 @@ public:
         fsync_path(path);
     }
 
+    // Every launch asks for its kernel again: remember the built ones by name and code, so a repeated launch does not
+    // format and hash the whole signature again
     std::shared_ptr<KernelRuntime> build(const std::string& name, const std::string& code) const {
+        auto& runtime = build_memo[name + '\n' + code];
+        if (runtime == nullptr)
+            runtime = build_impl(name, code);
+        return runtime;
+    }
+
+    std::shared_ptr<KernelRuntime> build_impl(const std::string& name, const std::string& code) const {
         const auto kernel_signature = fmt::format(
             "{}$${}$${}$${}$${}", name, signature, flags, external_headers_hash, code);
         const auto dir_path = cache_dir_path / "cache" / fmt::format("kernel.{}.{}", name, get_hex_digest(kernel_signature));
