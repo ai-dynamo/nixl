@@ -251,9 +251,9 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
 
     // Count before posting: another thread can complete the send first. A send
     // whose request the caller keeps is not counted.
-    const bool counted = (req == nullptr);
-    auto ctx = std::make_unique<nixl::ucx::amSendCtx>(
-        std::move(payload), counted ? epAmStats_ : nullptr, counted ? workerAmStats_ : nullptr);
+    auto ctx = (req == nullptr) ?
+        std::make_unique<nixl::ucx::amSendCtx>(std::move(payload), epAmStats_, workerAmStats_) :
+        std::make_unique<nixl::ucx::amSendCtx>(std::move(payload));
 
     ucp_request_param_t param;
     param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_MEMORY_TYPE |
@@ -264,7 +264,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
     param.user_data = ctx.get();
 
     const ucs_status_ptr_t request = ucp_am_send_nbx(
-        eph_, unsigned(msg_id), nullptr, 0, ctx->payload.data(), ctx->payload.size(), &param);
+        eph_, unsigned(msg_id), nullptr, 0, ctx->payload().data(), ctx->payload().size(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         ctx.release();
         if (req != nullptr) {

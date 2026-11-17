@@ -15,12 +15,13 @@
  * limitations under the License.
  */
 
-#ifndef NIXL_SRC_UTILS_UCX_AM_SEND_H
-#define NIXL_SRC_UTILS_UCX_AM_SEND_H
+#ifndef NIXL_SRC_PLUGINS_UCX_AM_SEND_H
+#define NIXL_SRC_PLUGINS_UCX_AM_SEND_H
 
 #include <atomic>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -32,57 +33,74 @@ class amSendStats {
 public:
     [[nodiscard]] size_t
     pending() const noexcept {
-        return pending_.load(std::memory_order_acquire);
+        return pending_;
     }
 
     void
     add() noexcept {
-        pending_.fetch_add(1, std::memory_order_release);
+        ++pending_;
     }
 
     void
     remove() noexcept {
-        pending_.fetch_sub(1, std::memory_order_release);
+        --pending_;
     }
 
 private:
     std::atomic<size_t> pending_{0};
 };
 
-// Payload of an AM send in flight. With counters, the send counts as pending
-// while the context exists, and the callback releases its request.
-struct amSendCtx {
+// Counts one AM send as pending on its endpoint and on its worker while it
+// exists.
+class amPendingStats {
+public:
+    amPendingStats(std::shared_ptr<amSendStats> ep_stats,
+                   std::shared_ptr<amSendStats> worker_stats) noexcept
+        : epStats_(std::move(ep_stats)),
+          workerStats_(std::move(worker_stats)) {
+        epStats_->add();
+        workerStats_->add();
+    }
+
+    ~amPendingStats() {
+        epStats_->remove();
+        workerStats_->remove();
+    }
+
+    amPendingStats(const amPendingStats &) = delete;
+    amPendingStats &
+    operator=(const amPendingStats &) = delete;
+
+private:
+    const std::shared_ptr<amSendStats> epStats_;
+    const std::shared_ptr<amSendStats> workerStats_;
+};
+
+// Payload of an AM send in flight. A counted send is pending while its context
+// exists, and its callback releases the request.
+class amSendCtx {
+public:
+    explicit amSendCtx(std::string &&data) noexcept : payload_(std::move(data)) {}
+
     amSendCtx(std::string &&data,
               std::shared_ptr<amSendStats> ep_stats,
               std::shared_ptr<amSendStats> worker_stats) noexcept
-        : payload(std::move(data)),
-          epStats(std::move(ep_stats)),
-          workerStats(std::move(worker_stats)) {
-        if (counted()) {
-            epStats->add();
-            workerStats->add();
-        }
-    }
+        : payload_(std::move(data)),
+          pendingStats_(std::in_place, std::move(ep_stats), std::move(worker_stats)) {}
 
-    ~amSendCtx() {
-        if (counted()) {
-            epStats->remove();
-            workerStats->remove();
-        }
+    [[nodiscard]] const std::string &
+    payload() const noexcept {
+        return payload_;
     }
-
-    amSendCtx(const amSendCtx &) = delete;
-    amSendCtx &
-    operator=(const amSendCtx &) = delete;
 
     [[nodiscard]] bool
     counted() const noexcept {
-        return epStats != nullptr;
+        return pendingStats_.has_value();
     }
 
-    const std::string payload;
-    const std::shared_ptr<amSendStats> epStats;
-    const std::shared_ptr<amSendStats> workerStats;
+private:
+    const std::string payload_;
+    const std::optional<amPendingStats> pendingStats_;
 };
 
 } // namespace nixl::ucx
