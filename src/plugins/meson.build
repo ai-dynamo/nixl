@@ -33,6 +33,10 @@ if enabled_plugins.get('REDIS')
     subdir('redis')
 endif
 
+if enabled_plugins.get('WQS')
+    subdir('wqs')
+endif
+
 if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')
 endif
