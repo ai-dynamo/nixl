@@ -21,6 +21,7 @@
 #include <absl/time/time.h>
 #include <cstring>
 #include <vector>
+#include "../common.h"
 #include "backend_engine.h"
 #include "common/nixl_log.h"
 #include "gtest/gtest.h"
@@ -328,8 +329,13 @@ testReadPastEnd(nixlBackendEngine &engine,
     long_local.addDesc(
         nixlMetaDesc(reinterpret_cast<uintptr_t>(dst.data()), dst.size(), 0, nullptr));
     long_remote.addDesc(nixlMetaDesc(0, dst.size(), dev_id, obj_md));
-    EXPECT_EQ(runXferToCompletion(engine, NIXL_READ, long_local, long_remote, agent_name),
-              NIXL_ERR_BACKEND);
+    {
+        // The backend logs the short read as an error; here it is the expected outcome.
+        const gtest::LogIgnoreGuard short_read("short read of");
+        EXPECT_EQ(runXferToCompletion(engine, NIXL_READ, long_local, long_remote, agent_name),
+                  NIXL_ERR_BACKEND);
+        EXPECT_EQ(short_read.getIgnoredCount(), 1u);
+    }
 
     EXPECT_EQ(engine.deregisterMem(obj_md), NIXL_SUCCESS);
 }
