@@ -53,8 +53,8 @@ protected:
         env_.addVar("NIXL_UCX_SGL_ENABLE", "n");
         env_.addVar("UCX_TLS", gtest::ucxTls("tcp"));
         env_.addVar("UCX_ZCOPY_THRESH", "0");
-        // Small socket buffers: a large notification needs many progress
-        // calls on the initiator to complete.
+        // Small socket buffers: with the target paused, a large notification
+        // fills them, and its send stays in flight until the target resumes.
         env_.addVar("UCX_TCP_SNDBUF", "65536");
         env_.addVar("UCX_TCP_RCVBUF", "65536");
 
@@ -259,10 +259,14 @@ protected:
 };
 
 TEST_P(ucxNotificationAgent, RepeatedReadWriteNotificationsAtDone) {
-    const std::string notification(256, 'n');
     size_t expected = 0;
     for (const auto operation : {NIXL_WRITE, NIXL_READ}) {
         for (uint32_t seed = 1; seed <= 32; ++seed) {
+            // Each transfer has its own notification: a late or repeated
+            // notification cannot pass for the next one
+            std::string notification =
+                (operation == NIXL_WRITE ? "write " : "read ") + std::to_string(seed) + ' ';
+            notification.resize(256, 'n');
             preparePayload(operation, seed);
             nixlXferReqH *request = nullptr;
             ASSERT_EQ(NIXL_SUCCESS, transfer(operation, notification, request));
