@@ -19,8 +19,8 @@
  * @brief GPU Device API for in-kernel memory transfers
  *
  * Include this header from CUDA device code. The namespaced nixl::gpu API is
- * the canonical interface; the nixlPut / nixlGpuGetXferStatus
- * wrappers keep the original C-style names.
+ * the canonical interface; the nixlPut / nixlGpuGetXferStatus wrappers keep
+ * the original C-style names.
  */
 
 #ifndef NIXL_SRC_API_DEVICE_GPU_NIXL_DEVICE_CUH
@@ -83,8 +83,6 @@ put(const memViewElem &src,
 
 /**
  * @brief Post a single-region memory transfer from remote to local GPU.
- *
- * Not implemented yet; always returns NIXL_ERR_NOT_SUPPORTED.
  *
  * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
  *                  time, a fixed mode must match the view.
