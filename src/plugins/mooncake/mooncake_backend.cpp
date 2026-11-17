@@ -421,6 +421,11 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
         size_t request_count = 0;
     };
 
+    // Built by prepXfer: the agent posts a handle with the descriptors it was
+    // prepared with.
+    std::vector<transfer_request_t> requests;
+    // Segment of the remote agent in requests.
+    int segment_id = -1;
     // Batches of the last transfer: one, or one per chunk when postXfer split
     // it. Only allocated ids are kept, since the engine dereferences them.
     std::vector<xferBatch> batches;
@@ -507,7 +512,29 @@ nixlMooncakeEngine::prepXfer(const nixl_xfer_op_t &operation,
                              const std::string &remote_agent,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
-    handle = new nixlMooncakeBackendReqH();
+    const std::optional<int> segment_id = getSegmentId(remote_agent);
+    if (!segment_id) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    if (local.descCount() != remote.descCount()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    auto priv = std::make_unique<nixlMooncakeBackendReqH>();
+    priv->segment_id = *segment_id;
+    priv->requests.resize(local.descCount());
+    for (size_t index = 0; index < priv->requests.size(); ++index) {
+        if (local[index].len != remote[index].len) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        auto &request = priv->requests[index];
+        request.opcode = (operation == NIXL_READ) ? OPCODE_READ : OPCODE_WRITE;
+        request.source = (void *)local[index].addr;
+        request.target_offset = remote[index].addr;
+        request.length = local[index].len;
+        request.target_id = *segment_id;
+    }
+    handle = priv.release();
     return NIXL_SUCCESS;
 }
 
@@ -519,30 +546,24 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
-    int segment_id;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto agent = connected_agents_.find(remote_agent);
-        if (agent == connected_agents_.end()) return NIXL_ERR_INVALID_PARAM;
-        segment_id = agent->second.segment_id;
+    const std::optional<int> segment_id = getSegmentId(remote_agent);
+    if (!segment_id) {
+        return NIXL_ERR_INVALID_PARAM;
     }
-    if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
     const nixl_status_t recycle_status = recycleBatches(*free_pool_, engine_, priv);
     if (recycle_status != NIXL_SUCCESS) {
         return recycle_status;
     }
-
-    const size_t request_count = local.descCount();
-    std::vector<transfer_request_t> request(request_count);
-    for (size_t index = 0; index < request_count; ++index) {
-        if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
-        request[index].opcode = (operation == NIXL_READ) ? OPCODE_READ : OPCODE_WRITE;
-        request[index].source = (void *)local[index].addr;
-        request[index].target_offset = remote[index].addr;
-        request[index].length = local[index].len;
-        request[index].target_id = segment_id;
+    if (*segment_id != priv->segment_id) {
+        // The agent reconnected since prepXfer.
+        for (auto &request : priv->requests) {
+            request.target_id = *segment_id;
+        }
+        priv->segment_id = *segment_id;
     }
 
+    auto &request = priv->requests;
+    const size_t request_count = request.size();
     const bool has_notif = opt_args && opt_args->hasNotif;
     size_t chunk_size = request_count;
     size_t num_chunks = 1;
@@ -674,16 +695,23 @@ nixlMooncakeEngine::getNotifs(notif_list_t &notif_list) {
 
 nixl_status_t
 nixlMooncakeEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
-    int segment_id;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto agent = connected_agents_.find(remote_agent);
-        if (agent == connected_agents_.end()) return NIXL_ERR_INVALID_PARAM;
-        segment_id = agent->second.segment_id;
+    const std::optional<int> segment_id = getSegmentId(remote_agent);
+    if (!segment_id) {
+        return NIXL_ERR_INVALID_PARAM;
     }
     notify_msg_t notify_msg;
     notify_msg.name = const_cast<char *>(local_agent_name_.c_str());
     notify_msg.msg = const_cast<char *>(msg.c_str());
-    int ret = genNotifyInEngine(engine_, segment_id, notify_msg);
+    int ret = genNotifyInEngine(engine_, *segment_id, notify_msg);
     return nixl_status_t(ret);
+}
+
+std::optional<int>
+nixlMooncakeEngine::getSegmentId(const std::string &remote_agent) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto agent = connected_agents_.find(remote_agent);
+    if (agent == connected_agents_.end()) {
+        return std::nullopt;
+    }
+    return agent->second.segment_id;
 }

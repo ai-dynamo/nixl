@@ -23,6 +23,7 @@
 #include <memory>
 #include <thread>
 #include <mutex>
+#include <optional>
 #include <unordered_set>
 
 #include "nixl.h"
@@ -102,6 +103,9 @@ private:
     struct AgentInfo {
         int segment_id;
     };
+
+    [[nodiscard]] std::optional<int>
+    getSegmentId(const std::string &remote_agent) const;
 
     mutable std::mutex mutex_;
     transfer_engine_t engine_;
