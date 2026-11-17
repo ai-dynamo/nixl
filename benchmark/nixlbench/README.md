@@ -716,6 +716,7 @@ See src/plugins/infinia/infinia_example.conf for a complete example.
 --odm_use_io_uring                     # Enable io_uring submit path (default: false; ODM_USE_IO_URING=1 also accepted)
 --odm_qid_start N                      # First ODM queue ID (0-15; default: 0)
 --odm_qid_end N                        # Last ODM queue ID (0-15; default: 15)
+--enable_pt=1                          # Progress thread / worker pool (auto-enabled for multi-queue MARVELL_ODM)
 ```
 
 ### Configuration File
@@ -994,6 +995,12 @@ EOF
 MARVELL_ODM uses the Marvell ODM DMA controller for GPU VRAM ↔ device memory
 transfers. Build with `-Denable_plugins=MARVELL_ODM`. No ETCD is needed for
 single-instance runs.
+
+Multi-queue runs (`--odm_qid_end` > `--odm_qid_start`) enable the agent progress
+thread automatically so the plugin can fan work across queues. Use
+`--enable_pt=1` explicitly to match other backends; transfers are asynchronous
+(`NIXL_IN_PROG`) when the worker pool is on and synchronous with io_uring or a
+single queue.
 
 ```bash
 export LD_LIBRARY_PATH=.../build/src/core:.../build/src/plugins/marvell_odm

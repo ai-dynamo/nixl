@@ -250,21 +250,27 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
     }
     /* One submit gate per hardware queue (see qid_locks_ in the header). */
     qid_locks_ = std::vector<std::mutex>(static_cast<size_t>(odm_num_queues_));
-    /* With more than one queue, start the internal worker pool so a single
-     * caller thread fans each transfer across all queues in parallel. */
 #ifdef HAVE_CUDA
 #if defined(HAVE_ODM_IO_URING)
-    if (odm_num_queues_ > 1 && !use_io_uring_.load()) {
+    const bool pool_eligible = odm_num_queues_ > 1 && !use_io_uring_.load();
 #else
-    if (odm_num_queues_ > 1) {
+    const bool pool_eligible = odm_num_queues_ > 1;
 #endif
+    if (pool_eligible && enable_prog_th_) {
         odmPoolStart();
+    } else if (pool_eligible && !enable_prog_th_) {
+        NIXL_INFO << "ODM: queue range spans " << odm_num_queues_
+                  << " queues but worker pool disabled (enableProgTh=false); "
+                     "transfers run synchronously on the caller thread";
     }
 #endif
 
     NIXL_INFO << "ODM backend initialized: dma_device=" << device_path_ << " qid=" << qid_
               << " qid_range=[" << qid_start_ << "," << qid_end_ << "]"
               << " internal_queues=" << odm_num_queues_
+#ifdef HAVE_CUDA
+              << " worker_pool=" << (odm_pool_started_ ? "on" : "off")
+#endif
 #ifdef HAVE_ODM_IO_URING
               << " io_uring=" << (use_io_uring_.load() ? "on" : "off")
 #endif

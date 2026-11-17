@@ -70,6 +70,12 @@ and the ODM kernel module loaded with `odm_use_io_uring=1`. Without SQE128,
 | `odm_qid_end` | Last queue in range | `0` (plugin default; nixlbench passes `15` unless overridden) |
 | `odm_use_io_uring` | Enable io_uring submit (dma-buf path only) | off |
 
+Agent `enableProgTh` (nixlbench `--enable_pt=1`) starts the internal multi-queue
+worker pool when `odm_qid_end > odm_qid_start` and io_uring is off. With the
+pool running, `postXfer` may return `NIXL_IN_PROG` and completions are polled
+via `checkXfer`. Single-queue, io_uring, and `enableProgTh=false` paths complete
+synchronously inside `postXfer`.
+
 ## nixlbench
 
 VRAM -> device DRAM (dma-buf path):

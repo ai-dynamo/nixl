@@ -128,6 +128,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     std::string backend_name;
     nixl_b_params_t backend_params;
     bool enable_pt = xferBenchConfig::enable_pt;
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_MARVELL_ODM &&
+        xferBenchConfig::odm_qid_end > xferBenchConfig::odm_qid_start) {
+        enable_pt = true;
+    }
     nixl_thread_sync_t sync_mode = xferBenchConfig::num_threads > 1 ?
         nixl_thread_sync_t::NIXL_THREAD_SYNC_RW :
         nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT;
