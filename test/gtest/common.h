@@ -208,6 +208,11 @@ fillPayload(void *addr, size_t size, uint32_t index, uint32_t seed);
 [[nodiscard]] bool
 checkPayload(const void *addr, size_t size, uint32_t index, uint32_t seed);
 
+// UCX_TLS for a UCX test: on a host with NVIDIA GPUs, NIXL rejects transports
+// without CUDA support, so add cuda_copy there.
+[[nodiscard]] std::string
+ucxTls(const std::string &transports);
+
 } // namespace gtest
 
 #define NIXL_INSTANTIATE_TEST(_test_name,               \

@@ -30,6 +30,7 @@
 #include <random>
 #include "absl/log/globals.h"
 #include "absl/log/log_sink_registry.h"
+#include "common/hw_info.h"
 
 namespace gtest {
 
@@ -267,6 +268,14 @@ bool
 checkPayload(const void *addr, size_t size, uint32_t index, uint32_t seed) {
     const auto bytes = payloadBytes(size, index, seed);
     return std::memcmp(addr, bytes.data(), bytes.size()) == 0;
+}
+
+std::string
+ucxTls(const std::string &transports) {
+    if (nixl::hwInfo::instance().numNvidiaGpus == 0) {
+        return transports;
+    }
+    return transports + ",cuda_copy";
 }
 
 } // namespace gtest
