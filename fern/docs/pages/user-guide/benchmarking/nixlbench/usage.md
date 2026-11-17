@@ -146,10 +146,11 @@ nixlbench --backend OBJ \
 
 ### INFINIA
 
-Run a single-instance INFINIA benchmark using a backend configuration file. For the file format and backend requirements, see [INFINIA](/nixl/user-guide/backend-selection/infinia).
+Run a single-instance INFINIA benchmark using NIXL's common TOML configuration file. For the file format and backend requirements, see [INFINIA](/nixl/user-guide/backend-selection/infinia).
 
 ```bash
-nixlbench --backend INFINIA --infinia_config_file /path/to/infinia.conf
+export NIXL_CONFIG_FILE=/path/to/nixl-infinia.toml
+nixlbench --backend INFINIA
 ```
 
 For backend-specific options not listed on this page, see the corresponding backend page in the [User Guide](/nixl/user-guide/backend-selection).
@@ -165,7 +166,7 @@ For backend-specific options not listed on this page, see the corresponding back
 | `--asio_address` | Listener address for direct two-worker ASIO coordination | `127.0.0.1` |
 | `--asio_port` | Listener port for direct two-worker ASIO coordination | `12345` |
 | `--worker_type` | Worker transfer engine (`nixl`, `nvshmem`) | `nixl` |
-| `--backend` | Communication backend (UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA) | `UCX` |
+| `--backend` | Communication backend (UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA) | `UCX` |
 | `--benchmark_group` | Group name for parallel runs | `default` |
 | `--etcd_endpoints` | etcd server URL for ETCD coordination | `http://localhost:2379` |
 

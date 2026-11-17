@@ -18,6 +18,7 @@ tomlplusplus_dep = dependency('tomlplusplus', required: true, default_options: [
 nixl_common_inc = include_directories('.')
 
 nixl_common_deps = [
+    thread_dep,
     absl_log_dep,
     absl_log_initialize_dep,
     absl_flat_hash_map_dep,
@@ -37,6 +38,7 @@ git_commit = git_hash.returncode() == 0 ? git_hash.stdout().strip() : 'unknown'
 nixl_common_lib = shared_library('nixl_common',
     'hw_info.cpp',
     'nixl_log.cpp',
+    'nixl_log_file_sink.cpp',
     'uuid_v4.cpp',
     'configuration.cpp',
     'nixl_duration.cpp',

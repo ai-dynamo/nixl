@@ -66,7 +66,7 @@ public:
 } // namespace
 
 nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL) {
     try {
         driver_ = std::make_unique<gdsDriverHandle>();
     }
@@ -232,11 +232,6 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
 
 nixl_status_t
 nixlGdsEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const {
-    // Extract metadata from descriptors which are file names
-    // Different plugins might customize parsing of metaInfo to get the file names
-    std::vector<nixl_blob_t> metadata(descs.descCount());
-    for (int i = 0; i < descs.descCount(); ++i)
-        metadata[i] = descs[i].metaInfo;
-
-    return nixl::queryFileInfoList(metadata, resp);
+    resp = nixl::queryFileInfoFromDescList(descs);
+    return NIXL_SUCCESS;
 }

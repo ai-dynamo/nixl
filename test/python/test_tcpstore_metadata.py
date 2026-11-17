@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import os
 import time
 import uuid
 from datetime import timedelta
@@ -13,17 +12,17 @@ import nixl._utils as utils
 from nixl import nixl_agent, nixl_agent_config, nixl_thread_sync_t
 
 
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(60)
 def test_tcpstore_metadata_exchange(monkeypatch):
     """Publish and fetch agent metadata through a real PyTorch TCPStore."""
-    # CI assigns the port from the range this executor owns, see
-    # .gitlab/test_python.sh; a local run lets the kernel pick one.
+    # Let the kernel pick a free port: a port chosen ahead of time can be taken
+    # by the time the store binds it.
     tcp_store = dist.TCPStore(
         host_name="127.0.0.1",
-        port=int(os.environ.get("NIXL_TCPSTORE_PORT", "0")),
+        port=0,
         world_size=None,
         is_master=True,
-        timeout=timedelta(seconds=5),
+        timeout=timedelta(seconds=30),
         wait_for_workers=False,
     )
 

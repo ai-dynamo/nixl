@@ -25,6 +25,10 @@
 #include <aws/core/utils/DateTime.h>
 #include <aws/core/utils/HashingUtils.h>
 #include <aws/core/utils/StringUtils.h>
+#include <aws/s3/S3Client.h>
+#include <aws/s3/model/AbortMultipartUploadRequest.h>
+#include <aws/s3/model/CompleteMultipartUploadRequest.h>
+#include <aws/s3/model/CreateMultipartUploadRequest.h>
 
 #include "object/s3/utils.h"
 #include "object/s3/aws_sdk_init.h"
@@ -54,9 +58,9 @@ namespace {
     // because that signer hashes the empty body over plain HTTP — the S3 RDMA
     // server only skips content-sha256 validation when the header is exactly
     // UNSIGNED-PAYLOAD, and the data here travels out-of-band over RDMA. This
-    // mirrors the standard S3 SigV4 signing. All non-signed headers (host,
-    // x-amz-rdma-token, content-*, checksum) must already be set on the request
-    // before calling.
+    // mirrors the standard S3 SigV4 signing. Op headers (x-amz-rdma-token,
+    // content-*) must be set before calling; this adds host, x-amz-date and
+    // x-amz-content-sha256 and signs every header on the request.
     void
     signV4(Aws::Http::HttpRequest &req,
            const Aws::String &access_key,
@@ -117,10 +121,9 @@ namespace {
                 StringUtils::URLEncode(kv.second.c_str());
         }
 
-        Aws::String canonical_uri = req.GetUri().GetURLEncodedPathRFC3986();
-        if (canonical_uri.empty()) {
-            canonical_uri = "/";
-        }
+        // Same encoding as the SDK's own SigV4 signer: every byte except the
+        // unreserved characters is escaped, unlike the path sent on the wire.
+        const Aws::String canonical_uri = req.GetUri().GetURLEncodedPath();
 
         const Aws::String method =
             Aws::Http::HttpMethodMapper::GetNameForHttpMethod(req.GetMethod());
@@ -174,11 +177,12 @@ struct S3RdmaControlPlane::Impl {
     Aws::String access_key;
     Aws::String secret_key;
     Aws::String session_token;
+    std::unique_ptr<Aws::S3::S3Client> s3;
 
     // Build the token-carrying control-plane request, apply the op-specific
     // headers, SigV4-sign it, and send it. The common prologue (rdma token +
     // content-sha256 sentinel) is shared by PUT and GET; @p set_op_headers adds
-    // whatever else the op needs (content-length/checksum for PUT, range for
+    // whatever else the op needs (content-length for PUT, range for
     // GET) before signing, since the signer canonicalizes the final header set.
     std::shared_ptr<Aws::Http::HttpResponse>
     sendRdmaRequest(Aws::Http::HttpMethod method,
@@ -271,8 +275,14 @@ S3RdmaControlPlane::S3RdmaControlPlane(const nixl_b_params_t *custom_params) : i
         config.connectTimeoutMs = rdma_connect_timeout_secs * 1000;
         config.requestTimeoutMs = rdma_timeout_secs * 1000;
         impl_->http = Aws::Http::CreateHttpClient(config);
+        impl_->s3 = std::make_unique<Aws::S3::S3Client>(
+            creds,
+            config,
+            Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::RequestDependent,
+            impl_->virtual_addressing);
 
-        valid_ = impl_->http != nullptr && !impl_->access_key.empty() && !impl_->secret_key.empty();
+        valid_ = impl_->http != nullptr && impl_->s3 != nullptr && !impl_->access_key.empty() &&
+            !impl_->secret_key.empty();
     }
     catch (const std::exception &e) {
         NIXL_WARN << "S3 RDMA control plane init failed: " << e.what();
@@ -304,12 +314,9 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t si
         }
 
         auto resp = impl_->sendRdmaRequest(
-            Aws::Http::HttpMethod::HTTP_PUT, uri, token, [&ctx](Aws::Http::HttpRequest &req) {
+            Aws::Http::HttpMethod::HTTP_PUT, uri, token, [](Aws::Http::HttpRequest &req) {
                 req.SetHeaderValue("content-type", "application/octet-stream");
                 req.SetContentLength("0");
-                if (!ctx.checksumCrc64nvme.empty()) {
-                    req.SetHeaderValue("x-amz-checksum-crc64nvme", ctx.checksumCrc64nvme.c_str());
-                }
             });
         if (!resp) {
             NIXL_ERROR << "rdmaPut: MakeRequest returned null for key=" << ctx.object;
@@ -319,30 +326,30 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t si
         const int http_status = static_cast<int>(resp->GetResponseCode());
         const std::string etag =
             resp->HasHeader("etag") ? stripQuotes(resp->GetHeader("etag").c_str()) : "";
-
-        // Success: the server completed the RDMA_READ and returns a standard
-        // HTTP 200 + ETag (the object payload moved out-of-band, so the HTTP body
-        // is empty). Matches the reference client implementations.
-        if (http_status == 200 && !etag.empty()) {
-            ctx.etag = etag;
-            if (resp->HasHeader("x-amz-checksum-crc64nvme")) {
-                ctx.checksumCrc64nvme = resp->GetHeader("x-amz-checksum-crc64nvme").c_str();
-            }
-            return static_cast<ssize_t>(size);
-        }
-
-        // Only an explicit `x-amz-rdma-reply: 501` is an RDMA decline. Any other
-        // non-200 response (including a plain 4xx/5xx that omits the header) is a
-        // real failure — return rdma_error so the retry path still runs, rather
-        // than misclassifying it as a decline.
         const std::string reply = resp->HasHeader(amz_rdma_reply) ?
             std::string(resp->GetHeader(amz_rdma_reply).c_str()) :
             "";
+        const int reply_code = parseRdmaReply(reply);
+
+        // Success requires the server's explicit RDMA acknowledgement
+        // (x-amz-rdma-reply: 200) in addition to HTTP 200 + ETag. A server that
+        // ignores the token stores a 0-byte object from the body-less PUT and
+        // returns 200 + ETag without the reply header; requiring the ack stops
+        // that from being reported as a full transfer. (rdmaGet checks the same
+        // header.)
+        if (http_status == 200 && !etag.empty() && reply_code == rdma_reply_success) {
+            ctx.etag = etag;
+            return static_cast<ssize_t>(size);
+        }
+
         std::ostringstream body;
         body << resp->GetResponseBody().rdbuf();
-        if (reply == "501") {
-            NIXL_ERROR << "rdmaPut declined: http=" << http_status << " x-amz-rdma-reply='" << reply
-                       << "' url=" << uri.GetURIString()
+        // An explicit 501 or a missing reply header means the server did not honor
+        // RDMA (a non-RDMA server never sets x-amz-rdma-reply); treat it as a
+        // decline. Any other non-200 is a transport failure so the retry path runs.
+        if (reply_code == rdma_not_supported) {
+            NIXL_ERROR << "rdmaPut declined (no RDMA ack): http=" << http_status
+                       << " x-amz-rdma-reply='" << reply << "' url=" << uri.GetURIString()
                        << " body=" << body.str().substr(0, error_body_log_max)
                        << " key=" << ctx.object;
             return rdma_not_supported;
@@ -382,8 +389,11 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
             "bytes=" + std::to_string(offset) + "-" + std::to_string(offset + size - 1);
 
         auto resp = impl_->sendRdmaRequest(
-            Aws::Http::HttpMethod::HTTP_GET, uri, token, [&range](Aws::Http::HttpRequest &req) {
+            Aws::Http::HttpMethod::HTTP_GET, uri, token, [&](Aws::Http::HttpRequest &req) {
                 req.SetHeaderValue("range", range.c_str());
+                if (!ctx.ifMatch.empty()) {
+                    req.SetHeaderValue("if-match", ("\"" + ctx.ifMatch + "\"").c_str());
+                }
             });
         if (!resp) {
             NIXL_ERROR << "rdmaGet: MakeRequest returned null for key=" << ctx.object;
@@ -415,6 +425,10 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
 
         const std::string etag =
             resp->HasHeader("etag") ? stripQuotes(resp->GetHeader("etag").c_str()) : "";
+        if (etag.empty()) {
+            NIXL_ERROR << "rdmaGet: response has no ETag for key=" << ctx.object;
+            return rdma_error;
+        }
 
         // The server reports the actual transferred byte count in
         // x-amz-rdma-bytes-transferred: it is authoritative and already clamped
@@ -444,6 +458,61 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
     catch (const std::exception &e) {
         NIXL_ERROR << "rdmaGet failed: " << e.what();
         return rdma_error;
+    }
+}
+
+std::string
+S3RdmaControlPlane::createMultipartUpload(const S3RdmaClientCtx &ctx) {
+    Aws::S3::Model::CreateMultipartUploadRequest req;
+    req.SetBucket(ctx.bucket.c_str());
+    req.SetKey(ctx.object.c_str());
+    auto outcome = impl_->s3->CreateMultipartUpload(req);
+    if (!outcome.IsSuccess()) {
+        NIXL_ERROR << "CreateMultipartUpload failed for key=" << ctx.object << ": "
+                   << outcome.GetError().GetMessage();
+        return "";
+    }
+    return outcome.GetResult().GetUploadId().c_str();
+}
+
+bool
+S3RdmaControlPlane::completeMultipartUpload(const S3RdmaClientCtx &ctx,
+                                            const std::vector<std::string> &etags) {
+    Aws::S3::Model::CompletedMultipartUpload upload;
+    for (size_t i = 0; i < etags.size(); ++i) {
+        upload.AddParts(Aws::S3::Model::CompletedPart()
+                            .WithPartNumber(static_cast<int>(i + 1))
+                            .WithETag(("\"" + etags[i] + "\"").c_str()));
+    }
+    Aws::S3::Model::CompleteMultipartUploadRequest req;
+    req.SetBucket(ctx.bucket.c_str());
+    req.SetKey(ctx.object.c_str());
+    req.SetUploadId(ctx.uploadId.c_str());
+    req.SetMultipartUpload(std::move(upload));
+    auto outcome = impl_->s3->CompleteMultipartUpload(req);
+    if (!outcome.IsSuccess()) {
+        NIXL_ERROR << "CompleteMultipartUpload failed for key=" << ctx.object << ": "
+                   << outcome.GetError().GetMessage();
+        return false;
+    }
+    return true;
+}
+
+void
+S3RdmaControlPlane::abortMultipartUpload(const S3RdmaClientCtx &ctx) noexcept {
+    try {
+        Aws::S3::Model::AbortMultipartUploadRequest req;
+        req.SetBucket(ctx.bucket.c_str());
+        req.SetKey(ctx.object.c_str());
+        req.SetUploadId(ctx.uploadId.c_str());
+        auto outcome = impl_->s3->AbortMultipartUpload(req);
+        if (!outcome.IsSuccess()) {
+            NIXL_WARN << "AbortMultipartUpload failed for key=" << ctx.object << ": "
+                      << outcome.GetError().GetMessage();
+        }
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "AbortMultipartUpload failed for key=" << ctx.object << ": " << e.what();
     }
 }
 

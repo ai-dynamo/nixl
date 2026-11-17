@@ -729,6 +729,15 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
             std::vector<std::string> accel_efa_devices;
             for (const auto &nic : group.nics) {
                 accel_efa_devices.push_back(nic.libfabric_name);
+                // group.common_ancestor is the lowest common ancestor of this NIC and
+                // the group's accelerator: step 2 walks each accelerator up to the node
+                // where it enters the NIC subtree, and step 3 walks these NICs to that
+                // same node. The groups hold copies of the NicInfo values, so the answer
+                // goes on the map entry.
+                auto nic_itr = nic_info_map.find(nic.libfabric_name);
+                if (nic_itr != nic_info_map.end()) {
+                    nic_itr->second.accel_via_pcie_switch = isPcieSwitch(group.common_ancestor);
+                }
             }
             // Find accelerator index in our discovered accelerators list
             int accel_index = -1;
@@ -744,9 +753,15 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
             }
 
             if (accel_index >= 0) {
-                // Store mapping using PCI bus ID as key
+                // Store mapping using PCI bus ID as key. Appended, not assigned: an accelerator
+                // reached by NICs on more than one route holds a group per route -- on GB200 one
+                // for the NICs under its PCIe switch and one for the NICs it meets at the Grace
+                // Package -- and it should be able to use all of them.
                 std::string pci_bus_id = getPcieAddressFromHwlocObj(group.closest_accel.hwloc_node);
-                pci_to_efa_devices[pci_bus_id] = accel_efa_devices;
+                auto &efa_devices_for_accel = pci_to_efa_devices[pci_bus_id];
+                efa_devices_for_accel.insert(efa_devices_for_accel.end(),
+                                             accel_efa_devices.begin(),
+                                             accel_efa_devices.end());
 
                 NIXL_TRACE << "PCI " << pci_bus_id << " (Accelerator " << accel_index << ") → "
                            << accel_efa_devices.size() << " EFA devices: [";
@@ -760,7 +775,40 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
             }
         }
     }
+
+    // Report the PCIe-path verdict per device, so a plugin init states which devices need
+    // the PCIe (BAR1) dmabuf mapping.
+    size_t pcie_path_nic_count = 0;
+    for (const auto &entry : nic_info_map) {
+        const bool pcie_mapping = entry.second.accel_via_pcie_switch;
+        if (pcie_mapping) {
+            pcie_path_nic_count++;
+        }
+        NIXL_DEBUG << "Device " << entry.first << " reaches its closest accelerator "
+                   << (pcie_mapping ? "through a PCIe switch" : "through the host");
+    }
+    NIXL_INFO << "GPU dmabuf mapping: " << pcie_path_nic_count << " of " << nic_info_map.size()
+              << " device(s) reach their accelerator through a PCIe switch";
+
     return NIXL_SUCCESS;
+}
+
+bool
+nixlLibfabricTopology::isPcieSwitch(hwloc_obj_t obj) {
+    return obj != nullptr && obj->type == HWLOC_OBJ_BRIDGE && obj->attr != nullptr &&
+        obj->attr->bridge.upstream_type == HWLOC_OBJ_BRIDGE_PCI;
+}
+
+bool
+nixlLibfabricTopology::nicSharesPcieSwitchWithAccel(const std::string &efa_device) const {
+    const auto itr = nic_info_map.find(efa_device);
+    if (itr == nic_info_map.end()) {
+        NIXL_DEBUG << "No NIC info for EFA device " << efa_device
+                   << "; reporting no PCIe path to an accelerator";
+        return false;
+    }
+
+    return itr->second.accel_via_pcie_switch;
 }
 
 void
@@ -1031,6 +1079,8 @@ nixlLibfabricTopology::collectNicInfo(NicInfo &nic,
     nic.bus_id = bus_id;
     nic.device_id = device_id;
     nic.function_id = function_id;
+    // Filled in by buildTopologyAwareGrouping() once NIC/accelerator grouping runs.
+    nic.accel_via_pcie_switch = false;
     if (!getPcieDevParentSwitchData(hwloc_node,
                                     pcie_addr,
                                     nic.parent_switch_domain,
@@ -1283,6 +1333,25 @@ nixlLibfabricTopology::calcAvgNicUpstreamBandwidth() {
     }
 }
 
+hwloc_obj_t
+nixlLibfabricTopology::findHostRouteNode(
+    hwloc_obj_t nic_node,
+    const std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> &subtree_accel) {
+    for (hwloc_obj_t node = nic_node; node; node = node->parent) {
+        if (node->type == HWLOC_OBJ_MACHINE) {
+            return nullptr;
+        }
+        if (subtree_accel.find(node) != subtree_accel.end()) {
+            return node;
+        }
+        if (node->type == HWLOC_OBJ_PACKAGE) {
+            // The NIC's own socket holds no accelerator.
+            return nullptr;
+        }
+    }
+    return nullptr;
+}
+
 nixl_status_t
 nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered_nics,
                                           const std::vector<AccelInfo> &discovered_accel,
@@ -1309,15 +1378,24 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
     // count
     std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> node_accel;
 
+    // Every accelerator under a node, for every ancestor of every accelerator. Step 2 stops an
+    // accelerator at the first node holding a NIC, which on a platform where some NICs share no
+    // PCIe switch with any accelerator is that accelerator's own switch -- so no higher node is
+    // ever marked and those NICs reach step 3 with nothing to join. This map lets step 3 pair
+    // them with the accelerators they do share an ancestor with, typically a Package.
+    std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> subtree_accel;
+
     for (const auto &accel : discovered_accel) {
         hwloc_obj_t node = accel.hwloc_node;
+        bool marked = false;
 
         while (node) {
-            if (nic_subtree_nodes.find(node) != nic_subtree_nodes.end()) {
+            if (!marked && nic_subtree_nodes.find(node) != nic_subtree_nodes.end()) {
                 node_group_counts[node]++;
                 node_accel[node].push_back(accel);
-                break;
+                marked = true;
             }
+            subtree_accel[node].push_back(accel);
             node = node->parent;
         }
     }
@@ -1340,8 +1418,35 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
             }
             target_node = target_node->parent;
         }
-        // If no ancestor found with groups, create individual groups
+        // These NICs share no PCIe switch with an accelerator. Pair them with the accelerators
+        // they do meet further up -- on GB200 that is the Grace Package holding both, and the
+        // NIC reaches HBM through the CPU rather than over PCIe. Leaving them unpaired is what
+        // kept half a GB200 node's EFA devices out of every VRAM registration.
+        //
+        // The meeting node is not a PCIe switch, so isPcieSwitch(common_ancestor) reports false
+        // for these NICs and their dmabuf exports take the platform default mapping, which is
+        // the window a CPU-attached NIC can address.
         if (!target_node) {
+            hwloc_obj_t host_node = findHostRouteNode(nic_node, subtree_accel);
+
+            if (host_node) {
+                // Seed the node so step 4 splits these NICs across its accelerators, rather
+                // than duplicating that logic here. A node an accelerator already stopped at
+                // keeps its own count, and these NICs join that split.
+                if (node_group_counts[host_node] == 0) {
+                    node_accel[host_node] = subtree_accel[host_node];
+                    node_group_counts[host_node] = static_cast<int>(node_accel[host_node].size());
+                }
+                ancestor_nics[host_node].insert(
+                    ancestor_nics[host_node].end(), nics.begin(), nics.end());
+                NIXL_DEBUG << "Paired " << nics.size()
+                           << " NIC(s) sharing no PCIe switch with an accelerator to a common "
+                           << "ancestor of type " << hwloc_obj_type_string(host_node->type)
+                           << " holding " << node_accel[host_node].size() << " accelerator(s)";
+                continue;
+            }
+
+            // No accelerator anywhere above this NIC, so it stays in a group of its own.
             for (const auto &nic : nics) {
                 NicGroup group;
                 group.nics.push_back(nic);

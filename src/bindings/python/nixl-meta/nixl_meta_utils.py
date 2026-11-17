@@ -69,6 +69,22 @@ def detect_cuda_major() -> int | None:
         return None
 
 
+def detect_rocm() -> bool:
+    """Whether the process uses a ROCm stack, to select the nixl_rocm backend.
+
+    Called after detect_cuda_major() returns None, by which point torch is
+    already imported if it is installed.
+    """
+    # torch already imported: use its official API.
+    torch = sys.modules.get("torch")
+    if torch is not None:
+        if getattr(getattr(torch, "version", None), "hip", None) is not None:
+            return True
+
+    # hip-python already imported: use it.
+    return "rocm.bindings" in sys.modules or "hip" in sys.modules
+
+
 def _torch_cuda_version_from_disk() -> str | None:
     """Return torch's build CUDA version (e.g. "12.6") without full torch import.
 

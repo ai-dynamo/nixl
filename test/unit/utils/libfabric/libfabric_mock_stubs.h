@@ -27,14 +27,18 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
 #include <rdma/fi_endpoint.h>
 #include <rdma/fi_cm.h>
 #include <rdma/fi_rma.h>
+
+#include "libfabric/libfabric_common.h"
 
 // helper template for allocating zeroed C structs (free()-able)
 template<typename T>
@@ -61,7 +65,50 @@ static struct fi_ops fi_av_fid_ops_stub{
     .close = fi_av_close_stub,
 };
 
-static fi_ops_av av_ops_stub = {};
+// Hands out dense fi_addr_t values like an FI_AV_TABLE provider, and the same address for a
+// repeated insert of the same bytes.
+static std::map<std::string, fi_addr_t> av_inserted_stub;
+static fi_addr_t av_next_fi_addr_stub = 0;
+
+// Unused by the other test that shares this header.
+[[maybe_unused]] static void
+mock_av_reset() {
+    av_inserted_stub.clear();
+    av_next_fi_addr_stub = 0;
+}
+
+static int
+fi_av_insert_stub(struct fid_av *av,
+                  const void *addr,
+                  size_t count,
+                  fi_addr_t *fi_addr,
+                  uint64_t flags,
+                  void *context) {
+    for (size_t i = 0; i < count; ++i) {
+        // Endpoint names are fixed-length opaque blobs; key on their bytes.
+        const std::string key(static_cast<const char *>(addr) + i * LF_EP_NAME_MAX_LEN,
+                              LF_EP_NAME_MAX_LEN);
+        auto it = av_inserted_stub.find(key);
+        if (it == av_inserted_stub.end()) {
+            it = av_inserted_stub.emplace(key, av_next_fi_addr_stub++).first;
+        }
+        fi_addr[i] = it->second;
+    }
+    return static_cast<int>(count);
+}
+
+static int
+fi_av_remove_stub(struct fid_av *av, fi_addr_t *fi_addr, size_t count, uint64_t flags) {
+    return 0;
+}
+
+static fi_ops_av av_ops_stub = {
+    .size = sizeof(fi_ops_av),
+    .insert = fi_av_insert_stub,
+    .insertsvc = nullptr,
+    .insertsym = nullptr,
+    .remove = fi_av_remove_stub,
+};
 
 static int
 fi_av_open_stub(struct fid_domain *domain,
@@ -268,6 +315,49 @@ mock_fabric_create() {
     fabric->fid.ops = &fi_fabric_ops_stub;
     fabric->ops = &fabric_ops_stub;
     return fabric;
+}
+
+// Helper: build a chain of `count` fake EFA fi_info entries, as __wrap_fi_getinfo would
+// return. The caps include FI_SOURCE because the rail requests it.
+[[maybe_unused]] static struct fi_info *
+mock_fi_info_chain(size_t count, uint64_t link_speed) {
+    fi_info *head = nullptr;
+    fi_info *prev = nullptr;
+    for (size_t i = 0; i < count; ++i) {
+        fi_info *fi = malloc_zero<fi_info>();
+
+        fi->caps = FI_MSG | FI_RMA | FI_HMEM | FI_LOCAL_COMM | FI_REMOTE_COMM | FI_SOURCE;
+
+        fi->domain_attr = malloc_zero<fi_domain_attr>();
+        std::string name = "efa_" + std::to_string(i);
+        fi->domain_attr->name = strdup(name.c_str());
+
+        fi->fabric_attr = malloc_zero<fi_fabric_attr>();
+        fi->fabric_attr->prov_name = strdup("efa");
+        fi->fabric_attr->name = strdup("efa");
+
+        fi->ep_attr = malloc_zero<fi_ep_attr>();
+        fi->ep_attr->type = FI_EP_RDM;
+
+        fi->nic = malloc_zero<fid_nic>();
+        fi->nic->bus_attr = malloc_zero<fi_bus_attr>();
+        fi->nic->bus_attr->bus_type = FI_BUS_PCI;
+        fi->nic->bus_attr->attr.pci.domain_id = 0;
+        fi->nic->bus_attr->attr.pci.bus_id = static_cast<uint8_t>(i);
+        fi->nic->bus_attr->attr.pci.device_id = 0;
+        fi->nic->bus_attr->attr.pci.function_id = 0;
+
+        fi->nic->link_attr = malloc_zero<fi_link_attr>();
+        fi->nic->link_attr->speed = link_speed;
+
+        if (prev) {
+            prev->next = fi;
+        } else {
+            head = fi;
+        }
+        prev = fi;
+    }
+    return head;
 }
 
 #endif // NIXL_TEST_UNIT_UTILS_LIBFABRIC_LIBFABRIC_MOCK_STUBS_H

@@ -29,6 +29,10 @@ if enabled_plugins.get('OBJ')
     subdir('obj')
 endif
 
+if enabled_plugins.get('REDIS')
+    subdir('redis')
+endif
+
 if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')
 endif
@@ -93,20 +97,9 @@ if enabled_plugins.get('HF3FS')
     endif
 endif
 
-infinia_lib_path = get_option('infinia_path') + '/lib'
-infinia_lib_file = 'red_client'
-infinia_lib_found = cc.find_library(infinia_lib_file, dirs: [infinia_lib_path], required: false)
-disable_infinia_backend = get_option('disable_infinia_backend')
 if enabled_plugins.get('INFINIA')
-    if (disable_infinia_backend or not infinia_lib_found.found()) and is_explicit_enable
-        if disable_infinia_backend
-            error('INFINIA plugin requested but Infinia backend is disabled')
-        else
-            error('INFINIA plugin requested but red_client library not found')
-        endif
-    elif not disable_infinia_backend and infinia_lib_found.found()
-        subdir('infinia')
-    endif
+    # Leave the Library and Header files check inside the subdir
+    subdir('infinia')
 endif
 
 gusli_lib_file = 'gusli_clnt'
@@ -129,6 +122,13 @@ if enabled_plugins.get('GPUNETIO')
     elif cuda_dep.found() and doca_gpunetio_dep.found()
         subdir('gpunetio')
     endif
+endif
+
+if enabled_plugins.get('DOCA_MEMOS')
+    # Always entered so doca_memos_backend_sources is defined for the unit
+    # tests; the plugin meson.build short-circuits internally when the DOCA
+    # dependencies are missing.
+    subdir('doca_memos')
 endif
 
 subdir('telemetry')

@@ -17,6 +17,7 @@
 #ifndef TEST_GTEST_COMMON_H
 #define TEST_GTEST_COMMON_H
 
+#include <atomic>
 #include <iostream>
 #include <iomanip>
 #include <cassert>
@@ -30,26 +31,12 @@
 #include <utility>
 #include <vector>
 #include <string>
+#include <string_view>
 #include "gtest/gtest.h"
 #include "absl/log/log_sink.h"
 #include "absl/log/log_entry.h"
 
-#ifdef HAVE_CUDA
-#include <cuda_runtime.h>
-#endif
-
 namespace gtest {
-
-inline bool
-hasCudaGpu() {
-#ifdef HAVE_CUDA
-    int count = 0;
-    auto err = cudaGetDeviceCount(&count);
-    return (err == cudaSuccess && count > 0);
-#else
-    return false;
-#endif
-}
 
 constexpr const char *
 GetMockBackendName() {
@@ -70,6 +57,8 @@ public:
 
 class ScopedEnv {
 public:
+    ~ScopedEnv();
+
     void
     addVar(const std::string &name, const std::string &value);
     /** @brief Remove a variable for the scope's lifetime, for tests that need
@@ -175,15 +164,49 @@ private:
     Send(const absl::LogEntry &entry) override;
 };
 
+class LogMessageCounter : private absl::LogSink {
+public:
+    explicit LogMessageCounter(std::string_view needle);
+    ~LogMessageCounter() override;
+
+    LogMessageCounter(LogMessageCounter &&) = delete;
+    LogMessageCounter(const LogMessageCounter &) = delete;
+
+    void
+    operator=(LogMessageCounter &&) = delete;
+    void
+    operator=(const LogMessageCounter &) = delete;
+
+    [[nodiscard]] size_t
+    count() const noexcept;
+
+private:
+    void
+    Send(const absl::LogEntry &entry) override;
+
+    const std::string needle_;
+    const absl::LogSeverityAtLeast minLogLevel_;
+    std::atomic<size_t> count_ = 0;
+};
+
 struct nixlTestParam {
     std::string backendName;
     bool progressThreadEnabled;
     unsigned numWorkers;
     unsigned numThreads;
     std::string engineConfig;
+    bool sglEnabled = false;
 };
 
 using nixl_test_t = testing::TestWithParam<nixlTestParam>;
+
+// A payload starts with its full index and the seed, then a byte pattern, so
+// swapped buffers and stale writes both show up. size must be at least 8.
+void
+fillPayload(void *addr, size_t size, uint32_t index, uint32_t seed);
+
+[[nodiscard]] bool
+checkPayload(const void *addr, size_t size, uint32_t index, uint32_t seed);
 
 } // namespace gtest
 
@@ -199,5 +222,22 @@ using nixl_test_t = testing::TestWithParam<nixlTestParam>;
         _test_case,                                     \
         testing::ValuesIn(std::vector<nixlTestParam>(   \
             {{_backend, _progress_thread_enabled, _num_workers, _num_threads, _engine_config}})));
+
+#define NIXL_INSTANTIATE_TEST_SGL(_test_name,                                    \
+                                  _test_case,                                    \
+                                  _backend,                                      \
+                                  _progress_thread_enabled,                      \
+                                  _num_workers,                                  \
+                                  _num_threads,                                  \
+                                  _engine_config)                                \
+    INSTANTIATE_TEST_SUITE_P(                                                    \
+        _test_name,                                                              \
+        _test_case,                                                              \
+        testing::ValuesIn(std::vector<nixlTestParam>({{_backend,                 \
+                                                       _progress_thread_enabled, \
+                                                       _num_workers,             \
+                                                       _num_threads,             \
+                                                       _engine_config,           \
+                                                       true}})));
 
 #endif /* TEST_GTEST_COMMON_H */

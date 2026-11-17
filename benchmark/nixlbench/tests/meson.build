@@ -1,17 +1,29 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+memos_key_tests = executable(
+  'memos_key_tests',
+  'memos_key_test.cpp',
+  include_directories: inc_dir,
+)
+test('memos_key_tests', memos_key_tests, suite: 'nixlbench')
+
 gtest_dep = dependency('gtest',
                        main: true,
                        required: false)
 
 if gtest_dep.found()
+  test_sources = ['print_stats_test.cpp']
+  if raw_cli_available
+    test_sources += ['raw_cli_test.cpp', 'posix_integration_test.cpp']
+  endif
   nixlbench_tests = executable(
     'nixlbench_tests',
-    ['raw_cli_test.cpp', 'posix_integration_test.cpp', 'print_stats_test.cpp'],
+    test_sources,
     include_directories: inc_dir,
     link_with: [utils_lib, nixlbench_runtimes],
     dependencies: deps + [gtest_dep],
+    link_language: 'cpp', # Let users pass -Wl,... in LDFLAGS (nvcc rejects it)
     install: true,
   )
 

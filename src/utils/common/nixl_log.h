@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 #ifndef __NIXL_LOG_H
 #define __NIXL_LOG_H
 
+#include <string>
 #include <system_error>
 #include "absl/log/log.h"
 #include "absl/log/check.h"
@@ -126,5 +127,28 @@
 static inline std::string nixl_strerror(int err) {
     return std::error_code(err, std::generic_category()).message();
 }
+
+namespace nixl {
+
+/**
+ * @brief Mirrors records into NIXL_LOG_FILE as well as stderr. Unset or empty
+ *        registers no sink, and the file is appended to. Call shutdownLogFile()
+ *        before changing the path. A setup failure returns false unless
+ *        NIXL_LOG_FILE_ERROR_IS_FATAL is set.
+ * @return true when a sink is registered.
+ */
+bool
+initLogFile();
+
+/**
+ * @brief Unregisters and destroys the NIXL_LOG_FILE sink. Idempotent.
+ *
+ * Runs at library unload, which on glibc is after static destructors, so late
+ * records still reach the file. That ordering is loader behaviour.
+ */
+void
+shutdownLogFile();
+
+} // namespace nixl
 
 #endif /* __NIXL_LOG_H */

@@ -132,13 +132,13 @@ protected:
 };
 
 // The multi-process exporter pointed at that directory and a port of its own.
-// Driven both directly (telemetry_mp_exporter_test.cpp) and through the core
-// (telemetry_mp_core_test.cpp): both files name this single fixture class, so
-// gtest groups them into one suite and runs SetUpTestSuite once per iteration.
+// Driven both directly and through the core, from several test files that all
+// name this single fixture class, so gtest groups them into one suite and runs
+// SetUpTestSuite once per iteration.
 class MpExporterTest : public mpTempDirTest {
 protected:
-    // A build tree has no <libnixl.so dir>/plugins, so LoadsThroughPluginManager
-    // finds the plugin only if the build path is registered. Registered once per
+    // A build tree has no <libnixl.so dir>/plugins, so a test that loads the plugin
+    // by name finds it only if the build path is registered. Registered once per
     // process (--gtest_repeat re-enters this hook), and only when it exists:
     // re-registering, or registering a missing directory, logs a warning/error
     // that the gtest main counts as a failure. When it is absent (a binary run
@@ -164,10 +164,36 @@ protected:
         env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", dir_.string());
     }
 
+    void
+    TearDown() override {
+        if (defaultDir_) {
+            std::error_code ec;
+            std::filesystem::remove_all(*defaultDir_, ec);
+        }
+        mpTempDirTest::TearDown();
+    }
+
+    std::filesystem::path
+    scopedDefaultDir() {
+        const std::filesystem::path shm = "/dev/shm";
+        std::error_code ec;
+        const bool shm_writable =
+            std::filesystem::is_directory(shm, ec) && ::access(shm.c_str(), W_OK | X_OK) == 0;
+        defaultDir_ = (shm_writable ? shm : std::filesystem::temp_directory_path()) /
+            ("nixl-telemetry-" + std::to_string(::geteuid()) + "-" + std::to_string(port_));
+        std::filesystem::remove_all(*defaultDir_, ec);
+        return *defaultDir_;
+    }
+
     [[nodiscard]] std::filesystem::path
     singleStoreFile() const {
+        return singleStoreFile(dir_);
+    }
+
+    [[nodiscard]] static std::filesystem::path
+    singleStoreFile(const std::filesystem::path &dir) {
         std::error_code ec;
-        for (const auto &entry : std::filesystem::directory_iterator(dir_, ec)) {
+        for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
             const auto name = entry.path().filename().string();
             if (name.rfind("nixl.", 0) == 0 && name.size() > 5 &&
                 name.substr(name.size() - 5) == ".mmap") {
@@ -179,6 +205,7 @@ protected:
 
     gtest::ScopedEnv env_;
     uint16_t port_ = 0;
+    std::optional<std::filesystem::path> defaultDir_;
 };
 
 #endif // NIXL_TEST_GTEST_MP_TELEMETRY_FIXTURE_H

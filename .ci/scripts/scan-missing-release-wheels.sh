@@ -25,6 +25,11 @@ git fetch --no-tags "${NIXL_REPO_URL}" \
 
 : > triggers.txt
 
+# build-container.sh options the nightly always passes: a ref whose copy
+# predates any of them stops parsing at the first unknown option and silently
+# ignores the rest of the command line, so such commits are never queued.
+REQUIRED_BUILD_OPTS="--build-options-file --ucx-spcx-plugin-install"
+
 branches="$(git for-each-ref --format='%(refname:lstrip=4)' 'refs/remotes/origin/release/*' | sort -V)"
 
 # Keep the Artifactory token out of the log (also under CI debug -x).
@@ -41,27 +46,35 @@ for ver in ${branches}; do
     continue
   fi
 
-  # The nightly always passes --build-options-file (and the plugin flags), so a
-  # release whose build-container.sh predates them fails at option parsing.
-  # Skip it rather than fan out builds that cannot succeed; release branches cut
-  # from main after that change pass on their own.
-  if ! git show "origin/release/${ver}:contrib/build-container.sh" 2>/dev/null \
-       | grep -q -- '--build-options-file'; then
-    echo "release/${ver}: build-container.sh predates --build-options-file, skipping"
-    continue
-  fi
+  # The nightly always passes --build-options-file and --ucx-spcx-plugin-install;
+  # a build-container.sh predating either drops them (and anything after them)
+  # and would publish wheels without the plugins. Skip those rather than fan out
+  # builds that cannot be right. This is only an early filter
+  # on the branch tip - each candidate commit is checked again below, since a
+  # branch that backports the options still has older commits without them.
+  release_bcs="$(git show "origin/release/${ver}:contrib/build-container.sh" 2>/dev/null || true)"
+  for opt in ${REQUIRED_BUILD_OPTS}; do
+    if ! printf '%s' "${release_bcs}" | grep -q -- "${opt}"; then
+      echo "release/${ver}: build-container.sh predates ${opt}, skipping"
+      continue 2
+    fi
+  done
 
   # repo/path/name are mandatory in any items .include() - Artifactory rejects
   # the query without them ("for permissions reasons").
   aql="items.find({\"repo\":\"${WHEEL_REPO_NAME}\",\"type\":\"folder\",\"path\":\"release/${ver}\",\"@NIXL_SHA\":{\"\$match\":\"*\"}}).include(\"repo\",\"path\",\"name\",\"@NIXL_SHA\")"
   # Only 200 is conclusive (no results is a valid 200); anything else skips the
   # release so an Artifactory hiccup cannot fan out a build for every commit.
-  http_code="$(curl -s --connect-timeout 10 --max-time 30 -o published.json -w '%{http_code}' \
+  # A failed curl leaves no body, or a partial one when the transfer dies after
+  # a 200, so its exit code overrides the HTTP code; the stale file from the
+  # previous release is removed so the dump below cannot show it.
+  rm -f published.json
+  http_code="$(curl -sS --connect-timeout 10 --max-time 30 -o published.json -w '%{http_code}' \
     -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -H 'Content-Type: text/plain' \
-    --data-binary "${aql}" "${AQL_API_URL}")" || http_code=""
+    --data-binary "${aql}" "${AQL_API_URL}")" || http_code="curl-exit-$?"
   if [ "${http_code}" != "200" ]; then
-    echo "release/${ver}: published AQL returned ${http_code:-<none>}, skipping this cycle"
-    head -c 500 published.json; echo
+    echo "release/${ver}: published AQL returned ${http_code}, skipping this cycle"
+    if [ -f published.json ]; then head -c 500 published.json; echo; fi
     continue
   fi
   published="$(grep -oE '"value"[[:space:]]*:[[:space:]]*"[0-9a-f]{8}"' published.json \
@@ -70,12 +83,13 @@ for ver in ${branches}; do
   # Reservations, aged here rather than in the query: AQL rejected both relative
   # date operators tried against this instance, and ?list already returns
   # lastModified per file. 404 just means nothing has been reserved yet.
-  http_code="$(curl -s --connect-timeout 10 --max-time 30 -o inflight.json -w '%{http_code}' \
+  rm -f inflight.json
+  http_code="$(curl -sS --connect-timeout 10 --max-time 30 -o inflight.json -w '%{http_code}' \
     -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
-    "${WHEEL_REPO_API}/release/${ver}/.inflight/?list&listFolders=0")" || http_code=""
+    "${WHEEL_REPO_API}/release/${ver}/.inflight/?list&listFolders=0")" || http_code="curl-exit-$?"
   if [ "${http_code}" != "200" ] && [ "${http_code}" != "404" ]; then
-    echo "release/${ver}: in-flight listing returned ${http_code:-<none>}, skipping this cycle"
-    head -c 500 inflight.json; echo
+    echo "release/${ver}: in-flight listing returned ${http_code}, skipping this cycle"
+    if [ -f inflight.json ]; then head -c 500 inflight.json; echo; fi
     continue
   fi
   reserved=""
@@ -107,6 +121,16 @@ for ver in ${branches}; do
     if printf '%s\n' "${published}" | grep -qx "${sha:0:8}"; then
       continue
     fi
+    sha_bcs="$(git show "${sha}:contrib/build-container.sh" 2>/dev/null || true)"
+    skip_sha=""
+    for opt in ${REQUIRED_BUILD_OPTS}; do
+      if ! printf '%s' "${sha_bcs}" | grep -q -- "${opt}"; then
+        echo "release/${ver}: ${sha:0:8} predates ${opt}, skipping"
+        skip_sha=1
+        break
+      fi
+    done
+    [ -n "${skip_sha}" ] && continue
     if printf '%s\n' "${reserved}" | grep -qx "${sha:0:8}"; then
       echo "release/${ver}: ${sha:0:8} already has a build in flight"
       n_flight=$((n_flight+1))

@@ -18,9 +18,18 @@ unit_test_deps = [
     gtest_dep,
 ]
 
+if is_variable('gpunetio_backend_interface')
+    subdir('gpunetio')
+endif
+
 if is_variable('obj_backend_interface')
     subdir('obj')
     unit_test_deps += [obj_unit_test_dep]
+endif
+
+if is_variable('redis_backend_interface')
+    subdir('redis')
+    unit_test_deps += [redis_unit_test_dep]
 endif
 
 subdir('agent')
@@ -58,6 +67,7 @@ endif
 unit_test_exe = executable('unit',
     sources : [
         'main.cpp',
+        'allocation_counter.cpp',
         '../common.cpp',
     ],
     cpp_args : cpp_flags,

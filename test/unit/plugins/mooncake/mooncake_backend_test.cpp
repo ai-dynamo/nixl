@@ -122,7 +122,7 @@ createEngine(std::string name, bool p_thread) {
     init.pthrDelay = 100;
     init.localAgent = name;
     init.customParams = &custom_params;
-    init.type = "Mooncake";
+    init.type = "MOONCAKE";
 
     mooncake = (nixlBackendEngine *)new nixlMooncakeEngine(&init);
     assert(!mooncake->getInitErr());

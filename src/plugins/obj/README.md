@@ -48,6 +48,9 @@ git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1
 
 If `cuobjclient-13.1` is not found during build, the S3 Accelerated engines will be automatically disabled, and the plugin will fall back to standard S3 and S3 CRT engines.
 
+See [CUObject Client Config for S3 Accelerated](s3_accel/README.md) for RDMA
+configuration and the startup latency workaround.
+
 ## Configuration
 
 The Object Storage backend supports configuration through two mechanisms: backend parameter maps passed during backend creation, and environment variables for system-wide settings. Backend parameters take precedence over environment variables.
@@ -324,10 +327,10 @@ Each engine implementation defines its own supported memory segment types via `g
 |--------|----------------------|-------------|
 | `DefaultObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | Standard S3 client - CPU memory only |
 | `S3CrtObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | S3 CRT client - CPU memory only |
-| `S3AccelObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | S3 Accelerated base - CPU memory by default |
+| `S3AccelObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG`, `VRAM_SEG` | Generic S3-over-RDMA - advertises `VRAM_SEG` when the RDMA fast path is ready |
 | Vendor engines | `OBJ_SEG`, `DRAM_SEG`, `VRAM_SEG` | Vendor-specific - override to add GPU support |
 
-**Important:** Vendor engines that support GPU-direct transfers should override `getSupportedMems()` to include `VRAM_SEG`. The base `S3AccelObjEngineImpl` does not include `VRAM_SEG` by default - each vendor must explicitly expose this capability.
+**Important:** `S3AccelObjEngineImpl` advertises `VRAM_SEG` only when the generic S3-over-RDMA fast path is ready (cuObject fabric + control plane). Under `accelerated=true` there is no HTTP fallback: the backend fails to initialize if the fast path is unavailable, and a transfer the server declines is a hard error. `putObjectAsync` rejects a non-zero offset (a single-shot RDMA PUT writes the whole object); `getObjectAsync` honours the offset as a ranged read.
 
 ### Adding a Vendor Implementation
 

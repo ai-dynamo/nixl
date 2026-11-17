@@ -240,6 +240,9 @@ static void runInitiator(const std::string &target_ip, int target_port, nixl_thr
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
     cfg.useListenThread = true;
+    // The initiator only sends/fetches metadata to the target; let the OS pick a free port
+    // instead of falling back to the fixed default (8888), which may be taken on shared nodes.
+    cfg.listenPort = 0;
     cfg.syncMode = sync_mode;
 
     std::cout << "Starting Agent for initiator\n";
