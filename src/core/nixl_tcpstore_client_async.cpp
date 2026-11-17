@@ -199,8 +199,7 @@ nixlTcpStoreClientAsync::nixlTcpStoreClientAsync(std::string host,
       opTimeout_(op_timeout),
       ioContext_(io_context),
       socket_(ioContext_),
-      connectionRetryTimer_(ioContext_, std::chrono::steady_clock::now()),
-      shutdownTimer_(ioContext_) {}
+      connectionRetryTimer_(ioContext_) {}
 
 nixlTcpStoreClientAsync::~nixlTcpStoreClientAsync() = default;
 
@@ -335,42 +334,17 @@ nixlTcpStoreClientAsync::doVerifyNonce(std::uint32_t nonce, deadline_t deadline)
 
 void
 nixlTcpStoreClientAsync::close() {
-    asio::post(ioContext_, [this]() { initiateShutdown(opTimeout_ * 5); });
-}
-
-// This function must be called from the I/O context.
-void
-nixlTcpStoreClientAsync::initiateShutdown(std::chrono::milliseconds grace_period) {
-    switch (connectionState_) {
-    case connection_state_t::CLOSED:
-    case connection_state_t::CONNECTING:
-        connectionState_ = connection_state_t::SHUTTING_DOWN;
-        doShutdown();
-        return;
-    case connection_state_t::CONNECTED:
-        connectionState_ = connection_state_t::SHUTTING_DOWN;
-        connectionRetryTimer_.cancel();
-        processSendQueue();
-
-        if (connectionState_ != connection_state_t::SHUTDOWN) {
-            shutdownTimer_.expires_after(grace_period);
-            shutdownTimer_.async_wait([this](asio::error_code error) {
-                if (connectionState_ == connection_state_t::SHUTTING_DOWN) {
-                    doShutdown();
-                }
-            });
-        }
-        break;
-    case connection_state_t::SHUTTING_DOWN:
-    case connection_state_t::SHUTDOWN:
-        break;
-    }
+    asio::post(ioContext_, [this]() { doShutdown(); });
 }
 
 // This function must be called from the I/O context.
 void
 nixlTcpStoreClientAsync::doShutdown() {
-    assert(connectionState_ == connection_state_t::SHUTTING_DOWN);
+    if (connectionState_ == connection_state_t::SHUTDOWN) {
+        return;
+    }
+
+    connectionState_ = connection_state_t::SHUTDOWN;
 
     if (socket_.is_open()) {
         asio::error_code ec;
@@ -378,12 +352,10 @@ nixlTcpStoreClientAsync::doShutdown() {
         socket_.close(ec);
     }
     connectionRetryTimer_.cancel();
-    shutdownTimer_.cancel();
 
     drainSendQueue();
     drainRecvQueue();
 
-    connectionState_ = connection_state_t::SHUTDOWN;
     NIXL_INFO << "[TCPStore client][Server: " << host_ << ":" << port_ << "]: "
               << "shutdown completed.";
 }
@@ -596,13 +568,11 @@ nixlTcpStoreClientAsync::scheduleRequest(std::unique_ptr<Request> request) {
     {
         // Concurrent correctness:
         // We must check the connection state under the lock, so that:
-        //   - either we see the SHUTDOWN/SHUTTING_DOWN state and fail the
-        //     request in-place; or,
-        //   - the processSendQueue() called after setting the SHUTTING_DOWN
-        //     inside initiateShutdown() sees our inserted request.
+        //   - either we see the SHUTDOWN state and fail the request in-place; or,
+        //   - the drainSendQueue() called after setting the SHUTDOWN state
+        //     inside doShutdown() sees our inserted request.
         const std::lock_guard lock(sendQueueMutex_);
-        if (connectionState_ != connection_state_t::SHUTTING_DOWN &&
-            connectionState_ != connection_state_t::SHUTDOWN) {
+        if (connectionState_ != connection_state_t::SHUTDOWN) {
             sendQueue_.push_back(std::move(request));
             is_queued = true;
         }
@@ -629,7 +599,6 @@ nixlTcpStoreClientAsync::processSendQueue() {
         // is established, processSendQueue() will be called again.
         return;
     case connection_state_t::CONNECTED:
-    case connection_state_t::SHUTTING_DOWN:
         if (hasInflightSend_) {
             // We must NOT send a new request while the previous one is
             // in flight. Wait for the send completion handler of the
@@ -646,10 +615,6 @@ nixlTcpStoreClientAsync::processSendQueue() {
             }
 
             if (!request) {
-                if (connectionState_ == connection_state_t::SHUTTING_DOWN && !hasInflightRecv_ &&
-                    recvQueue_.empty()) {
-                    doShutdown();
-                }
                 return;
             }
 
@@ -710,7 +675,6 @@ nixlTcpStoreClientAsync::processRecvQueue() {
             request->onComplete(asio::error::connection_reset, nixl::fixedCapacityBuffer(0));
             break;
         case connection_state_t::CONNECTED:
-        case connection_state_t::SHUTTING_DOWN:
             if (generation_ != request->connectionGeneration_) {
                 request->onComplete(asio::error::connection_reset, nixl::fixedCapacityBuffer(0));
                 break;
@@ -751,8 +715,7 @@ nixlTcpStoreClientAsync::processRecvQueue() {
                         asio::error_code error,
                         std::size_t) mutable {
                         if (!error && generation_ == request_ptr->connectionGeneration_ &&
-                            (connectionState_ == connection_state_t::CONNECTED ||
-                             connectionState_ == connection_state_t::SHUTTING_DOWN)) {
+                            connectionState_ == connection_state_t::CONNECTED) {
                             std::uint64_t msg_size;
                             memcpy(&msg_size, msg_size_buf.data(), sizeof(std::uint64_t));
 
@@ -783,18 +746,6 @@ nixlTcpStoreClientAsync::processRecvQueue() {
         }
 
         processRecvQueue();
-    } else {
-        // No receive task.
-        if (connectionState_ == connection_state_t::SHUTTING_DOWN) {
-            bool has_work_left = false;
-            {
-                const std::lock_guard lock(sendQueueMutex_);
-                has_work_left = (hasInflightSend_ || !sendQueue_.empty());
-            }
-            if (!has_work_left) {
-                doShutdown();
-            }
-        }
     }
 }
 
@@ -873,8 +824,6 @@ nixlTcpStoreClientAsync::onError(std::string what,
                            << "Max connection retry count reached. Close the connection.";
                 drainSendQueue();
             }
-        } else if (connectionState_ == connection_state_t::SHUTTING_DOWN) {
-            doShutdown();
         }
     }
 }

@@ -140,9 +140,6 @@ private:
 
     // Shutdown the connection to the TCPStore server.
     void
-    initiateShutdown(std::chrono::milliseconds grace_period);
-
-    void
     doShutdown();
 
     // Schedule a request to be sent to the TCPStore server.
@@ -234,7 +231,6 @@ private:
         CLOSED,
         CONNECTING,
         CONNECTED,
-        SHUTTING_DOWN,
         SHUTDOWN,
     };
     // The resolved endpoints of the TCPStore server.
@@ -251,13 +247,15 @@ private:
     std::int32_t connectionRetryCount_ = 0;
     // The timer for the connection retry.
     asio::steady_timer connectionRetryTimer_;
-    // The timer for the shutdown grace period.
-    asio::steady_timer shutdownTimer_;
 
     //// The following variables manage the request state. ////
 
     // Queued requests to be sent to the TCPStore server and the mutex to protect it.
     // The caller thread produces requests and the I/O context consumes them.
+    // In the latest version of nixlTcpStoreMetadataBackend, set()/get()/deleteKey()
+    // are called on the I/O thread only, so the mutex isn't a must. We leave it here
+    // for now to make the public interface thread-safe. If this becomes a performance
+    // bottleneck, we can remove the mutex and make the public interface non-thread-safe.
     std::mutex sendQueueMutex_;
     std::deque<std::unique_ptr<Request>> sendQueue_;
     bool hasInflightSend_ = false;

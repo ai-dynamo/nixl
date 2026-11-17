@@ -110,7 +110,8 @@ nixlTcpStoreMetadataBackend::nixlTcpStoreMetadataBackend(nixlMetadataContext &ct
       ioContext_(io_context),
       client_(makeClient(io_context)),
       fetchRetryTimer_(io_context),
-      fetchRetryDelay_(config.workerDelay) {
+      fetchRetryDelay_(config.workerDelay),
+      shutdownGracePeriodTimer_(io_context) {
     NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore backend ready";
 }
 
@@ -130,6 +131,14 @@ nixlTcpStoreMetadataBackend::stop() {
         if (!inflightTask_) {
             assert(writeQueue_.empty());
             client_->close();
+        } else {
+            shutdownGracePeriodTimer_.expires_after(fetchTimeout_);
+            shutdownGracePeriodTimer_.async_wait([this](asio::error_code error) {
+                if (!error) {
+                    writeQueue_.clear();
+                    client_->close();
+                }
+            });
         }
     });
 }
@@ -397,6 +406,7 @@ nixlTcpStoreMetadataBackend::writeTaskCompleted(const WriteTask *completed_task)
 
     if (writeQueue_.empty()) {
         if (stopCalled_) {
+            shutdownGracePeriodTimer_.cancel();
             client_->close();
         }
         return;

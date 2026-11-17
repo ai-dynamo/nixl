@@ -150,6 +150,8 @@ private:
     std::deque<std::unique_ptr<WriteTask>> writeQueue_;
     // The metadata operation that is currently being processed.
     std::unique_ptr<WriteTask> inflightTask_;
+    // Timer for the shutdown grace period after stop() is called.
+    asio::steady_timer shutdownGracePeriodTimer_;
 
     // Whether stop() has been called.
     bool stopCalled_ = false;
