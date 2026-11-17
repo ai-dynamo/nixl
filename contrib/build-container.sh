@@ -57,10 +57,6 @@ CUDA_VERSION=${CUDA_VERSION:-}
 # torch wheel index for the manylinux wheel build; unset = Dockerfile default
 # (cu132 for CUDA 13, cu<CUDA_VERSION> for CUDA 12).
 TORCH_CUDA_INDEX=${TORCH_CUDA_INDEX:-}
-# torch version installed from that index; unset = Dockerfile default. The two
-# belong together: an index only carries some torch versions, so overriding
-# TORCH_CUDA_INDEX alone can leave the Dockerfile's pinned version unresolvable.
-DEFAULT_TORCH_VERSION=${DEFAULT_TORCH_VERSION:-}
 BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/static/infinia-libs:v2.5.0-rcx.1"
 APT_MIRROR=""
@@ -170,14 +166,6 @@ get_options() {
         --torch-cuda-index)
             if [ "$2" ]; then
                 TORCH_CUDA_INDEX=$2
-                shift
-            else
-                missing_requirement $1
-            fi
-            ;;
-        --default-torch-version)
-            if [ "$2" ]; then
-                DEFAULT_TORCH_VERSION=$2
                 shift
             else
                 missing_requirement $1
@@ -301,24 +289,12 @@ get_options() {
         shift
     done
 
-    # A pre-built wheel base already has its torch; the wheel stage installs none.
-    if [[ -n $WHEEL_BASE_IMAGE && -n $DEFAULT_TORCH_VERSION ]]; then
-        error "ERROR:" "--default-torch-version has no effect with --wheel-base-image: torch comes from the pre-built base image"
-    fi
-
     if [[ $OS == "ubuntu22" ]]; then
         BASE_IMAGE=nvidia/cuda
         BASE_IMAGE_TAG=13.4.2-devel-ubuntu22.04
         WHL_BASE=${WHL_BASE:-manylinux_2_34}
         DEFAULT_PYTHON_VERSION="3.10"
         WHL_PYTHON_VERSIONS="${WHL_PYTHON_VERSIONS:-3.10}"
-        # The container image's default torch (cu134, 2.15) has no Python 3.10 wheels;
-        # cu130 2.14 does. Only when neither is given, and only for contrib/Dockerfile:
-        # Dockerfile.manylinux builds its own Python and picks its own index.
-        if [[ $(readlink -f "$DOCKER_FILE") == "$SOURCE_DIR/Dockerfile" && -z $TORCH_CUDA_INDEX && -z $DEFAULT_TORCH_VERSION ]]; then
-            TORCH_CUDA_INDEX=cu130
-            DEFAULT_TORCH_VERSION=2.14
-        fi
     fi
 
     WHL_PYTHON_VERSIONS="${WHL_PYTHON_VERSIONS:-3.12}"
@@ -341,7 +317,6 @@ show_build_options() {
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
     echo "Torch index: ${TORCH_CUDA_INDEX:-<Dockerfile default>}"
-    echo "Torch version: ${DEFAULT_TORCH_VERSION:-<Dockerfile default>}"
     echo "UCX Repo: ${UCX_REPO}"
     echo "UCX Ref: ${UCX_REF}"
     if [ -n "$UCX_SONAME_SUFFIX" ]; then
@@ -400,7 +375,6 @@ BASE_IMAGE_TAG="${BASE_IMAGE_TAG}"
 ARCH="${ARCH}"
 CUDA_VERSION="${CUDA_VERSION}"
 TORCH_CUDA_INDEX="${TORCH_CUDA_INDEX}"
-DEFAULT_TORCH_VERSION="${DEFAULT_TORCH_VERSION}"
 UCX_REPO="${UCX_REPO}"
 UCX_REF="${UCX_REF}"
 UCX_SHA="${ucx_sha}"
@@ -439,8 +413,7 @@ show_help() {
     echo "  [--dockerfile path to a dockerfile to use]"
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
     echo "  [--cuda-version CUDA MAJOR.MINOR for the manylinux wheel build, e.g. 12.9 (default: ${CUDA_VERSION_DEFAULT})]
-  [--torch-cuda-index torch wheel index (default: cu132 for CUDA 13, cu<CUDA_VERSION> for CUDA 12 in the manylinux wheel build; cu134 in the container image, cu130 with --os ubuntu22). In the container image, used only when the base image has no torch >=2.7; needs >=cu134 to avoid slow sm_103 startup]
-  [--default-torch-version torch version installed from that index, e.g. 2.15 (default: uses Dockerfile ARG default). Pass it with --torch-cuda-index: each index carries only some torch versions]
+  [--torch-cuda-index torch wheel index for the manylinux wheel build (default: cu132 for CUDA 13, cu<CUDA_VERSION> for CUDA 12)]
   [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
   [--manylinux-image-tag pinned PyPA manylinux image tag (default: ${MANYLINUX_IMAGE_TAG})]"
     echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
@@ -477,7 +450,6 @@ BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VE
 CUDA_VERSION="${CUDA_VERSION:-$CUDA_VERSION_DEFAULT}"
 BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
 BUILD_ARGS+="${TORCH_CUDA_INDEX:+ --build-arg TORCH_CUDA_INDEX=$TORCH_CUDA_INDEX}"
-BUILD_ARGS+="${DEFAULT_TORCH_VERSION:+ --build-arg DEFAULT_TORCH_VERSION=$DEFAULT_TORCH_VERSION}"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"
