@@ -23,7 +23,9 @@
 namespace {
 nixl_b_params_t
 getGdsMtBackendOptions() {
-    return {{"thread_count", std::to_string(defaultGdsMtThreadCount())}};
+    return {{"thread_count", std::to_string(defaultGdsMtThreadCount())},
+            {"vector_io", "auto"},
+            {"vector_max_entries", "32"}};
 }
 
 using gds_mt_plugin_t = nixlBackendPluginCreator<nixlGdsMtEngine>;
@@ -34,7 +36,7 @@ nixlBackendPlugin *
 createStaticGDS_MTPlugin() {
     return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
                                    "GDS_MT",
-                                   "0.1.0",
+                                   "0.1.1",
                                    getGdsMtBackendOptions(),
                                    {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
@@ -43,7 +45,7 @@ extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
                                    "GDS_MT",
-                                   "0.1.0",
+                                   "0.1.1",
                                    getGdsMtBackendOptions(),
                                    {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }

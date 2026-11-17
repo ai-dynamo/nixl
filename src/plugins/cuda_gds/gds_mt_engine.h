@@ -20,6 +20,7 @@
 #include <atomic>
 #include <future>
 #include <memory>
+#include <variant>
 #include <vector>
 
 #include "gds_backend.h"
@@ -29,18 +30,49 @@
 [[nodiscard]] size_t
 defaultGdsMtThreadCount() noexcept;
 
+enum class nixlGdsMtVectorIoMode {
+    AUTO,
+    OFF,
+    ON,
+};
+
+struct nixlGdsMtVectorReq {
+    explicit nixlGdsMtVectorReq(const gdsXferReq &first);
+
+    [[nodiscard]] bool
+    canAppend(const gdsXferReq &req, size_t max_entries) const;
+    void
+    append(const gdsXferReq &req);
+
+    CUfileHandle_t fh;
+    CUfileOpcode_t op;
+    size_t file_offset;
+    size_t total_size = 0;
+    std::vector<gdsXferReq> entries;
+};
+
+using nixlGdsMtWorkItem = std::variant<gdsXferReq, nixlGdsMtVectorReq>;
+
+// Build the scalar/vector execution list from prepared logical requests. Kept
+// separate from TaskFlow construction so grouping stays deterministic and can
+// be validated without submitting cuFile I/O.
+[[nodiscard]] std::vector<nixlGdsMtWorkItem>
+buildGdsMtWorkList(const std::vector<gdsXferReq> &reqs,
+                   bool use_vector_io,
+                   size_t vector_max_entries);
+
 class nixlGdsMtReqH : public nixlBackendReqH {
 public:
     ~nixlGdsMtReqH() override;
 
-    std::vector<gdsXferReq> request_list;
+    std::vector<nixlGdsMtWorkItem> work_list;
     tf::Taskflow taskflow;
     std::future<void> running_transfer;
     std::atomic<nixl_status_t> overall_status{NIXL_SUCCESS};
 };
 
-// "GDS_MT" backend: one blocking cuFileRead/cuFileWrite per request, run across
-// a TaskFlow executor. Only this engine pulls in TaskFlow.
+// "GDS_MT" backend: blocking scalar or vector cuFile calls run across a
+// TaskFlow executor. Only this engine pulls in TaskFlow.
 //
 // Inherits from nixlGdsEngine (see gds_backend.h): registerMem/deregisterMem,
 // queryMem, the cuFile driver lifecycle, and the prepXfer preamble (validation +
@@ -70,6 +102,8 @@ protected:
 
 private:
     size_t thread_count_;
+    nixlGdsMtVectorIoMode vector_io_mode_;
+    size_t vector_max_entries_;
     std::unique_ptr<tf::Executor> executor_;
 };
 
