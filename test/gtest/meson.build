@@ -33,13 +33,16 @@ gtest_inc_dirs = include_directories('.')
 # Sanitizer runtime configuration. Built once and shared by every instrumented
 # test (tagged with the 'sanitizer' suite) so `meson test --suite sanitizer`
 # runs them with halt-on-error semantics and the third-party suppression lists.
-# When -Dsanitizer=none the environment stays empty, so tagging tests with the
-# suite is harmless for normal builds.
-sanitizer_opts = get_option('sanitizer').split(',')
+# Without -Dsanitizer or -Db_sanitize the environment stays empty, so tagging
+# tests with the suite is harmless for normal builds.
+sanitizer_opts = get_option('sanitizer').split(',') + get_option('b_sanitize').split(',')
 sanitizer_env = environment()
 sanitizer_supp_dir = meson.current_source_dir() / 'sanitizer'
 if sanitizer_opts.contains('address')
-    sanitizer_env.set('ASAN_OPTIONS', 'halt_on_error=1:abort_on_error=1:detect_leaks=1')
+    # The Mooncake Transfer Engine's libstdc++ calls bind to NIXL's
+    # instrumented copies, and with stack-use-after-return detection
+    # RandomSizes alone takes more than 5 minutes.
+    sanitizer_env.set('ASAN_OPTIONS', 'halt_on_error=1:abort_on_error=1:detect_leaks=1:detect_stack_use_after_return=0')
     sanitizer_env.set('LSAN_OPTIONS', 'suppressions=' + sanitizer_supp_dir / 'lsan.supp')
 endif
 if sanitizer_opts.contains('undefined')
@@ -51,11 +54,6 @@ endif
 
 subdir('mocks')
 subdir('plugins')
-
-# The UCX device API tests also run the proxy mode, which needs only CUDA and the UCX backend.
-if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
-    subdir('device_api')
-endif
 
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
@@ -92,6 +90,10 @@ if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     cpp_flags += '-DHAVE_LIBFABRIC'
 endif
 
+if is_variable('mooncake_backend_interface')
+    cpp_flags += '-DHAVE_MOONCAKE'
+endif
+
 if get_option('test_all_plugins')
   cpp_flags+='-DTEST_ALL_PLUGINS'
 endif
@@ -125,8 +127,12 @@ gtest_sources = [
     ]
 
 if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
-    gtest_sources += device_api_test_sources
-    device_api_inc = nixl_device_api_inc_dirs + [include_directories('device_api')]
+    # The UCX device API tests also run the proxy mode, which needs only CUDA and the UCX backend.
+    gtest_sources += [
+        'device/gpu/device_gpu_agent.cpp',
+        'device/gpu/device_gpu_test.cu',
+    ]
+    device_api_inc = nixl_device_api_inc_dirs
     device_api_dep = [ucx_dep]
     if ucx_gpu_device_api_available
         device_api_dep += [doca_gpunetio_dep]

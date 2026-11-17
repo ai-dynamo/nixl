@@ -245,4 +245,28 @@ LogMessageCounter::Send(const absl::LogEntry &entry) {
     }
 }
 
+static std::vector<uint8_t>
+payloadBytes(size_t size, uint32_t index, uint32_t seed) {
+    assert(size >= sizeof(index) + sizeof(seed));
+    std::vector<uint8_t> bytes(size);
+    for (size_t i = 0; i < size; ++i) {
+        bytes[i] = static_cast<uint8_t>(seed + index + i);
+    }
+    std::memcpy(bytes.data(), &index, sizeof(index));
+    std::memcpy(bytes.data() + sizeof(index), &seed, sizeof(seed));
+    return bytes;
+}
+
+void
+fillPayload(void *addr, size_t size, uint32_t index, uint32_t seed) {
+    const auto bytes = payloadBytes(size, index, seed);
+    std::memcpy(addr, bytes.data(), bytes.size());
+}
+
+bool
+checkPayload(const void *addr, size_t size, uint32_t index, uint32_t seed) {
+    const auto bytes = payloadBytes(size, index, seed);
+    return std::memcmp(addr, bytes.data(), bytes.size()) == 0;
+}
+
 } // namespace gtest

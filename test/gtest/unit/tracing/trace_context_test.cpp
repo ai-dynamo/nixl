@@ -21,14 +21,23 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include "common.h"
+#include "tracing/random_buffer.h"
+#include "tracing/trace.h"
 #include "tracing/trace_context.h"
 
 constexpr char kCanonicalTraceparent[] = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
@@ -67,6 +76,28 @@ contextWithRandomnessValue(std::uint64_t randomness) {
             static_cast<std::uint8_t>(randomness >> (8 * index));
     }
     return context;
+}
+
+constexpr std::array<std::uint8_t, 8> kBlockStart{0, 1, 2, 3, 4, 5, 6, 7};
+
+std::size_t refill_count = 0;
+bool fail_next_refill = false;
+
+void
+countingRefill(std::span<std::uint8_t> bytes) {
+    ++refill_count;
+    if (std::exchange(fail_next_refill, false)) {
+        std::ranges::fill(bytes, std::uint8_t{0xff});
+        throw std::runtime_error("refill failed");
+    }
+    std::iota(bytes.begin(), bytes.end(), std::uint8_t{0});
+}
+
+[[nodiscard]] nixl::trace::RandomBuffer
+countingBuffer() {
+    refill_count = 0;
+    fail_next_refill = false;
+    return nixl::trace::RandomBuffer{countingRefill};
 }
 
 } // namespace
@@ -566,4 +597,103 @@ TEST(TraceContext, InvalidOtelVariableIsIgnoredNotFatal) {
 
     env.addVar(std::string(nixl::trace::otelTracesSampleRatioVar), "not-a-ratio");
     EXPECT_EQ(nixl::trace::resolveTraceSampleRatio(), 0.0);
+}
+
+TEST(TraceContext, RandomBufferRefillsOncePerBlock) {
+    auto buffer = countingBuffer();
+    std::array<std::uint8_t, 32> bytes{};
+
+    for (int draw = 0; draw < 8; ++draw) {
+        buffer.fill(bytes);
+    }
+    EXPECT_EQ(refill_count, 1u);
+
+    buffer.fill(bytes);
+    EXPECT_EQ(refill_count, 2u);
+}
+
+TEST(TraceContext, RandomBufferServesBytesInOrderAcrossBlocks) {
+    auto buffer = countingBuffer();
+    std::vector<std::uint8_t> served;
+
+    for (int draw = 0; draw < 22; ++draw) {
+        std::array<std::uint8_t, 24> bytes{};
+        buffer.fill(bytes);
+        served.insert(served.end(), bytes.begin(), bytes.end());
+    }
+
+    std::vector<std::uint8_t> expected(served.size());
+    std::iota(expected.begin(), expected.end(), std::uint8_t{0});
+    EXPECT_EQ(served, expected);
+    EXPECT_EQ(refill_count, 3u);
+}
+
+TEST(TraceContext, RandomBufferClearDiscardsTheRest) {
+    auto buffer = countingBuffer();
+    std::array<std::uint8_t, 8> first{};
+    std::array<std::uint8_t, 8> second{};
+
+    buffer.fill(first);
+    buffer.clear();
+    buffer.fill(second);
+
+    EXPECT_EQ(refill_count, 2u);
+    EXPECT_EQ(second, kBlockStart);
+}
+
+TEST(TraceContext, RandomBufferRetriesAfterAFailedRefill) {
+    auto buffer = countingBuffer();
+    std::array<std::uint8_t, 8> bytes{};
+
+    fail_next_refill = true;
+    EXPECT_THROW(buffer.fill(bytes), std::runtime_error);
+
+    buffer.fill(bytes);
+    EXPECT_EQ(refill_count, 2u);
+    EXPECT_EQ(bytes, kBlockStart);
+}
+
+TEST(TraceContext, ForkedChildDrawsItsOwnIds) {
+    std::array<int, 2> pipe_fds{};
+    ASSERT_EQ(::pipe(pipe_fds.data()), 0);
+
+    pid_t child = -1;
+    nixl::trace::TraceContext parent_context;
+    std::thread([&] {
+        static_cast<void>(nixl::trace::generateTraceContext());
+        child = ::fork();
+        if (child == 0) {
+            const auto context = nixl::trace::generateTraceContext();
+            const auto written =
+                ::write(pipe_fds[1], context.traceId.data(), context.traceId.size());
+            ::_exit(written == static_cast<ssize_t>(context.traceId.size()) ? 0 : 1);
+        }
+        parent_context = nixl::trace::generateTraceContext();
+    }).join();
+    ::close(pipe_fds[1]);
+
+    std::array<std::uint8_t, 16> child_trace_id{};
+    const auto received = ::read(pipe_fds[0], child_trace_id.data(), child_trace_id.size());
+    ::close(pipe_fds[0]);
+    ASSERT_GT(child, 0);
+
+    int status = 0;
+    ASSERT_EQ(::waitpid(child, &status, 0), child);
+    EXPECT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 0);
+    EXPECT_EQ(received, static_cast<ssize_t>(child_trace_id.size()));
+    EXPECT_NE(child_trace_id, parent_context.traceId);
+}
+
+TEST(TraceContext, DefaultSourceIdsAreDistinct) {
+    const nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}};
+    constexpr std::size_t count = 10000;
+    std::set<std::uint64_t> ids;
+
+    for (std::size_t index = 0; index < count; ++index) {
+        ids.insert(nixl::trace::generateRequestId(&tracer));
+    }
+
+    EXPECT_EQ(ids.size(), count);
+    EXPECT_FALSE(ids.contains(0));
 }
