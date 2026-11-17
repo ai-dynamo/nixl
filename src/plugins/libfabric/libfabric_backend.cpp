@@ -20,6 +20,7 @@
 #include "serdes/serdes.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "common/thread_pool.h"
 
 #include <cstdint>
 #include <dlfcn.h>
@@ -27,8 +28,6 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <deque>
-#include <functional>
 #include <iomanip>
 #include <numeric>
 #include <optional>
@@ -44,100 +43,12 @@ constexpr size_t NIXL_LIBFABRIC_DEFAULT_POST_THREADS = 0;
 constexpr size_t NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE = 1024;
 constexpr const char *NIXL_LIBFABRIC_POST_THREADS_PARAM = "num_threads";
 constexpr const char *NIXL_LIBFABRIC_POST_SPLIT_BATCH_SIZE_PARAM = "split_batch_size";
-constexpr size_t NIXL_LIBFABRIC_POST_THREAD_HW_MULTIPLIER = 4;
 
 void
 storeFirstError(std::atomic<int> &status, nixl_status_t new_status) {
     int expected = static_cast<int>(NIXL_SUCCESS);
     status.compare_exchange_strong(expected, static_cast<int>(new_status));
 }
-
-} // namespace
-
-class nixlLibfabricPostThreadPool {
-public:
-    explicit nixlLibfabricPostThreadPool(size_t thread_count) {
-        workers_.reserve(thread_count);
-        try {
-            for (size_t i = 0; i < thread_count; ++i) {
-                workers_.emplace_back([this]() { workerLoop(); });
-            }
-        }
-        catch (const std::exception &e) {
-            NIXL_ERROR << "Failed to create libfabric post worker threads: " << e.what();
-            stopAndJoin();
-            throw;
-        }
-        catch (...) {
-            NIXL_ERROR << "Failed to create libfabric post worker threads";
-            stopAndJoin();
-            throw;
-        }
-    }
-
-    ~nixlLibfabricPostThreadPool() {
-        stopAndJoin();
-    }
-
-    bool
-    submit(std::function<void()> task) {
-        {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            if (stop_) {
-                NIXL_WARN << "Ignoring libfabric post task submission after thread pool stop";
-                return false;
-            }
-            tasks_.emplace_back(std::move(task));
-        }
-        cv_.notify_one();
-        return true;
-    }
-
-private:
-    void
-    stopAndJoin() {
-        {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            stop_ = true;
-        }
-        // Workers drain tasks queued before stop_; submit() rejects new tasks after this point.
-        cv_.notify_all();
-
-        for (auto &worker : workers_) {
-            if (worker.joinable()) {
-                worker.join();
-            }
-        }
-    }
-
-    void
-    workerLoop() {
-        while (true) {
-            std::function<void()> task;
-            {
-                std::unique_lock<std::mutex> lock(mutex_);
-                cv_.wait(lock, [this]() { return stop_ || !tasks_.empty(); });
-
-                if (stop_ && tasks_.empty()) {
-                    return;
-                }
-
-                task = std::move(tasks_.front());
-                tasks_.pop_front();
-            }
-
-            task();
-        }
-    }
-
-    std::vector<std::thread> workers_;
-    std::deque<std::function<void()>> tasks_;
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    bool stop_ = false;
-};
-
-namespace {
 
 void *
 dlopen_libnrt() {
@@ -634,18 +545,12 @@ void
 nixlLibfabricEngine::initPostThreadPool() {
     LibfabricUtils::getCustomIntParam(
         getCustomParams(), NIXL_LIBFABRIC_POST_THREADS_PARAM, post_thread_count_);
-    const size_t max_post_thread_count =
-        static_cast<size_t>(std::max(1u, std::thread::hardware_concurrency())) *
-        NIXL_LIBFABRIC_POST_THREAD_HW_MULTIPLIER;
-    if (post_thread_count_ > max_post_thread_count) {
-        NIXL_WARN << "Capping libfabric post thread count from " << post_thread_count_ << " to "
-                  << max_post_thread_count;
-        post_thread_count_ = max_post_thread_count;
-    }
     LibfabricUtils::getCustomIntParam(
         getCustomParams(), NIXL_LIBFABRIC_POST_SPLIT_BATCH_SIZE_PARAM, post_split_batch_size_);
     if (post_thread_count_ > 0) {
-        post_thread_pool_ = std::make_unique<nixlLibfabricPostThreadPool>(post_thread_count_);
+        post_thread_pool_ = std::make_unique<nixl::threadPool>(post_thread_count_);
+        // The pool caps the thread count.
+        post_thread_count_ = post_thread_pool_->size();
         NIXL_DEBUG << "Libfabric descriptor post thread pool enabled with " << post_thread_count_
                    << " threads, split_batch_size=" << post_split_batch_size_;
     } else {
