@@ -39,6 +39,7 @@
 #include <nixl_types.h>
 #include "backend/backend_engine.h"
 #include "odm_ioctl.h"
+#include "sync.h"
 
 #ifdef HAVE_CUDA
 #include <cuda.h>
@@ -305,7 +306,9 @@ private:
      * concurrently from multiple threads. nextQid() pins each calling thread to a
      * fixed queue, assigned round-robin across [qid_start_, qid_end_].
      */
-    mutable std::mutex thread_assign_lock_;
+    nixl_thread_sync_t sync_mode_;
+    bool enable_prog_th_{false};
+    mutable nixlLock thread_assign_lock_;
     mutable std::unordered_map<std::thread::id, uint16_t> thread_qid_;
     mutable std::deque<std::thread::id> thread_order_;
     mutable uint32_t next_thread_slot_{0};

@@ -119,7 +119,10 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
       dma_fd_(-1),
       qid_(0),
       qid_start_(0),
-      qid_end_(0)
+      qid_end_(0),
+      sync_mode_(init_params->syncMode),
+      enable_prog_th_(init_params->enableProgTh),
+      thread_assign_lock_(init_params->syncMode)
 #ifdef HAVE_CUDA
       ,
       cuda_available_(false),
@@ -320,8 +323,11 @@ nixlOdmEngine::closeDevice() {
 
 uint16_t
 nixlOdmEngine::nextQid() const {
+    if (sync_mode_ == nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE) {
+        return qid_start_;
+    }
     const std::thread::id tid = std::this_thread::get_id();
-    std::lock_guard<std::mutex> lock(thread_assign_lock_);
+    NIXL_LOCK_GUARD(thread_assign_lock_);
     auto it = thread_qid_.find(tid);
     if (it != thread_qid_.end()) {
         return it->second;
