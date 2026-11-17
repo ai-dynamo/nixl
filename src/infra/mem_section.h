@@ -104,6 +104,10 @@ public:
     int
     getIndex(const nixlBasicDesc &query) const override;
 
+    /**
+     * @param start_index Search start in [0, descCount()]. Zero searches the full list.
+     * @pre With a positive start_index, any covering section is at start_index - 1 or later.
+     */
     int
     getCoveringIndex(const nixlBasicDesc &query, int start_index = 0) const;
 
