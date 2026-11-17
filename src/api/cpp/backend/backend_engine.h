@@ -17,6 +17,7 @@
 #ifndef __BACKEND_ENGINE_H
 #define __BACKEND_ENGINE_H
 
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -27,6 +28,20 @@
 
 constexpr size_t MAX_TELEMETRY_QUEUE_SIZE = 1000;
 
+enum class nixl_backend_capability_t : uint64_t {
+    NONE = 0,
+    REMOTE = 1ULL << 0,
+    LOCAL = 1ULL << 1,
+    NOTIF = 1ULL << 2,
+    TRACE_CONTEXT = 1ULL << 3,
+};
+
+[[nodiscard]] constexpr nixl_backend_capability_t
+operator|(nixl_backend_capability_t a, nixl_backend_capability_t b) noexcept {
+    return static_cast<nixl_backend_capability_t>(static_cast<uint64_t>(a) |
+                                                  static_cast<uint64_t>(b));
+}
+
 // Base backend engine class for different backend implementations
 class nixlBackendEngine {
     private:
@@ -35,6 +50,7 @@ class nixlBackendEngine {
         nixl_b_params_t customParams;
         std::vector<nixlTelemetryEvent> telemetryEvents_;
         std::mutex telemetryEventsMutex_;
+        const nixl_backend_capability_t capabilities_;
 
     protected:
         // Members that can be accessed by the child (localAgent cannot be modified)
@@ -72,10 +88,13 @@ class nixlBackendEngine {
         }
 
     public:
-        explicit nixlBackendEngine(const nixlBackendInitParams *init_params)
+        explicit nixlBackendEngine(
+            const nixlBackendInitParams *init_params,
+            nixl_backend_capability_t capabilities = nixl_backend_capability_t::NONE)
             : backendType(init_params->type),
               customParams(init_params->customParams ? *init_params->customParams :
                                                        nixl_b_params_t{}),
+              capabilities_(capabilities),
               localAgent(init_params->localAgent),
               enableTelemetry_(init_params->enableTelemetry_) {}
 
@@ -101,14 +120,28 @@ class nixlBackendEngine {
         // if they're called by mistake, they will return error if not implemented by backend.
 
         // Determines if a backend supports remote operations
-        virtual bool supportsRemote() const = 0;
+        virtual bool
+        supportsRemote() const {
+            return supportsCapability(nixl_backend_capability_t::REMOTE);
+        }
 
         // Determines if a backend supports local operations
-        virtual bool supportsLocal() const = 0;
+        virtual bool
+        supportsLocal() const {
+            return supportsCapability(nixl_backend_capability_t::LOCAL);
+        }
 
         // Determines if a backend supports sending notifications. Related methods are not
         // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
-        virtual bool supportsNotif() const = 0;
+        virtual bool
+        supportsNotif() const {
+            return supportsCapability(nixl_backend_capability_t::NOTIF);
+        }
+
+        [[nodiscard]] bool
+        supportsCapability(nixl_backend_capability_t cap) const noexcept {
+            return (static_cast<uint64_t>(capabilities_) & static_cast<uint64_t>(cap)) != 0;
+        }
 
         virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
 
@@ -246,13 +279,6 @@ class nixlBackendEngine {
                          nixl_cost_t &method,
                          const nixl_opt_args_t *extra_params = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
-        }
-
-        // Determines if a backend carries a request's trace context to its peer. Core reads it
-        // once for remote backends and, if false, warns once when a sampled request goes untraced.
-        [[nodiscard]] virtual bool
-        supportsTraceContext() const noexcept {
-            return false;
         }
 };
 #endif
