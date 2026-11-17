@@ -553,9 +553,6 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
     auto &ep = conn->getEp(worker_id);
     int_handle->init(conn, *ep);
 
-    nixl_status_t status = NIXL_SUCCESS;
-    nixlUcxReq pending_req = nullptr;
-
     for (size_t i = start_idx; i < end_idx; ++i) {
         void *laddr = (void *)local[i].addr;
         size_t lsize = local[i].len;
@@ -566,32 +563,16 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
         const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
         NIXL_ASSERT(rmd->conn->getEp(worker_id).get() == ep.get());
 
-        nixlUcxReq req;
+        nixlUcxReq req = nullptr;
         const nixl_status_t ret = operation == NIXL_READ ?
             ep->read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
             ep->write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
 
-        if (ret == NIXL_IN_PROG) {
-            if (pending_req != nullptr) [[likely]] {
-                ucp_request_free(pending_req);
-            }
-            pending_req = req;
-        } else if (ret != NIXL_SUCCESS) {
-            status = ret;
-            if (pending_req != nullptr) {
-                ucp_request_free(pending_req);
-                pending_req = nullptr;
-            }
-            break;
+        // Track every request that is still in progress: UCX does not complete
+        // the requests of an endpoint in the order they were issued.
+        if (int_handle->append(ret, req) != NIXL_SUCCESS) {
+            return ret;
         }
-    }
-
-    if (status == NIXL_SUCCESS && pending_req) {
-        status = NIXL_IN_PROG;
-    }
-
-    if (int_handle->append(status, pending_req) != NIXL_SUCCESS) {
-        return status;
     }
 
     /*

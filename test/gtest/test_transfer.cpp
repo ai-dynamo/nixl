@@ -696,6 +696,111 @@ TEST_P(TestTransfer, ManyDescriptorsPayload) {
     deregisterMem(getAgent(1), remote_buffers, mem_type);
 }
 
+// On RC transports UCX splits each READ of this fixture into many GET
+// fragments. The requests of one endpoint then complete in an order that
+// differs from the order they were issued in.
+class TestTransferFragmentedRead : public TestTransfer {
+protected:
+    // One byte per page tells whether the fragment that covers it has arrived.
+    static constexpr size_t check_step = 4096;
+
+    void
+    SetUp() override {
+        env.addVar("UCX_RC_MAX_GET_ZCOPY", "64k");
+        TestTransfer::SetUp();
+    }
+
+    [[nodiscard]] static uint8_t *
+    bytes(const MemBuffer &buffer) {
+        return reinterpret_cast<uint8_t *>(static_cast<uintptr_t>(buffer));
+    }
+
+    // Makes every checked byte of dst differ from src.
+    static void
+    invalidate(const std::vector<MemBuffer> &dst, const std::vector<MemBuffer> &src) {
+        for (size_t i = 0; i < dst.size(); ++i) {
+            for (size_t offset = 0; offset < dst[i].getSize(); offset += check_step) {
+                bytes(dst[i])[offset] = ~bytes(src[i])[offset];
+            }
+        }
+    }
+
+    // Returns the number of dst buffers with a checked byte that differs from src.
+    [[nodiscard]] static size_t
+    countStale(const std::vector<MemBuffer> &dst, const std::vector<MemBuffer> &src) {
+        size_t stale = 0;
+        for (size_t i = 0; i < dst.size(); ++i) {
+            for (size_t offset = 0; offset < dst[i].getSize(); offset += check_step) {
+                if (bytes(dst[i])[offset] != bytes(src[i])[offset]) {
+                    ++stale;
+                    break;
+                }
+            }
+        }
+        return stale;
+    }
+};
+
+// Looks at the local buffers as soon as a READ of many descriptors is reported
+// done: each of them must hold the remote data by then.
+TEST_P(TestTransferFragmentedRead, DataInPlaceWhenDone) {
+    constexpr size_t size = 2 * 1024 * 1024;
+    constexpr size_t count = 640;
+    constexpr size_t posts = 100;
+    constexpr nixl_mem_t mem_type = DRAM_SEG;
+    constexpr auto timeout = std::chrono::seconds(60);
+
+    std::vector<MemBuffer> local_buffers, remote_buffers;
+    createRegisteredMem(getAgent(0), size, count, mem_type, local_buffers);
+    createRegisteredMem(getAgent(1), size, count, mem_type, remote_buffers);
+    exchangeMD(0, 1);
+    fillPayloads(remote_buffers, 1);
+
+    nixlXferReqH *req = nullptr;
+    ASSERT_EQ(NIXL_SUCCESS,
+              getAgent(0).createXferReq(NIXL_READ,
+                                        makeDescList<nixlBasicDesc>(local_buffers, mem_type),
+                                        makeDescList<nixlBasicDesc>(remote_buffers, mem_type),
+                                        getAgentName(1),
+                                        req));
+
+    for (size_t post = 0; post < posts; ++post) {
+        invalidate(local_buffers, remote_buffers);
+
+        nixl_status_t status = getAgent(0).postXferReq(req);
+        ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+
+        // No sleep between the status checks, so that the buffers are looked at
+        // right after the transfer is reported done.
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while ((status == NIXL_IN_PROG) && (std::chrono::steady_clock::now() < deadline)) {
+            status = getAgent(0).getXferStatus(req);
+            if (!isProgressThreadEnabled()) {
+                nixl_notifs_t notifs;
+                getAgent(1).getNotifs(notifs);
+            }
+        }
+        ASSERT_EQ(NIXL_SUCCESS, status);
+
+        const size_t stale = countStale(local_buffers, remote_buffers);
+        EXPECT_EQ(0u, stale) << "post " << post << " was reported done with " << stale << " of "
+                             << count << " buffers not read yet";
+        if (stale != 0) {
+            break;
+        }
+    }
+
+    EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), local_buffers, mem_type);
+    deregisterMem(getAgent(1), remote_buffers, mem_type);
+}
+
+NIXL_INSTANTIATE_TEST(ucx, TestTransferFragmentedRead, "UCX", true, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransferFragmentedRead, "UCX", false, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransferFragmentedRead, "UCX", true, 6, 4, "");
+NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransferFragmentedRead, "UCX", false, 6, 4, "");
+
 TEST_P(TestTransfer, remoteMDFromSocket)
 {
     std::vector<MemBuffer> src_buffers, dst_buffers;

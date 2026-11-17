@@ -141,8 +141,10 @@ public:
             return checkConnection(ret);
         }
 
-        /* Last request completed successfully, all the others must be in the
-         * same state. TODO: remove extra checks? */
+        /* The last request completed successfully. The others can still be in
+         * progress: UCX does not complete the requests of an endpoint in the
+         * order they were issued, and the flush can complete while a data
+         * request is still queued in UCP. Check every one of them. */
         size_t incomplete_reqs = 0;
         nixl_status_t out_ret = NIXL_SUCCESS;
         for (nixlUcxReq req : requests_) {
@@ -156,6 +158,7 @@ public:
                 requests_[incomplete_reqs++] = req;
             } else {
                 // Any other ret value is ERR and will be returned
+                worker_->reqRelease(req);
                 out_ret = checkConnection(ret);
             }
         }
@@ -200,9 +203,9 @@ protected:
     }
 
 private:
-    // A post to a single endpoint issues at most two requests:
-    // one data request and one flush request.
-    static constexpr size_t max_requests = 2;
+    // A post tracks one request per descriptor that is still in progress, plus
+    // one flush request. A single-descriptor post needs no heap allocation.
+    static constexpr size_t inline_requests = 2;
 
     static void
     flushCb(void *, ucs_status_t status, void *user_data) {
@@ -267,7 +270,7 @@ private:
     ucx_connection_ptr_t conn_;
     // Resolved endpoint over which data and notifications are sent.
     const nixlUcxEp *ep_ = nullptr;
-    absl::InlinedVector<nixlUcxReq, max_requests> requests_;
+    absl::InlinedVector<nixlUcxReq, inline_requests> requests_;
     nixlUcxWorker *worker_ = nullptr;
     std::string notif_;
     std::atomic<nixlUcxReq> notifReq_{nullptr};
