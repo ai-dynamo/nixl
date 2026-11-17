@@ -125,12 +125,23 @@ struct OdmSegment {
     uint64_t len;
 };
 
+#ifdef HAVE_CUDA
+/** Tracks in-flight multi-queue pool work for one request (async postXfer). */
+struct OdmBatch {
+    std::atomic<size_t> remaining{0};
+    std::atomic<int> status{0}; /* nixl_status_t of first error */
+    std::mutex m;
+    std::condition_variable cv;
+};
+#endif
+
 /**
  * @class nixlOdmBackendReqH
  * @brief Per-transfer request handle.
  *
- * ODM/dma-buf transfers complete synchronously inside the FD ioctl
- * (posted=true on return).
+ * Transfers are synchronous when the worker pool is off (single queue, io_uring,
+ * or enableProgTh false). With the pool enabled, postXfer may return NIXL_IN_PROG
+ * and checkXfer polls async_batch until completion.
  */
 class nixlOdmBackendReqH : public nixlBackendReqH {
 public:
@@ -141,6 +152,9 @@ public:
     bool posted;
     bool dispatched; /* true once multi-queue pool work has been queued */
     nixl_status_t status;
+#ifdef HAVE_CUDA
+    OdmBatch async_batch_;
+#endif
 
     nixlOdmBackendReqH()
         : gpu_id(0),
@@ -336,6 +350,10 @@ private:
      */
     nixl_status_t
     postOdmHostVa(nixlOdmBackendReqH *req) const;
+    nixl_status_t
+    odmDoHostVaWork(nixlOdmBackendReqH *req, uint16_t req_qid) const;
+    void
+    waitReqAsyncComplete(nixlOdmBackendReqH *req) const;
 
 #ifdef HAVE_ODM_IO_URING
     nixl_status_t
@@ -362,24 +380,24 @@ private:
 #ifdef HAVE_CUDA
     /*
      * Internal multi-queue worker pool: splits each transfer across queues so a
-     * single caller thread can saturate PCIe.
+     * single caller thread can saturate PCIe (requires enableProgTh).
      */
-    struct OdmBatch {
-        std::atomic<size_t> remaining{0};
-        std::atomic<int> status{0}; /* nixl_status_t of first error */
-        std::mutex m;
-        std::condition_variable cv;
+    enum class OdmWorkKind : std::uint8_t {
+        DmaBufPiece,
+        HostVaRequest,
     };
 
     struct OdmWork {
-        uint64_t gpu_va;
-        uint64_t iova;
-        uint64_t len;
-        OdmBatch *batch;
-        unsigned int ioctl_cmd;
-        uint32_t xfer_type;
-        uint32_t gpu_id;
-        uint16_t qid;
+        uint64_t gpu_va{0};
+        uint64_t iova{0};
+        uint64_t len{0};
+        OdmBatch *batch{nullptr};
+        unsigned int ioctl_cmd{0};
+        uint32_t xfer_type{0};
+        uint32_t gpu_id{0};
+        uint16_t qid{0};
+        nixlOdmBackendReqH *host_va_req{nullptr};
+        OdmWorkKind kind{OdmWorkKind::DmaBufPiece};
     };
 
     struct OdmQueueWorker {

@@ -252,6 +252,118 @@ runDramSemanticsTests(nixlAgent &agent,
     return failures;
 }
 
+int
+runAsyncPostPollAndReleaseTests(nixlAgent &agent,
+                                nixlBackendH *backend,
+                                bool multi_queue,
+                                bool use_io_uring) {
+    if (!multi_queue || use_io_uring) {
+        return 0;
+    }
+    (void)backend;
+    constexpr size_t kAsyncXferSize = 8u * 1024u * 1024u;
+    void *gpu_buf = nullptr;
+    if (cudaMalloc(&gpu_buf, kAsyncXferSize) != cudaSuccess) {
+        std::cerr << "ODM async test: cudaMalloc failed" << std::endl;
+        return 1;
+    }
+
+    nixl_opt_args_t extra;
+    extra.backends.push_back(backend);
+    nixl_reg_dlist_t vram_list(VRAM_SEG);
+    nixl_reg_dlist_t odm_list(DRAM_SEG);
+    nixlBlobDesc blob_vram;
+    blob_vram.addr = reinterpret_cast<uintptr_t>(gpu_buf);
+    blob_vram.len = kAsyncXferSize;
+    blob_vram.devId = 0;
+    nixlBlobDesc blob_odm;
+    blob_odm.addr = 0;
+    blob_odm.len = kAsyncXferSize;
+    blob_odm.devId = 0;
+    vram_list.addDesc(blob_vram);
+    odm_list.addDesc(blob_odm);
+
+    nixl_status_t ret = agent.registerMem(vram_list, &extra);
+    if (ret != NIXL_SUCCESS) {
+        cudaFree(gpu_buf);
+        return 1;
+    }
+    ret = agent.registerMem(odm_list, &extra);
+    if (ret != NIXL_SUCCESS) {
+        agent.deregisterMem(vram_list, &extra);
+        cudaFree(gpu_buf);
+        return 1;
+    }
+
+    int failures = 0;
+    nixl_xfer_dlist_t src_list = vram_list.trim();
+    nixl_xfer_dlist_t dst_list = odm_list.trim();
+
+    std::cout << "Phase 5: async postXfer poll (multi-queue worker pool)" << std::endl;
+    nixlXferReqH *req = nullptr;
+    ret = agent.createXferReq(NIXL_WRITE, src_list, dst_list, kAgentName, req, &extra);
+    if (ret != NIXL_SUCCESS) {
+        failures = 1;
+        goto cleanup;
+    }
+    ret = agent.postXferReq(req);
+    if (ret != NIXL_IN_PROG && ret != NIXL_SUCCESS) {
+        std::cerr << "ODM async test: unexpected postXferReq status " << ret << std::endl;
+        agent.releaseXferReq(req);
+        failures = 1;
+        goto cleanup;
+    }
+    {
+        constexpr int kMaxPolls = 1000000;
+        int polls = 0;
+        nixl_status_t status = ret;
+        while (status == NIXL_IN_PROG) {
+            if (++polls > kMaxPolls) {
+                std::cerr << "ODM async test: poll timeout" << std::endl;
+                failures = 1;
+                break;
+            }
+            status = agent.getXferStatus(req);
+        }
+        if (failures == 0 && status != NIXL_SUCCESS) {
+            std::cerr << "ODM async test: transfer failed with status " << status << std::endl;
+            failures = 1;
+        }
+    }
+    agent.releaseXferReq(req);
+    req = nullptr;
+
+    if (failures == 0) {
+        std::cout << "Phase 6: release while in progress" << std::endl;
+        ret = agent.createXferReq(NIXL_WRITE, src_list, dst_list, kAgentName, req, &extra);
+        if (ret != NIXL_SUCCESS) {
+            failures = 1;
+            goto cleanup;
+        }
+        ret = agent.postXferReq(req);
+        if (ret == NIXL_IN_PROG || ret == NIXL_SUCCESS) {
+            agent.releaseXferReq(req);
+            req = nullptr;
+        } else {
+            std::cerr << "ODM async test: postXferReq failed for release test" << std::endl;
+            agent.releaseXferReq(req);
+            failures = 1;
+        }
+    }
+
+cleanup:
+    if (req != nullptr) {
+        agent.releaseXferReq(req);
+    }
+    agent.deregisterMem(vram_list, &extra);
+    agent.deregisterMem(odm_list, &extra);
+    cudaFree(gpu_buf);
+    if (failures == 0) {
+        std::cout << "ODM async post/poll/release tests PASSED" << std::endl;
+    }
+    return failures;
+}
+
 nixl_status_t
 waitForXfer(nixlAgent &agent, nixlXferReqH *req, bool sync_cuda) {
     nixl_status_t status = agent.postXferReq(req);
@@ -385,21 +497,6 @@ main(int argc, char **argv) {
         return odmDeviceFailureExitCode(access_err);
     }
 
-    if (!host_dram) {
-        int device_count = 0;
-        const cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
-        if (cuda_err != cudaSuccess || device_count == 0) {
-            std::cerr << "Error: CUDA GPU not available: " << cudaGetErrorString(cuda_err)
-                      << std::endl;
-            return 1;
-        }
-        CUresult cu_res = cuInit(0);
-        if (cu_res != CUDA_SUCCESS) {
-            std::cerr << "Error: cuInit failed" << std::endl;
-            return 1;
-        }
-    }
-
     std::cout << "Phase 1: Initialize NIXL agent and ODM backend" << std::endl;
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
@@ -428,6 +525,16 @@ main(int argc, char **argv) {
     if (ret != NIXL_SUCCESS || backend == nullptr) {
         std::cerr << "Error: failed to create ODM backend for " << path << std::endl;
         return 1;
+    }
+
+    if (!host_dram) {
+        int device_count = 0;
+        const cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
+        if (cuda_err != cudaSuccess || device_count == 0) {
+            std::cerr << "Error: CUDA GPU not available: " << cudaGetErrorString(cuda_err)
+                      << std::endl;
+            return 1;
+        }
     }
 
     void *host_buf = nullptr;
@@ -597,6 +704,20 @@ main(int argc, char **argv) {
         result = 1;
     } else {
         std::cout << "ODM VRAM round-trip validation PASSED" << std::endl;
+        {
+            int q_start = 0;
+            int q_end = 0;
+            try {
+                q_start = std::stoi(qid_start_str);
+                q_end = std::stoi(qid_end_str);
+            }
+            catch (...) {
+                q_start = 0;
+                q_end = 0;
+            }
+            result += runAsyncPostPollAndReleaseTests(
+                agent, backend, q_end > q_start, use_io_uring);
+        }
     }
 
 cleanup:

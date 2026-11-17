@@ -945,10 +945,15 @@ nixlOdmEngine::odmWorkerLoop(OdmQueueWorker *qw) const {
             w = qw->q.front();
             qw->q.pop();
         }
-        nixl_status_t cst = ensureCudaContext(w.gpu_id);
-        nixl_status_t st = (cst != NIXL_SUCCESS) ? cst : odmDoWork(w);
+        nixl_status_t st = NIXL_SUCCESS;
+        if (w.kind == OdmWorkKind::HostVaRequest) {
+            st = odmDoHostVaWork(w.host_va_req, w.qid);
+        } else {
+            nixl_status_t cst = ensureCudaContext(w.gpu_id);
+            st = (cst != NIXL_SUCCESS) ? cst : odmDoWork(w);
+        }
         OdmBatch *b = w.batch;
-        {
+        if (b) {
             std::lock_guard<std::mutex> blk(b->m);
             if (st != NIXL_SUCCESS) {
                 b->status.store(st, std::memory_order_relaxed);
@@ -962,7 +967,7 @@ nixlOdmEngine::odmWorkerLoop(OdmQueueWorker *qw) const {
 
 void
 nixlOdmEngine::odmPoolStart() {
-    if (odm_pool_started_ || odm_num_queues_ <= 1) {
+    if (odm_pool_started_ || odm_num_queues_ <= 1 || !enable_prog_th_) {
         return;
     }
     odm_stop_ = false;
@@ -1267,10 +1272,10 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
      * segment is split into up to odm_num_queues_ 64KB-aligned partitions; a
      * global round-robin index spreads pieces across queues so that a BATCH of
      * many small segments (e.g. batched 256K blocks) also lands on distinct
-     * queues instead of all piling onto queue 0. The caller blocks until all
-     * pieces complete.
+     * queues instead of all piling onto queue 0. Returns NIXL_IN_PROG when
+     * work is queued to the worker pool (async postXfer).
      */
-    OdmBatch batch;
+    OdmBatch &batch = req->async_batch_;
     std::vector<OdmWork> items;
     items.reserve(req->segments.size() * odm_num_queues_);
     // Start the round-robin index at the calling thread's assigned queue
@@ -1349,12 +1354,7 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
         qw->cv.notify_one();
     }
 
-    /* Wait for all partitions. */
-    {
-        std::unique_lock<std::mutex> blk(batch.m);
-        batch.cv.wait(blk, [&] { return batch.remaining.load(std::memory_order_acquire) == 0; });
-    }
-    return static_cast<nixl_status_t>(batch.status.load(std::memory_order_relaxed));
+    return NIXL_IN_PROG;
 #endif
 }
 
@@ -1363,18 +1363,12 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
 // ---------------------------------------------------------------------------
 
 nixl_status_t
-nixlOdmEngine::postOdmHostVa(nixlOdmBackendReqH *req) const {
-    /*
-     * NOTE: io_uring spray and pre-pinned pages are not implemented for the
-     * host-VA path. Those optimizations would require kernel module changes
-     * (host-VA spray ioctl and register-time pin_user_pages support).
-     */
+nixlOdmEngine::odmDoHostVaWork(nixlOdmBackendReqH *req, uint16_t req_qid) const {
     const unsigned int ioctl_cmd = (req->direction == OdmDirection::Outbound) ?
         MRVL_CXL_DMA_READ_COMMAND :
         MRVL_CXL_DMA_WRITE_COMMAND;
     const uint32_t xfer_type =
         (req->direction == OdmDirection::Outbound) ? ODM_XTYPE_OUTBOUND : ODM_XTYPE_INBOUND;
-    const uint16_t req_qid = nextQid();
     const int lock_slot = static_cast<int>(req_qid) - static_cast<int>(qid_start_);
     std::lock_guard<std::mutex> qlk(qid_locks_[(lock_slot >= 0 && lock_slot < odm_num_queues_) ?
                                                    static_cast<size_t>(lock_slot) :
@@ -1413,6 +1407,55 @@ nixlOdmEngine::postOdmHostVa(nixlOdmBackendReqH *req) const {
     return NIXL_SUCCESS;
 }
 
+nixl_status_t
+nixlOdmEngine::postOdmHostVa(nixlOdmBackendReqH *req) const {
+    /*
+     * NOTE: io_uring spray and pre-pinned pages are not implemented for the
+     * host-VA path. Those optimizations would require kernel module changes
+     * (host-VA spray ioctl and register-time pin_user_pages support).
+     */
+#ifdef HAVE_CUDA
+    if (odm_pool_started_) {
+        const uint16_t req_qid = nextQid();
+        OdmBatch &batch = req->async_batch_;
+        batch.remaining.store(1, std::memory_order_relaxed);
+        batch.status.store(NIXL_SUCCESS, std::memory_order_relaxed);
+        req->dispatched = true;
+
+        OdmWork w{};
+        w.kind = OdmWorkKind::HostVaRequest;
+        w.host_va_req = req;
+        w.batch = &batch;
+        w.qid = req_qid;
+
+        const int k = static_cast<int>(req_qid - qid_start_);
+        OdmQueueWorker *qw = odm_workers_[k].get();
+        std::lock_guard<std::mutex> lk(qw->m);
+        qw->q.push(w);
+        qw->cv.notify_one();
+        return NIXL_IN_PROG;
+    }
+#endif
+    return odmDoHostVaWork(req, nextQid());
+}
+
+void
+nixlOdmEngine::waitReqAsyncComplete(nixlOdmBackendReqH *req) const {
+#ifdef HAVE_CUDA
+    if (!req || !req->dispatched) {
+        return;
+    }
+    OdmBatch &batch = req->async_batch_;
+    if (batch.remaining.load(std::memory_order_acquire) == 0) {
+        return;
+    }
+    std::unique_lock<std::mutex> lk(batch.m);
+    batch.cv.wait(lk, [&] { return batch.remaining.load(std::memory_order_acquire) == 0; });
+#else
+    (void)req;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // postXfer / checkXfer / releaseReqH
 // ---------------------------------------------------------------------------
@@ -1432,10 +1475,16 @@ nixlOdmEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    waitReqAsyncComplete(req);
+
     /* NIXL may repost completed handles; multi-queue pool work may finish asynchronously. */
     req->posted = false;
     req->dispatched = false;
     req->status = NIXL_SUCCESS;
+#ifdef HAVE_CUDA
+    req->async_batch_.remaining.store(0, std::memory_order_relaxed);
+    req->async_batch_.status.store(NIXL_SUCCESS, std::memory_order_relaxed);
+#endif
     nixl_status_t st;
     if (req->is_dram_to_dram) {
         st = postOdmHostVa(req);
@@ -1446,12 +1495,17 @@ nixlOdmEngine::postXfer(const nixl_xfer_op_t &operation,
         st = postOdmDmabuf(req);
 #endif
     }
-    if (st != NIXL_SUCCESS && !req->dispatched) {
+    if (st != NIXL_SUCCESS && st != NIXL_IN_PROG) {
         return st;
+    }
+    if (st == NIXL_IN_PROG) {
+        req->posted = true;
+        req->status = NIXL_SUCCESS;
+        return NIXL_IN_PROG;
     }
     req->status = st;
     req->posted = true;
-    return (st == NIXL_SUCCESS) ? NIXL_SUCCESS : NIXL_IN_PROG;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -1460,7 +1514,19 @@ nixlOdmEngine::checkXfer(nixlBackendReqH *handle) const {
     if (!req) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    return req->posted ? req->status : NIXL_ERR_NOT_POSTED;
+    if (!req->posted) {
+        return NIXL_ERR_NOT_POSTED;
+    }
+#ifdef HAVE_CUDA
+    if (req->dispatched) {
+        OdmBatch &batch = req->async_batch_;
+        if (batch.remaining.load(std::memory_order_acquire) > 0) {
+            return NIXL_IN_PROG;
+        }
+        return static_cast<nixl_status_t>(batch.status.load(std::memory_order_relaxed));
+    }
+#endif
+    return req->status;
 }
 
 nixl_status_t
@@ -1469,6 +1535,7 @@ nixlOdmEngine::releaseReqH(nixlBackendReqH *handle) const {
     if (!req) {
         return NIXL_SUCCESS;
     }
+    waitReqAsyncComplete(req);
     delete req;
     return NIXL_SUCCESS;
 }
