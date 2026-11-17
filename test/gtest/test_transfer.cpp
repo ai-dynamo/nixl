@@ -768,7 +768,6 @@ TEST_P(TestTransferFragmentedRead, DataInPlaceWhenDone) {
         invalidate(local_buffers, remote_buffers);
 
         nixl_status_t status = getAgent(0).postXferReq(req);
-        ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
 
         // No sleep between the status checks, so that the buffers are looked at
         // right after the transfer is reported done.
@@ -780,7 +779,13 @@ TEST_P(TestTransferFragmentedRead, DataInPlaceWhenDone) {
                 getAgent(1).getNotifs(notifs);
             }
         }
-        ASSERT_EQ(NIXL_SUCCESS, status);
+
+        // A failure leaves the loop, not the test: the request is released and
+        // the buffers are deregistered before they are freed.
+        EXPECT_EQ(NIXL_SUCCESS, status) << "post " << post;
+        if (status != NIXL_SUCCESS) {
+            break;
+        }
 
         const size_t stale = countStale(local_buffers, remote_buffers);
         EXPECT_EQ(0u, stale) << "post " << post << " was reported done with " << stale << " of "
