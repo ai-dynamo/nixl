@@ -1,9 +1,16 @@
 # NIXL EP API shell
 
-The public exports, method signatures, defaults and argument annotations are
-preserved, except that `combine` annotates `bias` and `previous_event` as optional
-to match their `None` defaults. Method docstrings retain the production contracts
-for review; they are not claims that this shell executes those operations.
+The public exports, method signatures, defaults and argument annotations follow
+the production API, except that `combine` annotates `bias` and `previous_event`
+as optional to match their `None` defaults. Construction requires `world_rank`,
+`max_num_scaleout_ranks` and `max_num_scaleup_ranks`; it does not discover a group
+or connect peers. The constructor has no `num_bytes` or `num_nixl_channels`
+overrides. Public metadata getters and `publish` are absent; `connect_ranks`
+takes a Store instead of manual metadata. Topology staging, commit, inspection
+and coordinate helpers are private; `set_active_ranks` activates membership and
+`disconnect_ranks` finishes peer retirement.
+Method docstrings describe the
+production contracts, not operations executed by this shell.
 
 ## Install and exercise the public API
 
@@ -24,10 +31,13 @@ import torch
 from nixl.runtime.ep import ElasticBuffer, topk_idx_t
 
 buffer = ElasticBuffer(
-    rank_idx=0, num_ranks=2, num_group_scaleup_ranks=2,
+    world_rank=0, max_num_scaleout_ranks=1, max_num_scaleup_ranks=2,
     num_experts_per_rank=8, num_max_tokens_per_rank=16,
     hidden=512, num_topk=2, explicitly_destroy=True,
 )
+store = object()  # Inert Store stand-in for this shell-only example.
+buffer.connect_ranks([1], store=store)
+buffer.set_active_ranks([0, 1])
 x = torch.empty((16, 512), dtype=torch.bfloat16, device="meta")
 topk = torch.empty((16, 2), dtype=topk_idx_t, device="meta")
 received, indices, weights, handle, event = buffer.dispatch(x, topk)
@@ -39,11 +49,15 @@ buffer.destroy()
 
 ## What the shell models
 
-- Configuration, fixed expert slots per rank, connected peers, staged versus
-  committed topology, direct/hybrid selection, manual/automatic SM policy and
+- Configuration, fixed expert slots per rank, connected peers, active topology,
+  direct/hybrid selection, manual/automatic SM policy and
   explicit destruction are local Python state. No other rank participates.
-- With no declared domain size, the cohort is treated as one domain. Group
-  objects are queried only for their local `rank()` and `size()` values.
+  Construction starts with only `world_rank` active and no connected peers.
+  Connect peers explicitly, then activate the intended ranks with
+  `set_active_ranks` before dispatch.
+- The separate `get_logical_domain_size` helper queries only `group.size()`.
+  With no declared domain size, it assumes one domain. It does not discover
+  hardware or access a Store.
 - Dispatch returns the five-item API result; combine returns its two-item
   result. Receive tensors always have zero rows. Combine's placeholder has the
   original input token count and the supplied combine input's hidden width.
@@ -59,13 +73,15 @@ buffer.destroy()
   communication stream is an opaque placeholder, not a usable CUDA stream.
   Explicit event release also clears `extra_tensors`, extending the production
   baseline's event-only release behavior.
-- `get_buffer_size_hint()` returns `0`, `get_theoretical_num_sms()` returns `2`,
-  and `read_profile()` returns an empty mapping. These are placeholders, not
-  sizing, tuning or performance results. The shell's launch limit is `24`.
-- `publish()` is a no-op; peer connections and pending disconnects are local
-  state. A disconnected peer can reconnect after commit. No Store is touched
-  or data exchanged. Metadata contains no usable address. `init_jit()` is a
-  no-op, and `topk_idx_t` is fixed to `torch.int64`.
+- `num_bytes` is `0`, `get_buffer_size_hint()` returns `0`,
+  `get_theoretical_num_sms()` returns `2`, and `read_profile()` returns an empty
+  mapping. These are placeholders, not sizing, tuning or performance results.
+  The shell's launch limit is `24`.
+- Peer connections and retirement are local state. `connect_ranks`
+  ignores already-connected peers and requires a Store only for new peers,
+  passed directly or at construction, but never accesses it.
+  A disconnected peer can reconnect after `disconnect_ranks` returns. No data is exchanged.
+  `init_jit()` is a no-op, and `topk_idx_t` is fixed to `torch.int64`.
 
 The shell does not validate execution-dependent constraints, CUDA graph or
 stream behavior, memory ownership, timeouts, transport completion or GPU

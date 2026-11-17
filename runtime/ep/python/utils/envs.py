@@ -16,7 +16,6 @@ def get_logical_domain_size(
     *,
     num_scaleup_ranks: Optional[int] = None,
     store: Optional[dist.Store] = None,
-    bootstrap_id: Optional[str] = None,
     store_timeout_secs: int = 300,
 ) -> Tuple[int, int]:
     """
@@ -27,8 +26,8 @@ def get_logical_domain_size(
     Arguments:
         group: the communication group.
         num_scaleup_ranks: the declared domain size (must divide the group size), or `None` to infer it.
-        store: with `bootstrap_id`, the Store to exchange through instead of a cohort-private TCPStore served by the group's first rank.
-        bootstrap_id: the namespace in `store`.
+        store: the Store to exchange through using ProcessGroup global-rank keys, deleted after discovery;
+            otherwise a cohort-private TCPStore served by the group's first rank. Serialize discovery for overlapping groups.
         store_timeout_secs: how long to wait for the other ranks' records.
 
     Returns:

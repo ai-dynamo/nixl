@@ -6,7 +6,7 @@
 Run with ``python -m unittest discover -s runtime/ep/tests/api -v``. Set
 ``NIXL_EP_API_MODULE=nixl.runtime.ep`` to exercise the installed public package.
 The checked-in signature snapshot comes from production commit 6b11b2c, with
-documented annotation corrections; it is independent of the shell under test.
+documented API corrections; it is independent of the shell under test.
 """
 
 import ast
@@ -128,9 +128,7 @@ class ApiShellTests(unittest.TestCase):
 
     def buffer(self, **kwargs):
         options = dict(
-            rank_idx=0,
-            num_ranks=2,
-            num_group_scaleup_ranks=2,
+            world_rank=0,
             max_num_scaleout_ranks=2,
             max_num_scaleup_ranks=2,
             num_max_tokens_per_rank=8,
@@ -139,10 +137,15 @@ class ApiShellTests(unittest.TestCase):
             num_experts_per_rank=3,
             explicitly_destroy=True,
             store=ForbiddenStore(),
-            bootstrap_id="api-only",
         )
         options.update(kwargs)
         return self.ep.ElasticBuffer(**options)
+
+    def two_rank_buffer(self, **kwargs):
+        buffer = self.buffer(**kwargs)
+        buffer.connect_ranks([1], store=ForbiddenStore())
+        buffer.set_active_ranks([0, 1])
+        return buffer
 
     def tensor(self, shape, dtype=torch.bfloat16):
         return torch.empty(shape, dtype=dtype, device="meta")
@@ -207,260 +210,281 @@ class ApiShellTests(unittest.TestCase):
     def test_configuration_and_local_helpers_do_not_touch_store_or_hardware(self):
         group = SimpleNamespace(rank=lambda: 1, size=lambda: 4)
         store = ForbiddenStore()
-        buffer = self.buffer(group=group, rank_idx=None, num_ranks=None, store=store)
-        self.assertEqual(
-            (buffer.rank_idx, buffer.num_ranks, buffer.world_rank), (1, 4, 1)
-        )
+        buffer = self.buffer(world_rank=1, store=store)
         self.assertEqual(buffer.num_experts_per_rank, 3)
+        self.assertEqual(buffer.num_bytes, 0)
         self.assertIs(buffer.store, store)
         self.assertIsNone(buffer.runtime)
-        self.assertEqual(buffer.get_active_ranks(), [0, 1, 2, 3])
+        self.assertEqual(buffer.get_active_ranks(), [1])
         self.assertEqual(self.ep.get_logical_domain_size(group, store=store), (1, 4))
         self.assertEqual(
             self.ep.get_logical_domain_size(group, num_scaleup_ranks=2, store=store),
             (2, 2),
         )
-        self.assertEqual(
-            self.buffer(num_group_scaleup_ranks=None).get_topology_masks(), (1, 3)
-        )
-        with self.assertRaisesRegex(ValueError, "num_group_scaleup_ranks must divide"):
-            self.buffer(num_group_scaleup_ranks=0)
         with self.assertRaisesRegex(ValueError, "num_scaleup_ranks must divide"):
             self.ep.get_logical_domain_size(group, num_scaleup_ranks=0, store=store)
         self.assertEqual(buffer.get_buffer_size_hint(group, 8, 256, store=store), 0)
-        self.assertIsInstance(buffer.get_local_metadata(), bytes)
-        peer = buffer.get_local_peer_info()
-        self.assertEqual(len(peer), 4)
-        self.assertEqual(peer[2], buffer.world_rank)
         self.assertEqual(buffer.read_profile(), {})
         self.assertIs(buffer.get_comm_stream(), buffer.get_comm_stream())
         self.assertIsNone(buffer.barrier(with_cpu_sync=True))
-        self.assertIsNone(buffer.publish(store=store))
 
-    def test_topology_stages_then_commits_without_renumbering_slots(self):
-        buffer = self.buffer()
-        self.assertEqual(buffer.get_topology_masks(), (1, 3))
-        self.assertEqual(buffer.get_topology()[0], "direct")
-        self.assertEqual(buffer.world_rank_of(1, 1), 3)
+    def test_set_active_ranks_updates_topology_without_renumbering_slots(self):
+        buffer = self.two_rank_buffer()
+        self.assertEqual(buffer._get_topology_masks(), (1, 3))
+        self.assertEqual(buffer._get_topology()[0], "direct")
+        self.assertEqual(buffer._world_rank_of(1, 1), 3)
         self.assertEqual(buffer.get_connected_ranks(), [1])
         buffer.connect_ranks([2, 3], store=ForbiddenStore())
         self.assertEqual(buffer.get_connected_ranks(), [1, 2, 3])
         self.assertEqual(buffer.get_active_ranks(), [0, 1])
-        buffer.stage_topology(active_ranks=[3, 2, 1, 0], num_active_sms=8)
-        self.assertEqual(buffer.get_active_ranks(), [0, 1])
-        with self.assertRaises(ValueError):
-            buffer.set_num_active_sms(4)
-        buffer.commit_topology()
-        self.assertEqual(buffer.get_topology(), ("hybrid", 8))
-        self.assertEqual(buffer.get_topology_masks(), (3, 3))
-        self.assertEqual(buffer.get_topology_extent(), (2, 2))
+        buffer.set_active_ranks([3, 2, 1, 0], num_active_sms=8)
+        self.assertEqual(buffer._get_topology(), ("hybrid", 8))
+        self.assertEqual(buffer._get_topology_masks(), (3, 3))
+        self.assertEqual(buffer._get_topology_extent(), (2, 2))
         with self.assertRaises(ValueError):
             buffer.disconnect_ranks([2])
         buffer.set_active_ranks([2, 3])
-        self.assertEqual(buffer.get_topology(), ("direct", 8))
-        self.assertEqual(buffer.get_topology_masks(), (2, 3))
-        self.assertEqual(buffer.get_topology_extent(), (2, 2))
-        self.assertFalse(buffer.is_active)
+        self.assertEqual(buffer._get_topology(), ("direct", 8))
+        self.assertEqual(buffer._get_topology_masks(), (2, 3))
+        self.assertEqual(buffer._get_topology_extent(), (2, 2))
+        self.assertNotIn(buffer.world_rank, buffer.get_active_ranks())
         self.assertEqual(buffer.num_experts_per_rank, 3)
         buffer.disconnect_ranks([1])
-        buffer.commit_topology()
         self.assertEqual(buffer.get_connected_ranks(), [2, 3])
         with self.assertRaises(ValueError):
-            buffer.masks_of([0, 1, 2])
+            buffer._masks_of([0, 1, 2])
 
     def test_inactive_rank_can_retire_peers_from_committed_and_staged_worlds(self):
-        buffer = self.buffer()
+        buffer = self.two_rank_buffer()
         buffer.connect_ranks([2, 3], store=ForbiddenStore())
         buffer.set_active_ranks([2, 3])
-        buffer.stage_topology(active_ranks=[1])
-        self.assertFalse(buffer.is_active)
+        buffer._stage_topology(active_ranks=[1])
+        self.assertNotIn(buffer.world_rank, buffer.get_active_ranks())
         buffer.disconnect_ranks([1, 2, 3])
         self.assertEqual(buffer.get_connected_ranks(), [])
-        self.assertEqual(buffer.get_active_ranks(), [2, 3])
-        buffer.commit_topology()
         self.assertEqual(buffer.get_active_ranks(), [1])
-        self.assertFalse(buffer.is_active)
+        self.assertNotIn(buffer.world_rank, buffer.get_active_ranks())
 
     def test_disconnect_protects_each_world_only_when_local_rank_is_active(self):
         for committed, staged in (([0, 1], [2, 3]), ([2, 3], [0, 1])):
             with self.subTest(committed=committed, staged=staged):
-                buffer = self.buffer()
+                buffer = self.two_rank_buffer()
                 buffer.connect_ranks([2, 3], store=ForbiddenStore())
                 buffer.set_active_ranks(committed)
-                buffer.stage_topology(active_ranks=staged)
+                buffer._stage_topology(active_ranks=staged)
                 with self.assertRaises(ValueError):
                     buffer.disconnect_ranks([2, 1])
                 self.assertEqual(buffer.get_connected_ranks(), [1, 2, 3])
                 buffer.disconnect_ranks([2, 3])
                 self.assertEqual(buffer.get_connected_ranks(), [1])
-                self.assertEqual(buffer.get_active_ranks(), committed)
-                buffer.commit_topology()
                 self.assertEqual(buffer.get_active_ranks(), staged)
 
-    def test_connect_rejects_duplicate_and_connected_ranks_before_mutation(self):
-        for ranks in ([2, 2], [2, 1]):
+    def test_connect_rejects_duplicate_new_ranks_before_mutation(self):
+        for ranks in ([2, 2], [1, 2, 2]):
             with self.subTest(ranks=ranks):
-                buffer = self.buffer()
+                buffer = self.two_rank_buffer()
                 with self.assertRaises(ValueError):
                     buffer.connect_ranks(ranks, store=ForbiddenStore())
                 self.assertEqual(buffer.get_connected_ranks(), [1])
                 self.assertEqual(buffer.get_active_ranks(), [0, 1])
                 with self.assertRaises(ValueError):
-                    buffer.commit_topology()
+                    buffer._commit_topology()
 
-    def test_connect_rejects_incomplete_metadata_without_changing_staged_state(self):
-        metadata = dict(
-            remote_mds=[b"peer-2", b"peer-3"],
-            peer_infos=[(0, 0, 2, 0), (0, 0, 3, 0)],
-        )
-        invalid = [
-            {key: value for key, value in metadata.items() if key != missing}
-            for missing in metadata
-        ]
-        for key, values in metadata.items():
-            for wrong_length in ([], values[:1], values + values[:1]):
-                invalid.append({**metadata, key: wrong_length})
-        invalid.append({key: values[:1] for key, values in metadata.items()})
-        for incomplete in invalid:
-            with self.subTest(metadata=incomplete):
-                buffer = self.buffer()
-                with self.assertRaises(ValueError):
-                    buffer.connect_ranks([2, 3], **incomplete, store=ForbiddenStore())
+    def test_connect_ignores_existing_peers_without_store_or_state_changes(self):
+        for store in (None, ForbiddenStore()):
+            for staged in (False, True):
+                with self.subTest(store=store, staged=staged):
+                    buffer = self.two_rank_buffer(store=store)
+                    if staged:
+                        buffer._stage_topology(active_ranks=[0], num_active_sms=8)
+                    buffer.connect_ranks([1, 1])
+                    buffer.connect_ranks([])
+                    self.assertEqual(buffer.get_connected_ranks(), [1])
+                    self.assertEqual(buffer.get_active_ranks(), [0, 1])
+                    if staged:
+                        buffer._commit_topology()
+                        self.assertEqual(buffer.get_active_ranks(), [0])
+                        self.assertEqual(buffer._get_topology(), ("direct", 8))
+                    else:
+                        with self.assertRaises(ValueError):
+                            buffer._commit_topology()
+
+    def test_connect_mixed_peers_stages_only_new_connections(self):
+        buffer = self.two_rank_buffer()
+        buffer.connect_ranks([2, 1, 1])
+        self.assertEqual(buffer.get_connected_ranks(), [1, 2])
+        self.assertEqual(buffer.get_active_ranks(), [0, 1])
+        buffer.connect_ranks([2, 1])
+        buffer._commit_topology()
+        self.assertEqual(buffer.get_active_ranks(), [0, 1])
+        with self.assertRaises(ValueError):
+            buffer._commit_topology()
+
+    def test_connect_requires_store_without_changing_staged_state(self):
+        for staged in (False, True):
+            with self.subTest(staged=staged):
+                buffer = self.two_rank_buffer(store=None)
+                if staged:
+                    buffer._stage_topology(active_ranks=[0], num_active_sms=8)
+                with self.assertRaisesRegex(ValueError, "explicit Store"):
+                    buffer.connect_ranks([2, 3])
                 self.assertEqual(buffer.get_connected_ranks(), [1])
                 self.assertEqual(buffer.get_active_ranks(), [0, 1])
-                with self.assertRaises(ValueError):
-                    buffer.commit_topology()
+                if staged:
+                    buffer._commit_topology()
+                    self.assertEqual(buffer.get_active_ranks(), [0])
+                    self.assertEqual(buffer._get_topology(), ("direct", 8))
+                else:
+                    with self.assertRaises(ValueError):
+                        buffer._commit_topology()
+                buffer.connect_ranks([2, 3], store=ForbiddenStore())
+                self.assertEqual(buffer.get_connected_ranks(), [1, 2, 3])
 
-                buffer.stage_topology(active_ranks=[0], num_active_sms=8)
-                with self.assertRaises(ValueError):
-                    buffer.connect_ranks([2, 3], **incomplete, store=ForbiddenStore())
-                self.assertEqual(buffer.get_connected_ranks(), [1])
-                self.assertEqual(buffer.get_active_ranks(), [0, 1])
-                buffer.commit_topology()
-                self.assertEqual(buffer.get_active_ranks(), [0])
-                self.assertEqual(buffer.get_topology(), ("direct", 8))
-
-        buffer = self.buffer()
-        buffer.connect_ranks([2, 3], **metadata, store=ForbiddenStore())
+        buffer = self.two_rank_buffer()
+        buffer.connect_ranks([2, 3])
         self.assertEqual(buffer.get_connected_ranks(), [1, 2, 3])
-        buffer.commit_topology()
+        buffer._commit_topology()
         self.assertEqual(buffer.get_active_ranks(), [0, 1])
 
-    def test_disconnected_rank_can_reconnect_only_after_commit(self):
-        buffer = self.buffer()
+    def test_disconnect_finishes_retirement_and_allows_reconnect(self):
+        buffer = self.two_rank_buffer()
         buffer.connect_ranks([2], store=ForbiddenStore())
-        buffer.commit_topology()
+        buffer.set_active_ranks([0, 2])
+        buffer.set_active_ranks([0, 1])
         for ranks in ([2, 3], [2, 2]):
             with self.subTest(disconnect=ranks):
                 with self.assertRaises(ValueError):
                     buffer.disconnect_ranks(ranks)
                 self.assertEqual(buffer.get_connected_ranks(), [1, 2])
-                with self.assertRaises(ValueError):
-                    buffer.commit_topology()
         buffer.disconnect_ranks([2])
         self.assertEqual(buffer.get_connected_ranks(), [1])
-        with self.assertRaises(ValueError):
-            buffer.connect_ranks([3, 2], store=ForbiddenStore())
-        self.assertEqual(buffer.get_connected_ranks(), [1])
-        buffer.commit_topology()
-        buffer.connect_ranks([2], store=ForbiddenStore())
-        self.assertEqual(buffer.get_connected_ranks(), [1, 2])
-        buffer.commit_topology()
         self.assertEqual(buffer.get_active_ranks(), [0, 1])
+        buffer.connect_ranks([2], store=ForbiddenStore())
+        buffer.set_active_ranks([0, 2])
+        self.assertEqual(buffer.get_connected_ranks(), [1, 2])
+        self.assertEqual(buffer.get_active_ranks(), [0, 2])
 
-    def test_sm_updates_commit_pending_disconnects_when_they_recommit_topology(self):
+    def test_disconnect_preserves_membership_and_manual_or_automatic_sm_policy(self):
         x = self.tensor((5, 256))
         idx = self.tensor((5, 2), self.ep.topk_idx_t)
-        for method, sms in (("set", 4), ("set", 6), ("dispatch", 4), ("dispatch", 6)):
-            with self.subTest(method=method, sms=sms):
-                buffer = self.buffer()
-                buffer.set_num_active_sms(4)
-                buffer.connect_ranks([2], store=ForbiddenStore())
-                buffer.commit_topology()
-                buffer.disconnect_ranks([2])
-                if method == "set":
-                    buffer.set_num_active_sms(sms)
-                else:
-                    buffer.dispatch(x, idx, num_sms=sms)
-                self.assertEqual(buffer.get_topology(), ("direct", sms))
-                if method == "dispatch" and sms == 4:
-                    with self.assertRaises(ValueError):
-                        buffer.connect_ranks([2], store=ForbiddenStore())
-                    buffer.commit_topology()
-                buffer.connect_ranks([2], store=ForbiddenStore())
-                self.assertEqual(buffer.get_connected_ranks(), [1, 2])
+        for sms in (0, 6):
+            with self.subTest(sms=sms):
+                buffer = self.two_rank_buffer()
+                buffer.connect_ranks([2, 3])
+                buffer.set_active_ranks([0, 1, 2, 3])
+                buffer.dispatch(x, idx, num_sms=sms)
+                buffer.set_active_ranks([0, 1])
+                before = buffer._get_topology(), buffer._auto_sm_config
+                buffer.disconnect_ranks([2, 3])
                 self.assertEqual(buffer.get_active_ranks(), [0, 1])
+                self.assertEqual(
+                    (buffer._get_topology(), buffer._auto_sm_config), before
+                )
+                buffer.connect_ranks([2, 3])
+                buffer.set_active_ranks([0, 1, 2, 3])
+                self.assertEqual(buffer._get_topology(), ("hybrid", before[0][1]))
 
-    def test_constructor_rejects_coordinates_outside_each_axis(self):
-        for domain, position in ((-1, 0), (2, 0), (0, -1), (0, 2), (1, -1), (2, -1)):
-            with self.subTest(domain=domain, position=position):
-                with self.assertRaises(ValueError):
-                    self.buffer(
-                        num_ranks=1,
-                        num_group_scaleup_ranks=1,
-                        scaleout_rank_idx=domain,
-                        scaleup_rank_idx=position,
+    def test_empty_disconnect_does_not_activate_pending_state(self):
+        for staged in (False, True):
+            with self.subTest(staged=staged):
+                buffer = self.two_rank_buffer()
+                buffer.connect_ranks([2, 3])
+                if staged:
+                    buffer._stage_topology(active_ranks=[0, 1, 2, 3], num_active_sms=8)
+                before = buffer._pending, buffer._peers_changed, buffer._get_topology()
+                buffer.disconnect_ranks([])
+                self.assertEqual(buffer.get_active_ranks(), [0, 1])
+                self.assertEqual(
+                    (buffer._pending, buffer._peers_changed, buffer._get_topology()),
+                    before,
+                )
+                buffer._commit_topology()
+                self.assertEqual(
+                    buffer.get_active_ranks(), [0, 1, 2, 3] if staged else [0, 1]
+                )
+
+    def test_constructor_initializes_only_local_rank_without_store_access(self):
+        for world_rank, coordinates, masks in (
+            (0, (0, 0), (1, 1)),
+            (2, (1, 0), (2, 1)),
+            (3, (1, 1), (2, 2)),
+        ):
+            for store in (None, ForbiddenStore()):
+                with self.subTest(world_rank=world_rank, store=store):
+                    buffer = self.buffer(world_rank=world_rank, store=store)
+                    self.assertEqual(buffer.world_rank, world_rank)
+                    self.assertEqual(
+                        (buffer.scaleout_rank_idx, buffer.scaleup_rank_idx),
+                        coordinates,
                     )
-        # Valid local coordinates cannot let the cohort wrap into another domain.
-        with self.assertRaises(ValueError):
-            self.buffer(
-                rank_idx=0,
-                num_ranks=2,
-                num_group_scaleup_ranks=2,
-                max_num_scaleout_ranks=2,
-                max_num_scaleup_ranks=1,
-                scaleout_rank_idx=0,
-                scaleup_rank_idx=0,
-            )
-        # A singleton at the final valid cell establishes the upper boundary.
-        buffer = self.buffer(
-            num_ranks=1,
-            num_group_scaleup_ranks=1,
-            scaleout_rank_idx=1,
-            scaleup_rank_idx=1,
+                    self.assertEqual(buffer.get_active_ranks(), [world_rank])
+                    self.assertEqual(buffer.get_connected_ranks(), [])
+                    self.assertEqual(buffer._get_topology_masks(), masks)
+                    self.assertIn(buffer.world_rank, buffer.get_active_ranks())
+                    self.assertIs(buffer.store, store)
+                    self.assertIsNone(buffer.runtime)
+                    self.assertEqual(buffer.num_bytes, 0)
+                    self.assertFalse(hasattr(buffer, "rank_idx"))
+                    self.assertFalse(hasattr(buffer, "num_ranks"))
+                    with self.assertRaises(ValueError):
+                        buffer._commit_topology()
+
+    def test_constructor_rejects_invalid_world_rank_and_maxima(self):
+        invalid = (
+            {"world_rank": -1},
+            {"world_rank": 4},
+            {"world_rank": True},
+            {"world_rank": 1.0},
+            {"max_num_scaleout_ranks": 0},
+            {"max_num_scaleout_ranks": -1},
+            {"max_num_scaleout_ranks": True},
+            {"max_num_scaleout_ranks": 2.0},
+            {"max_num_scaleup_ranks": 0},
+            {"max_num_scaleup_ranks": -1},
+            {"max_num_scaleup_ranks": True},
+            {"max_num_scaleup_ranks": 2.0},
         )
-        self.assertEqual(buffer.world_rank, 3)
-        self.assertEqual(buffer.get_active_ranks(), [3])
+        for options in invalid:
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.buffer(**options)
 
     def test_failed_dispatch_preserves_manual_sms_and_existing_handle(self):
-        buffer = self.buffer()
+        buffer = self.two_rank_buffer()
         x = self.tensor((5, 256))
         idx = self.tensor((5, 2), self.ep.topk_idx_t)
         received, _, _, handle, _ = buffer.dispatch(x, idx, num_sms=4)
         malformed_idx = self.tensor((5,), self.ep.topk_idx_t)
         with self.assertRaises((IndexError, ValueError)):
             buffer.dispatch(x, malformed_idx)
-        self.assertEqual(buffer.get_topology(), ("direct", 4))
+        self.assertEqual(buffer._get_topology(), ("direct", 4))
         combined, _ = buffer.combine(received, handle)
         self.assert_placeholder(combined, (5, 256), torch.bfloat16)
         buffer.connect_ranks([2, 3], store=ForbiddenStore())
-        buffer.stage_topology(active_ranks=[0, 1, 2, 3])
-        buffer.commit_topology()
-        self.assertEqual(buffer.get_topology(), ("hybrid", 4))
+        buffer.set_active_ranks([0, 1, 2, 3])
+        self.assertEqual(buffer._get_topology(), ("hybrid", 4))
 
     def test_staged_topology_preserves_automatic_dispatch_topk_policy(self):
-        buffer = self.buffer()
+        buffer = self.two_rank_buffer()
         x = self.tensor((5, 256))
         idx_one = self.tensor((5, 1), self.ep.topk_idx_t)
         idx_two = self.tensor((5, 2), self.ep.topk_idx_t)
         buffer.dispatch(x, idx_one)
         buffer.connect_ranks([2, 3], store=ForbiddenStore())
-        buffer.stage_topology(active_ranks=[0, 1, 2, 3])
+        buffer._stage_topology(active_ranks=[0, 1, 2, 3])
         with self.assertRaises(ValueError):
             buffer.dispatch(x, idx_two)
         buffer.dispatch(x, idx_one)
         self.assertEqual(buffer.get_active_ranks(), [0, 1])
-        buffer.commit_topology()
+        buffer._commit_topology()
         self.assertEqual(buffer.get_active_ranks(), [0, 1, 2, 3])
         _, _, _, handle, _ = buffer.dispatch(x, idx_two)
         self.assert_placeholder(handle.topk_idx, (5, 2), self.ep.topk_idx_t)
 
     def test_manual_sms_and_destroyed_lifecycle(self):
-        buffer = self.buffer()
+        buffer = self.two_rank_buffer()
         buffer.set_num_active_sms(6)
-        buffer.stage_topology(active_ranks=[0, 1])
-        buffer.commit_topology()
-        self.assertEqual(buffer.get_topology(), ("direct", 6))
+        buffer.set_active_ranks([0, 1])
+        self.assertEqual(buffer._get_topology(), ("direct", 6))
         x = self.tensor((5, 256))
         idx = self.tensor((5, 2), self.ep.topk_idx_t)
         received, _, _, handle, _ = buffer.dispatch(x, idx, num_sms=6)
@@ -473,10 +497,11 @@ class ApiShellTests(unittest.TestCase):
             ("dispatch", lambda: buffer.dispatch(x, idx)),
             ("combine", lambda: buffer.combine(received, handle)),
             ("barrier", buffer.barrier),
-            ("stage", buffer.stage_topology),
+            ("set_active_ranks", lambda: buffer.set_active_ranks([0, 1])),
+            ("disconnect", lambda: buffer.disconnect_ranks([])),
             ("connect", lambda: buffer.connect_ranks([2])),
-            ("topology", buffer.get_topology),
-            ("active", lambda: buffer.is_active),
+            ("topology", buffer._get_topology),
+            ("active", buffer.get_active_ranks),
         ):
             with self.subTest(name=name), self.assertRaises(RuntimeError):
                 action()
@@ -488,7 +513,7 @@ class ApiShellTests(unittest.TestCase):
             ("nvfp4", torch.uint8, 128, torch.uint8, 16),
         ):
             with self.subTest(format=format_name):
-                buffer = self.buffer()
+                buffer = self.two_rank_buffer()
                 data = self.tensor((5, columns), dtype)
                 x = (
                     data
@@ -523,7 +548,7 @@ class ApiShellTests(unittest.TestCase):
                 self.assertIsInstance(combined[1], self.ep.EventOverlap)
 
     def test_expanded_optional_weights_handle_ownership_and_device_count(self):
-        buffer = self.buffer(deterministic=True)
+        buffer = self.two_rank_buffer(deterministic=True)
         x = self.tensor((5, 256))
         idx = self.tensor((5, 2), self.ep.topk_idx_t)
         weights = self.tensor((5, 2), torch.float32)
