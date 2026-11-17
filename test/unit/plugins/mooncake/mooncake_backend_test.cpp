@@ -782,14 +782,18 @@ main(int argc, char **argv) {
 #endif
     }
 
-    // num_threads=4 and split_batch_size=16 split the 64 descriptors into 4 batches
-    // on engines with getBatchTransferStatus(); older engines don't split.
-    nixlBackendEngine *split[2] = {createEngine("Agent1", false, 4, 16),
-                                   createEngine("Agent2", false, 4, 16)};
-    test_inter_agent_transfer(false, false, split[0], DRAM_SEG, 0, split[1], DRAM_SEG, 0);
-    test_inter_agent_transfer(false, true, split[0], DRAM_SEG, 0, split[1], DRAM_SEG, 0);
-    releaseEngine(split[0]);
-    releaseEngine(split[1]);
+    // On engines with getBatchTransferStatus(), split_batch_size=16 submits the 64
+    // descriptors in the background: as 4 batches with num_threads=4, and as one
+    // batch that carries the notification with num_threads=1. Older engines
+    // ignore num_threads.
+    for (const size_t num_threads : {4, 1}) {
+        nixlBackendEngine *async[2] = {createEngine("Agent1", false, num_threads, 16),
+                                       createEngine("Agent2", false, num_threads, 16)};
+        test_inter_agent_transfer(false, false, async[0], DRAM_SEG, 0, async[1], DRAM_SEG, 0);
+        test_inter_agent_transfer(false, true, async[0], DRAM_SEG, 0, async[1], DRAM_SEG, 0);
+        releaseEngine(async[0]);
+        releaseEngine(async[1]);
+    }
 
     // Deallocate Mooncake engines
     for (int i = 0; i < 2; i++) {

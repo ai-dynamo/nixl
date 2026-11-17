@@ -33,7 +33,10 @@
 #include "transfer_engine_c.h"
 
 class nixlMooncakeBackendMD;
-class nixlMooncakeThreadPool;
+
+namespace nixl {
+class threadPool;
+} // namespace nixl
 
 class nixlMooncakeEngine : public nixlBackendEngine {
 public:
@@ -125,14 +128,14 @@ private:
     mutable std::mutex mutex_;
     transfer_engine_t engine_;
     const std::string local_agent_name_;
-    // Splits a postXfer of at least split_batch_size_ requests into one batch
-    // per thread. Only created for more than one thread, and only on engines with
-    // getBatchTransferStatus().
-    std::unique_ptr<nixlMooncakeThreadPool> submit_pool_;
+    // Submits a postXfer of at least split_batch_size_ requests in the
+    // background, as one batch per thread, so that postXfer doesn't wait for
+    // it. Only created on engines with getBatchTransferStatus().
+    std::unique_ptr<nixl::threadPool> submit_pool_;
     size_t split_batch_size_;
     // One thread that frees the batches of finished transfers, so that neither
     // checkXfer nor releaseReqH waits for the engine to tear them down.
-    std::unique_ptr<nixlMooncakeThreadPool> free_pool_;
+    std::unique_ptr<nixl::threadPool> free_pool_;
     std::unordered_map<uint64_t, nixlMooncakeBackendMD *> mem_reg_info_;
     std::unordered_map<std::string, AgentInfo> connected_agents_;
 };
