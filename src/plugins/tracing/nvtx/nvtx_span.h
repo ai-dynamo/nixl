@@ -65,17 +65,6 @@ public:
     void
     addAttributes(std::span<const Attribute> attrs) override;
 
-    void
-    addCtrlDep(SpanId) override {}
-
-    void
-    addDataDep(SpanId) override {}
-
-    [[nodiscard]] SpanId
-    id() const noexcept override {
-        return {};
-    }
-
     static constexpr std::size_t inlineAttributes = 12;
     static constexpr std::size_t inlineValueSize = 64;
 

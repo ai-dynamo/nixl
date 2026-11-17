@@ -27,8 +27,6 @@
 
 namespace nixl::trace {
 
-struct SpanId;
-
 /**
  * @brief A single active span within one backend. Its destructor ends the
  *        range / fixes the duration for that backend.
@@ -50,14 +48,6 @@ public:
             std::visit([&](const auto value) { addAttribute(attr.key, value); }, attr.value);
         }
     }
-
-    virtual void
-    addCtrlDep(SpanId parent) = 0;
-    virtual void
-    addDataDep(SpanId parent) = 0;
-
-    [[nodiscard]] virtual SpanId
-    id() const noexcept = 0;
 };
 
 } // namespace nixl::trace

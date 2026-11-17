@@ -29,7 +29,7 @@ execution-trace tools.
   `emitSpan()`, `emitContextSpan()` or `emitEvent()` call fans out to every active
   backend.
 - **`nixl::trace::Span`** — a move-only handle returned by `beginSpan()` and
-  `beginContextSpan()`. It forwards attributes/dependencies to each backend span and
+  `beginContextSpan()`. It forwards attributes to each backend span and
   **ends them all on destruction** (RAII), so a span covers the scope in which it is
   declared.
 - **`emitSpan()` / `emitEvent()`** — record a span or a point event after the fact,
@@ -260,11 +260,9 @@ refused with `NIXL_ERR_REPOST_ACTIVE`, records nothing.
 Spans cover the synchronous call only; the `nixl::xfer.complete` event is emitted
 once per completed post, by the first call that sees the transfer complete:
 `postXferReq` when the backend completes it at once, and otherwise `getXferStatus`,
-a repost of the same request, or `releaseXferReq`. How a backend renders attributes and
-dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each
-backend (e.g. NVTX attaches attributes as typed payloads on the range via
-`nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
-record them).
+a repost of the same request, or `releaseXferReq`. How a backend renders attributes is
+backend-specific and documented with each backend (e.g. NVTX attaches attributes as
+typed payloads on the range via `nvtxRangePopPayload`).
 
 A post that fails records one `nixl::xfer.error` event instead, by the first call that
 sees the failure: `postXferReq` when the backend fails it at once, and otherwise
@@ -685,7 +683,8 @@ In NIXL tracing, "correlation" can mean two different things:
 ## Planned work
 
 - **Chakra backend** — serialize MLCommons Chakra execution traces (one ET per rank),
-  recording the span attributes and dependencies the NVTX backend ignores.
+  recording span attributes and the dependencies between spans, which the span API gains
+  with it.
 - **Cross-rank correlation** — propagate a globally unique request id on the wire so
   sender and receiver spans can be linked across processes (distributed tracing; a
   separate NIXL-architecture effort). UCX carries it in notifications (see "Backend

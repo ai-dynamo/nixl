@@ -34,14 +34,6 @@
 
 namespace nixl::trace {
 
-/**
- * @brief Opaque span identifier. Meaningful on backends that build a DAG
- *        (Chakra Node.id); returned as {0} by backends that do not (NVTX).
- */
-struct SpanId {
-    std::uint64_t value{0};
-};
-
 class Name {
 public:
     constexpr Name(Record record) noexcept
@@ -84,8 +76,8 @@ private:
 inline constexpr std::size_t maxTraceBackends = 4;
 
 /**
- * @brief Public span handle. Fans out attribute/dependency calls to every
- *        backend span it owns and ends them all on destruction. Move-only.
+ * @brief Public span handle. Fans out attribute calls to every backend span it
+ *        owns and ends them all on destruction. Move-only.
  */
 class Span {
 public:
@@ -126,32 +118,6 @@ public:
     void
     addAttributes(std::span<const Attribute> attrs) {
         forEachBackend([&](SpanBackend &backend) { backend.addAttributes(attrs); });
-    }
-
-    void
-    addCtrlDep(SpanId parent) {
-        forEachBackend([&](SpanBackend &backend) { backend.addCtrlDep(parent); });
-    }
-
-    void
-    addDataDep(SpanId parent) {
-        forEachBackend([&](SpanBackend &backend) { backend.addDataDep(parent); });
-    }
-
-    /** @brief Id of the first backend that provides a non-zero id, or {0}
-     *         when none do (e.g. NVTX-only). Order-independent across backends. */
-    [[nodiscard]] SpanId
-    id() const noexcept {
-        for (const auto &backend : backends_) {
-            if (backend == nullptr) {
-                break;
-            }
-            const SpanId backend_id = backend->id();
-            if (backend_id.value != 0) {
-                return backend_id;
-            }
-        }
-        return SpanId{};
     }
 
 private:

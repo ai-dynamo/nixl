@@ -121,7 +121,7 @@ makeRecord(std::string_view name,
 
 class MockSpan final : public nixl::trace::SpanBackend {
 public:
-    MockSpan(CallLog *log, std::uint64_t id) : log_(log), id_(id) {}
+    explicit MockSpan(CallLog *log) : log_(log) {}
 
     ~MockSpan() override {
         ++log_->spansEnded;
@@ -143,28 +143,15 @@ public:
         log_->dblAttrs.emplace_back(std::string(nixl::trace::toStringView(key)), value);
     }
 
-    void
-    addCtrlDep(nixl::trace::SpanId) override {}
-
-    void
-    addDataDep(nixl::trace::SpanId) override {}
-
-    [[nodiscard]] nixl::trace::SpanId
-    id() const noexcept override {
-        return {id_};
-    }
-
 private:
     CallLog *log_;
-    std::uint64_t id_;
 };
 
 class MockBackend : public nixl::trace::TraceBackend {
 public:
-    MockBackend(std::string name, CallLog *log, std::uint64_t span_id, bool null_spans = false)
+    MockBackend(std::string name, CallLog *log, bool null_spans = false)
         : name_(std::move(name)),
           log_(log),
-          spanId_(span_id),
           nullSpans_(null_spans) {}
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
@@ -174,7 +161,7 @@ public:
         if (nullSpans_) {
             return nullptr;
         }
-        return std::make_unique<MockSpan>(log_, spanId_);
+        return std::make_unique<MockSpan>(log_);
     }
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
@@ -186,7 +173,7 @@ public:
         if (nullSpans_) {
             return nullptr;
         }
-        return std::make_unique<MockSpan>(log_, spanId_);
+        return std::make_unique<MockSpan>(log_);
     }
 
     void
@@ -243,7 +230,6 @@ public:
 private:
     std::string name_;
     CallLog *log_;
-    std::uint64_t spanId_;
     bool nullSpans_;
 };
 
@@ -476,13 +462,11 @@ zeroSpanIdOnceRandomBytes(std::span<std::uint8_t> bytes) {
 [[nodiscard]] std::unique_ptr<nixl::trace::CompositeTracer>
 makeMockTracer(CallLog &a,
                CallLog &b,
-               std::uint64_t id_a = 0,
-               std::uint64_t id_b = 0,
                double sample_ratio = 0.0,
                nixl::trace::random_bytes_fn_t random_bytes = nullptr) {
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
-    backends.push_back(std::make_unique<MockBackend>("a", &a, id_a));
-    backends.push_back(std::make_unique<MockBackend>("b", &b, id_b));
+    backends.push_back(std::make_unique<MockBackend>("a", &a));
+    backends.push_back(std::make_unique<MockBackend>("b", &b));
     return std::make_unique<nixl::trace::CompositeTracer>(
         std::move(backends), sample_ratio, random_bytes);
 }
@@ -787,7 +771,7 @@ TEST(Tracing, EndMacroRecordsTheStatusAndEndsTheSpanAtOnce) {
 
 TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
     CallLog a, b;
-    auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    auto tracer = makeMockTracer(a, b, 0.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
     const nixl::trace::TraceContext request = testContext(0x42);
     auto post_context = request;
@@ -841,7 +825,7 @@ TEST(Tracing, RequestSpanMacrosRecordInTheirOwnScope) {
 
 TEST(Tracing, ScopeUnderMacroRecordsTheSuppliedContextsChild) {
     CallLog a, b;
-    auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    auto tracer = makeMockTracer(a, b, 0.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
     const auto application = testContext(0x61);
     const nixl_blob_t supplied = nixl::trace::formatTraceparent(application);
@@ -1011,7 +995,7 @@ TEST(Tracing, TracerKeepsAtMostMaxTraceBackends) {
     std::vector<CallLog> logs(nixl::trace::maxTraceBackends + 1);
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     for (CallLog &log : logs) {
-        backends.push_back(std::make_unique<MockBackend>("mock", &log, 0));
+        backends.push_back(std::make_unique<MockBackend>("mock", &log));
     }
     nixl::trace::CompositeTracer tracer{std::move(backends), 1.0};
 
@@ -1026,22 +1010,7 @@ TEST(Tracing, TracerKeepsAtMostMaxTraceBackends) {
     }
 }
 
-// Span::id() reports the first non-zero backend id, independent of ordering:
-// a backend with no id (e.g. NVTX, id {0}) must not mask a later backend's id.
-TEST(Tracing, SpanIdFromFirstNonZeroBackend) {
-    CallLog a, b;
-    auto tracer = makeMockTracer(a, b, /*id_a=*/42, /*id_b=*/99);
-    auto span = tracer->beginSpan("op");
-    EXPECT_EQ(span.id().value, 42u);
-
-    CallLog c, d;
-    auto tracer2 = makeMockTracer(c, d, /*id_a=*/0, /*id_b=*/99);
-    auto span2 = tracer2->beginSpan("op");
-    EXPECT_EQ(span2.id().value, 99u);
-}
-
-// A tracer with no backends is empty; spans are inactive and all calls are
-// safe no-ops (this is the zero-overhead, nothing-requested path).
+// A tracer with no backends is empty, and the spans it begins are inactive.
 TEST(Tracing, EmptyTracerIsInert) {
     nixl::trace::CompositeTracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{},
                                         0.0};
@@ -1049,12 +1018,6 @@ TEST(Tracing, EmptyTracerIsInert) {
 
     auto span = tracer.beginSpan("op", nixl::trace::Kind::CommRecv);
     EXPECT_FALSE(span.active());
-    span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"v"});
-    span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{1});
-    span.addCtrlDep(nixl::trace::SpanId{7});
-    EXPECT_EQ(span.id().value, 0u);
-    tracer.emitSpan("s", nixl::trace::Kind::Generic, {testContext(0x23), 0x2323}, 1, 2, {});
-    tracer.emitEvent("e", nixl::trace::Kind::Metadata, {testContext(0x23), 0x2323}, 3, {});
     const auto context_span =
         tracer.beginContextSpan("c", nixl::trace::Kind::CommSend, {testContext(0x23), 0x2323});
     EXPECT_FALSE(context_span.active());
@@ -1065,8 +1028,6 @@ TEST(Tracing, EmptyTracerIsInert) {
 TEST(Tracing, DefaultSpanIsInert) {
     nixl::trace::Span span;
     EXPECT_FALSE(span.active());
-    span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"v"});
-    EXPECT_EQ(span.id().value, 0u);
 }
 
 // NVTX auto-enable precedence (NIX-1576). resolveTraceBackends is the pure
@@ -1167,22 +1128,11 @@ TEST(Tracing, LoadTraceBackendsSkipsAnUnknownBackend) {
 }
 
 // The no-backend runtime path: a backend is requested but no plugin provides
-// it, so no backend loads and the agent has no tracer. Call sites then fall back
-// to a default-constructed Span -- the stub path that does essentially nothing --
-// and it must stay safe. NVTX's functional coverage lives in the e2e transfer
-// tests, which load the real plugin.
+// it, so no backend loads and the agent has no tracer. NVTX's functional coverage
+// lives in the e2e transfer tests, which load the real plugin.
 TEST(Tracing, RequestedBackendWithoutPluginIsInert) {
-    {
-        const gtest::LogIgnoreGuard ignore("requested but plugin");
-        EXPECT_TRUE(nixl::trace::loadTraceBackends({kUnloadableBackend}, "stub_agent").empty());
-    }
-
-    // What every traced call site binds to when the tracer is null.
-    nixl::trace::Span span;
-    EXPECT_FALSE(span.active());
-    span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{1024});
-    span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view{"peer_agent"});
-    EXPECT_EQ(span.id().value, 0u);
+    const gtest::LogIgnoreGuard ignore("requested but plugin");
+    EXPECT_TRUE(nixl::trace::loadTraceBackends({kUnloadableBackend}, "stub_agent").empty());
 }
 
 // Cross-thread correlation: push/pop must fan out to every backend, so a
@@ -1339,7 +1289,7 @@ TEST(Tracing, ScopeIsCurrentUntilItEnds) {
 
 TEST(Tracing, RequestDrawsItsIdentityFromItsTracer) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    const auto tracer = makeMockTracer(a, b, 1.0);
 
     const nixl::trace::CallScope call(tracer.get(), nullptr);
     const nixlXferReqH request(
@@ -1380,7 +1330,7 @@ static_assert(!std::is_constructible_v<nixl::trace::CallScope, nixl::trace::Trac
 
 TEST(Tracing, RequestOutsideACallScopeIsUntraced) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    const auto tracer = makeMockTracer(a, b, 1.0);
     {
         const nixl::trace::CallScope call(tracer.get(), nullptr);
         const nixlXferReqH inside(
@@ -1397,8 +1347,8 @@ TEST(Tracing, RequestOutsideACallScopeIsUntraced) {
 
 TEST(Tracing, CallScopesNest) {
     CallLog a, b, c, d;
-    const auto outer_tracer = makeMockTracer(a, b, 0, 0, 1.0);
-    const auto inner_tracer = makeMockTracer(c, d, 0, 0, 1.0);
+    const auto outer_tracer = makeMockTracer(a, b, 1.0);
+    const auto inner_tracer = makeMockTracer(c, d, 1.0);
     const nixl::trace::CallScope outer(outer_tracer.get(), nullptr);
     {
         const nixl::trace::CallScope inner(inner_tracer.get(), nullptr);
@@ -1415,7 +1365,7 @@ TEST(Tracing, CallScopesNest) {
 
 TEST(Tracing, RequestJoinsTheCallScopesContext) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0);
+    const auto tracer = makeMockTracer(a, b, 0.0);
     const auto parent = testContext(0x3f, 0x01);
     nixl_opt_args_t options;
     options.traceContext = nixl::trace::formatTraceparent(parent);
@@ -1431,7 +1381,7 @@ TEST(Tracing, RequestJoinsTheCallScopesContext) {
 
 TEST(Tracing, SampledRequestTakesTheCallsBaggageAndItsPostsInheritIt) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    const auto tracer = makeMockTracer(a, b, 1.0);
     nixl_opt_args_t options;
     options.traceBaggage = "tenant=a,job=7";
     const nixl::trace::CallScope call(tracer.get(), &options);
@@ -1448,7 +1398,7 @@ TEST(Tracing, SampledRequestTakesTheCallsBaggageAndItsPostsInheritIt) {
 
 TEST(Tracing, UnsampledRequestKeepsNoBaggage) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0);
+    const auto tracer = makeMockTracer(a, b, 0.0);
     nixl_opt_args_t options;
     options.traceBaggage = "tenant=a";
     const nixl::trace::CallScope call(tracer.get(), &options);
@@ -1462,7 +1412,7 @@ TEST(Tracing, UnsampledRequestKeepsNoBaggage) {
 TEST(Tracing, BaggageNixlCannotCarryIsIgnoredOnce) {
     gtest::LogMessageCounter ignored("ignoring a supplied baggage");
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    const auto tracer = makeMockTracer(a, b, 1.0);
     nixl_opt_args_t options;
     options.traceBaggage = std::string(nixl::trace::maxBaggageSize + 1, 'k');
     const nixl::trace::CallScope call(tracer.get(), &options);
@@ -1479,7 +1429,7 @@ TEST(Tracing, BaggageNixlCannotCarryIsIgnoredOnce) {
 
 TEST(Tracing, RequestPostAndNotificationSpansRecordTheirBaggage) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    const auto tracer = makeMockTracer(a, b, 1.0);
     nixl_opt_args_t options;
     options.traceBaggage = "tenant=a";
     const nixl::trace::CallScope call(tracer.get(), &options);
@@ -1513,7 +1463,7 @@ TEST(Tracing, RequestPostAndNotificationSpansRecordTheirBaggage) {
 
 TEST(Tracing, ScopesMakeTheirBaggageCurrentForTheBackend) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    const auto tracer = makeMockTracer(a, b, 1.0);
     const auto sink = tracer->makeSink("test", {});
     nixl_opt_args_t options;
     options.traceBaggage = "tenant=a";
@@ -1550,7 +1500,7 @@ TEST(Tracing, TracerSampleRatioReachesGeneratedContexts) {
     EXPECT_FALSE(nixl::trace::generateRequestIdentity(unsampled_tracer.get()).context.sampled());
 
     CallLog c, d;
-    const auto sampled_tracer = makeMockTracer(c, d, 0, 0, /*sample_ratio=*/1.0);
+    const auto sampled_tracer = makeMockTracer(c, d, /*sample_ratio=*/1.0);
     EXPECT_EQ(sampled_tracer->sampleRatio(), 1.0);
 
     const auto context = nixl::trace::generateRequestIdentity(sampled_tracer.get()).context;
@@ -1561,7 +1511,7 @@ TEST(Tracing, TracerSampleRatioReachesGeneratedContexts) {
 TEST(Tracing, ContextGenerationFailureIsUntracedAndLoggedOncePerTracer) {
     gtest::LogMessageCounter failures("could not generate a trace context");
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, failRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 1.0, failRandomBytes);
 
     for (int i = 0; i < 2; ++i) {
         EXPECT_EQ(nixl::trace::generateRequestIdentity(tracer.get()).context,
@@ -1570,7 +1520,7 @@ TEST(Tracing, ContextGenerationFailureIsUntracedAndLoggedOncePerTracer) {
     EXPECT_EQ(failures.count(), 1u);
 
     CallLog c, d;
-    const auto other_tracer = makeMockTracer(c, d, 0, 0, 1.0, failRandomBytes);
+    const auto other_tracer = makeMockTracer(c, d, 1.0, failRandomBytes);
     EXPECT_EQ(nixl::trace::generateRequestIdentity(other_tracer.get()).context,
               nixl::trace::TraceContext{});
     EXPECT_EQ(failures.count(), 2u);
@@ -1578,7 +1528,7 @@ TEST(Tracing, ContextGenerationFailureIsUntracedAndLoggedOncePerTracer) {
 
 TEST(Tracing, RequestIdentityDrawsItsIdsAgainWhileZero) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 0.0, zeroFirstRandomBytes);
     zero_draws_left = 2;
 
     const nixl::trace::TraceIdentity identity = nixl::trace::generateRequestIdentity(tracer.get());
@@ -1594,7 +1544,7 @@ TEST(Tracing, RequestIdentityDrawsItsIdsAgainWhileZero) {
 
 TEST(Tracing, RequestIdentityTakesItsIdsFromOneDraw) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, countedSequenceRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 1.0, countedSequenceRandomBytes);
     random_draws = 0;
 
     const nixl::trace::TraceIdentity identity = nixl::trace::generateRequestIdentity(tracer.get());
@@ -1614,7 +1564,7 @@ TEST(Tracing, RequestIdentityTakesItsIdsFromOneDraw) {
 
 TEST(Tracing, RequestIdentityDrawsOnlyAZeroIdAgain) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroSpanIdOnceRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 0.0, zeroSpanIdOnceRandomBytes);
     random_draws = 0;
 
     const nixl::trace::TraceIdentity identity = nixl::trace::generateRequestIdentity(tracer.get());
@@ -1633,7 +1583,7 @@ TEST(Tracing, RequestIdentityDrawsOnlyAZeroIdAgain) {
 TEST(Tracing, RequestIdentityIsNoneWithoutTracerOrSource) {
     gtest::LogMessageCounter failures("could not generate a trace context");
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, failRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 1.0, failRandomBytes);
 
     for (const nixl::trace::Tracer *source :
          std::initializer_list<const nixl::trace::Tracer *>{nullptr, tracer.get(), tracer.get()}) {
@@ -1647,7 +1597,7 @@ TEST(Tracing, RequestIdentityIsNoneWithoutTracerOrSource) {
 
 TEST(Tracing, PostContextDrawsOnlyItsSpanIdAgainWhileZero) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 1.0, zeroFirstRandomBytes);
     zero_draws_left = 1;
     const auto request = testContext(0x21, 0x03);
     auto expected = request;
@@ -1660,7 +1610,7 @@ TEST(Tracing, PostContextDrawsOnlyItsSpanIdAgainWhileZero) {
 TEST(Tracing, PostContextIsUnsampledWhenItsSourceFails) {
     gtest::LogMessageCounter failures("could not generate a trace context");
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, failRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 1.0, failRandomBytes);
     const auto request = testContext(0x22, 0x03);
     auto unsampled = request;
     unsampled.flags = 0x02;
@@ -1675,7 +1625,7 @@ TEST(Tracing, PostContextIsUnsampledWhenItsSourceFails) {
 TEST(Tracing, TraceablePostIsUntracedWhenItsSpanIdCannotBeDrawn) {
     gtest::LogMessageCounter failures("could not generate a trace context");
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, failRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 1.0, failRandomBytes);
     const auto request = testContext(0x58);
     const auto application = testContext(0x59);
     nixl::trace::Traceable traced{tracer.get(), {request, 0x58}};
@@ -1710,7 +1660,7 @@ TEST(Tracing, RequestIdFitsAnInt64) {
 
 TEST(Tracing, RequestIdentityJoinsASuppliedTraceparent) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 0.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
     const auto parent = testContext(0x41, 0x01);
 
@@ -1729,7 +1679,7 @@ TEST(Tracing, RequestIdentityJoinsASuppliedTraceparent) {
 
 TEST(Tracing, RequestIdentityJoinsASuppliedRecord) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    const auto tracer = makeMockTracer(a, b, 1.0);
     const auto parent = testContext(0x42, 0x02);
     std::array<std::uint8_t, nixl::trace::traceContextWireSize> record{};
     ASSERT_TRUE(nixl::trace::encodeTraceContext(parent, record).has_value());
@@ -1759,7 +1709,7 @@ TEST(Tracing, RequestIdentityKeepsOnlyTheFlagsItDefines) {
 TEST(Tracing, UnparsableParentIsIgnoredAndLoggedOncePerTracer) {
     gtest::LogMessageCounter ignored("ignoring a supplied trace context");
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0);
+    const auto tracer = makeMockTracer(a, b, 1.0);
     std::string later_version(nixl::trace::traceContextWireSize, '\x43');
     later_version.front() = '\x02';
 
@@ -1779,7 +1729,7 @@ TEST(Tracing, UnparsableParentIsIgnoredAndLoggedOncePerTracer) {
     EXPECT_EQ(ignored.count(), 1u);
 
     CallLog c, d;
-    const auto other_tracer = makeMockTracer(c, d, 0, 0, 1.0);
+    const auto other_tracer = makeMockTracer(c, d, 1.0);
     EXPECT_TRUE(
         nixl::trace::generateRequestIdentity(other_tracer.get(), "neither").context.valid());
     EXPECT_EQ(ignored.count(), 2u);
@@ -1787,7 +1737,7 @@ TEST(Tracing, UnparsableParentIsIgnoredAndLoggedOncePerTracer) {
 
 TEST(Tracing, TraceableDrawsEachPostASpanIdUnderItsRequest) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 1.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
     const auto sampled = testContext(0x31, 0x03);
     const auto unsampled = testContext(0x32, 0x02);
@@ -1820,7 +1770,7 @@ TEST(Tracing, TraceablePostTakesTheNextExecution) {
 
 TEST(Tracing, TraceablePostIdentityIsItsLatestPosts) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 1.0, zeroFirstRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 1.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
     const auto context = testContext(0x35, 0x03);
     nixl::trace::Traceable traced{tracer.get(), {context, 0x35}};
@@ -1848,7 +1798,7 @@ TEST(Tracing, TraceablePostIdentityIsItsLatestPosts) {
 
 TEST(Tracing, TraceablePostJoinsASuppliedContextForThatPostOnly) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 0.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
     const auto request = testContext(0x51);
     const auto application = testContext(0x52);
@@ -1867,7 +1817,7 @@ TEST(Tracing, TraceablePostJoinsASuppliedContextForThatPostOnly) {
 
 TEST(Tracing, TraceablePostTakesASuppliedContextsSampledFlag) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 0.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
     const auto unsampled_request = testContext(0x53, 0x02);
     const auto sampled_application = testContext(0x55, 0x01);
@@ -1889,7 +1839,7 @@ TEST(Tracing, TraceablePostTakesASuppliedContextsSampledFlag) {
 TEST(Tracing, TraceablePostIgnoresAnUnparsableContext) {
     gtest::LogMessageCounter ignored("ignoring a supplied trace context");
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0, 0, 0.0, zeroFirstRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 0.0, zeroFirstRandomBytes);
     zero_draws_left = 0;
     const auto request = testContext(0x57);
     nixl::trace::Traceable traced{tracer.get(), {request, 0x57}};
@@ -2278,7 +2228,7 @@ TEST(Tracing, TracerNeedsTimestampsUnlessEveryBackendOwnsThem) {
             if (owned) {
                 backends.push_back(std::make_unique<SelfTimedBackend>("self", &log, 0));
             } else {
-                backends.push_back(std::make_unique<MockBackend>("mock", &log, 0));
+                backends.push_back(std::make_unique<MockBackend>("mock", &log));
             }
         }
         return nixl::trace::CompositeTracer{std::move(backends), 0.0}.needsTimestamps();
@@ -2438,7 +2388,7 @@ TEST(TracePhaseSink, PostTraceRecordsItsPostsIdentity) {
 TEST(Tracing, InactiveSpanRecordsNothing) {
     CallLog a;
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
-    backends.push_back(std::make_unique<MockBackend>("a", &a, 0, /*null_spans=*/true));
+    backends.push_back(std::make_unique<MockBackend>("a", &a, /*null_spans=*/true));
     nixl::trace::CompositeTracer tracer{std::move(backends), 0.0};
     auto span = tracer.beginSpan("op");
     auto context_span =

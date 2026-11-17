@@ -85,17 +85,6 @@ public:
     void
     addAttribute(nixl::trace::AttributeKey, double) override {}
 
-    void
-    addCtrlDep(nixl::trace::SpanId) override {}
-
-    void
-    addDataDep(nixl::trace::SpanId) override {}
-
-    [[nodiscard]] nixl::trace::SpanId
-    id() const noexcept override {
-        return {};
-    }
-
 private:
     const int fd_;
     std::string line_;
