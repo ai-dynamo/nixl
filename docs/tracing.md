@@ -535,9 +535,11 @@ every other post, when the flush behind its puts or gets completes, or in
 released in flight, and none without the progress thread for a post that is not
 split, as on the default engine, where a transfer is seen to complete only when
 the application checks its status, so a stamp would time the poll rather than the
-transport. A post whose data transfer fails records one only where the flush
-callback reports the failure, while the progress thread runs: at that time, with
-the failure as `nixl.status`, and its in-flight span ends there. A transfer can
+transport. A post whose data transfer fails records one only where a thread other than
+the application's sees the failure: from the flush callback while the progress thread
+runs, and for a post split across the thread-pool engine's dedicated workers from its
+first chunk's dedicated thread. It is stamped at that time with the failure as
+`nixl.status`, and its in-flight span ends there. A transfer can
 complete, and its
 notification go out, before `postXfer` records `nixl::wire.submitted`, so
 `nixl::wire.completed` and `nixl::notif.sent` can come first; all three follow

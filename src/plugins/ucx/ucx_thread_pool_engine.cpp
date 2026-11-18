@@ -147,6 +147,9 @@ public:
     }
 
 private:
+    void
+    traceFailure(ucs_status_t failure) noexcept;
+
     std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
 };
 
@@ -191,6 +194,15 @@ nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
     sharedState_.reset();
 }
 
+void
+nixlUcxChunkBackendReqH::traceFailure(const ucs_status_t failure) noexcept {
+    if ((failure != UCS_OK) && (this == &sharedState_->chunks.front()) &&
+        sharedState_->trace.active()) {
+        trace = std::exchange(sharedState_->trace, {});
+        trace.completed(nixl::ucx::ucsToNixlStatus(failure));
+    }
+}
+
 nixl_status_t
 nixlUcxChunkBackendReqH::status() {
     // Read before the shared status: a failed chunk stores its status before it decrements
@@ -198,10 +210,15 @@ nixlUcxChunkBackendReqH::status() {
     // First check if entire request was cancelled or failed
     const nixl_status_t status = sharedState_->status.load();
     if (status != NIXL_SUCCESS) {
+        traceFailure(sharedState_->failure.load(std::memory_order_relaxed));
         return status;
     }
 
     const nixl_status_t ret = nixlUcxBackendReqH::status();
+    if (ret < 0) {
+        traceFailure(failure());
+        return ret;
+    }
     if ((ret != NIXL_SUCCESS) || (this != &sharedState_->chunks.front()) ||
         (sharedState_->notif.empty() && !sharedState_->trace.active())) {
         return ret;
@@ -213,7 +230,7 @@ nixlUcxChunkBackendReqH::status() {
 
     trace = std::exchange(sharedState_->trace, {});
     if (trace.active()) {
-        trace.completed();
+        trace.completed(NIXL_SUCCESS);
     }
     if (sharedState_->notif.empty()) {
         return NIXL_SUCCESS;

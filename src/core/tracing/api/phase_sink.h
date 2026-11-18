@@ -629,8 +629,20 @@ public:
     }
 
     void
-    completed() const noexcept {
-        recordCompleted(trace_.now());
+    completed(nixl_status_t status) const noexcept {
+        if (status == NIXL_SUCCESS) {
+            recordCompleted(trace_.now());
+            return;
+        }
+        const nixlTime::us_t phase_at = trace_.now();
+        nixl::trace::deferPhase({.trace = trace_,
+                                 .phase = nixl_trace_phase_t::WIRE_COMPLETED,
+                                 .operation = operation_,
+                                 .inflightSince = inflightSince_,
+                                 .phaseAt = phase_at,
+                                 .completedAt = (phase_at != 0) ? phase_at : nixlTime::getUs(),
+                                 .status = status});
+        nixl::trace::recordDeferredPhases(trace_.sink());
     }
 
 private:
@@ -687,7 +699,7 @@ public:
     drain() const noexcept {}
 
     void
-    completed() const noexcept {}
+    completed(nixl_status_t) const noexcept {}
 };
 
 #endif

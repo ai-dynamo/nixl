@@ -1298,9 +1298,9 @@ TEST_F(ucxTraceContextPropagation, ProgressThreadPostReleasedInFlightRecordsNoWi
 }
 
 TEST_F(ucxTraceContextPropagation, FailedPostCarriesUcxsNativeStatus) {
-    for (const auto &[engine, params, desc_count, completes_on_callback] :
-         {std::tuple{"default", nixl_b_params_t{}, size_t{1}, true},
-          std::tuple{"thread pool", threadPoolParams(), split_desc_count, false}}) {
+    for (const auto &[engine, params, desc_count] :
+         {std::tuple{"default", nixl_b_params_t{}, size_t{1}},
+          std::tuple{"thread pool", threadPoolParams(), split_desc_count}}) {
         nixl::trace::TraceContext context;
         std::uint64_t request_id = 0;
         nixl_status_t status = NIXL_IN_PROG;
@@ -1334,13 +1334,8 @@ TEST_F(ucxTraceContextPropagation, FailedPostCarriesUcxsNativeStatus) {
         const auto completion = std::ranges::find_if(completions, [&](const span_record_t &span) {
             return std::ranges::find(span, request) != span.end();
         });
-        if (completes_on_callback) {
-            ASSERT_NE(completion, completions.end()) << engine;
-            EXPECT_THAT(*completion, testing::Contains(testing::StartsWith("nixl.status=-")))
-                << engine;
-        } else {
-            EXPECT_EQ(completion, completions.end()) << engine;
-        }
+        ASSERT_NE(completion, completions.end()) << engine;
+        EXPECT_THAT(*completion, testing::Contains(testing::StartsWith("nixl.status=-"))) << engine;
     }
 }
 
