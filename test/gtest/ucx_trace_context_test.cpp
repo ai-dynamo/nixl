@@ -709,23 +709,38 @@ protected:
     }
 
     void
-    expectNoWireCompletedWhenReleasedInFlight(const nixl_b_params_t &sender_params,
-                                              size_t desc_count) const {
-        const gtest::LogIgnoreGuard released("released with [0-9]+ requests in progress");
-        const gtest::LogIgnoreGuard dropped("dropping [0-9]+ requests on exit");
+    expectWireCompletedAfterARefusedRelease(const nixl_b_params_t &sender_params,
+                                            size_t desc_count) const {
         nixl::trace::TraceContext context;
         std::uint64_t request_id = 0;
-        ASSERT_NO_FATAL_FAILURE(
-            writeToIdleTarget(sender_params,
-                              desc_count,
-                              context,
-                              request_id,
-                              [](nixlAgent &sender, std::optional<nixlAgent> &, nixlXferReqH *req) {
-                                  ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
-                              }));
+        ASSERT_NO_FATAL_FAILURE(writeToIdleTarget(
+            sender_params,
+            desc_count,
+            context,
+            request_id,
+            [](nixlAgent &sender, std::optional<nixlAgent> &target, nixlXferReqH *req) {
+                ASSERT_EQ(sender.releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+                nixl_notifs_t notifs;
+                nixl_status_t status = NIXL_IN_PROG;
+                const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
+                while (((status = sender.getXferStatus(req)) == NIXL_IN_PROG) &&
+                       (std::chrono::steady_clock::now() < deadline)) {
+                    ASSERT_EQ(target->getNotifs(notifs), NIXL_SUCCESS);
+                    std::this_thread::sleep_for(poll_interval);
+                }
+                ASSERT_EQ(status, NIXL_SUCCESS);
+                ASSERT_EQ(sender.releaseXferReq(req), NIXL_SUCCESS);
+            }));
         expectSenderPhases(sender_name, {context}, request_id, {1}, {});
-        EXPECT_TRUE(recordedSpans(traceFile, sender_name, "nixl::wire.completed").empty());
-        EXPECT_TRUE(recordedSpans(traceFile, sender_name, "nixl::wire.inflight.write").empty());
+        EXPECT_EQ(recordedSpans(traceFile, sender_name, "nixl::wire.completed").size(), 1u);
+        EXPECT_EQ(recordedSpans(traceFile, sender_name, "nixl::wire.inflight.write").size(), 1u);
+        EXPECT_EQ(recordedSpans(traceFile, sender_name, "nixl::xfer.complete").size(), 1u);
+        EXPECT_TRUE(recordedSpans(traceFile, sender_name, "nixl::xfer.error").empty());
+        const auto releases = recordedSpans(traceFile, sender_name, "nixl::releaseXferReq");
+        ASSERT_EQ(releases.size(), 2u);
+        EXPECT_THAT(releases[0],
+                    testing::Contains("nixl.status=" + std::to_string(NIXL_ERR_REPOST_ACTIVE)));
+        EXPECT_THAT(releases[1], testing::Contains("nixl.status=" + std::to_string(NIXL_SUCCESS)));
     }
 
     gtest::ScopedEnv env;
@@ -1271,8 +1286,8 @@ TEST_F(ucxTraceContextPropagation, PostsWithoutADedicatedOrProgressThreadRecordN
     EXPECT_TRUE(recordedSpans(traceFile, default_engine_name, "nixl::wire.inflight.write").empty());
 }
 
-TEST_F(ucxTraceContextPropagation, ThreadPoolPostReleasedInFlightRecordsNoWireCompleted) {
-    expectNoWireCompletedWhenReleasedInFlight(threadPoolParams(), split_desc_count);
+TEST_F(ucxTraceContextPropagation, ThreadPoolPostRecordsWireCompletedAfterARefusedRelease) {
+    expectWireCompletedAfterARefusedRelease(threadPoolParams(), split_desc_count);
 }
 
 TEST_F(ucxTraceContextPropagation, ProgressThreadWireCompletedPrecedesALatePoll) {
@@ -1300,8 +1315,8 @@ TEST_F(ucxTraceContextPropagation, ProgressThreadRecordsWireCompletedOncePerPost
     expectWireCompletedPerPost(sender_name, contexts, request_id);
 }
 
-TEST_F(ucxTraceContextPropagation, ProgressThreadPostReleasedInFlightRecordsNoWireCompleted) {
-    expectNoWireCompletedWhenReleasedInFlight({}, 1);
+TEST_F(ucxTraceContextPropagation, ProgressThreadPostRecordsWireCompletedAfterARefusedRelease) {
+    expectWireCompletedAfterARefusedRelease({}, 1);
 }
 
 TEST_F(ucxTraceContextPropagation, FailedPostCarriesUcxsNativeStatus) {

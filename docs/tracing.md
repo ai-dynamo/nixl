@@ -267,9 +267,8 @@ typed payloads on the range via `nvtxRangePopPayload`).
 
 A post that fails records one `nixl::xfer.error` event instead, by the first call that
 sees the failure: `postXferReq` when the backend fails it at once, and otherwise
-`getXferStatus`, a repost of the same request, or `releaseXferReq`. A release that
-cancels a post it still sees in flight records one with `NIXL_ERR_CANCELED`. Once its
-end is seen, each post that took an execution number has exactly one of the two.
+`getXferStatus`, a repost of the same request, or `releaseXferReq`. Once its end is
+seen, each post that took an execution number has exactly one of the two.
 `nixl.status` is the native `nixl_status_t`: on a `postXferReq` span the call's return;
 on `nixl::xfer.error` the failure; on `nixl::releaseXferReq` the call's return. When the
 backend reports its own status for the failure (`nixlBackendEngine::getNativeStatus()`;
@@ -531,10 +530,10 @@ a post split across its dedicated workers (at least `split_batch_size`
 descriptors, and at least `num_threads`), from its first chunk's dedicated thread
 once the other chunks are done; and, while the progress thread runs (`useProgThread`), for
 every other post, when the flush behind its puts or gets completes, or in
-`postXfer` if that flush completes at once. It records none for a post that is
-released in flight, and none without the progress thread for a post that is not
-split, as on the default engine, where a transfer is seen to complete only when
-the application checks its status, so a stamp would time the poll rather than the
+`postXfer` if that flush completes at once. It records none without the progress
+thread for a post that is not split, as on the default engine, where a transfer is
+seen to complete only when the application checks its status, so a stamp would time
+the poll rather than the
 transport. A post whose data transfer fails records one only where a thread other than
 the application's sees the failure: from the flush callback while the progress thread
 runs, and for a post split across the thread-pool engine's dedicated workers from its
@@ -637,11 +636,12 @@ in the same suite check the phases. Transfers to the agent itself, on the defaul
 engine, record `nixl::submit` and `nixl::wire.submitted` once per post and
 `nixl::notif.sent` once per notifying post. A transfer split across the thread-pool
 engine's dedicated workers also records one `nixl::wire.completed` and one
-`nixl::wire.inflight.write` per post, before a late status check, and none when released
-in flight; both its `nixl::wire.completed` and its `nixl::notif.sent` precede the post's
-`nixl::xfer.complete`. Without the progress thread, an unsplit one and one on the default engine
-record none; while it runs, both record one of each per post, the default engine's
-before a late status check and none when released in flight. A transfer to a second
+`nixl::wire.inflight.write` per post, before a late status check, and also when a release
+is refused while the post is in flight; both its `nixl::wire.completed` and its
+`nixl::notif.sent` precede the post's `nixl::xfer.complete`. Without the progress thread, an
+unsplit one and one on the default engine record none; while it runs, both record one of
+each per post, the default engine's before a late status check and also when a release is
+refused while the post is in flight. A transfer to a second
 agent that only the test progresses cannot finish inside `postXfer`; the sender's
 progress thread then sends its notification and records `notif.sent` without a
 status check. An unsampled request, or an agent with tracing off,

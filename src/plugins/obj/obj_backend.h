@@ -133,21 +133,6 @@ public:
                   std::shared_ptr<iS3Client> s3_client_crt = nullptr);
     virtual ~nixlObjEngine();
 
-    bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
-
-    bool
-    supportsNotif() const override {
-        return false;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const override;
 
