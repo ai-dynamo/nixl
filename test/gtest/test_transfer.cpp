@@ -17,6 +17,7 @@
  */
 
 #include "common.h"
+#include "common/hw_info.h"
 #include "gtest/gtest.h"
 
 #include "nixl.h"
@@ -751,6 +752,85 @@ TEST_P(TestTransfer, EmptyNotificationPayload) {
     doNotificationTest(
         getAgent(0), getAgentName(0), getAgent(1), getAgentName(1), repeat, num_threads, "");
 }
+
+// TCP with small socket buffers: an agent that does not progress holds back a
+// large notification sent to it
+class TestTransferTcp : public TestTransfer {
+protected:
+    void
+    SetUp() override {
+        // On a host with NVIDIA GPUs, NIXL rejects transports without CUDA support
+        env.addVar("UCX_TLS",
+                   (nixl::hwInfo::instance().numNvidiaGpus == 0) ? "tcp" : "tcp,cuda_copy");
+        env.addVar("UCX_TCP_SNDBUF", "65536");
+        env.addVar("UCX_TCP_RCVBUF", "65536");
+        TestTransfer::SetUp();
+    }
+};
+
+TEST_P(TestTransferTcp, ReleaseRefusedUntilNotificationIsSent) {
+    constexpr size_t size = 4096;
+    constexpr uint32_t seed = 1;
+    const std::string notif(1024 * 1024, 'n');
+    nixlAgent &sender = getAgent(0);
+    nixlAgent &receiver = getAgent(1);
+
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(sender, size, 1, DRAM_SEG, src_buffers);
+    createRegisteredMem(receiver, size, 1, DRAM_SEG, dst_buffers);
+    exchangeMD(0, 1);
+    fillPayloads(src_buffers, seed);
+    fillPayloads(dst_buffers, 0);
+
+    nixl_opt_args_t extra_params;
+    extra_params.notif = notif;
+    nixlXferReqH *xfer_req = nullptr;
+    ASSERT_EQ(NIXL_SUCCESS,
+              sender.createXferReq(NIXL_WRITE,
+                                   makeDescList<nixlBasicDesc>(src_buffers, DRAM_SEG),
+                                   makeDescList<nixlBasicDesc>(dst_buffers, DRAM_SEG),
+                                   getAgentName(1),
+                                   xfer_req,
+                                   &extra_params));
+    ASSERT_EQ(NIXL_IN_PROG, sender.postXferReq(xfer_req));
+
+    // Progress both agents until the data is in place. The receiver acknowledges
+    // the data only then, so the notification is not sent yet.
+    nixl_notifs_t notifs;
+    ASSERT_TRUE(wait_until_true([&]() {
+        EXPECT_EQ(NIXL_SUCCESS, receiver.getNotifs(notifs));
+        if (findPayloadMismatch(dst_buffers, seed) == dst_buffers.size()) {
+            return true;
+        }
+        EXPECT_EQ(NIXL_IN_PROG, sender.getXferStatus(xfer_req));
+        return false;
+    }));
+
+    // Only the sender progresses: the notification goes out, and the idle
+    // receiver holds it back
+    for (int i = 0; i < 100; ++i) {
+        ASSERT_EQ(NIXL_IN_PROG, sender.getXferStatus(xfer_req));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_EQ(NIXL_ERR_REPOST_ACTIVE, sender.releaseXferReq(xfer_req));
+
+    // Once the receiver progresses, the transfer is done
+    nixl_status_t status = NIXL_IN_PROG;
+    ASSERT_TRUE(wait_until_true([&]() {
+        EXPECT_EQ(NIXL_SUCCESS, receiver.getNotifs(notifs));
+        status = sender.getXferStatus(xfer_req);
+        return status != NIXL_IN_PROG;
+    }));
+    EXPECT_EQ(NIXL_SUCCESS, status);
+    EXPECT_EQ(NIXL_SUCCESS, sender.releaseXferReq(xfer_req));
+    verifyNotifs(receiver, getAgentName(0), 1, notif, std::move(notifs), &sender);
+
+    invalidateMD(0, 1);
+    deregisterMem(sender, src_buffers, DRAM_SEG);
+    deregisterMem(receiver, dst_buffers, DRAM_SEG);
+}
+
+NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransferTcp, "UCX", false, 2, 0, "");
 
 class TestListener : public TestTransfer {};
 
