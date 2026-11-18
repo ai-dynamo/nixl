@@ -148,7 +148,7 @@ class ElasticBuffer:
     positions). `connect_ranks` prepares peers; `set_active_ranks` activates the topology the kernels read.
     Only active ranks launch dispatch/combine. Construction initializes this rank alone.
     Connect peers explicitly, then activate the intended world. `disconnect_ranks` finishes retiring excluded peers.
-    Dispatch/combine and their graph replays require at least two active GPUs; smaller cohorts may bootstrap or tear down.
+    A single active rank can run dispatch/combine before connecting peers, including warm-up and graph capture.
     New-peer connections may run while the committed graph replays. Serialize
     control operations on each buffer; a background setup thread must select the buffer's CUDA device.
     Activation (`set_active_ranks`, `set_num_active_sms`) and peer retirement run outside capture, between complete dispatch/combine pairs.
@@ -334,7 +334,8 @@ class ElasticBuffer:
         This query does not change the buffer's automatic/manual SM policy.
         The raw estimate may exceed `num_launch_sms`; automatic selection clamps it to that launch limit.
         Traffic uses active domain/position counts and their fixed physical slots. One active domain
-        has no RDMA traffic even above domain index 0. Fewer active experts than `num_topk` requires explicit `num_sms`.
+        has no RDMA traffic even above domain index 0. With multiple active ranks, fewer active experts than
+        `num_topk` requires explicit `num_sms`.
         Every active rank's `dispatch(num_sms=0)` commits the same active SM count.
 
         Arguments:
@@ -729,10 +730,8 @@ class ElasticBuffer:
         self._ensure_open()
         if self.num_experts_per_rank <= 0:
             raise ValueError("Set num_experts_per_rank when constructing an EP buffer")
-        if len(self._active) < 2 or self.world_rank not in self._active:
-            raise ValueError(
-                "Dispatch/combine require this rank in a world with at least two active ranks"
-            )
+        if self.world_rank not in self._active:
+            raise ValueError("Dispatch/combine require this rank to be active")
 
     def _validate_sms(self, count):
         if not 2 <= count <= self.num_launch_sms or count % 2:

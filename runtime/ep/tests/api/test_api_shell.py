@@ -441,6 +441,35 @@ class ApiShellTests(unittest.TestCase):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 self.buffer(**options)
 
+    def test_single_rank_pairs_before_connection_and_after_shrink(self):
+        x = self.tensor((5, 256))
+        idx = self.tensor((5, 2), self.ep.topk_idx_t)
+        for rank, domains, positions in ((0, 1, 1), (3, 2, 2)):
+            with self.subTest(rank=rank, maximum=(domains, positions)):
+                buffer = self.buffer(
+                    world_rank=rank,
+                    max_num_scaleout_ranks=domains,
+                    max_num_scaleup_ranks=positions,
+                    store=None,
+                )
+                received, _, _, handle, _ = buffer.dispatch(x, idx)
+                combined, _ = buffer.combine(received, handle)
+                self.assert_placeholder(combined, (5, 256), torch.bfloat16)
+                self.assertEqual(buffer.get_connected_ranks(), [])
+                if positions == 1:
+                    continue
+                buffer.connect_ranks([2], store=ForbiddenStore())
+                for active in ([2, 3], [3]):
+                    buffer.set_active_ranks(active)
+                    received, _, _, handle, _ = buffer.dispatch(x, idx)
+                    combined, _ = buffer.combine(received, handle)
+                    self.assert_placeholder(combined, (5, 256), torch.bfloat16)
+                buffer.set_active_ranks([2])
+                with self.assertRaisesRegex(ValueError, "this rank to be active"):
+                    buffer.dispatch(x, idx)
+                with self.assertRaisesRegex(ValueError, "this rank to be active"):
+                    buffer.combine(received, handle)
+
     def test_failed_dispatch_preserves_manual_sms_and_existing_handle(self):
         buffer = self.two_rank_buffer()
         x = self.tensor((5, 256))

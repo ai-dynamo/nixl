@@ -46,13 +46,10 @@ import torch
 from nixl.runtime.ep import ElasticBuffer, topk_idx_t
 
 buffer = ElasticBuffer(
-    world_rank=0, max_num_scaleout_ranks=1, max_num_scaleup_ranks=2,
+    world_rank=0, max_num_scaleout_ranks=1, max_num_scaleup_ranks=1,
     num_experts_per_rank=8, num_max_tokens_per_rank=16,
     hidden=512, num_topk=2, explicitly_destroy=True,
 )
-store = object()  # Inert Store stand-in for this shell-only example.
-buffer.connect_ranks([1], store=store)
-buffer.set_active_ranks([0, 1])
 x = torch.empty((16, 512), dtype=torch.bfloat16, device="meta")
 topk = torch.empty((16, 2), dtype=topk_idx_t, device="meta")
 received, indices, weights, handle, event = buffer.dispatch(x, topk)
@@ -68,8 +65,8 @@ buffer.destroy()
   direct/hybrid selection, manual/automatic SM policy and
   explicit destruction are local Python state. No other rank participates.
   Construction starts with only `world_rank` active and no connected peers.
-  Connect peers explicitly, then activate the intended ranks with
-  `set_active_ranks` before dispatch.
+  Dispatch/combine work in this initial single-rank state. To add peers,
+  connect them explicitly, then activate them with `set_active_ranks`.
 - Dispatch returns the five-item API result; combine returns its two-item
   result. Receive tensors always have zero rows. Combine's placeholder has the
   original input token count and the supplied combine input's hidden width.
