@@ -39,7 +39,12 @@ namespace {
 
     void
     recordDeferred(const DeferredPhase &deferred) noexcept {
-        deferred.trace.recordAt(deferred.phase, deferred.phaseAt);
+        if (deferred.status == NIXL_SUCCESS) {
+            deferred.trace.recordAt(deferred.phase, deferred.phaseAt);
+        } else if (auto *const sink = static_cast<TracerPhaseSink *>(deferred.trace.sink())) {
+            sink->recordFailedPhase(
+                deferred.phase, deferred.phaseAt, deferred.trace.identity(), deferred.status);
+        }
         if (deferred.phase == nixl_trace_phase_t::WIRE_COMPLETED) {
             deferred.trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT,
                                       deferred.operation,
@@ -68,6 +73,7 @@ TracerPhaseSink::record(AttributeKey label_key,
                         std::optional<nixlTime::us_t> timestamp,
                         const TraceIdentity &identity,
                         std::span<const nixlBackendTraceAttr> attrs,
+                        std::span<const Attribute> typed_attrs,
                         const Emit &emit) noexcept {
     try {
         absl::InlinedVector<Attribute, inline_record_attrs> record_attrs;
@@ -90,6 +96,7 @@ TracerPhaseSink::record(AttributeKey label_key,
         for (const auto &attr : attrs) {
             record_attrs.push_back({attr.key, attr.value});
         }
+        record_attrs.insert(record_attrs.end(), typed_attrs.begin(), typed_attrs.end());
 
         emit(std::span<const Attribute>(record_attrs.data(), record_attrs.size()));
     }
@@ -120,6 +127,7 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
            (timestamp != 0) ? std::optional<nixlTime::us_t>{timestamp} : std::nullopt,
            identity,
            attrs,
+           {},
            [&](std::span<const Attribute> event_attrs) {
                tracer_.emitEvent(named ? Name(label) : Name(toRecord(phase)),
                                  kindOf(toRecord(phase)),
@@ -144,6 +152,7 @@ TracerPhaseSink::recordSpan(nixl_trace_span_t span,
            std::nullopt,
            identity,
            attrs,
+           {},
            [&](std::span<const Attribute> span_attrs) {
                tracer_.emitSpan(named ? Name(label) : Name(span_record),
                                 named ? operationKind(operation) : kindOf(span_record),
@@ -152,6 +161,25 @@ TracerPhaseSink::recordSpan(nixl_trace_span_t span,
                                 end,
                                 span_attrs);
            });
+}
+
+void
+TracerPhaseSink::recordFailedPhase(nixl_trace_phase_t phase,
+                                   nixlTime::us_t timestamp,
+                                   const TraceIdentity &identity,
+                                   nixl_status_t status) noexcept {
+    const Attribute status_attr{AttributeKey::NixlStatus, status};
+    record(
+        AttributeKey::NixlPhaseLabel,
+        {},
+        (timestamp != 0) ? std::optional<nixlTime::us_t>{timestamp} : std::nullopt,
+        identity,
+        {},
+        {&status_attr, 1},
+        [&](std::span<const Attribute> event_attrs) {
+            tracer_.emitEvent(
+                Name(toRecord(phase)), kindOf(toRecord(phase)), identity, timestamp, event_attrs);
+        });
 }
 
 void

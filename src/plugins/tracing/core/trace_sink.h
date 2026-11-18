@@ -57,6 +57,12 @@ public:
                std::span<const nixlBackendTraceAttr> attrs,
                std::string_view label) noexcept override;
 
+    void
+    recordFailedPhase(nixl_trace_phase_t phase,
+                      nixlTime::us_t timestamp,
+                      const TraceIdentity &identity,
+                      nixl_status_t status) noexcept;
+
     [[nodiscard]] bool
     needsTimestamps() const noexcept override {
         return tracer_.needsTimestamps();
@@ -93,6 +99,7 @@ private:
            std::optional<nixlTime::us_t> timestamp,
            const TraceIdentity &identity,
            std::span<const nixlBackendTraceAttr> attrs,
+           std::span<const Attribute> typed_attrs,
            const Emit &emit) noexcept;
 
     CompositeTracer &tracer_;

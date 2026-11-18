@@ -424,7 +424,7 @@ operation:
 | ---- | ---------------- | ---- | ------- |
 | `nixl::submit` | `SUBMIT` | `Metadata` | the backend accepted the operation |
 | `nixl::wire.submitted` | `WIRE_SUBMITTED` | `Metadata` | handed to the transport |
-| `nixl::wire.completed` | `WIRE_COMPLETED` | `Metadata` | transport signalled completion |
+| `nixl::wire.completed` | `WIRE_COMPLETED` | `Metadata` | transport signalled completion, or a failure with its `nixl.status` |
 | `nixl::notif.sent` | `NOTIF_SENT` | `CommSend` | notification posted to the wire |
 | `nixl::notif.received` | `NOTIF_RECEIVED` | `CommRecv` | notification observed locally |
 | `nixl::remote.observed` | `REMOTE_OBSERVED` | `Metadata` | the peer's side was observed |
@@ -529,11 +529,14 @@ a post split across its dedicated workers (at least `split_batch_size`
 descriptors, and at least `num_threads`), from its first chunk's dedicated thread
 once the other chunks are done; and, while the progress thread runs (`useProgThread`), for
 every other post, when the flush behind its puts or gets completes, or in
-`postXfer` if that flush completes at once. It records none for a post whose data
-transfer fails or that is released in flight, and none without the progress
-thread for a post that is not split, as on the default engine, where a transfer
-is seen to complete only when the application checks its status, so a stamp
-would time the poll rather than the transport. A transfer can complete, and its
+`postXfer` if that flush completes at once. It records none for a post that is
+released in flight, and none without the progress thread for a post that is not
+split, as on the default engine, where a transfer is seen to complete only when
+the application checks its status, so a stamp would time the poll rather than the
+transport. A post whose data transfer fails records one only where the flush
+callback reports the failure, while the progress thread runs: at that time, with
+the failure as `nixl.status`, and its in-flight span ends there. A transfer can
+complete, and its
 notification go out, before `postXfer` records `nixl::wire.submitted`, so
 `nixl::wire.completed` and `nixl::notif.sent` can come first; all three follow
 `nixl::submit`. For a post that completes at once, `nixl::wire.submitted` and

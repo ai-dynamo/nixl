@@ -2414,6 +2414,43 @@ TEST(TracePhaseSink, PostTraceRecordsItsPostsIdentity) {
     }
 }
 
+TEST(TracePhaseSink, CallbackCompletionRecordsAFailuresStatus) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+    const nixl::trace::TraceIdentity failed{testContext(0x3c), 0x3c, 1};
+    const nixl::trace::TraceIdentity completed{testContext(0x3d), 0x3d, 1};
+    for (const auto &[identity, status] :
+         {std::pair{failed, NIXL_ERR_REMOTE_DISCONNECT}, std::pair{completed, NIXL_SUCCESS}}) {
+        nixlBackendPostPhases phases;
+        {
+            const nixl::trace::Scope scope(tracer.get(), identity);
+            phases.begin(&sink, NIXL_WRITE, nixl_trace_completion_t::CALLBACK);
+        }
+        phases.callbackCompleted(status);
+        phases.drain();
+    }
+
+    for (const CallLog *log : {&a, &b}) {
+        std::vector<const EmittedRecord *> completions;
+        for (const EmittedRecord &event : log->emittedEvents) {
+            if (event.name == "nixl::wire.completed") {
+                completions.push_back(&event);
+            }
+        }
+        ASSERT_EQ(completions.size(), 2u);
+        EXPECT_EQ(completions[0]->context, failed.context);
+        const attr_t failure{"nixl.status", std::int64_t{NIXL_ERR_REMOTE_DISCONNECT}};
+        EXPECT_NE(std::ranges::find(completions[0]->attrs, failure), completions[0]->attrs.end());
+        EXPECT_EQ(completions[1]->context, completed.context);
+        EXPECT_TRUE(std::ranges::none_of(
+            completions[1]->attrs, [](const attr_t &attr) { return attr.first == "nixl.status"; }));
+        ASSERT_EQ(log->emittedSpans.size(), 2u);
+        ASSERT_EQ(completions[0]->times.size(), 1u);
+        EXPECT_EQ(log->emittedSpans[0].times.back(), completions[0]->times.front());
+    }
+}
+
 // A backend may decline a span; Tracer drops the null, leaving the Span
 // inactive even though the tracer has a backend. Nothing must be recorded and
 // no null span may be dereferenced.

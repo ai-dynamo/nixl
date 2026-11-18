@@ -220,11 +220,11 @@ private:
 
     static void
     flushCb(void *, ucs_status_t status, void *user_data) {
+        auto *const handle = static_cast<nixlUcxBackendReqH *>(user_data);
+        handle->trace.callbackCompleted(nixl::ucx::ucsToNixlStatus(status));
         if (status != UCS_OK) {
             return;
         }
-        auto *const handle = static_cast<nixlUcxBackendReqH *>(user_data);
-        handle->trace.callbackCompleted();
         if (!handle->notif_.empty()) {
             handle->sendNotif();
         }

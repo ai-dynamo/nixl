@@ -436,7 +436,8 @@ inline constexpr std::size_t deferredPhaseCapacity = 64;
  *        @ref nixl_trace_phase_t::WIRE_COMPLETED also records
  *        @ref nixl_trace_span_t::WIRE_INFLIGHT for `operation`, from
  *        `inflightSince` to `completedAt`, so a backend sets all three; left at
- *        their defaults, the span runs from 0 to 0.
+ *        their defaults, the span runs from 0 to 0. A `status` other than
+ *        `NIXL_SUCCESS` records the phase with it as `nixl.status`.
  */
 struct DeferredPhase {
     nixlBackendPostTrace trace;
@@ -445,6 +446,7 @@ struct DeferredPhase {
     nixlTime::us_t inflightSince = 0;
     nixlTime::us_t phaseAt = 0;
     nixlTime::us_t completedAt = 0;
+    nixl_status_t status = NIXL_SUCCESS;
 };
 
 #if defined(NIXL_TRACE_ENABLED)
@@ -581,7 +583,7 @@ public:
     }
 
     void
-    callbackCompleted() const noexcept {
+    callbackCompleted(nixl_status_t status) const noexcept {
         if (!completesOnCallback_) {
             return;
         }
@@ -591,7 +593,8 @@ public:
                                  .operation = operation_,
                                  .inflightSince = inflightSince_,
                                  .phaseAt = phase_at,
-                                 .completedAt = (phase_at != 0) ? phase_at : nixlTime::getUs()});
+                                 .completedAt = (phase_at != 0) ? phase_at : nixlTime::getUs(),
+                                 .status = status});
     }
 
     void
@@ -658,7 +661,7 @@ public:
     submitted() const noexcept {}
 
     void
-    callbackCompleted() const noexcept {}
+    callbackCompleted(nixl_status_t) const noexcept {}
 
     void
     notifSent(nixl_status_t) const noexcept {}
