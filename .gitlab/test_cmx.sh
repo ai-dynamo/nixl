@@ -55,7 +55,7 @@ cat /proc/meminfo
 ldd ./bin/nixlbench || true
 
 echo "==== Building DOCA KV mock ===="
-# This CI node has no NVMe-KV device. Build the DOCA_MEMOS unit-test mocks as a
+# CI has no NVMe-KV device. Build the DOCA_MEMOS unit-test mocks as a
 # shared library and load it in place of every libdoca_* the plugin needs. The
 # mock keeps values in memory and completes tasks in doca_pe_progress().
 PLUGIN="${NIXL_PLUGIN_DIR}/libplugin_DOCA_MEMOS.so"
@@ -92,11 +92,11 @@ if ldd -r "${PLUGIN}" 2>&1 | grep 'undefined symbol: doca_'; then
 fi
 
 echo "==== Running Nixlbench tests (DOCA_MEMOS, mock) ===="
-# The mock ignores the device path. Hugepages are not used: the rootless
-# SLURM/enroot container has no privilege to reserve them.
+# The mock ignores the device path. nixlbench allocates all of --total_buffer_size;
+# 1.5 GiB is the least that 3 threads x 128 blocks x 4 MiB need.
 for op_type in READ WRITE; do
     ./bin/nixlbench --backend=DOCA_MEMOS --doca_memos_device_name=/dev/null \
         --start_block_size=4194304 --max_block_size=4194304 \
         --start_batch_size=128 --max_batch_size=128 --op_type=${op_type} \
-        --total_buffer_size=31998345216 --num_threads=3 --progress_threads=1 --num_iter=3000
+        --total_buffer_size=1610612736 --num_threads=3 --progress_threads=1 --num_iter=3000
 done

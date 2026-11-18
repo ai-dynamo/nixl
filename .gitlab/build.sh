@@ -481,15 +481,15 @@ fi # PRE_INSTALLED_UCX_ENV end
 
 if [ -n "$DOCA_KV_ENV" ]; then
     echo "DOCA_KV_ENV is set, compiling DOCA KV"
-    if [ ! -s /run/secrets/ssh_key ]; then
-        echo "ERROR: DOCA_KV_ENV is set but the ssh_key build secret is missing" >&2
+    if [ ! -s "${SSH_KEY:-}" ]; then
+        echo "ERROR: DOCA_KV_ENV is set but SSH_KEY does not point to the git-nbu key" >&2
         exit 1
     fi
     # libb2 is a DOCA_MEMOS plugin dependency. liburing is held for the meson wrap;
     # DOCA KV needs the system one.
     $SUDO apt-get -qq install -y --no-install-recommends --allow-change-held-packages liburing2 liburing-dev libb2-dev
     # DOCA 3.6 is the first release with the doca_kv_* API the plugin uses.
-    GIT_SSH_COMMAND="ssh -i /run/secrets/ssh_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes" \
+    GIT_SSH_COMMAND="ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o IdentitiesOnly=yes" \
         git clone --depth 1 -b 3.6.0085-1 ssh://svc-nixl@git-nbu.nvidia.com:12023/doca/doca.git ${BUILD_TMP}/doca_kv
     ( \
     cd ${BUILD_TMP}/doca_kv && \
@@ -505,7 +505,13 @@ if [ -n "$DOCA_KV_ENV" ]; then
     )
     echo "/opt/doca_memos/doca_kv/lib/${ARCH}-linux-gnu" | $SUDO tee /etc/ld.so.conf.d/doca_kv.conf
     $SUDO ldconfig
-    export PKG_CONFIG_PATH="/opt/mellanox/doca/lib/$ARCH-linux-gnu/pkgconfig:/opt/mellanox/doca/lib64/pkgconfig:${PKG_CONFIG_PATH}:/opt/doca_memos/doca_kv/lib/$ARCH-linux-gnu/pkgconfig"
+    # The DOCA 3.6 build ships its own doca-common, which doca-kv requires; it must
+    # win over the base image's DOCA 3.5 one.
+    export PKG_CONFIG_PATH="/opt/doca_memos/doca_kv/lib/$ARCH-linux-gnu/pkgconfig:/opt/mellanox/doca/lib/$ARCH-linux-gnu/pkgconfig:/opt/mellanox/doca/lib64/pkgconfig:${PKG_CONFIG_PATH}"
+    if [ "$(pkg-config --modversion doca-common)" != "$(pkg-config --modversion doca-kv)" ]; then
+        echo "ERROR: doca-common and doca-kv resolve to different DOCA versions" >&2
+        exit 1
+    fi
 fi
 
 $SUDO rm -rf ${BUILD_TMP}
