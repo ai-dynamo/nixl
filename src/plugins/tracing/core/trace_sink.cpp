@@ -199,6 +199,8 @@ TracerPhaseSink::readTraceBaggage(nixlSerDes &ser_des) const {
     return decodeTraceBaggage(ser_des);
 }
 
+std::atomic<std::uint64_t> pendingDeferredPhases{0};
+
 void
 TracerPhaseSink::deferPhase(const DeferredPhase &deferred) noexcept {
     DeferredPhaseQueue &queue = deferred_phases;
@@ -207,15 +209,20 @@ TracerPhaseSink::deferPhase(const DeferredPhase &deferred) noexcept {
         return;
     }
     queue.entries[queue.count++] = deferred;
+    pendingDeferredPhases.fetch_add(1, std::memory_order_relaxed);
 }
 
 void
 TracerPhaseSink::recordDeferredPhases() noexcept {
     DeferredPhaseQueue &queue = deferred_phases;
-    for (std::size_t i = 0; i < queue.count; ++i) {
+    const std::size_t recorded = queue.count;
+    for (std::size_t i = 0; i < recorded; ++i) {
         recordDeferred(queue.entries[i]);
     }
     queue.count = 0;
+    if (recorded != 0) {
+        pendingDeferredPhases.fetch_sub(recorded, std::memory_order_relaxed);
+    }
 }
 
 } // namespace nixl::trace

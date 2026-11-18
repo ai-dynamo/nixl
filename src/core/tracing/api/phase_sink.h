@@ -28,6 +28,7 @@
  */
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -289,6 +290,22 @@ public:
 
     virtual void
     recordDeferredPhases() noexcept = 0;
+
+    [[nodiscard]] bool
+    mayHaveDeferredPhases() const noexcept {
+        return (pendingDeferredPhases_ == nullptr) ||
+            (pendingDeferredPhases_->load(std::memory_order_relaxed) != 0);
+    }
+
+protected:
+    nixlBackendTraceSink() noexcept = default;
+
+    explicit nixlBackendTraceSink(
+        const std::atomic<std::uint64_t> *pending_deferred_phases) noexcept
+        : pendingDeferredPhases_(pending_deferred_phases) {}
+
+private:
+    const std::atomic<std::uint64_t> *pendingDeferredPhases_ = nullptr;
 };
 
 #if defined(NIXL_TRACE_ENABLED)
@@ -484,7 +501,7 @@ deferPhase(const DeferredPhase &deferred) noexcept {
 /** @brief Records the phases the calling thread deferred, in order, and empties its queue. */
 inline void
 recordDeferredPhases(nixlBackendTraceSink *sink) noexcept {
-    if (sink != nullptr) {
+    if ((sink != nullptr) && sink->mayHaveDeferredPhases()) {
         sink->recordDeferredPhases();
     }
 }

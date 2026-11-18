@@ -30,12 +30,15 @@
 
 namespace nixl::trace {
 
+extern std::atomic<std::uint64_t> pendingDeferredPhases;
+
 class TracerPhaseSink final : public nixlBackendTraceSink {
 public:
     TracerPhaseSink(CompositeTracer &tracer,
                     std::string backend,
                     std::function<void(std::uint64_t)> on_dropped = {}) noexcept
-        : tracer_(tracer),
+        : nixlBackendTraceSink(&pendingDeferredPhases),
+          tracer_(tracer),
           backend_(std::move(backend)),
           onDropped_(std::move(on_dropped)) {}
 
