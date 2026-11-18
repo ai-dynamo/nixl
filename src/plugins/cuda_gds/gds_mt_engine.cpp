@@ -98,9 +98,8 @@ nixlGdsMtReqH::~nixlGdsMtReqH() {
 
 nixlGdsMtEngine::nixlGdsMtEngine(const nixlBackendInitParams *init_params)
     : nixlGdsEngine(init_params),
-      thread_count_(getThreadCount(init_params)) {
-    executor_ = std::make_unique<tf::Executor>(thread_count_);
-    NIXL_DEBUG << "GDS_MT: thread count=" << thread_count_;
+      executor_(std::make_unique<tf::Executor>(getThreadCount(init_params))) {
+    NIXL_DEBUG << "GDS_MT: thread count=" << executor_->num_workers();
 }
 
 nixl_status_t

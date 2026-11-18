@@ -68,7 +68,6 @@ protected:
     finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH *&handle) const override;
 
 private:
-    size_t thread_count_;
     std::unique_ptr<tf::Executor> executor_;
 };
 
