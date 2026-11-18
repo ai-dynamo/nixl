@@ -950,6 +950,8 @@ cleanup:
     std::cout << "PHASE 6: Cleanup" << std::endl;
     std::cout << "============================================================" << std::endl;
 
+    agent.deregisterMem(file_for_gds);
+
     // Delete test files
     std::cout << "Deleting test files..." << std::endl;
     for (i = 0; i < num_transfers; i++) {
@@ -971,7 +973,6 @@ cleanup:
     printProgress(1.0);
 
     // Cleanup resources
-    agent.deregisterMem(file_for_gds);
     if (use_vram) {
         agent.deregisterMem(vram_for_gds);
         for (i = 0; i < num_transfers; i++) {
