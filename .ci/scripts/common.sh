@@ -182,8 +182,12 @@ ensure_wqs_hugepages() {
     local dir=/sys/kernel/mm/hugepages/hugepages-2048kB
     local free total
     free=$(cat "${dir}/free_hugepages" 2>/dev/null || echo 0)
+    total=$(cat "${dir}/nr_hugepages" 2>/dev/null || echo 0)
+    if ! [[ "${free}" =~ ^[0-9]+$ && "${total}" =~ ^[0-9]+$ ]]; then
+        echo "WQS: unreadable hugepage counters (free='${free}' total='${total}')" >&2
+        return 1
+    fi
     if [ "${free}" -lt "${need}" ]; then
-        total=$(cat "${dir}/nr_hugepages" 2>/dev/null || echo 0)
         echo "WQS: ${free} free 2 MiB hugepages, need ${need}; trying to reserve $((total + need - free))"
         if [ "$(id -u)" -eq 0 ]; then
             echo $((total + need - free)) > /proc/sys/vm/nr_hugepages 2>/dev/null || true
@@ -191,6 +195,8 @@ ensure_wqs_hugepages() {
             echo $((total + need - free)) | sudo -n tee /proc/sys/vm/nr_hugepages >/dev/null 2>&1 || true
         fi
         free=$(cat "${dir}/free_hugepages" 2>/dev/null || echo 0)
+        echo "WQS: ${free} free 2 MiB hugepages after reservation attempt"
+        [[ "${free}" =~ ^[0-9]+$ ]] || return 1
     fi
     [ "${free}" -ge "${need}" ]
 }
