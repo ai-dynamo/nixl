@@ -25,7 +25,7 @@
 #include "gds_mt_engine.h"
 
 namespace {
-nixl_b_params_t
+[[nodiscard]] nixl_b_params_t
 getGdsBackendOptions() {
     return {{"mode", "batch"},
             {"batch_pool_size", "16"},
@@ -34,7 +34,7 @@ getGdsBackendOptions() {
             {"thread_count", std::to_string(defaultGdsMtThreadCount())}};
 }
 
-nixlBackendEngine *
+[[nodiscard]] nixlBackendEngine *
 createGdsEngine(const nixlBackendInitParams *init_params) {
     try {
         const std::string mode =
@@ -60,22 +60,22 @@ destroyGdsEngine(nixlBackendEngine *engine) {
     delete engine;
 }
 
-const char *
+[[nodiscard]] const char *
 getGdsPluginName() {
     return "GDS";
 }
 
-const char *
+[[nodiscard]] const char *
 getGdsPluginVersion() {
     return "0.1.1";
 }
 
-nixl_mem_list_t
+[[nodiscard]] nixl_mem_list_t
 getGdsBackendMems() {
     return {DRAM_SEG, VRAM_SEG, FILE_SEG};
 }
 
-nixlBackendPlugin *
+[[nodiscard]] nixlBackendPlugin *
 getGdsPlugin() {
     static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
                                        createGdsEngine,
@@ -89,12 +89,12 @@ getGdsPlugin() {
 } // namespace
 
 #ifdef STATIC_PLUGIN_GDS
-nixlBackendPlugin *
+[[nodiscard]] nixlBackendPlugin *
 createStaticGDSPlugin() {
     return getGdsPlugin();
 }
 #else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+extern "C" [[nodiscard]] NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return getGdsPlugin();
 }

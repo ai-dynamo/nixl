@@ -101,20 +101,20 @@ public:
     explicit nixlGdsBatchEngine(const nixlBackendInitParams *init_params);
     ~nixlGdsBatchEngine() override;
 
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     postXfer(const nixl_xfer_op_t &operation,
              const nixl_meta_dlist_t &local,
              const nixl_meta_dlist_t &remote,
              const std::string &remote_agent,
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args = nullptr) const override;
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     checkXfer(nixlBackendReqH *handle) const override;
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
 protected:
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH *&handle) const override;
 
 private:

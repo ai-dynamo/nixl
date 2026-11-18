@@ -21,7 +21,7 @@
 #include "gds_mt_engine.h"
 
 namespace {
-nixl_b_params_t
+[[nodiscard]] nixl_b_params_t
 getGdsMtBackendOptions() {
     return {{"thread_count", std::to_string(defaultGdsMtThreadCount())}};
 }
@@ -30,7 +30,7 @@ using gds_mt_plugin_t = nixlBackendPluginCreator<nixlGdsMtEngine>;
 } // namespace
 
 #ifdef STATIC_PLUGIN_GDS_MT
-nixlBackendPlugin *
+[[nodiscard]] nixlBackendPlugin *
 createStaticGDS_MTPlugin() {
     return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
                                    "GDS_MT",
@@ -39,7 +39,7 @@ createStaticGDS_MTPlugin() {
                                    {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 #else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+extern "C" [[nodiscard]] NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
                                    "GDS_MT",

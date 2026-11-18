@@ -60,12 +60,12 @@ public:
     gdsMemBuf(void *ptr, size_t sz, int flags = 0);
     ~gdsMemBuf();
 
-    bool
+    [[nodiscard]] bool
     isRegistered() const noexcept {
         return registered_;
     }
 
-    void *
+    [[nodiscard]] void *
     base() const noexcept {
         return base_;
     }
