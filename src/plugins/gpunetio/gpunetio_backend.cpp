@@ -274,9 +274,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params,
                         nixl_backend_capability_t::REMOTE |
                             (init_params->customParams->count("native_device_api") &&
-                                     init_params->customParams->at("native_device_api") == "true"
-                                 ? nixl_backend_capability_t::NONE
-                                 : nixl_backend_capability_t::NOTIF)) {
+                                     init_params->customParams->at("native_device_api") == "true" ?
+                                 nixl_backend_capability_t::NONE :
+                                 nixl_backend_capability_t::NOTIF)) {
     std::vector<std::string> ndevs, tmp_gdevs; /* Empty vector */
     doca_error_t result;
     nixl_b_params_t *custom_params = init_params->customParams;
@@ -1042,7 +1042,6 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
                 rdma_qp->qp_write.push_back(std::move(qp));
             }
             rdma_qp->writeProgrammed.resize(dataQpCount_, false);
-
         }
     }
     catch (const nixl::doca::verbs::teardown_error &e) {
