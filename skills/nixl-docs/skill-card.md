@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers working in a NIXL repository clone use this skill to locate and read the relevant NIXL documentation for APIs, architecture, transfer and storage backends, builds, environment variables, telemetry, troubleshooting, examples, benchmarks, CI, and contribution guidance. <br>
+Developers and engineers working in a clone of the NIXL repository use this skill to locate and read the relevant NIXL documentation (APIs, architecture, backend plugins, builds, environment variables, telemetry, troubleshooting, examples, benchmarks, and contribution guidance). <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,14 +25,16 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [NIXL Architecture (docs/nixl.md)](https://github.com/ai-dynamo/nixl/blob/main/docs/nixl.md) <br>
-- [NIXL Python API (docs/python_api.md)](https://github.com/ai-dynamo/nixl/blob/main/docs/python_api.md) <br>
-- [Backend Plugin Interface (docs/BackendGuide.md)](https://github.com/ai-dynamo/nixl/blob/main/docs/BackendGuide.md) <br>
-- [NIXL latest release](https://github.com/ai-dynamo/nixl/releases/latest) <br>
+- [NIXL Architecture](../../docs/nixl.md) <br>
+- [NIXL Python API](../../docs/python_api.md) <br>
+- [Backend Plugin Interface](../../docs/BackendGuide.md) <br>
+- [NIXL Telemetry System](../../docs/telemetry.md) <br>
+- [NIXL Tracing System](../../docs/tracing.md) <br>
+- [NIXL README](../../README.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Analysis, Configuration instructions] <br>
+**Output Type(s):** [Analysis, Documentation references] <br>
 **Output Format:** [Markdown] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -44,7 +46,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-5 evaluation tasks (5 positive), 1 attempt per task, each attempt run in its own isolated sandbox pod (`k8s-sandbox` environment); each task was also attempted without the skill as a baseline. <br>
+5 evaluation tasks (5 positive), 1 attempt per task, each attempt run in its own isolated sandbox pod (`k8s-sandbox` environment); each task was also attempted without the skill as a baseline. Evaluator version `1.6.10`, evaluation date 2026-11-18. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -66,7 +68,7 @@ Underlying evaluation signals used in this run: <br>
 
 
 ## Evaluation Results: <br>
-**Overall verdict: PASS — Recommended for publication**
+> ✅ **Overall verdict: PASS — Recommended for publication**
 
 ### Publication Recommendation
 
@@ -76,14 +78,16 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.3% — baseline ran, but no comparable score was available; uplift unavailable | 86.1% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 93.9% — baseline ran, but no comparable score was available; uplift unavailable | 88.1% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 80.0% → 100.0% (+20.0 points) | 80.0% → 84.0% (+4.0 points) |
-| Discoverability | 99.0% — baseline ran, but no comparable score was available; uplift unavailable | 95.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 80.0% → 100.0% (+20.0 points) | 86.7% → 80.0% (-6.7 points) |
-| Efficiency | 72.4% — baseline ran, but no comparable score was available; uplift unavailable | 71.4% — baseline ran, but no comparable score was available; uplift unavailable |
+| Correctness | 72.0% → 100.0% (+28.0 points) | 76.0% → 88.0% (+12.0 points) |
+| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 93.6% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 80.0% → 100.0% (+20.0 points) | 70.0% → 80.0% (+10.0 points) |
+| Efficiency | 69.3% — baseline ran, but no comparable score was available; uplift unavailable | 78.7% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
+
+Example: `47.0% → 92.0% (+45.0 points)` means the skill-assisted run scored 92.0%, 45.0 percentage points above its 47.0% no-skill baseline.
 
 #### Comparison details
 
@@ -92,10 +96,17 @@ Shared-source comparisons use the same signals and weights on both conditions. T
 | Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
 | --- | --- | --- | --- | --- |
 | claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| claude-code | Efficiency | Token-only comparison | 98.6% → 92.5% (-6.1 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| claude-code | Efficiency | Token-only comparison | 96.0% → 92.7% (-3.3 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 | codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| codex | Efficiency | Token-only comparison | 91.7% → 88.7% (-3.0 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| codex | Efficiency | Token-only comparison | 91.0% → 89.2% (-1.8 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 
+### Tier Status
+
+| Tier | Purpose | Status | Evidence |
+|---|---|---|---|
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 6 finding(s) |
+| Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
+| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 5 task(s) |
 
 ## Skill Version(s): <br>
 1.0.0 (source: frontmatter) <br>
