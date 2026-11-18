@@ -143,7 +143,7 @@ nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
 
     case BLK_SEG:
     case OBJ_SEG:
-        return NIXL_ERR_BACKEND;
+        return NIXL_ERR_NOT_SUPPORTED;
     }
     return NIXL_ERR_BACKEND;
 }
