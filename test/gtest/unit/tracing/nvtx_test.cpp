@@ -255,16 +255,25 @@ TEST(NvtxSpan, TracerSpansAndEventsAllocateNothing) {
         {nixl::trace::AttributeKey::NixlXferExecution, std::int64_t{1}},
     };
     const auto record = [&] {
-        const nixl::trace::Scope scope(&tracer, {*context, 42});
-        nixl::trace::Span span = tracer.beginContextSpan(
-            "nixl::postXferReq.write", nixl::trace::Kind::CommSend, {*context, 42});
+        const nixl::trace::Scope scope(&tracer, {*context, nixl::trace::RequestId{42}});
+        nixl::trace::Span span = tracer.beginContextSpan("nixl::postXferReq.write",
+                                                         nixl::trace::Kind::CommSend,
+                                                         {*context, nixl::trace::RequestId{42}});
         span.addAttribute(nixl::trace::AttributeKey::RemoteAgent, std::string_view("target"));
         span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{32768});
         span.addAttribute(nixl::trace::AttributeKey::NixlXferRequestId,
                           std::int64_t{0x7edcba9876543210});
-        tracer.emitEvent("nixl::submit", nixl::trace::Kind::Metadata, {*context, 42}, 1, attrs);
-        tracer.emitSpan(
-            "nixl::wire.inflight.write", nixl::trace::Kind::CommSend, {*context, 42}, 1, 2, attrs);
+        tracer.emitEvent("nixl::submit",
+                         nixl::trace::Kind::Metadata,
+                         {*context, nixl::trace::RequestId{42}},
+                         1,
+                         attrs);
+        tracer.emitSpan("nixl::wire.inflight.write",
+                        nixl::trace::Kind::CommSend,
+                        {*context, nixl::trace::RequestId{42}},
+                        1,
+                        2,
+                        attrs);
     };
     record();
 

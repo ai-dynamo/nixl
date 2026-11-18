@@ -106,7 +106,7 @@ GMockBackendEngine::observeTraceContext(const nixl_opt_b_args_t *opt_args) {
         observedTraceContext_.reset();
     }
     if (opt_args != nullptr) {
-        observedTraceRequests_.emplace_back((identity != nullptr) ? identity->requestId : 0,
+        observedTraceRequests_.emplace_back((identity != nullptr) ? *identity->requestId : 0,
                                             (identity != nullptr) ? identity->execution : 0);
         observedTraceIdentities_.push_back((identity != nullptr) ? std::make_optional(*identity) :
                                                                    std::nullopt);

@@ -94,7 +94,7 @@ NvtxTraceBackend::beginContextSpan(const Name name,
                                    const TraceIdentity &identity) {
     NvtxEvent ev;
     eventForName(ev, name, kind, domain_, registeredHandles_);
-    setCorrelation(ev.attributes, identity.requestId);
+    setCorrelation(ev.attributes, *identity.requestId);
     auto span = std::make_unique<NvtxSpan>(domain_, schemaIds_);
     nvtxDomainRangePushEx(domain_, &ev.attributes);
     return span;
@@ -109,7 +109,7 @@ NvtxTraceBackend::emitSpan(const Name name,
                            const std::span<const Attribute> attrs) {
     NvtxEvent ev;
     eventForName(ev, name, kind, domain_, registeredHandles_);
-    setCorrelation(ev.attributes, identity.requestId);
+    setCorrelation(ev.attributes, *identity.requestId);
     NvtxSpan range(domain_, schemaIds_);
     nvtxDomainRangePushEx(domain_, &ev.attributes);
     range.addAttribute(AttributeKey::NixlStartUs, static_cast<std::int64_t>(start));
@@ -135,7 +135,7 @@ NvtxTraceBackend::emitEvent(const Name name,
                             const std::span<const Attribute> attrs) {
     NvtxEvent ev;
     eventForName(ev, name, kind, domain_, registeredHandles_);
-    setCorrelation(ev.attributes, identity.requestId);
+    setCorrelation(ev.attributes, *identity.requestId);
     NvtxSpan range(domain_, schemaIds_);
     nvtxDomainRangePushEx(domain_, &ev.attributes);
     addAttributes(range, attrs);
@@ -143,7 +143,7 @@ NvtxTraceBackend::emitEvent(const Name name,
 
 void
 NvtxTraceBackend::pushContext(const TraceIdentity &identity) {
-    correlationStack().push(identity.requestId);
+    correlationStack().push(*identity.requestId);
 }
 
 void

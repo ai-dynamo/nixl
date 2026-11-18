@@ -107,7 +107,7 @@ Traceable::postBaggage() const noexcept {
 
 inline const TraceIdentity &
 Traceable::post(const nixl_blob_t &parent, const nixl_blob_t &baggage) {
-    if ((postIdentity_.requestId != 0) || ((tracer_ != nullptr) && !parent.empty())) {
+    if ((*postIdentity_.requestId != 0) || ((tracer_ != nullptr) && !parent.empty())) {
         advancePost(parent, baggage);
     }
     return postIdentity_;
@@ -303,7 +303,7 @@ end(Span &span, Status status) {
         trace_record,                                                                            \
         (traceable).requestIdentity().context,                                                   \
         __VA_ARGS__ __VA_OPT__(, ){::nixl::trace::AttributeKey::NixlXferRequestId,               \
-                                   (traceable).requestIdentity().requestId},                     \
+                                   *(traceable).requestIdentity().requestId},                    \
         {::nixl::trace::AttributeKey::NixlXferExecution,                                         \
          (traceable).requestIdentity().execution});                                              \
     ::nixl::trace::detail::addBaggage(span, (traceable).requestBaggage())
@@ -321,7 +321,7 @@ end(Span &span, Status status) {
         trace_record,                                                                 \
         span##_identity,                                                              \
         __VA_ARGS__ __VA_OPT__(, ){::nixl::trace::AttributeKey::NixlXferRequestId,    \
-                                   span##_identity.requestId},                        \
+                                   *span##_identity.requestId},                       \
         {::nixl::trace::AttributeKey::NixlXferExecution, span##_identity.execution}); \
     ::nixl::trace::detail::addBaggage(span, (traceable).postBaggage())
 

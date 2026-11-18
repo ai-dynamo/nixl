@@ -477,13 +477,13 @@ namespace agent {
         [[nodiscard]] static auto
         correlatedWith(const nixlXferReqH *req) {
             return testing::Contains("correlation=" +
-                                     std::to_string(req->traceable().postIdentity().requestId));
+                                     std::to_string(*req->traceable().postIdentity().requestId));
         }
 
         [[nodiscard]] static auto
         identifies(const nixlXferReqH *req) {
             return testing::Contains("nixl.xfer_request_id=" +
-                                     std::to_string(req->traceable().postIdentity().requestId));
+                                     std::to_string(*req->traceable().postIdentity().requestId));
         }
 
         [[nodiscard]] static auto
@@ -521,7 +521,7 @@ namespace agent {
 
         [[nodiscard]] static auto
         handed(const nixlXferReqH *req, std::uint64_t execution) {
-            return testing::Pair(req->traceable().postIdentity().requestId, execution);
+            return testing::Pair(*req->traceable().postIdentity().requestId, execution);
         }
 
         [[nodiscard]] static auto
@@ -541,7 +541,7 @@ namespace agent {
         childOf(const nixl::trace::TraceContext &parent) {
             static constexpr char digits[] = "0123456789abcdef";
             std::string field = "parent=";
-            for (const std::uint8_t byte : parent.spanId) {
+            for (const std::uint8_t byte : *parent.spanId) {
                 field += digits[byte >> 4];
                 field += digits[byte & 0x0f];
             }
@@ -691,7 +691,7 @@ namespace agent {
         nixlAgent *agent = agent_helper_->getAgent();
         nixlXferReqH *req = nullptr;
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
-        EXPECT_NE(req->traceable().requestIdentity().requestId, 0u);
+        EXPECT_NE(*req->traceable().requestIdentity().requestId, 0u);
 
         EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
         EXPECT_THAT(records("nixl::createXferReq"), testing::ElementsAre(identifies(req)));
@@ -966,8 +966,8 @@ namespace agent {
         nixlXferReqH *second = nullptr;
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, first), NIXL_SUCCESS);
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, second), NIXL_SUCCESS);
-        EXPECT_NE(first->traceable().requestIdentity().requestId, 0u);
-        EXPECT_NE(second->traceable().requestIdentity().requestId, 0u);
+        EXPECT_NE(*first->traceable().requestIdentity().requestId, 0u);
+        EXPECT_NE(*second->traceable().requestIdentity().requestId, 0u);
         EXPECT_NE(first->traceable().requestIdentity().requestId,
                   second->traceable().requestIdentity().requestId);
 
@@ -995,7 +995,7 @@ namespace agent {
             agent->makeXferReq(
                 NIXL_WRITE, *local_side, indices, *remote_side, indices, req, &setup_.extraParams),
             NIXL_SUCCESS);
-        EXPECT_NE(req->traceable().requestIdentity().requestId, 0u);
+        EXPECT_NE(*req->traceable().requestIdentity().requestId, 0u);
         EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
         EXPECT_THAT(records("nixl::makeXferReq"), testing::ElementsAre(identifies(req)));
         EXPECT_THAT(records("nixl::postXferReq.write"), testing::ElementsAre(postedAs(req, 1)));
@@ -1023,8 +1023,8 @@ namespace agent {
             NIXL_SUCCESS);
 
         for (const nixlXferReqH *req : {created, made}) {
-            EXPECT_NE(req->traceable().requestIdentity().requestId, 0u);
-            EXPECT_LE(req->traceable().requestIdentity().requestId,
+            EXPECT_NE(*req->traceable().requestIdentity().requestId, 0u);
+            EXPECT_LE(*req->traceable().requestIdentity().requestId,
                       static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
         }
         EXPECT_THAT(records("nixl::createXferReq"), testing::ElementsAre(identifies(created)));
@@ -1425,7 +1425,7 @@ namespace agent {
         EXPECT_EQ(sent->context.traceId, application.traceId);
         EXPECT_NE(sent->context.spanId, application.spanId);
         EXPECT_EQ(sent->context.parentSpanId, application.spanId);
-        EXPECT_EQ(sent->requestId, 0u);
+        EXPECT_EQ(*sent->requestId, 0u);
         EXPECT_THAT(records("nixl::genNotif"),
                     testing::ElementsAre(testing::AllOf(
                         testing::Contains("span=" + nixl::trace::formatTraceparent(sent->context)),
@@ -1528,7 +1528,7 @@ namespace agent {
             ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
             const auto request = req->traceable().requestIdentity().context;
             EXPECT_TRUE(request.sampled());
-            EXPECT_EQ(request.parentSpanId, (std::array<std::uint8_t, 8>{}));
+            EXPECT_EQ(*request.parentSpanId, (std::array<std::uint8_t, 8>{}));
             EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
         }
         EXPECT_EQ(ignored.count(), 1u);
@@ -1907,7 +1907,7 @@ namespace agent {
         nixlXferReqH *req = nullptr;
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup, req), NIXL_SUCCESS);
         EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
-        EXPECT_EQ(req->traceable().postIdentity().requestId, 0u);
+        EXPECT_EQ(*req->traceable().postIdentity().requestId, 0u);
         EXPECT_EQ(req->traceable().postIdentity().execution, 0u);
         EXPECT_THAT(agent_helper_->getGMockEngine().observedTraceRequests(),
                     testing::ElementsAre(testing::Pair(0u, 0u), testing::Pair(0u, 0u)));
@@ -2235,15 +2235,15 @@ namespace agent {
                                               xfer_req,
                                               &local_extra_params),
                   NIXL_SUCCESS);
-        EXPECT_EQ(xfer_req->traceable().requestIdentity().requestId, 0u);
+        EXPECT_EQ(*xfer_req->traceable().requestIdentity().requestId, 0u);
         EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
-        EXPECT_EQ(xfer_req->traceable().postIdentity().requestId, 0u);
+        EXPECT_EQ(*xfer_req->traceable().postIdentity().requestId, 0u);
 
         nixl_opt_args_t repost_params;
         EXPECT_EQ(local_agent_->postXferReq(xfer_req, &repost_params), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
-        EXPECT_EQ(xfer_req->traceable().postIdentity().requestId, 0u);
+        EXPECT_EQ(*xfer_req->traceable().postIdentity().requestId, 0u);
 
         nixl_notifs_t notif_map;
         EXPECT_EQ(remote_agent_->getNotifs(notif_map), NIXL_SUCCESS);
@@ -2432,11 +2432,11 @@ namespace agent {
                                             xfer_req,
                                             &local_extra_params),
                   NIXL_SUCCESS);
-        EXPECT_EQ(xfer_req->traceable().requestIdentity().requestId, 0u);
+        EXPECT_EQ(*xfer_req->traceable().requestIdentity().requestId, 0u);
         EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_SUCCESS);
 
         EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
-        EXPECT_EQ(xfer_req->traceable().postIdentity().requestId, 0u);
+        EXPECT_EQ(*xfer_req->traceable().postIdentity().requestId, 0u);
 
         nixl_notifs_t notif_map;
         EXPECT_EQ(remote_agent_->getNotifs(notif_map), NIXL_SUCCESS);

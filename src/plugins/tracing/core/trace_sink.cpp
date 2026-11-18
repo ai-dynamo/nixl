@@ -82,9 +82,9 @@ TracerPhaseSink::record(AttributeKey label_key,
             record_attrs.push_back(
                 {AttributeKey::NixlPhaseTimestampUs, static_cast<std::int64_t>(*timestamp)});
         }
-        if (identity.requestId != 0) {
+        if (*identity.requestId != 0) {
             record_attrs.push_back(
-                {AttributeKey::NixlXferRequestId, attributeValue(identity.requestId)});
+                {AttributeKey::NixlXferRequestId, attributeValue(*identity.requestId)});
         }
         if (identity.execution != 0) {
             record_attrs.push_back(

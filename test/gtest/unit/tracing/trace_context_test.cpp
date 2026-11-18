@@ -61,9 +61,9 @@ canonicalContext() {
 [[nodiscard]] nixl::trace::TraceContext
 contextWithTraceIdRandomness(std::uint8_t randomness_byte) {
     nixl::trace::TraceContext context;
-    context.traceId.fill(randomness_byte);
-    context.traceId[0] = 0x01;
-    context.spanId.fill(0x01);
+    context.traceId->fill(randomness_byte);
+    (*context.traceId)[0] = 0x01;
+    context.spanId->fill(0x01);
     context.flags = 0x02;
     return context;
 }
@@ -74,7 +74,7 @@ contextWithTraceIdRandomness(std::uint8_t randomness_byte) {
 contextWithRandomnessValue(std::uint64_t randomness) {
     auto context = contextWithTraceIdRandomness(0x00);
     for (std::size_t index = 0; index < 7; ++index) {
-        context.traceId[context.traceId.size() - 1 - index] =
+        (*context.traceId)[context.traceId->size() - 1 - index] =
             static_cast<std::uint8_t>(randomness >> (8 * index));
     }
     return context;
@@ -204,23 +204,23 @@ TEST(TraceContext, PreservesFlagsAndNormalizesOutput) {
 
 TEST(TraceContext, RoundTripsFixedContextWithoutFieldDrift) {
     nixl::trace::TraceContext expected;
-    expected.traceId = {0x4b,
-                        0xf9,
-                        0x2f,
-                        0x35,
-                        0x77,
-                        0xb3,
-                        0x4d,
-                        0xa6,
-                        0xa3,
-                        0xce,
-                        0x92,
-                        0x9d,
-                        0x0e,
-                        0x0e,
-                        0x47,
-                        0x36};
-    expected.spanId = {0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7};
+    *expected.traceId = {0x4b,
+                         0xf9,
+                         0x2f,
+                         0x35,
+                         0x77,
+                         0xb3,
+                         0x4d,
+                         0xa6,
+                         0xa3,
+                         0xce,
+                         0x92,
+                         0x9d,
+                         0x0e,
+                         0x0e,
+                         0x47,
+                         0x36};
+    *expected.spanId = {0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7};
     expected.flags = 0x03;
 
     const auto parsed = nixl::trace::parseTraceparent(nixl::trace::formatTraceparent(expected));
@@ -292,13 +292,13 @@ TEST(TraceContext, RefusesToEncodeInvalidContextOrShortBuffer) {
 
 TEST(TraceContext, RoundTripsThroughWireRecord) {
     nixl::trace::TraceContext minimal;
-    minimal.traceId[15] = 0x01;
-    minimal.spanId[7] = 0x01;
+    (*minimal.traceId)[15] = 0x01;
+    (*minimal.spanId)[7] = 0x01;
     minimal.flags = 0x03;
 
     nixl::trace::TraceContext maximal;
-    maximal.traceId.fill(0xff);
-    maximal.spanId.fill(0xff);
+    maximal.traceId->fill(0xff);
+    maximal.spanId->fill(0xff);
     maximal.flags = 0x01;
 
     for (const auto &expected : {canonicalContext(), drawContext(1.0), minimal, maximal}) {
@@ -477,7 +477,7 @@ TEST(TraceContext, LowerRatioKeepsSubsetOfHigherRatio) {
 TEST(TraceContext, SampleDecisionIgnoresLeadingTraceIdBytes) {
     const auto context = contextWithTraceIdRandomness(0xff);
     auto prefixed = context;
-    std::fill(prefixed.traceId.begin(), prefixed.traceId.end() - 7, 0x00);
+    std::fill(prefixed.traceId->begin(), prefixed.traceId->end() - 7, 0x00);
 
     ASSERT_TRUE(prefixed.valid());
     EXPECT_EQ(nixl::trace::sampledByRatio(prefixed, 0.5),
@@ -508,7 +508,7 @@ TEST(TraceContext, SampleDecisionIsStableAndIgnoresSpanId) {
     EXPECT_EQ(nixl::trace::sampledByRatio(context, 0.5), decision);
 
     auto span_changed = context;
-    span_changed.spanId[0] ^= 0xff;
+    (*span_changed.spanId)[0] ^= 0xff;
     EXPECT_EQ(nixl::trace::sampledByRatio(span_changed, 0.5), decision);
 }
 
@@ -674,8 +674,8 @@ TEST(TraceContext, ForkedChildDrawsItsOwnIds) {
         if (child == 0) {
             const auto context = drawContext(1.0);
             const auto written =
-                ::write(pipe_fds[1], context.traceId.data(), context.traceId.size());
-            ::_exit(written == static_cast<ssize_t>(context.traceId.size()) ? 0 : 1);
+                ::write(pipe_fds[1], context.traceId->data(), context.traceId->size());
+            ::_exit(written == static_cast<ssize_t>(context.traceId->size()) ? 0 : 1);
         }
         parent_context = drawContext(1.0);
     }).join();
@@ -691,7 +691,7 @@ TEST(TraceContext, ForkedChildDrawsItsOwnIds) {
     EXPECT_TRUE(WIFEXITED(status));
     EXPECT_EQ(WEXITSTATUS(status), 0);
     EXPECT_EQ(received, static_cast<ssize_t>(child_trace_id.size()));
-    EXPECT_NE(child_trace_id, parent_context.traceId);
+    EXPECT_NE(child_trace_id, *parent_context.traceId);
 }
 
 TEST(TraceContext, DefaultSourceIdsAreDistinct) {
@@ -701,7 +701,7 @@ TEST(TraceContext, DefaultSourceIdsAreDistinct) {
     std::set<std::uint64_t> ids;
 
     for (std::size_t index = 0; index < count; ++index) {
-        ids.insert(nixl::trace::generateRequestIdentity(&tracer).requestId);
+        ids.insert(*nixl::trace::generateRequestIdentity(&tracer).requestId);
     }
 
     EXPECT_EQ(ids.size(), count);

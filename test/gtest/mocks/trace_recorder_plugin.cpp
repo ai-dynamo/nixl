@@ -113,7 +113,7 @@ public:
                      nixl::trace::Kind,
                      const nixl::trace::TraceIdentity &identity) override {
         return std::make_unique<recordingSpan>(
-            fd_, lineFor(name.view(), identity.context, identity.requestId, "span"));
+            fd_, lineFor(name.view(), identity.context, *identity.requestId, "span"));
     }
 
     void
@@ -124,7 +124,7 @@ public:
              nixlTime::us_t end,
              std::span<const nixl::trace::Attribute> attrs) override {
         recordingSpan span(fd_,
-                           lineFor(name.view(), identity.context, identity.requestId) +
+                           lineFor(name.view(), identity.context, *identity.requestId) +
                                " start_us=" + std::to_string(start) +
                                " end_us=" + std::to_string(end));
         addAttributes(span, attrs);
@@ -138,7 +138,7 @@ public:
                     nixlTime::us_t end,
                     std::span<const nixl::trace::Attribute> attrs) override {
         recordingSpan span(fd_,
-                           lineFor(name.view(), identity.context, identity.requestId, "span") +
+                           lineFor(name.view(), identity.context, *identity.requestId, "span") +
                                " start_us=" + std::to_string(start) +
                                " end_us=" + std::to_string(end));
         addAttributes(span, attrs);
@@ -151,14 +151,14 @@ public:
               nixlTime::us_t at,
               std::span<const nixl::trace::Attribute> attrs) override {
         recordingSpan event(fd_,
-                            lineFor(name.view(), identity.context, identity.requestId) +
+                            lineFor(name.view(), identity.context, *identity.requestId) +
                                 " at_us=" + std::to_string(at));
         addAttributes(event, attrs);
     }
 
     void
     pushContext(const nixl::trace::TraceIdentity &identity) override {
-        contextStack().push_back({identity.context, identity.requestId});
+        contextStack().push_back({identity.context, *identity.requestId});
     }
 
     void
@@ -186,9 +186,9 @@ private:
         if (context.valid()) {
             line += " " + std::string(context_key) + "=" + nixl::trace::formatTraceparent(context);
             if ((context_key == "span") &&
-                std::ranges::any_of(context.parentSpanId,
+                std::ranges::any_of(*context.parentSpanId,
                                     [](std::uint8_t byte) { return byte != 0; })) {
-                line += " parent=" + hexOf(context.parentSpanId);
+                line += " parent=" + hexOf(*context.parentSpanId);
             }
         }
         return line;

@@ -104,7 +104,7 @@ TEST_F(traceRecorder, EmittedSpanRecordsItsTimesAndContext) {
                                    std::string_view{"peer"}}};
         tracer->emitSpan("nixl::test.span",
                          nixl::trace::Kind::CommSend,
-                         {context, recorded_request_id},
+                         {context, nixl::trace::RequestId{recorded_request_id}},
                          100,
                          250,
                          attrs);
@@ -137,8 +137,11 @@ TEST_F(traceRecorder, RecordedPhaseIsAnEventAtThePluginTimestamp) {
         nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
         const std::array attrs{
             nixlBackendTraceAttr{nixl::trace::AttributeKey::NixlRemoteAgent, "sender"}};
-        sink.recordPhase(
-            nixl_trace_phase_t::NOTIF_RECEIVED, 1234, {context, recorded_request_id, 1}, attrs, {});
+        sink.recordPhase(nixl_trace_phase_t::NOTIF_RECEIVED,
+                         1234,
+                         {context, nixl::trace::RequestId{recorded_request_id}, 1},
+                         attrs,
+                         {});
     }
 
     const std::string traceparent = nixl::trace::formatTraceparent(context);
@@ -162,10 +165,15 @@ TEST_F(traceRecorder, CorrelationIsTheRequestIdIndependentlyOfTheContext) {
         const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         {
-            const nixl::trace::Scope scope(tracer.get(), {context, recorded_request_id});
+            const nixl::trace::Scope scope(tracer.get(),
+                                           {context, nixl::trace::RequestId{recorded_request_id}});
             const auto span = tracer->beginSpan("nixl::test.scoped");
         }
-        tracer->emitEvent("nixl::test.event", nixl::trace::Kind::Metadata, {context, 0}, 5, {});
+        tracer->emitEvent("nixl::test.event",
+                          nixl::trace::Kind::Metadata,
+                          {context, nixl::trace::RequestId{0}},
+                          5,
+                          {});
     }
 
     EXPECT_EQ(records(),
@@ -187,16 +195,23 @@ TEST_F(traceRecorder, ContextSpanRecordsItsOwnContextAndId) {
         const auto tracer = makeRecorderTracer();
         ASSERT_NE(tracer, nullptr);
         {
-            const nixl::trace::Scope scope(tracer.get(), {context, recorded_request_id});
-            auto span = tracer->beginContextSpan(
-                "nixl::test.post", nixl::trace::Kind::CommSend, {context, recorded_request_id});
+            const nixl::trace::Scope scope(tracer.get(),
+                                           {context, nixl::trace::RequestId{recorded_request_id}});
+            auto span =
+                tracer->beginContextSpan("nixl::test.post",
+                                         nixl::trace::Kind::CommSend,
+                                         {context, nixl::trace::RequestId{recorded_request_id}});
             span.addAttribute(nixl::trace::AttributeKey::Bytes, std::int64_t{4096});
             const auto child = tracer->beginSpan("nixl::test.child");
-            const auto other = tracer->beginContextSpan(
-                "nixl::test.other", nixl::trace::Kind::Generic, {other_context, other_request_id});
+            const auto other =
+                tracer->beginContextSpan("nixl::test.other",
+                                         nixl::trace::Kind::Generic,
+                                         {other_context, nixl::trace::RequestId{other_request_id}});
         }
-        const auto unscoped = tracer->beginContextSpan(
-            "nixl::test.unscoped", nixl::trace::Kind::Generic, {context, recorded_request_id});
+        const auto unscoped =
+            tracer->beginContextSpan("nixl::test.unscoped",
+                                     nixl::trace::Kind::Generic,
+                                     {context, nixl::trace::RequestId{recorded_request_id}});
     }
 
     const std::string correlation = "correlation=" + std::to_string(recorded_request_id);

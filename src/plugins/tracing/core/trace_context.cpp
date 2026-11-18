@@ -92,7 +92,7 @@ parseBytes(std::string_view value,
 traceIdRandomness(const nixl::trace::TraceContext &context) noexcept {
     std::uint64_t word;
     std::memcpy(
-        &word, context.traceId.data() + context.traceId.size() - sizeof(word), sizeof(word));
+        &word, context.traceId->data() + context.traceId->size() - sizeof(word), sizeof(word));
     if constexpr (std::endian::native == std::endian::little) {
         word = __builtin_bswap64(word);
     }
@@ -145,23 +145,24 @@ drawRequestIdentity(nixl::trace::TraceIdentity &identity,
                sizeof(context.traceId) + sizeof(context.spanId) + sizeof(identity.requestId)>
         bytes;
     fill(bytes);
-    std::memcpy(context.traceId.data(), bytes.data(), sizeof(context.traceId));
+    std::memcpy(context.traceId->data(), bytes.data(), sizeof(context.traceId));
     std::memcpy(
-        context.spanId.data(), bytes.data() + sizeof(context.traceId), sizeof(context.spanId));
-    std::memcpy(&identity.requestId,
+        context.spanId->data(), bytes.data() + sizeof(context.traceId), sizeof(context.spanId));
+    std::uint64_t &request_id = *identity.requestId;
+    std::memcpy(&request_id,
                 bytes.data() + sizeof(context.traceId) + sizeof(context.spanId),
-                sizeof(identity.requestId));
+                sizeof(request_id));
 
-    while (isAllZero(context.traceId)) {
-        fill(context.traceId);
+    while (isAllZero(*context.traceId)) {
+        fill(*context.traceId);
     }
-    while (isAllZero(context.spanId)) {
-        fill(context.spanId);
+    while (isAllZero(*context.spanId)) {
+        fill(*context.spanId);
     }
-    identity.requestId &= max_request_id;
-    while (identity.requestId == 0) {
-        fill({reinterpret_cast<std::uint8_t *>(&identity.requestId), sizeof(identity.requestId)});
-        identity.requestId &= max_request_id;
+    request_id &= max_request_id;
+    while (request_id == 0) {
+        fill({reinterpret_cast<std::uint8_t *>(&request_id), sizeof(request_id)});
+        request_id &= max_request_id;
     }
 
     setFlags(context, sample_ratio);
@@ -201,11 +202,11 @@ nixl::trace::TraceparentText::TraceparentText(const nixl::trace::TraceContext &c
     *out++ = '0';
     *out++ = '0';
     *out++ = '-';
-    for (const auto byte : context.traceId) {
+    for (const auto byte : *context.traceId) {
         out = appendByte(out, byte);
     }
     *out++ = '-';
-    for (const auto byte : context.spanId) {
+    for (const auto byte : *context.spanId) {
         out = appendByte(out, byte);
     }
     *out++ = '-';
@@ -248,7 +249,7 @@ nixl::trace::parseTraceparent(std::string_view value) {
     }
 
     nixl::trace::TraceContext context;
-    if (!parseBytes(value, 3, context.traceId) || !parseBytes(value, 36, context.spanId) ||
+    if (!parseBytes(value, 3, *context.traceId) || !parseBytes(value, 36, *context.spanId) ||
         !parseByte(value, 53, context.flags) || !context.valid()) {
         return std::nullopt;
     }
@@ -279,8 +280,8 @@ nixl::trace::encodeTraceTags(nixlSerDes &ser_des,
         return;
     }
     ser_des.addBuf("tctx", record.data(), *size);
-    if (identity.requestId != 0) {
-        const requestTag tag{identity.requestId, identity.execution};
+    if (*identity.requestId != 0) {
+        const requestTag tag{*identity.requestId, identity.execution};
         ser_des.addBuf("treq", &tag, sizeof(tag));
     }
     if (!baggage.empty()) {
@@ -300,7 +301,7 @@ nixl::trace::decodeTraceTags(nixlSerDes &ser_des) {
     requestTag tag;
     if ((ser_des.peekBufLen("treq") == sizeof(tag)) &&
         (ser_des.getBuf("treq", &tag, sizeof(tag)) == NIXL_SUCCESS) && (tag.requestId != 0)) {
-        identity.requestId = tag.requestId;
+        identity.requestId = RequestId{tag.requestId};
         identity.execution = tag.execution;
     }
     return identity;
@@ -330,11 +331,11 @@ nixl::trace::encodeTraceContext(const nixl::trace::TraceContext &context,
 
     buffer[0] = nixl::trace::traceContextWireVersion;
     buffer[wire_flags_offset] = context.flags & supported_trace_flags;
-    std::copy(context.traceId.begin(),
-              context.traceId.end(),
+    std::copy(context.traceId->begin(),
+              context.traceId->end(),
               buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset));
-    std::copy(context.spanId.begin(),
-              context.spanId.end(),
+    std::copy(context.spanId->begin(),
+              context.spanId->end(),
               buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset));
     return nixl::trace::traceContextWireSize;
 }
@@ -354,11 +355,11 @@ nixl::trace::decodeTraceContext(std::span<const std::uint8_t> buffer,
 
     context.flags = buffer[wire_flags_offset] & supported_trace_flags;
     std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset),
-                context.traceId.size(),
-                context.traceId.begin());
+                context.traceId->size(),
+                context.traceId->begin());
     std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset),
-                context.spanId.size(),
-                context.spanId.begin());
+                context.spanId->size(),
+                context.spanId->begin());
     if (!context.valid()) {
         return nixl::trace::WireDecodeResult::Malformed;
     }
@@ -438,8 +439,8 @@ nixl::trace::CompositeTracer::generatePostContext(const nixl::trace::TraceContex
     nixl::trace::TraceContext context = request;
     try {
         do {
-            fill(context.spanId);
-        } while (isAllZero(context.spanId));
+            fill(*context.spanId);
+        } while (isAllZero(*context.spanId));
     }
     catch (const std::exception &e) {
         reportContextFailure(e.what());

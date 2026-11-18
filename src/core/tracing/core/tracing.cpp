@@ -218,7 +218,7 @@ CallScope::~CallScope() {
 void
 Traceable::emitRequestSpan() const noexcept {
     try {
-        const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
+        const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, *postIdentity_.requestId},
                                    {AttributeKey::NixlXferExecution, postIdentity_.execution}};
         tracer_->emitContextSpan(Record::XferReq,
                                  kindOf(Record::XferReq),
@@ -240,9 +240,9 @@ Traceable::advancePost(const nixl_blob_t &parent, const nixl_blob_t &baggage) {
         postBaggage_.clear();
         return;
     }
-    if (postIdentity_.requestId == 0) {
+    if (*postIdentity_.requestId == 0) {
         const TraceIdentity drawn = generateRequestIdentity(tracer_, parent);
-        if (drawn.requestId == 0) {
+        if (*drawn.requestId == 0) {
             return;
         }
         postIdentity_.requestId = drawn.requestId;
@@ -262,14 +262,14 @@ Traceable::advancePost(const nixl_blob_t &parent, const nixl_blob_t &baggage) {
 
 void
 Traceable::emitEvent(Record record) const {
-    const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
+    const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, *postIdentity_.requestId},
                                {AttributeKey::NixlXferExecution, postIdentity_.execution}};
     tracer_->emitEvent(record, kindOf(record), postIdentity_, attrs);
 }
 
 void
 Traceable::emitEvent(Record record, const Attribute &attr) const {
-    const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
+    const Attribute attrs[] = {{AttributeKey::NixlXferRequestId, *postIdentity_.requestId},
                                {AttributeKey::NixlXferExecution, postIdentity_.execution},
                                attr};
     tracer_->emitEvent(record, kindOf(record), postIdentity_, attrs);
@@ -277,7 +277,7 @@ Traceable::emitEvent(Record record, const Attribute &attr) const {
 
 void
 Traceable::emitEvent(Record record, std::span<const Attribute> attrs) const {
-    std::vector<Attribute> event_attrs{{AttributeKey::NixlXferRequestId, postIdentity_.requestId},
+    std::vector<Attribute> event_attrs{{AttributeKey::NixlXferRequestId, *postIdentity_.requestId},
                                        {AttributeKey::NixlXferExecution, postIdentity_.execution}};
     event_attrs.insert(event_attrs.end(), attrs.begin(), attrs.end());
     tracer_->emitEvent(record, kindOf(record), postIdentity_, event_attrs);
@@ -289,16 +289,18 @@ detail::suppliedIdentity(const Tracer *tracer, const nixl_blob_t &parent) {
     if (!supplied) {
         return {};
     }
-    return {supplied->sampled() ? generatePostContext(*supplied, tracer) : *supplied, 0, 0};
+    return {
+        supplied->sampled() ? generatePostContext(*supplied, tracer) : *supplied, RequestId{}, 0};
 }
 
 nixl_status_t
 traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info) {
     const TraceIdentity identity = traceable.postIdentity();
-    if ((identity.requestId == 0) || !identity.context.valid() || (traceable.tracer() == nullptr)) {
+    if ((*identity.requestId == 0) || !identity.context.valid() ||
+        (traceable.tracer() == nullptr)) {
         return NIXL_ERR_NOT_FOUND;
     }
-    info.requestId = identity.requestId;
+    info.requestId = *identity.requestId;
     info.execution = identity.execution;
     info.traceparent = traceable.tracer()->traceparent(identity.context);
     return NIXL_SUCCESS;

@@ -52,10 +52,10 @@ TEST(UcxTraceCompiledOut, PostPhasesAreEmpty) {
 
 TEST(UcxTraceCompiledOut, SampledPostSendsTheOlderNotification) {
     nixl::trace::TraceIdentity sampled;
-    sampled.context.traceId.fill(0x11);
-    sampled.context.spanId.fill(0x22);
+    sampled.context.traceId->fill(0x11);
+    sampled.context.spanId->fill(0x22);
     sampled.context.flags = 0x01;
-    sampled.requestId = 7;
+    sampled.requestId = nixl::trace::RequestId{7};
     sampled.execution = 1;
 
     EXPECT_EQ(nixl::ucx::serializeNotif(sender_name, "msg", nixlBackendPostTrace{nullptr, sampled}),
