@@ -64,13 +64,13 @@ the README, and the UCX release string in `libucp`).
 | 2 | DDN Infinia bundling | PASS when the plugin is in every binary wheel, links the DDN runtime and no `libred_*` library is bundled; FAIL also when the manifest says Infinia was not built |
 | 3 | SPCX built from the expected ref | PASS with the manifest's ref and commit, which the wheel README must agree with; SKIPPED without a manifest; FAIL on an unusable manifest or a disagreement |
 | 4 | UCX version and commit | PASS when every wheel carries the same UCX release and revision and they match the manifest |
-| 5 | Files added / removed / changed | REVIEW lists per file with the combinations it applies to; PASS only when nothing differs |
-| 6 | NIXL plugins bundled | PASS when the set is identical across the wheels of a CUDA line; additions and removals since the reference are listed |
-| 7 | UCX plugins bundled | same rule for the UCX modules |
-| 8 | Compressed wheel size | REVIEW: per wheel and total, with the members that moved by 1 MB or more |
+| 5 | NIXL plugins bundled | PASS when the set is identical across the wheels of a CUDA line; additions and removals since the reference are listed |
+| 6 | UCX plugins bundled | same rule for the UCX modules |
+| 7 | Compressed wheel size | REVIEW: per wheel and total, with the members that moved by 1 MB or more |
+| 8 | Files added / removed / changed | REVIEW lists per file with the combinations it applies to; PASS only when nothing differs. Last, because its lists are long |
 
 `PASS` and `FAIL` appear only where code can judge, `REVIEW` marks a list for a person, and
-`SKIPPED` names the missing input. Check 5 applies the rules the 1.4.1 audit learned the hard
+`SKIPPED` names the missing input. Check 8 applies the rules the 1.4.1 audit learned the hard
 way: the release version is stripped from both the `.dist-info/` and `.data/` prefixes; the
 8-hex auditwheel suffix is stripped from vendored library names and a moved suffix is reported
 as *rehashed*, not as an add plus a remove; and "did NIXL code change" is answered from the
