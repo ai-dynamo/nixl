@@ -120,7 +120,7 @@ impl XferRequest {
     /// The request id (the NVTX payload and `nixl.xfer_request_id`), the execution number of
     /// the latest accepted post (0 before any) and that post's W3C traceparent (the request's
     /// before any post), or `None` if the request has no trace identity, such as when no
-    /// tracing backend was active at its creation
+    /// tracing backend was active at its creation or the request is unsampled
     ///
     /// # Errors
     /// * `InvalidParam` - If the request handle is invalid

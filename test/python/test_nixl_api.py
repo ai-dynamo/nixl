@@ -856,15 +856,24 @@ def test_xfer_trace_info_without_tracing(monkeypatch, backend_name):
 def test_xfer_trace_info_counts_posts(monkeypatch, backend_name):
     monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
     monkeypatch.setenv("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1")
-    monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "0")
+    monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "1")
     with _xfer_handle(backend_name) as (agent, handle):
-        request_id, execution, traceparent = _trace_info(agent, handle)
+        request_id, execution, _ = _trace_info(agent, handle)
         assert request_id != 0 and execution == 0
-        match = _TRACEPARENT.fullmatch(traceparent)
-        assert match and match["flags"] == "02"
         for expected in (1, 2):
             _post_to_done(agent, handle)
-            assert _trace_info(agent, handle) == (request_id, expected, traceparent)
+            assert _trace_info(agent, handle)[:2] == (request_id, expected)
+
+
+@requires_nvtx_plugin
+def test_xfer_trace_info_unsampled_request_has_none(monkeypatch, backend_name):
+    monkeypatch.setenv("NIXL_TRACE_BACKENDS", "nvtx")
+    monkeypatch.setenv("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1")
+    monkeypatch.setenv("NIXL_TRACE_SAMPLE_RATIO", "0")
+    with _xfer_handle(backend_name) as (agent, handle):
+        assert agent.get_xfer_trace_info(handle) is None
+        _post_to_done(agent, handle)
+        assert agent.get_xfer_trace_info(handle) is None
 
 
 @requires_nvtx_plugin

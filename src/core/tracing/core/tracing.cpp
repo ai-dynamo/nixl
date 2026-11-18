@@ -235,8 +235,22 @@ void
 Traceable::advancePost(const nixl_blob_t &parent, const nixl_blob_t &baggage) {
     const std::optional<TraceContext> supplied =
         parent.empty() ? std::nullopt : parseParentContext(tracer_, parent);
-    const TraceContext &under = supplied ? *supplied : requestContext_;
-    postIdentity_.context = under.sampled() ? generatePostContext(under, tracer_) : under;
+    if (!requestContext_.sampled() && !(supplied && supplied->sampled())) {
+        postIdentity_.context = requestContext_;
+        postBaggage_.clear();
+        return;
+    }
+    if (postIdentity_.requestId == 0) {
+        const TraceIdentity drawn = generateRequestIdentity(tracer_, parent);
+        if (drawn.requestId == 0) {
+            return;
+        }
+        postIdentity_.requestId = drawn.requestId;
+        postIdentity_.context = drawn.context;
+    } else {
+        const TraceContext &under = supplied ? *supplied : requestContext_;
+        postIdentity_.context = under.sampled() ? generatePostContext(under, tracer_) : under;
+    }
     ++postIdentity_.execution;
     if (postIdentity_.context.sampled()) {
         const std::string_view own = parseBaggage(tracer_, baggage);
@@ -281,7 +295,7 @@ detail::suppliedIdentity(const Tracer *tracer, const nixl_blob_t &parent) {
 nixl_status_t
 traceInfo(const Traceable &traceable, nixl_xfer_trace_info_t &info) {
     const TraceIdentity identity = traceable.postIdentity();
-    if ((identity.requestId == 0) || (traceable.tracer() == nullptr)) {
+    if ((identity.requestId == 0) || !identity.context.valid() || (traceable.tracer() == nullptr)) {
         return NIXL_ERR_NOT_FOUND;
     }
     info.requestId = identity.requestId;

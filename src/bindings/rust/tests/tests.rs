@@ -1842,18 +1842,39 @@ fn test_get_xfer_trace_info_counts_posts() {
     ]);
     env_guard.set("NIXL_TRACE_BACKENDS", "nvtx");
     env_guard.set("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
-    env_guard.set("NIXL_TRACE_SAMPLE_RATIO", "0");
+    env_guard.set("NIXL_TRACE_SAMPLE_RATIO", "1");
 
     with_write_request(false, |agent, xfer_req, opt_args| {
         let before = trace_info(xfer_req);
         assert_ne!(before.request_id, 0);
         assert_eq!(before.execution, 0);
-        assert_eq!(split_traceparent(&before.traceparent).2, "02");
 
         for execution in 1..=2 {
             post_to_completion(agent, xfer_req, opt_args);
-            assert_eq!(trace_info(xfer_req), XferTraceInfo { execution, ..before.clone() });
+            let after = trace_info(xfer_req);
+            assert_eq!((after.request_id, after.execution), (before.request_id, execution));
         }
+    });
+}
+
+#[test]
+fn test_get_xfer_trace_info_unsampled_request_has_none() {
+    if nvtx_plugin_missing("test_get_xfer_trace_info_unsampled_request_has_none") {
+        return;
+    }
+    let env_guard = EnvGuard::new([
+        "NIXL_TRACE_BACKENDS",
+        "NIXL_TRACE_NVTX_WITHOUT_PROFILER",
+        "NIXL_TRACE_SAMPLE_RATIO",
+    ]);
+    env_guard.set("NIXL_TRACE_BACKENDS", "nvtx");
+    env_guard.set("NIXL_TRACE_NVTX_WITHOUT_PROFILER", "1");
+    env_guard.set("NIXL_TRACE_SAMPLE_RATIO", "0");
+
+    with_write_request(false, |agent, xfer_req, opt_args| {
+        assert_eq!(xfer_req.get_trace_info().expect("get_trace_info failed"), None);
+        post_to_completion(agent, xfer_req, opt_args);
+        assert_eq!(xfer_req.get_trace_info().expect("get_trace_info failed"), None);
     });
 }
 

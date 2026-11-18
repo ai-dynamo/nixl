@@ -274,7 +274,7 @@ namespace agent {
         EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
     }
 
-    TEST_F(tracingEnabledAgentFixture, RequestBuiltWhileTheBackendPrepsIsUntraced) {
+    TEST_F(sampledTracingAgentFixture, RequestBuiltWhileTheBackendPrepsIsUntraced) {
         selfXferSetup setup;
         agent_helper_->setupSelfXfer(setup);
         std::optional<bool> nested_traced;
@@ -300,8 +300,7 @@ namespace agent {
 
         nixlXferReqH *req = nullptr;
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup, req), NIXL_SUCCESS);
-        EXPECT_TRUE(req->traceable().requestIdentity().context.valid());
-        EXPECT_FALSE(req->traceable().requestIdentity().context.sampled());
+        EXPECT_FALSE(req->traceable().requestIdentity().context.valid());
         EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
         EXPECT_EQ(untraced.count(), 0u);

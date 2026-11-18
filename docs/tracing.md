@@ -197,8 +197,8 @@ release spans, its `nixl::xfer.complete` and `nixl::xfer.error` events and its b
 phases. An
 unsampled request records nothing, except a post given a sampled context of its own
 (see "Joining an application's trace"), so the requests a ratio below `1` skips cost
-only their ids and a few calls into the tracing core per post. Calls that belong to no
-request, such as registration,
+only their sampling decision and a few calls into the tracing core per post. Calls that
+belong to no request, such as registration,
 connections, metadata and notifications, are recorded whenever a backend is
 active, except a notification given an unsampled context.
 
@@ -294,12 +294,13 @@ of its own is the exception (see "Joining an application's trace").
 
 ### Request id and execution number
 
-While tracing is active, each request gets a request id when `createXferReq` or
-`makeXferReq` creates it: 63 random bits, fixed for the request's life and recorded
-as `nixl.xfer_request_id`. Each post that passes `postXferReq`'s checks and reaches
-the backend takes the request's next execution number, `nixl.xfer_execution`,
-starting at 1, whether or not the backend then fails it. A post rejected before
-that takes none. A post's `nixl::xfer.complete`
+While tracing is active, each sampled request gets a request id when `createXferReq` or
+`makeXferReq` creates it, and an unsampled one with its first post given a sampled context
+of its own: 63 random bits, fixed for the request's life and recorded as
+`nixl.xfer_request_id`. Each post that passes `postXferReq`'s checks and reaches the
+backend takes the request's next execution number, `nixl.xfer_execution`, starting at 1,
+whether or not the backend then fails it; an unsampled request's posts take one only when
+they are recorded. A post rejected before that takes none. A post's `nixl::xfer.complete`
 carries the same pair as its span. Both are recorded as `int64_t` attributes; 63
 bits keep every id positive. A receiver keeps any non-zero id it receives: a NIXL 1.6
 sender draws from all 64 bits, so about half its ids read as negative attributes,
@@ -323,8 +324,9 @@ the execution number of the latest post that took one (0 before any) and that po
 trace context as a W3C `traceparent`: the values that post's records carry. Before any
 post the `traceparent` is the request's own; each post of a sampled request has one of
 its own. A post refused by `postXferReq`'s checks changes none of the three. A request
-without an id, such as one created while no tracing backend is active, returns
-`NIXL_ERR_NOT_FOUND`; the getter never enables tracing.
+without an id, such as one created while no tracing backend is active or an unsampled one,
+returns `NIXL_ERR_NOT_FOUND`, and so does an unsampled request whose latest post was not
+recorded; the getter never enables tracing.
 From Python, `nixl_agent.get_xfer_trace_info(handle)` returns the same three as a
 `nixlXferTraceInfo` (`requestId`, `execution`, `traceparent`), or `None` when the
 request has no identity or the handle has been released.

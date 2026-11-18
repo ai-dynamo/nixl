@@ -762,7 +762,8 @@ class nixl_agent:
 
         Returns:
             nixlXferTraceInfo object, or None if the request has no trace identity, such as
-            when no tracing backend was active at its creation, or if the handle was released.
+            when no tracing backend was active at its creation or the request is unsampled,
+            or if the handle was released.
         """
         if handle._released:
             return None

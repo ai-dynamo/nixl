@@ -413,6 +413,9 @@ nixl::trace::CompositeTracer::parseBaggage(const nixl_blob_t &value) const {
 nixl::trace::TraceIdentity
 nixl::trace::CompositeTracer::generateRequestIdentity(const nixl_blob_t &parent) const {
     const std::optional<nixl::trace::TraceContext> parent_context = parseParentContext(parent);
+    if (parent_context ? !parent_context->sampled() : (sampleRatio() == 0.0)) {
+        return {};
+    }
     nixl::trace::TraceIdentity identity;
     try {
         drawRequestIdentity(identity, sampleRatio(), randomBytes());
@@ -426,7 +429,7 @@ nixl::trace::CompositeTracer::generateRequestIdentity(const nixl_blob_t &parent)
         identity.context.flags = parent_context->flags;
         identity.context.parentSpanId = parent_context->spanId;
     }
-    return identity;
+    return identity.context.sampled() ? identity : nixl::trace::TraceIdentity{};
 }
 
 nixl::trace::TraceContext

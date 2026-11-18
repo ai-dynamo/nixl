@@ -781,8 +781,10 @@ TEST(UcxTraceContextWire, OlderReceiverStillReadsTheMessage) {
 }
 
 TEST(UcxTraceContextWire, UnsampledRequestWritesNoContextBytes) {
-    const auto unsampled = drawContext(0.0);
+    auto unsampled = drawContext(1.0);
+    unsampled.flags = 0x02;
     ASSERT_TRUE(unsampled.valid());
+    ASSERT_FALSE(unsampled.sampled());
 
     EXPECT_EQ(tracedNotif({unsampled, tagged_request_id, tagged_execution}),
               olderSenderNotif(sender_name, "msg"));
@@ -816,7 +818,10 @@ TEST(UcxTraceContextWire, SampledBaggageRoundTrips) {
 }
 
 TEST(UcxTraceContextWire, UnsampledRequestWritesNoBaggage) {
-    const auto unsampled = drawContext(0.0);
+    auto unsampled = drawContext(1.0);
+    unsampled.flags = 0x02;
+    ASSERT_TRUE(unsampled.valid());
+    ASSERT_FALSE(unsampled.sampled());
 
     EXPECT_EQ(tracedNotif({unsampled, tagged_request_id, tagged_execution}, "tenant=a"),
               olderSenderNotif(sender_name, "msg"));
@@ -1406,8 +1411,7 @@ TEST_F(ucxTraceContextPropagation, UnsampledAndUntracedPostsRecordNoPhases) {
     env.addVar("NIXL_TRACE_SAMPLE_RATIO", "0");
     ASSERT_NO_FATAL_FAILURE(
         writeToSelf(unsampled_name, {}, 1, {tagged_msg}, unsampled, request_id));
-    ASSERT_TRUE(unsampled.at(0).valid());
-    ASSERT_FALSE(unsampled.at(0).sampled());
+    ASSERT_FALSE(unsampled.at(0).valid());
 
     std::vector<nixl::trace::TraceContext> untraced;
     env.addVar("NIXL_TRACE_BACKENDS", "");

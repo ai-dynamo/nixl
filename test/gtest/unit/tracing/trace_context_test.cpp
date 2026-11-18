@@ -240,10 +240,10 @@ TEST(TraceContext, GeneratesDistinctValidContexts) {
     constexpr std::size_t count = 64;
 
     for (std::size_t index = 0; index < count; ++index) {
-        const auto context = drawContext(0.0);
+        const auto context = drawContext(1.0);
         EXPECT_TRUE(context.valid());
-        EXPECT_EQ(context.flags, 0x02);
-        EXPECT_FALSE(context.sampled());
+        EXPECT_EQ(context.flags, 0x03);
+        EXPECT_TRUE(context.sampled());
         generated.insert(nixl::trace::formatTraceparent(context));
     }
 
@@ -301,7 +301,7 @@ TEST(TraceContext, RoundTripsThroughWireRecord) {
     maximal.spanId.fill(0xff);
     maximal.flags = 0x01;
 
-    for (const auto &expected : {canonicalContext(), drawContext(0.0), minimal, maximal}) {
+    for (const auto &expected : {canonicalContext(), drawContext(1.0), minimal, maximal}) {
         std::array<std::uint8_t, nixl::trace::traceContextWireSize> buffer{};
         ASSERT_TRUE(nixl::trace::encodeTraceContext(expected, buffer).has_value());
 
@@ -315,7 +315,7 @@ TEST(TraceContext, RoundTripsThroughWireRecord) {
 }
 
 TEST(TraceContext, WireAndTextFormsAgree) {
-    auto expected = drawContext(0.0);
+    auto expected = drawContext(1.0);
     expected.flags |= 0x01;
 
     std::array<std::uint8_t, nixl::trace::traceContextWireSize> buffer{};
@@ -338,7 +338,7 @@ TEST(TraceContext, SkipsUnknownVersionWithoutTouchingContext) {
     auto buffer = kCanonicalWireRecord;
     buffer[0] = nixl::trace::traceContextWireVersion + 1;
 
-    auto context = drawContext(0.0);
+    auto context = drawContext(1.0);
     const auto untouched = context;
 
     EXPECT_EQ(nixl::trace::decodeTraceContext(buffer, context),
@@ -409,7 +409,7 @@ TEST(TraceContext, NormalizesReservedFlagBitsFromRawRecord) {
 
 TEST(TraceContext, SampleRatioBoundsDecideEverythingOrNothing) {
     for (std::size_t index = 0; index < 32; ++index) {
-        const auto context = drawContext(0.0);
+        const auto context = drawContext(1.0);
         EXPECT_FALSE(nixl::trace::sampledByRatio(context, 0.0));
         EXPECT_TRUE(nixl::trace::sampledByRatio(context, 1.0));
         // Configuration rejects these, but the function takes any double, and
@@ -463,7 +463,7 @@ TEST(TraceContext, RatioScalesToNearestNotTowardZero) {
 // second stage thin an already-sampled stream instead of emptying it.
 TEST(TraceContext, LowerRatioKeepsSubsetOfHigherRatio) {
     for (std::size_t index = 0; index < 256; ++index) {
-        const auto context = drawContext(0.0);
+        const auto context = drawContext(1.0);
         if (!nixl::trace::sampledByRatio(context, 0.25)) {
             continue;
         }
@@ -521,9 +521,7 @@ TEST(TraceContext, GeneratedContextCarriesSampledFlag) {
     EXPECT_EQ(sampled.flags, 0x03);
     EXPECT_TRUE(sampled.sampled());
 
-    const auto unsampled = drawContext(0.0);
-    EXPECT_EQ(unsampled.flags, 0x02);
-    EXPECT_FALSE(unsampled.sampled());
+    EXPECT_FALSE(drawContext(0.0).valid());
 }
 
 TEST(TraceContext, SampleRatioIsOnWhenUnset) {
@@ -671,15 +669,15 @@ TEST(TraceContext, ForkedChildDrawsItsOwnIds) {
     pid_t child = -1;
     nixl::trace::TraceContext parent_context;
     std::thread([&] {
-        static_cast<void>(drawContext(0.0));
+        static_cast<void>(drawContext(1.0));
         child = ::fork();
         if (child == 0) {
-            const auto context = drawContext(0.0);
+            const auto context = drawContext(1.0);
             const auto written =
                 ::write(pipe_fds[1], context.traceId.data(), context.traceId.size());
             ::_exit(written == static_cast<ssize_t>(context.traceId.size()) ? 0 : 1);
         }
-        parent_context = drawContext(0.0);
+        parent_context = drawContext(1.0);
     }).join();
     ::close(pipe_fds[1]);
 
@@ -698,7 +696,7 @@ TEST(TraceContext, ForkedChildDrawsItsOwnIds) {
 
 TEST(TraceContext, DefaultSourceIdsAreDistinct) {
     const nixl::trace::CompositeTracer tracer{
-        std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}, 0.0};
+        std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}, 1.0};
     constexpr std::size_t count = 10000;
     std::set<std::uint64_t> ids;
 

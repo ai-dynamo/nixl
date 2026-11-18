@@ -1304,7 +1304,7 @@ TEST(Tracing, RequestDrawsItsIdentityFromItsTracer) {
 
 TEST(Tracing, RequestContextsAreDistinctAndStable) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b);
+    const auto tracer = makeMockTracer(a, b, 1.0);
     const nixl::trace::CallScope call(tracer.get(), nullptr);
     const nixlXferReqH first(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
@@ -1481,7 +1481,7 @@ TEST(Tracing, ScopesMakeTheirBaggageCurrentForTheBackend) {
 
 TEST(Tracing, ActiveTracerGeneratesValidDistinctContexts) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b);
+    const auto tracer = makeMockTracer(a, b, 1.0);
 
     const auto first = nixl::trace::generateRequestIdentity(tracer.get()).context;
     const auto second = nixl::trace::generateRequestIdentity(tracer.get()).context;
@@ -1497,7 +1497,9 @@ TEST(Tracing, TracerSampleRatioReachesGeneratedContexts) {
     CallLog a, b;
     const auto unsampled_tracer = makeMockTracer(a, b);
     EXPECT_EQ(unsampled_tracer->sampleRatio(), 0.0);
-    EXPECT_FALSE(nixl::trace::generateRequestIdentity(unsampled_tracer.get()).context.sampled());
+    const auto unsampled = nixl::trace::generateRequestIdentity(unsampled_tracer.get());
+    EXPECT_FALSE(unsampled.context.valid());
+    EXPECT_EQ(unsampled.requestId, 0u);
 
     CallLog c, d;
     const auto sampled_tracer = makeMockTracer(c, d, /*sample_ratio=*/1.0);
@@ -1528,7 +1530,7 @@ TEST(Tracing, ContextGenerationFailureIsUntracedAndLoggedOncePerTracer) {
 
 TEST(Tracing, RequestIdentityDrawsItsIdsAgainWhileZero) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0.0, zeroFirstRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 1.0, zeroFirstRandomBytes);
     zero_draws_left = 2;
 
     const nixl::trace::TraceIdentity identity = nixl::trace::generateRequestIdentity(tracer.get());
@@ -1564,7 +1566,7 @@ TEST(Tracing, RequestIdentityTakesItsIdsFromOneDraw) {
 
 TEST(Tracing, RequestIdentityDrawsOnlyAZeroIdAgain) {
     CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 0.0, zeroSpanIdOnceRandomBytes);
+    const auto tracer = makeMockTracer(a, b, 1.0, zeroSpanIdOnceRandomBytes);
     random_draws = 0;
 
     const nixl::trace::TraceIdentity identity = nixl::trace::generateRequestIdentity(tracer.get());
@@ -1577,7 +1579,7 @@ TEST(Tracing, RequestIdentityDrawsOnlyAZeroIdAgain) {
     EXPECT_EQ(identity.context.traceId, trace_id);
     EXPECT_EQ(identity.context.spanId, span_id);
     EXPECT_EQ(identity.requestId, 0x2222222222222222ULL);
-    EXPECT_FALSE(identity.context.sampled());
+    EXPECT_TRUE(identity.context.sampled());
 }
 
 TEST(Tracing, RequestIdentityIsNoneWithoutTracerOrSource) {
@@ -1651,7 +1653,7 @@ TEST(Tracing, TraceablePostIsUntracedWhenItsSpanIdCannotBeDrawn) {
 TEST(Tracing, RequestIdFitsAnInt64) {
     const nixl::trace::CompositeTracer tracer{
         std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{},
-        0.0,
+        1.0,
         [](std::span<std::uint8_t> bytes) { std::ranges::fill(bytes, std::uint8_t{0xff}); }};
 
     EXPECT_EQ(nixl::trace::generateRequestIdentity(&tracer).requestId,
@@ -1680,7 +1682,7 @@ TEST(Tracing, RequestIdentityJoinsASuppliedTraceparent) {
 TEST(Tracing, RequestIdentityJoinsASuppliedRecord) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 1.0);
-    const auto parent = testContext(0x42, 0x02);
+    const auto parent = testContext(0x42, 0x03);
     std::array<std::uint8_t, nixl::trace::traceContextWireSize> record{};
     ASSERT_TRUE(nixl::trace::encodeTraceContext(parent, record).has_value());
 
@@ -1689,8 +1691,8 @@ TEST(Tracing, RequestIdentityJoinsASuppliedRecord) {
 
     EXPECT_EQ(identity.context.traceId, parent.traceId);
     EXPECT_NE(identity.context.spanId, parent.spanId);
-    EXPECT_EQ(identity.context.flags, 0x02);
-    EXPECT_FALSE(identity.context.sampled());
+    EXPECT_EQ(identity.context.flags, 0x03);
+    EXPECT_TRUE(identity.context.sampled());
     EXPECT_EQ(identity.context.parentSpanId, parent.spanId);
     EXPECT_NE(identity.requestId, 0u);
 }

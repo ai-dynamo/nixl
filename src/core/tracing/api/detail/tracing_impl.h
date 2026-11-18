@@ -107,7 +107,7 @@ Traceable::postBaggage() const noexcept {
 
 inline const TraceIdentity &
 Traceable::post(const nixl_blob_t &parent, const nixl_blob_t &baggage) {
-    if (postIdentity_.requestId != 0) {
+    if ((postIdentity_.requestId != 0) || ((tracer_ != nullptr) && !parent.empty())) {
         advancePost(parent, baggage);
     }
     return postIdentity_;
