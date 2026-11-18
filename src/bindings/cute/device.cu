@@ -2,6 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #if defined(__clang__) && defined(__CUDA__)
+// CuTe 4.5.1 libNVVM cannot lower Clang's newer block-barrier intrinsic.
+// __syncthreads() is a full CTA barrier on barrier ID zero.
+static __device__ __forceinline__ __attribute__((convergent)) void
+cuteNixlBlockBarrier() {
+    asm volatile("bar.sync 0;" ::: "memory");
+}
+
+#pragma push_macro("__syncthreads")
+#define __syncthreads() cuteNixlBlockBarrier()
+
 // UCX's device qualifiers and CUDA-IPC specializations currently assume NVCC.
 #pragma push_macro("__NVCC__")
 #pragma push_macro("__builtin_ia32_prefetch")
@@ -19,6 +29,9 @@
 #endif
 
 #include <gpu/nixl_device.cuh>
+#if defined(__clang__) && defined(__CUDA__)
+#pragma pop_macro("__syncthreads")
+#endif
 
 // Source-matched private shims, not a stable ABI.
 static_assert(sizeof(nixlGpuXferStatusH) == 64);

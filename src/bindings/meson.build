@@ -18,14 +18,16 @@ subdir('python')
 if get_option('build_cute')
   subdir('cute')
   # A second install target keeps the same bitcode in the CUDA backend wheel.
-  custom_target('cute-wheel-bitcode',
-    input: cute_bitcode,
-    output: 'libnixl_device.bc',
-    command: [py, '-c', 'import shutil, sys; shutil.copyfile(sys.argv[1], sys.argv[2])',
-              '@INPUT@', '@OUTPUT@'],
-    install: true,
-    install_dir: py.get_install_dir() / cuda_wheel_dir / 'lib',
-  )
+  foreach arch, bitcode : cute_bitcodes
+    custom_target('cute-wheel-bitcode-' + arch,
+      input: bitcode,
+      output: '@PLAINNAME@',
+      command: [py, '-c', 'import shutil, sys; shutil.copyfile(sys.argv[1], sys.argv[2])',
+                '@INPUT@', '@OUTPUT@'],
+      install: true,
+      install_dir: py.get_install_dir() / cuda_wheel_dir / 'lib',
+    )
+  endforeach
 endif
 
 # Shared library exposing the nixl C API (nixl_capi_* symbols).

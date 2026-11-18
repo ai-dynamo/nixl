@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Build source-matched NIXL device bitcode for CuTe (LLVM 20, CUDA 13)."""
+"""Build source-matched NIXL device bitcode for CuTe."""
 
 import argparse
 import logging
@@ -12,10 +12,14 @@ from pathlib import Path
 
 
 def clean_ir(text):
-    """Remove Clang metadata that the CuTe 4.5.1 libNVVM reader rejects."""
+    """Remove optimized IR annotations that CuTe 4.5.1 libNVVM cannot read."""
     ids = re.findall(r"^(!\d+)\s*=.*nvvm-reflect-ftz.*$", text, re.MULTILINE)
     lines = []
     for line in text.splitlines():
+        # LLVM 22 dropped the size operand. libNVVM expects the older signature.
+        # Lifetime markers are optional after the shim has been optimized.
+        if re.search(r"@llvm\.lifetime\.(start|end)\.p\d+\(ptr\b", line):
+            continue
         if any(line.startswith(f"{key} =") for key in ids):
             continue
         if line.startswith("!llvm.module.flags ="):
@@ -35,13 +39,13 @@ def main():
     parser.add_argument("--ucx", required=True, type=Path)
     parser.add_argument("--arch", required=True, help="e.g. sm_90 or sm_100")
     parser.add_argument("--cuda", type=Path, default=Path("/usr/local/cuda"))
-    parser.add_argument("--llvm", type=Path, default=Path("/usr/lib/llvm-20/bin"))
+    parser.add_argument("--llvm", type=Path, default=Path("/usr/lib/llvm-22/bin"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--depfile", type=Path)
     args = parser.parse_args()
     here = Path(__file__).resolve().parent
     root = here.parents[2]
-    output = args.output or here / "libnixl_device.bc"
+    output = args.output or here / f"libnixl_device_{args.arch}.bc"
     dependencies = ["-MD", "-MF", args.depfile, "-MQ", output] if args.depfile else []
     if not (args.ucx / "include/ucp/api/device/ucp_device_impl.h").is_file():
         parser.error("UCX device development headers are required")

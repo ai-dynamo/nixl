@@ -12,6 +12,7 @@ from pathlib import Path
 try:
     import cutlass
     import cutlass.cute as cute
+    from cutlass.cutlass_dsl import CuTeDSL
 except ModuleNotFoundError as exc:
     if exc.name != "cutlass":
         raise
@@ -27,16 +28,40 @@ SUCCESS = int(nixl_status_t.NIXL_SUCCESS)
 IN_PROGRESS = int(nixl_status_t.NIXL_IN_PROG)
 DEFER = _bindings.NIXL_GPU_DEFER
 REQUEST_BYTES = _bindings.NIXL_GPU_REQUEST_BYTES
-_bitcode_path = Path(_bindings.__file__).parent / "lib" / "libnixl_device.bc"
-if not _bitcode_path.is_file():
+_libdir = Path(_bindings.__file__).parent / "lib"
+_bitcodes = {
+    path.stem.removeprefix("libnixl_device_"): cute.BitCode(str(path))
+    for path in _libdir.glob("libnixl_device_sm_*.bc")
+}
+if not _bitcodes:
     raise ImportError(
-        f"NIXL CuTe bitcode is missing: {_bitcode_path}. "
+        f"NIXL CuTe bitcode is missing from {_libdir}. "
         "Rebuild this NIXL backend with -Dbuild_cute=true."
     )
-_bitcode = cute.BitCode(str(_bitcode_path))
 
 
-@cute.extern(name="cute_nixl_put", source=_bitcode)
+def _extern(signature):
+    """Select the native symbol's bitcode when CuTe traces a kernel."""
+    variants = {
+        sm: cute.extern(signature, name="cute_nixl" + signature.__name__, source=source)
+        for sm, source in _bitcodes.items()
+    }
+
+    def emit(*args):
+        arch = CuTeDSL._get_dsl().get_arch_enum()
+        # Architecture-specific kernels (e.g. sm_90a) can link the base sm_90 shim.
+        sm = f"sm_{arch.major}{arch.minor}"
+        if sm not in variants:
+            raise ValueError(
+                f"No NIXL CuTe bitcode for {arch} in {_libdir}. "
+                f"Available targets: {', '.join(sorted(variants))}."
+            )
+        return variants[sm](*args)
+
+    return emit
+
+
+@_extern
 def _put(
     local: cutlass.Uint64,
     remote: cutlass.Uint64,
@@ -53,7 +78,7 @@ def _put(
     pass
 
 
-@cute.extern(name="cute_nixl_atomic_add", source=_bitcode)
+@_extern
 def _atomic_add(
     value: cutlass.Uint64,
     remote: cutlass.Uint64,
@@ -67,7 +92,7 @@ def _atomic_add(
     pass
 
 
-@cute.extern(name="cute_nixl_get_xfer_status", source=_bitcode)
+@_extern
 def _get_xfer_status(request: cutlass.Uint64, level: cutlass.Int32) -> cutlass.Int32:
     pass
 

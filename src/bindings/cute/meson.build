@@ -7,9 +7,6 @@ endif
 if ucx_path == '' or cuda_inc_path == ''
   error('CuTe bindings require explicit ucx_path and cudapath_inc')
 endif
-if selected_cuda_archs.length() != 1
-  error('CuTe bindings require a single nixl_cuda_arch_list target')
-endif
 cute_cuda_path = fs.parent(cuda_inc_path)
 if not fs.is_dir(cute_cuda_path / 'nvvm/libdevice')
   error('CuTe bindings require cudapath_inc=<CUDA toolkit>/include')
@@ -20,16 +17,22 @@ foreach tool : ['clang++', 'opt', 'llvm-as']
 endforeach
 
 # Keep the LLVM/libNVVM normalization in Python; Meson owns outputs and dependencies.
-cute_bitcode = custom_target('cute-device-bitcode',
-  input: 'device.cu',
-  output: 'libnixl_device.bc',
-  depfile: 'device.d',
-  command: [py, files('build.py'),
-            '--ucx', ucx_path, '--cuda', cute_cuda_path,
-            '--arch', selected_cuda_archs[0], '--llvm', cute_llvm_path,
-            '--output', '@OUTPUT@', '--depfile', '@DEPFILE@'],
-  depend_files: files('build.py'),
-  build_by_default: true,
-  install: true,
-  install_dir: get_option('libdir'),
-)
+cute_bitcodes = {}
+foreach arch : selected_cuda_archs
+  if arch in cute_bitcodes
+    continue
+  endif
+  bitcode = custom_target('cute-bitcode-' + arch,
+    input: 'device.cu',
+    output: 'libnixl_device_' + arch + '.bc',
+    depfile: 'device_' + arch + '.d',
+    command: [py, files('build.py'),
+              '--ucx', ucx_path, '--cuda', cute_cuda_path,
+              '--arch', arch, '--llvm', cute_llvm_path,
+              '--output', '@OUTPUT@', '--depfile', '@DEPFILE@'],
+    depend_files: files('build.py'),
+    install: true,
+    install_dir: get_option('libdir'),
+  )
+  cute_bitcodes += {arch: bitcode}
+endforeach

@@ -2,7 +2,7 @@
 
 Call NIXL from a CuTe compute kernel, for example to transfer produced KV-cache
 data. Host registration, connections and memory views remain ordinary NIXL calls.
-The optional `nixl.cute` module loads bitcode from the selected CUDA backend.
+The optional `nixl.cute` module links device bitcode from the selected CUDA backend.
 Ordinary `import nixl` does not import CuTe.
 
 - [cute.py](../python/nixl-meta/nixl/cute.py): Python device operations using `@cute.extern`.
@@ -21,7 +21,7 @@ from nixl import cute as device
 
 The extra pins the tested CuTe DSL 4.5.1 and includes its CUDA 12 and CUDA 13
 runtimes. It does not enable a native build or add bitcode to an existing wheel.
-Missing bitcode produces an import error; another backend's bitcode is never used.
+Importing `nixl.cute` requires a backend wheel that includes device bitcode.
 
 The wheel example uses [upstream PyTorch](https://pytorch.org/get-started/previous-versions/)
 2.11 (CUDA 13). Keep UCX compatible across the process: NGC 26.06 PyTorch
@@ -31,15 +31,14 @@ preloads UCX 1.21, which conflicts with this UCX 1.23 build.
 
 Requires UCX device support and UCX development headers
 (`--enable-devel-headers`). Use the same NIXL/UCX sources for the host library and
-bitcode. The tested toolchain is LLVM 20, CUDA 13.3 and CuTe DSL 4.5.1; the example
-also uses PyTorch and cuda-python.
+bitcode. The example uses CUDA 13.3, CuTe DSL 4.5.1, PyTorch and cuda-python.
 
 In an activated virtual environment, from the repository root
 (`CUDA_HOME` is the toolkit root; `UCX_PREFIX` is that UCX installation):
 
 ```sh
 meson setup build --prefix="$VIRTUAL_ENV" --libdir=lib \
-  -Dbuild_cute=true -Dnixl_cuda_arch_list=100 \
+  -Dbuild_cute=true \
   -Ducx_path="$UCX_PREFIX" -Dcudapath_inc="$CUDA_HOME/include" \
   -Dcudapath_lib="$CUDA_HOME/lib64"
 meson compile -C build
@@ -51,14 +50,18 @@ timeout --signal=TERM --kill-after=10s 120s \
 ```
 
 Use a Python environment that can import the installed CUDA backend; `uv` must
-be available at Meson setup to build the meta wheel. Meson installs
-`libnixl_device.bc` in both `libdir` and the backend's `nixl_cu12/lib` or
-`nixl_cu13/lib` directory. Python resolves the latter beside `nixl._bindings`.
-The source/UCX/GPU target must match the host build. The single GPU target
-restriction remains; this does not qualify a universal multi-architecture wheel.
+be available at Meson setup to build the meta wheel. Meson builds one
+`libnixl_device_sm_<arch>.bc` per target in `nixl_cuda_arch_list` and installs
+each file in both `libdir` and the CUDA backend wheel. Use the default list or
+set, for example, `-Dnixl_cuda_arch_list=90,100` for a smaller build.
 
-Meson uses `build.py` for LLVM/libNVVM normalization and tracks included headers.
-Set `-Dcute_llvm_path=...` if LLVM 20 is not in `/usr/lib/llvm-20/bin`.
+CuTe selects bitcode for the kernel's compile target, including an explicit
+`--gpu-arch`. A kernel targeting `sm_90a` uses the baseline `sm_90` bitcode.
+If the wheel lacks that target, compilation reports which targets it contains.
+
+Meson uses `build.py` to prepare bitcode for libNVVM and tracks included headers.
+The default LLVM 22 tool directory is `/usr/lib/llvm-22/bin`. Use
+`-Dcute_llvm_path=...` for another installation that supports the requested targets.
 For a backend wheel, pass the same setup options to `python -m build --wheel`
 using `-Csetup-args=-D...`; the bitcode is included in its installation manifest.
 
