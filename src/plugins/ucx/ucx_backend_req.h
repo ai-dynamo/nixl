@@ -53,8 +53,7 @@ public:
         NIXL_ASSERT(notifReq_ == nullptr);
         conn_ = conn;
         ep_ = &ep;
-        notifState_ = notif_state_t::NONE;
-        notifStatus_ = NIXL_SUCCESS;
+        notifStatus_ = notif_.empty() ? NIXL_SUCCESS : NIXL_IN_PROG;
     }
 
     [[nodiscard]] const nixlUcxEp &
@@ -82,31 +81,20 @@ public:
     [[nodiscard]] nixl_status_t
     flush() {
         nixlUcxReq req = nullptr;
-        const nixl_status_t status = ep_->flushEp(req, notif_.empty() ? nullptr : flushCb, this);
-        const nixl_status_t ret = append(status, req);
-        if (ret == NIXL_SUCCESS) {
-            if (status == NIXL_SUCCESS) {
-                flushed();
-            }
-            posted();
+        const bool has_notif = !notif_.empty();
+        NIXL_ASSERT(has_notif == (notifStatus_ == NIXL_IN_PROG));
+        const nixl_status_t status = ep_->flushEp(req, has_notif ? flushCb : nullptr, this);
+        if (has_notif && (status == NIXL_SUCCESS)) {
+            sendNotif();
         }
 
-        return ret;
+        return append(status, req);
     }
 
-    void
+    virtual void
     setNotif(std::string &&notif) {
+        NIXL_ASSERT(!hasPendingRequests());
         notif_ = std::move(notif);
-    }
-
-    void
-    posted() {
-        if (!notif_.empty()) {
-            notifStatus_ = NIXL_IN_PROG;
-            if (notifState_.exchange(notif_state_t::POSTED) == notif_state_t::FLUSHED) {
-                sendNotif();
-            }
-        }
     }
 
     [[nodiscard]] virtual bool
@@ -198,9 +186,20 @@ protected:
         worker_ = worker;
     }
 
-private:
-    enum class notif_state_t : uint8_t { NONE, POSTED, FLUSHED, SENT };
+    void
+    sendNotif() {
+        NIXL_ASSERT(!notif_.empty());
+        nixlUcxReq req = nullptr;
+        const nixl_status_t status = getEp().sendAm(
+            nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(notif_), UCP_AM_SEND_FLAG_EAGER, &req);
+        notif_.clear();
+        if (status == NIXL_IN_PROG) {
+            notifReq_ = req;
+        }
+        notifStatus_ = status;
+    }
 
+private:
     // A post to a single endpoint issues at most two requests:
     // one data request and one flush request.
     static constexpr size_t max_requests = 2;
@@ -208,35 +207,12 @@ private:
     static void
     flushCb(void *, ucs_status_t status, void *user_data) {
         if (status == UCS_OK) {
-            static_cast<nixlUcxBackendReqH *>(user_data)->flushed();
-        }
-    }
-
-    void
-    flushed() {
-        if (notifState_.exchange(notif_state_t::FLUSHED) == notif_state_t::POSTED) {
-            sendNotif();
-        }
-    }
-
-    void
-    sendNotif() {
-        nixlUcxReq req = nullptr;
-        const nixl_status_t status = getEp().sendAm(
-            nixl::ucx::am_cb_op_t::NOTIF_STR, std::move(notif_), UCP_AM_SEND_FLAG_EAGER, &req);
-        notif_.clear();
-        notifState_ = notif_state_t::SENT;
-        if (status == NIXL_IN_PROG) {
-            notifReq_ = req;
-        } else {
-            notifStatus_ = status;
+            static_cast<nixlUcxBackendReqH *>(user_data)->sendNotif();
         }
     }
 
     [[nodiscard]] nixl_status_t
     notifStatus() {
-        flushed();
-
         const nixlUcxReq req = notifReq_.load(std::memory_order_acquire);
         if (req != nullptr) {
             const nixl_status_t status = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
@@ -296,7 +272,6 @@ private:
     std::string notif_;
     std::atomic<nixlUcxReq> notifReq_{nullptr};
     std::atomic<nixl_status_t> notifStatus_{NIXL_SUCCESS};
-    std::atomic<notif_state_t> notifState_{notif_state_t::NONE};
 };
 
 #endif // NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H

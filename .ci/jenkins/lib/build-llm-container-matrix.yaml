@@ -14,7 +14,7 @@
 #
 # Wheels are pulled from Artifactory at:
 #   sw-nbu-swx-nixl-pypi-local/release/${NIXL_VERSION}/${WHEEL_BUILD_ID}/
-# WHEEL_BUILD_ID is the build number of the nixl-ci-build-wheel-nightly run that
+# WHEEL_BUILD_ID is the build number of the nixl-build-wheel run that
 # produced them. The directory is flat and holds one complete set - both
 # architectures and both CUDA majors, distinguished by the wheel filename - which
 # is why that job builds every CUDA major in a single run. Reads need the
