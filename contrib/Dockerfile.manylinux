@@ -30,6 +30,10 @@ ARG BASE_IMAGE_TAG="13.4.2-devel-ubi8"
 # When overridden to an Artifactory URL, the wheel stage pulls the pre-built deps
 # image instead of building wheel_base locally (CI caching). Default builds wheel_base here.
 ARG wheel_base=wheel_base
+# GPU stack the wheels are built for: "cuda" (default) or "rocm". Selects the
+# wheel_base_<stack> stage below; with BuildKit the other stack's stages
+# (including the CUDA donor image pull) are never built.
+ARG GPU_STACK="cuda"
 
 # CUDA donor stage — copies the toolkit and cuObject client pkg-config files
 # onto the manylinux base. The cuobjclient*.pc files are staged in a separate
@@ -40,11 +44,26 @@ RUN mkdir -p /opt/nixl-cuda-pkgconfig && \
 
 # Manylinux build base — official PyPA image (public on quay.io; ECR pull-through
 # available). AlmaLinux 8 / glibc 2.28 => manylinux_2_28 wheels.
-FROM ${MANYLINUX_IMAGE}_${ARCH}:${MANYLINUX_IMAGE_TAG} AS wheel_base
+FROM ${MANYLINUX_IMAGE}_${ARCH}:${MANYLINUX_IMAGE_TAG} AS manylinux_base
 
-# Re-declare args needed inside this stage (pre-FROM args are only visible to FROM lines).
-ARG ARCH="x86_64"
-ARG DEFAULT_PYTHON_VERSION="3.14"
+# Optional: builds behind a TLS-intercepting proxy pass its root CA as the
+# "proxy_ca" build secret (build-container.sh --proxy-ca-cert). It is added to
+# the system trust store and to the bundle the PyPA image's SSL_CERT_FILE names
+# (Python, uv, curl), and pip, uv, git and cargo are pointed at the system store
+# through their config files. Without the secret this step changes nothing.
+RUN --mount=type=secret,id=proxy_ca,required=false \
+    if [ -s /run/secrets/proxy_ca ] && ! cmp -s /run/secrets/proxy_ca /etc/pki/ca-trust/source/anchors/proxy-ca.crt; then \
+        install -m 0644 /run/secrets/proxy_ca /etc/pki/ca-trust/source/anchors/proxy-ca.crt && \
+        update-ca-trust extract && \
+        ca_bundle=/etc/pki/tls/certs/ca-bundle.crt && \
+        if [ -f "${SSL_CERT_FILE:-}" ]; then { echo; cat /run/secrets/proxy_ca; } >> "$SSL_CERT_FILE"; fi && \
+        printf '[global]\ncert = %s\n' "$ca_bundle" > /etc/pip.conf && \
+        mkdir -p /etc/uv && printf 'system-certs = true\n' > /etc/uv/uv.toml && \
+        git config --system http.sslCAInfo "$ca_bundle" && \
+        mkdir -p /usr/local/cargo && printf '[http]\ncainfo = "%s"\n' "$ca_bundle" > /usr/local/cargo/config.toml; \
+    fi
+
+FROM manylinux_base AS wheel_base_cuda
 
 # CUDA version (e.g. 12.9 / 13.4), passed explicitly. Drives the
 # /usr/local/cuda-<version> symlink below and the cu12/cu13 wheel split; the
@@ -68,6 +87,78 @@ COPY --from=cuda /opt/nixl-cuda-pkgconfig/ /usr/lib64/pkgconfig/
 ENV CUDA_HOME=/usr/local/cuda \
     PATH=/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH:-}
+
+# ROCm build base — same PyPA manylinux image, with the ROCm runtime, HIP/HSA
+# headers, hipFile and hipify-perl installed from AMD's EL8 rpm repository
+# (x86_64 only). ROCm is never bundled into the wheel; it is a build-time
+# dependency here and a host prerequisite at runtime.
+FROM manylinux_base AS wheel_base_rocm
+
+ARG ARCH="x86_64"
+# ROCm release X.Y.Z. The rpms are named amdrocm-<component><X.Y>-<X.Y.Z> and
+# install under /opt/rocm/core-<X.Y>.
+ARG ROCM_VERSION="10.1.0"
+# Prefix handed to libfabric, UCX and NIXL (-Drocm_path).
+ARG ROCM_PATH="/opt/rocm"
+# Empty = pick by ROCm major: 7.x is published on repo.amd.com
+# (packages-multi-arch), 10.x and newer on stable.repo.amd.com.
+ARG ROCM_REPO_URL=""
+ARG ROCM_REPO_GPG=""
+
+# The component packages only populate /opt/rocm/core-<X.Y>; the unversioned
+# bin/include/lib view is owned by the amdrocm-core<X.Y>-gfx* metapackages,
+# which would pull in the whole math/ML stack. Link the view here instead.
+# The repository has a single host and rpms of several hundred MB, so it gets a
+# longer stall timeout and more retries than dnf's defaults.
+RUN if [ "$ARCH" != "x86_64" ]; then \
+        echo "ERROR: GPU_STACK=rocm supports x86_64 only (ROCm publishes no $ARCH packages)" >&2; \
+        exit 1; \
+    fi && \
+    ROCM_MAJOR="${ROCM_VERSION%%.*}" && \
+    ROCM_MM="$(echo "$ROCM_VERSION" | cut -d. -f1,2)" && \
+    if [ -z "$ROCM_REPO_URL" ]; then \
+        if [ "$ROCM_MAJOR" = "7" ]; then \
+            ROCM_REPO_URL="https://repo.amd.com/rocm/packages-multi-arch/rhel8/x86_64/"; \
+        else \
+            ROCM_REPO_URL="https://stable.repo.amd.com/rocm/core/packages/rhel8/x86_64/"; \
+        fi; \
+    fi && \
+    if [ -z "$ROCM_REPO_GPG" ]; then \
+        if [ "$ROCM_MAJOR" = "7" ]; then \
+            ROCM_REPO_GPG="https://repo.amd.com/rocm/packages-multi-arch/gpg/rocm.gpg"; \
+        else \
+            ROCM_REPO_GPG="https://stable.repo.amd.com/rocm/gpg/packages.gpg"; \
+        fi; \
+    fi && \
+    printf '[amdrocm]\nname=AMD ROCm %s\nbaseurl=%s\nenabled=1\ngpgcheck=1\ngpgkey=%s\ntimeout=300\nretries=20\n' \
+        "$ROCM_VERSION" "$ROCM_REPO_URL" "$ROCM_REPO_GPG" > /etc/yum.repos.d/amdrocm.repo && \
+    ROCM_PKGS="" && \
+    for pkg in base sysdeps llvm llvm-devel runtime runtime-devel hipfile hipfile-devel hipify; do \
+        ROCM_PKGS="$ROCM_PKGS amdrocm-${pkg}${ROCM_MM}-${ROCM_VERSION}"; \
+    done && \
+    dnf install -y $ROCM_PKGS && \
+    dnf clean all && \
+    ROCM_CORE="/opt/rocm/core-${ROCM_MM}" && \
+    mkdir -p "$ROCM_PATH" && \
+    for entry in bin include lib .info; do \
+        [ -e "$ROCM_PATH/$entry" ] || ln -s "$ROCM_CORE/$entry" "$ROCM_PATH/$entry"; \
+    done && \
+    for f in lib/libamdhip64.so include/hip/hip_runtime.h bin/hipify-perl \
+             lib/libhsa-runtime64.so include/hsa/hsa.h \
+             lib/libhipfile.so include/hipfile.h .info/version; do \
+        test -e "$ROCM_PATH/$f" || { echo "ERROR: ROCm $ROCM_VERSION install is missing $ROCM_PATH/$f" >&2; exit 1; }; \
+    done
+
+ENV ROCM_PATH=${ROCM_PATH} \
+    PATH=${ROCM_PATH}/bin:${PATH} \
+    LD_LIBRARY_PATH=${ROCM_PATH}/lib:${LD_LIBRARY_PATH:-}
+
+FROM wheel_base_${GPU_STACK} AS wheel_base
+
+# Re-declare args needed inside this stage (pre-FROM args are only visible to FROM lines).
+ARG ARCH="x86_64"
+ARG DEFAULT_PYTHON_VERSION="3.14"
+ARG GPU_STACK
 
 # CUDA needs gcc <= 14. The PyPA manylinux base + system "Development Tools" can
 # pull in a gcc that CUDA rejects, so pin gcc-toolset-14 on PATH ahead of the
@@ -330,14 +421,14 @@ RUN wget ${WGET_RETRY_OPTS} https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/
     rpm -ivh --nodeps doca-sdk-common-*rpm && \
     rpm -ivh --nodeps doca-sdk-rdma-*rpm && \
     rpm -ivh --nodeps doca-sdk-verbs-*rpm && \
-    rpm -ivh --nodeps doca-sdk-gpunetio-*rpm && \
+    if [ "$GPU_STACK" != "rocm" ]; then rpm -ivh --nodeps doca-sdk-gpunetio-*rpm; fi && \
     rpm -ivh --nodeps doca-sdk-telemetry-exporter-*rpm && \
     # CollectX provides libclx-api.pc, required (Requires.private) by
     # doca-telemetry-exporter.pc and needed to link the telemetry exporter plugin.
     # Pulls both collectx-clxapi and collectx-clxapidev.
     rpm -ivh --nodeps collectx-clxapi*rpm && \
     # Check that gpunetio and telemetry-exporter development packages are installed correctly
-    pkg-config --cflags --libs doca-gpunetio && \
+    if [ "$GPU_STACK" != "rocm" ]; then pkg-config --cflags --libs doca-gpunetio; fi && \
     pkg-config --cflags --libs doca-telemetry-exporter
 
 ENV LD_LIBRARY_PATH=/usr/lib:/usr/local/lib:$LD_LIBRARY_PATH
@@ -349,7 +440,9 @@ WORKDIR /workspace
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
-RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /workspace && \
+# gdrcopy is NVIDIA-only; it has no ROCm counterpart.
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig if [ "$GPU_STACK" != "rocm" ]; then \
+    cd /workspace && \
     git clone --depth 1 https://github.com/NVIDIA/gdrcopy.git && \
     cd gdrcopy && \
     git fetch --tags --depth=1 && \
@@ -359,13 +452,19 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /workspace && \
     CUDA=/usr/local/cuda ./build-rpm-packages.sh && \
     rpm -Uvh gdrcopy-kmod-*.el8.noarch.rpm && \
     rpm -Uvh gdrcopy-*.el8.$ARCH.rpm && \
-    rpm -Uvh gdrcopy-devel-*.el8.noarch.rpm
+    rpm -Uvh gdrcopy-devel-*.el8.noarch.rpm; \
+    fi
 
 # Build libfabric from source
 RUN wget ${WGET_RETRY_OPTS} \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
     cd libfabric-* && \
+    if [ "$GPU_STACK" = "rocm" ]; then \
+        LIBFABRIC_GPU_PARAMS="--with-rocr=$ROCM_PATH --enable-rocr-dlopen"; \
+    else \
+        LIBFABRIC_GPU_PARAMS="--with-cuda=/usr/local/cuda --enable-cuda-dlopen --with-gdrcopy --enable-gdrcopy-dlopen"; \
+    fi && \
     ./autogen.sh && \
     ./configure --prefix=/usr/local \
                 --disable-verbs \
@@ -374,10 +473,7 @@ RUN wget ${WGET_RETRY_OPTS} \
                 --disable-usnic \
                 --disable-rstream \
                 --enable-efa \
-                --with-cuda=/usr/local/cuda \
-                --enable-cuda-dlopen \
-                --with-gdrcopy \
-                --enable-gdrcopy-dlopen && \
+                $LIBFABRIC_GPU_PARAMS && \
     make -j${NPROC:-$(nproc)} && \
     make install && \
     ldconfig
@@ -400,8 +496,11 @@ RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click s
 # extensions are built later in isolated environments by build-wheel.sh.
 # NIXL EP needs torch >= 2.14, which is only on the cu13 (cu132) index. Empty selects 2.14 for
 # CUDA 13 and 2.13 for CUDA 12 (NIXL EP is auto-disabled there).
+# The ROCm build installs no torch: torch is a build dependency of NIXL EP only
+# (CUDA-only), and the download.pytorch.org cu indexes serve CUDA builds.
 ARG DEFAULT_TORCH_VERSION=""
-RUN if [ -z "$TORCH_CUDA_INDEX" ]; then \
+RUN if [ "$GPU_STACK" != "rocm" ]; then \
+    if [ -z "$TORCH_CUDA_INDEX" ]; then \
         if [ "${CUDA_VERSION%%.*}" = "13" ]; then TORCH_CUDA_INDEX="cu132"; \
         else TORCH_CUDA_INDEX="cu$(echo "$CUDA_VERSION" | tr -d .)"; fi; \
     fi && \
@@ -409,7 +508,8 @@ RUN if [ -z "$TORCH_CUDA_INDEX" ]; then \
         if [ "${CUDA_VERSION%%.*}" = "13" ]; then DEFAULT_TORCH_VERSION="2.14"; else DEFAULT_TORCH_VERSION="2.13"; fi; \
     fi && \
     export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
-    uv pip install "torch==${DEFAULT_TORCH_VERSION}.*"
+    uv pip install "torch==${DEFAULT_TORCH_VERSION}.*"; \
+    fi
 # Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
@@ -439,6 +539,11 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src &&
          UCX_SONAME_PARAM=""; \
          UCX_MODULE_DEEPBIND_PARAM=""; \
      fi && \
+     if [ "$GPU_STACK" = "rocm" ]; then \
+         UCX_GPU_PARAM="--with-rocm=$ROCM_PATH"; \
+     else \
+         UCX_GPU_PARAM="--with-cuda=/usr/local/cuda"; \
+     fi && \
      ./contrib/configure-release-mt  \
          --enable-shared             \
          --disable-static            \
@@ -448,7 +553,7 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src &&
          --without-avx               \
          --enable-cma                \
          --enable-devel-headers      \
-         --with-cuda=/usr/local/cuda \
+         $UCX_GPU_PARAM              \
          --with-verbs                \
          --with-dm                   \
          --without-gdrcopy           \
@@ -460,9 +565,27 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src &&
          $UCX_MODULE_DEEPBIND_PARAM && \
      make -j &&                      \
      make -j install-strip &&        \
-     ldconfig
+     ldconfig &&                     \
+     if [ "$GPU_STACK" = "rocm" ] && ! ls /usr/lib64/ucx/*rocm*.so* >/dev/null 2>&1; then \
+         echo "ERROR: UCX was built without its ROCm module (no *rocm* under /usr/lib64/ucx)" >&2; \
+         exit 1; \
+     fi
 
 FROM $wheel_base AS wheel
+
+# Same proxy_ca step as in manylinux_base, for a pre-built wheel base image
+# (--wheel-base-image) that was built without it; a no-op when already applied.
+RUN --mount=type=secret,id=proxy_ca,required=false \
+    if [ -s /run/secrets/proxy_ca ] && ! cmp -s /run/secrets/proxy_ca /etc/pki/ca-trust/source/anchors/proxy-ca.crt; then \
+        install -m 0644 /run/secrets/proxy_ca /etc/pki/ca-trust/source/anchors/proxy-ca.crt && \
+        update-ca-trust extract && \
+        ca_bundle=/etc/pki/tls/certs/ca-bundle.crt && \
+        if [ -f "${SSL_CERT_FILE:-}" ]; then { echo; cat /run/secrets/proxy_ca; } >> "$SSL_CERT_FILE"; fi && \
+        printf '[global]\ncert = %s\n' "$ca_bundle" > /etc/pip.conf && \
+        mkdir -p /etc/uv && printf 'system-certs = true\n' > /etc/uv/uv.toml && \
+        git config --system http.sslCAInfo "$ca_bundle" && \
+        mkdir -p /usr/local/cargo && printf '[http]\ncainfo = "%s"\n' "$ca_bundle" > /usr/local/cargo/config.toml; \
+    fi
 
 # Re-declare so explicit --cuda-version / --torch-cuda-index reach this stage
 # when wheel_base is a pre-built cache image (--wheel-base-image).
@@ -471,6 +594,7 @@ ENV CUDA_VERSION=${CUDA_VERSION}
 ARG TORCH_CUDA_INDEX=""
 ENV TORCH_CUDA_INDEX=${TORCH_CUDA_INDEX}
 
+ARG GPU_STACK
 ARG ARCH="x86_64"
 ARG BUILD_TYPE="release"
 ARG BUILD_NIXL_EP=""
@@ -554,7 +678,13 @@ RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
 # meson setup clones the taskflow and prometheus-cpp [wrap-git] subprojects from github.com.
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     mkdir build && \
-    BUILD_NIXL_EP_RESOLVED="$(./contrib/resolve-nixl-ep.sh)" && \
+    if [ "$GPU_STACK" = "rocm" ]; then \
+        BUILD_NIXL_EP_RESOLVED="false"; \
+        GPU_STACK_FLAGS="-Drocm_path=$ROCM_PATH"; \
+    else \
+        BUILD_NIXL_EP_RESOLVED="$(./contrib/resolve-nixl-ep.sh)" && \
+        GPU_STACK_FLAGS="-Dcudapath_lib=/usr/local/cuda/lib64 -Dcudapath_inc=/usr/local/cuda/include -Drelease_wheel=true"; \
+    fi && \
     if [ "$BUILD_NIXL_EP_RESOLVED" = "true" ]; then \
         echo "=== NIXL EP enabled: Building NIXL with NIXL EP support ===" && \
         NIXL_EP_FLAG="-Dbuild_nixl_ep=true -Dbuild_examples=true"; \
@@ -562,9 +692,7 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
         NIXL_EP_FLAG=""; \
     fi && \
     meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE $NIXL_EP_FLAG -Ducx_path=/usr/local \
-    -Dcudapath_lib="/usr/local/cuda/lib64" \
-    -Dcudapath_inc="/usr/local/cuda/include" \
-    -Drelease_wheel=true && \
+    $GPU_STACK_FLAGS && \
     cd build && \
     ninja -j"${NPROC}" && \
     ninja install
@@ -576,7 +704,7 @@ ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib64/plugins
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig && \
-    if [ "${CUDA_VERSION%%.*}" = "13" ]; then \
+    if [ "$GPU_STACK" != "rocm" ] && [ "${CUDA_VERSION%%.*}" = "13" ]; then \
         OBJ_PLUGIN="$(find /usr/local/nixl -name libplugin_OBJ.so -print -quit)"; \
         test -n "$OBJ_PLUGIN" || { echo "ERROR: libplugin_OBJ.so not found" >&2; exit 1; }; \
         readelf -d "$OBJ_PLUGIN" | grep 'libcuobjclient'; \
@@ -590,7 +718,13 @@ ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
 ARG WHL_TORCH_VERSIONS="2.14,2.15,2.16"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
-    BUILD_NIXL_EP_RESOLVED="$(./contrib/resolve-nixl-ep.sh)" && \
+    if [ "$GPU_STACK" = "rocm" ]; then \
+        BUILD_NIXL_EP_RESOLVED="false"; \
+        GPU_STACK_FLAGS="--gpu-stack rocm --rocm-path $ROCM_PATH"; \
+    else \
+        BUILD_NIXL_EP_RESOLVED="$(./contrib/resolve-nixl-ep.sh)" && \
+        GPU_STACK_FLAGS=""; \
+    fi && \
     if [ "$BUILD_NIXL_EP_RESOLVED" = "true" ]; then \
         EP_BUILD_FLAGS="--build-nixl-ep --torch-versions $WHL_TORCH_VERSIONS"; \
     else \
@@ -606,12 +740,14 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --nixl-plugins-dir $NIXL_PLUGIN_DIR \
             --output-dir dist \
             ${TORCH_CUDA_INDEX:+--torch-cuda-index $TORCH_CUDA_INDEX} \
-            $EP_BUILD_FLAGS ; \
+            $EP_BUILD_FLAGS $GPU_STACK_FLAGS ; \
     done
 
 # Copy the meta package wheel to the dist directory, which will be used to push to PyPI.
 # The meta-wheel is identical for cu12 and cu13 builds (it pins both backends via
 # -Drelease_wheel=true), so only emit it once — arbitrarily during the cu12 build.
-RUN if [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "12" ]; then \
+# A ROCm build emits no meta wheel: dist/ holds only the nixl_rocm<X>_<Y> backend
+# wheels, which contrib/wheel_merge_rocm.py merges into the rocm-nixl wheel.
+RUN if [ "$GPU_STACK" != "rocm" ] && [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "12" ]; then \
       cp build/src/bindings/python/nixl-meta/nixl*.whl dist/; \
     fi

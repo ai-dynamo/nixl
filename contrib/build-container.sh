@@ -57,6 +57,10 @@ CUDA_VERSION=${CUDA_VERSION:-}
 # torch wheel index for the manylinux wheel build; unset = Dockerfile default
 # (cu132 for CUDA 13, cu<CUDA_VERSION> for CUDA 12).
 TORCH_CUDA_INDEX=${TORCH_CUDA_INDEX:-}
+GPU_STACK="cuda"
+ROCM_VERSION=""
+WHL_BASE_SET="false"
+PROXY_CA_CERT=""
 BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/static/infinia-libs:v2.5.0-rcx.1"
 APT_MIRROR=""
@@ -91,6 +95,7 @@ get_options() {
         --wheel-base)
             if [ "$2" ]; then
                 WHL_BASE=$2
+                WHL_BASE_SET="true"
                 shift
             else
                 missing_requirement $1
@@ -169,6 +174,30 @@ get_options() {
                 shift
             else
                 missing_requirement $1
+            fi
+            ;;
+        --gpu-stack)
+            if [ "$2" ]; then
+                GPU_STACK=$2
+                shift
+            else
+                missing_requirement "$1"
+            fi
+            ;;
+        --rocm-version)
+            if [ "$2" ]; then
+                ROCM_VERSION=$2
+                shift
+            else
+                missing_requirement "$1"
+            fi
+            ;;
+        --proxy-ca-cert)
+            if [ "$2" ]; then
+                PROXY_CA_CERT=$2
+                shift
+            else
+                missing_requirement "$1"
             fi
             ;;
         --manylinux-image)
@@ -317,6 +346,9 @@ show_build_options() {
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
     echo "Torch index: ${TORCH_CUDA_INDEX:-<Dockerfile default>}"
+    if [ "$GPU_STACK" = "rocm" ]; then
+        echo "GPU stack: rocm (ROCm ${ROCM_VERSION:-<Dockerfile default>})"
+    fi
     echo "UCX Repo: ${UCX_REPO}"
     echo "UCX Ref: ${UCX_REF}"
     if [ -n "$UCX_SONAME_SUFFIX" ]; then
@@ -389,6 +421,12 @@ WHL_PYTHON_VERSIONS="${WHL_PYTHON_VERSIONS}"
 WHL_PLATFORM="${WHL_PLATFORM}"
 TAG="${TAG}"
 EOF
+    if [ "$GPU_STACK" = "rocm" ]; then
+        cat >> "$BUILD_OPTIONS_FILE" <<EOF
+GPU_STACK="${GPU_STACK}"
+ROCM_VERSION="${ROCM_VERSION}"
+EOF
+    fi
 }
 
 show_help() {
@@ -414,6 +452,10 @@ show_help() {
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
     echo "  [--cuda-version CUDA MAJOR.MINOR for the manylinux wheel build, e.g. 12.9 (default: ${CUDA_VERSION_DEFAULT})]
   [--torch-cuda-index torch wheel index for the manylinux wheel build (default: cu132 for CUDA 13, cu<CUDA_VERSION> for CUDA 12)]
+  [--gpu-stack [cuda|rocm] GPU stack for the manylinux wheel build (default: ${GPU_STACK}); rocm builds the nixl-rocm<X>.<Y> backend wheels (merged into rocm-nixl by contrib/wheel_merge_rocm.py), is x86_64 only and requires --dockerfile contrib/Dockerfile.manylinux]
+  [--rocm-version ROCm X.Y.Z for --gpu-stack rocm, e.g. 10.1.0 or 7.14.1 (default: uses Dockerfile ARG default)]
+  [with --gpu-stack rocm, --wheel-base defaults to manylinux_2_28]
+  [--proxy-ca-cert root CA certificate (PEM file) of a TLS-intercepting proxy, passed to the build as the proxy_ca secret; requires a dockerfile that consumes it (contrib/Dockerfile.manylinux)]
   [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
   [--manylinux-image-tag pinned PyPA manylinux image tag (default: ${MANYLINUX_IMAGE_TAG})]"
     echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
@@ -441,14 +483,69 @@ if [ -d "$NIXL_DIR/build" ]; then
     exit 1
 fi
 
+case "$GPU_STACK" in
+    cuda)
+        if [ -n "$ROCM_VERSION" ]; then
+            error "ERROR:" "--rocm-version requires --gpu-stack rocm"
+        fi
+        ;;
+    rocm)
+        # Ask the dockerfile itself rather than matching paths, as for the spcx flag.
+        if ! grep -q '^ARG GPU_STACK' "$DOCKER_FILE"; then
+            error "ERROR:" "--gpu-stack rocm requires a dockerfile that consumes it (contrib/Dockerfile.manylinux); $DOCKER_FILE does not"
+        fi
+        if [ "$ARCH" != "x86_64" ]; then
+            error "ERROR:" "--gpu-stack rocm is only supported on x86_64 (requested arch: $ARCH)"
+        fi
+        if [ -n "$ROCM_VERSION" ] && ! [[ "$ROCM_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            error "ERROR:" "invalid --rocm-version '$ROCM_VERSION' (expected X.Y.Z)"
+        fi
+        if [ -n "$CUDA_VERSION" ]; then
+            error "ERROR:" "--cuda-version (or CUDA_VERSION in the environment) cannot be used with --gpu-stack rocm"
+        fi
+        if [ -n "$TORCH_CUDA_INDEX" ]; then
+            error "ERROR:" "--torch-cuda-index (or TORCH_CUDA_INDEX in the environment) cannot be used with --gpu-stack rocm"
+        fi
+        if [ -n "$WHL_TORCH_VERSIONS" ]; then
+            error "ERROR:" "--torch-versions cannot be used with --gpu-stack rocm (the ROCm wheel is not built against torch)"
+        fi
+        if [ "$BUILD_NIXL_EP" = "true" ]; then
+            error "ERROR:" "--build-nixl-ep cannot be used with --gpu-stack rocm (nixl_ep is CUDA-only)"
+        fi
+        # ROCm supports distributions with glibc older than 2.39 (EL8, EL9, Ubuntu 22.04).
+        if [ "$WHL_BASE_SET" = "false" ]; then
+            WHL_BASE=manylinux_2_28
+            WHL_PLATFORM=${WHL_BASE}_${ARCH}
+        fi
+        ;;
+    *)
+        error "ERROR:" "invalid --gpu-stack '$GPU_STACK' (expected cuda or rocm)"
+        ;;
+esac
+
+if [ -n "$PROXY_CA_CERT" ]; then
+    if [ ! -f "$PROXY_CA_CERT" ] || [ ! -r "$PROXY_CA_CERT" ]; then
+        error "ERROR:" "--proxy-ca-cert file not found or not readable: $PROXY_CA_CERT"
+    fi
+    if ! grep -q 'id=proxy_ca' "$DOCKER_FILE"; then
+        error "ERROR:" "--proxy-ca-cert requires a dockerfile that consumes the proxy_ca secret (contrib/Dockerfile.manylinux); $DOCKER_FILE does not"
+    fi
+    BUILD_ARGS+=" --secret id=proxy_ca,src=$(readlink -f "$PROXY_CA_CERT")"
+fi
+
 BUILD_ARGS+="${BASE_IMAGE:+ --build-arg BASE_IMAGE=$BASE_IMAGE}"
 BUILD_ARGS+="${BASE_IMAGE_TAG:+ --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG}"
 BUILD_ARGS+=" --build-arg MANYLINUX_IMAGE=$MANYLINUX_IMAGE --build-arg MANYLINUX_IMAGE_TAG=$MANYLINUX_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+="${DEFAULT_PYTHON_VERSION:+ --build-arg DEFAULT_PYTHON_VERSION=$DEFAULT_PYTHON_VERSION}"
 BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
-CUDA_VERSION="${CUDA_VERSION:-$CUDA_VERSION_DEFAULT}"
-BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
+if [ "$GPU_STACK" = "rocm" ]; then
+    BUILD_ARGS+=" --build-arg GPU_STACK=$GPU_STACK"
+    BUILD_ARGS+="${ROCM_VERSION:+ --build-arg ROCM_VERSION=$ROCM_VERSION}"
+else
+    CUDA_VERSION="${CUDA_VERSION:-$CUDA_VERSION_DEFAULT}"
+    BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
+fi
 BUILD_ARGS+="${TORCH_CUDA_INDEX:+ --build-arg TORCH_CUDA_INDEX=$TORCH_CUDA_INDEX}"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
