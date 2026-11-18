@@ -152,7 +152,32 @@ public:
         return NIXL_SUCCESS;
     }
 
+    /** Triggers UCX's lazy CUDA setup per peer here, where it cannot deadlock a waiting kernel. */
+    void
+    warmUp(const nixl_remote_meta_dlist_t &dlist, const std::vector<uint32_t> &peers) override {
+        for (size_t i = 0; i < peers.size(); ++i) {
+            if (const auto *md = static_cast<const nixlUcxPublicMetadata *>(dlist[i].metadataP)) {
+                warmUpPeer(*md, dlist[i].addr, peers[i]);
+            }
+        }
+    }
+
 private:
+    void
+    warmUpPeer(const nixlUcxPublicMetadata &md, uint64_t addr, uint32_t peer) {
+        if (!scratch_ && nixl::getDeviceOps()->allocDeviceMem(1, scratch_) != NIXL_SUCCESS) {
+            return;
+        }
+        const ucp_request_param_t param{};
+        for (uint32_t ch = 0; md.conn && workerId(ch, peer) < workers_.size(); ++ch) {
+            const size_t id = workerId(ch, peer);
+            void *req = ucp_get_nbx(
+                md.conn->getEp(id)->getEp(), scratch_.get(), 1, addr, md.getRkey(id).get(), &param);
+            while (UCS_PTR_IS_PTR(req) &&
+                   checkCompletion(ch, peer, {tokenFrom(req)}) == NIXL_IN_PROG) {}
+        }
+    }
+
     /** The one place the (channel, peer) -> shared worker layout is spelled out. */
     [[nodiscard]] size_t
     workerId(uint32_t channel, uint32_t peer) const noexcept {
@@ -236,6 +261,7 @@ private:
 
     const worker_span_t workers_;
     const uint32_t max_peers_;
+    nixl::deviceMem scratch_;
 };
 } // namespace nixl::ucx
 

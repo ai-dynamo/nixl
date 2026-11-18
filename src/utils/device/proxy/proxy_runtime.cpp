@@ -192,6 +192,7 @@ proxyRuntime::prepMemView(const nixl_remote_meta_dlist_t &dlist,
         peers.push_back(peers_.try_emplace(desc.remoteAgent, peers_.size()).first->second);
     }
 
+    transport_->warmUp(dlist, peers);
     return memview_manager_->prepRemote(dlist, direct_ptrs, peers, *proxy_memview);
 }
 

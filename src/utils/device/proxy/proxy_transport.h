@@ -96,6 +96,9 @@ public:
         direct_ptrs.clear();
         return NIXL_SUCCESS;
     }
+
+    virtual void
+    warmUp(const nixl_remote_meta_dlist_t &, const std::vector<uint32_t> &) {}
 };
 
 } // namespace nixl
