@@ -219,7 +219,7 @@ namespace agent {
         EXPECT_NE(*observed, nullptr);
     }
 
-    TEST_F(tracingEnabledAgentFixture, TracingOnHandsPluginEachRequestsContext) {
+    TEST_F(sampledTracingAgentFixture, TracingOnHandsPluginEachRequestsContext) {
         selfXferSetup setup;
         agent_helper_->setupSelfXfer(setup);
         nixlAgent *agent = agent_helper_->getAgent();
@@ -248,7 +248,7 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(second), NIXL_SUCCESS);
     }
 
-    TEST_F(tracingEnabledAgentFixture, TracingOnHandsPluginThePreppedRequestsContext) {
+    TEST_F(sampledTracingAgentFixture, TracingOnHandsPluginThePreppedRequestsContext) {
         selfXferSetup setup;
         agent_helper_->setupSelfXfer(setup);
         nixlAgent *agent = agent_helper_->getAgent();
@@ -1044,6 +1044,19 @@ namespace agent {
             return "0";
         }
     };
+
+    TEST_F(unsampledRecorderTracingAgentFixture, UnsampledRequestHandsPluginNoIdentity) {
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
+        ASSERT_FALSE(req->traceable().requestIdentity().context.sampled());
+        EXPECT_FALSE(engine.observedTraceContext().has_value());
+
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_FALSE(engine.observedTraceContext().has_value());
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+    }
 
     TEST_F(unsampledRecorderTracingAgentFixture, UnsampledFailureDoesNotAskForTheNativeStatus) {
         nixlAgent *agent = agent_helper_->getAgent();

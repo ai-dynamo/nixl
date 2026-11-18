@@ -259,9 +259,9 @@ public:
 
     /**
      * @brief The trace identity of the agent's call into this backend: non-null
-     * only on the calling thread, while prepXfer, postXfer or a genNotif given a
-     * context runs, and only when tracing is active. It is valid for that call; a
-     * backend that needs it later copies it.
+     * only on the calling thread, while a sampled prepXfer or postXfer, or a
+     * genNotif given a context, runs, and only when tracing is active. It is
+     * valid for that call; a backend that needs it later copies it.
      */
     [[nodiscard]] virtual const nixl::trace::TraceIdentity *
     currentIdentity() const noexcept = 0;

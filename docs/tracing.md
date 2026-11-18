@@ -47,10 +47,10 @@ execution-trace tools.
   its context and request id, explicitly, and the span's parent is the context's `parentSpanId`, when
   set. Every other span and event names its context's span id as its parent.
 - **`nixl::trace::Scope`** — an RAII guard the agent opens around a request's
-  creation, each of its posts and its release, while a tracer is active. It makes the
-  request's trace identity current on the calling thread, so the spans opened meanwhile
-  take it; a sampled one also hands that context to every backend while it lasts, which
-  makes it the active correlation scope.
+  creation, each of its posts and its release, when that call's trace identity is
+  sampled. It makes the identity current on the calling thread, so the spans opened
+  meanwhile take it, and hands its context to every backend while it lasts, which makes
+  it the active correlation scope.
 - **`TraceBackend` / `SpanBackend`** — the backend interfaces. Each backend
   implementation provides them.
 - **Backend plugins** — each backend is a `libtrace_backend_<name>.so` that exports
@@ -197,7 +197,8 @@ release spans, its `nixl::xfer.complete` and `nixl::xfer.error` events and its b
 phases. An
 unsampled request records nothing, except a post given a sampled context of its own
 (see "Joining an application's trace"), so the requests a ratio below `1` skips cost
-only their ids. Calls that belong to no request, such as registration,
+only their ids and a few calls into the tracing core per post. Calls that belong to no
+request, such as registration,
 connections, metadata and notifications, are recorded whenever a backend is
 active, except a notification given an unsampled context.
 
@@ -386,10 +387,10 @@ when `createBackend` constructs the engine, null while no tracer is active. Arou
 calls that carry tracing it opens a `nixl::trace::Scope`, which makes the call's
 identity current on that thread, and a backend reads it from its sink:
 
-- The sink's `currentIdentity()` returns the identity of the call only while
-  `prepXfer`, `postXfer`, or a `genNotif` given a context, runs on the calling thread,
-  so a backend that needs it later, at completion or on another thread, copies it
-  during the call.
+- The sink's `currentIdentity()` returns the identity of the call only while a
+  sampled `prepXfer` or `postXfer`, or a `genNotif` given a context, runs on the calling
+  thread, so a backend that needs it later, at completion or on another thread, copies
+  it during the call.
 - Outside those calls or on any other thread it returns null. Reading it at the wrong
   time is not an error, so a mistake shows only as a call that is not traced.
 - The current identity lives with the tracer, and the notification's trace tags and
@@ -464,8 +465,9 @@ to the same per-metric filter as every other metric (see
 A backend also sees the trace identity of the request it is executing, from its
 sink's `currentIdentity()` while `prepXfer` and `postXfer` run (see "Where a
 backend's trace state comes from"): the agent opens a `nixl::trace::Scope` around both
-while a tracer is active, and the pointer is null outside one, as in `prepMemView`,
-which has no request, or when an engine is called directly. It is one internal
+when the request or post is sampled, and the pointer is null outside one, as for an
+unsampled one, in `prepMemView`, which has no request, or when an engine is called
+directly. It is one internal
 `nixl::trace::TraceIdentity` holding the trace `context`, the `requestId` and the
 `execution` number. The context's trace id and flags are the same at prep and at every
 post of that request, reposts included. For a sampled request each post also has a span

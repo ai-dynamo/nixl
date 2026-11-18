@@ -718,7 +718,7 @@ TEST(Tracing, SpanMacroSkipsItsAttributesWithoutASpan) {
                                     {nixl::trace::AttributeKey::Bytes, ++evaluations});
             EXPECT_FALSE(post.active());
             EXPECT_FALSE(release.active());
-            EXPECT_EQ(currentIdentity(*tracer) != nullptr, traced == &unsampled);
+            EXPECT_EQ(currentIdentity(*tracer), nullptr);
         }
     }
 

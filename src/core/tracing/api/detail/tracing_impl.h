@@ -149,10 +149,13 @@ detail::requestStart(const Tracer *tracer, const TraceContext &context) noexcept
 
 } // namespace nixl::trace
 
-#define NIXL_TRACE_DETAIL_REQUEST_SCOPE_(span, tracer_ptr, identity, baggage)  \
-    std::optional<::nixl::trace::Scope> span##_scope;                          \
-    if (::nixl::trace::Tracer *nixl_trace_scope_tracer_ = (tracer_ptr)) {      \
-        span##_scope.emplace(nixl_trace_scope_tracer_, (identity), (baggage)); \
+#define NIXL_TRACE_DETAIL_REQUEST_SCOPE_(span, tracer_ptr, identity, baggage)                      \
+    std::optional<::nixl::trace::Scope> span##_scope;                                              \
+    if (::nixl::trace::Tracer *nixl_trace_scope_tracer_ = (tracer_ptr)) {                          \
+        const ::nixl::trace::TraceIdentity &nixl_trace_scope_identity_ = (identity);               \
+        if (nixl_trace_scope_identity_.context.sampled()) {                                        \
+            span##_scope.emplace(nixl_trace_scope_tracer_, nixl_trace_scope_identity_, (baggage)); \
+        }                                                                                          \
     }
 
 #define NIXL_TRACE_DETAIL_SUPPLIED_SCOPE_(span, tracer_ptr, options)                   \
@@ -298,10 +301,11 @@ end(Span &span, Status status) {
         span,                                                                                    \
         (traceable).tracer(),                                                                    \
         trace_record,                                                                            \
-        span##_scope->identity().context,                                                        \
+        (traceable).requestIdentity().context,                                                   \
         __VA_ARGS__ __VA_OPT__(, ){::nixl::trace::AttributeKey::NixlXferRequestId,               \
-                                   span##_scope->identity().requestId},                          \
-        {::nixl::trace::AttributeKey::NixlXferExecution, span##_scope->identity().execution});   \
+                                   (traceable).requestIdentity().requestId},                     \
+        {::nixl::trace::AttributeKey::NixlXferExecution,                                         \
+         (traceable).requestIdentity().execution});                                              \
     ::nixl::trace::detail::addBaggage(span, (traceable).requestBaggage())
 
 #define NIXL_TRACE_DETAIL_POST_SPAN(span, traceable, options, trace_record, ...)      \
