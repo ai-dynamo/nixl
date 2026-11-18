@@ -150,21 +150,6 @@ public:
     nixlDocaMemosEngine(const nixlBackendInitParams *init_params);
     ~nixlDocaMemosEngine() override;
 
-    bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
-
-    bool
-    supportsNotif() const override {
-        return false;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const override {
         return {OBJ_SEG, DRAM_SEG};

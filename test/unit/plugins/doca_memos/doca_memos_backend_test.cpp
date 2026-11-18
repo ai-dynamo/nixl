@@ -285,8 +285,8 @@ const std::string kHexDecodedKey = bytes({0x00,
 TEST_F(DocMemosBackendTest, ConstructorSuccess) {
     createEngine();
     EXPECT_TRUE(engine_ != nullptr);
-    EXPECT_FALSE(engine_->supportsRemote());
-    EXPECT_TRUE(engine_->supportsLocal());
+    EXPECT_FALSE(engine_->supportsCapability(nixl_backend_capability_t::REMOTE));
+    EXPECT_TRUE(engine_->supportsCapability(nixl_backend_capability_t::LOCAL));
 }
 
 TEST_F(DocMemosBackendTest, ConstructorMissingDeviceName) {
