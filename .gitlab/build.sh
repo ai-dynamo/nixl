@@ -517,11 +517,14 @@ if [ -n "$DOCA_KV_ENV" ]; then
     $SUDO ldconfig
     # The DOCA 3.6 build ships its own doca-common, which doca-kv requires; it must
     # win over the base image's DOCA 3.5 one.
-    export PKG_CONFIG_PATH="/opt/doca_memos/doca_kv/lib/$ARCH-linux-gnu/pkgconfig:/opt/mellanox/doca/lib/$ARCH-linux-gnu/pkgconfig:/opt/mellanox/doca/lib64/pkgconfig:${PKG_CONFIG_PATH}"
+    export PKG_CONFIG_PATH="/opt/doca_memos/doca_kv/lib/$ARCH-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}"
     if [ "$(pkg-config --modversion doca-common)" != "$(pkg-config --modversion doca-kv)" ]; then
         echo "ERROR: doca-common and doca-kv resolve to different DOCA versions" >&2
         exit 1
     fi
+    # These plugins use the base image's DOCA 3.5 libraries, which must not mix with
+    # DOCA 3.6's doca-common (the 3.5 telemetry exporter fails to link against it).
+    EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Ddisable_plugins=GPUNETIO,TELEMETRY_DOCA"
 fi
 
 $SUDO rm -rf ${BUILD_TMP}
