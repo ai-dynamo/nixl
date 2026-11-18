@@ -175,7 +175,7 @@ start_redis_server() {
 
 # The WQS plugin allocates its staging pool from a 2 MiB hugepage memfd (also with the
 # wqs_mock SDK). Make sure at least $1 (default 16) hugepages are free, reserving them when
-# the container is allowed to write /proc/sys/vm/nr_hugepages. Returns non-zero when they
+# the container is allowed to write the 2 MiB pool's nr_hugepages in sysfs. Returns non-zero when they
 # cannot be provided, so callers can skip the transfer tests loudly.
 ensure_wqs_hugepages() {
     local need=${1:-16}
@@ -190,9 +190,9 @@ ensure_wqs_hugepages() {
     if [ "${free}" -lt "${need}" ]; then
         echo "WQS: ${free} free 2 MiB hugepages, need ${need}; trying to reserve $((total + need - free))"
         if [ "$(id -u)" -eq 0 ]; then
-            echo $((total + need - free)) > /proc/sys/vm/nr_hugepages 2>/dev/null || true
+            echo $((total + need - free)) > "${dir}/nr_hugepages" 2>/dev/null || true
         else
-            echo $((total + need - free)) | sudo -n tee /proc/sys/vm/nr_hugepages >/dev/null 2>&1 || true
+            echo $((total + need - free)) | sudo -n tee "${dir}/nr_hugepages" >/dev/null 2>&1 || true
         fi
         free=$(cat "${dir}/free_hugepages" 2>/dev/null || echo 0)
         echo "WQS: ${free} free 2 MiB hugepages after reservation attempt"
