@@ -177,7 +177,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 - **What it does:** Fans out in parallel to nine downstream Jenkins jobs, waiting on all of them. On PR runs only the jobs selected by the [path filter](#path-filtering) for the PR's changed paths are started; the rest get a green "skipped" status under their own context. Manual runs (no PR number) always run all nine:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
-  - `nixl-ci-cmx` — `.ci/jenkins/lib/test-cmx-matrix.yaml` (DOCA_MEMOS smoke test on a `mizu` node with a BlueField)
+  - `nixl-ci-cmx` — `.ci/jenkins/lib/test-cmx-matrix.yaml` (DOCA_MEMOS smoke test against mocks, in the job container)
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node)
   - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (NIXL EP tests on dlcluster.nvidia.com)
   - `nixl-ci-gpu-vr` — `.ci/jenkins/lib/test-vr-matrix.yaml` (same tests as `nixl-ci-dl-gpu`, on the Vera Rubin `vrnvl72` partition / `rubin` account; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node, so it can run on a partly used node of the busy partition; nodes with a differing configuration are excluded via `SLURM_EXCLUDE`)
@@ -191,7 +191,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 
 - **Trigger:** Fan-out from `nixl-ci-dispatcher` (same as the other PR CI jobs).
 - **Config:** `.ci/jenkins/lib/test-cmx-matrix.yaml`, test script `.gitlab/test_cmx.sh`.
-- **What it does:** Smoke test for the DOCA_MEMOS (CMX) backend. Builds the `Dockerfile.gpu-test` image with `DOCA_KV_ENV=true`, which makes `build.sh` build DOCA KV from DOCA tag `3.6.0085-1` on `git-nbu` (SSH, `svc-nixl-ssh_key`, passed as a build secret so it never lands in a layer). On a `mizu` node with a GPU and a BlueField (`--gres=gpu:1,bf:1`), `test_cmx.sh` builds the DOCA_MEMOS unit-test mocks (`test/unit/plugins/doca_memos`) into a shared library, swaps it in for every `libdoca_*` the plugin links, and runs `nixlbench --backend=DOCA_MEMOS` READ and WRITE against the mock's in-memory store.
+- **What it does:** Smoke test for the DOCA_MEMOS (CMX) backend. Like `nixl-ci-non-gpu`, it runs in the job container on its own `nixl-ci-cmx-base` image, with no GPU or Slurm allocation. The `Build` step runs `build.sh` with `DOCA_KV_ENV=true`, which builds DOCA KV from DOCA tag `3.6.0085-1` on `git-nbu` (SSH, `svc-nixl-ssh_key` bound as `SSH_KEY`) and fails if `doca-common` and `doca-kv` resolve to different DOCA versions. `test_cmx.sh` then builds the DOCA_MEMOS unit-test mocks (`test/unit/plugins/doca_memos`) into a shared library, swaps it in for every `libdoca_*` the plugin links, and runs `nixlbench --backend=DOCA_MEMOS` READ and WRITE against the mock's in-memory store.
 - **UCX version:** Builds against the `Dockerfile` `ARG UCX_VERSION` default only; it has no `UCX_VER` parameter and is not part of `nixl-ci-nightly`.
 - **Automatic on every PR:** Yes — whenever the dispatcher runs (like the other dispatcher jobs).
 
@@ -422,7 +422,6 @@ Jobs submitted via the `slurmCI` module are named `${JOB_BASE_NAME}-${BUILD_NUMB
 | `nixl-ci-dl-gpu` | `nixl-ci-dl-gpu-<build>` |
 | `nixl-ci-dl-gpu-ep` | `nixl-ci-dl-gpu-ep-<build>` |
 | `nixl-ci-gpu-vr` | `nixl-ci-gpu-vr-<build>` |
-| `nixl-ci-cmx` | `nixl-ci-cmx-<build>` |
 | `nixl-ci-build-wheel` | `nixl-ci-build-wheel-<fw>-<build>` (`fw`: `vllm` or `sglang`) |
 | `nixl-ci-test-llm-container` | `nixl-ci-test-llm-container-<build>` |
 
@@ -625,14 +624,14 @@ header is sent on every request.
 pipelines run it through `.gitlab/build.sh` outside the image builds above, with the
 same credential:
 
-- The `Build` steps of `build-matrix.yaml` (`nixl-ci-non-gpu`) and
-  `test-sanitizer-matrix.yaml` run `build.sh` in the job container. They bind
+- The `Build` steps of `build-matrix.yaml` (`nixl-ci-non-gpu`), `test-cmx-matrix.yaml`
+  and `test-sanitizer-matrix.yaml` run `build.sh` in the job container. They bind
   `svc-nixl-github-read-only-token`, call `write_github_gitconfig /tmp/ghconfig` in a
   subshell, and export `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=include.path` and
   `GIT_CONFIG_VALUE_0=/tmp/ghconfig`. Every git process the step starts, including
   meson's clones and their submodule fetches, inherits that, without changing
   `~/.gitconfig`; the variables carry only the file's path (git ≥ 2.31).
-- The image-build steps of `test-matrix.yaml`, `test-cmx-matrix.yaml`, `test-dl-matrix.yaml`,
+- The image-build steps of `test-matrix.yaml`, `test-dl-matrix.yaml`,
   `test-vr-matrix.yaml` and `test-dl-ep-matrix.yaml` build `Dockerfile.gpu-test` with
   `podman build`. They bind the token, write `/tmp/ghconfig` and pass
   `--secret id=ghconfig,src=/tmp/ghconfig`. `Dockerfile.gpu-test` mounts it at the
