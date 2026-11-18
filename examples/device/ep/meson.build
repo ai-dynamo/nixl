@@ -160,7 +160,7 @@ nixl_ep_install_rpath += ':' + join_paths(get_option('prefix'), get_option('libd
 nixl_ep_install_rpath += ':' + torch_lib_dir
 
 # CUDA-versioned install dir so cu12 and cu13 wheels don't collide.
-nixl_ep_install_dir = 'nixl_ep_' + cuda_wheel_dir.split('_')[-1]  # nixl_ep_cu12 or nixl_ep_cu13
+nixl_ep_install_dir = 'nixl_ep_' + cuda_wheel_dir.substring(5)  # nixl_ep_cu12 or nixl_ep_cu13
 
 nixl_ep_ext = py.extension_module(nixl_ep_ext_name,
     nixl_ep_sources,

@@ -16,7 +16,10 @@
 """Shared helpers for the NIXL meta packages (``nixl`` and ``nixl_ep``)."""
 
 import importlib.util
+import os
 import pathlib
+import pkgutil
+import re
 import sys
 
 
@@ -83,6 +86,94 @@ def detect_rocm() -> bool:
 
     # hip-python already imported: use it.
     return "rocm.bindings" in sys.modules or "hip" in sys.modules
+
+
+def parse_rocm_version(text: str | None) -> tuple[int, int] | None:
+    """ROCm (major, minor) from "X.Y[.Z][-build]", or from a "+rocmX.Y[.Z]" tag."""
+    if not text:
+        return None
+    if "+" in text:
+        match = re.search(r"\+rocm(\d+)\.(\d+)", text)
+    else:
+        match = re.match(r"\s*(\d+)\.(\d+)", text)
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def detect_rocm_version() -> tuple[int, int] | None:
+    """ROCm (major, minor) used to select the nixl_rocm<X>_<Y> backend.
+
+    Never imports torch: called after detect_cuda_major() returns None, by which
+    point torch is already imported if it is installed.
+    """
+    # torch: its local version tag (e.g. "2.14.0+rocm10.1.0").
+    torch = sys.modules.get("torch")
+    if torch is not None:
+        version = parse_rocm_version(_rocm_tag(getattr(torch, "__version__", None)))
+    else:
+        version = parse_rocm_version(_rocm_tag(_distribution_version("torch")))
+    if version is not None:
+        return version
+
+    # ROCm install: its version file.
+    rocm_path = pathlib.Path(os.environ.get("ROCM_PATH") or "/opt/rocm")
+    for version_file in (
+        rocm_path / ".info" / "version",
+        rocm_path / "core" / ".info" / "version",
+    ):
+        try:
+            version = parse_rocm_version(version_file.read_text())
+        except (OSError, UnicodeDecodeError):
+            continue
+        if version is not None:
+            return version
+
+    # ROCm installed from pip wheels.
+    return parse_rocm_version(_distribution_version("rocm"))
+
+
+def find_rocm_backends() -> list[str]:
+    """Installed nixl_rocm<X>_<Y> backend packages, newest ROCm first."""
+    found = {}
+    for module in pkgutil.iter_modules():
+        match = re.fullmatch(r"nixl_rocm(\d+)_(\d+)", module.name)
+        if match:
+            found[module.name] = (int(match.group(1)), int(match.group(2)))
+    return sorted(found, key=lambda name: found[name], reverse=True)
+
+
+def find_cuda_backends() -> list[str]:
+    """Installed nixl_cu<NN> backend packages."""
+    return sorted(
+        module.name
+        for module in pkgutil.iter_modules()
+        if re.fullmatch(r"nixl_cu\d+", module.name)
+    )
+
+
+def detect_torch_cuda() -> str | None:
+    """CUDA version an installed PyTorch was built for, None if it is not a CUDA build.
+
+    Never imports torch.
+    """
+    torch = sys.modules.get("torch")
+    if torch is not None:
+        return getattr(getattr(torch, "version", None), "cuda", None)
+    return _torch_cuda_version_from_disk()
+
+
+def _rocm_tag(version: str | None) -> str | None:
+    """The version if it carries a "+rocm" local tag, else None."""
+    return version if version and "+rocm" in version else None
+
+
+def _distribution_version(name: str) -> str | None:
+    """Version of an installed distribution, from its metadata."""
+    import importlib.metadata
+
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
 
 def _torch_cuda_version_from_disk() -> str | None:

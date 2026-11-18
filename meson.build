@@ -405,6 +405,38 @@ if rocm_path != ''
     )
     message('ROCm/HIP enabled; toolchain path: ' + rocm_path)
 
+    # A ROCm-only build names its Python package after the ROCm release
+    # (nixl_rocm<X>_<Y>) so that wheels for different ROCm versions can coexist.
+    if wheel_variant == '' and not cuda_dep.found()
+        rocm_version = ''
+        foreach rocm_version_file : [rocm_path / '.info' / 'version',
+                                     rocm_path / 'core' / '.info' / 'version']
+            if rocm_version == '' and fs.is_file(rocm_version_file)
+                # Format is X.Y.Z, optionally followed by -<build>.
+                rocm_version = fs.read(rocm_version_file).strip().split('-')[0]
+            endif
+        endforeach
+        if rocm_version == '' and cpp.has_header('rocm-core/rocm_version.h', include_directories : rocm_inc)
+            rocm_version = '.'.join([
+                cpp.get_define('ROCM_VERSION_MAJOR',
+                               prefix : '#include <rocm-core/rocm_version.h>',
+                               include_directories : rocm_inc),
+                cpp.get_define('ROCM_VERSION_MINOR',
+                               prefix : '#include <rocm-core/rocm_version.h>',
+                               include_directories : rocm_inc),
+            ])
+        endif
+        rocm_version_parts = rocm_version.split('.')
+        if rocm_version_parts.length() < 2 or rocm_version_parts[0] == '' or rocm_version_parts[1] == ''
+            error('Could not determine the ROCm version under ' + rocm_path +
+                  ' (tried .info/version, core/.info/version and include/rocm-core/rocm_version.h).' +
+                  ' Pass -Dwheel_variant=rocm<X>_<Y>, e.g. -Dwheel_variant=rocm10_1.')
+        endif
+        wheel_variant = 'rocm' + rocm_version_parts[0] + '_' + rocm_version_parts[1]
+        cuda_wheel_dir = 'nixl_' + wheel_variant
+        message('ROCm version ' + rocm_version + '; Python package: ' + cuda_wheel_dir)
+    endif
+
     # hipify-perl is shipped with ROCm and is required for all ROCm builds.
     hipify_cmd = find_program('hipify-perl')
     hipify_src = generator(hipify_cmd,
