@@ -38,10 +38,10 @@ CHECK_NAMES = {
     2: "DDN INFINIA bundling",
     3: "SPCX built from the expected ref",
     4: "UCX version and commit",
-    5: "Files added / removed / changed",
-    6: "NIXL plugins bundled",
-    7: "UCX plugins bundled",
-    8: "Compressed wheel size",
+    5: "NIXL plugins bundled",
+    6: "UCX plugins bundled",
+    7: "Compressed wheel size",
+    8: "Files added / removed / changed",
 }
 SPCX_MODULES = ("libuct_ib_mlx5_ext.so.0.0.0", "libuct_ib_mlx5_gdp.so.0.0.0")
 INFINIA_PLUGIN = "libplugin_INFINIA.so"
@@ -687,7 +687,7 @@ def check_files(cand: Side, ref: Side) -> Finding:
     )
     if state == "PASS":
         text = f"identical member sets and contents across {len(shared)} shared cells + meta"
-    return _finding(5, state, text, details)
+    return _finding(8, state, text, details)
 
 
 def _plugin_check(
@@ -780,11 +780,11 @@ def _plugin_check(
 
 
 def check_nixl_plugins(cand: Side, ref: Side) -> Finding:
-    return _plugin_check(6, cand, ref, _NIXL_PLUGIN, "NIXL plugin")
+    return _plugin_check(5, cand, ref, _NIXL_PLUGIN, "NIXL plugin")
 
 
 def check_ucx_plugins(cand: Side, ref: Side) -> Finding:
-    return _plugin_check(7, cand, ref, _UCX_MODULE, "UCX")
+    return _plugin_check(6, cand, ref, _UCX_MODULE, "UCX")
 
 
 def _size_row(
@@ -942,7 +942,7 @@ def check_sizes(cand: Side, ref: Side, cuobjdump: Optional[str] = None) -> Findi
         "big_deltas": big_deltas,
         "fatbin": fatbin,
     }
-    return _finding(8, "REVIEW", text, details)
+    return _finding(7, "REVIEW", text, details)
 
 
 def run_checks(cand: Side, ref: Side, cuobjdump: Optional[str] = None) -> list[Finding]:
@@ -951,8 +951,8 @@ def run_checks(cand: Side, ref: Side, cuobjdump: Optional[str] = None) -> list[F
         check_infinia(cand, ref),
         check_spcx_ref(cand, ref),
         check_ucx(cand, ref),
-        check_files(cand, ref),
         check_nixl_plugins(cand, ref),
         check_ucx_plugins(cand, ref),
         check_sizes(cand, ref, cuobjdump),
+        check_files(cand, ref),
     ]
