@@ -143,7 +143,7 @@ void validateBuffer(void* expected, void* actual, size_t size, const char* opera
 
 // Helper function to fill buffer with repeating pattern
 void fill_test_pattern(void* buffer, size_t size) {
-    char* buf = (char*)buffer;
+    char *buf = static_cast<char *>(buffer);
     size_t phrase_len = TEST_PHRASE_LEN;
     size_t offset = 0;
 
@@ -157,7 +157,7 @@ void fill_test_pattern(void* buffer, size_t size) {
 
 // Helper function to fill GPU buffer with repeating pattern
 cudaError_t fill_gpu_test_pattern(void* gpu_buffer, size_t size) {
-    char* host_buffer = (char*)malloc(size);
+    char *host_buffer = static_cast<char *>(malloc(size));
     if (!host_buffer) {
         return cudaErrorMemoryAllocation;
     }
@@ -178,8 +178,8 @@ cudaError_t clear_gpu_buffer(void* gpu_buffer, size_t size) {
 
 // Helper function to validate GPU buffer
 bool validate_gpu_buffer(void* gpu_buffer, size_t size) {
-    char* host_buffer = (char*)malloc(size);
-    char* expected_buffer = (char*)malloc(size);
+    char *host_buffer = static_cast<char *>(malloc(size));
+    char *expected_buffer = static_cast<char *>(malloc(size));
     if (!host_buffer || !expected_buffer) {
         free(host_buffer);
         free(expected_buffer);
@@ -277,7 +277,7 @@ runRecoveryCase(const char *name,
     }
 
     nixl_reg_dlist_t vram_reg(use_dram ? DRAM_SEG : VRAM_SEG), file_reg(FILE_SEG);
-    vram_reg.addDesc(nixlBlobDesc((uintptr_t)gpu, size, 0));
+    vram_reg.addDesc(nixlBlobDesc(reinterpret_cast<uintptr_t>(gpu), size, 0));
     file_reg.addDesc(nixlBlobDesc(0, size, fd));
     if (agent.registerMem(vram_reg) != NIXL_SUCCESS ||
         agent.registerMem(file_reg) != NIXL_SUCCESS) {
@@ -690,14 +690,14 @@ int main(int argc, char *argv[])
 
         // Set up descriptors
         if (use_vram) {
-            vram_buf[i].addr   = (uintptr_t)(vram_addr[i]);
+            vram_buf[i].addr = reinterpret_cast<uintptr_t>(vram_addr[i]);
             vram_buf[i].len    = transfer_size;
             vram_buf[i].devId = dev_id;
             vram_for_gds.addDesc(vram_buf[i]);
         }
 
         if (use_dram) {
-            dram_buf[i].addr   = (uintptr_t)(dram_addr[i]);
+            dram_buf[i].addr = reinterpret_cast<uintptr_t>(dram_addr[i]);
             dram_buf[i].len    = transfer_size;
             dram_buf[i].devId  = 0;
             dram_for_gds.addDesc(dram_buf[i]);
@@ -927,7 +927,7 @@ int main(int argc, char *argv[])
                 }
             }
             if (use_dram) {
-                char* expected_buffer = (char*)malloc(transfer_size);
+                char *expected_buffer = static_cast<char *>(malloc(transfer_size));
                 if (!expected_buffer) {
                     std::cerr << "Failed to allocate validation buffer\n";
                     goto cleanup;

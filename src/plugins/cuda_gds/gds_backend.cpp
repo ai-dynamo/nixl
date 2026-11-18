@@ -132,7 +132,7 @@ nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
 
     case DRAM_SEG: {
         try {
-            out = new nixlGdsMetadata((void *)mem.addr, mem.len, 0);
+            out = new nixlGdsMetadata(reinterpret_cast<void *>(mem.addr), mem.len, 0);
             return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
@@ -148,7 +148,7 @@ nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
 
 nixl_status_t
 nixlGdsEngine::deregisterMem(nixlBackendMD *meta) {
-    std::unique_ptr<nixlGdsMetadata> md((nixlGdsMetadata *)meta);
+    std::unique_ptr<nixlGdsMetadata> md(static_cast<nixlGdsMetadata *>(meta));
 
     if (auto *file_data = std::get_if<fileSegData>(&md->data_)) {
         if (file_data->handle) {
@@ -237,7 +237,7 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
                                   resolved.dev_ptr_base,
                                   resolved.dev_ptr_offset,
                                   mem_desc.len,
-                                  (size_t)file_desc.addr,
+                                  static_cast<size_t>(file_desc.addr),
                                   file_data->handle->cu_fhandle,
                                   (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE});
     }

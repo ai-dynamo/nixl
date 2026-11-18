@@ -49,7 +49,7 @@ logCuFileIOError(const char *api, ssize_t nbytes) {
     if (nbytes == -1 && !IS_CUFILE_ERR(errno)) {
         NIXL_ERROR << "GDS_MT: " << api << " failed: " << nixl_strerror(errno);
     } else {
-        const int err = (nbytes == -1) ? errno : (int)-nbytes;
+        const int err = (nbytes == -1) ? errno : static_cast<int>(-nbytes);
         NIXL_ERROR << "GDS_MT: " << api << " failed: " << CUFILE_ERRSTR(err) << " (err=" << err
                    << ")";
     }
@@ -79,7 +79,7 @@ runCuFileOp(const gdsXferReq *req, std::atomic<nixl_status_t> *overall_status) {
         return;
     }
 
-    if ((size_t)nbytes != req->size) {
+    if (static_cast<size_t>(nbytes) != req->size) {
         NIXL_ERROR << "GDS_MT: error: short " << ((req->op == CUFILE_READ) ? "read: " : "write: ")
                    << nbytes << " out of " << req->size << " bytes - address=" << req->addr;
         overall_status->store(NIXL_ERR_BACKEND);
