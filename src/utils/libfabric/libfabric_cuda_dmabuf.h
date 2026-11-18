@@ -58,6 +58,29 @@ cudaDmabufAlignRange(const void *buffer,
 }
 
 /**
+ * @brief Decides whether an Auto registration registers CUDA memory by virtual address
+ * instead of exporting a dmabuf.
+ * @note A rail whose EFA device cannot reach CUDA memory copies every transfer through host
+ * bounce buffers, so the NIC never imports a dmabuf there and an export changes no mapping.
+ * Registering by virtual address keeps the GDRCopy mapping the EFA RDM provider skips for an
+ * FI_MR_DMABUF registration, which keeps copies into GPU memory fast. GDRCopy reads are slow in
+ * bulk, so this pays off only where the provider also bounds GDRCopy copies out of device
+ * memory by message size; otherwise the dmabuf registration, which copies with cudaMemcpy in
+ * both directions, is kept.
+ * @param auto_mode Whether the mapping type comes from Auto rather than from configuration.
+ * @param copies_through_host Whether the rail copies CUDA memory through host bounce buffers.
+ * @param provider_bounds_gdrcopy_reads Whether the provider bounds GDRCopy copies out of
+ * device memory by message size.
+ * @return True to register by virtual address without exporting a dmabuf.
+ */
+[[nodiscard]] inline bool
+cudaAutoRegistersByVirtualAddress(bool auto_mode,
+                                  bool copies_through_host,
+                                  bool provider_bounds_gdrcopy_reads) {
+    return auto_mode && copies_through_host && provider_bounds_gdrcopy_reads;
+}
+
+/**
  * @brief Queries whether a CUDA device supports a dmabuf export that can be registered.
  * @note Requires both device dmabuf support and the RDMA dmabuf import ioctls the kernel
  * provides from 5.12 onwards.

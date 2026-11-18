@@ -449,6 +449,14 @@ public:
     bool
     canRegisterWithDmabuf(nixl_mem_t mem_type, enum fi_hmem_iface iface) const;
 
+    /** Check if this rail copies CUDA memory through host bounce buffers.
+     *  True when the EFA provider reports FI_HMEM_P2P_DISABLED for the endpoint, which it
+     *  does when its device cannot reach CUDA memory (no GPU P2P, e.g. g6). */
+    [[nodiscard]] bool
+    copiesCudaThroughHost() const {
+        return cuda_copies_through_host_;
+    }
+
     /** Deregister memory from libfabric */
     nixl_status_t
     deregisterMemory(struct fid_mr *mr) const;
@@ -645,6 +653,7 @@ private:
 
     // Provider capability flags
     bool provider_supports_hmem_;
+    bool cuda_copies_through_host_ = false;
 
     // System runtime type (CUDA, NEURON, or SYSTEM) this rail was created for
     enum fi_hmem_iface runtime_;
