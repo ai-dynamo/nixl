@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
                     f"-DEP_NUM_TOPK_IDX_BITS={bits}",
                     "-I" + str(cls.root),
                     "-I" + str(fmt_include),
-                    "-I" + str(EP_ROOT / "nixl_ep_v2/include"),
+                    "-I" + str(EP_ROOT / "python/include"),
                     str(cls.root / "main.cpp"),
                     "-o",
                     str(cls.binaries[bits]),

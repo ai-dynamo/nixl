@@ -5,9 +5,9 @@
 """Prepare fresh joiners while survivors replay, then reuse their graphs through grow/shrink cycles.
 
 Launch with the same node-level RANK/WORLD_SIZE convention as test_adaptive_elastic.py.
-Initial ranks warm up eagerly. Joiners compile and capture against their future topology,
-without executing communication until cutover; this preserves the two-serving-GPU minimum.
-The first execution on a joiner is included in completion_gap_ms. This test exercises EP
+Initial ranks warm up collectively. Each joiner warms up, captures and replays independently
+in its initial singleton world before connecting peers, while at least two old ranks serve.
+Its unchanged graph then runs in the expanded world after cutover. This test exercises EP
 communication with synthetic expert outputs, not model loading or redistribution.
 
 JSON SWITCH rows report the worst survivor's final-old-completion to first-new-completion
@@ -123,7 +123,7 @@ def test_loop(local_rank, num_local_ranks, args):
     )
     full, initial = list(range(num_ranks)), list(range(plan[0]))
     captured_at = {}
-    buffer = graph = timer = None
+    buffer = graph = captured_graph_id = timer = None
 
     def trace(event, **fields):
         if args.trace:
@@ -151,8 +151,8 @@ def test_loop(local_rank, num_local_ranks, args):
             - before,
         )
 
-    def initialize(target, prefix, eager_warmup):
-        nonlocal buffer, graph, timer
+    def initialize(target, prefix, independent):
+        nonlocal buffer, graph, captured_graph_id, timer
         buffer = make_buffer(
             args,
             0,
@@ -163,33 +163,40 @@ def test_loop(local_rank, num_local_ranks, args):
             scaleout_rank_idx=rank // max_su,
             scaleup_rank_idx=rank % max_su,
         )
-        stats = connect(target, prefix, store)
-        buffer.set_active_ranks(
-            target, num_active_sms=args.num_sms or buffer.num_launch_sms
-        )
+        stats = {}
+        if not independent:
+            stats.update(connect(target, prefix, store))
+            buffer.set_active_ranks(
+                target, num_active_sms=args.num_sms or buffer.num_launch_sms
+            )
         round_idx = [0]
 
         def capture_barrier():
-            round_idx[0] += 1
-            barrier(store, f"{prefix}/capture/{round_idx[0]}", rank, target)
+            if not independent:
+                round_idx[0] += 1
+                barrier(store, f"{prefix}/capture/{round_idx[0]}", rank, target)
 
+        # Sample future-world IDs now: remote selections are dropped locally and become live after expansion.
         graph = GraphCase(Case(buffer, args), target, captured_at, capture_barrier)
         start = time.monotonic()
-        if eager_warmup:
-            graph.capture()
-            graph.replay_and_check(target, "initial world")
-        else:
-            # CUDA capture records communication; it does not execute it against the still-serving old world.
-            torch.cuda.synchronize()
-            graph.graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph.graph):
-                graph.outputs, graph.handle, graph.recv_x = graph.forward()
-            torch.cuda.synchronize()
+        if independent:
+            assert buffer.get_active_ranks() == [rank]
+            assert buffer.get_connected_ranks() == []
+        graph.capture()
+        graph.replay_and_check(
+            [rank] if independent else target,
+            "independent singleton" if independent else "initial world",
+        )
+        captured_graph_id = id(graph.graph)
+        stats["capture_ms"] = (time.monotonic() - start) * 1e3
+        if independent:
+            stats.update(connect(target, prefix, store))
+            # Connections are prepared, but the larger world is activated only after the old world drains.
+            assert buffer.get_active_ranks() == [rank]
         timer = ReplayTimer(args.replays_per_batch)
         trace(
             "prepared",
-            eager_warmup=eager_warmup,
-            capture_ms=(time.monotonic() - start) * 1e3,
+            independent_singleton=independent,
             **stats,
         )
         return stats
@@ -220,7 +227,7 @@ def test_loop(local_rank, num_local_ranks, args):
 
     captured_at.update({peer: initial for peer in initial})
     if rank in initial:
-        initialize(initial, "initial", True)
+        initialize(initial, "initial", False)
     barrier(store, "initial-ready", rank, full)
     switches = []
     for index, (old_size, new_size) in enumerate(zip(plan, plan[1:]), 1):
@@ -267,19 +274,18 @@ def test_loop(local_rank, num_local_ranks, args):
             stats["pre_cutover"] = timer.batch(graph.graph)
         else:
             store.wait([f"{key}/serving"])
-            stats.update(initialize(target, key, False))
+            stats.update(initialize(target, key, True))
             store.set(f"{key}/prepared/{rank}", b"1")
 
-        # Only the old world drains collectively. Joiners have captured a future world but have not executed it.
+        # Only the old world drains collectively. Joiners have executed their graphs solely in singleton worlds.
         if rank in old:
             buffer.barrier(with_cpu_sync=True)
         torch.cuda.synchronize()
         barrier(store, f"{key}/drained", rank, participants)
         start = time.monotonic()
-        if rank in old:
-            buffer.set_active_ranks(
-                target, num_active_sms=args.num_sms or buffer.num_launch_sms
-            )
+        buffer.set_active_ranks(
+            target, num_active_sms=args.num_sms or buffer.num_launch_sms
+        )
         if new_size < old_size:
             peers = buffer.get_connected_ranks()
             buffer.disconnect_ranks(
@@ -291,6 +297,9 @@ def test_loop(local_rank, num_local_ranks, args):
 
         if rank in target:
             # Check this first replay directly, before another replay could overwrite incorrect output.
+            assert (
+                id(graph.graph) == captured_graph_id
+            ), "topology changes must reuse the captured graph"
             first_end = torch.cuda.Event(enable_timing=True)
             graph.stats.zero_()
             graph.graph.replay()
@@ -305,7 +314,7 @@ def test_loop(local_rank, num_local_ranks, args):
             start = time.monotonic()
             graph.release()
             buffer.destroy()
-            buffer = graph = timer = None
+            buffer = graph = captured_graph_id = timer = None
             stats["retirement_ms"] = (time.monotonic() - start) * 1e3
             store.set(f"{key}/retired/{rank}", b"1")
 
@@ -375,7 +384,7 @@ def test_loop(local_rank, num_local_ranks, args):
                     indent=2,
                 )
         print(
-            "Passed: fresh joiners prepared during serving, first replays checked, survivor graphs retained.",
+            "Passed: joiners warmed and captured independently during serving, first expanded replays checked, all graphs retained.",
             flush=True,
         )
 

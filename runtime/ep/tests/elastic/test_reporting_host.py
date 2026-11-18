@@ -38,7 +38,7 @@ def load_helpers():
         )
     ]
     nodes += [node for node in module.body if getattr(node, "name", None) in names]
-    testing_source = SOURCE.parents[2] / "nixl_ep_v2/utils/testing.py"
+    testing_source = SOURCE.parents[2] / "python/utils/testing.py"
     nodes += [
         node
         for node in ast.parse(testing_source.read_text()).body

@@ -300,7 +300,7 @@ def test_dispatch_combine(
         ), "Expand should not affect the number of received tokens."
         num_expanded_tokens = expanded_handle.psum_num_recv_tokens_per_expert[-1].item()
 
-        # Construction the input data for NIXL EP v2 combine
+        # Construct the combine input.
         src_token_global_idx = handle.recv_src_metadata[:num_recv_tokens, 0]
         if not args.skip_check:
             sorted_src_token_global_idx = torch.sort(src_token_global_idx).values

@@ -28,8 +28,7 @@ constexpr int kNumMaxScaleupRanksCap = 128;
 constexpr int kNumScaleupMaskWords = kNumMaxScaleupRanksCap / 64;
 constexpr int kNumMaxRanksCap = kNumMaxScaleoutRanksCap * kNumMaxScaleupRanksCap;   // The caps' product: the world-rank-indexed workspace rows
 static_assert(kNumMaxScaleupRanksCap % 64 == 0, "The position mask is whole 64-bit words");
-// Communication worlds, including graph replays; bootstrap and teardown cohorts may be smaller.
-constexpr int kMinNumActiveRanks = 2;
+constexpr int kMinNumActiveRanks = 1;
 
 // The active positions of a domain (bit k across the words): a plain array, so the topology descriptor (`EPTopology`) stays a POD
 struct ScaleupMask {
@@ -145,9 +144,7 @@ struct alignas(128) EPTopology {
     }
 
     __device__ __host__ __forceinline__ void check_launch() const {
-        EP_UNIFIED_ASSERT(is_active() and "This rank is not active in the committed world (see `stage_topology`)");
-        EP_UNIFIED_ASSERT(num_active_scaleout_ranks() * num_active_scaleup_ranks() >= kMinNumActiveRanks and
-                          "Dispatch/combine require at least two active GPUs: commit a larger world before launching or replaying");
+        EP_UNIFIED_ASSERT(is_active() and "This rank is not active in the committed world (see `set_active_ranks`)");
     }
 };
 static_assert(sizeof(EPTopology) == 128, "The topology descriptor is one 128-byte line");

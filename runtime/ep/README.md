@@ -1,6 +1,6 @@
-# NIXL EP v2
+# NIXL EP
 
-This fork adapts DeepEP V2's BF16/FP8 dispatch and BF16 combine to a fixed
+NIXL EP provides BF16/FP8/NVFP4 dispatch and BF16 combine using a fixed
 launch grid. Direct and hybrid modes share one kernel family; kernels read
 the mode and active block count from a device topology descriptor. The
 NIXL/UCX transport supports planned membership changes between
@@ -136,9 +136,9 @@ Python handle fields and tensor shapes still describe capture-time metadata.
 The estimator runs on the host during topology updates, never during graph
 replay; no profiling or correctness checks are added to communication.
 
-Dispatch/combine require at least two active GPUs, checked before launch
-and again inside the kernels for graph replay. Smaller cohorts may still
-bootstrap or tear down. `num_experts_per_rank` fixes the physical routing
+Dispatch/combine support a single active GPU. The calling rank must be active,
+checked before launch and again inside the kernels for graph replay.
+`num_experts_per_rank` fixes the physical routing
 slot capacity per GPU at construction; peers, including joiners, must agree on it.
 Choose it for the largest per-GPU expert placement across all intended
 topologies, including shrink, rather than just the initial placement.
@@ -180,11 +180,9 @@ ranks construct their buffers independently, then call `connect_ranks` with
 their peers' stable world IDs. Mid-launch rank failure and transport recovery
 are unsupported.
 
-An idle joiner can commit its future topology locally and capture its graph
-before cutover. Capture must skip eager communication and replay until the
-old world has drained and all new-world ranks have activated. Construction
-precompiles the barrier without launching it; dispatch/combine still require
-two active GPUs.
+An idle joiner can warm up and capture dispatch/combine on its own GPU before
+connecting peers, then reuse the graph after coordinated activation of the new
+world. Construction precompiles the barrier without launching it.
 
 `connect_ranks` exchanges agent names and region descriptors through the supplied Store,
 publishing under `NIXL_EP/<world_rank>` and deleting it after the requested peers
@@ -288,7 +286,7 @@ validated.
 Run tests from `runtime/ep` after installing the package.
 The existing tests are `tests/elastic/test_ep.py` and
 `tests/elastic/test_barrier.py`. Their launcher uses
-`nixl_ep_v2/utils/envs.py:init_dist`; configure it for your cluster before
+`python/utils/envs.py:init_dist`; configure it for your cluster before
 running distributed tests. Run either script with `--help` for its options.
 All GPU tests require the metadata backend configuration above. For tests that
 serve a TCPStore on `MASTER_ADDR` / `MASTER_PORT`, set this before launching:
@@ -311,13 +309,13 @@ survivors replay, checks the first replay after each switch and serves
 through departure cleanup. It reports completion gaps during preparation,
 cutover and retirement. `--max-completion-gap-ms 1000` applies a one-second
 acceptance bound; the default reports gaps without enforcing a bound.
-Joiner capture is prepared ahead of cutover; its first execution is timed
-after activation. `tests/elastic/test_runtime_tokens.py` checks BF16 payloads
-and JIT reuse across token capacities.
+Joiners warm up and capture independently before connecting. Their first
+replay after expansion is checked. `tests/elastic/test_runtime_tokens.py`
+checks BF16 payloads and JIT reuse across token capacities.
 
 ## Phase profiling
 
-Set `NIXL_EP_ADAPTIVE_PROFILE=1` before importing NIXL EP v2 to record diagnostic
+Set `NIXL_EP_ADAPTIVE_PROFILE=1` before importing NIXL EP to record diagnostic
 timestamps. Dispatch and combine keep their existing arguments. Profiling
 adds one buffer-owned timestamp table and a descriptor after the workspace
 controls; existing control offsets and kernel signatures are unchanged.

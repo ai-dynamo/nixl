@@ -600,7 +600,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                 if (is_last_check) {
                     #pragma unroll
                     for (int j = 0; j < kNumScaleupRanksPerLane; ++ j) {
-                        printf("NIXL EP v2 adaptive combine (scale-up wait) timeout, scale-out: %d/%d, scale-up: %d/%d, "
+                        printf("NIXL EP adaptive combine (scale-up wait) timeout, scale-out: %d/%d, scale-up: %d/%d, "
                                "channel: %d, lane: %d, recv: %d, tail: %d (wait=%d)\n",
                                scaleout_rank_idx, num_scaleout_ranks, scaleup_rank_idx, num_scaleup_ranks,
                                channel_idx, j * 32 + lane_idx,
@@ -778,7 +778,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                 if (signal == kExpectedSignal)
                     return true;
                 if (is_last_check) {
-                    printf("NIXL EP v2 adaptive combine (scale-out wait all) timeout, scale-out: %d/%d, scale-up: %d/%d, "
+                    printf("NIXL EP adaptive combine (scale-out wait all) timeout, scale-out: %d/%d, scale-up: %d/%d, "
                            "channel: %d, lane: %d, signal: %lld, expected: %lld\n",
                            scaleout_rank_idx, num_scaleout_ranks, scaleup_rank_idx, num_scaleup_ranks,
                            channel_idx, lane_idx, static_cast<long long>(signal), static_cast<long long>(kExpectedSignal));

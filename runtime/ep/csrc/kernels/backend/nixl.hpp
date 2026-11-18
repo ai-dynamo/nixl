@@ -29,12 +29,12 @@ static void mutate_transport_or_abort(const int& world_rank, const char* operati
     try {
         func();
     } catch (const std::exception& e) {
-        fprintf(stderr, "NIXL EP v2 world rank %d: %s failed; recovery is unsupported; restart the process: %s\n",
+        fprintf(stderr, "NIXL EP world rank %d: %s failed; recovery is unsupported; restart the process: %s\n",
                 world_rank, operation, e.what());
         fflush(stderr);
         std::abort();
     } catch (...) {
-        fprintf(stderr, "NIXL EP v2 world rank %d: %s failed; recovery is unsupported; restart the process\n", world_rank, operation);
+        fprintf(stderr, "NIXL EP world rank %d: %s failed; recovery is unsupported; restart the process\n", world_rank, operation);
         fflush(stderr);
         std::abort();
     }

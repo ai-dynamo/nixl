@@ -140,7 +140,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
                         return true;
                     }
                     if (is_last_check) {
-                        printf("NIXL EP v2 adaptive combine (reduce epilogue) timeout, scale-out: %d/%d, scale-up: %d/%d, "
+                        printf("NIXL EP adaptive combine (reduce epilogue) timeout, scale-out: %d/%d, scale-up: %d/%d, "
                                "channel: %d, source domain: %d, token: %d, signal: %lld\n",
                                topo.scaleout_rank_idx, num_scaleout_ranks, topo.scaleup_rank_idx, num_scaleup_ranks,
                                channel_idx, stored_dst_rank_idx, token_idx, static_cast<long long>(signal));

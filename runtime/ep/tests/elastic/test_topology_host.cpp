@@ -4,7 +4,7 @@
 
 // Host-only launch-guard and routing-coordinate regression; no GPU or transport is initialized.
 // From runtime/ep, with CUDA_INCLUDE pointing to the CUDA include directory:
-// g++ -std=c++20 -O2 -Wno-attributes -Inixl_ep_v2/include -I"$CUDA_INCLUDE" \
+// g++ -std=c++20 -O2 -Wno-attributes -Ipython/include -I"$CUDA_INCLUDE" \
 //     -I"$CUDA_INCLUDE/cccl" tests/elastic/test_topology_host.cpp -o /tmp/test_topology_host
 // /tmp/test_topology_host
 #include <nixl_ep_v2/common/topology.cuh>
@@ -30,20 +30,20 @@ static topology::EPTopology make(std::initializer_list<int> domains, std::initia
 }
 
 int main() {
-    unsigned accepted = 0, refused_small = 0, refused_inactive = 0;
-    auto refuse = [&](const topology::EPTopology& t, bool small) {
+    unsigned accepted = 0, refused_inactive = 0;
+    auto refuse = [&](const topology::EPTopology& t) {
         bool rejected = false;
         try { t.check_launch(); }
         catch (const EPException& e) {
             const std::string message = e.what();
-            assert(message.find(small ? "at least two active GPUs" : "not active in the committed world") != std::string::npos);
+            assert(message.find("not active in the committed world") != std::string::npos);
             rejected = true;
         }
         assert(rejected);
-        if (small) ++refused_small; else ++refused_inactive;
+        ++refused_inactive;
     };
-    for (const auto& t : {make({0}, {0}), make({31}, {127})}) refuse(t, true);
-    for (const auto& t : {make({0}, {0, 1}), make({0, 1}, {0}),
+    for (const auto& t : {make({0}, {0}), make({31}, {127}),
+                         make({0}, {0, 1}), make({0, 1}, {0}),
                          make({31}, {65, 127}), make({0, 31}, {127}),
                          make({0}, {0, 1, 2}), make({0, 1, 2}, {0}),
                          make({0}, {0, 64, 127}), make({0, 31}, {0, 127}),
@@ -53,13 +53,13 @@ int main() {
     }
     auto inactive_domain = make({0, 31}, {0});
     inactive_domain.scaleout_rank_idx = 1;
-    refuse(inactive_domain, false);
+    refuse(inactive_domain);
     auto inactive_position = make({0}, {0, 127});
     inactive_position.scaleup_rank_idx = 64;
-    refuse(inactive_position, false);
+    refuse(inactive_position);
     auto out_of_extent = make({0}, {0, 1});
     out_of_extent.scaleup_rank_idx = 2;
-    refuse(out_of_extent, false);
+    refuse(out_of_extent);
 
     // Public IDs stay fixed through 2x8 -> 2x4 -> a nonzero direct domain -> 2x8.
     constexpr int slots_per_rank = 4;
@@ -95,7 +95,7 @@ int main() {
         assert((topology::world_expert_to_extent<72, slots_per_rank>(wide, (2 * 72 + 65) * slots_per_rank + local_slot) == -1));
     }
     assert(topology::scaleup_peer<72>(wide, 65) == topology::scaleup_peer<72>(shrunk, 65));
-    std::printf("Passed: %u accepted worlds, %u single-GPU refusals, %u inactive-rank refusals, "
+    std::printf("Passed: %u accepted worlds, %u inactive-rank refusals, "
                 "stable expert IDs through shrink, expansion and wide-domain holes.\n",
-                accepted, refused_small, refused_inactive);
+                accepted, refused_inactive);
 }

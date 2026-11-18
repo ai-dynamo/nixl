@@ -93,7 +93,7 @@ struct NIXLTransport {
         const auto status = nixlPut<nixl_gpu_level_t::THREAD>(src, dst, static_cast<size_t>(num_bytes), channel,
                                                               ring_doorbell ? 0 : nixl_gpu_flags::defer);
         if (status != NIXL_IN_PROG) {
-            printf("NIXL EP v2 nixlPut from world rank %d to world rank %d failed, status %d (offset %llu, %d bytes)\n",
+            printf("NIXL EP nixlPut from world rank %d to world rank %d failed, status %d (offset %llu, %d bytes)\n",
                    ctx.world_rank, world_rank, static_cast<int>(status), static_cast<unsigned long long>(get_offset(dst_sym_ptr)), num_bytes);
             ptx::trap();
         }
@@ -105,7 +105,7 @@ struct NIXLTransport {
         const nixlMemViewElem dst{ctx.remote_mvh, static_cast<size_t>(world_rank), get_offset(sym_ptr)};
         const auto status = nixlAtomicAdd<nixl_gpu_level_t::THREAD>(value, dst, channel, 0, completion);
         if (status != NIXL_IN_PROG) {
-            printf("NIXL EP v2 nixlAtomicAdd from world rank %d to world rank %d failed, status %d (offset %llu)\n",
+            printf("NIXL EP nixlAtomicAdd from world rank %d to world rank %d failed, status %d (offset %llu)\n",
                    ctx.world_rank, world_rank, static_cast<int>(status), static_cast<unsigned long long>(get_offset(sym_ptr)));
             ptx::trap();
         }

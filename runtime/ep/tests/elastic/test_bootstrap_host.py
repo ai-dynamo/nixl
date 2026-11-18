@@ -70,7 +70,7 @@ class BootstrapTests(unittest.TestCase):
             return len(records) // positions, positions
 
         path = (
-            Path(__file__).resolve().parents[2] / "nixl_ep_v2/utils/nixl_bootstrap.py"
+            Path(__file__).resolve().parents[2] / "python/utils/nixl_bootstrap.py"
         )
         spec = importlib.util.spec_from_file_location("bootstrap_host.bootstrap", path)
         assert spec is not None and spec.loader is not None

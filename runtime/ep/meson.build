@@ -1,10 +1,5 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#
-# This file incorporates material from the DeepSeek project, licensed under the MIT License.
-# The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
-#
-# SPDX-License-Identifier: MIT AND Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,26 +14,26 @@
 # limitations under the License.
 
 if not cuda_dep.found()
-    error('CUDA not found for requested NIXL-EP V2 build')
+    error('CUDA not found for requested NIXL EP runtime build')
 endif
 
 nvcc = meson.get_compiler('cuda')
 if nvcc.version().version_compare('<13.0')
-    warning('NIXL-EP V2 requires CUDA 13.0 or newer, skipping NIXL-EP V2 build')
+    warning('NIXL EP runtime requires CUDA 13.0 or newer, skipping the runtime build')
     subdir_done()
 endif
 
 if not ucx_dep.found()
-    error('UCX not found for requested NIXL-EP V2 build')
+    error('UCX not found for requested NIXL EP runtime build')
 endif
 
 if not ucx_gpu_device_api_available
-    error('UCX GPU device API is unavailable for requested NIXL-EP V2 build')
+    error('UCX GPU device API is unavailable for requested NIXL EP runtime build')
 endif
 
 torch_check = run_command(py, '-c', 'import torch', check: false)
 if torch_check.returncode() != 0
-    error('PyTorch not found for requested NIXL-EP V2 build')
+    error('PyTorch not found for requested NIXL EP runtime build')
 endif
 
 fmt_dep = dependency('fmt', version: '>=11', fallback: ['fmt', 'fmt_dep'])
@@ -55,6 +50,8 @@ if v2_cuda_include_root == ''
     if v2_cuda_include_root == ''
         error('Cannot locate the selected CUDA compiler toolkit: set cudapath_inc to its include directory')
     endif
+else
+    v2_cuda_include_root = join_paths(meson.project_source_root(), v2_cuda_include_root)
 endif
 v2_cccl_include_root = join_paths(v2_cuda_include_root, 'cccl')
 if not fs.is_file(join_paths(v2_cccl_include_root, 'cuda', 'atomic'))
@@ -71,18 +68,18 @@ have_v2_ucx_device_api = nvcc.compiles('''
     ''',
     dependencies: [ucx_dep, cuda_dep],
     args: nvcc_flags + ['-I' + v2_cccl_include_root],
-    name: 'NIXL-EP V2 UCX device API with CUDA IPC')
+    name: 'NIXL EP runtime UCX device API with CUDA IPC')
 if not have_v2_ucx_device_api
-    error('UCX device API with CUDA IPC is unavailable for requested NIXL-EP V2 build')
+    error('UCX device API with CUDA IPC is unavailable for requested NIXL EP runtime build')
 endif
 
 if ucx_path != ''
-    v2_ucx_include_root = ucx_inc_path
+    v2_ucx_include_root = join_paths(meson.project_source_root(), ucx_inc_path)
 else
     v2_ucx_include_root = ucx_dep.get_variable(pkgconfig: 'includedir', default_value: '')
 endif
 if v2_ucx_include_root == '' or not fs.is_dir(v2_ucx_include_root)
-    error('Cannot locate the include directory for the linked UCX for requested NIXL-EP V2 build')
+    error('Cannot locate the include directory for the linked UCX for requested NIXL EP runtime build')
 endif
 
 torch_dir = run_command(
@@ -108,8 +105,7 @@ v2_inc_dirs = [
     nixl_inc_dirs,
     nixl_device_api_inc_dirs,
     include_directories('csrc'),
-    include_directories('nixl_ep_v2/include'),
-    include_directories(v2_cccl_include_root),
+    include_directories('python/include'),
     torch_inc_dirs,
 ]
 
@@ -120,6 +116,7 @@ torch_ver = run_command(
 v2_ext_name = 'nixl_ep_v2_cpp_torch' + torch_ver
 
 v2_cpp_args = [
+    '-I' + v2_cccl_include_root,
     '-DTORCH_EXTENSION_NAME=' + v2_ext_name,
     '-Wno-deprecated-declarations',
     '-Wno-unused-variable',
@@ -130,6 +127,7 @@ v2_cpp_args = [
     '-Wno-unused-function',
 ]
 v2_cuda_args = [
+    '-I' + v2_cccl_include_root,
     '-DTORCH_EXTENSION_NAME=' + v2_ext_name,
     '--extended-lambda',
     '--expt-relaxed-constexpr',
@@ -146,7 +144,7 @@ v2_cuda_args = [
 v2_topk_idx_bits = run_command(py, '-c',
     'import os; print(os.getenv("NIXL_EP_NUM_TOPK_IDX_BITS", "64"))', check: true).stdout().strip()
 if v2_topk_idx_bits not in ['32', '64']
-    error('NIXL_EP_NUM_TOPK_IDX_BITS must be 32 or 64 when building NIXL-EP V2')
+    error('NIXL_EP_NUM_TOPK_IDX_BITS must be 32 or 64 when building the NIXL EP runtime')
 endif
 v2_cpp_args += ['-DEP_NUM_TOPK_IDX_BITS=' + v2_topk_idx_bits]
 v2_cuda_args += ['-DEP_NUM_TOPK_IDX_BITS=' + v2_topk_idx_bits]
@@ -197,36 +195,36 @@ executable(
 )
 
 py.install_sources(
-    'nixl_ep_v2/__init__.py',
+    'python/__init__.py',
     subdir: v2_install_dir,
     pure: false,
 )
 py.install_sources(
-    'nixl_ep_v2/buffers/__init__.py',
-    'nixl_ep_v2/buffers/elastic.py',
+    'python/buffers/__init__.py',
+    'python/buffers/elastic.py',
     subdir: join_paths(v2_install_dir, 'buffers'),
     pure: false,
 )
 py.install_sources(
-    'nixl_ep_v2/utils/__init__.py',
-    'nixl_ep_v2/utils/envs.py',
-    'nixl_ep_v2/utils/event.py',
-    'nixl_ep_v2/utils/find_pkgs.py',
-    'nixl_ep_v2/utils/gate.py',
-    'nixl_ep_v2/utils/math.py',
-    'nixl_ep_v2/utils/nixl_bootstrap.py',
-    'nixl_ep_v2/utils/nixl_fabric.py',
-    'nixl_ep_v2/utils/profiling.py',
-    'nixl_ep_v2/utils/refs.py',
-    'nixl_ep_v2/utils/semantic.py',
-    'nixl_ep_v2/utils/testing.py',
+    'python/utils/__init__.py',
+    'python/utils/envs.py',
+    'python/utils/event.py',
+    'python/utils/find_pkgs.py',
+    'python/utils/gate.py',
+    'python/utils/math.py',
+    'python/utils/nixl_bootstrap.py',
+    'python/utils/nixl_fabric.py',
+    'python/utils/profiling.py',
+    'python/utils/refs.py',
+    'python/utils/semantic.py',
+    'python/utils/testing.py',
     subdir: join_paths(v2_install_dir, 'utils'),
     pure: false,
 )
 
 v2_include_install_dir = join_paths(py.get_install_dir(), v2_install_dir, 'include')
 install_subdir(
-    'nixl_ep_v2/include/nixl_ep_v2',
+    'python/include/nixl_ep_v2',
     install_dir: v2_include_install_dir,
 )
 install_subdir(

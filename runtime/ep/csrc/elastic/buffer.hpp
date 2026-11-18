@@ -152,8 +152,7 @@ public:
             CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
         }
 
-        // The initial topology descriptor (`EPTopology`): this rank alone (one active domain: direct, as the rule says; nothing
-        // launches on it), every launched block active
+        // Initial topology: this rank alone in direct mode, with every launched block active.
         topology::ScaleupMask self = {};
         self.words[scaleup_rank_idx / 64] = 1ull << (scaleup_rank_idx % 64);
         stage_topology(topology::kModeDirect, 1u << scaleout_rank_idx, self, topology::get_num_launch_sms());
@@ -173,7 +172,7 @@ public:
             destroy();
 
         if (not destroyed) {
-            printf("`destroy()` is not called before NIXL EP v2 elastic buffer destruction, which can leak resources.\n");
+            printf("`destroy()` is not called before NIXL EP elastic buffer destruction, which can leak resources.\n");
             fflush(stdout);
         }
     }
@@ -370,7 +369,7 @@ public:
     std::tuple<torch::Tensor, std::vector<std::string>> read_profile() const {
         EP_HOST_ASSERT(not destroyed and "`read_profile` after buffer destruction: create a new buffer");
         EP_HOST_ASSERT(profile_storage.defined() and
-                       "Profiling is disabled: set NIXL_EP_ADAPTIVE_PROFILE=1 before importing NIXL EP v2 and creating the buffer");
+                       "Profiling is disabled: set NIXL_EP_ADAPTIVE_PROFILE=1 before importing NIXL EP and creating the buffer");
         EP_HOST_ASSERT(c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None and
                        "`read_profile` inside CUDA-graph capture: read after the captured graph has replayed");
         CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());

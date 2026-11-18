@@ -5,7 +5,7 @@
 // Compile-only probe for the adaptive kernels (they are normally JIT-compiled on first use, which hides
 // template errors until a multi-GPU run). Build inside the release container with the JIT's flags, e.g.
 //   nvcc -std=c++20 -O3 --expt-relaxed-constexpr --expt-extended-lambda -arch=sm_100a \
-//        -I nixl_ep_v2/include -I $NIXL_EP_NIXL_ROOT_DIR/include -I $NIXL_EP_UCX_ROOT_DIR/include -DEP_NIXL_DEVICE_API=1 \
+//        -I python/include -I $NIXL_EP_NIXL_ROOT_DIR/include -I $NIXL_EP_UCX_ROOT_DIR/include -DEP_NIXL_DEVICE_API=1 \
 //        -c tests/elastic/compile_probe_adaptive.cu -o /dev/null
 #include <nixl_ep_v2/impls/adaptive/dispatch.cuh>
 #include <nixl_ep_v2/impls/adaptive/combine.cuh>
@@ -52,7 +52,13 @@ static void __instantiate_kernels() {
     auto q4 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, topology::kNumLaunchSMs, 4, 7, 2, 128, 14336, 0, 2, 8, 1, kNumTimeoutCycles>);
     auto q5 = reinterpret_cast<void*>(&adaptive_combine_impl<false, true, topology::kNumLaunchSMs, 7, 128, 7168, 8, kNumTimeoutCycles>);
     auto q6 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<false, true, 148, 16, 7, 72, 7168, 4, 8, kNumTimeoutCycles>);
+    // A single-rank maximum world must compile as well as a singleton inside a larger world.
+    auto s0 = reinterpret_cast<void*>(&adaptive_dispatch_impl<false, topology::kNumLaunchSMs, 4, 7, 1, 1, 512, 0, 8, 2, 1, kNumTimeoutCycles>);
+    auto s1 = reinterpret_cast<void*>(&adaptive_combine_impl<false, true, topology::kNumLaunchSMs, 7, 1, 256, 2, kNumTimeoutCycles>);
+    auto s2 = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<false, false, 148, 7, 16, 1, 512, 0, 8, 2, 1>);
+    auto s3 = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<false, true, 148, 16, 7, 1, 256, 8, 2, kNumTimeoutCycles>);
     (void) pb; (void) p0; (void) p1; (void) p2; (void) p3; (void) p4; (void) p5; (void) p6; (void) p7; (void) p8; (void) p9; (void) pw; (void) q0; (void) q1; (void) q2; (void) q3; (void) q4; (void) q5;
     (void) pn; (void) pn6; (void) pnp; (void) pne; (void) pnc; (void) pnr;
     (void) q6;
+    (void) s0; (void) s1; (void) s2; (void) s3;
 }

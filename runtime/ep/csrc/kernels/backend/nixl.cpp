@@ -70,9 +70,9 @@ static void cleanup(const char* what, const func_t& func) noexcept {
     try {
         func();
     } catch (const std::exception& e) {
-        fprintf(stderr, "NIXL EP v2 cleanup (%s) failed: %s\n", what, e.what());
+        fprintf(stderr, "NIXL EP cleanup (%s) failed: %s\n", what, e.what());
     } catch (...) {
-        fprintf(stderr, "NIXL EP v2 cleanup (%s) failed: unknown exception\n", what);
+        fprintf(stderr, "NIXL EP cleanup (%s) failed: unknown exception\n", what);
     }
 }
 

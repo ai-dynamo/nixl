@@ -28,7 +28,7 @@ class EventOverlapTests(unittest.TestCase):
                 state.timeline.append(("wait", self.index, state.stream))
 
         self.EventHandle = EventHandle
-        path = Path(__file__).resolve().parents[2] / "nixl_ep_v2/utils/event.py"
+        path = Path(__file__).resolve().parents[2] / "python/utils/event.py"
         spec = importlib.util.spec_from_file_location("event_host.utils.event", path)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
@@ -69,9 +69,16 @@ class EventOverlapTests(unittest.TestCase):
         self.assertTrue(all(event() is None for event in self.events))
 
     def test_no_hook_does_not_record_another_event(self):
-        overlap = self.EventOverlap(self.EventHandle())
+        class Payload:
+            pass
+
+        payload = Payload()
+        retained = weakref.ref(payload)
+        overlap = self.EventOverlap(self.EventHandle(), extra_tensors=(payload,))
+        del payload
         self.stream = "A"
         overlap.current_stream_wait()
+        self.assertIsNotNone(retained())
         self.stream = "B"
         overlap.current_stream_wait(release_handle=True)
         self.assertEqual(
@@ -83,18 +90,28 @@ class EventOverlapTests(unittest.TestCase):
             ],
         )
         self.assertIsNone(self.events[0]())
+        self.assertIsNone(retained())
+        self.assertIsNone(overlap.extra_tensors)
 
     def test_context_exit_releases_both_events_after_first_hook(self):
-        overlap = self.EventOverlap(self.EventHandle())
+        class Payload:
+            pass
+
+        payload = Payload()
+        retained = weakref.ref(payload)
+        overlap = self.EventOverlap(self.EventHandle(), extra_tensors=(payload,))
+        del payload
         overlap.register_hook_after_wait(
             lambda: self.timeline.append(("sort", self.stream))
         )
         self.stream = "A"
         with overlap(release_handle=True):
-            pass
+            self.assertIsNotNone(retained())
         self.assertEqual(self.timeline[-2:], [("sort", "A"), ("record", 1, "A")])
         self.assertIsNone(overlap.event)
         self.assertTrue(all(event() is None for event in self.events))
+        self.assertIsNone(retained())
+        self.assertIsNone(overlap.extra_tensors)
 
 
 if __name__ == "__main__":

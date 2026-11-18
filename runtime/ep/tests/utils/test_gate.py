@@ -14,7 +14,7 @@ def test_unbalanced_scores():
     )
     for num_tokens in [1, 4096]:
         for num_experts_per_rank in [1, 4, 8, 16]:
-            for num_ranks in [2, 4, 8, 16, 64, 72]:
+            for num_ranks in [1, 2, 4, 8, 16, 64, 72]:
                 num_experts = num_experts_per_rank * num_ranks
                 for num_topk in [1, 2, 4, 6, 8, 9]:
                     if num_topk > num_experts:
@@ -63,6 +63,9 @@ def test_unbalanced_scores():
                                 total_rank_count += rank_count
 
                             # Calculate the actual ratio and inequality
+                            if num_ranks == 1:
+                                assert total_rank_count[0].item() == num_tokens
+                                continue
                             practical_ratio = total_rank_count[0].item() / max(
                                 total_rank_count[1:].min().item(), 1
                             )

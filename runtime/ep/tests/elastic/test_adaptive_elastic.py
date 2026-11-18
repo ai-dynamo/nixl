@@ -12,7 +12,7 @@ commits it, connections kept (with `--reconnect-on-leave` a leave is a symmetric
 `connect_ranks`). Active ranks run one eager dispatch (CPU sync) + combine routed over the ACTIVE experts, checked without
 any collective (every rank regenerates every other rank's routing from a seed), then replay the CUDA graph captured at
 the first phase they took part in against the reference of the current phase (payloads and expert statistics checked;
-selections of experts owned by ranks that left are dropped). Every traffic phase has at least two active GPUs.
+selections of experts owned by ranks that left are dropped). Single-rank traffic phases are supported.
 Ranks that are not active mirror every collective and touch no kernel. Timing is opt-in: `--benchmark` measures CUDA-event
 call/pair times, `--kineto` measures kernels, `--perf-phases` selects phases for both, and `--feed-pairs` measures transitions.
 `--skip-perf-test` suppresses event benchmarks; `--save-output [PATH]` saves per-rank results and configuration as JSON.
@@ -681,7 +681,7 @@ def run_feed(
 
 
 class GraphCase:
-    """One graph of dispatch (no CPU sync) + combine, captured at the first phase this rank takes part in (`full_phase`)
+    """One graph of dispatch (no CPU sync) + combine, with routing sampled over `full_phase`,
     and replayed in every later phase against the reference of that phase (dropped selections included).
     """
 
@@ -697,7 +697,7 @@ class GraphCase:
         barrier_fn: Callable[[], None],
     ):
         self.case = case
-        # The phase every rank captured at: its graph replays the routing sampled there
+        # The phase whose routing and payload each rank captured; warmup may use a smaller active world.
         self.capture_phase_of = capture_phase_of
         # The caller's barrier over the active ranks (the process test's spans several cohorts)
         self.barrier = barrier_fn

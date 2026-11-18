@@ -21,7 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-_REPO_SOURCE = Path(__file__).resolve().parents[2] / "nixl_ep_v2/buffers/elastic.py"
+_REPO_SOURCE = Path(__file__).resolve().parents[2] / "python/buffers/elastic.py"
 SOURCE = Path(os.environ.get("NIXL_EP_AUTO_SM_SOURCE", str(_REPO_SOURCE)))
 _TOPOLOGY_HEADER = SOURCE.parents[1] / "include/nixl_ep_v2/common/topology.cuh"
 _MIN_ACTIVE_RANKS_MATCH = re.search(
@@ -571,10 +571,41 @@ class AutoSMHostTests(unittest.TestCase):
             self.buffer._get_topology()[1], self.expected_sms([0], range(16))
         )
 
-    def test_small_or_inactive_world_preserves_auto_policy_without_model_evaluation(
+    def test_single_rank_warmup_with_more_topk_than_local_slots(self):
+        Buffer, cuda, _ = load_buffer()
+        buffer = Buffer(
+            world_rank=7,
+            max_num_scaleout_ranks=2,
+            max_num_scaleup_ranks=4,
+            num_experts_per_rank=1,
+            num_max_tokens_per_rank=16,
+            hidden=256,
+            num_topk=8,
+            store=object(),
+        )
+        topk_idx = SimpleNamespace(shape=(16, 8))
+        buffer.dispatch(object(), topk_idx, do_cpu_sync=False)
+        self.assertEqual(buffer.get_connected_ranks(), [])
+        self.assertEqual(buffer.get_active_ranks(), [7])
+        self.assertEqual(buffer._get_topology(), ("direct", buffer.num_launch_sms))
+        commits = buffer.runtime.commit_calls
+        cuda.capturing = True
+        buffer.dispatch(object(), topk_idx, do_cpu_sync=False)
+        self.assertEqual(buffer.runtime.commit_calls, commits)
+        self.assertEqual(buffer.runtime.dispatch_calls, 2)
+        cuda.capturing = False
+        buffer.connect_ranks(list(range(7)))
+        self.assertEqual(buffer.get_active_ranks(), [7])
+        buffer.set_active_ranks(list(range(8)))
+        self.assertEqual(buffer.get_active_ranks(), list(range(8)))
+        self.assertEqual(buffer._get_topology()[0], "hybrid")
+
+    def test_single_rank_retunes_and_inactive_rank_preserves_auto_policy(
         self,
     ):
         self.dispatch()
+        self.buffer.set_active_ranks(self.ranks([0], [0]))
+        self.assertEqual(self.buffer._get_topology()[1], self.expected_sms([0], [0]))
         current = self.buffer._get_topology()[1]
         model = self.buffer._get_theoretical_num_sms
         with patch.object(
@@ -582,8 +613,6 @@ class AutoSMHostTests(unittest.TestCase):
             "_get_theoretical_num_sms",
             side_effect=AssertionError("unexpected estimate"),
         ):
-            self.buffer.set_active_ranks(self.ranks([0], range(MIN_ACTIVE_RANKS - 1)))
-            self.assertEqual(self.buffer._get_topology()[1], current)
             self.buffer.set_active_ranks(self.ranks([1], range(8)))
             self.assertEqual(self.buffer._get_topology()[1], current)
         self.assertEqual(self.buffer._get_theoretical_num_sms, model)
@@ -608,7 +637,7 @@ class AutoSMHostTests(unittest.TestCase):
             "a refused automatic capture must not replace the manual policy",
         )
 
-    def test_default_elastic_plan_covers_both_minimum_world_shapes(self):
+    def test_default_elastic_plan_covers_single_rank_world(self):
         plan_source = Path(__file__).with_name("test_adaptive_elastic.py")
         tree = ast.parse(plan_source.read_text(), filename=str(plan_source))
         functions = [
@@ -629,10 +658,9 @@ class AutoSMHostTests(unittest.TestCase):
             )
         }
         exec(compile(module, str(plan_source), "exec"), namespace)
-        self.assertEqual(MIN_ACTIVE_RANKS, 2)
+        self.assertEqual(MIN_ACTIVE_RANKS, 1)
         plan = namespace["default_plan"](8, list(range(16)))
-        self.assertIn([0, 1], plan)  # One domain, two positions.
-        self.assertIn([0, 8], plan)  # Two domains, one position.
+        self.assertIn([0], plan)
         self.assertTrue(all(len(phase) >= MIN_ACTIVE_RANKS for phase in plan))
 
 

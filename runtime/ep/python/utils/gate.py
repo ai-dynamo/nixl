@@ -66,6 +66,8 @@ def generate_rank_count(
     num_normal_ranks = num_ranks - 1
 
     assert ratio >= 1.0, "ratio must be no less than 1.0"
+    if num_ranks == 1:
+        return torch.full((num_tokens, 1), num_topk, dtype=torch.int32, device="cuda")
 
     # Generate rank count of each token from random distribution
     random_scores = torch.rand(num_tokens, num_experts, device="cuda")

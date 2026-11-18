@@ -28,7 +28,7 @@ def dispatch(
     - `x`: Input tokens, `[num_tokens, hidden]` or (`[num_tokens, hidden], [num_tokens, hidden_sf]`)
     - `topk_idx`: Top-k expert indices for each token, `[num_tokens, num_topk]`
     - `topk_weights`: Required top-k weights for each token, `[num_tokens, num_topk]`
-    - `num_max_tokens_per_rank`: Maximum number of tokens per rank, must >= actual number of tokens per rank and aligned with NIXL EP v2's `num_max_tokens_per_rank` since we're going to calculate `src_token_global_idx = src_rank_idx*num_max_tokens_per_rank + src_token_local_idx`
+    - `num_max_tokens_per_rank`: Maximum number of tokens per rank, must >= actual number of tokens per rank and aligned with NIXL EP's `num_max_tokens_per_rank` since we're going to calculate `src_token_global_idx = src_rank_idx*num_max_tokens_per_rank + src_token_local_idx`
     - `num_experts`: Total number of experts across all ranks
 
     Returns:

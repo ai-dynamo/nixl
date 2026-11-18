@@ -68,7 +68,7 @@ __device__ __forceinline__ void red_add_rel_and_wait(const nixl::NIXLTransport& 
             if (status == NIXL_SUCCESS)
                 return true;
             if (status != NIXL_IN_PROG or is_last_check) {
-                printf("NIXL EP v2 completion %s, world rank %d, peer %d, channel %u, status %d; "
+                printf("NIXL EP completion %s, world rank %d, peer %d, channel %u, status %d; "
                        "all old-world peers must remain connected until the drain completes\n",
                        status == NIXL_IN_PROG ? "timeout" : "error", transport.ctx.world_rank, world_rank,
                        transport.channel, static_cast<int>(status));
@@ -129,7 +129,7 @@ __device__ __forceinline__ void active_grid_sync(unsigned* barrier_ptr, const in
                 if (ptx::ld_acquire_gpu(barrier_ptr + 1) != round)
                     return true;
                 if (is_last_check)
-                    printf("NIXL EP v2 adaptive grid barrier timeout, block: %d, active blocks: %d, round: %u, arrived: %u\n",
+                    printf("NIXL EP adaptive grid barrier timeout, block: %d, active blocks: %d, round: %u, arrived: %u\n",
                            static_cast<int>(blockIdx.x), num_active_sms, round, ptx::ld_acquire_gpu(barrier_ptr));
                 return false;
             });
@@ -176,7 +176,7 @@ __device__ __forceinline__ void peer_barrier_leg_rt(const nixl::NIXLTransport& t
                 if (signal >= expected)
                     return true;
                 if (is_last_check) {
-                    printf("NIXL EP v2 adaptive peer barrier timeout, tag: %d, leg: %s, scale-out: %d/%d, scale-up: %d/%d, "
+                    printf("NIXL EP adaptive peer barrier timeout, tag: %d, leg: %s, scale-out: %d/%d, scale-up: %d/%d, "
                            "peer position: %d (world rank %d), signal: %lld, expected: %lld\n", kTag, scaleout_leg ? "scale-out" : "scale-up",
                            topo.scaleout_rank_idx, topo.num_scaleout_ranks, topo.scaleup_rank_idx, topo.num_scaleup_ranks, thread_idx, world_rank, static_cast<long long>(signal), static_cast<long long>(expected));
                 }

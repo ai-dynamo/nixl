@@ -7,7 +7,7 @@ import importlib.util
 import unittest
 from pathlib import Path
 
-path = Path(__file__).resolve().parents[2] / "nixl_ep_v2/utils/profiling.py"
+path = Path(__file__).resolve().parents[2] / "python/utils/profiling.py"
 spec = importlib.util.spec_from_file_location("profile_summary", path)
 assert spec is not None and spec.loader is not None
 module = importlib.util.module_from_spec(spec)

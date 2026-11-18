@@ -251,7 +251,7 @@ adaptive_dispatch_impl(
                     }
 
                     if (is_last_check) {
-                        printf("NIXL EP v2 adaptive notify (GPU reduction) timeout, scale-out: %d/%d, scale-up: %d/%d, "
+                        printf("NIXL EP adaptive notify (GPU reduction) timeout, scale-out: %d/%d, scale-up: %d/%d, "
                                "slot: %d, status: %d | %d, expected: %d\n",
                                scaleout_rank_idx, num_scaleout_ranks, scaleup_rank_idx, num_scaleup_ranks, i,
                                static_cast<int>(status >> 32), static_cast<int>(status & 0xffffffff), num_active_sms);
@@ -318,7 +318,7 @@ adaptive_dispatch_impl(
                         }
 
                         if (is_last_check) {
-                            printf("NIXL EP v2 adaptive notify (direct) timeout, rank: %d, slot: %d, wait %s: %d, count: %d\n",
+                            printf("NIXL EP adaptive notify (direct) timeout, rank: %d, slot: %d, wait %s: %d, count: %d\n",
                                    rank_idx, i, i < num_scaleup_ranks ? "position" : "rank",
                                    i < num_scaleup_ranks ? i : (i - num_scaleup_ranks) / num_experts_per_rank, decoded);
                         }
@@ -385,7 +385,7 @@ adaptive_dispatch_impl(
                                 return true;
 
                             if (is_last_check) {
-                                printf("NIXL EP v2 adaptive notify (scale-out %s reduction) timeout, "
+                                printf("NIXL EP adaptive notify (scale-out %s reduction) timeout, "
                                        "scale-out: %d, scale-up: %d, "
                                        "slot: %d, wait scale-out: %d, decoded: %d\n",
                                        is_expert_reduction ? "expert" : "rank",
@@ -480,7 +480,7 @@ adaptive_dispatch_impl(
                     }
 
                     if (is_last_check) {
-                        printf("NIXL EP v2 adaptive notify (scale-up reduction) timeout, "
+                        printf("NIXL EP adaptive notify (scale-up reduction) timeout, "
                                "scale-out: %d/%d, scale-up: %d/%d, "
                                "slot: %d, status: %d | %d, expected: %d\n",
                                scaleout_rank_idx, num_scaleout_ranks, scaleup_rank_idx, num_scaleup_ranks, i,
@@ -747,7 +747,7 @@ adaptive_dispatch_impl(
                 // Timeout
                 if (is_last_check) {
                     if (lane_tracks_active_domain) {
-                        printf("NIXL EP v2 adaptive dispatch (forwarding) timeout, scale-out: %d, scale-up: %d, "
+                        printf("NIXL EP adaptive dispatch (forwarding) timeout, scale-out: %d, scale-up: %d, "
                                "channel: %d, lane: %d, old scale-out tail: %d, scale-out tail: (%d, %d)\n",
                                scaleout_rank_idx, scaleup_rank_idx,
                                channel_idx, lane_idx, stored_scaleout_old_tail_idx,

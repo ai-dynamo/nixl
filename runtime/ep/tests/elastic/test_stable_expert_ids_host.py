@@ -58,7 +58,7 @@ class StableExpertIdsTests(unittest.TestCase):
     def setUp(self):
         namespace = dict(torch=CpuTorch(), math=math)
         load_functions(
-            SOURCE.parents[2] / "nixl_ep_v2/utils/refs.py",
+            SOURCE.parents[2] / "python/utils/refs.py",
             {"generate_pre_combine_data", "ordered_accumulate", "combine"},
             namespace,
         )

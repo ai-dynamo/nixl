@@ -206,7 +206,7 @@ class NVCCCompiler final: public Compiler {
         std::smatch match;
         EP_HOST_ASSERT(std::regex_search(output, match, std::regex(R"(release (\d+\.\d+))")));
         std::sscanf(match[1].str().c_str(), "%d.%d", &major, &minor);
-        EP_HOST_ASSERT(major >= 13 and "NIXL-EP V2 requires NVCC >= 13.0: select a CUDA 13 toolkit for JIT compilation");
+        EP_HOST_ASSERT(major >= 13 and "NIXL EP requires NVCC >= 13.0: select a CUDA 13 toolkit for JIT compilation");
         return {major, minor};
     }
 
