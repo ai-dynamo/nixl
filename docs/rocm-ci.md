@@ -18,11 +18,86 @@ DOCKER_BUILDKIT=1 docker build -f .ci/dockerfiles/Dockerfile.rocm \
     -t nixl-rocm .
 ```
 
+The default base is ROCm 7.14. ROCm 10.1 is selected through build args only.
+The torch layer installs `torch==${TORCH_VERSION}+rocm<X.Y.Z>`, where `X.Y.Z` is
+read from the base image (`/opt/rocm/core/.info/version`), so `TORCH_VERSION`
+and `TORCH_INDEX_URL` must name a torch that AMD publishes for that ROCm
+release. ROCm 10 wheels are not on the default index:
+
+```bash
+DOCKER_BUILDKIT=1 docker build -f .ci/dockerfiles/Dockerfile.rocm \
+    --build-arg ROCM_BASE_IMAGE=rocm/dev-ubuntu-24.04:10.1.0-full \
+    --build-arg TORCH_VERSION=2.14.0 \
+    --build-arg TORCH_INDEX_URL=https://stable.repo.amd.com/rocm/whl-next/ \
+    -t nixl-rocm:10.1 .
+```
+
+| Build arg | Default (ROCm 7.14) | ROCm 10.1 |
+| --- | --- | --- |
+| `ROCM_BASE_IMAGE` | `rocm/dev-ubuntu-24.04:7.14.0-full` | `rocm/dev-ubuntu-24.04:10.1.0-full` |
+| `TORCH_VERSION` | `2.11.0` | `2.14.0` |
+| `TORCH_INDEX_URL` | `https://repo.amd.com/rocm/whl-multi-arch/` | `https://stable.repo.amd.com/rocm/whl-next/` |
+
+The image is x86_64 only.
+
 `Dockerfile.rocm` is a BuildKit-parallel refactor of the sequential
 `build-rocm.sh` flow: each source dependency builds in its own stage so the DAG
-scheduler runs them concurrently. `build-rocm.sh` remains the reference for the
-sequential build and for configuring NIXL/nixlbench
-(`-Dnixlbench_gpu=rocm -Drocm_path=...`).
+scheduler runs them concurrently. `build-rocm.sh` remains the reference for
+configuring NIXL/nixlbench (`-Dnixlbench_gpu=rocm -Drocm_path=...`); run it
+inside the image with `PRE_INSTALLED_ENV=1 PRE_INSTALLED_UCX_ENV=1`.
+
+### GPU memory support in UCX and libfabric
+
+Both transports are built against the ROCm prefix `${ROCM_PATH}/core`
+(`ROCM_PATH` is set by the ROCm base image; the build fails early if it is
+empty):
+
+- UCX is configured with `--with-rocm`, and the build fails if no UCX ROCm
+  module was produced.
+- libfabric is configured with `--with-rocr --enable-rocr-dlopen`, which
+  compiles in the ROCr memory interface (`FI_HMEM_ROCR`) used by the NIXL
+  libfabric plugin. libfabric does not link the ROCm runtime; it loads
+  `libhsa-runtime64.so` with `dlopen()` when it initializes. The image puts
+  `${ROCM_PATH}/core/lib` on `LD_LIBRARY_PATH` so that it is found.
+
+### Python package naming
+
+`build-rocm.sh` does not pass `-Dwheel_variant`. With `-Drocm_path` set and no
+CUDA present, meson derives the variant from the ROCm install as
+`rocm<major>_<minor>`, so the Python bindings are installed as
+`nixl_rocm7_14` on a ROCm 7.14 image and `nixl_rocm10_1` on a ROCm 10.1 image
+(previously `nixl_rocm`). To force a name, pass `-Dwheel_variant=<variant>` in
+the script's third argument (`EXTRA_BUILD_ARGS`).
+
+The build also produces upstream's pure-Python `nixl` meta wheel (the `nixl`
+dispatcher), exactly as a CUDA build does, and the script copies it to
+`dist/nixl-<version>-py3-none-any.whl`. It depends on the backend of the ROCm
+version it was built against (`nixl-rocm7.14` or `nixl-rocm10.1`) and is for
+local use only; it is not the `rocm-nixl` distribution.
+
+This image is a CI and development environment. The `rocm-nixl` release wheel
+is built by a separate flow: `contrib/Dockerfile.manylinux` with
+`GPU_STACK=rocm` builds one intermediate backend wheel per ROCm version
+(`nixl_rocm<X>_<Y>-*.whl`, no meta wheel), and `contrib/wheel_merge_rocm.py`
+merges them into a single `rocm_nixl-*.whl`; see
+[`contrib/README.md`](../contrib/README.md).
+
+### Building behind a TLS-intercepting proxy
+
+Both `Dockerfile.rocm` and `contrib/Dockerfile.manylinux` accept the proxy's
+root CA certificate as an optional BuildKit secret named `proxy_ca`. When it is
+given, the certificate is added to the image's system trust store before the
+first HTTPS fetch that follows the base package install; without it the step
+does nothing.
+
+```bash
+DOCKER_BUILDKIT=1 docker build -f .ci/dockerfiles/Dockerfile.rocm \
+    --secret id=proxy_ca,src=/path/to/proxy-root-ca.pem \
+    -t nixl-rocm .
+```
+
+For the wheel build, `contrib/build-container.sh --proxy-ca-cert FILE` forwards
+the same secret.
 
 ## AIS on AMD GPU (docker + nixlbench)
 
