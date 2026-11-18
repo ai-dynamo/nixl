@@ -221,7 +221,8 @@ private:
     static void
     flushCb(void *, ucs_status_t status, void *user_data) {
         auto *const handle = static_cast<nixlUcxBackendReqH *>(user_data);
-        handle->trace.callbackCompleted(nixl::ucx::ucsToNixlStatus(status));
+        handle->trace.callbackCompleted((status == UCS_OK) ? NIXL_SUCCESS :
+                                                             nixl::ucx::ucsToNixlStatus(status));
         if (status != UCS_OK) {
             return;
         }
