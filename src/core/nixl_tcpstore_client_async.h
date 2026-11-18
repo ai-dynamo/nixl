@@ -42,11 +42,12 @@
 
 #include "common/byte_buffer.h"
 
-// All requests are asynchronous. Request completion handlers are invoked on
-// the given execution context. If a request is started after stop() is called,
-// its completion handler is invoked immediately with an error before the request
-// call is finished. Request completion handlers must NOT block indefinitely,
-// and should return fast. Otherwise, it may block the execution of other requests.
+// All requests are asynchronous. Request completion handlers are normally invoked
+// on the given execution context. If a request is started after the client is
+// shutdown, its completion handler is invoked synchronously with an error on the
+// caller thread before the request call is finished.
+// Request completion handlers must NOT block indefinitely, and should return fast.
+// Otherwise, it may block the execution of other requests.
 class nixlTcpStoreClientAsync {
 public:
     // Construct a client with the given configuration.
@@ -78,8 +79,8 @@ public:
     void
     connect();
 
-    // Close the connection to the TCPStore server.
-    // Once close() is called, auto connect is disabled.
+    // Initiate a task to close the connection to the TCPStore server.
+    // This may cancel any pending requests.
     //
     // This function is thread-safe.
     void
@@ -237,15 +238,12 @@ private:
     asio::ip::tcp::resolver::results_type resolvedEndpoints_;
     // The socket to the TCPStore server.
     asio::ip::tcp::socket socket_;
-    // The state of the connection.
     std::atomic<connection_state_t> connectionState_ = connection_state_t::CLOSED;
     // The nonce from the PING response.
     std::uint32_t nonce_;
     // The generation of the current connection.
     std::int32_t generation_ = 0;
-    // The number of times the connection has been retried.
     std::int32_t connectionRetryCount_ = 0;
-    // The timer for the connection retry.
     asio::steady_timer connectionRetryTimer_;
 
     //// The following variables manage the request state. ////
@@ -258,11 +256,10 @@ private:
     // bottleneck, we can remove the mutex and make the public interface non-thread-safe.
     std::mutex sendQueueMutex_;
     std::deque<std::unique_ptr<Request>> sendQueue_;
-    bool hasInflightSend_ = false;
-
     // Queued requests waiting for responses from the TCPStore server.
     // The receive task queue is accessed exclusively from the I/O context.
     std::deque<std::unique_ptr<Request>> recvQueue_;
+    bool hasInflightSend_ = false;
     bool hasInflightRecv_ = false;
 };
 

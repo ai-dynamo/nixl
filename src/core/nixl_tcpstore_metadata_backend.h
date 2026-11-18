@@ -118,15 +118,11 @@ private:
     void
     writeTaskCompleted(const WriteTask *completed_task);
 
-    // Timeout for fetch operations.
     const std::chrono::milliseconds fetchTimeout_;
 
-    // The metadata context.
     nixlMetadataContext &ctx_;
 
-    // The I/O context.
     asio::io_context &ioContext_;
-    // The TCPStore client.
     const std::unique_ptr<nixlTcpStoreClientAsync> client_;
 
     // Keys this agent has published; TCPStore has no recursive delete, so
@@ -141,16 +137,13 @@ private:
     };
 
     std::unordered_map<std::string, pendingInfo> pendingKeys_;
-    // Timer for fetch retries.
     asio::steady_timer fetchRetryTimer_;
-    // Delay between fetch retries.
     std::chrono::microseconds fetchRetryDelay_;
 
     // Queued metadata operations that change the published metadata.
     std::deque<std::unique_ptr<WriteTask>> writeQueue_;
     // The metadata operation that is currently being processed.
     std::unique_ptr<WriteTask> inflightTask_;
-    // Timer for the shutdown grace period after stop() is called.
     asio::steady_timer shutdownGracePeriodTimer_;
 
     // Whether stop() has been called.

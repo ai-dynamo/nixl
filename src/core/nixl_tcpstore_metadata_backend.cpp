@@ -40,6 +40,9 @@ constexpr char namespace_prefix[] = "nixl/agents";
 
 // Bring-up budget: bounds the initial connect and how long a fetch keeps
 // waiting for a peer that has not published yet. Overridable for slow bring-up.
+//
+// The same duration is also used as the shutdown grace period after stop() is
+// called.
 constexpr long default_timeout_ms = 30000;
 
 // Bound on a single store operation once running. Kept well under the bring-up
