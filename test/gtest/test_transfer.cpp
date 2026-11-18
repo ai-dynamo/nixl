@@ -1225,11 +1225,8 @@ TEST(InvalidatedTransferMock, KeepsMetadataUntilRelease) {
         .WillOnce(Return(NIXL_IN_PROG))
         .WillOnce(Return(NIXL_SUCCESS));
     EXPECT_EQ(local_agent->getXferStatus(req), NIXL_IN_PROG);
-    EXPECT_CALL(local_engine, releaseReqH(&backend_req)).WillOnce(Return(NIXL_ERR_REPOST_ACTIVE));
-    {
-        const LogIgnoreGuard lig("could not release transfer request");
-        EXPECT_EQ(local_agent->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
-    }
+    EXPECT_CALL(local_engine, releaseReqH(_)).Times(0);
+    EXPECT_EQ(local_agent->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
     EXPECT_EQ(local_agent->getXferStatus(req), NIXL_SUCCESS);
     {
         const LogIgnoreGuard lig("invalidated or re-registered after");
@@ -1238,6 +1235,14 @@ TEST(InvalidatedTransferMock, KeepsMetadataUntilRelease) {
         EXPECT_EQ(local_agent->makeXferReq(
                       NIXL_READ, *local_dlist, indices, *remote_dlist, indices, stale),
                   NIXL_ERR_NOT_FOUND);
+    }
+    EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&local_engine));
+
+    {
+        const LogIgnoreGuard lig("could not release transfer request");
+        EXPECT_CALL(local_engine, releaseReqH(&backend_req)).WillOnce(Return(NIXL_ERR_BACKEND));
+        EXPECT_CALL(local_engine, unloadMD(_)).Times(0);
+        EXPECT_EQ(local_agent->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
     }
     EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&local_engine));
 
