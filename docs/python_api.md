@@ -23,6 +23,22 @@ The nixl python API and libraries, including UCX, are available directly through
 pip install nixl
 ```
 
+For AMD ROCm (x86_64 only), install `rocm-nixl` instead:
+
+```bash
+pip install rocm-nixl
+```
+
+With PyTorch:
+
+```bash
+pip install "rocm-nixl[rocm10.1]" --extra-index-url https://stable.repo.amd.com/rocm/whl-next/
+```
+
+One wheel carries the backends for the supported ROCm versions (7.14 and 10.1), and `import nixl` selects the one matching the installed ROCm at import time. The wheel itself does not depend on PyTorch. The `rocm<X>.<Y>` extra adds AMD's ROCm build of PyTorch for that ROCm version; it needs AMD's package index on the command line because that build is not on PyPI (for ROCm 7.14: `pip install "rocm-nixl[rocm7.14]" --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/`). Never install the default `torch` from PyPI on a ROCm system: it is the CUDA build. The extra needs pip 23.3 or newer (`python -m pip install -U pip`); older pip ignores it with a warning and installs no PyTorch. `rocm-nixl` and `nixl` both provide the `nixl` import package and must not be installed in the same environment.
+
+A ROCm install (7.14 or 10.1) is required on the host, with its libraries resolvable by the dynamic loader before Python starts (e.g. `export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH`; use `/opt/rocm/core-<X.Y>/lib` if `/opt/rocm/lib` does not exist). The ROCm version is read from an installed ROCm build of PyTorch, or from `$ROCM_PATH` (default `/opt/rocm`): `.info/version` or `core/.info/version`. If ROCm is not installed under `/opt/rocm`, e.g. only `/opt/rocm/core-<X.Y>` exists, also set `ROCM_PATH` to that prefix (e.g. `export ROCM_PATH=/opt/rocm/core-7.14`); if no version can be detected, the backend for the newest ROCm version is used.
+
 ### From Source
 
 To build from source, follow the main build instructions in the README.md, then install the Python bindings:

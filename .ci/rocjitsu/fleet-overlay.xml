@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+qemu-tool fleet overlay for .github/workflows/rocm-wheels-rocjitsu.yml. It is
+layered over qemu/stacks/rocm-golden.xml from the sbates130272/qemu-minimal
+commit that workflow pins, which names the guest image and the device server
+images; this file names none, so there is no image tag here to drift.
+-->
+<fleet xmlns="http://qemu-tool/fleet/1.0">
+  <vm-count>1</vm-count>
+  <vm-name-prefix>nixl-rocjitsu</vm-name-prefix>
+  <!-- One guest reached over the qemu container's forwarded SSH port needs no
+       inter-guest L2 path. -->
+  <ernic-tap>false</ernic-tap>
+  <!-- The spare emulated NVMe drive the AIS check formats and mounts. -->
+  <vm-nvme>1</vm-nvme>
+</fleet>

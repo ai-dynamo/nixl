@@ -15,7 +15,7 @@ UCX is the general-purpose high-performance network transport backend in NIXL. I
 
 ## Installation
 
-UCX is the default transfer backend and is included automatically with the `pip install nixl` package. For source builds, UCX must be built before NIXL.
+UCX is the default transfer backend and is included automatically with the `pip install nixl` package (and with the `rocm-nixl` package on AMD ROCm). For source builds, UCX must be built before NIXL.
 
 ### Build from Source
 

@@ -47,6 +47,24 @@ pip install nixl
 
 This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
+For AMD ROCm (x86_64 only), install the `rocm-nixl` package instead:
+
+```bash
+pip install rocm-nixl
+```
+
+With PyTorch:
+
+```bash
+pip install "rocm-nixl[rocm10.1]" --extra-index-url https://stable.repo.amd.com/rocm/whl-next/
+```
+
+One wheel carries the backends for the supported ROCm versions (7.14 and 10.1), and `import nixl` selects the one matching the installed ROCm at import time. The wheel itself does not depend on PyTorch. The `rocm<X>.<Y>` extra adds AMD's ROCm build of PyTorch for that ROCm version; it needs AMD's package index on the command line because that build is not on PyPI (for ROCm 7.14: `pip install "rocm-nixl[rocm7.14]" --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/`). Never install the default `torch` from PyPI on a ROCm system: it is the CUDA build. The extra needs pip 23.3 or newer (`python -m pip install -U pip`); older pip ignores it with a warning and installs no PyTorch.
+
+`rocm-nixl` and `nixl` both provide the `nixl` import package and must not be installed in the same environment. `nixl` also installs the CUDA backends and the CUDA build of PyTorch. If both were installed, run `pip uninstall nixl nixl-cu12 nixl-cu13 torch` and then `pip install --force-reinstall rocm-nixl`.
+
+A ROCm install (7.14 or 10.1) is required on the host, with its libraries resolvable by the dynamic loader before Python starts (e.g. `export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH`, or an entry in `/etc/ld.so.conf.d/` followed by `ldconfig`; use `/opt/rocm/core-<X.Y>/lib` if `/opt/rocm/lib` does not exist). The ROCm version is read from an installed ROCm build of PyTorch, or from `$ROCM_PATH` (default `/opt/rocm`): `.info/version` or `core/.info/version`. If ROCm is not installed under `/opt/rocm`, e.g. only `/opt/rocm/core-<X.Y>` exists, also set `ROCM_PATH` to that prefix (e.g. `export ROCM_PATH=/opt/rocm/core-7.14`); if no version can be detected, the backend for the newest ROCm version is used.
+
 ## Prerequisites for source build (Linux)
 
 NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
@@ -170,7 +188,7 @@ Common build options:
 - `static_plugins`: Comma-separated list of plugins to build statically
 - `enable_plugins`: Comma-separated list of plugins to build (e.g. `-Denable_plugins=UCX,POSIX`). Cannot be used with `disable_plugins`.
 - `disable_plugins`: Comma-separated list of plugins to exclude (e.g. `-Ddisable_plugins=GDS`). Cannot be used with `enable_plugins`.
-- `wheel_variant`: Override the Python wheel variant suffix (e.g. `-Dwheel_variant=rocm` yields `nixl_rocm`). Empty (default) = autodetect from the CUDA major version.
+- `wheel_variant`: Override the Python wheel variant suffix (e.g. `-Dwheel_variant=rocm10_1` yields `nixl_rocm10_1`). Empty (default) = autodetect from the CUDA major version, or `rocm<X>_<Y>` from the ROCm version when `rocm_path` is set and CUDA is not found.
 
 #### Building for AMD ROCm
 NIXL itself builds vendor-neutrally; CPU-side hardware detection
@@ -185,7 +203,15 @@ are present.
 single translation unit cannot include CUDA and HIP headers together, so one
 build targets one stack. Use `-Dnixlbench_gpu=cuda|rocm` to force a stack
 (`auto`, the default, prefers CUDA); `-Duse_rocm=true` is a deprecated alias for
-`-Dnixlbench_gpu=rocm`. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+`-Dnixlbench_gpu=rocm`.
+
+When building the Python bindings with `-Drocm_path` set and CUDA not found,
+`wheel_variant` is derived from the ROCm install as `rocm<X>_<Y>`, so the
+backend package is named `nixl_rocm<X>_<Y>` (e.g. `nixl_rocm10_1` for ROCm
+10.1.0). Pass `-Dwheel_variant=rocm<X>_<Y>` to override it, or when the ROCm
+version cannot be determined from the install. `import nixl` still accepts the
+legacy `nixl_rocm` package name. See
+[Building the python wheel](#building-the-python-wheel) for the `rocm-nixl` wheel.
 
 **Building with ROCm support:**
 ```bash
@@ -239,6 +265,12 @@ pip install nixl
 ```
 
 This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
+
+For AMD ROCm, install `rocm-nixl` instead of `nixl` (see [PyPI Wheel](#pypi-wheel) for the requirements and for PyTorch):
+
+```bash
+pip install rocm-nixl
+```
 
 #### Installation from source
 
@@ -304,6 +336,19 @@ pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 pip install .
 ./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
 meson setup build
+ninja -C build install
+pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
+```
+
+**For AMD ROCm:**
+
+Do not use the CUDA steps above on a ROCm host: they install the CUDA build of PyTorch from PyPI. PyTorch is not a prerequisite here. The steps are the same three; the platform-specific package is named after the ROCm install, `nixl-rocm<X>.<Y>` with import package `nixl_rocm<X>_<Y>` (e.g. `nixl-rocm10.1` and `nixl_rocm10_1` for ROCm 10.1), and the locally built `nixl` meta-package provides `import nixl`. Build without build isolation, so that `torch` is not downloaded as a build requirement.
+
+```
+pip install meson meson-python pybind11 patchelf pyyaml
+./contrib/tomlutil.py --wheel-name nixl-rocm10.1 --remove-dependency torch pyproject.toml
+pip install --no-build-isolation -Csetup-args=-Drocm_path=/opt/rocm .
+meson setup build -Drocm_path=/opt/rocm
 ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 ```
@@ -395,6 +440,8 @@ The contrib folder also includes a script to build the python wheel with the UCX
 ```
 ./contrib/build-wheel.sh
 ```
+
+The `rocm-nixl` wheel (x86_64 only) is built in two steps: `./contrib/build-container.sh --dockerfile contrib/Dockerfile.manylinux --gpu-stack rocm --rocm-version <X.Y.Z>` builds the backend wheels for one ROCm version (`nixl_rocm<X>_<Y>-*.whl`, one per Python version) inside a manylinux image, and `./contrib/wheel_merge_rocm.py` merges the backend wheels of one Python version into `rocm_nixl-<version>-cp<NN>-cp<NN>-manylinux_2_28_x86_64.whl`, which contains every backend and the `nixl` dispatcher package. `--gpu-stack` defaults to `cuda`. See [contrib/README.md](contrib/README.md#build-rocm-wheels) for the commands.
 
 ## Running with ETCD
 NIXL can use ETCD for metadata exchange between distributed nodes. This is especially useful in containerized or cloud-native environments.

@@ -98,6 +98,29 @@ export LD_LIBRARY_PATH=/path/to/nixl/build:$LD_LIBRARY_PATH
 pip install nixl
 ```
 
+On AMD ROCm (x86_64 only), install `rocm-nixl` instead:
+
+```bash
+pip install rocm-nixl
+```
+
+`rocm-nixl` is one wheel carrying the backends for the supported ROCm versions (7.14 and 10.1), and `import nixl` selects the one matching the installed ROCm. If the import fails because no backend matches the detected ROCm version, install a supported ROCm version. The ROCm version is read from an installed ROCm build of PyTorch, or from `$ROCM_PATH` (default `/opt/rocm`): `.info/version` or `core/.info/version`. If ROCm is not installed under `/opt/rocm`, e.g. only `/opt/rocm/core-<X.Y>` exists, also set `ROCM_PATH` to that prefix (e.g. `export ROCM_PATH=/opt/rocm/core-7.14`); if no version can be detected, the backend for the newest ROCm version is used.
+
+The wheel does not bundle the ROCm runtime. If a ROCm library (e.g. `libamdhip64.so`) cannot be opened, install ROCm on the host and add its library directory to the loader path before starting Python (use `/opt/rocm/core-<X.Y>/lib` if `/opt/rocm/lib` does not exist):
+
+```bash
+export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+```
+
+If `import nixl` fails with a message saying that a CUDA build of PyTorch was found, the default `torch` from PyPI is installed; it is the CUDA build. Replace it with AMD's ROCm build, which is not on PyPI, through the `rocm<X>.<Y>` extra and AMD's package index (for ROCm 7.14: `rocm-nixl[rocm7.14]` with `https://repo.amd.com/rocm/whl-multi-arch/`). The extra needs pip 23.3 or newer (`python -m pip install -U pip`); older pip ignores it with a warning and installs no PyTorch.
+
+```bash
+pip uninstall torch
+pip install "rocm-nixl[rocm10.1]" --extra-index-url https://stable.repo.amd.com/rocm/whl-next/
+```
+
+`rocm-nixl` and `nixl` both provide the `nixl` import package and must not be installed in the same environment. `nixl` also installs the CUDA backends and the CUDA build of PyTorch. If both were installed, run `pip uninstall nixl nixl-cu12 nixl-cu13 torch` and then `pip install --force-reinstall rocm-nixl`.
+
 ### Plug-in Shared Library Not Found at Runtime
 
 If NIXL cannot find backend plug-ins at runtime, set the plug-in directory:

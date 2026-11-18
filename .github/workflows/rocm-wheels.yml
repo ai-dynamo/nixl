@@ -1,0 +1,380 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ROCm Wheels
+
+on:
+  pull_request:
+    paths:
+      - contrib/Dockerfile.manylinux
+      - contrib/build-container.sh
+      - contrib/build-wheel.sh
+      - contrib/tomlutil.py
+      - contrib/wheel_add_ucx_plugins.py
+      - contrib/wheel_merge_rocm.py
+      - meson.build
+      - meson_options.txt
+      - pyproject.toml
+      - src/api/python/**
+      - src/bindings/python/**
+      - src/plugins/rocm_ais/**
+      - .ci/rocjitsu/**
+      - .ci/scripts/rocm_wheel_smoke_test.py
+      - .github/workflows/rocm-wheels.yml
+      - .github/workflows/rocm-wheels-rocjitsu.yml
+  push:
+    tags:
+      - v*
+  workflow_dispatch:
+    inputs:
+      rocm-versions:
+        description: ROCm versions to build for, as comma-separated X.Y.Z.
+        required: false
+        type: string
+        default: 7.14.1,10.1.0
+      python-versions:
+        description: Python versions to build for, comma-separated. Must include 3.12, which the test jobs use.
+        required: false
+        type: string
+        default: 3.10,3.11,3.12,3.13,3.14
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rocm-wheels-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rocm-versions: ${{ steps.plan.outputs.rocm-versions }}
+      python-versions: ${{ steps.plan.outputs.python-versions }}
+      test-python: ${{ steps.plan.outputs.test-python }}
+    steps:
+      - name: Select ROCm and Python versions
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ROCM_VERSIONS: ${{ inputs.rocm-versions }}
+          PYTHON_VERSIONS: ${{ inputs.python-versions }}
+          # The Python of the ubuntu:24.04 test container.
+          TEST_PYTHON: "3.12"
+        run: |
+          set -euo pipefail
+          rocm=${ROCM_VERSIONS:-7.14.1,10.1.0}
+          python=${PYTHON_VERSIONS:-3.10,3.11,3.12,3.13,3.14}
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            python=$TEST_PYTHON
+          fi
+          if [[ ! "$rocm" =~ ^[0-9]+\.[0-9]+\.[0-9]+(,[0-9]+\.[0-9]+\.[0-9]+)*$ ]]; then
+            echo "::error::rocm-versions must be comma-separated X.Y.Z, got '${rocm}'"
+            exit 1
+          fi
+          if [[ ! "$python" =~ ^3\.[0-9]+(,3\.[0-9]+)*$ ]]; then
+            echo "::error::python-versions must be comma-separated 3.Y, got '${python}'"
+            exit 1
+          fi
+          case ",${python}," in
+            *",${TEST_PYTHON},"*) ;;
+            *)
+              echo "::error::python-versions must include ${TEST_PYTHON}, which the test jobs use"
+              exit 1
+              ;;
+          esac
+          {
+            echo "rocm-versions=[\"${rocm//,/\",\"}\"]"
+            echo "python-versions=${python}"
+            echo "test-python=${TEST_PYTHON}"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (ROCm ${{ matrix.rocm-version }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        rocm-version: ${{ fromJSON(needs.plan.outputs.rocm-versions) }}
+    env:
+      ROCM_VERSION: ${{ matrix.rocm-version }}
+      PYTHON_VERSIONS: ${{ needs.plan.outputs.python-versions }}
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/share/swift /usr/local/lib/android \
+            /usr/local/.ghcup /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          df -h /
+
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Expose the Actions cache to BuildKit
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+
+      # Only the dependency stage goes to the Actions cache: the wheel stage
+      # starts with the source tree, so its layers are never reused.
+      - name: Build the dependency stage
+        env:
+          DOCKER_BUILD_EXTRA_ARGS: >-
+            --target wheel_base
+            --cache-from type=gha,scope=rocm-wheel-base-${{ matrix.rocm-version }}
+            --cache-to type=gha,mode=max,ignore-error=true,scope=rocm-wheel-base-${{ matrix.rocm-version }}
+        run: |
+          ./contrib/build-container.sh \
+            --dockerfile contrib/Dockerfile.manylinux \
+            --gpu-stack rocm --rocm-version "$ROCM_VERSION" \
+            --python-versions "$PYTHON_VERSIONS" \
+            --tag "nixl-wheel-base:rocm${ROCM_VERSION}"
+
+      - name: Build the wheels
+        env:
+          DOCKER_BUILD_EXTRA_ARGS: --load
+        run: |
+          ./contrib/build-container.sh \
+            --dockerfile contrib/Dockerfile.manylinux \
+            --gpu-stack rocm --rocm-version "$ROCM_VERSION" \
+            --python-versions "$PYTHON_VERSIONS" \
+            --tag "nixl-wheel:rocm${ROCM_VERSION}"
+
+      - name: Extract the wheels
+        run: |
+          set -euo pipefail
+          cid=$(docker create "nixl-wheel:rocm${ROCM_VERSION}")
+          docker cp "${cid}:/workspace/nixl/dist" dist
+          docker rm "$cid"
+          ls -l dist
+          backend="nixl_rocm$(echo "$ROCM_VERSION" | cut -d. -f1,2 | tr . _)"
+          compgen -G "dist/${backend}-*.whl" > /dev/null
+          for wheel in dist/*.whl; do
+            case "$(basename "$wheel")" in
+              "${backend}"-*) ;;
+              *)
+                echo "::error::dist/ holds ${wheel}, which is not a ${backend} backend wheel"
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Upload the backend wheels
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rocm-backend-wheels-${{ matrix.rocm-version }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  merge:
+    name: Merge
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Download the backend wheels
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: rocm-backend-wheels-*
+          merge-multiple: true
+          path: backends
+
+      # One rocm_nixl wheel per Python tag, holding the backend of every ROCm
+      # version this run built.
+      - name: Merge the backends
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          ls -l backends
+          wheels=(backends/nixl_rocm*.whl)
+          if [ "${#wheels[@]}" -eq 0 ]; then
+            echo "::error::no backend wheels were downloaded"
+            exit 1
+          fi
+          # <package>-<version>-<python tag>-<abi tag>-<platform tag>.whl
+          rocm_count=$(printf '%s\n' "${wheels[@]##*/}" | cut -d- -f1 | sort -u | wc -l)
+          tags=$(printf '%s\n' "${wheels[@]##*/}" | cut -d- -f3 | sort -u)
+          for tag in $tags; do
+            group=(backends/nixl_rocm*-"${tag}"-*.whl)
+            if [ "${#group[@]}" -ne "$rocm_count" ]; then
+              echo "::error::${tag} has ${#group[@]} backend wheel(s) but ${rocm_count} ROCm version(s) were built: ${group[*]}"
+              exit 1
+            fi
+            python3 contrib/wheel_merge_rocm.py --output-dir dist-merged "${group[@]}"
+          done
+          ls -l dist-merged
+          merged=(dist-merged/rocm_nixl-*.whl)
+          if [ "${#merged[@]}" -ne "$(wc -w <<< "$tags")" ]; then
+            echo "::error::expected one rocm_nixl wheel per Python tag (${tags//$'\n'/ }), found ${#merged[@]}"
+            exit 1
+          fi
+
+      # The extras are what keep pip from pairing rocm-nixl with PyPI's CUDA
+      # torch. Read from the metadata; torch itself is never downloaded.
+      - name: Check the merged wheels' requirements
+        run: |
+          set -euo pipefail
+          python3 -I - dist-merged/rocm_nixl-*.whl <<'EOF'
+          import email
+          import re
+          import sys
+          import zipfile
+
+          failed = False
+          for path in sys.argv[1:]:
+              with zipfile.ZipFile(path) as wheel:
+                  names = wheel.namelist()
+                  (metadata_name,) = [
+                      n for n in names if re.fullmatch(r"rocm_nixl-[^/]+\.dist-info/METADATA", n)
+                  ]
+                  metadata = email.message_from_bytes(wheel.read(metadata_name))
+              rocm = sorted(
+                  {m.group(1).replace("_", ".") for n in names if (m := re.match(r"nixl_rocm(\d+_\d+)/", n))}
+              )
+              extras = sorted(metadata.get_all("Provides-Extra") or [])
+              unconditional, pins = [], {}
+              for requirement in metadata.get_all("Requires-Dist") or []:
+                  spec, _, marker = (part.strip() for part in requirement.partition(";"))
+                  extra = re.search(r"extra\s*==\s*.(rocm\d+[._-]\d+)", marker)
+                  if extra:
+                      pins[extra.group(1)] = spec
+                  else:
+                      unconditional.append(spec)
+              problems = []
+              if metadata["Name"] != "rocm-nixl":
+                  problems.append(f"Name is {metadata['Name']}")
+              if [re.split(r"[^A-Za-z0-9._-]", spec)[0].lower() for spec in unconditional] != ["numpy"]:
+                  problems.append(f"unconditional requirements are {unconditional}, expected numpy only")
+              if not rocm:
+                  problems.append("no nixl_rocm<X>_<Y> backend package")
+              if [re.sub(r"[._-]", ".", extra) for extra in extras] != [f"rocm{xy}" for xy in rocm]:
+                  problems.append(f"extras are {extras}, expected one per backend ({rocm})")
+              for xy in rocm:
+                  spec = next((s for e, s in pins.items() if re.sub(r"[._-]", ".", e) == f"rocm{xy}"), "")
+                  if not re.fullmatch(rf"torch\s*==\s*[0-9.]+\+rocm{re.escape(xy)}\.\d+", spec):
+                      problems.append(f"extra rocm{xy} requires '{spec}', expected torch==<version>+rocm{xy}.<Z>")
+              for problem in problems:
+                  failed = True
+                  print(f"::error::{path}: {problem}")
+              print(f"{path}: backends {rocm}; requires {unconditional}; extras {pins}")
+          sys.exit(1 if failed else 0)
+          EOF
+
+      - name: Upload the merged wheels
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rocm-nixl-wheels
+          path: dist-merged/rocm_nixl-*.whl
+          if-no-files-found: error
+
+  test:
+    name: Test (ROCm ${{ matrix.rocm-version }})
+    needs: [plan, merge]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        rocm-version: ${{ fromJSON(needs.plan.outputs.rocm-versions) }}
+    container:
+      image: ubuntu:24.04
+    defaults:
+      run:
+        shell: bash
+    env:
+      ROCM_VERSION: ${{ matrix.rocm-version }}
+    steps:
+      - name: Install Python and the ROCm runtime
+        run: |
+          set -euo pipefail
+          rocm_xy=${ROCM_VERSION%.*}
+          if [ "${ROCM_VERSION%%.*}" = "7" ]; then
+            repo=https://repo.amd.com/rocm/packages-multi-arch/ubuntu2404
+            key=https://repo.amd.com/rocm/packages-multi-arch/gpg/rocm.gpg
+          else
+            repo=https://stable.repo.amd.com/rocm/core/packages/ubuntu2404
+            key=https://stable.repo.amd.com/rocm/gpg/packages.gpg
+          fi
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl python3 python3-venv
+          install -d /etc/apt/keyrings
+          curl -fsSL "$key" -o /etc/apt/keyrings/amdrocm.asc
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/amdrocm.asc] ${repo} stable main" \
+            > /etc/apt/sources.list.d/amdrocm.list
+          apt-get update
+          packages=()
+          for package in base sysdeps llvm runtime hipfile; do
+            packages+=("amdrocm-${package}${rocm_xy}=${ROCM_VERSION}-*")
+          done
+          apt-get install -y --no-install-recommends "${packages[@]}"
+          # The component packages only populate /opt/rocm/core-<X.Y>.
+          rocm_path=/opt/rocm/core-${rocm_xy}
+          cat "${rocm_path}/.info/version"
+          {
+            echo "ROCM_XY=${rocm_xy}"
+            echo "ROCM_PATH=${rocm_path}"
+            echo "LD_LIBRARY_PATH=${rocm_path}/lib"
+          } >> "$GITHUB_ENV"
+
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Download the merged wheels
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rocm-nixl-wheels
+          path: wheelhouse
+
+      # numpy is the only package taken from an index. The wheel is resolved
+      # with no index, so any other requirement it declared would fail here.
+      - name: Install the merged wheel
+        run: |
+          set -euo pipefail
+          ls -l wheelhouse
+          python3 -m venv venv
+          venv/bin/python -m pip install numpy
+          venv/bin/python -m pip install --no-index --find-links wheelhouse rocm-nixl
+
+      - name: Check that torch is not installed
+        run: |
+          venv/bin/python -m pip list
+          if venv/bin/python -m pip show torch > /dev/null 2>&1; then
+            echo "::error::torch was installed with rocm-nixl"
+            exit 1
+          fi
+
+      - name: Run the smoke test
+        run: |
+          env -u NIXL_PLUGIN_DIR venv/bin/python .ci/scripts/rocm_wheel_smoke_test.py \
+            --expect-rocm "$ROCM_XY"
+
+  rocjitsu:
+    name: rocjitsu (ROCm ${{ matrix.rocm-version }})
+    needs: [plan, merge]
+    strategy:
+      fail-fast: false
+      matrix:
+        rocm-version: ${{ fromJSON(needs.plan.outputs.rocm-versions) }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/rocm-wheels-rocjitsu.yml
+    with:
+      rocm-version: ${{ matrix.rocm-version }}
+      artifact-name: rocm-nixl-wheels
+      python-version: ${{ needs.plan.outputs.test-python }}
