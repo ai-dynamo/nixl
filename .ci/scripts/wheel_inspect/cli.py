@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from wheel_inspect import fetch as fetch_mod
 from wheel_inspect import report
@@ -15,6 +15,10 @@ from wheel_inspect.inventory import InventoryError
 from wheel_inspect.wheelset import WheelSetError, load_wheelset
 
 EXIT_OK, EXIT_USAGE, EXIT_NO_REPORT = 0, 1, 2
+
+
+class _NoReport(Exception):
+    pass
 
 
 def _fail(message: str) -> int:
@@ -31,31 +35,35 @@ def _inspect_dirs(
     candidate_label: Optional[str] = None,
     reference_label: Optional[str] = None,
     cuobjdump: Optional[str] = None,
-) -> int:
+) -> dict[str, Any]:
     try:
         cand = load_side(candidate, candidate_manifest, candidate_label)
         ref = load_side(reference, reference_manifest, reference_label)
     except (WheelSetError, InventoryError, OSError, ValueError) as exc:
-        return _fail(str(exc))
+        raise _NoReport(str(exc)) from exc
     findings = run_checks(cand, ref, cuobjdump)
     doc = report.build_document(cand, ref, findings, report.tool_version())
     report.write_reports(doc, out_dir)
     print(report.results_table(doc))
     print(f"\n{report.summary_line(doc)}; reports in {out_dir}")
-    return EXIT_OK
+    return doc
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
-    return _inspect_dirs(
-        Path(args.candidate),
-        Path(args.reference),
-        Path(args.out_dir),
-        Path(args.candidate_manifest) if args.candidate_manifest else None,
-        Path(args.reference_manifest) if args.reference_manifest else None,
-        args.candidate_label,
-        args.reference_label,
-        args.cuobjdump,
-    )
+    try:
+        _inspect_dirs(
+            Path(args.candidate),
+            Path(args.reference),
+            Path(args.out_dir),
+            Path(args.candidate_manifest) if args.candidate_manifest else None,
+            Path(args.reference_manifest) if args.reference_manifest else None,
+            args.candidate_label,
+            args.reference_label,
+            args.cuobjdump,
+        )
+    except _NoReport as exc:
+        return _fail(str(exc))
+    return EXIT_OK
 
 
 def default_opener() -> fetch_mod.Opener:
@@ -104,7 +112,8 @@ def _cmd_publish_report(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _cmd_release_run(args: argparse.Namespace) -> int:
+def _release_run(args: argparse.Namespace) -> str:
+    """Returns the one-line result: the state counts, plus a note when the upload failed."""
     out_dir = Path(args.out_dir)
     opener = default_opener()
     auth = fetch_mod.env_auth()
@@ -117,10 +126,10 @@ def _cmd_release_run(args: argparse.Namespace) -> int:
             print(f"reference: {reference_source}")
         reference = fetch_source(reference_source, out_dir / "reference", opener, auth)
     except (FetchError, WheelSetError, OSError) as exc:
-        return _fail(str(exc))
-    rc = _inspect_dirs(candidate, reference, out_dir, cuobjdump=args.cuobjdump)
-    if rc != EXIT_OK:
-        return rc
+        raise _NoReport(str(exc)) from exc
+    status = report.summary_line(
+        _inspect_dirs(candidate, reference, out_dir, cuobjdump=args.cuobjdump)
+    )
     kind, value = fetch_mod.parse_source(args.candidate)
     if kind == "artifactory" and not args.no_publish:
         doc = report.load_document(out_dir / f"{report.REPORT_BASENAME}.json") or {}
@@ -130,9 +139,25 @@ def _cmd_release_run(args: argparse.Namespace) -> int:
             print(f"report published to {value}")
         except (FetchError, OSError) as exc:
             doc["publish"] = {"ok": False, "folder": value, "error": str(exc)}
+            status += f"; report not published: {exc}"
             print(f"wheel_inspect: report not published: {exc}", file=sys.stderr)
         report.write_reports(doc, out_dir)
-    return EXIT_OK
+    return status
+
+
+def _cmd_release_run(args: argparse.Namespace) -> int:
+    rc = EXIT_OK
+    try:
+        status = _release_run(args)
+    except _NoReport as exc:
+        status = str(exc)
+        rc = _fail(status)
+    except Exception as exc:
+        status = f"{type(exc).__name__}: {exc}"
+        rc = _fail(status)
+    if args.status_file:
+        Path(args.status_file).write_text(status + "\n")
+    return rc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -202,6 +227,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     release.add_argument("--out-dir", required=True)
     release.add_argument("--no-publish", action="store_true")
+    release.add_argument(
+        "--status-file",
+        help="write the one-line result here: the state counts, or why there is no report",
+    )
     release.add_argument("--cuobjdump")
     release.set_defaults(func=_cmd_release_run)
     return parser
