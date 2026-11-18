@@ -4,10 +4,11 @@
 
 """
 Processes that start later and processes that exit. Where `test_adaptive_elastic.py` keeps every process alive, here a
-job is a set of independent STEPS: a step is one bootstrap cohort (`torch.multiprocessing.spawn` over the GPUs of one
+job is a set of independent STEPS: a step is one process cohort (`torch.multiprocessing.spawn` over the GPUs of one
 node, or a subset), launched when its ranks first appear in the plan and exiting for good when they leave. Steps meet
-only through an external `torch.distributed.TCPStore` (transport metadata via `ElasticBuffer.publish` /
-`connect_ranks(store=...)`, phase barriers via counters, all under `--run-tag`); world ranks follow from the step's
+through an external `torch.distributed.TCPStore` (peer discovery via reciprocal
+`connect_ranks(store=...)`, phase barriers via counters, all under `--run-tag`); NIXL's manager exchanges transport metadata.
+World ranks follow from the step's
 coordinates (`--scaleout-idx`, `--position-offset`), so a later step may re-use the world ranks of one that exited.
 
 Per phase k, every process alive at its start arrives at `phase/k/arrive`; a LEAVER makes itself a one-rank world,
@@ -22,7 +23,7 @@ Launch: a TCPStore server runs for the whole job outside the steps (`--store-hos
 by a launcher once phase k-1 is done (the counter `{run_tag}phase/{k-1}/done` at the size of phase k-1). Every step gets
 the same plan, declared maximum world and `--num-sms` (0 = the fixed launch grid, kept for every phase and capture).
 Plans sharing one server use distinct `--run-tag`s, and a failed run is never
-retried under its tag (its counters, metadata and bootstrap namespaces all derive from it).
+retried under its tag because its phase counters persist.
     PLAN='[[0,1,2,3],[0,1,2,3,4,5,6,7],[0,1,2,3],[0,1,2,3,4,5,6,7],[4,5,6,7],[0,1,2,3,4,5,6,7]]'
     node 0: test_adaptive_processes.py --plan "$PLAN" --scaleout-idx 0 --start-phase 0 --max-scaleout-ranks 2 ...
     node 1: test_adaptive_processes.py --plan "$PLAN" --scaleout-idx 1 --start-phase 1 --max-scaleout-ranks 2 ...   (exits at phase 2; back at 3 as new processes with --start-phase 3)
@@ -95,17 +96,7 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     )
     plan = json.loads(args.plan)
     start = args.start_phase
-    # A namespace of this cohort alone (steps start concurrently and restart at the same ids)
-    bootstrap_id = "adaptive-processes/" + json.dumps(
-        [
-            args.run_tag,
-            args.scaleout_idx,
-            args.position_offset,
-            num_ranks,
-            args.start_phase,
-        ]
-    )
-    peer_prefix = f"{args.run_tag}EP_NIXL"
+    peer_prefix = f"{args.run_tag}NIXL_EP"
     t_init = pc()
 
     buffer = make_buffer(
@@ -113,7 +104,8 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         rank_idx,
         num_ranks,
         store,
-        bootstrap_id=bootstrap_id,
+        key_prefix=peer_prefix,
+        num_group_scaleup_ranks=num_ranks,
         max_num_scaleout_ranks=args.max_scaleout_ranks,
         max_num_scaleup_ranks=args.max_scaleup_ranks,
         scaleout_rank_idx=args.scaleout_idx,
@@ -132,22 +124,17 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     assert me in plan[start] and (
         start == 0 or me not in plan[start - 1]
     ), f"Rank {me} does not join at phase {start} of {plan}"
-    buffer.publish(
-        key_prefix=peer_prefix
-    )  # other steps connect to us through the store
-    t_publish = pc()
     startup = dict(
         init_ms=(t_init - t0) * 1e3,
         buffer_ms=(t_buffer - t_init) * 1e3,
-        publish_ms=(t_publish - t_buffer) * 1e3,
     )
-    mode = buffer.get_topology()[0]
+    mode = buffer._get_topology()[0]
     step_ids = (
         buffer.get_active_ranks()
-    )  # the constructor made only this step's cohort the initial world
+    )  # setup connected and activated only this step's cohort
     assert mode == expected_mode(
         step_ids, max_su
-    ), f"the constructor derived {mode} for {step_ids}"
+    ), f"setup derived {mode} for {step_ids}"
     case = Case(buffer, args)
     validate_plan(case, plan)
 
@@ -180,7 +167,6 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
             buffer.set_active_ranks([me])
             tc = pc()
             buffer.disconnect_ranks(buffer.get_connected_ranks())
-            buffer.commit_topology()
             td = pc()
             buffer.destroy()
             te = pc()
@@ -207,22 +193,22 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
 
         ev0 = torch.cuda.Event(enable_timing=True)
         ev0.record()
-        buffer.stage_topology(active_ranks=phase)
-        buffer.commit_topology()
+        buffer.set_active_ranks(phase)
         ev1 = torch.cuda.Event(enable_timing=True)
         ev1.record()
         te = pc()
         gone = sorted(set(leavers) & set(buffer.get_connected_ranks()))
         if gone:
             buffer.disconnect_ranks(gone)
-            buffer.commit_topology()
         tf = pc()
         barrier(f"phase/{k}/live", len(phase))
         tg = pc()
-        assert buffer.is_active and buffer.get_active_ranks() == sorted(
+        assert (
+            buffer.world_rank in buffer.get_active_ranks()
+        ) and buffer.get_active_ranks() == sorted(
             phase
         ), f"active ranks {buffer.get_active_ranks()} != phase {phase}"
-        phase_mode = buffer.get_topology()[0]
+        phase_mode = buffer._get_topology()[0]
         assert (
             phase_mode == want_mode
         ), f"mode {phase_mode} on {phase}, expected {want_mode}"
@@ -261,7 +247,7 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         print(
             f'PROC tag={args.run_tag or "run"} phase={k} rank={me} local={local_rank} role={role} mode={phase_mode} '
             f"live={len(phase)} t_entry={t_entry:.3f} t_first_kernel={t_first_kernel:.3f} "
-            f'init_ms={startup["init_ms"]:.0f} buffer_ms={startup["buffer_ms"]:.0f} publish_ms={startup["publish_ms"]:.0f} '
+            f'init_ms={startup["init_ms"]:.0f} buffer_ms={startup["buffer_ms"]:.0f} '
             f"arrive_wait_ms={(tb - ta) * 1e3:.1f} num_connect={len(to_connect)} connect_ms={(tc - tb) * 1e3:.1f} "
             f"connected_wait_ms={(td - tc) * 1e3:.1f} stage_commit_ms={(te - td) * 1e3:.2f} commit_dev_ms={ev0.elapsed_time(ev1):.3f} "
             f"num_disconnect={len(gone)} disconnect_commit_ms={(tf - te) * 1e3:.2f} live_wait_ms={(tg - tf) * 1e3:.1f} "

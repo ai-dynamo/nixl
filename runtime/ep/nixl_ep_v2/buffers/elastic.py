@@ -5,8 +5,7 @@
 import functools
 import math
 import os
-import pickle
-from datetime import timedelta
+import uuid
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
@@ -17,14 +16,9 @@ from .. import _C
 
 # noinspection PyUnresolvedReferences
 from .._C import EventHandle
-from ..utils.envs import (
-    check_torch_deterministic,
-    get_logical_domain_size,
-    get_nvlink_gbs,
-    get_rdma_gbs,
-)
+from ..utils.envs import check_torch_deterministic, get_nvlink_gbs, get_rdma_gbs
 from ..utils.event import EventOverlap
-from ..utils.nixl_bootstrap import NixlBootstrap, resolve_bootstrap_store
+from ..utils.nixl_bootstrap import exchange_records
 from ..utils.semantic import align, value_or, weak_lru
 
 _DEFAULT_SM_READ_GBS, _DEFAULT_SM_WRITE_GBS = 200, 50
@@ -41,7 +35,7 @@ class EPHandle:
         num_max_tokens_per_rank: the maximum number of tokens per rank, all the ranks must hold the same value.
         num_sms: the active SM count recorded when the handle was created, checked by eager combine. A captured
             dispatch/combine graph reads the current count from the topology descriptor.
-        topk_idx: dispatch top-k expert indices, `[num_tokens, num_topk]`; cloned when `do_handle_copy=True`.
+        topk_idx: dispatch top-k stable expert IDs, `[num_tokens, num_topk]`; cloned when `do_handle_copy=True`.
         psum_num_recv_tokens_per_scaleup_rank: inclusive prefix sum of deduplicated received token counts
             per scaleup rank, shape `[max_num_scaleup_ranks + 1]`. A token is counted once per rank even if
             multiple of its top-k experts land on the same rank. The last element equals the total number
@@ -241,15 +235,13 @@ class ElasticBuffer:
         - high-throughput expert-parallel all-to-all (dispatch and combine, using NVLink and/or RDMA)
 
     Attributes:
-        rank_idx: this rank's cohort rank, its index in the constructing cohort.
-        num_ranks: the number of ranks in the group.
-        store: the explicit `torch.distributed.Store` given to the constructor (the default of `publish` and `connect_ranks`).
+        store: the explicit `torch.distributed.Store` given to the constructor (the default of `connect_ranks`).
         allow_multiple_reduction: whether to allow multiple reductions in combine. If disabled,
             only one reduction will be done in the combine epilogue for best precision,
             but it may increase data transfer size.
         prefer_overlap_with_compute: whether to prefer overlapping communication with compute.
             If enabled, we tend to use fewer SMs.
-        num_bytes: the total buffer size in bytes.
+        num_bytes: the allocated communication buffer size in bytes, excluding workspace.
         num_max_tokens_per_rank: the default maximum tokens per rank.
         max_num_scaleout_ranks: the declared maximum number of scaleout ranks (NVLink domains) the buffer is sized for.
         max_num_scaleup_ranks: the declared maximum number of scaleup ranks (positions per domain).
@@ -262,30 +254,28 @@ class ElasticBuffer:
         runtime: the C++ runtime.
 
     Elasticity: the active ranks are a product subset of the declared maximum world (active NVLink domains x active
-    positions, `masks_of`). `connect_ranks` / `disconnect_ranks` stage peers, `stage_topology` + `commit_topology`
-    rewrite the topology descriptor (`EPTopology`) the kernels read, a rank that is not active sits the launches
-    out (`is_active`). Construction coordinates the constructing cohort through a Store (see the constructor).
+    positions). `connect_ranks` prepares peers, `set_active_ranks` activates membership, and
+    `disconnect_ranks` retires excluded peers. The kernels read the topology descriptor (`EPTopology`).
+    Only active ranks launch dispatch/combine. Construction initializes this rank alone.
     Dispatch/combine and their graph replays require at least two active GPUs; smaller cohorts may bootstrap or tear down.
-    New-peer connections and host-only topology staging may run while the committed graph replays. Serialize
+    New-peer connections may run while the committed graph replays. Serialize
     control operations on each buffer; a background setup thread must select the buffer's CUDA device.
-    Activation (`commit_topology`, `set_num_active_sms`) runs outside capture, between complete dispatch/combine pairs.
+    Activation (`set_active_ranks`, `set_num_active_sms`) runs outside capture, between complete dispatch/combine pairs.
     Order topology commits and graph replays on the same CUDA stream, or establish the dependencies explicitly.
     Before activation or peer retirement, every rank of the old world, including departing ranks, must finish
     its queued CUDA work, call `barrier(with_cpu_sync=True)` to drain the transport, and rendezvous on the host before
     any peer departs. The update methods do not establish that completion boundary.
     Transport mutation/activation failures are fatal; invalid inputs and mapping refusals leave active views intact.
 
-    Three numberings: the cohort rank (`rank_idx`, this rank's index in the constructing cohort), the world rank
-    (`world_rank`, its cell in the declared maximum world, the transport's peer index) and the rank index (the kernels'
-    `rank_idx` over the committed extent, `scaleout_rank_idx * num_scaleup_ranks + scaleup_rank_idx`).
+    World ranks and public expert IDs index the declared maximum world. Internal source metadata and the
+    kernels' `rank_idx` still index the committed extent: `scaleout_rank_idx * num_scaleup_ranks + scaleup_rank_idx`.
     """
 
     def __init__(
         self,
-        group: Optional[dist.ProcessGroup] = None,
-        # Provide `num_bytes` (excludes workspace)
-        num_bytes: Optional[int] = None,
-        # Or provide MoE settings (BF16 by default)
+        world_rank: int,
+        max_num_scaleout_ranks: int,
+        max_num_scaleup_ranks: int,
         num_max_tokens_per_rank: int = 0,
         hidden: int = 0,
         num_topk: int = 0,
@@ -293,17 +283,7 @@ class ElasticBuffer:
         deterministic: bool = False,
         allow_multiple_reduction: bool = True,
         prefer_overlap_with_compute: bool = True,
-        max_num_scaleout_ranks: int = 0,
-        max_num_scaleup_ranks: int = 0,
-        num_nixl_channels: int = 0,
-        scaleout_rank_idx: Optional[int] = None,
-        scaleup_rank_idx: Optional[int] = None,
         store: Optional[dist.Store] = None,
-        rank_idx: Optional[int] = None,
-        num_ranks: Optional[int] = None,
-        num_group_scaleup_ranks: Optional[int] = None,
-        bootstrap_id: Optional[str] = None,
-        store_timeout_secs: int = 300,
         num_cpu_timeout_secs: int = 300,
         num_gpu_timeout_secs: int = 100,
         explicitly_destroy: bool = False,
@@ -311,110 +291,65 @@ class ElasticBuffer:
         num_experts_per_rank: int = 0,
     ):
         """
-        Initialize the elastic communication buffer.
-        The kernel mode follows the active NVLink domains at construction and each subsequent topology change.
+        Initialize this rank's buffer without accessing a Store or waiting for peers.
+        The initial topology contains this rank alone. Call `connect_ranks`, then `set_active_ranks` to join a world.
+        Buffer capacity is calculated from the workload settings and declared maximum world.
 
         Arguments:
-            group: the process group whose ranks form the constructing cohort. Unless both `store` and
-                `bootstrap_id` are supplied, a private TCPStore is created and its address is broadcast over the group.
-                Use `None` with `rank_idx`, `num_ranks`, `store` and `bootstrap_id`.
-            num_bytes: the total buffer size in bytes (excludes workspace), if set, overrides MoE-based calculation.
-                Must be aligned to 2 MB.
-            num_max_tokens_per_rank: the maximum number of tokens per rank, used for buffer size calculation.
+            world_rank: this rank's fixed ID in the declared maximum world. Its domain and position are
+                `divmod(world_rank, max_num_scaleup_ranks)`; the same IDs are passed to `connect_ranks`.
+            max_num_scaleout_ranks: positive maximum number of NVLink domains, shared by all peers.
+            max_num_scaleup_ranks: positive maximum positions per domain, at most 128, shared by all peers.
+                These maxima size the buffer, handles and kernels; they do not describe current membership.
+            num_max_tokens_per_rank: the maximum tokens per rank used for buffer sizing.
             hidden: the hidden dimension of each token.
             num_topk: the number of top-k experts per token.
             use_fp8_dispatch: reserve smaller dispatch arenas for FP8/NVFP4 inputs; False reserves BF16 capacity and also
-                accepts either quantized format. Must match across peers, including with explicit `num_bytes`; it does not cast inputs.
-            num_experts_per_rank: fixed physical routing slots per GPU, shared by all peers, including joiners.
-                Required (positive) for dispatch/combine; zero permits barrier-only buffers. This is not the model's
-                logical expert count. Slots may remain unused; the caller assigns weights and maps logical experts
-                to physical slots. The transport neither replicates experts nor creates weights.
+                accepts either quantized format. Must match across peers; it does not cast inputs.
+            num_experts_per_rank: fixed physical routing slot capacity per GPU, shared by all peers, including joiners.
+                Size it for the largest per-GPU expert placement across all intended topologies, not just the initial one.
+                The caller supplies this fixed value; slots may remain unused. It is not the model's logical expert count.
+                Positive for dispatch/combine; zero allocates a minimum-sized barrier-only buffer. The caller assigns
+                weights and maps logical experts to physical slots; the transport neither replicates experts nor creates weights.
             deterministic: whether to sort received tokens deterministically (eager execution only).
             allow_multiple_reduction: whether to allow multiple reductions in combine.
             prefer_overlap_with_compute: whether to prefer overlapping communication with compute.
-            num_cpu_timeout_secs: CPU-side timeout in seconds for CPU sync.
-            num_gpu_timeout_secs: GPU-side timeout in seconds for GPU operations.
-            explicitly_destroy: If this flag is set to True, you need to explicitly call `destroy()` to release resources;
-                otherwise, the resources will be released by the destructor.
-            max_num_scaleout_ranks: the maximum number of scaleout ranks (NVLink domains) the buffer, the handles and
-                the kernels are sized for; 0 = the cohort's domain count. The active ranks are any product subset of it.
-            max_num_scaleup_ranks: likewise for the positions per domain, at most 128 (`kNumMaxScaleupRanksCap`).
-            num_nixl_channels: UCX device channels per peer of the NIXL agent; 0 = `NIXL_EP_NIXL_NUM_CHANNELS` or 64 (UCX's maximum).
-            scaleout_rank_idx: this rank's NVLink domain in the maximum world (default: from the cohort's domain count and size).
-            scaleup_rank_idx: this rank's position inside its domain (default: from the cohort's domain count and size).
-            store: an explicit `torch.distributed.Store`: the default of `publish` and `connect_ranks`, and with
-                `bootstrap_id` the Store the cohort bootstraps through (else the group's first rank serves a cohort-private TCPStore).
-            rank_idx: this rank's index in the constructing cohort (required without a group; not the world rank).
-            num_ranks: the size of the constructing cohort (required without a group; a joiner uses a one-rank cohort).
-            num_group_scaleup_ranks: the cohort's declared NVLink-domain size (must divide `num_ranks`; contiguous blocks
-                validated as one domain each; `num_ranks` = one domain); omitted: inferred from the GPU evidence.
-                NVML proves the links are NVLink, not PCIe P2P. Commit separately requires CUDA-IPC mappings within
-                each domain and RDMA between domains; each declared domain must be a complete CUDA-IPC clique.
-            bootstrap_id: the cohort's namespace in `store` (required with an explicit bootstrap Store; distinct per
-                concurrent cohort, fresh after a partial construction or a change of the cohort's membership).
-            store_timeout_secs: how long the bootstrap waits for the cohort at each of its Store steps.
+            store: the default Store for `connect_ranks`, not accessed during construction.
+            num_cpu_timeout_secs: timeout for CPU synchronization, in seconds.
+            num_gpu_timeout_secs: timeout for GPU operations, in seconds.
+            explicitly_destroy: require explicit `destroy()` instead of releasing resources in the destructor.
         """
-
+        if (
+            any(
+                type(value) is not int
+                for value in (world_rank, max_num_scaleout_ranks, max_num_scaleup_ranks)
+            )
+            or max_num_scaleout_ranks <= 0
+            or max_num_scaleup_ranks <= 0
+            or not 0 <= world_rank < max_num_scaleout_ranks * max_num_scaleup_ranks
+        ):
+            raise ValueError(
+                "world_rank must lie in the declared maximum world, whose dimensions must be positive integers"
+            )
         if type(num_experts_per_rank) is not int or num_experts_per_rank < 0:
             raise ValueError("num_experts_per_rank must be a nonnegative integer")
         self.num_experts_per_rank = num_experts_per_rank
-
-        if group is not None:
-            if rank_idx not in (None, group.rank()) or num_ranks not in (
-                None,
-                group.size(),
-            ):
-                raise ValueError(
-                    "rank_idx / num_ranks do not match the supplied process group"
-                )
-            rank_idx, num_ranks = group.rank(), group.size()
-        if (
-            type(rank_idx) is not int
-            or type(num_ranks) is not int
-            or not 0 <= rank_idx < num_ranks
-        ):
-            raise ValueError(
-                "Without a process group, rank_idx and a positive num_ranks are required"
-            )
-        self.rank_idx, self.num_ranks = rank_idx, num_ranks
+        self.world_rank = world_rank
+        self.max_num_scaleout_ranks = max_num_scaleout_ranks
+        self.max_num_scaleup_ranks = max_num_scaleup_ranks
+        self.scaleout_rank_idx, self.scaleup_rank_idx = divmod(
+            world_rank, max_num_scaleup_ranks
+        )
         self.allow_multiple_reduction = allow_multiple_reduction
         self.prefer_overlap_with_compute = prefer_overlap_with_compute
         self.deterministic = deterministic
         self.store = store
-        # Automatic/manual selection follows the topology's stage/commit transaction.
         self._auto_sm_config: Optional[Tuple[int]] = None
         self._staged_auto_sm_config: Optional[Tuple[int]] = None
 
-        # Coordinate the cohort through a Store: the domain count and size, the session token, the peer metadata, the barrier
-        bootstrap_store, namespace = resolve_bootstrap_store(
-            group,
-            store,
-            bootstrap_id,
-            "elastic-buffer",
-            timeout_seconds=store_timeout_secs,
-        )
-        bootstrap = NixlBootstrap(
-            bootstrap_store,
-            self.rank_idx,
-            self.num_ranks,
-            namespace=namespace,
-            num_scaleup_ranks=num_group_scaleup_ranks,
-            timeout_seconds=store_timeout_secs,
-        )
-        num_group_scaleout_ranks = bootstrap.num_scaleout_ranks
-        group_scaleup_ranks: int = bootstrap.num_scaleup_ranks
-
-        # The declared maximum world and this rank's coordinates in it: explicit values win, else the cohort's domain count and size
-        max_num_scaleout_ranks = max_num_scaleout_ranks or num_group_scaleout_ranks
-        max_num_scaleup_ranks = max_num_scaleup_ranks or group_scaleup_ranks
-        if scaleout_rank_idx is None:
-            scaleout_rank_idx = self.rank_idx // group_scaleup_ranks
-        if scaleup_rank_idx is None:
-            scaleup_rank_idx = self.rank_idx % group_scaleup_ranks
-
-        # Calculate buffer size (already 2 MB-aligned from hint functions / calculate_elastic_buffer_size)
-        if num_bytes is None:
-            # NOTES: we allow `num_topk == 0`, as the buffer size can also be calculated by number of ranks (maybe bigger though)
+        if num_experts_per_rank == 0:
+            num_bytes = _C.min_elastic_buffer_bytes
+        else:
             num_bytes = _C.calculate_elastic_buffer_size(
                 max_num_scaleout_ranks,
                 max_num_scaleup_ranks,
@@ -424,25 +359,16 @@ class ElasticBuffer:
                 use_fp8_dispatch,
                 allow_multiple_reduction,
             )
-
         if int(os.environ.get("NIXL_EP_BUFFER_DEBUG", 0)):
             print(
-                f"Initializing EP elastic buffer with {num_bytes} bytes "
-                f"at cohort rank {self.rank_idx}/{self.num_ranks}"
+                f"Initializing EP elastic buffer with {num_bytes} bytes at world rank {world_rank}"
             )
         self.num_bytes = num_bytes
-
         self.num_max_tokens_per_rank = num_max_tokens_per_rank
 
-        # Avoid matching replacement processes to closed UD wire-up endpoints. This process-wide default can be
-        # overridden before construction; see the README deployment guidance.
+        # Avoid matching replacement processes to closed UD wire-up endpoints.
         os.environ.setdefault("UCX_UD_LINGER_TIMEOUT", "1s")
-
-        # NIXL: the UCX device channels of the agent (a warp is a channel; the transport refuses more than UCX's 64)
-        num_nixl_channels = num_nixl_channels or int(
-            os.getenv("NIXL_EP_NIXL_NUM_CHANNELS", 64)
-        )
-
+        num_nixl_channels = int(os.getenv("NIXL_EP_NIXL_NUM_CHANNELS", 64))
         self.explicitly_destroy = explicitly_destroy
         self.runtime = _C.ElasticBuffer(
             num_bytes,
@@ -454,43 +380,15 @@ class ElasticBuffer:
             self.explicitly_destroy,
             max_num_scaleout_ranks,
             max_num_scaleup_ranks,
-            scaleout_rank_idx,
-            scaleup_rank_idx,
+            self.scaleout_rank_idx,
+            self.scaleup_rank_idx,
             num_nixl_channels,
-            bootstrap.session_token,
+            uuid.uuid4().hex,
             num_experts_per_rank,
         )
-
-        # Adaptive kernels: the fixed launch grid; the active SM count is set per topology via `set_num_active_sms`
         self.num_launch_sms = _C.get_adaptive_num_launch_sms()
-        self.max_num_scaleout_ranks, self.max_num_scaleup_ranks = (
-            max_num_scaleout_ranks,
-            max_num_scaleup_ranks,
-        )
-
-        self.scaleout_rank_idx, self.scaleup_rank_idx = (
-            scaleout_rank_idx,
-            scaleup_rank_idx,
-        )
-        self.world_rank = self.world_rank_of(scaleout_rank_idx, scaleup_rank_idx)
-
-        # Connect the whole cohort and make it the active ranks (the constructor is collective over the cohort); the gather
-        # returns every member's `(metadata, peer info)` by world rank
-        infos = bootstrap.all_gather_peer_infos(
-            (self.get_local_metadata(), self.get_local_peer_info())
-        )
-        peers = [wr for wr in infos if wr != self.world_rank]
-        self.connect_ranks(
-            peers, [infos[wr][0] for wr in peers], [infos[wr][1] for wr in peers]
-        )
-        self.stage_topology(
-            num_active_sms=self.num_launch_sms, active_ranks=sorted(infos)
-        )
-        self.commit_topology()
-
-        # Call a barrier to ensure initialization visibility for all peers
+        # Complete local initialization before callers use the buffer on another stream.
         torch.cuda.synchronize()
-        bootstrap.barrier("ready")
 
     def destroy(self) -> None:
         """Destroy the runtime; requires `explicitly_destroy=True` at construction."""
@@ -502,58 +400,29 @@ class ElasticBuffer:
 
     @staticmethod
     def get_buffer_size_hint(
-        group: dist.ProcessGroup,
+        max_num_scaleout_ranks: int,
+        max_num_scaleup_ranks: int,
         num_max_tokens_per_rank: int,
         hidden: int,
         num_topk: int = 0,
         use_fp8_dispatch: bool = False,
         allow_multiple_reduction: bool = True,
-        max_num_scaleout_ranks: int = 0,
-        max_num_scaleup_ranks: int = 0,
-        num_group_scaleup_ranks: Optional[int] = None,
-        store: Optional[dist.Store] = None,
-        bootstrap_id: Optional[str] = None,
-        store_timeout_secs: int = 300,
     ) -> int:
         """
-        Get a recommended buffer size (in bytes) for the given MoE settings, without constructing the buffer.
-        The returned value is aligned to 2 MB. A missing maximum is discovered from the group's domain count and size (a Store exchange,
-        collective over `group`); the constructor repeats the exchange. To reuse the discovered domain count and size, call
-        `nixl.runtime.ep.get_logical_domain_size` once and pass its `num_scaleup_ranks` as `num_group_scaleup_ranks` with both
-        maxima: the constructor then validates declared blocks instead of inferring.
+        Query the communication buffer size (excluding workspace) for the declared maximum world, without constructing a buffer.
 
         Arguments:
-            group: the process group whose domain count and size fill in a missing maximum (`None` with both maxima given).
+            max_num_scaleout_ranks: the maximum number of NVLink domains.
+            max_num_scaleup_ranks: the maximum positions per domain.
             num_max_tokens_per_rank: the maximum number of tokens per rank.
             hidden: the hidden dimension of each token.
             num_topk: the number of top-k experts per token.
             use_fp8_dispatch: size dispatch arenas for FP8/NVFP4 inputs; pass the same value to the constructor.
             allow_multiple_reduction: whether to allow multiple reductions in combine.
-            max_num_scaleout_ranks: the declared maximum world to size for (0 = the group's domain count).
-            max_num_scaleup_ranks: likewise (0 = the group's domain size).
-            num_group_scaleup_ranks: the group's declared domain size, as the constructor's argument of the same name.
-            store: with `bootstrap_id`, the Store used for discovery; otherwise a private TCPStore whose address is broadcast over the group.
-            bootstrap_id: the namespace in `store`.
-            store_timeout_secs: the Store timeout of the discovery.
 
         Returns:
-            size: the recommended buffer size in bytes (2 MB-aligned).
+            size: the communication buffer size in bytes (2 MB-aligned).
         """
-        if max_num_scaleout_ranks == 0 or max_num_scaleup_ranks == 0:
-            if group is None:
-                raise ValueError(
-                    "get_buffer_size_hint without a process group needs both max_num_scaleout_ranks and max_num_scaleup_ranks"
-                )
-            group_domains, group_positions = get_logical_domain_size(
-                group,
-                num_scaleup_ranks=num_group_scaleup_ranks,
-                store=store,
-                bootstrap_id=bootstrap_id,
-                store_timeout_secs=store_timeout_secs,
-            )
-            max_num_scaleout_ranks = max_num_scaleout_ranks or group_domains
-            max_num_scaleup_ranks = max_num_scaleup_ranks or group_positions
-        # NOTES: calculate_elastic_buffer_size already returns 2 MB-aligned values
         return _C.calculate_elastic_buffer_size(
             max_num_scaleout_ranks,
             max_num_scaleup_ranks,
@@ -632,7 +501,7 @@ class ElasticBuffer:
         """
         return self._get_theoretical_num_sms_for_topology(
             num_topk,
-            *self.get_topology_masks(),
+            *self._get_topology_masks(),
             rdma_gbs=rdma_gbs,
             nvlink_gbs=nvlink_gbs,
             sm_read_gbs=sm_read_gbs,
@@ -775,111 +644,88 @@ class ElasticBuffer:
             )
         return num_sms
 
-    def get_local_metadata(self) -> bytes:
-        """This rank's NIXL agent metadata, which a peer loads to address this rank (`connect_ranks`)."""
-        return self.runtime.get_local_metadata()
-
-    def get_local_peer_info(self) -> Tuple[int, int, int, int]:
-        """This region's `(base address, CUDA device index, world rank, allocation bytes)`."""
-        return self.runtime.get_local_peer_info()
-
-    def publish(
-        self, store: Optional[dist.Store] = None, key_prefix: str = "EP_NIXL"
-    ) -> None:
-        """
-        Publish this rank's transport metadata to a `torch.distributed.Store` under `{key_prefix}/{world_rank}`, for ranks
-        outside this cohort to `connect_ranks` to it (same Store and `key_prefix` on both sides).
-        On process replacement, use a fresh shared `key_prefix`, or rendezvous after all targets' current processes
-        finish publishing before connecting. Store keys survive departed processes; `bootstrap_id` does not scope them.
-
-        Arguments:
-            store: the publication Store; defaults to the constructor's explicit `store` (never the bootstrap Store).
-            key_prefix: the key prefix the readers pass to `connect_ranks`.
-        """
-        store = value_or(store, self.store)
-        if store is None:
-            raise ValueError(
-                "Peer publication requires an explicit Store; pass store to ElasticBuffer or publish(store=...)"
-            )
-        store.set(
-            f"{key_prefix}/{self.world_rank}",
-            pickle.dumps((self.get_local_metadata(), self.get_local_peer_info())),
-        )
-
     def connect_ranks(
         self,
         world_ranks: List[int],
-        remote_mds: Optional[List[bytes]] = None,
-        peer_infos: Optional[List[Tuple[int, int, int, int]]] = None,
         store: Optional[dist.Store] = None,
-        key_prefix: str = "EP_NIXL",
+        key_prefix: str = "NIXL_EP",
         timeout_secs: float = 120.0,
     ) -> None:
         """
-        Load peers' transport metadata and stage new memory views (made live by the next `commit_topology`), from
-        `remote_mds` and `peer_infos` as published by the peers, or from a `store` they `publish`ed to.
+        Exchange agent names and region descriptors through a Store, fetch transport metadata through
+        NIXL's metadata manager, and prepare memory views for activation by `set_active_ranks`.
+        Already-connected peers are ignored. Publish discovery data under `{key_prefix}/{world_rank}`
+        and delete it after all listed peers have read it and
+        native preparation finishes. Complete each exchange on all participants before reusing its rank keys.
         Resets only new peers' barrier words on a setup stream. Native preparation releases the GIL so another
         Python thread can replay the committed graph; it does not change the live topology or active views.
 
         Arguments:
-            world_ranks: world ranks of the peers (not this rank, not connected yet).
-            remote_mds: the peers' `get_local_metadata()`, aligned with `world_ranks`.
-            peer_infos: the peers' `get_local_peer_info()`, aligned with `world_ranks`.
-            store: read `{key_prefix}/{world_rank}` from this store instead (default: the constructor's explicit `store`).
-            key_prefix: the publisher's key prefix; replacement freshness is the caller's responsibility (see `publish`).
-            timeout_secs: how long to wait for each peer's key in `store` (the wire-up has its own `NIXL_EP_NIXL_CONNECT_TIMEOUT_SECS`).
+            world_ranks: world ranks of the peers (not this rank); only new peers participate in the exchange.
+            store: the Store for reciprocal connection-data exchange (default: the constructor's explicit `store`).
+            key_prefix: the same Store key prefix on both sides; separate buffers using the same rank IDs need separate prefixes or Stores.
+            timeout_secs: the bound for each Store wait for discovery data or read acknowledgements;
+                NIXL metadata fetch and wire-up share `NIXL_EP_NIXL_CONNECT_TIMEOUT_SECS`.
         """
-        if (remote_mds is None) != (peer_infos is None):
+        connected = set(self.get_connected_ranks())
+        world_ranks = [rank for rank in world_ranks if rank not in connected]
+        if not world_ranks:
+            return
+        store = value_or(store, self.store)
+        if store is None:
             raise ValueError(
-                "remote_mds and peer_infos are given together (the peers' metadata and peer info), or neither (Store discovery)"
+                "Peer discovery requires an explicit Store; pass store to ElasticBuffer or "
+                "connect_ranks(store=...)"
             )
-        if remote_mds is None or peer_infos is None:
-            store = value_or(store, self.store)
-            if store is None:
-                raise ValueError(
-                    "Peer discovery requires an explicit Store; pass store to ElasticBuffer or "
-                    "connect_ranks(store=...), or pass remote_mds and peer_infos"
-                )
-            remote_mds, peer_infos = [], []
-            for world_rank in world_ranks:
-                key = f"{key_prefix}/{world_rank}"
-                store.wait([key], timedelta(seconds=timeout_secs))
-                md, info = pickle.loads(store.get(key))
-                remote_mds.append(md)
-                peer_infos.append(info)
-        self.runtime.connect_ranks(
-            list(world_ranks), list(remote_mds), [tuple(info) for info in peer_infos]
-        )
+        with exchange_records(
+            store,
+            self.world_rank,
+            world_ranks,
+            (
+                self.runtime.get_local_agent_name(),
+                self.runtime.get_local_peer_info(),
+            ),
+            key_prefix=key_prefix,
+            timeout_seconds=timeout_secs,
+        ) as records:
+            self.runtime.connect_ranks(
+                list(world_ranks),
+                [records[rank][0] for rank in world_ranks],
+                [tuple(records[rank][1]) for rank in world_ranks],
+            )
 
     def disconnect_ranks(self, world_ranks: List[int]) -> None:
         """
-        Forget peers whose process goes away (staged; dropped at the next `commit_topology`). Commit a topology without
-        the peer first (a staged, uncommitted topology must not hold it either). A rank that stays alive but sits a world
-        out is left out of `active_ranks` instead.
+        Retire departing peers and activate the remaining peer views outside capture. Drain the old world and exclude these peers
+        with `set_active_ranks` first. A live rank sitting a world out is only excluded from `active_ranks`.
+        An empty list does nothing.
         """
-        self.runtime.disconnect_ranks(list(world_ranks))
+        world_ranks = list(world_ranks)
+        if world_ranks:
+            self.runtime.disconnect_ranks(world_ranks)
+            self._commit_topology()
 
     def get_connected_ranks(self) -> List[int]:
         """World ranks of the connected peers (this rank excluded)."""
         return list(self.runtime.get_connected_ranks())
 
-    def world_rank_of(self, scaleout_rank_idx: int, scaleup_rank_idx: int) -> int:
+    def _world_rank_of(self, scaleout_rank_idx: int, scaleup_rank_idx: int) -> int:
         """The world rank of coordinates `(scaleout_rank_idx, scaleup_rank_idx)` in the declared maximum world."""
         return scaleout_rank_idx * self.max_num_scaleup_ranks + scaleup_rank_idx
 
-    def masks_of(self, active_ranks: Sequence[int]) -> Tuple[int, int]:
+    def _masks_of(self, active_ranks: Sequence[int]) -> Tuple[int, int]:
         """The `(scaleout_mask, scaleup_mask)` of world ranks forming a product of domains and positions."""
         active = sorted(set(int(r) for r in active_ranks))
         domains = sorted(set(r // self.max_num_scaleup_ranks for r in active))
         positions = sorted(set(r % self.max_num_scaleup_ranks for r in active))
-        product = sorted(self.world_rank_of(d, k) for d in domains for k in positions)
+        product = sorted(self._world_rank_of(d, k) for d in domains for k in positions)
         assert (
             product == active
         ), f"The active ranks must be a product of domains and positions; {domains} x {positions} != {active}"
         return sum(1 << d for d in domains), sum(1 << k for k in positions)
 
     @staticmethod
-    def mode_of(scaleout_mask: int) -> str:
+    def _mode_of(scaleout_mask: int) -> str:
         """Exactly one active NVLink domain selects direct mode, regardless of its index."""
         return "direct" if bin(scaleout_mask).count("1") == 1 else "hybrid"
 
@@ -891,13 +737,13 @@ class ElasticBuffer:
         active_ranks: Optional[Sequence[int]] = None,
     ) -> None:
         scaleout_mask, scaleup_mask = (
-            self.masks_of(active_ranks)
+            self._masks_of(active_ranks)
             if active_ranks is not None
-            else self.get_topology_masks()
+            else self._get_topology_masks()
         )
         auto_sm_config = None if num_active_sms else self._auto_sm_config
         if not num_active_sms:
-            num_active_sms = self.get_topology()[1]
+            num_active_sms = self._get_topology()[1]
             # Inactive ranks and bootstrap/teardown worlds do not launch dispatch/combine.
             if (
                 auto_sm_config is not None
@@ -912,7 +758,7 @@ class ElasticBuffer:
                     )
                 )
         if mode is None:
-            mode = self.mode_of(scaleout_mask)
+            mode = self._mode_of(scaleout_mask)
         # The position mask crosses the extension as 64-bit words (a whole NVL72 domain needs more than 64 bits)
         words = [
             (scaleup_mask >> (64 * i)) & ((1 << 64) - 1)
@@ -923,25 +769,13 @@ class ElasticBuffer:
         )
         self._staged_auto_sm_config = auto_sm_config
 
-    def stage_topology(
+    def _stage_topology(
         self, *, num_active_sms: int = 0, active_ranks: Optional[Sequence[int]] = None
     ) -> None:
-        """
-        Prepare a new topology descriptor (`EPTopology`) on the host, validated here and made live by `commit_topology`.
-        The mode is not an input: it follows `mode_of` on the staged domains.
-        A `set_num_active_sms` before the commit (a `dispatch` whose `num_sms` differs from the
-        committed count calls the former) is refused, as it would recommit the committed world over the staged one:
-        commit first, or stage after it.
-
-        Arguments:
-            num_active_sms: the active blocks of the fixed grid (even, at most `num_launch_sms`). A nonzero value pins
-                manual mode; 0 retunes from the last successful automatic dispatch, or keeps the count in manual mode.
-            active_ranks: the world ranks of the active ranks, a product set (`masks_of`) of connected ranks; `None`
-                keeps the committed active ranks.
-        """
+        """Validate and prepare the host topology without changing the active configuration."""
         self._stage(num_active_sms=num_active_sms, active_ranks=active_ranks)
 
-    def commit_topology(self) -> None:
+    def _commit_topology(self) -> None:
         """
         Make the staged topology descriptor (`EPTopology`) live: one stream-ordered device write on the current stream
         (a device synchronisation first when peers were connected or disconnected).
@@ -955,41 +789,41 @@ class ElasticBuffer:
     def set_active_ranks(
         self, active_ranks: Sequence[int], num_active_sms: int = 0
     ) -> None:
-        """`stage_topology(active_ranks=...)` + `commit_topology()` in one step; the mode follows the new world."""
-        self.stage_topology(num_active_sms=num_active_sms, active_ranks=active_ranks)
-        self.commit_topology()
+        """Validate and activate connected ranks forming a product of domains and positions; the mode follows the new world.
 
-    def get_topology_masks(self) -> Tuple[int, int]:
+        Call after draining the old world and completing a host rendezvous. `num_active_sms` must be even and
+        between 2 and `num_launch_sms`; a nonzero value pins manual selection. Zero retunes from the last
+        successful automatic dispatch, or keeps the count in manual mode.
+        """
+        self._stage_topology(num_active_sms=num_active_sms, active_ranks=active_ranks)
+        self._commit_topology()
+
+    def _get_topology_masks(self) -> Tuple[int, int]:
         """Committed `(scaleout_mask, scaleup_mask)`: bit d / bit k denotes an active domain / position."""
         scaleout_mask, words = self.runtime.get_topology_masks()
         return scaleout_mask, sum(int(w) << (64 * i) for i, w in enumerate(words))
 
     def get_active_ranks(self) -> List[int]:
         """The world ranks of the committed active ranks, sorted."""
-        scaleout_mask, scaleup_mask = self.get_topology_masks()
+        scaleout_mask, scaleup_mask = self._get_topology_masks()
         domains = [
             d for d in range(self.max_num_scaleout_ranks) if (scaleout_mask >> d) & 1
         ]
         positions = [
             k for k in range(self.max_num_scaleup_ranks) if (scaleup_mask >> k) & 1
         ]
-        return sorted(self.world_rank_of(d, k) for d in domains for k in positions)
+        return sorted(self._world_rank_of(d, k) for d in domains for k in positions)
 
-    def get_topology_extent(self) -> Tuple[int, int]:
+    def _get_topology_extent(self) -> Tuple[int, int]:
         """Committed extents: highest active domain index + 1 and highest active position + 1."""
-        scaleout_mask, scaleup_mask = self.get_topology_masks()
+        scaleout_mask, scaleup_mask = self._get_topology_masks()
         return scaleout_mask.bit_length(), scaleup_mask.bit_length()
-
-    @property
-    def is_active(self) -> bool:
-        """Whether this rank belongs to the committed world, including singleton bootstrap worlds."""
-        return self.runtime.is_active()
 
     def set_num_active_sms(self, num_active_sms: int) -> None:
         """
-        Recommit the committed topology descriptor with a new active SM count (even, at most `num_launch_sms`); its world
-        and mode are untouched. Pins manual mode until a successful `dispatch(num_sms=0)`.
-        Refused while a staged world awaits `commit_topology`: commit it first, or stage after this call.
+        Set a manual active SM count (even, from 2 to `num_launch_sms`), preserving membership and mode.
+        Disables automatic SM retuning on topology changes until a successful `dispatch(num_sms=0)`.
+        Call outside capture between completed dispatch/combine pairs.
         """
         self._set_num_active_sms(num_active_sms)
 
@@ -1001,14 +835,14 @@ class ElasticBuffer:
         ), 'set_num_active_sms needs the count (0 is not "keep the current value" here)'
         assert (
             not self.runtime.has_staged_topology()
-        ), "A staged world awaits commit_topology(): commit it before changing the active SM count, or stage after it"
-        mode, _ = self.get_topology()
+        ), "Finish the pending topology update before changing the active SM count"
+        mode, _ = self._get_topology()
         self._stage(mode=mode, num_active_sms=num_active_sms)
         if preserve_auto:
             self._staged_auto_sm_config = self._auto_sm_config
-        self.commit_topology()
+        self._commit_topology()
 
-    def get_topology(self) -> Tuple[str, int]:
+    def _get_topology(self) -> Tuple[str, int]:
         """The committed `(mode, num_active_sms)`."""
         mode, num_active_sms = self.runtime.get_topology()
         return _MODE_NAMES[mode], num_active_sms
@@ -1020,7 +854,7 @@ class ElasticBuffer:
         # The grid of the adaptive kernels is fixed, so `num_sms` only decides how many blocks do work: clamp it to
         # the launch grid (even, at least 2) and update the topology descriptor (`EPTopology`, its `num_active_sms`) if it changed
         num_active_sms = self._clamp_active_sms(num_sms)
-        _, current = self.get_topology()
+        _, current = self._get_topology()
         if current != num_active_sms:
             assert (
                 not torch.cuda.is_current_stream_capturing()
@@ -1071,10 +905,11 @@ class ElasticBuffer:
                 to the consuming GEMM; a shared GEMM scale requires inputs quantized with that same global scale.
             topk_idx: `[num_tokens, num_topk]` with `nixl.runtime.ep.topk_idx_t` (typically `torch.int64`), the expert
                 physical slot indices selected by each token, `-1` means no selection. With S = `num_experts_per_rank`,
-                slot e belongs to extent rank e // S, whose physical coordinates are
-                `(rank // scaleup_extent, rank % scaleup_extent)`. The routing range is
-                `scaleout_extent * scaleup_extent * S`, including holes; inactive slots are not renumbered away.
-                The caller updates routing IDs when the scaleup extent changes, and supplies correct weights.
+                expert_id = world_rank * S + local_expert_idx, where `0 <= local_expert_idx < S`.
+                Valid IDs are in `[0, max_num_scaleout_ranks * max_num_scaleup_ranks * S)` and stay fixed across
+                membership and extent changes, including graph replay. Slot e belongs to world rank e // S,
+                with coordinates `divmod(e // S, max_num_scaleup_ranks)`. Selections of inactive ranks are dropped.
+                The caller owns logical expert placement and routing weights; extent changes alone require no renumbering.
             topk_weights: `[num_tokens, num_topk]` with `torch.float`, the expert weights of each token to dispatch.
             cumulative_local_expert_recv_stats: `[num_experts_per_rank]` with `torch.int`, cumulative physical-slot
                 receive counts. The local slot count and required allocation stay fixed across topology changes,
@@ -1119,7 +954,7 @@ class ElasticBuffer:
         assert (
             auto_sm_config == self._auto_sm_config
             or not self.runtime.has_staged_topology()
-        ), "A staged world awaits commit_topology(): commit it before changing the automatic/manual SM policy"
+        ), "Finish the pending topology update before changing the automatic/manual SM policy"
         num_sms = self.get_theoretical_num_sms(num_topk) if num_sms == 0 else num_sms
         # Fixed grid: `num_sms` becomes the active block count of the topology descriptor
         num_sms = self._adaptive_active_sms(num_sms)

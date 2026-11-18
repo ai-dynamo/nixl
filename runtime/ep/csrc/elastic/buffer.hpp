@@ -102,8 +102,8 @@ public:
 
         // The declared maximum world and this rank's coordinates in it. Every rank of a world declares the same maximum world:
         // the world-rank numbering (`topology::world_rank`) and the handle shapes depend on it, and no exchange compares it
-        // (`connect_ranks` checks a peer's world-rank range and region size only). The dispatch capacity flag must also match,
-        // including when num_buffer_bytes is supplied explicitly, because it determines the source arena offsets.
+        // (`connect_ranks` checks a peer's world-rank range and region size only). The dispatch capacity flag must also match
+        // because it determines the source arena offsets.
         EP_HOST_ASSERT(0 < max_num_scaleout_ranks and max_num_scaleout_ranks <= topology::kNumMaxScaleoutRanksCap and
                        0 < max_num_scaleup_ranks and max_num_scaleup_ranks <= topology::kNumMaxScaleupRanksCap and "Bad declared maximum world");
         EP_HOST_ASSERT(0 <= scaleout_rank_idx and scaleout_rank_idx < max_num_scaleout_ranks and
@@ -165,7 +165,7 @@ public:
         CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&mapped_host_workspace, host_workspace, 0));
         std::memset(host_workspace, 0, layout::WorkspaceLayout::get_num_bytes());
 
-        // No barrier here: the Python constructor connects the cohort (`connect_ranks`), commits its world (`commit_topology`) and ends with the bootstrap Store barrier
+        // Construction is local; callers connect peers and commit the active world explicitly.
     }
 
     ~ElasticBuffer() noexcept(false) {
@@ -295,11 +295,6 @@ public:
         return {topology_host.scaleout_mask, words};
     }
 
-    // Whether this rank is active in the committed world (a rank that is not active must not call `dispatch`/`combine`)
-    bool is_active() const {
-        return topology_host.is_active();
-    }
-
     // Whether a world is staged and not committed (`set_num_active_sms` refuses to overwrite it)
     bool has_staged_topology() const {
         return topology_staged;
@@ -314,9 +309,9 @@ private:
 
 public:
     // ---- Peers ----
-    // Join: publish the metadata and peer info, `connect_ranks`, then stage and commit. Leave: commit a world without the rank, then `disconnect_ranks`
-    pybind11::bytes get_local_metadata() const {
-        return pybind11::bytes(nixl_context->get_local_metadata());
+    // Join: `connect_ranks`, then stage and commit. Leave: commit a world without the rank, then `disconnect_ranks`
+    std::string get_local_agent_name() const {
+        return nixl_context->get_local_agent_name();
     }
 
     // `(region base, device, world rank, allocation bytes)`
@@ -327,7 +322,7 @@ public:
         return {info.region_base, info.device_id, info.world_rank, info.num_region_bytes};
     }
 
-    void connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_mds,
+    void connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_agent_names,
                        const std::vector<peer_info_t>& peer_infos) {
         EP_HOST_ASSERT(c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None and
                        "`connect_ranks` inside a CUDA-graph capture: prepare peers outside capture");
@@ -347,7 +342,7 @@ public:
             CUDA_RUNTIME_CHECK(cudaMemsetAsync(wl.get_peer_barrier_expected_ptr(wr), 0, sizeof(int64_t), stream));
         }
         CUDA_RUNTIME_CHECK(cudaStreamSynchronize(stream));
-        nixl_context->connect_ranks(world_ranks, remote_mds, infos);
+        nixl_context->connect_ranks(world_ranks, remote_agent_names, infos);
     }
 
     void disconnect_ranks(const std::vector<int>& world_ranks) {
@@ -1033,6 +1028,7 @@ public:
                                        get_topology_ptr(),
                                        jit::device_runtime->get_num_sms(),
                                        jit::device_runtime->get_num_smem_bytes(),
+                                       max_num_scaleup_ranks,
                                        num_channels_per_sm,
                                        use_expanded_layout, allow_multiple_reduction,
                                        comm_stream);
@@ -1065,9 +1061,8 @@ static void register_apis(pybind11::module_& m) {
         .def("commit_topology", &ElasticBuffer::commit_topology)
         .def("get_topology", &ElasticBuffer::get_topology)
         .def("get_topology_masks", &ElasticBuffer::get_topology_masks)
-        .def("is_active", &ElasticBuffer::is_active)
         .def("has_staged_topology", &ElasticBuffer::has_staged_topology)
-        .def("get_local_metadata", &ElasticBuffer::get_local_metadata)
+        .def("get_local_agent_name", &ElasticBuffer::get_local_agent_name)
         .def("get_local_peer_info", &ElasticBuffer::get_local_peer_info)
         .def("connect_ranks", &ElasticBuffer::connect_ranks)
         .def("disconnect_ranks", &ElasticBuffer::disconnect_ranks)
@@ -1077,6 +1072,7 @@ static void register_apis(pybind11::module_& m) {
         .def("dispatch", &ElasticBuffer::dispatch)
         .def("combine", &ElasticBuffer::combine);
     m.def("calculate_elastic_buffer_size", &ElasticBuffer::calculate_buffer_size);
+    m.attr("min_elastic_buffer_bytes") = ElasticBuffer::kNumAlignmentBytes;
 }
 
 }  // namespace nixl_ep_v2::elastic

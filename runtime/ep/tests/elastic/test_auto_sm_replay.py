@@ -70,7 +70,6 @@ def test_loop(local_rank, num_local_ranks, args):
         store,
         rank,
         size,
-        namespace="auto-sm-test",
         timeout_seconds=args.store_timeout_secs,
     )
 
@@ -78,11 +77,13 @@ def test_loop(local_rank, num_local_ranks, args):
         torch.cuda.synchronize()
         cohort.barrier("test")
 
-    buffer = make_buffer(args, rank, size, store, bootstrap_id="auto-sm-buffer")
+    buffer = make_buffer(
+        args, rank, size, store, num_group_scaleup_ranks=cohort.num_scaleup_ranks
+    )
     assert (
         buffer.num_launch_sms >= 24
     ), "Use a launch grid of at least 24 blocks for distinct automatic estimates"
-    full_extent = buffer.get_topology_extent()
+    full_extent = buffer._get_topology_extent()
     assert full_extent in ((1, 16), (2, 8)), "Expected 1x16 or 2x8 NVLink domains"
     present = buffer.get_active_ranks()
     first_domain = min(present) // buffer.max_num_scaleup_ranks
@@ -125,7 +126,7 @@ def test_loop(local_rank, num_local_ranks, args):
         graph = GraphCase(case, present, {peer: present for peer in present}, barrier)
         graph.capture()
         captured_graph, addresses = graph.graph, graph_addresses(graph)
-        region_base = buffer.get_local_peer_info()[0]
+        region_base = buffer.runtime.get_local_peer_info()[0]
         counts = []
         # No Python dispatch/combine call may retune or rebuild the graph after capture.
         with patch.object(
@@ -137,8 +138,8 @@ def test_loop(local_rank, num_local_ranks, args):
         ):
             for phase_idx, phase in enumerate(plan):
                 switch_world(buffer, phase, barrier, args.store_timeout_secs)
-                if buffer.is_active:
-                    mode, active_sms = buffer.get_topology()
+                if buffer.world_rank in buffer.get_active_ranks():
+                    mode, active_sms = buffer._get_topology()
                     expected_sms = (
                         {16: 12, 8: 10, 4: 8, 2: 6}
                         if mode == "hybrid"
@@ -154,7 +155,7 @@ def test_loop(local_rank, num_local_ranks, args):
                         graph.graph is captured_graph
                         and graph_addresses(graph) == addresses
                     )
-                    assert buffer.get_local_peer_info()[0] == region_base
+                    assert buffer.runtime.get_local_peer_info()[0] == region_base
                     # Two replays also exercise reset state at the new count.
                     for replay in range(2):
                         graph.replay_and_check(

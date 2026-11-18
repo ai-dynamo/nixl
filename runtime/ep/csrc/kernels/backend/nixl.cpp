@@ -39,6 +39,8 @@ bool is_fabric_handle_supported(const int& device_id) {
 
 struct NIXLAgentState {
     std::shared_ptr<nixlAgent> agent;
+    std::string agent_name;
+    bool metadata_published = false;
     nixlBackendH* backend = nullptr;
     nixl_opt_args_t extra_params;
     nixl_reg_dlist_t reg_descs{VRAM_SEG};
@@ -107,6 +109,9 @@ static void allocate_device(std::unique_ptr<dtype_t, deleter_t>& allocation, con
 NIXLAgentState::~NIXLAgentState() noexcept {
     if (agent == nullptr)
         return;
+    // Publication remains available to future joiners; the agent drains this queued invalidation before teardown.
+    if (metadata_published)
+        cleanup("invalidate published metadata", [&] { NIXL_CHECK(agent->invalidateLocalMD()); });
     for (auto view: {staged_remote, active_local, active_remote})
         if (view != nullptr)
             cleanup("release memory view", [&] { agent->releaseMemView(view); });
@@ -135,7 +140,7 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
     num_region_bytes(num_region_bytes), peers(num_world_ranks), connected(num_world_ranks, 0),
     connect_epoch(num_world_ranks, 0), known_agent_names(num_world_ranks) {
     if (num_channels < 1 or num_channels > kNumMaxUCXDeviceChannels)
-        throw EPException("NIXL", __FILE__, __LINE__, "UCX connects at most " + std::to_string(kNumMaxUCXDeviceChannels) + " device channels per peer, got " + std::to_string(num_channels) + ": pass `num_nixl_channels` (or NIXL_EP_NIXL_NUM_CHANNELS) between 1 and " + std::to_string(kNumMaxUCXDeviceChannels));
+        throw EPException("NIXL", __FILE__, __LINE__, "UCX connects at most " + std::to_string(kNumMaxUCXDeviceChannels) + " device channels per peer, got " + std::to_string(num_channels) + ": set NIXL_EP_NIXL_NUM_CHANNELS between 1 and " + std::to_string(kNumMaxUCXDeviceChannels));
     CUDA_RUNTIME_CHECK(cudaGetDevice(&device_id));
     CUdevice device;
     CUDA_DRIVER_CHECK(lazy_cuDeviceGet(&device, device_id));
@@ -183,6 +188,7 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
 
     // The agent and its UCX backend: a progress thread polled every 1 ms (it serves the peers' wire-up and hellos while this host is in Python; NIXL's default delay 0 spins a core), RW sync for our calls beside it, one worker, `num_channels` device channels
     state = std::make_unique<NIXLAgentState>();
+    state->agent_name = agent_name;
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
     cfg.pthrDelay = 1000;  // us; NIXL rounds it up to whole ms for poll()
@@ -258,21 +264,19 @@ void NIXLEPContext::finalize() {
     region.reset();
 }
 
-std::string NIXLEPContext::get_local_metadata() const {
+std::string NIXLEPContext::get_local_agent_name() const {
     EP_HOST_ASSERT(state != nullptr and state->agent != nullptr);
-    nixl_blob_t blob;
-    NIXL_CHECK(state->agent->getLocalMD(blob));
-    return blob;
+    return state->agent_name;
 }
 
 NIXLPeerInfo NIXLEPContext::get_local_peer_info() const {
     return {static_cast<uint64_t>(region.ptr), device_id, world_rank, region.num_bytes};
 }
 
-void NIXLEPContext::connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_mds,
+void NIXLEPContext::connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_agent_names,
                                   const std::vector<NIXLPeerInfo>& peer_infos) {
     EP_HOST_ASSERT(state != nullptr and state->agent != nullptr);
-    EP_HOST_ASSERT(world_ranks.size() == remote_mds.size() and world_ranks.size() == peer_infos.size());
+    EP_HOST_ASSERT(world_ranks.size() == remote_agent_names.size() and world_ranks.size() == peer_infos.size());
     if (world_ranks.empty())
         return;
 
@@ -288,17 +292,25 @@ void NIXLEPContext::connect_ranks(const std::vector<int>& world_ranks, const std
             refuse(world_rank, wr, "Peer info does not match the world rank");
         if (peer_infos[i].num_region_bytes < static_cast<uint64_t>(num_region_bytes))
             refuse(world_rank, wr, "Peer region is too small");
+        if (remote_agent_names[i].empty())
+            refuse(world_rank, wr, "Peer agent name is empty");
         // A pending disconnect of the world rank would invalidate the metadata reloaded here at the next commit
         if (std::find(pending_disconnects.begin(), pending_disconnects.end(), wr) != pending_disconnects.end())
             refuse(world_rank, wr, "Commit the pending disconnect before reconnecting the same rank");
     }
     mutate_transport_or_abort(world_rank, "peer connection", [&] {
-        connect_validated_ranks(world_ranks, remote_mds, peer_infos);
+        connect_validated_ranks(world_ranks, remote_agent_names, peer_infos);
     });
 }
 
-void NIXLEPContext::connect_validated_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_mds,
+void NIXLEPContext::connect_validated_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_agent_names,
                                             const std::vector<NIXLPeerInfo>& peer_infos) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(get_env<int>("NIXL_EP_NIXL_CONNECT_TIMEOUT_SECS", 120));
+    if (not state->metadata_published) {
+        // Queue publication before fetches; all metadata-manager work stays inside native connect's GIL release.
+        NIXL_CHECK(state->agent->sendLocalMD());
+        state->metadata_published = true;
+    }
     // Load endpoint metadata first; the peer registry still includes peers reached through an intermediate rank.
     std::vector<int> endpoint_ranks;
     for (size_t i = 0; i < world_ranks.size(); ++ i) {
@@ -306,8 +318,8 @@ void NIXLEPContext::connect_validated_ranks(const std::vector<int>& world_ranks,
         if (not needs_endpoint(*this, wr))
             continue;
         endpoint_ranks.push_back(wr);
-        std::string name;
-        NIXL_CHECK(state->agent->loadRemoteMD(remote_mds[i], name));
+        const auto& name = remote_agent_names[i];
+        NIXL_CHECK(state->agent->fetchRemoteMD(name));
         // A different agent behind the world rank is a new process (a leaver's exited, a fresh one joined): its epochs start from
         // zero, so ours restart (the per-peer barrier words restart at every connect, see `ElasticBuffer::connect_ranks`)
         if (known_agent_names[wr] != name) {
@@ -316,11 +328,23 @@ void NIXLEPContext::connect_validated_ranks(const std::vector<int>& world_ranks,
         }
     }
 
+    nixl_xfer_dlist_t empty_descs(VRAM_SEG);
+    for (const int wr: endpoint_ranks) {
+        while (true) {
+            const auto status = state->agent->checkRemoteMD(known_agent_names[wr], empty_descs);
+            if (status == NIXL_SUCCESS)
+                break;
+            if (status != NIXL_ERR_NOT_FOUND)
+                NIXL_CHECK(status);
+            if (std::chrono::steady_clock::now() >= deadline)
+                refuse(world_rank, wr, "Timed out fetching peer metadata: use the same metadata server and call `connect_ranks` on the peer");
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
     // Wire-up handshake: UCX endpoints connect lazily and `prepMemView` needs them connected, so every new endpoint peer gets a
     // hello carrying the pair's connection epoch and we wait for its hello back (both sides call `connect_ranks` with
     // each other); a hello of an earlier epoch cannot satisfy this one, an asymmetric protocol shows as an epoch mismatch
-    const auto start = std::chrono::steady_clock::now();
-    const auto timeout_secs = get_env<int>("NIXL_EP_NIXL_CONNECT_TIMEOUT_SECS", 120);
     for (size_t i = 0; i < endpoint_ranks.size(); ++ i) {
         const int wr = endpoint_ranks[i];
         connect_epoch[wr] += 1;
@@ -351,8 +375,7 @@ void NIXLEPContext::connect_validated_ranks(const std::vector<int>& world_ranks,
             }
         }
         if (num_greeted < endpoint_ranks.size()) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count();
-            if (elapsed >= timeout_secs) {
+            if (std::chrono::steady_clock::now() >= deadline) {
                 std::stringstream ss;
                 for (size_t i = 0; i < endpoint_ranks.size(); ++ i) if (not greeted[i]) {
                     const int wr = endpoint_ranks[i];

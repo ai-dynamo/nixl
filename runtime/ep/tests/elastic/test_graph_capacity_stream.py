@@ -40,7 +40,6 @@ def run(local_rank, num_local_ranks, args):
         store,
         rank,
         num_ranks,
-        namespace="graph-capacity-stream",
         timeout_seconds=args.store_timeout_secs,
     )
     max_so, max_su = cohort.num_scaleout_ranks, cohort.num_scaleup_ranks
@@ -49,7 +48,6 @@ def run(local_rank, num_local_ranks, args):
         0,
         1,
         store,
-        bootstrap_id=f"graph-capacity-stream/{rank}",
         max_num_scaleout_ranks=max_so,
         max_num_scaleup_ranks=max_su,
         scaleout_rank_idx=rank // max_su,
@@ -57,7 +55,6 @@ def run(local_rank, num_local_ranks, args):
     )
     assert buffer.max_num_scaleout_ranks >= 2 and buffer.max_num_scaleup_ranks >= 2
     full = list(range(num_ranks))
-    buffer.publish(key_prefix="graph-capacity-stream/peers")
     off_rail = [
         peer
         for peer in full
@@ -66,15 +63,14 @@ def run(local_rank, num_local_ranks, args):
     # Logical off-rail peers alone stage an all-null remote view.
     buffer.connect_ranks(off_rail, key_prefix="graph-capacity-stream/peers")
     assert buffer.get_connected_ranks() == off_rail
-    buffer.commit_topology()
+    buffer.set_active_ranks([rank])
     buffer.disconnect_ranks(off_rail)
-    buffer.commit_topology()
+    cohort.barrier("off-rail-disconnected")
     buffer.connect_ranks(
         [peer for peer in full if peer != rank],
         key_prefix="graph-capacity-stream/peers",
     )
-    buffer.stage_topology(active_ranks=full)
-    buffer.commit_topology()
+    buffer.set_active_ranks(full)
     first_domain = list(range(buffer.max_num_scaleup_ranks))
     captured_at = {peer: full for peer in full}
 
@@ -107,18 +103,18 @@ def run(local_rank, num_local_ranks, args):
         ("same", comm_stream),
     ):
         for phase in (full, first_domain, full):
-            if buffer.is_active:
+            if buffer.world_rank in buffer.get_active_ranks():
                 buffer.barrier(with_cpu_sync=True)
             drained_barrier()
-            buffer.stage_topology(
+            buffer._stage_topology(
                 active_ranks=phase,
                 num_active_sms=args.num_sms or buffer.num_launch_sms,
             )
             with torch.cuda.stream(commit_stream):
-                buffer.commit_topology()
+                buffer._commit_topology()
             if rank in phase:
                 for graph in (graphs[0], graphs[1], graphs[0]):
-                    # commit_topology must order the upload before communication;
+                    # The commit must order the upload before communication;
                     # synchronize only after replay, never between commit and replay.
                     with torch.cuda.stream(comm_stream):
                         graph.stats.zero_()

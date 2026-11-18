@@ -35,7 +35,7 @@ class NVFP4HostTests(unittest.TestCase):
         torch = Buffer.dispatch.__globals__["torch"]
         torch.uint8, torch.float8_e4m3fn, torch.int32 = "uint8", "float8", "int32"
         self.buffer = Buffer(
-            num_bytes=2097152,
+            world_rank=0,
             num_max_tokens_per_rank=16,
             hidden=128,
             num_topk=2,
@@ -43,11 +43,11 @@ class NVFP4HostTests(unittest.TestCase):
             max_num_scaleout_ranks=1,
             max_num_scaleup_ranks=4,
             store=object(),
-            bootstrap_id="nvfp4-host",
-            rank_idx=0,
-            num_ranks=4,
             explicitly_destroy=True,
         )
+        peers = list(range(1, 4))
+        self.buffer.connect_ranks(peers)
+        self.buffer.set_active_ranks(list(range(4)))
         self.calls = []
 
         def dispatch(*args):

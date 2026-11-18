@@ -14,6 +14,7 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
+from buffer_setup import create_group_buffer
 from test_adaptive_modes import ModeTestBuffer
 from test_ep import test_dispatch_combine
 
@@ -24,8 +25,9 @@ from nixl.runtime.ep.utils.envs import dist_print, init_dist
 def run(local_rank, num_local_ranks, args):
     _, num_ranks, group = init_dist(local_rank, num_local_ranks)
     assert args.num_experts > 0 and args.num_experts % num_ranks == 0
-    buffer = ModeTestBuffer(
+    buffer = create_group_buffer(
         group,
+        buffer_type=ModeTestBuffer,
         num_experts_per_rank=args.num_experts // num_ranks,
         num_max_tokens_per_rank=max(args.token_counts),
         hidden=args.hidden,
@@ -34,7 +36,7 @@ def run(local_rank, num_local_ranks, args):
         explicitly_destroy=True,
     )
     modes = (
-        ("direct", "hybrid") if buffer.get_topology()[0] == "direct" else ("hybrid",)
+        ("direct", "hybrid") if buffer._get_topology()[0] == "direct" else ("hybrid",)
     )
     first_kernels = None
     for capacity in args.token_counts:

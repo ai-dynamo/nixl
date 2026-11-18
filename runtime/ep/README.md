@@ -56,26 +56,39 @@ replacement process to a stale wire-up endpoint. This process-wide default
 affects subsequent UCX initialization; set the variable before construction
 to override it.
 
+UCX transport channels per peer default to 64. For tuning, set
+`NIXL_EP_NIXL_NUM_CHANNELS` to a value from 1 through 64 before construction.
+
 ### Dispatch and combine
 
 BF16 combine requires `hidden` divisible by 256, including pairs that use
 FP8 or NVFP4 dispatch.
 
-Given an initialized process group `group` and CUDA tensors `x` (BF16,
+With NIXL's metadata backend configured as described below, a process group `group`
+containing two NVLink domains of eight GPUs in domain-contiguous rank order,
+a shared `torch.distributed.Store` named `store`, and CUDA tensors `x` (BF16,
 `[tokens, hidden]`), `topk_idx` (`nixl.runtime.ep.topk_idx_t`, `[tokens, topk]`) and
 optional `topk_weights` (float32, the same shape):
 
 ```python
 from nixl.runtime.ep import ElasticBuffer
 
+domains, positions = 2, 8
+world_rank = group.rank()
+world = list(range(group.size()))
 buffer = ElasticBuffer(
-    group,
+    world_rank=world_rank,
+    max_num_scaleout_ranks=domains,
+    max_num_scaleup_ranks=positions,
+    store=store,
     num_max_tokens_per_rank=4096,
     hidden=7168,
     num_topk=8,
     num_experts_per_rank=8,  # Fixed physical routing slots per GPU.
     explicitly_destroy=True,
 )
+buffer.connect_ranks([rank for rank in world if rank != world_rank])
+buffer.set_active_ranks(world)
 recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(
     x, topk_idx, topk_weights=topk_weights,
 )
@@ -84,7 +97,8 @@ combined_x, _ = buffer.combine(recv_x, handle)
 buffer.destroy()
 ```
 
-Construction is collective over the constructing cohort; communication and
+Construction does not use the Python Store or wait for peers. Peer connection exchanges
+metadata; activation selects the participating ranks. Communication and
 destruction are collective over the committed active world.
 When using `async_with_compute_stream=True`, wait on the returned event
 before consuming the result. Deterministic sorting is supported only in eager
@@ -104,7 +118,7 @@ changes are collective, between completed pairs, with updates and replay
 ordered on the same stream or through explicit event dependencies.
 
 `dispatch(num_sms=0)` remembers its top-k for automatic
-SM selection. Subsequent `stage_topology` / `set_active_ranks` calls with
+SM selection. Subsequent `set_active_ranks` calls with
 the default `num_active_sms=0` recompute the estimate for the proposed
 membership using cached bandwidth information. Commit publishes the new
 topology and count together. An explicit dispatch or topology SM count
@@ -119,13 +133,15 @@ ranks establish their policy through their normal dispatch warm-up/capture.
 Captured non-deterministic dispatch/combine graphs use the updated active count
 without recapture. Their backing allocations cover the full launch grid;
 Python handle fields and tensor shapes still describe capture-time metadata.
-The estimator runs on the host during topology staging, never during graph
+The estimator runs on the host during topology updates, never during graph
 replay; no profiling or correctness checks are added to communication.
 
 Dispatch/combine require at least two active GPUs, checked before launch
 and again inside the kernels for graph replay. Smaller cohorts may still
 bootstrap or tear down. `num_experts_per_rank` fixes the physical routing
-slots per GPU at construction; peers, including joiners, must agree on it.
+slot capacity per GPU at construction; peers, including joiners, must agree on it.
+Choose it for the largest per-GPU expert placement across all intended
+topologies, including shrink, rather than just the initial placement.
 Local expert metadata and `cumulative_local_expert_recv_stats` retain that
 fixed length through shrink/expand. Without a CPU sync, received token
 storage covers the declared maximum world, including expanded outputs and
@@ -136,40 +152,55 @@ Unused slots may remain unrouted; the transport does not replicate experts
 or create weights. The caller owns the mapping from logical experts to
 physical slots and supplies the corresponding routing weights.
 
-For S slots per GPU, the physical routing range is
-`scaleout_extent * scaleup_extent * S`. Slot `e` belongs to extent rank
-`e // S`, with coordinates `(rank // scaleup_extent, rank % scaleup_extent)`.
-Extents are the highest active coordinates plus one. Holes keep their IDs;
-active ranks are not packed together. A changed scaleup extent therefore
-requires the caller to update routing IDs for the intended coordinates.
-The SM traffic estimate uses active-rank counts times S, excluding holes.
+For S = `num_experts_per_rank` slots per GPU, the public expert ID is
+`world_rank * S + local_expert_idx`, where `0 <= local_expert_idx < S`.
+IDs range from zero through `max_num_scaleout_ranks * max_num_scaleup_ranks * S - 1`.
+Slot `e` belongs to world rank `e // S`, with coordinates
+`divmod(e // S, max_num_scaleup_ranks)`. IDs stay fixed across membership and
+extent changes, including graph replay; holes are not packed away. `-1` means
+no selection, and selections owned by inactive ranks are dropped. The caller
+does not renumber IDs solely because an extent changes, but still owns logical
+expert placement and routing weights. Internal source metadata continues to
+use committed-extent rank encoding. The SM traffic estimate uses active-rank
+counts times S, excluding holes.
 
-`connect_ranks` / `disconnect_ranks` stage peer views; `stage_topology`
-stages membership. `commit_topology` activates both. The convenience method
-`set_active_ranks` stages and commits membership immediately. Exclude
-departing peers in a committed topology before disconnecting them.
+`connect_ranks` prepares peer views; `set_active_ranks` validates and activates
+the requested membership and prepared views. After excluding departing peers
+from the active world, `disconnect_ranks` retires them and activates the
+remaining peer views before returning. An empty disconnect does nothing.
 Size the buffer for its maximum world at construction. Active ranks form a
 product of active domains and positions within those domains. New-peer
-connections and host-only topology staging may run while the committed
-graph replays. Use one CUDA device per process. Serialize control operations
+connections may run while the committed graph replays. Activation and peer
+retirement run outside graph capture. Use one CUDA device per process. Serialize control operations
 on each buffer and select that device in any background setup thread. Before
 activation or peer retirement, every old-world rank must finish
 queued CUDA work, call `buffer.barrier(with_cpu_sync=True)` to drain the
 transport, and complete a host rendezvous before any peer departs. Joining
-cohorts use an explicit Store and fresh `bootstrap_id`; see `publish` and
-`connect_ranks` for metadata exchange. Mid-launch rank failure and transport
-recovery are unsupported.
+ranks construct their buffers independently, then call `connect_ranks` with
+their peers' stable world IDs. Mid-launch rank failure and transport recovery
+are unsupported.
 
 An idle joiner can commit its future topology locally and capture its graph
 before cutover. Capture must skip eager communication and replay until the
 old world has drained and all new-world ranks have activated. Construction
-precompiles the barrier without launching it, including for singleton
-bootstrap cohorts; dispatch/combine still require two active GPUs.
+precompiles the barrier without launching it; dispatch/combine still require
+two active GPUs.
 
-For process replacement, use a fresh shared publication `key_prefix`, or
-rendezvous after every target's current process has completed `publish`
-before calling `connect_ranks`. Store keys survive departing processes;
-`bootstrap_id` isolates cohort construction, not publication keys.
+`connect_ranks` exchanges agent names and region descriptors through the supplied Store,
+publishing under `NIXL_EP/<world_rank>` and deleting it after the requested peers
+have read it and native preparation finishes. Already-connected peers are ignored;
+if no new peers remain, the call does nothing and needs no Store. New peers must request each
+other in the same exchange. World IDs must be unique within the Store, and
+all participants must finish an exchange before reusing its keys.
+
+NIXL's metadata manager publishes and fetches transport metadata. Configure its
+backend before buffer construction; for TCPStore, set `NIXL_TCPSTORE_ENDPOINT=host:port`
+on every rank to a running TCPStore server. This can be the server backing the
+Python Store and must remain available through buffer destruction.
+Native publication, fetch and readiness checks release the GIL, allowing another Python thread to replay the
+active graph. Publications remain available to future joiners until buffer
+destruction. The manager starts its backend connection asynchronously during
+construction without waiting for peers.
 
 Invalid inputs and incompatible mappings are refused before activation.
 Failures after transport mutation terminate the process; restart it instead
@@ -180,18 +211,24 @@ of attempting recovery.
 - Import `nixl.runtime.ep`. The component has no separate `__version__`;
   its release version is the installed NIXL distribution version.
   Root exports are `ElasticBuffer`, `EPHandle`, `EventHandle`, `EventOverlap`,
-  `topk_idx_t` and `get_logical_domain_size`; wildcard imports exclude
-  initialization helpers.
+  and `topk_idx_t`; wildcard imports exclude initialization helpers.
 
 - This fork exposes V2 dispatch/combine only. Legacy `Buffer`/`Config`,
   NVSHMEM, Engram, PP, AGRS and CPU-segment APIs are removed.
+- Construction takes a stable `world_rank` and both maximum world dimensions;
+  it creates only that rank's local buffer. Connect peers explicitly, then activate
+  the intended world with `set_active_ranks`.
 - Constructor keyword `num_experts_per_rank` fixes physical routing slots
   per GPU; it must be positive for dispatch/combine (zero permits a
   barrier-only buffer). `num_experts` is removed from `dispatch`,
   `get_theoretical_num_sms`, `EPHandle`, and native dispatch/combine; slot
-  totals follow the topology. The cached `dispatch(handle=...)` path is
+  IDs span the declared maximum world. The cached `dispatch(handle=...)` path is
   removed, along with `allow_hybrid_mode`, the buffer's `group` and alignment
   exports.
+- Constructor `num_bytes` is removed. Allocation is calculated from the workload
+  settings and maximum world dimensions; barrier-only buffers are sized internally.
+  `get_buffer_size_hint` uses explicit maxima for local memory planning, and `buffer.num_bytes`
+  reports the communication allocation excluding workspace.
 - `combine` takes no top-k weights and returns `(combined_x, event)`.
   Upstream used the optional weight return for routing-weight gradients in
   dispatch backward; this fork omits that path. It is independent of cached
@@ -204,8 +241,8 @@ of attempting recovery.
   dispatch capacity; peers must use matching capacity settings. These buffers
   accept FP8/NVFP4 and reject BF16 dispatch. Default BF16-capacity buffers
   accept all three wire formats, selected by dispatch input tensors.
-- Committed masks/extents and connected world ranks replace static domain
-  attributes/accessors. `get_physical_domain_size` and the
+- Active and connected world-rank queries replace static domain
+  attributes/accessors; topology helpers are internal. `get_physical_domain_size` and the
   `barrier(sequential=)` argument are removed.
 - `get_theoretical_num_sms` drops the zero-only `num_scaleout_topk` argument;
   its second positional argument is now `rdma_gbs`. It returns the raw estimate,
@@ -253,6 +290,15 @@ The existing tests are `tests/elastic/test_ep.py` and
 `tests/elastic/test_barrier.py`. Their launcher uses
 `nixl_ep_v2/utils/envs.py:init_dist`; configure it for your cluster before
 running distributed tests. Run either script with `--help` for its options.
+All GPU tests require the metadata backend configuration above. For tests that
+serve a TCPStore on `MASTER_ADDR` / `MASTER_PORT`, set this before launching:
+
+```bash
+export NIXL_TCPSTORE_ENDPOINT="${MASTER_ADDR:-127.0.0.1}:${MASTER_PORT:-8361}"
+```
+
+For tests launched with `--store-host` / `--store-port`, use that external server's
+address instead. The metadata server must stay alive until all buffers are destroyed.
 
 `tests/elastic/test_adaptive_elastic.py` accepts an inline JSON plan or a
 plan file through `--plan`. `--benchmark`, `--kineto` and `--feed-pairs`

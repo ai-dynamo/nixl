@@ -69,13 +69,13 @@ public:
     // Release the views, deregister and free the region (idempotent)
     void finalize();
 
-    // This agent's metadata blob and region info, for the peers (exchanged out of band by the caller)
-    std::string get_local_metadata() const;
+    // The agent name identifies this rank's publication in NIXL's metadata manager.
+    std::string get_local_agent_name() const;
     NIXLPeerInfo get_local_peer_info() const;
 
     // Register peers, wire required endpoints and stage new views; world ranks distinct, not ours, not connected; every peer calls this with us too.
     // Validate the whole peer list before loading metadata; later failures abort because peer state may have changed.
-    void connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_mds,
+    void connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_agent_names,
                        const std::vector<NIXLPeerInfo>& peer_infos);
 
     // Forget peers and stage new views; their metadata is invalidated at the next commit. Invalid requests leave state
@@ -130,7 +130,7 @@ private:
     std::unique_ptr<NIXLAgentState> state;
 
     void stage_views();
-    void connect_validated_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_mds,
+    void connect_validated_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_agent_names,
                                  const std::vector<NIXLPeerInfo>& peer_infos);
     void release_staged_views();
     void release_active_views();

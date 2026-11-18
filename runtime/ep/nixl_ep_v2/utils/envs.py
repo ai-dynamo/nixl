@@ -7,12 +7,10 @@ import os
 import random
 import re
 import subprocess
-from typing import Optional, Tuple
+from typing import Tuple
 
 import torch
 import torch.distributed as dist
-
-from .nixl_bootstrap import NixlBootstrap, resolve_bootstrap_store
 
 _local_rank = None
 _global_seed = 0
@@ -103,48 +101,6 @@ def init_dist(
         dist.get_world_size(),
         dist.new_group(list(range(num_local_ranks * num_nodes))),
     )
-
-
-def get_logical_domain_size(
-    group: dist.ProcessGroup,
-    *,
-    num_scaleup_ranks: Optional[int] = None,
-    store: Optional[dist.Store] = None,
-    bootstrap_id: Optional[str] = None,
-    store_timeout_secs: int = 300,
-) -> Tuple[int, int]:
-    """
-    Get the logical domain sizes (scaleout ranks and scaleup ranks): every rank's GPU evidence (an NVML fabric clique, else
-    the host and its NVLink P2P peers) exchanged through a Store and inferred into uniform, rank-contiguous domains, or,
-    with `num_scaleup_ranks`, contiguous blocks of that many ranks, each validated to be one NVLink domain.
-
-    Arguments:
-        group: the communication group.
-        num_scaleup_ranks: the declared domain size (must divide the group size), or `None` to infer it.
-        store: with `bootstrap_id`, the Store to exchange through instead of a cohort-private TCPStore served by the group's first rank.
-        bootstrap_id: the namespace in `store`.
-        store_timeout_secs: how long to wait for the other ranks' records.
-
-    Returns:
-        num_scaleout_ranks: the number of logical scaleout ranks.
-        num_scaleup_ranks: the number of logical scaleup ranks.
-    """
-    rank, num_ranks = group.rank(), group.size()
-    bootstrap_store, namespace = resolve_bootstrap_store(
-        group, store, bootstrap_id, "domain-size", timeout_seconds=store_timeout_secs
-    )
-    cohort = NixlBootstrap(
-        bootstrap_store,
-        rank,
-        num_ranks,
-        namespace=namespace,
-        num_scaleup_ranks=num_scaleup_ranks,
-        timeout_seconds=store_timeout_secs,
-    )
-    cohort.barrier(
-        "domains"
-    )  # the first rank keeps the Store it serves until every peer has read the domain count and size
-    return cohort.num_scaleout_ranks, cohort.num_scaleup_ranks
 
 
 def check_torch_deterministic() -> None:

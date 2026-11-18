@@ -2,15 +2,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
-"""NIXL cohort coordination through a torch Store: the cohort's NVLink domain count and size, a session token, the
-peers' metadata and a final barrier, under a per-cohort ``namespace`` (concurrent cohorts on one Store use distinct
-ones; a cohort whose construction failed part-way, or whose membership changed, retries under a fresh one: the
-construction round is counted per rank, and ranks at different rounds wait on different session keys)."""
+"""Cohort discovery and metadata exchange through temporary global-rank Store keys."""
 
-import hashlib
 import pickle
 import socket
 import uuid
+from contextlib import contextmanager
 from datetime import timedelta
 from typing import Optional, Tuple, cast
 
@@ -19,35 +16,83 @@ import torch.distributed as dist
 from .nixl_fabric import inspect_fabric_device, validate_fabric_records
 
 
+@contextmanager
+def exchange_records(
+    store,
+    rank,
+    peers,
+    value,
+    *,
+    key_prefix="NIXL_EP",
+    timeout_seconds=300,
+):
+    """Exchange records with reciprocal peers; delete this rank's record after all peers read it.
+
+    Use globally unique rank IDs within the Store. Complete the previous exchange on all participating
+    ranks before reusing its keys; concurrent exchanges must not share a rank and key prefix.
+    """
+    peers = tuple(peers)
+    timeout = timedelta(seconds=timeout_seconds)
+    publication = uuid.uuid4().hex
+    key = f"{key_prefix}/{rank}"
+    acknowledgements = [
+        f"{key_prefix}/read/{rank}/{publication}/{peer}" for peer in peers
+    ]
+    store.set(key, pickle.dumps((publication, value), protocol=4))
+    try:
+        keys = [f"{key_prefix}/{peer}" for peer in peers]
+        if keys:
+            store.wait(keys, timeout)
+        records = {}
+        for peer, peer_key in zip(peers, keys):
+            # A peer may withdraw after wait(); this non-pickle sentinel reads without blocking or creating a key.
+            missing = b"\x00"
+            encoded = store.compare_set(peer_key, missing, missing)
+            if encoded == missing:
+                raise RuntimeError(
+                    f"Peer {peer} withdrew its Store metadata during exchange"
+                )
+            peer_publication, record = pickle.loads(encoded)
+            records[peer] = record
+            store.set(f"{key_prefix}/read/{peer}/{peer_publication}/{rank}", b"1")
+        if acknowledgements:
+            store.wait(acknowledgements, timeout)
+        yield records
+    finally:
+        store.delete_key(key)
+        for acknowledgement in acknowledgements:
+            store.delete_key(acknowledgement)
+
+
 class NixlBootstrap:
+    """Coordinate global ranks; omitted world ranks use cohort indices for a private Store."""
+
     def __init__(
         self,
         store,
         rank: int,
         num_ranks: int,
         *,
-        namespace: str,
+        world_ranks=None,
         num_scaleup_ranks=None,
         timeout_seconds=300,
     ):
-        self.store, self.rank, self.num_ranks = store, rank, num_ranks
+        self.store, self.rank = store, rank
+        self.timeout_seconds = timeout_seconds
         self.timeout = timedelta(seconds=timeout_seconds)
         self._rounds: dict[str, int] = {}
-        cohort = hashlib.sha256(namespace.encode()).hexdigest()
-        root = f"nixl_ep_v2/nixl/bootstrap/{cohort}"
-        sequence = store.add(f"{root}/sequence/{rank}", 1)
-        nonce_key = f"{root}/session/{sequence}"
-        if rank == 0:
-            store.set(nonce_key, uuid.uuid4().hex)
-        try:
-            self.session_token = self._get(nonce_key).decode("ascii")
-        except Exception as e:
-            raise RuntimeError(
-                f"Cohort rank {rank} (construction round {sequence}) saw no session token from rank 0 "
-                f"within {timeout_seconds}s: the cohort disagrees on its rounds or membership; "
-                "construct with a fresh bootstrap_id"
-            ) from e
-        self._prefix = f"{root}/{self.session_token}"
+        self.world_ranks = tuple(
+            range(num_ranks) if world_ranks is None else world_ranks
+        )
+        if (
+            len(self.world_ranks) != num_ranks
+            or len(set(self.world_ranks)) != num_ranks
+        ):
+            raise ValueError(
+                "world_ranks must contain one distinct global rank per cohort member"
+            )
+        self.world_rank = self.world_ranks[rank]
+        self.peers = tuple(peer for peer in self.world_ranks if peer != self.world_rank)
 
         # Publish probe errors too, so that peers reject the same evidence instead of waiting for this rank
         try:
@@ -55,8 +100,9 @@ class NixlBootstrap:
         except Exception as error:
             record = {"error": f"{type(error).__name__}: {error}"}
         configurations = self._all_gather(
-            "fabric", (num_ranks, num_scaleup_ranks, record)
+            "fabric", (num_ranks, num_scaleup_ranks, record, uuid.uuid4().hex)
         )
+        self._generation = configurations[0][3]
         bad = [
             (r, c[:2])
             for r, c in enumerate(configurations)
@@ -64,80 +110,66 @@ class NixlBootstrap:
         ]
         if bad:
             raise ValueError(
-                f"Cohort rank {rank} declared (num_ranks, num_group_scaleup_ranks)="
+                f"Cohort rank {rank} declared (num_ranks, num_scaleup_ranks)="
                 f"{(num_ranks, num_scaleup_ranks)}; ranks {bad} disagree"
             )
         records = tuple(config[2] for config in configurations)
         self.num_scaleout_ranks, self.num_scaleup_ranks = validate_fabric_records(
             records, num_scaleup_ranks
         )
-
-    def _get(self, key):
-        self.store.wait([key], self.timeout)
-        return self.store.get(key)
+        # A subsequent discovery may reuse the same global-rank keys.
+        self.barrier("fabric")
 
     def _round(self, name):
         index = self._rounds.get(name, 0)
         self._rounds[name] = index + 1
-        return f"{self._prefix}/{name}/{index}"
+        return f"NIXL_EP/bootstrap/{name}/{index}"
 
     def _all_gather(self, name, value):
-        prefix = self._round(name)
-        self.store.set(f"{prefix}/{self.rank}", pickle.dumps(value, protocol=4))
-        keys = [f"{prefix}/{rank}" for rank in range(self.num_ranks)]
-        self.store.wait(keys, self.timeout)
-        return [pickle.loads(self.store.get(key)) for key in keys]
-
-    def all_gather_peer_infos(self, mine):
-        """Gather ``(metadata_bytes, peer_info)`` for this cohort: a dict by world rank (``peer_info[2]``) in cohort-rank
-        order (insertion order, which callers rely on); world ranks need not equal cohort ranks.
-        """
-        records = self._all_gather("peers", mine)
-        infos = {}
-        for metadata, info in records:
-            world_rank = info[2]
-            if world_rank in infos:
-                raise ValueError(f"Duplicate world rank {world_rank} in the cohort")
-            infos[world_rank] = (metadata, tuple(info))
-        return infos
+        with exchange_records(
+            self.store,
+            self.world_rank,
+            self.peers,
+            value,
+            key_prefix=self._round(name),
+            timeout_seconds=self.timeout_seconds,
+        ) as records:
+            records[self.world_rank] = value
+            return [records[rank] for rank in self.world_ranks]
 
     def barrier(self, phase):
         """Cohort barrier for explicitly coordinated lifecycle steps (repeated phases get fresh keys); the leader
-        waits for the peers' departure so that it may release a Store it owns afterwards.
+        waits for the peers' departure, then removes the keys and may release a Store it owns afterwards.
         """
-        prefix = self._round(f"barrier/{phase}")
-        self.store.set(f"{prefix}/arrived/{self.rank}", b"1")
-        self.store.wait(
-            [f"{prefix}/arrived/{rank}" for rank in range(self.num_ranks)], self.timeout
-        )
+        # A failed discovery may leave barrier keys behind; each new discovery has its own generation.
+        prefix = self._round(f"barrier/{self._generation}/{phase}")
+        arrived = [f"{prefix}/arrived/{rank}" for rank in self.world_ranks]
+        self.store.set(f"{prefix}/arrived/{self.world_rank}", b"1")
+        self.store.wait(arrived, self.timeout)
         if self.rank:
-            self.store.set(f"{prefix}/departed/{self.rank}", b"1")
-        elif self.num_ranks > 1:
-            self.store.wait(
-                [f"{prefix}/departed/{rank}" for rank in range(1, self.num_ranks)],
-                self.timeout,
-            )
+            self.store.set(f"{prefix}/departed/{self.world_rank}", b"1")
+        else:
+            departed = [f"{prefix}/departed/{rank}" for rank in self.world_ranks[1:]]
+            if departed:
+                self.store.wait(departed, self.timeout)
+            # Every peer has finished reading arrivals and has no further Store operations in this barrier.
+            for key in arrived + departed:
+                self.store.delete_key(key)
 
 
 def resolve_bootstrap_store(
     group: Optional[dist.ProcessGroup],
     store: Optional[dist.Store],
-    bootstrap_id: Optional[str],
-    group_namespace: str,
     timeout_seconds: int = 300,
-) -> Tuple[dist.Store, str]:
+) -> dist.Store:
     """
-    The Store a cohort coordinates its construction through, and its namespace there: an explicit `store` with a
-    `bootstrap_id`, else a cohort-private `TCPStore` under `group_namespace` (or `bootstrap_id` when only that was
-    given): the group's first rank serves it on a free port and its address travels through the group. The returned
-    Store must outlive the cohort's use of it. Without a group both `store` and `bootstrap_id` are required.
+    Use the supplied Store, or create a cohort-private TCPStore whose address is broadcast over the group.
+    The returned Store must outlive the cohort's use of it. Without a group, an explicit Store is required.
     """
-    if store is not None and bootstrap_id is not None:
-        return store, bootstrap_id
+    if store is not None:
+        return store
     if group is None:
-        raise ValueError(
-            "Bootstrapping without a process group requires both store and bootstrap_id"
-        )
+        raise ValueError("Bootstrapping without a process group requires a Store")
     rank, num_ranks = group.rank(), group.size()
     host, timeout = socket.gethostname(), timedelta(seconds=timeout_seconds)
     cohort_store = None
@@ -155,4 +187,4 @@ def resolve_bootstrap_store(
             is_master=False,
             timeout=timeout,
         )
-    return cohort_store, bootstrap_id if bootstrap_id is not None else group_namespace
+    return cohort_store

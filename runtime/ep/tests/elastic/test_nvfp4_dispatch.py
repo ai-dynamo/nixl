@@ -11,6 +11,7 @@ import argparse
 
 import torch
 import torch.distributed as dist
+from buffer_setup import create_group_buffer
 from test_adaptive_modes import capture
 from test_ep import fold_expanded
 
@@ -167,7 +168,7 @@ def run(buffer, args):
 def test_loop(local_rank, num_processes, args):
     _, world, group = init_dist(local_rank, num_processes)
     assert args.num_experts > 0 and args.num_experts % world == 0
-    buffer = nixl_ep_v2.ElasticBuffer(
+    buffer = create_group_buffer(
         group,
         num_max_tokens_per_rank=args.num_tokens,
         hidden=args.hidden,

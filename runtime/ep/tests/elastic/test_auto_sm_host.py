@@ -15,9 +15,11 @@ import math
 import os
 import re
 import unittest
+import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 _REPO_SOURCE = Path(__file__).resolve().parents[2] / "nixl_ep_v2/buffers/elastic.py"
 SOURCE = Path(os.environ.get("NIXL_EP_AUTO_SM_SOURCE", str(_REPO_SOURCE)))
@@ -52,7 +54,6 @@ class FakeRuntime:
     def __init__(self, *args, cuda=None):
         self.cuda = cuda
         self.mode, self.sms = 0, 24
-        self.masks = (1, 1)
         self.pending = None
         self.staged_views = False
         self.connected = set()
@@ -61,6 +62,9 @@ class FakeRuntime:
         self.dispatch_calls = 0
         self.commit_calls = 0
         self.max_domains, self.max_positions = args[7:9]
+        self.domain, self.position = args[9:11]
+        self.world_rank = self.domain * self.max_positions + self.position
+        self.masks = (1 << self.domain, 1 << self.position)
         self.num_experts_per_rank = args[-1]
 
     def stage_topology_masks(self, mode, domains, position_words, sms):
@@ -100,17 +104,21 @@ class FakeRuntime:
     def has_staged_topology(self):
         return self.pending is not None
 
-    def is_active(self):
-        return bool(self.masks[0] & 1 and self.masks[1] & 1)
+    def get_local_agent_name(self):
+        return "local"
 
-    def get_local_metadata(self):
-        return b"local"
+    def get_connected_ranks(self):
+        return sorted(self.connected)
 
     def get_local_peer_info(self):
-        return 4096, 0, 0, 2097152
+        return 4096, 0, self.world_rank, 2097152
 
-    def connect_ranks(self, ranks, metadata, peer_info):
+    def connect_ranks(self, ranks, remote_agent_names, peer_info):
         self.connected.update(ranks)
+        self.staged_views = True
+
+    def disconnect_ranks(self, ranks):
+        self.connected.difference_update(ranks)
         self.staged_views = True
 
     def dispatch(self, *args):
@@ -134,22 +142,6 @@ class FakeRuntime:
         )
 
 
-class FakeBootstrap:
-    def __init__(self, store, rank, num_ranks, **kwargs):
-        self.num_scaleout_ranks = 1
-        self.num_scaleup_ranks = num_ranks
-        self.session_token = "host-test"
-
-    def all_gather_peer_infos(self, mine):
-        return {
-            rank: (b"peer", (4096, rank, rank, 2097152))
-            for rank in range(self.num_scaleup_ranks)
-        }
-
-    def barrier(self, phase):
-        pass
-
-
 def load_buffer():
     """Execute original class methods; replace only external boundaries."""
     cuda = FakeCuda()
@@ -167,6 +159,11 @@ def load_buffer():
 
     def native_factory(*args):
         return FakeRuntime(*args, cuda=cuda)
+
+    def exchange_records(store, rank, peers, value, **kwargs):
+        return nullcontext(
+            {peer: (b"peer", (4096, peer, peer, 2097152)) for peer in peers}
+        )
 
     tree = ast.parse(SOURCE.read_text(), filename=str(SOURCE))
     nodes = [
@@ -195,6 +192,7 @@ def load_buffer():
         "math": math,
         "os": os,
         "functools": functools,
+        "uuid": uuid,
         "weak_lru": functools.lru_cache,
         "align": lambda value, alignment: ((value + alignment - 1) // alignment)
         * alignment,
@@ -202,15 +200,16 @@ def load_buffer():
         "torch": SimpleNamespace(cuda=cuda),
         "_C": SimpleNamespace(
             ElasticBuffer=native_factory,
+            calculate_elastic_buffer_size=Mock(return_value=2097152),
+            min_elastic_buffer_bytes=2097152,
             get_adaptive_num_launch_sms=lambda: 24,
             min_num_active_ranks=MIN_ACTIVE_RANKS,
         ),
-        "NixlBootstrap": FakeBootstrap,
-        "resolve_bootstrap_store": lambda *args, **kwargs: (object(), "host-test"),
         "get_rdma_gbs": rdma_bandwidth,
         "get_nvlink_gbs": nvlink_bandwidth,
         "check_torch_deterministic": lambda: None,
         "EventOverlap": lambda event: event,
+        "exchange_records": exchange_records,
     }
     exec(compile(module, str(SOURCE), "exec"), namespace)
     return namespace["ElasticBuffer"], cuda, calls
@@ -220,7 +219,7 @@ class AutoSMHostTests(unittest.TestCase):
     def setUp(self):
         self.Buffer, self.cuda, self.probes = load_buffer()
         self.buffer = self.Buffer(
-            num_bytes=2097152,
+            world_rank=0,
             num_max_tokens_per_rank=16,
             hidden=7168,
             num_topk=8,
@@ -228,11 +227,11 @@ class AutoSMHostTests(unittest.TestCase):
             max_num_scaleout_ranks=2,
             max_num_scaleup_ranks=16,
             store=object(),
-            bootstrap_id="host-test",
-            rank_idx=0,
-            num_ranks=16,
             explicitly_destroy=True,
         )
+        peers = list(range(1, 16))
+        self.buffer.connect_ranks(peers)
+        self.buffer.set_active_ranks(list(range(16)))
         self.cuda.synchronizations = 0
 
     def test_mode_override_is_confined_to_test_buffer(self):
@@ -249,18 +248,18 @@ class AutoSMHostTests(unittest.TestCase):
         )
         TestBuffer = namespace["ModeTestBuffer"]
         with patch.dict(os.environ, {"NIXL_EP_ADAPTIVE_MODE": "hybrid"}):
-            self.assertEqual(self.Buffer.mode_of(1), "direct")
-            self.assertEqual(TestBuffer.mode_of(1), "hybrid")
-            self.assertEqual(TestBuffer.mode_of(3), "hybrid")
+            self.assertEqual(self.Buffer._mode_of(1), "direct")
+            self.assertEqual(TestBuffer._mode_of(1), "hybrid")
+            self.assertEqual(TestBuffer._mode_of(3), "hybrid")
         buffer = TestBuffer.__new__(TestBuffer)
         buffer.__dict__.update(self.buffer.__dict__)
         buffer.set_topology_forced("hybrid")
-        self.assertEqual(buffer.get_topology(), ("hybrid", 24))
-        buffer.stage_topology(active_ranks=self.ranks([0], range(8)))
+        self.assertEqual(buffer._get_topology(), ("hybrid", 24))
+        buffer._stage_topology(active_ranks=self.ranks([0], range(8)))
         with self.assertRaisesRegex(AssertionError, "Commit the staged world"):
             buffer.set_topology_forced("direct")
-        buffer.commit_topology()
-        self.assertEqual(buffer.get_topology()[0], "direct")
+        buffer._commit_topology()
+        self.assertEqual(buffer._get_topology()[0], "direct")
 
     @staticmethod
     def ranks(domains, positions):
@@ -277,7 +276,7 @@ class AutoSMHostTests(unittest.TestCase):
     def expected_sms(self, domains, positions, num_topk=8):
         # Existing traffic model is the oracle; this task changes its invocation,
         # not its formula. Supply proposed dimensions explicitly, never read the
-        # live descriptor that stage_topology has not committed yet.
+        # live descriptor that _stage_topology has not committed yet.
         active_experts = (
             self.buffer.num_experts_per_rank * len(domains) * len(positions)
         )
@@ -298,33 +297,33 @@ class AutoSMHostTests(unittest.TestCase):
     ):
         self.assertEqual(self.buffer.num_experts_per_rank, 16)
         self.assertEqual(self.buffer.runtime.num_experts_per_rank, 16)
-        self.assertEqual(self.buffer.get_topology(), ("direct", 24))
+        self.assertEqual(self.buffer._get_topology(), ("direct", 24))
         self.assertEqual(self.probes, {"rdma": 0, "nvlink": 0})
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
-        self.assertEqual(self.buffer.get_topology(), ("hybrid", 24))
+        self.assertEqual(self.buffer._get_topology(), ("hybrid", 24))
         self.assertEqual(self.probes, {"rdma": 0, "nvlink": 0})
         self.assertEqual(self.buffer.runtime.dispatch_calls, 0)
 
     def test_stage_uses_proposed_masks_and_publishes_only_at_commit(self):
         self.dispatch()
-        before = self.buffer.get_topology(), self.buffer.get_topology_masks()
+        before = self.buffer._get_topology(), self.buffer._get_topology_masks()
         expected = self.expected_sms([0, 1], range(8))
         self.assertNotEqual(
             before[0][1], expected, "test needs distinguishable SM estimates"
         )
-        self.buffer.stage_topology(active_ranks=self.ranks([0, 1], range(8)))
+        self.buffer._stage_topology(active_ranks=self.ranks([0, 1], range(8)))
         self.assertEqual(
-            (self.buffer.get_topology(), self.buffer.get_topology_masks()), before
+            (self.buffer._get_topology(), self.buffer._get_topology_masks()), before
         )
         self.assertEqual(self.buffer.runtime.pending[1], expected)
-        self.buffer.commit_topology()
-        self.assertEqual(self.buffer.get_topology(), ("hybrid", expected))
-        self.assertEqual(self.buffer.get_topology_masks(), (3, 255))
+        self.buffer._commit_topology()
+        self.assertEqual(self.buffer._get_topology(), ("hybrid", expected))
+        self.assertEqual(self.buffer._get_topology_masks(), (3, 255))
 
     def test_estimate_query_does_not_enable_automatic_retuning(self):
         self.buffer.get_theoretical_num_sms(8)
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
-        self.assertEqual(self.buffer.get_topology()[1], 24)
+        self.assertEqual(self.buffer._get_topology()[1], 24)
 
     def test_numeric_debug_flag(self):
         for value, enabled in (("0", False), ("1", True)):
@@ -340,7 +339,7 @@ class AutoSMHostTests(unittest.TestCase):
         model = self.buffer._get_theoretical_num_sms
         before = model.cache_info()
         self.buffer.get_theoretical_num_sms(8)
-        self.buffer.stage_topology(active_ranks=self.ranks([0], range(16)))
+        self.buffer._stage_topology(active_ranks=self.ranks([0], range(16)))
         after = model.cache_info()
         self.assertEqual(after.misses, before.misses)
         self.assertGreaterEqual(after.hits - before.hits, 2)
@@ -350,11 +349,11 @@ class AutoSMHostTests(unittest.TestCase):
         self.dispatch(num_topk=1)
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
         self.assertEqual(
-            self.buffer.get_topology()[1],
+            self.buffer._get_topology()[1],
             self.expected_sms([0, 1], range(8), num_topk=1),
         )
         self.assertNotEqual(
-            self.buffer.get_topology()[1],
+            self.buffer._get_topology()[1],
             self.expected_sms([0, 1], range(8)),
             "test needs distinct estimates for the two MoE configurations",
         )
@@ -378,7 +377,8 @@ class AutoSMHostTests(unittest.TestCase):
             with self.subTest(domains=domains, positions=list(positions)):
                 self.buffer.set_active_ranks(self.ranks(domains, positions))
                 self.assertEqual(
-                    self.buffer.get_topology()[1], self.expected_sms(domains, positions)
+                    self.buffer._get_topology()[1],
+                    self.expected_sms(domains, positions),
                 )
                 self.assertEqual(self.buffer.num_experts_per_rank, 16)
         self.assertEqual(self.buffer.runtime.dispatch_calls, dispatch_calls)
@@ -410,139 +410,172 @@ class AutoSMHostTests(unittest.TestCase):
         with patch.dict(self.Buffer.dispatch.__globals__, get_nvlink_gbs=no_nvlink):
             self.dispatch()
         self.assertEqual(self.buffer.runtime.dispatch_calls, 1)
-        self.assertEqual(self.buffer.get_topology()[1], self.expected_sms([0, 1], [0]))
+        self.assertEqual(self.buffer._get_topology()[1], self.expected_sms([0, 1], [0]))
         self.assertEqual(self.probes, {"rdma": 1, "nvlink": 0})
 
     def test_explicit_dispatch_disables_retune_until_automatic_dispatch_resumes(self):
         self.dispatch()
         self.dispatch(num_sms=10)
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
-        self.assertEqual(self.buffer.get_topology()[1], 10)
+        self.assertEqual(self.buffer._get_topology()[1], 10)
         self.dispatch(num_sms=0)
         self.assertEqual(
-            self.buffer.get_topology()[1], self.expected_sms([0, 1], range(8))
+            self.buffer._get_topology()[1], self.expected_sms([0, 1], range(8))
         )
         self.buffer.set_active_ranks(self.ranks([0], range(16)))
         self.assertEqual(
-            self.buffer.get_topology()[1], self.expected_sms([0], range(16))
+            self.buffer._get_topology()[1], self.expected_sms([0], range(16))
         )
 
     def test_explicit_staged_count_is_preserved_until_automatic_dispatch(self):
         self.dispatch()
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)), num_active_sms=12)
-        self.assertEqual(self.buffer.get_topology()[1], 12)
+        self.assertEqual(self.buffer._get_topology()[1], 12)
         self.buffer.set_active_ranks(self.ranks([0], range(16)))
-        self.assertEqual(self.buffer.get_topology()[1], 12)
+        self.assertEqual(self.buffer._get_topology()[1], 12)
         self.dispatch()
         self.assertEqual(
-            self.buffer.get_topology()[1], self.expected_sms([0], range(16))
+            self.buffer._get_topology()[1], self.expected_sms([0], range(16))
         )
 
     def test_explicit_unchanged_dispatch_count_still_selects_manual_policy(self):
         self.dispatch()
-        current = self.buffer.get_topology()[1]
+        current = self.buffer._get_topology()[1]
         self.dispatch(num_sms=current)
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
-        self.assertEqual(self.buffer.get_topology()[1], current)
+        self.assertEqual(self.buffer._get_topology()[1], current)
 
     def test_explicit_setter_pins_count_until_auto_dispatch_resumes(self):
         self.dispatch()
         self.buffer.set_num_active_sms(10)
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
-        self.assertEqual(self.buffer.get_topology()[1], 10)
+        self.assertEqual(self.buffer._get_topology()[1], 10)
         self.dispatch()
         self.buffer.set_active_ranks(self.ranks([0], range(16)))
         self.assertEqual(
-            self.buffer.get_topology()[1], self.expected_sms([0], range(16))
+            self.buffer._get_topology()[1], self.expected_sms([0], range(16))
         )
 
     def test_failed_explicit_stage_does_not_disable_automatic_policy(self):
         self.dispatch()
-        before = self.buffer.get_topology(), self.buffer.get_topology_masks()
+        before = self.buffer._get_topology(), self.buffer._get_topology_masks()
         self.buffer.runtime.fail_stage = True
         with self.assertRaisesRegex(ValueError, "stage refusal"):
-            self.buffer.stage_topology(
+            self.buffer._stage_topology(
                 active_ranks=self.ranks([0, 1], range(8)), num_active_sms=10
             )
         self.assertEqual(
-            (self.buffer.get_topology(), self.buffer.get_topology_masks()), before
+            (self.buffer._get_topology(), self.buffer._get_topology_masks()), before
         )
         self.buffer.runtime.fail_stage = False
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
         self.assertEqual(
-            self.buffer.get_topology()[1], self.expected_sms([0, 1], range(8))
+            self.buffer._get_topology()[1], self.expected_sms([0, 1], range(8))
         )
 
     def test_failed_restage_keeps_previous_pending_transaction(self):
         self.dispatch()
-        self.buffer.stage_topology(active_ranks=self.ranks([0, 1], range(8)))
+        self.buffer._stage_topology(active_ranks=self.ranks([0, 1], range(8)))
         pending = self.buffer.runtime.pending
         self.buffer.runtime.fail_stage = True
         with self.assertRaisesRegex(ValueError, "stage refusal"):
-            self.buffer.stage_topology(
+            self.buffer._stage_topology(
                 active_ranks=self.ranks([0], range(4)), num_active_sms=10
             )
         self.assertEqual(self.buffer.runtime.pending, pending)
         self.buffer.runtime.fail_stage = False
-        self.buffer.commit_topology()
+        self.buffer._commit_topology()
         self.assertEqual(
-            self.buffer.get_topology()[1], self.expected_sms([0, 1], range(8))
+            self.buffer._get_topology()[1], self.expected_sms([0, 1], range(8))
         )
         self.buffer.set_active_ranks(self.ranks([0], range(16)))
         self.assertEqual(
-            self.buffer.get_topology()[1], self.expected_sms([0], range(16))
+            self.buffer._get_topology()[1], self.expected_sms([0], range(16))
         )
 
     def test_refused_commit_does_not_publish_staged_manual_policy(self):
         self.dispatch()
-        before = self.buffer.get_topology(), self.buffer.get_topology_masks()
-        self.buffer.stage_topology(
+        before = self.buffer._get_topology(), self.buffer._get_topology_masks()
+        self.buffer._stage_topology(
             active_ranks=self.ranks([0, 1], range(8)), num_active_sms=10
         )
         self.buffer.runtime.fail_commit = True
         with self.assertRaisesRegex(ValueError, "mapping refusal"):
-            self.buffer.commit_topology()
+            self.buffer._commit_topology()
         self.assertEqual(
-            (self.buffer.get_topology(), self.buffer.get_topology_masks()), before
+            (self.buffer._get_topology(), self.buffer._get_topology_masks()), before
         )
         self.buffer.runtime.fail_commit = False
-        self.buffer.stage_topology(active_ranks=self.ranks([0, 1], range(8)))
-        self.buffer.commit_topology()
+        self.buffer._stage_topology(active_ranks=self.ranks([0, 1], range(8)))
+        self.buffer._commit_topology()
         self.assertEqual(
-            self.buffer.get_topology()[1], self.expected_sms([0, 1], range(8))
+            self.buffer._get_topology()[1], self.expected_sms([0, 1], range(8))
         )
 
-    def test_transport_only_commit_does_not_restore_old_manual_policy(self):
-        self.dispatch()
-        self.buffer.set_num_active_sms(10)
-        self.dispatch()
-        self.buffer.runtime.staged_views = True
-        self.buffer.commit_topology()
-        self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
-        self.assertEqual(
-            self.buffer.get_topology()[1], self.expected_sms([0, 1], range(8))
-        )
+    def test_disconnect_finishes_retirement_and_preserves_membership_and_sm_policy(
+        self,
+    ):
+        for automatic in (False, True):
+            with self.subTest(automatic=automatic):
+                self.buffer.connect_ranks(list(range(8, 16)))
+                self.buffer.set_active_ranks(list(range(16)))
+                self.buffer.set_num_active_sms(10)
+                if automatic:
+                    self.dispatch()
+                self.buffer.set_active_ranks(list(range(8)))
+                before = self.buffer._get_topology(), self.buffer._auto_sm_config
+                commits = self.buffer.runtime.commit_calls
+                self.buffer.disconnect_ranks(list(range(8, 16)))
+                self.assertEqual(self.buffer.runtime.commit_calls, commits + 1)
+                self.assertFalse(self.buffer.runtime.staged_views)
+                self.assertEqual(self.buffer.get_connected_ranks(), list(range(1, 8)))
+                self.assertEqual(self.buffer.get_active_ranks(), list(range(8)))
+                self.assertEqual(
+                    (self.buffer._get_topology(), self.buffer._auto_sm_config), before
+                )
+                self.buffer.set_active_ranks(list(range(4)))
+                self.assertEqual(
+                    self.buffer._get_topology()[1],
+                    self.expected_sms([0], range(4)) if automatic else 10,
+                )
+
+    def test_empty_disconnect_does_not_commit_pending_connections(self):
+        runtime = self.buffer.runtime
+        runtime.disconnect_ranks = Mock(wraps=runtime.disconnect_ranks)
+        for prepared in (False, True):
+            with self.subTest(prepared=prepared):
+                if prepared:
+                    self.buffer.connect_ranks([16])
+                commits = runtime.commit_calls
+                before = self.buffer._get_topology(), self.buffer._auto_sm_config
+                self.buffer.disconnect_ranks([])
+                self.assertEqual(runtime.commit_calls, commits)
+                self.assertEqual(runtime.staged_views, prepared)
+                self.assertEqual(
+                    (self.buffer._get_topology(), self.buffer._auto_sm_config), before
+                )
+        runtime.disconnect_ranks.assert_not_called()
 
     def test_dispatch_policy_change_cannot_overwrite_pending_transaction(self):
         self.dispatch()
-        self.buffer.stage_topology(active_ranks=self.ranks([0, 1], range(8)))
+        self.buffer._stage_topology(active_ranks=self.ranks([0, 1], range(8)))
         pending = self.buffer.runtime.pending
         dispatch_calls = self.buffer.runtime.dispatch_calls
-        with self.assertRaisesRegex(AssertionError, "staged|commit"):
-            self.dispatch(num_sms=self.buffer.get_topology()[1])
+        with self.assertRaisesRegex(AssertionError, "pending"):
+            self.dispatch(num_sms=self.buffer._get_topology()[1])
         self.assertEqual(self.buffer.runtime.pending, pending)
         self.assertEqual(self.buffer.runtime.dispatch_calls, dispatch_calls)
-        self.buffer.commit_topology()
+        self.buffer._commit_topology()
         self.buffer.set_active_ranks(self.ranks([0], range(16)))
         self.assertEqual(
-            self.buffer.get_topology()[1], self.expected_sms([0], range(16))
+            self.buffer._get_topology()[1], self.expected_sms([0], range(16))
         )
 
     def test_small_or_inactive_world_preserves_auto_policy_without_model_evaluation(
         self,
     ):
         self.dispatch()
-        current = self.buffer.get_topology()[1]
+        current = self.buffer._get_topology()[1]
         model = self.buffer._get_theoretical_num_sms
         with patch.object(
             self.buffer,
@@ -550,13 +583,13 @@ class AutoSMHostTests(unittest.TestCase):
             side_effect=AssertionError("unexpected estimate"),
         ):
             self.buffer.set_active_ranks(self.ranks([0], range(MIN_ACTIVE_RANKS - 1)))
-            self.assertEqual(self.buffer.get_topology()[1], current)
+            self.assertEqual(self.buffer._get_topology()[1], current)
             self.buffer.set_active_ranks(self.ranks([1], range(8)))
-            self.assertEqual(self.buffer.get_topology()[1], current)
+            self.assertEqual(self.buffer._get_topology()[1], current)
         self.assertEqual(self.buffer._get_theoretical_num_sms, model)
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
         self.assertEqual(
-            self.buffer.get_topology()[1], self.expected_sms([0, 1], range(8))
+            self.buffer._get_topology()[1], self.expected_sms([0, 1], range(8))
         )
 
     def test_count_change_during_capture_refuses_before_native_dispatch(self):
@@ -566,11 +599,11 @@ class AutoSMHostTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "capture"):
             self.dispatch(num_sms=0)
         self.assertEqual(self.buffer.runtime.dispatch_calls, dispatch_calls)
-        self.assertEqual(self.buffer.get_topology()[1], 10)
+        self.assertEqual(self.buffer._get_topology()[1], 10)
         self.cuda.capturing = False
         self.buffer.set_active_ranks(self.ranks([0, 1], range(8)))
         self.assertEqual(
-            self.buffer.get_topology()[1],
+            self.buffer._get_topology()[1],
             10,
             "a refused automatic capture must not replace the manual policy",
         )

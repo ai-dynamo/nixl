@@ -115,7 +115,6 @@ def test_loop(local_rank, num_local_ranks, args):
         store,
         rank,
         num_ranks,
-        namespace="elastic-warmup-test",
         timeout_seconds=args.store_timeout_secs,
     )
     max_so, max_su = cohort.num_scaleout_ranks, cohort.num_scaleup_ranks
@@ -136,7 +135,6 @@ def test_loop(local_rank, num_local_ranks, args):
 
     def connect(target, prefix, peer_store):
         torch.cuda.set_device(local_rank)
-        buffer.publish(store=peer_store, key_prefix=prefix)
         peers = sorted(set(target) - {rank} - set(buffer.get_connected_ranks()))
         before = timer.completed if timer is not None else 0
         start = time.monotonic()
@@ -160,17 +158,15 @@ def test_loop(local_rank, num_local_ranks, args):
             0,
             1,
             store,
-            bootstrap_id=f"elastic-warmup/{prefix}/{rank}",
             max_num_scaleout_ranks=max_so,
             max_num_scaleup_ranks=max_su,
             scaleout_rank_idx=rank // max_su,
             scaleup_rank_idx=rank % max_su,
         )
         stats = connect(target, prefix, store)
-        buffer.stage_topology(
-            active_ranks=target, num_active_sms=args.num_sms or buffer.num_launch_sms
+        buffer.set_active_ranks(
+            target, num_active_sms=args.num_sms or buffer.num_launch_sms
         )
-        buffer.commit_topology()
         round_idx = [0]
 
         def capture_barrier():
@@ -252,10 +248,6 @@ def test_loop(local_rank, num_local_ranks, args):
                     host, port, is_master=False, wait_for_workers=False, timeout=timeout
                 )
                 result = connect(target, key, connection_store)
-                buffer.stage_topology(
-                    active_ranks=target,
-                    num_active_sms=args.num_sms or buffer.num_launch_sms,
-                )
                 connection_store.set(f"{key}/prepared/{rank}", b"1")
                 return result
 
@@ -285,13 +277,14 @@ def test_loop(local_rank, num_local_ranks, args):
         barrier(store, f"{key}/drained", rank, participants)
         start = time.monotonic()
         if rank in old:
-            buffer.commit_topology()
+            buffer.set_active_ranks(
+                target, num_active_sms=args.num_sms or buffer.num_launch_sms
+            )
         if new_size < old_size:
             peers = buffer.get_connected_ranks()
             buffer.disconnect_ranks(
                 [peer for peer in peers if rank not in target or peer not in target]
             )
-            buffer.commit_topology()
         torch.cuda.synchronize()
         stats["activation_ms"] = (time.monotonic() - start) * 1e3
         barrier(store, f"{key}/activated", rank, participants)

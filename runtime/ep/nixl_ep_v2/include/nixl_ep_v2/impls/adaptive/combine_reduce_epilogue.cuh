@@ -19,6 +19,7 @@ namespace nixl_ep_v2::elastic::adaptive {
 // Reduce epilogue of the adaptive combine: given the buffer base, it derives the rows to reduce from the topology descriptor (`EPTopology`)
 template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
           int kNumSMs, int kNumWarps, int kNumChannelsPerSM,
+          int kNumMaxScaleupRanks,
           int kHidden,
           int kNumExpertsPerRank, int kNumTopk,
           int64_t kNumTimeoutCycles,
@@ -99,7 +100,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
         if (lane_idx < kNumTopk) {
             const int dst_expert_idx = static_cast<int>(combined_topk_idx[token_idx * kNumTopk + lane_idx]);
             owner = dst_expert_idx >= 0 ? dst_expert_idx / num_experts_per_rank : -1;
-            const int owner_domain = owner / num_scaleup_ranks, owner_position = owner % num_scaleup_ranks;
+            const int owner_domain = owner / kNumMaxScaleupRanks, owner_position = owner % kNumMaxScaleupRanks;
             // A selection of a masked rank's expert was dropped at dispatch: no row to reduce, weight zero
             if (owner >= 0 and not topo.is_active(owner_domain, owner_position))
                 owner = -1;

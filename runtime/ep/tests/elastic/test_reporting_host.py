@@ -107,11 +107,22 @@ class ReportingHostTests(unittest.TestCase):
 
     def test_remote_rows_exclude_local_domain_and_deduplicate(self):
         count = self.ns["remote_payload_rows"]
-        self.assertEqual(count([[0, 1, 4, 7, -1]], 4, 2, 0), (0, 0))
-        self.assertEqual(count([[0, 8, 9, 12], [8, 12, 13], [-1, -1]], 4, 2, 0), (2, 4))
-        # Active domain/position holes retain their extent coordinates; source domain is not necessarily zero.
-        self.assertEqual(count([[10, 26, 27, 30, 31, -1]], 2, 4, 1), (1, 2))
-        self.assertEqual(count([[32, 35, 60, -1]], 4, 8, 1), (0, 0))
+        self.assertEqual(count([[0, 1, 4, 7, -1]], 4, 2, 0, range(4)), (0, 0))
+        self.assertEqual(
+            count([[0, 8, 9, 12], [8, 12, 13], [-1, -1]], 4, 2, 0, range(4)), (2, 4)
+        )
+        # World-rank holes retain their physical coordinates; source domain is not necessarily zero.
+        self.assertEqual(
+            count([[10, 26, 27, 30, 31, -1]], 2, 4, 1, [5, 7, 13, 15]), (1, 2)
+        )
+        self.assertEqual(count([[32, 35, 60, -1]], 4, 8, 1, [8, 15]), (0, 0))
+
+    def test_remote_rows_keep_world_stride_and_drop_inactive_owners(self):
+        count = self.ns["remote_payload_rows"]
+        row = [[0, 4, 8, 9, 10, 12, -1]]
+        self.assertEqual(count(row, 2, 4, 0, range(8)), (1, 3))
+        self.assertEqual(count(row, 2, 4, 0, [0, 1, 4, 5]), (1, 2))
+        self.assertEqual(count(row, 2, 4, 1, [4, 5]), (0, 0))
 
     def test_combine_destinations_filter_ignored_entries_before_deduplication(self):
         try:
@@ -131,7 +142,7 @@ class ReportingHostTests(unittest.TestCase):
         namespace = dict(
             torch=torch,
             Optional=Optional,
-            num_experts=8,
+            num_physical_experts=8,
             args=SimpleNamespace(ignore_local_traffic=True),
         )
         exec(
@@ -154,7 +165,10 @@ class ReportingHostTests(unittest.TestCase):
 
     def test_return_payload_counts_follow_reduction_mode(self):
         buffer = SimpleNamespace(
-            num_experts_per_rank=2, scaleout_rank_idx=1, allow_multiple_reduction=True
+            num_experts_per_rank=2,
+            scaleout_rank_idx=1,
+            max_num_scaleup_ranks=4,
+            allow_multiple_reduction=True,
         )
         case = SimpleNamespace(buffer=buffer, extent=lambda phase: (4, 4))
         pair = SimpleNamespace(
@@ -175,7 +189,8 @@ class ReportingHostTests(unittest.TestCase):
         )
         buffer.allow_multiple_reduction = False
         self.assertEqual(
-            self.ns["pair_bytes"](case, pair, [])["combine_remote_payload"], 40
+            self.ns["pair_bytes"](case, pair, [5, 7, 13, 15])["combine_remote_payload"],
+            40,
         )
 
     def test_kineto_only_never_runs_event_benchmark(self):
@@ -189,7 +204,9 @@ class ReportingHostTests(unittest.TestCase):
                     "Kineto timing conflicts with NIXL_EP_USE_NVIDIA_TOOLS: disable Kineto",
                 ):
                     self.ns["bench_kineto"](
-                        lambda: self.fail("refused profiling must not run the workload"),
+                        lambda: self.fail(
+                            "refused profiling must not run the workload"
+                        ),
                         names,
                     )
             args = self.ns["make_parser"]().parse_args([])
@@ -210,6 +227,7 @@ class ReportingHostTests(unittest.TestCase):
             world_rank=0,
             scaleout_rank_idx=0,
             num_experts_per_rank=2,
+            max_num_scaleup_ranks=2,
             allow_multiple_reduction=True,
             barrier=lambda: None,
             dispatch=lambda **kw: None,

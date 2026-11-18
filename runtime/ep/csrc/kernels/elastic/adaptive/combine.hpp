@@ -134,6 +134,7 @@ public:
         // Templated arguments
         bool use_expanded_layout, allow_multiple_reduction;
         int num_channels_per_sm;
+        int num_max_scaleup_ranks;
         int hidden;
         int num_experts_per_rank, num_topk;
         int64_t num_timeout_cycles;
@@ -158,12 +159,13 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",                        args.use_expanded_layout, args.allow_multiple_reduction,
                            args.launch_args.grid_dim.first,
                            args.launch_args.num_threads / 32,
                            args.num_channels_per_sm,
+                           args.num_max_scaleup_ranks,
                            args.hidden,
                            args.num_experts_per_rank, args.num_topk,
                            args.num_timeout_cycles);
@@ -191,6 +193,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
                                            void* bias_0, void* bias_1,
                                            const topology::EPTopology* topology,
                                            const int& num_sms, const int& num_smem_bytes,
+                                           const int& num_max_scaleup_ranks,
                                            const int& num_channels_per_sm,
                                            const bool& use_expanded_layout, const bool& allow_multiple_reduction,
                                            const at::cuda::CUDAStream& stream) {
@@ -205,6 +208,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
         .use_expanded_layout = use_expanded_layout,
         .allow_multiple_reduction = allow_multiple_reduction,
         .num_channels_per_sm = num_channels_per_sm,
+        .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .hidden = hidden,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk,
         .num_timeout_cycles = num_timeout_cycles,

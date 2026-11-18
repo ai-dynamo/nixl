@@ -6,6 +6,7 @@ import argparse
 
 import torch
 import torch.distributed as dist
+from buffer_setup import create_group_buffer
 
 import nixl.runtime.ep as nixl_ep_v2
 from nixl.runtime.ep.utils.envs import dist_print, init_dist
@@ -14,7 +15,7 @@ from nixl.runtime.ep.utils.testing import bench_kineto
 
 def test_barrier(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
     dist_print("Profiling barrier:", once_in_node=True)
-    num_scaleout_ranks, num_scaleup_ranks = buffer.get_topology_extent()
+    num_scaleout_ranks, num_scaleup_ranks = buffer._get_topology_extent()
     dist_print(
         f"Config:\n" f" > Ranks: {num_scaleout_ranks} x {num_scaleup_ranks}\n",
         once_in_node=True,
@@ -31,7 +32,7 @@ def test_barrier(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
         barrier=buffer.barrier,
     )
     dist_print(
-        f" > EP: {buffer.rank_idx:3}/{buffer.num_ranks:3}, "
+        f" > EP: {buffer.world_rank:3}/{len(buffer.get_active_ranks()):3}, "
         f"barrier time: {t * 1e6:.3f} us"
     )
     dist_print(once_in_node=True)
@@ -44,9 +45,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
 
     do_pressure_test = args.do_pressure_test
     for i in range(int(1e9) if do_pressure_test else 1):
-        buffer = nixl_ep_v2.ElasticBuffer(
-            group, num_bytes=2**30, explicitly_destroy=True
-        )
+        buffer = create_group_buffer(group, explicitly_destroy=True)
 
         # Test barrier
         test_barrier(buffer, args)

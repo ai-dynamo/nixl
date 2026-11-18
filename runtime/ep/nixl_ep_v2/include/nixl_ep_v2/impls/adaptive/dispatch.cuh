@@ -85,10 +85,8 @@ adaptive_dispatch_impl(
     const int num_channels = kNumChannelsPerSM * num_active_sms;
     const int num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels);
 
-    // Direct mode (MNNVL): one flat NVLink team = exactly one active NVLink domain, whatever its index (the extent
-    // `num_scaleout_ranks` may exceed 1; ranks, experts and tokens keep their global numbering, NVLink peers and
-    // per-position slots are addressed by the position `rank % num_scaleup_ranks`); the data warps write straight
-    // into the peers' scale-up buffers instead of staging through the scale-out send buffer and the forward warps
+    // Direct mode: one active NVLink domain, including a nonzero domain index.
+    // Data warps write to each peer's position without scale-out staging or forwarding.
     const bool is_direct = topo.mode == topology::kModeDirect;
 
     // Utils
@@ -98,9 +96,6 @@ adaptive_dispatch_impl(
 
     // A rank's position inside its domain (from its rank index)
     const auto position_of = [=](const int& rank) { return rank % num_scaleup_ranks; };
-
-    // Whether the rank owning a (global) expert is active; a selection of a dead expert is dropped
-    const auto is_expert_owner_active = [=](const int& expert_idx) { return topology::is_rank_active<kNumMaxScaleupRanks>(topo, expert_idx / num_experts_per_rank); };
 
     // Workspaces
     const auto workspace_layout = layout::WorkspaceLayout(ctx.local_base);
@@ -204,10 +199,9 @@ adaptive_dispatch_impl(
         for (int i = global_warp_idx; i < num_tokens; i += kNumNotifyWarps * num_active_sms) {
             // Expert choice can not be redundant
             // NOTES: no assertions here as they are expensive
-            auto dst_expert_idx = lane_idx < kNumTopk ?
-                static_cast<int>(__ldg(topk_idx + i * kNumTopk + lane_idx)) : -1;
-            if (dst_expert_idx >= 0 and not is_expert_owner_active(dst_expert_idx))
-                dst_expert_idx = -1;
+            const auto dst_expert_idx = lane_idx < kNumTopk ?
+                topology::world_expert_to_extent<kNumMaxScaleupRanks, kNumExpertsPerRank>(
+                    topo, static_cast<int>(__ldg(topk_idx + i * kNumTopk + lane_idx))) : -1;
             if (dst_expert_idx >= 0)
                 atomicAdd_block(expert_count + dst_expert_idx, 1);
 
@@ -306,7 +300,7 @@ adaptive_dispatch_impl(
                     const bool is_rank_slot = i < num_scaleup_ranks;
                     const int expert_slot = i - num_scaleup_ranks;
                     const bool active = is_rank_slot ? topology::is_scaleup_active<kNumMaxScaleupRanks>(topo, i)
-                                                     : is_expert_owner_active(expert_slot);
+                                                     : topology::is_rank_active<kNumMaxScaleupRanks>(topo, expert_slot / num_experts_per_rank);
                     int* smem_dst = is_rank_slot ? rank_count + i : expert_count + expert_slot;
                     if (not active) {
                         *smem_dst = 0;
@@ -561,11 +555,9 @@ adaptive_dispatch_impl(
             int stored_dst_rank_idx = -1;
             if (lane_idx < kNumTopk) {
                 const auto uncasted_dst_expert_idx = __ldg(topk_idx + token_idx * kNumTopk + lane_idx);
-                const auto dst_expert_idx = static_cast<int>(uncasted_dst_expert_idx);
-                // The destination rank is global; its NVLink peer and its per-position slots are its position
+                const auto dst_expert_idx = topology::world_expert_to_extent<kNumMaxScaleupRanks, kNumExpertsPerRank>(topo, static_cast<int>(uncasted_dst_expert_idx));
+                // The destination rank uses the current extent; its NVLink peer is its position.
                 stored_dst_rank_idx = dst_expert_idx >= 0 ? dst_expert_idx / num_experts_per_rank : -1;
-                if (stored_dst_rank_idx >= 0 and not topology::is_rank_active<kNumMaxScaleupRanks>(topo, stored_dst_rank_idx))
-                    stored_dst_rank_idx = -1;
                 tma_buffer.get_topk_idx_ptr()[lane_idx] = dst_expert_idx;
                 if (topk_weights != nullptr)
                     tma_buffer.get_topk_weights_ptr()[lane_idx] = __ldg(topk_weights + token_idx * kNumTopk + lane_idx);
@@ -637,8 +629,8 @@ adaptive_dispatch_impl(
             int stored_dst_scaleout_rank_idx = -1;
             if (lane_idx < kNumTopk) {
                 const auto uncasted_dst_expert_idx = __ldg(topk_idx + token_idx * kNumTopk + lane_idx);
-                const auto dst_expert_idx = static_cast<int>(uncasted_dst_expert_idx);
-                stored_dst_scaleout_rank_idx = dst_expert_idx >= 0 and is_expert_owner_active(dst_expert_idx) ?
+                const auto dst_expert_idx = topology::world_expert_to_extent<kNumMaxScaleupRanks, kNumExpertsPerRank>(topo, static_cast<int>(uncasted_dst_expert_idx));
+                stored_dst_scaleout_rank_idx = dst_expert_idx >= 0 ?
                     dst_expert_idx / num_experts_per_scaleout : -1;
                 tma_buffer.get_topk_idx_ptr()[lane_idx] = dst_expert_idx;
                 if (topk_weights != nullptr)

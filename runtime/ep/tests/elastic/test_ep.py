@@ -8,6 +8,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
+from buffer_setup import create_group_buffer, get_logical_domain_size
 
 import nixl.runtime.ep as nixl_ep_v2
 from nixl.runtime.ep.utils.envs import dist_print, init_dist, init_seed
@@ -108,7 +109,7 @@ def test_dispatch_combine(
     use_fp8_dispatch: Optional[bool] = None,
 ):
     # Settings
-    num_scaleout_ranks, num_scaleup_ranks = buffer.get_topology_extent()
+    num_scaleout_ranks, num_scaleup_ranks = buffer._get_topology_extent()
     num_max_tokens_per_rank, num_tokens, hidden = (
         args.num_tokens,
         max(1, args.num_tokens - dist.get_rank()),
@@ -132,7 +133,7 @@ def test_dispatch_combine(
     scores = get_unbalanced_scores(
         num_tokens,
         num_experts,
-        buffer.num_ranks,
+        len(buffer.get_active_ranks()),
         num_topk,
         args.unbalanced_ratio,
         args.precise_unbalanced_ratio,
@@ -145,6 +146,18 @@ def test_dispatch_combine(
         rand_mask = torch.rand_like(topk_idx, dtype=torch.float)
         topk_idx.masked_fill_(rand_mask < args.masked_ratio, -1)
         topk_weights.masked_fill_(topk_idx < 0, 0)
+    # The collective reference uses dense process-group ranks; dispatch uses fixed world owners.
+    ref_topk_idx = topk_idx
+    active_world = torch.tensor(sorted(buffer.get_active_ranks()), device="cuda")
+    topk_idx = torch.where(
+        ref_topk_idx >= 0,
+        active_world[ref_topk_idx.clamp_min(0) // num_local_experts] * num_local_experts
+        + ref_topk_idx.clamp_min(0) % num_local_experts,
+        -1,
+    ).to(nixl_ep_v2.topk_idx_t)
+    num_physical_experts = (
+        buffer.max_num_scaleout_ranks * buffer.max_num_scaleup_ranks * num_local_experts
+    )
 
     # Run all tests
     dist_print("Running all test cases:", once_in_node=True)
@@ -195,13 +208,13 @@ def test_dispatch_combine(
                 ref_recv_src_token_idx,
                 ref_num_recv_tokens_per_rank,
             ) = ref_dispatch(
-                x, topk_idx, topk_weights, num_max_tokens_per_rank, num_experts
+                x, ref_topk_idx, topk_weights, num_max_tokens_per_rank, num_experts
             )
             ref_recv_x_bf16 = get_recv_x_bf16(ref_recv_x)
 
             if args.allow_multiple_reduction:
                 # The hybrid combine performs the intra-scaleup reduction first, the direct combine only reduces within a rank
-                if buffer.get_topology()[0] == "hybrid":
+                if buffer._get_topology()[0] == "hybrid":
                     reduced_combine_recipe = (True, True)
                     combine_recipe = (True, True)
                 else:
@@ -221,18 +234,18 @@ def test_dispatch_combine(
             ref_reduced_combined_y = ref_combine(
                 ref_y,
                 topk_idx,
-                num_scaleout_ranks,
-                num_scaleup_ranks,
-                num_experts,
+                buffer.max_num_scaleout_ranks,
+                buffer.max_num_scaleup_ranks,
+                num_physical_experts,
                 bias,
                 *reduced_combine_recipe,
             )
             ref_combined_y = ref_combine(
                 ref_y,
                 topk_idx,
-                num_scaleout_ranks,
-                num_scaleup_ranks,
-                num_experts,
+                buffer.max_num_scaleout_ranks,
+                buffer.max_num_scaleup_ranks,
+                num_physical_experts,
                 bias,
                 *combine_recipe,
             )  # Reduce within rank, then globally, for non-expand combine mode
@@ -375,17 +388,16 @@ def test_dispatch_combine(
                 return (
                     None
                     if not args.dump_profile_traces
-                    else f"{args.dump_profile_traces}/{prefix}_rank{buffer.rank_idx}.json"
+                    else f"{args.dump_profile_traces}/{prefix}_rank{buffer.world_rank}.json"
                 )
 
             # Calculate the number of tokens that are sent to the other scaleout peers
-            dst_scaleout_rank_idx = topk_idx // (num_experts // num_scaleout_ranks)
+            dst_scaleout_rank_idx = topk_idx // (
+                num_local_experts * buffer.max_num_scaleup_ranks
+            )
             num_scaleout_send_tokens = 0
             for i in range(num_scaleout_ranks if num_scaleout_ranks > 1 else 0):
-                if (
-                    args.ignore_local_traffic
-                    and i == dist.get_rank() // num_scaleup_ranks
-                ):
+                if args.ignore_local_traffic and i == buffer.scaleout_rank_idx:
                     continue
                 num_scaleout_send_tokens += (
                     (dst_scaleout_rank_idx == i).any(dim=1).sum().item()
@@ -399,7 +411,7 @@ def test_dispatch_combine(
                         src_token_global_idx
                         // num_max_tokens_per_rank
                         % num_scaleup_ranks
-                        == dist.get_rank() % num_scaleup_ranks
+                        == buffer.scaleup_rank_idx
                     )
                     .sum()
                     .item()
@@ -423,7 +435,7 @@ def test_dispatch_combine(
                 trace_path=get_trace_path("dispatch"),
             )
             dist_print(
-                f"   * EP: {buffer.rank_idx:3}/{buffer.num_ranks} | "
+                f"   * EP: {buffer.world_rank:3}/{len(buffer.get_active_ranks())} | "
                 f"dispatch: "
                 f"{num_scaleout_bytes / t / 1e9:.0f} GB/s (SO), "
                 f"{num_scaleup_bytes / t / 1e9:.0f} GB/s (SU), {t * 1e6:.3f} us, {num_scaleup_bytes:.0f} bytes | "
@@ -442,7 +454,7 @@ def test_dispatch_combine(
                 trace_path=get_trace_path("expanded_dispatch"),
             )
             dist_print(
-                f"   - EP: {buffer.rank_idx:3}/{buffer.num_ranks} | "
+                f"   - EP: {buffer.world_rank:3}/{len(buffer.get_active_ranks())} | "
                 f"expanded dispatch: "
                 f"{num_scaleout_bytes / t / 1e9:.0f} GB/s (SO), "
                 f"{num_scaleup_bytes / t / 1e9:.0f} GB/s (SU), {t * 1e6:.3f} us, {num_scaleup_bytes:.0f} bytes | "
@@ -457,16 +469,16 @@ def test_dispatch_combine(
             num_reduction_write_bytes = count_bytes(combined_x)
 
             def get_combine_bytes(is_expand_mode: bool) -> Tuple[float, float, float]:
-                num_experts_per_rank = num_experts // (
-                    num_scaleup_ranks * num_scaleout_ranks
+                num_experts_per_rank = buffer.num_experts_per_rank
+                num_experts_per_scaleout_rank = (
+                    num_experts_per_rank * buffer.max_num_scaleup_ranks
                 )
-                num_experts_per_scaleout_rank = num_experts_per_rank * num_scaleup_ranks
 
                 def get_unique_and_valid_dst_count(
                     dst_idx: torch.Tensor,
                     ignored_nums_l: Optional[int] = None,
                     ignored_nums_r: Optional[int] = None,
-                    max_num_in_dst_idx: int = num_experts - 1,
+                    max_num_in_dst_idx: int = num_physical_experts - 1,
                 ) -> int:
                     """
                     Get the number of valid destinations, with deduplication within each token and numbers within `[ignored_nums_l, ignored_nums_r)` being ignored
@@ -490,8 +502,9 @@ def test_dispatch_combine(
                         num_scaleup_tokens = num_scaleup_recv_tokens
                         num_scaleout_tokens = get_unique_and_valid_dst_count(
                             topk_idx // num_experts_per_rank,
-                            buffer.scaleout_rank_idx * num_scaleup_ranks,
-                            (buffer.scaleout_rank_idx + 1) * num_scaleup_ranks,
+                            buffer.scaleout_rank_idx * buffer.max_num_scaleup_ranks,
+                            (buffer.scaleout_rank_idx + 1)
+                            * buffer.max_num_scaleup_ranks,
                         )
                         num_reduction_read_tokens = get_unique_and_valid_dst_count(
                             topk_idx // num_experts_per_rank
@@ -526,7 +539,7 @@ def test_dispatch_combine(
                     # With `allow_multiple_reduction`, "combine" has exactly the same number of tokens as "dispatch"
                     num_scaleup_tokens = num_scaleup_recv_tokens
                     num_scaleout_tokens = num_scaleout_send_tokens
-                    if buffer.get_topology()[0] == "hybrid":
+                    if buffer._get_topology()[0] == "hybrid":
                         num_reduction_read_tokens = get_unique_and_valid_dst_count(
                             topk_idx // num_experts_per_scaleout_rank
                         )
@@ -552,7 +565,7 @@ def test_dispatch_combine(
                 trace_path=get_trace_path("combine"),
             )
             dist_print(
-                f"   @ EP: {buffer.rank_idx:3}/{buffer.num_ranks} | "
+                f"   @ EP: {buffer.world_rank:3}/{len(buffer.get_active_ranks())} | "
                 f"combine: "
                 f"{num_scaleout_bytes / t / 1e9:.0f} GB/s (SO), "
                 f"{num_scaleup_bytes / t / 1e9:.0f} GB/s (SU), {t * 1e6:.3f} us, {num_scaleup_bytes:.0f} bytes | "
@@ -570,7 +583,7 @@ def test_dispatch_combine(
                 trace_path=get_trace_path("reduced_combine"),
             )
             dist_print(
-                f"   + EP: {buffer.rank_idx:3}/{buffer.num_ranks} | "
+                f"   + EP: {buffer.world_rank:3}/{len(buffer.get_active_ranks())} | "
                 f"reduced combine: "
                 f"{num_scaleout_bytes / t / 1e9:.0f} GB/s (SO), "
                 f"{num_scaleup_bytes / t / 1e9:.0f} GB/s (SU), {t * 1e6:.3f} us, {num_scaleup_bytes:.0f} bytes | "
@@ -583,6 +596,12 @@ def test_dispatch_combine(
         if not args.skip_check:
             # Handle copy checks
             assert (topk_idx.data_ptr() != handle.topk_idx.data_ptr()) == do_handle_copy
+            assert torch.equal(
+                handle.topk_idx, topk_idx
+            ), "handle changed external expert IDs"
+            assert torch.equal(
+                expanded_handle.topk_idx, topk_idx
+            ), "expanded handle changed external expert IDs"
 
             # Make the valid part of the whole tensor for no CPU sync mode
             if not args.do_cpu_sync:
@@ -725,7 +744,7 @@ def test_dispatch_combine(
                 )
                 assert (
                     align(ref_count, expert_alignment) == count
-                ), f"{buffer.rank_idx=}, {i=}, {ref_count=}, {count=}"
+                ), f"{buffer.world_rank=}, {i=}, {ref_count=}, {count=}"
                 assert ref_count == expanded_count, f"{ref_count=}, {expanded_count=}"
 
             # Check dispatch scale-up received token psum
@@ -755,7 +774,7 @@ def test_dispatch_combine(
                 ),  # Expanded
                 (recv_x, recv_topk_idx, recv_topk_weights, handle),  # Unexpanded
             ):
-                for i in range(buffer.num_ranks):
+                for i in range(len(buffer.get_active_ranks())):
                     rank_start_idx = sum(ref_num_recv_tokens_per_rank[:i])
                     rank_end_idx = rank_start_idx + ref_num_recv_tokens_per_rank[i]
                     sorted_metadata = torch.sort(check_handle.recv_src_metadata[:, 0])
@@ -830,10 +849,12 @@ def add_test_dispatch_combine_arguments(parser: argparse.ArgumentParser) -> None
 def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     rank_idx, num_ranks, group = init_dist(local_rank, num_local_ranks, seed=args.seed)
     assert args.num_experts > 0 and args.num_experts % num_ranks == 0
+    topology = get_logical_domain_size(group)
 
     def construct_elastic_buffer(use_fp8_dispatch):
-        return nixl_ep_v2.ElasticBuffer(
+        return create_group_buffer(
             group,
+            topology=topology,
             num_experts_per_rank=args.num_experts // num_ranks,
             num_max_tokens_per_rank=args.num_tokens,
             hidden=args.hidden,
@@ -854,7 +875,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
             buffer = buffers.get(use_fp8_dispatch)
             if buffer is None:
                 hint = nixl_ep_v2.ElasticBuffer.get_buffer_size_hint(
-                    group,
+                    *topology,
                     args.num_tokens,
                     args.hidden,
                     use_fp8_dispatch=use_fp8_dispatch,

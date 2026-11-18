@@ -73,9 +73,6 @@ from ._C import topk_idx_t as topk_idx_t  # noqa: E402,F401
 # Import APIs after initialization
 from .buffers.elastic import ElasticBuffer as ElasticBuffer  # noqa: E402,F401
 from .buffers.elastic import EPHandle as EPHandle  # noqa: E402,F401
-from .utils.envs import (  # noqa: E402,F401
-    get_logical_domain_size as get_logical_domain_size,
-)
 
 # noinspection PyUnresolvedReferences
 from .utils.event import EventHandle as EventHandle  # noqa: E402,F401
@@ -87,5 +84,4 @@ __all__ = [
     "EventHandle",
     "EventOverlap",
     "topk_idx_t",
-    "get_logical_domain_size",
 ]

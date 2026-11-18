@@ -97,7 +97,7 @@ enum Mode : int {
 // The active ranks are the product of the active domains (`scaleout_mask`, bit d) and the active positions of a domain
 // (`scaleup_mask`, bit k): rank (d, k) takes part iff both bits are set; `num_scaleout_ranks` / `num_scaleup_ranks`
 // are the extents of the masks (highest active index + 1), so physical coordinates do not change with holes.
-// With S fixed physical expert slots per rank, routing slot e has extent rank e / S, whose coordinates
+// With S fixed physical expert slots per rank, internal routing slot e has extent rank e / S, whose coordinates
 // are (rank / num_scaleup_ranks, rank % num_scaleup_ranks). Holes retain their slots; they are not packed
 // away. The slot range is num_scaleout_ranks * num_scaleup_ranks * S, not the active rank count times S.
 struct alignas(128) EPTopology {
@@ -163,6 +163,19 @@ __device__ __forceinline__ bool is_scaleup_active(const EPTopology& topo, const 
 template <int kNumMaxScaleupRanks>
 __device__ __forceinline__ bool is_rank_active(const EPTopology& topo, const int& rank_idx) {
     return topo.is_scaleout_active(rank_idx / topo.num_scaleup_ranks) and is_scaleup_active<kNumMaxScaleupRanks>(topo, rank_idx % topo.num_scaleup_ranks);
+}
+
+// Public expert IDs use world ranks; internal counters and token metadata use the current extent.
+template <int kNumMaxScaleupRanks, int kNumExpertsPerRank>
+__device__ __forceinline__ int world_expert_to_extent(const EPTopology& topo, const int& expert_idx) {
+    if (expert_idx < 0)
+        return -1;
+    const int owner = expert_idx / kNumExpertsPerRank;
+    const int domain = owner / kNumMaxScaleupRanks, position = owner % kNumMaxScaleupRanks;
+    // Check before changing strides: an inactive position must not alias a rank in another domain.
+    if (not topo.is_scaleout_active(domain) or not is_scaleup_active<kNumMaxScaleupRanks>(topo, position))
+        return -1;
+    return (domain * topo.num_scaleup_ranks + position) * kNumExpertsPerRank + expert_idx % kNumExpertsPerRank;
 }
 
 // World ranks of our peers (`world_rank`): the scale-up peer at position `k` of our domain, the rail peer in domain `d`

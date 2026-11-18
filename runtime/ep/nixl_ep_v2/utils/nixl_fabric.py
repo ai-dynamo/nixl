@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
-"""NVLink-domain evidence for a constructing cohort: fail-closed for a declared domain size, inferred from pairwise
+"""NVLink-domain evidence for a discovery cohort: fail-closed for a declared domain size, inferred from pairwise
 evidence otherwise. No CUDA/NVML initialization at import time; GPUs are resolved in NVML by UUID."""
 
 import ctypes
@@ -117,7 +117,7 @@ def inspect_fabric_device():
 
 def validate_fabric_records(records, requested_scaleup=None):
     """Validate declared logical domains (contiguous blocks of ``requested_scaleup`` ranks, pairwise NVLink-linked;
-    a block smaller than its CUDA IPC clique passes here and is refused at ``commit_topology``, since the scale-out
+    a block smaller than its CUDA IPC clique passes here and is refused at activation, since the scale-out
     path needs RDMA to every rail peer) or infer uniform, rank-contiguous physical domains. Returns
     ``(num_scaleout_ranks, num_scaleup_ranks)``.
     """

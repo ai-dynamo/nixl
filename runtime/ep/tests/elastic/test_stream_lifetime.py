@@ -13,8 +13,9 @@ from datetime import timedelta
 
 import torch
 import torch.distributed as dist
+from buffer_setup import create_group_buffer
 
-from nixl.runtime.ep import ElasticBuffer, topk_idx_t
+from nixl.runtime.ep import topk_idx_t
 
 
 @torch.inference_mode()
@@ -30,7 +31,7 @@ def run(rank, port):
         timeout=timedelta(seconds=120),
     )
     tokens, hidden = 64, 512
-    buffer = ElasticBuffer(
+    buffer = create_group_buffer(
         dist.group.WORLD,
         num_experts_per_rank=8,
         num_max_tokens_per_rank=tokens,
@@ -38,7 +39,7 @@ def run(rank, port):
         num_topk=1,
         explicitly_destroy=True,
     )
-    assert buffer.get_topology()[0] == "direct"
+    assert buffer._get_topology()[0] == "direct"
     compute = torch.cuda.current_stream()
     communication = buffer.get_comm_stream()
     assert compute != communication
@@ -47,7 +48,9 @@ def run(rank, port):
     routes = ((torch.arange(tokens, device="cuda") % 2) * 8).to(topk_idx_t).view(-1, 1)
     weights = torch.ones((tokens, 1), dtype=torch.float32, device="cuda")
     residual = torch.full_like(first_input, 3)
-    initial_copy, observed = torch.empty_like(first_input), torch.empty_like(first_input)
+    initial_copy, observed = torch.empty_like(first_input), torch.empty_like(
+        first_input
+    )
 
     def dispatch(data, ready=None):
         return buffer.dispatch(
@@ -122,7 +125,9 @@ def run(rank, port):
         for attempt in range(3):
             check_output(kind)
             if rank == 0:
-                print(f"PASS: {kind} output lifetime, attempt {attempt + 1}", flush=True)
+                print(
+                    f"PASS: {kind} output lifetime, attempt {attempt + 1}", flush=True
+                )
 
     capture_stream = torch.cuda.Stream()
     capture_stream.wait_stream(compute)

@@ -61,22 +61,41 @@ int main() {
     out_of_extent.scaleup_rank_idx = 2;
     refuse(out_of_extent, false);
 
-    // Fixed slots use extent rank IDs, including holes and positions above bit 63.
+    // Public IDs stay fixed through 2x8 -> 2x4 -> a nonzero direct domain -> 2x8.
     constexpr int slots_per_rank = 4;
+    const auto full = make({0, 1}, {0, 1, 2, 3, 4, 5, 6, 7});
+    const auto half = make({0, 1}, {0, 1, 2, 3});
+    const auto direct = make({1}, {0, 1});
+    const auto holes = make({0, 1}, {0, 2});
+    for (int local_slot = 0; local_slot < slots_per_rank; ++local_slot) {
+        const int slot = 8 * slots_per_rank + local_slot;
+        assert((topology::world_expert_to_extent<8, slots_per_rank>(full, slot) == slot));
+        assert((topology::world_expert_to_extent<8, slots_per_rank>(half, slot) == 4 * slots_per_rank + local_slot));
+        assert((topology::world_expert_to_extent<8, slots_per_rank>(direct, slot) == 2 * slots_per_rank + local_slot));
+        assert((topology::world_expert_to_extent<8, slots_per_rank>(holes, slot) == 3 * slots_per_rank + local_slot));
+        assert((topology::world_expert_to_extent<8, slots_per_rank>(full, slot) == slot));
+        // World rank 4 is inactive after shrink; translating it first would alias live world rank 8.
+        assert((topology::world_expert_to_extent<8, slots_per_rank>(half, 4 * slots_per_rank + local_slot) == -1));
+        assert((topology::world_expert_to_extent<8, slots_per_rank>(direct, local_slot) == -1));
+        assert((topology::world_expert_to_extent<8, slots_per_rank>(holes, slots_per_rank + local_slot) == -1));
+    }
+    assert((topology::world_expert_to_extent<8, slots_per_rank>(half, -1) == -1));
+    assert((topology::world_expert_to_extent<8, slots_per_rank>(full, 16 * slots_per_rank) == -1));
+
+    // Non-power-of-two maximum width and positions above bit 63.
     const auto wide = make({1}, {65, 71});
+    const auto shrunk = make({1}, {64, 65});
     assert(wide.num_scaleout_ranks * wide.num_scaleup_ranks * slots_per_rank == 576);
     assert(wide.num_active_scaleout_ranks() * wide.num_active_scaleup_ranks() * slots_per_rank == 8);
     for (int local_slot = 0; local_slot < slots_per_rank; ++local_slot) {
         const int slot = (1 * 72 + 65) * slots_per_rank + local_slot;
-        assert(topology::is_rank_active<72>(wide, slot / slots_per_rank));
-        assert(!topology::is_rank_active<72>(wide, (1 * 72 + 64)));
-        assert(!topology::is_rank_active<72>(wide, (2 * 72 + 65)));
+        assert((topology::world_expert_to_extent<72, slots_per_rank>(wide, slot) == slot));
+        assert((topology::world_expert_to_extent<72, slots_per_rank>(shrunk, slot) == (1 * 66 + 65) * slots_per_rank + local_slot));
+        assert((topology::world_expert_to_extent<72, slots_per_rank>(wide, (1 * 72 + 64) * slots_per_rank + local_slot) == -1));
+        assert((topology::world_expert_to_extent<72, slots_per_rank>(wide, (2 * 72 + 65) * slots_per_rank + local_slot) == -1));
     }
-    const auto shrunk = make({1}, {64, 65});
-    const int rerouted_slot = (1 * shrunk.num_scaleup_ranks + 65) * slots_per_rank;
-    assert(topology::is_rank_active<72>(shrunk, rerouted_slot / slots_per_rank));
     assert(topology::scaleup_peer<72>(wide, 65) == topology::scaleup_peer<72>(shrunk, 65));
     std::printf("Passed: %u accepted worlds, %u single-GPU refusals, %u inactive-rank refusals, "
-                "fixed-slot routing through wide-domain holes and extent changes.\n",
+                "stable expert IDs through shrink, expansion and wide-domain holes.\n",
                 accepted, refused_small, refused_inactive);
 }
