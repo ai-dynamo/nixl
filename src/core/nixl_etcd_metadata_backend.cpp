@@ -200,6 +200,12 @@ public:
     waitForMetadataFromEtcd(const std::string &metadata_key, nixl_blob_t &remote_metadata) {
         try {
             const etcd::Response response = etcd_->get(metadata_key);
+            if (response.is_ok()) {
+                remote_metadata = response.value().as_string();
+                if (!remote_metadata.empty()) {
+                    return NIXL_SUCCESS;
+                }
+            }
             const int64_t watch_index = response.index();
             std::promise<nixl_status_t> ret_prom;
             auto future = ret_prom.get_future();
