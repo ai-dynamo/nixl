@@ -120,7 +120,7 @@ protected:
     finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH *&handle) const = 0;
 
 private:
-    std::unique_ptr<gdsDriverHandle> driver_;
+    gdsDriverHandle driver_;
     std::unordered_map<int, std::weak_ptr<gdsFileHandle>> gds_file_map_;
     nixl::PathModeDevIdRegistry path_mode_devids_;
 };

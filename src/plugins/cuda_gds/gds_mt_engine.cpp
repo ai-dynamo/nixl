@@ -99,19 +99,7 @@ nixlGdsMtReqH::~nixlGdsMtReqH() {
 nixlGdsMtEngine::nixlGdsMtEngine(const nixlBackendInitParams *init_params)
     : nixlGdsEngine(init_params),
       thread_count_(getThreadCount(init_params)) {
-    // Base ctor opened the cuFile driver; bail if that failed.
-    if (this->initErr) {
-        return;
-    }
-
-    try {
-        executor_ = std::make_unique<tf::Executor>(thread_count_);
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "GDS_MT: failed to create executor: " << e.what();
-        this->initErr = true;
-        return;
-    }
+    executor_ = std::make_unique<tf::Executor>(thread_count_);
     NIXL_DEBUG << "GDS_MT: thread count=" << thread_count_;
 }
 

@@ -72,15 +72,7 @@ gdsResolveRegisteredBuffer(void *registered_base, uintptr_t descriptor_addr) noe
 }
 
 nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL) {
-    try {
-        driver_ = std::make_unique<gdsDriverHandle>();
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << e.what();
-        this->initErr = true;
-    }
-}
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL) {}
 
 nixl_status_t
 nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
