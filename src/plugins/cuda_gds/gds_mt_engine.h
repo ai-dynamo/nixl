@@ -50,7 +50,6 @@ public:
 class nixlGdsMtEngine : public nixlGdsEngine {
 public:
     explicit nixlGdsMtEngine(const nixlBackendInitParams *init_params);
-    ~nixlGdsMtEngine() override = default;
 
     nixl_status_t
     postXfer(const nixl_xfer_op_t &operation,

@@ -65,11 +65,6 @@ gdsResolveRegisteredBuffer(void *registered_base, uintptr_t descriptor_addr) noe
 class nixlGdsEngine : public nixlBackendEngine {
 public:
     explicit nixlGdsEngine(const nixlBackendInitParams *init_params);
-    ~nixlGdsEngine() override = default;
-
-    nixlGdsEngine(const nixlGdsEngine &) = delete;
-    nixlGdsEngine &
-    operator=(const nixlGdsEngine &) = delete;
 
     nixl_mem_list_t
     getSupportedMems() const override {
