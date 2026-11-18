@@ -95,7 +95,7 @@ def main():
             "opt",
             "--passes=internalize,inline,globaldce",
             "-internalize-public-api-list=cute_nixl_put,cute_nixl_atomic_add,"
-            "cute_nixl_get_xfer_status",
+            "cute_nixl_flush,cute_nixl_get_xfer_status",
             "-S",
             raw,
             "-o",

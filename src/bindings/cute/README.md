@@ -19,9 +19,8 @@ dependencies with `pip install 'nixl[cute]'`. Import the operations explicitly:
 from nixl import cute as device
 ```
 
-The extra pins the tested CuTe DSL 4.5.1 and includes its CUDA 12 and CUDA 13
-runtimes. It does not enable a native build or add bitcode to an existing wheel.
-Importing `nixl.cute` requires a backend wheel that includes device bitcode.
+Only CuTe-enabled builds include `nixl.cute` and the `[cute]` extra. The extra
+installs the tested CuTe DSL 4.5.1 with CUDA 13 support.
 
 The wheel example uses [upstream PyTorch](https://pytorch.org/get-started/previous-versions/)
 2.11 (CUDA 13). Keep UCX compatible across the process: NGC 26.06 PyTorch
@@ -52,8 +51,9 @@ timeout --signal=TERM --kill-after=10s 120s \
 Use a Python environment that can import the installed CUDA backend; `uv` must
 be available at Meson setup to build the meta wheel. Meson builds one
 `libnixl_device_sm_<arch>.bc` per target in `nixl_cuda_arch_list` and installs
-each file in both `libdir` and the CUDA backend wheel. Use the default list or
-set, for example, `-Dnixl_cuda_arch_list=90,100` for a smaller build.
+each file in `libdir` and the Python backend package. The wheel includes only the
+package copy. Use the default list or set `-Dnixl_cuda_arch_list=90,100` for a
+smaller build.
 
 CuTe selects bitcode for the kernel's compile target, including an explicit
 `--gpu-arch`. A kernel targeting `sm_90a` uses the baseline `sm_90` bitcode.
@@ -66,8 +66,11 @@ For a backend wheel, pass the same setup options to `python -m build --wheel`
 using `-Csetup-args=-D...`; the bitcode is included in its installation manifest.
 
 Select `--level thread|warp|block`, `--defer` and `--elements N` as needed.
-The example's `--defer` then wait protocol is validated only for CUDA IPC;
-GDA may need a later nondeferred submission to flush deferred work.
+With `--defer`, the example polls once. If work is still pending, it calls
+`device.flush(remote, channel=..., level=...)` before continuing to poll.
+Flush waits on the GPU for prior work on that channel. It requires UCX direct
+mode built with `ucp_device_flush`. Older UCX builds and proxy mode return
+`NIXL_ERR_NOT_SUPPORTED`.
 Gloo exchanges host metadata and coordinates validation/buffer reuse; NIXL moves
 the GPU payload. The example checks three generations and guard regions.
 Its host synchronization is for correctness, not a performance benchmark.

@@ -93,6 +93,13 @@ def _atomic_add(
 
 
 @_extern
+def _flush(
+    remote: cutlass.Uint64, channel: cutlass.Uint32, level: cutlass.Int32
+) -> cutlass.Int32:
+    pass
+
+
+@_extern
 def _get_xfer_status(request: cutlass.Uint64, level: cutlass.Int32) -> cutlass.Int32:
     pass
 
@@ -168,6 +175,16 @@ def atomic_add(
             cutlass.Uint64(request),
             cutlass.Int32(level),
         )
+    )
+
+
+def flush(remote, *, channel=0, level=THREAD):
+    """Block on the GPU until prior operations on this remote view's channel complete.
+
+    Returns the native status, including NIXL_ERR_NOT_SUPPORTED when unavailable.
+    """
+    return _status(
+        _flush(cutlass.Uint64(remote), cutlass.Uint32(channel), cutlass.Int32(level))
     )
 
 

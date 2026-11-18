@@ -114,10 +114,12 @@ def test_target_selected_per_compilation(package_tree, major):
             CuTeDSL.target = SimpleNamespace(major=major, minor=minor, suffix=suffix)
             cute.put(1, 2, 3)
             cute.atomic_add(1, 2)
+            cute.flush(2, channel=3, level=cute.WARP)
             cute.get_xfer_status(1)
             path = Path(_bindings.__file__).parent / "lib" / f"libnixl_device_sm_{major}{minor}.bc"
             assert calls == [(name, str(path)) for name in
-                             ("cute_nixl_put", "cute_nixl_atomic_add", "cute_nixl_get_xfer_status")]
+                             ("cute_nixl_put", "cute_nixl_atomic_add", "cute_nixl_flush",
+                              "cute_nixl_get_xfer_status")]
             calls.clear()
         """,
         major,

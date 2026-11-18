@@ -25,8 +25,23 @@ from nixl import nixl_agent, nixl_agent_config, nixl_thread_sync_t
 
 
 @cute.jit
-def complete(request, status, *, level: cutlass.Constexpr):
-    """Example policy: wait on the GPU; never poll a terminal submission."""
+def complete(
+    remote,
+    request,
+    status,
+    channel: cutlass.Constexpr,
+    flags: cutlass.Constexpr,
+    level: cutlass.Constexpr,
+):
+    """Wait for the request on the GPU, pushing deferred work if still pending."""
+    if cutlass.const_expr(flags & device.DEFER):
+        # UCX also returns IN_PROGRESS for transfers already completed by CUDA IPC.
+        if status == device.IN_PROGRESS:
+            status = device.get_xfer_status(request, level=level)
+        if status == device.IN_PROGRESS:
+            flushed = device.flush(remote, channel=channel, level=level)
+            if flushed != device.SUCCESS:
+                status = flushed
     while status == device.IN_PROGRESS:
         status = device.get_xfer_status(request, level=level)
     return status
@@ -52,6 +67,7 @@ def compute_and_put(
     cute.arch.sync_threads()  # All producers finish before the cooperative PUT.
     # One cooperative operation: every participant uses the leader's request.
     request = requests.iterator.toint()
+    channel = 2
     result = device.put(
         local,
         remote,
@@ -61,20 +77,27 @@ def compute_and_put(
         remote_index=1,
         local_offset=4,
         remote_offset=12,
-        channel=2,
+        channel=channel,
         flags=flags,
         level=level,
     )
-    result = complete(request, result, level=level)
+    result = complete(remote, request, result, channel, flags, level)
     status[tid] = result
     # Publish stores from every CUDA-IPC writer before sending readiness.
     cute.arch.fence_acq_rel_sys()
     cute.arch.sync_threads()
     if result == device.SUCCESS:
         result = device.atomic_add(
-            7, remote, request, index=0, offset=8, channel=2, flags=flags, level=level
+            7,
+            remote,
+            request,
+            index=0,
+            offset=8,
+            channel=channel,
+            flags=flags,
+            level=level,
         )
-        status[threads + tid] = complete(request, result, level=level)
+        status[threads + tid] = complete(remote, request, result, channel, flags, level)
 
 
 @cute.kernel

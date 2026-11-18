@@ -99,6 +99,22 @@ cute_nixl_atomic_add(uint64_t value,
 }
 
 extern "C" __device__ __attribute__((always_inline)) int
+cute_nixl_flush(uint64_t remote, unsigned channel, int level) {
+    using namespace nixl::gpu;
+    auto view = reinterpret_cast<nixlMemViewH>(remote);
+    switch (level) {
+    case 0:
+        return flush<level_t::THREAD, exec_mode_t::DYNAMIC>(view, channel);
+    case 1:
+        return flush<level_t::WARP, exec_mode_t::DYNAMIC>(view, channel);
+    case 2:
+        return flush<level_t::BLOCK, exec_mode_t::DYNAMIC>(view, channel);
+    default:
+        return NIXL_ERR_INVALID_PARAM;
+    }
+}
+
+extern "C" __device__ __attribute__((always_inline)) int
 cute_nixl_get_xfer_status(uint64_t request, int level) {
     if (request == 0) {
         return NIXL_ERR_INVALID_PARAM;

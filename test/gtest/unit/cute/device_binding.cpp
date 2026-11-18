@@ -11,7 +11,7 @@ nixlMemViewElem last_src{}, last_dst{};
 nixlGpuXferStatusH *last_request = nullptr;
 uint64_t last_size = 0, last_value = 0, last_flags = 0;
 unsigned last_channel = 0;
-int last_level = -1, submits = 0, polls = 0;
+int last_level = -1, submits = 0, polls = 0, flushes = 0;
 nixl_status_t next_status = NIXL_IN_PROG;
 } // namespace
 
@@ -56,6 +56,19 @@ nixlGpuGetXferStatus(nixlGpuXferStatusH &request) {
     ++polls;
     return next_status;
 }
+
+namespace nixl::gpu {
+template<level_t level, exec_mode_t mode>
+nixl_status_t
+flush(const nixlMemViewH &remote, unsigned channel) {
+    static_assert(mode == exec_mode_t::DYNAMIC);
+    last_dst.mvh = remote;
+    last_channel = channel;
+    last_level = static_cast<int>(level);
+    ++flushes;
+    return next_status;
+}
+} // namespace nixl::gpu
 
 #define NIXL_SRC_API_DEVICE_GPU_NIXL_DEVICE_CUH
 #define __device__
@@ -115,6 +128,20 @@ TEST(CuteDeviceBinding, AtomicForwardsArgumentsAndStatusWithoutPolling) {
     }
 }
 
+TEST(CuteDeviceBinding, FlushForwardsRemoteChannelAndStatus) {
+    for (int level = 0; level < 3; ++level) {
+        for (auto result : {NIXL_SUCCESS, NIXL_ERR_NOT_SUPPORTED, NIXL_ERR_BACKEND}) {
+            next_status = result;
+            flushes = 0;
+            EXPECT_EQ(cute_nixl_flush(22, 4, level), result);
+            EXPECT_EQ(last_dst.mvh, reinterpret_cast<nixlMemViewH>(22));
+            EXPECT_EQ(last_channel, 4u);
+            EXPECT_EQ(last_level, level);
+            EXPECT_EQ(flushes, 1);
+        }
+    }
+}
+
 TEST(CuteDeviceBinding, NullRequestIsForwardedNotConvertedToBlocking) {
     next_status = NIXL_IN_PROG;
     polls = 0;
@@ -153,13 +180,15 @@ TEST(CuteDeviceBinding, NullProgressRequestDoesNotCallBackend) {
 TEST(CuteDeviceBinding, UnsupportedCooperationDoesNotCallBackend) {
     nixlGpuXferStatusH request;
     const auto address = reinterpret_cast<uint64_t>(&request);
-    submits = polls = 0;
+    submits = polls = flushes = 0;
     for (int level : {-1, 3}) {
         EXPECT_EQ(cute_nixl_put(11, 22, 17, 0, 0, 0, 0, 0, 0, address, level),
                   NIXL_ERR_INVALID_PARAM);
         EXPECT_EQ(cute_nixl_atomic_add(1, 22, 0, 0, 0, 0, address, level), NIXL_ERR_INVALID_PARAM);
         EXPECT_EQ(cute_nixl_get_xfer_status(address, level), NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(cute_nixl_flush(22, 4, level), NIXL_ERR_INVALID_PARAM);
     }
     EXPECT_EQ(submits, 0);
     EXPECT_EQ(polls, 0);
+    EXPECT_EQ(flushes, 0);
 }
