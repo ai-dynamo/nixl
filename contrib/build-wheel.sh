@@ -89,7 +89,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ "$BUILD_NIXL_EP" = "true" ] && [ -z "$TORCH_VERSIONS" ]; then
-    echo "ERROR: --build-nixl-ep requires --torch-versions (e.g. --torch-versions 2.11,2.12)" >&2
+    echo "ERROR: --build-nixl-ep requires --torch-versions" >&2
     exit 1
 fi
 

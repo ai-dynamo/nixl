@@ -42,12 +42,14 @@
 namespace {
 [[nodiscard]] bool
 sglEnabledFromConfig() {
-    const bool enabled = nixl::config::getValueDefaulted("NIXL_UCX_SGL_ENABLE", false);
+    // TODO: Remove NIXL_UCX_SGL_ENABLE once SGL has had enough field exposure.
+    const auto configured = nixl::config::getValueOptional<bool>("NIXL_UCX_SGL_ENABLE");
 #ifdef HAVE_UCX_SGL_API
+    const bool enabled = configured.value_or(true);
     NIXL_DEBUG << "UCX SGL offload " << (enabled ? "enabled" : "disabled");
     return enabled;
 #else
-    if (enabled) {
+    if (configured.value_or(false)) {
         NIXL_WARN << "NIXL_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL support";
     }
     return false;
@@ -94,7 +96,10 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 }
 
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
-    : nixlBackendEngine(&init_params),
+    : nixlBackendEngine(&init_params,
+                        nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::LOCAL |
+                            nixl_backend_capability_t::NOTIF |
+                            nixl_backend_capability_t::TRACE_CONTEXT),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
