@@ -39,7 +39,7 @@ while IFS= read -r -d '' f; do
     *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|*.md|*.svg|*.woff|*.woff2|*.ttf|*.otf|*.wrap|*.in|*.json|*.csv|*.tsv|*.template|*.patch|*.gitignore|*.python-version|*py.typed)
       continue
       ;;
-    CODEOWNERS|*LICENSE*|Doxyfile|.clang-format|.clang-tidy|.codespellrc|.coderabbit.yaml)
+    CODEOWNERS|*LICENSE*|Doxyfile|.clang-format|.clang-tidy|.codespellrc|.coderabbit.yaml|skills/*/skill.oms.sig)
       continue
       ;;
   esac
