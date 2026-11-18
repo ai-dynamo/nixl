@@ -331,7 +331,8 @@ nixlLibfabricTopology::getPcieDevData(const std::string &efa_device,
                                       size_t &device_link_speed,
                                       uint16_t &parent_switch_domain,
                                       uint8_t &parent_switch_bus_id,
-                                      size_t &parent_switch_link_speed) const {
+                                      size_t &parent_switch_link_speed,
+                                      bool &host_dma_starved) const {
     bool found = false;
     NicInfoMap::const_iterator itr = nic_info_map.find(efa_device);
     if (itr == nic_info_map.end()) {
@@ -343,6 +344,7 @@ nixlLibfabricTopology::getPcieDevData(const std::string &efa_device,
         parent_switch_domain = itr->second.parent_switch_domain;
         parent_switch_bus_id = itr->second.parent_switch_bus_id;
         parent_switch_link_speed = itr->second.parent_switch_link_speed;
+        host_dma_starved = itr->second.host_dma_starved;
         NIXL_DEBUG << "EFA device " << efa_device << " has upstream link speed "
                    << device_link_speed << " Gbps, and is associated with NUMA node "
                    << numa_node_id << " through PCIe switch on domain/bus-id "
@@ -353,13 +355,27 @@ nixlLibfabricTopology::getPcieDevData(const std::string &efa_device,
 }
 
 size_t
-nixlLibfabricTopology::getNumaRailCount() const {
-    size_t numa_rail_count = 0;
-    size_t numa_node_count = numa_speed_map.size();
-    if (numa_node_count > 0) {
-        numa_rail_count = nic_info_map.size() / numa_node_count;
+nixlLibfabricTopology::getUsableNicCount() const {
+    size_t usable_nic_count = 0;
+    for (const auto &entry : nic_info_map) {
+        if (!entry.second.host_dma_starved) {
+            ++usable_nic_count;
+        }
     }
-    return numa_rail_count;
+    return usable_nic_count;
+}
+
+size_t
+nixlLibfabricTopology::getNumaRailCount() const {
+    // a NUMA node whose NICs all sit behind host-starved uplinks has no rails of its own, so it is
+    // left out of the average
+    const size_t starved_node_count =
+        static_cast<size_t>(std::count(numa_node_starved.begin(), numa_node_starved.end(), true));
+    const size_t numa_node_count = numa_speed_map.size() - starved_node_count;
+    if (numa_node_count == 0) {
+        return 0;
+    }
+    return getUsableNicCount() / numa_node_count;
 }
 
 void
@@ -1081,6 +1097,7 @@ nixlLibfabricTopology::collectNicInfo(NicInfo &nic,
     nic.function_id = function_id;
     // Filled in by buildTopologyAwareGrouping() once NIC/accelerator grouping runs.
     nic.accel_via_pcie_switch = false;
+    nic.host_dma_starved = false;
     if (!getPcieDevParentSwitchData(hwloc_node,
                                     pcie_addr,
                                     nic.parent_switch_domain,
@@ -1089,6 +1106,11 @@ nixlLibfabricTopology::collectNicInfo(NicInfo &nic,
         NIXL_TRACE << "Could not locate parent PCIe bridge/switch of NIC " << name;
         nic.parent_switch_domain = UINT16_MAX;
         nic.parent_switch_bus_id = UINT8_MAX;
+    } else {
+        // compare the uplink with what the NIC can put on the network: its line rate, or its own
+        // PCIe link when libfabric reports no rate
+        const size_t nic_rate = nic.line_speed != 0 ? nic.line_speed : nic.upstream_link_speed;
+        nic.host_dma_starved = nic.parent_switch_link_speed < nic_rate;
     }
     nic_info_map.insert(NicInfoMap::value_type(name, nic));
     NIXL_DEBUG << "EFA device " << name << " mapped to NUMA node " << nic.numa_node_id
@@ -1116,6 +1138,9 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
     LinkSpeedMap link_speed_map;
 
     uint16_t max_node_id = 0;
+    std::vector<std::string> starved_nics;
+    std::set<uint16_t> starved_nic_nodes;
+    std::set<uint16_t> usable_nic_nodes;
     for (const auto &entry : nic_info_map) {
         const NicInfo &nic_info = entry.second;
         if (nic_info.numa_node_id == INVALID_NUMA_NODE_ID) {
@@ -1125,6 +1150,14 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
             continue;
         }
         max_node_id = std::max(max_node_id, nic_info.numa_node_id);
+        if (nic_info.host_dma_starved) {
+            // the uplink above this NIC cannot carry even one NIC's host memory traffic, so it
+            // adds no NUMA capacity
+            starved_nics.push_back(nic_info.libfabric_name);
+            starved_nic_nodes.insert(nic_info.numa_node_id);
+            continue;
+        }
+        usable_nic_nodes.insert(nic_info.numa_node_id);
 
         hwloc_obj_t hwloc_node = hwloc_get_pcidev_by_busid(hwloc_topology,
                                                            nic_info.domain_id,
@@ -1193,6 +1226,17 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
         }
     }
 
+    if (!starved_nics.empty()) {
+        std::sort(starved_nics.begin(), starved_nics.end());
+        std::stringstream ss;
+        for (size_t i = 0; i < starved_nics.size(); ++i) {
+            ss << (i > 0 ? ", " : "") << starved_nics[i];
+        }
+        NIXL_WARN << "EFA devices [" << ss.str()
+                  << "] sit under a PCIe bridge/switch whose uplink is slower than their line "
+                     "rate, and are left out of DRAM_SEG rail selection";
+    }
+
     // if nothing usable was found then stop
     // (usable means a NIC with parent switch having non-zero link speed)
     if (link_speed_map.empty()) {
@@ -1203,6 +1247,12 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
 
     // now we process the link speed map and accumulate per NUMA node
     numa_speed_map.resize(max_node_id + 1, 0);
+    numa_node_starved.assign(numa_speed_map.size(), false);
+    for (uint16_t node_id : starved_nic_nodes) {
+        if (usable_nic_nodes.count(node_id) == 0) {
+            numa_node_starved[node_id] = true;
+        }
+    }
     for (const auto &entry : link_speed_map) {
         float topmost_speed = entry.second.first;
         uint16_t numa_node_id = entry.second.second;
@@ -1223,18 +1273,21 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
 void
 nixlLibfabricTopology::calcAvgNumaNodeBandwidth() {
     // calculate average NUMA node capacity, and print warning if not the same on all nodes
-    size_t speed_count = numa_speed_map.size();
-    if (speed_count == 0) {
-        // return early (avoid division by zero)
-        avg_numa_speed = 0;
-        return;
-    }
+    // NOTE: a node whose NICs all sit behind host-starved uplinks has no capacity, and is left out
+    // of the average, which would otherwise shrink the derived DRAM_SEG rail limit, possibly to
+    // zero (DRAM_SEG buffers on such a node take rails of the closest node)
+    size_t speed_count = 0;
     bool speed_uniform = true;
     size_t speed = 0;
     bool speed_valid = false;
     size_t total_speed = 0;
-    for (size_t i = 0; i < speed_count; ++i) {
-        size_t curr_speed = numa_speed_map[i];
+    for (size_t i = 0; i < numa_speed_map.size(); ++i) {
+        const size_t curr_speed = numa_speed_map[i];
+        if (i < numa_node_starved.size() && numa_node_starved[i]) {
+            NIXL_TRACE << "NUMA node " << i << " has no PCIe link capacity for host memory traffic";
+            continue;
+        }
+        ++speed_count;
         if (!speed_valid) {
             speed = curr_speed;
             speed_valid = true;
@@ -1247,7 +1300,10 @@ nixlLibfabricTopology::calcAvgNumaNodeBandwidth() {
         }
         total_speed += curr_speed;
     }
-    if (speed_uniform) {
+    if (speed_count == 0) {
+        // nothing usable (avoid division by zero)
+        avg_numa_speed = 0;
+    } else if (speed_uniform) {
         avg_numa_speed = speed;
         NIXL_DEBUG << "NUMA PCIe capacity is uniform across all nodes with link bandwidth: "
                    << avg_numa_speed << " Gbps";
@@ -1303,11 +1359,17 @@ nixlLibfabricTopology::calcAvgNicUpstreamBandwidth() {
         avg_nic_upstream_speed = 0;
         return;
     }
+    // only NICs that can carry host memory traffic count, since this average is used to size
+    // DRAM_SEG rail selection
     bool speed_uniform = true;
     size_t speed = 0;
     bool speed_valid = false;
     size_t total_speed = 0;
+    size_t nic_count = 0;
     for (const auto &entry : nic_info_map) {
+        if (entry.second.host_dma_starved) {
+            continue;
+        }
         size_t curr_speed = entry.second.upstream_link_speed;
         if (!speed_valid) {
             speed = curr_speed;
@@ -1319,14 +1381,18 @@ nixlLibfabricTopology::calcAvgNicUpstreamBandwidth() {
             speed_uniform = false;
         }
         total_speed += curr_speed;
+        ++nic_count;
     }
-    if (speed_uniform) {
+    if (nic_count == 0) {
+        avg_nic_upstream_speed = 0;
+        NIXL_WARN << "No NIC has a PCIe uplink with capacity for host memory traffic";
+    } else if (speed_uniform) {
         avg_nic_upstream_speed = speed;
         NIXL_DEBUG
             << "NIC upstream link bandwidth is uniform across all PCIe devices with bandwidth: "
             << avg_nic_upstream_speed << " Gbps";
     } else {
-        avg_nic_upstream_speed = total_speed / nic_info_map.size();
+        avg_nic_upstream_speed = total_speed / nic_count;
         NIXL_WARN << "NIC upstream link bandwidth is non-uniform across all PCIe devices with "
                      "average bandwidth: "
                   << avg_nic_upstream_speed << " Gbps, rail selection policy may be sub-optimal";
