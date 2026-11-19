@@ -176,3 +176,12 @@ def test_libnvvm_lifetime_markers():
     old = "  call void @llvm.lifetime.start.p0(i64 8, ptr %buf)\n"
     store = "  store i64 1, ptr %buf\n"
     assert clean_ir(new + store + declaration + old) == store + old
+
+
+def test_libnvvm_keeps_pointer_alignment():
+    clean_ir = runpy.run_path(str(ROOT / "src/bindings/cute/build.py"))["clean_ir"]
+    signature = (
+        "define align 8 ptr @f(ptr byval(i32) align 16 %p) local_unnamed_addr #0"
+    )
+    body = "  %v = load i32, ptr %p, align 16\n  ret ptr %p\n}\n"
+    assert clean_ir(signature + " align 2 {\n" + body) == signature + " {\n" + body

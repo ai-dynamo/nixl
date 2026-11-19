@@ -48,6 +48,7 @@ def _extern(signature):
     }
 
     def emit(*args):
+        # CuTe 4.5.1 exposes the compile target through its private DSL context.
         arch = CuTeDSL._get_dsl().get_arch_enum()
         # Architecture-specific kernels (e.g. sm_90a) can link the base sm_90 shim.
         sm = f"sm_{arch.major}{arch.minor}"
@@ -136,7 +137,8 @@ def put(
     flags and cooperation level. Keep the buffers/views/request alive until the
     operation completes. DEFER permits, but does not guarantee, deferral.
     Cooperating threads share one request, aligned to 16 bytes. Independent
-    operations need separate requests until completion.
+    operations need separate requests until completion. A completed request
+    can be reused without clearing it.
     """
     return _status(
         _put(
@@ -191,9 +193,9 @@ def flush(remote, *, channel=0, level=THREAD):
 def get_xfer_status(request, *, level=THREAD):
     """Perform one native progress poll on a nonzero, in-progress request.
 
-    Call only after IN_PROGRESS, using the submission's cooperation level.
-    Do not poll after success/error, or after an untracked (null-request) call.
-    All participating threads must enter cooperative calls uniformly; request
-    ownership follows put(). A zero request returns NIXL_ERR_INVALID_PARAM.
+    Poll at the submission's cooperation level while the request is IN_PROGRESS.
+    Lanes can observe completion at different times. Broadcast one lane's status
+    before using it to decide whether the group polls again or submits more work.
+    A zero request returns NIXL_ERR_INVALID_PARAM.
     """
     return _status(_get_xfer_status(cutlass.Uint64(request), cutlass.Int32(level)))

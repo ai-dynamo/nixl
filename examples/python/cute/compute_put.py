@@ -25,6 +25,23 @@ from nixl import nixl_agent, nixl_agent_config, nixl_thread_sync_t
 
 
 @cute.jit
+def poll(request, block_status, level: cutlass.Constexpr):
+    status = device.get_xfer_status(request, level=level)
+    # Lanes can sample the same request on either side of completion. Use the
+    # leader's observation for the group's next poll, flush or notification.
+    if cutlass.const_expr(level == device.WARP):
+        status = cute.arch.shuffle_sync(status, 0)
+    elif cutlass.const_expr(level == device.BLOCK):
+        tid, _, _ = cute.arch.thread_idx()
+        if tid == 0:
+            block_status[0] = status
+        cute.arch.sync_threads()
+        status = block_status[0]
+        cute.arch.sync_threads()  # All readers finish before the next poll.
+    return status
+
+
+@cute.jit
 def complete(
     remote,
     request,
@@ -32,18 +49,19 @@ def complete(
     channel: cutlass.Constexpr,
     flags: cutlass.Constexpr,
     level: cutlass.Constexpr,
+    block_status,
 ):
     """Wait for the request on the GPU, pushing deferred work if still pending."""
     if cutlass.const_expr(flags & device.DEFER):
         # UCX also returns IN_PROGRESS for transfers already completed by CUDA IPC.
         if status == device.IN_PROGRESS:
-            status = device.get_xfer_status(request, level=level)
+            status = poll(request, block_status, level)
         if status == device.IN_PROGRESS:
             flushed = device.flush(remote, channel=channel, level=level)
             if flushed != device.SUCCESS:
                 status = flushed
     while status == device.IN_PROGRESS:
-        status = device.get_xfer_status(request, level=level)
+        status = poll(request, block_status, level)
     return status
 
 
@@ -67,6 +85,9 @@ def compute_and_put(
     cute.arch.sync_threads()  # All producers finish before the cooperative PUT.
     # One cooperative operation: every participant uses the leader's request.
     request = requests.iterator.toint()
+    block_status = None
+    if cutlass.const_expr(level == device.BLOCK):
+        block_status = cute.make_tensor(cute.arch.alloc_smem(cutlass.Int32, 1), (1,))
     channel = 2
     result = device.put(
         local,
@@ -81,7 +102,7 @@ def compute_and_put(
         flags=flags,
         level=level,
     )
-    result = complete(remote, request, result, channel, flags, level)
+    result = complete(remote, request, result, channel, flags, level, block_status)
     status[tid] = result
     # Publish stores from every CUDA-IPC writer before sending readiness.
     cute.arch.fence_acq_rel_sys()
@@ -97,7 +118,9 @@ def compute_and_put(
             flags=flags,
             level=level,
         )
-        status[threads + tid] = complete(remote, request, result, channel, flags, level)
+        status[threads + tid] = complete(
+            remote, request, result, channel, flags, level, block_status
+        )
 
 
 @cute.kernel

@@ -28,7 +28,10 @@ def clean_ir(text):
             line = re.sub(r"!\{\s*,?\s*", "!{", line)
             line = re.sub(r",\s*}", "}", line)
         if line.startswith("define "):
-            line = re.sub(r"\s+align\s+\d+(?=\s|\{)", "", line)
+            # Only strip the function alignment emitted by opt. Pointer
+            # parameters and return values can carry their own alignment.
+            signature, close, attributes = line.rpartition(")")
+            line = signature + close + re.sub(r" align [0-9]+\b", "", attributes)
         lines.append(line)
     return "\n".join(lines) + "\n"
 

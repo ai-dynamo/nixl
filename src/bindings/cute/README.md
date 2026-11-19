@@ -70,7 +70,9 @@ With `--defer`, the example polls once. If work is still pending, it calls
 `device.flush(remote, channel=..., level=...)` before continuing to poll.
 Flush waits on the GPU for prior work on that channel. It requires UCX direct
 mode built with `ucp_device_flush`. Older UCX builds and proxy mode return
-`NIXL_ERR_NOT_SUPPORTED`.
+`NIXL_ERR_NOT_SUPPORTED`. If the request is still pending and flush is
+unsupported, the example reports the error. Run without `--defer` on that stack.
+Polling alone cannot ring the doorbell for deferred GDA work.
 Gloo exchanges host metadata and coordinates validation/buffer reuse; NIXL moves
 the GPU payload. The example checks three generations and guard regions.
 Its host synchronization is for correctness, not a performance benchmark.
@@ -79,21 +81,23 @@ abort the run rather than attempting buffer reuse or recovery.
 
 ## Device contract
 
-`put`, `atomic_add` and `get_xfer_status` forward the
+`put`, `atomic_add`, `get_xfer_status` and `flush` forward the
 [native API](../../api/device/gpu/nixl_device.cuh), including descriptor indices,
 byte offsets, channels, flags and status.
 
-- Use a compile-time THREAD/WARP/BLOCK level; all participants enter uniformly.
-- Cooperating threads share one zeroed, 64-byte request, aligned to 16 bytes;
-  the native dynamic dispatcher tags it from the group leader. Independent
+- The supported cooperation levels are `THREAD`, `WARP` and `BLOCK`. All
+  participants enter each cooperative call together.
+- Cooperating threads share one 64-byte request aligned to 16 bytes. The example
+  zeroes it once. Each accepted submission initializes its request state, so the
+  storage can be reused after completion without clearing it. Overlapping
   operations need separate requests. Keep requests, buffers and views alive
   until completion.
 - Poll only after `IN_PROGRESS`, at the same cooperation level; stop on success
   or error. `get_xfer_status` performs one poll, not a completion loop.
 - `request=0` forwards a native null request; it does not select blocking mode.
   Polling zero is invalid and returns `NIXL_ERR_INVALID_PARAM`.
-- No wrapper wait, fence, allocation or launch is added. Native submission may
-  do inline work; `DEFER` permits deferral but does not guarantee overlap.
+- Submission adds no wrapper wait, fence, allocation or launch. Native
+  submission may do inline work even with `DEFER`.
 - Producer publication, receiver acquire and safe buffer reuse belong to the
   caller. See the example for one explicit protocol.
 
