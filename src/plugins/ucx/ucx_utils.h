@@ -75,7 +75,7 @@ public:
     }
 
     [[nodiscard]] static ucs_status_t
-    takeCallFailure() noexcept;
+    takeImmediateFailure() noexcept;
 
     nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
     ~nixlUcxEp();

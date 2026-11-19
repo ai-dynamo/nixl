@@ -71,7 +71,7 @@ public:
         if (status == NIXL_IN_PROG) [[likely]] {
             requests_.push_back(req);
         } else if (status != NIXL_SUCCESS) {
-            noteCallFailure();
+            noteImmediateFailure();
             // Error. Release all previously initiated ops and exit:
             release();
             return status;
@@ -145,7 +145,7 @@ public:
         if (ret == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
         } else if (ret != NIXL_SUCCESS) {
-            noteFailure(req);
+            noteInFlightFailure(req);
             return checkConnection(ret);
         }
 
@@ -164,7 +164,7 @@ public:
                 requests_[incomplete_reqs++] = req;
             } else {
                 // Any other ret value is ERR and will be returned
-                noteFailure(req);
+                noteInFlightFailure(req);
                 out_ret = checkConnection(ret);
             }
         }
@@ -211,7 +211,7 @@ protected:
         if (status == NIXL_IN_PROG) {
             notifReq_ = req;
         } else if (status != NIXL_SUCCESS) {
-            noteCallFailure();
+            noteImmediateFailure();
         }
         notifStatus_ = status;
     }
@@ -235,15 +235,15 @@ private:
     }
 
     void
-    noteFailure(nixlUcxReq req) noexcept {
+    noteInFlightFailure(nixlUcxReq req) noexcept {
         if (failure_ == UCS_OK) {
             failure_ = ucp_request_check_status(req);
         }
     }
 
     void
-    noteCallFailure() noexcept {
-        const ucs_status_t failure = nixlUcxEp::takeCallFailure();
+    noteImmediateFailure() noexcept {
+        const ucs_status_t failure = nixlUcxEp::takeImmediateFailure();
         if (failure_ == UCS_OK) {
             failure_ = failure;
         }
@@ -258,7 +258,7 @@ private:
                 return status;
             }
             if (status != NIXL_SUCCESS) {
-                noteFailure(req);
+                noteInFlightFailure(req);
             }
 
             worker_->reqRelease(req);

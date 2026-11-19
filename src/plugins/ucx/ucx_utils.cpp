@@ -139,18 +139,18 @@ err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status) {
 }
 
 namespace {
-thread_local ucs_status_t call_failure = UCS_OK;
+thread_local ucs_status_t immediate_failure = UCS_OK;
 
 [[nodiscard]] nixl_status_t
-callFailed(ucs_status_t status) {
-    call_failure = status;
+failedImmediately(ucs_status_t status) {
+    immediate_failure = status;
     return nixl::ucx::ucsToNixlStatus(status);
 }
 } // namespace
 
 ucs_status_t
-nixlUcxEp::takeCallFailure() noexcept {
-    return std::exchange(call_failure, UCS_OK);
+nixlUcxEp::takeImmediateFailure() noexcept {
+    return std::exchange(immediate_failure, UCS_OK);
 }
 
 void
@@ -260,7 +260,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
     if (status != NIXL_SUCCESS) {
         // The endpoint is already in a failed state (e.g. the peer disconnected),
         // so no request will be issued.
-        call_failure = failure_.load(std::memory_order_relaxed);
+        immediate_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -284,7 +284,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
         return NIXL_IN_PROG;
     }
 
-    return UCS_PTR_IS_ERR(request) ? callFailed(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 /* ===========================================
@@ -300,7 +300,7 @@ nixlUcxEp::read(uint64_t raddr,
                 nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) [[unlikely]] {
-        call_failure = failure_.load(std::memory_order_relaxed);
+        immediate_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -314,7 +314,7 @@ nixlUcxEp::read(uint64_t raddr,
         return NIXL_IN_PROG;
     }
 
-    return UCS_PTR_IS_ERR(request) ? callFailed(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -326,7 +326,7 @@ nixlUcxEp::write(void *laddr,
                  nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) [[unlikely]] {
-        call_failure = failure_.load(std::memory_order_relaxed);
+        immediate_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -340,7 +340,7 @@ nixlUcxEp::write(void *laddr,
         return NIXL_IN_PROG;
     }
 
-    return UCS_PTR_IS_ERR(request) ? callFailed(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -414,7 +414,7 @@ nixlUcxEp::flushEp(nixlUcxReq &req, ucp_send_nbx_callback_t cb, void *user_data)
         return NIXL_IN_PROG;
     }
 
-    return UCS_PTR_IS_ERR(request) ? callFailed(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 #ifdef HAVE_UCX_SGL_API
@@ -425,7 +425,7 @@ nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
                    nixlUcxReq &req) {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
-        call_failure = failure_.load(std::memory_order_relaxed);
+        immediate_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -446,7 +446,7 @@ nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
     }
 
     req = nullptr;
-    return UCS_PTR_IS_ERR(request) ? callFailed(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 #endif
 
