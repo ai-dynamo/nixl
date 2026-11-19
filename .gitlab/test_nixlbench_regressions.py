@@ -10,6 +10,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REQUIRED_SUITES = {
+    "SgManyToOneTopologyTest",
+    "SgProductionLayoutTest",
+    "AggregateStatsTest",
+    "CapacityTest",
     "PrintStatsTest",
     "RawCliDispatchTest",
     "PluginMetadataDiscoveryTest",

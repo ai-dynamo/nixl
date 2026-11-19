@@ -19,6 +19,7 @@
 #define NIXL_BENCHMARK_NIXLBENCH_SRC_UTILS_UTILS_H
 
 #include "config.h"
+#include "utils/transfer_scheme.h"
 #include <chrono>
 #include <cstdint>
 #include <iostream>
@@ -127,12 +128,6 @@
 // OBJ S3 required checksum types
 #define XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED "supported"
 #define XFERBENCH_OBJ_REQ_CHECKSUM_REQUIRED "required"
-
-// Scheme types for transfer patterns
-#define XFERBENCH_SCHEME_PAIRWISE "pairwise"
-#define XFERBENCH_SCHEME_ONE_TO_MANY "onetomany"
-#define XFERBENCH_SCHEME_MANY_TO_ONE "manytoone"
-#define XFERBENCH_SCHEME_TP "tp"
 
 // Operation types
 #define XFERBENCH_OP_READ "READ"
@@ -465,7 +460,7 @@ public:
                      std::vector<std::vector<xferBenchIOV>> &remote_lists);
     static void
     printStatsHeader();
-    static void
+    static bool
     printStats(bool is_target, size_t block_size, size_t batch_size, xferBenchStats stats);
 };
 

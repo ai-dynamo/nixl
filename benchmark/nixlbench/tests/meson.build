@@ -13,7 +13,11 @@ gtest_dep = dependency('gtest',
                        required: false)
 
 if gtest_dep.found()
-  test_sources = ['print_stats_test.cpp']
+  test_sources = ['print_stats_test.cpp', 'sg_manytoone_test.cpp', 'aggregate_stats_test.cpp',
+                  'capacity_test.cpp']
+  if etcd_available
+    test_sources += ['etcd_reduction_test.cpp']
+  endif
   if raw_cli_available
     test_sources += ['raw_cli_test.cpp', 'posix_integration_test.cpp']
   endif

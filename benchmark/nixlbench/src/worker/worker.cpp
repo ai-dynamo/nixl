@@ -58,7 +58,13 @@ public:
     }
 
     virtual int
-    reduceSumDouble(double *local_value, double *global_value, int dest_rank) override {
+    reduceSumDouble(double *local_value,
+                    double *global_value,
+                    int dest_rank,
+                    int num_contributors = 0) override {
+        if (dest_rank != 0 || (num_contributors != 0 && num_contributors != 1)) {
+            return -1;
+        }
         *global_value = *local_value;
         return 0;
     }

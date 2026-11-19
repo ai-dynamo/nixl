@@ -118,7 +118,17 @@ public:
     }
 
     int
-    reduceSumDouble(double *local_value, double *global_value, int dest_rank) override {
+    reduceSumDouble(double *local_value,
+                    double *global_value,
+                    int dest_rank,
+                    int num_contributors = 0) override {
+        if (num_contributors == 1 && dest_rank == 0 && getRank() == 0) {
+            *global_value = *local_value;
+            return 0;
+        }
+        if (num_contributors != 0 && num_contributors != getSize()) {
+            return -1;
+        }
         assert(dest_rank < getSize());
         if (getRank() != dest_rank) {
             postSend(asio_msg_type_t::REDUCE, local_value, sizeof(double));

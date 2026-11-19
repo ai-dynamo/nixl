@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <iomanip>
 #include <cstring>
+#include <cmath>
+#include <limits>
 #include <etcd/SyncClient.hpp>
 #include <etcd/KeepAlive.hpp>
 #include <etcd/Response.hpp>
@@ -384,85 +386,86 @@ int xferBenchEtcdRT::recvChar(char* buffer, size_t count, int src_rank) {
     return 0;
 }
 
-int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, int dest_rank) {
+int
+xferBenchEtcdRT::reduceSumDouble(double *local_value,
+                                 double *global_value,
+                                 int dest_rank,
+                                 int num_contributors) {
+    const uint64_t generation = reduction_gen++;
+    if (num_contributors == 0) {
+        // Preserve the original pairwise convention for three-argument callers.
+        num_contributors = global_size > 2 ? global_size / 2 : global_size;
+    }
+    if (num_contributors < 1 || num_contributors > global_size || dest_rank < 0 ||
+        dest_rank >= num_contributors || my_rank < 0 || my_rank >= num_contributors ||
+        !std::isfinite(*local_value)) {
+        std::cerr << "Invalid reduction participants or value" << std::endl;
+        return -1;
+    }
     try {
-        // Use a deterministic key based on dest_rank to avoid collisions
-        std::string reduce_key = makeKey("reduce/dest-" + std::to_string(dest_rank));
-        std::string value_key = reduce_key + "/rank-" + std::to_string(my_rank);
-
-        // Contribute our value directly as a string
-        std::stringstream ss;
-        ss << std::fixed << std::setprecision(16) << *local_value;
-        client->put(value_key, ss.str());
-
-        // If we are the destination rank, collect and reduce
-        if (my_rank == dest_rank) {
-            // Initialize the global value with our value
-            *global_value = *local_value;
-
-            // Wait for all contributions
-            int received = 0;
-            int expected;
-            // For pairwise scheme with multiple devices, only initiator processes contribute
-            // In pairwise scheme: global_size = num_initiator_dev + num_target_dev
-            // Only initiators participate in reduction, so we expect (num_initiator_dev - 1)
-            // contributions
-            if (global_size > 2) {
-                // Assume pairwise scheme with equal initiators and targets
-                expected = (global_size / 2) - 1; // Only other initiators
-            } else {
-                expected = global_size - 1; // Fallback for simple 2-process case
-            }
-            int retries = 0;
-
-            while (received < expected && should_retry(retries, 30)) {
-                auto response = client->ls(reduce_key);
-                if (response.error_code() == 0) {
-                    for (const auto &kv : response.keys()) {
-                        // Skip our own contribution
-                        std::string key = kv;
-                        if (key == value_key) {
-                            continue;
-                        }
-
-                        // Get the contribution data as a string
-                        auto get_response = client->get(key);
-                        if (get_response.error_code() == 0) {
-                            // Convert string directly to double
-                            std::string value_str = get_response.value().as_string();
-                            double contrib_value = std::stod(value_str);
-
-                            // Add to the global value
-                            *global_value += contrib_value;
-
-                            // Remove this contribution
-                            client->rm(key);
-                            received++;
-                        }
-                    }
-                }
-
-                if (received < expected) {
-                    std::this_thread::sleep_for(std::chrono::seconds(3));
-                    retries++;
-                }
-            }
-
-            // Clean up
-            client->rmdir(reduce_key, true);
-
-            if (received < expected) {
-                std::cerr << "Timeout waiting for reduction contributions (got " << received << "/"
-                          << expected << " contributions)" << std::endl;
-                return -1;
-            }
-        } else {
-            // Non-destination ranks just wait a bit to ensure their contribution is processed
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+        // A fast contributor may enter the next round before this one is collected.
+        // The trailing slash also keeps prefix cleanup from touching another round.
+        const std::string reduce_key = makeKey("reduce/" + std::to_string(generation) + "/dest-" +
+                                               std::to_string(dest_rank) + "/");
+        const std::string value_key = reduce_key + "rank-" + std::to_string(my_rank);
+        std::ostringstream value;
+        value << std::setprecision(std::numeric_limits<double>::max_digits10) << *local_value;
+        if (!client->put(value_key, value.str()).is_ok()) {
+            std::cerr << "Failed to publish reduction contribution" << std::endl;
+            return -1;
+        }
+        if (my_rank != dest_rank) {
+            return 0;
         }
 
+        double sum = *local_value;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+        for (int rank = 0; rank < num_contributors; ++rank) {
+            if (rank == dest_rank) {
+                continue;
+            }
+            const std::string key = reduce_key + "rank-" + std::to_string(rank);
+            bool received = false;
+            while (!error() && std::chrono::steady_clock::now() < deadline) {
+                auto response = client->get(key);
+                if (!response.is_ok() && response.error_code() != etcd::ERROR_KEY_NOT_FOUND) {
+                    std::cerr << "Failed to read reduction contribution from rank " << rank
+                              << std::endl;
+                    return -1;
+                }
+                if (!response.value().key().empty()) {
+                    const std::string text = response.value().as_string();
+                    size_t consumed = 0;
+                    const double contribution = std::stod(text, &consumed);
+                    if (consumed != text.size() || !std::isfinite(contribution)) {
+                        std::cerr << "Invalid reduction contribution from rank " << rank
+                                  << std::endl;
+                        return -1;
+                    }
+                    sum += contribution;
+                    received = true;
+                    break;
+                }
+                // Liveness makes a failed peer a bounded error rather than a partial sum.
+                if (!areAllPeersAlive()) {
+                    return -1;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            if (!received) {
+                std::cerr << "Reduction interrupted or timed out waiting for rank " << rank
+                          << std::endl;
+                return -1;
+            }
+        }
+        if (!std::isfinite(sum) || !client->rmdir(reduce_key, true).is_ok()) {
+            std::cerr << "Failed to complete reduction" << std::endl;
+            return -1;
+        }
+        *global_value = sum;
         return 0;
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e) {
         std::cerr << "Error in reduce operation: " << e.what() << std::endl;
         return -1;
     }
@@ -487,6 +490,12 @@ xferBenchEtcdRT::barrier(const std::string &barrier_id, const bool finishing) {
                 break;
             }
 
+            // A failed peer removes its namespace during cleanup. Missing barrier
+            // keys only indicate completion while every peer is still alive.
+            // Startup permits ranks still registering; finishing permits exited peers.
+            if (barrier_id != "start_barrier" && !finishing && !areAllPeersAlive()) {
+                throw std::runtime_error("peer lost");
+            }
             count = resp.keys().size();
             if (count == 0 || // rank 0 observed completion and deleted the barrier
                 count == (int)global_size) {

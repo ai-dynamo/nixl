@@ -126,7 +126,9 @@ run_nixlbench_two_workers_etcd() {
     parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 4 ; $command_line"
 }
 
+trap 'kill -9 ${ETCD_PID:-} 2>/dev/null || true' EXIT
 start_etcd_server "/nixl/nixlbench_ci"
+python3 "$SCRIPT_DIR/test_nixlbench_etcd.py" ./bin/nixlbench_tests ./nixlbench-etcd-tests.xml
 
 for op_type in READ WRITE; do
     for initiator in $seg_types; do
