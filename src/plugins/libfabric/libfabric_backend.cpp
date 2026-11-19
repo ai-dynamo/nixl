@@ -957,7 +957,8 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
                 if (handshake_done()) {
                     break;
                 }
-                nixl_status_t progress_status = rail_manager_.progressActiveRails();
+                nixl_status_t progress_status = rail_manager_.progressActiveRails(
+                    nixlLibfabricRailManager::ProgressCudaDevice::SetAndRestore);
                 if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
                     NIXL_ERROR << "Failed to progress rails when waiting for handshake.";
                     return progress_status;
@@ -1031,6 +1032,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     priv->buffer_ = (void *)mem.addr;
     priv->length_ = mem.len;
     priv->device_id_ = mem.devId; // Store device ID
+    priv->mem_type_ = nixl_mem;
 
     std::string pci_bus_id = "";
 
@@ -1146,8 +1148,8 @@ nixl_status_t
 nixlLibfabricEngine::deregisterMem(nixlBackendMD *meta) {
     auto *priv = static_cast<nixlLibfabricPrivateMetadata *>(meta);
     // Use Rail Manager for centralized memory deregistration
-    nixl_status_t status =
-        rail_manager_.deregisterMemory(priv->selected_rails_, priv->rail_mr_list_);
+    nixl_status_t status = rail_manager_.deregisterMemory(
+        priv->selected_rails_, priv->rail_mr_list_, priv->mem_type_, priv->device_id_);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager deregisterMemory failed";
         // Continue with cleanup even if deregistration failed
@@ -1677,7 +1679,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // Progress rails to kick off transfers
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager_.progressActiveRails();
+        nixl_status_t progress_status = rail_manager_.progressActiveRails(
+            nixlLibfabricRailManager::ProgressCudaDevice::SetAndRestore);
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in postXfer";
             return progress_status;
@@ -1708,7 +1711,8 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
     auto backend_handle = static_cast<nixlLibfabricBackendH *>(handle);
 
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager_.progressActiveRails();
+        nixl_status_t progress_status = rail_manager_.progressActiveRails(
+            nixlLibfabricRailManager::ProgressCudaDevice::SetAndRestore);
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in checkXfer";
             return progress_status;
@@ -2048,7 +2052,8 @@ nixlLibfabricEngine::genNotif(const std::string &remote_agent, const std::string
 nixl_status_t
 nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager_.progressActiveRails();
+        nixl_status_t progress_status = rail_manager_.progressActiveRails(
+            nixlLibfabricRailManager::ProgressCudaDevice::SetAndRestore);
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in getNotifs";
             return progress_status;
@@ -2089,7 +2094,9 @@ nixlLibfabricEngine::progressThread() {
     while (!progress_thread_stop_.load()) {
         // Process completions only on rails (non-blocking)
         bool any_completions = false;
-        nixl_status_t status = rail_manager_.progressActiveRails();
+        // Target-side shm CUDA IPC copies run here and need the device of the targeted VRAM
+        nixl_status_t status =
+            rail_manager_.progressActiveRails(nixlLibfabricRailManager::ProgressCudaDevice::Set);
         if (status == NIXL_SUCCESS) {
             any_completions = true;
             NIXL_DEBUG << "PT: Processed completions on rails";
