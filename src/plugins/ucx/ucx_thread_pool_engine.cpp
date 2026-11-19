@@ -130,7 +130,6 @@ public:
               nixlUcxWorker *worker) {
         NIXL_ASSERT(sharedState_.get() == nullptr);
         sharedState_ = shared_state;
-        failureSeenAt_.reset();
         setWorker(worker);
     }
 
@@ -153,10 +152,9 @@ private:
     publishFailure(nixl_status_t status, ucs_status_t failure) noexcept;
 
     [[nodiscard]] bool
-    traceFailure(ucs_status_t failure) noexcept;
+    canRetire(ucs_status_t failure) noexcept;
 
     std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
-    std::optional<nixlBackendPostPhases::completion_time_t> failureSeenAt_;
 };
 
 /*
@@ -207,27 +205,9 @@ nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
 }
 
 bool
-nixlUcxChunkBackendReqH::traceFailure(const ucs_status_t failure) noexcept {
-    if ((failure == UCS_OK) || (this != &sharedState_->chunks.front()) ||
-        !sharedState_->trace.active()) {
-        return true;
-    }
-    switch (sharedState_->failure.decide()) {
-    case nixlUcxSplitFailure::decision_t::WAIT:
-        if (!failureSeenAt_) {
-            failureSeenAt_ = sharedState_->trace.completionTime();
-        }
-        return false;
-    case nixlUcxSplitFailure::decision_t::RECORD:
-        trace = std::exchange(sharedState_->trace, {});
-        trace.completed(nixl::ucx::ucsToNixlStatus(failure),
-                        failureSeenAt_ ? *failureSeenAt_ : trace.completionTime());
-        return true;
-    case nixlUcxSplitFailure::decision_t::DROP:
-        sharedState_->trace = {};
-        return true;
-    }
-    return true;
+nixlUcxChunkBackendReqH::canRetire(const ucs_status_t failure) noexcept {
+    return (this != &sharedState_->chunks.front()) ||
+        sharedState_->failure.observe(failure, sharedState_->trace);
 }
 
 nixl_status_t
@@ -237,12 +217,12 @@ nixlUcxChunkBackendReqH::status() {
     // First check if entire request was cancelled or failed
     const nixl_status_t status = sharedState_->status.load();
     if (status != NIXL_SUCCESS) {
-        return traceFailure(sharedState_->failure.native()) ? status : NIXL_IN_PROG;
+        return canRetire(sharedState_->failure.native()) ? status : NIXL_IN_PROG;
     }
 
     const nixl_status_t ret = nixlUcxBackendReqH::status();
     if (ret < 0) {
-        if (traceFailure(failure())) {
+        if (canRetire(failure())) {
             return ret;
         }
         publishFailure(ret, failure());

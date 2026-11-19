@@ -19,17 +19,19 @@
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
+#include <utility>
 
 extern "C" {
 #include <ucp/api/ucp.h>
 }
 
 #include "nixl_types.h"
+#include "tracing/api/phase_sink.h"
+#include "ucx_enums.h"
 
 class nixlUcxSplitFailure {
 public:
-    enum class decision_t : std::uint8_t { WAIT, RECORD, DROP };
-
     struct failure_t {
         nixl_status_t status = NIXL_SUCCESS;
         std::int32_t native = UCS_OK;
@@ -39,6 +41,7 @@ public:
     reset() noexcept {
         failure_.store({}, std::memory_order_relaxed);
         submission_.store(submission_t::SUBMITTING, std::memory_order_relaxed);
+        seenAt_.reset();
     }
 
     [[nodiscard]] bool
@@ -64,6 +67,45 @@ public:
                           std::memory_order_release);
     }
 
+    [[nodiscard]] nixl_status_t
+    submissionStatus(nixl_status_t fanout) const noexcept {
+        if (fanout == NIXL_SUCCESS) {
+            return fanout;
+        }
+        const nixl_status_t claimed = status();
+        return (claimed != NIXL_SUCCESS) ? claimed : fanout;
+    }
+
+    [[nodiscard]] bool
+    observe(ucs_status_t failure, nixlBackendPostPhases &trace) noexcept {
+        if ((failure == UCS_OK) || !trace.active()) {
+            return true;
+        }
+        switch (decide()) {
+        case decision_t::WAIT:
+            if (!seenAt_) {
+                seenAt_ = trace.completionTime();
+            }
+            return false;
+        case decision_t::RECORD: {
+            const nixlBackendPostPhases phases = std::exchange(trace, {});
+            phases.completed(nixl::ucx::ucsToNixlStatus(failure),
+                             seenAt_ ? *seenAt_ : phases.completionTime());
+            return true;
+        }
+        case decision_t::DROP:
+            trace = {};
+            return true;
+        }
+        return true;
+    }
+
+private:
+    enum class submission_t : std::uint8_t { SUBMITTING, SUBMITTED, REJECTED };
+    enum class decision_t : std::uint8_t { WAIT, RECORD, DROP };
+
+    static_assert(std::atomic<failure_t>::is_always_lock_free);
+
     [[nodiscard]] decision_t
     decide() const noexcept {
         switch (submission_.load(std::memory_order_acquire)) {
@@ -77,22 +119,9 @@ public:
         return decision_t::DROP;
     }
 
-    [[nodiscard]] nixl_status_t
-    submissionStatus(nixl_status_t fanout) const noexcept {
-        if (fanout == NIXL_SUCCESS) {
-            return fanout;
-        }
-        const nixl_status_t claimed = status();
-        return (claimed != NIXL_SUCCESS) ? claimed : fanout;
-    }
-
-private:
-    enum class submission_t : std::uint8_t { SUBMITTING, SUBMITTED, REJECTED };
-
-    static_assert(std::atomic<failure_t>::is_always_lock_free);
-
     std::atomic<failure_t> failure_{};
     std::atomic<submission_t> submission_{submission_t::SUBMITTING};
+    std::optional<nixlBackendPostPhases::completion_time_t> seenAt_;
 };
 
 #endif
