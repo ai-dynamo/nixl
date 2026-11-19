@@ -34,6 +34,7 @@
 
 #include "absl/container/inlined_vector.h"
 
+#include "ucx_split_failure.h"
 #include "ucx_utils.h"
 
 namespace {
@@ -164,19 +165,9 @@ private:
  * number of pending requests, and to control the lifetime of the chunks.
  */
 struct nixlUcxBackendSharedState {
-    enum class submission_t : std::uint8_t { SUBMITTING, SUBMITTED, REJECTED };
-
-    struct failure_t {
-        nixl_status_t status = NIXL_SUCCESS;
-        std::int32_t native = UCS_OK;
-    };
-
-    static_assert(std::atomic<failure_t>::is_always_lock_free);
-
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
-    std::atomic<failure_t> failure{};
-    std::atomic<submission_t> submission{submission_t::SUBMITTING};
+    nixlUcxSplitFailure failure;
     std::string notif;
     std::vector<nixlUcxChunkBackendReqH> chunks;
     nixlBackendPostPhases trace;
@@ -196,8 +187,7 @@ struct nixlUcxBackendSharedState {
 void
 nixlUcxChunkBackendReqH::publishFailure(const nixl_status_t status,
                                         const ucs_status_t failure) noexcept {
-    nixlUcxBackendSharedState::failure_t none;
-    if (sharedState_->failure.compare_exchange_strong(none, {status, failure})) {
+    if (sharedState_->failure.publish(status, failure)) {
         sharedState_->status.store(status);
     }
 }
@@ -222,18 +212,18 @@ nixlUcxChunkBackendReqH::traceFailure(const ucs_status_t failure) noexcept {
         !sharedState_->trace.active()) {
         return true;
     }
-    switch (sharedState_->submission.load(std::memory_order_acquire)) {
-    case nixlUcxBackendSharedState::submission_t::SUBMITTING:
+    switch (sharedState_->failure.decide()) {
+    case nixlUcxSplitFailure::decision_t::WAIT:
         if (!failureSeenAt_) {
             failureSeenAt_ = sharedState_->trace.completionTime();
         }
         return false;
-    case nixlUcxBackendSharedState::submission_t::SUBMITTED:
+    case nixlUcxSplitFailure::decision_t::RECORD:
         trace = std::exchange(sharedState_->trace, {});
         trace.completed(nixl::ucx::ucsToNixlStatus(failure),
                         failureSeenAt_ ? *failureSeenAt_ : trace.completionTime());
         return true;
-    case nixlUcxBackendSharedState::submission_t::REJECTED:
+    case nixlUcxSplitFailure::decision_t::DROP:
         sharedState_->trace = {};
         return true;
     }
@@ -247,8 +237,7 @@ nixlUcxChunkBackendReqH::status() {
     // First check if entire request was cancelled or failed
     const nixl_status_t status = sharedState_->status.load();
     if (status != NIXL_SUCCESS) {
-        const auto failure = sharedState_->failure.load(std::memory_order_relaxed);
-        return traceFailure(static_cast<ucs_status_t>(failure.native)) ? status : NIXL_IN_PROG;
+        return traceFailure(sharedState_->failure.native()) ? status : NIXL_IN_PROG;
     }
 
     const nixl_status_t ret = nixlUcxBackendReqH::status();
@@ -303,9 +292,7 @@ public:
     startXfer() {
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
-        sharedState_->failure.store({}, std::memory_order_relaxed);
-        sharedState_->submission.store(nixlUcxBackendSharedState::submission_t::SUBMITTING,
-                                       std::memory_order_relaxed);
+        sharedState_->failure.reset();
         sharedState_->trace = trace;
         sharedState_->pendingReqs.store(getNumChunks());
     }
@@ -321,10 +308,7 @@ public:
     void
     finishSubmission(nixl_status_t status) noexcept {
         if (trace.active()) {
-            sharedState_->submission.store((status == NIXL_SUCCESS) ?
-                                               nixlUcxBackendSharedState::submission_t::SUBMITTED :
-                                               nixlUcxBackendSharedState::submission_t::REJECTED,
-                                           std::memory_order_release);
+            sharedState_->failure.finishSubmission(status);
         }
     }
 
@@ -335,14 +319,12 @@ public:
 
     [[nodiscard]] ucs_status_t
     failure() const noexcept override {
-        return sharedState_ ? static_cast<ucs_status_t>(
-                                  sharedState_->failure.load(std::memory_order_relaxed).native) :
-                              UCS_OK;
+        return sharedState_ ? sharedState_->failure.native() : UCS_OK;
     }
 
     [[nodiscard]] nixl_status_t
-    sharedStatus() const noexcept {
-        return sharedState_->failure.load().status;
+    submissionStatus(nixl_status_t fanout) const noexcept {
+        return sharedState_->failure.submissionStatus(fanout);
     }
 
     void
@@ -605,9 +587,5 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     NIXL_TRACE << "sent " << *comp_handle << " with status: " << status;
     comp_handle->finishSubmission(status);
-    if (status == NIXL_SUCCESS) {
-        return status;
-    }
-    const nixl_status_t shared = comp_handle->sharedStatus();
-    return (shared != NIXL_SUCCESS) ? shared : status;
+    return comp_handle->submissionStatus(status);
 }
