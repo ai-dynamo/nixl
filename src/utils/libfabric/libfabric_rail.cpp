@@ -438,6 +438,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     endpoint = nullptr;
     cq = nullptr;
     av = nullptr;
+    eq = nullptr;
     memset(ep_name, 0, sizeof(ep_name));
 
     // Initialize all Libfabric resources for this rail
@@ -576,6 +577,15 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             throw std::runtime_error("fi_av_open failed for rail " + std::to_string(rail_id));
         }
 
+        struct fi_eq_attr eq_attr = {};
+        eq_attr.wait_obj = FI_WAIT_NONE;
+        ret = fi_eq_open(fabric, &eq_attr, &eq, NULL);
+        if (ret) {
+            NIXL_WARN << "fi_eq_open failed for rail " << rail_id << ": " << fi_strerror(-ret)
+                      << "; running without an EQ";
+            eq = nullptr;
+        }
+
         // Create endpoint for this rail
         ret = fi_endpoint(domain, info, &endpoint, NULL);
         if (ret) {
@@ -583,7 +593,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             throw std::runtime_error("fi_endpoint failed for rail " + std::to_string(rail_id));
         }
 
-        // Bind endpoint with CQ and AV for this rail
+        // Bind endpoint with CQ, AV and EQ for this rail
         ret = fi_ep_bind(endpoint, &cq->fid, FI_TRANSMIT | FI_RECV);
         if (ret) {
             NIXL_ERROR << "fi_ep_bind cq failed for rail " << rail_id << ": " << fi_strerror(-ret);
@@ -594,6 +604,16 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         if (ret) {
             NIXL_ERROR << "fi_ep_bind av failed for rail " << rail_id << ": " << fi_strerror(-ret);
             throw std::runtime_error("fi_ep_bind av failed for rail " + std::to_string(rail_id));
+        }
+
+        if (eq) {
+            ret = fi_ep_bind(endpoint, &eq->fid, 0);
+            if (ret) {
+                NIXL_WARN << "fi_ep_bind eq failed for rail " << rail_id << ": "
+                          << fi_strerror(-ret) << "; running without an EQ";
+                fi_close(&eq->fid);
+                eq = nullptr;
+            }
         }
 
         // On runtimes the shm provider cannot serve, disable it so that intra-node
@@ -737,7 +757,7 @@ nixlLibfabricRail::cleanup() {
         endpoint = nullptr;
     }
 
-    // STEP 2: Close CQ after endpoint
+    // STEP 2: Close CQ, AV and EQ after endpoint
     if (cq) {
         NIXL_TRACE << "Closing completion queue for rail " << rail_id;
         int ret = fi_close(&cq->fid);
@@ -754,6 +774,15 @@ nixlLibfabricRail::cleanup() {
             NIXL_WARN << "fi_close av failed for rail " << rail_id << ": " << fi_strerror(-ret);
         }
         av = nullptr;
+    }
+
+    if (eq) {
+        NIXL_TRACE << "Closing event queue for rail " << rail_id;
+        int ret = fi_close(&eq->fid);
+        if (ret) {
+            NIXL_WARN << "fi_close eq failed for rail " << rail_id << ": " << fi_strerror(-ret);
+        }
+        eq = nullptr;
     }
 
     // STEP 3: Clean up request pools while domain is still valid
@@ -841,6 +870,21 @@ nixlLibfabricRail::progressCompletionQueue() {
             // Handle error - but be careful about fi_cq_readerr
             memset(&err_entry, 0, sizeof(err_entry));
             err_ret = fi_cq_readerr(cq, &err_entry, 0);
+        }
+
+        // EFA writes EQ errors during fi_cq_readfrom(); log them and keep running
+        if (eq) {
+            uint32_t event;
+            struct fi_eq_entry entry;
+            while (fi_eq_read(eq, &event, &entry, sizeof(entry), 0) == -FI_EAVAIL) {
+                struct fi_eq_err_entry eq_err = {};
+                if (fi_eq_readerr(eq, &eq_err, 0) < 0) {
+                    break;
+                }
+                NIXL_ERROR << "EQ error on rail " << rail_id << " (" << provider_name << ", "
+                           << device_name << "): " << fi_strerror(eq_err.err) << " (err "
+                           << eq_err.err << "), prov_errno " << eq_err.prov_errno;
+            }
         }
     }
     // CQ lock released here - completion is now local data
