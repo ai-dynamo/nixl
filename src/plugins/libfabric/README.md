@@ -156,6 +156,7 @@ The following table summarizes briefly the plugin's runtime configuration:
 | num_threads | Enables a thread pool for parallel descriptor posting in postXfer | Backend init param | integer | 4, 8 | Default 0 keeps the serial posting path |
 | split_batch_size | Minimum descriptor count before postXfer uses the posting thread pool | Backend init param | integer | 1024, 4096 | Default 1024; only applies when num_threads is greater than 0 |
 | dmabuf_mapping | Selects the CUDA dmabuf mapping type a VRAM_SEG registration exports for an EFA rail | Backend init param or `NIXL_LIBFABRIC_DMABUF_MAPPING` environment variable | auto, pcie, default, off | auto, off | Default auto takes a per-NIC verdict from the PCIe-path topology; pcie and default force the GPU's PCIe aperture (BAR1) or the platform default mapping on every device; off registers by virtual address. Only applies to CUDA device memory on an EFA provider whose fabric carries libfabric API 1.20 or newer |
+| nics | Selects the RDMA or the converged EFA devices | Backend init param or `NIXL_LIBFABRIC_NICS` environment variable | rdma, converged | converged | Default rdma. An RDMA device is local to a GPU, its nearest counting PCIe bridges and CPU packages, and a converged device is local to none of the GPUs. GPU and DRAM_SEG rails, and rail 0, all come from the chosen kind. converged uses the RDMA devices when there is no converged device. Ignored on hosts without an NVIDIA or AMD GPU |
 
 ## API Reference
 
