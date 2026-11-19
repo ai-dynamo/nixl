@@ -1742,6 +1742,11 @@ nixlLibfabricNumaRailSelectionPolicy::buildNumaDataRails(const nixlLibfabricTopo
                       << " (out of range) for device " << device << ", skipping";
             continue;
         }
+        if (!topology->isNumaNearestDevice(device)) {
+            NIXL_DEBUG << "Device " << device << " is farther from NUMA node " << dev_numa_node_id
+                       << " than another device, skipping";
+            continue;
+        }
 
         // get parent switch bus id
         uint16_t numa_node_id = nixlLibfabricTopology::INVALID_NUMA_NODE_ID;
