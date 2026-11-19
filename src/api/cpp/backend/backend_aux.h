@@ -23,6 +23,7 @@
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
+#include "notif_callbacks.h"
 #include "common/nixl_time.h"
 
 class nixlBackendTraceSink;
@@ -69,6 +70,7 @@ class nixlBackendInitParams {
         nixl_thread_sync_t syncMode;
         bool enableTelemetry_ = false;
         nixlBackendTraceSink *traceSink = nullptr;
+        const nixlNotifRouter *notifRouter = nullptr;
 };
 
 // Pure virtual class to have a common pointer type

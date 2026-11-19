@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_CORE_AGENT_DATA_H
 #define NIXL_SRC_CORE_AGENT_DATA_H
 
+#include "backend/notif_callbacks.h"
 #include "mem_section.h"
 #include "nixl_md_manager.h"
 #include "nixl_metadata_context.h"
@@ -39,6 +40,7 @@ class nixlAgentData final : public nixlMetadataContext {
     private:
         const std::string name_;
         const nixlAgentConfig config_;
+        nixlNotifRouter notifRouter_;
         // Agent-owned metadata manager; always built (single metadata path).
         // It owns the pluggable backends, which own their own transport state
         // (sockets/listener for P2P, client for ETCD) and their own threads.

@@ -40,6 +40,7 @@ GMockBackendEngine::setDefaults() {
     ON_CALL(*this, supportsRemote()).WillByDefault(Return(true));
     ON_CALL(*this, supportsLocal()).WillByDefault(Return(true));
     ON_CALL(*this, supportsNotif()).WillByDefault(Return(true));
+    ON_CALL(*this, supportsNotifCallback()).WillByDefault(Return(false));
     ON_CALL(*this, getSupportedMems()).WillByDefault(Return(nixl_mem_list_t{DRAM_SEG}));
     ON_CALL(*this, registerMem(_, _, _)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, deregisterMem(_)).WillByDefault(Return(NIXL_SUCCESS));

@@ -135,6 +135,11 @@ public:
         return true;
     }
 
+    [[nodiscard]] bool
+    supportsNotifCallback() const noexcept override {
+        return true;
+    }
+
     nixl_mem_list_t
     getSupportedMems() const override;
 

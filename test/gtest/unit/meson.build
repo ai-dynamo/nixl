@@ -38,6 +38,9 @@ unit_test_deps += [agent_unit_test_dep]
 subdir('descriptors')
 unit_test_deps += [descriptors_unit_test_dep]
 
+subdir('notif_callbacks')
+unit_test_deps += [notif_callbacks_unit_test_dep]
+
 subdir('device_ops')
 unit_test_deps += [device_ops_unit_test_dep]
 

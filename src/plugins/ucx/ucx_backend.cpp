@@ -830,7 +830,10 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
                                         notif.traceExecution);
     }
 
-    engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
+    nixlNotifCallbackArgs args{std::move(notif.agent), std::move(notif.msg)};
+    if (engine->deliverNotif(args) == nixl_notif_route_t::NIXL_NOTIF_ROUTE_UNMATCHED) {
+        engine->appendNotif(std::move(args.remoteAgent), std::move(args.notifMessage));
+    }
     return UCS_OK;
 }
 

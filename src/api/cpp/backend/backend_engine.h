@@ -33,6 +33,7 @@ class nixlBackendEngine {
         // Members that cannot be modified by a child backend and parent bookkeep
         nixl_backend_t  backendType;
         nixl_b_params_t customParams;
+        const nixlNotifRouter *notifRouter_;
         std::vector<nixlTelemetryEvent> telemetryEvents_;
         std::mutex telemetryEventsMutex_;
 
@@ -71,11 +72,20 @@ class nixlBackendEngine {
             telemetryEvents_.emplace_back(event_type, value);
         }
 
+        [[nodiscard]] nixl_notif_route_t
+        deliverNotif(nixlNotifCallbackArgs &args) const {
+            if (notifRouter_ == nullptr) {
+                return nixl_notif_route_t::NIXL_NOTIF_ROUTE_UNMATCHED;
+            }
+            return notifRouter_->call(args);
+        }
+
     public:
         explicit nixlBackendEngine(const nixlBackendInitParams *init_params)
             : backendType(init_params->type),
               customParams(init_params->customParams ? *init_params->customParams :
                                                        nixl_b_params_t{}),
+              notifRouter_(init_params->notifRouter),
               localAgent(init_params->localAgent),
               enableTelemetry_(init_params->enableTelemetry_) {}
 
@@ -252,6 +262,11 @@ class nixlBackendEngine {
         // once for remote backends and, if false, warns once when a sampled request goes untraced.
         [[nodiscard]] virtual bool
         supportsTraceContext() const noexcept {
+            return false;
+        }
+
+        [[nodiscard]] virtual bool
+        supportsNotifCallback() const noexcept {
             return false;
         }
 };

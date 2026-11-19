@@ -198,6 +198,11 @@ makeMDConfig(const nixlAgentConfig &config) {
             std::chrono::microseconds(config.lthrDelay)};
 }
 
+[[nodiscard]] bool
+lacksNotifCallbacks(const nixlBackendEngine &backend) {
+    return backend.supportsRemote() && !backend.supportsNotifCallback();
+}
+
 void
 traceXferComplete(nixl::trace::Tracer *tracer, const nixlXferReqH &req) {
     NIXL_TRACE_EVENT(tracer,
@@ -374,6 +379,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
+    init_params.notifRouter =&data->notifRouter_;
 
     std::unique_ptr<nixlBackendTraceSink> trace_sink;
     if (data->tracer_ != nullptr) {
@@ -408,8 +414,13 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
     if (backend->supportsRemote()) {
         if (!backend->supportsNotif()) {
-            NIXL_ERROR_FUNC << "backend '" << type << "' supportsRemote but not notifications";
+            NIXL_ERROR_FUNC << "backend '" << type << "' supports remote but not notifications";
             return NIXL_ERR_BACKEND;
+        }
+
+        if (!data->notifRouter_.empty() && lacksNotifCallbacks(*backend)) {
+            NIXL_ERROR_FUNC << "backend '" << type << "' does not support notification callbacks";
+            return NIXL_ERR_NOT_SUPPORTED;
         }
 
         const nixl_status_t ret = backend->getConnInfo(conn_info);
@@ -2184,4 +2195,21 @@ nixlAgent::releaseMemView(nixlMemViewH mvh) const {
 
     it->second.releaseMemView(mvh);
     data->mvhToEngine.erase(it);
+}
+
+nixl_status_t
+nixlAgent::registerNotifCallback(const std::string &prefix, const nixl_notif_callback_t &callback) {
+    NIXL_LOCK_GUARD(data->lock);
+    for (const auto &[type, backend] : data->backendEngines_) {
+        if (lacksNotifCallbacks(*backend)) {
+            NIXL_ERROR_FUNC << "backend '" << type << "' does not support notification callbacks";
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+    }
+    return data->notifRouter_.add(prefix, callback);
+}
+
+nixl_status_t
+nixlAgent::deregisterNotifCallback(const std::string &prefix) {
+    return data->notifRouter_.remove(prefix);
 }

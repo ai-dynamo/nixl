@@ -627,6 +627,36 @@ class nixlAgent {
         checkRemoteMD (const std::string remote_name,
                        const nixl_xfer_dlist_t &descs) const;
 
+        /**
+         * @brief  Register a callback for the notifications whose message starts with prefix. The
+         *         callback runs on the thread that received the notification, must not call into
+         *         this nixlAgent, must not throw, and the notifications it receives never reach
+         *         getNotifs.
+         *         Notifications received before the call still go to getNotifs. Safe to call while
+         *         backends receive notifications. While a callback is registered, createBackend of a
+         *         backend that cannot deliver notifications to callbacks fails.
+         *
+         * @param  prefix        Prefix of the notifications to receive. Must not be empty, and must
+         *                       not be a prefix of a registered one, or have one as its prefix
+         * @param  callback      Callback to run for each of these notifications. Must not be empty
+         * @return nixl_status_t NIXL_SUCCESS; NIXL_ERR_INVALID_PARAM for an empty prefix or
+         *                       callback, or an overlapping prefix; NIXL_ERR_NOT_SUPPORTED if a
+         *                       backend of this nixlAgent cannot deliver notifications to callbacks
+         */
+        nixl_status_t
+        registerNotifCallback(const std::string &prefix, const nixl_notif_callback_t &callback);
+
+        /**
+         * @brief  Remove the callback registered for prefix. Notifications with that prefix received
+         *         afterwards go to getNotifs. Returns after a call of the callback already in
+         *         progress completes. Safe to call while backends receive notifications.
+         *
+         * @param  prefix        Prefix that registerNotifCallback was called with
+         * @return nixl_status_t NIXL_SUCCESS; NIXL_ERR_NOT_FOUND if no callback is registered for
+         *                       prefix
+         */
+        nixl_status_t
+        deregisterNotifCallback(const std::string &prefix);
 };
 
 #endif
