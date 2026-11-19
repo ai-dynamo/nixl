@@ -105,6 +105,11 @@ navigation:
             path: ./docs/pages/user-guide/backends/doca-memos.md
           - page: GUSLI
             path: ./docs/pages/user-guide/backends/gusli.md
+          - page: Redis
+            path: ./docs/pages/user-guide/backends/redis.md
+          - page: AMD Infinity Storage
+            slug: rocm-ais
+            path: ./docs/pages/user-guide/backends/rocm-ais.md
       - page: "Metadata Exchange with etcd"
         path: ./docs/pages/user-guide/etcd-metadata-exchange.md
       - page: Telemetry Guide
