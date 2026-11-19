@@ -58,10 +58,11 @@
             exit(EXIT_FAILURE);                                                        \
         }                                                                              \
     } while (0)
+
 #elif HAVE_ROCM
 #include <hip/hip_runtime.h>
 
-#define CHECK_CUDA_ERROR(result, message)                                      \
+#define CHECK_HIP_ERROR(result, message)                                       \
     do {                                                                       \
         const auto _r = (result);                                              \
         if (_r != hipSuccess) {                                                \
@@ -70,6 +71,7 @@
             exit(EXIT_FAILURE);                                                \
         }                                                                      \
     } while (0)
+
 #endif
 
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
@@ -98,6 +100,7 @@
 #define XFERBENCH_BACKEND_LIBFABRIC "LIBFABRIC"
 #define XFERBENCH_BACKEND_GDS "GDS"
 #define XFERBENCH_BACKEND_GDS_MT "GDS_MT"
+#define XFERBENCH_BACKEND_AIS "AIS"
 #define XFERBENCH_BACKEND_POSIX "POSIX"
 #define XFERBENCH_BACKEND_GPUNETIO "GPUNETIO"
 #define XFERBENCH_BACKEND_MOONCAKE "MOONCAKE"
