@@ -111,6 +111,9 @@ public:
     int
     getCoveringIndex(const nixlBasicDesc &query, int start_index = 0) const;
 
+    bool
+    overlapsAny(const nixlBasicDesc &query) const noexcept;
+
     void
     resize(const size_t &count) override;
 
