@@ -22,4 +22,5 @@ pytest
 pyyaml
 toml
 tomli
+tomlkit
 types-PyYAML
