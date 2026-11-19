@@ -3,17 +3,25 @@
 The public exports, method signatures, defaults and argument annotations follow
 the production API. Construction requires `world_rank`,
 `max_num_scaleout_ranks`, `max_num_scaleup_ranks`, positive
-`num_max_tokens_per_rank` and `hidden`, and keyword-only
+`num_max_tokens_per_rank` and `hidden`, and
 `num_experts_per_rank`; it does not discover a group
 or connect peers. The constructor has no `num_bytes` or `num_nixl_channels`
 overrides. Public metadata getters and `publish` are absent; `connect_ranks`
-takes a Store instead of manual metadata. Topology inspection and coordinate
-helpers are private; `set_active_ranks` validates and activates membership in
-one call, and `disconnect_ranks` excludes and retires peers in one call.
+takes a Store instead of manual metadata. Production discovers physical topology
+and maps caller-assigned rank IDs internally; `set_active_ranks` validates and
+activates membership in one call, and `disconnect_ranks` excludes and retires
+peers in one call.
 `get_buffer_size_hint` requires both maximum-world dimensions and queries size
 locally without a process group or Store.
+The constructor and size hint require `num_topk` from 1 through 32 for buffer sizing;
+dispatch takes its actual routing width from `topk_idx.shape[1]`.
 Method docstrings describe the
 production contracts, not operations executed by this shell.
+
+`world_rank` is a caller-assigned ID in
+`[0, max_num_scaleout_ranks * max_num_scaleup_ranks)`. Its numeric value does not
+encode a physical domain or a position within one. The maximum dimensions bound
+capacity; they do not impose a numbering scheme on application ranks.
 
 `num_experts_per_rank` is a required positive integer specifying the fixed
 physical slot capacity per GPU; slots may remain unused. Choose it for the
@@ -29,7 +37,7 @@ renumbering IDs solely because an extent changes. Internal source metadata
 continues to use committed-extent rank encoding. The shell does not read or
 route these IDs.
 
-The keyword-only `num_launch_sms=24` selects the fixed main dispatch/combine
+`num_launch_sms=24` selects the fixed main dispatch/combine
 block count for the buffer's lifetime: an even integer from 2 through 64, exposed as a
 read-only property and matching across peers. Dispatch, combine and captured
 graph replays always use this count. Membership and direct/hybrid mode may
@@ -71,8 +79,8 @@ buffer.destroy()
 
 ## What the shell models
 
-- Configuration, fixed expert slots per rank, connected peers, active topology,
-  direct/hybrid selection, the fixed SM count and
+- Configuration, fixed expert slots per rank, connected peers, active membership,
+  the fixed SM count and
   explicit destruction are local Python state. No other rank participates.
   Construction starts with only `world_rank` active and no connected peers.
   Dispatch/combine work in this initial single-rank state. To add peers,
@@ -98,19 +106,20 @@ buffer.destroy()
   ignores already-connected peers and requires a Store only for new peers,
   passed directly or at construction, but never accesses it.
   On an active local rank, `disconnect_ranks` also removes requested peers from
-  membership; survivors must form a nonempty product of domains and positions.
-  Direct/hybrid mode follows the surviving world and the fixed SM count stays
-  unchanged. On an inactive local rank, retirement preserves its active-world
-  descriptor, including when all peers in that world are retired. The entire
-  request and surviving topology are validated before either state changes;
+  membership. The fixed SM count stays unchanged. On an inactive local rank,
+  retirement preserves its active membership, including when all peers in that
+  world are retired. The entire request is validated before either state changes;
   invalid requests leave both membership and connections unchanged, and an
   empty request is a no-op. The caller must drain the old world and complete a
   host rendezvous before retiring peers; the call does not coordinate ranks.
   A disconnected peer can reconnect after `disconnect_ranks` returns. No data is exchanged.
   `init_jit()` is a no-op, and `topk_idx_t` is fixed to `torch.int64`.
 
-The shell does not validate execution-dependent constraints, CUDA graph or
-stream behavior, memory ownership, timeouts, transport completion or GPU
+The shell does not discover hardware, infer direct/hybrid mode, or validate
+physical topology shapes from rank IDs. Production validates those shapes using
+its discovered internal mapping. The shell does not validate other
+execution-dependent constraints, CUDA graph or stream behavior, memory ownership,
+timeouts, transport completion or GPU
 correctness. The existing core NIXL and EP example sources remain in this repository;
 none is loaded by the standalone shell.
 

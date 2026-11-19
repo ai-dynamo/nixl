@@ -124,16 +124,14 @@ class ElasticBuffer:
         num_max_tokens_per_rank: the default maximum tokens per rank.
         max_num_scaleout_ranks: the declared maximum number of scaleout ranks (NVLink domains) the buffer is sized for.
         max_num_scaleup_ranks: the declared maximum number of scaleup ranks (positions per domain).
-        scaleout_rank_idx: this rank's NVLink domain index in the declared maximum world.
-        scaleup_rank_idx: this rank's position inside its NVLink domain.
-        world_rank: this rank's world rank, its cell `scaleout_rank_idx * max_num_scaleup_ranks + scaleup_rank_idx` of the
-            declared maximum world (the transport's peer index).
+        world_rank: this rank's caller-assigned ID, independent of physical topology.
         num_launch_sms: the read-only main dispatch/combine block count, fixed for this buffer's lifetime.
             An even integer from 2 through 64 (default 24).
         runtime: the C++ runtime.
 
-    Elasticity: the active ranks are a product subset of the declared maximum world (active NVLink domains x active
-    positions). `connect_ranks` prepares peers; `set_active_ranks` activates the topology the kernels read.
+    Elasticity: production discovers physical domains during connection preparation and maps world ranks to internal
+    domain/position slots. The active hardware must form a supported product of domains and positions.
+    `connect_ranks` prepares peers; `set_active_ranks` activates the topology the kernels read.
     Only active ranks launch dispatch/combine. Construction initializes this rank alone.
     Connect peers explicitly, then activate the intended world. `disconnect_ranks` excludes and retires peers;
     on an active local rank, the survivors must still form a nonempty product of domains and positions.
@@ -149,8 +147,8 @@ class ElasticBuffer:
     any peer departs. The update methods do not establish that completion boundary.
     Invalid inputs and mapping refusals before peer retirement preserve active views; failures after retirement or view activation are fatal.
 
-    World ranks and public expert IDs index the declared maximum world. Internal source metadata and the
-    kernels' `rank_idx` still index the committed extent: `scaleout_rank_idx * num_scaleup_ranks + scaleup_rank_idx`.
+    World ranks and public expert IDs remain independent of internal topology coordinates.
+    Internal source metadata uses the committed topology's rank encoding.
     """
 
     def __init__(
@@ -160,7 +158,8 @@ class ElasticBuffer:
         max_num_scaleup_ranks: int,
         num_max_tokens_per_rank: int,
         hidden: int,
-        num_topk: int = 0,
+        num_experts_per_rank: int,
+        num_topk: int,
         use_fp8_dispatch: bool = False,
         deterministic: bool = False,
         allow_multiple_reduction: bool = True,
@@ -169,8 +168,6 @@ class ElasticBuffer:
         num_cpu_timeout_secs: int = 300,
         num_gpu_timeout_secs: int = 100,
         explicitly_destroy: bool = False,
-        *,
-        num_experts_per_rank: int,
         num_launch_sms: int = 24,
     ):
         """
@@ -179,14 +176,15 @@ class ElasticBuffer:
         Buffer capacity is calculated from the workload settings and declared maximum world.
 
         Arguments:
-            world_rank: this rank's fixed ID in the declared maximum world. Its domain and position are
-                `divmod(world_rank, max_num_scaleup_ranks)`; the same IDs are passed to `connect_ranks`.
+            world_rank: this rank's caller-assigned fixed ID in
+                `[0, max_num_scaleout_ranks * max_num_scaleup_ranks)`, independent of physical topology.
+                The same IDs are passed to `connect_ranks` and `set_active_ranks`.
             max_num_scaleout_ranks: positive maximum number of NVLink domains, shared by all peers.
             max_num_scaleup_ranks: positive maximum positions per domain, at most 128, shared by all peers.
                 These maxima size the buffer, handles and kernels; they do not describe current membership.
             num_max_tokens_per_rank: required positive maximum tokens per rank used for buffer sizing.
             hidden: required positive hidden dimension of each token.
-            num_topk: the number of top-k experts per token.
+            num_topk: required integer from 1 through 32; top-k capacity used for buffer sizing.
             use_fp8_dispatch: reserve smaller dispatch arenas for FP8/NVFP4 inputs; False reserves BF16 capacity and also
                 accepts either quantized format. Must match across peers; it does not cast inputs.
             num_experts_per_rank: required positive integer giving the fixed physical routing slot capacity per GPU.
@@ -236,13 +234,18 @@ class ElasticBuffer:
             explicitly_destroy,
         )
         self.store = store
-        self.num_bytes = 0
+        self.num_bytes = self.get_buffer_size_hint(
+            max_num_scaleout_ranks,
+            max_num_scaleup_ranks,
+            num_max_tokens_per_rank,
+            hidden,
+            num_topk,
+            use_fp8_dispatch,
+            allow_multiple_reduction,
+        )
         self.world_rank = world_rank
         self.max_num_scaleout_ranks = max_num_scaleout_ranks
         self.max_num_scaleup_ranks = max_num_scaleup_ranks
-        self.scaleout_rank_idx, self.scaleup_rank_idx = divmod(
-            world_rank, max_num_scaleup_ranks
-        )
         self._num_launch_sms = num_launch_sms
         self.runtime = None
         self._destroyed = False
@@ -268,7 +271,7 @@ class ElasticBuffer:
         max_num_scaleup_ranks: int,
         num_max_tokens_per_rank: int,
         hidden: int,
-        num_topk: int = 0,
+        num_topk: int,
         use_fp8_dispatch: bool = False,
         allow_multiple_reduction: bool = True,
     ) -> int:
@@ -280,13 +283,15 @@ class ElasticBuffer:
             max_num_scaleup_ranks: the maximum positions per domain.
             num_max_tokens_per_rank: the maximum number of tokens per rank.
             hidden: the hidden dimension of each token.
-            num_topk: the number of top-k experts per token.
+            num_topk: required integer from 1 through 32; top-k capacity used for buffer sizing.
             use_fp8_dispatch: size dispatch arenas for FP8/NVFP4 inputs; pass the same value to the constructor.
             allow_multiple_reduction: whether to allow multiple reductions in combine.
 
         Returns:
             size: the communication buffer size in bytes (2 MB-aligned).
         """
+        if type(num_topk) is not int or not 1 <= num_topk <= 32:
+            raise ValueError("num_topk must be an integer between 1 and 32")
         return 0
 
     def read_profile(self) -> Dict[str, torch.Tensor]:
@@ -331,8 +336,9 @@ class ElasticBuffer:
         timeout_secs: float = 120.0,
     ) -> None:
         """
-        Exchange agent names and region descriptors through a Store, fetch transport metadata through NIXL's
-        metadata manager, and prepare memory views for activation by `set_active_ranks`. Already-connected peers are ignored.
+        Exchange agent names, region descriptors and physical topology evidence through a Store, fetch transport
+        metadata through NIXL's metadata manager, and prepare internal rank mappings and memory views for activation
+        by `set_active_ranks`. Already-connected peers are ignored.
         Discovery data uses `{key_prefix}/{world_rank}` and is deleted after all new peers have read it and
         native preparation finishes. Each new peer must request this rank;
         complete the exchange on all participants before reusing its rank keys.
@@ -384,42 +390,12 @@ class ElasticBuffer:
         active = self._active
         if self.world_rank in active:
             active = tuple(rank for rank in active if rank not in peers)
-            self._masks_of(active)
         self._active, self._connected = active, self._connected - peers
 
     def get_connected_ranks(self) -> List[int]:
         """World ranks of the connected peers (this rank excluded)."""
         self._ensure_open()
         return sorted(self._connected)
-
-    def _world_rank_of(self, scaleout_rank_idx: int, scaleup_rank_idx: int) -> int:
-        """The world rank of coordinates `(scaleout_rank_idx, scaleup_rank_idx)` in the declared maximum world."""
-        return scaleout_rank_idx * self.max_num_scaleup_ranks + scaleup_rank_idx
-
-    def _masks_of(self, active_ranks: Sequence[int]) -> Tuple[int, int]:
-        """The `(scaleout_mask, scaleup_mask)` of world ranks forming a product of domains and positions."""
-        active = sorted(set(active_ranks))
-        if not active or any(
-            (
-                r < 0 or r >= self.max_num_scaleout_ranks * self.max_num_scaleup_ranks
-                for r in active
-            )
-        ):
-            raise ValueError(
-                "Active ranks must be nonempty and within the declared maximum world"
-            )
-        domains = sorted({r // self.max_num_scaleup_ranks for r in active})
-        positions = sorted({r % self.max_num_scaleup_ranks for r in active})
-        if active != [self._world_rank_of(d, p) for d in domains for p in positions]:
-            raise ValueError(
-                "Active ranks must form a product of domains and positions"
-            )
-        return (sum((1 << d for d in domains)), sum((1 << p for p in positions)))
-
-    @staticmethod
-    def _mode_of(scaleout_mask: int) -> str:
-        """Exactly one active NVLink domain selects direct mode, regardless of its index."""
-        return "direct" if bin(scaleout_mask).count("1") == 1 else "hybrid"
 
     def set_active_ranks(self, active_ranks: Sequence[int]) -> None:
         """Validate and activate connected ranks forming a product of domains and positions; the mode follows the new world.
@@ -429,7 +405,14 @@ class ElasticBuffer:
         """
         self._ensure_open()
         active = tuple(sorted(set(active_ranks)))
-        self._masks_of(active)
+        if not active or any(
+            type(rank) is not int
+            or not 0 <= rank < self.max_num_scaleout_ranks * self.max_num_scaleup_ranks
+            for rank in active
+        ):
+            raise ValueError(
+                "Active ranks must be nonempty integers within the declared maximum world"
+            )
         if self.world_rank in active and (
             not set(active).issubset(self._connected | {self.world_rank})
         ):
@@ -438,25 +421,10 @@ class ElasticBuffer:
             )
         self._active = active
 
-    def _get_topology_masks(self) -> Tuple[int, int]:
-        """Committed `(scaleout_mask, scaleup_mask)`: bit d / bit k denotes an active domain / position."""
-        self._ensure_open()
-        return self._masks_of(self._active)
-
     def get_active_ranks(self) -> List[int]:
         """The world ranks of the committed active ranks, sorted."""
         self._ensure_open()
         return list(self._active)
-
-    def _get_topology_extent(self) -> Tuple[int, int]:
-        """Committed extents: highest active domain index + 1 and highest active position + 1."""
-        (domains, positions) = self._get_topology_masks()
-        return (domains.bit_length(), positions.bit_length())
-
-    def _get_mode(self) -> str:
-        """The committed direct or hybrid mode."""
-        (domains, _) = self._get_topology_masks()
-        return self._mode_of(domains)
 
     def dispatch(
         self,
@@ -501,8 +469,8 @@ class ElasticBuffer:
                 physical slot indices selected by each token, `-1` means no selection. With S = `num_experts_per_rank`,
                 expert_id = world_rank * S + local_expert_idx, where `0 <= local_expert_idx < S`.
                 Valid IDs are in `[0, max_num_scaleout_ranks * max_num_scaleup_ranks * S)` and stay fixed across
-                membership and extent changes, including graph replay. Slot e belongs to world rank e // S,
-                with coordinates `divmod(e // S, max_num_scaleup_ranks)`. Selections of inactive ranks are dropped.
+                membership and extent changes, including graph replay. Slot e belongs to world rank e // S;
+                production resolves its internal coordinates from the discovered topology. Selections of inactive ranks are dropped.
                 The caller owns logical expert placement and routing weights; extent changes alone require no renumbering.
             topk_weights: `[num_tokens, num_topk]` with `torch.float`, the expert weights of each token to dispatch.
             cumulative_local_expert_recv_stats: `[num_experts_per_rank]` with `torch.int`, cumulative physical-slot

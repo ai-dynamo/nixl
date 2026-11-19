@@ -205,54 +205,36 @@ class ApiShellTests(unittest.TestCase):
         self.assertIs(buffer.store, store)
         self.assertIsNone(buffer.runtime)
         self.assertEqual(buffer.get_active_ranks(), [1])
-        self.assertEqual(buffer.get_buffer_size_hint(2, 2, 8, 256), 0)
+        self.assertEqual(buffer.get_buffer_size_hint(2, 2, 8, 256, 2), 0)
         self.assertEqual(buffer.read_profile(), {})
         self.assertIs(buffer.get_comm_stream(), buffer.get_comm_stream())
         self.assertIsNone(buffer.barrier(with_cpu_sync=True))
 
-    def test_set_active_ranks_updates_topology_with_fixed_local_slot_count(self):
+    def test_membership_accepts_caller_rank_ids_without_inferring_topology(self):
         buffer = self.two_rank_buffer()
-        self.assertEqual(buffer._get_topology_masks(), (1, 3))
-        self.assertEqual(buffer._get_mode(), "direct")
-        self.assertEqual(buffer._world_rank_of(1, 1), 3)
-        self.assertEqual(buffer.get_connected_ranks(), [1])
         buffer.connect_ranks([2, 3], store=ForbiddenStore())
         self.assertEqual(buffer.get_connected_ranks(), [1, 2, 3])
         self.assertEqual(buffer.get_active_ranks(), [0, 1])
-        buffer.set_active_ranks([3, 2, 1, 0])
-        self.assertEqual(buffer._get_mode(), "hybrid")
-        self.assertEqual(buffer._get_topology_masks(), (3, 3))
-        self.assertEqual(buffer._get_topology_extent(), (2, 2))
-        with self.assertRaises(ValueError):
-            buffer.disconnect_ranks([2])
-        buffer.set_active_ranks([0, 2])
-        self.assertEqual(buffer._get_topology_masks(), (3, 1))
-        self.assertEqual(buffer._get_topology_extent(), (2, 1))
-        self.assertEqual(buffer._world_rank_of(1, 0), 2)
-        self.assertEqual(buffer.num_experts_per_rank, 3)
-        buffer.set_active_ranks([2, 3])
-        self.assertEqual(buffer._get_mode(), "direct")
-        self.assertEqual(buffer._get_topology_masks(), (2, 3))
-        self.assertEqual(buffer._get_topology_extent(), (2, 2))
+        # These IDs do not imply physical domains or internal positions.
+        for active in ([3, 2, 1, 0], [0, 3], [0, 1, 3], [1, 2], [2, 3]):
+            with self.subTest(active=active):
+                buffer.set_active_ranks(active)
+                self.assertEqual(buffer.get_active_ranks(), sorted(active))
+                self.assertEqual(buffer.num_experts_per_rank, 3)
         self.assertNotIn(buffer.world_rank, buffer.get_active_ranks())
-        self.assertEqual(buffer.num_experts_per_rank, 3)
         buffer.disconnect_ranks([1])
         self.assertEqual(buffer.get_connected_ranks(), [2, 3])
-        with self.assertRaises(ValueError):
-            buffer._masks_of([0, 1, 2])
+        self.assertEqual(buffer.get_active_ranks(), [2, 3])
 
     def test_inactive_rank_can_retire_peers_without_changing_membership(self):
-        for active, mode in (([2, 3], "direct"), ([1], "direct"), ([1, 3], "hybrid")):
+        for active in ([2, 3], [1], [1, 3]):
             with self.subTest(active=active):
                 buffer = self.two_rank_buffer()
                 buffer.connect_ranks([2, 3], store=ForbiddenStore())
                 buffer.set_active_ranks(active)
-                masks = buffer._get_topology_masks()
                 buffer.disconnect_ranks([1, 2, 3])
                 self.assertEqual(buffer.get_connected_ranks(), [])
                 self.assertEqual(buffer.get_active_ranks(), active)
-                self.assertEqual(buffer._get_topology_masks(), masks)
-                self.assertEqual(buffer._get_mode(), mode)
                 self.assertNotIn(buffer.world_rank, buffer.get_active_ranks())
 
     def test_disconnect_mixed_active_and_inactive_peers_leaves_singleton(self):
@@ -264,8 +246,6 @@ class ApiShellTests(unittest.TestCase):
                 buffer.disconnect_ranks(retired)
                 self.assertEqual(buffer.get_connected_ranks(), [3])
                 self.assertEqual(buffer.get_active_ranks(), [0])
-                self.assertEqual(buffer._get_topology_masks(), (1, 1))
-                self.assertEqual(buffer._get_mode(), "direct")
                 received, _, _, handle, _ = buffer.dispatch(
                     self.tensor((5, 256)), self.tensor((5, 2), self.ep.topk_idx_t)
                 )
@@ -273,7 +253,7 @@ class ApiShellTests(unittest.TestCase):
                 self.assert_placeholder(combined, (5, 256), torch.bfloat16)
 
     def test_disconnect_rejects_entire_request_before_changing_state(self):
-        for retired in ([4, 4], [4, 0], [4, 5], [4, 6], [4, -1], [4, 2]):
+        for retired in ([4, 4], [4, 0], [4, 5], [4, 6], [4, -1]):
             with self.subTest(retired=retired):
                 buffer = self.buffer(max_num_scaleout_ranks=3, num_launch_sms=8)
                 buffer.connect_ranks([1, 2, 3, 4])
@@ -282,35 +262,34 @@ class ApiShellTests(unittest.TestCase):
                     buffer.disconnect_ranks(retired)
                 self.assertEqual(buffer.get_connected_ranks(), [1, 2, 3, 4])
                 self.assertEqual(buffer.get_active_ranks(), [0, 1, 2, 3])
-                self.assertEqual(buffer._get_topology_masks(), (3, 3))
-                self.assertEqual(buffer._get_mode(), "hybrid")
                 self.assertEqual(buffer.num_launch_sms, 8)
 
-    def test_disconnect_position_shrink_keeps_hybrid_mode(self):
+    def test_disconnect_keeps_noncontiguous_rank_ids(self):
         buffer = self.two_rank_buffer()
         buffer.connect_ranks([2, 3])
         buffer.set_active_ranks([0, 1, 2, 3])
         buffer.disconnect_ranks([1, 3])
         self.assertEqual(buffer.get_connected_ranks(), [2])
         self.assertEqual(buffer.get_active_ranks(), [0, 2])
-        self.assertEqual(buffer._get_topology_masks(), (3, 1))
-        self.assertEqual(buffer._get_topology_extent(), (2, 1))
-        self.assertEqual(buffer._get_mode(), "hybrid")
 
-    def test_disconnect_domain_shrink_selects_direct_on_nonzero_domain(self):
+    def test_disconnect_does_not_infer_physical_shape_from_rank_ids(self):
+        buffer = self.buffer(max_num_scaleout_ranks=3)
+        buffer.connect_ranks([1, 2, 3, 4])
+        buffer.set_active_ranks([0, 1, 2, 3])
+        buffer.disconnect_ranks([4, 2])
+        self.assertEqual(buffer.get_active_ranks(), [0, 1, 3])
+        self.assertEqual(buffer.get_connected_ranks(), [1, 3])
+
+    def test_disconnect_preserves_nonzero_caller_rank(self):
         buffer = self.buffer(world_rank=2)
         buffer.connect_ranks([0, 1, 3])
         buffer.set_active_ranks([0, 1, 2, 3])
         buffer.disconnect_ranks([0, 1])
         self.assertEqual(buffer.get_connected_ranks(), [3])
         self.assertEqual(buffer.get_active_ranks(), [2, 3])
-        self.assertEqual(buffer._get_topology_masks(), (2, 3))
-        self.assertEqual(buffer._get_mode(), "direct")
         buffer.disconnect_ranks([3])
         self.assertEqual(buffer.get_connected_ranks(), [])
         self.assertEqual(buffer.get_active_ranks(), [2])
-        self.assertEqual(buffer._get_topology_masks(), (2, 1))
-        self.assertEqual(buffer._get_mode(), "direct")
 
     def test_connect_rejects_duplicate_new_ranks_before_mutation(self):
         for ranks in ([2, 2], [1, 2, 2]):
@@ -331,7 +310,6 @@ class ApiShellTests(unittest.TestCase):
                     buffer.connect_ranks([])
                     self.assertEqual(buffer.get_connected_ranks(), [1])
                     self.assertEqual(buffer.get_active_ranks(), active)
-                    self.assertEqual(buffer._get_mode(), "direct")
 
     def test_connect_mixed_peers_prepares_only_new_connections(self):
         buffer = self.two_rank_buffer()
@@ -353,11 +331,9 @@ class ApiShellTests(unittest.TestCase):
                     buffer.connect_ranks([2, 3])
                 self.assertEqual(buffer.get_connected_ranks(), [1])
                 self.assertEqual(buffer.get_active_ranks(), active)
-                self.assertEqual(buffer._get_mode(), "direct")
                 buffer.connect_ranks([2, 3], store=ForbiddenStore())
                 self.assertEqual(buffer.get_connected_ranks(), [1, 2, 3])
                 self.assertEqual(buffer.get_active_ranks(), active)
-                self.assertEqual(buffer._get_mode(), "direct")
 
         buffer = self.two_rank_buffer()
         buffer.connect_ranks([2, 3])
@@ -382,7 +358,7 @@ class ApiShellTests(unittest.TestCase):
         self.assertEqual(buffer.get_connected_ranks(), [1, 2])
         self.assertEqual(buffer.get_active_ranks(), [0, 2])
 
-    def test_disconnect_domain_shrink_switches_to_direct_with_fixed_sm_count(self):
+    def test_disconnect_and_reconnect_preserve_fixed_sm_count(self):
         x = self.tensor((5, 256))
         idx = self.tensor((5, 2), self.ep.topk_idx_t)
         for sms in (2, 24, 64):
@@ -395,12 +371,9 @@ class ApiShellTests(unittest.TestCase):
                 buffer.disconnect_ranks([2, 3])
                 self.assertEqual(buffer.get_connected_ranks(), [1])
                 self.assertEqual(buffer.get_active_ranks(), [0, 1])
-                self.assertEqual(buffer._get_topology_masks(), (1, 3))
-                self.assertEqual(buffer._get_mode(), "direct")
                 self.assertEqual(buffer.num_launch_sms, sms)
                 buffer.connect_ranks([2, 3])
                 buffer.set_active_ranks([0, 1, 2, 3])
-                self.assertEqual(buffer._get_mode(), "hybrid")
                 self.assertEqual(buffer.num_launch_sms, sms)
 
     def test_empty_disconnect_preserves_connections_membership_and_fixed_sms(self):
@@ -412,34 +385,34 @@ class ApiShellTests(unittest.TestCase):
         buffer.disconnect_ranks([])
         self.assertEqual(buffer.get_connected_ranks(), [1, 2, 3])
         self.assertEqual(buffer.get_active_ranks(), [0, 1])
-        self.assertEqual(buffer._get_mode(), "direct")
         self.assertEqual(buffer.num_launch_sms, 8)
         combined, _ = buffer.combine(received, handle)
         self.assert_placeholder(combined, (5, 256), torch.bfloat16)
 
     def test_constructor_initializes_only_local_rank_without_store_access(self):
-        for world_rank, coordinates, masks in (
-            (0, (0, 0), (1, 1)),
-            (2, (1, 0), (2, 1)),
-            (3, (1, 1), (2, 2)),
-        ):
+        for world_rank in (0, 2, 3):
             for store in (None, ForbiddenStore()):
                 with self.subTest(world_rank=world_rank, store=store):
                     buffer = self.buffer(world_rank=world_rank, store=store)
                     self.assertEqual(buffer.world_rank, world_rank)
-                    self.assertEqual(
-                        (buffer.scaleout_rank_idx, buffer.scaleup_rank_idx),
-                        coordinates,
-                    )
                     self.assertEqual(buffer.get_active_ranks(), [world_rank])
                     self.assertEqual(buffer.get_connected_ranks(), [])
-                    self.assertEqual(buffer._get_topology_masks(), masks)
-                    self.assertIn(buffer.world_rank, buffer.get_active_ranks())
                     self.assertIs(buffer.store, store)
                     self.assertIsNone(buffer.runtime)
                     self.assertEqual(buffer.num_bytes, 0)
-                    self.assertFalse(hasattr(buffer, "rank_idx"))
-                    self.assertFalse(hasattr(buffer, "num_ranks"))
+                    for name in (
+                        "rank_idx",
+                        "num_ranks",
+                        "scaleout_rank_idx",
+                        "scaleup_rank_idx",
+                        "_get_mode",
+                        "_get_topology_masks",
+                        "_get_topology_extent",
+                        "_world_rank_of",
+                        "_masks_of",
+                        "_mode_of",
+                    ):
+                        self.assertFalse(hasattr(buffer, name), name)
 
     def test_constructor_rejects_invalid_world_rank_and_maxima(self):
         invalid = (
@@ -468,6 +441,7 @@ class ApiShellTests(unittest.TestCase):
                 max_num_scaleup_ranks=1,
                 num_max_tokens_per_rank=1,
                 hidden=256,
+                num_topk=1,
             )
         for capacity in (0, -1, 1.0, "1", None, True, False):
             with (
@@ -480,7 +454,7 @@ class ApiShellTests(unittest.TestCase):
 
     def test_constructor_requires_positive_workload_sizes(self):
         for name in ("num_max_tokens_per_rank", "hidden"):
-            settings = dict(num_max_tokens_per_rank=1, hidden=256)
+            settings = dict(num_max_tokens_per_rank=1, hidden=256, num_topk=1)
             del settings[name]
             with self.subTest(missing=name), self.assertRaisesRegex(TypeError, name):
                 self.ep.ElasticBuffer(0, 1, 1, num_experts_per_rank=1, **settings)
@@ -490,6 +464,30 @@ class ApiShellTests(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, "must be positive"),
                 ):
                     self.buffer(**{name: value})
+
+    def test_constructor_and_size_hint_require_supported_topk(self):
+        with self.assertRaisesRegex(TypeError, "num_topk"):
+            self.ep.ElasticBuffer(0, 1, 1, 1, 256, 1)
+        with self.assertRaisesRegex(TypeError, "num_topk"):
+            self.ep.ElasticBuffer.get_buffer_size_hint(1, 1, 1, 256)
+        for topk in (0, -1, 33, True, False, 1.0, "1", None):
+            for construct in (False, True):
+                with (
+                    self.subTest(topk=topk, construct=construct),
+                    self.assertRaisesRegex(
+                        ValueError, "num_topk must be an integer between 1 and 32"
+                    ),
+                ):
+                    if construct:
+                        self.buffer(num_topk=topk)
+                    else:
+                        self.ep.ElasticBuffer.get_buffer_size_hint(1, 1, 1, 256, topk)
+        for topk in (1, 32):
+            with self.subTest(topk=topk):
+                self.assertEqual(self.buffer(num_topk=topk).num_bytes, 0)
+                self.assertEqual(
+                    self.ep.ElasticBuffer.get_buffer_size_hint(1, 1, 1, 256, topk), 0
+                )
 
     def test_fixed_sm_count_is_per_buffer_and_read_only(self):
         with patch.dict(os.environ, {"NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS": "64"}):
@@ -535,7 +533,7 @@ class ApiShellTests(unittest.TestCase):
         constructor = inspect.signature(self.ep.ElasticBuffer).parameters
         self.assertEqual(constructor["num_launch_sms"].default, 24)
         self.assertIs(
-            constructor["num_launch_sms"].kind, inspect.Parameter.KEYWORD_ONLY
+            constructor["num_launch_sms"].kind, inspect.Parameter.POSITIONAL_OR_KEYWORD
         )
         self.assertNotIn(
             "num_sms", inspect.signature(self.ep.ElasticBuffer.dispatch).parameters
@@ -556,7 +554,7 @@ class ApiShellTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(buffer, name))
-        before = buffer.get_active_ranks(), buffer._get_mode(), buffer.num_launch_sms
+        before = buffer.get_active_ranks(), buffer.num_launch_sms
         with self.assertRaises(TypeError):
             buffer.dispatch(
                 self.tensor((5, 256)),
@@ -568,7 +566,7 @@ class ApiShellTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             buffer.set_active_ranks([0], 6)
         self.assertEqual(
-            (buffer.get_active_ranks(), buffer._get_mode(), buffer.num_launch_sms),
+            (buffer.get_active_ranks(), buffer.num_launch_sms),
             before,
         )
 
@@ -626,7 +624,6 @@ class ApiShellTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "allocation failed"):
                         buffer.dispatch(x, self.tensor((5, 1), self.ep.topk_idx_t))
                 self.assertEqual(buffer.get_active_ranks(), [0, 1])
-                self.assertEqual(buffer._get_mode(), "direct")
                 self.assertEqual(buffer.num_launch_sms, sms)
                 combined, _ = buffer.combine(received, handle)
                 self.assert_placeholder(combined, (5, 256), torch.bfloat16)
@@ -641,7 +638,6 @@ class ApiShellTests(unittest.TestCase):
                 buffer.dispatch(
                     self.tensor((5, 256)), self.tensor((5, 2), self.ep.topk_idx_t)
                 )
-        self.assertEqual(buffer._get_mode(), "direct")
         self.assertEqual(buffer.num_launch_sms, 32)
         self.assertEqual(buffer.get_active_ranks(), [0])
 
@@ -657,23 +653,17 @@ class ApiShellTests(unittest.TestCase):
                         buffer.set_active_ranks(active)
                     self.assertEqual(buffer.get_active_ranks(), [0, 1])
                     self.assertEqual(buffer.get_connected_ranks(), [1])
-                    self.assertEqual(buffer._get_mode(), "direct")
                     self.assertEqual(buffer.num_launch_sms, sms)
                     combined, _ = buffer.combine(received, handle)
                     self.assert_placeholder(combined, (5, 256), torch.bfloat16)
 
-    def test_fixed_sms_survive_topk_membership_and_mode_changes(self):
+    def test_fixed_sms_survive_topk_and_membership_changes(self):
         x = self.tensor((5, 256))
         for sms in (2, 8, 24, 64):
             with self.subTest(sms=sms):
                 buffer = self.two_rank_buffer(num_launch_sms=sms)
                 buffer.connect_ranks([2, 3])
-                for active, mode in (
-                    ([0, 1, 2, 3], "hybrid"),
-                    ([0, 2], "hybrid"),
-                    ([0], "direct"),
-                    ([0, 1], "direct"),
-                ):
+                for active in ([0, 1, 2, 3], [0, 3], [0, 1, 3], [0], [0, 1]):
                     buffer.set_active_ranks(active)
                     for topk in (1, 2):
                         received, _, _, handle, _ = buffer.dispatch(
@@ -681,15 +671,12 @@ class ApiShellTests(unittest.TestCase):
                         )
                         combined, _ = buffer.combine(received, handle)
                         self.assert_placeholder(combined, (5, 256), torch.bfloat16)
-                        self.assertEqual(buffer._get_mode(), mode)
                         self.assertEqual(buffer.num_launch_sms, sms)
                 buffer.set_active_ranks([2, 3])
-                self.assertEqual(buffer._get_mode(), "direct")
                 self.assertEqual(buffer.num_launch_sms, sms)
                 with self.assertRaisesRegex(ValueError, "this rank to be active"):
                     buffer.dispatch(x, self.tensor((5, 1), self.ep.topk_idx_t))
                 buffer.set_active_ranks([0, 1, 2, 3])
-                self.assertEqual(buffer._get_mode(), "hybrid")
                 self.assertEqual(buffer.num_launch_sms, sms)
 
     def test_fixed_sms_and_destroyed_lifecycle(self):
@@ -707,7 +694,6 @@ class ApiShellTests(unittest.TestCase):
             ("set_active_ranks", lambda: buffer.set_active_ranks([0, 1])),
             ("disconnect", lambda: buffer.disconnect_ranks([])),
             ("connect", lambda: buffer.connect_ranks([2])),
-            ("mode", buffer._get_mode),
             ("active", buffer.get_active_ranks),
             ("connected", buffer.get_connected_ranks),
         ):
