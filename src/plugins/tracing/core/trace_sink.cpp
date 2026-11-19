@@ -33,6 +33,12 @@ namespace {
     struct DeferredPhaseQueue {
         std::array<DeferredPhase, deferredPhaseCapacity> entries;
         std::size_t count = 0;
+
+        ~DeferredPhaseQueue() {
+            if (count != 0) {
+                pendingDeferredPhases.fetch_sub(count, std::memory_order_relaxed);
+            }
+        }
     };
 
     thread_local DeferredPhaseQueue deferred_phases;
@@ -200,6 +206,10 @@ TracerPhaseSink::readTraceBaggage(nixlSerDes &ser_des) const {
 }
 
 std::atomic<std::uint64_t> pendingDeferredPhases{0};
+
+TracerPhaseSink::~TracerPhaseSink() {
+    recordDeferredPhases();
+}
 
 void
 TracerPhaseSink::deferPhase(const DeferredPhase &deferred) noexcept {

@@ -2543,6 +2543,61 @@ TEST(TracePhaseSink, DeferredPhaseIsPendingUntilRecorded) {
     }
 }
 
+TEST(TracePhaseSink, DestroyedSinkRecordsItsThreadsDeferredPhases) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 1.0);
+    std::uint64_t before = 0;
+    {
+        nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+        sink.recordDeferredPhases();
+        before = nixl::trace::pendingDeferredPhases.load();
+        nixlBackendPostPhases phases;
+        {
+            const nixl::trace::Scope scope(tracer.get(),
+                                           {testContext(0x42), nixl::trace::RequestId{0x42}, 1});
+            phases.begin(&sink, NIXL_WRITE, nixl_trace_completion_t::CALLBACK);
+        }
+        phases.callbackCompleted(NIXL_ERR_CANCELED);
+        ASSERT_EQ(nixl::trace::pendingDeferredPhases.load(), before + 1);
+    }
+
+    EXPECT_EQ(nixl::trace::pendingDeferredPhases.load(), before);
+    const attr_t canceled{"nixl.status", std::int64_t{NIXL_ERR_CANCELED}};
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_TRUE(std::ranges::any_of(log->emittedEvents, [&](const EmittedRecord &event) {
+            return (event.name == "nixl::wire.completed") &&
+                (std::ranges::find(event.attrs, canceled) != event.attrs.end());
+        }));
+    }
+}
+
+TEST(TracePhaseSink, ThreadExitReturnsTheCountOfThePhasesItDeferred) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 1.0);
+    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+    sink.recordDeferredPhases();
+    const std::uint64_t before = nixl::trace::pendingDeferredPhases.load();
+    std::uint64_t while_deferred = 0;
+    std::thread([&] {
+        nixlBackendPostPhases phases;
+        {
+            const nixl::trace::Scope scope(tracer.get(),
+                                           {testContext(0x43), nixl::trace::RequestId{0x43}, 1});
+            phases.begin(&sink, NIXL_WRITE, nixl_trace_completion_t::CALLBACK);
+        }
+        phases.callbackCompleted(NIXL_ERR_CANCELED);
+        while_deferred = nixl::trace::pendingDeferredPhases.load();
+    }).join();
+
+    EXPECT_EQ(while_deferred, before + 1);
+    EXPECT_EQ(nixl::trace::pendingDeferredPhases.load(), before);
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_TRUE(std::ranges::none_of(log->emittedEvents, [](const EmittedRecord &event) {
+            return event.name == "nixl::wire.completed";
+        }));
+    }
+}
+
 TEST(TracePhaseSink, CallbackCompletionRecordsAFailuresStatus) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);

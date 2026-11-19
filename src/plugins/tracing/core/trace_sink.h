@@ -42,6 +42,8 @@ public:
           backend_(std::move(backend)),
           onDropped_(std::move(on_dropped)) {}
 
+    ~TracerPhaseSink() override;
+
     using nixlBackendTraceSink::recordPhase;
 
     void
