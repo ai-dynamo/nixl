@@ -1421,6 +1421,14 @@ TEST_F(ucxTraceContextPropagation, PostToAFailedEndpointCarriesUcxsNativeStatus)
             << engine;
         EXPECT_THAT(*error, testing::Contains(testing::StartsWith("nixl.backend_status_name=")))
             << engine;
+        for (const char *phase : {"nixl::wire.submitted", "nixl::wire.completed"}) {
+            EXPECT_TRUE(std::ranges::none_of(recordedSpans(traceFile, sender_name, phase),
+                                             [&](const span_record_t &span) {
+                                                 return std::ranges::find(span, request) !=
+                                                     span.end();
+                                             }))
+                << engine << ": " << phase;
+        }
     }
 }
 
