@@ -16,10 +16,14 @@
  */
 #include "nixl_tcpstore_client_async.h"
 
+#include <unistd.h>
+
 #include <cassert>
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <span>
+#include <type_traits>
 
 #include "asio/error.hpp"
 #include "asio/error_code.hpp"

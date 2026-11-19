@@ -23,12 +23,19 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 
+#include <algorithm>
+#include <cassert>
 #include <charconv>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
+#include <utility>
 
 namespace {
 

@@ -27,10 +27,12 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 
+#include <exception>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include <asio.hpp>
 
