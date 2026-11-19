@@ -91,6 +91,7 @@ def test_tcpstore_metadata_exchange(monkeypatch):
         utils.free_passthru(source_addr)
         utils.free_passthru(target_addr)
 
+
 def test_tcpstore_metadata_reconnection(monkeypatch, capfd):
     """Test TCPStore metadata reconnection."""
     # Let the kernel pick a free port: a port chosen ahead of time can be taken
