@@ -1,6 +1,6 @@
 {
   "source_commit": "6b11b2cb804801b9781bb0e5480460d2e58d27ce",
-  "api_corrections": "ElasticBuffer.combine: bias and previous_event are Optional to match their None defaults. ElasticBuffer.__init__: removed the num_bytes override; sizing is automatic. Removed the num_nixl_channels override; transport channels are configured internally. Removed public metadata getters, publish, and connect_ranks metadata arguments; connect_ranks uses a Store with the NIXL_EP key prefix. ElasticBuffer.__init__: requires world_rank and both maximum-world dimensions; removed process-group/cohort, explicit-coordinate, bootstrap_id and store_timeout_secs arguments. Construction initializes only the local rank with no connected peers; Store access belongs to connect_ranks. Removed bootstrap_id from get_buffer_size_hint. Removed the public get_logical_domain_size helper; domain discovery belongs to test setup. ElasticBuffer.get_buffer_size_hint: requires both maximum-world dimensions and sizes locally; removed group, num_group_scaleup_ranks, store and store_timeout_secs. Topology staging, commit, inspection and coordinate helpers are private; set_active_ranks activates membership and disconnect_ranks completes peer retirement. Removed redundant is_active; membership is available through get_active_ranks. Public expert IDs use world_rank * num_experts_per_rank + local_expert_idx across the declared maximum world and remain fixed across extent changes; production dispatch drops inactive-rank selections. Internal source metadata retains committed-extent rank encoding. This semantic correction leaves public signatures unchanged; the shell does not simulate routing. Dispatch/combine support a single active rank before peer connection; inactive ranks remain rejected.",
+  "api_corrections": "Removed the redundant EPHandle.recv_count_is_exact field and constructor argument; count availability is derived internally from the CPU per-expert counts. ElasticBuffer.combine: bias and previous_event are Optional to match their None defaults. ElasticBuffer.__init__: removed the num_bytes override; sizing is automatic and requires positive num_max_tokens_per_rank and hidden constructor arguments. Removed the num_nixl_channels override; transport channels are configured internally. Removed public metadata getters, publish, and connect_ranks metadata arguments; connect_ranks uses a Store with the NIXL_EP key prefix. ElasticBuffer.__init__: requires world_rank and both maximum-world dimensions; removed process-group/cohort, explicit-coordinate, bootstrap_id and store_timeout_secs arguments. Construction initializes only the local rank with no connected peers; Store access belongs to connect_ranks. Removed bootstrap_id from get_buffer_size_hint. Removed the public get_logical_domain_size helper; domain discovery belongs to test setup. ElasticBuffer.get_buffer_size_hint: requires both maximum-world dimensions and sizes locally; removed group, num_group_scaleup_ranks, store and store_timeout_secs. set_active_ranks validates and activates membership in one call, without saved pending topology. Topology inspection and coordinate helpers are private; disconnect_ranks validates the entire retirement request before mutation and, on an active local rank, excludes requested peers from membership in the same call; survivors must form a nonempty product of domains and positions. Direct/hybrid mode follows the surviving world and the fixed SM count is unchanged. An inactive local rank preserves its active-world descriptor while retiring any connected peers, including all peers in that world. Invalid requests and non-product survivors preserve both membership and connections; an empty request is a no-op. Callers still drain the old world and rendezvous before retirement; the call does not coordinate ranks. These semantic corrections leave public signatures unchanged. Removed redundant is_active; membership is available through get_active_ranks. Public expert IDs use world_rank * num_experts_per_rank + local_expert_idx across the declared maximum world and remain fixed across extent changes; production dispatch drops inactive-rank selections. Internal source metadata retains committed-extent rank encoding. This semantic correction leaves public signatures unchanged; the shell does not simulate routing. Dispatch/combine support a single active rank before peer connection; inactive ranks remain rejected. ElasticBuffer.__init__: num_experts_per_rank is a required keyword-only positive integer specifying fixed physical slot capacity; unused slots remain valid and barrier-only buffers are unsupported. ElasticBuffer.__init__: keyword-only num_launch_sms=24 selects an even per-buffer main dispatch/combine block count from 2 through 64, exposed by a read-only property and fixed for the buffer lifetime, including captured graph replays. Membership and direct/hybrid mode can change while reusing the same graph. Removed dispatch num_sms and set_active_ranks num_active_sms arguments, set_num_active_sms, get_theoretical_num_sms, all automatic selection state, and the EPHandle.num_sms field and constructor argument.",
   "native_event_source": "runtime/ep/csrc/elastic/buffer.hpp:1067; runtime/ep/csrc/utils/event.hpp",
   "exports": [
     "ElasticBuffer",
@@ -16,7 +16,7 @@
       "decorators": []
     },
     "EPHandle.__init__": {
-      "parameters": "self, do_expand: bool, expert_alignment: int, num_max_tokens_per_rank: int, num_sms: int, topk_idx: torch.Tensor, num_recv_tokens: int, num_recv_tokens_per_expert_list: list, psum_num_recv_tokens_per_scaleup_rank: torch.Tensor, psum_num_recv_tokens_per_expert: torch.Tensor, num_unaligned_recv_tokens_per_expert: torch.Tensor, recv_src_metadata: torch.Tensor, token_metadata_at_forward: torch.Tensor, channel_linked_list: torch.Tensor, recv_count_is_exact: bool",
+      "parameters": "self, do_expand: bool, expert_alignment: int, num_max_tokens_per_rank: int, topk_idx: torch.Tensor, num_recv_tokens: int, num_recv_tokens_per_expert_list: list, psum_num_recv_tokens_per_scaleup_rank: torch.Tensor, psum_num_recv_tokens_per_expert: torch.Tensor, num_unaligned_recv_tokens_per_expert: torch.Tensor, recv_src_metadata: torch.Tensor, token_metadata_at_forward: torch.Tensor, channel_linked_list: torch.Tensor",
       "returns": null,
       "decorators": []
     },
@@ -33,7 +33,7 @@
       "decorators": []
     },
     "ElasticBuffer.__init__": {
-      "parameters": "self, world_rank: int, max_num_scaleout_ranks: int, max_num_scaleup_ranks: int, num_max_tokens_per_rank: int=0, hidden: int=0, num_topk: int=0, use_fp8_dispatch: bool=False, deterministic: bool=False, allow_multiple_reduction: bool=True, prefer_overlap_with_compute: bool=True, store: Optional[dist.Store]=None, num_cpu_timeout_secs: int=300, num_gpu_timeout_secs: int=100, explicitly_destroy: bool=False, *, num_experts_per_rank: int=0",
+      "parameters": "self, world_rank: int, max_num_scaleout_ranks: int, max_num_scaleup_ranks: int, num_max_tokens_per_rank: int, hidden: int, num_topk: int=0, use_fp8_dispatch: bool=False, deterministic: bool=False, allow_multiple_reduction: bool=True, prefer_overlap_with_compute: bool=True, store: Optional[dist.Store]=None, num_cpu_timeout_secs: int=300, num_gpu_timeout_secs: int=100, explicitly_destroy: bool=False, *, num_experts_per_rank: int, num_launch_sms: int=24",
       "returns": null,
       "decorators": []
     },
@@ -71,11 +71,6 @@
       "returns": "torch.Stream",
       "decorators": []
     },
-    "ElasticBuffer.get_theoretical_num_sms": {
-      "parameters": "self, num_topk: int, rdma_gbs: float=0, nvlink_gbs: float=0, sm_read_gbs: float=_DEFAULT_SM_READ_GBS, sm_write_gbs: float=_DEFAULT_SM_WRITE_GBS",
-      "returns": "int",
-      "decorators": []
-    },
     "ElasticBuffer.connect_ranks": {
       "parameters": "self, world_ranks: List[int], store: Optional[dist.Store]=None, key_prefix: str='NIXL_EP', timeout_secs: float=120.0",
       "returns": "None",
@@ -92,7 +87,7 @@
       "decorators": []
     },
     "ElasticBuffer.set_active_ranks": {
-      "parameters": "self, active_ranks: Sequence[int], num_active_sms: int=0",
+      "parameters": "self, active_ranks: Sequence[int]",
       "returns": "None",
       "decorators": []
     },
@@ -101,13 +96,8 @@
       "returns": "List[int]",
       "decorators": []
     },
-    "ElasticBuffer.set_num_active_sms": {
-      "parameters": "self, num_active_sms: int",
-      "returns": "None",
-      "decorators": []
-    },
     "ElasticBuffer.dispatch": {
-      "parameters": "self, x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], topk_idx: torch.Tensor, topk_weights: Optional[torch.Tensor]=None, cumulative_local_expert_recv_stats: Optional[torch.Tensor]=None, num_max_tokens_per_rank: Optional[int]=None, expert_alignment: int=1, num_sms: int=0, previous_event: Optional[EventHandle]=None, previous_event_before_epilogue: Optional[EventHandle]=None, async_with_compute_stream: bool=False, allocate_on_comm_stream: bool=False, do_handle_copy: bool=True, do_cpu_sync: bool=True, do_expand: bool=False, do_zero_padding: bool=False, use_tma_aligned_col_major_sf: bool=False",
+      "parameters": "self, x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], topk_idx: torch.Tensor, topk_weights: Optional[torch.Tensor]=None, cumulative_local_expert_recv_stats: Optional[torch.Tensor]=None, num_max_tokens_per_rank: Optional[int]=None, expert_alignment: int=1, previous_event: Optional[EventHandle]=None, previous_event_before_epilogue: Optional[EventHandle]=None, async_with_compute_stream: bool=False, allocate_on_comm_stream: bool=False, do_handle_copy: bool=True, do_cpu_sync: bool=True, do_expand: bool=False, do_zero_padding: bool=False, use_tma_aligned_col_major_sf: bool=False",
       "returns": "Tuple[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor], EPHandle, EventOverlap]",
       "decorators": []
     },
@@ -155,6 +145,13 @@
       "parameters": "self",
       "returns": null,
       "decorators": []
+    },
+    "ElasticBuffer.num_launch_sms": {
+      "parameters": "self",
+      "returns": "int",
+      "decorators": [
+        "property"
+      ]
     }
   }
 }

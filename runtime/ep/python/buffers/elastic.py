@@ -13,8 +13,6 @@ import torch.distributed as dist
 
 from ..utils.event import EventHandle, EventOverlap
 
-_DEFAULT_SM_READ_GBS, _DEFAULT_SM_WRITE_GBS = 200, 50
-
 
 def _empty(shape, dtype):
     return torch.empty(shape, dtype=dtype, device="meta")
@@ -33,13 +31,10 @@ class EPHandle:
         do_expand: whether the expanding (one-token-per-expert-slot) layout is used.
         expert_alignment: align the number of tokens received by each local expert to this variable.
         num_max_tokens_per_rank: the maximum number of tokens per rank, all the ranks must hold the same value.
-        num_sms: the active SM count recorded when the handle was created, checked by eager combine. A captured
-            dispatch/combine graph reads the current count from the topology descriptor.
         topk_idx: dispatch top-k stable expert IDs, `[num_tokens, num_topk]`; cloned when `do_handle_copy=True`.
-        psum_num_recv_tokens_per_scaleup_rank: inclusive prefix sum of deduplicated received token counts
-            per scaleup rank, shape `[max_num_scaleup_ranks + 1]`. A token is counted once per rank even if
-            multiple of its top-k experts land on the same rank. The last element equals the total number
-            of received tokens.
+        psum_num_recv_tokens_per_scaleup_rank: `[max_num_scaleup_ranks + 1]` inclusive prefix counts
+            over the committed scaleup extent; unused entries before the fixed final total are zero.
+            A token is counted once per rank even if multiple selected experts belong to that rank.
         psum_num_recv_tokens_per_expert: prefix sum of alignment-padded received token counts per local
             expert, shape `[num_experts_per_rank]`. Each expert's count is padded to `expert_alignment`.
             In non-expand mode, this is the inclusive prefix sum. In expand mode, `psum[i]` equals
@@ -47,15 +42,13 @@ class EPHandle:
             of expert `i` — so `psum[i] - align(psum[i-1], expert_alignment)` recovers the real
             count for expert `i`, and `align(psum[i], expert_alignment)` gives expert `i+1`'s
             starting offset.
-        num_recv_tokens_per_expert_list: Python list of per-expert received token counts (CPU-side).
+        num_recv_tokens_per_expert_list: CPU per-expert receive counts; empty without CPU synchronization.
         num_unaligned_recv_tokens_per_expert: the actual (unaligned) number of tokens received per local
             expert, shape `[num_experts_per_rank]` with `torch.int`, in both compact and expanded layouts.
         recv_src_metadata: source token indices and buffer slot indices.
         token_metadata_at_forward: per-channel forwarded token metadata (allocated in both modes, written in hybrid mode).
         channel_linked_list: per-channel per-scaleup-peer linked list (allocated in both modes, written in hybrid mode).
-        num_recv_tokens: the total number of received tokens (the worst case of the declared maximum world unless
-            `recv_count_is_exact`).
-        recv_count_is_exact: whether `num_recv_tokens` is the real count (the dispatch had a CPU sync).
+        num_recv_tokens: the actual receive count with CPU synchronization; otherwise the declared maximum world's capacity.
         num_recv_tokens_device: 0-d `torch.int` device view of the real count, valid without a CPU sync and in graphs.
     """
 
@@ -64,7 +57,6 @@ class EPHandle:
         do_expand: bool,
         expert_alignment: int,
         num_max_tokens_per_rank: int,
-        num_sms: int,
         topk_idx: torch.Tensor,
         num_recv_tokens: int,
         num_recv_tokens_per_expert_list: list,
@@ -74,14 +66,12 @@ class EPHandle:
         recv_src_metadata: torch.Tensor,
         token_metadata_at_forward: torch.Tensor,
         channel_linked_list: torch.Tensor,
-        recv_count_is_exact: bool,
     ):
         assert topk_idx is not None
 
         self.do_expand = do_expand
         self.expert_alignment = expert_alignment
         self.num_max_tokens_per_rank = num_max_tokens_per_rank
-        self.num_sms = num_sms
         self.topk_idx = topk_idx
         self.psum_num_recv_tokens_per_scaleup_rank = (
             psum_num_recv_tokens_per_scaleup_rank
@@ -95,7 +85,6 @@ class EPHandle:
 
         # May not be accurate without CPU sync
         self.num_recv_tokens = num_recv_tokens
-        self.recv_count_is_exact = recv_count_is_exact
 
     @property
     def num_recv_tokens_device(self) -> torch.Tensor:
@@ -131,7 +120,6 @@ class ElasticBuffer:
             only one reduction will be done in the combine epilogue for best precision,
             but it may increase data transfer size.
         prefer_overlap_with_compute: whether to prefer overlapping communication with compute.
-            If enabled, we tend to use fewer SMs.
         num_bytes: the allocated communication buffer size in bytes, excluding workspace.
         num_max_tokens_per_rank: the default maximum tokens per rank.
         max_num_scaleout_ranks: the declared maximum number of scaleout ranks (NVLink domains) the buffer is sized for.
@@ -140,23 +128,26 @@ class ElasticBuffer:
         scaleup_rank_idx: this rank's position inside its NVLink domain.
         world_rank: this rank's world rank, its cell `scaleout_rank_idx * max_num_scaleup_ranks + scaleup_rank_idx` of the
             declared maximum world (the transport's peer index).
-        num_launch_sms: the fixed launch grid of the adaptive kernels (24, or `NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS`, even,
-            at most 64); `num_sms` is the active block count, even and at most this.
+        num_launch_sms: the read-only main dispatch/combine block count, fixed for this buffer's lifetime.
+            An even integer from 2 through 64 (default 24).
         runtime: the C++ runtime.
 
     Elasticity: the active ranks are a product subset of the declared maximum world (active NVLink domains x active
     positions). `connect_ranks` prepares peers; `set_active_ranks` activates the topology the kernels read.
     Only active ranks launch dispatch/combine. Construction initializes this rank alone.
-    Connect peers explicitly, then activate the intended world. `disconnect_ranks` finishes retiring excluded peers.
+    Connect peers explicitly, then activate the intended world. `disconnect_ranks` excludes and retires peers;
+    on an active local rank, the survivors must still form a nonempty product of domains and positions.
+    An inactive local rank preserves its active-world descriptor while retiring any connected peers.
     A single active rank can run dispatch/combine before connecting peers, including warm-up and graph capture.
     New-peer connections may run while the committed graph replays. Serialize
     control operations on each buffer; a background setup thread must select the buffer's CUDA device.
-    Activation (`set_active_ranks`, `set_num_active_sms`) and peer retirement run outside capture, between complete dispatch/combine pairs.
+    Activation (`set_active_ranks`) and peer retirement run outside capture, between complete dispatch/combine pairs.
+    Membership and direct/hybrid mode may change while the same graph uses the fixed `num_launch_sms` grid.
     Order topology commits and graph replays on the same CUDA stream, or establish the dependencies explicitly.
     Before activation or peer retirement, every rank of the old world, including departing ranks, must finish
     its queued CUDA work, call `barrier(with_cpu_sync=True)` to drain the transport, and rendezvous on the host before
     any peer departs. The update methods do not establish that completion boundary.
-    Transport mutation/activation failures are fatal; invalid inputs and mapping refusals leave active views intact.
+    Invalid inputs and mapping refusals before peer retirement preserve active views; failures after retirement or view activation are fatal.
 
     World ranks and public expert IDs index the declared maximum world. Internal source metadata and the
     kernels' `rank_idx` still index the committed extent: `scaleout_rank_idx * num_scaleup_ranks + scaleup_rank_idx`.
@@ -167,8 +158,8 @@ class ElasticBuffer:
         world_rank: int,
         max_num_scaleout_ranks: int,
         max_num_scaleup_ranks: int,
-        num_max_tokens_per_rank: int = 0,
-        hidden: int = 0,
+        num_max_tokens_per_rank: int,
+        hidden: int,
         num_topk: int = 0,
         use_fp8_dispatch: bool = False,
         deterministic: bool = False,
@@ -179,7 +170,8 @@ class ElasticBuffer:
         num_gpu_timeout_secs: int = 100,
         explicitly_destroy: bool = False,
         *,
-        num_experts_per_rank: int = 0,
+        num_experts_per_rank: int,
+        num_launch_sms: int = 24,
     ):
         """
         Initialize this rank's buffer without accessing a Store or waiting for peers.
@@ -192,16 +184,19 @@ class ElasticBuffer:
             max_num_scaleout_ranks: positive maximum number of NVLink domains, shared by all peers.
             max_num_scaleup_ranks: positive maximum positions per domain, at most 128, shared by all peers.
                 These maxima size the buffer, handles and kernels; they do not describe current membership.
-            num_max_tokens_per_rank: the maximum tokens per rank used for buffer sizing.
-            hidden: the hidden dimension of each token.
+            num_max_tokens_per_rank: required positive maximum tokens per rank used for buffer sizing.
+            hidden: required positive hidden dimension of each token.
             num_topk: the number of top-k experts per token.
             use_fp8_dispatch: reserve smaller dispatch arenas for FP8/NVFP4 inputs; False reserves BF16 capacity and also
                 accepts either quantized format. Must match across peers; it does not cast inputs.
-            num_experts_per_rank: fixed physical routing slot capacity per GPU, shared by all peers, including joiners.
+            num_experts_per_rank: required positive integer giving the fixed physical routing slot capacity per GPU.
+                Must match across peers, including joiners.
                 Size it for the largest per-GPU expert placement across all intended topologies, not just the initial one.
                 The caller supplies this fixed value; slots may remain unused. It is not the model's logical expert count.
-                Positive for dispatch/combine; zero allocates a minimum-sized barrier-only buffer. The caller assigns
-                weights and maps logical experts to physical slots; the transport neither replicates experts nor creates weights.
+                The caller assigns weights and maps logical experts to physical slots;
+                the transport neither replicates experts nor creates weights.
+            num_launch_sms: fixed main dispatch/combine block count, an even integer from 2 through 64 (default 24).
+                Must match across peers and remains unchanged for the buffer lifetime, including graph replay.
             deterministic: whether to sort received tokens deterministically (eager execution only).
             allow_multiple_reduction: whether to allow multiple reductions in combine.
             prefer_overlap_with_compute: whether to prefer overlapping communication with compute.
@@ -222,8 +217,16 @@ class ElasticBuffer:
             raise ValueError(
                 "world_rank must lie in the declared maximum world, whose dimensions must be positive integers"
             )
-        if type(num_experts_per_rank) is not int or num_experts_per_rank < 0:
-            raise ValueError("num_experts_per_rank must be a nonnegative integer")
+        if type(num_experts_per_rank) is not int or num_experts_per_rank <= 0:
+            raise ValueError("num_experts_per_rank must be a positive integer")
+        if (
+            type(num_launch_sms) is not int
+            or not 2 <= num_launch_sms <= 64
+            or num_launch_sms % 2
+        ):
+            raise ValueError("num_launch_sms must be an even integer between 2 and 64")
+        if num_max_tokens_per_rank <= 0 or hidden <= 0:
+            raise ValueError("num_max_tokens_per_rank and hidden must be positive")
         self.num_experts_per_rank = num_experts_per_rank
         self.num_max_tokens_per_rank = num_max_tokens_per_rank
         self.allow_multiple_reduction = allow_multiple_reduction
@@ -240,15 +243,17 @@ class ElasticBuffer:
         self.scaleout_rank_idx, self.scaleup_rank_idx = divmod(
             world_rank, max_num_scaleup_ranks
         )
-        self.num_launch_sms = 24
+        self._num_launch_sms = num_launch_sms
         self.runtime = None
         self._destroyed = False
-        self._auto_sm_config: Optional[Tuple[int]] = None
-        self._pending: Optional[Tuple[Tuple[int, ...], int, Optional[Tuple[int]]]]
-        (self._sms, self._pending, self._peers_changed) = (24, None, False)
         self._stream = _StreamPlaceholder()
         self._active: Tuple[int, ...] = (world_rank,)
         self._connected: set[int] = set()
+
+    @property
+    def num_launch_sms(self) -> int:
+        """The fixed main dispatch/combine block count selected at construction."""
+        return self._num_launch_sms
 
     def destroy(self) -> None:
         """Destroy the runtime; requires `explicitly_destroy=True` at construction."""
@@ -256,7 +261,6 @@ class ElasticBuffer:
             raise ValueError("destroy() requires explicitly_destroy=True")
         self._destroyed = True
         self._connected.clear()
-        self._pending = None
 
     @staticmethod
     def get_buffer_size_hint(
@@ -319,38 +323,6 @@ class ElasticBuffer:
         self._ensure_open()
         return self._stream
 
-    def get_theoretical_num_sms(
-        self,
-        num_topk: int,
-        rdma_gbs: float = 0,
-        nvlink_gbs: float = 0,
-        # TODO: use different values for other architectures
-        sm_read_gbs: float = _DEFAULT_SM_READ_GBS,
-        sm_write_gbs: float = _DEFAULT_SM_WRITE_GBS,
-    ) -> int:
-        """
-        Estimate the optimal number of SMs for dispatch/combine kernels based on bandwidth modeling.
-        The result is cached per set of active ranks and argument set. This assumes a balanced gate distribution.
-        This query does not change the buffer's automatic/manual SM policy.
-        The raw estimate may exceed `num_launch_sms`; automatic selection clamps it to that launch limit.
-        Traffic uses active domain/position counts and their fixed physical slots. One active domain
-        has no RDMA traffic even above domain index 0. With multiple active ranks, fewer active experts than
-        `num_topk` requires explicit `num_sms`.
-        Every active rank's `dispatch(num_sms=0)` commits the same active SM count.
-
-        Arguments:
-            num_topk: the number of top-k experts per token.
-            rdma_gbs: the RDMA bandwidth in GB/s (0 for auto-detect).
-            nvlink_gbs: the NVLink bandwidth in GB/s (0 for auto-detect).
-            sm_read_gbs: the per-SM HBM read bandwidth in GB/s.
-            sm_write_gbs: the per-SM HBM write bandwidth in GB/s.
-
-        Returns:
-            num_sms: the raw model estimate (even, at least 2), before the launch-grid limit.
-        """
-        self._ensure_open()
-        return 2
-
     def connect_ranks(
         self,
         world_ranks: List[int],
@@ -395,14 +367,13 @@ class ElasticBuffer:
                     "Connected ranks must be other ranks within the declared maximum world"
                 )
         self._connected.update(peers)
-        self._peers_changed = True
 
     def disconnect_ranks(self, world_ranks: List[int]) -> None:
         """
-        Retire peers whose processes go away, including their transport views and metadata.
-        Drain the old world, rendezvous, and use `set_active_ranks` to exclude them before disconnecting.
-        Retirement runs outside capture and completes before this call returns; an empty list does nothing.
-        A rank that stays alive but sits a world out is left out of `active_ranks` instead.
+        Exclude departing peers and retire their connections outside capture, after draining the old world and a host rendezvous.
+        An active caller's remaining ranks must form a product of domains and positions; the mode follows that world.
+        An inactive caller only retires connections, preserving its membership descriptor. An empty list does nothing.
+        A live rank sitting a world out is only excluded with `set_active_ranks`.
         """
         self._ensure_open()
         if not world_ranks:
@@ -410,16 +381,11 @@ class ElasticBuffer:
         peers = set(world_ranks)
         if len(peers) != len(world_ranks) or not peers.issubset(self._connected):
             raise ValueError("Disconnect only connected peers, each once")
-        protected = set(self._active) if self.world_rank in self._active else set()
-        if self._pending is not None and self.world_rank in self._pending[0]:
-            protected.update(self._pending[0])
-        if protected.intersection(peers):
-            raise ValueError(
-                "Use `set_active_ranks` to exclude peers before disconnecting"
-            )
-        self._connected.difference_update(peers)
-        self._peers_changed = True
-        self._commit_topology()
+        active = self._active
+        if self.world_rank in active:
+            active = tuple(rank for rank in active if rank not in peers)
+            self._masks_of(active)
+        self._active, self._connected = active, self._connected - peers
 
     def get_connected_ranks(self) -> List[int]:
         """World ranks of the connected peers (this rank excluded)."""
@@ -455,53 +421,22 @@ class ElasticBuffer:
         """Exactly one active NVLink domain selects direct mode, regardless of its index."""
         return "direct" if bin(scaleout_mask).count("1") == 1 else "hybrid"
 
-    def _stage_topology(
-        self, *, num_active_sms: int = 0, active_ranks: Optional[Sequence[int]] = None
-    ) -> None:
-        """Validate and prepare the host topology without changing the active configuration."""
+    def set_active_ranks(self, active_ranks: Sequence[int]) -> None:
+        """Validate and activate connected ranks forming a product of domains and positions; the mode follows the new world.
+
+        Call outside capture after draining the old world and completing a host rendezvous.
+        The buffer keeps the fixed main dispatch/combine block count selected at construction.
+        """
         self._ensure_open()
-        active = (
-            tuple(sorted(set(active_ranks)))
-            if active_ranks is not None
-            else self._active
-        )
+        active = tuple(sorted(set(active_ranks)))
         self._masks_of(active)
         if self.world_rank in active and (
             not set(active).issubset(self._connected | {self.world_rank})
         ):
             raise ValueError(
-                "Connect the requested peers before staging an active topology"
+                "Connect the requested peers before activating the requested topology"
             )
-        auto_sm_config = self._auto_sm_config if num_active_sms == 0 else None
-        sms = num_active_sms or (2 if auto_sm_config is not None else self._sms)
-        self._validate_sms(sms)
-        self._pending = (active, sms, auto_sm_config)
-
-    def _commit_topology(self) -> None:
-        """
-        Make the staged topology descriptor (`EPTopology`) live: one stream-ordered device write on the current stream
-        (a device synchronisation first when peers were connected or disconnected).
-        """
-        self._ensure_open()
-        if self._pending is None and (not self._peers_changed):
-            raise ValueError(
-                "Nothing staged: stage topology or connect/disconnect peers first"
-            )
-        if self._pending is not None:
-            (self._active, self._sms, self._auto_sm_config) = self._pending
-        (self._pending, self._peers_changed) = (None, False)
-
-    def set_active_ranks(
-        self, active_ranks: Sequence[int], num_active_sms: int = 0
-    ) -> None:
-        """Validate and activate connected ranks forming a product of domains and positions; the mode follows the new world.
-
-        Call after draining the old world and completing a host rendezvous. `num_active_sms` must be even and
-        between 2 and `num_launch_sms`; a nonzero value pins manual selection. Zero retunes from the last
-        successful automatic dispatch, or keeps the count in manual mode.
-        """
-        self._stage_topology(active_ranks=active_ranks, num_active_sms=num_active_sms)
-        self._commit_topology()
+        self._active = active
 
     def _get_topology_masks(self) -> Tuple[int, int]:
         """Committed `(scaleout_mask, scaleup_mask)`: bit d / bit k denotes an active domain / position."""
@@ -518,25 +453,10 @@ class ElasticBuffer:
         (domains, positions) = self._get_topology_masks()
         return (domains.bit_length(), positions.bit_length())
 
-    def set_num_active_sms(self, num_active_sms: int) -> None:
-        """
-        Set a manual active SM count (even, from 2 to `num_launch_sms`), preserving membership and mode.
-        Disables automatic SM retuning on topology changes until a successful `dispatch(num_sms=0)`.
-        Call outside capture between completed dispatch/combine pairs.
-        """
-        self._ensure_open()
-        if self._pending is not None:
-            raise ValueError(
-                "Finish the pending topology update before changing the active SM count"
-            )
-        self._validate_sms(num_active_sms)
-        self._pending = (self._active, num_active_sms, None)
-        self._commit_topology()
-
-    def _get_topology(self) -> Tuple[str, int]:
-        """The committed `(mode, num_active_sms)`."""
+    def _get_mode(self) -> str:
+        """The committed direct or hybrid mode."""
         (domains, _) = self._get_topology_masks()
-        return (self._mode_of(domains), self._sms)
+        return self._mode_of(domains)
 
     def dispatch(
         self,
@@ -546,7 +466,6 @@ class ElasticBuffer:
         cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
         num_max_tokens_per_rank: Optional[int] = None,
         expert_alignment: int = 1,
-        num_sms: int = 0,
         previous_event: Optional[EventHandle] = None,
         previous_event_before_epilogue: Optional[EventHandle] = None,
         async_with_compute_stream: bool = False,
@@ -565,7 +484,8 @@ class ElasticBuffer:
     ]:
         """
         Dispatch tokens to different ranks. Supports both single-node and multi-node settings.
-            The SM count is automatically determined if not specified.
+        Uses the fixed `num_launch_sms` main-kernel block count selected at construction.
+        Membership and direct/hybrid mode can change between completed pairs, including graph replays.
 
         Arguments:
             x: `torch.Tensor` or tuple of `torch.Tensor`, for the first type, the shape must be
@@ -590,12 +510,6 @@ class ElasticBuffer:
                 including graph replay; unused slots receive no tokens.
             num_max_tokens_per_rank: the maximum number of tokens per rank (the constructor's value if not given).
             expert_alignment: align the number of tokens received by each local expert to this variable.
-            num_sms: the number of SMs to use (0 for automatic via `get_theoretical_num_sms`). A successful automatic
-                dispatch remembers top-k for later topology updates; a nonzero value pins manual mode.
-                The policy is shared by all graphs using this buffer; the latest successful dispatch selects it.
-                This is the active block count of the fixed grid, clamped to `num_launch_sms` (even, at least 2).
-                A value other than the committed active SM count rewrites the topology descriptor (`EPTopology`) eagerly;
-                under a CUDA-graph capture it must equal the committed active SM count (warm up eagerly with the same value).
             previous_event: the event to wait before actually executing the kernel.
                 If set, `allocate_on_comm_stream` must also be `True`.
             previous_event_before_epilogue: the event to wait before actually executing the copy epilogue.
@@ -622,18 +536,6 @@ class ElasticBuffer:
         if expert_alignment <= 0:
             raise ValueError("expert_alignment must be positive")
         num_topk = topk_idx.shape[1]
-        auto_sm_config = (num_topk,) if num_sms == 0 else None
-        sms = (
-            2
-            if auto_sm_config is not None
-            else max(2, min((num_sms + 1) // 2 * 2, self.num_launch_sms))
-        )
-        if self._pending is not None and (
-            sms != self._sms or auto_sm_config != self._auto_sm_config
-        ):
-            raise ValueError(
-                "Finish the pending topology update before changing the SM policy"
-            )
         (data, scales) = x if isinstance(x, tuple) else (x, None)
         received = _empty((0, *data.shape[1:]), data.dtype)
         if scales is not None:
@@ -656,7 +558,6 @@ class ElasticBuffer:
             do_expand,
             expert_alignment,
             capacity,
-            sms,
             _empty(topk_idx.shape, topk_idx.dtype) if do_handle_copy else topk_idx,
             0,
             [0] * self.num_experts_per_rank if do_cpu_sync else [],
@@ -666,12 +567,8 @@ class ElasticBuffer:
             _empty((0, 2 + num_topk), torch.int32),
             _empty((0,), torch.int32),
             _empty((0,), torch.int32),
-            do_cpu_sync,
         )
         event = EventOverlap(EventHandle() if async_with_compute_stream else None)
-        if sms != self._sms:
-            self.set_num_active_sms(sms)
-        self._auto_sm_config = auto_sm_config
         return (
             received,
             received_indices,
@@ -693,8 +590,7 @@ class ElasticBuffer:
         """
         Combine (reduce) tokens from different ranks back to their original ranks.
         Supports both single-node and multi-node settings.
-        Dispatch and combine use the topology descriptor's active block count throughout the pair.
-        Eager combine checks the handle's recorded count; captured kernels read the current descriptor.
+        Dispatch and combine use the fixed `num_launch_sms` main-kernel block count throughout the buffer lifetime.
         Upstream's optional top-k weight return, used for routing-weight gradients in dispatch backward, is unsupported.
 
         Arguments:
@@ -715,8 +611,6 @@ class ElasticBuffer:
             event: the event after executing the kernel (valid only if `async_with_compute_stream` is set).
         """
         self._ensure_dispatchable()
-        if handle.num_sms != self._sms:
-            raise ValueError("The handle SM count differs from the committed topology")
         return (
             _empty((handle.topk_idx.shape[0], x.shape[1]), torch.bfloat16),
             EventOverlap(EventHandle() if async_with_compute_stream else None),
@@ -728,13 +622,5 @@ class ElasticBuffer:
 
     def _ensure_dispatchable(self):
         self._ensure_open()
-        if self.num_experts_per_rank <= 0:
-            raise ValueError("Set num_experts_per_rank when constructing an EP buffer")
         if self.world_rank not in self._active:
             raise ValueError("Dispatch/combine require this rank to be active")
-
-    def _validate_sms(self, count):
-        if not 2 <= count <= self.num_launch_sms or count % 2:
-            raise ValueError(
-                "Active SM count must be even and between 2 and num_launch_sms"
-            )
