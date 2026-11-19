@@ -116,8 +116,6 @@ getXferStatus(xferStatusH &xfer_status) {
     }
 
     payload->cached_status = NIXL_SUCCESS;
-    deviceAtomic(lane->last_success_generation)
-        .store(payload->generation, cuda::memory_order_relaxed);
     // IDLE is the last release: a new submitter may now replace active_ticket.
     deviceAtomic(lane->phase).store(gpunetio_lane_phase_idle, cuda::memory_order_release);
     return NIXL_SUCCESS;

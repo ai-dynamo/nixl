@@ -28,17 +28,11 @@ constexpr uint32_t gpunetio_lane_phase_posting = 1;
 constexpr uint32_t gpunetio_lane_phase_posted = 2;
 constexpr uint32_t gpunetio_lane_phase_failed = 3;
 
-enum class GpunetioLanePhase : uint32_t {
-    IDLE = gpunetio_lane_phase_idle,
-    POSTING = gpunetio_lane_phase_posting,
-    POSTED = gpunetio_lane_phase_posted,
-    FAILED = gpunetio_lane_phase_failed,
-};
-
 struct alignas(16) GpunetioDeviceLane {
     doca_gpu_dev_verbs_qp *qp;
     alignas(8) uint64_t generation;
     alignas(8) uint64_t active_ticket;
+    // Reserved to preserve the layout used by existing native consumers.
     alignas(8) uint64_t last_success_generation;
     alignas(4) uint32_t phase;
     alignas(4) uint32_t failed;

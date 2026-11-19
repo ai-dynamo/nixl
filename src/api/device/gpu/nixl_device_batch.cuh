@@ -29,7 +29,6 @@ class readSession {
     Lane *lane_ = nullptr;
     doca_gpu_dev_verbs_qp *qp_ = nullptr;
     doca_gpu_dev_verbs_cq *cq_ = nullptr;
-    uint64_t generation_ = 0;
     uint64_t next_retire_ = 0;
     uint64_t next_fifo_ = 0;
     uint64_t reserved_first_ = 0;
@@ -147,7 +146,7 @@ public:
             return NIXL_ERR_INVALID_PARAM;
         }
         capacity_ = qp_->sq_wqe_num < cq_->cqe_num ? qp_->sq_wqe_num : cq_->cqe_num;
-        generation_ = deviceAtomic(lane_->generation).fetch_add(1, cuda::memory_order_relaxed) + 1;
+        deviceAtomic(lane_->generation).fetch_add(1, cuda::memory_order_relaxed);
         outstanding_ = 0;
         reserved_ = false;
         acquired_ = true;
@@ -390,7 +389,6 @@ public:
         if (!acquired_ || reserved_ || outstanding_ || consistency_pending_ || dump_pending_) {
             return NIXL_ERR_NOT_ALLOWED;
         }
-        deviceAtomic(lane_->last_success_generation).store(generation_, cuda::memory_order_relaxed);
         deviceAtomic(lane_->phase).store(gpunetio_lane_phase_idle, cuda::memory_order_release);
         acquired_ = false;
         return NIXL_SUCCESS;
