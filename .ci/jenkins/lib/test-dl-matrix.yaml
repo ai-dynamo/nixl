@@ -161,7 +161,7 @@ steps:
         "--gres=${SLURM_GRES}",
         "--mem=${SLURM_MEM}",
         "--mincpus=${SLURM_MINCPUS}",
-        "--exclude=gb-nvl-053-compute05,gb-nvl-057-compute06,gb-nvl-059-compute03,gb-nvl-059-compute04"
+        "--nodelist=gb-nvl-053-compute05"
       ]
 
   - name: Sync Container Image
