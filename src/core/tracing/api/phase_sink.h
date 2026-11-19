@@ -630,11 +630,15 @@ public:
 
     void
     completed(nixl_status_t status) const noexcept {
+        completed(status, trace_.now());
+    }
+
+    void
+    completed(nixl_status_t status, nixlTime::us_t phase_at) const noexcept {
         if (status == NIXL_SUCCESS) {
-            recordCompleted(trace_.now());
+            recordCompleted(phase_at);
             return;
         }
-        const nixlTime::us_t phase_at = trace_.now();
         nixl::trace::deferPhase({.trace = trace_,
                                  .phase = nixl_trace_phase_t::WIRE_COMPLETED,
                                  .operation = operation_,
@@ -700,6 +704,9 @@ public:
 
     void
     completed(nixl_status_t) const noexcept {}
+
+    void
+    completed(nixl_status_t, nixlTime::us_t) const noexcept {}
 };
 
 #endif

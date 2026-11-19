@@ -129,6 +129,7 @@ public:
               nixlUcxWorker *worker) {
         NIXL_ASSERT(sharedState_.get() == nullptr);
         sharedState_ = shared_state;
+        failureSeenAt_.reset();
         setWorker(worker);
     }
 
@@ -154,6 +155,7 @@ private:
     traceFailure(ucs_status_t failure) noexcept;
 
     std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
+    std::optional<nixlTime::us_t> failureSeenAt_;
 };
 
 /*
@@ -222,10 +224,14 @@ nixlUcxChunkBackendReqH::traceFailure(const ucs_status_t failure) noexcept {
     }
     switch (sharedState_->submission.load(std::memory_order_acquire)) {
     case nixlUcxBackendSharedState::submission_t::SUBMITTING:
+        if (!failureSeenAt_) {
+            failureSeenAt_ = sharedState_->trace.post().now();
+        }
         return false;
     case nixlUcxBackendSharedState::submission_t::SUBMITTED:
         trace = std::exchange(sharedState_->trace, {});
-        trace.completed(nixl::ucx::ucsToNixlStatus(failure));
+        trace.completed(nixl::ucx::ucsToNixlStatus(failure),
+                        failureSeenAt_ ? *failureSeenAt_ : trace.post().now());
         return true;
     case nixlUcxBackendSharedState::submission_t::REJECTED:
         sharedState_->trace = {};
