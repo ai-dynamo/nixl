@@ -420,21 +420,6 @@ public:
     /** Destroy engine and cleanup all resources */
     ~nixlLibfabricEngine();
 
-    bool
-    supportsRemote() const override {
-        return true;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
-
-    bool
-    supportsNotif() const override {
-        return true;
-    }
-
     /** Get list of supported memory types */
     nixl_mem_list_t
     getSupportedMems() const override;
