@@ -289,6 +289,11 @@ public:
         return sharedState_ ? sharedState_->failure.load(std::memory_order_relaxed) : UCS_OK;
     }
 
+    [[nodiscard]] nixl_status_t
+    sharedStatus() const noexcept {
+        return sharedState_->status.load();
+    }
+
     void
     setNotif(std::string &&notif) override {
         sharedState_->notif = std::move(notif);
@@ -548,5 +553,5 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     });
 
     NIXL_TRACE << "sent " << *comp_handle << " with status: " << status;
-    return status;
+    return (status == NIXL_SUCCESS) ? status : comp_handle->sharedStatus();
 }
