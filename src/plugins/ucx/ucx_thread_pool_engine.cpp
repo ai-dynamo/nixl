@@ -164,10 +164,16 @@ private:
 struct nixlUcxBackendSharedState {
     enum class submission_t : std::uint8_t { SUBMITTING, SUBMITTED, REJECTED };
 
+    struct failure_t {
+        nixl_status_t status = NIXL_SUCCESS;
+        std::int32_t native = UCS_OK;
+    };
+
+    static_assert(std::atomic<failure_t>::is_always_lock_free);
+
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
-    std::atomic<bool> failed{false};
-    std::atomic<ucs_status_t> failure{UCS_OK};
+    std::atomic<failure_t> failure{};
     std::atomic<submission_t> submission{submission_t::SUBMITTING};
     std::string notif;
     std::vector<nixlUcxChunkBackendReqH> chunks;
@@ -188,8 +194,8 @@ struct nixlUcxBackendSharedState {
 void
 nixlUcxChunkBackendReqH::publishFailure(const nixl_status_t status,
                                         const ucs_status_t failure) noexcept {
-    if (!sharedState_->failed.exchange(true)) {
-        sharedState_->failure.store(failure, std::memory_order_relaxed);
+    nixlUcxBackendSharedState::failure_t none;
+    if (sharedState_->failure.compare_exchange_strong(none, {status, failure})) {
         sharedState_->status.store(status);
     }
 }
@@ -235,8 +241,8 @@ nixlUcxChunkBackendReqH::status() {
     // First check if entire request was cancelled or failed
     const nixl_status_t status = sharedState_->status.load();
     if (status != NIXL_SUCCESS) {
-        return traceFailure(sharedState_->failure.load(std::memory_order_relaxed)) ? status :
-                                                                                     NIXL_IN_PROG;
+        const auto failure = sharedState_->failure.load(std::memory_order_relaxed);
+        return traceFailure(static_cast<ucs_status_t>(failure.native)) ? status : NIXL_IN_PROG;
     }
 
     const nixl_status_t ret = nixlUcxBackendReqH::status();
@@ -291,8 +297,7 @@ public:
     startXfer() {
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
-        sharedState_->failed.store(false, std::memory_order_relaxed);
-        sharedState_->failure.store(UCS_OK, std::memory_order_relaxed);
+        sharedState_->failure.store({}, std::memory_order_relaxed);
         sharedState_->submission.store(nixlUcxBackendSharedState::submission_t::SUBMITTING,
                                        std::memory_order_relaxed);
         sharedState_->trace = trace;
@@ -324,12 +329,14 @@ public:
 
     [[nodiscard]] ucs_status_t
     failure() const noexcept override {
-        return sharedState_ ? sharedState_->failure.load(std::memory_order_relaxed) : UCS_OK;
+        return sharedState_ ? static_cast<ucs_status_t>(
+                                  sharedState_->failure.load(std::memory_order_relaxed).native) :
+                              UCS_OK;
     }
 
     [[nodiscard]] nixl_status_t
     sharedStatus() const noexcept {
-        return sharedState_->status.load();
+        return sharedState_->failure.load().status;
     }
 
     void
