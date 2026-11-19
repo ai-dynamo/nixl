@@ -270,6 +270,7 @@ class nixl_agent:
             nixl_conf.backends = self.plugin_list
 
         for bknd in nixl_conf.backends:
+            bknd = self._canonical_backend_name(bknd)
             if bknd not in self.plugin_list:
                 logger.warning(
                     "Skipping backend registration %s due to the missing plugin.",
@@ -279,11 +280,14 @@ class nixl_agent:
                 # TODO: improve population of init from nixl_conf
                 init: dict[str, str] = {}
                 if nixl_conf.num_threads > 0:
-                    if bknd == "UCX" or bknd == "OBJ" or bknd == "LIBFABRIC":
+                    # Compare case-insensitively so a plugin registered under
+                    # a different spelling still gets the thread parameter.
+                    bknd_upper = self._ascii_upper(bknd)
+                    if bknd_upper in ("UCX", "OBJ", "LIBFABRIC"):
                         init["num_threads"] = str(nixl_conf.num_threads)
-                    elif bknd == "GDS_MT":
+                    elif bknd_upper == "GDS_MT":
                         init["thread_count"] = str(nixl_conf.num_threads)
-                    elif bknd == "UCCL":
+                    elif bknd_upper == "UCCL":
                         init["num_cpus"] = str(nixl_conf.num_threads)
                 self.create_backend(bknd, init)
 
@@ -345,6 +349,7 @@ class nixl_agent:
         Returns:
             List of supported memory types.
         """
+        backend = self._canonical_backend_name(backend)
         if backend not in self.plugin_mem_types:
             self._load_plugin_params(backend)
         if backend not in self.plugin_mem_types:
@@ -364,6 +369,7 @@ class nixl_agent:
         Returns:
             Dictionary of plugin parameters, described above.
         """
+        backend = self._canonical_backend_name(backend)
         if backend not in self.plugin_b_options:
             self._load_plugin_params(backend)
         if backend not in self.plugin_b_options:
@@ -383,11 +389,13 @@ class nixl_agent:
         Returns:
             List of supported memory types.
         """
-        if backend in self.backend_mems:
-            return self.backend_mems[backend]
+        resolved = self._resolve_created_backend(backend)
+        if resolved is not None and resolved in self.backend_mems:
+            return self.backend_mems[resolved]
         else:
             logger.warning(
-                "Backend %s not instantiated to get its supported mem types.", backend
+                "Backend %s is ambiguous or not instantiated to get its supported mem types.",
+                backend,
             )
             return []
 
@@ -403,13 +411,73 @@ class nixl_agent:
         Returns:
             Dictionary of backend parameters, described in get_plugin_params.
         """
-        if backend in self.backend_options:
-            return self.backend_options[backend]
+        resolved = self._resolve_created_backend(backend)
+        if resolved is not None and resolved in self.backend_options:
+            return self.backend_options[resolved]
         else:
             logger.warning(
-                "Backend %s not instantiated to get its parameters.", backend
+                "Backend %s is ambiguous or not instantiated to get its parameters.",
+                backend,
             )
             return {}
+
+    @staticmethod
+    def _ascii_upper(name: str) -> str:
+        """ASCII-only upper casing, matching the comparison used by the core."""
+        return "".join(chr(ord(c) - 32) if "a" <= c <= "z" else c for c in name)
+
+    def _canonical_backend_name(self, backend: str) -> str:
+        """Resolve a backend name to the spelling the plugin advertises.
+
+        Mirrors the plugin manager in the C++ core: surrounding whitespace is
+        trimmed, an exact match always wins (two plugins may be registered
+        under spellings that differ only in case), and only then names are
+        compared case-insensitively, so a backend created as " ucx " is keyed
+        as "UCX".
+        """
+        name = backend.strip(" \t\n\r\f\v")
+        for plugin in self.plugin_list:
+            if plugin == name:
+                return plugin
+        folded = self._ascii_upper(name)
+        for plugin in self.plugin_list:
+            if self._ascii_upper(plugin) == folded:
+                return plugin
+        return name
+
+    def _resolve_created_backend(self, backend: str) -> Optional[str]:
+        """Resolve a backend name to the key of an instantiated backend.
+
+        A name that exactly matches a registered plugin stays exact: it must
+        not silently resolve to a case-variant sibling. A non-exact spelling
+        is folded and auto-matched only when exactly one instantiated backend
+        is a candidate. Returns None when the backend is not instantiated or
+        the spelling is ambiguous across instantiated backends.
+        """
+        name = backend.strip(" \t\n\r\f\v")
+        if name in self.plugin_list or name in self.backends:
+            candidates = [name] if name in self.backends else []
+        else:
+            folded = self._ascii_upper(name)
+            # Snapshot the keys: create_backend() may run on another thread.
+            candidates = [
+                created
+                for created in list(self.backends)
+                if self._ascii_upper(created) == folded
+            ]
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
+
+    def _backend_handle(self, backend: str):
+        """Look up an instantiated backend, accepting any name spelling."""
+        created = self._resolve_created_backend(backend)
+        if created is None:
+            raise KeyError(
+                f"Backend '{backend}' is ambiguous or not instantiated; "
+                f"use an exact name. Instantiated: {list(self.backends.keys())}"
+            )
+        return self.backends[created]
 
     def create_backend(self, backend: str, initParams: dict[str, str] = {}):
         """Initialize a backend with the specified initialization parameters, described above.
@@ -418,6 +486,7 @@ class nixl_agent:
             backend: Name of the backend.
             initParams: Dictionary of initialization parameters.
         """
+        backend = self._canonical_backend_name(backend)
         self.backends[backend] = self.agent.createBackend(backend, initParams)
 
         (backend_options, mem_types) = self.agent.getBackendParams(
@@ -448,7 +517,7 @@ class nixl_agent:
 
         handle_list = []
         for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
         self.agent.registerMem(reg_descs, handle_list)
 
         return reg_descs
@@ -465,7 +534,7 @@ class nixl_agent:
         """
         handle_list = []
         for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
         self.agent.deregisterMem(dereg_list, handle_list)
 
     def query_memory(
@@ -484,12 +553,14 @@ class nixl_agent:
         reg_descs = self.get_reg_descs(reg_list, mem_type)
 
         # Get the backend handle
-        if backend not in self.backends:
+        resolved = self._resolve_created_backend(backend)
+        if resolved is None:
             raise ValueError(
-                f"Backend '{backend}' not found. Available backends: {list(self.backends.keys())}"
+                f"Backend '{backend}' is ambiguous or not instantiated. "
+                f"Available backends: {list(self.backends.keys())}"
             )
 
-        return self.agent.queryMem(reg_descs, self.backends[backend])
+        return self.agent.queryMem(reg_descs, self.backends[resolved])
 
     def make_connection(self, remote_agent: str, backends: list[str] = []):
         """Proactively establish a connection with a remote agent,
@@ -504,7 +575,7 @@ class nixl_agent:
         """
         handle_list = []
         for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
 
         self.agent.makeConnection(remote_agent, handle_list)
 
@@ -553,7 +624,7 @@ class nixl_agent:
 
         handle_list = []
         for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
 
         if is_strided:
             if mem_type is None:
@@ -617,7 +688,7 @@ class nixl_agent:
         op = self.nixl_ops[operation]
         handle_list = []
         for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
 
         handle = self.agent.makeXferReq(
             op,
@@ -663,7 +734,7 @@ class nixl_agent:
         op = self.nixl_ops[operation]
         handle_list = []
         for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
 
         handle = self.agent.createXferReq(
             op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
@@ -820,7 +891,7 @@ class nixl_agent:
     ) -> int:
         handle_list = []
         for backend_string in backends or []:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
         return self.agent.prepMemView(dlist, handle_list)
 
     """
@@ -844,7 +915,7 @@ class nixl_agent:
         """
         handle_list = []
         for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
         return self.agent.getNotifs({}, handle_list)
 
     def update_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
@@ -859,7 +930,7 @@ class nixl_agent:
         """
         handle_list = []
         for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
         self.notifs = self.agent.getNotifs(self.notifs, handle_list)  # Adds new notifs
         return self.notifs
 
@@ -885,7 +956,7 @@ class nixl_agent:
         """
         handle_list = []
         for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
         self.notifs = self.agent.getNotifs(self.notifs, handle_list)  # Adds new notifs
         found = False
         message = None
@@ -916,7 +987,9 @@ class nixl_agent:
         if backend is None:
             self.agent.genNotif(remote_agent_name, notif_msg)
         else:
-            self.agent.genNotif(remote_agent_name, notif_msg, self.backends[backend])
+            self.agent.genNotif(
+                remote_agent_name, notif_msg, self._backend_handle(backend)
+            )
 
     def get_agent_metadata(self) -> bytes:
         """Get the full metadata of the local agent.
@@ -945,7 +1018,7 @@ class nixl_agent:
         """
         handle_list = []
         for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
         return self.agent.getLocalPartialMD(descs, inc_conn_info, handle_list)
 
     def add_remote_agent(self, metadata: bytes) -> str:
@@ -1017,7 +1090,7 @@ class nixl_agent:
         """
         handle_list = []
         for backend_string in backends:
-            handle_list.append(self.backends[backend_string])
+            handle_list.append(self._backend_handle(backend_string))
         self.agent.sendLocalPartialMD(
             descs, inc_conn_info, handle_list, ip_addr, port, label
         )
