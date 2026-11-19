@@ -159,6 +159,7 @@ nixlTcpStoreMetadataBackend::publishKey(const std::string &key, nixl_blob_t &&bl
 
         void
         initiate() override {
+            NIXL_DEBUG << "[" << backend_.ctx_.agentName() << "] TCPStore publishing key " << key_;
             backend_.client_->set(key_, std::move(blob_), [this](asio::error_code error) {
                 if (!error) {
                     NIXL_DEBUG << "[" << backend_.ctx_.agentName() << "] TCPStore published key "
@@ -217,6 +218,9 @@ nixlTcpStoreMetadataBackend::fetchRemote(const std::string &remote_name,
         default_metadata_label;
     const std::string key = makeKey(label, remote_name, nixl_null_agent);
     auto deadline = std::chrono::steady_clock::now() + fetchTimeout_;
+
+    NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore fetching metadata for " << remote_name
+               << " with key " << key << " and deadline " << deadline.time_since_epoch().count();
 
     // The fetch runs on the I/O thread. The result lands in the agent cache
     // (observed via checkRemoteMD), matching the async model of the other backends.
@@ -281,6 +285,9 @@ nixlTcpStoreMetadataBackend::initiateFetch(const std::string &remote_name, const
                          if (!error) {
                              NIXL_DEBUG << "[" << ctx_.agentName()
                                         << "] TCPStore key not yet present: " << key;
+                         } else {
+                             NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore fetch for " << key
+                                        << " failed with error: " << error.message();
                          }
 
                          auto fetch_deadline = std::chrono::steady_clock::now();
@@ -323,6 +330,9 @@ nixlTcpStoreMetadataBackend::retryPendingFetches() {
         }
 
         if (std::chrono::steady_clock::now() < info.deadline) {
+            NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore retrying fetch for "
+                       << info.remoteName << " with key " << key << " and deadline "
+                       << info.deadline.time_since_epoch().count();
             info.fetchInProgress = true;
             initiateFetch(info.remoteName, key);
             ++it;
@@ -350,6 +360,8 @@ nixlTcpStoreMetadataBackend::invalidateLocal(const nixl_opt_args_t * /*extra_par
             pendingCount_ = backend_.publishedKeys_.size();
 
             for (const auto &key : backend_.publishedKeys_) {
+                NIXL_DEBUG << "[" << backend_.ctx_.agentName() << "] TCPStore invalidating key "
+                           << key;
                 backend_.client_->deleteKey(
                     key, [this, key = key](asio::error_code error, bool success) {
                         if (!error && success) {

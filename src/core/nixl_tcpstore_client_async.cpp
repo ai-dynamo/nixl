@@ -199,7 +199,11 @@ nixlTcpStoreClientAsync::nixlTcpStoreClientAsync(std::string host,
       opTimeout_(op_timeout),
       ioContext_(io_context),
       socket_(ioContext_),
-      connectionRetryTimer_(ioContext_) {}
+      connectionRetryTimer_(ioContext_) {
+    NIXL_INFO << "[TCPStore client] Created with host: " << host_ << ", port: " << port_
+              << ", connect timeout: " << connect_timeout.count()
+              << " ms, op timeout: " << op_timeout.count() << " ms";
+}
 
 nixlTcpStoreClientAsync::~nixlTcpStoreClientAsync() = default;
 
@@ -210,6 +214,7 @@ nixlTcpStoreClientAsync::connect() {
         // asynchronous wait operation.
         connectionRetryTimer_.expires_at(std::chrono::steady_clock::now());
 
+        connectionRetryCount_ = 0;
         doResolve(connectTimeout_);
     });
 }
@@ -823,6 +828,10 @@ nixlTcpStoreClientAsync::onError(std::string what,
                 NIXL_ERROR << "[TCPStore client][Server: " << host_ << ":" << port_ << "]: "
                            << "Max connection retry count reached. Close the connection.";
                 drainSendQueue();
+
+                // Reset the connection retry count so that a new request initiates a new
+                // reconnection attempt.
+                connectionRetryCount_ = 0;
             }
         }
     }
