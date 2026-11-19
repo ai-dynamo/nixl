@@ -24,7 +24,12 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <system_error>
 #include <thread>
 
 namespace {
@@ -41,6 +46,25 @@ globalTimerNs() {
     uint64_t ns;
     asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(ns));
     return ns;
+}
+
+[[nodiscard]] bool
+hasActiveIbPort() {
+    namespace fs = std::filesystem;
+    const auto is_port_active = [](const fs::directory_entry &port) {
+        std::ifstream state_file(port.path() / "state");
+        std::string state;
+        return std::getline(state_file, state) && (state == "4: ACTIVE");
+    };
+    const auto has_active_port = [&](const fs::directory_entry &dev) {
+        std::error_code ec;
+        const fs::directory_iterator ports(dev.path() / "ports", ec);
+        return std::any_of(begin(ports), end(ports), is_port_active);
+    };
+
+    std::error_code ec;
+    const fs::directory_iterator devs("/sys/class/infiniband", ec);
+    return std::any_of(begin(devs), end(devs), has_active_port);
 }
 } // namespace
 
@@ -69,10 +93,25 @@ atomicAddKernel(void *counter_mvh) {
 }
 
 __device__ void
-putAndWait(const memViewElem &src, const memViewElem &dst, size_t size, unsigned channel_id = 0) {
+putAndComplete(const memViewElem &src,
+               const memViewElem &dst,
+               size_t bytes,
+               unsigned channel_id,
+               uint64_t put_flags) {
     xferStatusH xfer_status;
-    nixl_status_t status = put(src, dst, size, channel_id, 0, &xfer_status);
-    waitPostedWithSystemFence(status, xfer_status);
+    auto status = put(src, dst, bytes, channel_id, put_flags, &xfer_status);
+    assert(status == NIXL_IN_PROG);
+    if (put_flags & flags::defer) {
+        status = flush(dst.mvh, channel_id);
+        assert(status == NIXL_SUCCESS);
+    } else {
+        waitPostedWithSystemFence(status, xfer_status);
+    }
+}
+
+__device__ void
+putAndWait(const memViewElem &src, const memViewElem &dst, size_t size, unsigned channel_id = 0) {
+    putAndComplete(src, dst, size, channel_id, 0);
 }
 
 __global__ void
@@ -98,6 +137,17 @@ putChannelKernel(void *src_mvh, void *dst_mvh) {
     }
 }
 
+__global__ void
+putFlushKernel(void *src_mvh,
+               void *dst_mvh,
+               size_t bytes,
+               unsigned channel_id,
+               uint64_t put_flags) {
+    const memViewElem src{src_mvh, 0, 0};
+    const memViewElem dst{dst_mvh, 0, 0};
+    putAndComplete(src, dst, bytes, channel_id, put_flags);
+}
+
 void
 waitForData(const memBuffer &actual, const memBuffer &expected) {
     const auto deadline = std::chrono::steady_clock::now() + data_arrival_timeout;
@@ -115,6 +165,9 @@ protected:
             GTEST_SKIP() << "UCX direct GPU API is unavailable";
         }
 #endif
+        if (!hasActiveIbPort()) {
+            GTEST_SKIP() << "No active IB port";
+        }
         int count;
         if ((cudaGetDeviceCount(&count) != cudaSuccess) || (count < 1)) {
             GTEST_SKIP() << "No CUDA-capable GPU is available";
@@ -142,12 +195,12 @@ protected:
         return senderAgent_->regAndPrepLocalMemView(mbs);
     }
 
-private:
     [[nodiscard]] bool
     isProxy() const {
         return GetParam();
     }
 
+private:
     std::unique_ptr<gtest::LogIgnoreGuard> lig_;
     std::unique_ptr<agent> senderAgent_;
     std::unique_ptr<agent> receiverAgent_;
@@ -209,6 +262,35 @@ TEST_P(test, putChannel) {
     waitForData(dst_mbs[1], src_mbs[0]);
     EXPECT_EQ(src_mbs[0], dst_mbs[0]);
     EXPECT_EQ(src_mbs[0], dst_mbs[1]);
+}
+
+TEST_P(test, deferredPutFlush) {
+    if (isProxy()) {
+        GTEST_SKIP() << "GPU flush is unsupported in proxy mode";
+    }
+    // Skip before submitting deferred work when the UCX headers lack flush support.
+#if __has_include(<ucp/api/device/ucp_device_impl.h>)
+    if constexpr (!impl::ucx::flush_supported<level_t::THREAD>) {
+        GTEST_SKIP() << "UCX device flush API is unavailable";
+    }
+#else
+    GTEST_SKIP() << "UCX direct GPU API is unavailable";
+#endif
+    constexpr size_t bytes = 4 * 1024;
+    const std::vector<uint64_t> pattern(bytes / sizeof(test_value), test_value);
+    std::vector<memBuffer> src_mbs;
+    src_mbs.emplace_back(memBuffer{bytes, pattern.data()});
+    std::vector<memBuffer> dst_mbs;
+    dst_mbs.emplace_back(memBuffer{bytes});
+
+    void *src_mvh = prepLocalMemView(src_mbs);
+    void *dst_mvh = prepRemoteMemView(dst_mbs);
+    // Exercise a non-default channel and complete solely through flush.
+    putFlushKernel<<<1, 1>>>(src_mvh, dst_mvh, bytes, 1, flags::defer);
+    const cudaError_t launch_status = cudaGetLastError();
+    ASSERT_EQ(launch_status, cudaSuccess) << cudaGetErrorString(launch_status);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    EXPECT_EQ(src_mbs[0], dst_mbs[0]);
 }
 
 INSTANTIATE_TEST_SUITE_P(deviceGpu,
