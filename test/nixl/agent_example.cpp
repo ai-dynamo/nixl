@@ -172,6 +172,9 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
         nixl_exit_on_failure(status, "Failed to release dst Dlist handle", agent1);
     }
 
+    status = A1->invalidateRemoteMD(agent2);
+    nixl_exit_on_failure(status, "Failed to invalidate remote MD", agent1);
+
     free(src_buf);
     free(dst_buf);
 }
@@ -362,6 +365,9 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
         status = A2->deregisterMem(dst_mem_lists[update], &extra_params2);
         nixl_exit_on_failure(status, "Failed to deregister memory", agent2);
     }
+
+    status = A1->invalidateRemoteMD(agent2);
+    nixl_exit_on_failure(status, "Failed to invalidate remote MD", agent1);
 
     // Free allocated memory
     for (int update_idx = 0; update_idx < NUM_UPDATES; update_idx++) {
