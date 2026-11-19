@@ -30,11 +30,14 @@ namespace {
 
     constexpr std::size_t inline_record_attrs = 12;
 
+    constinit thread_local bool deferred_phases_gone = false;
+
     struct DeferredPhaseQueue {
         std::array<DeferredPhase, deferredPhaseCapacity> entries;
         std::size_t count = 0;
 
         ~DeferredPhaseQueue() {
+            deferred_phases_gone = true;
             if (count != 0) {
                 pendingDeferredPhases.fetch_sub(count, std::memory_order_relaxed);
             }
@@ -208,11 +211,15 @@ TracerPhaseSink::readTraceBaggage(nixlSerDes &ser_des) const {
 std::atomic<std::uint64_t> pendingDeferredPhases{0};
 
 TracerPhaseSink::~TracerPhaseSink() {
-    recordDeferredPhases();
+    nixl::trace::recordDeferredPhases(this);
 }
 
 void
 TracerPhaseSink::deferPhase(const DeferredPhase &deferred) noexcept {
+    if (deferred_phases_gone) {
+        recordDeferred(deferred);
+        return;
+    }
     DeferredPhaseQueue &queue = deferred_phases;
     if (queue.count == queue.entries.size()) {
         recordDeferred(deferred);
@@ -224,6 +231,9 @@ TracerPhaseSink::deferPhase(const DeferredPhase &deferred) noexcept {
 
 void
 TracerPhaseSink::recordDeferredPhases() noexcept {
+    if (deferred_phases_gone) {
+        return;
+    }
     DeferredPhaseQueue &queue = deferred_phases;
     const std::size_t recorded = queue.count;
     for (std::size_t i = 0; i < recorded; ++i) {

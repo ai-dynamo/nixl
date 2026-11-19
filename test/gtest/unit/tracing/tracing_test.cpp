@@ -2598,6 +2598,37 @@ TEST(TracePhaseSink, ThreadExitReturnsTheCountOfThePhasesItDeferred) {
     }
 }
 
+TEST(TracePhaseSink, SinkOutlivingItsThreadsQueueLeavesThePendingCountAlone) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b, 1.0);
+    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+    sink.recordDeferredPhases();
+    const std::uint64_t before = nixl::trace::pendingDeferredPhases.load();
+    nixlBackendPostPhases pending;
+    {
+        const nixl::trace::Scope scope(tracer.get(),
+                                       {testContext(0x44), nixl::trace::RequestId{0x44}, 1});
+        pending.begin(&sink, NIXL_WRITE, nixl_trace_completion_t::CALLBACK);
+    }
+    pending.callbackCompleted(NIXL_ERR_CANCELED);
+
+    std::thread([&] {
+        thread_local std::optional<nixl::trace::TracerPhaseSink> owner;
+        owner.emplace(*tracer, "UCX");
+        nixlBackendPostPhases phases;
+        {
+            const nixl::trace::Scope scope(tracer.get(),
+                                           {testContext(0x45), nixl::trace::RequestId{0x45}, 1});
+            phases.begin(&*owner, NIXL_WRITE, nixl_trace_completion_t::CALLBACK);
+        }
+        phases.callbackCompleted(NIXL_ERR_CANCELED);
+    }).join();
+
+    EXPECT_EQ(nixl::trace::pendingDeferredPhases.load(), before + 1);
+    sink.recordDeferredPhases();
+    EXPECT_EQ(nixl::trace::pendingDeferredPhases.load(), before);
+}
+
 TEST(TracePhaseSink, CallbackCompletionRecordsAFailuresStatus) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
