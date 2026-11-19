@@ -19,7 +19,51 @@ aws_s3_crt = dependency('aws-cpp-sdk-s3-crt', static: false, required: false)
 aws_core = dependency('aws-cpp-sdk-core', required: false, static: false)
 
 if aws_s3.found() and aws_s3_crt.found() and aws_core.found()
-    # By default aws-cpp-sdk sets c++11 compile flag for the whole project
+    # By default aws-cpp-sdk sets a c++11 compile flag for the whole project, so
+    # the SDK is consumed below with compile_args dropped. pkg-config carries the
+    # header search paths in those same Cflags, so re-derive them here. Stock
+    # aws-sdk-cpp .pc files have no prefix variable, and their includedir and
+    # libdir are relative to the install prefix. The .pc file is somewhere below
+    # that prefix, so walk up from pcfiledir to the first dir whose includedir
+    # has the SDK headers. A relative libdir means the .pc file is in
+    # <libdir>/pkgconfig. The relative -L resolves against the build dir, so add
+    # the absolute one, and find the library by path so meson also puts its dir
+    # on the build rpath. is_system also lets meson drop any path that is
+    # already a compiler default.
+    aws_sdk_include_dirs = []
+    aws_sdk_seen_includes = []
+    aws_sdk_libs = []
+    foreach aws_dep : [aws_s3, aws_s3_crt, aws_core]
+        if aws_dep.type_name() != 'pkgconfig'
+            continue
+        endif
+        aws_inc = aws_dep.get_variable(pkgconfig: 'includedir', default_value: '')
+        aws_lib = aws_dep.get_variable(pkgconfig: 'libdir', default_value: '')
+        # Take the parent of the .pc file path, so a trailing slash in pcfiledir
+        # does not change the result.
+        aws_pc_dir = fs.parent(aws_dep.get_variable(pkgconfig: 'pcfiledir') / (aws_dep.name() + '.pc'))
+        if aws_lib != '' and not fs.is_absolute(aws_lib) and fs.is_absolute(aws_pc_dir)
+            aws_lib_dir = fs.parent(aws_pc_dir)
+            aws_sdk_libs += declare_dependency(link_args: '-L' + aws_lib_dir)
+            aws_sdk_libs += cpp.find_library(aws_dep.name(), dirs: aws_lib_dir, static: false, required: false)
+        endif
+        if aws_inc != '' and not fs.is_absolute(aws_inc)
+            aws_dir = aws_pc_dir
+            foreach _ : aws_pc_dir.split('/')
+                aws_dir = fs.parent(aws_dir)
+                if fs.is_file(aws_dir / aws_inc / 'aws/core/Aws.h')
+                    aws_inc = aws_dir / aws_inc
+                    break
+                endif
+            endforeach
+        endif
+        if aws_inc != '' and fs.is_absolute(aws_inc) and aws_inc not in aws_sdk_seen_includes and fs.is_dir(aws_inc)
+            aws_sdk_seen_includes += aws_inc
+            aws_sdk_include_dirs += include_directories(aws_inc, is_system: true)
+        endif
+    endforeach
+    aws_sdk_paths = declare_dependency(include_directories: aws_sdk_include_dirs, dependencies: aws_sdk_libs)
+
     partial_aws_s3 = aws_s3.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
     partial_aws_s3_crt = aws_s3_crt.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
     partial_aws_core = aws_core.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
@@ -35,7 +79,7 @@ if aws_s3.found() and aws_s3_crt.found() and aws_core.found()
     # engine — can compose them.
     obj_utils_sources = ['s3/utils.cpp', 's3/utils.h',
                          'rdma/rdma_protocol.h']
-    obj_utils_deps = [nixl_common_dep, partial_aws_s3, partial_aws_s3_crt, partial_aws_core]
+    obj_utils_deps = [nixl_common_dep, aws_sdk_paths, partial_aws_s3, partial_aws_s3_crt, partial_aws_core]
     if cuobj_dep.found()
         obj_utils_sources += ['rdma/rdma.h',
                               'rdma/cuobj_client.h', 'rdma/cuobj_client.cpp',

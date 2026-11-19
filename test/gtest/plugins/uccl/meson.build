@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,21 +31,21 @@ if not python_dep.found() or not pybind11_dep.found()
     subdir_done()
 endif
 
-cpp_flags = []
-cpp_flags += '-DBUILD_DIR="' + meson.project_build_root() + '"'
+uccl_gtest_cpp_flags = []
+uccl_gtest_cpp_flags += '-DBUILD_DIR="' + meson.project_build_root() + '"'
 
 if cuda_dep.found()
-    cuda_dependencies = [cuda_dep]
-    cpp_flags += '-DHAVE_CUDA'
+    uccl_gtest_cuda_deps = [cuda_dep]
+    uccl_gtest_cpp_flags += '-DHAVE_CUDA'
 else
-    cuda_dependencies = []
-    cpp_flags += '-UHAVE_CUDA'
+    uccl_gtest_cuda_deps = []
+    uccl_gtest_cpp_flags += '-UHAVE_CUDA'
 endif
 
 uccl_test_exe = executable('uccl_gtest',
     sources : ['uccl_test.cpp', '../../main.cpp', '../../common.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs, '.'],
-    cpp_args : cpp_flags,
+    cpp_args : uccl_gtest_cpp_flags,
     dependencies : [
         nixl_dep,
         nixl_infra,
@@ -59,7 +59,7 @@ uccl_test_exe = executable('uccl_gtest',
         gmock_dep,
         absl_strings_dep,
         absl_time_dep
-    ] + cuda_dependencies,
+    ] + uccl_gtest_cuda_deps,
     link_with: [nixl_build_lib],
     install : true
 )

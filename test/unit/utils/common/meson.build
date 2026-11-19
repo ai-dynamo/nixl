@@ -14,15 +14,13 @@
 # limitations under the License.
 
 if cuda_dep.found()
-    cuda_dependencies = [cuda_dep]
-    cpp_args = '-DUSE_VRAM'
+    p2p_test_cuda_deps = [cuda_dep]
 else
-    cuda_dependencies = []
-    cpp_args = '-UUSE_VRAM'
+    p2p_test_cuda_deps = []
 endif
 
 p2p_socket = executable('p2p_test',
             'p2p_socket_test.cpp',
-            dependencies: [nixl_dep, nixl_infra, stream_interface] + cuda_dependencies,
+            dependencies: [nixl_dep, nixl_infra, stream_interface] + p2p_test_cuda_deps,
             include_directories: [nixl_inc_dirs, utils_inc_dirs],
             install: true)

@@ -163,7 +163,7 @@ ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:/usr/local/openssl3/lib:$LD_LIBRA
 - etcd-cpp-apiv3
 
 #### Rust Toolchain
-- Rust 1.86.0 for native dependencies
+- Rust 1.95.0 for native dependencies
 - Architecture-specific toolchain setup
 
 #### UCX (Unified Communication X)

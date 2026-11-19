@@ -17,14 +17,14 @@
 # GPU support: HIP/ROCm when rocm_path is set, CUDA otherwise. The test uses the
 # gpu_utils.h abstraction (HAVE_CUDA / HAVE_ROCM), so no hipify translation is
 # needed here -- the HIP headers are consumed directly via rocm_dep.
-libfabric_utils_dep = [ libfabric_dep, nixl_common_deps, serdes_interface ]
+libfabric_unit_test_deps = [ libfabric_dep, nixl_common_deps, serdes_interface ]
 libfabric_test_cpp_args = []
 
 if rocm_dep.found()
-    libfabric_utils_dep += [ rocm_dep ]
+    libfabric_unit_test_deps += [ rocm_dep ]
     libfabric_test_cpp_args += [ '-DHAVE_GPU', '-DHAVE_ROCM' ]
 elif cuda_dep.found()
-    libfabric_utils_dep += [ cuda_dep ]
+    libfabric_unit_test_deps += [ cuda_dep ]
     libfabric_test_cpp_args += [ '-DHAVE_GPU', '-DHAVE_CUDA' ]
 endif
 
@@ -41,7 +41,7 @@ if get_option('buildtype') != 'release'
 
     libfabric_topology_test_bin = executable('libfabric_topology_test',
                'libfabric_topology_test.cpp',
-               dependencies: libfabric_utils_dep,
+               dependencies: libfabric_unit_test_deps,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                link_with: libfabric_utils_lib,
                cpp_args: libfabric_test_cpp_args,
@@ -59,7 +59,7 @@ if get_option('buildtype') != 'release'
 
     rail_active_refcount_test_bin = executable('rail_active_refcount_test',
                'rail_active_refcount_test.cpp',
-               dependencies: libfabric_utils_dep,
+               dependencies: libfabric_unit_test_deps,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                link_with: libfabric_utils_lib,
                cpp_args: libfabric_test_cpp_args,
@@ -76,7 +76,7 @@ if get_option('buildtype') != 'release'
 
     src_addr_resolution_test_bin = executable('src_addr_resolution_test',
                'src_addr_resolution_test.cpp',
-               dependencies: libfabric_utils_dep,
+               dependencies: libfabric_unit_test_deps,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                link_with: libfabric_utils_lib,
                cpp_args: libfabric_test_cpp_args,
@@ -89,7 +89,7 @@ if get_option('buildtype') != 'release'
     # header-inline and free of CUDA types, so the test runs on any host.
     libfabric_dmabuf_test_bin = executable('libfabric_dmabuf_test',
                'libfabric_dmabuf_test.cpp',
-               dependencies: libfabric_utils_dep,
+               dependencies: libfabric_unit_test_deps,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                link_with: libfabric_utils_lib,
                cpp_args: libfabric_test_cpp_args,

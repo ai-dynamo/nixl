@@ -210,7 +210,7 @@ else
 # Rust
     wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init -O ${TMPDIR}/rustup-init
     chmod +x ${TMPDIR}/rustup-init
-    ${TMPDIR}/rustup-init -y --default-toolchain 1.86.0
+    ${TMPDIR}/rustup-init -y --default-toolchain 1.95.0
 # Astral
     wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O ${TMPDIR}/install_uv.sh
     chmod +x ${TMPDIR}/install_uv.sh

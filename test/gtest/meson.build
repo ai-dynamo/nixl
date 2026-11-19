@@ -52,11 +52,6 @@ endif
 subdir('mocks')
 subdir('plugins')
 
-# The UCX device API tests also run the proxy mode, which needs only CUDA and the UCX backend.
-if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
-    subdir('device_api')
-endif
-
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
 # ROCm detection (mutually exclusive with CUDA; default off)
@@ -135,8 +130,12 @@ gtest_sources = [
     ]
 
 if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
-    gtest_sources += device_api_test_sources
-    device_api_inc = nixl_device_api_inc_dirs + [include_directories('device_api')]
+    # The UCX device API tests also run the proxy mode, which needs only CUDA and the UCX backend.
+    gtest_sources += [
+        'device/gpu/device_gpu_agent.cpp',
+        'device/gpu/device_gpu_test.cu',
+    ]
+    device_api_inc = nixl_device_api_inc_dirs
     device_api_dep = [ucx_dep]
     if ucx_gpu_device_api_available
         device_api_dep += [doca_gpunetio_dep]

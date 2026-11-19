@@ -156,6 +156,8 @@ protected:
         // Disabling Telemetry until the corresponding test
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
+        env.addVar("NIXL_UCX_SGL_ENABLE", isSglEnabled() ? "y" : "n");
+
         if (getBackendName() == "MOONCAKE") {
             // TCP loopback on host memory: CI hosts may expose RDMA devices the
             // test cannot use, and CI builds Mooncake without GPU support.
@@ -193,6 +195,11 @@ protected:
     size_t
     getNumThreads() const {
         return GetParam().numThreads;
+    }
+
+    bool
+    isSglEnabled() const {
+        return GetParam().sglEnabled;
     }
 
     nixl_opt_args_t
@@ -811,6 +818,14 @@ NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransfer, "UCX", true, 6, 4, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
 #ifdef HAVE_MOONCAKE
 NIXL_INSTANTIATE_TEST(mooncake, TestTransfer, "MOONCAKE", false, 1, 0, "");
+#endif
+
+#ifdef HAVE_UCX_SGL_API
+
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl, TestTransfer, "UCX", true, 2, 0, "");
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl_no_pt, TestTransfer, "UCX", false, 2, 0, "");
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl_threadpool, TestTransfer, "UCX", true, 6, 4, "");
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
 #endif
 
 NIXL_INSTANTIATE_TEST(ucx_telemetry, TestTransferTelemetry, "UCX", true, 2, 0, "");

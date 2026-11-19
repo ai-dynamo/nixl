@@ -547,6 +547,16 @@ wait
   --backend UCX --num_threads 4 --enable_pt --progress_threads 2
 ```
 
+### Pipeline depth
+
+For NIXL workers, descriptor depth is the smaller of the configured pipeline depth
+and the larger per-worker iteration count across warmup and measurement, after
+iteration rounding and the large-block reduction. Each phase caps active requests
+to its iteration count while preserving each request's batch size.
+
+The POSIX integration tests cover short READ/WRITE phases, capped WRITE byte
+boundaries, large blocks with multiple workers, and phase warning behavior.
+
 ### Command Line Options
 
 #### Core Configuration
@@ -565,7 +575,7 @@ wait
 --target_seg_type TYPE     # Memory segment type for target [DRAM, VRAM] (default: DRAM)
 --scheme NAME              # Communication scheme [pairwise, manytoone, onetomany, tp] (default: pairwise)
 --mode MODE                # Process mode [SG (Single GPU per proc), MG (Multi GPU per proc)] (default: SG)
---op_type TYPE             # Operation type [READ, WRITE] (default: WRITE)
+--op_type TYPE             # Operation type [READ, WRITE, QUERY] (default: WRITE)
 --check_consistency        # Enable consistency checking
 --total_buffer_size SIZE   # Total buffer size across devices per process (default: 8GiB)
 --start_block_size SIZE    # Starting block size (default: 4KiB)
@@ -648,6 +658,9 @@ devices can differ between the initiator and target processes.
 --gpunetio_oob_list IFACE   # OOB interface name for the control path
 --gpunetio_gid_index N      # RoCE GID table index (default: 0)
 --gpunetio_oob_port PORT    # OOB TCP port (default: 6544)
+--gpunetio_data_qp_count N  # GPUNetIO WRITE QPs per peer [1-4] (default: 1)
+--gpunetio_write_stripe MODE # GPUNETIO WRITE distribution: slots (default) or bytes
+--gpunetio_write_stripe_min_bytes N # Minimum bytes per WRITE QP in bytes mode (default: 4194304)
 ```
 
 **OBJ (S3) Backend:**
@@ -795,39 +808,6 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 ```
 The workers automatically coordinate ranks through ETCD as they connect. Note, the second nixlbench should be started within 60s, otherwise the first instance will stop with an error in the barrier.
 
-### SG many-to-one
-
-For a host-driven `N`:1 many-to-one WRITE (incast), start `N + 1` processes
-with identical arguments and the same unique `--benchmark_group`. ETCD ranks
-`0..N-1` are initiators and rank `N` is the single target, so start the
-initiators before the target when deterministic role placement is required.
-The Device API remains limited to the pairwise scheme.
-
-```bash
-./nixlbench \
-  --etcd_endpoints http://etcd-server:2379 \
-  --benchmark_group manytoone-example \
-  --backend UCX --mode SG --scheme manytoone \
-  --num_initiator_dev 4 --num_target_dev 1 \
-  --op_type WRITE \
-  --initiator_seg_type VRAM --target_seg_type VRAM \
-  --total_buffer_size 268435456 \
-  --start_block_size 262144 --max_block_size 262144 \
-  --start_batch_size 1 --max_batch_size 1
-```
-
-Run this command in five processes. Each initiator receives a distinct region
-of the target buffer. Assign one GPU per process and expose that GPU to the
-process as CUDA device 0 (for example, with `CUDA_VISIBLE_DEVICES`). When
-`--use_hugepages` is enabled for DRAM, each per-initiator, per-thread target
-region must be a multiple of 2 MiB.
-
-For SG many-to-one, `--total_buffer_size` is the aggregate target region.
-Each initiator receives `total_buffer_size / num_initiator_dev` bytes in total;
-with `num_threads` threads, each initiator-thread receives
-`total_buffer_size / (num_initiator_dev * num_threads)` bytes. The configured
-`block_size * batch_size * pipeline_depth` must fit in that per-thread region.
-
 ### Backend-Specific Examples
 
 #### Network Backends
@@ -864,6 +844,20 @@ one GPU is available.
 
 The examples below write their files into `/mnt/storage/testdir`. Create it on
 the device you want to measure first: `mkdir -p /mnt/storage/testdir`.
+
+**DOCA_MEMOS object keys:**
+
+DOCA_MEMOS uses a fresh random 128-bit object key for each registered thread/device/batch
+entry. Keys are supplied through `metaInfo` as 32 hexadecimal characters, which the backend
+decodes into 16 binary bytes. The descriptor `dev_id` remains a local numeric identifier;
+it is not used as the object key. This avoids small-integer keys with mostly constant bytes
+and gives independent clients independent object sets, with negligible collision probability.
+
+Keys are generated from OS entropy during registration, independently of
+`randomize_location_mode_seed`. The same registered keys are reused for READ prepopulation,
+verification, and timed iterations; separate runs generate new keys. This does not add a
+hash-library dependency or change the DOCA_MEMOS backend. Confirm placement with per-target
+counters when measuring a distributed deployment; random keys alone do not verify routing.
 
 **GDS (GPU Direct Storage):**
 ```bash
