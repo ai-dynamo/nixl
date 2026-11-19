@@ -71,6 +71,10 @@ public:
         if (status == NIXL_IN_PROG) [[likely]] {
             requests_.push_back(req);
         } else if (status != NIXL_SUCCESS) {
+            const ucs_status_t failure = nixlUcxEp::takeCallFailure();
+            if (failure_ == UCS_OK) {
+                failure_ = failure;
+            }
             // Error. Release all previously initiated ops and exit:
             release();
             return status;

@@ -138,6 +138,21 @@ err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status) {
     ep->err_cb(ucp_ep, status);
 }
 
+namespace {
+thread_local ucs_status_t call_failure = UCS_OK;
+
+[[nodiscard]] nixl_status_t
+callFailed(ucs_status_t status) {
+    call_failure = status;
+    return nixl::ucx::ucsToNixlStatus(status);
+}
+} // namespace
+
+ucs_status_t
+nixlUcxEp::takeCallFailure() noexcept {
+    return std::exchange(call_failure, UCS_OK);
+}
+
 void
 nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
     const auto current_state = state_.load(std::memory_order_relaxed);
@@ -147,6 +162,7 @@ nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
                << ucs_status_string(status) << ")";
 
     NIXL_ASSERT(eph_ == ucp_ep);
+    failure_.store(status, std::memory_order_relaxed);
     state_ = nixl::ucx::ep_state_t::FAILED;
 }
 
@@ -283,6 +299,7 @@ nixlUcxEp::read(uint64_t raddr,
                 nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) [[unlikely]] {
+        call_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -296,7 +313,7 @@ nixlUcxEp::read(uint64_t raddr,
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? callFailed(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -308,6 +325,7 @@ nixlUcxEp::write(void *laddr,
                  nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) [[unlikely]] {
+        call_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -321,7 +339,7 @@ nixlUcxEp::write(void *laddr,
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? callFailed(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -395,7 +413,7 @@ nixlUcxEp::flushEp(nixlUcxReq &req, ucp_send_nbx_callback_t cb, void *user_data)
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? callFailed(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 #ifdef HAVE_UCX_SGL_API
@@ -406,6 +424,7 @@ nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
                    nixlUcxReq &req) {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
+        call_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -426,7 +445,7 @@ nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
     }
 
     req = nullptr;
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? callFailed(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 #endif
 

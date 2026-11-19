@@ -56,6 +56,7 @@ class nixlUcxEp {
 private:
     ucp_ep_h eph_{nullptr};
     std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::CONNECTED};
+    std::atomic<ucs_status_t> failure_{UCS_OK};
     const uint32_t closeFlags_;
 
     nixl_status_t
@@ -72,6 +73,9 @@ public:
     checkTxState() const noexcept {
         return nixl::ucx::toNixlStatus(state_);
     }
+
+    [[nodiscard]] static ucs_status_t
+    takeCallFailure() noexcept;
 
     nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
     ~nixlUcxEp();

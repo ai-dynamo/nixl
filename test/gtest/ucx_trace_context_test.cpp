@@ -1361,6 +1361,69 @@ TEST_F(ucxTraceContextPropagation, FailedPostCarriesUcxsNativeStatus) {
     }
 }
 
+TEST_F(ucxTraceContextPropagation, PostToAFailedEndpointCarriesUcxsNativeStatus) {
+    for (const auto &[engine, params, desc_count] :
+         {std::tuple{"default", nixl_b_params_t{}, size_t{1}},
+          std::tuple{"thread pool", threadPoolParams(), split_desc_count}}) {
+        gtest::ScopedEnv tls;
+        tls.addVar("UCX_TLS", idleTargetTls());
+        const gtest::LogIgnoreGuard efa(efa_warning);
+        const gtest::LogIgnoreGuard disconnected(
+            "was disconnected after transfer request creation");
+        std::optional<nixlAgent> target(std::in_place, target_name, idleConfig());
+        nixlBackendH *target_backend = nullptr;
+        ASSERT_EQ(target->createBackend("UCX", {}, target_backend), NIXL_SUCCESS);
+        const std::vector<char> dst_buffer(desc_count * buffer_size);
+        nixl_reg_dlist_t target_regs(DRAM_SEG);
+        target_regs.addDesc(nixlBlobDesc(address(dst_buffer), dst_buffer.size(), 0));
+        ASSERT_EQ(target->registerMem(target_regs), NIXL_SUCCESS);
+        std::string target_md;
+        ASSERT_EQ(target->getLocalMD(target_md), NIXL_SUCCESS);
+
+        nixlAgent sender(sender_name, agentConfig());
+        nixlBackendH *sender_backend = nullptr;
+        ASSERT_EQ(sender.createBackend("UCX", params, sender_backend), NIXL_SUCCESS);
+        const std::vector<char> src_buffer(dst_buffer.size(), 'x');
+        nixl_reg_dlist_t sender_regs(DRAM_SEG);
+        sender_regs.addDesc(nixlBlobDesc(address(src_buffer), src_buffer.size(), 0));
+        ASSERT_EQ(sender.registerMem(sender_regs), NIXL_SUCCESS);
+        std::string loaded_name;
+        ASSERT_EQ(sender.loadRemoteMD(target_md, loaded_name), NIXL_SUCCESS);
+
+        nixl_xfer_dlist_t src(DRAM_SEG);
+        nixl_xfer_dlist_t dst(DRAM_SEG);
+        for (size_t i = 0; i < desc_count; ++i) {
+            src.addDesc(nixlBasicDesc(address(src_buffer) + i * buffer_size, buffer_size, 0));
+            dst.addDesc(nixlBasicDesc(address(dst_buffer) + i * buffer_size, buffer_size, 0));
+        }
+        nixlXferReqH *first = nullptr;
+        ASSERT_EQ(sender.createXferReq(NIXL_WRITE, src, dst, target_name, first), NIXL_SUCCESS);
+        ASSERT_EQ(sender.postXferReq(first), NIXL_IN_PROG) << engine;
+        target.reset();
+        EXPECT_LT(awaitCompletion(sender, first, NIXL_IN_PROG), 0) << engine;
+        ASSERT_EQ(sender.releaseXferReq(first), NIXL_SUCCESS) << engine;
+
+        nixlXferReqH *refused = nullptr;
+        ASSERT_EQ(sender.createXferReq(NIXL_WRITE, src, dst, target_name, refused), NIXL_SUCCESS);
+        const std::uint64_t refused_id = *refused->traceable().requestIdentity().requestId;
+        EXPECT_EQ(sender.postXferReq(refused), NIXL_ERR_REMOTE_DISCONNECT) << engine;
+        ASSERT_EQ(sender.releaseXferReq(refused), NIXL_SUCCESS) << engine;
+        ASSERT_EQ(sender.invalidateRemoteMD(target_name), NIXL_SUCCESS) << engine;
+        ASSERT_EQ(sender.deregisterMem(sender_regs), NIXL_SUCCESS) << engine;
+
+        const std::string request = "nixl.xfer_request_id=" + std::to_string(refused_id);
+        const auto errors = recordedSpans(traceFile, sender_name, "nixl::xfer.error");
+        const auto error = std::ranges::find_if(errors, [&](const span_record_t &span) {
+            return std::ranges::find(span, request) != span.end();
+        });
+        ASSERT_NE(error, errors.end()) << engine;
+        EXPECT_THAT(*error, testing::Contains(testing::StartsWith("nixl.backend_status_code=-")))
+            << engine;
+        EXPECT_THAT(*error, testing::Contains(testing::StartsWith("nixl.backend_status_name=")))
+            << engine;
+    }
+}
+
 TEST_F(ucxTraceContextPropagation, ProgressThreadRecordsTheNotificationItSends) {
     env.addVar("UCX_TLS", idleTargetTls());
     const gtest::LogIgnoreGuard efa(efa_warning);
