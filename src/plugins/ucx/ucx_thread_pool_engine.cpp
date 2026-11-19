@@ -155,7 +155,7 @@ private:
     traceFailure(ucs_status_t failure) noexcept;
 
     std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
-    std::optional<nixlTime::us_t> failureSeenAt_;
+    std::optional<nixlBackendPostPhases::completion_time_t> failureSeenAt_;
 };
 
 /*
@@ -225,13 +225,13 @@ nixlUcxChunkBackendReqH::traceFailure(const ucs_status_t failure) noexcept {
     switch (sharedState_->submission.load(std::memory_order_acquire)) {
     case nixlUcxBackendSharedState::submission_t::SUBMITTING:
         if (!failureSeenAt_) {
-            failureSeenAt_ = sharedState_->trace.post().now();
+            failureSeenAt_ = sharedState_->trace.completionTime();
         }
         return false;
     case nixlUcxBackendSharedState::submission_t::SUBMITTED:
         trace = std::exchange(sharedState_->trace, {});
         trace.completed(nixl::ucx::ucsToNixlStatus(failure),
-                        failureSeenAt_ ? *failureSeenAt_ : trace.post().now());
+                        failureSeenAt_ ? *failureSeenAt_ : trace.completionTime());
         return true;
     case nixlUcxBackendSharedState::submission_t::REJECTED:
         sharedState_->trace = {};

@@ -555,6 +555,11 @@ recordNotifReceived(const nixlBackendPostTrace &,
  */
 class nixlBackendPostPhases {
 public:
+    struct completion_time_t {
+        nixlTime::us_t phaseAt = 0;
+        nixlTime::us_t completedAt = 0;
+    };
+
     void
     begin(nixlBackendTraceSink *sink,
           nixl_xfer_op_t operation,
@@ -595,7 +600,7 @@ public:
         const nixlTime::us_t submitted_at = trace_.now();
         trace_.recordAt(nixl_trace_phase_t::WIRE_SUBMITTED, submitted_at);
         if (completedAtOnce_) {
-            recordCompleted(submitted_at);
+            recordCompleted(completionTimeAt(submitted_at));
         }
     }
 
@@ -628,34 +633,43 @@ public:
         nixl::trace::recordDeferredPhases(trace_.sink());
     }
 
-    void
-    completed(nixl_status_t status) const noexcept {
-        completed(status, trace_.now());
+    [[nodiscard]] completion_time_t
+    completionTime() const noexcept {
+        return completionTimeAt(trace_.now());
     }
 
     void
-    completed(nixl_status_t status, nixlTime::us_t phase_at) const noexcept {
+    completed(nixl_status_t status) const noexcept {
+        completed(status, completionTime());
+    }
+
+    void
+    completed(nixl_status_t status, const completion_time_t &at) const noexcept {
         if (status == NIXL_SUCCESS) {
-            recordCompleted(phase_at);
+            recordCompleted(at);
             return;
         }
         nixl::trace::deferPhase({.trace = trace_,
                                  .phase = nixl_trace_phase_t::WIRE_COMPLETED,
                                  .operation = operation_,
                                  .inflightSince = inflightSince_,
-                                 .phaseAt = phase_at,
-                                 .completedAt = (phase_at != 0) ? phase_at : nixlTime::getUs(),
+                                 .phaseAt = at.phaseAt,
+                                 .completedAt = at.completedAt,
                                  .status = status});
         nixl::trace::recordDeferredPhases(trace_.sink());
     }
 
 private:
+    [[nodiscard]] static completion_time_t
+    completionTimeAt(nixlTime::us_t phase_at) noexcept {
+        return {phase_at, (phase_at != 0) ? phase_at : nixlTime::getUs()};
+    }
+
     void
-    recordCompleted(nixlTime::us_t phase_at) const noexcept {
-        const nixlTime::us_t completed_at = (phase_at != 0) ? phase_at : nixlTime::getUs();
-        trace_.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, phase_at);
+    recordCompleted(const completion_time_t &at) const noexcept {
+        trace_.recordAt(nixl_trace_phase_t::WIRE_COMPLETED, at.phaseAt);
         trace_.recordSpan(
-            nixl_trace_span_t::WIRE_INFLIGHT, operation_, inflightSince_, completed_at);
+            nixl_trace_span_t::WIRE_INFLIGHT, operation_, inflightSince_, at.completedAt);
     }
 
     nixlBackendPostTrace trace_;
@@ -669,6 +683,8 @@ private:
 
 class nixlBackendPostPhases {
 public:
+    struct completion_time_t {};
+
     void
     begin(nixlBackendTraceSink *, nixl_xfer_op_t, nixl_trace_completion_t) noexcept {}
 
@@ -702,11 +718,16 @@ public:
     void
     drain() const noexcept {}
 
+    [[nodiscard]] constexpr completion_time_t
+    completionTime() const noexcept {
+        return {};
+    }
+
     void
     completed(nixl_status_t) const noexcept {}
 
     void
-    completed(nixl_status_t, nixlTime::us_t) const noexcept {}
+    completed(nixl_status_t, const completion_time_t &) const noexcept {}
 };
 
 #endif

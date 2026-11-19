@@ -2616,6 +2616,33 @@ TEST(TracePhaseSink, CompletionRecordsAFailuresStatus) {
     }
 }
 
+TEST(TracePhaseSink, FailedCompletionRecordedLaterEndsItsSpanWhenTaken) {
+    CallLog a;
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+    backends.push_back(std::make_unique<SelfTimedBackend>("a", &a, 0));
+    nixl::trace::CompositeTracer tracer{std::move(backends), 0.0};
+    nixl::trace::TracerPhaseSink sink{tracer, "UCX"};
+    const nixl::trace::TraceIdentity identity{testContext(0x41), nixl::trace::RequestId{0x41}, 1};
+    nixlBackendPostPhases phases;
+    {
+        const nixl::trace::Scope scope(&tracer, identity);
+        phases.begin(&sink, NIXL_WRITE, nixl_trace_completion_t::LAST_PART);
+    }
+
+    const nixlBackendPostPhases::completion_time_t taken = phases.completionTime();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    phases.completed(NIXL_ERR_BACKEND, taken);
+
+    EXPECT_EQ(taken.phaseAt, 0u);
+    EXPECT_NE(taken.completedAt, 0u);
+    ASSERT_EQ(a.emittedSpans.size(), 1u);
+    EXPECT_EQ(a.emittedSpans[0].times.back(), taken.completedAt);
+    const auto completion = std::ranges::find(
+        a.emittedEvents, std::string("nixl::wire.completed"), &EmittedRecord::name);
+    ASSERT_NE(completion, a.emittedEvents.end());
+    EXPECT_EQ(completion->times, std::vector<nixlTime::us_t>{0});
+}
+
 // A backend may decline a span; Tracer drops the null, leaving the Span
 // inactive even though the tracer has a backend. Nothing must be recorded and
 // no null span may be dereferenced.
