@@ -605,5 +605,9 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     NIXL_TRACE << "sent " << *comp_handle << " with status: " << status;
     comp_handle->finishSubmission(status);
-    return (status == NIXL_SUCCESS) ? status : comp_handle->sharedStatus();
+    if (status == NIXL_SUCCESS) {
+        return status;
+    }
+    const nixl_status_t shared = comp_handle->sharedStatus();
+    return (shared != NIXL_SUCCESS) ? shared : status;
 }
