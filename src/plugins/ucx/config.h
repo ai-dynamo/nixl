@@ -46,6 +46,10 @@ public:
     void
     validateTlsCudaSupport() const;
 
+    // Store memory types of registered memory only, without installing memory hooks.
+    void
+    enableMemtypeMap() const;
+
 private:
     [[nodiscard]] static ucp_config_t *
     readUcpConfig();

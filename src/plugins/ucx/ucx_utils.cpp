@@ -603,17 +603,25 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
 
     std::string elem;
     std::stringstream stream(engine_config);
+    bool cache_configured = false;
 
     while (std::getline(stream, elem, ',')) {
         std::string_view elem_view = elem;
         size_t pos = elem_view.find('=');
 
         if (pos != std::string::npos) {
-            config.modify(elem_view.substr(0, pos), elem_view.substr(pos + 1));
+            const auto key = elem_view.substr(0, pos);
+            cache_configured |= (key == "MEMTYPE_CACHE") || (key == "RCACHE_ENABLE");
+            config.modify(key, elem_view.substr(pos + 1));
         }
     }
 
     config.validateTlsCudaSupport();
+    if (cache_configured) {
+        NIXL_DEBUG << "Cache configured in engine config, not enabling memtype map";
+    } else if (ucpVersion_ >= UCP_VERSION(1, 24)) {
+        config.enableMemtypeMap();
+    }
 
     ucp_context_h new_ctx = nullptr;
     const auto status = ucp_init(&ucp_params, config.getUcpConfig(), &new_ctx);
