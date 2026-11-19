@@ -166,7 +166,7 @@ def test_tcpstore_metadata_reconnection(monkeypatch, capfd):
         assert captured.err.count("gave up waiting for key") == 1
 
         # Restart the TCPStore.
-        tcp_store = dist.TCPStore(
+        dist.TCPStore(
             host_name="127.0.0.1",
             port=tcp_store_port,
             world_size=None,
