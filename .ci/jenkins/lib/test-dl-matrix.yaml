@@ -196,14 +196,15 @@ steps:
         export LD_LIBRARY_PATH=${NIXL_INSTALL_DIR}/lib:${NIXL_INSTALL_DIR}/lib/aarch64-linux-gnu:${NIXL_INSTALL_DIR}/lib/aarch64-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH;
         export NIXL_PLUGIN_DIR=${NIXL_INSTALL_DIR}/lib/aarch64-linux-gnu/plugins;
         unset UCX_NET_DEVICES;
-        hostname; echo CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES; nvidia-smi -L;
-        cat /proc/driver/nvidia/version;
+        hostname; uname -r; uptime -s; echo CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES;
+        cat /proc/driver/nvidia/version | head -n 1;
         grep -e RegistryDwords -e EnableStreamMemOPs /proc/driver/nvidia/params;
-        ls /sys/module | grep -e nvidia -e peermem;
-        for d in /sys/class/infiniband/*; do echo $d $(cat $d/fw_ver) $(cat $d/ports/1/state $d/ports/1/link_layer 2>/dev/null); done;
-        ./bin/ucx_info -v | grep -e version -e revision;
-        echo ===== rc_gda; UCX_IB_GDA_RETAIN_INACTIVE_CTX=y UCX_LOG_LEVEL=debug ./bin/ucx_info -d 2>&1 | grep -i -e gdaki -e "gda transport" -e "Transport: rc_gda" | head -n 40;
-        echo ===== gtest; UCX_LOG_LEVEL=debug ./bin/gtest --gtest_filter=deviceGpu/test.atomicAdd/UCX 2>&1 | grep -i -e gdaki -e "gda transport" -e "lane not found" -e OK -e FAILED | head -n 40;
+        cat /sys/module/mlx5_core/version /sys/module/mlx5_ib/version 2>/dev/null;
+        grep -H . /sys/module/mlx5_core/parameters/* 2>/dev/null;
+        ofed_info -s 2>/dev/null;
+        for d in /sys/class/infiniband/*; do echo $d $(cat $d/fw_ver $d/board_id $d/hca_type) $(cat $d/ports/1/state $d/ports/1/link_layer 2>/dev/null); done;
+        echo ===== dmesg; dmesg 2>&1 | grep -i -e "write.comb" -e "wc_" -e " wc" -e "not permitted" | head -n 40;
+        echo ===== uar; UCX_IB_GDA_RETAIN_INACTIVE_CTX=y UCX_LOG_LEVEL=debug ./bin/ucx_info -d 2>&1 | grep -e devx_alloc_uar -e GDAKI -e "gda transport" -e "Transport: rc_gda" | head -n 40;
         echo ===== baseline; ./bin/gtest --gtest_filter=deviceGpu/test.*/UCX;
         false
       headNode: "${SLURM_HEAD_NODE}"
