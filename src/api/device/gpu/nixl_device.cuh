@@ -87,13 +87,13 @@ put(const memViewElem &src,
  * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
  *                  time, a fixed mode must match the view.
  *
- * @param src         [in]  Source (remote) memory view element
  * @param dst         [in]  Destination (local) memory view element
+ * @param src         [in]  Source (remote) memory view element
  * @param size        [in]  Size in bytes to transfer
- * @param xfer_status [in,out] Status handle, required to know when the data has arrived
- *                            (use @ref nixl::gpu::getXferStatus)
  * @param channel_id  [in]  Channel ID to use for the transfer
  * @param flags       [in]  Transfer flags
+ * @param xfer_status [in,out] Optional status handle
+ *                            (use @ref nixl::gpu::getXferStatus)
  *
  * @return NIXL_ERR_NOT_SUPPORTED Get is not supported yet.
  */
@@ -102,9 +102,9 @@ __device__ nixl_status_t
 get(const memViewElem &,
     const memViewElem &,
     size_t,
-    xferStatusH &,
     unsigned = 0,
-    uint64_t = 0) {
+    uint64_t = 0,
+    xferStatusH * = nullptr) {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
