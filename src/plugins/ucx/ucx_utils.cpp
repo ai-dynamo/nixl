@@ -42,6 +42,20 @@ ucpVersion() noexcept {
     return UCP_VERSION(major_version, minor_version);
 }
 
+/**
+ * @brief Failover when UCX provides it and the loaded library is 1.24 or newer
+ */
+[[nodiscard]] std::optional<ucp_err_handling_mode_t>
+failoverErrHandlingMode(unsigned ucp_version) noexcept {
+#ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
+    constexpr unsigned ucp_version_err_handling_failover = UCP_VERSION(1, 24);
+    if (ucp_version >= ucp_version_err_handling_failover) {
+        return UCP_ERR_HANDLING_MODE_FAILOVER;
+    }
+#endif
+    return std::nullopt;
+}
+
 } // namespace
 
 /**
@@ -49,12 +63,16 @@ ucpVersion() noexcept {
  */
 ucp_err_handling_mode_t
 defaultErrHandlingMode() noexcept {
+    return failoverErrHandlingMode(ucpVersion()).value_or(UCP_ERR_HANDLING_MODE_PEER);
+}
+
+bool
+isFailoverErrHandlingMode(ucp_err_handling_mode_t mode) noexcept {
 #ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
-    if (ucpVersion() >= ucp_version_err_handling_failover) {
-        return UCP_ERR_HANDLING_MODE_FAILOVER;
-    }
+    return mode == UCP_ERR_HANDLING_MODE_FAILOVER;
+#else
+    return false;
 #endif
-    return UCP_ERR_HANDLING_MODE_PEER;
 }
 
 [[nodiscard]] nixl_b_params_t
@@ -564,7 +582,8 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                size_t num_device_channels,
                                const std::string &engine_config,
                                const std::string &name,
-                               nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy)
+                               nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy,
+                               ucp_err_handling_mode_t err_handling_mode)
     : mtType_(makeMtType(prog_thread, sync_mode)),
       ucpVersion_(makeUcpVersion()),
       name_(name),
@@ -648,12 +667,10 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
 
     config.validateTlsCudaSupport();
 
-#ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
     /* UCX_FAILOVER_MODE=token requires UCX_IB_INDIRECT_ATOMIC=n. */
-    if (defaultErrHandlingMode() == UCP_ERR_HANDLING_MODE_FAILOVER) {
+    if (isFailoverErrHandlingMode(err_handling_mode)) {
         config.modifyAlways("IB_INDIRECT_ATOMIC", "n");
     }
-#endif
 
     ucp_context_h new_ctx = nullptr;
     const auto status = ucp_init(&ucp_params, config.getUcpConfig(), &new_ctx);

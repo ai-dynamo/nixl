@@ -139,7 +139,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
                                           num_device_channels,
                                           engine_config,
                                           localAgent,
-                                          vram_memtype_hint_policy);
+                                          vram_memtype_hint_policy,
+                                          errHandlingMode_);
 
     uc->warnAboutHardwareSupportMismatch();
 

@@ -532,9 +532,9 @@ TEST_P(TestErrorHandling, BasicXfer) {
 TEST_P(TestErrorHandling, LoadRemoteThenFail) {
     const LogIgnoreGuard lig(expected_log);
     excludeEfaTransports();
-    // TODO: Failover is not implemented in UCX wireup. The target is destroyed
-    // before the first post, while the endpoint is still in wireup, so use peer
-    // failure.
+    // TODO: Drop the peer override once openucx/ucx#12372 is merged. The target
+    // is destroyed while the endpoint is still in wireup, and UCX wireup does
+    // not handle failover yet.
     testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_WRITE>(nixl::ucx_err_handling_mode_peer);
     testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_READ>(nixl::ucx_err_handling_mode_peer);
 }
