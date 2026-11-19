@@ -16,16 +16,23 @@
  */
 #include "mooncake_backend.h"
 #include "serdes/serdes.h"
+#include "common/backend.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "common/thread_pool.h"
 
+#include <algorithm>
 #include <arpa/inet.h>
+#include <atomic>
 #include <bits/stdint-uintn.h>
 #include <ifaddrs.h>
+#include <memory>
 #include <net/if.h>
 #include <netdb.h>
+#include <optional>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <utility>
 
 namespace {
 std::vector<std::string>
@@ -78,6 +85,52 @@ chooseIpAddress() {
     return nixl::config::getValueDefaulted("NIXL_MOONCAKE_IP_ADDR", fallback);
 }
 
+// Walks every request: NIXL_IN_PROG while any is in flight, then NIXL_SUCCESS if
+// all completed or NIXL_ERR_BACKEND if any failed or timed out.
+[[nodiscard]] nixl_status_t
+queryRequestStatus(transfer_engine_t engine, uint64_t batch_id, size_t request_count) {
+    bool has_failed = false;
+    for (size_t index = 0; index < request_count; ++index) {
+        transfer_status_t status;
+        if (getTransferStatus(engine, batch_id, index, &status) != 0) {
+            has_failed = true;
+        } else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING) {
+            return NIXL_IN_PROG;
+        } else if (status.status != STATUS_COMPLETED) {
+            has_failed = true;
+        }
+    }
+    return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
+}
+
+// Returns NIXL_IN_PROG while any request of the batch is in flight, then
+// NIXL_SUCCESS if every request completed or NIXL_ERR_BACKEND otherwise.
+// Observing completion also lets the Transfer Engine send the notification
+// attached to the batch.
+[[nodiscard]] nixl_status_t
+queryBatchStatus(transfer_engine_t engine, uint64_t batch_id, size_t request_count) {
+#ifdef HAVE_MOONCAKE_BATCH_STATUS
+    // One call per poll instead of one per request.
+    transfer_status_t status;
+    if (getBatchTransferStatus(engine, batch_id, &status) == 0) {
+        if (status.status == STATUS_PENDING || status.status == STATUS_WAITING) {
+            return NIXL_IN_PROG;
+        }
+        if (status.status == STATUS_COMPLETED) {
+            return NIXL_SUCCESS;
+        }
+    }
+    // A failure can be reported while other requests still use the buffers.
+    // Report it only once every request is done.
+    if (queryRequestStatus(engine, batch_id, request_count) == NIXL_IN_PROG) {
+        return NIXL_IN_PROG;
+    }
+    return NIXL_ERR_BACKEND;
+#else
+    return queryRequestStatus(engine, batch_id, request_count);
+#endif
+}
+
 // BATCH_CLEANUP_DEFERRED in newer transfer_engine_c.h: the engine took over a
 // batch that is still busy and frees it once its requests drain.
 constexpr int kBatchCleanupDeferred = 5;
@@ -91,11 +144,49 @@ freeBatch(transfer_engine_t engine, uint64_t batch_id) {
     return rc;
 }
 
+constexpr size_t kDefaultSplitBatchSize = 1024;
+
+// A backend parameter takes precedence over its environment variable.
+[[nodiscard]] size_t
+getSizeParam(const nixl_b_params_t *params,
+             const std::string &key,
+             const std::string &env,
+             size_t fallback) {
+    if (const auto value = nixl::getBackendParamOptional<size_t>(params, key)) {
+        return *value;
+    }
+    return nixl::config::getValueDefaulted<size_t>(env, fallback);
+}
+
 } // namespace
 
 nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       local_agent_name_(init_params->localAgent) {
+    const size_t num_threads =
+        getSizeParam(init_params->customParams, "num_threads", "NIXL_MOONCAKE_NUM_THREADS", 0);
+    split_batch_size_ = getSizeParam(init_params->customParams,
+                                     "split_batch_size",
+                                     "NIXL_MOONCAKE_SPLIT_BATCH_SIZE",
+                                     kDefaultSplitBatchSize);
+    if (split_batch_size_ == 0) {
+        split_batch_size_ = kDefaultSplitBatchSize;
+    }
+    if (num_threads > 0) {
+#ifdef HAVE_MOONCAKE_BATCH_STATUS
+        submit_pool_ = std::make_unique<nixl::threadPool>(num_threads);
+#else
+        // Released engines without it don't get the speedup and lack
+        // kvcache-ai/Mooncake#3198, so a failed submit may never finish. Before
+        // v0.3.12 they can also report a TCP WRITE complete too early
+        // (kvcache-ai/Mooncake#2850).
+        NIXL_WARN << "Mooncake Transfer Engine has no getBatchTransferStatus(), ignoring "
+                  << "num_threads=" << num_threads;
+#endif
+    }
+    free_pool_ = std::make_unique<nixl::threadPool>(1);
+    NIXL_INFO << "Mooncake submit threads=" << (submit_pool_ ? submit_pool_->size() : 0)
+              << " split_batch_size=" << split_batch_size_;
     const std::string segment_name = chooseIpAddress();
     engine_ = createTransferEngine("P2PHANDSHAKE", segment_name.c_str(), "", 0, true);
 }
@@ -110,6 +201,9 @@ nixlMooncakeEngine::getSupportedMems() const {
 
 // Through parent destructor the unregister will be called.
 nixlMooncakeEngine::~nixlMooncakeEngine() {
+    submit_pool_.reset();
+    // Runs the queued frees while the engine still exists.
+    free_pool_.reset();
     destroyTransferEngine(engine_);
 }
 
@@ -239,11 +333,155 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
 
     virtual ~nixlMooncakeBackendReqH() {}
 
-    uint64_t batch_id = INVALID_BATCH;
-    size_t request_count = 0;
-    // Set when a failed submit left requests that may still be in flight.
+    struct xferBatch {
+        uint64_t id = INVALID_BATCH;
+        size_t request_count = 0;
+    };
+
+    // Submits that postXfer queued. The queued tasks share it, since the handle
+    // can be released as soon as the last one finished.
+    struct submitState {
+        std::atomic<size_t> pending{0};
+        std::atomic<bool> failed{false};
+    };
+
+    // Built by prepXfer: the agent posts a handle with the descriptors it was
+    // prepared with.
+    std::vector<transfer_request_t> requests;
+    // Segment of the remote agent in requests.
+    int segment_id = -1;
+    // Batches of the last transfer: one, or one per submit thread. Only
+    // allocated ids are kept once its submits finished, since the engine
+    // dereferences them.
+    std::vector<xferBatch> batches;
+    std::shared_ptr<submitState> submits = std::make_shared<submitState>();
+    // A split transfer has no single batch to carry its notification, so
+    // checkXfer sends it to {agent, message} once every batch completed.
+    std::optional<std::pair<std::string, std::string>> pending_notif;
+    // Set when the last transfer failed; checkXfer reports it once no batch is
+    // in flight.
     bool failed = false;
 };
+
+namespace {
+// Hands the batches of the last transfer to the free thread. Tearing down a
+// batch of 200,000 requests takes tens of milliseconds, and callers such as
+// vLLM poll and release on the thread that runs their model step.
+void
+freeBatches(nixl::threadPool &free_pool, transfer_engine_t engine, nixlMooncakeBackendReqH *priv) {
+    if (priv->batches.empty()) {
+        return;
+    }
+    std::vector<uint64_t> ids;
+    ids.reserve(priv->batches.size());
+    for (const auto &batch : priv->batches) {
+        ids.push_back(batch.id);
+    }
+    priv->batches.clear();
+    // The pool stops only when the engine is destroyed, after running every
+    // queued task.
+    static_cast<void>(free_pool.submit([engine, ids = std::move(ids)] {
+        for (const uint64_t id : ids) {
+            freeBatch(engine, id);
+        }
+    }));
+}
+
+void
+releaseBatches(nixl::threadPool &free_pool,
+               transfer_engine_t engine,
+               nixlMooncakeBackendReqH *priv) {
+    freeBatches(free_pool, engine, priv);
+    priv->pending_notif.reset();
+    priv->failed = false;
+}
+
+// Returns whether a submit that postXfer queued is still running. Once none
+// is, drops the batches that a failed submit didn't allocate.
+[[nodiscard]] bool
+submitPending(nixlMooncakeBackendReqH *priv) {
+    auto &submits = *priv->submits;
+    if (submits.pending.load(std::memory_order_acquire) != 0) {
+        return true;
+    }
+    if (submits.failed.exchange(false, std::memory_order_relaxed)) {
+        priv->failed = true;
+        std::erase_if(priv->batches, [](const auto &batch) { return batch.id == INVALID_BATCH; });
+    }
+    return false;
+}
+
+// The queued submits write to the handle's batches.
+void
+waitForSubmits(nixlMooncakeBackendReqH *priv) {
+    auto &pending = priv->submits->pending;
+    for (size_t count = pending.load(std::memory_order_acquire); count != 0;
+         count = pending.load(std::memory_order_acquire)) {
+        pending.wait(count, std::memory_order_acquire);
+    }
+    static_cast<void>(submitPending(priv));
+}
+
+// Runs on a submit thread: allocates and submits one batch of a postXfer. A
+// batch that fails to submit stays for checkXfer to wait for, as
+// keepFailedBatch() does on engines with getBatchTransferStatus().
+void
+submitBatch(transfer_engine_t engine,
+            nixlMooncakeBackendReqH::submitState &submits,
+            nixlMooncakeBackendReqH::xferBatch &batch,
+            transfer_request_t *requests,
+            size_t count,
+            notify_msg_t *notify_msg) {
+    batch.id = allocateBatchID(engine, count);
+    int rc = -1;
+    if (batch.id != INVALID_BATCH) {
+        batch.request_count = count;
+        rc = notify_msg ? submitTransferWithNotify(engine, batch.id, requests, count, *notify_msg) :
+                          submitTransfer(engine, batch.id, requests, count);
+    }
+    if (rc != 0) {
+        submits.failed.store(true, std::memory_order_relaxed);
+    }
+    if (submits.pending.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        submits.pending.notify_all();
+    }
+}
+
+// checkXfer frees the batches once it sees the transfer finish. A transfer it
+// has not seen finish still owns them, so a repost waits for its requests.
+nixl_status_t
+recycleBatches(nixl::threadPool &free_pool,
+               transfer_engine_t engine,
+               nixlMooncakeBackendReqH *priv) {
+    if (submitPending(priv)) {
+        return NIXL_ERR_REPOST_ACTIVE;
+    }
+    for (const auto &batch : priv->batches) {
+        if (queryBatchStatus(engine, batch.id, batch.request_count) == NIXL_IN_PROG) {
+            return NIXL_ERR_REPOST_ACTIVE;
+        }
+    }
+    releaseBatches(free_pool, engine, priv);
+    return NIXL_SUCCESS;
+}
+
+// A failed submit can leave requests that a transport already started, which
+// use the caller's buffers until they finish. Engines with
+// getBatchTransferStatus() also have kvcache-ai/Mooncake#3198, which gives every
+// request of a failed submit a final status, so the batch stays on the handle
+// for checkXfer to wait for. Older engines can leave such requests waiting
+// forever, so the batch is freed at once, or leaked if it is busy.
+// Returns whether the batch stays on the handle.
+bool
+keepFailedBatch([[maybe_unused]] transfer_engine_t engine, [[maybe_unused]] uint64_t batch_id) {
+#ifdef HAVE_MOONCAKE_BATCH_STATUS
+    return true;
+#else
+    freeBatch(engine, batch_id);
+    return false;
+#endif
+}
+} // namespace
 
 nixl_status_t
 nixlMooncakeEngine::prepXfer(const nixl_xfer_op_t &operation,
@@ -252,9 +490,29 @@ nixlMooncakeEngine::prepXfer(const nixl_xfer_op_t &operation,
                              const std::string &remote_agent,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
-    auto priv = new nixlMooncakeBackendReqH();
-    priv->batch_id = INVALID_BATCH;
-    handle = priv;
+    const std::optional<int> segment_id = getSegmentId(remote_agent);
+    if (!segment_id) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    if (local.descCount() != remote.descCount()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    auto priv = std::make_unique<nixlMooncakeBackendReqH>();
+    priv->segment_id = *segment_id;
+    priv->requests.resize(local.descCount());
+    for (size_t index = 0; index < priv->requests.size(); ++index) {
+        if (local[index].len != remote[index].len) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        auto &request = priv->requests[index];
+        request.opcode = (operation == NIXL_READ) ? OPCODE_READ : OPCODE_WRITE;
+        request.source = (void *)local[index].addr;
+        request.target_offset = remote[index].addr;
+        request.length = local[index].len;
+        request.target_id = *segment_id;
+    }
+    handle = priv.release();
     return NIXL_SUCCESS;
 }
 
@@ -266,104 +524,126 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
-    if (priv->failed) {
-        NIXL_ERROR << "Mooncake request failed to submit earlier; release it and create a new one";
+    const std::optional<int> segment_id = getSegmentId(remote_agent);
+    if (!segment_id) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    const nixl_status_t recycle_status = recycleBatches(*free_pool_, engine_, priv);
+    if (recycle_status != NIXL_SUCCESS) {
+        return recycle_status;
+    }
+    if (*segment_id != priv->segment_id) {
+        // The agent reconnected since prepXfer.
+        for (auto &request : priv->requests) {
+            request.target_id = *segment_id;
+        }
+        priv->segment_id = *segment_id;
+    }
+
+    auto &request = priv->requests;
+    const size_t request_count = request.size();
+    const bool has_notif = opt_args && opt_args->hasNotif;
+    if (submit_pool_ && request_count >= split_batch_size_) {
+        // Each pool thread submits one batch. checkXfer reports the transfer in
+        // progress until every submit finished.
+        const size_t threads = submit_pool_->size();
+        const size_t chunk_size = (request_count + threads - 1) / threads;
+        const size_t num_chunks = (request_count + chunk_size - 1) / chunk_size;
+        std::optional<std::string> notif_msg;
+        if (has_notif && num_chunks > 1) {
+            priv->pending_notif.emplace(remote_agent, opt_args->notifMsg);
+        } else if (has_notif) {
+            notif_msg = opt_args->notifMsg;
+        }
+        priv->batches.assign(num_chunks, {});
+        auto &submits = *priv->submits;
+        submits.pending.store(num_chunks, std::memory_order_relaxed);
+        for (size_t chunk = 0; chunk < num_chunks; ++chunk) {
+            const size_t begin = chunk * chunk_size;
+            const size_t count = std::min(chunk_size, request_count - begin);
+            const bool queued = submit_pool_->submit([this,
+                                                      submits = priv->submits,
+                                                      &batch = priv->batches[chunk],
+                                                      entries = request.data() + begin,
+                                                      count,
+                                                      notif_msg] {
+                notify_msg_t notify_msg;
+                notify_msg.name = const_cast<char *>(local_agent_name_.c_str());
+                notify_msg.msg = notif_msg ? const_cast<char *>(notif_msg->c_str()) : nullptr;
+                submitBatch(
+                    engine_, *submits, batch, entries, count, notif_msg ? &notify_msg : nullptr);
+            });
+            if (!queued) {
+                // Only while the engine is destroyed.
+                submits.failed.store(true, std::memory_order_relaxed);
+                submits.pending.fetch_sub(num_chunks - chunk, std::memory_order_acq_rel);
+                break;
+            }
+        }
+        NIXL_DEBUG << "Mooncake queued " << request_count << " requests as " << num_chunks
+                   << " batches";
+        return NIXL_IN_PROG;
+    }
+
+    const uint64_t batch_id = allocateBatchID(engine_, request_count);
+    if (batch_id == INVALID_BATCH) {
         return NIXL_ERR_BACKEND;
     }
-    int segment_id;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto agent = connected_agents_.find(remote_agent);
-        if (agent == connected_agents_.end()) return NIXL_ERR_INVALID_PARAM;
-        segment_id = agent->second.segment_id;
-    }
-    if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
-
-    const size_t request_count = local.descCount();
-    if (priv->batch_id == INVALID_BATCH) {
-        uint64_t batch_id = allocateBatchID(engine_, request_count);
-        if (batch_id == INVALID_BATCH) {
-            return NIXL_ERR_BACKEND;
-        }
-        priv->batch_id = batch_id;
-        priv->request_count = 0;
-    }
-
-    std::vector<transfer_request_t> request(request_count);
-    for (size_t index = 0; index < request_count; ++index) {
-        if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
-        request[index].opcode = (operation == NIXL_READ) ? OPCODE_READ : OPCODE_WRITE;
-        request[index].source = (void *)local[index].addr;
-        request[index].target_offset = remote[index].addr;
-        request[index].length = local[index].len;
-        request[index].target_id = segment_id;
-    }
+    priv->batches.push_back({batch_id, request_count});
     int rc = 0;
-    if (opt_args && opt_args->hasNotif) {
+    if (has_notif) {
         notify_msg_t notify_msg;
         notify_msg.name = const_cast<char *>(local_agent_name_.c_str());
         notify_msg.msg = const_cast<char *>(opt_args->notifMsg.c_str());
-        rc = submitTransferWithNotify(
-            engine_, priv->batch_id, request.data(), request_count, notify_msg);
+        rc = submitTransferWithNotify(engine_, batch_id, request.data(), request_count, notify_msg);
     } else {
-        rc = submitTransfer(engine_, priv->batch_id, request.data(), request_count);
+        rc = submitTransfer(engine_, batch_id, request.data(), request_count);
     }
     if (rc) {
-        // Requests queued before the failure may still be in flight. The handle
-        // can be reposted only if the batch was freed right away. A deferred
-        // batch now belongs to the engine; a busy one is retried in releaseReqH.
-        const int free_rc = freeBatch(engine_, priv->batch_id);
-        if (free_rc == 0 || free_rc == kBatchCleanupDeferred) {
-            priv->batch_id = INVALID_BATCH;
-            priv->request_count = 0;
+        if (!keepFailedBatch(engine_, batch_id)) {
+            priv->batches.pop_back();
         }
-        priv->failed = (free_rc != 0);
-        return NIXL_ERR_BACKEND;
+        priv->failed = true;
+        return checkXfer(handle);
     }
-    priv->request_count += request_count;
     return NIXL_IN_PROG;
 }
 
 nixl_status_t
 nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
-    if (priv->failed) {
-        return NIXL_ERR_BACKEND;
+    if (submitPending(priv)) {
+        return NIXL_IN_PROG;
     }
-    // Once every request completed, the batch is freed below and batch_id is
-    // reset to INVALID_BATCH. A later checkXfer() on the same handle must not
-    // reach the engine: getTransferStatus() and freeBatchID() cast the batch
-    // id to a BatchDesc pointer and dereference it, so passing INVALID_BATCH
-    // (UINT64_MAX) crashes. Report the already-reached terminal state instead.
-    if (priv->batch_id == INVALID_BATCH) {
-        return NIXL_SUCCESS;
-    }
-    bool has_failed = false;
-    for (size_t index = 0; index < priv->request_count; ++index) {
-        transfer_status_t status;
-        int rc = getTransferStatus(engine_, priv->batch_id, index, &status);
-        if (rc || status.status == STATUS_FAILED)
-            has_failed = true;
-        else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING)
+    // A failure is reported once no batch is still in flight.
+    nixl_status_t status = priv->failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
+    for (const auto &batch : priv->batches) {
+        const nixl_status_t batch_status = queryBatchStatus(engine_, batch.id, batch.request_count);
+        if (batch_status == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
+        }
+        if (batch_status != NIXL_SUCCESS) {
+            status = batch_status;
+        }
     }
-    if (!has_failed) {
-        // Each batch_id has the batch size, and cannot process more requests
-        // than the batch size. So, free the batch id here to workaround the issue
-        // where the same nixlBackendReqH could be used to post multiple transfer.
-        freeBatch(engine_, priv->batch_id);
-        priv->batch_id = INVALID_BATCH;
-        priv->request_count = 0;
+    if (status == NIXL_SUCCESS && priv->pending_notif) {
+        const auto [agent, msg] = std::move(*priv->pending_notif);
+        priv->pending_notif.reset();
+        if (genNotif(agent, msg) != NIXL_SUCCESS) {
+            status = NIXL_ERR_BACKEND;
+        }
     }
-    return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
+    // Keep reporting a failure after the batches are gone.
+    priv->failed = status != NIXL_SUCCESS;
+    freeBatches(*free_pool_, engine_, priv);
+    return status;
 }
 
 nixl_status_t
 nixlMooncakeEngine::releaseReqH(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
-    if (priv->batch_id != INVALID_BATCH) {
-        freeBatch(engine_, priv->batch_id);
-    }
+    waitForSubmits(priv);
+    releaseBatches(*free_pool_, engine_, priv);
     delete priv;
     return NIXL_SUCCESS;
 }
@@ -382,16 +662,23 @@ nixlMooncakeEngine::getNotifs(notif_list_t &notif_list) {
 
 nixl_status_t
 nixlMooncakeEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
-    int segment_id;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto agent = connected_agents_.find(remote_agent);
-        if (agent == connected_agents_.end()) return NIXL_ERR_INVALID_PARAM;
-        segment_id = agent->second.segment_id;
+    const std::optional<int> segment_id = getSegmentId(remote_agent);
+    if (!segment_id) {
+        return NIXL_ERR_INVALID_PARAM;
     }
     notify_msg_t notify_msg;
     notify_msg.name = const_cast<char *>(local_agent_name_.c_str());
     notify_msg.msg = const_cast<char *>(msg.c_str());
-    int ret = genNotifyInEngine(engine_, segment_id, notify_msg);
+    int ret = genNotifyInEngine(engine_, *segment_id, notify_msg);
     return nixl_status_t(ret);
+}
+
+std::optional<int>
+nixlMooncakeEngine::getSegmentId(const std::string &remote_agent) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto agent = connected_agents_.find(remote_agent);
+    if (agent == connected_agents_.end()) {
+        return std::nullopt;
+    }
+    return agent->second.segment_id;
 }
