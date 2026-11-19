@@ -161,6 +161,7 @@ private:
 struct nixlUcxBackendSharedState {
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
+    std::atomic<bool> failed{false};
     std::atomic<ucs_status_t> failure{UCS_OK};
     std::string notif;
     std::vector<nixlUcxChunkBackendReqH> chunks;
@@ -182,11 +183,12 @@ void
 nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
     NIXL_ASSERT(sharedState_.get() != nullptr);
     if (status != NIXL_SUCCESS) {
-        if (const ucs_status_t failure = takeFailure(); failure != UCS_OK) {
-            sharedState_->failure.store(failure, std::memory_order_relaxed);
-        }
+        const ucs_status_t failure = takeFailure();
         nixlUcxBackendReqH::release();
-        sharedState_->status.store(status);
+        if (!sharedState_->failed.exchange(true)) {
+            sharedState_->failure.store(failure, std::memory_order_relaxed);
+            sharedState_->status.store(status);
+        }
     }
     sharedState_->pendingReqs.fetch_sub(1);
     NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
@@ -263,6 +265,7 @@ public:
     startXfer() {
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
+        sharedState_->failed.store(false, std::memory_order_relaxed);
         sharedState_->failure.store(UCS_OK, std::memory_order_relaxed);
         sharedState_->trace = trace;
         sharedState_->pendingReqs.store(getNumChunks());
