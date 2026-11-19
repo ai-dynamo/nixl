@@ -260,6 +260,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
     if (status != NIXL_SUCCESS) {
         // The endpoint is already in a failed state (e.g. the peer disconnected),
         // so no request will be issued.
+        call_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -283,7 +284,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? callFailed(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 /* ===========================================

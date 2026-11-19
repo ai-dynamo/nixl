@@ -71,10 +71,7 @@ public:
         if (status == NIXL_IN_PROG) [[likely]] {
             requests_.push_back(req);
         } else if (status != NIXL_SUCCESS) {
-            const ucs_status_t failure = nixlUcxEp::takeCallFailure();
-            if (failure_ == UCS_OK) {
-                failure_ = failure;
-            }
+            noteCallFailure();
             // Error. Release all previously initiated ops and exit:
             release();
             return status;
@@ -213,6 +210,8 @@ protected:
         trace.notifSent(status);
         if (status == NIXL_IN_PROG) {
             notifReq_ = req;
+        } else if (status != NIXL_SUCCESS) {
+            noteCallFailure();
         }
         notifStatus_ = status;
     }
@@ -239,6 +238,14 @@ private:
     noteFailure(nixlUcxReq req) noexcept {
         if (failure_ == UCS_OK) {
             failure_ = ucp_request_check_status(req);
+        }
+    }
+
+    void
+    noteCallFailure() noexcept {
+        const ucs_status_t failure = nixlUcxEp::takeCallFailure();
+        if (failure_ == UCS_OK) {
+            failure_ = failure;
         }
     }
 
