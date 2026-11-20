@@ -30,11 +30,13 @@ def peer(tmp_path):
         dedent(
             """\
             import argparse
+            import logging
             import os
             import sys
             import time
             from pathlib import Path
 
+            logging.basicConfig(level=logging.INFO, format="%(message)s")
             parser = argparse.ArgumentParser()
             parser.add_argument("--mode", required=True)
             parser.add_argument("--ip", required=True)
@@ -46,10 +48,10 @@ def peer(tmp_path):
             if args.mode == "target":
                 assert args.port == 0 and os.environ["NIXL_LOG_LEVEL"] == "INFO"
                 assert "INITIATOR_ONLY" not in os.environ
-                print("target diagnostic", file=sys.stderr, flush=True)
+                logging.info("target diagnostic")
                 if action == "early":
                     sys.exit(7)
-                print("MD listener is listening on port 4242", file=sys.stderr, flush=True)
+                logging.info("MD listener is listening on port 4242")
                 while not Path("initiator.pid").exists():
                     time.sleep(0.02)
             else:
