@@ -976,7 +976,7 @@ nixlLibfabricRail::progressCompletionQueue() {
     return (ret > 0) ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
-nixl_status_t
+void
 nixlLibfabricRail::pollForCompletions() {
     struct fi_cq_data_entry cq_buf[NIXL_LIBFABRIC_CQ_BATCH_SIZE];
     fi_addr_t src_addrs[NIXL_LIBFABRIC_CQ_BATCH_SIZE];
@@ -991,26 +991,20 @@ nixlLibfabricRail::pollForCompletions() {
         }
     }
     if (cq_ret > 0) {
-        nixl_status_t first_error = NIXL_SUCCESS;
         for (int c = 0; c < cq_ret; c++) {
-            const auto status = processCompletionQueueEntry(&cq_buf[c], src_addrs[c]);
-            if (status != NIXL_SUCCESS && first_error == NIXL_SUCCESS) {
-                first_error = status;
-            }
+            processCompletionQueueEntry(&cq_buf[c], src_addrs[c]);
         }
-        return first_error;
-    }
-    if (cq_ret == -FI_EAGAIN) {
-        return NIXL_SUCCESS;
-    }
-
-    NIXL_ERROR << "CQ error in drain interleave on rail " << rail_id << ": "
-               << fi_strerror(-cq_ret);
-    if (err_ret > 0) {
-        NIXL_ERROR << "CQ error detail: " << fi_strerror(err_entry.err)
-                   << " prov_errno: " << err_entry.prov_errno;
-        // Exactly as in progressCompletionQueue: the error entry is consumed,
-        // so its owner must receive a terminal completion and release the request.
+    } else if (cq_ret < 0 && cq_ret != -FI_EAGAIN) {
+        NIXL_ERROR << "CQ error in drain interleave on rail " << rail_id << ": "
+                   << fi_strerror(-cq_ret);
+        if (err_ret <= 0) {
+            NIXL_ERROR << "fi_cq_readerr failed in drain interleave: " << err_ret;
+            return;
+        }
+        NIXL_ERROR << "CQ error detail on rail " << rail_id << ": "
+                   << fi_strerror(err_entry.err) << " prov_errno: " << err_entry.prov_errno;
+        // fi_cq_readerr consumes the failing operation's only completion.
+        // Complete that request, but keep draining: unrelated peers may still be healthy.
         if (err_entry.op_context) {
             nixlLibfabricReq *req = findRequestFromContext(err_entry.op_context);
             if (req && req->in_use) {
@@ -1020,10 +1014,7 @@ nixlLibfabricRail::pollForCompletions() {
                 releaseRequest(req);
             }
         }
-    } else {
-        NIXL_ERROR << "fi_cq_readerr failed in drain interleave: " << err_ret;
     }
-    return NIXL_ERR_BACKEND;
 }
 
 // Route completion to appropriate handler (rail-specific)
@@ -1522,12 +1513,7 @@ nixlLibfabricRail::drainPostQueue() {
             }
 
             if (ret == -FI_EAGAIN) {
-                // A consumed CQ error is terminal for its request. Do not
-                // busy-spin forever trying to post into a failed endpoint.
-                if (pollForCompletions() != NIXL_SUCCESS) {
-                    ret = -FI_EIO;
-                    break;
-                }
+                pollForCompletions();
             }
         }
 
@@ -1546,9 +1532,7 @@ nixlLibfabricRail::drainPostQueue() {
         }
         posted++;
         if (posted % POST_POLL_INTERLEAVE_RATIO == 0) {
-            if (pollForCompletions() != NIXL_SUCCESS) {
-                return NIXL_ERR_BACKEND;
-            }
+            pollForCompletions();
         }
     }
 
