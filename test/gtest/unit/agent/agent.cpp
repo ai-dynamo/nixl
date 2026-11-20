@@ -550,20 +550,23 @@ namespace agent {
         EXPECT_CALL(engine, postXfer).Times(2).WillRepeatedly(testing::Return(NIXL_IN_PROG));
         EXPECT_CALL(engine, checkXfer)
             .WillOnce(testing::Return(NIXL_SUCCESS))
-            .WillOnce(testing::Return(NIXL_IN_PROG));
+            .WillOnce(testing::Return(NIXL_IN_PROG))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
         nixlXferReqH *completed = nullptr;
-        nixlXferReqH *cancelled = nullptr;
+        nixlXferReqH *pending = nullptr;
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, completed), NIXL_SUCCESS);
-        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, cancelled), NIXL_SUCCESS);
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, pending), NIXL_SUCCESS);
         const auto completed_mark = correlatedWith(completed);
         const auto completed_post = postedAs(completed, 1);
 
         EXPECT_EQ(agent->postXferReq(completed), NIXL_IN_PROG);
-        EXPECT_EQ(agent->postXferReq(cancelled), NIXL_IN_PROG);
+        EXPECT_EQ(agent->postXferReq(pending), NIXL_IN_PROG);
         EXPECT_EQ(agent->releaseXferReq(completed), NIXL_SUCCESS);
-        EXPECT_EQ(agent->releaseXferReq(cancelled), NIXL_SUCCESS);
+        ASSERT_EQ(agent->releaseXferReq(pending), NIXL_ERR_REPOST_ACTIVE);
         EXPECT_THAT(completionMarks(), testing::ElementsAre(completed_mark));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(completed_post));
+        EXPECT_EQ(agent->getXferStatus(pending), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releaseXferReq(pending), NIXL_SUCCESS);
     }
 
     TEST_F(recorderTracingAgentFixture, EveryPostCompletedAtOnceIsMarked) {
@@ -777,22 +780,6 @@ namespace agent {
         EXPECT_THAT(records("nixl::releaseXferReq"), testing::ElementsAre(release));
     }
 
-    TEST_F(recorderTracingAgentFixture, ReleaseThatCancelsRecordsACancel) {
-        nixlAgent *agent = agent_helper_->getAgent();
-        const auto &engine = agent_helper_->getGMockEngine();
-        EXPECT_CALL(engine, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
-        EXPECT_CALL(engine, checkXfer).WillOnce(testing::Return(NIXL_IN_PROG));
-        EXPECT_CALL(engine, releaseReqH).WillOnce(testing::Return(NIXL_SUCCESS));
-        nixlXferReqH *req = nullptr;
-        ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
-        const auto cancel = testing::AllOf(postedAs(req, 1), withStatus(NIXL_ERR_CANCELED));
-
-        EXPECT_EQ(agent->postXferReq(req), NIXL_IN_PROG);
-        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
-        EXPECT_THAT(records("nixl::xfer.error"), testing::ElementsAre(cancel));
-        EXPECT_TRUE(completionMarks().empty());
-    }
-
     TEST_F(recorderTracingAgentFixture, RefusedReleaseAndItsRetryAreTwoRecords) {
         nixlAgent *agent = agent_helper_->getAgent();
         const auto &engine = agent_helper_->getGMockEngine();
@@ -800,7 +787,7 @@ namespace agent {
         EXPECT_CALL(engine, checkXfer)
             .WillOnce(testing::Return(NIXL_IN_PROG))
             .WillOnce(testing::Return(NIXL_SUCCESS));
-        EXPECT_CALL(engine, releaseReqH).WillOnce(testing::Return(NIXL_ERR_BACKEND));
+        EXPECT_CALL(engine, releaseReqH).Times(0);
         nixlXferReqH *req = nullptr;
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
         const auto refused = testing::AllOf(postedAs(req, 1), withStatus(NIXL_ERR_REPOST_ACTIVE));
@@ -810,6 +797,7 @@ namespace agent {
         EXPECT_EQ(agent->postXferReq(req), NIXL_IN_PROG);
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
         EXPECT_EQ(agent->getXferStatus(req), NIXL_SUCCESS);
+        testing::Mock::VerifyAndClearExpectations(const_cast<mocks::GMockBackendEngine *>(&engine));
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
         EXPECT_THAT(records("nixl::releaseXferReq"), testing::ElementsAre(refused, released));
         EXPECT_THAT(completionMarks(), testing::ElementsAre(completion));
@@ -1173,6 +1161,44 @@ namespace agent {
             agent_ = agent_helper_->getAgent();
         }
     };
+
+    TEST_F(singleAgentSessionFixture, ActiveReleaseRequiresDrain) {
+        selfXferSetup setup;
+        nixl_b_params_t params;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, setup.backend), NIXL_SUCCESS);
+        ASSERT_EQ(agent_helper_->initAndRegisterMemory(
+                      setup.localBlob, setup.regDlist, setup.extraParams, setup.backend),
+                  NIXL_SUCCESS);
+        setup.xferDlist.addDesc(setup.localBlob.getDesc());
+
+        nixlBackendReqH backend_request;
+        const auto &engine = agent_helper_->getGMockEngine();
+        EXPECT_CALL(engine, prepXfer)
+            .WillOnce([&](const auto &,
+                          const auto &,
+                          const auto &,
+                          const auto &,
+                          nixlBackendReqH *&request,
+                          const auto *) {
+                request = &backend_request;
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(engine, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+        nixlXferReqH *request = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, request), NIXL_SUCCESS);
+        ASSERT_EQ(agent_->postXferReq(request), NIXL_IN_PROG);
+
+        EXPECT_CALL(engine, checkXfer(&backend_request))
+            .WillOnce(testing::Return(NIXL_IN_PROG))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        EXPECT_CALL(engine, releaseReqH).Times(0);
+        ASSERT_EQ(agent_->releaseXferReq(request), NIXL_ERR_REPOST_ACTIVE);
+        ASSERT_EQ(agent_->getXferStatus(request), NIXL_SUCCESS);
+        ASSERT_TRUE(testing::Mock::VerifyAndClearExpectations(
+            const_cast<mocks::GMockBackendEngine *>(&engine)));
+        EXPECT_CALL(engine, releaseReqH(&backend_request)).WillOnce(testing::Return(NIXL_SUCCESS));
+        EXPECT_EQ(agent_->releaseXferReq(request), NIXL_SUCCESS);
+    }
 
     class dualAgentBridgeFixture : public testing::Test {
     protected:
@@ -1573,7 +1599,7 @@ namespace agent {
         EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
     }
 
-    TEST_F(dualAgentBridgeFixture, FailedActiveReleaseKeepsRequestPollable) {
+    TEST_F(dualAgentBridgeFixture, RefusedReleaseKeepsRequestAliveInEveryState) {
         DualAgentSetup s(DRAM_SEG);
         setupDualAgent(s);
 
@@ -1583,33 +1609,49 @@ namespace agent {
 
         nixlBackendReqH backend_request;
         auto &engine = local_agent_helper_->getGMockEngine();
-        EXPECT_CALL(engine, prepXfer)
-            .WillOnce([&](const auto &,
-                          const auto &,
-                          const auto &,
-                          const auto &,
-                          nixlBackendReqH *&request,
-                          const auto *) {
-                request = &backend_request;
-                return NIXL_SUCCESS;
-            });
-        EXPECT_CALL(engine, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
-        EXPECT_CALL(engine, checkXfer)
-            .WillOnce(testing::Return(NIXL_IN_PROG))
-            .WillOnce(testing::Return(NIXL_SUCCESS));
-        EXPECT_CALL(engine, releaseReqH)
-            .WillOnce(testing::Return(NIXL_ERR_BACKEND))
-            .WillOnce(testing::Return(NIXL_SUCCESS));
+        for (const auto post_status : {NIXL_ERR_BACKEND, NIXL_SUCCESS, NIXL_ERR_NOT_POSTED}) {
+            for (const auto release_status :
+                 {NIXL_ERR_BACKEND, NIXL_IN_PROG, NIXL_ERR_NOT_ALLOWED}) {
+                SCOPED_TRACE(testing::Message()
+                             << "post=" << post_status << ", release=" << release_status);
+                EXPECT_CALL(engine, prepXfer)
+                    .WillOnce([&](const auto &,
+                                  const auto &,
+                                  const auto &,
+                                  const auto &,
+                                  nixlBackendReqH *&request,
+                                  const auto *) {
+                        request = &backend_request;
+                        return NIXL_SUCCESS;
+                    });
+                if (post_status == NIXL_ERR_NOT_POSTED) {
+                    EXPECT_CALL(engine, postXfer).Times(0);
+                } else {
+                    EXPECT_CALL(engine, postXfer).WillOnce(testing::Return(post_status));
+                }
+                EXPECT_CALL(engine, checkXfer).Times(0);
+                EXPECT_CALL(engine, releaseReqH(&backend_request))
+                    .WillOnce(testing::Return(release_status))
+                    .WillOnce(testing::Return(NIXL_SUCCESS));
 
-        nixlXferReqH *xfer_req;
-        EXPECT_EQ(
-            local_agent_->createXferReq(
-                NIXL_WRITE, local_xfer_dlist, remote_xfer_dlist, s.remote_agent_name, xfer_req),
-            NIXL_SUCCESS);
-        EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_IN_PROG);
-        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_ERR_REPOST_ACTIVE);
-        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
-        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+                nixlXferReqH *xfer_req = nullptr;
+                ASSERT_EQ(local_agent_->createXferReq(NIXL_WRITE,
+                                                      local_xfer_dlist,
+                                                      remote_xfer_dlist,
+                                                      s.remote_agent_name,
+                                                      xfer_req),
+                          NIXL_SUCCESS);
+                if (post_status != NIXL_ERR_NOT_POSTED) {
+                    ASSERT_EQ(local_agent_->postXferReq(xfer_req), post_status);
+                }
+                // ASSERT avoids polling a freed handle if release incorrectly succeeds.
+                ASSERT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_ERR_REPOST_ACTIVE);
+                EXPECT_EQ(local_agent_->getXferStatus(xfer_req), post_status);
+                EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+                ASSERT_TRUE(testing::Mock::VerifyAndClearExpectations(
+                    const_cast<mocks::GMockBackendEngine *>(&engine)));
+            }
+        }
     }
 
     TEST_F(dualAgentBridgeFixture, PrepMemViewRemoteDRAM) {
