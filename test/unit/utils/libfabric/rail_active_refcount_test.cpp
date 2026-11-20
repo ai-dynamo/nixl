@@ -26,6 +26,7 @@
 #include "libfabric_mock_stubs.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 
 // Number of fake EFA devices to create
@@ -272,6 +273,50 @@ testVramDeviceSelection(nixlLibfabricRailManager &mgr) {
     return 0;
 }
 
+static int
+testStripingThreshold(nixlLibfabricRailManager &mgr) {
+    NIXL_INFO << "  testStripingThreshold";
+
+    const size_t rails = NUM_FAKE_RAILS;
+    const size_t default_threshold = NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD;
+
+    // mgr was built with a threshold of 0. A transfer smaller than the rail count still
+    // cannot give every rail a chunk, so it is posted on one rail.
+    TEST_ASSERT(!mgr.usesStriping(rails - 1, rails), "transfer smaller than the rail count");
+    TEST_ASSERT(mgr.usesStriping(rails, rails), "one byte per rail is enough to stripe");
+
+    struct {
+        const char *param; // striping_threshold value, nullptr when the parameter is absent
+        size_t transfer_size;
+        bool striped;
+    } cases[] = {
+        {nullptr, default_threshold - 1, false},
+        {nullptr, default_threshold, true},
+        {"128k", default_threshold - 1, false}, // malformed: the default stays
+        {"1048576", 1048575, false},
+        {"1048576", 1048576, true},
+        {"4096", 4095, false},
+        {"4096", 4096, true},
+    };
+
+    // The environment variable overrides the init parameter, so the cases below need it unset.
+    unsetenv("NIXL_LIBFABRIC_STRIPING_THRESHOLD");
+
+    for (const auto &c : cases) {
+        nixl_b_params_t params;
+        if (c.param) {
+            params["striping_threshold"] = c.param;
+        }
+        nixlLibfabricRailManager configured(default_threshold);
+        TEST_ASSERT(configured.init(params) == NIXL_SUCCESS, "rail manager init succeeded");
+        TEST_ASSERT(configured.usesStriping(c.transfer_size, rails) == c.striped,
+                    std::string("striping_threshold=") + (c.param ? c.param : "(absent)") +
+                        ", transfer of " + std::to_string(c.transfer_size) + " bytes");
+    }
+
+    return 0;
+}
+
 int
 main() {
     NIXL_INFO << "=== Rail Active Refcount Test ===";
@@ -291,6 +336,9 @@ main() {
     if ((res = testRegisterDeregisterRefcount(mgr)) != 0) return res;
     if ((res = testDeregisterFailureKeepsRailActive(mgr)) != 0) return res;
     if ((res = testVramDeviceSelection(mgr)) != 0) {
+        return res;
+    }
+    if ((res = testStripingThreshold(mgr)) != 0) {
         return res;
     }
 

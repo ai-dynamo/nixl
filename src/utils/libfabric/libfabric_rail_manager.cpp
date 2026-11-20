@@ -267,6 +267,11 @@ nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
     }
     NIXL_INFO << "CUDA dmabuf mapping mode: " << dmabuf_mapping;
 
+    // the value given to the constructor stays in effect when striping_threshold is absent or
+    // malformed
+    LibfabricUtils::getCustomIntParam(custom_params, "striping_threshold", striping_threshold_);
+    NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes";
+
     // load from config or compute bandwidth limit per NUMA node
     // then from that deduce rail count limit
     // finally choose appropriate rail selection policy:

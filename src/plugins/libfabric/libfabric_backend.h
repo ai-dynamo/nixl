@@ -197,9 +197,6 @@ private:
     // Rail Manager - Stack allocated for better performance (mutable for const methods)
     mutable nixlLibfabricRailManager rail_manager_;
 
-    // Configurable striping threshold
-    size_t striping_threshold_;
-
     // Descriptor-posting thread pool configuration
     size_t post_thread_count_;
     size_t post_split_batch_size_;

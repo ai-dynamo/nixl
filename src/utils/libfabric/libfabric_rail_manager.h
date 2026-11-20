@@ -104,6 +104,11 @@ public:
      * NUMA node, and subsequently, if still not reaching user-specified limit, spills over to
      * adjacent NUMA nodes if required. If user override exceeds total machine network capacity,
      * then all rails will be used for DRAM_SEG memory type.
+     *
+     * - striping_threshold (matching environment variable NIXL_LIBFABRIC_STRIPING_THRESHOLD):
+     * Transfer size in bytes from which a transfer is split across all the rails selected for its
+     * buffer, instead of being posted on one of them. If not specified, the value given to the
+     * constructor is used.
      */
     nixl_status_t
     init(const nixl_b_params_t &custom_params);
@@ -263,13 +268,15 @@ public:
     reserveBaseOffset();
 
     /** True when a transfer of this size across this many rails is striped (split across the
-     *  rails) rather than posted on a single rail.
+     *  rails) rather than posted on a single rail. A transfer smaller than the rail count is
+     *  never striped, because it cannot give every rail a chunk.
      * @param transfer_size Size of the transfer in bytes
      * @param rail_count Number of rails selected for the transfer
      */
     bool
     usesStriping(size_t transfer_size, size_t rail_count) const {
-        return transfer_size >= striping_threshold_ && rail_count > 1;
+        return transfer_size >= striping_threshold_ && rail_count > 1 &&
+            transfer_size >= rail_count;
     }
 
     // Control Message APIs
