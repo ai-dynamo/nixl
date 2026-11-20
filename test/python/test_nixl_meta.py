@@ -26,11 +26,18 @@ NIXL_META_INIT = (
 )
 
 
-def test_missing_backends_chain_first_import_error(monkeypatch):
+@pytest.mark.parametrize(
+    ("rocm", "candidates"),
+    [
+        (False, ["nixl_cu13", "nixl_cu12", "nixl_rocm"]),
+        (True, ["nixl_rocm", "nixl_cu13", "nixl_cu12"]),
+    ],
+)
+def test_missing_backends_chain_first_import_error(monkeypatch, rocm, candidates):
     monkeypatch.setitem(
         sys.modules,
         "nixl_meta_utils",
-        SimpleNamespace(detect_cuda_major=lambda: None, detect_rocm=lambda: False),
+        SimpleNamespace(detect_cuda_major=lambda: None, detect_rocm=lambda: rocm),
     )
     errors = []
 
@@ -41,9 +48,11 @@ def test_missing_backends_chain_first_import_error(monkeypatch):
 
     monkeypatch.setattr(importlib, "import_module", missing_backend)
 
-    candidates = ["nixl_cu13", "nixl_cu12", "nixl_rocm"]
-    with pytest.raises(ImportError, match=f"tried {', '.join(candidates)}") as exc_info:
+    with pytest.raises(ImportError) as exc_info:
         runpy.run_path(str(NIXL_META_INIT))
 
     assert [error.name for error in errors] == candidates
+    assert (
+        str(exc_info.value) == f"No NIXL backend found (tried {', '.join(candidates)})"
+    )
     assert exc_info.value.__cause__ is errors[0]
