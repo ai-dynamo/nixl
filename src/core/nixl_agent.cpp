@@ -31,6 +31,7 @@
 #include "agent_data.h"
 #include "nixl_md_manager.h"
 #include "plugin_manager.h"
+#include "common/backend.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/operators.h"
@@ -44,6 +45,9 @@
 #include "tracing/trace_sink.h"
 
 namespace {
+
+// createBackend parameter read by the agent: false keeps a backend from serving its own agent
+constexpr char allow_local_connection_param[] = "allow_local_connection";
 
 const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
@@ -545,6 +549,15 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
     }
 
+    bool allow_local = true;
+    try {
+        allow_local = nixl::getBackendParamDefaulted(params, allow_local_connection_param, true);
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR_FUNC << e.what();
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     nixlBackendInitParams init_params;
     init_params.localAgent = data->name_;
     init_params.type = type;
@@ -583,6 +596,12 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         return NIXL_ERR_BACKEND;
     }
 
+    if (!allow_local && !backend->supportsRemote()) {
+        NIXL_ERROR_FUNC << "backend '" << type << "' serves only its own agent, so "
+                        << allow_local_connection_param << " cannot be off";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     std::string conn_info;
 
     if (backend->supportsRemote()) {
@@ -599,7 +618,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
     }
 
-    if (backend->supportsLocal()) {
+    if (allow_local && backend->supportsLocal()) {
         const nixl_status_t ret = backend->connect(data->name_);
 
         if (NIXL_SUCCESS != ret) {
@@ -608,6 +627,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
                             << ret;
             return ret;
         }
+
+        data->localEngines.insert(backend.get());
     }
 
     for (auto &elm : backend->getSupportedMems()) {
@@ -689,9 +710,10 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
         nixlBackendEngine* backend = (*backend_list)[i];
         // meta_descs use to be passed to loadLocalData
         nixl_sec_dlist_t sec_descs(descs.getType());
-        nixl_status_t ret = data->localSection_.addDescList(descs, backend, sec_descs);
+        const bool use_local = data->localEngines.contains(backend);
+        nixl_status_t ret = data->localSection_.addDescList(descs, backend, sec_descs, use_local);
         if (ret == NIXL_SUCCESS) {
-            if (backend->supportsLocal()) {
+            if (use_local) {
                 const auto [it, inserted] = data->remoteSections_.try_emplace(
                     data->name_, std::make_shared<nixlRemoteSection>(data->name_));
 
@@ -1724,7 +1746,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
 
     if (data->name_ == remote_agent) {
         for (const auto &eng : *backend_list) {
-            if (eng->supportsLocal()) {
+            if (data->localEngines.contains(eng)) {
                 ret = eng->genNotif(remote_agent, msg);
                 if (ret < 0) {
                     NIXL_ERROR_FUNC << "backend '" << eng->getType() << "' returned error status "

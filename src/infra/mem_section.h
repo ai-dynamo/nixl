@@ -205,7 +205,8 @@ class nixlLocalSection : public nixlMemSection {
         nixl_status_t
         addDescList(const nixl_reg_dlist_t &mem_elms,
                     nixlBackendEngine *backend,
-                    nixlSecDescList &remote_self);
+                    nixlSecDescList &remote_self,
+                    bool use_local);
 
         // Each nixlBasicDesc should be same as original registration region
         nixl_status_t remDescList (const nixl_reg_dlist_t &mem_elms,

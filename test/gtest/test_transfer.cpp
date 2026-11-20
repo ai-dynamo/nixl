@@ -752,6 +752,45 @@ TEST_P(TestTransfer, SelfNotification) {
             getAgent(0), getAgentName(0), getAgent(0), getAgentName(0), repeat, num_threads);
 }
 
+TEST_P(TestTransfer, NoLocalConnection) {
+    // An agent whose backend does not serve its own agent still transfers to another agent
+    const std::string name = "agent_no_local";
+    nixl_b_params_t params = getBackendParams();
+    params["allow_local_connection"] = "false";
+    nixlAgent agent(name, getConfig(0, false));
+    nixlBackendH *backend = nullptr;
+    ASSERT_EQ(agent.createBackend(getBackendName(), params, backend), NIXL_SUCCESS);
+
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(agent, 64, 1, DRAM_SEG, src_buffers);
+    createRegisteredMem(getAgent(1), 64, 1, DRAM_SEG, dst_buffers);
+
+    nixl_blob_t md;
+    std::string md_name;
+    ASSERT_EQ(agent.getLocalMD(md), NIXL_SUCCESS);
+    ASSERT_EQ(getAgent(1).loadRemoteMD(md, md_name), NIXL_SUCCESS);
+    ASSERT_EQ(getAgent(1).getLocalMD(md), NIXL_SUCCESS);
+    ASSERT_EQ(agent.loadRemoteMD(md, md_name), NIXL_SUCCESS);
+
+    doTransfer(agent,
+               name,
+               getAgent(1),
+               getAgentName(1),
+               NIXL_WRITE,
+               64,
+               1,
+               1,
+               1,
+               DRAM_SEG,
+               src_buffers,
+               DRAM_SEG,
+               dst_buffers);
+
+    EXPECT_EQ(getAgent(1).invalidateRemoteMD(name), NIXL_SUCCESS);
+    EXPECT_EQ(agent.deregisterMem(makeDescList<nixlBlobDesc>(src_buffers, DRAM_SEG)), NIXL_SUCCESS);
+    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+}
+
 TEST_P(TestTransfer, EmptyNotificationPayload) {
     constexpr size_t repeat = 16;
     constexpr size_t num_threads = 2;
