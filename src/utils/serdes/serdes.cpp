@@ -17,9 +17,62 @@
 #include <cstring>
 #include <limits>
 #include <utility>
+#include <variant>
 
 #include "serdes.h"
 #include "common/nixl_log.h"
+
+namespace {
+
+enum class FieldError { IncompleteHeader, TagMismatch, IncompleteData };
+
+std::variant<size_t, FieldError>
+parseFieldLength(std::string_view wire, size_t offset, std::string_view tag) noexcept {
+    if (offset > wire.size()) {
+        return FieldError::IncompleteHeader;
+    }
+
+    const size_t remaining = wire.size() - offset;
+    if (tag.size() > remaining || remaining - tag.size() < sizeof(size_t)) {
+        return FieldError::IncompleteHeader;
+    }
+    if (!tag.empty() && std::memcmp(wire.data() + offset, tag.data(), tag.size()) != 0) {
+        return FieldError::TagMismatch;
+    }
+
+    size_t len;
+    std::memcpy(&len, wire.data() + offset + tag.size(), sizeof(len));
+    const size_t header_end = offset + tag.size() + sizeof(len);
+    // Reserve the trailing byte without adding the untrusted length to the cursor.
+    if (wire.size() - header_end <= len) {
+        return FieldError::IncompleteData;
+    }
+    return len;
+}
+
+std::optional<size_t>
+fieldLengthOrLog(std::string_view wire, size_t offset, const std::string &tag) {
+    const auto field = parseFieldLength(wire, offset, tag);
+    if (const auto *len = std::get_if<size_t>(&field)) {
+        return *len;
+    }
+
+    switch (std::get<FieldError>(field)) {
+    case FieldError::IncompleteHeader:
+        NIXL_ERROR << "Deserialization of tag " << tag
+                   << " failed for incomplete or missing header";
+        break;
+    case FieldError::TagMismatch:
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed for tag mismatch";
+        break;
+    case FieldError::IncompleteData:
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed for incomplete data";
+        break;
+    }
+    return std::nullopt;
+}
+
+} // namespace
 
 nixlSerDes::nixlSerDes()
     : workingStr("nixlSerDes|"),
@@ -50,9 +103,8 @@ nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str)
 
 std::string
 nixlSerDes::getStr(const std::string &tag) {
-    const auto len = peekBufLen(tag);
+    const auto len = fieldLengthOrLog(workingStr, des_offset, tag);
     if (!len) {
-        NIXL_ERROR << "Deserialization of tag " << tag << " failed for invalid or incomplete field";
         return "";
     }
 
@@ -70,25 +122,11 @@ nixlSerDes::getStr(const std::string &tag) {
 
 std::optional<size_t>
 nixlSerDes::peekBufLen(std::string_view tag) const noexcept {
-    if (des_offset > workingStr.size()) {
-        return std::nullopt;
+    const auto field = parseFieldLength(workingStr, des_offset, tag);
+    if (const auto *len = std::get_if<size_t>(&field)) {
+        return *len;
     }
-
-    const size_t remaining = workingStr.size() - des_offset;
-    if (tag.size() > remaining || remaining - tag.size() < sizeof(size_t) ||
-        (!tag.empty() &&
-         std::memcmp(workingStr.data() + des_offset, tag.data(), tag.size()) != 0)) {
-        return std::nullopt;
-    }
-
-    size_t len;
-    std::memcpy(&len, workingStr.data() + des_offset + tag.size(), sizeof(len));
-    const size_t header_end = des_offset + tag.size() + sizeof(size_t);
-    // Reserve the trailing byte without adding the untrusted length to the cursor.
-    if (workingStr.size() - header_end <= len) {
-        return std::nullopt;
-    }
-    return len;
+    return std::nullopt;
 }
 
 // Byte buffers serialization
@@ -104,9 +142,12 @@ nixl_status_t nixlSerDes::addBuf(const std::string &tag, const void* buf, ssize_
 
 ssize_t
 nixlSerDes::getBufLen(const std::string &tag) const {
-    const auto len = peekBufLen(tag);
-    if (!len || *len > static_cast<size_t>(std::numeric_limits<ssize_t>::max())) {
-        NIXL_ERROR << "Deserialization of tag " << tag << " failed for invalid or incomplete field";
+    const auto len = fieldLengthOrLog(workingStr, des_offset, tag);
+    if (!len) {
+        return -1;
+    }
+    if (*len > static_cast<size_t>(std::numeric_limits<ssize_t>::max())) {
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed for data length mismatch";
         return -1;
     }
 
@@ -120,10 +161,12 @@ nixl_status_t
 nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len) {
     // In existing code the value of len is often assumed instead
     // of the return value from a preceding call to getBufLen().
-    const auto field_len = peekBufLen(tag);
-    if (!field_len || len < 0 || static_cast<size_t>(len) != *field_len) {
-        NIXL_ERROR << "Deserialization of tag " << tag
-                   << " failed for invalid field or data length mismatch";
+    const auto field_len = fieldLengthOrLog(workingStr, des_offset, tag);
+    if (!field_len) {
+        return NIXL_ERR_MISMATCH;
+    }
+    if (len < 0 || static_cast<size_t>(len) != *field_len) {
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed for data length mismatch";
         return NIXL_ERR_MISMATCH;
     }
 

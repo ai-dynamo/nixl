@@ -26,11 +26,6 @@
 
 namespace {
 
-const std::string invalid_field_log =
-    "^Deserialization of tag .* failed for invalid or incomplete field$";
-const std::string invalid_length_log =
-    "^Deserialization of tag .* failed for invalid field or data length mismatch$";
-
 // Construct malformed fields without asking the serializer to allocate their declared size.
 std::string
 makeField(std::string_view tag, size_t length, std::string_view payload) {
@@ -43,20 +38,21 @@ makeField(std::string_view tag, size_t length, std::string_view payload) {
 }
 
 void
-expectRejectedField(const std::string &wire, const std::string &tag) {
-    nixlSerDes reader;
-    ASSERT_EQ(reader.importStr(wire), NIXL_SUCCESS);
-    const gtest::LogIgnoreGuard field_log(invalid_field_log);
-    const gtest::LogIgnoreGuard length_log(invalid_length_log);
+expectRejectedField(nixlSerDes &reader, const std::string &tag, const char *reason) {
+    SCOPED_TRACE(tag);
     EXPECT_FALSE(reader.peekBufLen(tag).has_value());
+    const std::string expected = "^Deserialization of tag " + tag + " failed for " + reason + "$";
+    const gtest::LogIgnoreGuard log(expected);
     EXPECT_EQ(reader.getBufLen(tag), -1);
+    EXPECT_EQ(log.getIgnoredCount(), 1u);
     EXPECT_TRUE(reader.getStr(tag).empty());
+    EXPECT_EQ(log.getIgnoredCount(), 2u);
 
-    ASSERT_EQ(reader.importStr(wire), NIXL_SUCCESS);
     std::array<char, 4> output{'a', 'b', 'c', 'd'};
     const auto original = output;
     EXPECT_EQ(reader.getBuf(tag, output.data(), output.size()), NIXL_ERR_MISMATCH);
     EXPECT_EQ(output, original);
+    EXPECT_EQ(log.getIgnoredCount(), 3u);
 }
 
 TEST(SerDesTest, RoundTripsMixedBinaryFields) {
@@ -78,15 +74,13 @@ TEST(SerDesTest, RoundTripsMixedBinaryFields) {
     EXPECT_EQ(reader.getBuf("number", &decoded, sizeof(decoded)), NIXL_SUCCESS);
     EXPECT_EQ(decoded, number);
     EXPECT_EQ(reader.getStr("last"), "value");
-    EXPECT_FALSE(reader.peekBufLen("last").has_value());
-    const gtest::LogIgnoreGuard field_log(invalid_field_log);
-    EXPECT_EQ(reader.getBufLen("last"), -1);
-    EXPECT_TRUE(reader.getStr("last").empty());
+    expectRejectedField(reader, "last", "incomplete or missing header");
 }
 
 TEST(SerDesTest, EmptyFieldsConsumeTheirTrailingByte) {
     nixlSerDes writer;
     ASSERT_EQ(writer.addStr("msg", ""), NIXL_SUCCESS);
+    ASSERT_EQ(writer.addStr("empty", ""), NIXL_SUCCESS);
     ASSERT_EQ(writer.addStr("buffer", ""), NIXL_SUCCESS);
     ASSERT_EQ(writer.addStr("last", "value"), NIXL_SUCCESS);
 
@@ -94,8 +88,12 @@ TEST(SerDesTest, EmptyFieldsConsumeTheirTrailingByte) {
     ASSERT_EQ(reader.importStr(writer.exportStr()), NIXL_SUCCESS);
     EXPECT_EQ(reader.peekBufLen("msg"), 0u);
     EXPECT_EQ(reader.getStr("msg"), "");
-    const gtest::LogIgnoreGuard empty_log("^Deserialization of tag buffer has data length zero$");
+    const gtest::LogIgnoreGuard empty_log("^Deserialization of tag empty failed for empty data$");
+    EXPECT_EQ(reader.getStr("empty"), "");
+    EXPECT_EQ(empty_log.getIgnoredCount(), 1u);
+    const gtest::LogIgnoreGuard zero_log("^Deserialization of tag buffer has data length zero$");
     EXPECT_EQ(reader.getBufLen("buffer"), 0);
+    EXPECT_EQ(zero_log.getIgnoredCount(), 1u);
     EXPECT_EQ(reader.getBuf("buffer", nullptr, 0), NIXL_SUCCESS);
     EXPECT_EQ(reader.getStr("last"), "value");
 }
@@ -103,17 +101,9 @@ TEST(SerDesTest, EmptyFieldsConsumeTheirTrailingByte) {
 TEST(SerDesTest, WrongTagDoesNotConsumeOrWrite) {
     nixlSerDes reader;
     ASSERT_EQ(reader.importStr(makeField("field", 4, "data")), NIXL_SUCCESS);
-    for (const std::string tag : {"other", "a tag longer than the entire serialized field"}) {
-        SCOPED_TRACE(tag);
-        const gtest::LogIgnoreGuard field_log(invalid_field_log);
-        const gtest::LogIgnoreGuard length_log(invalid_length_log);
-        EXPECT_FALSE(reader.peekBufLen(tag).has_value());
-        EXPECT_EQ(reader.getBufLen(tag), -1);
-        EXPECT_TRUE(reader.getStr(tag).empty());
-        std::array<char, 4> output{};
-        EXPECT_EQ(reader.getBuf(tag, output.data(), output.size()), NIXL_ERR_MISMATCH);
-        EXPECT_EQ(output, (std::array<char, 4>{}));
-    }
+    expectRejectedField(reader, "other", "tag mismatch");
+    expectRejectedField(
+        reader, "a tag longer than the entire serialized field", "incomplete or missing header");
     EXPECT_EQ(reader.getStr("field"), "data");
 }
 
@@ -123,8 +113,10 @@ TEST(SerDesTest, WrongBufferLengthDoesNotConsumeOrWrite) {
         nixlSerDes reader;
         ASSERT_EQ(reader.importStr(makeField("field", 4, "data")), NIXL_SUCCESS);
         std::array<char, 5> output{};
-        const gtest::LogIgnoreGuard length_log(invalid_length_log);
+        const gtest::LogIgnoreGuard length_log(
+            "^Deserialization of tag field failed for data length mismatch$");
         EXPECT_EQ(reader.getBuf("field", output.data(), length), NIXL_ERR_MISMATCH);
+        EXPECT_EQ(length_log.getIgnoredCount(), 1u);
         EXPECT_EQ(output, (std::array<char, 5>{}));
         EXPECT_EQ(reader.peekBufLen("field"), 4u);
         EXPECT_EQ(reader.getStr("field"), "data");
@@ -132,13 +124,17 @@ TEST(SerDesTest, WrongBufferLengthDoesNotConsumeOrWrite) {
 }
 
 TEST(SerDesTest, RejectsTruncatedFields) {
+    const size_t prefix_size = std::string_view("nixlSerDes|").size();
     for (const std::string tag : {"", "field"}) {
         const auto complete = makeField(tag, 4, "data");
-        for (size_t length = std::string_view("nixlSerDes|").size(); length < complete.size();
-             ++length) {
-            SCOPED_TRACE(tag);
+        const size_t header_end = prefix_size + tag.size() + sizeof(size_t);
+        for (size_t length = prefix_size; length < complete.size(); ++length) {
             SCOPED_TRACE(length);
-            expectRejectedField(complete.substr(0, length), tag);
+            nixlSerDes reader;
+            ASSERT_EQ(reader.importStr(complete.substr(0, length)), NIXL_SUCCESS);
+            const char *reason =
+                length < header_end ? "incomplete or missing header" : "incomplete data";
+            expectRejectedField(reader, tag, reason);
         }
     }
 }
@@ -149,7 +145,9 @@ TEST(SerDesTest, RejectsOverflowingLengths) {
     for (const size_t length :
          {max_length, max_length - 1, max_signed_length, max_signed_length + 1}) {
         SCOPED_TRACE(length);
-        expectRejectedField(makeField("field", length, "data"), "field");
+        nixlSerDes reader;
+        ASSERT_EQ(reader.importStr(makeField("field", length, "data")), NIXL_SUCCESS);
+        expectRejectedField(reader, "field", "incomplete data");
     }
 }
 
@@ -158,8 +156,10 @@ TEST(SerDesTest, RejectsNegativeBufferLengthMatchingWireBits) {
     ASSERT_EQ(reader.importStr(makeField("field", std::numeric_limits<size_t>::max(), "data")),
               NIXL_SUCCESS);
     std::array<char, 4> output{};
-    const gtest::LogIgnoreGuard length_log(invalid_length_log);
+    const gtest::LogIgnoreGuard field_log(
+        "^Deserialization of tag field failed for incomplete data$");
     EXPECT_EQ(reader.getBuf("field", output.data(), -1), NIXL_ERR_MISMATCH);
+    EXPECT_EQ(field_log.getIgnoredCount(), 1u);
     EXPECT_EQ(output, (std::array<char, 4>{}));
 }
 
@@ -171,9 +171,7 @@ TEST(SerDesTest, RejectsOverflowingLengthAfterValidField) {
     nixlSerDes reader;
     ASSERT_EQ(reader.importStr(wire), NIXL_SUCCESS);
     EXPECT_EQ(reader.getStr("first"), "prefix");
-    EXPECT_FALSE(reader.peekBufLen("field").has_value());
-    const gtest::LogIgnoreGuard field_log(invalid_field_log);
-    EXPECT_TRUE(reader.getStr("field").empty());
+    expectRejectedField(reader, "field", "incomplete data");
 }
 
 } // namespace

@@ -37,7 +37,8 @@ public:
 
     /* Ser/Des for Strings */
     nixl_status_t addStr(const std::string &tag, const std::string &str);
-    // Failed reads leave the cursor unchanged.
+    // Malformed or incomplete fields and tag mismatches leave the cursor unchanged.
+    // Consumes a well-formed empty field and returns "", logging an error unless the tag is "msg".
     std::string getStr(const std::string &tag);
 
     /* Ser/Des for Byte buffers */
