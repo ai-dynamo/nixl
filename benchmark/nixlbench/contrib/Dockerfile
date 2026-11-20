@@ -198,6 +198,7 @@ ARG GRPC_TAG="v1.76.0"
 ARG HIREDIS_VERSION="1.4.0"
 ARG PROTOBUF_TAG="v33.4"
 ARG DISABLE_RXDM_DXS="false"
+ARG DISABLE_GPUDIRECT_TCPXO_CUDA="false"
 ARG RXDM_DXS_INSTALL_PATH="/usr/local/lib"
 ARG FASTRAK_RXDM_URI=""
 ARG DXS_CLIENT_URI=""
@@ -397,7 +398,7 @@ WORKDIR /workspace/nixl
 # meson setup clones the taskflow and prometheus-cpp [wrap-git] subprojects from github.com.
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     mkdir build && \
-    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE -Ddisable_rxdm_dxs=$DISABLE_RXDM_DXS -Ddisable_gpudirect_tcpxo_cuda=$DISABLE_GPUDIRECT_TCPXO_CUDA && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install || { cat /workspace/nixl/build/meson-logs/meson-log.txt || true; exit 1; }

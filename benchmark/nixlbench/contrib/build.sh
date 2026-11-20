@@ -49,6 +49,7 @@ WHL_PYTHON_VERSIONS="3.12"
 NPROC=${NPROC:-$(nproc)}
 APT_MIRROR=""
 DISABLE_RXDM_DXS="false"
+DISABLE_GPUDIRECT_TCPXO_CUDA="false"
 FASTRAK_RXDM_URI=""
 DXS_CLIENT_URI=""
 
@@ -169,6 +170,9 @@ get_options() {
         --disable-rxdm-dxs)
             DISABLE_RXDM_DXS=true
             ;;
+        --disable-gpudirect-tcpxo-cuda)
+            DISABLE_GPUDIRECT_TCPXO_CUDA=true
+            ;;
         --rxdm-uri)
             if [ "$2" ]; then
                 FASTRAK_RXDM_URI=$2
@@ -262,6 +266,7 @@ show_help() {
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
     echo "  [--disable-rxdm-dxs to stub out RxDM/DXS and disable this capability in GPUDirect-TCPXO]"
+    echo "  [--disable-gpudirect-tcpxo-cuda to disable CUDA support in GPUDirect-TCPXO]"
     echo "  [DOCKER_BUILD_EXTRA_ARGS env var: extra arguments passed through to docker build, e.g. --secret id=ghconfig,src=<file>; word-split, so paths with spaces are not supported]"
     exit 0
 }
@@ -291,6 +296,7 @@ if [ -n "$EFA_VERSION" ]; then
 fi
 BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
 BUILD_ARGS+=" --build-arg DISABLE_RXDM_DXS=$DISABLE_RXDM_DXS"
+BUILD_ARGS+=" --build-arg DISABLE_GPUDIRECT_TCPXO_CUDA=$DISABLE_GPUDIRECT_TCPXO_CUDA"
 BUILD_ARGS+="${FASTRAK_RXDM_URI:+ --build-arg FASTRAK_RXDM_URI=$FASTRAK_RXDM_URI}"
 BUILD_ARGS+="${DXS_CLIENT_URI:+ --build-arg DXS_CLIENT_URI=$DXS_CLIENT_URI}"
 

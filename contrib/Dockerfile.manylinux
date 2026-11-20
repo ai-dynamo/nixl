@@ -502,6 +502,7 @@ ARG UCX_SPCX_PLUGIN_VERSION=""
 ARG INFINIA_PLUGIN_VERSION=""
 
 ARG DISABLE_RXDM_DXS="false"
+ARG DISABLE_GPUDIRECT_TCPXO_CUDA="false"
 ARG RXDM_DXS_INSTALL_PATH="/usr/local/lib"
 ARG FASTRAK_RXDM_URI=""
 ARG DXS_CLIENT_URI=""
@@ -609,6 +610,8 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
         NIXL_EP_FLAG=""; \
     fi && \
     meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE $NIXL_EP_FLAG -Ducx_path=/usr/local \
+    -Ddisable_rxdm_dxs=$DISABLE_RXDM_DXS \
+    -Ddisable_gpudirect_tcpxo_cuda=$DISABLE_GPUDIRECT_TCPXO_CUDA \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" \
     -Drelease_wheel=true && \
@@ -652,6 +655,8 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --ucx-plugins-dir /usr/lib64/ucx \
             --nixl-plugins-dir $NIXL_PLUGIN_DIR \
             --output-dir dist \
+            --disable-rxdm-dxs "$DISABLE_RXDM_DXS" \
+            --disable-gpudirect-tcpxo-cuda "$DISABLE_GPUDIRECT_TCPXO_CUDA" \
             ${TORCH_CUDA_INDEX:+--torch-cuda-index $TORCH_CUDA_INDEX} \
             $EP_BUILD_FLAGS ; \
     done
