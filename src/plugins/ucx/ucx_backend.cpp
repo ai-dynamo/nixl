@@ -40,16 +40,22 @@
 #include "device/proxy/proxy_config.h"
 
 namespace {
+/**
+ * @brief SGL offload from config, disabled when the error-handling mode is failover
+ */
 [[nodiscard]] bool
-sglEnabledFromConfig() {
-    // TODO: Remove NIXL_UCX_SGL_ENABLE once SGL has had enough field exposure.
-    const auto configured = nixl::config::getValueOptional<bool>("NIXL_UCX_SGL_ENABLE");
+sglEnabledFromConfig([[maybe_unused]] ucp_err_handling_mode_t err_handling_mode) {
 #ifdef HAVE_UCX_SGL_API
-    const bool enabled = configured.value_or(true);
+    const bool enabled = sglRequestedFromConfig();
+    if (enabled && isFailoverErrHandlingMode(err_handling_mode)) {
+        NIXL_DEBUG << "UCX SGL offload is not supported with failover error handling,"
+                   << " disabling SGL offload";
+        return false;
+    }
     NIXL_DEBUG << "UCX SGL offload " << (enabled ? "enabled" : "disabled");
     return enabled;
 #else
-    if (configured.value_or(false)) {
+    if (nixl::config::getValueOptional<bool>("NIXL_UCX_SGL_ENABLE").value_or(false)) {
         NIXL_WARN << "NIXL_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL support";
     }
     return false;
@@ -105,7 +111,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
                             nixl_backend_capability_t::TRACE_CONTEXT),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
-      sglEnabled_(sglEnabledFromConfig()),
+      sglEnabled_(sglEnabledFromConfig(errHandlingMode_)),
       traceSink_(init_params.traceSink) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;

@@ -28,6 +28,7 @@
 
 #include <nixl_types.h>
 
+#include "common/configuration.h"
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
@@ -58,12 +59,28 @@ failoverErrHandlingMode(unsigned ucp_version) noexcept {
 
 } // namespace
 
+bool
+sglRequestedFromConfig() {
+#ifdef HAVE_UCX_SGL_API
+    // TODO: Remove NIXL_UCX_SGL_ENABLE once SGL has had enough field exposure.
+    return nixl::config::getValueOptional<bool>("NIXL_UCX_SGL_ENABLE").value_or(true);
+#else
+    return false;
+#endif
+}
+
 /**
- * @brief Failover on UCX 1.24 and newer, otherwise peer
+ * @brief Failover on UCX 1.24 and newer unless SGL offload is requested, otherwise peer
  */
 ucp_err_handling_mode_t
-defaultErrHandlingMode() noexcept {
-    return failoverErrHandlingMode(ucpVersion()).value_or(UCP_ERR_HANDLING_MODE_PEER);
+defaultErrHandlingMode() {
+    const auto failover = failoverErrHandlingMode(ucpVersion());
+    if (failover && sglRequestedFromConfig()) {
+        NIXL_DEBUG << "UCX failover error handling is not supported with SGL offload,"
+                   << " defaulting to peer error handling";
+        return UCP_ERR_HANDLING_MODE_PEER;
+    }
+    return failover.value_or(UCP_ERR_HANDLING_MODE_PEER);
 }
 
 bool
