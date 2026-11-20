@@ -420,7 +420,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     size_t base_offset,
     bool apply_fi_more,
     int device_id,
-    bool is_cuda_vram) {
+    bool is_cuda_vram,
+    nixlLibfabricWriteBatch *write_batch) {
     // Initialize output parameter
     submitted_count_out = 0;
 
@@ -491,6 +492,39 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             // Generate next SEQ_ID for this specific write operation
             uint8_t seq_id = LibfabricUtils::getNextSeqId();
             uint64_t imm_data = NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, xfer_id, seq_id);
+            if (write_batch) {
+                // Batched post: everything above (request pool, SEQ_ID) runs now, and the
+                // fi_writemsg calls of the FI_MORE group follow back to back under one lock.
+                size_t posted = 0;
+                if (write_batch->count > 0 &&
+                    (write_batch->rail_id != rail_id ||
+                     write_batch->count == write_batch->writes.size())) {
+                    status = flushWriteBatch(*write_batch, posted);
+                    submitted_count_out = posted;
+                    if (status != NIXL_SUCCESS) {
+                        rails_[rail_id]->releaseRequest(req);
+                        return status;
+                    }
+                }
+                write_batch->rail_id = rail_id;
+                write_batch->writes[write_batch->count++] = {nixlLibfabricPostRequest::WRITE,
+                                                             req->local_addr,
+                                                             req->chunk_size,
+                                                             fi_mr_desc(req->local_mr),
+                                                             imm_data,
+                                                             dest_addrs.at(rail_id)[remote_ep_id],
+                                                             req->remote_addr,
+                                                             req->remote_key,
+                                                             req,
+                                                             fi_flags,
+                                                             device_id,
+                                                             is_cuda_vram};
+                if (!apply_fi_more) {
+                    status = flushWriteBatch(*write_batch, posted);
+                    submitted_count_out += posted;
+                }
+                return status;
+            }
             status = rails_[rail_id]->postWrite(req->local_addr,
                                                 req->chunk_size,
                                                 fi_mr_desc(req->local_mr),
@@ -623,6 +657,33 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
 
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlLibfabricRailManager::flushWriteBatch(nixlLibfabricWriteBatch &batch, size_t &posted_out) {
+    posted_out = 0;
+    if (batch.count == 0) {
+        return NIXL_SUCCESS;
+    }
+    const nixl_status_t status =
+        rails_[batch.rail_id]->postWriteBatch(batch.writes.data(), batch.count, posted_out);
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Batched write failed on rail " << batch.rail_id << " after " << posted_out
+                   << "/" << batch.count << " posts; releasing the rest";
+        for (size_t i = posted_out; i < batch.count; ++i) {
+            rails_[batch.rail_id]->releaseRequest(batch.writes[i].req);
+        }
+    }
+    batch.count = 0;
+    return status;
+}
+
+void
+nixlLibfabricRailManager::discardWriteBatch(nixlLibfabricWriteBatch &batch) {
+    for (size_t i = 0; i < batch.count; ++i) {
+        rails_[batch.rail_id]->releaseRequest(batch.writes[i].req);
+    }
+    batch.count = 0;
 }
 
 void
