@@ -474,6 +474,150 @@ fn test_multiple_registrations() {
     assert!(storage2.as_slice().iter().all(|&x| x == 0xBB));
 }
 
+#[derive(Debug)]
+struct AlignedBuffer {
+    ptr: std::ptr::NonNull<u8>,
+    layout: std::alloc::Layout,
+}
+
+unsafe impl Send for AlignedBuffer {}
+unsafe impl Sync for AlignedBuffer {}
+
+impl AlignedBuffer {
+    fn new(size: usize, align: usize) -> Self {
+        let layout = std::alloc::Layout::from_size_align(size, align).unwrap();
+        let ptr = std::ptr::NonNull::new(unsafe { std::alloc::alloc_zeroed(layout) })
+            .unwrap_or_else(|| std::alloc::handle_alloc_error(layout));
+        Self { ptr, layout }
+    }
+}
+
+impl Drop for AlignedBuffer {
+    fn drop(&mut self) {
+        unsafe { std::alloc::dealloc(self.ptr.as_ptr(), self.layout) };
+    }
+}
+
+impl AsRef<[u8]> for AlignedBuffer {
+    fn as_ref(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.layout.size()) }
+    }
+}
+
+impl AsMut<[u8]> for AlignedBuffer {
+    fn as_mut(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.layout.size()) }
+    }
+}
+
+fn is_registered(agent: &Agent, addr: usize, len: usize) -> bool {
+    let mut descs = XferDescList::new(MemType::Dram).unwrap();
+    descs.add_desc(addr, len, 0);
+    agent.prepare_xfer_dlist("", &descs, None).is_ok()
+}
+
+#[derive(Debug)]
+struct DropProbe {
+    data: Vec<u8>,
+    agent: Agent,
+    registered_at_drop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for DropProbe {
+    fn drop(&mut self) {
+        let registered = is_registered(&self.agent, self.data.as_ptr() as usize, self.data.len());
+        self.registered_at_drop
+            .store(registered, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl AsRef<[u8]> for DropProbe {
+    fn as_ref(&self) -> &[u8] {
+        &self.data
+    }
+}
+
+impl AsMut<[u8]> for DropProbe {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.data
+    }
+}
+
+#[test]
+fn test_storage_from_buffer_registers_buffer_address() {
+    let (agent, opt_args) = create_agent_with_backend("test_agent").unwrap();
+    let mut storage = unsafe { SystemStorage::from_buffer(AlignedBuffer::new(8192, 4096)) };
+    let addr = unsafe { storage.as_ptr() } as usize;
+    assert!(!is_registered(&agent, addr, 8192));
+
+    storage.register(&agent, Some(&opt_args)).unwrap();
+    assert!(is_registered(&agent, addr, 8192));
+}
+
+#[test]
+fn test_storage_from_buffer_transfer() {
+    let (agent1, opt_args1) = create_agent_with_backend("buffer_xfer_src").unwrap();
+    let (agent2, opt_args2) = create_agent_with_backend("buffer_xfer_dst").unwrap();
+
+    let mut source = unsafe { SystemStorage::from_buffer(AlignedBuffer::new(8192, 4096)) };
+    let mut target = unsafe { SystemStorage::from_buffer(AlignedBuffer::new(8192, 4096)) };
+    source.memset(0xBB);
+    source.register(&agent1, Some(&opt_args1)).unwrap();
+    target.register(&agent2, Some(&opt_args2)).unwrap();
+
+    let remote_name = agent1.load_remote_md(&agent2.get_local_md().unwrap()).unwrap();
+
+    let mut local_dlist = XferDescList::new(MemType::Dram).unwrap();
+    local_dlist.add_storage_desc(&source).unwrap();
+    let mut remote_dlist = XferDescList::new(MemType::Dram).unwrap();
+    remote_dlist.add_storage_desc(&target).unwrap();
+
+    let xfer_req = agent1
+        .create_xfer_req(XferOp::Write, &local_dlist, &remote_dlist, &remote_name, None)
+        .unwrap();
+    agent1.post_xfer_req(&xfer_req, None).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !agent1.get_xfer_status(&xfer_req).unwrap().is_success() {
+        assert!(Instant::now() < deadline, "transfer did not complete");
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(target.as_slice().iter().all(|&x| x == 0xBB));
+}
+
+#[test]
+fn test_storage_into_inner_deregisters() {
+    let (agent, opt_args) = create_agent_with_backend("test_agent").unwrap();
+    let mut storage = SystemStorage::from(vec![0u8; 1024]);
+    let ptr = unsafe { storage.as_ptr() };
+    storage.register(&agent, Some(&opt_args)).unwrap();
+    assert!(is_registered(&agent, ptr as usize, 1024));
+
+    let data = storage.into_inner().unwrap();
+    assert_eq!(data.as_ptr(), ptr);
+    assert!(!is_registered(&agent, ptr as usize, 1024));
+}
+
+#[test]
+fn test_storage_drop_deregisters_before_releasing_buffer() {
+    let (agent, opt_args) = create_agent_with_backend("test_agent").unwrap();
+    let registered_at_drop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let probe = DropProbe {
+        data: vec![0u8; 1024],
+        agent: agent.clone(),
+        registered_at_drop: registered_at_drop.clone(),
+    };
+    let addr = probe.data.as_ptr() as usize;
+
+    let mut storage = unsafe { SystemStorage::from_buffer(probe) };
+    storage.register(&agent, Some(&opt_args)).unwrap();
+    assert!(is_registered(&agent, addr, 1024));
+
+    drop(storage);
+    assert!(!registered_at_drop.load(std::sync::atomic::Ordering::SeqCst));
+}
+
 #[test]
 fn test_make_connection_success() {
     let agent = Agent::new("test_agent").expect("Failed to create agent");

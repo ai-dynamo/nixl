@@ -583,42 +583,95 @@ pub trait NixlRegistration: NixlDescriptor {
     fn register(&mut self, agent: &Agent, opt_args: Option<&OptArgs>) -> Result<(), NixlError>;
 }
 
-/// System memory storage implementation using a Vec<u8>
+/// System memory storage backed by a byte buffer
+///
+/// The buffer type `B` defaults to `Vec<u8>`. Use [`SystemStorage::new`] or
+/// `From<Vec<u8>>` for a `Vec<u8>`, and [`SystemStorage::from_buffer`] for any
+/// other buffer, such as one from a custom allocator.
 #[derive(Debug)]
-pub struct SystemStorage {
-    data: Vec<u8>,
+pub struct SystemStorage<B = Vec<u8>> {
     handle: Option<RegistrationHandle>,
+    data: B,
 }
 
 impl SystemStorage {
     /// Create a new system storage with the given size
     pub fn new(size: usize) -> Result<Self, NixlError> {
-        let data = vec![0; size];
-        Ok(Self { data, handle: None })
+        Ok(Self::from(vec![0; size]))
+    }
+}
+
+impl From<Vec<u8>> for SystemStorage {
+    fn from(data: Vec<u8>) -> Self {
+        Self { handle: None, data }
+    }
+}
+
+impl<B> SystemStorage<B> {
+    /// Deregister the storage, if registered, and return its buffer
+    ///
+    /// # Errors
+    /// Returns the storage together with the error if deregistration fails,
+    /// so the buffer is not released while it may still be registered.
+    pub fn into_inner(mut self) -> Result<B, (Self, NixlError)> {
+        if let Some(handle) = self.handle.as_mut() {
+            if let Err(error) = handle.deregister() {
+                return Err((self, error));
+            }
+        }
+        Ok(self.data)
+    }
+}
+
+impl<B> SystemStorage<B>
+where
+    B: AsRef<[u8]> + AsMut<[u8]> + fmt::Debug + Send + Sync,
+{
+    /// Create a system storage over a caller-provided buffer
+    ///
+    /// Registration records the buffer's address once, and transfers read and
+    /// write through it for as long as the storage stays registered.
+    ///
+    /// # Safety
+    /// The caller must ensure:
+    /// - `as_ref` and `as_mut` return the same region, at the same address and
+    ///   with the same length, on every call for as long as the buffer lives
+    /// - That region does not move when the buffer itself is moved
+    /// - That region stays allocated for as long as the storage may be
+    ///   registered, including when the storage is leaked. A buffer that
+    ///   borrows its memory must not let the borrow end before then
+    pub unsafe fn from_buffer(data: B) -> Self {
+        Self { handle: None, data }
     }
 
     /// Fill the storage with a specific byte value
     pub fn memset(&mut self, value: u8) {
-        self.data.fill(value);
+        self.data.as_mut().fill(value);
     }
 
     /// Get a slice of the underlying data
     pub fn as_slice(&self) -> &[u8] {
-        &self.data
+        self.data.as_ref()
     }
 }
 
-impl MemoryRegion for SystemStorage {
+impl<B> MemoryRegion for SystemStorage<B>
+where
+    B: AsRef<[u8]> + AsMut<[u8]> + fmt::Debug + Send + Sync,
+{
     fn size(&self) -> usize {
-        self.data.len()
+        self.data.as_ref().len()
     }
 
     unsafe fn as_ptr(&self) -> *const u8 {
-        self.data.as_ptr()
+        self.data.as_ref().as_ptr()
     }
 }
 
-impl NixlDescriptor for SystemStorage {
+impl<B> NixlDescriptor for SystemStorage<B>
+where
+    B: AsRef<[u8]> + AsMut<[u8]> + fmt::Debug + Send + Sync,
+{
     fn mem_type(&self) -> MemType {
         MemType::Dram
     }
@@ -628,7 +681,10 @@ impl NixlDescriptor for SystemStorage {
     }
 }
 
-impl NixlRegistration for SystemStorage {
+impl<B> NixlRegistration for SystemStorage<B>
+where
+    B: AsRef<[u8]> + AsMut<[u8]> + fmt::Debug + Send + Sync,
+{
     fn register(&mut self, agent: &Agent, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
         let handle = agent.register_memory(self, opt_args)?;
         self.handle = Some(handle);
