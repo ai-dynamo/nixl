@@ -434,7 +434,12 @@ def profile_command(model, model_config, **kwargs):
     click.echo(f"TP: {model_configuration.model.tp_size}")
     click.echo(f"PP: {model_configuration.model.pp_size}")
     click.echo(separator)
-    nixl_bench.profile()
+    result = nixl_bench.profile()
+    if result.returncode:
+        # subprocess uses negative return codes for signals; expose the usual
+        # shell status (128 + signal) instead of wrapping a negative exit code.
+        code = result.returncode
+        raise click.exceptions.Exit(code if code > 0 else 128 - code)
 
 
 @cli.command("kvcache")
