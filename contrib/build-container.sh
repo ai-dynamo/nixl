@@ -40,12 +40,12 @@ ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
-WHL_PYTHON_VERSIONS="3.12"
+WHL_PYTHON_VERSIONS=""
 UCX_REPO=${UCX_REPO:-https://github.com/openucx/ucx.git}
 UCX_REF=${UCX_REF:-v1.23.x}
 UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-}
 PRIVATE_UCX_SONAME_SUFFIX="nixl"
-BUILD_NIXL_EP="true"
+BUILD_NIXL_EP=""
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
@@ -293,8 +293,11 @@ get_options() {
         BASE_IMAGE=nvidia/cuda
         BASE_IMAGE_TAG=13.4.2-devel-ubuntu22.04
         WHL_BASE=${WHL_BASE:-manylinux_2_34}
+        DEFAULT_PYTHON_VERSION="3.10"
+        WHL_PYTHON_VERSIONS="${WHL_PYTHON_VERSIONS:-3.10}"
     fi
 
+    WHL_PYTHON_VERSIONS="${WHL_PYTHON_VERSIONS:-3.12}"
     WHL_PLATFORM=${WHL_BASE}_${ARCH}
 
     if [ -z "$TAG" ]; then
@@ -325,6 +328,8 @@ show_build_options() {
     fi
     if [ "$BUILD_NIXL_EP" = "true" ]; then
         echo "NIXL EP: Enabled"
+    elif [ -z "$BUILD_NIXL_EP" ]; then
+        echo "NIXL EP: Dockerfile default (Dockerfile.manylinux: CUDA 13 - Enabled, CUDA 12 - Disabled)"
     else
         echo "NIXL EP: Disabled"
     fi
@@ -440,6 +445,7 @@ BUILD_ARGS+="${BASE_IMAGE:+ --build-arg BASE_IMAGE=$BASE_IMAGE}"
 BUILD_ARGS+="${BASE_IMAGE_TAG:+ --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG}"
 BUILD_ARGS+=" --build-arg MANYLINUX_IMAGE=$MANYLINUX_IMAGE --build-arg MANYLINUX_IMAGE_TAG=$MANYLINUX_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
+BUILD_ARGS+="${DEFAULT_PYTHON_VERSION:+ --build-arg DEFAULT_PYTHON_VERSION=$DEFAULT_PYTHON_VERSION}"
 BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
 CUDA_VERSION="${CUDA_VERSION:-$CUDA_VERSION_DEFAULT}"
 BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
@@ -449,7 +455,7 @@ BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
 BUILD_ARGS+=" --build-arg UCX_SONAME_SUFFIX=$UCX_SONAME_SUFFIX"
-BUILD_ARGS+=" --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP"
+BUILD_ARGS+="${BUILD_NIXL_EP:+ --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP}"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"

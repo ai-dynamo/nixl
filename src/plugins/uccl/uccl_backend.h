@@ -26,6 +26,7 @@
 #include <thread>
 #include <atomic>
 #include <map>
+#include <optional>
 
 #include "nixl.h"
 #include <nixl_types.h>
@@ -41,21 +42,6 @@ class nixlUcclEngine : public nixlBackendEngine {
 public:
     nixlUcclEngine(const nixlBackendInitParams *init_params);
     ~nixlUcclEngine();
-
-    bool
-    supportsRemote() const {
-        return true;
-    }
-
-    bool
-    supportsLocal() const {
-        return true;
-    }
-
-    bool
-    supportsNotif() const {
-        return true;
-    }
 
     bool
     supportsProgTh() const {
@@ -166,7 +152,7 @@ public:
 
     uccl_conn_t *conn;
     uint64_t transfer_id;
-    nixl_blob_t notif_msg;
+    std::optional<nixl_blob_t> notif_msg;
     std::vector<FifoItem> fifo_items;
     std::vector<std::vector<char>> ipc_infos;
     bool use_ipc = false;

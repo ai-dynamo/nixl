@@ -60,6 +60,17 @@ for op_type in READ WRITE; do
     run_nixlbench_one_worker --backend POSIX --op_type $op_type --check_consistency
 done
 
+
+# REDIS storage backend: single-process, no peer, no runtime coordinator needed
+trap 'kill -9 ${REDIS_PID:-} 2>/dev/null || true' EXIT
+start_redis_server
+
+for op_type in READ WRITE; do
+    run_nixlbench_one_worker --backend REDIS --op_type $op_type --check_consistency
+done
+
+kill -9 $REDIS_PID 2>/dev/null || true
+
 if $HAS_GPU ; then
     seg_types="VRAM DRAM"
 else
@@ -80,7 +91,7 @@ s.close()
 run_nixlbench_two_workers_asio() {
     args="$@"
     asio_port=$(get_random_tcp_port)
-    command_line="./bin/nixlbench --runtime_type=ASIO --asio_port=$asio_port $DEFAULT_NB_PARAMS $args"
+    command_line="timeout --signal=INT --kill-after=15s 360s ./bin/nixlbench --runtime_type=ASIO --asio_port=$asio_port $DEFAULT_NB_PARAMS $args"
     parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 4 ; $command_line"
 }
 
@@ -106,8 +117,9 @@ done
 
 run_nixlbench_two_workers_etcd() {
     args="$@"
-    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
-    command_line="./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args"
+    # Bounded group name: an unbounded /dev/urandom pipeline can hang forever if SIGPIPE is ignored
+    benchmark_group="etcd-$$-$(date +%s)-${RANDOM}${RANDOM}"
+    command_line="timeout --signal=INT --kill-after=15s 360s ./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args"
     parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 4 ; $command_line"
 }
 

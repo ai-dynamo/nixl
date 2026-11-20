@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -80,6 +81,15 @@ protected:
             EXPECT_EQ(list[i].devId, expected[i].second) << "devId mismatch at index " << i;
             EXPECT_EQ(list[i].len, defaultLen) << "len mismatch at index " << i;
         }
+    }
+};
+
+class testMemSection : public nixlMemSection {
+public:
+    void
+    addDescs(nixlSecDescList descs) {
+        nixlSecDescList &target = emplace(descs.getType(), nullptr);
+        target.addDescs(std::move(descs));
     }
 };
 
@@ -241,6 +251,91 @@ TEST_F(secDescListTest, ZeroLenObjSegQuery) {
     EXPECT_EQ(list.getIndex(query), 0);
 }
 
+TEST_F(secDescListTest, UnboundedFileSegCoversFiniteRangeFromNonzeroOffset) {
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(4096, 0, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(4096, 64, 0)), 0);
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(8192, 64, 0)), 0);
+}
+
+TEST_F(secDescListTest, UnboundedFileSegDoesNotCoverEarlierRange) {
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(4096, 0, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(0, 64, 0)), -1);
+}
+
+TEST_F(secDescListTest, FiniteFileSegDoesNotCoverOverflowingRange) {
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(4096, 4096, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(4160, SIZE_MAX, 0)), -1);
+}
+
+TEST_F(secDescListTest, UnboundedFileSegDoesNotCoverOverflowingRange) {
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(4096, 0, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(4160, SIZE_MAX, 0)), -1);
+}
+
+TEST_F(secDescListTest, OverflowingFiniteFileSegDoesNotCoverRange) {
+    constexpr uintptr_t max_addr = std::numeric_limits<uintptr_t>::max();
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(max_addr - 64, 128, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(max_addr - 32, 16, 0)), -1);
+}
+
+TEST_F(secDescListTest, PopulateWalksOrderedSectionsAndDevices) {
+    nixlBackendMD metadata1(false);
+    nixlBackendMD metadata2(false);
+    nixlBackendMD metadata3(false);
+
+    nixlSecDescList registrations(DRAM_SEG);
+    registrations.addDesc(nixlSectionDesc(100, 64, 1, &metadata1));
+    registrations.addDesc(nixlSectionDesc(200, 64, 1, &metadata2));
+    registrations.addDesc(nixlSectionDesc(100, 64, 2, &metadata3));
+
+    testMemSection section;
+    section.addDescs(std::move(registrations));
+
+    nixl_xfer_dlist_t query(DRAM_SEG);
+    query.addDesc(nixlBasicDesc(112, 16, 1));
+    query.addDesc(nixlBasicDesc(208, 16, 1));
+    query.addDesc(nixlBasicDesc(112, 16, 2));
+
+    nixl_meta_dlist_t response(DRAM_SEG);
+    ASSERT_EQ(section.populate(query, nullptr, response), NIXL_SUCCESS);
+    ASSERT_EQ(response.descCount(), 3);
+    EXPECT_EQ(response[0].metadataP, &metadata1);
+    EXPECT_EQ(response[1].metadataP, &metadata2);
+    EXPECT_EQ(response[2].metadataP, &metadata3);
+}
+
+TEST_F(secDescListTest, PopulateFallsBackForDisorderedQueries) {
+    nixlBackendMD metadata1(false);
+    nixlBackendMD metadata2(false);
+
+    nixlSecDescList registrations(DRAM_SEG);
+    registrations.addDesc(nixlSectionDesc(100, 64, 1, &metadata1));
+    registrations.addDesc(nixlSectionDesc(200, 64, 1, &metadata2));
+
+    testMemSection section;
+    section.addDescs(std::move(registrations));
+
+    nixl_xfer_dlist_t query(DRAM_SEG);
+    query.addDesc(nixlBasicDesc(208, 16, 1));
+    query.addDesc(nixlBasicDesc(112, 16, 1));
+
+    nixl_meta_dlist_t response(DRAM_SEG);
+    ASSERT_EQ(section.populate(query, nullptr, response), NIXL_SUCCESS);
+    ASSERT_EQ(response.descCount(), 2);
+    EXPECT_EQ(response[0].metadataP, &metadata2);
+    EXPECT_EQ(response[1].metadataP, &metadata1);
+}
+
 TEST_F(secDescListTest, ZeroLenQueryNotFound) {
     nixlSecDescList list(FILE_SEG);
     nixlSectionDesc desc(0, SIZE_MAX, 0);
@@ -332,6 +427,48 @@ TEST_F(secDescListTest, AddDescsDoesNotNormalizeDramSeg) {
 
     EXPECT_EQ(list[0].len, 0);
     EXPECT_EQ(list[1].len, 0);
+}
+
+TEST_F(secDescListTest, OverlapsHandlesUnboundedAndOverflowingRanges) {
+    constexpr uintptr_t max_addr = std::numeric_limits<uintptr_t>::max();
+
+    EXPECT_FALSE(nixlBasicDesc(100, 50, 0).overlaps(nixlBasicDesc(150, 50, 0)));
+    EXPECT_TRUE(nixlBasicDesc(100, 51, 0).overlaps(nixlBasicDesc(150, 50, 0)));
+    EXPECT_FALSE(nixlBasicDesc(100, 50, 0).overlaps(nixlBasicDesc(100, 50, 1)));
+    EXPECT_FALSE(nixlBasicDesc(100, 0, 0).overlaps(nixlBasicDesc(100, 50, 0)));
+    EXPECT_TRUE(nixlBasicDesc(150, 0, 0).overlaps(nixlBasicDesc(100, 100, 0)));
+
+    EXPECT_TRUE(nixlBasicDesc(4096, SIZE_MAX, 0).overlaps(nixlBasicDesc(8192, 64, 0)));
+    EXPECT_TRUE(nixlBasicDesc(8192, 64, 0).overlaps(nixlBasicDesc(4096, SIZE_MAX, 0)));
+    EXPECT_FALSE(nixlBasicDesc(4096, SIZE_MAX, 0).overlaps(nixlBasicDesc(0, 4096, 0)));
+
+    EXPECT_TRUE(nixlBasicDesc(max_addr - 64, 128, 0).overlaps(nixlBasicDesc(max_addr - 16, 8, 0)));
+    EXPECT_FALSE(nixlBasicDesc(max_addr - 64, 128, 0).overlaps(nixlBasicDesc(0, 16, 0)));
+}
+
+TEST_F(secDescListTest, OverlapsAnyDetectsNeighborOverlaps) {
+    nixlSecDescList list(DRAM_SEG);
+    EXPECT_FALSE(list.overlapsAny(nixlBasicDesc(100, 64, 0)));
+
+    list.addDesc(nixlSectionDesc(200, 64, 0));
+    list.addDesc(nixlSectionDesc(100, 64, 0));
+
+    EXPECT_TRUE(list.overlapsAny(nixlBasicDesc(100, 64, 0)));
+    EXPECT_TRUE(list.overlapsAny(nixlBasicDesc(100, 32, 0)));
+    EXPECT_TRUE(list.overlapsAny(nixlBasicDesc(100, 128, 0)));
+    EXPECT_TRUE(list.overlapsAny(nixlBasicDesc(150, 60, 0)));
+    EXPECT_TRUE(list.overlapsAny(nixlBasicDesc(232, 64, 0)));
+
+    EXPECT_FALSE(list.overlapsAny(nixlBasicDesc(0, 100, 0)));
+    EXPECT_FALSE(list.overlapsAny(nixlBasicDesc(164, 36, 0)));
+    EXPECT_FALSE(list.overlapsAny(nixlBasicDesc(264, 64, 0)));
+    EXPECT_FALSE(list.overlapsAny(nixlBasicDesc(100, 64, 1)));
+
+    nixlSecDescList file_list(FILE_SEG);
+    file_list.addDesc(nixlSectionDesc(4096, 0, 1));
+    EXPECT_TRUE(file_list.overlapsAny(nixlBasicDesc(4096, 0, 1)));
+    EXPECT_TRUE(file_list.overlapsAny(nixlBasicDesc(8192, 64, 1)));
+    EXPECT_FALSE(file_list.overlapsAny(nixlBasicDesc(0, 4096, 1)));
 }
 
 } // namespace descriptors

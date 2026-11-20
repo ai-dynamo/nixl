@@ -425,6 +425,15 @@ Fixes #123
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
+### Agent Skills
+
+Pull requests from a fork that change `skills/` need NVSkills signing:
+
+1. Grant `svc-nvskills-signing` write access to your fork and make sure the invitation is accepted.
+2. Ask a NIXL maintainer to comment `/nvskills-ci` after each commit that changes `skills/`.
+
+See the [NVIDIA/skills contributing guide](https://github.com/NVIDIA/skills/blob/main/CONTRIBUTING.md) for details.
+
 ## Miscelaneous
 
 - NIXL's default build assumes recent versions of

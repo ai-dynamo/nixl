@@ -72,14 +72,16 @@ public:
     void
     updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
 
-    [[nodiscard]] std::uint64_t
-    traceCorrelationId64() const noexcept {
-        return traceContext_.correlationId64();
-    }
-
     [[nodiscard]] const nixl::trace::TraceContext &
     traceContext() const noexcept {
         return traceContext_;
+    }
+
+    /** @brief Trace context of the latest post handed to the backend, which that
+     *         post's nixl::xfer.complete carries; traceContext() before any post. */
+    [[nodiscard]] const nixl::trace::TraceContext &
+    tracePostContext() const noexcept {
+        return tracePostContext_;
     }
 
     [[nodiscard]] std::uint64_t
@@ -104,6 +106,8 @@ private:
     const std::string remoteAgent;
     const nixl_remote_section_weak_t remoteSection;
     const nixl::trace::TraceContext traceContext_;
+    nixl::trace::TraceContext tracePostContext_;
+    bool traceRequestSpanIdUsed_ = false;
     const std::uint64_t traceRequestId_;
     std::atomic<std::uint64_t> traceExecution_ = 0;
     nixl_blob_t notifMsg;

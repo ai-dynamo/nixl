@@ -44,24 +44,17 @@ namespace {
     }
 
     void
-    setCorrelation(nvtxEventAttributes_t &ev, const std::uint64_t correlation_id) noexcept {
-        ev.payloadType = NVTX_PAYLOAD_TYPE_UNSIGNED_INT64;
-        ev.payload.ullValue = correlation_id;
+    setCorrelation(nvtxEventAttributes_t &ev, const std::uint64_t request_id) noexcept {
+        if (request_id != 0) {
+            ev.payloadType = NVTX_PAYLOAD_TYPE_UNSIGNED_INT64;
+            ev.payload.ullValue = request_id;
+        }
     }
 
     void
     applyCorrelation(nvtxEventAttributes_t &ev) noexcept {
         const correlation_stack_t &stack = correlationStack();
-        if (!stack.empty()) {
-            setCorrelation(ev, stack.top());
-        }
-    }
-
-    void
-    applyContext(nvtxEventAttributes_t &ev, const TraceContext &context) noexcept {
-        if (context.valid()) {
-            setCorrelation(ev, context.correlationId64());
-        }
+        setCorrelation(ev, stack.empty() ? 0 : stack.top());
     }
 
     void
@@ -85,31 +78,48 @@ NvtxTraceBackend::~NvtxTraceBackend() {
 
 std::unique_ptr<SpanBackend>
 NvtxTraceBackend::beginSpan(const std::string_view name, const Kind kind) {
-    nvtxEventAttributes_t ev = eventForName(name, kind, domain_, registeredHandles_);
-    applyCorrelation(ev);
+    NvtxEvent ev;
+    eventForName(ev, name, kind, domain_, registeredHandles_);
+    applyCorrelation(ev.attributes);
     auto span = std::make_unique<NvtxSpan>(domain_, schemaIds_);
-    nvtxDomainRangePushEx(domain_, &ev);
+    nvtxDomainRangePushEx(domain_, &ev.attributes);
+    return span;
+}
+
+std::unique_ptr<SpanBackend>
+NvtxTraceBackend::beginContextSpan(const std::string_view name,
+                                   const Kind kind,
+                                   const TraceContext &,
+                                   const std::uint64_t request_id) {
+    NvtxEvent ev;
+    eventForName(ev, name, kind, domain_, registeredHandles_);
+    setCorrelation(ev.attributes, request_id);
+    auto span = std::make_unique<NvtxSpan>(domain_, schemaIds_);
+    nvtxDomainRangePushEx(domain_, &ev.attributes);
     return span;
 }
 
 void
 NvtxTraceBackend::mark(const std::string_view name, const Kind kind) {
-    nvtxEventAttributes_t ev = eventForName(name, kind, domain_, registeredHandles_);
-    applyCorrelation(ev);
-    nvtxDomainMarkEx(domain_, &ev);
+    NvtxEvent ev;
+    eventForName(ev, name, kind, domain_, registeredHandles_);
+    applyCorrelation(ev.attributes);
+    nvtxDomainMarkEx(domain_, &ev.attributes);
 }
 
 void
 NvtxTraceBackend::emitSpan(const std::string_view name,
                            const Kind kind,
-                           const TraceContext &context,
+                           const TraceContext &,
+                           const std::uint64_t request_id,
                            const nixlTime::us_t start,
                            const nixlTime::us_t end,
                            const std::span<const Attribute> attrs) {
-    nvtxEventAttributes_t ev = eventForName(name, kind, domain_, registeredHandles_);
-    applyContext(ev, context);
+    NvtxEvent ev;
+    eventForName(ev, name, kind, domain_, registeredHandles_);
+    setCorrelation(ev.attributes, request_id);
     NvtxSpan range(domain_, schemaIds_);
-    nvtxDomainRangePushEx(domain_, &ev);
+    nvtxDomainRangePushEx(domain_, &ev.attributes);
     range.addAttribute("nixl.start_us", static_cast<std::int64_t>(start));
     range.addAttribute("nixl.end_us", static_cast<std::int64_t>(end));
     addAttributes(range, attrs);
@@ -118,19 +128,21 @@ NvtxTraceBackend::emitSpan(const std::string_view name,
 void
 NvtxTraceBackend::emitEvent(const std::string_view name,
                             const Kind kind,
-                            const TraceContext &context,
+                            const TraceContext &,
+                            const std::uint64_t request_id,
                             nixlTime::us_t,
                             const std::span<const Attribute> attrs) {
-    nvtxEventAttributes_t ev = eventForName(name, kind, domain_, registeredHandles_);
-    applyContext(ev, context);
+    NvtxEvent ev;
+    eventForName(ev, name, kind, domain_, registeredHandles_);
+    setCorrelation(ev.attributes, request_id);
     NvtxSpan range(domain_, schemaIds_);
-    nvtxDomainRangePushEx(domain_, &ev);
+    nvtxDomainRangePushEx(domain_, &ev.attributes);
     addAttributes(range, attrs);
 }
 
 void
-NvtxTraceBackend::pushContext(const TraceContext &context) {
-    correlationStack().push(context.correlationId64());
+NvtxTraceBackend::pushContext(const TraceContext &, const std::uint64_t request_id) {
+    correlationStack().push(request_id);
 }
 
 void
