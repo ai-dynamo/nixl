@@ -285,7 +285,7 @@ class nixl_agent:
                 init: dict[str, str] = {}
                 if nixl_conf.num_threads > 0:
                     bknd_upper = bknd.translate(_ASCII_UPPER)
-                    if bknd_upper in ("UCX", "OBJ", "LIBFABRIC"):
+                    if bknd_upper in ("UCX", "OBJ", "LIBFABRIC", "MOONCAKE"):
                         init["num_threads"] = str(nixl_conf.num_threads)
                     elif bknd_upper == "GDS_MT":
                         init["thread_count"] = str(nixl_conf.num_threads)
