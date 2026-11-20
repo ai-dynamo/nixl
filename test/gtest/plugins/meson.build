@@ -21,6 +21,10 @@ if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')
 endif
 
+if enabled_plugins.get('LIBBLKIO') and has_libblkio_plugin
+    subdir('libblkio')
+endif
+
 if not enabled_plugins.get('OBJ')
     message('OBJ plugin not enabled, skipping plugins_gtest build')
     subdir_done()

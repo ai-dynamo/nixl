@@ -45,6 +45,10 @@ if 'REDIS' in static_plugins
     nixl_lib_deps += [ redis_backend_interface ]
 endif
 
+if 'LIBBLKIO' in static_plugins
+    nixl_lib_deps += [ libblkio_backend_interface ]
+endif
+
 if is_variable('doca_memos_backend_interface') and 'DOCA_MEMOS' in static_plugins
     nixl_lib_deps += [ doca_memos_backend_interface ]
 endif
