@@ -46,6 +46,15 @@ WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 NPROC=${NPROC:-$(nproc)}
 APT_MIRROR=""
+# VALKEY / GLIDE:
+#   --enable-valkey           build valkey-glide FFI inside the image (needs network)
+#   --glide-path <prefix>     use a prebuilt prefix instead (skips cargo in Docker)
+#   --valkey-glide-ref <tag>  git tag/branch for in-image build (default v2.6.0-rc2)
+GLIDE_PATH=""
+ENABLE_VALKEY=0
+GLIDE_FROM_SOURCE=0
+VALKEY_GLIDE_REF="v2.6.0-rc2"
+GLIDE_BUILD_CONTEXT_ARGS=""
 
 get_options() {
     while :; do
@@ -102,6 +111,28 @@ get_options() {
             if [ "$2" ]; then
                 NIXL_BENCH_BUILD_CONTEXT_ARGS="--build-context nixlbench=$2"
                 commit_id=$(git --git-dir=$2/.git --work-tree=$2 rev-parse --short HEAD)
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --enable-valkey)
+            ENABLE_VALKEY=1
+            GLIDE_FROM_SOURCE=1
+            ;;
+        --glide-path)
+            if [ "$2" ]; then
+                GLIDE_PATH=$(readlink -f "$2")
+                ENABLE_VALKEY=1
+                GLIDE_FROM_SOURCE=0
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --valkey-glide-ref)
+            if [ "$2" ]; then
+                VALKEY_GLIDE_REF=$2
                 shift
             else
                 missing_requirement $1
@@ -173,7 +204,28 @@ get_options() {
         error "ERROR: --nixl <path to nixl source> is required"
     fi
 
-    BUILD_CONTEXT_ARGS="$NIXL_BUILD_CONTEXT_ARGS $NIXL_BENCH_BUILD_CONTEXT_ARGS $UCX_BUILD_CONTEXT_ARGS"
+    if [ "$ENABLE_VALKEY" = "1" ] && [ -n "$GLIDE_PATH" ]; then
+        if [ ! -f "$GLIDE_PATH/lib/libglide_ffi.a" ]; then
+            error "ERROR: --glide-path missing lib/libglide_ffi.a under" "$GLIDE_PATH"
+        fi
+        if [ ! -f "$GLIDE_PATH/include/glide_ffi.h" ]; then
+            error "ERROR: --glide-path missing include/glide_ffi.h under" "$GLIDE_PATH"
+        fi
+        if [ ! -f "$GLIDE_PATH/proto/connection_request.proto" ]; then
+            error "ERROR: --glide-path missing proto/connection_request.proto under" "$GLIDE_PATH"
+        fi
+        GLIDE_FROM_SOURCE=0
+        GLIDE_BUILD_CONTEXT_ARGS="--build-context glide=$GLIDE_PATH"
+    else
+        # Named context is always required by the Dockerfile COPY --from=glide.
+        # From-source builds ignore the stub and clone valkey-glide in the image.
+        GLIDE_STUB=$(mktemp -d)
+        touch "$GLIDE_STUB/.keep"
+        trap 'rm -rf "$GLIDE_STUB"' EXIT
+        GLIDE_BUILD_CONTEXT_ARGS="--build-context glide=$GLIDE_STUB"
+    fi
+
+    BUILD_CONTEXT_ARGS="$NIXL_BUILD_CONTEXT_ARGS $NIXL_BENCH_BUILD_CONTEXT_ARGS $UCX_BUILD_CONTEXT_ARGS $GLIDE_BUILD_CONTEXT_ARGS"
 
     VERSION=v$latest_tag.dev.$commit_id
     if [ -z "$TAG" ]; then
@@ -188,6 +240,8 @@ show_build_options() {
     echo "Dockerfile: ${DOCKER_FILE}"
     echo "NIXL Source: ${NIXL_SRC}"
     echo "UCX Source: ${UCX_SRC} (optional)"
+    echo "VALKEY: ENABLE_VALKEY=${ENABLE_VALKEY} GLIDE_FROM_SOURCE=${GLIDE_FROM_SOURCE}"
+    echo "GLIDE Path: ${GLIDE_PATH:-<none>}  (ref=${VALKEY_GLIDE_REF})"
     echo "Build Type: ${BUILD_TYPE}"
     echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
@@ -211,6 +265,9 @@ show_help() {
     echo "  [--efa-version EFA installer version]"
     echo "  [--nixlbench path/to/nixlbench/source/dir]"
     echo "  [--ucx path/to/ucx/source/dir]"
+    echo "  [--enable-valkey]  # build valkey-glide FFI in-image and enable VALKEY plugin"
+    echo "  [--glide-path path/to/glide/prefix]  # optional prebuilt prefix instead of in-image cargo"
+    echo "  [--valkey-glide-ref tag]  # default v2.6.0-rc2 (used with --enable-valkey)"
     echo "  [--build-type [debug|release] to select build type]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--python-versions python versions to build for, comma separated]"
@@ -239,6 +296,9 @@ BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
+BUILD_ARGS+=" --build-arg ENABLE_VALKEY=$ENABLE_VALKEY"
+BUILD_ARGS+=" --build-arg GLIDE_FROM_SOURCE=$GLIDE_FROM_SOURCE"
+BUILD_ARGS+=" --build-arg VALKEY_GLIDE_REF=$VALKEY_GLIDE_REF"
 if [ -n "$EFA_VERSION" ]; then
     BUILD_ARGS+=" --build-arg EFA_VERSION=$EFA_VERSION"
 fi

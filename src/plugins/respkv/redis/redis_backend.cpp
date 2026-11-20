@@ -26,42 +26,7 @@ getInitCustomParams(const nixlBackendInitParams *init_params) {
 }
 
 bool
-isValidPrepXferParams(const nixl_xfer_op_t &operation,
-                      const nixl_meta_dlist_t &local,
-                      const nixl_meta_dlist_t &remote,
-                      const std::string &remote_agent,
-                      const std::string &local_agent) {
-    if (operation != NIXL_WRITE && operation != NIXL_READ) {
-        NIXL_ERROR << absl::StrFormat("Error: Invalid operation type: %d", operation);
-        return false;
-    }
-
-    if (local.descCount() == 0) {
-        NIXL_ERROR << "Error: Transfer descriptor lists must not be empty";
-        return false;
-    }
-
-    if (local.descCount() != remote.descCount()) {
-        NIXL_ERROR << absl::StrFormat(
-            "Error: Local and remote descriptor counts must match (%d != %d)",
-            local.descCount(),
-            remote.descCount());
-        return false;
-    }
-
-    if (remote_agent != local_agent) {
-        NIXL_WARN << absl::StrFormat(
-            "Warning: Remote agent doesn't match the requesting agent (%s). Got %s",
-            local_agent,
-            remote_agent);
-    }
-
-    if (local.getType() != DRAM_SEG) {
-        NIXL_ERROR << absl::StrFormat("Error: Local memory type must be DRAM_SEG, got %d",
-                                      local.getType());
-        return false;
-    }
-
+isValidRemoteMemType(const nixl_meta_dlist_t &remote) {
     if (remote.getType() != DRAM_SEG && remote.getType() != OBJ_SEG) {
         NIXL_ERROR << absl::StrFormat(
             "Error: Remote memory type must be DRAM_SEG or OBJ_SEG, got %d", remote.getType());
@@ -153,7 +118,7 @@ public:
 } // namespace
 
 nixlRedisKVEngine::nixlRedisKVEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
+    : nixlRespKvEngine(init_params) {
     auto config = RedisConfig::fromBackendParams(getInitCustomParams(init_params));
     redisClient_ = std::make_shared<RedisConnectionPool>(std::move(config));
     NIXL_INFO << "Redis backend initialized";
@@ -161,7 +126,7 @@ nixlRedisKVEngine::nixlRedisKVEngine(const nixlBackendInitParams *init_params)
 
 nixlRedisKVEngine::nixlRedisKVEngine(const nixlBackendInitParams *init_params,
                                      std::shared_ptr<iRedisClient> redis_client)
-    : nixlBackendEngine(init_params),
+    : nixlRespKvEngine(init_params),
       redisClient_(std::move(redis_client)) {}
 
 nixl_status_t
@@ -253,7 +218,8 @@ nixlRedisKVEngine::prepXfer(const nixl_xfer_op_t &operation,
                             const std::string &remote_agent,
                             nixlBackendReqH *&handle,
                             const nixl_opt_b_args_t *) const {
-    if (!isValidPrepXferParams(operation, local, remote, remote_agent, localAgent)) {
+    if (!validatePrepCommon(operation, local, remote, remote_agent) ||
+        !isValidRemoteMemType(remote)) {
         return NIXL_ERR_INVALID_PARAM;
     }
 

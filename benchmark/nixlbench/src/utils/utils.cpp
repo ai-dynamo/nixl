@@ -77,6 +77,47 @@ buildRedisCliPrefix() {
     return prefix;
 }
 
+/**
+ * Seed/verify helpers talk RESP to Valkey. Prefer `valkey-cli` when present; otherwise
+ * `redis-cli` (same wire protocol). Host/port: VALKEY_* then REDIS_*.
+ */
+std::string
+buildValkeyCliPrefix() {
+    std::string prefix;
+    const char *password = getenv("VALKEY_PASSWORD");
+    if ((!password || password[0] == '\0')) {
+        password = getenv("REDIS_PASSWORD");
+    }
+    if (password && password[0] != '\0') {
+        prefix += "REDISCLI_AUTH=" + shellQuote(password) + " ";
+    }
+
+    // Resolve once per process; both binaries speak RESP to Valkey + large-object.
+    static const std::string cli = []() -> std::string {
+        if (system("command -v valkey-cli >/dev/null 2>&1") == 0) {
+            return "valkey-cli";
+        }
+        return "redis-cli";
+    }();
+    prefix += cli;
+
+    const char *host = getenv("VALKEY_HOST");
+    if (!host || host[0] == '\0') {
+        host = getenv("REDIS_HOST");
+    }
+    if (host && host[0] != '\0') {
+        prefix += " -h " + shellQuote(host);
+    }
+    const char *port = getenv("VALKEY_PORT");
+    if (!port || port[0] == '\0') {
+        port = getenv("REDIS_PORT");
+    }
+    if (port && port[0] != '\0') {
+        prefix += " -p " + shellQuote(port);
+    }
+    return prefix;
+}
+
 bool
 runRedisCli(const std::string &cmd, const std::string &operation) {
     std::cout << operation << std::endl;
@@ -122,6 +163,41 @@ getRedisBench(size_t buffer_size, const std::string &key, void *buffer) {
     return true;
 }
 
+bool
+getValkeyBench(size_t buffer_size, const std::string &key, void *buffer) {
+    if (buffer_size > 0 && !buffer) {
+        std::cerr << "Invalid Valkey BLOB.TCP_GET output buffer for key: " << key << std::endl;
+        return false;
+    }
+
+    const std::string filename = "/tmp/" + key + ".get";
+    // TCP GET returns the object payload; used only for WRITE consistency checks.
+    const std::string cmd = buildValkeyCliPrefix() + " --raw BLOB.TCP_GET " + shellQuote(key) +
+        " > " + shellQuote(filename);
+    if (!runRedisCli(cmd, "Getting Valkey object: " + key)) {
+        unlink(filename.c_str());
+        return false;
+    }
+
+    int fd = open(filename.c_str(), O_RDONLY);
+    if (fd < 0) {
+        std::cerr << "Failed to open Valkey GET output: " << filename
+                  << " with error: " << strerror(errno) << std::endl;
+        unlink(filename.c_str());
+        return false;
+    }
+
+    ssize_t rc = pread(fd, buffer, buffer_size, 0);
+    close(fd);
+    unlink(filename.c_str());
+    if (rc < 0 || static_cast<size_t>(rc) != buffer_size) {
+        std::cerr << "Valkey BLOB.TCP_GET size mismatch for key " << key << ": expected "
+                  << buffer_size << " bytes, got " << (rc < 0 ? 0 : rc) << " bytes" << std::endl;
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 // Define command line parameters
@@ -147,7 +223,7 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, AIS, POSIX, GPUNETIO, MOONCAKE, HF3FS, "
-              "OBJ, REDIS, GUSLI, AZURE_BLOB, DOCA_MEMOS] (only used with nixl worker)");
+              "OBJ, REDIS, VALKEY, GUSLI, AZURE_BLOB, DOCA_MEMOS] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: the backend must support "
@@ -1134,7 +1210,7 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,GDS,GDS_MT,AIS,POSIX,MOONCAKE,HF3FS,OBJ,REDIS,GUSLI,"
+        printOption("Backend (--backend=[UCX,GDS,GDS_MT,AIS,POSIX,MOONCAKE,HF3FS,OBJ,REDIS,VALKEY,GUSLI,"
                     "AZURE_BLOB,DOCA_MEMOS])",
                     backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
@@ -1532,6 +1608,12 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                             std::cerr << "Failed to get Redis key: " << iov.metaInfo << std::endl;
                             exit(EXIT_FAILURE);
                         }
+                    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_VALKEY) {
+                        if (!getValkeyBench(len, iov.metaInfo, addr)) {
+                            std::cerr << "Failed to get Valkey object: " << iov.metaInfo
+                                      << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
                     } else if (xferBenchConfig::isObjStorageBackend()) {
                         if (!xferBenchUtils::getObj(iov.metaInfo)) {
                             std::cerr << "Failed to get object: " << iov.metaInfo << std::endl;
@@ -1847,6 +1929,27 @@ xferBenchUtils::putRedis(size_t buffer_size, const std::string &key) {
 }
 
 bool
+xferBenchUtils::putValkey(size_t buffer_size, const std::string &key) {
+    if (buffer_size == 0) {
+        std::cerr << "Invalid Valkey seed size: 0" << std::endl;
+        return false;
+    }
+
+    const std::string filename = "/tmp/" + key;
+    int fd = createFile(buffer_size, filename);
+    if (fd < 0) {
+        return false;
+    }
+
+    // large-object TCP path; NIXL transfers still use BLOB.RDMA_* via GLIDE.
+    const std::string cmd = buildValkeyCliPrefix() + " -x BLOB.TCP_SET " + shellQuote(key) + " < " +
+        shellQuote(filename);
+    bool ok = runRedisCli(cmd, "Seeding Valkey object for READ: " + key);
+    cleanupFile(fd, filename);
+    return ok;
+}
+
+bool
 xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
         // INFINIA backends don't need external CLI put
@@ -1885,9 +1988,10 @@ xferBenchUtils::rmObj(const std::string &name) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
         return true;
     }
-    // REDIS uses OBJ_SEG for remote addressing, but cleanup is not S3/Azure CLI-based.
+    // REDIS/VALKEY use OBJ_SEG for remote addressing, but cleanup is not S3/Azure CLI-based.
     // Bench keys are ephemeral; skip explicit delete (same as prior DRAM_SEG teardown).
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS ||
+        xferBenchConfig::backend == XFERBENCH_BACKEND_VALKEY) {
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
