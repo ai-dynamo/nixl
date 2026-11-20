@@ -20,6 +20,8 @@
 #include <cassert>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 /* CUDA/HIP: include only via headers that load toml++ before HIP (see utils.h).
  * Early hip_runtime.h breaks toml++ on GCC + ROCm (__noinline__ macro). */
@@ -1874,7 +1876,10 @@ postSlot(nixlAgent *agent, xferBenchStats &thread_stats, slotState &slot) {
 static nixl_status_t
 recycleSlot(nixlAgent *agent, nixlBackendH *backend_engine, slotState &slot) {
     if (slot.req) {
-        agent->releaseXferReq(slot.req);
+        const nixl_status_t rc = agent->releaseXferReq(slot.req);
+        if (rc != NIXL_SUCCESS) {
+            return rc;
+        }
         slot.req = nullptr;
     }
     if (xferBenchConfig::prepared_xfer) {
@@ -1891,33 +1896,36 @@ recycleSlot(nixlAgent *agent, nixlBackendH *backend_engine, slotState &slot) {
     if (xferBenchConfig::reregister_mem && slot.registered) {
         nixl_status_t rc =
             deregisterIterationMem(agent, slot.local_iov, slot.remote_iov, backend_engine);
-        slot.registered = false;
         if (rc != NIXL_SUCCESS) {
             return rc;
         }
+        slot.registered = false;
     }
     return NIXL_SUCCESS;
 }
 
-// Best-effort teardown for early-exit / error paths.
+// Stop before stack unwinding can free memory that a backend still owns.
 static void
-cleanupSlots(nixlAgent *agent, nixlBackendH *backend_engine, std::vector<slotState> &slots) {
+cleanupSlots(nixlAgent *agent,
+             nixlBackendH *backend_engine,
+             std::vector<slotState> &slots,
+             xferBenchRT *runtime) {
     for (auto &slot : slots) {
-        if (slot.req) {
-            agent->releaseXferReq(slot.req);
-            slot.req = nullptr;
-        }
-        if (slot.prep_local_dlist) {
-            agent->releasedDlistH(slot.prep_local_dlist);
-            slot.prep_local_dlist = nullptr;
-        }
-        if (slot.prep_remote_dlist) {
-            agent->releasedDlistH(slot.prep_remote_dlist);
-            slot.prep_remote_dlist = nullptr;
-        }
-        if (xferBenchConfig::reregister_mem && slot.registered) {
-            deregisterIterationMem(agent, slot.local_iov, slot.remote_iov, backend_engine);
-            slot.registered = false;
+        const nixl_status_t rc = recycleSlot(agent, backend_engine, slot);
+        if (rc != NIXL_SUCCESS) {
+            std::cerr << "Failed to release transfer resources: " << nixlEnumStrings::statusStr(rc)
+                      << "; terminating before memory cleanup" << std::endl;
+#pragma omp critical(nixlbench_fatal_cleanup)
+            {
+                try {
+                    runtime->cleanupForExit();
+                }
+                catch (...) {
+                    std::fputs("Runtime cleanup failed; terminating with live transfer resources\n",
+                               stderr);
+                }
+                std::_Exit(EXIT_FAILURE);
+            }
         }
     }
 }
@@ -1937,6 +1945,7 @@ execTransferLoop(nixlAgent *agent,
                  xferBenchStats &thread_stats,
                  const std::vector<xferBenchIOV> &local_iov,
                  const std::vector<xferBenchIOV> &remote_iov,
+                 xferBenchRT *runtime,
                  const std::atomic<int> *terminate_ptr = nullptr) {
     const int depth = std::min(xferBenchConfig::pipeline_depth, num_iter);
     if (depth < xferBenchConfig::pipeline_depth) {
@@ -1965,7 +1974,7 @@ execTransferLoop(nixlAgent *agent,
 
     for (int s = 0; s < depth; s++) {
         if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
-            cleanupSlots(agent, backend_engine, slots);
+            cleanupSlots(agent, backend_engine, slots, runtime);
             return -1;
         }
         nixl_status_t rc =
@@ -1973,14 +1982,14 @@ execTransferLoop(nixlAgent *agent,
         if (rc != NIXL_SUCCESS) [[unlikely]] {
             std::cerr << "prepareSlot failed for slot " << s << ": "
                       << nixlEnumStrings::statusStr(rc) << std::endl;
-            cleanupSlots(agent, backend_engine, slots);
+            cleanupSlots(agent, backend_engine, slots, runtime);
             return -1;
         }
         rc = postSlot(agent, thread_stats, slots[s]);
         if (rc != NIXL_SUCCESS) [[unlikely]] {
             std::cerr << "postSlot failed for slot " << s << ": " << nixlEnumStrings::statusStr(rc)
                       << std::endl;
-            cleanupSlots(agent, backend_engine, slots);
+            cleanupSlots(agent, backend_engine, slots, runtime);
             return -1;
         }
         issued++;
@@ -1988,7 +1997,7 @@ execTransferLoop(nixlAgent *agent,
 
     while (completed < num_iter) {
         if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
-            cleanupSlots(agent, backend_engine, slots);
+            cleanupSlots(agent, backend_engine, slots, runtime);
             return -1;
         }
         for (int s = 0; s < depth; s++) {
@@ -2004,7 +2013,7 @@ execTransferLoop(nixlAgent *agent,
             if (rc != NIXL_SUCCESS) [[unlikely]] {
                 std::cerr << "Transfer failed on slot " << s << ": "
                           << nixlEnumStrings::statusStr(rc) << std::endl;
-                cleanupSlots(agent, backend_engine, slots);
+                cleanupSlots(agent, backend_engine, slots, runtime);
                 return -1;
             }
 
@@ -2017,7 +2026,7 @@ execTransferLoop(nixlAgent *agent,
             }
 
             if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
-                cleanupSlots(agent, backend_engine, slots);
+                cleanupSlots(agent, backend_engine, slots, runtime);
                 return -1;
             }
 
@@ -2026,14 +2035,14 @@ execTransferLoop(nixlAgent *agent,
                 if (rc != NIXL_SUCCESS) [[unlikely]] {
                     std::cerr << "recycleSlot failed for slot " << s << ": "
                               << nixlEnumStrings::statusStr(rc) << std::endl;
-                    cleanupSlots(agent, backend_engine, slots);
+                    cleanupSlots(agent, backend_engine, slots, runtime);
                     return -1;
                 }
                 rc = prepareSlot(agent, backend_engine, op, target, params, thread_stats, slots[s]);
                 if (rc != NIXL_SUCCESS) [[unlikely]] {
                     std::cerr << "prepareSlot failed on resubmit for slot " << s << ": "
                               << nixlEnumStrings::statusStr(rc) << std::endl;
-                    cleanupSlots(agent, backend_engine, slots);
+                    cleanupSlots(agent, backend_engine, slots, runtime);
                     return -1;
                 }
             }
@@ -2042,14 +2051,14 @@ execTransferLoop(nixlAgent *agent,
             if (rc != NIXL_SUCCESS) [[unlikely]] {
                 std::cerr << "postSlot failed on resubmit for slot " << s << ": "
                           << nixlEnumStrings::statusStr(rc) << std::endl;
-                cleanupSlots(agent, backend_engine, slots);
+                cleanupSlots(agent, backend_engine, slots, runtime);
                 return -1;
             }
             issued++;
         }
     }
 
-    cleanupSlots(agent, backend_engine, slots);
+    cleanupSlots(agent, backend_engine, slots, runtime);
     return 0;
 }
 
@@ -2062,6 +2071,7 @@ execTransfer(nixlAgent *agent,
              const int num_iter,
              const int num_threads,
              xferBenchStats &stats,
+             xferBenchRT *runtime,
              const std::atomic<int> *terminate_ptr = nullptr) {
     int ret = 0;
     stats.clear();
@@ -2091,6 +2101,7 @@ execTransfer(nixlAgent *agent,
                                       thread_stats,
                                       local_iov,
                                       remote_iov,
+                                      runtime,
                                       terminate_ptr);
 
         if (result != 0) [[unlikely]] {
@@ -2381,7 +2392,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            NIXL_WRITE,
                            1,
                            xferBenchConfig::num_threads,
-                           prepop_stats);
+                           prepop_stats,
+                           rt);
         if (ret < 0) {
             std::cerr << "Failed to pre-populate for QUERY (block_size=" << block_size << ")"
                       << std::endl;
@@ -2449,7 +2461,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            NIXL_WRITE,
                            1,
                            xferBenchConfig::num_threads,
-                           prepop_stats);
+                           prepop_stats,
+                           rt);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Failed to pre-populate keys for READ (block_size="
                       << block_size << ")" << std::endl;
@@ -2467,7 +2480,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            NIXL_READ,
                            1,
                            xferBenchConfig::num_threads,
-                           verify_stats);
+                           verify_stats,
+                           rt);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Verification failed - retrieve operations failed after "
                          "pre-population (block_size="
@@ -2534,6 +2548,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                skip,
                                xferBenchConfig::num_threads,
                                stats,
+                               rt,
                                &terminate);
         }
         if (ret < 0) {
@@ -2563,6 +2578,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            num_iter,
                            xferBenchConfig::num_threads,
                            stats,
+                           rt,
                            &terminate);
     }
     if (ret < 0) {
