@@ -50,13 +50,8 @@ protected:
         // receiver does not progress
         env_.addVar("UCX_TCP_SNDBUF", "65536");
         env_.addVar("UCX_TCP_RCVBUF", "65536");
-        context_ =
-            std::make_unique<nixlUcxContext>(std::vector<std::string>{},
-                                             false,
-                                             2,
-                                             nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE,
-                                             0,
-                                             "TLS=" + tls + ",ZCOPY_THRESH=" + zcopyThresh());
+        context_ = std::make_unique<nixlUcxContext>(
+            std::vector<std::string>{}, false, 2, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0, "");
         receiver_ = std::make_unique<nixlUcxWorker>(*context_, UCP_ERR_HANDLING_MODE_PEER);
         ASSERT_EQ(UCS_OK,
                   receiver_->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, receive, &received_));
@@ -109,13 +104,48 @@ protected:
             << "expected bytes=" << payload.size() << ", received bytes=" << received_.size();
     }
 
-    // Exchange a message, then leave the receiver idle
+    // Whether the sockets hold back a large send while the receiver does not
+    // progress, seen on a plain UCP send rather than on the transfer under test
+    void
+    probeHold() {
+        const std::string payload(large_payload_size, 'p');
+        ucp_request_param_t param;
+        param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS;
+        param.flags = UCP_AM_SEND_FLAG_EAGER;
+        const ucs_status_ptr_t request = ucp_am_send_nbx(ep_->getEp(),
+                                                         unsigned(nixl::ucx::am_cb_op_t::NOTIF_STR),
+                                                         nullptr,
+                                                         0,
+                                                         payload.data(),
+                                                         payload.size(),
+                                                         &param);
+        ASSERT_FALSE(UCS_PTR_IS_ERR(request)) << ucs_status_string(UCS_PTR_STATUS(request));
+        const auto in_progress = [request] {
+            return UCS_PTR_IS_PTR(request) && (ucp_request_check_status(request) == UCS_INPROGRESS);
+        };
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+        while (in_progress() && (std::chrono::steady_clock::now() < deadline)) {
+            sender_->progress();
+        }
+        heldBack_ = in_progress();
+        progressUntilReceived(payload);
+        if (UCS_PTR_IS_PTR(request)) {
+            EXPECT_EQ(UCS_OK, ucp_request_check_status(request));
+            ucp_request_free(request);
+        }
+        received_.clear();
+    }
+
+    // Exchange a message, see whether the sockets hold back a large send, then
+    // leave the receiver idle
     void
     establish() {
         const nixl_status_t status =
             ep_->sendAm(nixl::ucx::am_cb_op_t::NOTIF_STR, "ready", UCP_AM_SEND_FLAG_EAGER);
         ASSERT_TRUE(status == NIXL_SUCCESS || status == NIXL_IN_PROG);
         ASSERT_NO_FATAL_FAILURE(progressUntilReceived("ready"));
+        received_.clear();
+        ASSERT_NO_FATAL_FAILURE(probeHold());
         // A TCP flush after a send waits for the peer. Flush now, so that a
         // flush with no sends after this one completes without the receiver.
         nixlUcxReq req = nullptr;
@@ -134,23 +164,22 @@ protected:
     }
 
     // Start the transfer, and wait until only the send of its notification
-    // is in progress. Skips the test when the send completes before the
-    // receiver progresses: some hosts buffer more than others.
+    // is in progress. Skips the test where the sockets take a large send
+    // without the receiver: there is nothing to hold.
     void
     holdNotification(const std::string &payload) {
+        ASSERT_EQ(large_payload_size, payload.size());
+        if (!heldBack_) {
+            GTEST_SKIP() << "the sockets take a send of " << payload.size()
+                         << " bytes without the receiver";
+        }
         transfer_.reset(new nixlUcxBackendReqH(sender_.get()));
         transfer_->setNotif(std::string(payload));
         transfer_->init({}, *ep_);
         ASSERT_EQ(NIXL_SUCCESS, transfer_->flush());
-        nixl_status_t status = NIXL_IN_PROG;
         ASSERT_TRUE(waitUntil([&] {
-            status = transfer_->status();
-            return (status != NIXL_IN_PROG) || !transfer_->hasPendingRequests();
+            return (transfer_->status() == NIXL_IN_PROG) && !transfer_->hasPendingRequests();
         }));
-        if (status == NIXL_SUCCESS) {
-            GTEST_SKIP() << "the notification was sent before the receiver progressed";
-        }
-        ASSERT_EQ(NIXL_IN_PROG, status);
     }
 
     // Releases a transfer and then destroys it, as the engine does
@@ -164,6 +193,9 @@ protected:
 
     gtest::ScopedEnv env_;
     std::string received_;
+    // Whether the sockets hold back a large send while the receiver does not
+    // progress
+    bool heldBack_ = false;
     std::unique_ptr<nixlUcxContext> context_;
     std::unique_ptr<nixlUcxWorker> receiver_;
     std::unique_ptr<nixlUcxWorker> sender_;
