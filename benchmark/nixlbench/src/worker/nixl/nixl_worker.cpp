@@ -16,6 +16,7 @@
  */
 
 #include "worker/nixl/nixl_worker.h"
+#include "worker/nixl/nixl_topology.h"
 #include <algorithm>
 #include <cassert>
 #include <cctype>
@@ -35,6 +36,7 @@
 #include "utils/memos_key.h"
 #include "utils/scope_guard.h"
 #include "utils/utils.h"
+#include "utils/transfer_layout.h"
 #include <unistd.h>
 #include <utility>
 #include <sys/time.h>
@@ -1137,7 +1139,12 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
     } else if (isTarget()) {
         num_devices = xferBenchConfig::num_target_dev;
     }
-    buffer_size = xferBenchConfig::total_buffer_size / (num_devices * num_threads);
+    buffer_size = nixlbench::deviceBufferSize(isInitiator(), num_threads);
+    if (!xferBenchConfig::isStorageBackend() && XFERBENCH_MODE_SG == xferBenchConfig::mode &&
+        XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme) {
+        // Each SG process uses one assigned GPU, exposed to it as role-local device 0.
+        num_devices = 1;
+    }
 
     if (xferBenchConfig::storage_enable_direct) {
         if (xferBenchConfig::page_size == 0) {
@@ -1445,6 +1452,16 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
     iov_lists.clear();
 }
 
+std::vector<int>
+xferBenchNixlWorker::exchangePeerRanks() {
+    return nixlbench::exchangePeerRanks(XFERBENCH_MODE_SG == xferBenchConfig::mode,
+                                        xferBenchConfig::scheme,
+                                        isInitiator(),
+                                        rt->getRank(),
+                                        xferBenchConfig::num_initiator_dev,
+                                        xferBenchConfig::num_target_dev);
+}
+
 int
 xferBenchNixlWorker::exchangeMetadata() {
     int meta_sz, ret = 0;
@@ -1454,35 +1471,31 @@ xferBenchNixlWorker::exchangeMetadata() {
         return 0;
     }
 
+    const std::vector<int> peers = exchangePeerRanks();
+
     if (isTarget()) {
         std::string local_metadata;
         const char *buffer;
-        int destrank;
 
         agent->getLocalMD(local_metadata);
 
         buffer = local_metadata.data();
         meta_sz = local_metadata.size();
 
-        if (IS_PAIRWISE_AND_SG()) {
-            destrank = rt->getRank() - xferBenchConfig::num_target_dev;
-            // XXX: Fix up the rank, depends on processes distributed on hosts
-            // assumes placement is adjacent ranks to same node
-        } else {
-            destrank = 0;
+        for (int destrank : peers) {
+            ret = rt->sendInt(&meta_sz, destrank);
+            if (ret != 0) {
+                std::cerr << "NIXL: failed to send metadata size to rank " << destrank << std::endl;
+                return ret;
+            }
+            ret = rt->sendChar((char *)buffer, meta_sz, destrank);
+            if (ret != 0) {
+                std::cerr << "NIXL: failed to send metadata to rank " << destrank << std::endl;
+                return ret;
+            }
         }
-        rt->sendInt(&meta_sz, destrank);
-        rt->sendChar((char *)buffer, meta_sz, destrank);
     } else if (isInitiator()) {
-        int srcrank;
-
-        if (IS_PAIRWISE_AND_SG()) {
-            srcrank = rt->getRank() + xferBenchConfig::num_initiator_dev;
-            // XXX: Fix up the rank, depends on processes distributed on hosts
-            // assumes placement is adjacent ranks to same node
-        } else {
-            srcrank = 1;
-        }
+        const int srcrank = peers.front();
 
         ret = rt->recvInt(&meta_sz, srcrank);
         if (ret < 0) {
@@ -1601,36 +1614,44 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             }
         }
     } else {
+        const std::vector<int> peers = exchangePeerRanks();
         for (const auto &local_iov : local_iovs) {
-            nixlSerDes ser_des;
-            nixl_xfer_dlist_t local_desc(seg_type);
-
-            iovListToNixlXferDlist(local_iov, local_desc);
-
             if (isTarget()) {
-                int destrank;
-                if (IS_PAIRWISE_AND_SG()) {
-                    destrank = rt->getRank() - xferBenchConfig::num_target_dev;
-                    // XXX: Fix up the rank, depends on processes distributed on hosts
-                    // assumes placement is adjacent ranks to same node
-                } else {
-                    destrank = 0;
-                }
+                for (size_t peer_index = 0; peer_index < peers.size(); ++peer_index) {
+                    size_t offset = 0;
+                    size_t count = local_iov.size();
+                    if (XFERBENCH_MODE_SG == xferBenchConfig::mode &&
+                        XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme) {
+                        const auto range = nixlbench::manyToOneDescriptorRange(
+                            local_iov.size(), peers.size(), peer_index);
+                        if (!range) {
+                            std::cerr << "NIXL: target descriptor count " << local_iov.size()
+                                      << " cannot be split across " << peers.size()
+                                      << " initiator ranks" << std::endl;
+                            std::exit(EXIT_FAILURE);
+                        }
+                        offset = range->offset;
+                        count = range->count;
+                    }
 
-                local_desc.serialize(&ser_des);
-                std::string desc_str = ser_des.exportStr();
-                desc_str_sz = desc_str.size();
-                rt->sendInt(&desc_str_sz, destrank);
-                rt->sendChar(desc_str.data(), desc_str.size(), destrank);
-            } else if (isInitiator()) {
-                int srcrank;
-                if (IS_PAIRWISE_AND_SG()) {
-                    srcrank = rt->getRank() + xferBenchConfig::num_initiator_dev;
-                    // XXX: Fix up the rank, depends on processes distributed on hosts
-                    // assumes placement is adjacent ranks to same node
-                } else {
-                    srcrank = 1;
+                    std::vector<xferBenchIOV> peer_iov(local_iov.begin() + offset,
+                                                       local_iov.begin() + offset + count);
+                    nixl_xfer_dlist_t peer_desc(seg_type);
+                    iovListToNixlXferDlist(peer_iov, peer_desc);
+                    nixlSerDes ser_des;
+                    peer_desc.serialize(&ser_des);
+                    std::string desc_str = ser_des.exportStr();
+                    desc_str_sz = desc_str.size();
+                    const int destrank = peers[peer_index];
+                    if (rt->sendInt(&desc_str_sz, destrank) != 0 ||
+                        rt->sendChar(desc_str.data(), desc_str.size(), destrank) != 0) {
+                        std::cerr << "NIXL: failed to send descriptors to rank " << destrank
+                                  << std::endl;
+                        std::exit(EXIT_FAILURE);
+                    }
                 }
+            } else if (isInitiator()) {
+                const int srcrank = peers.front();
 
                 if (rt->recvInt(&desc_str_sz, srcrank) != 0) {
                     std::cerr << "NIXL: failed to receive metadata size" << std::endl;
@@ -1644,6 +1665,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     std::exit(EXIT_FAILURE);
                 }
 
+                nixlSerDes ser_des;
                 ser_des.importStr(desc_str);
 
                 nixl_xfer_dlist_t remote_desc(&ser_des);
@@ -1653,6 +1675,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     }
 
     if (xferBenchConfig::use_device_api) {
+        const std::vector<int> peers = exchangePeerRanks();
+        const int peer_rank = peers.front();
         if (isTarget() && completion_counter_iov.has_value()) {
             nixlSerDes cc_ser;
             nixl_xfer_dlist_t cc_dlist(seg_type);
@@ -1664,32 +1688,20 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             cc_dlist.addDesc(cc_basic);
             cc_dlist.serialize(&cc_ser);
             std::string cc_export = cc_ser.exportStr();
-            int destrank;
-            if (IS_PAIRWISE_AND_SG()) {
-                destrank = rt->getRank() - xferBenchConfig::num_target_dev;
-            } else {
-                destrank = 0;
-            }
             desc_str_sz = static_cast<int>(cc_export.size());
-            rt->sendInt(&desc_str_sz, destrank);
-            rt->sendChar(cc_export.data(), cc_export.size(), destrank);
+            rt->sendInt(&desc_str_sz, peer_rank);
+            rt->sendChar(cc_export.data(), cc_export.size(), peer_rank);
         } else if (isInitiator()) {
             nixlSerDes cc_ser;
-            int srcrank;
-            if (IS_PAIRWISE_AND_SG()) {
-                srcrank = rt->getRank() + xferBenchConfig::num_initiator_dev;
-            } else {
-                srcrank = 1;
-            }
             completion_counter_iov.reset();
-            if (rt->recvInt(&desc_str_sz, srcrank) != 0) {
+            if (rt->recvInt(&desc_str_sz, peer_rank) != 0) {
                 std::cerr << "NIXL: failed to receive completion counter descriptor size"
                           << std::endl;
                 std::exit(EXIT_FAILURE);
             }
             std::string cc_str;
             cc_str.resize(static_cast<size_t>(desc_str_sz), '\0');
-            if (rt->recvChar(cc_str.data(), cc_str.size(), srcrank) != 0) {
+            if (rt->recvChar(cc_str.data(), cc_str.size(), peer_rank) != 0) {
                 std::cerr << "NIXL: failed to receive completion counter descriptor" << std::endl;
                 std::exit(EXIT_FAILURE);
             }
@@ -1959,23 +1971,26 @@ execTransferLoop(nixlAgent *agent,
                  const std::string &target,
                  nixl_opt_args_t &params,
                  const int num_iter,
+                 const int descriptor_depth,
                  xferBenchStats &thread_stats,
                  const std::vector<xferBenchIOV> &local_iov,
                  const std::vector<xferBenchIOV> &remote_iov,
                  const std::atomic<int> *terminate_ptr = nullptr) {
-    const int depth = std::min(xferBenchConfig::pipeline_depth, num_iter);
-    if (depth < xferBenchConfig::pipeline_depth) {
-        std::cout << "Warning: pipeline_depth (" << xferBenchConfig::pipeline_depth
-                  << ") exceeds num_iter (" << num_iter << "), capping to " << depth << std::endl;
+    const int depth = std::min(descriptor_depth, num_iter);
+    if (depth < descriptor_depth && num_iter > 1 && omp_get_thread_num() == 0) {
+        std::cout << "Warning: capping descriptor_depth from " << descriptor_depth << " to "
+                  << depth << " (phase num_iter=" << num_iter << ")" << std::endl;
     }
     const bool recreate = xferBenchConfig::recreate_xfer;
 
-    if (local_iov.size() % depth != 0) {
+    if (local_iov.size() % descriptor_depth != 0) {
         std::cerr << "Error: descriptor count (" << local_iov.size()
-                  << ") is not evenly divisible by pipeline depth (" << depth << ")" << std::endl;
+                  << ") is not evenly divisible by descriptor depth (" << descriptor_depth << ")"
+                  << std::endl;
         return -1;
     }
-    const size_t entries_per_slot = local_iov.size() / depth;
+    // Capping concurrency must preserve each request's original descriptor group.
+    const size_t entries_per_slot = local_iov.size() / descriptor_depth;
 
     std::vector<slotState> slots(depth);
     for (int s = 0; s < depth; s++) {
@@ -2086,6 +2101,7 @@ execTransfer(nixlAgent *agent,
              const nixl_xfer_op_t op,
              const int num_iter,
              const int num_threads,
+             const int descriptor_depth,
              xferBenchStats &stats,
              const std::atomic<int> *terminate_ptr = nullptr) {
     int ret = 0;
@@ -2113,6 +2129,7 @@ execTransfer(nixlAgent *agent,
                                       target,
                                       params,
                                       num_iter,
+                                      descriptor_depth,
                                       thread_stats,
                                       local_iov,
                                       remote_iov,
@@ -2381,9 +2398,9 @@ std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
                               const std::vector<std::vector<xferBenchIOV>> &remote_iovs) {
-    const int workers = xferBenchConfig::workerNum();
-    int num_iter = xferBenchConfig::num_iter / workers;
-    int skip = xferBenchConfig::warmup_iter / workers;
+    const auto plan = xferBenchConfig::iterationPlan(block_size);
+    const int num_iter = plan.num_iter;
+    const int skip = plan.warmup_iter;
     xferBenchStats stats;
     int ret = 0;
 
@@ -2395,7 +2412,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
             return std::variant<xferBenchStats, int>(-1);
         }
 
-        // Write every remote descriptor once so queryMem measures hits.
+        // Write every remote descriptor once in one slot so queryMem measures hits.
         xferBenchStats prepop_stats;
         std::cout << "Pre-populating with " << block_size << " byte values before QUERY test..."
                   << std::endl;
@@ -2406,17 +2423,12 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            NIXL_WRITE,
                            1,
                            xferBenchConfig::num_threads,
+                           1,
                            prepop_stats);
         if (ret < 0) {
             std::cerr << "Failed to pre-populate for QUERY (block_size=" << block_size << ")"
                       << std::endl;
             return std::variant<xferBenchStats, int>(ret);
-        }
-
-        // Reduce iterations for large block sizes
-        if (block_size > LARGE_BLOCK_SIZE) {
-            skip /= xferBenchConfig::large_blk_iter_ftr;
-            num_iter /= xferBenchConfig::large_blk_iter_ftr;
         }
 
         if (skip > 0) {
@@ -2460,7 +2472,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
     // For DOCA_MEMOS READ: pre-populate keys by writing them first with the correct block_size.
     // DOCA_MEMOS stores exact key-value pairs; a retrieve fails with IO_FAILED if the stored
     // value length doesn't match the read buffer length. This mirrors fio's approach of
-    // running a write job before the read job.
+    // running a write job before the read job. Run each descriptor slot once to cover all keys
+    // while preserving the measured transfer's request grouping.
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_DOCA_MEMOS &&
         xferBenchConfig::op_type == XFERBENCH_OP_READ) {
         xferBenchStats prepop_stats;
@@ -2472,8 +2485,9 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            local_iovs,
                            remote_iovs,
                            NIXL_WRITE,
-                           1,
+                           plan.descriptor_depth,
                            xferBenchConfig::num_threads,
+                           plan.descriptor_depth,
                            prepop_stats);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Failed to pre-populate keys for READ (block_size="
@@ -2490,8 +2504,9 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            local_iovs,
                            remote_iovs,
                            NIXL_READ,
-                           1,
+                           plan.descriptor_depth,
                            xferBenchConfig::num_threads,
+                           plan.descriptor_depth,
                            verify_stats);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Verification failed - retrieve operations failed after "
@@ -2501,12 +2516,6 @@ xferBenchNixlWorker::transfer(size_t block_size,
         }
         std::cout << "DOCA_MEMOS: Verification complete - all keys verified successfully"
                   << std::endl;
-    }
-
-    // Reduce skip by 10x for large block sizes
-    if (block_size > LARGE_BLOCK_SIZE) {
-        skip /= xferBenchConfig::large_blk_iter_ftr;
-        num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
     nixlMemViewH local_mvh = nullptr;
@@ -2558,6 +2567,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                xfer_op,
                                skip,
                                xferBenchConfig::num_threads,
+                               plan.descriptor_depth,
                                stats,
                                &terminate);
         }
@@ -2587,6 +2597,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            xfer_op,
                            num_iter,
                            xferBenchConfig::num_threads,
+                           plan.descriptor_depth,
                            stats,
                            &terminate);
     }
@@ -2601,17 +2612,10 @@ xferBenchNixlWorker::transfer(size_t block_size,
 void
 xferBenchNixlWorker::poll(size_t block_size) {
     nixl_notifs_t notifs;
-    nixl_status_t status;
-    int skip = 0, num_iter = 0, total_iter = 0;
-
-    skip = xferBenchConfig::warmup_iter;
-    num_iter = xferBenchConfig::num_iter;
-    // Reduce skip by 10x for large block sizes
-    if (block_size > LARGE_BLOCK_SIZE) {
-        skip /= xferBenchConfig::large_blk_iter_ftr;
-        num_iter /= xferBenchConfig::large_blk_iter_ftr;
-    }
-    total_iter = skip + num_iter;
+    const auto plan = xferBenchConfig::iterationPlan(block_size);
+    const uint64_t workers = xferBenchConfig::workerNum();
+    const uint64_t warmup_iter = static_cast<uint64_t>(plan.warmup_iter) * workers;
+    const uint64_t total_iter = (static_cast<uint64_t>(plan.warmup_iter) + plan.num_iter) * workers;
 
     // Periodically check if all peers are still alive via etcd lease keys.
     // Fires at most once every liveness_check_interval to avoid
@@ -2634,13 +2638,11 @@ xferBenchNixlWorker::poll(size_t block_size) {
         xferBenchConfig::use_device_api && completion_counter_iov.has_value();
     if (use_device_completion_counter) {
         const xferBenchIOV &counter_iov = completion_counter_iov.value();
-        if (!waitForDeviceCompletionCounter(
-                counter_iov, static_cast<uint64_t>(skip), "warmup", checkLiveness)) {
+        if (!waitForDeviceCompletionCounter(counter_iov, warmup_iter, "warmup", checkLiveness)) {
             return;
         }
         synchronize();
-        if (!waitForDeviceCompletionCounter(
-                counter_iov, static_cast<uint64_t>(total_iter), "transfer", checkLiveness)) {
+        if (!waitForDeviceCompletionCounter(counter_iov, total_iter, "transfer", checkLiveness)) {
             return;
         }
         synchronize();
@@ -2648,19 +2650,33 @@ xferBenchNixlWorker::poll(size_t block_size) {
         return;
     }
 
-    /* Ensure warmup is done*/
-    do {
-        status = agent->getNotifs(notifs);
-        checkLiveness();
-    } while (!signaled() && status == NIXL_SUCCESS && skip != int(notifs["initiator"].size()));
-    synchronize();
+    const uint64_t initiator_count = XFERBENCH_MODE_SG == xferBenchConfig::mode &&
+            XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme ?
+        static_cast<uint64_t>(xferBenchConfig::num_initiator_dev) :
+        1;
+    const uint64_t expected_warmup = warmup_iter * initiator_count;
+    const uint64_t expected_total = total_iter * initiator_count;
+    auto waitForNotifications = [&](uint64_t expected, const char *phase) {
+        while (!signaled() && notifs["initiator"].size() < expected) {
+            const auto status = agent->getNotifs(notifs);
+            if (status != NIXL_SUCCESS) {
+                std::cerr << "nixlbench: getNotifs failed during " << phase << " with status "
+                          << status << std::endl;
+                terminate.store(1);
+                return false;
+            }
+            checkLiveness();
+        }
+        return !signaled();
+    };
 
-    /* Polling for actual iterations*/
-    do {
-        status = agent->getNotifs(notifs);
-        checkLiveness();
-    } while (!signaled() && status == NIXL_SUCCESS &&
-             total_iter != int(notifs["initiator"].size()));
+    if (!waitForNotifications(expected_warmup, "warmup")) {
+        return;
+    }
+    synchronize();
+    if (!waitForNotifications(expected_total, "measurement")) {
+        return;
+    }
     synchronize();
 }
 

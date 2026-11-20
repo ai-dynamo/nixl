@@ -19,6 +19,7 @@
 #define NIXL_BENCHMARK_NIXLBENCH_SRC_UTILS_UTILS_H
 
 #include "config.h"
+#include "utils/transfer_scheme.h"
 #include <chrono>
 #include <cstdint>
 #include <iostream>
@@ -131,12 +132,6 @@
 #define XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED "supported"
 #define XFERBENCH_OBJ_REQ_CHECKSUM_REQUIRED "required"
 
-// Scheme types for transfer patterns
-#define XFERBENCH_SCHEME_PAIRWISE "pairwise"
-#define XFERBENCH_SCHEME_ONE_TO_MANY "onetomany"
-#define XFERBENCH_SCHEME_MANY_TO_ONE "manytoone"
-#define XFERBENCH_SCHEME_TP "tp"
-
 // Operation types
 #define XFERBENCH_OP_READ "READ"
 #define XFERBENCH_OP_WRITE "WRITE"
@@ -169,6 +164,12 @@
 #define IS_MANY_TO_ONE_AND_MG()                                 \
     (XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme && \
      XFERBENCH_MODE_MG == xferBenchConfig::mode)
+
+struct xferBenchIterationPlan {
+    int warmup_iter;
+    int num_iter;
+    int descriptor_depth;
+};
 
 class xferBenchConfig {
 public:
@@ -269,6 +270,9 @@ public:
     static int doca_memos_num_tasks;
     static std::string doca_memos_nguid;
 
+    /* Per-worker iterations and descriptor slots needed by either execution phase. */
+    static xferBenchIterationPlan
+    iterationPlan(size_t block_size);
     // Cached set of memory segment types reported by the selected backend.
     // Populated pre-instantiation in loadParams via getPluginParams, then refreshed
     // post-instantiation by the worker via getBackendParams (so LIBFABRIC's runtime-added
@@ -459,7 +463,7 @@ public:
                      std::vector<std::vector<xferBenchIOV>> &remote_lists);
     static void
     printStatsHeader();
-    static void
+    static bool
     printStats(bool is_target, size_t block_size, size_t batch_size, xferBenchStats stats);
 };
 

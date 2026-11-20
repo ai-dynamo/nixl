@@ -20,6 +20,7 @@
 #include <nixl.h>
 #include <sys/time.h>
 #include "utils/utils.h"
+#include "utils/transfer_layout.h"
 #if HAVE_RAW_CLI
 #include "utils/raw_cli.h"
 #endif
@@ -32,84 +33,6 @@
 #include <memory>
 #include <csignal>
 
-static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int num_threads) {
-    int initiator_device, target_device;
-    size_t buffer_size, count, stride;
-
-    initiator_device = xferBenchConfig::num_initiator_dev;
-    target_device = xferBenchConfig::num_target_dev;
-
-    // Default value
-    count = 1;
-    buffer_size = xferBenchConfig::total_buffer_size / (initiator_device * num_threads);
-
-    // TODO: add macro for schemes
-    // Maybe, we can squeze ONE_TO_MANY and MANY_TO_ONE into TP scheme
-    if (XFERBENCH_SCHEME_ONE_TO_MANY == xferBenchConfig::scheme) {
-        if (worker.isInitiator()) {
-            count = target_device;
-        }
-    } else if (XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme) {
-        if (worker.isTarget()) {
-            count = initiator_device;
-        }
-    } else if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
-        if (worker.isInitiator()) {
-            if (initiator_device < target_device) {
-                count = target_device / initiator_device;
-            }
-        } else if (worker.isTarget()) {
-            if (target_device < initiator_device) {
-                count = initiator_device / target_device;
-            }
-        }
-    }
-    stride = buffer_size / count;
-
-    // For hugepages: ensure stride is a multiple of 2MB so addresses stay 2MB-aligned
-    // This ensures dev_offset = (i * stride) % iov.len is always a multiple of 2MB
-    if (xferBenchConfig::use_hugepages) {
-        stride = ROUND_UP(stride, HUGEPAGE_SIZE);
-    }
-
-    return std::make_pair(count, stride);
-}
-
-static std::vector<std::vector<xferBenchIOV>> createTransferDescLists(xferBenchWorker &worker,
-                                                                      std::vector<std::vector<xferBenchIOV>> &iov_lists,
-                                                                      size_t block_size,
-                                                                      size_t batch_size,
-                                                                      int num_threads) {
-    auto [count, stride] = getStrideScheme(worker, num_threads);
-    std::vector<std::vector<xferBenchIOV>> xfer_lists;
-
-    for (const auto &iov_list: iov_lists) {
-        std::vector<xferBenchIOV> xfer_list;
-
-        for (const auto &iov : iov_list) {
-            for (size_t i = 0; i < count; i++) {
-                size_t dev_offset = ((i * stride) % iov.len);
-
-                for (size_t j = 0; j < batch_size; j++) {
-                    size_t block_offset = ((j * block_size) % iov.len);
-                    if (block_offset + block_size > iov.len) {
-                        // Prevent memory overflow when iov.len is not divisible by block_size
-                        block_offset = 0;
-                    }
-                    xfer_list.push_back(xferBenchIOV((iov.addr + dev_offset) + block_offset,
-                                                     block_size,
-                                                     iov.devId,
-                                                     iov.metaInfo));
-                }
-            }
-        }
-
-        xfer_lists.push_back(xfer_list);
-    }
-
-    return xfer_lists;
-}
-
 static int processBatchSizes(xferBenchWorker &worker,
                              std::vector<std::vector<xferBenchIOV>> &iov_lists,
                              size_t block_size, int num_threads) {
@@ -117,9 +40,12 @@ static int processBatchSizes(xferBenchWorker &worker,
          !worker.signaled() &&
              batch_size <= xferBenchConfig::max_batch_size;
          batch_size *= 2) {
-        size_t effective_batch = batch_size * xferBenchConfig::pipeline_depth;
-        auto local_trans_lists =
-            createTransferDescLists(worker, iov_lists, block_size, effective_batch, num_threads);
+        const int descriptor_depth = xferBenchConfig::worker_type == XFERBENCH_WORKER_NIXL ?
+            xferBenchConfig::iterationPlan(block_size).descriptor_depth :
+            xferBenchConfig::pipeline_depth;
+        size_t effective_batch = batch_size * descriptor_depth;
+        auto local_trans_lists = nixlbench::createTransferDescLists(
+            worker.isInitiator(), iov_lists, block_size, effective_batch, num_threads);
 
         if (worker.isTarget()) {
             if (xferBenchConfig::isStorageBackend()) {
@@ -129,14 +55,15 @@ static int processBatchSizes(xferBenchWorker &worker,
 
             worker.exchangeIOV(local_trans_lists, block_size);
             worker.poll(block_size);
+            if (worker.signaled()) {
+                return EXIT_FAILURE;
+            }
 
             if (!xferBenchUtils::validateTransfer(false, local_trans_lists, local_trans_lists)) {
                 return EXIT_FAILURE;
             }
-            if (IS_PAIRWISE_AND_SG()) {
-                // TODO: This is here just to call throughput reduction
-                // Separate reduction and print
-                xferBenchUtils::printStats(true, block_size, batch_size, xferBenchStats());
+            if (!xferBenchUtils::printStats(true, block_size, batch_size, xferBenchStats())) {
+                return EXIT_FAILURE;
             }
         } else if (worker.isInitiator()) {
             std::vector<std::vector<xferBenchIOV>> remote_trans_lists(
@@ -151,8 +78,18 @@ static int processBatchSizes(xferBenchWorker &worker,
                 return EXIT_FAILURE;
             }
 
-            xferBenchUtils::printStats(
-                false, block_size, batch_size, std::get<xferBenchStats>(result));
+            if (!xferBenchUtils::printStats(
+                    false, block_size, batch_size, std::get<xferBenchStats>(result))) {
+                return EXIT_FAILURE;
+            }
+        }
+        if (xferBenchConfig::mode == XFERBENCH_MODE_SG &&
+            xferBenchConfig::scheme == XFERBENCH_SCHEME_MANY_TO_ONE) {
+            // Complete summary-message cleanup before the next IOV exchange reuses its keys.
+            worker.synchronize();
+        }
+        if (batch_size > xferBenchConfig::max_batch_size / 2) {
+            break;
         }
     }
 
@@ -228,6 +165,9 @@ runBenchmark() {
         ret = processBatchSizes(*worker_ptr, iov_lists, block_size, num_workers);
         if (0 != ret) {
             return EXIT_FAILURE;
+        }
+        if (block_size > xferBenchConfig::max_block_size / 2) {
+            break;
         }
     }
 
