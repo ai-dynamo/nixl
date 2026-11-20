@@ -128,6 +128,7 @@ endif
 
 if ucx_dep.found() and is_variable('ucx_backend_interface')
     gtest_sources += 'hw_warning_test.cpp'
+    gtest_sources += 'ucx_config_test.cpp'
     gtest_sources += 'ucx_trace_context_test.cpp'
     gtest_sources += 'ucx_request_release_test.cpp'
     cpp_flags += '-DHAVE_UCX_BACKEND'
