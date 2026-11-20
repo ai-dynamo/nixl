@@ -185,7 +185,8 @@ public:
                    const std::string &engine_conf = "",
                    const std::string &name = "",
                    nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy =
-                       nixl_ucx_vram_memtype_hint_t::AUTO);
+                       nixl_ucx_vram_memtype_hint_t::AUTO,
+                   ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_PEER);
     nixlUcxContext(nixlUcxContext &&) = delete;
     nixlUcxContext(const nixlUcxContext &) = delete;
 
@@ -300,6 +301,25 @@ operator<<(std::ostream &os, const nixlUcxWorker &worker);
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options();
+
+/**
+ * @brief Whether UCX SGL offload is requested: NIXL_UCX_SGL_ENABLE, enabled by default
+ *        when built with the UCX SGL API
+ */
+[[nodiscard]] bool
+sglRequestedFromConfig();
+
+/**
+ * @brief Failover on UCX 1.24 and newer unless SGL offload is requested, otherwise peer
+ */
+[[nodiscard]] ucp_err_handling_mode_t
+defaultErrHandlingMode();
+
+/**
+ * @brief Whether the mode is failover; false when UCX lacks failover
+ */
+[[nodiscard]] bool
+isFailoverErrHandlingMode(ucp_err_handling_mode_t mode) noexcept;
 
 [[nodiscard]] std::string_view
 ucx_err_mode_to_string(ucp_err_handling_mode_t t);

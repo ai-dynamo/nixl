@@ -33,12 +33,17 @@ constexpr std::chrono::seconds wait_timeout{100};
 namespace nixl {
     constexpr const char* ucx_err_handling_mode_key  = "ucx_error_handling_mode";
     constexpr const char* ucx_err_handling_mode_peer = "peer";
+    constexpr const char *ucx_err_handling_mode_failover = "failover";
 
+    /**
+     * @brief Create a UCX backend, optionally overriding the error-handling mode
+     */
     static nixlBackendH *
     createUcxBackend(nixlAgent &agent,
                      const std::string &backend_name,
                      size_t num_workers,
-                     size_t num_threads) {
+                     size_t num_threads,
+                     const std::string &err_handling_mode = "") {
         std::vector<nixl_backend_t> plugins;
         nixl_status_t status = agent.getAvailPlugins(plugins);
         EXPECT_EQ(status, NIXL_SUCCESS);
@@ -51,7 +56,15 @@ namespace nixl {
         EXPECT_EQ(NIXL_SUCCESS, status);
 
         nixlBackendH* backend_handle = nullptr;
+#ifdef HAVE_UCX_BACKEND
+        EXPECT_EQ(std::string(ucx_err_mode_to_string(defaultErrHandlingMode())),
+                  params[ucx_err_handling_mode_key]);
+#else
         EXPECT_EQ(ucx_err_handling_mode_peer, params[ucx_err_handling_mode_key]);
+#endif
+        if (!err_handling_mode.empty()) {
+            params[ucx_err_handling_mode_key] = err_handling_mode;
+        }
         params["num_workers"] = std::to_string(num_workers);
         params["num_threads"] = std::to_string(num_threads);
         // If threadpool is configured always force split
@@ -103,7 +116,8 @@ class TestErrorHandling : public nixl_test_t {
              const std::string &backend_name,
              bool use_prog_thread,
              size_t num_workers,
-             size_t num_threads);
+             size_t num_threads,
+             const std::string &err_handling_mode = "");
 
         void
         destroy();
@@ -150,7 +164,12 @@ protected:
     };
 
     TestErrorHandling();
-    template<TestType test_type, enum nixl_xfer_op_t op> void testXfer();
+    /**
+     * @brief Run one transfer pattern, optionally forcing an error-handling mode
+     */
+    template<TestType test_type, enum nixl_xfer_op_t op>
+    void
+    testXfer(const std::string &err_handling_mode_override = "");
     void
     testNotifAfterFail();
     void
@@ -186,6 +205,7 @@ private:
     const bool progThread_;
     size_t numWorkers_;
     size_t numThreads_;
+    const std::string errHandlingMode_;
 };
 
 void
@@ -193,7 +213,8 @@ TestErrorHandling::Agent::init(const std::string &name,
                                const std::string &backend_name,
                                bool use_prog_thread,
                                size_t num_workers,
-                               size_t num_threads) {
+                               size_t num_threads,
+                               const std::string &err_handling_mode) {
     nixlAgentConfig cfg;
     m_progThread = use_prog_thread;
     cfg.useProgThread = use_prog_thread;
@@ -201,7 +222,8 @@ TestErrorHandling::Agent::init(const std::string &name,
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     m_priv = std::make_unique<nixlAgent>(name, cfg);
     // At the moment, only UCX backend is tested for error handling support.
-    m_backend = nixl::createUcxBackend(*m_priv, backend_name, num_workers, num_threads);
+    m_backend =
+        nixl::createUcxBackend(*m_priv, backend_name, num_workers, num_threads, err_handling_mode);
     m_mem.init(m_backend);
     m_mem.fillData();
 
@@ -312,10 +334,14 @@ TestErrorHandling::TestErrorHandling()
     : m_backend_name(GetParam().backendName),
       progThread_(GetParam().progressThreadEnabled),
       numWorkers_(GetParam().numWorkers),
-      numThreads_(GetParam().numThreads) {
+      numThreads_(GetParam().numThreads),
+      errHandlingMode_(GetParam().ucxErrHandlingMode) {
+    m_env.unsetVar("NIXL_UCX_SGL_ENABLE");
     m_env.addVar("UCX_RC_TIMEOUT", "100us");
     m_env.addVar("UCX_RC_RETRY_COUNT", "4");
     m_env.addVar("UCX_UD_TIMEOUT", "3s");
+    // Default 20s keepalive cannot fail every AM lane inside the 100s wait.
+    m_env.addVar("UCX_KEEPALIVE_INTERVAL", "1s");
     m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
 }
 
@@ -334,12 +360,20 @@ TestErrorHandling::excludeEfaTransports() {
     }
 }
 
+/**
+ * @brief Run one transfer pattern, optionally forcing an error-handling mode
+ */
 template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
-void TestErrorHandling::testXfer() {
+void
+TestErrorHandling::testXfer(const std::string &err_handling_mode_override) {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
-    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
-    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    const std::string &err_handling_mode =
+        err_handling_mode_override.empty() ? errHandlingMode_ : err_handling_mode_override;
+    m_Initiator.init(
+        initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_, err_handling_mode);
+    m_Target.init(
+        target_name, m_backend_name, progThread_, numWorkers_, numThreads_, err_handling_mode);
 
     exchangeMetaData();
 
@@ -368,7 +402,12 @@ void TestErrorHandling::testXfer() {
                 // on disconnect: the consumer must do it explicitly before
                 // re-registering the failed agent.
                 EXPECT_EQ(m_Initiator.getAgent()->invalidateRemoteMD(target_name), NIXL_SUCCESS);
-                m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+                m_Target.init(target_name,
+                              m_backend_name,
+                              progThread_,
+                              numWorkers_,
+                              numThreads_,
+                              err_handling_mode);
                 exchangeMetaData();
             }
         } else {
@@ -499,8 +538,11 @@ TEST_P(TestErrorHandling, BasicXfer) {
 TEST_P(TestErrorHandling, LoadRemoteThenFail) {
     const LogIgnoreGuard lig(expected_log);
     excludeEfaTransports();
-    testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_WRITE>();
-    testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_READ>();
+    // TODO: Drop the peer override once openucx/ucx#12372 is merged. The target
+    // is destroyed while the endpoint is still in wireup, and UCX wireup does
+    // not handle failover yet.
+    testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_WRITE>(nixl::ucx_err_handling_mode_peer);
+    testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_READ>(nixl::ucx_err_handling_mode_peer);
 }
 
 TEST_P(TestErrorHandling, XferThenFail) {
@@ -541,8 +583,10 @@ void
 TestErrorHandling::testStalePreppedDlist() {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
-    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
-    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Initiator.init(
+        initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
+    m_Target.init(
+        target_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
     exchangeMetaData();
 
     nixl_xfer_dlist_t l_descs(DRAM_SEG), r_descs(DRAM_SEG);
@@ -590,8 +634,10 @@ void
 TestErrorHandling::testStaleXferHandle() {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
-    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
-    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Initiator.init(
+        initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
+    m_Target.init(
+        target_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
     exchangeMetaData();
 
     nixl_xfer_dlist_t l_descs(DRAM_SEG), r_descs(DRAM_SEG);
@@ -635,8 +681,10 @@ void
 TestErrorHandling::testMetadataReloadKeepsHandlesValid() {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
-    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
-    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Initiator.init(
+        initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
+    m_Target.init(
+        target_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
     exchangeMetaData();
 
     nixl_xfer_dlist_t l_descs(DRAM_SEG), r_descs(DRAM_SEG);
@@ -666,6 +714,27 @@ TestErrorHandling::testMetadataReloadKeepsHandlesValid() {
     m_Initiator.destroy();
 }
 
+#if defined(HAVE_UCX_BACKEND) && defined(HAVE_UCX_SGL_API)
+TEST(UcxErrHandlingDefault, SglSelectsPeer) {
+    ScopedEnv env;
+    env.addVar("NIXL_UCX_SGL_ENABLE", "y");
+    EXPECT_EQ(defaultErrHandlingMode(), UCP_ERR_HANDLING_MODE_PEER);
+}
+#endif
+
+#if defined(HAVE_UCX_BACKEND) && defined(HAVE_UCX_ERR_HANDLING_FAILOVER)
+TEST(UcxErrHandlingDefault, SglDisabledAllowsFailover) {
+    ScopedEnv env;
+    env.addVar("NIXL_UCX_SGL_ENABLE", "n");
+    unsigned major, minor, release;
+    ucp_get_version(&major, &minor, &release);
+    const auto expected = (UCP_VERSION(major, minor) >= UCP_VERSION(1, 24)) ?
+        UCP_ERR_HANDLING_MODE_FAILOVER :
+        UCP_ERR_HANDLING_MODE_PEER;
+    EXPECT_EQ(defaultErrHandlingMode(), expected);
+}
+#endif
+
 #ifdef HAVE_UCX_BACKEND
 TEST_P(TestErrorHandling, ErrorCallbackMarksEndpointFailedWithoutClosingIt) {
     std::vector<std::string> devices;
@@ -693,5 +762,26 @@ NIXL_INSTANTIATE_TEST(ucx, TestErrorHandling, "UCX", true, 1, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestErrorHandling, "UCX", false, 1, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool, TestErrorHandling, "UCX", true, 2, 1, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestErrorHandling, "UCX", false, 2, 1, "");
+
+#ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
+NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(
+    ucx_failover, TestErrorHandling, "UCX", true, 1, 0, nixl::ucx_err_handling_mode_failover);
+NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(
+    ucx_failover_no_pt, TestErrorHandling, "UCX", false, 1, 0, nixl::ucx_err_handling_mode_failover);
+NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(ucx_failover_threadpool,
+                                   TestErrorHandling,
+                                   "UCX",
+                                   true,
+                                   2,
+                                   1,
+                                   nixl::ucx_err_handling_mode_failover);
+NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(ucx_failover_threadpool_no_pt,
+                                   TestErrorHandling,
+                                   "UCX",
+                                   false,
+                                   2,
+                                   1,
+                                   nixl::ucx_err_handling_mode_failover);
+#endif
 
 } // namespace gtest

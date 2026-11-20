@@ -28,17 +28,76 @@
 
 #include <nixl_types.h>
 
+#include "common/configuration.h"
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
 #include "serdes/serdes.h"
+
+namespace {
+
+[[nodiscard]] unsigned
+ucpVersion() noexcept {
+    unsigned major_version, minor_version, release_number;
+    ucp_get_version(&major_version, &minor_version, &release_number);
+    return UCP_VERSION(major_version, minor_version);
+}
+
+/**
+ * @brief Failover when UCX provides it and the loaded library is 1.24 or newer
+ */
+[[nodiscard]] std::optional<ucp_err_handling_mode_t>
+failoverErrHandlingMode(unsigned ucp_version) noexcept {
+#ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
+    constexpr unsigned ucp_version_err_handling_failover = UCP_VERSION(1, 24);
+    if (ucp_version >= ucp_version_err_handling_failover) {
+        return UCP_ERR_HANDLING_MODE_FAILOVER;
+    }
+#endif
+    return std::nullopt;
+}
+
+} // namespace
+
+bool
+sglRequestedFromConfig() {
+#ifdef HAVE_UCX_SGL_API
+    // TODO: Remove NIXL_UCX_SGL_ENABLE once SGL has had enough field exposure.
+    return nixl::config::getValueOptional<bool>("NIXL_UCX_SGL_ENABLE").value_or(true);
+#else
+    return false;
+#endif
+}
+
+/**
+ * @brief Failover on UCX 1.24 and newer unless SGL offload is requested, otherwise peer
+ */
+ucp_err_handling_mode_t
+defaultErrHandlingMode() {
+    const auto failover = failoverErrHandlingMode(ucpVersion());
+    if (failover && sglRequestedFromConfig()) {
+        NIXL_DEBUG << "UCX failover error handling is not supported with SGL offload,"
+                   << " defaulting to peer error handling";
+        return UCP_ERR_HANDLING_MODE_PEER;
+    }
+    return failover.value_or(UCP_ERR_HANDLING_MODE_PEER);
+}
+
+bool
+isFailoverErrHandlingMode(ucp_err_handling_mode_t mode) noexcept {
+#ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
+    return mode == UCP_ERR_HANDLING_MODE_FAILOVER;
+#else
+    return false;
+#endif
+}
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
     nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
 
     params.emplace(nixl_ucx_err_handling_param_name,
-                   ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));
+                   ucx_err_mode_to_string(defaultErrHandlingMode()));
     params.emplace(nixl_ucx_vram_memtype_hint_param_name,
                    ucx_vram_memtype_hint_to_string(nixl_ucx_vram_memtype_hint_t::AUTO));
     return params;
@@ -54,6 +113,9 @@ template<typename E> struct EnumName {
 constexpr auto ucx_err_handling_mode_names = std::to_array<EnumName<ucp_err_handling_mode_t>>({
     {UCP_ERR_HANDLING_MODE_NONE, "none"},
     {UCP_ERR_HANDLING_MODE_PEER, "peer"},
+#ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
+    {UCP_ERR_HANDLING_MODE_FAILOVER, "failover"},
+#endif
 });
 
 constexpr auto ucx_vram_memtype_hint_names = std::to_array<EnumName<nixl_ucx_vram_memtype_hint_t>>({
@@ -448,13 +510,16 @@ nixlUcxMtLevelIsSupported(const nixl::ucx::mt_mode_t mt_type) noexcept {
 
 namespace {
 
+/**
+ * @brief Loaded UCX major.minor, packed with UCP_VERSION
+ */
 [[nodiscard]] unsigned
 makeUcpVersion() noexcept {
-    unsigned major_version, minor_version, release_number;
-    ucp_get_version(&major_version, &minor_version, &release_number);
-    const unsigned version = UCP_VERSION(major_version, minor_version);
+    const unsigned version = ucpVersion();
 
     if (version < UCP_VERSION(1, 19)) {
+        unsigned major_version, minor_version, release_number;
+        ucp_get_version(&major_version, &minor_version, &release_number);
         NIXL_WARN << "UCX version is " << major_version << '.' << minor_version << '.'
                   << release_number
                   << " which is less than 1.19, CUDA support is limited, including"
@@ -524,6 +589,9 @@ ucx_policy_to_mem_type(const nixl_ucx_vram_memtype_hint_t policy) {
 
 } // namespace
 
+/**
+ * @brief Create the UCX context and apply NIXL transport settings
+ */
 nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                bool prog_thread,
                                unsigned long num_workers,
@@ -531,7 +599,8 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                size_t num_device_channels,
                                const std::string &engine_config,
                                const std::string &name,
-                               nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy)
+                               nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy,
+                               ucp_err_handling_mode_t err_handling_mode)
     : mtType_(makeMtType(prog_thread, sync_mode)),
       ucpVersion_(makeUcpVersion()),
       name_(name),
@@ -614,6 +683,11 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     }
 
     config.validateTlsCudaSupport();
+
+    /* UCX_FAILOVER_MODE=token requires UCX_IB_INDIRECT_ATOMIC=n. */
+    if (isFailoverErrHandlingMode(err_handling_mode)) {
+        config.modifyAlways("IB_INDIRECT_ATOMIC", "n");
+    }
 
     ucp_context_h new_ctx = nullptr;
     const auto status = ucp_init(&ucp_params, config.getUcpConfig(), &new_ctx);
