@@ -1,5 +1,33 @@
 # DOCA plugin unit test
 
+## Native pool qualification
+
+`native_qp_count=1` is the default. Native mode accepts1..32 active READ
+channels per backend, selected once at view preparation with
+`hint.customParam="native_channel=N"`. The GPU API/device-view ABI is unchanged.
+Use matching channel views; channels are independently ordered, even with
+strict registrations. Native pools still support one peer per engine.
+
+Set `NIXL_GPUNETIO_TEST_QPS=4` or32 to exercise the owned pool in the hardware
+GET test below. It checks distinct lane/QP identities, mixed-channel rejection,
+generation preservation on re-preparation/MD reload, immediate GPU consumption,
+and repeated SQ/CQ wrap on every channel. The default remains the one-QP test.
+
+The following are disposable-process fault modes; failed resources stay alive
+until process exit, not normal resource reclamation or recovery:
+
+- `NIXL_GPUNETIO_TEST_PEER_QPS=N` differing from the reader count requires
+  setup rejection during metadata/OOB exchange.
+- `NIXL_GPUNETIO_TEST_RETENTION=1` poisons the last channel and checks idle
+  view release plus failed-channel retention. Run under memory checking.
+- Add `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to use a real invalid-rkey READ instead
+  of synthetic poisoning. It requires a CQ error, sticky refusal and continued
+  healthy-channel progress before testing retention.
+
+`nixl_gpunetio_native_pool_options_test` is a CPU-only parser test with no
+GPU/network dependency. It covers all supported sizes/channels and invalid
+syntax/bounds/binary blobs.
+
 Unit test application for the DOCA GPUNetIO backend plugin. It enables a GPU to GPU communications between initiator and target using the GPUDirect Async Kernel-Initiated (GDAKI) technology through the [DOCA GPUNetIO](https://docs.nvidia.com/doca/sdk/doca+gpunetio/index.html) library.
 
 Initiator and target communicate over the network using the DOCA GPUNetIO plugin, so both processes should run on a system with a GPU. Initiator and target exchange a sequence of metadata and notifications for the setup then initiator posts twice the same transfer request with 32 buffers, with a value for the first transfer and updated value for the second transfer.
@@ -17,6 +45,39 @@ Please look at the [DOCA GPUNetIO](https://docs.nvidia.com/doca/sdk/doca+gpuneti
 ## Execute
 
 The following instructions assume DOCA libraries and NIXL libraries are set in LD_LIBRARY_PATH environment variable.
+
+The native GET test also exercises FIFO pipelining and partial retirement over
+90 rounds per channel; it skips this part when MCST consistency is required.
+A captured two-CTA contention check verifies that only one session owns a lane,
+that the other is rejected, and that the lane can be reused across replays.
+With two or more QPs, two separately captured Graphs also publish independent
+READs on distinct lanes before either retires; destination bytes are checked.
+
+For the native GET test, add `NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR=1` together
+with `NIXL_GPUNETIO_TEST_RETENTION=1` and `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to
+inject a bad key between two valid READs and check sticky FIFO error handling.
+Run this only in a disposable process; failed resources are retained until
+process exit. The public FIFO completion path is the default. Define
+`NIXL_GPUNETIO_PUBLIC_FIFO_ONLY=0` consistently across CUDA consumers only
+when testing the unsupported private parallel CQ helper.
+
+With `build_tests=true`, a non-release build, and `gpunetio_device_api=enabled`,
+`nixl_gpunetio_device_get_test` exercises GPU-initiated GET from registered
+pinned Host or VRAM memory. It creates two agents on the selected GPUs and checks scalar and
+CTA-batched reads, individual completions, result bytes, and guard bytes.
+It also rejects a malformed metadata section and verifies that the same live
+peer can reload valid metadata and execute the reads. The malformed-section
+check emits an expected `NIXL_ERR_MISMATCH` log.
+Run it manually on a configured GPUNETIO system with two free consecutive OOB
+ports; the GPU index is relative to `CUDA_VISIBLE_DEVICES`:
+
+```
+./nixl_gpunetio_device_get_test <rdma-device> <oob-interface> <gid-index> <base-port> <owner-gpu> [DRAM|VRAM] [reader-gpu]
+```
+
+The source type defaults to `DRAM`, and the reader GPU defaults to the owner
+GPU. The test requires the explicitly enabled DOCA 3.5 device API. Its
+same-host result does not establish cross-node correctness or performance.
 
 Target should start first. A command line example:
 

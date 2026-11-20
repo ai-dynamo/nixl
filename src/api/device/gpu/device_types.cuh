@@ -42,6 +42,7 @@ namespace nixl::gpu {
 enum class exec_mode_t : uint8_t {
     UCX_DIRECT = 1,
     PROXY = 2,
+    GPUNETIO_DIRECT = 3,
     DYNAMIC = 0xff,
 };
 

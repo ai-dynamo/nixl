@@ -56,6 +56,73 @@ DOCA GPUNetIO backend takes these input parameters:
 - write_stripe_min_bytes: minimum bytes per WRITE QP in `bytes` mode (default `4194304`); must be positive.
 - cuda_streams: how many CUDA streams the backend should create at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. It must be an integer in the inclusive range [1, 4]; if this parameter is not specified, default value is `DOCA_POST_STREAM_NUM` (4).
 
+### Experimental GPU-initiated GET
+
+Build with `-Dgpunetio_device_api=enabled` and create a GPUNETIO backend with
+`native_device_api=true`. This mode supports GPU-initiated GET using local VRAM
+and registered remote VRAM or pinned Host memory. It does not support host
+transfer requests or notifications. `native_qp_count=1` keeps the existing
+single-QP default. Native mode can opt into a backend-owned pool of up to32
+active READ QPs with `native_qp_count=N` on both peers. One agent/backend and
+one memory registration serve the entire pool. Legacy stream-mode WRITE uses
+the separate `data_qp_count` option and remains limited to4. The default
+backend remains in stream mode.
+
+Prepare channel views once with `nixl_opt_args_t::customParam` set to
+`"native_channel=N"` in `prepMemView`; omitted/empty selects channel0. Valid
+indices are `[0,native_qp_count)`. Use matching local/remote/scratch channels.
+Existing GPU `get`, status, and `readSession` calls and the device-view ABI
+are unchanged. Views are long-lived prepared resources, not per-copy requests;
+the backend owns the QPs and shares their registered buffers. For example:
+
+```cpp
+auto lane_hint = hint;
+lane_hint.customParam = "native_channel=3";
+agent.prepMemView(local, local_view, &lane_hint);
+agent.prepMemView(remote, remote_view, &lane_hint);
+// GPU: same get/readSession calls using this prepared view pair.
+```
+
+Each pool channel has independent ownership, generations, SQ/CQ and ordering.
+There is no cross-channel ordering;
+do not overlap in-flight destination ranges across channels without external
+synchronization. The native pool remains one peer per engine. Re-preparing a
+bound channel does not reset its generation or credits. Busy/failed channel
+views retain their MR pins until safe teardown. Both peers must configure the
+same native pool size; a mismatched pool is rejected, not silently resized.
+
+The pool reuses the versioned multi-QP connection exchange. For pools larger
+than one, the legacy dedicated QP is retained for wire compatibility; the
+additional data-QP set supplies the active native channels. Native setup does
+not allocate the legacy CPU-mapped striped-WRITE completion counter.
+
+The experimental split-phase session also offers `acquireFifo()` and
+`pollFifo(ticket)` for single-thread, ordered checks through the public DOCA
+poll helper. `pollFifo` rejects out-of-order tickets and `retire` rejects a
+range that has not been checked. Do not mix this mode with parallel `poll` in
+one session. The default public-only profile does not reference the SDK
+internal CQ helper; a non-FIFO session cannot reserve READs, and parallel
+`poll()` returns `NIXL_ERR_NOT_SUPPORTED`. A non-FIFO `acquire()` can still be
+used for lane qualification and then finished without reserving. To experiment with the unsupported private helper, define
+`NIXL_GPUNETIO_PUBLIC_FIFO_ONLY=0` consistently in every CUDA consumer.
+Applications must still retire successful reads, perform any required
+consistency operation and keep all graph resources alive. The public FIFO mode has workload-dependent cost.
+
+CUDA consumers define `NIXL_ENABLE_GPUNETIO_DEVICE_API=1` and include
+`<gpu/nixl_device.cuh>` for scalar `get`, or `<gpu/nixl_device_batch.cuh>` for
+the split-phase `readSession`. The current implementation is restricted to
+DOCA 3.5. Its opt-in parallel batch completion path uses an internal SDK
+helper; that path has no SDK compatibility guarantee. Scalar GET requires a
+registered scratch byte disjoint from the destination. For batch reads, one CTA owns a session;
+the caller must synchronize WQE builders, poll every completion, retire in FIFO
+order, and keep the views, registrations and buffers alive until work retires.
+When required, `postConsistency` also needs a registered disjoint scratch byte.
+The MCST-required path has not been validated on hardware that requires MCST;
+support for such platforms remains unverified.
+An unsuccessful or abandoned operation must be failed and its resources kept
+until the engine is safely torn down. See the manual hardware test in
+`test/unit/plugins/gpunetio` for a complete small example.
+
 ## Example
 
 In directory `test/unit/plugins/doca` there is a sample named `nixl_gpunetio_stream_test.cu` where initiator and target exchange data through DOCA GPUNetIO backend.
