@@ -402,7 +402,7 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
 
     // Batches at either end can reuse the section's allocation.
     const bool append = !(batch.front() < vec.back());
-    if (append || !(vec.front() < batch.back())) {
+    if (append || batch.back() < vec.front()) {
         vec.insert(append ? vec.end() : vec.begin(),
                    std::make_move_iterator(batch.begin()),
                    std::make_move_iterator(batch.end()));
