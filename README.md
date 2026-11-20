@@ -120,11 +120,13 @@ make -j$(nproc) && make install
 
 ### Additional plugins
 
-Some plugins may have additional build requirements, see them here:
+The following guides cover plugin-specific build requirements.
 
-- [Mooncake](src/plugins/mooncake/README.md)
-- [POSIX](src/plugins/posix/README.md)
-- [GDS](src/plugins/cuda_gds/README.md)
+- Network and transfer engines: [UCX](fern/docs/pages/user-guide/backends/ucx.md), [Libfabric](src/plugins/libfabric/README.md), [GPUNetIO](src/plugins/gpunetio/README.md), [UCCL](src/plugins/uccl/README.md), [GPUDirect-TCPXO](src/plugins/gpudirect_tcpxo/README.md) (not yet enabled in the build), [Mooncake](src/plugins/mooncake/README.md)
+- File and block storage: [POSIX](src/plugins/posix/README.md), [GDS](src/plugins/cuda_gds/README.md), [HF3FS](src/plugins/hf3fs/README.md), [GUSLI](src/plugins/gusli/README.md), [AIS](src/plugins/rocm_ais/README.md)
+- Object and KV storage: [OBJ](src/plugins/obj/README.md), [Azure Blob](src/plugins/azure_blob/README.md), [Redis](src/plugins/redis/README.md), [INFINIA](src/plugins/infinia/README.md), [DOCA_MEMOS](src/plugins/doca_memos/README.md)
+
+Alongside these transfer backends, NIXL uses [telemetry plugins](src/plugins/telemetry/README.md) to export internal agent metrics.
 
 ## Getting started
 ### Build & install
@@ -212,7 +214,7 @@ meson setup build -Drocm_path=/custom/path/to/rocm
 #### Environment Variables
 
 There are a few environment variables that can be set to configure the build:
-- `NIXL_NO_STUBS_FALLBACK`: If not set or 0, build NIXL stub library if the library build fails
+- `NIXL_NO_STUBS_FALLBACK`: Read by the Rust bindings build (`src/bindings/rust/build.rs`); when not set (or not `1`), a failed build of the NIXL library falls back to building the stub API. Set it to `1` to turn that fallback into a hard error.
 
 ### Building Documentation
 
