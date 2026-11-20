@@ -275,7 +275,8 @@ private:
         return (static_cast<uint64_t>(sender_peer_idx) << 16) | notif_xfer_id;
     }
 
-    std::unordered_map<uint64_t, PendingNotification> pending_notifications_;
+    using pending_map_t = std::unordered_map<uint64_t, PendingNotification>;
+    pending_map_t pending_notifications_;
 
     // Agents whose handshake arrived before the local createAgentConnection had registered
     // them in connections_. Drained inside createAgentConnection.
@@ -688,20 +689,21 @@ public:
     /**
      * @brief Release one pending notification if it is now ready
      *
-     * If the entry for @p key has all its message fragments and all its expected
-     * write completions, moves it to the main notification list and erases it.
+     * If @p it has all its message fragments and all its expected write
+     * completions, moves it to the main notification list and erases it.
      *
      * Every caller has just updated exactly that one entry, and an entry's
      * readiness depends only on its own counters, so no other entry can have
-     * become ready. Checking only @p key keeps each completion O(1); scanning the
-     * whole map made every completion O(entries), and entries for writes posted
-     * without a notification are never released, so that cost grew without bound
-     * on a long-lived receiver.
+     * become ready. The caller passes the iterator it updated, without releasing
+     * receiver_tracking_mutex_ in between, so each event (a remote write
+     * completion, a notification fragment, a transfer error) costs one lock and
+     * one map lookup.
      *
-     * @param[in] key makePendingKey(sender_peer_idx, notif_xfer_id) of the entry
+     * @pre receiver_tracking_mutex_ is held by the caller
+     * @param[in] it The entry of pending_notifications_ the caller just updated
      */
     void
-    checkPendingNotification(uint64_t key);
+    completePendingIfReadyLocked(pending_map_t::iterator it);
 };
 
 #endif
