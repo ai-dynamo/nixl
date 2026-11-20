@@ -137,13 +137,13 @@ inline constexpr uint16_t default_comm_port = 8888;
  * @brief A constant to define the default metadata label for ETCD server key.
  *        Appended to the agent's key prefix to form the full key for metadata.
  */
-extern const std::string default_metadata_label;
+__attribute__((visibility("default"))) extern const std::string default_metadata_label;
 
 /**
  * @brief A constant to define the default partial metadata label for ETCD server key.
  *        Appended to the agent's key prefix to form the full key for partial metadata.
  */
-extern const std::string default_partial_metadata_label;
+__attribute__((visibility("default"))) extern const std::string default_partial_metadata_label;
 
 
 /**
@@ -339,6 +339,6 @@ using nixl_xfer_trace_info_t = nixlXferTraceInfo;
 /**
  * @brief A constant for an invalid agent name.
  */
-extern const std::string nixl_null_agent;
+__attribute__((visibility("default"))) extern const std::string nixl_null_agent;
 
 #endif
