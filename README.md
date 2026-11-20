@@ -122,9 +122,11 @@ make -j$(nproc) && make install
 
 Some plugins may have additional build requirements, see their READMEs:
 
-- Network and transfer engines: [Libfabric](src/plugins/libfabric/README.md), [GPUNetIO](src/plugins/gpunetio/README.md), [UCCL](src/plugins/uccl/README.md), [GPUDirect-TCPXO](src/plugins/gpudirect_tcpxo/README.md) (not yet enabled in the build), [Mooncake](src/plugins/mooncake/README.md)
+- Network and transfer engines: [UCX](src/plugins/ucx/README.md), [Libfabric](src/plugins/libfabric/README.md), [GPUNetIO](src/plugins/gpunetio/README.md), [UCCL](src/plugins/uccl/README.md), [GPUDirect-TCPXO](src/plugins/gpudirect_tcpxo/README.md) (not yet enabled in the build), [Mooncake](src/plugins/mooncake/README.md)
 - File and block storage: [POSIX](src/plugins/posix/README.md), [GDS](src/plugins/cuda_gds/README.md), [HF3FS](src/plugins/hf3fs/README.md), [GUSLI](src/plugins/gusli/README.md), [AIS](src/plugins/rocm_ais/README.md)
 - Object and KV storage: [OBJ](src/plugins/obj/README.md), [Azure Blob](src/plugins/azure_blob/README.md), [Redis](src/plugins/redis/README.md), [INFINIA](src/plugins/infinia/README.md), [DOCA_MEMOS](src/plugins/doca_memos/README.md)
+
+Alongside these transfer backends, NIXL uses [telemetry plugins](src/plugins/telemetry/README.md) to export internal agent metrics.
 
 ## Getting started
 ### Build & install
