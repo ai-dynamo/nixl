@@ -20,7 +20,7 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | [Claude Code Review](#claude-code-review-claude-reviewyml) | GitHub Actions | `pull_request` (opened/synchronize/reopened) | Yes |
 | [External Contributor](#external-contributor-external_contributoryaml) | GitHub Actions | `pull_request_target` (opened, fork only) | Yes (fork PRs only) |
 | [Blossom-CI](#blossom-ci-blossom-ciyml) | GitHub Actions | `pull_request_target` (opened/synchronize/reopened), `/build` PR comment, or `workflow_dispatch` | Yes — subject to `Authorization` |
-| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | Yes — whenever Blossom-CI's `Job-trigger` runs; these 8 are the *only* Jenkins jobs in the PR CI path |
+| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `cmx`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | Yes — whenever Blossom-CI's `Job-trigger` runs; these 9 are the *only* Jenkins jobs in the PR CI path |
 | `nixl-ci-build-container` | Jenkins (standalone) | Triggered by `verification-launcher` (nightly ~22:00) or manual | No — never runs as part of PR CI |
 | `nixl-build-wheel` | Jenkins (standalone) | Triggered by `verification-launcher` (nightly) or `build-wheel-release-poller`, or manual | No — never runs as part of PR CI |
 | `nixl-verification-launcher` | Jenkins (standalone) | Cron: midnight (wheels) + 10 PM (containers) | No — never runs as part of PR CI |
@@ -30,8 +30,8 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | `nixl-ci-cleanup-artifacts` | Jenkins (standalone) | Daily cron (6 AM) + manual | No — never runs as part of PR CI |
 | `nixl-ci-nightly` | Jenkins (standalone) | Nightly cron (`H 0`) + manual | No — orchestrates the nightly UCX-`master` run of the 3 GPU jobs |
 
-> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 17 Jenkins jobs: the
-> dispatcher, the 8 jobs it fans out to (the PR CI flow), and 8 standalone jobs
+> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 18 Jenkins jobs: the
+> dispatcher, the 9 jobs it fans out to (the PR CI flow), and 8 standalone jobs
 > (`build-container`, `build-wheel`, `verification-launcher`,
 > `build-wheel-release-poller`, `build-llm-container`, `test-llm-container`,
 > `cleanup-artifacts`, `nightly`). The standalone ones run only on their own
@@ -104,7 +104,7 @@ sequenceDiagram
     participant Scan as Vulnerability-scan (Black Duck)
     participant Trigger as Job-trigger
     participant Jenkins as nixl-ci-dispatcher
-    participant Children as Child jobs<br/>(non-gpu, gpu, dl-gpu,<br/>dl-gpu-ep, gpu-vr, build-wheel,<br/>test-sanitizers, build-container-pr)
+    participant Children as Child jobs<br/>(non-gpu, gpu, cmx, dl-gpu,<br/>dl-gpu-ep, gpu-vr, build-wheel,<br/>test-sanitizers, build-container-pr)
 
     User->>GH: comment "/build"
     GH->>Blossom: issue_comment event
@@ -136,7 +136,7 @@ Step by step, matching the jobs in `blossom-ci.yml`:
 5. **Job-trigger** calls `blossom-ci` with `OPERATION: START-CI-JOB`, which
    triggers the Jenkins `nixl-ci-dispatcher` job.
 6. `nixl-ci-dispatcher` fans out in parallel to the child jobs selected by the
-   path filter from its eight (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`,
+   path filter from its nine (`non-gpu`, `gpu`, `cmx`, `dl-gpu`, `dl-gpu-ep`,
    `gpu-vr`, `build-wheel`, `test-sanitizers`, `build-container-pr` — see
    [Jenkins jobs](#jenkins-jobs) below). Every job runs unless
    `.ci/path-filters.yaml` narrows the set for the PR's changed paths; jobs
@@ -146,7 +146,7 @@ Step by step, matching the jobs in `blossom-ci.yml`:
 
 ## Jenkins jobs
 
-All 14 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
+All 18 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
 (Jenkins Job Builder config). The dispatcher runs its own pipeline,
 `.ci/jenkins/pipeline/Jenkinsfile.dispatcher`, checked out from the PR merge
 ref (`refs/pull/<n>/merge`) on webhook runs, or from any branch/commit passed
@@ -156,7 +156,7 @@ events — they only start via the Jenkins webhook fired by Blossom-CI, or via
 their own nightly/manual trigger. They split into two groups:
 
 - **Dispatcher-triggered (part of the PR CI path):** `nixl-ci-dispatcher` and
-  the 7 jobs it fans out to. This is the *only* way any Jenkins job runs
+  the 9 jobs it fans out to. This is the *only* way any Jenkins job runs
   against a PR, triggered by a PR push or a `/build` comment.
 - **Standalone (never run against a PR):** `nixl-ci-build-container`,
   `nixl-build-wheel`, `nixl-verification-launcher`,
@@ -174,9 +174,10 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
 
 - **Trigger:** GitHub webhook payload forwarded by Blossom-CI's `Job-trigger` step (`OPERATION: START-CI-JOB`). Not a raw GitHub Actions event.
-- **What it does:** Fans out in parallel to eight downstream Jenkins jobs, waiting on all of them. On PR runs only the jobs selected by the [path filter](#path-filtering) for the PR's changed paths are started; the rest get a green "skipped" status under their own context. Manual runs (no PR number) always run all eight:
+- **What it does:** Fans out in parallel to nine downstream Jenkins jobs, waiting on all of them. On PR runs only the jobs selected by the [path filter](#path-filtering) for the PR's changed paths are started; the rest get a green "skipped" status under their own context. Manual runs (no PR number) always run all nine:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
+  - `nixl-ci-cmx` — `.ci/jenkins/lib/test-cmx-matrix.yaml` (DOCA_MEMOS smoke test against mocks, in the job container)
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node)
   - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (NIXL EP tests on dlcluster.nvidia.com)
   - `nixl-ci-gpu-vr` — `.ci/jenkins/lib/test-vr-matrix.yaml` (same tests as `nixl-ci-dl-gpu`, on the Vera Rubin `vrnvl72` partition / `rubin` account; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node, so it can run on a partly used node of the busy partition; nodes with a differing configuration are excluded via `SLURM_EXCLUDE`)
@@ -185,6 +186,14 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
   - `nixl-ci-build-container-pr` — `.ci/jenkins/lib/build-container-pr-matrix.yaml`
 - **UCX version:** The four GPU test jobs (`nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr`) build and test against a single UCX version per run — the `UCX_VER` parameter, which defaults to empty and falls back to the `Dockerfile` `ARG UCX_VERSION` default (`v1.23.x`). UCX `master` is validated nightly, not per PR: the standalone `nixl-ci-nightly` job (see below) fans out to all four with `UCX_VER=master` and emails one consolidated report, so UCX regressions surface outside the PR path instead of blocking PRs.
 - **Automatic on every PR:** Yes — runs whenever Blossom-CI triggers it (PR push or `/build` comment). The dispatcher also aborts any stale in-flight dispatcher run for the same PR, whichever of the two started it (and the leaf builds it started), before starting.
+
+### `nixl-ci-cmx` (dispatcher-triggered)
+
+- **Trigger:** Fan-out from `nixl-ci-dispatcher` (same as the other PR CI jobs).
+- **Config:** `.ci/jenkins/lib/test-cmx-matrix.yaml`, test script `.gitlab/test_cmx.sh`.
+- **What it does:** Smoke test for the DOCA_MEMOS (CMX) backend. Like `nixl-ci-non-gpu`, it runs in the job container on its own `nixl-ci-cmx-base` image, with no GPU or Slurm allocation. The `Build` step runs `build.sh` with `DOCA_KV_ENV=true`, which builds DOCA KV from DOCA tag `3.6.0085-1` on `git-nbu` (SSH, `svc-nixl-ssh_key` bound as `SSH_KEY`) and fails if `doca-common` and `doca-kv` resolve to different DOCA versions. It skips the `GPUNETIO` and `TELEMETRY_DOCA` plugins, which use the base image's DOCA 3.5 libraries. `test_cmx.sh` then builds the DOCA_MEMOS unit-test mocks (`test/unit/plugins/doca_memos`) into a shared library, swaps it in for every `libdoca_*` the plugin links, and runs `nixlbench --backend=DOCA_MEMOS` READ and WRITE against the mock's in-memory store.
+- **UCX version:** Builds against the `Dockerfile` `ARG UCX_VERSION` default only; it has no `UCX_VER` parameter and is not part of `nixl-ci-nightly`.
+- **Automatic on every PR:** Yes — whenever the dispatcher runs (like the other dispatcher jobs).
 
 ### `nixl-ci-build-container-pr` (dispatcher-triggered)
 
@@ -334,6 +343,7 @@ job is core, so `docs` maps to nothing:
 |---|---|---|
 | `non-gpu` | `nixl-ci-non-gpu` | `[]` |
 | `gpu` | `nixl-ci-gpu` | `[]` |
+| `cmx` | `nixl-ci-cmx` | `[]` |
 | `dl-gpu` | `nixl-ci-dl-gpu` | `[]` |
 | `dl-gpu-ep` | `nixl-ci-dl-gpu-ep` | `[]` |
 | `gpu-vr` | `nixl-ci-gpu-vr` | `[]` |
@@ -362,13 +372,13 @@ run.
 
 | PR touches | Component set | Runs | Statuses |
 |---|---|---|---|
-| `docs/...` or `CONTRIBUTING.md` only | `docs` | nothing | 8 green "Skipped by path filter: PR touches docs", `blossom-ci` green `NIXL CI ended: ran 0/8 jobs (docs)` |
-| root `README.md` only | `all` (`/README.md`) | all 8 | as before |
-| `docs/...` + `src/core/...` | `docs`, `all` | all 8 | as before |
-| `.ci/path-filters.yaml` only | `all` (`.ci/**`) | all 8 | as before |
-| adds `tools/new.sh` without registering it | `pre-commit` fails on the PR; if merged anyway, `all` (unmatched) | all 8 | as before |
-| any PR with label `ci:full` | `all` | all 8 | as before |
-| manual run, no PR | `all` | all 8 | as before |
+| `docs/...` or `CONTRIBUTING.md` only | `docs` | nothing | 9 green "Skipped by path filter: PR touches docs", `blossom-ci` green `NIXL CI ended: ran 0/9 jobs (docs)` |
+| root `README.md` only | `all` (`/README.md`) | all 9 | as before |
+| `docs/...` + `src/core/...` | `docs`, `all` | all 9 | as before |
+| `.ci/path-filters.yaml` only | `all` (`.ci/**`) | all 9 | as before |
+| adds `tools/new.sh` without registering it | `pre-commit` fails on the PR; if merged anyway, `all` (unmatched) | all 9 | as before |
+| any PR with label `ci:full` | `all` | all 9 | as before |
+| manual run, no PR | `all` | all 9 | as before |
 
 Whenever the decision cannot be made, the dispatcher runs everything and says
 why in the console:
@@ -397,7 +407,7 @@ Path filter: run = [branch, ...]; skip = [branch, ...]
 
 or, when a reason applies, `Path filter: <reason>; running all jobs` followed by
 the `run = ...; skip = []` line. The reason also reaches the PR: the final
-`blossom-ci` status reads `NIXL CI ended: ran <k>/8 jobs (<components>[; <reason>])`
+`blossom-ci` status reads `NIXL CI ended: ran <k>/9 jobs (<components>[; <reason>])`
 (truncated to 140 characters) and the build description carries
 `| components: <components>[; <reason>]`, so a silent fallback is visible
 without opening the console.
@@ -614,8 +624,8 @@ header is sent on every request.
 pipelines run it through `.gitlab/build.sh` outside the image builds above, with the
 same credential:
 
-- The `Build` steps of `build-matrix.yaml` (`nixl-ci-non-gpu`) and
-  `test-sanitizer-matrix.yaml` run `build.sh` in the job container. They bind
+- The `Build` steps of `build-matrix.yaml` (`nixl-ci-non-gpu`), `test-cmx-matrix.yaml`
+  and `test-sanitizer-matrix.yaml` run `build.sh` in the job container. They bind
   `svc-nixl-github-read-only-token`, call `write_github_gitconfig /tmp/ghconfig` in a
   subshell, and export `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=include.path` and
   `GIT_CONFIG_VALUE_0=/tmp/ghconfig`. Every git process the step starts, including

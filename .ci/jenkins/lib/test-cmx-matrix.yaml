@@ -1,0 +1,101 @@
+---
+#
+# CMX Test Matrix Configuration
+#
+# Builds NIXL with DOCA KV and runs nixlbench against the DOCA_MEMOS backend
+# as a smoke test. The DOCA_MEMOS unit-test mocks stand in for DOCA, so it
+# needs no GPU or BlueField and runs in the job container, like nixl-ci-non-gpu.
+#
+# Key Components:
+# - Job Configuration: Defines timeout, failure behavior, and server resources
+# - Docker Images: Specifies the container images used for different build stages
+# - Matrix Axes: Defines build variations (currently x86_64 architecture)
+# - Run Steps: Sequential steps for running tests
+#
+# When Modified:
+# - Adding/removing Docker images: Affects available test environments
+# - Modifying matrix axes: Changes test variations (e.g., adding architectures)
+# - Adjusting resource limits: Impacts test performance and resource allocation
+# - Adding/removing steps: Changes the test pipeline sequence
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+
+job: nixl-ci-cmx
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
+registry_path: /sw-nbu-swx-nixl-docker-local/ci
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 16Gi, cpu: 16000m}"
+  requests: "{memory: 8Gi, cpu: 8000m}"
+
+credentials:
+  - credentialsId: 'svc-nixl-github-read-only-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
+  - {credentialsId: 'svc-nixl-ssh_key', type: 'sshUserPrivateKey', keyFileVariable: 'SSH_KEY'}
+
+env:
+  NIXL_INSTALL_DIR: /opt/nixl
+  TEST_TIMEOUT: 30
+  STORAGE_DRIVER: overlay
+  # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
+  # the "CI_MANAGED" placeholder must not be hand-edited.
+  CI_IMAGE_TAG: "CI_MANAGED"
+
+# ci-demo builds the images below outside any step; an entry's credentialsId binds
+# the token around its build, and this hook writes the git config the Dockerfile
+# mounts as the "ghconfig" secret. Left empty when nothing is bound.
+pipeline_on_image_build:
+  run: |
+    #!/bin/bash -e
+    . .ci/scripts/common.sh
+    write_github_gitconfig /tmp/ghconfig
+
+runs_on_dockers:
+  - {
+     file: '.ci/dockerfiles/Dockerfile.base',
+     name: 'nixl-ci-cmx-base',
+     tag: "${CI_IMAGE_TAG}",
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --secret id=ghconfig,src=/tmp/ghconfig',
+     credentialsId: 'svc-nixl-github-read-only-token'
+    }
+
+matrix:
+  axes:
+    arch:
+      - x86_64
+
+taskName: "${name}/${arch}/${axis_index}"
+
+steps:
+  - name: Build
+    credentialsId:
+      - 'svc-nixl-github-read-only-token'
+      - 'svc-nixl-ssh_key'
+    parallel: false
+    run: |
+      export PRE_INSTALLED_ENV="true"
+      export PRE_INSTALLED_UCX_ENV="true"
+      # build.sh builds DOCA KV from git-nbu with the SSH_KEY bound above.
+      export DOCA_KV_ENV="true"
+      # Authenticate meson's [wrap-git] subproject clones (taskflow, prometheus-cpp) with the
+      # github.com credential; git's environment config is inherited by every git it runs.
+      (. .ci/scripts/common.sh && write_github_gitconfig /tmp/ghconfig)
+      export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=/tmp/ghconfig
+      .gitlab/build.sh ${NIXL_INSTALL_DIR}
+
+  - name: Test CMX
+    parallel: false
+    timeout: "${TEST_TIMEOUT}"
+    run: |
+      .gitlab/test_cmx.sh ${NIXL_INSTALL_DIR}
