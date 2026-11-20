@@ -153,7 +153,7 @@ public:
 } // namespace
 
 nixlRedisKVEngine::nixlRedisKVEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL) {
     auto config = RedisConfig::fromBackendParams(getInitCustomParams(init_params));
     redisClient_ = std::make_shared<RedisConnectionPool>(std::move(config));
     NIXL_INFO << "Redis backend initialized";
@@ -161,7 +161,7 @@ nixlRedisKVEngine::nixlRedisKVEngine(const nixlBackendInitParams *init_params)
 
 nixlRedisKVEngine::nixlRedisKVEngine(const nixlBackendInitParams *init_params,
                                      std::shared_ptr<iRedisClient> redis_client)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       redisClient_(std::move(redis_client)) {}
 
 nixl_status_t
