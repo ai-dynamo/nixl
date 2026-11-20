@@ -63,6 +63,12 @@ public:
     void
     operator=(const nixlXferReqH &) = delete;
 
+    // Submitted: status is NIXL_IN_PROG (see nixl.h for the request states).
+    [[nodiscard]] bool
+    isSubmitted() const noexcept {
+        return status == NIXL_IN_PROG;
+    }
+
     ~nixlXferReqH() {
         if ((backendHandle != nullptr) && (engine != nullptr)) {
             engine->releaseReqH(backendHandle);
@@ -115,6 +121,8 @@ private:
 
     const nixl_xfer_op_t backendOp;
     nixl_status_t status = NIXL_ERR_NOT_POSTED;
+    // True after cancelXferReq() succeeded for the current submission. Every post resets it.
+    bool cancelRequested = false;
 
     nixl_xfer_telem_t telemetry;
     nixlTime::nixlDuration timer;

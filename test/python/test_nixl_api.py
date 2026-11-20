@@ -938,3 +938,24 @@ def test_leaked_xfer_handle_is_queued_on_the_agent(one_empty_agent, monkeypatch)
         # 0xDEAD is not a real request, so the agent's destructor must not
         # hand it to the native release once the real agent is back.
         one_empty_agent._leaked_xfer_handles.clear()
+
+
+def test_cancel_xfer_handle_reports_whether_cancellation_was_initiated(
+    one_empty_agent, monkeypatch
+):
+    class CancelNative:
+        statuses = [bindings.NIXL_SUCCESS, bindings.NIXL_IN_PROG]
+
+        def createXferReq(self, *args):
+            return 0xCAFE
+
+        def cancelXferReq(self, handle):
+            return self.statuses.pop(0)
+
+        def releaseXferReq(self, handle):
+            pass
+
+    monkeypatch.setattr(one_empty_agent, "agent", CancelNative())
+    handle = one_empty_agent.initialize_xfer("WRITE", None, None, "peer")
+    assert one_empty_agent.cancel_xfer_handle(handle) is True
+    assert one_empty_agent.cancel_xfer_handle(handle) is False

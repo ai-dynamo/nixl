@@ -54,6 +54,7 @@ The key/value parameters are a map of strings to byte arrays that are passed fro
 * getSupportedMems(): Indicates memory types supported by the backend
 * supportsCapability(): Indicates if the backend has a capability from `nixl_backend_capability_t`. A backend passes its capabilities, combined with `|`, to the `nixlBackendEngine` constructor; none are set by default
   * `LOCAL`, `REMOTE`, `NOTIF`: the values that supportsLocal(), supportsRemote() and supportsNotif() return by default, so a backend does not need to override these methods
+  * `XFER_CANCEL`: the backend implements cancelXfer()
   * `TRACE_CONTEXT`: the backend carries a request's trace context to its peer. Only in-tree plugins can implement it, since the trace context type is internal
 
 Based on the first 3 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend must have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional.
@@ -99,12 +100,13 @@ getPublicData and loadRemoteMD are required if backend supportsRemote, and loadL
 * postXfer(): Posts a transfer request, meaning the backend should start the transfer. This call is asynchronous, meaning it should not wait to finish the transfer. If the transfer is really small, it’s fine to return DONE right after this call.
 * checkXfer(): Checks the status of a transfer request.
 * releaseReqH(): Releases a transfer request handle, which should be an extension of the nixlBackendReqH. Core refuses release while `checkXfer()` reports `NIXL_IN_PROG`; release does not cancel transfers. A non-success return keeps the handle owned by the caller. Error-state cleanup remains the backend's responsibility; an error status alone does not prove that its operations have stopped.
+* cancelXfer(): Optional. A backend that can cancel reports the `XFER_CANCEL` capability and overrides cancelXfer(). cancelXfer() only initiates the cancellation. It does not block, poll or free the handle. It returns NIXL_SUCCESS, or NIXL_IN_PROG if the cancellation was already requested. The handle stays in use until checkXfer() returns a terminal status. Cancellation does not change the meaning of the checkXfer() return codes. It only makes NIXL_ERR_CANCELED more likely: the transfer can still finish with NIXL_SUCCESS or another error. The default returns NIXL_ERR_NOT_SUPPORTED. The agent calls cancelXfer() only if the backend reports `XFER_CANCEL`.
 
 Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not set supportsNotifications, no such notification will be asked.
 
 Note that any transfer request will be prepped only once, but can be posted multiple times, as long as it gets to DONE state before getting reposted. There is no ordering guarantee across transfer requests, and no locking mechanism for any specific memory region; the user is in charge of not corrupting the memory by having two simultaneous transfers to the same location.
 
-Release does not cancel or wait for an active transfer. Core returns `NIXL_ERR_REPOST_ACTIVE` while it remains in progress, preserving the handle. The application must keep buffers and registrations alive, poll to completion, then retry release. Explicit cancellation is a separate future API, not part of release.
+Release does not cancel or wait for an active transfer. Core returns `NIXL_ERR_REPOST_ACTIVE` while it remains in progress, preserving the handle. The application must keep buffers and registrations alive, poll to completion, then retry release. Explicit cancellation is a separate future API, not part of release. To stop a transfer, cancel it with cancelXferReq(), poll to a terminal status, then release.
 ### Notification Handling:
 
 * getNotifs(): Gets notifications received from remote agents (or local in case of loopback). The output is a map from remote agent name to a list (vector) of notifications, in the form of byte array.

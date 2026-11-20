@@ -389,6 +389,25 @@ class nixlAgent {
                           nixlBackendH* &backend) const;
 
         /**
+         * @brief  Ask the backend to cancel the submitted request `req_hndl`. The call returns
+         *         at once and frees nothing. The transfer owns the buffers until
+         *         getXferStatus() returns a terminal status. The getXferStatus() return codes
+         *         keep their meaning. Cancellation only makes NIXL_ERR_CANCELED more likely:
+         *         the transfer can still end with NIXL_SUCCESS or another error.
+         *
+         * @param  req_hndl      Transfer request handle
+         * @return nixl_status_t NIXL_SUCCESS if the cancellation started,
+         *                       NIXL_IN_PROG if it was already requested,
+         *                       NIXL_ERR_NOT_ALLOWED if the request is not submitted
+         *                       (not posted, or already completed or failed),
+         *                       NIXL_ERR_NOT_SUPPORTED if the backend cannot cancel,
+         *                       NIXL_ERR_INVALID_PARAM for a null handle,
+         *                       or the error status of the backend.
+         */
+        nixl_status_t
+        cancelXferReq(nixlXferReqH *req_hndl) const;
+
+        /**
          * @brief  Release the transfer request `req_hndl`. If the transfer is active,
          *         return an error without canceling it.
          *

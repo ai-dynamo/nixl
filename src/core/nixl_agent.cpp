@@ -1440,6 +1440,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     // If status is not NIXL_IN_PROG we can repost,
+    req_hndl->cancelRequested = false;
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,
                                                   req_hndl->initiatorDescs,
                                                   req_hndl->targetDescs,
@@ -1564,6 +1565,39 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
     NIXL_LOCK_GUARD(data->lock);
     backend = data->backendHandles_[req_hndl->engine->getType()].get();
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::cancelXferReq(nixlXferReqH *req_hndl) const {
+    if (!req_hndl) {
+        NIXL_ERROR_FUNC << "transfer request handle is null";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    if (!req_hndl->isSubmitted()) {
+        NIXL_ERROR_FUNC << "only a submitted (in progress) transfer request can be canceled";
+        return NIXL_ERR_NOT_ALLOWED;
+    }
+
+    if (req_hndl->cancelRequested) {
+        return NIXL_IN_PROG;
+    }
+
+    if (!req_hndl->engine->supportsCapability(nixl_backend_capability_t::XFER_CANCEL)) {
+        NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
+                        << "' does not support canceling transfer requests";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    const nixl_status_t ret = req_hndl->engine->cancelXfer(req_hndl->backendHandle);
+    if (ret == NIXL_SUCCESS || ret == NIXL_IN_PROG) {
+        req_hndl->cancelRequested = true;
+    } else {
+        NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
+                        << "' failed to cancel the transfer request with status " << ret;
+    }
+    return ret;
 }
 
 /** Release only when safe; refusal preserves the request and its backend handle for retry. */
