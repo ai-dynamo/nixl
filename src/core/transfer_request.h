@@ -51,6 +51,15 @@ public:
                  const nixl_mem_t local_type,
                  const nixl_mem_t remote_type,
                  const size_t desc_count,
+                 std::shared_ptr<nixlRemoteSection> remote_section_ref,
+                 const nixl::trace::TraceContext &trace_context,
+                 const std::uint64_t trace_request_id);
+
+    nixlXferReqH(const std::string &remote_agent,
+                 const nixl_xfer_op_t backend_op,
+                 const nixl_mem_t local_type,
+                 const nixl_mem_t remote_type,
+                 const size_t desc_count,
                  const nixl_remote_section_weak_t &remote_section_ref,
                  const nixl::trace::TraceContext &trace_context,
                  const std::uint64_t trace_request_id);
@@ -104,7 +113,7 @@ private:
     nixl_meta_dlist_t targetDescs;
 
     const std::string remoteAgent;
-    const nixl_remote_section_weak_t remoteSection;
+    const std::shared_ptr<nixlRemoteSection> remoteSection;
     const nixl::trace::TraceContext traceContext_;
     nixl::trace::TraceContext tracePostContext_;
     bool traceRequestSpanIdUsed_ = false;
