@@ -1652,6 +1652,21 @@ nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req)
 }
 
 nixl_capi_status_t
+nixl_capi_cancel_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req) {
+    if (!agent || !req || !req->req) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        agent->inner->cancelXferReq(*req->req);
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
 nixl_capi_release_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req)
 {
   if (!agent || !req || !req->req) {

@@ -1979,5 +1979,76 @@ namespace agent {
         EXPECT_EQ(agent->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
     }
 
+    TEST_F(dualAgentBridgeFixture, CancelOfRequestWithoutBackendSupportDoesNothing) {
+        DualAgentSetup s(DRAM_SEG);
+        auto &engine = local_agent_helper_->getGMockEngine();
+        nixlBackendReqH backend_request;
+        setupDualAgent(s);
+        ON_CALL(engine, prepXfer)
+            .WillByDefault(testing::DoAll(testing::SetArgReferee<4>(&backend_request),
+                                          testing::Return(NIXL_SUCCESS)));
+        nixl_xfer_dlist_t local_dlist(DRAM_SEG), remote_dlist(DRAM_SEG);
+        local_dlist.addDesc(s.local_blob.getDesc());
+        remote_dlist.addDesc(s.remote_blob.getDesc());
+        nixlXferReqH *req;
+        ASSERT_EQ(local_agent_->createXferReq(
+                      NIXL_WRITE, local_dlist, remote_dlist, s.remote_agent_name, req),
+                  NIXL_SUCCESS);
+        EXPECT_CALL(engine, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+        EXPECT_CALL(engine, cancelXfer).Times(0);
+
+        {
+            const LogIgnoreGuard lig("only an in-flight transfer request can be canceled");
+            local_agent_->cancelXferReq(*req);
+        }
+        EXPECT_EQ(local_agent_->postXferReq(req), NIXL_IN_PROG);
+        local_agent_->cancelXferReq(*req);
+        EXPECT_EQ(local_agent_->getXferStatus(req), NIXL_SUCCESS);
+        {
+            const LogIgnoreGuard lig("only an in-flight transfer request can be canceled");
+            local_agent_->cancelXferReq(*req);
+        }
+        EXPECT_EQ(local_agent_->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
+    TEST_F(dualAgentBridgeFixture, CancelIsForwardedToBackend) {
+        DualAgentSetup s(DRAM_SEG);
+        auto &engine = local_agent_helper_->getGMockEngine();
+        nixlBackendReqH backend_request;
+        ON_CALL(engine, capabilities())
+            .WillByDefault(testing::Return(nixl_backend_capability_t::XFER_CANCEL));
+        setupDualAgent(s);
+        ON_CALL(engine, prepXfer)
+            .WillByDefault(testing::DoAll(testing::SetArgReferee<4>(&backend_request),
+                                          testing::Return(NIXL_SUCCESS)));
+        nixl_xfer_dlist_t local_dlist(DRAM_SEG), remote_dlist(DRAM_SEG);
+        local_dlist.addDesc(s.local_blob.getDesc());
+        remote_dlist.addDesc(s.remote_blob.getDesc());
+        nixlXferReqH *req;
+        ASSERT_EQ(local_agent_->createXferReq(
+                      NIXL_WRITE, local_dlist, remote_dlist, s.remote_agent_name, req),
+                  NIXL_SUCCESS);
+        EXPECT_CALL(engine, postXfer).WillRepeatedly(testing::Return(NIXL_IN_PROG));
+        EXPECT_CALL(engine, cancelXfer(&backend_request))
+            .WillOnce(testing::Return(NIXL_ERR_BACKEND))
+            .WillOnce(testing::Return(NIXL_SUCCESS))
+            .WillOnce(testing::Return(NIXL_IN_PROG));
+        EXPECT_CALL(engine, checkXfer).WillOnce(testing::Return(NIXL_ERR_CANCELED));
+
+        EXPECT_EQ(local_agent_->postXferReq(req), NIXL_IN_PROG);
+        {
+            const LogIgnoreGuard lig("failed to cancel the transfer request with status");
+            local_agent_->cancelXferReq(*req);
+        }
+        local_agent_->cancelXferReq(*req);
+        local_agent_->cancelXferReq(*req);
+        EXPECT_EQ(local_agent_->getXferStatus(req), NIXL_ERR_CANCELED);
+        {
+            const LogIgnoreGuard lig("only an in-flight transfer request can be canceled");
+            local_agent_->cancelXferReq(*req);
+        }
+        EXPECT_EQ(local_agent_->releaseXferReq(req), NIXL_SUCCESS);
+    }
+
 } // namespace agent
 } // namespace gtest

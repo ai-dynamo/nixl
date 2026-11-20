@@ -63,6 +63,13 @@ public:
     void
     operator=(const nixlXferReqH &) = delete;
 
+    // In flight: the last known status is NIXL_IN_PROG. The client has not yet polled a
+    // terminal status.
+    [[nodiscard]] bool
+    isInFlight() const noexcept {
+        return status == NIXL_IN_PROG;
+    }
+
     ~nixlXferReqH() {
         if ((backendHandle != nullptr) && (engine != nullptr)) {
             engine->releaseReqH(backendHandle);

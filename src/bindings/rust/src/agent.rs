@@ -1100,6 +1100,30 @@ impl Agent {
         }
     }
 
+    /// Asks the backend to cancel an in-flight transfer request.
+    ///
+    /// The transfer keeps the buffers until [`Agent::get_xfer_status`] returns a terminal
+    /// status. If the backend cannot cancel, nothing happens and the transfer runs to
+    /// completion.
+    ///
+    /// # Errors
+    /// * `InvalidParam` - The request handle is not valid
+    /// * `BackendError` - The native call threw
+    pub fn cancel_xfer_req(&self, req: &XferRequest) -> Result<(), NixlError> {
+        let status = unsafe {
+            bindings::nixl_capi_cancel_xfer_req(
+                self.inner.write().unwrap().handle.as_ptr(),
+                req.handle(),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
     /// Queries the backend for a transfer request
     ///
     /// # Arguments
