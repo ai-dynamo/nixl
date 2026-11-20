@@ -132,11 +132,25 @@ awsS3Client::getObjectAsync(std::string_view key,
     s3Client_->GetObjectAsync(
         request,
         // Report the READ result while retaining the stream factory.
-        [callback, stream_factory](const Aws::S3::S3Client *,
-                                   const Aws::S3::Model::GetObjectRequest &,
-                                   const Aws::S3::Model::GetObjectOutcome &outcome,
-                                   const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
-            callback(outcome.IsSuccess());
+        [callback, stream_factory, key_str = std::string(key), data_len, offset](
+            const Aws::S3::S3Client *,
+            const Aws::S3::Model::GetObjectRequest &,
+            const Aws::S3::Model::GetObjectOutcome &outcome,
+            const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+            if (!outcome.IsSuccess()) {
+                callback(false);
+                return;
+            }
+            // S3 answers a range that runs past the end of the object with the bytes that
+            // exist (HTTP 206); Content-Length is what was written into the buffer.
+            const long long read_len = outcome.GetResult().GetContentLength();
+            if (read_len != static_cast<long long>(data_len)) {
+                NIXL_ERROR << "getObjectAsync: short read of object '" << key_str << "': requested "
+                           << data_len << " bytes at offset " << offset << ", got " << read_len;
+                callback(false);
+                return;
+            }
+            callback(true);
         },
         nullptr);
 }
