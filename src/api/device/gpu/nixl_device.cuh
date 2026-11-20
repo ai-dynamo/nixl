@@ -82,6 +82,33 @@ put(const memViewElem &src,
 }
 
 /**
+ * @brief Post a single-region memory transfer from remote to local GPU.
+ *
+ * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
+ *                  time, a fixed mode must match the view.
+ *
+ * @param dst         [in]  Destination (local) memory view element
+ * @param src         [in]  Source (remote) memory view element
+ * @param size        [in]  Size in bytes to transfer
+ * @param channel_id  [in]  Channel ID to use for the transfer
+ * @param flags       [in]  Transfer flags
+ * @param xfer_status [in,out] Optional status handle
+ *                            (use @ref nixl::gpu::getXferStatus)
+ *
+ * @return NIXL_ERR_NOT_SUPPORTED Get is not supported yet.
+ */
+template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+get(const memViewElem &,
+    const memViewElem &,
+    size_t,
+    unsigned = 0,
+    uint64_t = 0,
+    xferStatusH * = nullptr) {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+/**
  * @brief Atomic add to remote GPU memory.
  *
  * This function performs an atomic increment on a remote counter.
