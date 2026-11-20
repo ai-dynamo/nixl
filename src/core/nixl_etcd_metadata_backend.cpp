@@ -38,6 +38,22 @@
 
 namespace {
 constexpr char default_namespace[] = "/nixl/agents/";
+
+// Where an agent's metadata was read from the store. revision is the store revision of the read:
+// events after it are not in the value. generation is the metadata key's create_revision, which
+// only changes when the key is deleted and recreated (a new lifetime of the agent) and is read in
+// the same call as the blob, so it always describes the blob that gets cached.
+struct mdPosition {
+    int64_t revision = 0;
+    int64_t generation = 0;
+};
+
+// An agent whose watch was cancelled by compaction and has to be resynced from the store.
+struct rewatchRequest {
+    std::string agent;
+    std::string label;
+    int64_t generation;
+};
 } // namespace
 
 // Hand-rolled etcd client (connection + watchers). Moved from the former
@@ -50,6 +66,9 @@ private:
     const std::string namespacePrefix_;
     const std::string agentName_;
     std::vector<std::string> invalidatedAgents_;
+    // Agents whose watch etcd cancelled because its start revision was compacted; resynced from
+    // the store in processInvalidatedAgents. Guarded by invalidatedAgentsMutex_ as well.
+    std::vector<rewatchRequest> rewatchAgents_;
     std::mutex invalidatedAgentsMutex_;
     std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>> agentWatchers_;
     std::chrono::microseconds watchTimeout_;
@@ -167,7 +186,8 @@ public:
     nixl_status_t
     fetchMetadataFromEtcd(const std::string &agent_name,
                           const std::string &metadata_type,
-                          nixl_blob_t &metadata) {
+                          nixl_blob_t &metadata,
+                          mdPosition &pos) {
         const std::string metadata_key = makeKey(agent_name, metadata_type);
         try {
             const etcd::Response response = etcd_->get(metadata_key);
@@ -184,6 +204,8 @@ public:
                 }
                 NIXL_DEBUG << "Successfully fetched key: " << metadata_key << " (rev "
                            << response.value().modified_index() << ")";
+                pos.revision = response.index();
+                pos.generation = response.value().created_index();
                 return NIXL_SUCCESS;
             }
             NIXL_INFO << "Failed to fetch key: " << metadata_key
@@ -197,7 +219,9 @@ public:
     }
 
     nixl_status_t
-    waitForMetadataFromEtcd(const std::string &metadata_key, nixl_blob_t &remote_metadata) {
+    waitForMetadataFromEtcd(const std::string &metadata_key,
+                            nixl_blob_t &remote_metadata,
+                            mdPosition &pos) {
         try {
             const etcd::Response response = etcd_->get(metadata_key);
             const int64_t watch_index = response.index();
@@ -222,6 +246,8 @@ public:
                     return;
                 }
                 remote_metadata = response.value().as_string();
+                pos.revision = response.value().modified_index();
+                pos.generation = response.value().created_index();
                 NIXL_DEBUG << "Watch response: metadata key fetched: " << metadata_key;
                 ret_prom.set_value(NIXL_SUCCESS);
             };
@@ -247,19 +273,25 @@ public:
     nixl_status_t
     fetchOrWaitForMetadataFromEtcd(const std::string &remote_agent,
                                    const std::string &metadata_label,
-                                   nixl_blob_t &remote_metadata) {
+                                   nixl_blob_t &remote_metadata,
+                                   mdPosition &pos) {
         const nixl_status_t ret =
-            fetchMetadataFromEtcd(remote_agent, metadata_label, remote_metadata);
+            fetchMetadataFromEtcd(remote_agent, metadata_label, remote_metadata, pos);
         if (ret == NIXL_SUCCESS) {
             return NIXL_SUCCESS;
         }
         const std::string metadata_key = makeKey(remote_agent, metadata_label);
         NIXL_DEBUG << "Metadata not found, setting up watch for: " << metadata_key;
-        return waitForMetadataFromEtcd(metadata_key, remote_metadata);
+        return waitForMetadataFromEtcd(metadata_key, remote_metadata, pos);
     }
 
+    // pos is where the agent's metadata (under label) was read. The watch starts just after
+    // pos.revision, so a DELETE that lands between the fetch and the watch being established is
+    // replayed instead of lost.
     void
-    setupAgentWatcher(const std::string &agent_name) {
+    setupAgentWatcher(const std::string &agent_name,
+                      const std::string &label,
+                      const mdPosition &pos) {
         if (agentWatchers_.find(agent_name) != agentWatchers_.end()) {
             // Expected: fetchRemote re-arms after every successful fetch, and
             // this is what keeps watchers from stacking up per fetch.
@@ -268,53 +300,110 @@ public:
         }
         // DELETE events are enqueued to be processed in serviceEvents (can't be
         // done inside the Watcher callback).
-        const auto process_response = [this, agent_name](etcd::Response response) -> void {
+        const auto process_response =
+            [this, agent_name, label, pos](etcd::Response response) -> void {
+            if (response.compact_revision() > 0) {
+                // The start revision was compacted, so etcd cancelled this watch and any DELETE
+                // it would have replayed is gone. Resync from the store in the worker.
+                NIXL_WARN << "Watcher for agent " << agent_name
+                          << " cancelled: start revision compacted (compact revision "
+                          << response.compact_revision() << "); resyncing";
+                const std::lock_guard lock(invalidatedAgentsMutex_);
+                rewatchAgents_.push_back({agent_name, label, pos.generation});
+                return;
+            }
             if (!response.is_ok()) {
                 NIXL_ERROR << "Watcher failed to watch agent " << agent_name
                            << " from etcd: " << response.error_message();
                 return;
             }
             NIXL_DEBUG << "Watcher received " << response.events().size() << " events from etcd";
-            if (response.events().size() != 1) {
-                NIXL_ERROR << "Watcher agent " << agent_name
-                           << " received unexpected number of events from etcd: "
-                           << response.events().size();
-                return;
+            // One response can batch several events (e.g. both deletes of a recursive rmdir,
+            // or a replay from an older revision), so act on every DELETE instead of
+            // dropping a response that does not carry exactly one event.
+            bool deleted = false;
+            for (const auto &event : response.events()) {
+                if (event.event_type() == etcd::Event::EventType::DELETE_) {
+                    NIXL_DEBUG << "Watcher DELETE: " << event.kv().key() << " (rev "
+                               << event.kv().modified_index() << ")";
+                    deleted = true;
+                } else {
+                    NIXL_ERROR << "Watcher for " << event.kv().key()
+                               << " received unexpected event from etcd: "
+                               << static_cast<int>(event.event_type());
+                }
             }
-            const auto &event = response.events()[0];
-            if (event.event_type() == etcd::Event::EventType::DELETE_) {
-                NIXL_DEBUG << "Watcher DELETE: " << event.kv().key() << " (rev "
-                           << event.kv().modified_index() << ")";
+            if (deleted) {
                 const std::lock_guard lock(invalidatedAgentsMutex_);
                 invalidatedAgents_.push_back(agent_name);
-            } else {
-                NIXL_ERROR << "Watcher for " << event.kv().key()
-                           << " received unexpected event from etcd: "
-                           << static_cast<int>(event.event_type());
             }
         };
         const std::string agent_prefix = makeKey(agent_name, "");
-        agentWatchers_[agent_name] =
+        agentWatchers_[agent_name] = (pos.revision > 0) ?
+            std::make_unique<etcd::Watcher>(
+                *etcd_, agent_prefix, pos.revision + 1, process_response) :
             std::make_unique<etcd::Watcher>(*etcd_, agent_prefix, process_response);
+    }
+
+    void
+    invalidateAgent(nixlMetadataContext &ctx, const std::string &agent) {
+        NIXL_DEBUG << "Invalidated agent: " << agent;
+        agentWatchers_.erase(agent);
+        const nixl_status_t ret = ctx.invalidateRemoteMD(agent);
+        if (ret != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to invalidate remote metadata for agent: " << agent << ": "
+                       << ret;
+        } else {
+            NIXL_DEBUG << "Successfully invalidated remote metadata for agent: " << agent;
+        }
+    }
+
+    // The agent's watch was cancelled by compaction, so events since its start revision are lost.
+    // Re-read the metadata key and compare its generation with the one cached: the same key means
+    // the agent's lifetime continued, so watch again from the fresh revision; a missing or
+    // recreated key means a DELETE (and possibly a republish) was compacted away, so invalidate.
+    void
+    resyncAgentWatcher(nixlMetadataContext &ctx, const rewatchRequest &req) {
+        agentWatchers_.erase(req.agent);
+        try {
+            const etcd::Response response = etcd_->get(makeKey(req.agent, req.label));
+            if (response.is_ok()) {
+                if (response.value().created_index() == req.generation) {
+                    setupAgentWatcher(req.agent, req.label, {response.index(), req.generation});
+                } else {
+                    invalidateAgent(ctx, req.agent);
+                }
+                return;
+            }
+            if (!response.is_network_unavailable() && !response.is_grpc_timeout()) {
+                invalidateAgent(ctx, req.agent);
+                return;
+            }
+            NIXL_WARN << "Resync of agent " << req.agent << " failed: " << response.error_message()
+                      << "; will retry";
+        }
+        catch (const std::exception &e) {
+            NIXL_WARN << "Resync of agent " << req.agent << " failed: " << e.what()
+                      << "; will retry";
+        }
+        const std::lock_guard lock(invalidatedAgentsMutex_);
+        rewatchAgents_.push_back(req);
     }
 
     void
     processInvalidatedAgents(nixlMetadataContext &ctx) {
         std::vector<std::string> tmp_invalidated_agents;
+        std::vector<rewatchRequest> tmp_rewatch_agents;
         {
             const std::lock_guard lock(invalidatedAgentsMutex_);
             tmp_invalidated_agents = std::move(invalidatedAgents_);
+            tmp_rewatch_agents = std::move(rewatchAgents_);
         }
         for (const auto &agent : tmp_invalidated_agents) {
-            NIXL_DEBUG << "Invalidated agent: " << agent;
-            agentWatchers_.erase(agent);
-            const nixl_status_t ret = ctx.invalidateRemoteMD(agent);
-            if (ret != NIXL_SUCCESS) {
-                NIXL_ERROR << "Failed to invalidate remote metadata for agent: " << agent << ": "
-                           << ret;
-            } else {
-                NIXL_DEBUG << "Successfully invalidated remote metadata for agent: " << agent;
-            }
+            invalidateAgent(ctx, agent);
+        }
+        for (const auto &req : tmp_rewatch_agents) {
+            resyncAgentWatcher(ctx, req);
         }
     }
 };
@@ -393,7 +482,9 @@ nixlEtcdMetadataBackend::fetchRemote(const std::string &remote_name,
         default_metadata_label;
     worker_.submit([this, remote_name, label]() {
         nixl_blob_t blob;
-        if (client_->fetchOrWaitForMetadataFromEtcd(remote_name, label, blob) != NIXL_SUCCESS) {
+        mdPosition pos;
+        if (client_->fetchOrWaitForMetadataFromEtcd(remote_name, label, blob, pos) !=
+            NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to fetch metadata from etcd for agent: " << remote_name;
             return;
         }
@@ -410,7 +501,7 @@ nixlEtcdMetadataBackend::fetchRemote(const std::string &remote_name,
             return;
         }
         NIXL_DEBUG << "Successfully loaded metadata for agent: " << remote_name;
-        client_->setupAgentWatcher(remote_name);
+        client_->setupAgentWatcher(remote_name, label, pos);
     });
     return NIXL_SUCCESS;
 }
