@@ -26,6 +26,7 @@
 #include <span>
 
 #include "nixl.h"
+#include "gpu/device_types.cuh"
 #include "serdes/serdes.h"
 
 namespace py = pybind11;
@@ -234,6 +235,14 @@ PYBIND11_MODULE(_bindings, m) {
 #else
     m.attr("HAVE_UCX_GPU_DEVICE_API") = false;
 #endif
+
+    py::enum_<nixl_gpu_level_t>(m, "nixl_gpu_level_t")
+        .value("THREAD", nixl_gpu_level_t::THREAD)
+        .value("WARP", nixl_gpu_level_t::WARP)
+        .value("BLOCK", nixl_gpu_level_t::BLOCK)
+        .value("GRID", nixl_gpu_level_t::GRID);
+    m.attr("NIXL_GPU_DEFER") = nixl_gpu_flags::defer;
+    m.attr("NIXL_GPU_REQUEST_BYTES") = sizeof(nixlGpuXferStatusH);
 
     // cast types
     py::enum_<nixl_thread_sync_t>(m, "nixl_thread_sync_t")

@@ -17,3 +17,7 @@ fs = import('fs')
 nixl_init_copy = fs.copyfile('__init__.py')
 nixl_api_copy = fs.copyfile('_api.py')
 nixl_logging_copy = fs.copyfile('logging.py')
+nixl_cute_copy = []
+if get_option('build_cute')
+  nixl_cute_copy = fs.copyfile('cute.py')
+endif
