@@ -19,6 +19,7 @@
 #define NIXL_SRC_CORE_PLUGIN_MANAGER_H
 
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <cstdint>
 #include <map>
@@ -133,16 +134,34 @@ public:
     void
     discoverPluginsFromList(const std::string &filename);
 
-    // Load a specific backend plugin. When canonical_name is not null it
-    // receives the cache key the plugin was resolved to (the user-provided
-    // spelling with whitespace trimmed and matched case-insensitively).
+    /**
+     * @brief Load a backend plugin by any spelling of its name.
+     *
+     * @param plugin_name User-provided plugin name; surrounding whitespace is
+     *                    trimmed and the result is matched case-insensitively
+     *                    against every known plugin name.
+     * @param canonical_name When not null, always receives the cache key the
+     *                       name resolved to, also on a nullptr return: the
+     *                       trimmed spelling, an exactly matching plugin name,
+     *                       or a case-insensitive match. Empty for
+     *                       whitespace-only input.
+     * @return Handle to the loaded plugin, or nullptr when the plugin cannot
+     *         be loaded.
+     */
     std::shared_ptr<const nixlBackendPluginHandle>
     loadBackendPlugin(const nixl_backend_t &plugin_name, nixl_backend_t *canonical_name = nullptr);
 
-    // Resolve a user-provided backend name to the canonical plugin name:
-    // surrounding whitespace is trimmed and the result is matched
-    // case-insensitively against every known plugin name. Falls back to the
-    // trimmed input when no plugin matches.
+    /**
+     * @brief Resolve a user-provided backend name to the canonical plugin name.
+     *
+     * Surrounding whitespace is trimmed; a trimmed name that names a plugin
+     * exactly (or whose standard plugin file is on disk) is returned as-is,
+     * and only then is the name folded case-insensitively against every known
+     * plugin name. Falls back to the trimmed input when no plugin matches.
+     *
+     * @param name User-provided backend name.
+     * @return The canonical plugin name; empty for whitespace-only input.
+     */
     [[nodiscard]] nixl_backend_t
     canonicalBackendName(const nixl_backend_t &name) const;
 
@@ -187,30 +206,69 @@ public:
     void
     addPluginDirectory(const std::string &directory);
 
-    // Get a copy of the registered plugin directories
+    /**
+     * @brief Get a copy of the registered plugin directories.
+     *
+     * @return Directories in registration-priority order.
+     */
     [[nodiscard]] std::vector<std::string>
     getPluginDirectories() const;
 
-    // Remove a plugin directory again (unit tests only)
+    /** @brief Remove a plugin directory again (unit tests only). */
     void
     removePluginDirectoryForUnitTest(const std::string &directory);
 
-    // Report a directory entry as a scan carrying the given registration
-    // generation would (unit tests only): the entry is discarded unless the
-    // directory's current generation still matches.
+    /**
+     * @brief Report a directory entry as a scan carrying the given
+     *        registration generation would (unit tests only): the entry is
+     *        discarded unless the directory's current generation still
+     *        matches.
+     */
     void
     discoverBackendPluginWithGenerationForUnitTest(const std::filesystem::path &path,
                                                    const std::string &dir,
                                                    uint64_t generation);
 
-    // Current registration generation of a plugin directory; zero when the
-    // directory is not registered (unit tests only).
+    /**
+     * @brief Current registration generation of a plugin directory; zero when
+     *        the directory is not registered (unit tests only).
+     */
     [[nodiscard]] uint64_t
     pluginDirectoryScanGenerationForUnitTest(const std::string &dir) const;
 
-    // Forget a discovered, not-yet-loaded plugin name entirely (unit tests only)
+    /**
+     * @brief Forget a discovered, not-yet-loaded plugin name entirely,
+     *        including any pluginlist-registered library path (unit tests
+     *        only).
+     */
     void
     forgetDiscoveredPluginForUnitTest(const nixl_backend_t &name);
+
+    /** @brief Result of looking for an exact directory entry: the exact
+     *         file name is present, the directory was enumerated and holds
+     *         no such entry, or the directory could not be enumerated at
+     *         all (e.g. no read permission). */
+    enum class EntryLookup { MATCH, NO_MATCH, CANNOT_LIST };
+
+    /**
+     * @brief The loader's standard-path compatibility gate, exposed for
+     *        direct unit testing: a directory that cannot be enumerated keeps
+     *        serving a standard file name its scan really saw, verified by
+     *        path; an enumeration that completed without the entry always
+     *        wins, and a whitespace variant never proves a standard name
+     *        (unit tests only).
+     */
+    [[nodiscard]] static bool
+    standardPathFallbackForUnitTest(EntryLookup lookup, bool scan_saw_standard, bool path_exists);
+
+    /**
+     * @brief Arm a one-shot hook fired after the caller's own name
+     *        resolution and before the load's resolution, so a test can
+     *        change the manager's environment between the two. The hook must
+     *        not call back into the manager (unit tests only).
+     */
+    void
+    setPreLoadHookForUnitTest(std::function<void()> hook);
 
     // Static Plugin Helpers
     const std::vector<nixlBackendStaticPluginInfo> &
@@ -234,9 +292,13 @@ private:
     // and which registered directories provide it. A name stays available as
     // long as it has at least one source; sources are tracked even for
     // plugins that are already loaded, so they survive an unload.
+    // standard_dirs records the directories whose scan saw the plugin behind
+    // its standard file name ("libplugin_<name>.so"), as opposed to a
+    // whitespace variant, whose real path lands in dir_override_paths_.
     struct DiscoverySources {
         bool from_plugin_list = false;
         std::set<std::string> dirs;
+        std::set<std::string> standard_dirs;
     };
 
     std::map<nixl_backend_t, DiscoverySources> discovered_backend_plugins_;
@@ -256,6 +318,7 @@ private:
     // current number differs (deregistered, or deregistered and re-registered).
     // Zero is never a valid registration number.
     std::map<std::string, uint64_t> dir_scan_generations_;
+    std::function<void()> pre_load_hook_for_test_;
     uint64_t next_scan_generation_ = 1;
     std::vector<std::string> plugin_dirs_;
     std::vector<nixlBackendStaticPluginInfo> backend_static_plugins_;

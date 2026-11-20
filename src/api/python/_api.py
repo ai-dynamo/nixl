@@ -479,6 +479,20 @@ class nixl_agent:
             )
         return self.backends[created]
 
+    def _backend_handles(self, backends: list[str]) -> list[nixl_backend_handle]:
+        """Resolve backend names to instantiated handles, dropping duplicates.
+
+        Two spellings in one list that resolve to the same instantiated backend
+        (e.g. mixed case) must yield the handle only once, so the same memory is
+        not registered with an engine twice.
+        """
+        handle_list: list[nixl_backend_handle] = []
+        for backend_string in backends:
+            handle = self._backend_handle(backend_string)
+            if handle not in handle_list:
+                handle_list.append(handle)
+        return handle_list
+
     def create_backend(self, backend: str, initParams: dict[str, str] = {}):
         """Initialize a backend with the specified initialization parameters, described above.
 
@@ -515,9 +529,7 @@ class nixl_agent:
         """
         reg_descs = self.get_reg_descs(reg_list, mem_type)
 
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends)
         self.agent.registerMem(reg_descs, handle_list)
 
         return reg_descs
@@ -532,9 +544,7 @@ class nixl_agent:
             backends: Optional list of backend names for deregistration, otherwise NIXL will deregister
                 with all the backends that have these memory regions registered.
         """
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends)
         self.agent.deregisterMem(dereg_list, handle_list)
 
     def query_memory(
@@ -573,9 +583,7 @@ class nixl_agent:
             backends: Optional list of backend names to limit the connections to specific backends
             remote_agent: Name of the remote agent.
         """
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends)
 
         self.agent.makeConnection(remote_agent, handle_list)
 
@@ -622,9 +630,7 @@ class nixl_agent:
         if is_local:
             agent_name = nixlBind.NIXL_INIT_AGENT
 
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends)
 
         if is_strided:
             if mem_type is None:
@@ -686,9 +692,7 @@ class nixl_agent:
                 The handle can be released by calling release_xfer_handle from agent, or release() method on itself.
         """
         op = self.nixl_ops[operation]
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends)
 
         handle = self.agent.makeXferReq(
             op,
@@ -732,9 +736,7 @@ class nixl_agent:
                 The handle can be released by calling release_xfer_handle from agent, or release() method on itself.
         """
         op = self.nixl_ops[operation]
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends)
 
         handle = self.agent.createXferReq(
             op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
@@ -889,9 +891,7 @@ class nixl_agent:
         *,
         backends: Optional[list[str]] = None,
     ) -> int:
-        handle_list = []
-        for backend_string in backends or []:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends or [])
         return self.agent.prepMemView(dlist, handle_list)
 
     """
@@ -913,9 +913,7 @@ class nixl_agent:
             Dictionary of new notifications.
                 Return Dict is a map of remote agent names to a list of notification messages from that agent.
         """
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends)
         return self.agent.getNotifs({}, handle_list)
 
     def update_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
@@ -928,9 +926,7 @@ class nixl_agent:
         Returns:
             Dictionary of updated notifications.
         """
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends)
         self.notifs = self.agent.getNotifs(self.notifs, handle_list)  # Adds new notifs
         return self.notifs
 
@@ -954,9 +950,7 @@ class nixl_agent:
         Returns:
             True if the notification is found, False otherwise.
         """
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends)
         self.notifs = self.agent.getNotifs(self.notifs, handle_list)  # Adds new notifs
         found = False
         message = None
@@ -1016,9 +1010,7 @@ class nixl_agent:
         Returns:
             Metadata of the local agent, in bytes.
         """
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends)
         return self.agent.getLocalPartialMD(descs, inc_conn_info, handle_list)
 
     def add_remote_agent(self, metadata: bytes) -> str:
@@ -1088,9 +1080,7 @@ class nixl_agent:
             label: Label to use for the metadata when sending to central metadata server.
                 Ignored when sending to a peer.
         """
-        handle_list = []
-        for backend_string in backends:
-            handle_list.append(self._backend_handle(backend_string))
+        handle_list = self._backend_handles(backends)
         self.agent.sendLocalPartialMD(
             descs, inc_conn_info, handle_list, ip_addr, port, label
         )

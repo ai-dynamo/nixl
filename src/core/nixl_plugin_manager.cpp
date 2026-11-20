@@ -332,6 +332,44 @@ upperAscii(std::string s) {
     return s;
 }
 
+/* Outcome of looking for an entry whose file name is exactly `filename`.
+ * exists() is not enough: on case-insensitive file systems it succeeds for
+ * case variants and would let one library load under two spellings. A
+ * directory that cannot be enumerated is reported separately from one that
+ * was enumerated and holds no such entry. */
+using EntryLookup = nixlPluginManager::EntryLookup;
+
+EntryLookup
+lookupExactEntry(const std::string &dir, const std::string &filename) {
+    std::error_code ec;
+    std::filesystem::directory_iterator it(dir, ec), end;
+    if (ec) {
+        return EntryLookup::CANNOT_LIST;
+    }
+    // increment(ec) makes the iterator equal to end when it fails, so the
+    // error must be checked immediately rather than at the top of the next
+    // iteration (which never runs).
+    for (; it != end;) {
+        if (it->path().filename().string() == filename) {
+            return EntryLookup::MATCH;
+        }
+        it.increment(ec);
+        if (ec) {
+            return EntryLookup::CANNOT_LIST;
+        }
+    }
+    return EntryLookup::NO_MATCH;
+}
+
+/* Whether the loader's compatibility branch applies: only for a directory
+ * that cannot be enumerated at all, whose scan really saw the standard file
+ * name (a whitespace variant never proves one), and whose standard path
+ * still verifies. */
+bool
+standardPathFallback(EntryLookup lookup, bool scan_saw_standard, bool path_exists) {
+    return lookup == EntryLookup::CANNOT_LIST && scan_saw_standard && path_exists;
+}
+
 bool
 shouldDeepBindPlugin(const std::string &plugin_name) {
     // Case-insensitive so a UCX plugin registered under a different
@@ -514,6 +552,7 @@ nixlPluginManager::removePluginDirectoryForUnitTest(const std::string &directory
     // names survive.
     for (auto it = discovered_backend_plugins_.begin(); it != discovered_backend_plugins_.end();) {
         it->second.dirs.erase(directory);
+        it->second.standard_dirs.erase(directory);
         if (!it->second.from_plugin_list && it->second.dirs.empty()) {
             it = discovered_backend_plugins_.erase(it);
         } else {
@@ -536,11 +575,25 @@ nixlPluginManager::pluginDirectoryScanGenerationForUnitTest(const std::string &d
     return it == dir_scan_generations_.end() ? 0 : it->second;
 }
 
+bool
+nixlPluginManager::standardPathFallbackForUnitTest(EntryLookup lookup,
+                                                   bool scan_saw_standard,
+                                                   bool path_exists) {
+    return standardPathFallback(lookup, scan_saw_standard, path_exists);
+}
+
+void
+nixlPluginManager::setPreLoadHookForUnitTest(std::function<void()> hook) {
+    const std::lock_guard lock(mutex_);
+    pre_load_hook_for_test_ = std::move(hook);
+}
+
 void
 nixlPluginManager::forgetDiscoveredPluginForUnitTest(const nixl_backend_t &name) {
     const std::lock_guard lock(mutex_);
     discovered_backend_plugins_.erase(name);
     dir_override_paths_.erase(name);
+    explicit_plugin_paths_.erase(name);
 }
 
 std::string
@@ -561,6 +614,17 @@ nixlPluginManager::composePluginPath(const std::string &dir,
 std::shared_ptr<const nixlBackendPluginHandle>
 nixlPluginManager::loadBackendPlugin(const std::string &plugin_name,
                                      nixl_backend_t *canonical_name) {
+    // One-shot test hook (swapped out under the lock, run without it): fires
+    // after the caller's own name resolution and before this load's.
+    std::function<void()> hook;
+    {
+        const std::lock_guard lock(mutex_);
+        hook.swap(pre_load_hook_for_test_);
+    }
+    if (hook) {
+        hook();
+    }
+
     const std::lock_guard lock(mutex_);
 
     const std::string canonical = canonicalBackendNameLocked(plugin_name);
@@ -602,6 +666,20 @@ nixlPluginManager::canonicalBackendNameLocked(const nixl_backend_t &name) const 
         return trimmed;
     }
 
+    // The trimmed spelling may name a standard plugin file that a directory
+    // scan has not published yet (scans run outside the lock); folding to
+    // another spelling then would load the wrong plugin, while main probed
+    // the requested spelling directly. The exact entry name decides, so a
+    // case variant in a case-insensitive directory cannot capture the
+    // request. Probing under the lock matches loadBackendPluginImpl, which
+    // already dlopens while holding it.
+    const std::string wanted_file = backendPluginPrefix + trimmed + kPluginSuffix;
+    for (const auto &dir : plugin_dirs_) {
+        if (lookupExactEntry(dir, wanted_file) == EntryLookup::MATCH) {
+            return trimmed;
+        }
+    }
+
     // Callers may pass "ucx", "Ucx" or " UCX " for the UCX backend, so fall
     // back to a case-insensitive match against every known plugin name.
     const std::string wanted = upperAscii(trimmed);
@@ -609,11 +687,12 @@ nixlPluginManager::canonicalBackendNameLocked(const nixl_backend_t &name) const 
         return upperAscii(candidate) == wanted;
     };
 
-    for (const auto &pair : loaded_backend_plugins_) {
-        if (matches(pair.first)) {
-            return pair.first;
-        }
-    }
+    // Registration decides between same-fold spellings, never what happens to
+    // be loaded: the loaded set grows over time, and preferring it would make
+    // one agent's repeated alias request resolve differently once another
+    // agent loads a case variant, slipping past the duplicate check. Loaded
+    // spellings remain a last resort for plugins whose directories were
+    // removed after they loaded.
     for (const auto &pair : explicit_plugin_paths_) {
         if (matches(pair.first)) {
             return pair.first;
@@ -622,6 +701,11 @@ nixlPluginManager::canonicalBackendNameLocked(const nixl_backend_t &name) const 
     for (const auto &known : discovered_backend_plugins_) {
         if (matches(known.first)) {
             return known.first;
+        }
+    }
+    for (const auto &pair : loaded_backend_plugins_) {
+        if (matches(pair.first)) {
+            return pair.first;
         }
     }
     return trimmed;
@@ -654,18 +738,37 @@ nixlPluginManager::loadBackendPluginImpl(const std::string &plugin_name) const {
         }
     }
 
-    // Try to load the plugin from all registered directories. Suppress the
+    // Try to load the plugin from all registered directories. The exact
+    // directory entry decides, so on case-insensitive file systems a case
+    // variant in a higher-priority directory cannot capture a request whose
+    // exact file lives in a lower-priority one, and one library cannot be
+    // cached under two spellings. A directory that can no longer be
+    // enumerated at all (search permission without read) keeps serving a
+    // standard file name its scan really saw, verified by path; a whitespace
+    // variant never proves a standard name, and an enumeration that completed
+    // without the entry always wins over the stale scan record. Suppress the
     // missing-file warning while fallback candidates remain (a plugin behind
     // a non-canonical file name has no standard file to find here).
     const auto override_it = dir_override_paths_.find(plugin_name);
     const bool has_override = override_it != dir_override_paths_.end();
+    const std::string standard_file = backendPluginPrefix + plugin_name + kPluginSuffix;
+    const auto discovered_it = discovered_backend_plugins_.find(plugin_name);
     for (const auto& dir : plugin_dirs_) {
-        std::string plugin_path = composePluginPath(dir, backendPluginPrefix, plugin_name);
-        if (plugin_path.empty()) {
-            continue;
+        const std::string plugin_path = composePluginPath(dir, backendPluginPrefix, plugin_name);
+        const EntryLookup lookup = lookupExactEntry(dir, standard_file);
+        bool use_path = lookup == EntryLookup::MATCH;
+        if (!use_path) {
+            const bool scan_saw_standard = discovered_it != discovered_backend_plugins_.end() &&
+                discovered_it->second.standard_dirs.count(dir) != 0;
+            // The path probe runs only when the compatibility branch could
+            // apply at all, never on an ordinary miss.
+            if (lookup == EntryLookup::CANNOT_LIST && scan_saw_standard) {
+                std::error_code ec;
+                use_path = standardPathFallback(
+                    lookup, scan_saw_standard, std::filesystem::exists(plugin_path, ec));
+            }
         }
-
-        if (!std::filesystem::exists(plugin_path)) {
+        if (!use_path) {
             if (!has_override) {
                 NIXL_WARN << "Plugin file does not exist: " << plugin_path;
             }
@@ -835,6 +938,11 @@ nixlPluginManager::discoverBackendPlugin(const std::filesystem::path &path,
                 NIXL_WARN << "Multiple non-canonical files for plugin '" << trimmed << "' in "
                           << dir_key << "; keeping " << inserted.first->second;
             }
+        } else {
+            // The scan saw the standard file name itself; only that proves
+            // the on-disk spelling for the unlistable-directory fallback in
+            // the loader.
+            discovered_backend_plugins_[trimmed].standard_dirs.insert(dir_key);
         }
         NIXL_INFO << "Discovered backend plugin: " << trimmed;
     }

@@ -63,6 +63,19 @@ upperAscii(std::string s) {
     return s;
 }
 
+/* Trim ASCII whitespace from both ends, matching the plugin manager's name
+ * canonicalization. */
+std::string
+trimAscii(const std::string &s) {
+    static constexpr const char *whitespace = " \t\n\r\f\v";
+    const auto first = s.find_first_not_of(whitespace);
+    if (first == std::string::npos) {
+        return "";
+    }
+    const auto last = s.find_last_not_of(whitespace);
+    return s.substr(first, last - first + 1);
+}
+
 // One continuation bit per index pair: set when both indices grow by one from the pair before.
 // Filled on the stack one chunk of pairs at a time.
 class nixlContinuationBitmap {
@@ -585,12 +598,40 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
     }
 
+    // An alias request (the trimmed spelling differs from what it resolved
+    // to) is a duplicate when the agent already holds an engine under a
+    // same-fold spelling: which same-fold spelling the resolver picks can
+    // shift when other agents load case variants in the meantime, and the
+    // request never names the held spelling exactly. Exact requests, padded
+    // or not, keep creating distinct spellings.
+    const auto alias_is_duplicate = [&](const nixl_backend_t &key) {
+        for (const auto &engine : data->backendEngines_) {
+            if (upperAscii(engine.first) == upperAscii(key)) {
+                NIXL_ERROR_FUNC << "backend already created for type '" << engine.first
+                                << "' (case variant of '" << key << "')";
+                return true;
+            }
+        }
+        return false;
+    };
+    // Checked before loading so the answer does not depend on whether the
+    // selected library is currently loadable...
+    if (requested != trimAscii(type) && alias_is_duplicate(requested)) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     // Try to load the backend as a plugin; the manager resolves
     // user-provided spellings (" ucx ", "Ucx") and reports the cache key it
     // settled on. Key everything below by that name so the agent's
     // registries agree with the plugin manager's cache.
     nixl_backend_t canonical;
     auto plugin_handle = plugin_manager.loadBackendPlugin(type, &canonical);
+
+    // ... and re-checked afterwards: the second resolution inside the load
+    // can shift when files or registrations changed between the two.
+    if (canonical != requested && canonical != trimAscii(type) && alias_is_duplicate(canonical)) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
     if (!plugin_handle) {
         NIXL_ERROR_FUNC << "unsupported backend '" << type << "'";
