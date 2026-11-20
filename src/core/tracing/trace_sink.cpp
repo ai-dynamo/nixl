@@ -51,14 +51,12 @@ namespace {
 
 void
 TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
-                             std::string_view label,
                              nixlTime::us_t timestamp,
+                             const TraceIdentity &identity,
                              std::span<const nixlBackendTraceAttr> attrs,
-                             const TraceContext *context,
-                             std::uint64_t request_id,
-                             std::uint64_t execution) noexcept {
+                             std::string_view label) noexcept {
     try {
-        const TraceContext event_context = (context != nullptr) ? *context : TraceContext{};
+        const TraceContext &event_context = identity.context;
         std::string traceparent;
         std::string request_id_text;
         std::vector<Attribute> event_attrs;
@@ -69,12 +67,13 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
             traceparent = formatTraceparent(event_context);
             event_attrs.push_back({"nixl.traceparent", traceparent});
         }
-        if (request_id != 0) {
-            request_id_text = std::to_string(request_id);
+        if (identity.requestId != 0) {
+            request_id_text = std::to_string(identity.requestId);
             event_attrs.push_back({"nixl.xfer_request_id", request_id_text});
         }
-        if (execution != 0) {
-            event_attrs.push_back({"nixl.xfer_execution", static_cast<std::int64_t>(execution)});
+        if (identity.execution != 0) {
+            event_attrs.push_back(
+                {"nixl.xfer_execution", static_cast<std::int64_t>(identity.execution)});
         }
         if (!label.empty()) {
             event_attrs.push_back({"nixl.phase.label", label});
@@ -87,7 +86,7 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
         tracer_.emitEvent(named ? label : toStringView(phase),
                           phaseKind(phase),
                           event_context,
-                          request_id,
+                          identity.requestId,
                           timestamp,
                           event_attrs);
     }
