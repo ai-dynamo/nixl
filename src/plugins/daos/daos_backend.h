@@ -20,21 +20,6 @@ public:
     static nixl_b_params_t
     getPluginParams();
 
-    bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
-
-    bool
-    supportsNotif() const override {
-        return false;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const override {
         return {DRAM_SEG, OBJ_SEG};

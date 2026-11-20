@@ -186,7 +186,7 @@ nixlDaosEngine::getPluginParams() {
 }
 
 nixlDaosEngine::nixlDaosEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       syncMode_(init_params->syncMode),
       client_(makeLibDfsClient(init_params)) {
     NIXL_INFO << "DAOS backend initialized with native libdfs events";
@@ -194,7 +194,7 @@ nixlDaosEngine::nixlDaosEngine(const nixlBackendInitParams *init_params)
 
 nixlDaosEngine::nixlDaosEngine(const nixlBackendInitParams *init_params,
                                std::shared_ptr<iDfsClient> client)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       syncMode_(init_params->syncMode),
       client_(std::move(client)) {
     if (!client_) {
