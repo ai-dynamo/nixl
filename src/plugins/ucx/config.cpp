@@ -27,6 +27,7 @@ extern "C" {
 #include <ucs/config/global_opts.h>
 }
 
+#include <ucm/api/ucm.h>
 #include "common/configuration.h"
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
@@ -74,6 +75,26 @@ config::modifyAlways(std::string_view key, std::string_view value) const {
     } else {
         NIXL_DEBUG << "Modified UCX config: " << key_str << "=" << value_str;
     }
+}
+
+void
+config::enableMemtypeMap() const {
+    for (const auto var : {"UCX_MEM_EVENTS", "UCX_MEMTYPE_CACHE", "UCX_RCACHE_ENABLE"}) {
+        if (nixl::config::internal::getenvOptional(var)) {
+            NIXL_DEBUG << "UCX env var already set: " << var << ", not enabling memtype map";
+            return;
+        }
+    }
+
+    // Both MEMTYPE_CACHE and the UCM options are process-wide, so set them only once
+    static std::once_flag once;
+    std::call_once(once, [this] {
+        modifyAlways("MEMTYPE_CACHE", "y");
+        ucm_global_config_t ucm_opts = ucm_global_opts;
+        ucm_opts.enable_events = 0;
+        ucm_set_global_opts(&ucm_opts);
+        NIXL_DEBUG << "Disabled UCX memory events, memtype map is used for registered memory only";
+    });
 }
 
 void
