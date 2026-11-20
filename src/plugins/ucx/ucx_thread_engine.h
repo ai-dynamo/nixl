@@ -95,6 +95,11 @@ protected:
     void
     appendNotif(std::string &&remote_name, std::string &&msg) override;
 
+    [[nodiscard]] bool
+    hasProgressThread() const noexcept override {
+        return thread_ != nullptr;
+    }
+
 private:
     std::mutex notifMutex_;
     std::unique_ptr<nixlUcxThread> thread_;

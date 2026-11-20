@@ -16,6 +16,7 @@
  */
 
 #include "ucx_utils.h"
+#include "tracing/api/phase_sink.h"
 
 #include <algorithm>
 #include <array>
@@ -137,6 +138,21 @@ err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status) {
     ep->err_cb(ucp_ep, status);
 }
 
+namespace {
+thread_local ucs_status_t immediate_failure = UCS_OK;
+
+[[nodiscard]] nixl_status_t
+failedImmediately(ucs_status_t status) {
+    immediate_failure = status;
+    return nixl::ucx::ucsToNixlStatus(status);
+}
+} // namespace
+
+ucs_status_t
+nixlUcxEp::takeImmediateFailure() noexcept {
+    return std::exchange(immediate_failure, UCS_OK);
+}
+
 void
 nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
     const auto current_state = state_.load(std::memory_order_relaxed);
@@ -146,6 +162,7 @@ nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
                << ucs_status_string(status) << ")";
 
     NIXL_ASSERT(eph_ == ucp_ep);
+    failure_.store(status, std::memory_order_relaxed);
     state_ = nixl::ucx::ep_state_t::FAILED;
 }
 
@@ -243,6 +260,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
     if (status != NIXL_SUCCESS) {
         // The endpoint is already in a failed state (e.g. the peer disconnected),
         // so no request will be issued.
+        immediate_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -266,7 +284,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 /* ===========================================
@@ -282,6 +300,7 @@ nixlUcxEp::read(uint64_t raddr,
                 nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) [[unlikely]] {
+        immediate_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -295,7 +314,7 @@ nixlUcxEp::read(uint64_t raddr,
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -307,6 +326,7 @@ nixlUcxEp::write(void *laddr,
                  nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) [[unlikely]] {
+        immediate_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -320,7 +340,7 @@ nixlUcxEp::write(void *laddr,
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -394,7 +414,7 @@ nixlUcxEp::flushEp(nixlUcxReq &req, ucp_send_nbx_callback_t cb, void *user_data)
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 
 #ifdef HAVE_UCX_SGL_API
@@ -405,6 +425,7 @@ nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
                    nixlUcxReq &req) {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
+        immediate_failure = failure_.load(std::memory_order_relaxed);
         return status;
     }
 
@@ -425,7 +446,7 @@ nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
     }
 
     req = nullptr;
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request)) : NIXL_SUCCESS;
 }
 #endif
 
@@ -738,11 +759,13 @@ operator<<(std::ostream &os, const nixlUcxWorker &worker) {
 
 nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
                              ucp_err_handling_mode_t err_handling_mode,
-                             size_t id)
+                             size_t id,
+                             nixlBackendTraceSink *trace_sink)
     : name_(ctx.getName() + ":" + std::to_string(id)),
       worker(createUcpWorker(ctx), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode),
-      id_(id) {
+      id_(id),
+      traceSink_(trace_sink) {
     NIXL_DEBUG << *this << ": created ucp worker " << worker.get();
 }
 
@@ -914,7 +937,9 @@ nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_
 
 unsigned
 nixlUcxWorker::progress() {
-    return ucp_worker_progress(worker.get());
+    const unsigned progressed = ucp_worker_progress(worker.get());
+    nixl::trace::recordDeferredPhases(traceSink_);
+    return progressed;
 }
 
 void
@@ -928,7 +953,7 @@ nixlUcxWorker::test(nixlUcxReq req) {
     if (req == nullptr) {
         return NIXL_SUCCESS;
     }
-    ucp_worker_progress(worker.get());
+    progress();
     return nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
 }
 

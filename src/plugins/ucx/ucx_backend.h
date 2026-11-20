@@ -29,7 +29,7 @@
 #include <utility>
 
 #include "backend/backend_engine.h"
-#include "tracing/trace_context.h"
+#include "tracing/api/phase_sink.h"
 
 #include "mem_list.h"
 #include "rkey.h"
@@ -39,20 +39,17 @@ namespace nixl::ucx {
 struct notifMessage {
     std::string agent;
     std::string msg;
-    std::optional<nixl::trace::TraceContext> traceContext;
-    std::uint64_t traceRequestId = 0;
-    std::uint64_t traceExecution = 0;
+    nixlBackendPostTrace trace;
+    std::string baggage;
 };
 
 [[nodiscard]] std::string
 serializeNotif(const std::string &agent,
                const std::string &msg,
-               const nixl::trace::TraceContext *trace_context,
-               std::uint64_t request_id = 0,
-               std::uint64_t execution = 0);
+               const nixlBackendPostTrace &trace = {});
 
 [[nodiscard]] notifMessage
-deserializeNotif(const std::string &buffer, bool with_trace_context);
+deserializeNotif(const std::string &buffer, nixlBackendTraceSink *sink);
 } // namespace nixl::ucx
 
 class nixlUcxConnection : public nixlBackendConnMD {
@@ -180,6 +177,8 @@ public:
     checkXfer(nixlBackendReqH *handle) const override;
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
+    [[nodiscard]] std::optional<nixlBackendNativeStatus>
+    getNativeStatus(const nixlBackendReqH *handle) const override;
 
     unsigned
     progress();
@@ -211,7 +210,7 @@ protected:
     void
     addWorker(argTypes &&...args) {
         workers_.emplace_back(std::make_unique<workerType>(
-            *uc, errHandlingMode_, workers_.size(), std::forward<argTypes>(args)...));
+            *uc, errHandlingMode_, workers_.size(), traceSink_, std::forward<argTypes>(args)...));
     }
 
     [[nodiscard]] worker_span_t
@@ -243,6 +242,11 @@ protected:
     [[nodiscard]] bool
     isSglEnabled() const noexcept {
         return sglEnabled_;
+    }
+
+    [[nodiscard]] virtual bool
+    hasProgressThread() const noexcept {
+        return false;
     }
 
     virtual void
@@ -284,10 +288,7 @@ private:
               const ucp_am_recv_param_t *param);
 
     [[nodiscard]] std::string
-    buildNotif(const std::string &msg,
-               const nixl::trace::TraceContext *trace_context,
-               std::uint64_t request_id = 0,
-               std::uint64_t execution = 0) const;
+    buildNotif(const std::string &msg, const nixlBackendPostTrace &trace = {}) const;
 
     nixl_status_t
     notifSendPriv(const std::string &remote_agent,

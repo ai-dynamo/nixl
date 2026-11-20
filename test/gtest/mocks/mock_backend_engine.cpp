@@ -96,6 +96,12 @@ MockBackendEngine::releaseReqH(nixlBackendReqH *handle) const {
     return gmock_backend_engine->releaseReqH(handle);
 }
 
+std::optional<nixlBackendNativeStatus>
+MockBackendEngine::getNativeStatus(const nixlBackendReqH *handle) const {
+    assert(sharedState > 0);
+    return gmock_backend_engine->getNativeStatus(handle);
+}
+
 nixl_status_t
 MockBackendEngine::prepMemView(const nixl_meta_dlist_t &dlist,
                                nixlMemViewH &mvh,

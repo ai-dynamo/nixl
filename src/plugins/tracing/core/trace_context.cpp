@@ -1,0 +1,453 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstring>
+#include <limits>
+#include <stdexcept>
+
+#include <pthread.h>
+
+#include "common/nixl_log.h"
+#include "common/uuid_v4.h"
+#include "serdes/serdes.h"
+#include "tracing/api/log_once.h"
+#include "tracing/core/random_generator.h"
+#include "tracing/core/trace.h"
+#include "tracing/core/trace_context.h"
+
+namespace {
+constexpr std::uint8_t supported_trace_flags = 0x03;
+constexpr std::size_t wire_flags_offset = 1;
+constexpr std::size_t wire_trace_id_offset = 2;
+constexpr std::size_t wire_span_id_offset = 18;
+constexpr std::size_t trace_id_randomness_bytes = 7;
+constexpr double two_pow_56 = 0x1p56;
+constexpr std::uint64_t max_request_id = std::numeric_limits<std::int64_t>::max();
+
+static_assert(std::endian::native == std::endian::little);
+
+struct requestTag {
+    std::uint64_t requestId;
+    std::uint64_t execution;
+};
+
+template<std::size_t Size>
+[[nodiscard]] bool
+isAllZero(const std::array<std::uint8_t, Size> &bytes) noexcept {
+    return std::all_of(bytes.begin(), bytes.end(), [](std::uint8_t byte) { return byte == 0; });
+}
+
+[[nodiscard]] int
+hexValue(char value) noexcept {
+    if (value >= '0' && value <= '9') {
+        return value - '0';
+    }
+    if (value >= 'a' && value <= 'f') {
+        return value - 'a' + 10;
+    }
+    return -1;
+}
+
+[[nodiscard]] bool
+parseByte(std::string_view value, std::size_t offset, std::uint8_t &result) noexcept {
+    const int high = hexValue(value[offset]);
+    const int low = hexValue(value[offset + 1]);
+    if (high < 0 || low < 0) {
+        return false;
+    }
+    result = static_cast<std::uint8_t>((high << 4) | low);
+    return true;
+}
+
+template<std::size_t Size>
+[[nodiscard]] bool
+parseBytes(std::string_view value,
+           std::size_t offset,
+           std::array<std::uint8_t, Size> &result) noexcept {
+    for (std::size_t index = 0; index < Size; ++index) {
+        if (!parseByte(value, offset + index * 2, result[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] std::uint64_t
+traceIdRandomness(const nixl::trace::TraceContext &context) noexcept {
+    std::uint64_t word;
+    std::memcpy(
+        &word, context.traceId->data() + context.traceId->size() - sizeof(word), sizeof(word));
+    if constexpr (std::endian::native == std::endian::little) {
+        word = __builtin_bswap64(word);
+    }
+    return word & ((std::uint64_t{1} << (trace_id_randomness_bytes * 8)) - 1);
+}
+
+void
+systemRandomBytes(std::span<std::uint8_t> output) {
+    nixl::generateRandomBytes(output.data(), output.size());
+}
+
+constinit thread_local nixl::trace::RandomGenerator random_generator{systemRandomBytes};
+
+void
+clearRandomGenerator() noexcept {
+    random_generator.clear();
+}
+
+void
+generatedRandomBytes(std::span<std::uint8_t> output) {
+    // A forked child must not hand out the bytes its parent still holds.
+    static const bool fork_safe = (pthread_atfork(nullptr, nullptr, clearRandomGenerator) == 0);
+    if (!fork_safe) {
+        systemRandomBytes(output);
+        return;
+    }
+    random_generator.fill(output);
+}
+
+[[nodiscard]] nixl::trace::random_bytes_fn_t
+randomSource(nixl::trace::random_bytes_fn_t random_bytes) noexcept {
+    return (random_bytes != nullptr) ? random_bytes : generatedRandomBytes;
+}
+
+void
+setFlags(nixl::trace::TraceContext &context, double sample_ratio) noexcept {
+    context.flags = 0x02;
+    if (nixl::trace::sampledByRatio(context, sample_ratio)) {
+        context.flags |= nixl::trace::sampledTraceFlag;
+    }
+}
+
+void
+drawRequestIdentity(nixl::trace::TraceIdentity &identity,
+                    double sample_ratio,
+                    nixl::trace::random_bytes_fn_t random_bytes) {
+    const auto fill = randomSource(random_bytes);
+    nixl::trace::TraceContext &context = identity.context;
+    std::array<std::uint8_t,
+               sizeof(context.traceId) + sizeof(context.spanId) + sizeof(identity.requestId)>
+        bytes;
+    fill(bytes);
+    std::memcpy(context.traceId->data(), bytes.data(), sizeof(context.traceId));
+    std::memcpy(
+        context.spanId->data(), bytes.data() + sizeof(context.traceId), sizeof(context.spanId));
+    std::uint64_t &request_id = *identity.requestId;
+    std::memcpy(&request_id,
+                bytes.data() + sizeof(context.traceId) + sizeof(context.spanId),
+                sizeof(request_id));
+
+    while (isAllZero(*context.traceId)) {
+        fill(*context.traceId);
+    }
+    while (isAllZero(*context.spanId)) {
+        fill(*context.spanId);
+    }
+    request_id &= max_request_id;
+    while (request_id == 0) {
+        fill({reinterpret_cast<std::uint8_t *>(&request_id), sizeof(request_id)});
+        request_id &= max_request_id;
+    }
+
+    setFlags(context, sample_ratio);
+}
+
+[[nodiscard]] std::optional<nixl::trace::TraceContext>
+parseParent(const nixl_blob_t &value) {
+    if ((value.size() == nixl::trace::traceContextWireSize) &&
+        (static_cast<std::uint8_t>(value.front()) == nixl::trace::traceContextWireVersion)) {
+        const std::span<const std::uint8_t> record(
+            reinterpret_cast<const std::uint8_t *>(value.data()), value.size());
+        nixl::trace::TraceContext context;
+        if (nixl::trace::decodeTraceContext(record, context) != nixl::trace::WireDecodeResult::Ok) {
+            return std::nullopt;
+        }
+        return context;
+    }
+    return nixl::trace::parseTraceparent(value);
+}
+
+char *
+appendByte(char *out, std::uint8_t value) noexcept {
+    constexpr std::array<char, 16> hex{
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    *out++ = hex[value >> 4];
+    *out++ = hex[value & 0x0f];
+    return out;
+}
+} // namespace
+
+nixl::trace::TraceparentText::TraceparentText(const nixl::trace::TraceContext &context) noexcept
+    : size_(0) {
+    if (!context.valid()) {
+        return;
+    }
+    char *out = text_.data();
+    *out++ = '0';
+    *out++ = '0';
+    *out++ = '-';
+    for (const auto byte : *context.traceId) {
+        out = appendByte(out, byte);
+    }
+    *out++ = '-';
+    for (const auto byte : *context.spanId) {
+        out = appendByte(out, byte);
+    }
+    *out++ = '-';
+    out = appendByte(out, context.flags & supported_trace_flags);
+    size_ = static_cast<std::uint8_t>(out - text_.data());
+}
+
+void
+nixl::trace::CompositeTracer::reportContextFailure(std::string_view reason) const noexcept {
+    logOnce(contextFailureLogged_, [reason] {
+        NIXL_ERROR << "nixl::trace: could not generate a trace context (" << reason
+                   << "); the request or post continues without it and further failures "
+                      "are not logged";
+    });
+}
+
+void
+nixl::trace::CompositeTracer::reportUnparsableParent(std::size_t size) const noexcept {
+    logOnce(unparsableParentLogged_, [size] {
+        NIXL_WARN << "nixl::trace: ignoring a supplied trace context of " << size
+                  << " bytes that is neither a traceparent nor a trace context record; the "
+                     "request draws its own, and further ones are not logged";
+    });
+}
+
+void
+nixl::trace::CompositeTracer::reportUnparsableBaggage(std::size_t size) const noexcept {
+    logOnce(unparsableBaggageLogged_, [size] {
+        NIXL_WARN << "nixl::trace: ignoring a supplied baggage of " << size
+                  << " bytes that is longer than " << maxBaggageSize
+                  << " bytes or not printable ASCII; further ones are not logged";
+    });
+}
+
+std::optional<nixl::trace::TraceContext>
+nixl::trace::parseTraceparent(std::string_view value) {
+    if (value.size() != 55 || value[0] != '0' || value[1] != '0' || value[2] != '-' ||
+        value[35] != '-' || value[52] != '-') {
+        return std::nullopt;
+    }
+
+    nixl::trace::TraceContext context;
+    if (!parseBytes(value, 3, *context.traceId) || !parseBytes(value, 36, *context.spanId) ||
+        !parseByte(value, 53, context.flags) || !context.valid()) {
+        return std::nullopt;
+    }
+    return context;
+}
+
+std::string
+nixl::trace::formatTraceparent(const nixl::trace::TraceContext &context) {
+    return std::string(nixl::trace::TraceparentText(context).view());
+}
+
+bool
+nixl::trace::isBaggage(std::string_view value) noexcept {
+    return !value.empty() && (value.size() <= maxBaggageSize) &&
+        std::ranges::all_of(value, [](char c) { return (c >= 0x20) && (c <= 0x7e); });
+}
+
+void
+nixl::trace::encodeTraceTags(nixlSerDes &ser_des,
+                             const TraceIdentity &identity,
+                             std::string_view baggage) {
+    if (!identity.context.sampled()) {
+        return;
+    }
+    std::array<std::uint8_t, traceContextWireSize> record;
+    const auto size = encodeTraceContext(identity.context, record);
+    if (!size) {
+        return;
+    }
+    ser_des.addBuf("tctx", record.data(), *size);
+    if (*identity.requestId != 0) {
+        const requestTag tag{*identity.requestId, identity.execution};
+        ser_des.addBuf("treq", &tag, sizeof(tag));
+    }
+    if (!baggage.empty()) {
+        ser_des.addBuf("tbag", baggage.data(), static_cast<ssize_t>(baggage.size()));
+    }
+}
+
+std::optional<nixl::trace::TraceIdentity>
+nixl::trace::decodeTraceTags(nixlSerDes &ser_des) {
+    std::array<std::uint8_t, traceContextWireSize> record;
+    TraceIdentity identity;
+    if ((ser_des.peekBufLen("tctx") != traceContextWireSize) ||
+        (ser_des.getBuf("tctx", record.data(), traceContextWireSize) != NIXL_SUCCESS) ||
+        (decodeTraceContext(record, identity.context) != WireDecodeResult::Ok)) {
+        return std::nullopt;
+    }
+    requestTag tag;
+    if ((ser_des.peekBufLen("treq") == sizeof(tag)) &&
+        (ser_des.getBuf("treq", &tag, sizeof(tag)) == NIXL_SUCCESS) && (tag.requestId != 0)) {
+        identity.requestId = RequestId{tag.requestId};
+        identity.execution = tag.execution;
+    }
+    return identity;
+}
+
+std::string
+nixl::trace::decodeTraceBaggage(nixlSerDes &ser_des) {
+    const std::optional<std::size_t> size = ser_des.peekBufLen("tbag");
+    if (!size || (*size == 0) || (*size > maxBaggageSize)) {
+        return {};
+    }
+    std::string baggage(*size, '\0');
+    if ((ser_des.getBuf("tbag", baggage.data(), static_cast<ssize_t>(baggage.size())) !=
+         NIXL_SUCCESS) ||
+        !isBaggage(baggage)) {
+        return {};
+    }
+    return baggage;
+}
+
+std::optional<std::size_t>
+nixl::trace::encodeTraceContext(const nixl::trace::TraceContext &context,
+                                std::span<std::uint8_t> buffer) {
+    if (!context.valid() || buffer.size() < nixl::trace::traceContextWireSize) {
+        return std::nullopt;
+    }
+
+    buffer[0] = nixl::trace::traceContextWireVersion;
+    buffer[wire_flags_offset] = context.flags & supported_trace_flags;
+    std::copy(context.traceId->begin(),
+              context.traceId->end(),
+              buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset));
+    std::copy(context.spanId->begin(),
+              context.spanId->end(),
+              buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset));
+    return nixl::trace::traceContextWireSize;
+}
+
+nixl::trace::WireDecodeResult
+nixl::trace::decodeTraceContext(std::span<const std::uint8_t> buffer,
+                                nixl::trace::TraceContext &context) {
+    if (buffer.empty()) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+    if (buffer[0] != nixl::trace::traceContextWireVersion) {
+        return nixl::trace::WireDecodeResult::UnknownVersion;
+    }
+    if (buffer.size() != nixl::trace::traceContextWireSize) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+
+    context.flags = buffer[wire_flags_offset] & supported_trace_flags;
+    std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset),
+                context.traceId->size(),
+                context.traceId->begin());
+    std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset),
+                context.spanId->size(),
+                context.spanId->begin());
+    if (!context.valid()) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+
+    return nixl::trace::WireDecodeResult::Ok;
+}
+
+bool
+nixl::trace::sampledByRatio(const nixl::trace::TraceContext &context, double ratio) noexcept {
+    if (!context.valid() || !(ratio > 0.0)) {
+        return false;
+    }
+
+    if (ratio >= 1.0) {
+        return true;
+    }
+
+    const double kept = std::round(ratio * two_pow_56);
+    // Subtract in integers: (1 - ratio) * two_pow_56 rounds to two_pow_56 for
+    // every ratio below 2^-53, which would turn small probabilities into never.
+    const auto threshold =
+        static_cast<std::uint64_t>(two_pow_56) - static_cast<std::uint64_t>(kept);
+    return traceIdRandomness(context) >= threshold;
+}
+
+std::optional<nixl::trace::TraceContext>
+nixl::trace::CompositeTracer::parseParentContext(const nixl_blob_t &value) const {
+    if (value.empty()) {
+        return std::nullopt;
+    }
+    std::optional<nixl::trace::TraceContext> context = parseParent(value);
+    if (!context) {
+        reportUnparsableParent(value.size());
+        return std::nullopt;
+    }
+    context->flags &= supported_trace_flags;
+    return context;
+}
+
+std::string_view
+nixl::trace::CompositeTracer::parseBaggage(const nixl_blob_t &value) const {
+    if (value.empty()) {
+        return {};
+    }
+    if (!isBaggage(value)) {
+        reportUnparsableBaggage(value.size());
+        return {};
+    }
+    return value;
+}
+
+nixl::trace::TraceIdentity
+nixl::trace::CompositeTracer::generateRequestIdentity(const nixl_blob_t &parent) const {
+    const std::optional<nixl::trace::TraceContext> parent_context = parseParentContext(parent);
+    if (parent_context ? !parent_context->sampled() : (sampleRatio() == 0.0)) {
+        return {};
+    }
+    nixl::trace::TraceIdentity identity;
+    try {
+        drawRequestIdentity(identity, sampleRatio(), randomBytes());
+    }
+    catch (const std::exception &e) {
+        reportContextFailure(e.what());
+        return {};
+    }
+    if (parent_context) {
+        identity.context.traceId = parent_context->traceId;
+        identity.context.flags = parent_context->flags;
+        identity.context.parentSpanId = parent_context->spanId;
+    }
+    return identity.context.sampled() ? identity : nixl::trace::TraceIdentity{};
+}
+
+nixl::trace::TraceContext
+nixl::trace::CompositeTracer::generatePostContext(const nixl::trace::TraceContext &request) const {
+    const auto fill = randomSource(randomBytes());
+    nixl::trace::TraceContext context = request;
+    try {
+        do {
+            fill(*context.spanId);
+        } while (isAllZero(*context.spanId));
+    }
+    catch (const std::exception &e) {
+        reportContextFailure(e.what());
+        nixl::trace::TraceContext unsampled = request;
+        unsampled.flags &= static_cast<std::uint8_t>(~nixl::trace::sampledTraceFlag);
+        return unsampled;
+    }
+    context.parentSpanId = request.spanId;
+    return context;
+}

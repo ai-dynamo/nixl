@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_TRACE_PLUGIN_H
-#define NIXL_SRC_CORE_TRACING_TRACE_PLUGIN_H
+#ifndef NIXL_SRC_CORE_TRACING_API_TRACE_PLUGIN_H
+#define NIXL_SRC_CORE_TRACING_API_TRACE_PLUGIN_H
 
 /*
  * Trace-backend plugin interface (internal core API).
@@ -24,10 +24,10 @@
  * loaded `.so` plugin, exactly like NIXL's data backends and telemetry exporters. This
  * header is the contract a trace plugin implements; it is loaded by nixlPluginManager
  * (prefix `libtrace_backend_`, init symbol `nixl_trace_plugin_init`). The facade types
- * (`nixl::trace::TraceBackend`) live in `trace.h`.
+ * (`nixl::trace::TraceBackend`) live in `trace_backend.h`.
  */
 
-#include "tracing/trace.h"
+#include "tracing/api/trace_backend.h"
 #include "common/nixl_log.h"
 
 #include <memory>
@@ -116,4 +116,4 @@ NIXL_TRACE_PLUGIN_EXPORT void
 nixl_trace_plugin_fini();
 }
 
-#endif // NIXL_SRC_CORE_TRACING_TRACE_PLUGIN_H
+#endif // NIXL_SRC_CORE_TRACING_API_TRACE_PLUGIN_H

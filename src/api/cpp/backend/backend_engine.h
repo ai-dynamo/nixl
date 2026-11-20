@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -187,6 +188,13 @@ class nixlBackendEngine {
         // Release the request; a non-success result must preserve the handle.
         // Core refuses release while checkXfer reports NIXL_IN_PROG; release does not cancel.
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
+
+        // For a failed request, the backend's own status before it was mapped to nixl_status_t;
+        // none unless the backend reports one
+        virtual std::optional<nixlBackendNativeStatus>
+        getNativeStatus(const nixlBackendReqH *) const {
+            return std::nullopt;
+        }
 
         // Prepare a memory view for remote buffers
         virtual nixl_status_t

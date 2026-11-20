@@ -49,12 +49,14 @@ inline constexpr unsigned ucp_version_mem_type_rdma = UCP_VERSION(1, 22);
 
 using nixlUcxReq = void *;
 
+class nixlBackendTraceSink;
 class nixlUcxMem;
 
 class nixlUcxEp {
 private:
     ucp_ep_h eph_{nullptr};
     std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::CONNECTED};
+    std::atomic<ucs_status_t> failure_{UCS_OK};
     const uint32_t closeFlags_;
 
     nixl_status_t
@@ -71,6 +73,9 @@ public:
     checkTxState() const noexcept {
         return nixl::ucx::toNixlStatus(state_);
     }
+
+    [[nodiscard]] static ucs_status_t
+    takeImmediateFailure() noexcept;
 
     nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
     ~nixlUcxEp();
@@ -224,7 +229,8 @@ public:
     explicit nixlUcxWorker(
         const nixlUcxContext &,
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
-        size_t id = 0);
+        size_t id = 0,
+        nixlBackendTraceSink *trace_sink = nullptr);
 
     virtual ~nixlUcxWorker() = default;
 
@@ -293,6 +299,7 @@ private:
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     const ucp_err_handling_mode_t err_handling_mode_;
     const size_t id_;
+    nixlBackendTraceSink *const traceSink_;
 };
 
 std::ostream &
