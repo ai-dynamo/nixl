@@ -16,6 +16,16 @@
 cpp = meson.get_compiler('cpp')
 mooncake_lib = cpp.find_library('transfer_engine')
 
+mooncake_compile_flags = []
+
+# Older Transfer Engines (e.g. v0.3.10.post1) only report per-request status.
+if cpp.has_header_symbol('transfer_engine_c.h', 'getBatchTransferStatus')
+    mooncake_compile_flags += ['-DHAVE_MOONCAKE_BATCH_STATUS']
+    message('Mooncake: checkXfer polls each batch with getBatchTransferStatus')
+else
+    message('Mooncake: no getBatchTransferStatus, checkXfer polls each request')
+endif
+
 mooncake_plugin_deps = [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib]
 
 if 'MOONCAKE' in static_plugins
@@ -24,6 +34,7 @@ if 'MOONCAKE' in static_plugins
                dependencies: mooncake_plugin_deps,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: false,
+               cpp_args : mooncake_compile_flags,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
     mooncake_backend_lib = shared_library('MOONCAKE',
@@ -31,7 +42,7 @@ else
                dependencies: mooncake_plugin_deps,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
-               cpp_args : ['-fPIC'],
+               cpp_args : mooncake_compile_flags + ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir,
                install_rpath: '$ORIGIN/..')
