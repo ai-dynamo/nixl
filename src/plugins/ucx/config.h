@@ -53,6 +53,12 @@ private:
     const std::unique_ptr<ucp_config_t, void (*)(ucp_config_t *)> config_{readUcpConfig(),
                                                                           &ucp_config_release};
 };
+
+// Point the libc ``environ`` that a deep-bound plugin and libucs see at the live process
+// environment. A no-op unless the plugin was loaded with RTLD_DEEPBIND; see the definition.
+void
+syncDeepBoundEnviron();
+
 } // namespace nixl::ucx
 
 #endif
