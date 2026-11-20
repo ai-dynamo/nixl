@@ -1,83 +1,94 @@
 # NIXL UCX Plugin
 
-This plugin is the primary network backend of NIXL. It provides peer-to-peer
-transfers between agents over UCX (RDMA, shared memory, and other UCX
-transports), covering host memory (`DRAM_SEG`) and GPU memory (`VRAM_SEG`),
-for both remote (cross-node) and local (same-node) transfers, with
-notifications and trace-context propagation support.
+UCX is the default network backend for the NIXL Python agent. It supports
+transfers within an agent and between agents on the same node or across nodes,
+using UCX transports such as RDMA, shared memory, and TCP. See the
+[UCX user guide](../../../fern/docs/pages/user-guide/backends/ucx.md).
 
 ## Overview
 
-- **Memory types**: `DRAM_SEG`, `VRAM_SEG` (CUDA and ROCm devices, via the
-  memory types supported by the UCX build)
-- **Capabilities**: remote and local transfers, notifications, trace contexts
-- **Connection model**: one UCX endpoint per (remote agent, worker) pair;
-  packed remote keys (rkeys) are cached per endpoint and exchanged through
-  NIXL metadata
-- **GPU device API support**: when NIXL is built against a UCX with the GPU
-  device API, memory views can be handed to CUDA kernels for device-initiated
-  communication (see `prep_mem_view` in the Python API)
+- **Memory types** include host memory (`DRAM_SEG`) and GPU memory (`VRAM_SEG`)
+  supported by the UCX context.
+- **Capabilities** include local and remote transfers and notifications.
+  Transfer notifications can carry sampled trace contexts.
+- **Connections** use one endpoint per local worker for each peer. NIXL
+  exchanges a packed remote key (rkey) for each registered region. The
+  receiver stores one unpacked rkey per endpoint for that region.
+- **GPU memory views** prepared with `prep_mem_view` let CUDA kernels initiate
+  transfers. Both the direct path and the device proxy require a loaded NIXL
+  device operations implementation. The direct path also requires the UCX GPU
+  device API at build time.
 
 ## Engine Variants
 
-The engine implementation is selected at backend creation:
+Backend creation checks these conditions in order.
 
 | Condition | Engine | Description |
 | --------- | ------ | ----------- |
-| `device_proxy=true` | proxy engine | Host CPU threads relay device-issued `PUT`/`ATOMIC_ADD` commands from per-peer rings to UCX operations. Used for device-initiated transfers when the UCX GPU device API is not available. |
-| `num_threads > 0` | thread pool engine | Each thread drives a dedicated UCX worker; large transfers are split into chunks (`split_batch_size`) and submitted in parallel. |
-| progress thread enabled (default agent configuration) | thread engine | A single progress thread advances all shared UCX workers and delivers notifications. |
-| otherwise | base engine | Progress happens inside status checks on the calling thread. |
+| `device_proxy=true` | proxy engine | Host threads relay device-issued `PUT` and `ATOMIC_ADD` commands from per-channel, per-peer rings through the UCX host API. |
+| `num_threads > 0` | thread pool engine | Each transfer thread drives a dedicated UCX worker. Batches reaching `split_batch_size` are divided across those workers. |
+| progress thread enabled (Python default) | thread engine | One background thread advances all shared UCX workers and processes incoming notifications. |
+| progress thread disabled (C++ default) | base engine | Polling transfer status or notifications drives progress on the calling thread. |
 
-`num_threads` and `device_proxy` are mutually exclusive.
+With `device_proxy=true`, disable the agent progress thread
+(`enable_prog_thread=False` in Python, `useProgThread=false` in C++) and leave
+`num_threads` at `0`. Omit `ucx_error_handling_mode` to use `none`, or set it
+to `none` explicitly. The proxy constructor throws if you pass the plugin's
+advertised default of `peer`.
 
 ## Dependencies
 
-- **UCX**: built and tested with UCX `v1.23.x`; see the
-  [root README](../../../README.md#ucx) for build instructions. Standard
-  `UCX_*` environment variables are honored; NIXL only sets values that were
-  not already configured.
-- **GDRCopy**: optional, recommended for maximum RDMA performance with CUDA
-  GPUs. NIXL and UCX work without it.
-- **CUDA or ROCm**: required for `VRAM_SEG` support (UCX must be built with
-  `--with-cuda` or `--with-rocm` respectively).
+- For the tested **UCX** version and build instructions, see the
+  [root README](../../../README.md#ucx).
+- **GDRCopy** is optional and recommended for CUDA GPU transfers.
+- For **CUDA** or **ROCm** buffers, build UCX with `--with-cuda` or
+  `--with-rocm`, respectively.
 
 ## Backend Initialization Options
 
-Options can be inspected with `get_plugin_params("UCX")` (Python) or
-`getPluginParams("UCX", ...)` (C++) and passed to backend creation:
+`get_plugin_params("UCX")` in Python and `getPluginParams("UCX", ...)` in C++
+advertise defaults for `ucx_devices`, `num_workers`, `ucx_error_handling_mode`,
+and `ucx_vram_memtype_hint`. The engine ignores
+`ucx_devices`. Pass `device_list` to `create_backend` or `createBackend` to
+select network devices.
 
 | Option | Default | Description |
 | ------ | ------- | ----------- |
-| `num_workers` | `1` | Total number of UCX workers (shared plus dedicated). Shared workers are assigned round-robin to calling threads. |
-| `device_list` | *(all devices)* | Comma-separated list of UCX device names to restrict the context to. |
-| `engine_config` | *(empty)* | Extra UCX engine configuration string. |
-| `ucx_num_device_channels` | `4` | Number of channels per device for the UCX GPU device API. |
+| `num_workers` | `1` | Total shared and dedicated workers. The engine keeps at least one shared worker and assigns shared workers to calling threads round-robin by default. |
+| `device_list` | unset (UCX device selection) | Separate bare device names with the exact delimiter `", "` (comma and space). NIXL appends `:1` to each item when setting `NET_DEVICES`. |
+| `engine_config` | *(empty)* | Comma-separated UCX `KEY=VALUE` settings, such as `MAX_RMA_RAILS=1`. |
+| `ucx_num_device_channels` | `4` | Sets the default for `RC_GDA_NUM_CHANNELS` with UCX 1.21 or newer. |
 | `num_threads` | `0` | Number of dedicated transfer threads (enables the thread pool engine). |
-| `split_batch_size` | `4096` with UCX SGL, otherwise `1024` | Chunk size (number of descriptors) used to split large transfers across the thread pool; lower bound is `num_threads`. |
-| `ucx_error_handling_mode` | `peer` | UCX endpoint error handling policy: `peer` or `none`. See the [backend guide](../../../docs/BackendGuide.md) for the trade-offs; `none` trades remote failure visibility for transport availability. |
-| `ucx_vram_memtype_hint` | `auto` | Memory type hint passed to UCX when registering VRAM: `auto`, `none`, `cuda`, `cuda-managed`, `rocm`, `ze-device`. Matching is case-sensitive. See the [backend guide](../../../docs/BackendGuide.md). |
-| `device_proxy` | `false` | Enable the device proxy for device-initiated transfers. |
-| `proxy_channel_count` | `4` | Number of proxy channels. |
-| `proxy_thread_count` | `proxy_channel_count` | Number of proxy CPU progress threads. |
-| `proxy_max_peers` | `8` | Maximum number of remote peers to provision rings for; set to the real peer capacity. |
-| `proxy_ring_depth` | `256` | Ring slots per (channel, peer); must be a power of two. |
-| `proxy_drain_timeout_ms` | `60000` | A proxy drain that takes longer aborts the process; `0` waits forever. |
+| `split_batch_size` | `4096` with SGL enabled, otherwise `1024` | Minimum descriptor count for splitting a transfer across dedicated workers. The effective threshold is at least `num_threads`. |
+| `ucx_error_handling_mode` | `peer` (proxy uses `none`) | `peer` requests endpoint failure reporting. `none` permits transports that lack peer failure reporting. See the [backend guide](../../../docs/BackendGuide.md#ucx-backend-initialization-options). |
+| `ucx_vram_memtype_hint` | `auto` | VRAM registration hint policy. Accepted values are `auto`, `none`, `cuda`, `cuda-managed`, `rocm`, and `ze-device`. Matching is case-sensitive. |
+| `device_proxy` | `false` | Enables the `proxy_*` options. The proxy uses one worker per ring (`proxy_channel_count * proxy_max_peers`) and rejects larger `num_workers` values. |
+| `proxy_channel_count` | `4` | Positive number of proxy channels. |
+| `proxy_thread_count` | `proxy_channel_count` | Positive number of CPU progress threads. It must divide the channel count or be a multiple of the channel count that divides the total ring count. |
+| `proxy_max_peers` | `8` | Positive peer capacity. Each channel provisions one ring per peer slot. |
+| `proxy_ring_depth` | `256` | Slots per ring. Must be a nonzero power of two. |
+| `proxy_drain_timeout_ms` | `60000` | A drain that reaches this deadline aborts the process. Set `0` to wait without a deadline. |
+
+For example, `device_list="mlx5_0, mlx5_1"` sets `NET_DEVICES` to
+`mlx5_0:1,mlx5_1:1`. With `"mlx5_0,mlx5_1"`, NIXL sees one item and passes
+`mlx5_0,mlx5_1:1` to UCX.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
-| `NIXL_UCX_SGL_ENABLE` | `true` when NIXL is built with UCX SGL support, otherwise ignored | Toggle UCX scatter-gather list offload of multi-descriptor transfers. |
-| `NIXL_UCX_WARNING_TIMEOUT` | `5000` ms | How long a memory-view request waits for a connection before logging a warning (duration with unit, e.g. `10s`). |
-| `NIXL_UCX_EXPECTED_SONAME` | unset | If set, the backend fails to load unless it bound to a libucx whose path contains this substring; useful to catch wrong UCX installations. |
-| `NIXL_UCX_DEEPBIND` | unset | Load the UCX plugin with `RTLD_DEEPBIND` to prefer plugin-local symbols. |
-| `UCX_*` | — | Standard UCX environment variables; applied before NIXL defaults. |
+| `NIXL_UCX_SGL_ENABLE` | `true` with UCX SGL support, otherwise `false` | Enables scatter-gather list (SGL) offload for writes on builds with SGL support. |
+| `NIXL_UCX_WARNING_TIMEOUT` | `5000` ms | Warning interval while NIXL retries remote device memory-list creation on `UCS_ERR_NOT_CONNECTED`. Use integer milliseconds, such as `10000`. |
+| `NIXL_UCX_EXPECTED_SONAME` | unset | A nonempty value must appear in the library path for `ucp_get_version_string` or plugin initialization fails. |
+| `NIXL_UCX_DEEPBIND` | `false` | Requests `RTLD_DEEPBIND` for the dynamic UCX plugin on platforms that support it. An invalid boolean value logs a warning and enables the flag. |
+| `UCX_*` | — | UCX environment settings take precedence over NIXL tuning defaults and `engine_config`. An explicit `device_list` overrides `UCX_NET_DEVICES`. |
 
 ## Building
 
-The plugin is built automatically when UCX is found. Point the build at a
-custom UCX installation with `meson setup <build_dir> -Ducx_path=/path/to/ucx`.
+With the default plugin selection, Meson builds the plugin when it finds UCX.
+Point the build at a custom UCX installation with
+`meson setup <build_dir> -Ducx_path=/path/to/ucx`. See the
+[UCX build options](../../../fern/docs/pages/user-guide/backends/ucx.md#build-options).
 UCX SGL support is detected at compile time (it requires the
 `ucp_dt_local_sgl_t` type) and enables the write-path SGL offload by default
 (`NIXL_UCX_SGL_ENABLE`).
@@ -85,17 +96,16 @@ UCX SGL support is detected at compile time (it requires the
 ## Example Usage
 
 ```python
-import nixl
+from nixl import nixl_agent, nixl_agent_config
 
 # Create the agent without backends, then instantiate UCX with parameters
-agent = nixl.nixl_agent(backends=[])
-params = agent.get_plugin_params("UCX")   # advertised options and defaults
+agent = nixl_agent("agent", nixl_agent_config(backends=[]))
+params = agent.get_plugin_params("UCX").copy()
 params["num_workers"] = "4"
 agent.create_backend("UCX", params)
-
-# Or simply use the default engine configuration
-# agent = nixl.nixl_agent()               # UCX backend is created by default
 ```
+
+For the default UCX configuration, use `nixl_agent("agent")`.
 
 For transfers between two agents, exchange metadata (directly or through a
 metadata service), then follow the standard NIXL transfer flow — see
@@ -103,7 +113,7 @@ metadata service), then follow the standard NIXL transfer flow — see
 
 ## Tests
 
-- `test/unit/plugins/ucx/ucx_backend_test` — backend behavior
-- `test/unit/plugins/ucx/ucx_backend_multi` — multi-agent transfers
-- `test/unit/plugins/ucx/ucx_worker_test` — worker management
-- `test/gtest/` — tracing context propagation and hardware warning tests
+- Intra-agent and inter-agent transfers — [ucx_backend_test.cpp](../../../test/unit/plugins/ucx/ucx_backend_test.cpp)
+- One-sided connection and disconnection between two agents — [ucx_backend_multi.cpp](../../../test/unit/plugins/ucx/ucx_backend_multi.cpp)
+- Endpoint reads, writes, and flushes with two workers — [ucx_worker_test.cpp](../../../test/unit/plugins/ucx/ucx_worker_test.cpp)
+- Trace-context propagation and hardware warnings — [ucx_trace_context_test.cpp](../../../test/gtest/ucx_trace_context_test.cpp) and [hw_warning_test.cpp](../../../test/gtest/hw_warning_test.cpp)
