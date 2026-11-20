@@ -252,7 +252,7 @@ nixlUcxEp::disconnect() {
 }
 
 nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode)
-    : closeFlags_(err_handling_mode == UCP_ERR_HANDLING_MODE_PEER ? UCP_EP_CLOSE_FLAG_FORCE : 0) {
+    : closeFlags_(err_handling_mode != UCP_ERR_HANDLING_MODE_NONE ? UCP_EP_CLOSE_FLAG_FORCE : 0) {
     ucp_ep_params_t ep_params;
 
     ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS | UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
@@ -670,6 +670,11 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         }
     }
 
+    /* UCX_FAILOVER_MODE=token requires UCX_IB_INDIRECT_ATOMIC=n. */
+    if (isFailoverErrHandlingMode(err_handling_mode)) {
+        config.modify("IB_INDIRECT_ATOMIC", "n");
+    }
+
     std::string elem;
     std::stringstream stream(engine_config);
 
@@ -683,11 +688,6 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     }
 
     config.validateTlsCudaSupport();
-
-    /* UCX_FAILOVER_MODE=token requires UCX_IB_INDIRECT_ATOMIC=n. */
-    if (isFailoverErrHandlingMode(err_handling_mode)) {
-        config.modifyAlways("IB_INDIRECT_ATOMIC", "n");
-    }
 
     ucp_context_h new_ctx = nullptr;
     const auto status = ucp_init(&ucp_params, config.getUcpConfig(), &new_ctx);

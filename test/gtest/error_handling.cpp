@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <nixl_types.h>
 #include "common.h"
@@ -34,6 +36,25 @@ namespace nixl {
     constexpr const char* ucx_err_handling_mode_key  = "ucx_error_handling_mode";
     constexpr const char* ucx_err_handling_mode_peer = "peer";
     constexpr const char *ucx_err_handling_mode_failover = "failover";
+
+    /**
+     * @brief Whether any InfiniBand or RoCE port is active
+     */
+    [[nodiscard]] static bool
+    hasActiveIbPort() {
+        std::error_code ec;
+        for (const auto &dev : std::filesystem::directory_iterator("/sys/class/infiniband", ec)) {
+            for (const auto &port : std::filesystem::directory_iterator(dev.path() / "ports", ec)) {
+                std::ifstream state_file(port.path() / "state");
+                std::string state;
+                if (std::getline(state_file, state) &&
+                    (state.find("ACTIVE") != std::string::npos)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 
     /**
      * @brief Create a UCX backend, optionally overriding the error-handling mode
@@ -164,6 +185,8 @@ protected:
     };
 
     TestErrorHandling();
+    void
+    SetUp() override;
     /**
      * @brief Run one transfer pattern, optionally forcing an error-handling mode
      */
@@ -343,6 +366,26 @@ TestErrorHandling::TestErrorHandling()
     // Default 20s keepalive cannot fail every AM lane inside the 100s wait.
     m_env.addVar("UCX_KEEPALIVE_INTERVAL", "1s");
     m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
+}
+
+void
+TestErrorHandling::SetUp() {
+#ifdef HAVE_UCX_BACKEND
+    if (errHandlingMode_ != nixl::ucx_err_handling_mode_failover) {
+        return;
+    }
+
+    unsigned major, minor, release;
+    ucp_get_version(&major, &minor, &release);
+    if (UCP_VERSION(major, minor) < UCP_VERSION(1, 24)) {
+        GTEST_SKIP() << "UCX failover error handling requires UCX 1.24 or newer";
+    }
+
+    // Failover cannot select protocols over shared memory and TCP alone.
+    if (!nixl::hasActiveIbPort()) {
+        GTEST_SKIP() << "UCX failover error handling requires an active InfiniBand or RoCE port";
+    }
+#endif
 }
 
 void
@@ -560,6 +603,9 @@ TEST_P(TestErrorHandling, XferFailRestore) {
 }
 
 TEST_P(TestErrorHandling, XferPostThenFail) {
+    // TODO: Drop once openucx/ucx#12371 is merged. Without it, failover cancels
+    // notifications that are still in flight to the failed target.
+    const LogIgnoreGuard lig("UCX AM send failed with status -16");
     testXfer<TestType::FAIL_AFTER_POST, NIXL_WRITE>();
     testXfer<TestType::FAIL_AFTER_POST, NIXL_READ>();
 }
@@ -764,10 +810,20 @@ NIXL_INSTANTIATE_TEST(ucx_threadpool, TestErrorHandling, "UCX", true, 2, 1, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestErrorHandling, "UCX", false, 2, 1, "");
 
 #ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
-NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(
-    ucx_failover, TestErrorHandling, "UCX", true, 1, 0, nixl::ucx_err_handling_mode_failover);
-NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(
-    ucx_failover_no_pt, TestErrorHandling, "UCX", false, 1, 0, nixl::ucx_err_handling_mode_failover);
+NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(ucx_failover,
+                                   TestErrorHandling,
+                                   "UCX",
+                                   true,
+                                   1,
+                                   0,
+                                   nixl::ucx_err_handling_mode_failover);
+NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(ucx_failover_no_pt,
+                                   TestErrorHandling,
+                                   "UCX",
+                                   false,
+                                   1,
+                                   0,
+                                   nixl::ucx_err_handling_mode_failover);
 NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(ucx_failover_threadpool,
                                    TestErrorHandling,
                                    "UCX",

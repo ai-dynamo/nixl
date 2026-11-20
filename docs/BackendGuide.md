@@ -182,6 +182,11 @@ overridden before passing it to `createBackend` in C++ or `create_backend` in Py
 
 The two options are independent; you do not need to set one to use the other.
 
+Agents that connect to each other must use the same `ucx_error_handling_mode`. UCX rejects
+endpoints whose error handling modes differ. The default can differ between agents, because it
+depends on the local UCX version and SGL setting, so set the mode explicitly when they may not
+match.
+
 `ucx_error_handling_mode` affects UCP transport lane selection, not only error reporting.
 NIXL creates endpoints with `err_mode` set from this option, and UCP only selects lanes whose
 transport advertises peer failure support. A transport that does not advertise it is therefore

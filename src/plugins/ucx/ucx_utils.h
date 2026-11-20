@@ -177,16 +177,16 @@ private:
     supportsMemoryType(ucs_memory_type_t mem_type) const;
 
 public:
-    nixlUcxContext(const std::vector<std::string> &devs,
-                   bool prog_thread,
-                   unsigned long num_workers,
-                   nixl_thread_sync_t sync_mode,
-                   size_t num_device_channels,
-                   const std::string &engine_conf = "",
-                   const std::string &name = "",
-                   nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy =
-                       nixl_ucx_vram_memtype_hint_t::AUTO,
-                   ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_PEER);
+    nixlUcxContext(
+        const std::vector<std::string> &devs,
+        bool prog_thread,
+        unsigned long num_workers,
+        nixl_thread_sync_t sync_mode,
+        size_t num_device_channels,
+        const std::string &engine_conf = "",
+        const std::string &name = "",
+        nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy = nixl_ucx_vram_memtype_hint_t::AUTO,
+        ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_PEER);
     nixlUcxContext(nixlUcxContext &&) = delete;
     nixlUcxContext(const nixlUcxContext &) = delete;
 
