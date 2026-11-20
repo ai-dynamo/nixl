@@ -36,7 +36,9 @@ def api():
     """Import this checkout's wrapper without importing or replacing an installed nixl."""
     package = ModuleType("_nixl_backend_resolution_test")
     package._bindings = Mock(
-        DEFAULT_COMM_PORT=0, nixlInvalidParamError=BindingInvalidParamError
+        DEFAULT_COMM_PORT=0,
+        nixlInvalidParamError=BindingInvalidParamError,
+        nixlAgent=None,
     )
     path = Path(__file__).resolve().parents[2] / "src/api/python/_api.py"
     spec = spec_from_file_location(f"{package.__name__}._api", path)
@@ -54,7 +56,7 @@ def api():
 
 @pytest.fixture
 def make_agent(api, monkeypatch):
-    def make(plugins, configured=()):
+    def make(plugins, configured=(), num_threads=0):
         binding = Mock()
         binding.getAvailPlugins.return_value = list(plugins)
         created = set()
@@ -72,7 +74,8 @@ def make_agent(api, monkeypatch):
         binding.getPluginParams.return_value = ({"default": "0"}, ["DRAM"])
         monkeypatch.setattr(api.nixlBind, "nixlAgent", lambda name, config: binding)
         agent = api.nixl_agent(
-            "local", api.nixl_agent_config(backends=list(configured))
+            "local",
+            api.nixl_agent_config(backends=list(configured), num_threads=num_threads),
         )
         monkeypatch.setattr(agent, "get_reg_descs", lambda descs, mem_type: descs)
         return agent
@@ -116,6 +119,21 @@ def test_backend_lists_register_each_handle_once_in_request_order(make_agent):
     agent.agent.registerMem.assert_called_once_with("descs", [22, 11])
     agent.deregister_memory("descs", backends=["UCX", "posix", " ucx "])
     agent.agent.deregisterMem.assert_called_once_with("descs", [11, 22])
+
+
+def test_notification_uses_the_resolved_handle_list(make_agent):
+    agent = make_agent({"UCX": 11}, ["UCX"])
+    agent.send_notif("peer", b"hello")
+    agent.send_notif("peer", b"hello", backend=" ucx ")
+    assert agent.agent.genNotif.call_args_list == [
+        call("peer", b"hello"),
+        call("peer", b"hello", [11]),
+    ]
+
+
+def test_mooncake_alias_forwards_thread_count(make_agent):
+    agent = make_agent({"MOONCAKE": 11}, [" mooncake "], num_threads=3)
+    agent.agent.createBackend.assert_called_once_with("MOONCAKE", {"num_threads": "3"})
 
 
 @pytest.mark.parametrize("first, second", [("UCX", "ucx"), ("ucx", "UCX")])

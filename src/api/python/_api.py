@@ -220,6 +220,13 @@ class nixl_agent:
         agent_name: Name of the agent, should be unique for clarity.
         nixl_conf: Optional configuration for the agent, described in nixl_agent_config.
         instantiate_all: Whether to instantiate all available backend plugins.
+
+    Raises:
+        nixlInvalidParamError: An entry in nixl_conf.backends is empty after
+            trimming ASCII whitespace.
+        ValueError: An entry in nixl_conf.backends is ambiguous. The C++ methods
+            nixlAgent::createBackend and nixlAgent::getPluginParams return
+            NIXL_ERR_NOT_FOUND for the same name.
     """
 
     def __init__(
@@ -422,9 +429,11 @@ class nixl_agent:
             return {}
 
     def _canonical_backend_name(self, backend: str) -> str:
-        """Match the C++ plugin manager: exact spelling wins, otherwise a folded
-        name must identify one distinct spelling across all available and created
-        backends. An unknown name keeps its spelling for the native loader.
+        """Resolve a name across available and created backends.
+
+        An exact spelling wins. Otherwise, use a unique ASCII case-insensitive
+        match or raise ValueError if multiple spellings match. Return the trimmed
+        name for the native loader if there is no match.
         """
         name = backend.strip(" \t\n\r\f\v")
         if not name:
@@ -463,7 +472,8 @@ class nixl_agent:
         Raises:
             nixlInvalidParamError: The name is empty after trimming ASCII whitespace,
                 or the backend has already been created.
-            ValueError: Multiple plugin spellings match the requested alias.
+            ValueError: The name has no exact match and matches multiple plugin
+                spellings when ASCII case is ignored.
         """
         self._create_backend(self._canonical_backend_name(backend), initParams)
 
@@ -943,13 +953,13 @@ class nixl_agent:
             remote_agent_name: Name of the remote agent.
             notif_msg: Message to send, it will be received as bytes.
                 notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
-            backends: Optional a backend name to use to send the notifications.
+            backend: Optional backend name to use for the notification.
         """
         if backend is None:
             self.agent.genNotif(remote_agent_name, notif_msg)
         else:
             self.agent.genNotif(
-                remote_agent_name, notif_msg, self._backend_handle(backend)
+                remote_agent_name, notif_msg, [self._backend_handle(backend)]
             )
 
     def get_agent_metadata(self) -> bytes:

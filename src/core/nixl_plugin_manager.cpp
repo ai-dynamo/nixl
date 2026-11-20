@@ -21,6 +21,7 @@
 #include "common/nixl_log.h"
 #include "common/str_util.h"
 #include <absl/strings/str_join.h>
+#include <algorithm>
 #include <dlfcn.h>
 #include <exception>
 #include <filesystem>
@@ -418,7 +419,6 @@ nixlPluginManager::nixlPluginManager() {
     std::string plugin_dir = getPluginDir();
     if (!plugin_dir.empty()) {
         NIXL_DEBUG << "Loading plugins from: " << plugin_dir;
-        plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);
         discoverPluginsFromDir(plugin_dir);
     }
 
@@ -444,21 +444,6 @@ nixlPluginManager::addPluginDirectory(const std::string &directory) {
     if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory)) {
         NIXL_ERROR << "Plugin directory does not exist or is not readable: " << directory;
         return;
-    }
-
-    {
-        const std::lock_guard lock(mutex_);
-
-        // Check if directory is already in the list
-        for (const auto& dir : plugin_dirs_) {
-            if (dir == directory) {
-                NIXL_WARN << "Plugin directory already registered: " << directory;
-                return;
-            }
-        }
-
-        // Prioritize the new directory by inserting it at the beginning
-        plugin_dirs_.insert(plugin_dirs_.begin(), directory);
     }
 
     discoverPluginsFromDir(directory);
@@ -682,7 +667,6 @@ nixlPluginManager::discoverBackendPlugin(const std::filesystem::directory_entry 
     if (startsWith(filename, backendPluginPrefix) && endsWith(filename, kPluginSuffix)) {
         const std::string plugin_name = extractPluginName(filename, backendPluginPrefix);
         if (!plugin_name.empty() && absl::StripAsciiWhitespace(plugin_name) == plugin_name) {
-            const std::lock_guard lock(mutex_);
             discovered_backend_plugins_[plugin_name].insert(entry.path().parent_path());
             NIXL_INFO << "Discovered backend plugin: " << plugin_name;
         }
@@ -707,14 +691,26 @@ nixlPluginManager::discoverTracePlugin(const std::string &filename) {
 
 void
 nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path &dirpath) {
+    // Enumerate without holding the registry lock, then publish the search path and
+    // its exact spellings together so name resolution sees one complete inventory.
+    std::vector<std::filesystem::directory_entry> entries;
     std::error_code ec;
-    std::filesystem::directory_iterator dir_iter(dirpath, ec);
+    for (std::filesystem::directory_iterator it(dirpath, ec), end; it != end; it.increment(ec)) {
+        entries.push_back(*it);
+    }
     if (ec) {
         NIXL_ERROR << "Error accessing directory(" << dirpath << "): " << ec.message();
-        return;
+        entries.clear();
     }
 
-    for (const auto& entry : dir_iter) {
+    const std::string directory = dirpath.string();
+    const std::lock_guard lock(mutex_);
+    if (std::find(plugin_dirs_.begin(), plugin_dirs_.end(), directory) != plugin_dirs_.end()) {
+        NIXL_WARN << "Plugin directory already registered: " << directory;
+        return;
+    }
+    plugin_dirs_.insert(plugin_dirs_.begin(), directory);
+    for (const auto &entry : entries) {
         std::string filename = entry.path().filename().string();
         discoverBackendPlugin(entry);
         discoverTelemetryPlugin(filename);

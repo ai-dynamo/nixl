@@ -15,9 +15,13 @@
  * limitations under the License.
  */
 
+#include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <string_view>
+#include <thread>
 #include <unistd.h>
 
 #include <absl/cleanup/cleanup.h>
@@ -101,6 +105,51 @@ namespace {
         EXPECT_EXIT(
             {
                 checkAmbiguousPluginList();
+                std::_Exit(testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
+            },
+            testing::ExitedWithCode(EXIT_SUCCESS),
+            "");
+    }
+
+    void
+    checkDirectoryInventory() {
+        auto &manager = nixlPluginManager::getInstance();
+        std::string dir = testing::TempDir() + "/nixl-inventory-XXXXXX";
+        ASSERT_NE(mkdtemp(dir.data()), nullptr);
+        const absl::Cleanup cleanup = [&] { std::filesystem::remove_all(dir); };
+        constexpr std::string_view prefix = "NIXL_INVENTORY_TEST_";
+        constexpr int count = 48;
+        for (int i = 0; i < count; ++i) {
+            const auto name = "libplugin_" + std::string(prefix) + std::to_string(i) + ".so";
+            ASSERT_TRUE(std::ofstream(std::filesystem::path(dir) / name).is_open());
+        }
+        const auto visible = [&] {
+            const auto names = manager.getAvailBackendPluginNames();
+            return std::count_if(names.begin(), names.end(), [&](const auto &name) {
+                return name.starts_with(prefix);
+            });
+        };
+        ASSERT_EQ(visible(), 0);
+        std::atomic<bool> done = false;
+        std::thread discovery([&] {
+            manager.addPluginDirectory(dir);
+            done = true;
+        });
+        do {
+            const auto n = visible();
+            if (n != 0 && n != count) {
+                ADD_FAILURE() << "Partially published directory: " << n;
+                break;
+            }
+        } while (!done);
+        discovery.join();
+        EXPECT_EQ(visible(), count);
+    }
+
+    TEST(BackendNameResolutionDeathTest, DirectoryNamesArePublishedTogether) {
+        EXPECT_EXIT(
+            {
+                checkDirectoryInventory();
                 std::_Exit(testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
             },
             testing::ExitedWithCode(EXIT_SUCCESS),
