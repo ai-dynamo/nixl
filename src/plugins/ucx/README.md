@@ -73,6 +73,11 @@ For example, `device_list="mlx5_0, mlx5_1"` sets `NET_DEVICES` to
 `mlx5_0:1,mlx5_1:1`. With `"mlx5_0,mlx5_1"`, NIXL sees one item and passes
 `mlx5_0,mlx5_1:1` to UCX.
 
+NIXL applies `device_list` before `engine_config`. With `UCX_NET_DEVICES`
+unset, a `NET_DEVICES` entry in `engine_config` overrides `device_list`.
+With `UCX_NET_DEVICES` set, NIXL skips that `engine_config` entry and an
+explicit `device_list` takes precedence over the environment.
+
 ## Environment Variables
 
 | Variable | Default | Description |
