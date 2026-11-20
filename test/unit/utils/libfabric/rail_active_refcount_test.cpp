@@ -185,13 +185,13 @@ testRegisterDeregisterRefcount(nixlLibfabricRailManager &mgr) {
                 "active count unchanged after second register");
 
     // Deregister first — rails still active (refcount > 0)
-    st = mgr.deregisterMemory(selected_rails, mr_list);
+    st = mgr.deregisterMemory(selected_rails, mr_list, DRAM_SEG, 0);
     TEST_ASSERT(st == NIXL_SUCCESS, "first deregisterMemory succeeded");
     TEST_ASSERT(mgr.getActiveRailCount() == NUM_FAKE_RAILS,
                 "all rails still active after first deregister");
 
     // Deregister second — refcounts drop to 0, rails removed
-    st = mgr.deregisterMemory(selected_rails2, mr_list2);
+    st = mgr.deregisterMemory(selected_rails2, mr_list2, DRAM_SEG, 0);
     TEST_ASSERT(st == NIXL_SUCCESS, "second deregisterMemory succeeded");
     TEST_ASSERT(mgr.getActiveRailCount() == 0, "no active rails after full deregister");
 
@@ -219,7 +219,7 @@ testDeregisterFailureKeepsRailActive(nixlLibfabricRailManager &mgr) {
 
     // Make fi_close fail so deregisterMemory fails
     fi_mr_self_ops_stub.close = fi_mr_close_fail;
-    st = mgr.deregisterMemory(selected_rails, mr_list);
+    st = mgr.deregisterMemory(selected_rails, mr_list, DRAM_SEG, 0);
     fi_mr_self_ops_stub.close = fi_mr_close_stub;
 
     TEST_ASSERT(st != NIXL_SUCCESS, "deregisterMemory should fail");
@@ -227,8 +227,48 @@ testDeregisterFailureKeepsRailActive(nixlLibfabricRailManager &mgr) {
                 "all rails still active after failed deregister");
 
     // Clean up: successful deregister to reset state
-    st = mgr.deregisterMemory(selected_rails, mr_list);
+    st = mgr.deregisterMemory(selected_rails, mr_list, DRAM_SEG, 0);
     mgr.clearActiveRails();
+    return 0;
+}
+
+static int
+testVramDeviceSelection(nixlLibfabricRailManager &mgr) {
+    NIXL_INFO << "  testVramDeviceSelection";
+
+    nixlLibfabricRail &rail = mgr.getRail(0);
+    const int none = nixlLibfabricRail::VRAM_DEVICE_NONE;
+    TEST_ASSERT(rail.getVramDevice() == none, "no VRAM device before any registration");
+
+    rail.addVramDevice(-1);
+    TEST_ASSERT(rail.getVramDevice() == none, "negative device id ignored");
+
+    rail.addVramDevice(3);
+    TEST_ASSERT(rail.getVramDevice() == 3, "single device selected");
+
+    rail.addVramDevice(1);
+    TEST_ASSERT(rail.getVramDevice() == 1, "tie between devices 1 and 3 keeps the lower id");
+
+    rail.addVramDevice(3);
+    TEST_ASSERT(rail.getVramDevice() == 3, "device with more live registrations wins");
+
+    rail.removeVramDevice(3);
+    TEST_ASSERT(rail.getVramDevice() == 1, "back to a tie after a deregistration: lower id");
+
+    rail.removeVramDevice(1);
+    TEST_ASSERT(rail.getVramDevice() == 3, "device 1 fully deregistered: only device 3 left");
+
+    rail.removeVramDevice(7);
+    TEST_ASSERT(rail.getVramDevice() == 3, "removing an unknown device is a no-op");
+
+    rail.removeVramDevice(3);
+    TEST_ASSERT(rail.getVramDevice() == none, "no VRAM device after the last deregistration");
+
+    rail.addVramDevice(2);
+    TEST_ASSERT(rail.getVramDevice() == 2, "a new device is picked up after earlier ones are gone");
+    rail.removeVramDevice(2);
+    TEST_ASSERT(rail.getVramDevice() == none, "state cleared for later tests");
+
     return 0;
 }
 
@@ -250,6 +290,9 @@ main() {
     if ((res = testMultipleRailsIndependent(mgr)) != 0) return res;
     if ((res = testRegisterDeregisterRefcount(mgr)) != 0) return res;
     if ((res = testDeregisterFailureKeepsRailActive(mgr)) != 0) return res;
+    if ((res = testVramDeviceSelection(mgr)) != 0) {
+        return res;
+    }
 
     NIXL_INFO << "=== All rail active refcount tests PASSED ===";
     return 0;
