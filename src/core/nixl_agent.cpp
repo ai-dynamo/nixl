@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <chrono>
@@ -48,6 +49,13 @@ namespace {
 const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
 };
+
+bool
+hasBackendType(const backend_map_t &engines, const std::string &uppercase_type) {
+    return std::any_of(engines.begin(), engines.end(), [&](const auto &entry) {
+        return nixl::str::upperAscii(entry.first) == uppercase_type;
+    });
+}
 
 // One continuation bit per index pair: set when both indices grow by one from the pair before.
 // Filled on the stack one chunk of pairs at a time.
@@ -461,8 +469,6 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
                             nixl_mem_list_t &mems,
                             nixl_b_params_t &params) const {
 
-    // TODO: unify to uppercase/lowercase and do ltrim/rtrim for type
-
     auto &plugin_manager = nixlPluginManager::getInstance();
     return plugin_manager.getBackendParams(type, mems, params);
 }
@@ -490,7 +496,7 @@ nixlAgentData::warnAboutEfaHardwareMismatch() {
         return;
     }
 
-    if ((backendEngines_.count("UCX") != 0) && (backendEngines_.count("LIBFABRIC") == 0)) {
+    if (hasBackendType(backendEngines_, "UCX") && !hasBackendType(backendEngines_, "LIBFABRIC")) {
         const auto &hw_info = nixl::hwInfo::instance();
         if (hw_info.numEfaDevices > 0) {
             NIXL_WARN
@@ -520,11 +526,18 @@ nixlAgentData::warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
 
 /** Create and register a backend engine. */
 nixl_status_t
-nixlAgent::createBackend(const nixl_backend_t &type,
+nixlAgent::createBackend(const nixl_backend_t &name,
                          const nixl_b_params_t &params,
-                         nixlBackendH* &bknd_hndl) {
+                         nixlBackendH *&bknd_hndl) {
 
     NIXL_LOCK_GUARD(data->lock);
+    auto &plugin_manager = nixlPluginManager::getInstance();
+    nixl_backend_t type;
+    const auto status = plugin_manager.canonicalBackendName(name, type);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
     // Registering same type of backend is not supported, unlikely and prob error
     if (data->backendEngines_.count(type) != 0) {
         NIXL_ERROR_FUNC << "backend already created for type '" << type << "'";
@@ -532,11 +545,13 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     }
 
     // Check if the plugin is in an illegal combination with another plugin backend already created
+    const auto uppercase_type = nixl::str::upperAscii(type);
     for (const auto &combination : illegal_plugin_combinations) {
-        if (std::find(combination.begin(), combination.end(), type) != combination.end()) {
+        if (std::find(combination.begin(), combination.end(), uppercase_type) !=
+            combination.end()) {
             for (const auto &plugin_name : combination) {
-                if (plugin_name != type &&
-                    data->backendEngines_.find(plugin_name) != data->backendEngines_.end()) {
+                if (plugin_name != uppercase_type &&
+                    hasBackendType(data->backendEngines_, plugin_name)) {
                     NIXL_ERROR_FUNC << "Plugin backend " << type
                                     << " is in illegal combination with " << plugin_name;
                     return NIXL_ERR_NOT_ALLOWED;
@@ -562,8 +577,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     }
 
     // First, try to load the backend as a plugin
-    auto& plugin_manager = nixlPluginManager::getInstance();
-    auto plugin_handle = plugin_manager.loadBackendPlugin(type);
+    auto plugin_handle = plugin_manager.loadResolvedBackendPlugin(type);
 
     if (!plugin_handle) {
         NIXL_ERROR_FUNC << "unsupported backend '" << type << "'";
