@@ -126,3 +126,7 @@ if enabled_plugins.get('DOCA_MEMOS')
         subdir('doca_memos')
     endif
 endif
+
+if is_variable('tcpxo_backend_interface')
+    subdir('gpudirect_tcpxo')
+endif

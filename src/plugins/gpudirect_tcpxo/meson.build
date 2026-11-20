@@ -31,10 +31,6 @@ if not get_option('disable_gpudirect_tcpxo_cuda') and cuda_dep.found()
     compile_flags += ['-DHAVE_CUDA']
 endif
 
-proto_args = [
-    '--proto_path=@CURRENT_SOURCE_DIR@',
-]
-
 if get_option('disable_rxdm_dxs')
     compile_flags += ['-DTCPXO_STUB_RXDM_DXS']
 else
@@ -109,11 +105,6 @@ else
     ]
 endif
 
-proto_args += [
-    '--cpp_out=@BUILD_DIR@',
-    '@INPUT@',
-]
-
 # Build protobuf files
 protoc = find_program('protoc', required: false)
 if not protoc.found()
@@ -139,12 +130,16 @@ if not protobuf_dep.found()
 endif
 tcpxo_plugin_deps += [protobuf_dep]
 
-protoc_gen = generator(
-    protoc,
-    output: ['@BASENAME@.pb.cc', '@BASENAME@.pb.h'],
-    arguments: proto_args,
+proto_files = custom_target(
+    'control_channel_proto',
+    input: 'control_channel.proto',
+    output: ['control_channel.pb.cc', 'control_channel.pb.h'],
+    command: [
+        protoc,
+        '--proto_path=@CURRENT_SOURCE_DIR@',
+        '--cpp_out=@OUTDIR@', '@INPUT@',
+    ],
 )
-proto_files = protoc_gen.process('control_channel.proto')
 
 tcpxo_sources = [
     'tcpxo_backend.cpp',
@@ -193,6 +188,8 @@ else
 endif
 
 tcpxo_backend_interface = declare_dependency(
+    sources: [proto_files[1]],
+    include_directories: include_directories('.'),
     link_with: tcpxo_backend_lib,
     dependencies: tcpxo_plugin_deps,
 )

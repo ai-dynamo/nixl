@@ -22,6 +22,7 @@ NIXL_SRC=$(readlink -f "${SOURCE_DIR}/../../..")
 NIXL_BUILD_CONTEXT_ARGS="--build-context nixl=$NIXL_SRC"
 NIXL_BENCH_BUILD_CONTEXT_ARGS="--build-context nixlbench=$BUILD_CONTEXT/"
 DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
+WEBRTC_DOCKER_FILE="${NIXL_SRC}/contrib/Dockerfile.webrtc"
 UCX_SRC=""
 UCX_BUILD_CONTEXT_ARGS=""
 BUILD_TYPE="release"
@@ -39,6 +40,7 @@ fi
 # unset comes from the Dockerfile's own ARG default rather than an empty string.
 BASE_IMAGE=""
 BASE_IMAGE_TAG=""
+WEBRTC_DEFAULT_IMAGE_REF="webrtc:ubuntu22"
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
@@ -46,6 +48,10 @@ WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 NPROC=${NPROC:-$(nproc)}
 APT_MIRROR=""
+DISABLE_RXDM_DXS="false"
+DISABLE_GPUDIRECT_TCPXO_CUDA="false"
+FASTRAK_RXDM_URI=""
+DXS_CLIENT_URI=""
 
 get_options() {
     while :; do
@@ -126,6 +132,15 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --webrtc-tag)
+            if [ "$2" ]; then
+                WEBRTC_IMAGE_REF="$2"
+                WEBRTC_TAG=("--tag" "$2")
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --ucx)
             if [ "$2" ]; then
                 UCX_SRC=$2
@@ -147,6 +162,28 @@ get_options() {
         --apt-mirror)
             if [ "$2" ]; then
                 APT_MIRROR=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --disable-rxdm-dxs)
+            DISABLE_RXDM_DXS=true
+            ;;
+        --disable-gpudirect-tcpxo-cuda)
+            DISABLE_GPUDIRECT_TCPXO_CUDA=true
+            ;;
+        --rxdm-uri)
+            if [ "$2" ]; then
+                FASTRAK_RXDM_URI=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --dxs-uri)
+            if [ "$2" ]; then
+                DXS_CLIENT_URI=$2
                 shift
             else
                 missing_requirement $1
@@ -175,10 +212,21 @@ get_options() {
 
     BUILD_CONTEXT_ARGS="$NIXL_BUILD_CONTEXT_ARGS $NIXL_BENCH_BUILD_CONTEXT_ARGS $UCX_BUILD_CONTEXT_ARGS"
 
+    if [ "$ARCH" != "x86_64" ]; then
+        DISABLE_RXDM_DXS=true
+    fi
+    WEBRTC_DOCKER_FILE="${NIXL_SRC}/contrib/Dockerfile.webrtc"
+
     VERSION=v$latest_tag.dev.$commit_id
     if [ -z "$TAG" ]; then
         TAG="--tag nixlbench:${VERSION}"
         echo $TAG
+    fi
+    if [ "$DISABLE_RXDM_DXS" = "true" ] || [ "$DOCKER_FILE" != "${SOURCE_DIR}/Dockerfile" ]; then
+        WEBRTC_IMAGE_REF="scratch"
+    elif [ "${#WEBRTC_TAG[@]}" -eq 0 ]; then
+        WEBRTC_IMAGE_REF="${WEBRTC_DEFAULT_IMAGE_REF}"
+        WEBRTC_TAG=("--tag" "${WEBRTC_IMAGE_REF}")
     fi
 }
 
@@ -217,6 +265,8 @@ show_help() {
     echo "  [--tag tag for image]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
+    echo "  [--disable-rxdm-dxs to stub out RxDM/DXS and disable this capability in GPUDirect-TCPXO]"
+    echo "  [--disable-gpudirect-tcpxo-cuda to disable CUDA support in GPUDirect-TCPXO]"
     echo "  [DOCKER_BUILD_EXTRA_ARGS env var: extra arguments passed through to docker build, e.g. --secret id=ghconfig,src=<file>; word-split, so paths with spaces are not supported]"
     exit 0
 }
@@ -230,10 +280,12 @@ error() {
     exit 1
 }
 
+WEBRTC_TAG=()
 get_options "$@"
 
 BUILD_ARGS+="${BASE_IMAGE:+ --build-arg BASE_IMAGE=$BASE_IMAGE}"
 BUILD_ARGS+="${BASE_IMAGE_TAG:+ --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG}"
+BUILD_ARGS+=" --build-arg WEBRTC_IMAGE=$WEBRTC_IMAGE_REF"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
@@ -243,7 +295,14 @@ if [ -n "$EFA_VERSION" ]; then
     BUILD_ARGS+=" --build-arg EFA_VERSION=$EFA_VERSION"
 fi
 BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
+BUILD_ARGS+=" --build-arg DISABLE_RXDM_DXS=$DISABLE_RXDM_DXS"
+BUILD_ARGS+=" --build-arg DISABLE_GPUDIRECT_TCPXO_CUDA=$DISABLE_GPUDIRECT_TCPXO_CUDA"
+BUILD_ARGS+="${FASTRAK_RXDM_URI:+ --build-arg FASTRAK_RXDM_URI=$FASTRAK_RXDM_URI}"
+BUILD_ARGS+="${DXS_CLIENT_URI:+ --build-arg DXS_CLIENT_URI=$DXS_CLIENT_URI}"
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS ${DOCKER_BUILD_EXTRA_ARGS:-} $TAG $NO_CACHE $BUILD_CONTEXT_ARGS $BUILD_CONTEXT --progress plain
+if [ "$WEBRTC_IMAGE_REF" != "scratch" ]; then
+    docker build --platform linux/$ARCH -f "$WEBRTC_DOCKER_FILE" "${WEBRTC_TAG[@]}" $NO_CACHE "${NIXL_SRC}" --progress plain || exit $?
+fi
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS ${DOCKER_BUILD_EXTRA_ARGS:-} $TAG $NO_CACHE $BUILD_CONTEXT_ARGS $BUILD_CONTEXT --progress plain || exit $?

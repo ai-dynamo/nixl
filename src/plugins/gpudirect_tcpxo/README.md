@@ -464,6 +464,30 @@ address.
         individual transfer operations)
         -   E.g. add `--block-size 128` or larger to your vLLM options.
 
+### CTRL_DEV causes crash
+
+-   **Symptom**: In DEBUG log mode, one of the last logs you see is:
+
+    > Found ### network interfaces
+
+    Before your workload crashes.
+
+-   **Cause**: Our logic to choose the control device for the control channel
+    scans a list of devices. If there are multiple devices that prefix match the
+    name given in `FASTRAK_CTRL_DEV`, we'll attempt to add them to a list that
+    only has a size of 1.
+
+-   **Workaround**: Use the *exact* ifname of the ethernet adapter for the
+    `FASTRAK_CTRL_DEV` envrionment variable.
+
+### Transfers Slowly Leak Memory
+
+-   **Symptom**: You see your workload process' memory slowly increasing.
+-   **Cause**: We have a mechanic that keeps track of all control channel
+    messages to ensure all operations are accounted for. However, not all code
+    paths lead to reclemation of the tracking object.
+-   **Workaround**: Restarting the workload if memory usage exceeds limits.
+
 ## Troubleshooting
 
 The following are common issues you may run into, and how to resolve them.
