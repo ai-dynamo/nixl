@@ -1001,8 +1001,8 @@ nixlLibfabricRail::pollForCompletions() {
             NIXL_ERROR << "fi_cq_readerr failed in drain interleave: " << err_ret;
             return;
         }
-        NIXL_ERROR << "CQ error detail on rail " << rail_id << ": "
-                   << fi_strerror(err_entry.err) << " prov_errno: " << err_entry.prov_errno;
+        NIXL_ERROR << "CQ error detail on rail " << rail_id << ": " << fi_strerror(err_entry.err)
+                   << " prov_errno: " << err_entry.prov_errno;
         // fi_cq_readerr consumes the failing operation's only completion.
         // Complete that request, but keep draining: unrelated peers may still be healthy.
         if (err_entry.op_context) {
