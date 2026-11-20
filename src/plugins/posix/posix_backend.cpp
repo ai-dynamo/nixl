@@ -272,7 +272,7 @@ nixlPosixEngine::getPluginParams() {
 }
 
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       io_queue_type_(getIoQueueType(init_params->customParams)),
       io_queue_(nixlPosixIOQueue::instantiate(
           io_queue_type_,

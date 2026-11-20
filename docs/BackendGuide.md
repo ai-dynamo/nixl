@@ -98,13 +98,13 @@ getPublicData and loadRemoteMD are required if backend supportsRemote, and loadL
 * estimateXferCost: Given the same info as prepXfer, as well as the transfer request output from prepXfer, the backend can estimate the time of transfer, with noise margin and method of estimation. This is optional.
 * postXfer(): Posts a transfer request, meaning the backend should start the transfer. This call is asynchronous, meaning it should not wait to finish the transfer. If the transfer is really small, it’s fine to return DONE right after this call.
 * checkXfer(): Checks the status of a transfer request.
-* releaseReqH(): Releases a transfer request handle, which should be an extension of the nixlBackendReqH. Note that the NIXL agent may release that handle at a number of error cases, expecting this function to handle proper cancellation of requests in addition to freeing resources.
+* releaseReqH(): Releases a transfer request handle, which should be an extension of the nixlBackendReqH. Core refuses release while `checkXfer()` reports `NIXL_IN_PROG`; release does not cancel transfers. A non-success return keeps the handle owned by the caller. Error-state cleanup remains the backend's responsibility; an error status alone does not prove that its operations have stopped.
 
 Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not set supportsNotifications, no such notification will be asked.
 
 Note that any transfer request will be prepped only once, but can be posted multiple times, as long as it gets to DONE state before getting reposted. There is no ordering guarantee across transfer requests, and no locking mechanism for any specific memory region; the user is in charge of not corrupting the memory by having two simultaneous transfers to the same location.
 
-Finally, note that a call to releaseXferReq should not block and be asynchronous, especially important to remember when aborting a transfer. This function can return error, meaning it was not successful in aborting the request. If a backend can abort a transfer quickly without a stall, then releaseXferReq can return success right away. Otherwise, one option would be to wait for the transfer to complete. In the meantime, checkXferReq should return error if there was a call to abort which was not successful, while calls to releaseXferReq would return error until the transfer is completed and it returns success. If there is a scenario that a blocking call can abort the transfer before it is completed, then that blocking call can start in a separate thread (or within the progress thread of the backend). In other words, use a blocking call under the hood but provide non-blocking APIs to the user.
+Release does not cancel or wait for an active transfer. Core returns `NIXL_ERR_REPOST_ACTIVE` while it remains in progress, preserving the handle. The application must keep buffers and registrations alive, poll to completion, then retry release. Explicit cancellation is a separate future API, not part of release.
 ### Notification Handling:
 
 * getNotifs(): Gets notifications received from remote agents (or local in case of loopback). The output is a map from remote agent name to a list (vector) of notifications, in the form of byte array.
@@ -258,7 +258,7 @@ The agent will call the backend specific transfer handle that is stored within t
 
 ### Invalidate transfer request:
 
-The agent will call the **releaseReqH** from the SB API on the backend specific transfer handle to release it, and potentially abort the transfer if in progress and the backend has the capability. Then the agent will release the other resources within the agent level transfer handle to fully release it.
+The agent refreshes the status of an in-progress transfer. If it remains `NIXL_IN_PROG`, **releaseXferReq** returns `NIXL_ERR_REPOST_ACTIVE` without calling **releaseReqH** or invalidating the handle. The application retains ownership and must keep buffers and registrations alive, poll the transfer to completion, then retry release. Release does not cancel the transfer. Otherwise, the agent calls **releaseReqH** for the backend handle, if present, and releases its own transfer-handle resources only after backend release succeeds. A backend refusal also preserves ownership for retry.
 
 ### Get notifications:
 
