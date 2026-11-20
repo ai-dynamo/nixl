@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "file_utils.h"
+#include "file_path_mode.h"
 
 #include <fcntl.h>
 #include <optional>
@@ -30,8 +31,13 @@ queryFileInfo(const std::string &filename) {
         return std::nullopt;
     }
 
+    // A path-mode metaInfo ("ro:/path", "rw,direct:/path", ...) names the file after the
+    // modes prefix; stat that path, as registerMem would open it. Anything else is a plain path.
+    const auto spec = parsePathMeta(filename);
+    const std::string &path = spec ? spec->path : filename;
+
     struct ::stat stat_buf;
-    if (::stat(filename.c_str(), &stat_buf) != 0) {
+    if (::stat(path.c_str(), &stat_buf) != 0) {
         return std::nullopt;
     }
 

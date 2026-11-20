@@ -31,7 +31,8 @@ namespace nixl {
 
 /**
  * @brief Query file information for a single file
- * @param filename The filename to query (can be prefixed)
+ * @param filename A plain path, or a path-mode string ("<modes>:<path>", see
+ *                 parsePathMeta()) whose path part is queried
  * @return nixl_query_resp_t containing file info if accessible, std::nullopt otherwise
  */
 [[nodiscard]] nixl_query_resp_t
