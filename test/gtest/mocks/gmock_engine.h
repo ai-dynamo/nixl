@@ -87,6 +87,9 @@ public:
     [[nodiscard]] std::vector<std::pair<std::uint64_t, std::uint64_t>>
     observedTraceRequests() const;
 
+    [[nodiscard]] std::vector<std::optional<nixl::trace::TraceIdentity>>
+    observedTraceIdentities() const;
+
     MOCK_METHOD(bool, supportsRemote, (), (const, override));
     MOCK_METHOD(bool, supportsLocal, (), (const, override));
     MOCK_METHOD(bool, supportsNotif, (), (const, override));
@@ -185,6 +188,7 @@ private:
     std::optional<const nixlBackendTraceSink *> observedTraceSink_;
     std::optional<nixl::trace::TraceContext> observedTraceContext_;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> observedTraceRequests_;
+    std::vector<std::optional<nixl::trace::TraceIdentity>> observedTraceIdentities_;
 };
 
 } // namespace mocks
