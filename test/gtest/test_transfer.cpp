@@ -778,7 +778,8 @@ protected:
 TEST_P(TestTransferTcp, ReleaseRefusedUntilNotificationIsSent) {
     constexpr size_t size = 4096;
     constexpr uint32_t seed = 1;
-    const std::string notif(1024 * 1024, 'n');
+    // Far more than the sockets take from an idle receiver
+    const std::string notif(16 * 1024 * 1024, 'n');
     nixlAgent &sender = getAgent(0);
     nixlAgent &receiver = getAgent(1);
 
@@ -814,27 +815,41 @@ TEST_P(TestTransferTcp, ReleaseRefusedUntilNotificationIsSent) {
     }));
 
     // Only the sender progresses: the notification goes out, and the idle
-    // receiver holds it back
-    for (int i = 0; i < 100; ++i) {
-        ASSERT_EQ(NIXL_IN_PROG, sender.getXferStatus(xfer_req));
+    // receiver holds it back, unless the sockets take all of it
+    nixl_status_t status = NIXL_IN_PROG;
+    for (int i = 0; (i < 100) && (status == NIXL_IN_PROG); ++i) {
+        status = sender.getXferStatus(xfer_req);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    EXPECT_EQ(NIXL_ERR_REPOST_ACTIVE, sender.releaseXferReq(xfer_req));
+    const bool held = (status == NIXL_IN_PROG);
+    if (held) {
+        ASSERT_EQ(NIXL_ERR_REPOST_ACTIVE, sender.releaseXferReq(xfer_req));
+    }
 
     // Once the receiver progresses, the transfer is done
-    nixl_status_t status = NIXL_IN_PROG;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while ((status == NIXL_IN_PROG) && (std::chrono::steady_clock::now() < deadline)) {
+        ASSERT_EQ(NIXL_SUCCESS, receiver.getNotifs(notifs));
+        status = sender.getXferStatus(xfer_req);
+    }
+    ASSERT_EQ(NIXL_SUCCESS, status);
+    EXPECT_EQ(NIXL_SUCCESS, sender.releaseXferReq(xfer_req));
+
+    const std::string sender_name = getAgentName(0);
     ASSERT_TRUE(wait_until_true([&]() {
         EXPECT_EQ(NIXL_SUCCESS, receiver.getNotifs(notifs));
-        status = sender.getXferStatus(xfer_req);
-        return status != NIXL_IN_PROG;
+        return !notifs[sender_name].empty();
     }));
-    EXPECT_EQ(NIXL_SUCCESS, status);
-    EXPECT_EQ(NIXL_SUCCESS, sender.releaseXferReq(xfer_req));
-    verifyNotifs(receiver, getAgentName(0), 1, notif, std::move(notifs), &sender);
+    ASSERT_EQ(1u, notifs[sender_name].size());
+    EXPECT_TRUE(notifs[sender_name].front() == notif)
+        << "received " << notifs[sender_name].front().size() << " bytes";
 
     invalidateMD(0, 1);
     deregisterMem(sender, src_buffers, DRAM_SEG);
     deregisterMem(receiver, dst_buffers, DRAM_SEG);
+    if (!held) {
+        GTEST_SKIP() << "the notification was sent before the receiver progressed";
+    }
 }
 
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransferTcp, "UCX", false, 2, 0, "");

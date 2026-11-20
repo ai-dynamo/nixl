@@ -29,7 +29,9 @@
 
 namespace {
 
-constexpr size_t large_payload_size = 1024 * 1024;
+// Far more than the sockets take from an idle receiver: about 256 KiB with the
+// 64 KiB buffers set below
+constexpr size_t large_payload_size = 16 * 1024 * 1024;
 
 // A sender and a receiver worker of one UCX context, and a transfer with no
 // data and a large notification. The flush of the transfer completes without
@@ -132,16 +134,23 @@ protected:
     }
 
     // Start the transfer, and wait until only the send of its notification
-    // is in progress
+    // is in progress. Skips the test when the send completes before the
+    // receiver progresses: some hosts buffer more than others.
     void
     holdNotification(const std::string &payload) {
         transfer_.reset(new nixlUcxBackendReqH(sender_.get()));
         transfer_->setNotif(std::string(payload));
         transfer_->init({}, *ep_);
         ASSERT_EQ(NIXL_SUCCESS, transfer_->flush());
+        nixl_status_t status = NIXL_IN_PROG;
         ASSERT_TRUE(waitUntil([&] {
-            return (transfer_->status() == NIXL_IN_PROG) && !transfer_->hasPendingRequests();
+            status = transfer_->status();
+            return (status != NIXL_IN_PROG) || !transfer_->hasPendingRequests();
         }));
+        if (status == NIXL_SUCCESS) {
+            GTEST_SKIP() << "the notification was sent before the receiver progressed";
+        }
+        ASSERT_EQ(NIXL_IN_PROG, status);
     }
 
     // Releases a transfer and then destroys it, as the engine does
@@ -168,6 +177,9 @@ protected:
 TEST_F(ucxNotification, TransferIsDoneOnceNotificationIsSent) {
     const std::string payload(large_payload_size, 'n');
     ASSERT_NO_FATAL_FAILURE(holdNotification(payload));
+    if (IsSkipped()) {
+        return;
+    }
 
     nixl_status_t status = NIXL_IN_PROG;
     ASSERT_TRUE(waitUntil([&] {
@@ -182,6 +194,9 @@ TEST_F(ucxNotification, TransferIsDoneOnceNotificationIsSent) {
 TEST_F(ucxNotification, ReleaseLeavesNotificationSendToItsCallback) {
     const std::string payload(large_payload_size, 'n');
     ASSERT_NO_FATAL_FAILURE(holdNotification(payload));
+    if (IsSkipped()) {
+        return;
+    }
 
     // Release the transfer before it is done, as the engine does. Only the
     // send of its notification is in progress: it goes on, and its callback
@@ -206,6 +221,9 @@ protected:
 
 TEST_F(ucxNotificationBcopy, FailedNotificationSendFailsTransfer) {
     ASSERT_NO_FATAL_FAILURE(holdNotification(std::string(large_payload_size, 'f')));
+    if (IsSkipped()) {
+        return;
+    }
 
     // The receiver goes away while it holds back the notification. The send
     // fails, and so does the transfer.
