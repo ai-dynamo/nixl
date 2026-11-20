@@ -698,7 +698,7 @@ private:
     // System runtime type (CUDA, NEURON, or SYSTEM) this rail was created for
     enum fi_hmem_iface runtime_;
 
-    void
+    nixl_status_t
     pollForCompletions();
 
     /** Record that fi_addr belongs to agent_idx. Called from insertAddress(). */
