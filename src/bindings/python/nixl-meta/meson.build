@@ -55,6 +55,7 @@ if uv.found()
       nixl_init_copy,
       nixl_api_copy,
       nixl_logging_copy,
+      nixl_runtime_init_copy,
       nixl_ep_init_copy,
     ],
     output: [wheel_name],

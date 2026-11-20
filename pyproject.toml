@@ -25,6 +25,8 @@ readme = "README.md"
 license = "MIT AND Apache-2.0"
 license-files = [
   "LICENSE",
+  "runtime/ep/LICENSE-DeepEP",
+  "runtime/ep/LICENSE-fmt",
   "licenses/NVIDIA-proprietary-LICENSE.txt",
 ]
 requires-python = ">=3.10"
