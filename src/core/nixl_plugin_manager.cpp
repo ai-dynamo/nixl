@@ -19,8 +19,9 @@
 #include "nixl.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "common/str_util.h"
+#include <absl/strings/str_join.h>
 #include <dlfcn.h>
-#include <algorithm>
 #include <exception>
 #include <filesystem>
 #include <dirent.h>
@@ -295,24 +296,11 @@ loadPluginList(const std::string &filename) {
         // Find the equals sign
         size_t pos = line.find('=');
         if (pos != std::string::npos) {
-            std::string name = line.substr(0, pos);
-            std::string path = line.substr(pos + 1);
-
-            auto trim = [](std::string &s) {
-                const char *whitespace = " \t\n\r\f\v";
-                s.erase(0, s.find_first_not_of(whitespace));
-                s.erase(s.find_last_not_of(whitespace) + 1);
-            };
-            trim(name);
-            trim(path);
-            // "NAME=" without a path is legitimate: it only registers the
-            // name as discoverable. Reject entries without a name.
-            if (name.empty()) {
-                continue;
+            const absl::string_view entry(line);
+            const std::string name(absl::StripAsciiWhitespace(entry.substr(0, pos)));
+            if (!name.empty()) {
+                plugins[name] = std::string(absl::StripAsciiWhitespace(entry.substr(pos + 1)));
             }
-
-            // Add to map
-            plugins[name] = path;
         }
     }
 
@@ -320,61 +308,24 @@ loadPluginList(const std::string &filename) {
 }
 
 namespace {
-/* ASCII-only upper casing: locale-independent, and plugin names are
- * expected to be ASCII. */
-std::string
-upperAscii(std::string s) {
-    for (char &c : s) {
-        if (c >= 'a' && c <= 'z') {
-            c -= 'a' - 'A';
-        }
-    }
-    return s;
-}
-
-/* Outcome of looking for an entry whose file name is exactly `filename`.
- * exists() is not enough: on case-insensitive file systems it succeeds for
- * case variants and would let one library load under two spellings. A
- * directory that cannot be enumerated is reported separately from one that
- * was enumerated and holds no such entry. */
-using EntryLookup = nixlPluginManager::EntryLookup;
-
-EntryLookup
-lookupExactEntry(const std::string &dir, const std::string &filename) {
-    std::error_code ec;
-    std::filesystem::directory_iterator it(dir, ec), end;
-    if (ec) {
-        return EntryLookup::CANNOT_LIST;
-    }
-    // increment(ec) makes the iterator equal to end when it fails, so the
-    // error must be checked immediately rather than at the top of the next
-    // iteration (which never runs).
-    for (; it != end;) {
-        if (it->path().filename().string() == filename) {
-            return EntryLookup::MATCH;
-        }
-        it.increment(ec);
-        if (ec) {
-            return EntryLookup::CANNOT_LIST;
-        }
-    }
-    return EntryLookup::NO_MATCH;
-}
-
-/* Whether the loader's compatibility branch applies: only for a directory
- * that cannot be enumerated at all, whose scan really saw the standard file
- * name (a whitespace variant never proves one), and whose standard path
- * still verifies. */
+// A case-insensitive filesystem can report that a sibling's path exists. Check the spelling
+// returned by the directory, using the spelling seen at discovery if it cannot be listed.
 bool
-standardPathFallback(EntryLookup lookup, bool scan_saw_standard, bool path_exists) {
-    return lookup == EntryLookup::CANNOT_LIST && scan_saw_standard && path_exists;
+hasStandardFilename(const std::filesystem::path &dir,
+                    const std::string &filename,
+                    bool discovered) {
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(dir, ec), end; it != end; it.increment(ec)) {
+        if (it->path().filename() == filename) {
+            return true;
+        }
+    }
+    return ec && discovered;
 }
 
 bool
 shouldDeepBindPlugin(const std::string &plugin_name) {
-    // Case-insensitive so a UCX plugin registered under a different
-    // spelling still gets the deep-bind treatment.
-    if (upperAscii(plugin_name) != upperAscii(kUcxPluginName)) {
+    if (nixl::str::upperAscii(plugin_name) != kUcxPluginName) {
         return false;
     }
 
@@ -423,13 +374,8 @@ nixlPluginManager::discoverPluginsFromList(const std::string &filename) {
 
     const std::lock_guard lock(mutex_);
 
-    for (const auto& pair : plugins) {
-        const std::string& name = pair.first;
-        const std::string& path = pair.second;
-
-        // Record the source even when the plugin is already loaded, so the
-        // name survives a later unload.
-        discovered_backend_plugins_[name].from_plugin_list = true;
+    for (const auto &[name, path] : plugins) {
+        discovered_backend_plugins_.try_emplace(name);
         if (!path.empty()) {
             explicit_plugin_paths_[name] = path;
             NIXL_INFO << "Discovered backend plugin from list: " << name << " (" << path << ")";
@@ -472,14 +418,8 @@ nixlPluginManager::nixlPluginManager() {
     std::string plugin_dir = getPluginDir();
     if (!plugin_dir.empty()) {
         NIXL_DEBUG << "Loading plugins from: " << plugin_dir;
-        uint64_t generation = 0;
-        {
-            const std::lock_guard lock(mutex_);
-            plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);
-            generation = next_scan_generation_++;
-            dir_scan_generations_[plugin_dir] = generation;
-        }
-        discoverPluginsFromDir(plugin_dir, generation);
+        plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);
+        discoverPluginsFromDir(plugin_dir);
     }
 
     registerBuiltinPlugins();
@@ -506,7 +446,6 @@ nixlPluginManager::addPluginDirectory(const std::string &directory) {
         return;
     }
 
-    uint64_t generation = 0;
     {
         const std::lock_guard lock(mutex_);
 
@@ -520,80 +459,9 @@ nixlPluginManager::addPluginDirectory(const std::string &directory) {
 
         // Prioritize the new directory by inserting it at the beginning
         plugin_dirs_.insert(plugin_dirs_.begin(), directory);
-        generation = next_scan_generation_++;
-        dir_scan_generations_[directory] = generation;
     }
 
-    discoverPluginsFromDir(directory, generation);
-}
-
-std::vector<std::string>
-nixlPluginManager::getPluginDirectories() const {
-    const std::lock_guard lock(mutex_);
-    return plugin_dirs_;
-}
-
-void
-nixlPluginManager::removePluginDirectoryForUnitTest(const std::string &directory) {
-    const std::lock_guard lock(mutex_);
-
-    plugin_dirs_.erase(std::remove(plugin_dirs_.begin(), plugin_dirs_.end(), directory),
-                       plugin_dirs_.end());
-    dir_scan_generations_.erase(directory);
-    for (auto it = dir_override_paths_.begin(); it != dir_override_paths_.end();) {
-        it->second.erase(directory);
-        if (it->second.empty()) {
-            it = dir_override_paths_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    // Forget names this directory was the only source of; pluginlist-sourced
-    // names survive.
-    for (auto it = discovered_backend_plugins_.begin(); it != discovered_backend_plugins_.end();) {
-        it->second.dirs.erase(directory);
-        it->second.standard_dirs.erase(directory);
-        if (!it->second.from_plugin_list && it->second.dirs.empty()) {
-            it = discovered_backend_plugins_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-}
-
-void
-nixlPluginManager::discoverBackendPluginWithGenerationForUnitTest(const std::filesystem::path &path,
-                                                                  const std::string &dir,
-                                                                  uint64_t generation) {
-    discoverBackendPlugin(path, dir, generation);
-}
-
-uint64_t
-nixlPluginManager::pluginDirectoryScanGenerationForUnitTest(const std::string &dir) const {
-    const std::lock_guard lock(mutex_);
-    const auto it = dir_scan_generations_.find(dir);
-    return it == dir_scan_generations_.end() ? 0 : it->second;
-}
-
-bool
-nixlPluginManager::standardPathFallbackForUnitTest(EntryLookup lookup,
-                                                   bool scan_saw_standard,
-                                                   bool path_exists) {
-    return standardPathFallback(lookup, scan_saw_standard, path_exists);
-}
-
-void
-nixlPluginManager::setPreLoadHookForUnitTest(std::function<void()> hook) {
-    const std::lock_guard lock(mutex_);
-    pre_load_hook_for_test_ = std::move(hook);
-}
-
-void
-nixlPluginManager::forgetDiscoveredPluginForUnitTest(const nixl_backend_t &name) {
-    const std::lock_guard lock(mutex_);
-    discovered_backend_plugins_.erase(name);
-    dir_override_paths_.erase(name);
-    explicit_plugin_paths_.erase(name);
+    discoverPluginsFromDir(directory);
 }
 
 std::string
@@ -611,110 +479,60 @@ nixlPluginManager::composePluginPath(const std::string &dir,
     return plugin_path;
 }
 
+nixl_status_t
+nixlPluginManager::canonicalBackendName(const nixl_backend_t &name,
+                                        nixl_backend_t &canonical) const {
+    const std::string trimmed(absl::StripAsciiWhitespace(name));
+    if (trimmed.empty()) {
+        NIXL_ERROR << "Empty backend name";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // As in Python, an exact spelling wins. A folded spelling must identify just one
+    // distinct name in the entire inventory, regardless of which plugins are loaded.
+    const auto folded = nixl::str::upperAscii(trimmed);
+    std::set<nixl_backend_t> matches;
+    for (const auto &candidate : getAvailBackendPluginNames()) {
+        if (candidate == trimmed) {
+            canonical = candidate;
+            return NIXL_SUCCESS;
+        }
+        if (nixl::str::upperAscii(candidate) == folded) {
+            matches.insert(candidate);
+        }
+    }
+    if (matches.size() > 1) {
+        NIXL_ERROR << "Ambiguous backend name '" << trimmed
+                   << "': " << absl::StrJoin(matches, ", ");
+        return NIXL_ERR_NOT_FOUND;
+    }
+    canonical = matches.empty() ? trimmed : *matches.begin();
+    return NIXL_SUCCESS;
+}
+
 std::shared_ptr<const nixlBackendPluginHandle>
-nixlPluginManager::loadBackendPlugin(const std::string &plugin_name,
-                                     nixl_backend_t *canonical_name) {
-    // One-shot test hook (swapped out under the lock, run without it): fires
-    // after the caller's own name resolution and before this load's.
-    std::function<void()> hook;
-    {
-        const std::lock_guard lock(mutex_);
-        hook.swap(pre_load_hook_for_test_);
-    }
-    if (hook) {
-        hook();
-    }
-
-    const std::lock_guard lock(mutex_);
-
-    const std::string canonical = canonicalBackendNameLocked(plugin_name);
-    if (canonical_name != nullptr) {
-        *canonical_name = canonical;
-    }
-    if (canonical.empty()) {
+nixlPluginManager::loadBackendPlugin(const nixl_backend_t &plugin_name) {
+    nixl_backend_t canonical;
+    if (canonicalBackendName(plugin_name, canonical) != NIXL_SUCCESS) {
         return nullptr;
     }
-    const auto plugin_handle = loadBackendPluginImpl(canonical);
+    return loadResolvedBackendPlugin(canonical);
+}
+
+std::shared_ptr<const nixlBackendPluginHandle>
+nixlPluginManager::loadResolvedBackendPlugin(const nixl_backend_t &canonical_name) {
+    const std::lock_guard lock(mutex_);
+
+    const auto plugin_handle = loadBackendPluginImpl(canonical_name);
     if (plugin_handle) {
-        loaded_backend_plugins_.try_emplace(canonical, plugin_handle);
+        loaded_backend_plugins_.try_emplace(canonical_name, plugin_handle);
     }
     return plugin_handle;
 }
 
-nixl_backend_t
-nixlPluginManager::canonicalBackendName(const nixl_backend_t &name) const {
-    const std::lock_guard lock(mutex_);
-    return canonicalBackendNameLocked(name);
-}
-
-nixl_backend_t
-nixlPluginManager::canonicalBackendNameLocked(const nixl_backend_t &name) const {
-    // Trim ASCII whitespace from both ends.
-    static constexpr const char *whitespace = " \t\n\r\f\v";
-    const auto first = name.find_first_not_of(whitespace);
-    if (first == std::string::npos) {
-        return "";
-    }
-    const auto last = name.find_last_not_of(whitespace);
-    const std::string trimmed = name.substr(first, last - first + 1);
-
-    // An exact match always wins, so distinctly registered spellings (a
-    // pluginlist may legitimately contain both "FOO" and "foo") keep loading
-    // their own library.
-    if (loaded_backend_plugins_.count(trimmed) != 0 || explicit_plugin_paths_.count(trimmed) != 0 ||
-        discovered_backend_plugins_.count(trimmed) != 0) {
-        return trimmed;
-    }
-
-    // The trimmed spelling may name a standard plugin file that a directory
-    // scan has not published yet (scans run outside the lock); folding to
-    // another spelling then would load the wrong plugin, while main probed
-    // the requested spelling directly. The exact entry name decides, so a
-    // case variant in a case-insensitive directory cannot capture the
-    // request. Probing under the lock matches loadBackendPluginImpl, which
-    // already dlopens while holding it.
-    const std::string wanted_file = backendPluginPrefix + trimmed + kPluginSuffix;
-    for (const auto &dir : plugin_dirs_) {
-        if (lookupExactEntry(dir, wanted_file) == EntryLookup::MATCH) {
-            return trimmed;
-        }
-    }
-
-    // Callers may pass "ucx", "Ucx" or " UCX " for the UCX backend, so fall
-    // back to a case-insensitive match against every known plugin name.
-    const std::string wanted = upperAscii(trimmed);
-    const auto matches = [&](const std::string &candidate) {
-        return upperAscii(candidate) == wanted;
-    };
-
-    // Registration decides between same-fold spellings, never what happens to
-    // be loaded: the loaded set grows over time, and preferring it would make
-    // one agent's repeated alias request resolve differently once another
-    // agent loads a case variant, slipping past the duplicate check. Loaded
-    // spellings remain a last resort for plugins whose directories were
-    // removed after they loaded.
-    for (const auto &pair : explicit_plugin_paths_) {
-        if (matches(pair.first)) {
-            return pair.first;
-        }
-    }
-    for (const auto &known : discovered_backend_plugins_) {
-        if (matches(known.first)) {
-            return known.first;
-        }
-    }
-    for (const auto &pair : loaded_backend_plugins_) {
-        if (matches(pair.first)) {
-            return pair.first;
-        }
-    }
-    return trimmed;
-}
-
 std::shared_ptr<const nixlBackendPluginHandle>
 nixlPluginManager::loadBackendPluginImpl(const std::string &plugin_name) const {
-    // Whitespace-only and empty names never name a plugin.
-    if (plugin_name.empty()) {
+    if (plugin_name.empty() || absl::StripAsciiWhitespace(plugin_name) != plugin_name) {
         return nullptr;
     }
 
@@ -738,40 +556,19 @@ nixlPluginManager::loadBackendPluginImpl(const std::string &plugin_name) const {
         }
     }
 
-    // Try to load the plugin from all registered directories. The exact
-    // directory entry decides, so on case-insensitive file systems a case
-    // variant in a higher-priority directory cannot capture a request whose
-    // exact file lives in a lower-priority one, and one library cannot be
-    // cached under two spellings. A directory that can no longer be
-    // enumerated at all (search permission without read) keeps serving a
-    // standard file name its scan really saw, verified by path; a whitespace
-    // variant never proves a standard name, and an enumeration that completed
-    // without the entry always wins over the stale scan record. Suppress the
-    // missing-file warning while fallback candidates remain (a plugin behind
-    // a non-canonical file name has no standard file to find here).
-    const auto override_it = dir_override_paths_.find(plugin_name);
-    const bool has_override = override_it != dir_override_paths_.end();
-    const std::string standard_file = backendPluginPrefix + plugin_name + kPluginSuffix;
-    const auto discovered_it = discovered_backend_plugins_.find(plugin_name);
+    // Try to load the plugin from all registered directories
+    const auto discovered = discovered_backend_plugins_.find(plugin_name);
+    const auto filename = backendPluginPrefix + plugin_name + kPluginSuffix;
     for (const auto& dir : plugin_dirs_) {
-        const std::string plugin_path = composePluginPath(dir, backendPluginPrefix, plugin_name);
-        const EntryLookup lookup = lookupExactEntry(dir, standard_file);
-        bool use_path = lookup == EntryLookup::MATCH;
-        if (!use_path) {
-            const bool scan_saw_standard = discovered_it != discovered_backend_plugins_.end() &&
-                discovered_it->second.standard_dirs.count(dir) != 0;
-            // The path probe runs only when the compatibility branch could
-            // apply at all, never on an ordinary miss.
-            if (lookup == EntryLookup::CANNOT_LIST && scan_saw_standard) {
-                std::error_code ec;
-                use_path = standardPathFallback(
-                    lookup, scan_saw_standard, std::filesystem::exists(plugin_path, ec));
-            }
+        const auto plugin_path = std::filesystem::path(dir) / filename;
+        if (!std::filesystem::exists(plugin_path)) {
+            NIXL_WARN << "Plugin file does not exist: " << plugin_path;
+            continue;
         }
-        if (!use_path) {
-            if (!has_override) {
-                NIXL_WARN << "Plugin file does not exist: " << plugin_path;
-            }
+
+        const bool seen_in_dir = discovered != discovered_backend_plugins_.end() &&
+            discovered->second.contains(plugin_path.parent_path());
+        if (!hasStandardFilename(dir, filename, seen_in_dir)) {
             continue;
         }
 
@@ -779,23 +576,6 @@ nixlPluginManager::loadBackendPluginImpl(const std::string &plugin_name) const {
             loadPluginFromPath(plugin_path, backendLoader, shouldDeepBindPlugin(plugin_name));
         if (plugin_handle) {
             return std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
-        }
-    }
-
-    // Last resort: a plugin discovered behind a non-canonical file name
-    // (e.g. "libplugin_ Foo .so"). Walk the candidates in plugin_dirs_ order
-    // so priority follows directory registration, never scan completion.
-    if (has_override) {
-        for (const auto &dir : plugin_dirs_) {
-            const auto cand = override_it->second.find(dir);
-            if (cand == override_it->second.end() || !std::filesystem::exists(cand->second)) {
-                continue;
-            }
-            auto plugin_handle =
-                loadPluginFromPath(cand->second, backendLoader, shouldDeepBindPlugin(plugin_name));
-            if (plugin_handle) {
-                return std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
-            }
         }
     }
 
@@ -897,54 +677,15 @@ extractPluginName(const std::string &filename, const std::string &prefix) {
 } // namespace
 
 void
-nixlPluginManager::discoverBackendPlugin(const std::filesystem::path &path,
-                                         const std::string &dir_key,
-                                         uint64_t generation) {
-    const std::string filename = path.filename().string();
+nixlPluginManager::discoverBackendPlugin(const std::filesystem::directory_entry &entry) {
+    const std::string filename = entry.path().filename().string();
     if (startsWith(filename, backendPluginPrefix) && endsWith(filename, kPluginSuffix)) {
-        std::string plugin_name = extractPluginName(filename, backendPluginPrefix);
-
-        // Trim ASCII whitespace. A discovered name is only usable when it
-        // equals its trimmed form, because loading composes the file name
-        // from the plugin name; "libplugin_ .so" is skipped, and
-        // "libplugin_ Foo .so" is registered by its real path.
-        static constexpr const char *whitespace = " \t\n\r\f\v";
-        const auto first = plugin_name.find_first_not_of(whitespace);
-        if (first == std::string::npos) {
-            return;
+        const std::string plugin_name = extractPluginName(filename, backendPluginPrefix);
+        if (!plugin_name.empty() && absl::StripAsciiWhitespace(plugin_name) == plugin_name) {
+            const std::lock_guard lock(mutex_);
+            discovered_backend_plugins_[plugin_name].insert(entry.path().parent_path());
+            NIXL_INFO << "Discovered backend plugin: " << plugin_name;
         }
-        const auto last = plugin_name.find_last_not_of(whitespace);
-        const std::string trimmed = plugin_name.substr(first, last - first + 1);
-
-        const std::lock_guard lock(mutex_);
-        // Discard the scan when the directory was deregistered, or
-        // deregistered and re-registered, while this scan was in flight.
-        const auto gen_it = dir_scan_generations_.find(dir_key);
-        if (gen_it == dir_scan_generations_.end() || gen_it->second != generation) {
-            return;
-        }
-
-        // Record the source even when the plugin is already loaded, so the
-        // name survives a later unload. A non-canonical file name additionally
-        // records its real path as a fallback candidate, without overriding a
-        // pluginlist-specified library or the standard file name, which the
-        // loader prefers. dir_key is the registered directory string, so
-        // discovery, loading and removal all share one key regardless of
-        // trailing slashes or other spelling differences.
-        discovered_backend_plugins_[trimmed].dirs.insert(dir_key);
-        if (trimmed != plugin_name) {
-            const auto inserted = dir_override_paths_[trimmed].emplace(dir_key, path.string());
-            if (!inserted.second) {
-                NIXL_WARN << "Multiple non-canonical files for plugin '" << trimmed << "' in "
-                          << dir_key << "; keeping " << inserted.first->second;
-            }
-        } else {
-            // The scan saw the standard file name itself; only that proves
-            // the on-disk spelling for the unlistable-directory fallback in
-            // the loader.
-            discovered_backend_plugins_[trimmed].standard_dirs.insert(dir_key);
-        }
-        NIXL_INFO << "Discovered backend plugin: " << trimmed;
     }
 }
 
@@ -965,17 +706,17 @@ nixlPluginManager::discoverTracePlugin(const std::string &filename) {
 }
 
 void
-nixlPluginManager::discoverPluginsFromDir(const std::string &dir, uint64_t generation) {
+nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path &dirpath) {
     std::error_code ec;
-    std::filesystem::directory_iterator dir_iter(dir, ec);
+    std::filesystem::directory_iterator dir_iter(dirpath, ec);
     if (ec) {
-        NIXL_ERROR << "Error accessing directory(" << dir << "): " << ec.message();
+        NIXL_ERROR << "Error accessing directory(" << dirpath << "): " << ec.message();
         return;
     }
 
     for (const auto& entry : dir_iter) {
         std::string filename = entry.path().filename().string();
-        discoverBackendPlugin(entry.path(), dir, generation);
+        discoverBackendPlugin(entry);
         discoverTelemetryPlugin(filename);
         discoverTracePlugin(filename);
     }
@@ -983,28 +724,29 @@ nixlPluginManager::discoverPluginsFromDir(const std::string &dir, uint64_t gener
 
 void
 nixlPluginManager::unloadBackendPluginForUnitTest(const nixl_backend_t &plugin_name) {
-    // Resolve to the canonical name so a plugin loaded through one spelling
-    // can be unloaded through another.
-    const nixl_backend_t canonical = canonicalBackendName(plugin_name);
-
     // Do not unload static plugins
     for (const auto &splugin : getBackendStaticPlugins()) {
-        if (splugin.name == canonical) {
+        if (splugin.name == plugin_name) {
             return;
         }
     }
 
     const std::lock_guard lock(mutex_);
-    loaded_backend_plugins_.erase(canonical);
+    loaded_backend_plugins_.erase(plugin_name);
 }
 
 nixl_status_t
 nixlPluginManager::getBackendParams(const nixl_backend_t &type,
                                     nixl_mem_list_t &mems,
                                     nixl_b_params_t &params) const {
+    nixl_backend_t canonical;
+    const auto status = canonicalBackendName(type, canonical);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
     const std::lock_guard lock(mutex_);
 
-    if (const auto plugin = loadBackendPluginImpl(canonicalBackendNameLocked(type))) {
+    if (const auto plugin = loadBackendPluginImpl(canonical)) {
         mems = plugin->getBackendMems();
         params = plugin->getBackendOptions();
         return NIXL_SUCCESS;
@@ -1014,9 +756,13 @@ nixlPluginManager::getBackendParams(const nixl_backend_t &type,
 
 std::shared_ptr<const nixlBackendPluginHandle>
 nixlPluginManager::getBackendPlugin(const nixl_backend_t &plugin_name) {
+    nixl_backend_t canonical;
+    if (canonicalBackendName(plugin_name, canonical) != NIXL_SUCCESS) {
+        return nullptr;
+    }
     const std::lock_guard lock(mutex_);
 
-    auto it = loaded_backend_plugins_.find(canonicalBackendNameLocked(plugin_name));
+    auto it = loaded_backend_plugins_.find(canonical);
     if (it != loaded_backend_plugins_.end()) {
         return it->second;
     }
@@ -1063,17 +809,17 @@ nixlPluginManager::getLoadedBackendPluginNames() {
 }
 
 std::vector<nixl_backend_t>
-nixlPluginManager::getAvailBackendPluginNames() {
+nixlPluginManager::getAvailBackendPluginNames() const {
     const std::lock_guard lock(mutex_);
 
     std::vector<nixl_backend_t> names;
     for (const auto &pair : loaded_backend_plugins_) {
         names.push_back(pair.first);
     }
-    for (const auto &name : discovered_backend_plugins_) {
+    for (const auto &[name, directories] : discovered_backend_plugins_) {
         // Skip discovered plugins that are already loaded to avoid duplicates
-        if (loaded_backend_plugins_.find(name.first) == loaded_backend_plugins_.end()) {
-            names.push_back(name.first);
+        if (loaded_backend_plugins_.find(name) == loaded_backend_plugins_.end()) {
+            names.push_back(name);
         }
     }
     return names;

@@ -70,10 +70,12 @@ class nixlAgent {
          * @brief  Get the supported memory types, and init config parameters and their
          *         default values for a backend plugin.
          *
-         * @param  type          Plugin backend type
+         * @param  type          Plugin name. Surrounding ASCII whitespace is ignored. An exact
+         *                       spelling wins, otherwise a unique ASCII case match is used.
          * @param  mems [out]    List of supported memory types for nixl by the plugin
          * @param  params [out]  List of init parameters and their values for the plugin
-         * @return nixl_status_t Error code if call was not successful
+         * @return NIXL_SUCCESS on success, NIXL_ERR_INVALID_PARAM for an empty or whitespace-only
+         *         name, or NIXL_ERR_NOT_FOUND for an ambiguous or unavailable plugin.
          */
         nixl_status_t
         getPluginParams (const nixl_backend_t &type,
@@ -97,10 +99,12 @@ class nixlAgent {
         /**
          * @brief  Instantiate a backend engine object based on the corresponding parameters
          *
-         * @param  type          Backend type
+         * @param  type          Backend name, using the same matching rules as getPluginParams().
          * @param  params        Backend specific parameters
          * @param  backend [out] Backend handle for NIXL
-         * @return nixl_status_t Error code if call was not successful
+         * @return NIXL_SUCCESS on success, NIXL_ERR_INVALID_PARAM for an empty or whitespace-only
+         *         name or an already created backend, NIXL_ERR_NOT_FOUND for an ambiguous or
+         *         unavailable plugin, or another backend initialization error.
          */
         nixl_status_t
         createBackend (const nixl_backend_t &type,

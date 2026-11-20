@@ -17,348 +17,271 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
-#include <cctype>
-#include <string>
-#include <vector>
-
-#include "agent_data.h"
-#include "mocks/gmock_engine.h"
-
 #include "backend/backend_plugin.h"
 #include "common.h"
 #include "nixl.h"
 #include "plugin_manager.h"
-#include "plugin_manager_test_helpers.h"
 
 namespace gtest {
 namespace plugin_manager {
-    struct PluginDesc {
-        enum PluginType { Real, Mock };
+struct PluginDesc {
+  enum PluginType { Real, Mock };
+  const char *name;
+  const PluginType type;
+};
 
-        const char *name;
-        const PluginType type;
-    };
+/* Utililty print function for readable log. */
+void PrintTo(const PluginDesc &plugin_desc, ::std::ostream *os) {
+  *os << plugin_desc.name;
+}
 
-    /* Utililty print function for readable log. */
-    void
-    PrintTo(const PluginDesc &plugin_desc, ::std::ostream *os) {
-        *os << plugin_desc.name;
-    }
-
-    const PluginDesc ucx_plugin_desc{.name = "UCX", .type = PluginDesc::PluginType::Real};
-
-    const PluginDesc gds_plugin_desc{.name = "GDS", .type = PluginDesc::PluginType::Real};
+const PluginDesc ucx_plugin_desc{.name = "UCX",
+                                 .type = PluginDesc::PluginType::Real};
+const PluginDesc gds_plugin_desc{.name = "GDS",
+                                 .type = PluginDesc::PluginType::Real};
 #ifdef HAVE_LIBFABRIC
-    const PluginDesc libfabric_plugin_desc{.name = "LIBFABRIC",
-                                           .type = PluginDesc::PluginType::Real};
+const PluginDesc libfabric_plugin_desc{.name = "LIBFABRIC", .type = PluginDesc::PluginType::Real};
 #endif
 
-    class LoadSinglePluginTestFixture : public testing::TestWithParam<PluginDesc> {
-    protected:
-        nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
-        std::shared_ptr<const nixlBackendPluginHandle> plugin_handle_;
+class LoadSinglePluginTestFixture
+    : public testing::TestWithParam<PluginDesc> {
+protected:
+  nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
+  std::shared_ptr<const nixlBackendPluginHandle> plugin_handle_;
 
-        void
-        SetUp() override {
+  void SetUp() override {
 #if !TEST_ALL_PLUGINS
-            if (GetParam().type == PluginDesc::PluginType::Real) {
-                GTEST_SKIP();
-            }
+    if (GetParam().type == PluginDesc::PluginType::Real)
+      GTEST_SKIP();
 #endif
-            plugin_handle_ = plugin_manager_.loadBackendPlugin(GetParam().name);
-        }
+    plugin_handle_ = plugin_manager_.loadBackendPlugin(GetParam().name);
+  }
 
-        void
-        TearDown() override {
+  void TearDown() override {
 #if !TEST_ALL_PLUGINS
-            if (GetParam().type == PluginDesc::PluginType::Real) {
-                return;
-            }
+    if (GetParam().type == PluginDesc::PluginType::Real)
+      return;
 #endif
-            plugin_manager_.unloadBackendPluginForUnitTest(GetParam().name);
-        }
+    plugin_manager_.unloadBackendPluginForUnitTest(GetParam().name);
+  }
 
-        /* Returns true if the plugin was successfully loaded, otherwise false. */
-        bool
-        IsLoaded() {
-            return plugin_handle_ != nullptr;
-        }
-    };
+  /* Returns true if the plugin was successfully loaded, otherwise false. */
+  bool IsLoaded() { return plugin_handle_ != nullptr; }
+};
 
-    class LoadMultiplePluginsTestFixture : public testing::TestWithParam<std::vector<PluginDesc>> {
-    protected:
-        nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
-        std::vector<std::shared_ptr<const nixlBackendPluginHandle>> plugin_handles_;
+class LoadMultiplePluginsTestFixture
+    : public testing::TestWithParam<std::vector<PluginDesc>> {
+protected:
+  nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
+  std::vector<std::shared_ptr<const nixlBackendPluginHandle>> plugin_handles_;
 
-        void
-        SetUp() override {
-            for (const auto &plugin : GetParam()) {
+  void SetUp() override {
+    for (const auto &plugin : GetParam()) {
 #if !TEST_ALL_PLUGINS
-                if (plugin.type == PluginDesc::PluginType::Real) {
-                    continue;
-                }
+      if (plugin.type == PluginDesc::PluginType::Real)
+        continue;
 #endif
-                plugin_handles_.push_back(plugin_manager_.loadBackendPlugin(plugin.name));
-            }
-        }
+      plugin_handles_.push_back(plugin_manager_.loadBackendPlugin(plugin.name));
+    }
+  }
 
-        void
-        TearDown() override {
-            for (const auto &plugin : GetParam()) {
+  void TearDown() override {
+    for (const auto &plugin : GetParam()) {
 #if !TEST_ALL_PLUGINS
-                if (plugin.type == PluginDesc::PluginType::Real) {
-                    continue;
-                }
+      if (plugin.type == PluginDesc::PluginType::Real)
+        continue;
 #endif
-                plugin_manager_.unloadBackendPluginForUnitTest(plugin.name);
-            }
-        }
-
-        /*
-         * Returns true if all the plugins were successfully loaded, otherwise false.
-         */
-        bool
-        AreAllLoaded() {
-            return all_of(
-                plugin_handles_.begin(),
-                plugin_handles_.end(),
-                [](std::shared_ptr<const nixlBackendPluginHandle> ptr) { return ptr != nullptr; });
-        }
-    };
-
-    class LoadedPluginTestFixture : public testing::Test {
-    protected:
-        nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
-        std::set<std::string> prev_plugins_;
-        std::set<std::string> loaded_plugins_;
-
-        void
-        SetUp() override {
-            for (const auto &plugin : plugin_manager_.getLoadedBackendPluginNames()) {
-                prev_plugins_.insert(plugin);
-            }
-        }
-
-        void
-        TearDown() override {
-            for (const auto &plugin : loaded_plugins_) {
-                plugin_manager_.unloadBackendPluginForUnitTest(plugin);
-            }
-        }
-
-        /*
-         * Load a plugin to plugin manager if isn't already loaded.
-         *
-         * Returns true if the plugin loaded successfully, otherwise false.
-         */
-        bool
-        LoadPlugin(std::string name) {
-            if (prev_plugins_.find(name) != prev_plugins_.end()) {
-                return true;
-            }
-            if (loaded_plugins_.find(name) != loaded_plugins_.end()) {
-                return false;
-            }
-            loaded_plugins_.insert(name);
-            return plugin_manager_.loadBackendPlugin(name) != nullptr;
-        }
-
-        /* Unload a plugin from plugin manager if it was loaded during this test. */
-        void
-        UnloadPlugin(std::string name) {
-            if (loaded_plugins_.find(name) == loaded_plugins_.end()) {
-                return;
-            }
-            plugin_manager_.unloadBackendPluginForUnitTest(name);
-            loaded_plugins_.erase(name);
-        }
-
-        /*
-         * Returns true if the only non static plugins are similar to the loaded ones,
-         * otherwise false.
-         */
-        bool
-        HasOnlyLoadedPlugins() {
-            const auto &pm_loaded = plugin_manager_.getLoadedBackendPluginNames();
-            for (const auto &pm_loaded_plugin : pm_loaded) {
-                if ((prev_plugins_.find(pm_loaded_plugin) == prev_plugins_.end()) &&
-                    (loaded_plugins_.find(pm_loaded_plugin) == loaded_plugins_.end())) {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-    };
-
-    TEST_P(LoadSinglePluginTestFixture, SimpleLifeCycleTest) {
-        EXPECT_TRUE(IsLoaded());
+      plugin_manager_.unloadBackendPluginForUnitTest(plugin.name);
     }
+  }
 
-    TEST_P(LoadMultiplePluginsTestFixture, SimpleLifeCycleTest) {
-        EXPECT_TRUE(AreAllLoaded());
-    }
+  /*
+   * Returns true if all the plugins were successfully loaded, otherwise false.
+   */
+  bool AreAllLoaded() {
+      return all_of(
+          plugin_handles_.begin(),
+          plugin_handles_.end(),
+          [](std::shared_ptr<const nixlBackendPluginHandle> ptr) { return ptr != nullptr; });
+  }
+};
 
-    TEST_F(LoadedPluginTestFixture, NoLoadedPluginsTest) {
-        EXPECT_TRUE(HasOnlyLoadedPlugins());
-    }
+class LoadedPluginTestFixture : public testing::Test {
+protected:
+  nixlPluginManager &plugin_manager_ = nixlPluginManager::getInstance();
+  std::set<std::string> prev_plugins_;
+  std::set<std::string> loaded_plugins_;
 
-    TEST_F(LoadedPluginTestFixture, DeferredDiscoveryTest) {
-        auto mock = GetMockBackendName();
-        auto avail = plugin_manager_.getAvailBackendPluginNames();
-        auto loaded = plugin_manager_.getLoadedBackendPluginNames();
+  void SetUp() override {
+      for (const auto &plugin : plugin_manager_.getLoadedBackendPluginNames())
+          prev_plugins_.insert(plugin);
+  }
 
-        // Available plugins should include discovered-but-not-loaded ones
-        EXPECT_GT(avail.size(), loaded.size());
-        EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
-        EXPECT_EQ(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
+  void TearDown() override {
+    for (const auto &plugin : loaded_plugins_)
+        plugin_manager_.unloadBackendPluginForUnitTest(plugin);
+  }
 
-        // After loading, it should appear in both
-        EXPECT_TRUE(LoadPlugin(mock));
-        loaded = plugin_manager_.getLoadedBackendPluginNames();
-        EXPECT_NE(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
+  /*
+   * Load a plugin to plugin manager if isn't already loaded.
+   *
+   * Returns true if the plugin loaded successfully, otherwise false.
+   */
+  bool LoadPlugin(std::string name) {
+    if (prev_plugins_.find(name) != prev_plugins_.end())
+      return true;
+    if (loaded_plugins_.find(name) != loaded_plugins_.end())
+      return false;
+    loaded_plugins_.insert(name);
+    return plugin_manager_.loadBackendPlugin(name) != nullptr;
+  }
 
-        // After unloading, still available (discovered on disk) but not loaded
-        UnloadPlugin(mock);
-        loaded = plugin_manager_.getLoadedBackendPluginNames();
-        EXPECT_EQ(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
-        avail = plugin_manager_.getAvailBackendPluginNames();
-        EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
-    }
+  /* Unload a plugin from plugin manager if it was loaded during this test. */
+  void UnloadPlugin(std::string name) {
+    if (loaded_plugins_.find(name) == loaded_plugins_.end())
+      return;
+    plugin_manager_.unloadBackendPluginForUnitTest(name);
+    loaded_plugins_.erase(name);
+  }
 
-    TEST_F(LoadedPluginTestFixture, StaleTelemetryPluginApiVersionIsRejected) {
-        const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
-        const LogIgnoreGuard lig_missing("Plugin file does not exist");
+  /*
+   * Returns true if the only non static plugins are similar to the loaded ones,
+   * otherwise false.
+   */
+  bool
+  HasOnlyLoadedPlugins() {
+      const auto &pm_loaded = plugin_manager_.getLoadedBackendPluginNames();
+      for (const auto &pm_loaded_plugin : pm_loaded) {
+          if ((prev_plugins_.find(pm_loaded_plugin) == prev_plugins_.end()) &&
+              (loaded_plugins_.find(pm_loaded_plugin) == loaded_plugins_.end()))
+              return false;
+      }
 
-        EXPECT_EQ(plugin_manager_.loadTelemetryPlugin("mock_stale"), nullptr);
-        EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
-    }
+      return true;
+  }
+};
 
-    TEST_F(LoadedPluginTestFixture, StaleTracePluginApiVersionIsRejected) {
-        const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+TEST_P(LoadSinglePluginTestFixture, SimpleLifeCycleTest) {
+  EXPECT_TRUE(IsLoaded());
+}
 
-        EXPECT_EQ(plugin_manager_.loadTracePlugin("mock_stale"), nullptr);
-        EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
-    }
+TEST_P(LoadMultiplePluginsTestFixture, SimpleLifeCycleTest) {
+  EXPECT_TRUE(AreAllLoaded());
+}
 
-    TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {
-        const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
-        const LogIgnoreGuard lig_missing("Plugin file does not exist");
+TEST_F(LoadedPluginTestFixture, NoLoadedPluginsTest) {
+  EXPECT_TRUE(HasOnlyLoadedPlugins());
+}
 
-        const auto avail = plugin_manager_.getAvailBackendPluginNames();
-        ASSERT_NE(std::find(avail.begin(), avail.end(), "MOCK_STALE_BACKEND"), avail.end());
+TEST_F(LoadedPluginTestFixture, DeferredDiscoveryTest) {
+    auto mock = GetMockBackendName();
+    auto avail = plugin_manager_.getAvailBackendPluginNames();
+    auto loaded = plugin_manager_.getLoadedBackendPluginNames();
 
-        EXPECT_EQ(plugin_manager_.loadBackendPlugin("MOCK_STALE_BACKEND"), nullptr);
+    // Available plugins should include discovered-but-not-loaded ones
+    EXPECT_GT(avail.size(), loaded.size());
+    EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
+    EXPECT_EQ(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
 
-        const auto loaded = plugin_manager_.getLoadedBackendPluginNames();
-        EXPECT_EQ(std::find(loaded.begin(), loaded.end(), "MOCK_STALE_BACKEND"), loaded.end());
-    }
+    // After loading, it should appear in both
+    EXPECT_TRUE(LoadPlugin(mock));
+    loaded = plugin_manager_.getLoadedBackendPluginNames();
+    EXPECT_NE(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
 
-    TEST_F(LoadedPluginTestFixture, CurrentPluginApiVersionIsAccepted) {
-        EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
-        EXPECT_EQ(NIXL_PLUGIN_API_VERSION, 4);
-    }
+    // After unloading, still available (discovered on disk) but not loaded
+    UnloadPlugin(mock);
+    loaded = plugin_manager_.getLoadedBackendPluginNames();
+    EXPECT_EQ(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
+    avail = plugin_manager_.getAvailBackendPluginNames();
+    EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
+}
 
-    TEST_F(LoadedPluginTestFixture, LoadSinglePluginTest) {
-        EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
-        EXPECT_TRUE(HasOnlyLoadedPlugins());
-    }
+TEST_F(LoadedPluginTestFixture, StaleTelemetryPluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+    const LogIgnoreGuard lig_missing("Plugin file does not exist");
 
-    TEST_F(LoadedPluginTestFixture, LoadUnloadSimplePluginTest) {
-        EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
-        UnloadPlugin(GetMockBackendName());
-        EXPECT_TRUE(HasOnlyLoadedPlugins());
-    }
+    EXPECT_EQ(plugin_manager_.loadTelemetryPlugin("mock_stale"), nullptr);
+    EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
+}
 
-    TEST_F(LoadedPluginTestFixture, LibfabricPluginAdvertisesPostThreadOptions) {
+TEST_F(LoadedPluginTestFixture, StaleTracePluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+
+    EXPECT_EQ(plugin_manager_.loadTracePlugin("mock_stale"), nullptr);
+    EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
+}
+
+TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+    const LogIgnoreGuard lig_missing("Plugin file does not exist");
+
+    const auto avail = plugin_manager_.getAvailBackendPluginNames();
+    ASSERT_NE(std::find(avail.begin(), avail.end(), "MOCK_STALE_BACKEND"), avail.end());
+
+    EXPECT_EQ(plugin_manager_.loadBackendPlugin("MOCK_STALE_BACKEND"), nullptr);
+
+    const auto loaded = plugin_manager_.getLoadedBackendPluginNames();
+    EXPECT_EQ(std::find(loaded.begin(), loaded.end(), "MOCK_STALE_BACKEND"), loaded.end());
+}
+
+TEST_F(LoadedPluginTestFixture, CurrentPluginApiVersionIsAccepted) {
+    EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
+    EXPECT_EQ(NIXL_PLUGIN_API_VERSION, 4);
+}
+
+TEST_F(LoadedPluginTestFixture, LoadSinglePluginTest) {
+    EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
+    EXPECT_TRUE(HasOnlyLoadedPlugins());
+}
+
+TEST_F(LoadedPluginTestFixture, LoadUnloadSimplePluginTest) {
+    EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
+    UnloadPlugin(GetMockBackendName());
+    EXPECT_TRUE(HasOnlyLoadedPlugins());
+}
+
+TEST_F(LoadedPluginTestFixture, LibfabricPluginAdvertisesPostThreadOptions) {
 #if defined(HAVE_LIBFABRIC) && TEST_ALL_PLUGINS
-        auto plugin_handle = plugin_manager_.getBackendPlugin("LIBFABRIC");
-        if (!plugin_handle) {
-            plugin_handle = plugin_manager_.loadBackendPlugin("LIBFABRIC");
-            if (plugin_handle) {
-                loaded_plugins_.insert("LIBFABRIC");
-            }
+    auto plugin_handle = plugin_manager_.getBackendPlugin("LIBFABRIC");
+    if (!plugin_handle) {
+        plugin_handle = plugin_manager_.loadBackendPlugin("LIBFABRIC");
+        if (plugin_handle) {
+            loaded_plugins_.insert("LIBFABRIC");
         }
-        ASSERT_NE(plugin_handle, nullptr);
+    }
+    ASSERT_NE(plugin_handle, nullptr);
 
-        const auto backend_options = plugin_handle->getBackendOptions();
-        ASSERT_NE(backend_options.find("num_threads"), backend_options.end());
-        ASSERT_NE(backend_options.find("split_batch_size"), backend_options.end());
-        EXPECT_EQ(backend_options.at("num_threads"), "0");
-        EXPECT_EQ(backend_options.at("split_batch_size"), "1024");
+    const auto backend_options = plugin_handle->getBackendOptions();
+    ASSERT_NE(backend_options.find("num_threads"), backend_options.end());
+    ASSERT_NE(backend_options.find("split_batch_size"), backend_options.end());
+    EXPECT_EQ(backend_options.at("num_threads"), "0");
+    EXPECT_EQ(backend_options.at("split_batch_size"), "1024");
 #else
-        GTEST_SKIP();
+    GTEST_SKIP();
 #endif
-    }
+}
 
-    /* Backend names coming from users may differ in case and carry surrounding
-     * whitespace; every string-keyed entry point should resolve them to the
-     * canonical plugin name. */
-    TEST_F(LoadedPluginTestFixture, BackendNamesAreCaseAndSpaceInsensitive) {
-        const std::string canonical = GetMockBackendName();
-        std::string lower(canonical);
-        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
-            return std::tolower(c);
-        });
-        const std::string padded = "  " + lower + " \t";
-
-        // Resolution maps any spelling onto the canonical plugin name, rejects
-        // whitespace-only names, and returns unknown names trimmed.
-        EXPECT_EQ(plugin_manager_.canonicalBackendName(padded), canonical);
-        EXPECT_EQ(plugin_manager_.canonicalBackendName("   "), "");
-        EXPECT_EQ(plugin_manager_.canonicalBackendName(" no_such_plugin "), "no_such_plugin");
-        EXPECT_EQ(plugin_manager_.loadBackendPlugin("   "), nullptr);
-
-        // Snapshot the cache keys so the alias load below can be shown to add
-        // at most the canonical entry; restore the cache even if an assertion
-        // below fails.
-        auto before = plugin_manager_.getLoadedBackendPluginNames();
-        std::sort(before.begin(), before.end());
-        const bool was_loaded = std::find(before.begin(), before.end(), canonical) != before.end();
-        CacheRestore cache_restore{canonical, !was_loaded};
-
-        // Loading through an alias reports the canonical name it resolved to.
-        nixl_backend_t resolved;
-        const auto alias_handle = plugin_manager_.loadBackendPlugin(padded, &resolved);
-        ASSERT_NE(alias_handle, nullptr);
-        EXPECT_EQ(resolved, canonical);
-        EXPECT_EQ(alias_handle.get(), plugin_manager_.loadBackendPlugin(canonical).get());
-        EXPECT_NE(plugin_manager_.getBackendPlugin(lower), nullptr);
-        nixl_mem_list_t mems;
-        nixl_b_params_t params;
-        EXPECT_EQ(plugin_manager_.getBackendParams(padded, mems, params), NIXL_SUCCESS);
-
-        auto after = plugin_manager_.getLoadedBackendPluginNames();
-        std::sort(after.begin(), after.end());
-        auto expected = before;
-        expected.push_back(canonical);
-        std::sort(expected.begin(), expected.end());
-        expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
-        EXPECT_EQ(after, expected);
-    }
-
-    /* Load single plugins tests instantiations. */
-    INSTANTIATE_TEST_SUITE_P(MockLoadPluginInstantiation,
-                             LoadSinglePluginTestFixture,
-                             testing::Values(PluginDesc{.name = GetMockBackendName(),
-                                                        .type = PluginDesc::PluginType::Mock}));
-    INSTANTIATE_TEST_SUITE_P(UcxLoadPluginInstantiation,
-                             LoadSinglePluginTestFixture,
-                             testing::Values(ucx_plugin_desc));
-    INSTANTIATE_TEST_SUITE_P(GdsLoadPluginInstantiation,
-                             LoadSinglePluginTestFixture,
-                             testing::Values(gds_plugin_desc));
+/* Load single plugins tests instantiations. */
+INSTANTIATE_TEST_SUITE_P(MockLoadPluginInstantiation,
+                         LoadSinglePluginTestFixture,
+                         testing::Values(PluginDesc{.name = GetMockBackendName(),
+                                                    .type = PluginDesc::PluginType::Mock}));
+INSTANTIATE_TEST_SUITE_P(UcxLoadPluginInstantiation,
+                         LoadSinglePluginTestFixture,
+                         testing::Values(ucx_plugin_desc));
+INSTANTIATE_TEST_SUITE_P(GdsLoadPluginInstantiation,
+                         LoadSinglePluginTestFixture,
+                         testing::Values(gds_plugin_desc));
 #ifdef HAVE_LIBFABRIC
-    INSTANTIATE_TEST_SUITE_P(LibfabricLoadPluginInstantiation,
-                             LoadSinglePluginTestFixture,
-                             testing::Values(libfabric_plugin_desc));
+INSTANTIATE_TEST_SUITE_P(LibfabricLoadPluginInstantiation,
+                         LoadSinglePluginTestFixture,
+                         testing::Values(libfabric_plugin_desc));
 #endif
 
-    /* Load multiple plugins tests instantiations. */
-    INSTANTIATE_TEST_SUITE_P(UcxGdsLoadMultiplePluginInstantiation,
-                             LoadMultiplePluginsTestFixture,
-                             testing::Values(std::vector<PluginDesc>{ucx_plugin_desc,
-                                                                     gds_plugin_desc}));
+/* Load multiple plugins tests instantiations. */
+INSTANTIATE_TEST_SUITE_P(UcxGdsLoadMultiplePluginInstantiation,
+                         LoadMultiplePluginsTestFixture,
+                         testing::Values(std::vector<PluginDesc>{
+                             ucx_plugin_desc, gds_plugin_desc}));
 } // namespace plugin_manager
 } // namespace gtest

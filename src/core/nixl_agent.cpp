@@ -50,30 +50,11 @@ const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
 };
 
-/* ASCII-only upper casing: locale-independent, and plugin names are
- * expected to be ASCII. Backend names registered or created under a
- * different spelling are compared through this helper. */
-std::string
-upperAscii(std::string s) {
-    for (char &c : s) {
-        if (c >= 'a' && c <= 'z') {
-            c -= 'a' - 'A';
-        }
-    }
-    return s;
-}
-
-/* Trim ASCII whitespace from both ends, matching the plugin manager's name
- * canonicalization. */
-std::string
-trimAscii(const std::string &s) {
-    static constexpr const char *whitespace = " \t\n\r\f\v";
-    const auto first = s.find_first_not_of(whitespace);
-    if (first == std::string::npos) {
-        return "";
-    }
-    const auto last = s.find_last_not_of(whitespace);
-    return s.substr(first, last - first + 1);
+bool
+hasBackendType(const backend_map_t &engines, const std::string &uppercase_type) {
+    return std::any_of(engines.begin(), engines.end(), [&](const auto &entry) {
+        return nixl::str::upperAscii(entry.first) == uppercase_type;
+    });
 }
 
 // One continuation bit per index pair: set when both indices grow by one from the pair before.
@@ -515,14 +496,7 @@ nixlAgentData::warnAboutEfaHardwareMismatch() {
         return;
     }
 
-    // Compare case-insensitively so a plugin registered under a different
-    // spelling is still recognized.
-    const auto has_backend = [this](const char *name) {
-        return std::any_of(backendEngines_.begin(), backendEngines_.end(), [&](const auto &pair) {
-            return upperAscii(pair.first) == name;
-        });
-    };
-    if (has_backend("UCX") && !has_backend("LIBFABRIC")) {
+    if (hasBackendType(backendEngines_, "UCX") && !hasBackendType(backendEngines_, "LIBFABRIC")) {
         const auto &hw_info = nixl::hwInfo::instance();
         if (hw_info.numEfaDevices > 0) {
             NIXL_WARN
@@ -552,101 +526,43 @@ nixlAgentData::warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
 
 /** Create and register a backend engine. */
 nixl_status_t
-nixlAgent::createBackend(const nixl_backend_t &type,
+nixlAgent::createBackend(const nixl_backend_t &name,
                          const nixl_b_params_t &params,
-                         nixlBackendH* &bknd_hndl) {
+                         nixlBackendH *&bknd_hndl) {
 
     NIXL_LOCK_GUARD(data->lock);
-
     auto &plugin_manager = nixlPluginManager::getInstance();
+    nixl_backend_t type;
+    const auto status = plugin_manager.canonicalBackendName(name, type);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
 
-    // Resolve the requested name once: whitespace-only names are rejected,
-    // and the resolved spelling drives the illegal-combination check below.
-    const nixl_backend_t requested = plugin_manager.canonicalBackendName(type);
-    if (requested.empty()) {
-        NIXL_ERROR_FUNC << "empty backend name '" << type << "'";
+    // Registering same type of backend is not supported, unlikely and prob error
+    if (data->backendEngines_.count(type) != 0) {
+        NIXL_ERROR_FUNC << "backend already created for type '" << type << "'";
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Check if the plugin is in an illegal combination with another plugin
-    // backend already created. This runs before the plugin is loaded so an
-    // unavailable plugin still reports the combination, and compares
-    // case-insensitively so a plugin registered under a different spelling
-    // still conflicts.
-    const std::string requested_upper = upperAscii(requested);
+    // Check if the plugin is in an illegal combination with another plugin backend already created
+    const auto uppercase_type = nixl::str::upperAscii(type);
     for (const auto &combination : illegal_plugin_combinations) {
-        const bool self_in_combination =
-            std::any_of(combination.begin(), combination.end(), [&](const std::string &entry) {
-                return upperAscii(entry) == requested_upper;
-            });
-        if (!self_in_combination) {
-            continue;
-        }
-
-        for (const auto &entry : combination) {
-            const std::string entry_upper = upperAscii(entry);
-            if (entry_upper == requested_upper) {
-                continue;
-            }
-            for (const auto &pair : data->backendEngines_) {
-                if (upperAscii(pair.first) == entry_upper) {
+        if (std::find(combination.begin(), combination.end(), uppercase_type) !=
+            combination.end()) {
+            for (const auto &plugin_name : combination) {
+                if (plugin_name != uppercase_type &&
+                    hasBackendType(data->backendEngines_, plugin_name)) {
                     NIXL_ERROR_FUNC << "Plugin backend " << type
-                                    << " is in illegal combination with " << entry;
+                                    << " is in illegal combination with " << plugin_name;
                     return NIXL_ERR_NOT_ALLOWED;
                 }
             }
         }
     }
 
-    // An alias request (the trimmed spelling differs from what it resolved
-    // to) is a duplicate when the agent already holds an engine under a
-    // same-fold spelling: which same-fold spelling the resolver picks can
-    // shift when other agents load case variants in the meantime, and the
-    // request never names the held spelling exactly. Exact requests, padded
-    // or not, keep creating distinct spellings.
-    const auto alias_is_duplicate = [&](const nixl_backend_t &key) {
-        for (const auto &engine : data->backendEngines_) {
-            if (upperAscii(engine.first) == upperAscii(key)) {
-                NIXL_ERROR_FUNC << "backend already created for type '" << engine.first
-                                << "' (case variant of '" << key << "')";
-                return true;
-            }
-        }
-        return false;
-    };
-    // Checked before loading so the answer does not depend on whether the
-    // selected library is currently loadable...
-    if (requested != trimAscii(type) && alias_is_duplicate(requested)) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    // Try to load the backend as a plugin; the manager resolves
-    // user-provided spellings (" ucx ", "Ucx") and reports the cache key it
-    // settled on. Key everything below by that name so the agent's
-    // registries agree with the plugin manager's cache.
-    nixl_backend_t canonical;
-    auto plugin_handle = plugin_manager.loadBackendPlugin(type, &canonical);
-
-    // ... and re-checked afterwards: the second resolution inside the load
-    // can shift when files or registrations changed between the two.
-    if (canonical != requested && canonical != trimAscii(type) && alias_is_duplicate(canonical)) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if (!plugin_handle) {
-        NIXL_ERROR_FUNC << "unsupported backend '" << type << "'";
-        return NIXL_ERR_NOT_FOUND;
-    }
-
-    // Registering same type of backend is not supported, unlikely and prob error
-    if (data->backendEngines_.count(canonical) != 0) {
-        NIXL_ERROR_FUNC << "backend already created for type '" << canonical << "'";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
     nixlBackendInitParams init_params;
     init_params.localAgent = data->name_;
-    init_params.type = canonical;
+    init_params.type = type;
     init_params.customParams = const_cast<nixl_b_params_t *>(&params);
     init_params.enableProgTh = data->config_.useProgThread;
     init_params.pthrDelay = data->config_.pthrDelay;
@@ -656,20 +572,28 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     std::unique_ptr<nixlBackendTraceSink> trace_sink;
     if (data->tracer_ != nullptr) {
         trace_sink = std::make_unique<nixl::trace::TracerPhaseSink>(
-            *data->tracer_, canonical, data->telemetry_.get());
+            *data->tracer_, type, data->telemetry_.get());
         init_params.traceSink = trace_sink.get();
+    }
+
+    // First, try to load the backend as a plugin
+    auto plugin_handle = plugin_manager.loadResolvedBackendPlugin(type);
+
+    if (!plugin_handle) {
+        NIXL_ERROR_FUNC << "unsupported backend '" << type << "'";
+        return NIXL_ERR_NOT_FOUND;
     }
 
     // Plugin found, use it to create the backend
     backend_ptr_t backend(plugin_handle->createEngine(&init_params));
 
     if (!backend) {
-        NIXL_ERROR_FUNC << "backend creation failed for '" << canonical << "'";
+        NIXL_ERROR_FUNC << "backend creation failed for '" << type << "'";
         return NIXL_ERR_BACKEND;
     }
 
     if (backend->getInitErr()) {
-        NIXL_ERROR_FUNC << "backend initialization error for '" << canonical << "'";
+        NIXL_ERROR_FUNC << "backend initialization error for '" << type << "'";
         return NIXL_ERR_BACKEND;
     }
 
@@ -677,14 +601,14 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
     if (backend->supportsRemote()) {
         if (!backend->supportsNotif()) {
-            NIXL_ERROR_FUNC << "backend '" << canonical << "' supportsRemote but not notifications";
+            NIXL_ERROR_FUNC << "backend '" << type << "' supportsRemote but not notifications";
             return NIXL_ERR_BACKEND;
         }
 
         const nixl_status_t ret = backend->getConnInfo(conn_info);
         if (ret != NIXL_SUCCESS) {
-            NIXL_ERROR_FUNC << "failed to get connection info for '" << canonical
-                            << "' with status " << ret;
+            NIXL_ERROR_FUNC << "failed to get connection info for '" << type << "' with status "
+                            << ret;
             return ret;
         }
     }
@@ -693,7 +617,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         const nixl_status_t ret = backend->connect(data->name_);
 
         if (NIXL_SUCCESS != ret) {
-            NIXL_ERROR_FUNC << "backend '" << canonical
+            NIXL_ERROR_FUNC << "backend '" << type
                             << "' encountered error during intra-agent transfer setup with status "
                             << ret;
             return ret;
@@ -708,28 +632,28 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
     if (backend->supportsRemote()) {
         data->notifEngines.push_back(backend.get());
-        data->connMd_[canonical] = conn_info;
+        data->connMd_[type] = conn_info;
         if ((data->tracer_ != nullptr) &&
             !backend->supportsCapability(nixl_backend_capability_t::TRACE_CONTEXT)) {
-            data->traceContextUnsupported_.try_emplace(canonical);
+            data->traceContextUnsupported_.try_emplace(type);
         }
     }
 
     // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
     std::unique_ptr<nixlBackendH> bknd_temp(new nixlBackendH(backend.get()));
-    const auto [it, inserted] = data->backendHandles_.try_emplace(canonical, std::move(bknd_temp));
+    const auto [it, inserted] = data->backendHandles_.try_emplace(type, std::move(bknd_temp));
     NIXL_ASSERT(inserted);
     bknd_hndl = it->second.get();
 
     if (trace_sink != nullptr) {
-        data->traceSinks_.insert_or_assign(canonical, std::move(trace_sink));
+        data->traceSinks_.insert_or_assign(type, std::move(trace_sink));
     }
-    data->backendEngines_.try_emplace(canonical, std::move(backend));
+    data->backendEngines_.try_emplace(type, std::move(backend));
 
     // TODO: Check if backend supports ProgThread
     //       when threading is in agent
 
-    NIXL_DEBUG << "Created backend: " << canonical;
+    NIXL_DEBUG << "Created backend: " << type;
 
     return NIXL_SUCCESS;
 }

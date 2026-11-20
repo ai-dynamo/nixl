@@ -19,9 +19,7 @@
 #define NIXL_SRC_CORE_PLUGIN_MANAGER_H
 
 #include <filesystem>
-#include <functional>
 #include <string>
-#include <cstdint>
 #include <map>
 #include <set>
 #include <memory>
@@ -135,35 +133,32 @@ public:
     discoverPluginsFromList(const std::string &filename);
 
     /**
-     * @brief Load a backend plugin by any spelling of its name.
-     *
-     * @param plugin_name User-provided plugin name; surrounding whitespace is
-     *                    trimmed and the result is matched case-insensitively
-     *                    against every known plugin name.
-     * @param canonical_name When not null, always receives the cache key the
-     *                       name resolved to, also on a nullptr return: the
-     *                       trimmed spelling, an exactly matching plugin name,
-     *                       or a case-insensitive match. Empty for
-     *                       whitespace-only input.
-     * @return Handle to the loaded plugin, or nullptr when the plugin cannot
-     *         be loaded.
+     * @brief Resolve a backend name against all loaded, listed and discovered plugins.
+     * @param name Requested name, with optional surrounding ASCII whitespace.
+     * @param[out] canonical Exact spelling if present, otherwise the unique ASCII case match.
+     *        With no match, the trimmed name is used for standard plugin file lookup.
+     * @return NIXL_SUCCESS on resolution, NIXL_ERR_INVALID_PARAM for an empty or whitespace-only
+     *         name, or NIXL_ERR_NOT_FOUND for an ambiguous spelling. On error, logs the reason
+     *         and leaves @p canonical untouched.
      */
-    std::shared_ptr<const nixlBackendPluginHandle>
-    loadBackendPlugin(const nixl_backend_t &plugin_name, nixl_backend_t *canonical_name = nullptr);
+    [[nodiscard]] nixl_status_t
+    canonicalBackendName(const nixl_backend_t &name, nixl_backend_t &canonical) const;
 
     /**
-     * @brief Resolve a user-provided backend name to the canonical plugin name.
-     *
-     * Surrounding whitespace is trimmed; a trimmed name that names a plugin
-     * exactly (or whose standard plugin file is on disk) is returned as-is,
-     * and only then is the name folded case-insensitively against every known
-     * plugin name. Falls back to the trimmed input when no plugin matches.
-     *
-     * @param name User-provided backend name.
-     * @return The canonical plugin name; empty for whitespace-only input.
+     * @brief Resolve and load a backend plugin.
+     * @param plugin_name Requested name, using the rules of canonicalBackendName().
+     * @return Loaded handle, or nullptr for an empty, ambiguous or unavailable name.
      */
-    [[nodiscard]] nixl_backend_t
-    canonicalBackendName(const nixl_backend_t &name) const;
+    std::shared_ptr<const nixlBackendPluginHandle>
+    loadBackendPlugin(const nixl_backend_t &plugin_name);
+
+    /**
+     * @brief Load and cache a plugin using the spelling already chosen by canonicalBackendName().
+     * @param canonical_name Resolved plugin name. The caller must have ruled out ambiguity.
+     * @return Loaded handle, or nullptr for an empty or untrimmed name or an unavailable plugin.
+     */
+    std::shared_ptr<const nixlBackendPluginHandle>
+    loadResolvedBackendPlugin(const nixl_backend_t &canonical_name);
 
     // Load a specific telemetry plugin
     std::shared_ptr<const nixlTelemetryPluginHandle>
@@ -177,12 +172,24 @@ public:
     void
     unloadBackendPluginForUnitTest(const nixl_backend_t &plugin_name);
 
+    /**
+     * @brief Get the default parameters and memory types of a backend plugin.
+     * @param type Requested name, using the rules of canonicalBackendName().
+     * @param[out] mems Supported memory types.
+     * @param[out] params Default plugin parameters.
+     * @return NIXL_SUCCESS, NIXL_ERR_INVALID_PARAM for an empty or whitespace-only name,
+     *         or NIXL_ERR_NOT_FOUND for an ambiguous or unavailable plugin.
+     */
     [[nodiscard]] nixl_status_t
     getBackendParams(const nixl_backend_t &type,
                      nixl_mem_list_t &mems,
                      nixl_b_params_t &params) const;
 
-    // Get a backend plugin handle
+    /**
+     * @brief Find an already loaded backend plugin.
+     * @param plugin_name Requested name, using the rules of canonicalBackendName().
+     * @return Loaded handle, or nullptr for an empty, ambiguous or unloaded name.
+     */
     std::shared_ptr<const nixlBackendPluginHandle>
     getBackendPlugin(const nixl_backend_t &plugin_name);
 
@@ -194,9 +201,12 @@ public:
     std::vector<nixl_backend_t>
     getLoadedBackendPluginNames();
 
-    // Get all available backend plugin names (loaded + discovered on disk)
+    /**
+     * @brief List the distinct spellings available for backend name resolution.
+     * @return Loaded plugin names followed by additional directory and plugin-list names.
+     */
     std::vector<nixl_backend_t>
-    getAvailBackendPluginNames();
+    getAvailBackendPluginNames() const;
 
     // Get all loaded telemetry plugin names
     std::vector<nixl_telemetry_plugin_t>
@@ -206,70 +216,6 @@ public:
     void
     addPluginDirectory(const std::string &directory);
 
-    /**
-     * @brief Get a copy of the registered plugin directories.
-     *
-     * @return Directories in registration-priority order.
-     */
-    [[nodiscard]] std::vector<std::string>
-    getPluginDirectories() const;
-
-    /** @brief Remove a plugin directory again (unit tests only). */
-    void
-    removePluginDirectoryForUnitTest(const std::string &directory);
-
-    /**
-     * @brief Report a directory entry as a scan carrying the given
-     *        registration generation would (unit tests only): the entry is
-     *        discarded unless the directory's current generation still
-     *        matches.
-     */
-    void
-    discoverBackendPluginWithGenerationForUnitTest(const std::filesystem::path &path,
-                                                   const std::string &dir,
-                                                   uint64_t generation);
-
-    /**
-     * @brief Current registration generation of a plugin directory; zero when
-     *        the directory is not registered (unit tests only).
-     */
-    [[nodiscard]] uint64_t
-    pluginDirectoryScanGenerationForUnitTest(const std::string &dir) const;
-
-    /**
-     * @brief Forget a discovered, not-yet-loaded plugin name entirely,
-     *        including any pluginlist-registered library path (unit tests
-     *        only).
-     */
-    void
-    forgetDiscoveredPluginForUnitTest(const nixl_backend_t &name);
-
-    /** @brief Result of looking for an exact directory entry: the exact
-     *         file name is present, the directory was enumerated and holds
-     *         no such entry, or the directory could not be enumerated at
-     *         all (e.g. no read permission). */
-    enum class EntryLookup { MATCH, NO_MATCH, CANNOT_LIST };
-
-    /**
-     * @brief The loader's standard-path compatibility gate, exposed for
-     *        direct unit testing: a directory that cannot be enumerated keeps
-     *        serving a standard file name its scan really saw, verified by
-     *        path; an enumeration that completed without the entry always
-     *        wins, and a whitespace variant never proves a standard name
-     *        (unit tests only).
-     */
-    [[nodiscard]] static bool
-    standardPathFallbackForUnitTest(EntryLookup lookup, bool scan_saw_standard, bool path_exists);
-
-    /**
-     * @brief Arm a one-shot hook fired after the caller's own name
-     *        resolution and before the load's resolution, so a test can
-     *        change the manager's environment between the two. The hook must
-     *        not call back into the manager (unit tests only).
-     */
-    void
-    setPreLoadHookForUnitTest(std::function<void()> hook);
-
     // Static Plugin Helpers
     const std::vector<nixlBackendStaticPluginInfo> &
     getBackendStaticPlugins();
@@ -278,48 +224,16 @@ public:
     getTelemetryStaticPlugins();
 
 private:
-    // canonicalBackendName() without locking; callers must hold mutex_.
-    [[nodiscard]] nixl_backend_t
-    canonicalBackendNameLocked(const nixl_backend_t &name) const;
-
     std::map<nixl_backend_t, std::shared_ptr<const nixlBackendPluginHandle>>
         loaded_backend_plugins_;
     std::map<nixl_telemetry_plugin_t, std::shared_ptr<const nixlTelemetryPluginHandle>>
         loaded_telemetry_plugins_;
     std::map<std::string, std::shared_ptr<const nixlTracePluginHandle>> loaded_trace_plugins_;
-
-    // Per-plugin discovery bookkeeping: whether the pluginlist file names it
-    // and which registered directories provide it. A name stays available as
-    // long as it has at least one source; sources are tracked even for
-    // plugins that are already loaded, so they survive an unload.
-    // standard_dirs records the directories whose scan saw the plugin behind
-    // its standard file name ("libplugin_<name>.so"), as opposed to a
-    // whitespace variant, whose real path lands in dir_override_paths_.
-    struct DiscoverySources {
-        bool from_plugin_list = false;
-        std::set<std::string> dirs;
-        std::set<std::string> standard_dirs;
-    };
-
-    std::map<nixl_backend_t, DiscoverySources> discovered_backend_plugins_;
+    // Standard filenames seen during discovery, by plugin name and directory. An entry from
+    // the plugin list may have no directory.
+    std::map<nixl_backend_t, std::set<std::filesystem::path>> discovered_backend_plugins_;
     // Explicit paths from the plugin list file (name -> .so path)
     std::map<nixl_backend_t, std::string> explicit_plugin_paths_;
-    // Real paths of plugins discovered behind non-canonical file names,
-    // keyed by the directory they were found in (canonical name -> directory
-    // -> actual .so path). The loader walks them in plugin_dirs_ order, so
-    // priority follows directory registration, never scan completion order;
-    // consulted only after the standard file names so pluginlist entries and
-    // canonical files win.
-    std::map<nixl_backend_t, std::map<std::string, std::string>> dir_override_paths_;
-
-    // Registration generation per directory string. Every registration
-    // allocates a fresh number from next_scan_generation_; a scan carries the
-    // number it started under and discards its results when the directory's
-    // current number differs (deregistered, or deregistered and re-registered).
-    // Zero is never a valid registration number.
-    std::map<std::string, uint64_t> dir_scan_generations_;
-    std::function<void()> pre_load_hook_for_test_;
-    uint64_t next_scan_generation_ = 1;
     std::vector<std::string> plugin_dirs_;
     std::vector<nixlBackendStaticPluginInfo> backend_static_plugins_;
     std::vector<nixlTelemetryStaticPluginInfo> telemetry_static_plugins_;
@@ -338,13 +252,11 @@ private:
 
     // Search a directory for plugins
     void
-    discoverPluginsFromDir(const std::string &dir, uint64_t generation);
+    discoverPluginsFromDir(const std::filesystem::path &dirpath);
 
     // Discover helper functions
     void
-    discoverBackendPlugin(const std::filesystem::path &path,
-                          const std::string &dir_key,
-                          uint64_t generation);
+    discoverBackendPlugin(const std::filesystem::directory_entry &entry);
 
     void
     discoverTelemetryPlugin(const std::string &filename);
