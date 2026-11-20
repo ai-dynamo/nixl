@@ -93,6 +93,8 @@ class nixl_xfer_handle:
     nixlRepostActiveError and the handle remains valid. Keep the agents, buffers,
     and registrations alive; poll a pending transfer and retry after completion.
     Finalization makes a best-effort release attempt, not a completion guarantee.
+    To cancel a submitted request, call cancel_xfer_handle() and poll check_xfer_state()
+    until it completes.
 
     Args:
         agent: Owning nixl_agent used to perform release operations.
@@ -762,6 +764,25 @@ class nixl_agent:
             for backendS, backendH in self.backends.items()
             if backendH == b_handle
         )
+
+    def cancel_xfer_handle(self, handle: nixl_xfer_handle) -> bool:
+        """Ask the backend to cancel a transfer that is in progress.
+        The call returns at once. It frees nothing and does not give the buffers back.
+        Call check_xfer_state() until it no longer returns "PROC". It then returns "ERR" if the
+        cancellation took effect, or "DONE" if the transfer finished first. After that, you can
+        reuse the buffers and release the handle.
+
+        Args:
+            handle: Handle to a posted transfer operation from initialize_xfer or make_xfer.
+
+        Returns:
+            True if the cancellation started, False if it was already requested.
+
+        Raises:
+            nixlNotAllowedError: the transfer is not in progress.
+            nixlNotSupportedError: the backend does not support cancelling transfers.
+        """
+        return self.agent.cancelXferReq(handle._handle) == nixlBind.NIXL_SUCCESS
 
     def release_xfer_handle(self, handle: nixl_xfer_handle):
         """Release a transfer handle without canceling an active transfer.
