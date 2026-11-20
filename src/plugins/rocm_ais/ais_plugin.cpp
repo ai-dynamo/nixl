@@ -15,53 +15,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-#include <exception>
+#include <memory>
+#include <stdexcept>
 #include <string>
 
 #include "ais_mt_engine.h"
 #include "backend/backend_plugin.h"
 #include "common/backend.h"
-#include "common/nixl_log.h"
 
 namespace {
 [[nodiscard]] nixl_b_params_t
 getAisBackendOptions() {
     return {{"mode", "mt"}, {"thread_count", std::to_string(defaultAisMtThreadCount())}};
-}
-
-[[nodiscard]] nixlBackendEngine *
-createAisEngine(const nixlBackendInitParams *init_params) {
-    try {
-        const std::string mode =
-            nixl::getBackendParamDefaulted(init_params->customParams, "mode", std::string("mt"));
-        if (mode == "mt") {
-            return new nixlAisMtEngine(init_params);
-        }
-
-        // Batch support is coming soon; it will be selected with mode=batch.
-        NIXL_ERROR << "AIS: invalid mode '" << mode << "'; expected 'mt'";
-        return nullptr;
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to create AIS engine: " << e.what();
-        return nullptr;
-    }
-}
-
-void
-destroyAisEngine(nixlBackendEngine *engine) {
-    delete engine;
-}
-
-[[nodiscard]] const char *
-getAisPluginName() {
-    return "AIS";
-}
-
-[[nodiscard]] const char *
-getAisPluginVersion() {
-    return "0.1.0";
 }
 
 // DRAM_SEG is not advertised until hipFile supports host buffers.
@@ -70,28 +35,35 @@ getAisBackendMems() {
     return {VRAM_SEG, FILE_SEG};
 }
 
-[[nodiscard]] nixlBackendPlugin *
-getAisPlugin() {
-    static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
-                                       createAisEngine,
-                                       destroyAisEngine,
-                                       getAisPluginName,
-                                       getAisPluginVersion,
-                                       getAisBackendOptions,
-                                       getAisBackendMems};
-    return &plugin;
-}
+// "mode" selects the engine class, so nixlBackendPluginCreator builds the engine
+// through this factory instead of a constructor. Batch support is coming soon;
+// it will be selected with mode=batch.
+struct aisEngineFactory {
+    [[nodiscard]] static std::unique_ptr<nixlAisEngine>
+    create(const nixlBackendInitParams &init_params) {
+        const std::string mode =
+            nixl::getBackendParamDefaulted(init_params.customParams, "mode", std::string("mt"));
+        if (mode == "mt") {
+            return std::make_unique<nixlAisMtEngine>(&init_params);
+        }
+        throw std::invalid_argument("AIS: invalid mode '" + mode + "'; expected 'mt'");
+    }
+};
+
+using ais_plugin_t = nixlBackendPluginCreator<aisEngineFactory>;
 } // namespace
 
 #ifdef STATIC_PLUGIN_AIS
 [[nodiscard]] nixlBackendPlugin *
 createStaticAISPlugin() {
-    return getAisPlugin();
+    return ais_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "AIS", "0.1.0", getAisBackendOptions(), getAisBackendMems());
 }
 #else
 extern "C" [[nodiscard]] NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return getAisPlugin();
+    return ais_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "AIS", "0.1.0", getAisBackendOptions(), getAisBackendMems());
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
