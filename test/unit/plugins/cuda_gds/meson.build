@@ -35,6 +35,26 @@ if is_variable('gds_backend_interface')
         nixl_gds_app,
         args: ['--gds-mode', 'mt', '--path-mode-only'],
     )
+
+    nixl_gds_batch_mock_test = executable(
+        'nixl_gds_batch_mock_test',
+        'nixl_gds_batch_mock_test.cpp',
+        '../../../../src/plugins/cuda_gds/gds_batch_engine.cpp',
+        dependencies: gds_engine_dep,
+        include_directories: [
+            nixl_inc_dirs,
+            utils_inc_dirs,
+            include_directories('../../../../src/plugins/cuda_gds'),
+        ],
+        link_args: [
+            '-Wl,--wrap=cuFileBatchIOSetUp',
+            '-Wl,--wrap=cuFileBatchIOSubmit',
+            '-Wl,--wrap=cuFileBatchIOGetStatus',
+            '-Wl,--wrap=cuFileBatchIOCancel',
+            '-Wl,--wrap=cuFileBatchIODestroy',
+        ],
+    )
+    test('gds_batch_short_completion', nixl_gds_batch_mock_test)
 endif
 
 if is_variable('gds_mt_backend_interface')
