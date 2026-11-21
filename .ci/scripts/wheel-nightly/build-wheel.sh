@@ -12,10 +12,9 @@ set -x
 # Infinia is always bundled in the nightly; the built source ref's
 # build-container.sh pins the image. The spcx plugin is not built here -
 # it was compiled against the same wheel_base and comes off the PVC.
-# The torch versions are only for NIXL EP (torch >= 2.14, cu13 index only).
+# The torch version is only for NIXL EP (torch >= 2.14, cu13 index only).
 # Dockerfile.manylinux resolves that itself: cu12 builds no EP and no torch
-# extensions, cu13 builds WHL_TORCH_VERSIONS. Nothing is passed for it here;
-# the requested list is only recorded in cell.env for the manifest.
+# extensions, cu13 builds WHL_TORCH_VERSION. Nothing is passed for it here.
 # Never default the CUDA line: an unset axis falling through to cu13 made
 # both cells build cu13 under identical filenames, so each overwrote the
 # other and the folder silently held half a set.
@@ -26,11 +25,9 @@ dockerfile_arg_default() {
 case "${cuda}" in
   12)
     BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
-    TORCH_VERSIONS=""
     ;;
   13)
     BASE_IMAGE_FLAGS=""
-    TORCH_VERSIONS="2.14,2.15,2.16"
     ;;
   *)
     echo "ERROR: cuda is '${cuda:-<unset>}', expected 12 or 13"
@@ -70,7 +67,6 @@ fi
   echo "ARCH=${arch}"
   echo "PYTHON_VERSION=${python_version}"
   echo "MANYLINUX=${manylinux}"
-  echo "TORCH_VERSIONS_REQUESTED=${TORCH_VERSIONS}"
   echo "WHEEL_BASE_IMAGE=${WHEEL_BASE_IMAGE}"
   echo "UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
   echo "UCX_SPCX_PLUGIN_COMMIT=${UCX_SPCX_PLUGIN_COMMIT}"
