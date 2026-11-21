@@ -982,11 +982,12 @@ nixlLibfabricRail::pollForCompletions() {
     fi_addr_t src_addrs[NIXL_LIBFABRIC_CQ_BATCH_SIZE];
     struct fi_cq_err_entry err_entry = {};
     int cq_ret;
+    int err_ret = 0;
     {
         const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
         cq_ret = fi_cq_readfrom(cq, cq_buf, NIXL_LIBFABRIC_CQ_BATCH_SIZE, src_addrs);
         if (cq_ret < 0 && cq_ret != -FI_EAGAIN) {
-            fi_cq_readerr(cq, &err_entry, 0);
+            err_ret = fi_cq_readerr(cq, &err_entry, 0);
         }
     }
     if (cq_ret > 0) {
@@ -995,7 +996,24 @@ nixlLibfabricRail::pollForCompletions() {
         }
     } else if (cq_ret < 0 && cq_ret != -FI_EAGAIN) {
         NIXL_ERROR << "CQ error in drain interleave on rail " << rail_id << ": "
-                   << fi_strerror(err_entry.err);
+                   << fi_strerror(-cq_ret);
+        if (err_ret <= 0) {
+            NIXL_ERROR << "fi_cq_readerr failed in drain interleave: " << err_ret;
+            return;
+        }
+        NIXL_ERROR << "CQ error detail on rail " << rail_id << ": " << fi_strerror(err_entry.err)
+                   << " prov_errno: " << err_entry.prov_errno;
+        // fi_cq_readerr consumes the failing operation's only completion.
+        // Complete that request, but keep draining: unrelated peers may still be healthy.
+        if (err_entry.op_context) {
+            nixlLibfabricReq *req = findRequestFromContext(err_entry.op_context);
+            if (req && req->in_use) {
+                if (req->completion_callback) {
+                    req->completion_callback(NIXL_ERR_BACKEND);
+                }
+                releaseRequest(req);
+            }
+        }
     }
 }
 
