@@ -494,10 +494,12 @@ nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {
     auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
     if (itr != this->descs.end() && itr->covers(query))
         return static_cast<int>(itr - this->descs.begin());
-    // If query and element don't have the same start address, try previous entry
-    if (itr != this->descs.begin()) {
-        auto prev_itr = std::prev(itr, 1);
-        if (prev_itr->covers(query)) return static_cast<int>(prev_itr - this->descs.begin());
+    // Registrations can overlap, so a covering section may start well before the
+    // lower-bound predecessor. Check all earlier starts instead of assuming that
+    // the immediate predecessor owns the range.
+    while (itr != this->descs.begin()) {
+        --itr;
+        if (itr->covers(query)) return static_cast<int>(itr - this->descs.begin());
     }
     return -1;
 }
