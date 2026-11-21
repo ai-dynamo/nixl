@@ -89,13 +89,14 @@ private:
     void *buffer_; // Local memory buffer address
     size_t length_; // Buffer length in bytes
     int device_id_; // Device ID for VRAM, -1 for DRAM
+    nixl_mem_t mem_type_; // Memory type the buffer was registered with
     std::vector<struct fid_mr *> rail_mr_list_; // Memory registrations, one per rail
     std::vector<uint64_t> rail_key_list_; // Remote access keys, one per rail
     std::vector<char *> src_ep_names_; // Source endpoint names, one per rail
     std::vector<size_t> selected_rails_; // Rails selected based on memory topology
 
 public:
-    nixlLibfabricPrivateMetadata() : nixlBackendMD(true), device_id_(-1) {}
+    nixlLibfabricPrivateMetadata() : nixlBackendMD(true), device_id_(-1), mem_type_(DRAM_SEG) {}
     friend class nixlLibfabricEngine;
 };
 
