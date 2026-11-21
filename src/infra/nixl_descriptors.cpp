@@ -532,8 +532,9 @@ int
 nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {
     const nixlBasicDesc adjusted_query = normalizeQuery(query);
     auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), adjusted_query);
-    if (itr != this->descs.end() && itr->covers(adjusted_query))
+    if (itr != this->descs.end() && itr->covers(adjusted_query)) {
         return static_cast<int>(itr - this->descs.begin());
+    }
     const size_t position = static_cast<size_t>(itr - this->descs.begin());
     if (position == 0) {
         return -1;
