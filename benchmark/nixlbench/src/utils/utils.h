@@ -57,10 +57,11 @@
             exit(EXIT_FAILURE);                                                        \
         }                                                                              \
     } while (0)
+
 #elif HAVE_ROCM
 #include <hip/hip_runtime.h>
 
-#define CHECK_CUDA_ERROR(result, message)                                      \
+#define CHECK_HIP_ERROR(result, message)                                       \
     do {                                                                       \
         const auto _r = (result);                                              \
         if (_r != hipSuccess) {                                                \
@@ -69,6 +70,7 @@
             exit(EXIT_FAILURE);                                                \
         }                                                                      \
     } while (0)
+
 #endif
 
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
@@ -97,6 +99,7 @@
 #define XFERBENCH_BACKEND_LIBFABRIC "LIBFABRIC"
 #define XFERBENCH_BACKEND_GDS "GDS"
 #define XFERBENCH_BACKEND_GDS_MT "GDS_MT"
+#define XFERBENCH_BACKEND_AIS "AIS"
 #define XFERBENCH_BACKEND_POSIX "POSIX"
 #define XFERBENCH_BACKEND_GPUNETIO "GPUNETIO"
 #define XFERBENCH_BACKEND_MOONCAKE "MOONCAKE"
@@ -107,6 +110,7 @@
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 #define XFERBENCH_BACKEND_INFINIA "INFINIA"
+#define XFERBENCH_BACKEND_DOCA_MEMOS "DOCA_MEMOS"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -136,6 +140,7 @@
 // Operation types
 #define XFERBENCH_OP_READ "READ"
 #define XFERBENCH_OP_WRITE "WRITE"
+#define XFERBENCH_OP_QUERY "QUERY"
 
 // Mode types
 #define XFERBENCH_MODE_SG "SG"
@@ -219,6 +224,8 @@ public:
     static std::string gpunetio_gid_index;
     static std::string gpunetio_oob_port;
     static int gpunetio_data_qp_count;
+    static std::string gpunetio_write_stripe;
+    static uint64_t gpunetio_write_stripe_min_bytes;
     static long page_size;
     static std::string obj_access_key;
     static std::string obj_secret_key;
@@ -258,6 +265,9 @@ public:
     /* Parallel workers split iterations across both CPU and Device API. */
     static int
     workerNum();
+    static std::string doca_memos_device_name;
+    static int doca_memos_num_tasks;
+    static std::string doca_memos_nguid;
 
     // Cached set of memory segment types reported by the selected backend.
     // Populated pre-instantiation in loadParams via getPluginParams, then refreshed

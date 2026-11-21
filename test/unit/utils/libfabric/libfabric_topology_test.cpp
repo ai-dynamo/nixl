@@ -314,9 +314,11 @@ struct DmabufMappingInfo {
     // This guards rail selection, which the mapping expectations above cannot see: swapping
     // which NICs an accelerator holds leaves every mapping verdict unchanged, because the
     // verdict is a property of the device rather than of the selection. On a platform
-    // carrying both routes the rows below also state that an accelerator reaches its NICs on
-    // both -- the ones under its PCIe switch and the ones it meets at the CPU.
+    // carrying both routes the rows below also state which route an accelerator's NICs take.
     std::vector<std::pair<std::string, std::vector<std::string>>> accel_efa_devices;
+    // Devices nearest to no accelerator, which serve host memory only. Every other device on
+    // the node is expected in some accelerator's list above.
+    std::vector<std::string> host_only_devices;
 };
 
 static const DmabufMappingInfo dmabuf_mapping_topologies[] = {
@@ -398,15 +400,21 @@ static const DmabufMappingInfo dmabuf_mapping_topologies[] = {
                                     "rdmap191s0",
                                     "rdmap192s0"},
      .expect_grouping_skipped = false,
-     // Every GPU reaches four EFA devices: the two under its PCIe switch, which need the
-     // PCIe (BAR1) mapping, and the two it meets at its Grace Package, which need the
-     // platform default one. All 16 devices on the node are selectable.
-     .accel_efa_devices = {{"0000:29:00.0", {"rdmap39s0", "rdmap40s0", "rdmap54s0", "rdmap55s0"}},
-                           {"0000:3f:00.0", {"rdmap61s0", "rdmap62s0", "rdmap76s0", "rdmap77s0"}},
-                           {"0000:9c:00.0",
-                            {"rdmap154s0", "rdmap155s0", "rdmap169s0", "rdmap170s0"}},
-                           {"0000:b2:00.0",
-                            {"rdmap176s0", "rdmap177s0", "rdmap191s0", "rdmap192s0"}}}},
+     // Every GPU takes the two EFA devices under its PCIe switch, which are nearer than the
+     // ones it meets at its Package and need the PCIe (BAR1) mapping. The other eight are
+     // nearest to no GPU and serve host memory.
+     .accel_efa_devices = {{"0000:29:00.0", {"rdmap39s0", "rdmap40s0"}},
+                           {"0000:3f:00.0", {"rdmap61s0", "rdmap62s0"}},
+                           {"0000:9c:00.0", {"rdmap154s0", "rdmap155s0"}},
+                           {"0000:b2:00.0", {"rdmap176s0", "rdmap177s0"}}},
+     .host_only_devices = {"rdmap54s0",
+                           "rdmap55s0",
+                           "rdmap76s0",
+                           "rdmap77s0",
+                           "rdmap169s0",
+                           "rdmap170s0",
+                           "rdmap191s0",
+                           "rdmap192s0"}},
 
     // end of list
 };
@@ -494,6 +502,10 @@ testNeuronTopology(const char *instance_type);
 static int
 testDmabufMappingShapes();
 
+// test the path distance that pairs NICs with accelerators and NUMA nodes
+static int
+testPathDistance();
+
 // test the dmabuf mapping decision on every enabled captured topology
 static int
 testDmabufMappingTopologies();
@@ -549,6 +561,11 @@ main(int argc, char *argv[]) {
     // test the CUDA dmabuf mapping decision: ancestor classification first (needs no
     // XML), then the end-to-end decision on every captured topology
     res = testDmabufMappingShapes();
+    if (res != 0) {
+        return res;
+    }
+
+    res = testPathDistance();
     if (res != 0) {
         return res;
     }
@@ -1683,6 +1700,98 @@ testDmabufMappingShapes() {
 }
 
 int
+testPathDistance() {
+    NIXL_INFO << "=== Testing path distance between topology objects ===";
+
+    // Two sockets. Socket 0 holds a PCIe switch with a GPU and a NIC on two downstream ports,
+    // a NIC on a root port of its own, and a NUMA node; socket 1 holds a NIC on a root port.
+    union hwloc_obj_attr_u host_attr = {};
+    host_attr.bridge.upstream_type = HWLOC_OBJ_BRIDGE_HOST;
+    union hwloc_obj_attr_u pci_attr = {};
+    pci_attr.bridge.upstream_type = HWLOC_OBJ_BRIDGE_PCI;
+
+    hwloc_obj machine = {}, package0 = {}, package1 = {}, numa0 = {};
+    machine.type = HWLOC_OBJ_MACHINE;
+    package0.type = package1.type = HWLOC_OBJ_PACKAGE;
+    package0.parent = package1.parent = &machine;
+    numa0.type = HWLOC_OBJ_NUMANODE;
+    numa0.parent = &package0;
+
+    auto bridge = [](hwloc_obj &obj, hwloc_obj &parent, union hwloc_obj_attr_u &attr) {
+        obj.type = HWLOC_OBJ_BRIDGE;
+        obj.attr = &attr;
+        obj.parent = &parent;
+    };
+    auto device = [](hwloc_obj &obj, hwloc_obj &parent) {
+        obj.type = HWLOC_OBJ_PCI_DEVICE;
+        obj.parent = &parent;
+    };
+    hwloc_obj host0 = {}, root0 = {}, upstream = {}, down_gpu = {}, down_nic = {};
+    hwloc_obj host0b = {}, root0b = {}, host1 = {}, root1 = {};
+    hwloc_obj gpu = {}, switch_nic = {}, root_nic = {}, remote_nic = {};
+    bridge(host0, package0, host_attr);
+    bridge(root0, host0, pci_attr);
+    bridge(upstream, root0, pci_attr);
+    bridge(down_gpu, upstream, pci_attr);
+    bridge(down_nic, upstream, pci_attr);
+    bridge(host0b, package0, host_attr);
+    bridge(root0b, host0b, pci_attr);
+    bridge(host1, package1, host_attr);
+    bridge(root1, host1, pci_attr);
+    device(gpu, down_gpu);
+    device(switch_nic, down_nic);
+    device(root_nic, root0b);
+    device(remote_nic, root1);
+
+    struct DistanceCase {
+        const char *name;
+        hwloc_obj_t from;
+        hwloc_obj_t to;
+        int expected;
+        hwloc_obj_t expected_meeting;
+    };
+
+    const DistanceCase cases[] = {
+        {"GPU to the NIC under its switch", &gpu, &switch_nic, 2, &upstream},
+        {"GPU to a root-port NIC on its socket", &gpu, &root_nic, 6, &package0},
+        {"GPU to a root-port NIC on the other socket", &gpu, &remote_nic, 8, &machine},
+        {"NUMA node to a root-port NIC on its socket", &numa0, &root_nic, 2, &package0},
+        {"NUMA node to the NIC under the switch", &numa0, &switch_nic, 4, &package0},
+        {"NUMA node to a NIC on the other socket", &numa0, &remote_nic, 4, &machine},
+        {"an object to itself", &gpu, &gpu, 0, &gpu},
+        {"an object to its ancestor", &gpu, &root0, 2, &root0},
+        {"no object", &gpu, nullptr, -1, nullptr},
+    };
+
+    int rc = 0;
+    for (const auto &test_case : cases) {
+        for (const bool reversed : {false, true}) {
+            hwloc_obj_t meeting = nullptr;
+            const int distance = reversed ?
+                nixlLibfabricTopology::pathDistance(test_case.to, test_case.from, &meeting) :
+                nixlLibfabricTopology::pathDistance(test_case.from, test_case.to, &meeting);
+            if (distance != test_case.expected || meeting != test_case.expected_meeting) {
+                NIXL_ERROR << "Path distance wrong for '" << test_case.name << "'"
+                           << (reversed ? " (reversed)" : "") << ": expected " << test_case.expected
+                           << ", got " << distance
+                           << (meeting == test_case.expected_meeting ? "" : ", wrong meeting");
+                rc = 1;
+            }
+        }
+    }
+    if (!nixlLibfabricTopology::isPcieSwitch(&upstream) ||
+        nixlLibfabricTopology::isPcieSwitch(&package0)) {
+        NIXL_ERROR << "Meeting-object classification wrong for the distance cases";
+        rc = 1;
+    }
+
+    if (rc == 0) {
+        NIXL_INFO << "   SUCCESS: path distance correct for every case";
+    }
+    return rc;
+}
+
+int
 testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
     // The fi_getinfo mock reads curr_topology for the NIC count and line speed; the rest of
     // TopologyInfo is unused by this test.
@@ -1800,11 +1909,15 @@ testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
             }
         }
 
+        const auto &host_only = mapping_info.host_only_devices;
         for (const auto &device : devices) {
-            if (selectable.find(device) == selectable.end()) {
+            const bool expected =
+                std::find(host_only.begin(), host_only.end(), device) == host_only.end();
+            if ((selectable.find(device) != selectable.end()) != expected) {
                 NIXL_ERROR << "EFA device " << device << " on " << mapping_info.instance_type
-                           << " is reachable by no accelerator, so a VRAM registration never "
-                           << "selects it";
+                           << (expected ? " is reachable by no accelerator" :
+                                          " was expected to serve host memory only, but an "
+                                          "accelerator selects it");
                 rc = 8;
             }
         }
