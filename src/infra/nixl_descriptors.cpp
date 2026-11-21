@@ -490,20 +490,8 @@ nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
 }
 
 int
-nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query, int start_index) const {
-    auto first = this->descs.begin() + start_index;
-    auto last = this->descs.end();
-    if (start_index > 0) {
-        // Ordered queries usually stay nearby. Bracket their next section in O(log gap).
-        const size_t count = last - first;
-        size_t step = 1;
-        while (step < count && first[step] < query) {
-            step *= 2;
-        }
-        last = first + std::min(step + 1, count);
-        first += step / 2;
-    }
-    auto itr = std::lower_bound(first, last, query);
+nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {
+    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
     if (itr != this->descs.end() && itr->covers(query))
         return static_cast<int>(itr - this->descs.begin());
     // If query and element don't have the same start address, try previous entry

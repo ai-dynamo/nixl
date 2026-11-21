@@ -94,7 +94,6 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
     }
 
     const nixlSecDescList &base = it->second;
-    const int size = base.descCount();
 
     resp.clear();
     resp.reserve(query.descCount());
@@ -120,23 +119,14 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
             covering = &base[s_index];
             covering_end = rangeEnd(*covering);
         } else {
-            // The current section covered the previous query. For an ordered
-            // query on the same device, its start cannot precede the section.
             if (!coversFollowingWithEnd(*covering, covering_end, query[i])) {
-                ++s_index;
-                if (s_index < size) {
+                s_index = base.getCoveringIndex(query[i]);
+                if (s_index >= 0) {
                     covering = &base[s_index];
                     covering_end = rangeEnd(*covering);
                 }
-                if (s_index < size && !coversWithEnd(*covering, covering_end, query[i])) {
-                    s_index = base.getCoveringIndex(query[i], s_index);
-                    if (s_index >= 0) {
-                        covering = &base[s_index];
-                        covering_end = rangeEnd(*covering);
-                    }
-                }
             }
-            if (s_index < 0 || s_index == size) [[unlikely]] {
+            if (s_index < 0) [[unlikely]] {
                 resp.clear();
                 return NIXL_ERR_UNKNOWN;
             }
@@ -163,7 +153,6 @@ nixlMemSection::populate(const nixl_xfer_dlist_t &query,
     }
 
     const nixlSecDescList &base = it->second;
-    const int size = base.descCount();
     const int n = query.descCount();
 
     resp.clear();
@@ -185,10 +174,7 @@ nixlMemSection::populate(const nixl_xfer_dlist_t &query,
             if (it < query[i - 1]) {
                 s_index = base.getCoveringIndex(it);
             } else {
-                ++s_index;
-                if (s_index == size || !coversWithEnd(base[s_index], rangeEnd(base[s_index]), it)) {
-                    s_index = base.getCoveringIndex(it, s_index);
-                }
+                s_index = base.getCoveringIndex(it);
             }
             if (s_index < 0) {
                 resp.clear();
