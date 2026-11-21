@@ -55,6 +55,7 @@ The key/value parameters are a map of strings to byte arrays that are passed fro
 * supportsCapability(): Indicates if the backend has a capability from `nixl_backend_capability_t`. A backend passes its capabilities, combined with `|`, to the `nixlBackendEngine` constructor; none are set by default
   * `LOCAL`, `REMOTE`, `NOTIF`: the values that supportsLocal(), supportsRemote() and supportsNotif() return by default, so a backend does not need to override these methods
   * `TRACE_CONTEXT`: the backend carries a request's trace context to its peer. Only in-tree plugins can implement it, since the trace context type is internal
+  * `CONN_STATE`: the backend implements checkConn(). A backend that overrides checkConn() must declare it, since the core calls checkConn() only on backends that do
 
 Based on the first 3 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend must have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional.
 
@@ -64,6 +65,7 @@ Based on the first 3 methods (supports*), the required methods to be implemented
 * disconnect(): Terminates connection with a remote agent
 * getConnInfo(): Provides connection information in form of a serialized byte array for remote agents
 * loadRemoteConnInfo(): Loads connection information (byte array) received from a remote agent
+* checkConn(): Optional. Reports whether the loaded connection to a remote agent is known to have failed, without probing it, by returning NIXL_ERR_REMOTE_DISCONNECT. The core calls it before it loads metadata again for an agent that is already loaded, and before makeConnection() connects, so that neither reports success while the backend keeps a connection it can no longer use
 
 Some backends require a self connection for loopback, so connect and disconnect is always required, as a backend either supports local or remote communication, or both. However, getConnInfo and loadRemoteConnInfo are required only if supportsRemote is set.
 

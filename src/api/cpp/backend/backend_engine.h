@@ -34,6 +34,8 @@ enum class nixl_backend_capability_t : uint64_t {
     LOCAL = 1ULL << 1,
     NOTIF = 1ULL << 2,
     TRACE_CONTEXT = 1ULL << 3,
+    // Implements checkConn().
+    CONN_STATE = 1ULL << 4,
 };
 
 [[nodiscard]] constexpr nixl_backend_capability_t
@@ -279,6 +281,17 @@ class nixlBackendEngine {
                          std::chrono::microseconds &err_margin,
                          nixl_cost_t &method,
                          const nixl_opt_args_t *extra_params = nullptr) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        // Report whether the loaded connection to remote_agent is known to have failed,
+        // without probing it: return NIXL_ERR_REMOTE_DISCONNECT if it has. The core calls
+        // this only on backends that declare CONN_STATE, before it loads metadata for an
+        // agent that is already loaded and before makeConnection() connects, and ignores
+        // any other result. It is the last virtual so that plugins built before it keep
+        // their vtable layout; they do not declare CONN_STATE, so it is never called on them.
+        virtual nixl_status_t
+        checkConn(const std::string &remote_agent) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 };

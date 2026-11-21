@@ -17,10 +17,18 @@
 
 #include <algorithm>
 #include <chrono>
+#include <fcntl.h>
+#include <filesystem>
 #include <gtest/gtest.h>
+#include <map>
+#include <netdb.h>
 #include <nixl_types.h>
+#include <set>
+#include <sys/socket.h>
+#include "absl/cleanup/cleanup.h"
 #include "common.h"
 #include "common/hw_info.h"
+#include "common/scoped_fd.h"
 #include "nixl.h"
 #ifdef HAVE_UCX_BACKEND
 #include "ucx_utils.h"
@@ -160,6 +168,8 @@ protected:
     void
     testMetadataReloadKeepsHandlesValid();
     void
+    testReconnectAfterConnectionLoss();
+    void
     excludeEfaTransports();
 
 private:
@@ -276,7 +286,7 @@ TestErrorHandling::Agent::waitForCompletion(nixlXferReqH *req_handle,
         }
     } while ((status == NIXL_IN_PROG) && (std::chrono::steady_clock::now() < deadline));
 
-    m_priv->releaseXferReq(req_handle);
+    EXPECT_EQ(NIXL_SUCCESS, m_priv->releaseXferReq(req_handle));
 
     return status;
 }
@@ -535,6 +545,10 @@ TEST_P(TestErrorHandling, MetadataReloadKeepsHandlesValid) {
     testMetadataReloadKeepsHandlesValid();
 }
 
+TEST_P(TestErrorHandling, ReconnectAfterConnectionLoss) {
+    testReconnectAfterConnectionLoss();
+}
+
 // Transfer handles and prepped dlists bind to a remote registration generation: they
 // must be rejected after that generation is invalidated and the agent re-registers.
 void
@@ -662,6 +676,264 @@ TestErrorHandling::testMetadataReloadKeepsHandlesValid() {
     EXPECT_EQ(m_Initiator.waitForCompletion(req, m_Target, target_notifs), NIXL_SUCCESS);
     EXPECT_EQ(initiator.releasedDlistH(local_side), NIXL_SUCCESS);
     EXPECT_EQ(initiator.releasedDlistH(remote_side), NIXL_SUCCESS);
+    m_Target.destroy();
+    m_Initiator.destroy();
+}
+
+namespace {
+
+    struct tcpSocket {
+        int fd;
+        std::string local;
+        std::string peer;
+    };
+
+    // "host:port" of an INET socket address, empty for any other address.
+    std::string
+    addressString(const sockaddr_storage &addr, socklen_t len) {
+        if ((addr.ss_family != AF_INET) && (addr.ss_family != AF_INET6)) {
+            return {};
+        }
+
+        char host[NI_MAXHOST];
+        char port[NI_MAXSERV];
+        if (getnameinfo(reinterpret_cast<const sockaddr *>(&addr),
+                        len,
+                        host,
+                        sizeof(host),
+                        port,
+                        sizeof(port),
+                        NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
+            return {};
+        }
+        return std::string(host) + ":" + port;
+    }
+
+    // The /proc/self/fd link ("socket:[inode]") of an fd, which stays unique while the
+    // socket is open; empty if it cannot be read.
+    std::string
+    fdLink(int fd) {
+        std::error_code ec;
+        const auto link = std::filesystem::read_symlink("/proc/self/fd/" + std::to_string(fd), ec);
+        return ec ? std::string() : link.string();
+    }
+
+    // The TCP sockets of this process that are connected to a peer, keyed by their fd link.
+    // Each fd is read through a duplicate, so that its type, addresses and link all come
+    // from one socket even if the fd is closed and reused meanwhile.
+    std::map<std::string, tcpSocket>
+    connectedTcpSockets() {
+        std::map<std::string, tcpSocket> sockets;
+        for (const auto &entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+            const int fd = std::stoi(entry.path().filename().string());
+            const ::nixl::scopedFd pinned(fcntl(fd, F_DUPFD_CLOEXEC, 0));
+            if (!pinned.valid()) {
+                continue;
+            }
+            const int pfd = pinned.get();
+
+            int type = 0;
+            socklen_t type_len = sizeof(type);
+            if ((getsockopt(pfd, SOL_SOCKET, SO_TYPE, &type, &type_len) != 0) ||
+                (type != SOCK_STREAM)) {
+                continue;
+            }
+
+            sockaddr_storage local{};
+            sockaddr_storage peer{};
+            socklen_t local_len = sizeof(local);
+            socklen_t peer_len = sizeof(peer);
+            if ((getsockname(pfd, reinterpret_cast<sockaddr *>(&local), &local_len) != 0) ||
+                (getpeername(pfd, reinterpret_cast<sockaddr *>(&peer), &peer_len) != 0)) {
+                continue;
+            }
+
+            tcpSocket sock{fd, addressString(local, local_len), addressString(peer, peer_len)};
+            const std::string link = fdLink(pfd);
+            if (!link.empty() && !sock.local.empty() && !sock.peer.empty()) {
+                sockets.emplace(link, std::move(sock));
+            }
+        }
+        return sockets;
+    }
+
+    // Shuts down both ends of the TCP connections that were opened since `before` at both
+    // ends, between two sockets of this process, as a network failure would. In this test,
+    // those are the connections between its two agents. Listening sockets have no peer and
+    // stay open, so the agents keep running with unchanged metadata and still accept new
+    // connections.
+    size_t
+    shutdownInProcessTcpConnections(const std::map<std::string, tcpSocket> &before) {
+        std::map<std::string, tcpSocket> opened = connectedTcpSockets();
+        std::erase_if(opened, [&](const auto &entry) { return before.count(entry.first) != 0; });
+        std::set<std::pair<std::string, std::string>> ends;
+        for (const auto &[link, sock] : opened) {
+            ends.emplace(sock.local, sock.peer);
+        }
+
+        size_t count = 0;
+        for (const auto &[link, sock] : opened) {
+            if (ends.count({sock.peer, sock.local}) == 0) {
+                continue;
+            }
+
+            // The fd may have been closed, and reused for another socket, since it was
+            // listed. A duplicate pins whatever it refers to now; shut it down only if that
+            // is still the listed socket.
+            const ::nixl::scopedFd pinned(fcntl(sock.fd, F_DUPFD_CLOEXEC, 0));
+            if (pinned.valid() && (fdLink(pinned.get()) == link) &&
+                (shutdown(pinned.get(), SHUT_RDWR) == 0)) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+} // namespace
+
+// When the connection to an agent fails while the agent keeps running, its metadata stays
+// loaded. Once the backend knows about the failure, loading the agent's metadata again,
+// in full or in part, returns NIXL_ERR_REMOTE_DISCONNECT and changes nothing, and so does
+// makeConnection(). Invalidating the metadata disconnects the backend, and loading the full
+// metadata again then connects anew.
+void
+TestErrorHandling::testReconnectAfterConnectionLoss() {
+    // TCP only, so that shutting down the agents' TCP connections fails the endpoints.
+    // cuda_copy satisfies CUDA-enabled UCX validation. The test reads, as
+    // UcxRequestRelease does over TCP.
+    m_env.addVar("UCX_TLS", "tcp,cuda_copy");
+    const LogIgnoreGuard lig(expected_log);
+    const LogIgnoreGuard lig_failed("knows that its connection to agent 'target' has failed");
+    const LogIgnoreGuard lig_stale("prepped descriptor lists must be re-created");
+    // How makeConnection() reports it when an endpoint fails between its check and connect().
+    const LogIgnoreGuard lig_connect(
+        "failed on backend 'UCX' with status NIXL_ERR_REMOTE_DISCONNECT");
+    const auto sockets_before = connectedTcpSockets();
+    const std::string target_name = "target";
+    m_Initiator.init("initiator", m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    exchangeMetaData();
+    nixlAgent &initiator = *m_Initiator.getAgent();
+    nixlAgent &target = *m_Target.getAgent();
+
+    nixl_xfer_dlist_t local_descs(DRAM_SEG), remote_descs(DRAM_SEG);
+    nixlBasicDesc local_desc, remote_desc;
+    m_Initiator.fillRegList(local_descs, local_desc);
+    m_Target.fillRegList(remote_descs, remote_desc);
+
+    // The target's metadata in full, and in part without connection info.
+    const std::string target_md = m_Target.getLocalMD();
+    nixl_reg_dlist_t target_reg(DRAM_SEG);
+    target_reg.addDesc(nixlBlobDesc(remote_desc.addr, remote_desc.len, remote_desc.devId));
+    std::string target_partial;
+    ASSERT_EQ(NIXL_SUCCESS, target.getLocalPartialMD(target_reg, target_partial, nullptr));
+
+    // The same with a second target buffer as a new descriptor.
+    std::vector<std::byte> extra_buf(256);
+    nixl_reg_dlist_t extra_reg(DRAM_SEG);
+    extra_reg.addDesc(
+        nixlBlobDesc(reinterpret_cast<uintptr_t>(extra_buf.data()), extra_buf.size(), 0));
+    ASSERT_EQ(NIXL_SUCCESS, target.registerMem(extra_reg));
+    // Deregister while extra_buf is alive, also when an assertion ends the test early.
+    absl::Cleanup deregister_extra = [&] {
+        EXPECT_EQ(NIXL_SUCCESS, target.deregisterMem(extra_reg));
+    };
+    std::string target_md_extra, target_partial_extra;
+    ASSERT_EQ(NIXL_SUCCESS, target.getLocalMD(target_md_extra));
+    ASSERT_EQ(NIXL_SUCCESS, target.getLocalPartialMD(extra_reg, target_partial_extra, nullptr));
+    const nixl_xfer_dlist_t extra_descs = extra_reg.trim();
+    const nixl_xfer_dlist_t no_descs(DRAM_SEG);
+
+    // Dlists prepped before the failure, and a request made from them.
+    nixlDlistH *local_side = nullptr;
+    nixlDlistH *remote_side = nullptr;
+    absl::Cleanup release_dlists = [&] {
+        for (nixlDlistH *dlist : {local_side, remote_side}) {
+            if (dlist != nullptr) {
+                EXPECT_EQ(NIXL_SUCCESS, initiator.releasedDlistH(dlist));
+            }
+        }
+    };
+    ASSERT_EQ(NIXL_SUCCESS, initiator.prepXferDlist(local_descs, local_side));
+    ASSERT_EQ(NIXL_SUCCESS, initiator.prepXferDlist(target_name, remote_descs, remote_side));
+    const std::vector<int> first{0};
+    const auto make_prepped_req = [&]() {
+        nixlXferReqH *req = nullptr;
+        const nixl_status_t status =
+            initiator.makeXferReq(NIXL_READ, local_side, first, remote_side, first, req);
+        if (status == NIXL_SUCCESS) {
+            EXPECT_EQ(NIXL_SUCCESS, initiator.releaseXferReq(req));
+        }
+        return status;
+    };
+
+    const auto read = [this]() {
+        nixl_xfer_dlist_t local_descs(DRAM_SEG), remote_descs(DRAM_SEG);
+        nixlBasicDesc local_desc, remote_desc;
+        m_Initiator.fillRegList(local_descs, local_desc);
+        m_Target.fillRegList(remote_descs, remote_desc);
+
+        nixlXferReqH *req = nullptr;
+        nixl_status_t status = m_Initiator.createXferReq(NIXL_READ, local_descs, remote_descs, req);
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
+
+        status = m_Initiator.postXferReq(req);
+        if (status < 0) {
+            // A failed post leaves the request with the caller.
+            EXPECT_EQ(NIXL_SUCCESS, m_Initiator.releaseXferReq(req));
+            return status;
+        }
+
+        nixl_notifs_t target_notifs;
+        status = m_Initiator.waitForCompletion(req, m_Target, target_notifs);
+        if (status == NIXL_SUCCESS) {
+            EXPECT_EQ(NIXL_SUCCESS, m_Target.waitForNotif("notification", target_notifs));
+            EXPECT_TRUE(m_Target.dataCmp(m_Initiator));
+            m_Target.fillData();
+        }
+        return status;
+    };
+
+    ASSERT_EQ(NIXL_SUCCESS, read());
+    ASSERT_EQ(NIXL_SUCCESS, make_prepped_req());
+
+    ASSERT_GT(shutdownInProcessTcpConnections(sockets_before), 0u);
+    // No transfer is posted: the endpoints fail when their workers next make progress, on
+    // the progress thread or, without one, in getNotifs().
+    const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
+    nixl_status_t status;
+    do {
+        nixl_notifs_t notifs;
+        EXPECT_EQ(NIXL_SUCCESS, initiator.getNotifs(notifs));
+        status = initiator.makeConnection(target_name);
+    } while ((status == NIXL_SUCCESS) && (std::chrono::steady_clock::now() < deadline));
+    ASSERT_EQ(NIXL_ERR_REMOTE_DISCONNECT, status);
+
+    // Loading the metadata again, in full or in part, with or without the new descriptor,
+    // reports the failure and changes nothing: the metadata stays loaded without the new
+    // descriptor, and the prepped dlists still bind to it.
+    std::string name;
+    EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, initiator.loadRemoteMD(target_md, name));
+    EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, initiator.loadRemoteMD(target_md_extra, name));
+    EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, initiator.loadRemoteMD(target_partial, name));
+    EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, initiator.loadRemoteMD(target_partial_extra, name));
+    EXPECT_EQ(NIXL_SUCCESS, initiator.checkRemoteMD(target_name, no_descs));
+    EXPECT_EQ(NIXL_ERR_NOT_FOUND, initiator.checkRemoteMD(target_name, extra_descs));
+    EXPECT_EQ(NIXL_SUCCESS, make_prepped_req());
+    EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, read());
+
+    // Invalidating disconnects the backend, and loading the full metadata again connects
+    // anew. Dlists prepped before stay bound to the invalidated metadata.
+    EXPECT_EQ(NIXL_SUCCESS, initiator.invalidateRemoteMD(target_name));
+    EXPECT_EQ(NIXL_SUCCESS, initiator.loadRemoteMD(target_md, name));
+    EXPECT_EQ(NIXL_SUCCESS, initiator.makeConnection(target_name));
+    EXPECT_EQ(NIXL_ERR_NOT_FOUND, make_prepped_req());
+    EXPECT_EQ(NIXL_SUCCESS, read());
+
+    std::move(release_dlists).Invoke();
+    std::move(deregister_extra).Invoke();
     m_Target.destroy();
     m_Initiator.destroy();
 }

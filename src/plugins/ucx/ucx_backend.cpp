@@ -99,7 +99,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
     : nixlBackendEngine(&init_params,
                         nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::LOCAL |
                             nixl_backend_capability_t::NOTIF |
-                            nixl_backend_capability_t::TRACE_CONTEXT),
+                            nixl_backend_capability_t::TRACE_CONTEXT |
+                            nixl_backend_capability_t::CONN_STATE),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
@@ -182,8 +183,9 @@ nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
         return loadRemoteConnInfo(remote_agent, workerAddr);
     }
 
-    return (remoteConnMap.find(remote_agent) == remoteConnMap.end()) ? NIXL_ERR_NOT_FOUND :
-                                                                       NIXL_SUCCESS;
+    // The endpoints were created when the connection info was loaded, so there is nothing
+    // to connect; report whether they are still usable.
+    return checkConn(remote_agent);
 }
 
 nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
@@ -196,6 +198,15 @@ nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
     // thread safety?
     remoteConnMap.erase(it);
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::checkConn(const std::string &remote_agent) const {
+    const auto it = remoteConnMap.find(remote_agent);
+    if (it == remoteConnMap.end()) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+    return it->second->checkTxState();
 }
 
 nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent,
@@ -293,11 +304,9 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
             // TODO: err: remote connection not found
             return NIXL_ERR_NOT_FOUND;
         }
-        for (size_t i = 0; i < workers_.size(); ++i) {
-            const nixl_status_t status = it->second->getEp(i)->checkTxState();
-            if (status != NIXL_SUCCESS) {
-                return status;
-            }
+        const nixl_status_t status = it->second->checkTxState();
+        if (status != NIXL_SUCCESS) {
+            return status;
         }
         // nixlSerDes::_stringToBytes() was used to "unpack" blob here.
         output = new nixlUcxPublicMetadata(

@@ -95,6 +95,10 @@ class nixlAgentData final : public nixlMetadataContext {
 
         nixl_status_t
         invalidateRemoteMDLocked(const std::string &remote_name);
+        // NIXL_ERR_REMOTE_DISCONNECT if `backend` declares CONN_STATE and knows that its
+        // loaded connection to `remote_agent` has failed, NIXL_SUCCESS otherwise.
+        [[nodiscard]] nixl_status_t
+        checkConnLocked(const std::string &remote_agent, const nixl_backend_t &backend) const;
 
         nixl_status_t
         loadConnInfo(const std::string &remote_name,

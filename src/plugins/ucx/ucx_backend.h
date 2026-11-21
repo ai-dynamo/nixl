@@ -64,6 +64,18 @@ class nixlUcxConnection : public nixlBackendConnMD {
             return eps[ep_id];
         }
 
+        // NIXL_ERR_REMOTE_DISCONNECT once the endpoint of any worker has failed.
+        [[nodiscard]] nixl_status_t
+        checkTxState() const noexcept {
+            for (const auto &ep : eps) {
+                const nixl_status_t status = ep->checkTxState();
+                if (status != NIXL_SUCCESS) {
+                    return status;
+                }
+            }
+            return NIXL_SUCCESS;
+        }
+
     friend class nixlUcxEngine;
 };
 
@@ -131,6 +143,8 @@ public:
     connect(const std::string &remote_agent) override;
     nixl_status_t
     disconnect(const std::string &remote_agent) override;
+    nixl_status_t
+    checkConn(const std::string &remote_agent) const override;
 
     nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
