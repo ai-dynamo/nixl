@@ -41,12 +41,11 @@ proxyRing::allocate(deviceOps &allocator,
     ring_index_ = ring_index;
     consumer_idx_shadow_ = 0;
 
-    if (allocator.allocDeviceMem(sizeof(nixlProxyWorkRing), work_ring_mem_) != NIXL_SUCCESS ||
+    if (allocator.allocDeviceMem(sizeof(proxyWorkRing), work_ring_mem_) != NIXL_SUCCESS ||
         allocator.allocDeviceMem(sizeof(uint64_t), producer_idx_mem_) != NIXL_SUCCESS ||
         allocator.allocDeviceMem(sizeof(uint64_t), consumer_idx_cache_mem_) != NIXL_SUCCESS ||
-        allocator.allocMappedHostMem(sizeof(nixlProxyCommand) * depth, records_mem_) !=
-            NIXL_SUCCESS ||
-        allocator.allocMappedHostMem(sizeof(nixlProxyCompletionSlot), completion_slot_mem_) !=
+        allocator.allocMappedHostMem(sizeof(proxyCommand) * depth, records_mem_) != NIXL_SUCCESS ||
+        allocator.allocMappedHostMem(sizeof(proxyCompletionSlot), completion_slot_mem_) !=
             NIXL_SUCCESS) {
         NIXL_ERROR << "proxyRing::allocate: device allocation failed";
         deallocate();
@@ -58,8 +57,8 @@ proxyRing::allocate(deviceOps &allocator,
         return NIXL_ERR_BACKEND;
     }
 
-    nixlProxyWorkRing work_ring{
-        records_mem_.devicePointer<nixlProxyCommand>(),
+    proxyWorkRing work_ring{
+        records_mem_.devicePointer<proxyCommand>(),
         static_cast<uint64_t *>(producer_idx_mem_.get()),
         consumer_idx_dev,
         static_cast<uint64_t *>(consumer_idx_cache_mem_.get()),
@@ -72,8 +71,8 @@ proxyRing::allocate(deviceOps &allocator,
         deallocate();
         return NIXL_ERR_BACKEND;
     }
-    device_view_ = nixlProxyRingDesc{static_cast<nixlProxyWorkRing *>(work_ring_mem_.get()),
-                                     completion_slot_mem_.devicePointer<nixlProxyCompletionSlot>()};
+    device_view_ = proxyRingDesc{static_cast<proxyWorkRing *>(work_ring_mem_.get()),
+                                 completion_slot_mem_.devicePointer<proxyCompletionSlot>()};
 
     NIXL_DEBUG << "Proxy ring: depth=" << depth << " ring=" << ring_index
                << " commands(dev)=" << records_mem_.devicePointer();
@@ -86,9 +85,9 @@ proxyRing::rearm() noexcept {
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
-    nixlProxyCommand *commands_host = commandsHost();
+    proxyCommand *commands_host = commandsHost();
     for (uint32_t i = 0; i < depth_; ++i) {
-        commands_host[i] = nixlProxyCommand{};
+        commands_host[i] = proxyCommand{};
     }
     if (ops_->memsetDeviceMem(producer_idx_mem_.get(), 0, sizeof(uint64_t)) != NIXL_SUCCESS ||
         ops_->memsetDeviceMem(consumer_idx_cache_mem_.get(), 0, sizeof(uint64_t)) != NIXL_SUCCESS) {
@@ -115,7 +114,7 @@ void
 proxyRing::retireOldest(nixl_status_t status) noexcept {
     const uint64_t consumer_idx = consumer_idx_shadow_;
     proxyRequestState &front = inflight_[consumer_idx % depth_];
-    nixlProxyCompletionSlot *slot = completionSlotHost();
+    proxyCompletionSlot *slot = completionSlotHost();
     if (__atomic_load_n(&slot->failed_idx, __ATOMIC_RELAXED) == 0) {
         slot->completion_status = status;
         if (status < 0) {
@@ -210,7 +209,7 @@ proxyRing::deallocate() noexcept {
     inflight_.clear();
     submit_idx_ = 0;
     depth_ = 0;
-    device_view_ = nixlProxyRingDesc{};
+    device_view_ = proxyRingDesc{};
 }
 
 } // namespace nixl
