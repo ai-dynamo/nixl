@@ -81,8 +81,8 @@ put(const memViewElem &src,
     xferStatusH *xfer_status) {
     nixl_status_t status = NIXL_IN_PROG;
     if (isLeader<level>()) {
-        auto src_ptr = detail::elemPtr(src);
-        auto dst_ptr = detail::elemPtr(dst);
+        const void *src_ptr = detail::elemPtr(src);
+        void *dst_ptr = detail::elemPtr(dst);
         if (src_ptr != nullptr && dst_ptr != nullptr) {
             detail::putDirect(src_ptr, dst_ptr, size, xfer_status);
         } else {
