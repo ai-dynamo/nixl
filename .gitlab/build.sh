@@ -199,6 +199,30 @@ else
       rm -rf "hiredis-${HIREDIS_VERSION}" "hiredis-${HIREDIS_VERSION}.tar.gz" \
     )
 
+    # Build the public WQS mock SDK (libwqs_store.so + shared_client.h): an in-process stand-in
+    # for the WQS SharedClient SDK that lets the WQS plugin be built and tested without a WQS
+    # cluster. Pinned for reproducibility; the legacy KVCache mock is not needed.
+    WQS_MOCK_REF="3dc51f00e4c2f359fbd3752fc8cd785b95f1a1e3"
+    ( \
+      cd "${BUILD_TMP}" && \
+      wget -q --tries=3 "https://github.com/expontech/wqs_mock/archive/${WQS_MOCK_REF}.tar.gz" \
+          -O "wqs_mock-${WQS_MOCK_REF}.tar.gz" && \
+      tar -xzf "wqs_mock-${WQS_MOCK_REF}.tar.gz" && \
+      cd "wqs_mock-${WQS_MOCK_REF}" && \
+      cmake -S . -B build \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DWQS_MOCK_BUILD_LEGACY=OFF && \
+      cmake --build build -j"$NPROC" && \
+      ctest --test-dir build --output-on-failure && \
+      cmake --install build && \
+      $SUDO ldconfig && \
+      cd "${BUILD_TMP}" && \
+      rm -rf "wqs_mock-${WQS_MOCK_REF}" "wqs_mock-${WQS_MOCK_REF}.tar.gz" \
+    )
+
     # Install python dependencies and upgrade to latest version
     $SUDO pip3 --no-cache-dir install --break-system-packages \
         meson meson-python pybind11 patchelf \
@@ -516,8 +540,15 @@ else
         printf "[binaries]\npython = '%s'\n" "${NIXL_PYTHON}" > "${NIXL_PYTHON_NATIVE_FILE}"
         NIXL_PYTHON_ARGS=(--native-file "${NIXL_PYTHON_NATIVE_FILE}" -Dpython.install_env=venv)
     fi
+    # Build the WQS plugin against the wqs_mock SDK installed in INSTALL_DIR. Only when this
+    # tree has the WQS options and the mock is installed, so older trees/images are unaffected.
+    WQS_BUILD_ARGS=""
+    if grep -q "wqs_inc_path" meson_options.txt && \
+       [ -f "${INSTALL_DIR}/include/shared_client.h" ] && [ -f "${INSTALL_DIR}/lib/libwqs_store.so" ]; then
+        WQS_BUILD_ARGS="-Dwqs_inc_path=${INSTALL_DIR}/include -Dwqs_lib_path=${INSTALL_DIR}/lib"
+    fi
     # shellcheck disable=SC2086
-    meson setup "${NIXL_PYTHON_ARGS[@]}" ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
+    meson setup "${NIXL_PYTHON_ARGS[@]}" ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} ${WQS_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
     if [ -n "${NIXL_PYTHON_NATIVE_FILE}" ]; then
         rm -f "${NIXL_PYTHON_NATIVE_FILE}"
