@@ -36,25 +36,40 @@ getXferStatus(xferStatusH &xfer_status) {
     return broadcastStatus<level>(status);
 }
 
-__device__ __forceinline__ void *
-getPtr(nixlMemViewH mvh, size_t index);
+static __device__ nixlProxyCompletionSlot direct_completion_slot;
 
-static __device__ nixlProxyCompletionSlot direct_completion_slot{};
+namespace detail {
+    __device__ __forceinline__ void *
+    getPtr(nixlMemViewH mvh, size_t index) {
+        auto memview = static_cast<const nixlProxyDeviceMemView *>(mvh);
+        if (index >= memview->direct_ptr_count) {
+            return nullptr;
+        }
 
-__device__ __forceinline__ void
-completeDirect(xferStatusH *xfer_status) {
-    if (xfer_status != nullptr) {
-        const proxyXferStatus pxs{&direct_completion_slot, 0};
-        memcpy(xfer_status->storage, &pxs, sizeof(pxs));
+        return nixlProxyDeviceMemViewDirectPtrs(memview)[index];
     }
-}
 
-__device__ __forceinline__ void
-putDirect(const char *src, char *dst, size_t size, xferStatusH *xfer_status) {
-    memcpy(dst, src, size);
-    __threadfence_system();
-    completeDirect(xfer_status);
-}
+    __device__ __forceinline__ void *
+    elemPtr(const memViewElem &e) {
+        auto base = static_cast<char *>(getPtr(e.mvh, e.index));
+        return base ? base + e.offset : nullptr;
+    }
+
+    __device__ __forceinline__ void
+    completeDirect(xferStatusH *xfer_status) {
+        if (xfer_status != nullptr) {
+            const proxyXferStatus pxs{&direct_completion_slot, 0};
+            memcpy(xfer_status->storage, &pxs, sizeof(pxs));
+        }
+    }
+
+    __device__ __forceinline__ void
+    putDirect(const void *src, void *dst, size_t size, xferStatusH *xfer_status) {
+        memcpy(dst, src, size);
+        __threadfence_system();
+        completeDirect(xfer_status);
+    }
+} // namespace detail
 
 template<level_t level>
 __device__ __forceinline__ nixl_status_t
@@ -65,28 +80,28 @@ put(const memViewElem &src,
     uint64_t,
     xferStatusH *xfer_status) {
     nixl_status_t status = NIXL_IN_PROG;
-    auto src_ptr = static_cast<const char *>(getPtr(src.mvh, src.index));
-    auto dst_ptr = static_cast<char *>(getPtr(dst.mvh, dst.index));
-    if (src_ptr != nullptr && dst_ptr != nullptr) {
-        if (isLeader<level>()) {
-            putDirect(src_ptr + src.offset, dst_ptr + dst.offset, size, xfer_status);
+    if (isLeader<level>()) {
+        auto src_ptr = detail::elemPtr(src);
+        auto dst_ptr = detail::elemPtr(dst);
+        if (src_ptr != nullptr && dst_ptr != nullptr) {
+            detail::putDirect(src_ptr, dst_ptr, size, xfer_status);
+        } else {
+            auto src_memview = static_cast<const nixlProxyDeviceMemView *>(src.mvh);
+            auto dst_memview = static_cast<const nixlProxyDeviceMemView *>(dst.mvh);
+            auto ctx = proxyContextFromMemView(dst_memview);
+            assert(src_memview->context == dst_memview->context);
+            status = ctx->enqueue(nixlProxyCommand{.operand = static_cast<uint64_t>(src.offset),
+                                                   .dst_offset = static_cast<uint64_t>(dst.offset),
+                                                   .size = static_cast<uint64_t>(size),
+                                                   .src_view = proxyHostViewFromHandle(src.mvh),
+                                                   .dst_view = proxyHostViewFromHandle(dst.mvh),
+                                                   .src_index = static_cast<uint32_t>(src.index),
+                                                   .dst_index = static_cast<uint32_t>(dst.index),
+                                                   .opcode = nixl_proxy_opcode_t::PUT},
+                                  nixlProxyDeviceMemViewPeer(dst_memview, dst.index),
+                                  channel_id,
+                                  xfer_status);
         }
-    } else if (isLeader<level>()) {
-        auto src_memview = static_cast<const nixlProxyDeviceMemView *>(src.mvh);
-        auto dst_memview = static_cast<const nixlProxyDeviceMemView *>(dst.mvh);
-        auto ctx = proxyContextFromMemView(dst_memview);
-        assert(src_memview->context == dst_memview->context);
-        status = ctx->enqueue(nixlProxyCommand{.operand = static_cast<uint64_t>(src.offset),
-                                               .dst_offset = static_cast<uint64_t>(dst.offset),
-                                               .size = static_cast<uint64_t>(size),
-                                               .src_view = proxyHostViewFromHandle(src.mvh),
-                                               .dst_view = proxyHostViewFromHandle(dst.mvh),
-                                               .src_index = static_cast<uint32_t>(src.index),
-                                               .dst_index = static_cast<uint32_t>(dst.index),
-                                               .opcode = nixl_proxy_opcode_t::PUT},
-                              nixlProxyDeviceMemViewPeer(dst_memview, dst.index),
-                              channel_id,
-                              xfer_status);
     }
     return broadcastStatus<level>(status);
 }
@@ -99,39 +114,32 @@ atomicAdd(uint64_t value,
           uint64_t,
           xferStatusH *xfer_status) {
     nixl_status_t status = NIXL_IN_PROG;
-    auto counter_ptr = static_cast<char *>(getPtr(counter.mvh, counter.index));
-    if (counter_ptr != nullptr) {
-        if (isLeader<level>()) {
-            cuda::atomic_ref<uint64_t, cuda::thread_scope_system> ref(
-                *reinterpret_cast<uint64_t *>(counter_ptr + counter.offset));
+    if (isLeader<level>()) {
+        auto counter_ptr = static_cast<uint64_t *>(detail::elemPtr(counter));
+        if (counter_ptr != nullptr) {
+            cuda::atomic_ref<uint64_t, cuda::thread_scope_system> ref(*counter_ptr);
             ref.fetch_add(value, cuda::memory_order_release);
-            completeDirect(xfer_status);
+            detail::completeDirect(xfer_status);
+        } else {
+            auto memview = static_cast<const nixlProxyDeviceMemView *>(counter.mvh);
+            auto ctx = proxyContextFromMemView(memview);
+            status =
+                ctx->enqueue(nixlProxyCommand{.operand = value,
+                                              .dst_offset = static_cast<uint64_t>(counter.offset),
+                                              .dst_view = proxyHostViewFromHandle(counter.mvh),
+                                              .dst_index = static_cast<uint32_t>(counter.index),
+                                              .opcode = nixl_proxy_opcode_t::ATOMIC_ADD},
+                             nixlProxyDeviceMemViewPeer(memview, counter.index),
+                             channel_id,
+                             xfer_status);
         }
-    } else if (isLeader<level>()) {
-        auto memview = static_cast<const nixlProxyDeviceMemView *>(counter.mvh);
-        auto ctx = proxyContextFromMemView(memview);
-        status = ctx->enqueue(nixlProxyCommand{.operand = value,
-                                               .dst_offset = static_cast<uint64_t>(counter.offset),
-                                               .dst_view = proxyHostViewFromHandle(counter.mvh),
-                                               .dst_index = static_cast<uint32_t>(counter.index),
-                                               .opcode = nixl_proxy_opcode_t::ATOMIC_ADD},
-                              nixlProxyDeviceMemViewPeer(memview, counter.index),
-                              channel_id,
-                              xfer_status);
     }
     return broadcastStatus<level>(status);
 }
 
 __device__ __forceinline__ void *
 getPtr(nixlMemViewH mvh, size_t index) {
-    auto memview = static_cast<const nixlProxyDeviceMemView *>(mvh);
-    assert(memview != nullptr && memview->context != nullptr);
-    // A proxied view may have no direct pointer for an element; that is not an error.
-    if (index >= memview->direct_ptr_count) {
-        return nullptr;
-    }
-
-    return nixlProxyDeviceMemViewDirectPtrs(memview)[index];
+    return detail::getPtr(mvh, index);
 }
 
 } // namespace nixl::gpu::impl::proxy
