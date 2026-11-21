@@ -111,6 +111,7 @@ class NixlMemRegion {
     nixl_mem_t seg_type_ = DRAM_SEG;
     std::vector<xferBenchIOV> iovs_;
     nixl_opt_args_t cached_opt_args_;
+    bool registered_ = true;
 
 public:
     NixlMemRegion(nixlAgent &agent,
@@ -118,6 +119,10 @@ public:
                   nixl_mem_t seg_type,
                   std::vector<xferBenchIOV> iovs);
     ~NixlMemRegion();
+    // Release registration without freeing the backing buffers. Iteration
+    // slots can then register slices without overlapping a setup registration.
+    void
+    deregister();
     NixlMemRegion(NixlMemRegion &&o) noexcept;
     // Move-only; a reference member makes the region non-assignable, which is
     // fine since it is only ever emplaced into / cleared from vectors.
