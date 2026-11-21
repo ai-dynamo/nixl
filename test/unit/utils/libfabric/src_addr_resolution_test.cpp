@@ -486,7 +486,6 @@ testFiSourceRequested() {
     return 0;
 }
 
-
 static int
 testCqErrorDuringPostDrain(nixlLibfabricRailManager &mgr) {
     NIXL_INFO << "  testCqErrorDuringPostDrain";
@@ -523,8 +522,7 @@ testCqErrorDuringPostDrain(nixlLibfabricRailManager &mgr) {
     TEST_ASSERT(failed_status.size() == 1 && failed_status[0] == NIXL_ERR_BACKEND,
                 "failed request received its terminal status");
     TEST_ASSERT(!failed->in_use, "failed request released");
-    TEST_ASSERT(healthy_status.empty() && healthy->in_use,
-                "healthy request remains in flight");
+    TEST_ASSERT(healthy_status.empty() && healthy->in_use, "healthy request remains in flight");
     TEST_ASSERT(queued_write_attempts == 2, "healthy post retried once");
     return 0;
 }
