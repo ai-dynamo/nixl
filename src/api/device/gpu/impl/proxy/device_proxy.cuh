@@ -36,6 +36,26 @@ getXferStatus(xferStatusH &xfer_status) {
     return broadcastStatus<level>(status);
 }
 
+__device__ __forceinline__ void *
+getPtr(nixlMemViewH mvh, size_t index);
+
+static __device__ nixlProxyCompletionSlot direct_completion_slot{};
+
+__device__ __forceinline__ void
+completeDirect(xferStatusH *xfer_status) {
+    if (xfer_status != nullptr) {
+        const proxyXferStatus pxs{&direct_completion_slot, 0};
+        memcpy(xfer_status->storage, &pxs, sizeof(pxs));
+    }
+}
+
+__device__ __forceinline__ void
+putDirect(const char *src, char *dst, size_t size, xferStatusH *xfer_status) {
+    memcpy(dst, src, size);
+    __threadfence_system();
+    completeDirect(xfer_status);
+}
+
 template<level_t level>
 __device__ __forceinline__ nixl_status_t
 put(const memViewElem &src,
@@ -45,7 +65,13 @@ put(const memViewElem &src,
     uint64_t,
     xferStatusH *xfer_status) {
     nixl_status_t status = NIXL_IN_PROG;
-    if (isLeader<level>()) {
+    auto src_ptr = static_cast<const char *>(getPtr(src.mvh, src.index));
+    auto dst_ptr = static_cast<char *>(getPtr(dst.mvh, dst.index));
+    if (src_ptr != nullptr && dst_ptr != nullptr) {
+        if (isLeader<level>()) {
+            putDirect(src_ptr + src.offset, dst_ptr + dst.offset, size, xfer_status);
+        }
+    } else if (isLeader<level>()) {
         auto src_memview = static_cast<const nixlProxyDeviceMemView *>(src.mvh);
         auto dst_memview = static_cast<const nixlProxyDeviceMemView *>(dst.mvh);
         auto ctx = proxyContextFromMemView(dst_memview);
@@ -73,7 +99,15 @@ atomicAdd(uint64_t value,
           uint64_t,
           xferStatusH *xfer_status) {
     nixl_status_t status = NIXL_IN_PROG;
-    if (isLeader<level>()) {
+    auto counter_ptr = static_cast<char *>(getPtr(counter.mvh, counter.index));
+    if (counter_ptr != nullptr) {
+        if (isLeader<level>()) {
+            cuda::atomic_ref<uint64_t, cuda::thread_scope_system> ref(
+                *reinterpret_cast<uint64_t *>(counter_ptr + counter.offset));
+            ref.fetch_add(value, cuda::memory_order_release);
+            completeDirect(xfer_status);
+        }
+    } else if (isLeader<level>()) {
         auto memview = static_cast<const nixlProxyDeviceMemView *>(counter.mvh);
         auto ctx = proxyContextFromMemView(memview);
         status = ctx->enqueue(nixlProxyCommand{.operand = value,
