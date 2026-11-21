@@ -188,6 +188,11 @@ runBenchmark() {
     int ret = 0;
     int num_workers = xferBenchConfig::workerNum();
 
+    // Before createWorker, so runtime and backend threads inherit the binding
+    if (xferBenchConfig::applyNumaBinding() != 0) {
+        return EXIT_FAILURE;
+    }
+
     // Create the appropriate worker based on worker configuration
     std::unique_ptr<xferBenchWorker> worker_ptr = createWorker();
     if (!worker_ptr) {
