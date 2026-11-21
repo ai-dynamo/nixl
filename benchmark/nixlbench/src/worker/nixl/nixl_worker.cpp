@@ -2087,7 +2087,7 @@ execTransfer(nixlAgent *agent,
              const int num_iter,
              const int num_threads,
              xferBenchStats &stats,
-             const std::atomic<int> *terminate_ptr = nullptr) {
+             std::atomic<int> *terminate_ptr = nullptr) {
     int ret = 0;
     stats.clear();
 
@@ -2118,12 +2118,18 @@ execTransfer(nixlAgent *agent,
                                       remote_iov,
                                       terminate_ptr);
 
-        if (result != 0) [[unlikely]] {
-            ret = result;
+        // Stop the other threads instead of letting each report the same fault.
+        if (result != 0 && terminate_ptr) [[unlikely]] {
+            terminate_ptr->store(1);
         }
 
 #pragma omp critical
-        { stats.add(thread_stats); }
+        {
+            if (result != 0) {
+                ret = result;
+            }
+            stats.add(thread_stats);
+        }
     }
 
     const nixlTime::us_t total_duration = total_timer.lap();
@@ -2406,7 +2412,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            NIXL_WRITE,
                            1,
                            xferBenchConfig::num_threads,
-                           prepop_stats);
+                           prepop_stats,
+                           &terminate);
         if (ret < 0) {
             std::cerr << "Failed to pre-populate for QUERY (block_size=" << block_size << ")"
                       << std::endl;
@@ -2474,7 +2481,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            NIXL_WRITE,
                            1,
                            xferBenchConfig::num_threads,
-                           prepop_stats);
+                           prepop_stats,
+                           &terminate);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Failed to pre-populate keys for READ (block_size="
                       << block_size << ")" << std::endl;
@@ -2492,7 +2500,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            NIXL_READ,
                            1,
                            xferBenchConfig::num_threads,
-                           verify_stats);
+                           verify_stats,
+                           &terminate);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Verification failed - retrieve operations failed after "
                          "pre-population (block_size="
