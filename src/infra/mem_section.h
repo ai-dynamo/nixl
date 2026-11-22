@@ -123,9 +123,6 @@ public:
 
 private:
     void
-    rebuildCoverageIndex() noexcept;
-
-    void
     addSortedDescs(std::vector<nixlSectionDesc> batch);
 
     bool
@@ -159,8 +156,6 @@ private:
         }
         return nixlBasicDesc(query.addr, SIZE_MAX, query.devId);
     }
-
-    std::vector<int> coverageMaxIndices;
 };
 
 using nixl_sec_dlist_t = nixlSecDescList;

@@ -368,46 +368,12 @@ operator== <nixlRemoteMetaDesc>(const nixlDescList<nixlRemoteMetaDesc> &lhs,
 
 // nixlSecDescList keeps the elements sorted
 void
-nixlSecDescList::rebuildCoverageIndex() noexcept {
-    coverageMaxIndices.resize(this->descs.size());
-
-    uintptr_t max_end = 0;
-    int max_index = -1;
-    uint64_t current_dev = 0;
-    bool have_device = false;
-    constexpr uintptr_t max_addr = std::numeric_limits<uintptr_t>::max();
-
-    for (size_t i = 0; i < this->descs.size(); ++i) {
-        const auto &desc = this->descs[i];
-        if (!have_device || desc.devId != current_dev) {
-            current_dev = desc.devId;
-            have_device = true;
-            max_end = 0;
-            max_index = -1;
-        }
-
-        uintptr_t end = 0;
-        if (desc.len == SIZE_MAX) {
-            end = max_addr;
-        } else if (desc.len <= max_addr - desc.addr) {
-            end = desc.addr + desc.len;
-        }
-        if (end > max_end) {
-            max_end = end;
-            max_index = static_cast<int>(i);
-        }
-        coverageMaxIndices[i] = max_index;
-    }
-}
-
-void
 nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
     nixlSectionDesc normalized = desc;
     normalizeSecDesc(normalized);
     auto &vec = this->descs;
     auto itr = std::upper_bound(vec.begin(), vec.end(), normalized);
     vec.insert(itr, std::move(normalized));
-    rebuildCoverageIndex();
 }
 
 void
@@ -416,7 +382,6 @@ nixlSecDescList::addDesc(nixlSectionDesc &&desc) {
     auto &vec = this->descs;
     auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
     vec.insert(itr, std::move(desc));
-    rebuildCoverageIndex();
 }
 
 void
@@ -424,7 +389,6 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
     auto &vec = this->descs;
     if (vec.empty()) {
         vec = std::move(batch);
-        rebuildCoverageIndex();
         return;
     }
 
@@ -434,7 +398,6 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
         vec.insert(append ? vec.end() : vec.begin(),
                    std::make_move_iterator(batch.begin()),
                    std::make_move_iterator(batch.end()));
-        rebuildCoverageIndex();
         return;
     }
 
@@ -458,7 +421,6 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
     while (b != b_end) {
         *dst++ = std::move(*b++);
     }
-    rebuildCoverageIndex();
 }
 
 void
@@ -514,7 +476,6 @@ nixlSecDescList::remDescs(std::vector<size_t> indices, order ord) {
         }
     }
     descs.resize(write);
-    rebuildCoverageIndex();
 }
 
 
@@ -530,18 +491,17 @@ nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
 
 int
 nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {
-    const nixlBasicDesc adjusted_query = normalizeQuery(query);
-    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), adjusted_query);
-    if (itr != this->descs.end() && itr->covers(adjusted_query))
+    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
+    if (itr != this->descs.end() && itr->covers(query))
         return static_cast<int>(itr - this->descs.begin());
-    const size_t position = static_cast<size_t>(itr - this->descs.begin());
-    if (position == 0) {
-        return -1;
-    }
-
-    const int candidate = coverageMaxIndices[position - 1];
-    if (candidate >= 0 && this->descs[candidate].covers(adjusted_query)) {
-        return candidate;
+    // Registrations can overlap, so a covering section may start well before the
+    // lower-bound predecessor. Check all earlier starts instead of assuming that
+    // the immediate predecessor owns the range.
+    while (itr != this->descs.begin()) {
+        --itr;
+        if (itr->covers(query)) {
+            return static_cast<int>(itr - this->descs.begin());
+        }
     }
     return -1;
 }
@@ -560,7 +520,6 @@ nixlSecDescList::resize(const size_t &count) {
         throw std::logic_error(
             "nixlSecDescList: to keep list sorted, resize growth is not allowed.");
     this->descs.resize(count);
-    rebuildCoverageIndex();
 }
 
 nixlRemoteDesc::nixlRemoteDesc(const uintptr_t addr,
