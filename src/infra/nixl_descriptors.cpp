@@ -499,9 +499,7 @@ nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {
     // the immediate predecessor owns the range.
     while (itr != this->descs.begin()) {
         --itr;
-        if (itr->covers(query)) {
-            return static_cast<int>(itr - this->descs.begin());
-        }
+        if (itr->covers(query)) return static_cast<int>(itr - this->descs.begin());
     }
     return -1;
 }
