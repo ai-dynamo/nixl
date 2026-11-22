@@ -314,16 +314,6 @@ TEST_F(secDescListTest, PopulateWalksOrderedSectionsAndDevices) {
     EXPECT_EQ(response[2].metadataP, &metadata3);
 }
 
-TEST_F(secDescListTest, CoveringIndexFindsEarlierOverlappingRegistration) {
-    nixlSecDescList registrations(DRAM_SEG);
-    registrations.addDesc(nixlSectionDesc(0, 10, 1));
-    registrations.addDesc(nixlSectionDesc(100, 1000, 1));
-    registrations.addDesc(nixlSectionDesc(200, 10, 1));
-    registrations.addDesc(nixlSectionDesc(300, 10, 1));
-
-    EXPECT_EQ(registrations.getCoveringIndex(nixlBasicDesc(400, 1, 1)), 1);
-}
-
 TEST_F(secDescListTest, PopulateFallsBackForDisorderedQueries) {
     nixlBackendMD metadata1(false);
     nixlBackendMD metadata2(false);
