@@ -288,6 +288,8 @@ Payload values and scales are checked byte for byte; combine stays BF16.
 Each phase checks eager execution and retained CUDA graphs with both original
 and changed routing. Processes remain alive throughout the membership plan;
 the active topology determines direct or hybrid execution.
+`--reconnect-on-leave` retires departing ranks' peer connections into local
+singleton buffers that sit out until rejoining; their captured graphs are retained.
 
 ## Phase profiling
 
