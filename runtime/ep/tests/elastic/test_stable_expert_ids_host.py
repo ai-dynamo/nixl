@@ -47,7 +47,7 @@ class CpuTorch:
 
     def __getattr__(self, name):
         function = getattr(torch, name)
-        if name not in {"tensor", "arange"}:
+        if name not in {"tensor", "arange", "empty"}:
             return function
 
         def allocate(*args, **kwargs):
@@ -80,6 +80,7 @@ class StableExpertIdsTests(unittest.TestCase):
                 "Case",
                 "GraphCase",
                 "NUM_CAPTURE_BARRIERS",
+                "COMBINE_SLICE_BYTES",
                 "as_nvfp4",
                 "payload_parts",
                 "payload_rows",
@@ -182,6 +183,37 @@ class StableExpertIdsTests(unittest.TestCase):
                     damaged[component].view(torch.uint8)[0, 0] ^= 1
                     damaged = damaged if isinstance(joined, tuple) else damaged[0]
                     self.assertFalse(equal(damaged, expected))
+
+    def test_sliced_combine_matches_single_slice(self):
+        self.mapping[:] = [0, 4, 1, 5, 2, 6, 3, 7]
+        sources = torch.arange(17)
+        sources[-2:] = -1
+        local_indices = torch.tensor([[0, -1, 1, -1], [-1] * 4, [0, 1, -1, -1]])
+        local_indices = local_indices.repeat(6, 1)[:17]
+        local_indices[-2:] = -1
+        expected_input = self.case.combine_input(sources, local_indices)
+        small_budget = 5 * self.case.num_topk * self.case.hidden * 4
+        self.namespace["COMBINE_SLICE_BYTES"] = small_budget
+        self.assertEqual(len(self.case.row_slices(17)), 4)
+        self.assertTrue(
+            torch.equal(self.case.combine_input(sources, local_indices), expected_input)
+        )
+        empty = self.case.combine_input(
+            torch.empty(0, dtype=torch.int64), torch.empty((0, 4), dtype=torch.int64)
+        )
+        self.assertEqual(empty.shape, (0, self.case.hidden))
+        self.assertEqual(empty.dtype, torch.bfloat16)
+
+        routing = torch.tensor([[8, 2, 12, -1], [14, 10, 4, 1], [-1] * 4]).repeat(4, 1)
+        for mode, phase in (("direct", [0, 2, 4, 6]), ("hybrid", [0, 1, 4, 5])):
+            with self.subTest(mode=mode):
+                self.buffer._get_mode = lambda: mode
+                self.namespace["COMBINE_SLICE_BYTES"] = 1 << 30
+                expected = self.case.combine_reference(phase, routing)
+                self.namespace["COMBINE_SLICE_BYTES"] = small_budget
+                self.assertTrue(
+                    torch.equal(self.case.combine_reference(phase, routing), expected)
+                )
 
     def test_position_shrink_and_nonzero_domain_preserve_expert_owner(self):
         routing = torch.tensor([[8, 9, -1, 4], [4, 5, -1, -1], [10, 11, 0, 1]])
