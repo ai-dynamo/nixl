@@ -27,9 +27,9 @@
 namespace nixl {
 
 proxyMemViewManager::proxyMemViewManager(deviceOps &allocator,
-                                         const nixlProxyDeviceContextData *device_context)
-    : allocator_(allocator),
-      device_context_(device_context) {}
+                                         const proxyDeviceContextData *device_context)
+    : deviceOps_(allocator),
+      deviceContext_(device_context) {}
 
 template<typename DlistT>
 nixl_status_t
@@ -45,33 +45,33 @@ proxyMemViewManager::createView(const DlistT &dlist,
     host_view->remote = std::is_same_v<DlistT, nixl_remote_meta_dlist_t>;
     fillDescs(dlist, host_view->descs);
 
-    const nixlProxyDeviceMemView memview_contents{
+    const proxyDeviceMemView memview_contents{
         static_cast<uint64_t>(reinterpret_cast<uintptr_t>(host_view.get())),
-        device_context_,
+        deviceContext_,
         static_cast<uint32_t>(direct_ptrs.size()),
         static_cast<uint32_t>(peers.size())};
 
     // GPU: allocate the device memview and copy the contents, direct pointers and peers into it.
     deviceMem device_memview_mem;
-    if (allocator_.allocDeviceMem(nixlProxyDeviceMemViewBytes(direct_ptrs.size(), peers.size()),
+    if (deviceOps_.allocDeviceMem(proxyDeviceMemViewBytes(direct_ptrs.size(), peers.size()),
                                   device_memview_mem) != NIXL_SUCCESS) {
         NIXL_ERROR << "proxyMemViewManager: failed to allocate device memview";
         return NIXL_ERR_BACKEND;
     }
-    auto *device_memview = static_cast<nixlProxyDeviceMemView *>(device_memview_mem.get());
-    nixl_status_t copy_status = allocator_.copy(device_memview,
+    auto *device_memview = static_cast<proxyDeviceMemView *>(device_memview_mem.get());
+    nixl_status_t copy_status = deviceOps_.copy(device_memview,
                                                 &memview_contents,
                                                 sizeof(memview_contents),
                                                 deviceOps::copyDirection::HostToDevice);
     if (copy_status == NIXL_SUCCESS && !direct_ptrs.empty()) {
-        copy_status = allocator_.copy(nixlProxyDeviceMemViewDirectPtrs(device_memview),
+        copy_status = deviceOps_.copy(proxyDeviceMemViewDirectPtrs(device_memview),
                                       direct_ptrs.data(),
                                       direct_ptrs.size() * sizeof(void *),
                                       deviceOps::copyDirection::HostToDevice);
     }
     if (copy_status == NIXL_SUCCESS && !peers.empty()) {
         copy_status =
-            allocator_.copy(nixlProxyDeviceMemViewDirectPtrs(device_memview) + direct_ptrs.size(),
+            deviceOps_.copy(proxyDeviceMemViewDirectPtrs(device_memview) + direct_ptrs.size(),
                             peers.data(),
                             peers.size() * sizeof(peers[0]),
                             deviceOps::copyDirection::HostToDevice);
@@ -82,8 +82,8 @@ proxyMemViewManager::createView(const DlistT &dlist,
     }
 
     // Link: the host view owns its device memview, and the map owns the host view.
-    host_view->proxy_memview = device_memview;
-    host_view->proxy_memview_mem = std::move(device_memview_mem);
+    host_view->proxyMemView = device_memview;
+    host_view->proxyMemViewMem = std::move(device_memview_mem);
     out = host_view.get();
     views_.emplace(device_memview, std::move(host_view));
     return NIXL_SUCCESS;
@@ -97,7 +97,7 @@ proxyMemViewManager::prepLocal(const nixl_meta_dlist_t &dlist, proxy_view_handle
         return status;
     }
 
-    out = host_view->proxy_memview;
+    out = host_view->proxyMemView;
     NIXL_DEBUG << "proxyMemViewManager::prepLocal: host_view=" << host_view
                << " descs=" << dlist.descCount();
     return NIXL_SUCCESS;
@@ -119,7 +119,7 @@ proxyMemViewManager::prepRemote(const nixl_remote_meta_dlist_t &dlist,
         return status;
     }
 
-    out = host_view->proxy_memview;
+    out = host_view->proxyMemView;
     NIXL_DEBUG << "proxyMemViewManager::prepRemote: host_view=" << host_view
                << " descs=" << dlist.descCount() << " direct_ptrs=" << direct_ptrs.size();
     return NIXL_SUCCESS;

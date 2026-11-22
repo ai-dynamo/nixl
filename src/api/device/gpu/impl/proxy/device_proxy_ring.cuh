@@ -29,7 +29,7 @@ namespace nixl::gpu::impl::proxy {
 // Overlay struct written into xferStatusH::storage by enqueue()
 // and read back by pollXferStatus().  Must fit within the 64-byte opaque blob.
 struct proxyXferStatus {
-    nixlProxyCompletionSlot *slot; // device pointer to the channel's nixlProxyCompletionSlot
+    proxyCompletionSlot *slot; // device pointer to the channel's proxyCompletionSlot
     uint64_t opIdx;
 };
 
@@ -38,18 +38,18 @@ static_assert(sizeof(proxyXferStatus) <= xfer_status_payload_size,
 
 __device__ __forceinline__ uint64_t
 proxyHostViewFromHandle(nixlMemViewH mvh) {
-    return static_cast<const nixlProxyDeviceMemView *>(mvh)->host_view;
+    return static_cast<const proxyDeviceMemView *>(mvh)->host_view;
 }
 
 struct proxyDeviceContext;
 
 __device__ __forceinline__ const proxyDeviceContext *
-proxyContextFromMemView(const nixlProxyDeviceMemView *memview) {
+proxyContextFromMemView(const proxyDeviceMemView *memview) {
     assert(memview != nullptr && memview->context != nullptr);
     return reinterpret_cast<const proxyDeviceContext *>(memview->context);
 }
 
-struct proxyDeviceContext : nixlProxyDeviceContextData {
+struct proxyDeviceContext : proxyDeviceContextData {
 
     __device__ __forceinline__ size_t
     ringIndex(uint32_t peer_index, uint32_t channel_id) const {
@@ -57,7 +57,7 @@ struct proxyDeviceContext : nixlProxyDeviceContextData {
     }
 
     __device__ inline nixl_status_t
-    enqueue(nixlProxyCommand command,
+    enqueue(proxyCommand command,
             uint32_t peer,
             uint32_t channel_id,
             xferStatusH *xfer_status = nullptr) const {
@@ -66,13 +66,13 @@ struct proxyDeviceContext : nixlProxyDeviceContextData {
 
         cuda::atomic_ref<uint64_t, cuda::thread_scope_system> shut(*shutdown_word);
         if (shut.load(cuda::memory_order_relaxed) ==
-            static_cast<uint64_t>(nixl_proxy_control_state_t::SHUTDOWN)) {
+            static_cast<uint64_t>(proxy_control_state_t::SHUTDOWN)) {
             return NIXL_ERR_BACKEND;
         }
 
-        nixlProxyRingDesc &ring_desc = rings[ringIndex(peer, channel_id)];
+        proxyRingDesc &ring_desc = rings[ringIndex(peer, channel_id)];
         assert(ring_desc.work_ring != nullptr && ring_desc.completion_slot != nullptr);
-        nixlProxyWorkRing *ring = ring_desc.work_ring;
+        proxyWorkRing *ring = ring_desc.work_ring;
 
         cuda::atomic_ref<uint64_t, cuda::thread_scope_device> producer_idx(*ring->producer_idx);
         cuda::atomic_ref<uint64_t, cuda::thread_scope_system> cons(*ring->consumer_idx);
@@ -88,7 +88,7 @@ struct proxyDeviceContext : nixlProxyDeviceContextData {
             *ring->consumer_idx_cache = cached_consumer_idx;
 
             if (shut.load(cuda::memory_order_relaxed) ==
-                static_cast<uint64_t>(nixl_proxy_control_state_t::SHUTDOWN)) {
+                static_cast<uint64_t>(proxy_control_state_t::SHUTDOWN)) {
                 return NIXL_ERR_BACKEND;
             }
         }

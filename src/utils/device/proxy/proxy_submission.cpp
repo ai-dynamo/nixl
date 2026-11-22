@@ -65,7 +65,7 @@ namespace {
 } // namespace
 
 nixl_status_t
-resolveSubmission(const nixlProxyCommand &command,
+resolveSubmission(const proxyCommand &command,
                   uint32_t channel,
                   uint32_t peer,
                   proxyBackendSubmission &out) noexcept {
@@ -73,12 +73,12 @@ resolveSubmission(const nixlProxyCommand &command,
     bool needs_source = false;
     size_t transfer_size = 0;
     switch (command.opcode) {
-    case nixl_proxy_opcode_t::PUT:
+    case proxy_opcode_t::PUT:
         known_opcode = true;
         needs_source = true;
         transfer_size = command.size;
         break;
-    case nixl_proxy_opcode_t::ATOMIC_ADD:
+    case proxy_opcode_t::ATOMIC_ADD:
         known_opcode = true;
         transfer_size = sizeof(uint64_t);
         break;
