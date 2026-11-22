@@ -23,21 +23,21 @@
 namespace nixl::gpu::impl::proxy {
 
 template<level_t level>
-__device__ __forceinline__ nixl_status_t
+[[nodiscard]] __device__ __forceinline__ nixl_status_t
 getXferStatus(xferStatusH &xfer_status) {
     if constexpr (level == level_t::GRID) {
         return proxyDeviceContext::pollXferStatus(xfer_status);
+    } else {
+        nixl_status_t status = NIXL_IN_PROG;
+        if (isLeader<level>()) {
+            status = proxyDeviceContext::pollXferStatus(xfer_status);
+        }
+        return broadcastStatus<level>(status);
     }
-
-    nixl_status_t status = NIXL_IN_PROG;
-    if (isLeader<level>()) {
-        status = proxyDeviceContext::pollXferStatus(xfer_status);
-    }
-    return broadcastStatus<level>(status);
 }
 
 template<level_t level>
-__device__ __forceinline__ nixl_status_t
+[[nodiscard]] __device__ __forceinline__ nixl_status_t
 put(const memViewElem &src,
     const memViewElem &dst,
     size_t size,
@@ -66,7 +66,7 @@ put(const memViewElem &src,
 }
 
 template<level_t level>
-__device__ __forceinline__ nixl_status_t
+[[nodiscard]] __device__ __forceinline__ nixl_status_t
 atomicAdd(uint64_t value,
           const memViewElem &counter,
           unsigned channel_id,
@@ -88,10 +88,11 @@ atomicAdd(uint64_t value,
     return broadcastStatus<level>(status);
 }
 
-__device__ __forceinline__ void *
+[[nodiscard]] __device__ __forceinline__ void *
 getPtr(nixlMemViewH mvh, size_t index) {
     auto memview = static_cast<const nixlProxyDeviceMemView *>(mvh);
-    assert(memview != nullptr && memview->context != nullptr);
+    assert(memview != nullptr);
+    assert(memview->context != nullptr);
     // A proxied view may have no direct pointer for an element; that is not an error.
     if (index >= memview->direct_ptr_count) {
         return nullptr;
