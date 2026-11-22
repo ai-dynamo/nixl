@@ -5,13 +5,9 @@
 """Cohort discovery and metadata exchange through temporary global-rank Store keys."""
 
 import pickle
-import socket
 import uuid
 from contextlib import contextmanager
 from datetime import timedelta
-from typing import Optional, Tuple, cast
-
-import torch.distributed as dist
 
 from .nixl_fabric import inspect_fabric_device, validate_fabric_records
 
@@ -155,36 +151,3 @@ class NixlBootstrap:
             # Every peer has finished reading arrivals and has no further Store operations in this barrier.
             for key in arrived + departed:
                 self.store.delete_key(key)
-
-
-def resolve_bootstrap_store(
-    group: Optional[dist.ProcessGroup],
-    store: Optional[dist.Store],
-    timeout_seconds: int = 300,
-) -> dist.Store:
-    """
-    Use the supplied Store, or create a cohort-private TCPStore whose address is broadcast over the group.
-    The returned Store must outlive the cohort's use of it. Without a group, an explicit Store is required.
-    """
-    if store is not None:
-        return store
-    if group is None:
-        raise ValueError("Bootstrapping without a process group requires a Store")
-    rank, num_ranks = group.rank(), group.size()
-    host, timeout = socket.gethostname(), timedelta(seconds=timeout_seconds)
-    cohort_store = None
-    address: list[Optional[Tuple[str, int]]] = [None]
-    if rank == 0:
-        cohort_store = dist.TCPStore(
-            host, 0, num_ranks, is_master=True, timeout=timeout, wait_for_workers=False
-        )
-        address[0] = (host, cohort_store.port)
-    dist.broadcast_object_list(address, src=dist.get_global_rank(group, 0), group=group)
-    if cohort_store is None:
-        cohort_store = dist.TCPStore(
-            *cast(Tuple[str, int], address[0]),
-            num_ranks,
-            is_master=False,
-            timeout=timeout,
-        )
-    return cohort_store

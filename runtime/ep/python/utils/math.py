@@ -7,7 +7,6 @@ from typing import Tuple
 import torch
 
 from .semantic import align as align
-from .semantic import ceil_div as ceil_div  # noqa: F401
 
 
 def calc_diff(x: torch.Tensor, y: torch.Tensor) -> float:
@@ -15,16 +14,6 @@ def calc_diff(x: torch.Tensor, y: torch.Tensor) -> float:
     denominator = (x * x + y * y).sum()
     sim = 2 * (x * y).sum() / denominator
     return (1 - sim).item()
-
-
-def safe_div(a, b) -> float:
-    try:
-        return a / b
-    except ZeroDivisionError:
-        if a == 0:
-            return 0
-        else:
-            raise
 
 
 @torch.compile(dynamic=True)
@@ -38,37 +27,3 @@ def per_token_cast_to_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     return (x_padded_view * (448.0 / x_amax.unsqueeze(2))).to(torch.float8_e4m3fn).view(
         m, aligned_n
     )[:, :n].contiguous(), (x_amax / 448.0).view(m, -1)
-
-
-@torch.compile(dynamic=True)
-def per_token_cast_back(x_fp8: torch.Tensor, x_scales: torch.Tensor) -> torch.Tensor:
-    if x_fp8.numel() == 0:
-        return x_fp8.to(torch.bfloat16)
-
-    assert x_fp8.dim() == 2
-    m, n = x_fp8.shape
-    aligned_n = align(n, 128)
-    x_fp8_padded = torch.nn.functional.pad(
-        x_fp8, (0, aligned_n - n), mode="constant", value=0
-    )
-    if x_scales.dtype == torch.int:
-        x_scales = x_scales.view(dtype=torch.uint8).to(torch.int) << 23
-        x_scales = x_scales.view(dtype=torch.float)
-    x_fp32_padded = x_fp8_padded.to(torch.float32).view(x_fp8.shape[0], -1, 128)
-    x_scales = x_scales.view(x_fp8.shape[0], -1, 1)
-    return (
-        (x_fp32_padded * x_scales)
-        .view(x_fp8_padded.shape)
-        .to(torch.bfloat16)[:, :n]
-        .contiguous()
-    )
-
-
-def count_bytes(*tensors) -> int:
-    total = 0
-    for t in tensors:
-        if isinstance(t, (tuple, list)):
-            total += count_bytes(*t)
-        elif t is not None:
-            total += t.numel() * t.element_size()
-    return total

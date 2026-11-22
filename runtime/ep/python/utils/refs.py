@@ -6,172 +6,6 @@ import math
 from typing import Optional, Tuple, Union
 
 import torch
-import torch.distributed as dist
-
-from .envs import get_global_seed
-from .math import ceil_div
-
-
-def dispatch(
-    x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
-    topk_idx: torch.Tensor,
-    topk_weights: torch.Tensor,
-    num_max_tokens_per_rank: int,
-    num_experts: int,
-):
-    """
-    The reference implementation of dispatching tokens to experts across multiple ranks.
-
-    Not expanded. Sorted by rank and then by token within each rank (i.e. sorted by `src_token_global_idx`).
-
-    Arguments:
-    - `x`: Input tokens, `[num_tokens, hidden]` or (`[num_tokens, hidden], [num_tokens, hidden_sf]`)
-    - `topk_idx`: Top-k expert indices for each token, `[num_tokens, num_topk]`
-    - `topk_weights`: Required top-k weights for each token, `[num_tokens, num_topk]`
-    - `num_max_tokens_per_rank`: Maximum number of tokens per rank, must >= actual number of tokens per rank and aligned with NIXL EP's `num_max_tokens_per_rank` since we're going to calculate `src_token_global_idx = src_rank_idx*num_max_tokens_per_rank + src_token_local_idx`
-    - `num_experts`: Total number of experts across all ranks
-
-    Returns:
-    - `recv_x`, `recv_topk_idx`, and `recv_topk_weights`: Received tokens, top-k indices, and top-k weights after dispatching. Out of range `recv_topk_idx` (i.e. that expert is not on the current rank) are set to -1.
-    - `recv_src_token_idx`: Received `src_token_global_idx` for each received token
-    - `num_recv_tokens_per_rank`: Number of received tokens from each rank, `[num_ranks]`
-    """
-    # TODO: support forwarding
-    rank_idx = dist.get_rank()
-    num_ranks = dist.get_world_size()
-
-    assert num_experts % num_ranks == 0
-    num_experts_per_rank = num_experts // num_ranks
-
-    # Unpack SF
-    use_fp8 = isinstance(x, tuple)
-    if isinstance(x, tuple):
-        x, sf = x
-    else:
-        sf = None
-
-    # TODO: use SF bytes instead of hardcoded recipe
-    num_tokens, hidden = x.size()
-    num_tokens_, num_topk = topk_idx.size()
-    assert num_tokens == num_tokens_
-    if sf is not None:
-        num_tokens__, hidden_sf = sf.size()
-        assert num_tokens == num_tokens__
-        assert hidden_sf == ceil_div(hidden, 128)
-    num_tokens__, num_topk_ = topk_weights.size()
-    assert num_tokens == num_tokens__
-    assert num_topk == num_topk_
-
-    # Prepare per-peer send buffers
-    send_x_list = []
-    send_sf_list = []
-    send_topk_idx_list = []
-    send_topk_weights_list = []
-    send_src_token_idx_list = []
-    num_send_tokens_per_rank = torch.zeros(
-        (num_ranks,), dtype=torch.int, device=x.device
-    )
-    for dst_rank_idx in range(num_ranks):
-        expert_start_idx = dst_rank_idx * num_experts_per_rank
-        expert_end_idx = expert_start_idx + num_experts_per_rank
-
-        # Get the indices of tokens
-        mask_to_send = (
-            (expert_start_idx <= topk_idx) & (topk_idx < expert_end_idx)
-        ).any(dim=1)
-        indices_to_send = mask_to_send.nonzero(as_tuple=True)[0]
-        num_send_tokens_per_rank[dst_rank_idx] = indices_to_send.numel()
-
-        # Select the data for tokens
-        x_to_send = x[indices_to_send]
-        sf_to_send = sf[indices_to_send] if sf is not None else None
-        topk_idx_to_send = topk_idx[indices_to_send]
-        topk_weights_to_send = topk_weights[indices_to_send]
-        masked_topk_idx = torch.where(
-            (expert_start_idx <= topk_idx_to_send)
-            & (topk_idx_to_send < expert_end_idx),
-            topk_idx_to_send,
-            torch.full_like(topk_idx_to_send, -1),
-        )
-
-        send_x_list.append(x_to_send)
-        send_sf_list.append(sf_to_send)
-        send_topk_idx_list.append(masked_topk_idx)
-        send_topk_weights_list.append(topk_weights_to_send)
-        send_src_token_idx_list.append(indices_to_send)
-
-    send_x = torch.cat(send_x_list, dim=0)
-    send_sf = torch.cat(send_sf_list, dim=0) if use_fp8 else None
-    send_topk_idx = torch.cat(send_topk_idx_list, dim=0)
-    send_topk_weights = torch.cat(send_topk_weights_list, dim=0)
-    send_src_token_idx = torch.cat(send_src_token_idx_list, dim=0).to(torch.int)
-    send_src_token_idx += rank_idx * num_max_tokens_per_rank
-
-    # Exchange size
-    num_recv_tokens_per_rank = torch.empty(
-        (num_ranks,), dtype=torch.int, device=x.device
-    )
-    dist.all_to_all_single(num_recv_tokens_per_rank, num_send_tokens_per_rank)
-    num_recv_tokens = int(num_recv_tokens_per_rank.sum().item())
-
-    # Exchange main data
-    num_send_tokens_per_rank = num_send_tokens_per_rank.tolist()
-    num_recv_tokens_per_rank = num_recv_tokens_per_rank.tolist()
-    recv_x = torch.empty((num_recv_tokens, hidden), dtype=x.dtype, device=x.device)
-    recv_sf = (
-        torch.empty((num_recv_tokens, hidden_sf), dtype=sf.dtype, device=x.device)
-        if sf is not None
-        else None
-    )
-    recv_topk_idx = torch.empty(
-        (num_recv_tokens, num_topk), dtype=topk_idx.dtype, device=x.device
-    )
-    recv_topk_weights = torch.empty(
-        (num_recv_tokens, num_topk), dtype=topk_weights.dtype, device=x.device
-    )
-    recv_src_token_idx = torch.empty(
-        (num_recv_tokens,), dtype=torch.int, device=x.device
-    )
-    dist.all_to_all_single(
-        recv_x, send_x, num_recv_tokens_per_rank, num_send_tokens_per_rank
-    )
-    if use_fp8:
-        dist.all_to_all_single(
-            recv_sf, send_sf, num_recv_tokens_per_rank, num_send_tokens_per_rank
-        )
-    dist.all_to_all_single(
-        recv_topk_idx, send_topk_idx, num_recv_tokens_per_rank, num_send_tokens_per_rank
-    )
-    dist.all_to_all_single(
-        recv_topk_weights,
-        send_topk_weights,
-        num_recv_tokens_per_rank,
-        num_send_tokens_per_rank,
-    )
-    dist.all_to_all_single(
-        recv_src_token_idx,
-        send_src_token_idx,
-        num_recv_tokens_per_rank,
-        num_send_tokens_per_rank,
-    )
-
-    # Mask top-k indices
-    expert_start_idx = rank_idx * num_experts_per_rank
-    expert_end_idx = expert_start_idx + num_experts_per_rank
-    mask = (expert_start_idx <= recv_topk_idx) & (recv_topk_idx < expert_end_idx)
-    recv_topk_idx = recv_topk_idx - expert_start_idx
-    recv_topk_idx.masked_fill_(~mask, -1)
-
-    # Pack SF
-    recv_x = (recv_x, recv_sf) if use_fp8 else recv_x
-
-    return (
-        recv_x,
-        recv_topk_idx,
-        recv_topk_weights,
-        recv_src_token_idx,
-        torch.tensor(num_recv_tokens_per_rank, dtype=torch.int),
-    )
 
 
 def generate_pre_combine_data(
@@ -180,8 +14,8 @@ def generate_pre_combine_data(
     num_topk: int,
     hidden: int,
     *,
-    num_ranks: Optional[int] = None,
-    seed: Optional[int] = None
+    num_ranks: int,
+    seed: int,
 ) -> torch.Tensor:
     """
     Generate data needed for combine from `src_token_global_idx`.
@@ -195,13 +29,11 @@ def generate_pre_combine_data(
 
     Arguments:
     - `src_token_global_idx`: Source token global indices, `[num_tokens]`
-    - `num_ranks`, `seed`: the reference configuration for tests without a process group (defaults: the world size, the global seed)
+    - `num_ranks`, `seed`: the reference configuration supplied by the test
 
     Returns:
     - Generated data, `[num_tokens, num_topk, hidden]`
     """
-    num_ranks = dist.get_world_size() if num_ranks is None else num_ranks
-    seed = get_global_seed() if seed is None else seed
     token_seeds = src_token_global_idx.unsqueeze(1) * num_topk + torch.arange(
         num_topk, device=src_token_global_idx.device
     ).unsqueeze(
