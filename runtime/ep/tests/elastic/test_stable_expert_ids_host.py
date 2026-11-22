@@ -74,7 +74,19 @@ class StableExpertIdsTests(unittest.TestCase):
             namespace,
         )
         load_functions(
-            SOURCE, {"extent_of", "Case", "GraphCase", "NUM_CAPTURE_BARRIERS"}, namespace
+            SOURCE,
+            {
+                "extent_of",
+                "Case",
+                "GraphCase",
+                "NUM_CAPTURE_BARRIERS",
+                "as_nvfp4",
+                "payload_parts",
+                "payload_rows",
+                "cat_payloads",
+                "payload_equal",
+            },
+            namespace,
         )
         self.namespace = namespace
         self.mapping = list(range(8))
@@ -134,6 +146,42 @@ class StableExpertIdsTests(unittest.TestCase):
         for actual, expected in zip(seen, (captured, rerouted, captured)):
             for received, supplied in zip(actual, expected):
                 self.assertTrue(torch.equal(received, supplied))
+
+    def test_payload_rows_preserve_bytes_and_detect_corruption(self):
+        rows, parts, equal, cat = (
+            self.namespace[name]
+            for name in (
+                "payload_rows",
+                "payload_parts",
+                "payload_equal",
+                "cat_payloads",
+            )
+        )
+        bf16 = torch.arange(256).reshape(4, 64).to(torch.bfloat16)
+        fp8 = (
+            torch.arange(256, dtype=torch.uint8)
+            .reshape(4, 64)
+            .view(torch.float8_e4m3fn),
+            torch.arange(1, 5, dtype=torch.float32).reshape(4, 1),
+        )
+        nvfp4 = self.namespace["as_nvfp4"](bf16)
+        nvfp4[1].view(torch.uint8)[0, 0] = 0x7F  # NaN scale bits must survive exactly.
+        for kind, payload in (("bf16", bf16), ("fp8", fp8), ("nvfp4", nvfp4)):
+            with self.subTest(dtype=kind):
+                expected = rows(payload, torch.tensor([3, 0, 2]))
+                joined = cat(
+                    [
+                        rows(payload, slice(0, 0)),
+                        rows(payload, torch.tensor([3])),
+                        rows(payload, torch.tensor([0, 2])),
+                    ]
+                )
+                self.assertTrue(equal(joined, expected))
+                for component in range(len(parts(joined))):
+                    damaged = tuple(t.clone() for t in parts(joined))
+                    damaged[component].view(torch.uint8)[0, 0] ^= 1
+                    damaged = damaged if isinstance(joined, tuple) else damaged[0]
+                    self.assertFalse(equal(damaged, expected))
 
     def test_position_shrink_and_nonzero_domain_preserve_expert_owner(self):
         routing = torch.tensor([[8, 9, -1, 4], [4, 5, -1, -1], [10, 11, 0, 1]])

@@ -286,7 +286,9 @@ address instead. The metadata server must stay alive until all buffers are destr
 plan file through `--plan`. `--benchmark`, `--kineto` and `--feed-pairs`
 enable call, kernel and transition timing; `--save-output PATH` saves
 per-rank results. Payload byte counts exclude transport overhead and are
-not per-NIC bandwidth measurements.
+not per-NIC bandwidth measurements. `--dtype {bf16,fp8,nvfp4}` selects the
+dispatch format for checked and timed pairs, with matching buffer capacity.
+Payload values and scales are checked byte for byte; combine stays BF16.
 
 `tests/elastic/test_elastic_warmup.py` prepares fresh joining buffers while
 survivors replay, checks the first replay after each switch and serves

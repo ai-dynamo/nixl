@@ -314,6 +314,7 @@ class ReportingHostTests(unittest.TestCase):
         case = SimpleNamespace(
             buffer=buffer,
             num_max_tokens_per_rank=4,
+            dtype="bf16",
             num_experts=8,
             num_topk=2,
             hidden=16,
@@ -329,7 +330,7 @@ class ReportingHostTests(unittest.TestCase):
             sample_routing=lambda *args: (Rows([[0, 1]]), None),
         )
         pair = self.ns["PairCase"](
-            case, 0, [0, 1], SimpleNamespace(perf_tokens=0, seed=0, perf_fp8=0)
+            case, 0, [0, 1], SimpleNamespace(perf_tokens=0, seed=0)
         )
         self.assertEqual(calls, [])
         self.assertEqual(pair.dispatch_bytes_per_token, 32)
