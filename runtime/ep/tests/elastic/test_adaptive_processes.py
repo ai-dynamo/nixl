@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
 """
-Processes that start later and processes that exit. Where `test_adaptive_elastic.py` keeps every process alive, here a
+Processes that start later and processes that exit. Where `test_elastic_ep.py` keeps every process alive, here a
 job is a set of independent STEPS: a step is one process cohort (`torch.multiprocessing.spawn` over the GPUs of one
 node, or a subset), launched when its ranks first appear in the plan and exiting for good when they leave. Steps meet
 through an external `torch.distributed.TCPStore` (peer discovery via reciprocal
@@ -38,7 +38,7 @@ from typing import Dict, List, Optional
 import torch
 import torch.distributed as dist
 from buffer_setup import rank_coordinates, rank_mapping
-from test_adaptive_elastic import (
+from test_elastic_ep import (
     Case,
     GraphCase,
     add_common_arguments,

@@ -14,7 +14,7 @@ try:
 except ModuleNotFoundError:
     torch = None
 
-SOURCE = Path(__file__).with_name("test_adaptive_elastic.py")
+SOURCE = Path(__file__).with_name("test_elastic_ep.py")
 
 
 def load_functions(path, names, namespace):
@@ -63,9 +63,7 @@ class StableExpertIdsTests(unittest.TestCase):
             namespace,
         )
         namespace["ref_combine"] = namespace["combine"]
-        load_functions(
-            SOURCE.with_name("test_adaptive_modes.py"), {"combine_recipe"}, namespace
-        )
+        load_functions(SOURCE, {"combine_recipe"}, namespace)
         load_functions(
             SOURCE.with_name("buffer_setup.py"),
             {"rank_mapping", "rank_coordinates", "topology_experts"},

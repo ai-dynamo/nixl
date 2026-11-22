@@ -4,7 +4,7 @@
 
 """BF16 regression: membership changes retain the fixed constructor grid and graph.
 
-Run on 16 GPUs arranged as 1x16 or 2x8, using test_adaptive_elastic.py's
+Run on 16 GPUs arranged as 1x16 or 2x8, using test_elastic_ep.py's
 node-level launcher convention. No benchmark or performance claim is made.
 The same dispatch/combine graph is reused while shrinking and expanding
 direct worlds and, on 2x8, hybrid worlds; its addresses and launch count stay fixed.
@@ -20,7 +20,7 @@ from unittest.mock import patch
 import torch
 import torch.distributed as dist
 from buffer_setup import rank_coordinates
-from test_adaptive_elastic import (
+from test_elastic_ep import (
     Case,
     GraphCase,
     add_common_arguments,

@@ -16,7 +16,7 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 from buffer_setup import rank_coordinates
-from test_adaptive_elastic import (
+from test_elastic_ep import (
     Case,
     GraphCase,
     add_common_arguments,

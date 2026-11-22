@@ -12,7 +12,7 @@ import argparse
 import torch
 import torch.distributed as dist
 from buffer_setup import create_group_buffer
-from test_adaptive_modes import capture
+from test_elastic_ep import capture
 from test_ep import fold_expanded
 
 import nixl.runtime.ep as nixl_ep_v2

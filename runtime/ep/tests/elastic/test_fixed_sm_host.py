@@ -853,7 +853,7 @@ class FixedSMHostTests(unittest.TestCase):
         self.assertEqual(buffer.num_launch_sms, 24)
 
     def test_default_elastic_plan_covers_single_rank_world(self):
-        plan_source = Path(__file__).with_name("test_adaptive_elastic.py")
+        plan_source = Path(__file__).with_name("test_elastic_ep.py")
         tree = ast.parse(plan_source.read_text(), filename=str(plan_source))
         functions = [
             node

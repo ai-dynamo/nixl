@@ -16,7 +16,7 @@ from datetime import timedelta
 import torch
 import torch.distributed as dist
 from buffer_setup import rank_mapping
-from test_adaptive_elastic import (
+from test_elastic_ep import (
     Case,
     GraphCase,
     add_common_arguments,

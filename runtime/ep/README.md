@@ -282,7 +282,7 @@ export NIXL_TCPSTORE_ENDPOINT="${MASTER_ADDR:-127.0.0.1}:${MASTER_PORT:-8361}"
 For tests launched with `--store-host` / `--store-port`, use that external server's
 address instead. The metadata server must stay alive until all buffers are destroyed.
 
-`tests/elastic/test_adaptive_elastic.py` accepts an inline JSON plan or a
+`tests/elastic/test_elastic_ep.py` accepts an inline JSON plan or a
 plan file through `--plan`. `--benchmark`, `--kineto` and `--feed-pairs`
 enable call, kernel and transition timing; `--save-output PATH` saves
 per-rank results. Payload byte counts exclude transport overhead and are
@@ -316,7 +316,7 @@ replays also removes samples from blocks or roles that become inactive.
 For eager and graph-replay profiles with the elastic test's correctness checks:
 
 ```bash
-NIXL_EP_ADAPTIVE_PROFILE=1 python tests/elastic/test_adaptive_elastic.py --profile --num-tokens 16
+NIXL_EP_ADAPTIVE_PROFILE=1 python tests/elastic/test_elastic_ep.py --profile --num-tokens 16
 ```
 
 `PROFILE` reports the first and last observed phase boundaries relative to
