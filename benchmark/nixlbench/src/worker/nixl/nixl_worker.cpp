@@ -121,10 +121,35 @@ getRandomSeed() {
     return seed;
 }
 
+#if HAVE_CUDA
+/*
+ * Backends such as UCX can only use CUDA IPC with a VRAM peer when the DRAM
+ * process has an active CUDA context, which it would otherwise never create.
+ */
+static void
+initCudaContext() {
+    int num_devices = 0;
+
+    if ((cudaGetDeviceCount(&num_devices) != cudaSuccess) || (num_devices == 0)) {
+        (void)cudaGetLastError();
+        return;
+    }
+
+    CHECK_CUDA_ERROR(cudaFree(nullptr), "Failed to create CUDA context");
+}
+#endif
+
 xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
     : xferBenchWorker(),
       default_rng_(getRandomSeed()) {
     seg_type = GET_SEG_TYPE(isInitiator());
+
+#if HAVE_CUDA
+    if ((xferBenchConfig::initiator_seg_type == "VRAM") ||
+        (xferBenchConfig::target_seg_type == "VRAM")) {
+        initCudaContext();
+    }
+#endif
 
     int rank;
     std::string backend_name;
