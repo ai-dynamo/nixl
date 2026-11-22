@@ -31,6 +31,7 @@
 #include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
+#include "utils/memos_duration.h"
 
 #if HAVE_CUDA
 #include <cuda.h>
@@ -192,6 +193,9 @@ public:
     static int num_iter;
     static int large_blk_iter_ftr;
     static int warmup_iter;
+    static int warmup_seconds;
+    static int duration_seconds;
+    static int duration_latency_samples;
     static int num_threads;
     static bool enable_pt;
     static size_t progress_threads;
@@ -216,6 +220,9 @@ public:
     static bool reregister_mem;
     static bool prepared_xfer;
     static int pipeline_depth;
+    static bool agent_per_thread;
+    static size_t memos_keys_per_thread;
+    static bool memos_reuse_local;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
     static int gds_mt_num_threads;
@@ -353,6 +360,11 @@ public:
     add(const xferMetricStats &other);
     void
     reserve(size_t n);
+    // Reserve and fault in sample storage before a duration-mode window.
+    void
+    preallocate(size_t n);
+    size_t
+    count() const;
     void
     clear();
 
@@ -362,6 +374,7 @@ private:
 
 // Stats class for measuring benchmark metrics
 struct xferBenchStats {
+    nixlbench::MemosDurationStats duration;
     xferMetricStats total_duration;
     xferMetricStats prepare_duration;
     xferMetricStats post_duration;

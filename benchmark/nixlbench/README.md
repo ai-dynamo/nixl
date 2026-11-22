@@ -1290,3 +1290,127 @@ sudo sysctl -p
 ---
 
 *This guide covers NIXLBench build and usage procedures as of 2025. For the latest updates, please refer to the official repository.*
+
+### DOCA_MEMOS working-set size
+
+By default, DOCA_MEMOS registers only `max_batch_size` keys per thread/device.
+Increasing `total_buffer_size` alone does not increase the number of stored keys.
+To vary the storage working set independently of batch size, set:
+
+```bash
+export NIXLBENCH_MEMOS_KEYS_PER_THREAD=2048
+```
+
+With eight threads, a fixed batch size of 32, and 512 KiB values, this registers
+16,384 distinct keys and exercises an 8 GiB working set. Set
+`--total_buffer_size=8589934592` so each worker has sufficient local buffer space.
+For other block sizes, choose a key count that is a multiple of the batch size;
+for an approximately 8 GiB total working set with eight threads, use
+`floor(1 GiB / block_size / batch_size) * batch_size` keys per thread.
+
+The benchmark prepares one transfer request per batch of keys and cycles through
+those requests in order at `pipeline_depth=1`. With `--pipeline_depth=N`, each
+worker keeps up to N batches in flight, replacing each completed batch independently
+and selecting a free bank from the pool. Banks still in flight are never reused.
+The last batches drain before returning; iteration counts and existing statistics
+retain their usual meaning. This is batch-level replenishment, not FIO's
+per-I/O replenishment: batch size 32 with depth 2 allows up to 64 operations per
+worker (512 across eight workers). READ prepopulation and its retrieval-success
+check visit every key before warmup and measurement. Each phase starts at the first
+batch; a short measurement may visit only part of the pool. The retrieval check
+is not a data-integrity checksum. Request preparation is still included in the
+existing execution-loop timing; larger pools create more request handles.
+
+The option accepts decimal integers from 1 through 1,000,000. It requires the
+NIXL worker, DOCA_MEMOS READ or WRITE, DRAM, one device per side, SG/pairwise mode,
+a positive `pipeline_depth` no larger than `keys_per_thread / batch_size`, and a
+fixed batch size. Request recreation, memory reregistration, QUERY, and location
+randomization are unsupported and rejected.
+By default, the full pool must fit in each thread's buffer at `max_block_size`.
+Set `NIXLBENCH_REUSE_LOCAL=1` with the key-pool option to use only
+`batch_size * pipeline_depth` local value buffers per worker. For example,
+8,192 keys per worker, eight workers, batch 32 and depth 2 with 512 KiB values
+need 256 MiB of local buffers, while the remote working set remains 32 GiB.
+Use `--total_buffer_size=268435456` for that configuration. Reuse defaults to
+off; the variable accepts only `0` or `1` and requires the key-pool mode.
+
+Reuse requires the number of key banks to be divisible by pipeline depth.
+Each lane keeps its local buffers until completion and advances through its
+own key banks. Fixed per-lane iteration budgets ensure prepopulation and the
+retrieval check visit every key despite out-of-order completions. At the end
+of a phase, a fast lane may drain before a slower lane finishes its budget.
+Native iteration counts, timing and statistics are unchanged.
+
+Each local region must hold at least `max_block_size * batch_size * pipeline_depth`
+bytes. Extra bytes, including hugepage allocation padding, are left unused:
+address wrapping uses exactly `block_size * batch_size * pipeline_depth` bytes
+for the current value size. Values such as 508 and 1020 KiB retain their exact
+sizes; they are not rounded to 512 or 1024 KiB. Larger buffers and block-size
+sweeps use the same logical slot mapping.
+
+Existing
+random 128-bit object keys remain independent across threads and runs. Unset the
+environment variable to retain the default transfer path and key count.
+
+### Timed steady-state MEMOS measurements
+
+Use `--warmup_seconds=1 --duration_seconds=30` with the host MEMOS key-pool
+path to replace the iteration-based warmup and measurement with a continuous
+pipeline. Both flags accept whole seconds from 0 through 86,400. Duration 0
+retains the existing iteration mode; positive timed warmup requires positive
+duration. The first implementation supports one process, host NIXL/DOCA_MEMOS,
+DRAM, SG/pairwise, a fixed batch, one device per side, and the key-pool option.
+Unsupported worker/backend/device/multi-process combinations are rejected.
+
+Key prepopulation and the retrieval-success check still traverse the entire
+key pool using iteration counts. Each worker then prepares its requests before
+a common process-wide monotonic start. All workers use the same warmup and
+measurement deadlines. Warmup flows directly into measurement without a drain,
+request recreation, or equal iteration quotas: faster lanes may complete more
+batches. `num_iter`, `warmup_iter`, and `large_blk_iter_ftr` do not determine the
+duration-mode measurement budget.
+
+Throughput counts batches whose successful completions are **observed** within
+`[measurement_start, measurement_end)`, including warmup-issued batches that
+complete inside the measurement window. At the deadline, workers stop posting
+and drain outstanding requests. Later completions count only as drain work;
+their bytes and drain/cleanup time are excluded from steady-state throughput.
+Latency samples require both posting and completion inside the measurement
+window. Request preparation is outside the window and is displayed as `n/a`.
+Native `Avg Lat.` remains amortized worker time per I/O, not hardware queue
+latency. Completions are timed at polling observation, not by device timestamps.
+
+The `STEADY_STATE` record reports actual measured batches, I/Os and bytes,
+window timestamps, warmup and drain completions, drain time, issued/completed
+counts, worker coverage, and the sum of per-worker API batch peaks. That peak
+is not an NVMe hardware queue-depth measurement. Duration mode bounds latency sample storage with
+`--duration_latency_samples=65536` (per worker, separately for post and transfer
+latencies; valid range 1–1,000,000). Storage and pipeline bookkeeping are
+allocated and touched before the common timer starts. Every in-window
+completion still counts toward throughput, even after the latency sample limit
+is reached. Means and percentiles pool the first N eligible samples from each
+worker; they are not a weighted or uniform sample of a longer complete window.
+The `latency_samples`, `post_samples`, `latency_sample_limit`, and
+`latency_samples_truncated` fields disclose this policy and any truncation.
+`post_eligible_batches`, `post_samples_truncated`, and
+`transfer_samples_truncated` distinguish the two latency sample streams.
+Increase the limit when a longer/high-rate run needs more latency samples.
+No result is emitted if the window has no completions or its worker/window/
+counter accounting is inconsistent. MEMOS prepopulation also rejects an OpenMP
+team smaller than requested, preventing a partial key-pool check from being
+reported as complete. Deferred request cancellation retains the handle and
+buffers while driving progress until the backend accepts release. The point's
+external watchdog remains necessary for a permanently stalled backend.
+
+### Experimental agent ownership
+
+With the expanded DOCA_MEMOS key pool, `--agent_per_thread=true` creates one
+independent NIXL agent/backend and registration set per benchmark worker. It
+supports host DRAM READ/WRITE, SG/pairwise, one device, manual progress, and stable
+registrations only. The default remains a shared agent. Each context retains
+RW synchronization and the configured per-backend task count: this multiplies
+backend resources, and does not isolate the physical device or DPU.
+
+The existing key-pool rotation, reused-buffer geometry, full-key population and
+retrieval checks, common duration window and completion accounting are unchanged.
+Context initialization and destruction occur outside the measured window.

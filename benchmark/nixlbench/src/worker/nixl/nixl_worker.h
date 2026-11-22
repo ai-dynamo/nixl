@@ -34,13 +34,15 @@
 #include "worker/worker.h"
 #include <random>
 #include "worker/nixl/nixl_mem_region.h"
+#include "worker/nixl/nixl_memos_context.h"
 
 // Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
 
 class xferBenchNixlWorker: public xferBenchWorker {
     private:
-        nixlAgent* agent;
-        nixlBackendH* backend_engine;
+        nixlAgent *agent = nullptr;
+        nixlBackendH *backend_engine = nullptr;
+        std::vector<std::unique_ptr<nixlbench::MemosWorkerContext>> thread_contexts_;
         nixl_mem_t seg_type;
         std::vector<xferFileState> remote_fds;
         std::vector<NixlMemRegion> remote_regs_;
@@ -77,6 +79,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
 
     private:
+        std::vector<std::vector<xferBenchIOV>>
+        allocateThreadMemory(int num_threads);
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
         std::optional<xferBenchIOV>
