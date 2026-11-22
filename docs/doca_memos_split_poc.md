@@ -32,6 +32,21 @@ payload copies, stored headers, manifests or internal metadata validation.
   Upstream removed `ignore_read_not_found` and `query_mem_mode`; this patch does
   not reintroduce them or change NIXLBench.
 
+**Key-collision assumption:** application keys are assumed to be independently
+randomly generated, rather than deliberately selected to match internal keys.
+Continuation keys are 128-bit BLAKE2b digests and share the physical key space
+with application keys. Accidental collision risk depends on the total number of
+stored application and continuation keys; for the intended random-key workload,
+that risk is accepted as negligible.
+
+This format does not isolate deliberately chosen application keys. In raw
+hexadecimal mode, a caller can compute another object's continuation key and
+write a separate object at that key, overwriting the continuation. A subsequent
+read may return mixed data with a success status. Hash-input domain separation
+does not prevent this chosen-key overwrite. Protection against such callers is
+outside this PoC's scope. The accepted random-key assumption requires no key-format
+change or data repopulation.
+
 All participants must use the same effective chunk size, supported by their
 interfaces, and data must have been written with that geometry. The backend does
 not handle unaligned geometry, validate object generations/lengths, roll back partial writes, or clean up stale
